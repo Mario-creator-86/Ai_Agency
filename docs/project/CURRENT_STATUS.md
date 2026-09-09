@@ -287,6 +287,11 @@ Completed and released the same day. Details:
 - `drawCar`: the hard-coded bus route label "12" is gone; the destination blind stays blank.
 - `makeTraffic`/`updateTraffic` (new, exported): vehicles now spawn spread across each lane's loop stretch and move as a platoon — a follower near its leader adopts the leader's speed and a hard clamp holds a 24 px bumper gap, including across the road's wrap seam, so same-lane vehicles can no longer drive through each other.
 - `drawNamePlate`: the name renders at single scale (was double) on a light paper card with dark ink and a muted state line — half the height, far less floor area, readable over the night interiors; the selected variant keeps the gold border.
+- Follow-up (Owner direction, same day): the runtime state moved out of the floor card
+  entirely. The card at the character's feet now carries the name only; a new
+  `drawStateTag` floats the state (IDLE, WORKING…) above the head as a dark chip with
+  department-accent text, and the thinking bulb / sleeping Z marks were raised above it
+  so the three never overlap.
 - Verification: `npm test` 11/11 (3 new traffic invariant tests: spawn spacing, fast-car-catches-slow-bus, 15-minute mixed-timestep seam run), `npm run check` clean, `npm run build` OK (86 kB). Live browser check on the running local studio confirmed the bus has no number, traffic flows with no overlap across frames, and the nameplates render as small light cards.
 
 ## Documentation identifiers, initial Git commit — 2026-09-10, ZCode (second session)

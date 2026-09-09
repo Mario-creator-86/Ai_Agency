@@ -251,3 +251,9 @@ Decision D-DESIGN-003.
   (spawn spacing, catch-up scenario, 15-minute mixed-timestep seam run).
 - **Nameplates**: name type reduced from double to single scale on a light paper card with dark ink
   and a muted state line — smaller plates that stay readable over the dark floors.
+
+## 2026-09-10 — State tag above the character (Owner feedback)
+
+- The floor nameplate now carries the agent name only. The runtime state (IDLE, WORKING, …)
+  floats above the character's head on a dark chip in the department accent, and the thinking
+  bulb and sleeping Z marks were raised so none of the three overlap.

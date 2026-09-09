@@ -1985,7 +1985,7 @@ function drawStateMark(ctx, cx, topY, mode, time, accent) {
   if (mode === 'think') {
     const bob = Math.sin(time * 2.2) * 2;
     const bx = cx + 12;
-    const by = topY - 16 + bob;
+    const by = topY - 30 + bob;
     px(ctx, bx - 5, by - 6, 12, 10, '#22322b');
     outline(ctx, bx - 5, by - 6, 12, 10, '#3f5a4e');
     // Filament bulb
@@ -1997,8 +1997,8 @@ function drawStateMark(ctx, cx, topY, mode, time, accent) {
   } else if (mode === 'sleep') {
     for (let i = 0; i < 3; i += 1) {
       const t = (time * 0.7 + i * 0.33) % 1;
-      const zx = cx + 10 + t * 12;
-      const zy = topY - 6 - t * 20;
+      const zx = cx + 8 + t * 12;
+      const zy = topY - 27 - t * 14;
       ctx.globalAlpha = 1 - t;
       drawText(ctx, 'Z', zx, zy, '#8fa294', 1 + Math.round(t), 1);
       ctx.globalAlpha = 1;
@@ -2012,22 +2012,42 @@ function drawStateMark(ctx, cx, topY, mode, time, accent) {
 }
 
 /**
+ * Runtime-state tag above the head. The card at the feet says who this is; this tag says
+ * what the backend last reported (IDLE, WORKING…), in the department accent on a dark
+ * chip so it stays readable over any wall, screen or window behind it.
+ */
+function drawStateTag(ctx, cx, headTop, state, accent) {
+  const label = String(state || 'IDLE').trim().toUpperCase().slice(0, 12);
+  const w = textWidth(label, 1, 1) + 12;
+  const h = 11;
+  const x = Math.round(cx - w / 2);
+  const top = Math.round(headTop) - 20;
+
+  ctx.save();
+  ctx.globalAlpha = 0.35;
+  px(ctx, x + 2, top + 2, w, h, '#060d0b');
+  ctx.restore();
+  px(ctx, x, top, w, h, '#101c19');
+  outline(ctx, x, top, w, h, '#2c443a');
+  px(ctx, x + 1, top + 1, w - 2, 1, '#24382f');
+  drawText(ctx, label, x + 6, top + 2, accent, 1, 1);
+}
+
+/**
  * Nameplate on the floor slab. A small paper card, in the same register as the speech
  * bubbles: light board with dark ink stays readable over the night-time floors, where
- * the old dark-on-dark plate washed into the furniture. The name sits at single scale —
- * at double scale the plate grew wider than the character it labels.
+ * the old dark-on-dark plate washed into the furniture. It carries the name only —
+ * the runtime state lives in the tag above the character's head.
  */
-function drawNamePlate(ctx, cx, y, name, state, accent, selected) {
+function drawNamePlate(ctx, cx, y, name, accent, selected) {
   let label = String(name || '').trim().toUpperCase();
   if (label.length > 15) {
     const cut = label.slice(0, 15);
     const space = cut.lastIndexOf(' ');
     label = (space > 5 ? cut.slice(0, space) : cut).trim();
   }
-  const nameW = textWidth(label, 1, 1);
-  const stateW = state ? textWidth(state, 1, 1) : 0;
-  const w = Math.max(nameW, stateW) + 22;
-  const h = state ? 24 : 13;
+  const w = textWidth(label, 1, 1) + 22;
+  const h = 13;
   const x = Math.round(cx - w / 2);
   const top = Math.round(y);
 
@@ -2040,12 +2060,9 @@ function drawNamePlate(ctx, cx, y, name, state, accent, selected) {
   outline(ctx, x, top, w, h, selected ? PAL.gold : '#2b3f37');
   px(ctx, x + 1, top + 1, w - 2, 1, '#fffbef');
 
-  // Department dot, then the name; the runtime state rides underneath in muted ink.
+  // Department dot, then the name.
   px(ctx, x + 6, top + 5, 4, 4, accent);
   drawText(ctx, label, x + 14, top + 4, '#1c2a24', 1, 1);
-  if (state) {
-    drawText(ctx, state, x + 14, top + 14, '#5c6b60', 1, 1);
-  }
 }
 
 /** Speech bubble raised by a backend agent.message_sent event. */
@@ -2656,12 +2673,18 @@ export class OfficeEngine {
 
       const body = drawCharacter(ctx, agent.x, floorY, look, mode, time, selected);
       drawStateMark(ctx, agent.x, body.headY, mode, time, st.accent);
+      drawStateTag(
+        ctx,
+        agent.x,
+        body.headY,
+        mode === 'sleep' ? 'PAUSED' : String(agent.runtime_state || 'IDLE'),
+        st.accent,
+      );
       drawNamePlate(
         ctx,
         agent.x,
         floorY - 1,
         agent.display_name || agent.name || agent.role_name || 'AGENT',
-        mode === 'sleep' ? 'PAUSED' : String(agent.runtime_state || 'IDLE'),
         st.accent,
         selected,
       );
