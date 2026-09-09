@@ -389,3 +389,35 @@ secret checks pass.
 Known related gap (not addressed here): agent runtime-state changes (THINKING/IDLE) are column
 updates without events, so the state tag above the head updates on layout refresh rather than
 instantly.
+
+## Research agent works the pipeline; office fully live — 2026-09-10, ZCode (fifth session)
+
+Two increments, both verified against the configured Ollama Cloud provider:
+
+**1. The office is fully live.** `run_agent_task` now emits `agent.state_changed`
+(THINKING at start, IDLE at completion) through the outbox, and `agent.paused`/`agent.resumed`
+were moved onto the outbox too — the state tag above each character's head and the pause
+animation now follow backend events in real time instead of waiting for a layout refresh.
+
+**2. The research agent actually reads sources.** New
+`POST /api/v1/factual/sources/{id}/extract-with-agent` (`backend/app/factual/agent_pipeline.py`):
+the LeadResearcher agent (or any given ACTIVE agent with a model) receives the source's
+sanitized text inside the inert `<untrusted_source_evidence>` boundary, extracts up to 12
+atomic claims through its real LLM, and the JSON is strictly schema-validated before anything
+is stored. Every claim lands **UNVERIFIED** regardless of the model's confidence — the model
+that read the source is never the one that verifies it. Unparseable output raises (422) and
+stores nothing. A truncated JSON list (token cap hit mid-item) keeps only the complete
+objects — the dangling partial claim is dropped, never guessed. The agent announces a human
+summary ("Am extras N afirmații...") as its speech bubble instead of raw JSON
+(`run_agent_task` gained an `emit_message` flag for structured pipelines).
+
+Live evidence: the IANA Example Domains page was fetched with the research retrieval adapter
+(real SHA-256 provenance) and ingested; Dr. Aris (nemotron-3-super) returned 9 accurate claims
+(RFC 2606/6761 reservations, registration restrictions, subdomain guidance) recorded UNVERIFIED,
+and his speech bubble appeared in the 2D office. Phase 4 remains partial: keyword
+search/discovery and an independently authorized fact-checker are still open.
+
+Tests: 4 pipeline tests (stubbed adapter: valid JSON with fences; unparseable output rejected
+with nothing stored; policy STOP blocks before any claim; truncated list keeps only complete
+claims), phase-1 run tests extended to assert THINKING/IDLE state events. Suite: 144 passed /
+3 skipped; ruff, ruff format, mypy, docs and secret checks pass.

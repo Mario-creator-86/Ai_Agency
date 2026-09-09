@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
+from pydantic import BaseModel, ConfigDict
 
+from app.factual.agent_pipeline import agent_extract_claims
 from app.factual.schemas import (
     ApproveScriptCommand,
     ExtractClaimsCommand,
@@ -34,6 +37,13 @@ from app.factual.services import (
     verify_claim,
 )
 from app.security import require_owner
+
+
+class AgentExtractCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    command_id: UUID
+    agent_id: UUID | None = None
 
 
 def create_factual_router() -> APIRouter:
@@ -84,6 +94,28 @@ def create_factual_router() -> APIRouter:
             return {"claims": claims}
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @router.post("/sources/{source_id}/extract-with-agent")
+    def post_extract_with_agent(
+        request: Request,
+        source_id: Annotated[str, Path(min_length=36, max_length=36)],
+        cmd: AgentExtractCommand,
+    ) -> dict:
+        """The research agent reads the ingested source and extracts claims via its LLM.
+
+        Claims land UNVERIFIED regardless of the model's confidence — verification stays a
+        separate, independent step the agent cannot perform for its own output.
+        """
+        try:
+            return agent_extract_claims(
+                request.app.state.engine,
+                request.app.state.registry,
+                source_id,
+                str(cmd.command_id),
+                agent_id=str(cmd.agent_id) if cmd.agent_id else None,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @router.post("/claims/{claim_id}/verify", response_model=FactualClaimView)
     def post_verify_claim(

@@ -460,6 +460,15 @@ class _StubAdapter:
         return GenerateResult(self.text, 3, 5, None)
 
 
+def session_events(engine, event_type):
+    with Session(engine) as session:
+        return session.scalars(
+            select(DomainEvent)
+            .where(DomainEvent.event_type == event_type)
+            .order_by(DomainEvent.sequence)
+        ).all()
+
+
 def _message_events(engine):
     with Session(engine) as session:
         return session.scalars(
@@ -493,6 +502,11 @@ def test_successful_run_emits_real_agent_message(seeded):
             select(OutboxRecord).where(OutboxRecord.event_id == events[0].event_id)
         ).all()
     assert len(outbox) == 1 and outbox[0].status == "PENDING"
+
+    # The office learns the run's phases live: THINKING at start, IDLE at completion.
+    state_events = session_events(engine, "agent.state_changed")
+    assert [e.payload["runtime_state"] for e in state_events] == ["THINKING", "IDLE"]
+    assert all(e.aggregate_id == seeded["agent_active_id"] for e in state_events)
 
 
 def test_failed_run_emits_no_agent_message(seeded):

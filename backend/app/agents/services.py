@@ -82,12 +82,12 @@ def pause_agent(engine: Engine, agent_id: str) -> dict:
 
         agent.lifecycle = "PAUSED"
         agent.version += 1
-        event = append_event(
+        event, _ = append_event_with_outbox(
             session,
             "agent.paused",
             "agent",
             agent_id,
-            1,
+            agent.version,
             {"display_name": agent.display_name, "lifecycle": "PAUSED"},
             str(uuid4()),
         )
@@ -107,12 +107,12 @@ def resume_agent(engine: Engine, agent_id: str) -> dict:
 
         agent.lifecycle = "ACTIVE"
         agent.version += 1
-        event = append_event(
+        event, _ = append_event_with_outbox(
             session,
             "agent.resumed",
             "agent",
             agent_id,
-            1,
+            agent.version,
             {"display_name": agent.display_name, "lifecycle": "ACTIVE"},
             str(uuid4()),
         )
@@ -328,6 +328,7 @@ def run_agent_task(
     correlation_id: str,
     max_tokens: int | None = None,
     temperature: float | None = None,
+    emit_message: bool = True,
 ) -> dict:
     """Execute an agent LLM run through the policy kernel. Returns AgentRunView dict."""
     run_id = str(uuid4())
@@ -402,6 +403,15 @@ def run_agent_task(
         provider_name = provider_rec.name
         agent.runtime_state = "THINKING"
         agent.version += 1
+        append_event_with_outbox(
+            session,
+            "agent.state_changed",
+            "agent",
+            agent_id,
+            agent.version,
+            {"runtime_state": "THINKING", "task_type": task_type},
+            correlation_id,
+        )
 
     # Execute outside the DB transaction to avoid holding locks during LLM call
     try:
@@ -439,6 +449,15 @@ def run_agent_task(
         if agent:
             agent.runtime_state = "IDLE"
             agent.version += 1
+            append_event_with_outbox(
+                session,
+                "agent.state_changed",
+                "agent",
+                agent_id,
+                agent.version,
+                {"runtime_state": "IDLE", "task_type": task_type},
+                correlation_id,
+            )
 
         event = append_event(
             session,
@@ -483,7 +502,7 @@ def run_agent_task(
         # (../architecture/06_BACKEND_EVENT_MODEL.md §7). Reasoning models can succeed with
         # no visible text; then there is nothing real to say and no event is emitted.
         message_text = " ".join((output_text or "").split())[:200]
-        if status == "SUCCEEDED" and message_text:
+        if emit_message and status == "SUCCEEDED" and message_text:
             append_event_with_outbox(
                 session,
                 "agent.message_sent",

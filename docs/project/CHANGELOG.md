@@ -282,3 +282,16 @@ Decision D-DESIGN-003.
   the one-shot replay at connect).
 - Activity log labels the event "Agentul a răspuns". Verified live: an API-triggered run made
   the answering bubble appear above the agent in the 2D office.
+
+## 2026-09-10 — Research agent extracts claims from real sources; office fully live
+
+- `agent.state_changed` (THINKING/IDLE) now flows through the outbox during runs, and
+  pause/resume events were moved onto the outbox — state tags and pause animations in the
+  2D office follow backend events live.
+- New `POST /factual/sources/{id}/extract-with-agent`: the research agent reads the sanitized
+  source (inert boundary, prompt-injection safe) and extracts schema-validated atomic claims
+  via its assigned model. Claims stay UNVERIFIED; unparseable output is rejected; truncated
+  JSON keeps only complete objects. The agent announces "Am extras N afirmatii..." as its
+  speech bubble instead of raw JSON.
+- Verified live end to end: real IANA page fetched via the retrieval adapter -> Dr. Aris
+  (nemotron-3-super) -> 9 accurate UNVERIFIED claims -> bubble in the office.
