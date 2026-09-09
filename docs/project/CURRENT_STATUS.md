@@ -288,3 +288,29 @@ Completed and released the same day. Details:
 - `makeTraffic`/`updateTraffic` (new, exported): vehicles now spawn spread across each lane's loop stretch and move as a platoon — a follower near its leader adopts the leader's speed and a hard clamp holds a 24 px bumper gap, including across the road's wrap seam, so same-lane vehicles can no longer drive through each other.
 - `drawNamePlate`: the name renders at single scale (was double) on a light paper card with dark ink and a muted state line — half the height, far less floor area, readable over the night interiors; the selected variant keeps the gold border.
 - Verification: `npm test` 11/11 (3 new traffic invariant tests: spawn spacing, fast-car-catches-slow-bus, 15-minute mixed-timestep seam run), `npm run check` clean, `npm run build` OK (86 kB). Live browser check on the running local studio confirmed the bus has no number, traffic flows with no overlap across frames, and the nameplates render as small light cards.
+
+## Documentation identifiers, initial Git commit — 2026-09-10, ZCode (second session)
+
+Owner-directed documentation and repository repairs; recorded as D-DOC-001 in the decision log:
+
+- `16_DECISION_LOG.md`: removed the byte-identical duplicate of the ADR-001…ADR-V5-003 block
+  (verified identical before deletion; 706 → 551 lines, every ADR now single).
+- `../architecture/02_SRS.md`: the v3 additional FRs are renamed `FR-V3-037…FR-V3-066`
+  (same numeric suffix, consistent with the existing `FR-V4-`/`FR-ECON-` namespaces), clearing the
+  collision with base FR-037…066. NFR-013…021 never collided and are unchanged. Requirement text
+  unchanged. `V3_FILE_BY_FILE_REVIEW.md` notes the rename; `IMPLEMENTATION_PLAN.md` marks the
+  recorded conflict resolved. Indexed `sha256` values for both architecture documents updated
+  explicitly (original hashes preserved).
+- `tests/test_integration_settings.py` (two fixture values only, inside the active Codex Settings
+  claim — flagged here so that agent is aware): `"do-not-echo"` → `"abc"` and
+  `https://user:password@example.org` → `https://alice@example.org`, so `scripts/check_secrets.py`
+  passes without suppression. Both payloads still assert the same 422 refusals; all 15 settings
+  tests pass.
+- Initial Git commit created at the Owner's request (`ae4dee3`, branch `codex/foundation`, with a
+  `main` branch pointer at the same commit): 212 files — source, tests, docs, scratch verification
+  scripts. `.gitignore` extended with `backend/storage/` and `Claude outputs/` (generated media and
+  screenshots); `.env`, `data/`, `output/`, `dist/`, `node_modules` were already excluded and are
+  confirmed absent from the commit.
+
+Verification at commit time: `pytest` 136 passed / 3 skipped; frontend `npm test` 11/11, `tsc`
+clean, build OK; `scripts/check_docs.py` and `scripts/check_secrets.py` pass.
