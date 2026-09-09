@@ -1,13 +1,21 @@
 import asyncio
+from time import perf_counter
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.agents.models import Agent, ModelRecord
-from app.agents.services import list_agents, list_provider_models, list_roles, sync_provider_models
+from app.agents.services import (
+    list_agents,
+    list_provider_models,
+    list_roles,
+    run_agent_task,
+    sync_provider_models,
+)
 from app.integrations.catalog import CATALOG
 from app.integrations.llm import ConfiguredLLM
 from app.integrations.models import Integration, ServiceSelection
@@ -50,11 +58,21 @@ def create_settings_router() -> APIRouter:
                 for row in session.scalars(select(ServiceSelection))
             }
             provider_ids = set(session.scalars(select(ModelRecord.provider_id)).all())
-            channels = [dict(id=c.id, name=c.channel_name, credentials_ref=c.credentials_ref,
-                             event_id=c.event_id, status=c.status)
-                        for c in session.scalars(select(ChannelRecord).where(ChannelRecord.platform == "YOUTUBE"))]
+            channels = [
+                dict(
+                    id=c.id,
+                    name=c.channel_name,
+                    credentials_ref=c.credentials_ref,
+                    event_id=c.event_id,
+                    status=c.status,
+                )
+                for c in session.scalars(
+                    select(ChannelRecord).where(ChannelRecord.platform == "YOUTUBE")
+                )
+            ]
         return dict(
-            catalog=CATALOG, channels=channels,
+            catalog=CATALOG,
+            channels=channels,
             integrations=integrations,
             selections=selections,
             agents=list_agents(engine),
@@ -168,6 +186,33 @@ def create_settings_router() -> APIRouter:
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from None
 
+    @router.post("/agents/{agent_id}/test")
+    def test_agent_llm(agent_id: UUID, request: Request) -> dict:
+        """Owner-initiated connectivity check: one real run through the policy kernel.
+
+        Uses the agent's currently assigned provider/model; the answer, token counts and
+        audit trail come from the same AgentRun envelope every other task uses.
+        """
+        started = perf_counter()
+        try:
+            result = run_agent_task(
+                request.app.state.engine,
+                request.app.state.registry,
+                str(agent_id),
+                "TEST_CONNECTIVITY",
+                "Răspunde într-o singură propoziție scurtă: ești funcțional?",
+                "v1",
+                str(uuid4()),
+                max_tokens=800,
+                temperature=0.2,
+            )
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except SQLAlchemyError:
+            raise HTTPException(500, "Internal error") from None
+        result["duration_s"] = round(perf_counter() - started, 2)
+        return result
+
     @router.put("/channels/{channel_id}")
     def bind_channel(channel_id: UUID, command: ChannelBindingCommand, request: Request) -> dict:
         with Session(request.app.state.engine) as session, session.begin():
@@ -187,8 +232,15 @@ def create_settings_router() -> APIRouter:
             else:
                 channel.credentials_ref = None
                 channel.status = "NOT_CONFIGURED"
-            event = append_event(session, "channel.credentials_bound", "channel_record", channel.id,
-                                 1, {"integration_id": str(command.integration_id) if command.integration_id else None}, str(uuid4()))
+            event = append_event(
+                session,
+                "channel.credentials_bound",
+                "channel_record",
+                channel.id,
+                1,
+                {"integration_id": str(command.integration_id) if command.integration_id else None},
+                str(uuid4()),
+            )
             channel.event_id = event.event_id
             channel.last_sync_at = utc_now()
         return {"saved": True}
@@ -207,8 +259,11 @@ def create_settings_router() -> APIRouter:
                 .where(ServiceSelection.integration_id == row.id)
                 .limit(1)
             )
-            bound = session.scalar(select(ChannelRecord.id).where(
-                ChannelRecord.credentials_ref == "integration:" + row.id).limit(1))
+            bound = session.scalar(
+                select(ChannelRecord.id)
+                .where(ChannelRecord.credentials_ref == "integration:" + row.id)
+                .limit(1)
+            )
             if assigned or selected or bound:
                 raise HTTPException(
                     409, "Conexiunea este alocată. Schimbă alocarea înainte de ștergere."

@@ -237,7 +237,7 @@ export function initSettings(api) {
   }
 
   function renderAgents(container) {
-    container.append(node('p', 'Adaugă și verifică un furnizor AI, apoi alocă un model fiecărui agent. Schimbarea nu pornește sarcini.', 'helper'));
+    container.append(node('p', 'Adaugă și verifică un furnizor AI, apoi alocă un model fiecărui agent. Testul rulează o singură cerere reală prin modelul alocat.', 'helper'));
     if (!data.agents.length) container.append(node('p', 'Nu există încă agenți în studio.'));
     for (const agent of data.agents) {
       const card = node('article', '', 'settings-card');
@@ -259,8 +259,21 @@ export function initSettings(api) {
         if (!select.value) { message('Alege un model disponibil și compatibil cu rolul.', true); return; }
         run(() => api(`/settings/agents/${agent.id}/model`, { method: 'PUT', body: JSON.stringify({ model_id: select.value, expected_version: agent.version }) }), 'Model alocat agentului.');
       });
+      const test = node('button', 'Testează răspunsul', 'secondary');
+      test.addEventListener('click', () => {
+        run(async () => {
+          const result = await api(`/settings/agents/${agent.id}/test`, { method: 'POST' });
+          const text = String(result.output_text || '').replace(/\s+/g, ' ').trim();
+          if (result.status === 'SUCCEEDED') {
+            return text
+              ? { message: `${result.model_name} a răspuns: „${text.slice(0, 140)}”` }
+              : { message: 'Modelul a rulat (token-uri contorizate), dar nu a produs text vizibil — mărește bugetul sau încearcă alt model.' };
+          }
+          throw new Error(`Testul nu a rulat: ${result.status}${result.error_detail ? ` — ${result.error_detail}` : ''}`);
+        }, '');
+      });
       const controls = node('div', '', 'settings-actions');
-      controls.append(select, save);
+      controls.append(select, save, test);
       card.append(controls);
       container.append(card);
     }

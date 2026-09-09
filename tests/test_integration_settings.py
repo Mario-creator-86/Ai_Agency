@@ -11,7 +11,7 @@ from app.integrations.services import selected_youtube
 from app.integrations.vault import CredentialVault
 from app.main import create_app
 from app.models import DomainEvent
-from app.providers.base import ModelInfo
+from app.providers.base import GenerateResult, ModelInfo
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -204,3 +204,65 @@ def test_external_probe_does_not_leak_failures(client, headers, monkeypatch):
     response = client.post(f"/api/v1/settings/integrations/{identifier}/check", headers=headers)
     assert response.json()["status"] == "FAILED"
     assert "upstream-secret-value" not in response.text
+
+
+def test_agent_llm_test_endpoint_runs_assigned_model(client, headers, engine, monkeypatch):
+    from app.models import OwnerPolicy
+
+    seed_initial_workforce(engine)
+    with Session(engine) as session, session.begin():
+        session.get(OwnerPolicy, 1).autonomy_stopped = False
+    identifier, _ = put(
+        client,
+        headers,
+        command(
+            "ollama",
+            config={"base_url": "https://ollama.example.org"},
+            secrets={"api_key": secrets.token_urlsafe(32)},
+        ),
+    )
+
+    async def models(self):
+        return [ModelInfo("cloud-model", None, True)]
+
+    monkeypatch.setattr(ConfiguredLLM, "list_models", models)
+    assert (
+        client.post(f"/api/v1/settings/integrations/{identifier}/check", headers=headers).json()[
+            "status"
+        ]
+        == "VERIFIED"
+    )
+
+    with Session(engine) as session:
+        agent = session.scalar(select(Agent))
+        agent_id, version = agent.id, agent.version
+        model_id = session.scalar(
+            select(ModelRecord.id).where(ModelRecord.provider_id == identifier)
+        )
+    assert model_id
+    assert (
+        client.put(
+            f"/api/v1/settings/agents/{agent_id}/model",
+            headers=headers,
+            json={"model_id": model_id, "expected_version": version},
+        ).status_code
+        == 200
+    )
+
+    async def generate(self, model, prompt, **kwargs):
+        return GenerateResult("Da, sunt funcțional.", 9, 7, None)
+
+    monkeypatch.setattr(ConfiguredLLM, "generate", generate)
+    result = client.post(f"/api/v1/settings/agents/{agent_id}/test", headers=headers)
+    assert result.status_code == 200
+    body = result.json()
+    assert body["status"] == "SUCCEEDED"
+    assert body["output_text"] == "Da, sunt funcțional."
+    assert body["model_name"] == "cloud-model"
+    assert body["duration_s"] >= 0
+    assert (
+        client.post(
+            "/api/v1/settings/agents/00000000-0000-0000-0000-000000000000/test", headers=headers
+        ).status_code
+        == 404
+    )
