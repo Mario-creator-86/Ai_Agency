@@ -272,3 +272,13 @@ Decision D-DESIGN-003.
 - mypy: typed the ffprobe result and storyboard scene payloads (`dict[str, Any]`).
 - Baseline now passes every README check: ruff, ruff format, mypy, pytest 137, frontend 11,
   docs integrity, secret scan.
+
+## 2026-09-10 — Live speech bubbles with the agent's real answer
+
+- `run_agent_task` emits `agent.message_sent` (transactional outbox) carrying the model's real
+  output when a run succeeds with visible text; failed and text-less runs stay silent.
+- The app lifespan now dispatches the outbox every second, so committed events are broadcast to
+  WebSocket clients live (previously the dispatcher was never invoked and the office only saw
+  the one-shot replay at connect).
+- Activity log labels the event "Agentul a răspuns". Verified live: an API-triggered run made
+  the answering bubble appear above the agent in the 2D office.

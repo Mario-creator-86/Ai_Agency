@@ -1,7 +1,8 @@
+import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
@@ -30,7 +31,7 @@ from app.publishing.router import create_publishing_router
 from app.schemas import PolicyCommand, PolicyResult
 from app.security import require_owner
 from app.services import CommandConflict, change_stop, read_events, snapshot
-from app.workflows.publisher import ConnectionManager
+from app.workflows.publisher import ConnectionManager, publish_pending_outbox
 from app.workflows.router import (
     create_scheduler_router,
     create_tasks_router,
@@ -49,16 +50,38 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Migrations/bootstrap are explicit startup commands, never hidden destructive schema edits.
+        with engine.connect() as connection:
+            revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
+            if revision != "0008_integration_settings":
+                raise RuntimeError("Run scripts/bootstrap.py with this application version")
+            if connection.scalar(text("SELECT COUNT(*) FROM owner_policy")) != 1:
+                raise RuntimeError("Run scripts/bootstrap.py to initialize the studio")
+        load_registry(engine, app.state.credential_vault, app.state.registry)
+
+        # Outbox dispatcher: broadcast committed events to WebSocket clients every second.
+        # Runs on the server's own event loop on purpose — publish_pending_outbox schedules
+        # the broadcasts with the running loop, and the sockets belong to this loop. The
+        # SQLite read is a short local transaction, acceptable between request cycles.
+        stop_dispatcher = asyncio.Event()
+
+        async def dispatch_outbox() -> None:
+            while not stop_dispatcher.is_set():
+                try:
+                    publish_pending_outbox(engine, app.state.connection_manager)
+                except Exception as exc:
+                    logger.error("outbox_dispatch_failed", extra={"error": type(exc).__name__})
+                try:
+                    await asyncio.wait_for(stop_dispatcher.wait(), timeout=1.0)
+                except TimeoutError:
+                    pass
+
+        dispatcher = asyncio.create_task(dispatch_outbox())
         try:
-            with engine.connect() as connection:
-                revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
-                if revision != "0008_integration_settings":
-                    raise RuntimeError("Run scripts/bootstrap.py with this application version")
-                if connection.scalar(text("SELECT COUNT(*) FROM owner_policy")) != 1:
-                    raise RuntimeError("Run scripts/bootstrap.py to initialize the studio")
-            load_registry(engine, app.state.credential_vault, app.state.registry)
             yield
         finally:
+            stop_dispatcher.set()
+            with suppress(asyncio.CancelledError):
+                await dispatcher
             engine.dispose()
 
     app = FastAPI(

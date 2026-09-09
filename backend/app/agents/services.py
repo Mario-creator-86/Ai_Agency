@@ -31,6 +31,7 @@ from app.agents.schemas import AgentRunView, AgentView, ModelView, ProviderView,
 from app.models import OwnerPolicy
 from app.providers.registry import ProviderRegistry
 from app.services import append_event, utc_now
+from app.workflows.services import append_event_with_outbox
 
 logger = logging.getLogger("studio.agents")
 
@@ -475,6 +476,23 @@ def run_agent_task(
         )
         session.add(run)
         session.flush()
+
+        # The model's real output is the agent's operational message. Emitting it as
+        # agent.message_sent (through the outbox, so it reaches the live office) is what the
+        # speech-bubble projection consumes — only real messages may become live bubbles
+        # (../architecture/06_BACKEND_EVENT_MODEL.md §7). Reasoning models can succeed with
+        # no visible text; then there is nothing real to say and no event is emitted.
+        message_text = " ".join((output_text or "").split())[:200]
+        if status == "SUCCEEDED" and message_text:
+            append_event_with_outbox(
+                session,
+                "agent.message_sent",
+                "agent",
+                agent_id,
+                agent.version if agent else 1,
+                {"text": message_text, "run_id": run_id, "task_type": task_type},
+                correlation_id,
+            )
         return AgentRunView.model_validate(run).model_dump()
 
 

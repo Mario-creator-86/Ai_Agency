@@ -432,3 +432,103 @@ def test_blocked_run_is_persisted(seeded):
         run = session.get(AgentRun, result["id"])
     assert run is not None
     assert run.status == "BLOCKED_POLICY"
+
+
+# ---------------------------------------------------------------------------
+# Successful runs emit the real model output as agent.message_sent
+# ---------------------------------------------------------------------------
+
+
+class _StubAdapter:
+    """Minimal provider adapter returning a fixed real-looking answer."""
+
+    def __init__(self, text: str | None = None, fail: bool = False) -> None:
+        self.text = text
+        self.fail = fail
+
+    async def health_check(self):  # pragma: no cover - gate only reads cached status
+        return HealthResult("HEALTHY")
+
+    async def list_models(self):  # pragma: no cover - not used by run_agent_task
+        return []
+
+    async def generate(self, model, prompt, **kwargs):
+        if self.fail:
+            raise RuntimeError("provider exploded")
+        from app.providers.base import GenerateResult
+
+        return GenerateResult(self.text, 3, 5, None)
+
+
+def _message_events(engine):
+    with Session(engine) as session:
+        return session.scalars(
+            select(DomainEvent)
+            .where(DomainEvent.event_type == "agent.message_sent")
+            .order_by(DomainEvent.sequence)
+        ).all()
+
+
+def test_successful_run_emits_real_agent_message(seeded):
+    from app.workflows.models import OutboxRecord
+
+    clear_stop(seeded["engine"])
+    engine = seeded["engine"]
+    registry = ProviderRegistry()
+    registry.register(seeded["provider_id"], _StubAdapter("Da, sunt funcțional."))
+
+    result = run_agent_task(
+        engine, registry, seeded["agent_active_id"], "plan", "Say you work", "v1", str(uuid4())
+    )
+
+    assert result["status"] == "SUCCEEDED"
+    events = _message_events(engine)
+    assert len(events) == 1
+    assert events[0].aggregate_type == "agent"
+    assert events[0].aggregate_id == seeded["agent_active_id"]
+    assert events[0].payload["text"] == "Da, sunt funcțional."
+    assert events[0].payload["run_id"] == result["id"]
+    with Session(engine) as session:
+        outbox = session.scalars(
+            select(OutboxRecord).where(OutboxRecord.event_id == events[0].event_id)
+        ).all()
+    assert len(outbox) == 1 and outbox[0].status == "PENDING"
+
+
+def test_failed_run_emits_no_agent_message(seeded):
+    clear_stop(seeded["engine"])
+    registry = ProviderRegistry()
+    registry.register(seeded["provider_id"], _StubAdapter(fail=True))
+
+    result = run_agent_task(
+        seeded["engine"],
+        registry,
+        seeded["agent_active_id"],
+        "plan",
+        "Say you work",
+        "v1",
+        str(uuid4()),
+    )
+
+    assert result["status"] == "FAILED"
+    assert _message_events(seeded["engine"]) == []
+
+
+def test_successful_run_without_visible_text_emits_nothing(seeded):
+    """Reasoning models can finish with an empty visible answer; nothing real to bubble."""
+    clear_stop(seeded["engine"])
+    registry = ProviderRegistry()
+    registry.register(seeded["provider_id"], _StubAdapter("   "))
+
+    result = run_agent_task(
+        seeded["engine"],
+        registry,
+        seeded["agent_active_id"],
+        "plan",
+        "Say you work",
+        "v1",
+        str(uuid4()),
+    )
+
+    assert result["status"] == "SUCCEEDED"
+    assert _message_events(seeded["engine"]) == []

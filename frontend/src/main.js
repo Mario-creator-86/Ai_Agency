@@ -274,6 +274,7 @@ function addEventToLog(event) {
     'agent.paused': 'Agentul a fost pus pe pauză',
     'agent.resumed': 'Agentul a fost reactivat',
     'agent.run_completed': 'Sarcină finalizată cu succes',
+    'agent.message_sent': 'Agentul a răspuns',
     'workflow.created': 'Flux de producție creat',
     'provider.model_discovered': 'Model nou descoperit prin provider',
   };
@@ -930,6 +931,7 @@ function render(data) {
     'agent.paused': 'Agentul a fost pus pe pauză',
     'agent.resumed': 'Agentul a fost reactivat',
     'agent.run_completed': 'Sarcină finalizată cu succes',
+    'agent.message_sent': 'Agentul a răspuns',
     'storyboard.created': 'Storyboard generat din scenariu',
     'media.video_rendered': 'Video 9:16 asamblat cu succes',
     'media.qc_evaluated': 'Control Calitate (QC) evaluat',

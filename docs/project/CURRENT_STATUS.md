@@ -359,3 +359,33 @@ from pre-audit and remediation code). Cleaned without behaviour change:
 Verification after cleanup: `ruff check .` clean, `ruff format --check .` clean (185 files),
 `mypy` clean (68 files), `pytest` 137 passed / 3 skipped, frontend `npm test` 11/11, `tsc` clean,
 build OK, `check_docs.py` and `check_secrets.py` pass.
+
+## Live speech bubbles wired end to end — 2026-09-10, ZCode (fourth session)
+
+The speech-bubble projection existed in the frontend (handler, expiry, paper bubble renderer)
+but nothing ever fed it: the backend never emitted `agent.message_sent`, and the transactional
+outbox had no dispatcher, so no event was broadcast live after the initial replay. Three fixes:
+
+1. **Producer** — `run_agent_task` now emits `agent.message_sent` (through
+   `append_event_with_outbox`) in the same transaction that records the successful run, with the
+   model's real output text (whitespace-normalised, capped at 200 chars) plus `run_id` and
+   `task_type`. Per `../architecture/06_BACKEND_EVENT_MODEL.md` §7 only real messages may become
+   live bubbles: failed runs and successful runs with no visible text (reasoning models with a
+   small budget) emit nothing.
+2. **Dispatcher** — the app lifespan now runs the outbox dispatcher every second
+   (`publish_pending_outbox`), broadcasting committed outbox events to WebSocket clients. It runs
+   on the server's own event loop on purpose: the broadcast tasks and the sockets belong to that
+   loop. This also un-silences the workflow events that were already written to the outbox.
+3. **UI label** — `agent.message_sent` shows as "Agentul a răspuns" in the activity log.
+
+Verification: three new phase-1 tests (successful run emits the event with the real text and a
+PENDING outbox record; failed run emits nothing; empty visible output emits nothing). Live E2E
+against Ollama Cloud with the office open: an API-triggered run for Lyra/gpt-oss:120b produced
+the speech bubble above her head reading "SUNT GATA SĂ LUCREZ ÎN CABINA VOCALĂ." — the run was
+fired from outside the page, so the bubble proves the live event chain, not page-local state.
+Full suite: ruff/format/mypy clean, pytest 140 passed / 3 skipped, frontend 11/11, docs and
+secret checks pass.
+
+Known related gap (not addressed here): agent runtime-state changes (THINKING/IDLE) are column
+updates without events, so the state tag above the head updates on layout refresh rather than
+instantly.
