@@ -1,0 +1,173 @@
+"""Unit tests for Ollama adapter using mock HTTP responses.
+
+Real provider tests are skip-marked unless STUDIO_OLLAMA_URL is set.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+from unittest.mock import MagicMock, patch
+from urllib.error import URLError
+
+import pytest
+from app.providers.ollama import OllamaProvider
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_response(body: dict) -> MagicMock:
+    """Create a mock HTTP response context manager."""
+    m = MagicMock()
+    m.__enter__ = MagicMock(return_value=m)
+    m.__exit__ = MagicMock(return_value=False)
+    m.read = MagicMock(return_value=json.dumps(body).encode())
+    return m
+
+
+def run(coro):
+    return asyncio.run(coro)
+
+
+# ---------------------------------------------------------------------------
+# health_check
+# ---------------------------------------------------------------------------
+
+
+def test_health_check_healthy():
+    provider = OllamaProvider()
+    mock_resp = _make_response({"models": []})
+    with patch("app.providers.ollama.urlopen", return_value=mock_resp):
+        result = run(provider.health_check())
+    assert result.status == "HEALTHY"
+    assert result.latency_ms is not None and result.latency_ms >= 0
+
+
+def test_health_check_offline():
+    provider = OllamaProvider()
+    with patch("app.providers.ollama.urlopen", side_effect=URLError("Connection refused")):
+        result = run(provider.health_check())
+    assert result.status == "OFFLINE"
+    assert "Connection refused" in result.detail
+
+
+def test_health_check_unknown_error():
+    provider = OllamaProvider()
+    with patch("app.providers.ollama.urlopen", side_effect=RuntimeError("unexpected")):
+        result = run(provider.health_check())
+    assert result.status == "UNKNOWN"
+
+
+# ---------------------------------------------------------------------------
+# list_models
+# ---------------------------------------------------------------------------
+
+
+def test_list_models_parses_response():
+    provider = OllamaProvider()
+    body = {
+        "models": [
+            {"name": "llama3.2:latest", "details": {"parameter_size": "3B"}},
+            {"name": "phi3:mini", "details": {}},
+        ]
+    }
+    mock_resp = _make_response(body)
+    with patch("app.providers.ollama.urlopen", return_value=mock_resp):
+        models = run(provider.list_models())
+    assert len(models) == 2
+    assert models[0].model_name == "llama3.2:latest"
+    assert models[0].is_available is True
+    assert "3B" in models[0].notes
+    assert models[1].notes == ""
+
+
+def test_list_models_empty():
+    provider = OllamaProvider()
+    with patch("app.providers.ollama.urlopen", return_value=_make_response({"models": []})):
+        models = run(provider.list_models())
+    assert models == []
+
+
+# ---------------------------------------------------------------------------
+# generate
+# ---------------------------------------------------------------------------
+
+
+def test_generate_returns_real_text():
+    provider = OllamaProvider()
+    body = {
+        "response": "The sky is blue.",
+        "prompt_eval_count": 10,
+        "eval_count": 5,
+        "done": True,
+    }
+    mock_resp = _make_response(body)
+    with patch("app.providers.ollama.urlopen", return_value=mock_resp):
+        result = run(provider.generate("llama3.2:latest", "Why is the sky blue?"))
+    assert result.text == "The sky is blue."
+    assert result.prompt_tokens == 10
+    assert result.completion_tokens == 5
+    assert result.cost_vr is None  # Ollama is local
+
+
+def test_generate_with_system_and_options():
+    provider = OllamaProvider()
+    body = {"response": "ok", "prompt_eval_count": 2, "eval_count": 1, "done": True}
+    captured_body = {}
+
+    def fake_urlopen(req, timeout=None):
+        import json as _json
+
+        captured_body.update(_json.loads(req.data))
+        return _make_response(body)
+
+    with patch("app.providers.ollama.urlopen", side_effect=fake_urlopen):
+        run(
+            provider.generate(
+                "llama3.2:latest",
+                "Hello",
+                system="You are concise.",
+                max_tokens=50,
+                temperature=0.7,
+            )
+        )
+
+    assert captured_body["system"] == "You are concise."
+    assert captured_body["options"]["num_predict"] == 50
+    assert captured_body["options"]["temperature"] == 0.7
+    assert captured_body["stream"] is False
+
+
+def test_generate_propagates_connection_error():
+    provider = OllamaProvider()
+    with patch("app.providers.ollama.urlopen", side_effect=URLError("refused")):
+        with pytest.raises(URLError):
+            run(provider.generate("llama3.2:latest", "test"))
+
+
+# ---------------------------------------------------------------------------
+# Real provider test (skipped unless STUDIO_OLLAMA_URL is set)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(
+    not os.environ.get("STUDIO_OLLAMA_URL"),
+    reason="Real Ollama not configured (set STUDIO_OLLAMA_URL to enable)",
+)
+def test_real_ollama_health_and_generate():
+    url = os.environ["STUDIO_OLLAMA_URL"]
+    provider = OllamaProvider(base_url=url)
+
+    health = run(provider.health_check())
+    assert health.status == "HEALTHY", f"Ollama not healthy: {health}"
+
+    models = run(provider.list_models())
+    assert len(models) > 0, "No models found in real Ollama"
+
+    model_name = models[0].model_name
+    result = run(provider.generate(model_name, "Say hello in one word.", max_tokens=5))
+    assert isinstance(result.text, str) and len(result.text) > 0
+    assert result.prompt_tokens is not None

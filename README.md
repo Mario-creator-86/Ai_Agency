@@ -1,0 +1,122 @@
+# Autonomous AI Studio
+
+Local-first AI media studio. Phases 0–2 are complete; phases 4–6 are partially implemented and
+their acceptance criteria are not met — see [Current status](docs/project/CURRENT_STATUS.md) and the
+[external audit](docs/project/AUDIT_2026-09-09_EXTERNAL.md). This is not a production AI company.
+
+## Documentation is authoritative
+
+- [Master Prompt](docs/architecture/00_MASTER_PROMPT.md) — primary product/build instructions.
+- [Architecture reading order](docs/architecture/README.md) — complete normative specification package.
+- [Current status](docs/project/CURRENT_STATUS.md) — verified implementation and limitations.
+- [Roadmap](docs/project/13_ROADMAP_TODO.md) and [normalized implementation plan](docs/project/IMPLEMENTATION_PLAN.md).
+- [Decisions](docs/project/16_DECISION_LOG.md) and [developer handoff](docs/project/14_AI_HANDOFF_PROTOCOL.md).
+
+## Repository layout
+
+```text
+docs/architecture/    78 normative specification/review documents
+docs/project/         Live roadmap, status, decisions, change history and document index
+backend/app/          FastAPI, settings, persistence, Owner commands and read models
+backend/migrations/   Explicit versioned Alembic schema
+frontend/             HTML + Tailwind CSS + JavaScript, built with Vite
+tests/                Backend local integration/invariant tests
+frontend/tests/       Snapshot projection tests
+scripts/              start.py launcher, bootstrap, server runner, integrity/security checks
+data/                 Local SQLite data (generated, ignored by Git)
+output/               Local verification artifacts (generated, ignored by Git)
+```
+
+## Local setup
+
+Requires Python 3.12–3.14, uv, Node.js 22.12+ and npm.
+
+One command does everything — dependencies, database, frontend build, server:
+
+```shell
+start.cmd
+```
+
+On any platform: `uv run python scripts/start.py`. Every step is idempotent, so this is also how
+you restart after a code change. Useful flags: `--skip-frontend`, `--skip-sync`, `--rebuild`.
+
+Open [the local studio](http://127.0.0.1:8000). Paste `STUDIO_OWNER_TOKEN` from the generated `.env`
+into the Owner sign-in form. Ctrl+C stops the studio.
+
+Before starting, the launcher prints what is actually configured. Two integrations are optional and
+are **disabled rather than simulated** when absent:
+
+- **ffmpeg** (plus `ffprobe`) — without it, video rendering returns HTTP 503 and quality control
+  cannot measure a render. The studio never writes a placeholder file with an `.mp4` name.
+- **YouTube OAuth** (`STUDIO_YOUTUBE_CLIENT_ID`, `STUDIO_YOUTUBE_CLIENT_SECRET`,
+  `STUDIO_YOUTUBE_REFRESH_TOKEN`) — without these, publishing endpoints return HTTP 503. Nothing
+  is uploaded and nothing is reported as published.
+
+The individual steps, if you prefer to run them yourself:
+
+```shell
+uv sync --locked
+npm ci --prefix frontend
+uv run python scripts/bootstrap.py
+npm run build --prefix frontend
+uv run python scripts/run.py
+``` The token stays in page memory; refresh or sign-out clears the session.
+Never commit/share `.env`. Bootstrap never overwrites an existing credential file or studio.
+
+The launcher binds to `127.0.0.1` by default. Remote deployment, TLS and multi-user access are not
+implemented. Do not expose this development service directly to the Internet.
+
+SQLite files live under `data/`. Migrations must be run before application startup; application
+startup refuses an unexpected schema. Back up the database before future migrations; there is no
+destructive downgrade command. Stop the server before manually copying SQLite files, including WAL
+and SHM companions if present. A complete tested backup/restore tool is a later roadmap item.
+
+Studio name/timezone are initial bootstrap values. Editing environment defaults later does not
+silently rewrite existing domain state. All event timestamps are UTC; display uses stored timezone.
+
+## What works
+
+Authenticated snapshots/event history, persisted initial empty room, explicit unavailable modules,
+Owner STOP flag, optimistic versions, idempotent commands, atomic policy/event writes and immutable
+history. Releasing STOP keeps Manual mode and does not start work. There are no workers/providers,
+media jobs or external publishing/payment routes to run yet.
+
+The frontend polls committed snapshots every five seconds while visible. It labels disconnected
+state and disables commands while stale. This is a foundation shell, **not the Phase 3 office renderer**.
+Rooms/characters, animation, full WebSocket replay and agent inspectors will be implemented later.
+
+## Verify
+
+```shell
+uv run python scripts/check_docs.py
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy
+npm run check --prefix frontend
+npm test --prefix frontend
+npm run build --prefix frontend
+uv run pytest
+uv run python scripts/check_secrets.py
+```
+
+GitHub Actions contains the same baseline for Windows/Linux. Local passes do not prove hosted CI
+has executed. Real-provider tests have not run; no external integration is claimed.
+
+Architecture file changes require a recorded decision and explicit index hash update.
+`scripts/check_docs.py` detects missing/moved documents, broken known-document references and
+unexpected architecture edits. Project tracking documents are intentionally mutable.
+
+## API
+
+Public: `GET /health/live`, `GET /health/ready` (API/database scope only).
+
+Owner Bearer token required:
+
+- `GET /api/v1/snapshot`
+- `GET /api/v1/events?after=0&limit=50`
+- `POST /api/v1/owner/autonomy-stop` with `schema_version`, UUID `command_id`,
+  `expected_version` and Boolean `stopped`.
+
+Same command ID + same payload returns its original result. Changed payload or stale policy version
+returns 409. A retry after an unknown network outcome must reuse the original command ID.
+

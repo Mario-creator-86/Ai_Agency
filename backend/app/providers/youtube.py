@@ -1,0 +1,311 @@
+"""Official YouTube Data API v3 publishing adapter.
+
+Follows Section 25 of Master Prompt & 22_PROVIDER_INTEGRATION_CONTRACTS.md:
+- Official Google OAuth2 token exchange and refresh.
+- Resumable video upload (videos.insert).
+- AI / synthetic content disclosure flag.
+- Authoritative remote status queries and reconciliation before retry.
+- Never fabricates external state; returns NOT_CONFIGURED if credentials missing.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from pathlib import Path
+from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+
+from app.providers.publishing_base import (
+    PublishingHealthResult,
+    PublishingProvider,
+    RemoteVideoStatus,
+    UploadResult,
+)
+
+logger = logging.getLogger("studio.publishing.youtube")
+
+ADAPTER_VERSION = "1.1.0"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
+YOUTUBE_UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
+
+UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024
+
+SYNTHETIC_DISCLOSURE = (
+    "Disclosure: this video was produced with generative AI by an autonomous studio pipeline."
+)
+
+
+def youtube_provider_from_settings(settings: Any) -> "YouTubeProvider":
+    """Build the official adapter from application Settings.
+
+    Returns an adapter that reports ``is_configured is False`` when credentials are absent;
+    callers must refuse to publish rather than substituting a simulated adapter.
+    """
+    secret = getattr(settings, "youtube_client_secret", None)
+    refresh = getattr(settings, "youtube_refresh_token", None)
+    return YouTubeProvider(
+        client_id=getattr(settings, "youtube_client_id", None),
+        client_secret=secret.get_secret_value() if secret is not None else None,
+        refresh_token=refresh.get_secret_value() if refresh is not None else None,
+        channel_id=getattr(settings, "youtube_channel_id", None),
+    )
+
+
+class YouTubeProvider(PublishingProvider):
+    """Official YouTube Data API v3 adapter."""
+
+    ADAPTER_VERSION = ADAPTER_VERSION
+
+    def __init__(
+        self,
+        *,
+        client_id: str | None = None,
+        client_secret: str | None = None,
+        refresh_token: str | None = None,
+        channel_id: str | None = None,
+    ) -> None:
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self.refresh_token = refresh_token
+        self.channel_id = channel_id
+        self._access_token: str | None = None
+
+    @property
+    def is_configured(self) -> bool:
+        return bool(self.client_id and self.client_secret and self.refresh_token)
+
+    def _get_access_token(self) -> str:
+        if not self.is_configured:
+            raise ValueError("YouTube OAuth credentials not configured")
+        data = urlencode(
+            {
+                "client_id": self.client_id,
+                "client_secret": self.client_secret,
+                "refresh_token": self.refresh_token,
+                "grant_type": "refresh_token",
+            }
+        ).encode("utf-8")
+        req = Request(GOOGLE_TOKEN_URL, data=data, method="POST")
+        try:
+            with urlopen(req, timeout=15) as resp:
+                res_data = json.loads(resp.read().decode("utf-8"))
+                token = res_data.get("access_token")
+                if not token:
+                    raise ValueError("Failed to obtain access_token from Google OAuth")
+                self._access_token = token
+                return token
+        except (URLError, HTTPError) as exc:
+            logger.error("youtube_token_refresh_failed", extra={"error": str(exc)})
+            raise
+
+    async def health_check(self) -> PublishingHealthResult:
+        if not self.is_configured:
+            return PublishingHealthResult(
+                status="NOT_CONFIGURED",
+                detail="YouTube OAuth credentials (client_id, secret, refresh_token) not configured in environment.",
+            )
+        try:
+            token = self._get_access_token()
+            url = f"{YOUTUBE_API_BASE}/channels?part=snippet&mine=true"
+            req = Request(url, headers={"Authorization": f"Bearer {token}"}, method="GET")
+            with urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                items = data.get("items", [])
+                if items:
+                    ch = items[0]
+                    return PublishingHealthResult(
+                        status="HEALTHY",
+                        channel_id=ch.get("id"),
+                        channel_title=ch.get("snippet", {}).get("title"),
+                    )
+                return PublishingHealthResult(status="AUTH_REQUIRED", detail="No channel associated with account")
+        except Exception as exc:  # noqa: BLE001
+            return PublishingHealthResult(status="ERROR", detail=str(exc))
+
+    async def upload_video(
+        self,
+        file_path: Path,
+        *,
+        title: str,
+        description: str,
+        tags: list[str],
+        privacy_status: str = "private",
+        extra: dict[str, Any] | None = None,
+    ) -> UploadResult:
+        if not self.is_configured:
+            return UploadResult(
+                remote_video_id="",
+                remote_url="",
+                status="FAILED",
+                error_detail="YouTube OAuth credentials not configured",
+            )
+        if not file_path.is_file():
+            return UploadResult(
+                remote_video_id="",
+                remote_url="",
+                status="FAILED",
+                error_detail=f"File {file_path} does not exist on disk",
+            )
+
+        token = self._get_access_token()
+        # Synthetic/altered content disclosure is mandatory for AI-generated uploads.
+        # It is declared both in the API status block and in human-readable description text,
+        # because the API field alone is not visible to viewers.
+        disclosed_description = description[:4800]
+        if SYNTHETIC_DISCLOSURE not in disclosed_description:
+            disclosed_description = f"{disclosed_description}\n\n{SYNTHETIC_DISCLOSURE}"
+        disclosure_tags = list(dict.fromkeys([*tags, "ai generated", "synthetic media"]))
+
+        metadata = {
+            "snippet": {
+                "title": title[:100],
+                "description": disclosed_description[:5000],
+                "tags": disclosure_tags[:50],
+                "categoryId": "28",  # Science & Technology
+            },
+            "status": {
+                "privacyStatus": privacy_status,
+                "selfDeclaredMadeForKids": False,
+                "containsSyntheticMedia": True,
+            },
+        }
+
+        # 1. Initiate resumable upload session
+        init_url = f"{YOUTUBE_UPLOAD_URL}?uploadType=resumable&part=snippet,status"
+        init_body = json.dumps(metadata).encode("utf-8")
+        init_req = Request(
+            init_url,
+            data=init_body,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json; charset=UTF-8",
+                "X-Upload-Content-Type": "video/mp4",
+                "X-Upload-Content-Length": str(file_path.stat().st_size),
+            },
+            method="POST",
+        )
+
+        try:
+            with urlopen(init_req, timeout=30) as resp:
+                upload_uri = resp.headers.get("Location")
+                if not upload_uri:
+                    return UploadResult(
+                        remote_video_id="",
+                        remote_url="",
+                        status="FAILED",
+                        error_detail="Google upload server did not return Location header",
+                    )
+        except Exception as exc:  # noqa: BLE001
+            return UploadResult(remote_video_id="", remote_url="", status="FAILED", error_detail=str(exc))
+
+        # 2. Upload the bytes in resumable chunks. Google answers 308 for each accepted
+        #    chunk and 200/201 with the video resource once the last chunk lands.
+        total = file_path.stat().st_size
+        offset = 0
+        try:
+            with file_path.open("rb") as handle:
+                while offset < total:
+                    chunk = handle.read(UPLOAD_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    end = offset + len(chunk) - 1
+                    chunk_req = Request(
+                        upload_uri,
+                        data=chunk,
+                        headers={
+                            "Content-Type": "video/mp4",
+                            "Content-Length": str(len(chunk)),
+                            "Content-Range": f"bytes {offset}-{end}/{total}",
+                        },
+                        method="PUT",
+                    )
+                    try:
+                        with urlopen(chunk_req, timeout=300) as resp:
+                            body = resp.read().decode("utf-8")
+                            res_body = json.loads(body) if body.strip() else {}
+                    except HTTPError as http_exc:
+                        if http_exc.code != 308:
+                            raise
+                        # 308 Resume Incomplete: continue from the byte range Google confirmed.
+                        rng = http_exc.headers.get("Range")
+                        offset = int(rng.split("-")[-1]) + 1 if rng else end + 1
+                        handle.seek(offset)
+                        continue
+                    offset = end + 1
+
+            video_id = res_body.get("id")
+            if not video_id:
+                return UploadResult(
+                    remote_video_id="",
+                    remote_url="",
+                    status="UNKNOWN",
+                    error_detail="Upload finished but video ID missing in response",
+                )
+            return UploadResult(
+                remote_video_id=video_id,
+                remote_url=f"https://youtube.com/shorts/{video_id}",
+                status="CONFIRMED",
+                raw_response=res_body,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # UNKNOWN, not FAILED: the video may exist remotely. Reconcile before any retry.
+            return UploadResult(
+                remote_video_id="",
+                remote_url="",
+                status="UNKNOWN",
+                error_detail=f"Upload stream interrupted: {exc}",
+            )
+
+    async def get_video_status(self, remote_video_id: str) -> RemoteVideoStatus:
+        if not self.is_configured:
+            return RemoteVideoStatus(remote_video_id=remote_video_id, exists=False)
+        token = self._get_access_token()
+        url = f"{YOUTUBE_API_BASE}/videos?part=status&id={remote_video_id}"
+        req = Request(url, headers={"Authorization": f"Bearer {token}"}, method="GET")
+        try:
+            with urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                items = data.get("items", [])
+                if not items:
+                    return RemoteVideoStatus(remote_video_id=remote_video_id, exists=False)
+                st = items[0].get("status", {})
+                return RemoteVideoStatus(
+                    remote_video_id=remote_video_id,
+                    exists=True,
+                    privacy_status=st.get("privacyStatus"),
+                    upload_status=st.get("uploadStatus"),
+                    rejection_reason=st.get("rejectionReason"),
+                )
+        except Exception:
+            return RemoteVideoStatus(remote_video_id=remote_video_id, exists=False)
+
+    async def reconcile_upload(
+        self, idempotency_key: str, expected_title: str
+    ) -> UploadResult | None:
+        """Search channel uploads by title to prevent duplicate submission."""
+        if not self.is_configured:
+            return None
+        token = self._get_access_token()
+        params = urlencode({"part": "snippet", "mine": "true", "type": "video", "q": expected_title[:50]})
+        url = f"{YOUTUBE_API_BASE}/search?{params}"
+        req = Request(url, headers={"Authorization": f"Bearer {token}"}, method="GET")
+        try:
+            with urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                for item in data.get("items", []):
+                    title = item.get("snippet", {}).get("title", "")
+                    if expected_title[:50].lower() in title.lower():
+                        vid_id = item.get("id", {}).get("videoId")
+                        if vid_id:
+                            return UploadResult(
+                                remote_video_id=vid_id,
+                                remote_url=f"https://youtube.com/shorts/{vid_id}",
+                                status="CONFIRMED",
+                            )
+        except Exception:
+            pass
+        return None

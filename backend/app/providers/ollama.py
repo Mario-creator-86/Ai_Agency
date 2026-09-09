@@ -1,0 +1,132 @@
+"""Ollama HTTP adapter.
+
+Uses the official Ollama REST API:
+  GET  /api/tags     -> list models
+  POST /api/generate -> text generation (non-streaming)
+
+If Ollama is not running, returns OFFLINE status.
+Never fabricates a model response.
+"""
+
+from __future__ import annotations
+
+import json as _json
+import time
+from typing import Any
+from urllib.error import URLError
+from urllib.request import Request, urlopen
+
+from app.providers.base import GenerateResult, HealthResult, LLMProvider, ModelInfo
+
+ADAPTER_VERSION = "1.0.0"
+
+
+class OllamaProvider(LLMProvider):
+    ADAPTER_VERSION = ADAPTER_VERSION
+
+    def __init__(
+        self,
+        base_url: str = "http://127.0.0.1:11434",
+        api_key: str | None = None,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+
+    def _get_headers(self) -> dict[str, str]:
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
+
+    def _get(self, path: str, timeout: int = 10) -> dict:
+        url = f"{self.base_url}{path}"
+        req = Request(url, method="GET", headers=self._get_headers())
+        with urlopen(req, timeout=timeout) as resp:
+            return _json.loads(resp.read())
+
+    def _post(self, path: str, body: dict, timeout: int = 120) -> dict:
+        url = f"{self.base_url}{path}"
+        data = _json.dumps(body).encode()
+        req = Request(
+            url,
+            data=data,
+            method="POST",
+            headers=self._get_headers(),
+        )
+        with urlopen(req, timeout=timeout) as resp:
+            return _json.loads(resp.read())
+
+    async def health_check(self) -> HealthResult:
+        t0 = time.perf_counter()
+        try:
+            self._get("/api/tags", timeout=5)
+            latency = (time.perf_counter() - t0) * 1000
+            return HealthResult(status="HEALTHY", latency_ms=round(latency, 1))
+        except (URLError, OSError) as exc:
+            return HealthResult(status="OFFLINE", detail=str(exc))
+        except Exception as exc:  # noqa: BLE001
+            return HealthResult(status="UNKNOWN", detail=str(exc))
+
+    async def list_models(self) -> list[ModelInfo]:
+        """List models from Ollama, supporting both local and cloud models (e.g. :cloud)."""
+        data = self._get("/api/tags")
+        models = []
+        for m in data.get("models", []):
+            name = m.get("name", "")
+            details = m.get("details", {})
+            ctx = details.get("parameter_size")
+            is_cloud = ":cloud" in name or "cloud" in name.lower()
+            note_parts = []
+            if ctx:
+                note_parts.append(f"parameter_size={ctx}")
+            if is_cloud:
+                note_parts.append("cloud_model=true")
+            models.append(
+                ModelInfo(
+                    model_name=name,
+                    context_length=None,
+                    is_available=True,
+                    notes=", ".join(note_parts),
+                    is_cloud=is_cloud,
+                )
+            )
+        return models
+
+    async def show_model(self, model: str) -> dict:
+        """Fetch full model metadata from Ollama /api/show."""
+        return self._post("/api/show", {"name": model})
+
+    async def generate(
+        self,
+        model: str,
+        prompt: str,
+        *,
+        system: str | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> GenerateResult:
+        body: dict[str, Any] = {
+            "model": model,
+            "prompt": prompt,
+            "stream": False,
+        }
+        if system:
+            body["system"] = system
+        if max_tokens is not None:
+            body.setdefault("options", {})["num_predict"] = max_tokens
+        if temperature is not None:
+            body.setdefault("options", {})["temperature"] = temperature
+        if extra:
+            body.update(extra)
+        data = self._post("/api/generate", body)
+        text = data.get("response", "")
+        prompt_tokens = data.get("prompt_eval_count")
+        completion_tokens = data.get("eval_count")
+        return GenerateResult(
+            text=text,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cost_vr=None,  # Ollama is local; no monetary cost tracked
+            raw_response=data,
+        )

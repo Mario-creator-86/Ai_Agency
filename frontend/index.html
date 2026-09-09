@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="ro">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#172927" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <title>Autonomous AI Studio</title>
+  </head>
+  <body>
+    <header class="topbar">
+      <a href="/" class="brand"><span class="brand-symbol">A<span>·</span>S</span><span>Autonomous<br /><strong>AI Studio</strong></span></a>
+      <span class="text-sm text-stone-300">OWNER WORKSPACE <span class="separator">/</span> LOCAL STUDIO</span>
+      <span id="connection" class="connection" role="status">Neconectat</span>
+    </header>
+    <main>
+      <section id="login" class="login panel">
+        <p class="eyebrow">STUDIO CONTROL</p>
+        <h1>Un loc pentru<br />următoarea idee.</h1>
+        <p>Conectează-te la spațiul privat al studioului.</p>
+        <form id="login-form">
+          <label for="owner-token">Cheia Owner</label>
+          <input id="owner-token" type="password" required minlength="32" autocomplete="off" spellcheck="false" />
+          <button type="submit" class="primary">Deschide studioul <span aria-hidden="true">↗</span></button>
+        </form>
+        <p class="helper">Cheia locală este în fișierul .env, la STUDIO_OWNER_TOKEN. Rămâne doar în memoria acestei pagini.</p>
+      </section>
+      <section id="workspace" hidden>
+        <div class="page-heading">
+          <div><p class="eyebrow">THE OBSERVABLE COMPANY</p><h1 id="studio-name">Studioul tău</h1><p>Activitatea reală a companiei, într-un singur loc.</p></div>
+          <button id="logout" class="quiet">Închide sesiunea</button>
+        </div>
+        <div class="notice"><span class="notice-marker">01</span><div><strong>Fundația studioului</strong><p>Infrastructura locală este activă. Agenții și producția media urmează în etapele următoare.</p></div><span class="tag">FOUNDATION</span></div>
+        <div class="workspace-grid">
+          <section class="panel office-panel">
+            <div class="section-heading"><div><p class="eyebrow">WORKSPACE</p><h2>Biroul studioului</h2></div><span id="office-status" class="tag">Stare salvată</span></div>
+            <div class="office-scene office-scene-container" id="office-scene-container">
+              <canvas id="office-canvas" class="office-canvas"></canvas>
+              <div class="camera-toolbar">
+                <button id="zoom-in" class="quiet cam-btn" title="Apropie">+</button>
+                <button id="zoom-out" class="quiet cam-btn" title="Depărtează">−</button>
+                <button id="zoom-fit" class="quiet cam-btn" title="Încadrează">Fit</button>
+                <button id="zoom-reset" class="quiet cam-btn" title="Scară 1:1">1:1</button>
+                <button id="fullscreen-btn" class="quiet cam-btn btn-fs" title="Ecran complet">Ecran complet</button>
+                <button id="exit-fullscreen-btn" class="quiet cam-btn btn-exit-fs hidden" title="Ieșire din ecran complet">✕ Ieși</button>
+                <button id="open-research-btn" class="quiet cam-btn" title="Subiecte, surse și verificarea afirmațiilor">Cercetare</button>
+                <button id="open-media-btn" class="quiet cam-btn cam-btn-media" title="Storyboard-uri, randare video și control de calitate">Producție media</button>
+                <button id="open-publishing-btn" class="quiet cam-btn cam-btn-pub" title="Canale, verificări înainte de publicare și istoric">Distribuție</button>
+              </div>
+              <div id="rooms" class="rooms" hidden></div>
+            </div>
+            <div class="office-footer"><span id="room-caption">—</span><span id="snapshot-time">—</span></div>
+          </section>
+          <aside class="side-column">
+            <section class="panel control-panel">
+              <p class="eyebrow">OWNER CONTROL</p><h2>Controlul autonomiei</h2>
+              <div class="mode-row"><span>Mod curent</span><strong>MANUAL</strong></div>
+              <div class="mode-row"><span>Oprire persistentă</span><strong id="stop-status">—</strong></div>
+              <button id="stop-toggle" class="danger" disabled>STOP AUTONOMY</button>
+              <p class="helper">Eliberarea opririi păstrează modul Manual. Nu pornește agenți sau publicări.</p>
+              <div class="control-note">Publicare externă și plăți externe: dezactivate.</div>
+            </section>
+            <section class="panel">
+              <p class="eyebrow">WORKFORCE & PIPELINE</p>
+              <h2>Studioul 2D Activ</h2>
+              <p class="body-copy">Apasă pe orice agent sau birou pentru inspectare detaliată și control direct.</p>
+              <span class="tag live-badge">LIVE RENDERER · 60 FPS</span>
+            </section>
+          </aside>
+        </div>
+        <div class="lower-grid">
+          <section class="panel"><div class="section-heading"><div><p class="eyebrow">ACTIVITY LOG</p><h2>Evenimente confirmate</h2></div><span id="cursor" class="tag">—</span></div><ol id="events" class="events"></ol></section>
+          <section class="panel"><p class="eyebrow">CAPABILITIES</p><h2>Stadiul modulelor</h2><ul id="modules" class="modules"></ul></section>
+        </div>
+      </section>
+
+      <!-- Agent Inspector Modal / Drawer -->
+      <dialog id="agent-inspector" class="studio-dialog">
+        <div class="dialog-header">
+          <div>
+            <span class="eyebrow eyebrow-accent" id="inspector-role">ROLE</span>
+            <h2 id="inspector-name" class="dialog-title">Agent</h2>
+          </div>
+          <button id="inspector-close" class="dialog-close">✕</button>
+        </div>
+        <div class="agent-stats-grid">
+          <div><span class="stat-label">Stare runtime</span><strong id="inspector-state" class="stat-value text-accent">IDLE</strong></div>
+          <div><span class="stat-label">Ciclu viață</span><strong id="inspector-lifecycle" class="stat-value text-success">ACTIVE</strong></div>
+          <div><span class="stat-label">Model configurat</span><strong id="inspector-model" class="stat-value">glm-5.2:cloud</strong></div>
+          <div><span class="stat-label">Identificator</span><small id="inspector-id" class="stat-uuid">uuid</small></div>
+        </div>
+        <div class="dialog-btn-row">
+          <button id="agent-pause-btn" class="secondary btn-pause">Pauză agent</button>
+          <button id="agent-resume-btn" class="secondary btn-resume">Reia agent</button>
+        </div>
+        <div class="dialog-section">
+          <h3 class="dialog-section-header">Rulează o sarcină</h3>
+          <form id="agent-run-form" class="dialog-form">
+            <input id="agent-run-objective" placeholder="Obiectiv sarcină (ex: Planifică tema episodului 1)..." required class="dialog-input" />
+            <button type="submit" class="primary dialog-submit-btn">Execută cu modelul alocat ↗</button>
+          </form>
+          <div id="agent-run-output" class="dialog-output" hidden></div>
+        </div>
+      </dialog>
+
+      <!-- Factual Research & Verification Modal -->
+      <dialog id="research-modal" class="studio-dialog research-dialog">
+        <div class="dialog-header">
+          <div>
+            <h2 class="dialog-title">Cercetare și verificare factuală</h2>
+            <p class="dialog-desc">Propune teme, analizează surse și verifică afirmațiile înainte de scenarizare.</p>
+          </div>
+          <button id="close-research-btn" class="dialog-close">✕</button>
+        </div>
+        <div class="dialog-section-bottom">
+          <h3 class="dialog-section-header-bright">Propune un subiect</h3>
+          <form id="topic-propose-form" class="dialog-form">
+            <input id="topic-title" placeholder="Titlu episod (ex: Telescopul James Webb găsește cea mai veche galaxie)" required class="dialog-input" />
+            <input id="topic-subject" placeholder="Subiect factual (ex: Descoperirea galaxiei GLASS-z12 la redshift 12.1)" required class="dialog-input" />
+            <div class="topic-input-grid">
+              <input id="topic-angle" placeholder="Unghi de abordare (ex: Descoperire revoluționară)" required class="dialog-input" />
+              <input id="topic-audience" placeholder="Public (ex: science)" value="general" class="dialog-input" />
+            </div>
+            <button type="submit" class="primary dialog-submit-btn">Trimite subiect spre cercetare ↗</button>
+          </form>
+          <div id="topic-propose-status" class="dialog-status-msg" hidden></div>
+        </div>
+        <div>
+          <div class="topics-header-row">
+            <h3 class="dialog-section-header-bright-compact">Subiecte recente și scorul de noutate</h3>
+            <button id="refresh-topics-btn" class="quiet btn-refresh">Reîmprospătează</button>
+          </div>
+          <div id="topics-list" class="topics-container">
+            <div class="topics-loading">Se încarcă subiectele...</div>
+          </div>
+        </div>
+      </dialog>
+      <!-- Media Production & Video Assembly Modal -->
+      <dialog id="media-modal" class="studio-dialog media-dialog">
+        <div class="dialog-header">
+          <div>
+            <h2 class="dialog-title">Producție media și asamblare video</h2>
+            <p class="dialog-desc">Transformă scenariile verificate în video vertical 9:16: storyboard, sinteză audio-video și control de calitate.</p>
+          </div>
+          <button id="close-media-btn" class="dialog-close">✕</button>
+        </div>
+
+        <div class="media-tabs-bar">
+          <button id="tab-storyboards-btn" class="media-tab media-tab-active">Storyboard-uri și randări</button>
+          <button id="tab-characters-btn" class="media-tab">Character Bible</button>
+        </div>
+
+        <div id="media-content-area">
+          <!-- Storyboard View -->
+          <div id="media-storyboards-section">
+            <div class="topics-header-row">
+              <h3 class="dialog-section-header-bright-compact">Pipeline activ: scenariu · storyboard · video · QC</h3>
+              <div class="media-actions-bar">
+                <button id="generate-demo-storyboard-btn" class="quiet btn-media-action" title="Creează topic, scenariu și o afirmație NEVERIFICATĂ pentru testarea pipeline-ului factual">Creează fixture demo</button>
+                <button id="refresh-media-btn" class="quiet btn-refresh">Reîmprospătează</button>
+              </div>
+            </div>
+            <div id="media-status-msg" class="dialog-status-msg" hidden></div>
+            <div id="storyboards-list" class="storyboard-container">
+              <div class="topics-loading">Se încarcă producția media...</div>
+            </div>
+          </div>
+
+          <!-- Character Bible View -->
+          <div id="media-characters-section" class="hidden">
+            <div class="topics-header-row">
+              <h3 class="dialog-section-header-bright-compact">Personaje canonice</h3>
+            </div>
+            <div id="characters-list" class="characters-grid">
+              <div class="topics-loading">Se încarcă personajele...</div>
+            </div>
+          </div>
+        </div>
+      </dialog>
+      <!-- Autonomous Publishing & Distribution Modal -->
+      <dialog id="publishing-modal" class="studio-dialog publishing-dialog">
+        <div class="dialog-header">
+          <div>
+            <h2 class="dialog-title">Distribuție și publicare YouTube Shorts</h2>
+            <p class="dialog-desc">Publicare privată pe canale YouTube oficiale. Fără credențiale reale nu se publică nimic — studioul nu simulează încărcări.</p>
+          </div>
+          <button id="close-publishing-btn" class="dialog-close">✕</button>
+        </div>
+
+        <div class="publishing-content-area">
+          <!-- Gate & Channel Overview -->
+          <div class="pub-overview-grid">
+            <div class="pub-card pub-channels-card">
+              <div class="pub-card-header">
+                <h3>Sloturi de canale</h3>
+                <span class="privacy-badge privacy-badge-private">Privat implicit</span>
+              </div>
+              <div id="channels-list" class="channels-container">
+                <div class="topics-loading">Se încarcă canalele...</div>
+              </div>
+            </div>
+
+            <div class="pub-card pub-gate-card">
+              <div class="pub-card-header">
+                <h3>Verificări înainte de publicare</h3>
+                <span class="tag">SUBSET</span>
+              </div>
+              <ul class="pub-gate-list">
+                <li><span class="gate-icon">✓</span> <strong>1. Autonomie activă:</strong> oprirea de urgență a Owner-ului nu este pornită.</li>
+                <li><span class="gate-icon">✓</span> <strong>2. Fișier pe disc:</strong> există și are dimensiune &gt; 0.</li>
+                <li><span class="gate-icon">✓</span> <strong>3. Raport QC PASSED:</strong> rezoluție, durată și proveniență <em>măsurate</em> din fișier cu ffprobe.</li>
+                <li><span class="gate-icon">✓</span> <strong>4. Factualitate:</strong> toate afirmațiile citate au status SUPPORTED.</li>
+                <li><span class="gate-icon">✓</span> <strong>5. Protecție duplicate:</strong> idempotent per canal.</li>
+              </ul>
+              <p class="pub-gate-note">Nu sunt încă implementate din <code>50_CONTENT_GATE_MATRIX.md</code>: drepturi pe pachetul final, politica platformei, noutate pe metadata finală, brand, buget, continuitate și confidențialitate narativă pentru Canalul B.</p>
+            </div>
+          </div>
+
+          <!-- Quick Action & Notification -->
+          <div class="pub-actions-row">
+            <div class="pub-quick-info">
+              <strong>Publicare 1-Click:</strong> trimite cel mai recent video cu QC PASSED către Canalul A, privat. Necesită canal AUTENTIFICAT și credențiale YouTube reale.
+            </div>
+            <div class="media-actions-bar">
+              <button id="trigger-quick-publish-btn" class="quiet btn-media-action btn-pub-action">Publică privat</button>
+              <button id="refresh-publishing-btn" class="quiet btn-refresh">Reîmprospătează</button>
+            </div>
+          </div>
+          <div id="publisher-config-banner" class="dialog-status-msg" hidden></div>
+          <div id="publishing-status-msg" class="dialog-status-msg" hidden></div>
+
+          <!-- Publications History Table -->
+          <div class="pub-history-section">
+            <div class="topics-header-row">
+              <h3 class="dialog-section-header-bright-compact">Istoric publicări</h3>
+            </div>
+            <div id="publications-list" class="publications-container">
+              <div class="topics-loading">Se încarcă publicațiile...</div>
+            </div>
+          </div>
+        </div>
+      </dialog>
+      <p id="message" role="alert" class="message" hidden></p>
+    </main>
+    <footer class="site-footer"><span>Autonomous AI Studio · Foundation 0.1</span><span>Real work. Verified state.</span></footer>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

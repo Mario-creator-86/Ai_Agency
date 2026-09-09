@@ -1,0 +1,21 @@
+.settings-dialog { width: min(1000px, 94vw); max-width: 1000px; max-height: 92dvh; overflow-y: auto; }
+.settings-dialog h3 { font-size: 1.05rem; margin: .3rem 0 .6rem; }
+.settings-intro { margin: 0 0 1rem; }
+.settings-tabs { display: flex; flex-wrap: wrap; gap: .5rem; padding-block: .5rem; border-bottom: 1px solid var(--line); }
+.settings-content { display: grid; gap: 1rem; }
+.settings-message { min-height: 1.5em; margin-block: .7rem; }
+.settings-error { color: var(--alert-ink); }
+.settings-add, .settings-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; }
+.settings-connections { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: .8rem; }
+.settings-card, .settings-editor { border: 1px solid var(--line); padding: 1rem; border-radius: .6rem; min-width: 0; }
+.settings-card h3, .settings-card p { overflow-wrap: anywhere; }
+.settings-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin: 1rem 0; }
+.settings-fields label { display: flex; flex-direction: column; gap: .4rem; font-size: .88rem; }
+.settings-dialog input, .settings-dialog select { width: 100%; min-width: 0; box-sizing: border-box; padding: .7rem; border: 1px solid var(--line); border-radius: .35rem; background: var(--surface-sunk); color: var(--ink); font: inherit; }
+.settings-add select, .settings-actions select { flex: 1; min-width: 170px; }
+.settings-dialog button { white-space: normal; }
+.settings-editor > button { margin-right: .6rem; }
+.settings-editor a { text-decoration: underline; }
+.settings-limitation { font-size: .85rem; color: var(--ink-3); }
+.settings-routing { display: grid; grid-template-columns: 130px minmax(0, 1fr) auto; gap: .7rem; align-items: center; }
+@media (max-width: 640px) { .settings-fields { grid-template-columns: 1fr; } .settings-routing { grid-template-columns: 1fr; } .settings-dialog { padding: 1rem; } }

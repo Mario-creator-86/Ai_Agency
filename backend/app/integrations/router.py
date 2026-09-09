@@ -1,0 +1,229 @@
+import asyncio
+from uuid import UUID, uuid4
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.agents.models import Agent, ModelRecord
+from app.agents.services import list_agents, list_provider_models, list_roles, sync_provider_models
+from app.integrations.catalog import CATALOG
+from app.integrations.llm import ConfiguredLLM
+from app.integrations.models import Integration, ServiceSelection
+from app.integrations.probes import probe
+from app.integrations.services import SaveIntegration, assign_agent, public, save, select_service
+from app.providers.youtube import YouTubeProvider
+from app.publishing.models import ChannelRecord
+from app.security import require_owner
+from app.services import append_event, utc_now
+
+
+class SelectionCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    integration_id: UUID | None
+    expected_version: int = Field(ge=0)
+
+
+class AssignmentCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    model_id: UUID
+    expected_version: int = Field(ge=1)
+
+
+class ChannelBindingCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    integration_id: UUID | None
+    expected_event_id: UUID | None
+
+
+def create_settings_router() -> APIRouter:
+    router = APIRouter(prefix="/settings", dependencies=[Depends(require_owner)])
+
+    @router.get("")
+    def read_settings(request: Request) -> dict:
+        engine = request.app.state.engine
+        with Session(engine) as session:
+            integrations = [public(row) for row in session.scalars(select(Integration))]
+            selections = {
+                row.purpose: dict(integration_id=row.integration_id, version=row.version)
+                for row in session.scalars(select(ServiceSelection))
+            }
+            provider_ids = set(session.scalars(select(ModelRecord.provider_id)).all())
+            channels = [dict(id=c.id, name=c.channel_name, credentials_ref=c.credentials_ref,
+                             event_id=c.event_id, status=c.status)
+                        for c in session.scalars(select(ChannelRecord).where(ChannelRecord.platform == "YOUTUBE"))]
+        return dict(
+            catalog=CATALOG, channels=channels,
+            integrations=integrations,
+            selections=selections,
+            agents=list_agents(engine),
+            roles=list_roles(engine),
+            models=[m for p in provider_ids for m in list_provider_models(engine, p)],
+            legacy_youtube_configured=request.app.state.settings.youtube_credentials_present,
+        )
+
+    @router.put("/integrations/{identifier}")
+    def save_integration(identifier: UUID, command: SaveIntegration, request: Request) -> dict:
+        try:
+            result = save(
+                request.app.state.engine,
+                request.app.state.credential_vault,
+                str(identifier),
+                command,
+            )
+            if CATALOG[command.kind]["runtime"] == "llm":
+                with Session(request.app.state.engine) as session:
+                    row = session.get(Integration, str(identifier))
+                    if row is None:
+                        raise HTTPException(409, "Conexiunea a fost ștearsă")
+                    adapter = ConfiguredLLM(
+                        row.kind,
+                        row.config,
+                        request.app.state.credential_vault.decrypt(row.encrypted_secrets),
+                    )
+                    request.app.state.registry.register(str(identifier), adapter)
+            return result
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+
+    @router.post("/integrations/{identifier}/check")
+    def check_integration(identifier: UUID, request: Request) -> dict:
+        engine = request.app.state.engine
+        vault = request.app.state.credential_vault
+        with Session(engine) as session:
+            row = session.get(Integration, str(identifier))
+            if row is None:
+                raise HTTPException(404, "Conexiune inexistentă")
+            kind, config, version = row.kind, row.config, row.version
+            secrets = vault.decrypt(row.encrypted_secrets)
+        runtime = CATALOG[kind]["runtime"]
+        try:
+            if runtime == "llm":
+                sync_provider_models(engine, request.app.state.registry, str(identifier))
+                status = "VERIFIED"
+            elif runtime == "stored":
+                status = "ACCESS_VERIFIED" if probe(kind, config, secrets) else "FAILED"
+            else:
+                provider = YouTubeProvider(
+                    client_id=config["client_id"],
+                    client_secret=secrets["client_secret"],
+                    refresh_token=secrets["refresh_token"],
+                    channel_id=config["channel_id"],
+                )
+                health = asyncio.run(provider.health_check())
+                status = (
+                    "VERIFIED"
+                    if health.status == "HEALTHY" and health.channel_id == config["channel_id"]
+                    else "FAILED"
+                )
+        except NotImplementedError:
+            return {"status": "NOT_SUPPORTED", "message": "Verificarea nu este încă disponibilă."}
+        except Exception:
+            status = "FAILED"
+        with Session(engine) as session, session.begin():
+            row = session.get(Integration, str(identifier))
+            if row is None or row.version != version:
+                raise HTTPException(409, "Configurația s-a schimbat în timpul verificării")
+            row.status, row.checked_at = status, utc_now()
+            row.version += 1
+            event = append_event(
+                session,
+                "settings.integration_checked",
+                "integration",
+                row.id,
+                row.version,
+                {"status": status},
+                str(uuid4()),
+            )
+            row.event_id = event.event_id
+        return {
+            "status": status,
+            "message": "Acces verificat. Nu s-a publicat sau generat conținut."
+            if status in ("VERIFIED", "ACCESS_VERIFIED")
+            else "Verificarea a eșuat. Verifică datele, permisiunile și accesul la serviciu.",
+        }
+
+    @router.put("/selections/{purpose}")
+    def set_selection(purpose: str, command: SelectionCommand, request: Request) -> dict:
+        try:
+            return select_service(
+                request.app.state.engine,
+                purpose,
+                str(command.integration_id) if command.integration_id else None,
+                command.expected_version,
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+
+    @router.put("/agents/{agent_id}/model")
+    def set_agent_model(agent_id: UUID, command: AssignmentCommand, request: Request) -> dict:
+        try:
+            return assign_agent(
+                request.app.state.engine,
+                str(agent_id),
+                str(command.model_id),
+                command.expected_version,
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+
+    @router.put("/channels/{channel_id}")
+    def bind_channel(channel_id: UUID, command: ChannelBindingCommand, request: Request) -> dict:
+        with Session(request.app.state.engine) as session, session.begin():
+            channel = session.get(ChannelRecord, str(channel_id))
+            if channel is None or channel.platform != "YOUTUBE":
+                raise HTTPException(404, "Canal YouTube inexistent")
+            expected = str(command.expected_event_id) if command.expected_event_id else None
+            if channel.event_id != expected:
+                raise HTTPException(409, "Canalul s-a schimbat; reîncarcă")
+            if command.integration_id:
+                row = session.get(Integration, str(command.integration_id))
+                if row is None or row.kind != "youtube" or row.status != "VERIFIED":
+                    raise HTTPException(422, "Verifică întâi conexiunea YouTube")
+                channel.remote_channel_id = row.config["channel_id"]
+                channel.credentials_ref = "integration:" + row.id
+                channel.status = "AUTHENTICATED"
+            else:
+                channel.credentials_ref = None
+                channel.status = "NOT_CONFIGURED"
+            event = append_event(session, "channel.credentials_bound", "channel_record", channel.id,
+                                 1, {"integration_id": str(command.integration_id) if command.integration_id else None}, str(uuid4()))
+            channel.event_id = event.event_id
+            channel.last_sync_at = utc_now()
+        return {"saved": True}
+
+    @router.delete("/integrations/{identifier}")
+    def delete_integration(identifier: UUID, expected_version: int, request: Request) -> dict:
+        with Session(request.app.state.engine) as session, session.begin():
+            row = session.get(Integration, str(identifier))
+            if row is None:
+                raise HTTPException(404, "Conexiune inexistentă")
+            if row.version != expected_version:
+                raise HTTPException(409, "Reîncarcă setările")
+            assigned = session.scalar(select(Agent.id).where(Agent.provider_id == row.id).limit(1))
+            selected = session.scalar(
+                select(ServiceSelection.purpose)
+                .where(ServiceSelection.integration_id == row.id)
+                .limit(1)
+            )
+            bound = session.scalar(select(ChannelRecord.id).where(
+                ChannelRecord.credentials_ref == "integration:" + row.id).limit(1))
+            if assigned or selected or bound:
+                raise HTTPException(
+                    409, "Conexiunea este alocată. Schimbă alocarea înainte de ștergere."
+                )
+            append_event(
+                session,
+                "settings.integration_deleted",
+                "integration",
+                row.id,
+                row.version + 1,
+                {"kind": row.kind},
+                str(uuid4()),
+            )
+            session.delete(row)
+        request.app.state.registry.unregister(str(identifier))
+        return {"deleted": True}
+
+    return router

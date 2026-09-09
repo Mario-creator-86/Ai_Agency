@@ -1,0 +1,36 @@
+{
+  "phase": "6",
+  "completed_milestone": "Phase 2 Automation (last phase completed against its original acceptance criteria)",
+  "active_task": "Post-audit remediation of Phases 4-6 truthfulness defects",
+  "next_task": "Real research/search adapter (Phase 4 acceptance) and a real visual/TTS provider (Phase 5 acceptance)",
+  "last_green_test_commit": null,
+  "verification": "docs/project/AUDIT_2026-09-09_EXTERNAL.md",
+  "tests": {
+    "python_passed": 87,
+    "python_skipped_without_ffmpeg": 2,
+    "javascript_passed": 6,
+    "failed": 0
+  },
+  "known_blockers": [
+    "No search/research provider: sources must be supplied manually, so Phase 4 acceptance ('real research, independent fact checks') is not met",
+    "No visual or TTS provider: renders use placeholder frames, which QC blocks from publication, so Phase 5 acceptance is not met",
+    "No YouTube OAuth credentials: publishing is disabled by design until STUDIO_YOUTUBE_* is configured, so Phase 6 acceptance ('private upload verified') is not met",
+    "Phase 7 analytics code exists on disk but is not wired, not in Base.metadata and has no migration"
+  ],
+  "future_integration_dependencies": [
+    "Configured LLM provider/model",
+    "Search provider",
+    "Media/TTS provider",
+    "YouTube OAuth"
+  ],
+  "configured_provider_names": [],
+  "migration_version": "0006_phase6_publishing",
+  "autonomy_mode": "MANUAL",
+  "feature_flags": {
+    "public_publish_enabled": false,
+    "external_payments_enabled": false,
+    "autonomous_firing_enabled": false,
+    "provider_auto_switch_enabled": false,
+    "world_generation_enabled": false
+  }
+}
