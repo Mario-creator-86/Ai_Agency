@@ -170,7 +170,6 @@ def test_simulated_upload_is_never_recorded_as_a_real_publication(engine, tmp_pa
     assert "publishing.video_published" not in types
 
 
-
 def test_simulated_adapter_never_returns_a_youtube_url(tmp_path):
     import asyncio
 

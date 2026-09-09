@@ -2,7 +2,8 @@
 
 Uses YouTube Analytics REST API:
   https://youtubeanalytics.googleapis.com/v2/reports
-Requires valid Google OAuth credentials with https://www.googleapis.com/auth/yt-analytics.readonly scope.
+Requires valid Google OAuth credentials with
+https://www.googleapis.com/auth/yt-analytics.readonly scope.
 Never fabricates fake numbers; reports status or raises when not configured.
 """
 
@@ -79,7 +80,11 @@ class YouTubeAnalyticsProvider(AnalyticsProvider):
             "ids": "channel==MINE",
             "startDate": "2024-01-01",
             "endDate": "2026-12-31",
-            "metrics": "views,estimatedMinutesWatched,averageViewPercentage,annotationClickThroughRate,likes,comments,shares,subscribersGained,subscribersLost",
+            "metrics": (
+                "views,estimatedMinutesWatched,averageViewPercentage,"
+                "annotationClickThroughRate,likes,comments,shares,"
+                "subscribersGained,subscribersLost"
+            ),
             "filters": f"video=={remote_video_id}",
         }
         url = f"https://youtubeanalytics.googleapis.com/v2/reports?{urlencode(params)}"

@@ -39,7 +39,7 @@ SYNTHETIC_DISCLOSURE = (
 )
 
 
-def youtube_provider_from_settings(settings: Any) -> "YouTubeProvider":
+def youtube_provider_from_settings(settings: Any) -> YouTubeProvider:
     """Build the official adapter from application Settings.
 
     Returns an adapter that reports ``is_configured is False`` when credentials are absent;
@@ -106,7 +106,10 @@ class YouTubeProvider(PublishingProvider):
         if not self.is_configured:
             return PublishingHealthResult(
                 status="NOT_CONFIGURED",
-                detail="YouTube OAuth credentials (client_id, secret, refresh_token) not configured in environment.",
+                detail=(
+                    "YouTube OAuth credentials (client_id, secret, refresh_token) "
+                    "not configured in environment."
+                ),
             )
         try:
             token = self._get_access_token()
@@ -122,7 +125,9 @@ class YouTubeProvider(PublishingProvider):
                         channel_id=ch.get("id"),
                         channel_title=ch.get("snippet", {}).get("title"),
                     )
-                return PublishingHealthResult(status="AUTH_REQUIRED", detail="No channel associated with account")
+                return PublishingHealthResult(
+                    status="AUTH_REQUIRED", detail="No channel associated with account"
+                )
         except Exception as exc:  # noqa: BLE001
             return PublishingHealthResult(status="ERROR", detail=str(exc))
 
@@ -200,7 +205,9 @@ class YouTubeProvider(PublishingProvider):
                         error_detail="Google upload server did not return Location header",
                     )
         except Exception as exc:  # noqa: BLE001
-            return UploadResult(remote_video_id="", remote_url="", status="FAILED", error_detail=str(exc))
+            return UploadResult(
+                remote_video_id="", remote_url="", status="FAILED", error_detail=str(exc)
+            )
 
         # 2. Upload the bytes in resumable chunks. Google answers 308 for each accepted
         #    chunk and 200/201 with the video resource once the last chunk lands.
@@ -290,7 +297,9 @@ class YouTubeProvider(PublishingProvider):
         if not self.is_configured:
             return None
         token = self._get_access_token()
-        params = urlencode({"part": "snippet", "mine": "true", "type": "video", "q": expected_title[:50]})
+        params = urlencode(
+            {"part": "snippet", "mine": "true", "type": "video", "q": expected_title[:50]}
+        )
         url = f"{YOUTUBE_API_BASE}/search?{params}"
         req = Request(url, headers={"Authorization": f"Bearer {token}"}, method="GET")
         try:

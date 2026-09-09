@@ -38,8 +38,10 @@ def main() -> None:
     finally:
         engine.dispose()
     print("Foundation database ready. Owner token is in .env (never share or commit it).")
-    print("To build the frontend and start the studio in one step, run start.cmd "
-          "(or: uv run python scripts/start.py).")
+    print(
+        "To build the frontend and start the studio in one step, run start.cmd "
+        "(or: uv run python scripts/start.py)."
+    )
 
 
 if __name__ == "__main__":

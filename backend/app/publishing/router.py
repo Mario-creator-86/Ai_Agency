@@ -8,6 +8,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Path, Request
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.integrations.services import selected_youtube
 from app.media.models import MediaAsset
 from app.providers.publishing_base import PublishingProvider
 from app.providers.youtube import YouTubeProvider, youtube_provider_from_settings
@@ -32,7 +33,6 @@ from app.publishing.services import (
     seed_default_channels,
 )
 from app.security import require_owner
-from app.integrations.services import selected_youtube
 
 PUBLISHER_NOT_CONFIGURED_DETAIL = {
     "error": "PublisherNotConfigured",
@@ -66,17 +66,29 @@ def get_active_publisher(request: Request) -> PublishingProvider:
         if publication:
             channel = get_channel(request.app.state.engine, publication["channel_id"])
     elif "asset_id" in request.path_params:
-        channel = next((c for c in list_channels(request.app.state.engine)
-                        if c["channel_type"] == "MAIN_FACTUAL"), None)
+        channel = next(
+            (
+                c
+                for c in list_channels(request.app.state.engine)
+                if c["channel_type"] == "MAIN_FACTUAL"
+            ),
+            None,
+        )
     reference = (channel or {}).get("credentials_ref") or ""
-    identifier = reference.removeprefix("integration:") if reference.startswith("integration:") else None
+    identifier = (
+        reference.removeprefix("integration:") if reference.startswith("integration:") else None
+    )
     try:
-        configured = selected_youtube(request.app.state.engine, request.app.state.credential_vault, identifier)
+        configured = selected_youtube(
+            request.app.state.engine, request.app.state.credential_vault, identifier
+        )
     except ValueError:
         raise HTTPException(409, "Selected YouTube credentials are unavailable") from None
     yt: YouTubeProvider = configured or youtube_provider_from_settings(request.app.state.settings)
     if configured and channel and configured.channel_id != channel["remote_channel_id"]:
-        raise HTTPException(409, "The selected YouTube account does not match the publication channel")
+        raise HTTPException(
+            409, "The selected YouTube account does not match the publication channel"
+        )
     if not yt.is_configured:
         raise HTTPException(status_code=503, detail=PUBLISHER_NOT_CONFIGURED_DETAIL)
     return yt
@@ -92,7 +104,10 @@ def create_publishing_router() -> APIRouter:
         settings = request.app.state.settings
         return {
             "channels": list_channels(engine),
-            "publisher_configured": bool(selected_youtube(engine, request.app.state.credential_vault)) or bool(getattr(settings, "youtube_credentials_present", False)),
+            "publisher_configured": bool(
+                selected_youtube(engine, request.app.state.credential_vault)
+            )
+            or bool(getattr(settings, "youtube_credentials_present", False)),
         }
 
     @router.post("/channels/seed")
@@ -130,7 +145,9 @@ def create_publishing_router() -> APIRouter:
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    @router.get("/gate/evaluate/{media_asset_id}/{channel_id}", response_model=PublishingGateEvaluationView)
+    @router.get(
+        "/gate/evaluate/{media_asset_id}/{channel_id}", response_model=PublishingGateEvaluationView
+    )
     def evaluate_gate(
         request: Request,
         media_asset_id: Annotated[str, Path(min_length=36, max_length=36)],
@@ -151,7 +168,6 @@ def create_publishing_router() -> APIRouter:
         if not pub:
             raise HTTPException(status_code=404, detail="Publication not found")
         return pub
-
 
     @router.post("/publications/intent", response_model=PublicationView)
     def post_publication_intent(
@@ -177,9 +193,18 @@ def create_publishing_router() -> APIRouter:
                 detail={"error": "NotFound", "message": exc.message, "reasons": exc.reasons},
             ) from exc
         except PublishingGateError as exc:
-            raise HTTPException(status_code=422, detail={"error": "PublishingGateError", "message": exc.message, "reasons": exc.reasons}) from exc
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "PublishingGateError",
+                    "message": exc.message,
+                    "reasons": exc.reasons,
+                },
+            ) from exc
         except SQLAlchemyError:
-            raise HTTPException(status_code=500, detail="Database error creating publication intent") from None
+            raise HTTPException(
+                status_code=500, detail="Database error creating publication intent"
+            ) from None
 
     @router.post("/publications/{publication_id}/execute", response_model=PublicationView)
     def execute_publication_endpoint(
@@ -198,14 +223,17 @@ def create_publishing_router() -> APIRouter:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"Publication execution failed: {exc}") from exc
+            raise HTTPException(
+                status_code=500, detail=f"Publication execution failed: {exc}"
+            ) from exc
 
     @router.post("/publish-asset/{asset_id}", response_model=PublicationView)
     def quick_publish_asset(
         request: Request,
         asset_id: Annotated[str, Path(min_length=36, max_length=36)],
     ) -> dict:
-        """One-click pipeline: finds Channel A, checks gate, creates intent, and executes private upload."""
+        """One-click pipeline: finds Channel A, checks gate, creates intent,
+        and executes private upload."""
         engine = request.app.state.engine
         # Refuse before doing any work if there is no real publisher.
         publisher = get_active_publisher(request)
@@ -227,12 +255,19 @@ def create_publishing_router() -> APIRouter:
             )
 
         with engine.connect() as conn:
-            asset = conn.execute(MediaAsset.__table__.select().where(MediaAsset.id == asset_id)).mappings().first()
+            asset = (
+                conn.execute(MediaAsset.__table__.select().where(MediaAsset.id == asset_id))
+                .mappings()
+                .first()
+            )
             if not asset:
                 raise HTTPException(status_code=404, detail="Media asset not found")
 
         title = "Autonomous AI Studio: Shorts Release"
-        description = "Produced autonomously by Autonomous AI Studio with full provenance and QC verification. #shorts #ai"
+        description = (
+            "Produced autonomously by Autonomous AI Studio with full provenance "
+            "and QC verification. #shorts #ai"
+        )
         tags = ["shorts", "autonomous", "ai", "technology"]
         cmd_id = uuid4()
         correlation_id = str(uuid4())
@@ -256,6 +291,13 @@ def create_publishing_router() -> APIRouter:
                 detail={"error": "NotFound", "message": exc.message, "reasons": exc.reasons},
             ) from exc
         except PublishingGateError as exc:
-            raise HTTPException(status_code=422, detail={"error": "PublishingGateError", "message": exc.message, "reasons": exc.reasons}) from exc
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "PublishingGateError",
+                    "message": exc.message,
+                    "reasons": exc.reasons,
+                },
+            ) from exc
 
     return router

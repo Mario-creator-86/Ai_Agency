@@ -151,8 +151,10 @@ def test_office_layout_returns_zones_and_assignments(seeded_studio):
 
     # Zones on the same floor must not overlap.
     for floor in {z["floor"] for z in layout["zones"]}:
-        spans = sorted(((z["x"], z["x"] + z["width"]) for z in layout["zones"] if z["floor"] == floor))
-        for (_, end), (start, _) in zip(spans, spans[1:]):
+        spans = sorted(
+            (z["x"], z["x"] + z["width"]) for z in layout["zones"] if z["floor"] == floor
+        )
+        for (_, end), (start, _) in zip(spans, spans[1:], strict=False):
             assert end <= start, f"zones overlap on floor {floor}"
 
     # Every desk stands on its zone's floor slab.

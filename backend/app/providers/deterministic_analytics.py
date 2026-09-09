@@ -8,7 +8,6 @@ Derives metrics deterministically from hashing video identifiers and metadata.
 from __future__ import annotations
 
 import hashlib
-from typing import Any
 
 from app.providers.analytics_base import AnalyticsProvider, ChannelMetrics, VideoMetrics
 

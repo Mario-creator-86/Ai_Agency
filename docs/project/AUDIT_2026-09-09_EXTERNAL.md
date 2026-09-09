@@ -89,9 +89,13 @@ cu Character Bible. `CURRENT_STATUS.md` îl prezintă ca al 4-lea nivel al unui 
 `backend/app/media/router.py:117-130`
 
 ```python
-claim = FactualClaim(..., status="SUPPORTED", confidence=0.99,
+claim = FactualClaim(
+    ...,
+    status="SUPPORTED",
+    confidence=0.99,
     verifier_notes="Arhitectura v5 garantează...",
-    evidence_text="https://studio.local/specs/provenance")
+    evidence_text="https://studio.local/specs/provenance",
+)
 ```
 
 Se inserează direct în DB o afirmație „verificată", fără `SourceSnapshot`, fără `verify_claim`, fără

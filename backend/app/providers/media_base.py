@@ -3,6 +3,7 @@
 Following docs/architecture/22_PROVIDER_INTEGRATION_CONTRACTS.md:
 Never fake or fabricate unknown/unsupported methods.
 """
+
 from __future__ import annotations
 
 import abc

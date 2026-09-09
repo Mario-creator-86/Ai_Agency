@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import JSON, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models import Base
@@ -19,7 +19,9 @@ class ChannelRecord(Base):
     platform: Mapped[str] = mapped_column(String(50), nullable=False, default="YOUTUBE")
     remote_channel_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     credentials_ref: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    upload_privacy_default: Mapped[str] = mapped_column(String(20), nullable=False, default="private")
+    upload_privacy_default: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="private"
+    )
     # UNCONFIGURED | CONFIGURED | AUTHENTICATED | ERROR | ACTIVE
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="UNCONFIGURED")
     created_at: Mapped[str] = mapped_column(String(40), nullable=False)
@@ -68,7 +70,8 @@ class PublicationRecord(Base):
     description: Mapped[str] = mapped_column(Text, nullable=False)
     tags_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     privacy_status: Mapped[str] = mapped_column(String(20), nullable=False, default="private")
-    # DRAFT_INTENT | VALIDATED | STARTED | REMOTE_CONFIRMED | REMOTE_UNKNOWN | SCHEDULED | PUBLISHED | FAILED_RETRYABLE | FAILED_FINAL | NEEDS_RECONCILIATION | BLOCKED_GATE
+    # DRAFT_INTENT | VALIDATED | STARTED | REMOTE_CONFIRMED | REMOTE_UNKNOWN | SCHEDULED
+    # | PUBLISHED | FAILED_RETRYABLE | FAILED_FINAL | NEEDS_RECONCILIATION | BLOCKED_GATE
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="DRAFT_INTENT")
     idempotency_key: Mapped[str] = mapped_column(String(100), nullable=False)
     remote_video_id: Mapped[str | None] = mapped_column(String(100), nullable=True)

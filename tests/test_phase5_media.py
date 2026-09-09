@@ -11,39 +11,40 @@ Tests:
 - Quality Control (QC) gate: Technical, Factual, Character, and Rights checks.
 - Media REST API endpoints and Owner authentication.
 """
+
 from __future__ import annotations
 
 import asyncio
+import shutil
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select
-from sqlalchemy.orm import Session
-
 from app.factual.models import FactualClaim, ScriptDraft, TopicIdea
 from app.factual.services import FactualGateError
-import shutil
-
 from app.media.assembler import RenderEngineUnavailable, assemble_video_job
-
-requires_ffmpeg = pytest.mark.skipif(
-    shutil.which("ffmpeg") is None,
-    reason="FFmpeg not installed; the studio refuses to fake a render, so there is nothing to assert",
-)
+from app.media.models import MediaAsset, VideoRenderJob
 from app.media.qc import evaluate_media_qc
 from app.media.services import (
     generate_storyboard_from_script,
     list_character_bibles,
     seed_default_character_bibles,
 )
-from app.media.models import MediaAsset, VideoRenderJob
 from app.models import OwnerPolicy
 from app.providers.deterministic_media import (
     DeterministicTTSAdapter,
     DeterministicVisualAdapter,
 )
 from app.services import utc_now
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+requires_ffmpeg = pytest.mark.skipif(
+    shutil.which("ffmpeg") is None,
+    reason=(
+        "FFmpeg not installed; the studio refuses to fake a render, so there is nothing to assert"
+    ),
+)
 
 
 def test_character_bible_seeding_and_retrieval(engine):
@@ -86,7 +87,9 @@ def test_deterministic_visual_and_tts_adapters():
 
     # 2. Test TTS voiceover generation
     tts_res = asyncio.run(
-        tts_adapter.synthesize("Artificial intelligence media studios operate with full observability.")
+        tts_adapter.synthesize(
+            "Artificial intelligence media studios operate with full observability."
+        )
     )
     assert tts_res.format == "wav"
     assert tts_res.duration_seconds >= 2.0
@@ -142,15 +145,19 @@ def test_storyboard_generation_enforces_content_gate(engine):
             title="Quantum Leap",
             target_duration_seconds=45,
             voiceover_full_text="Scientists achieved breakthrough qubit coherence in lab tests.",
-            scenes_json=[{
-                "scene_index": 1,
-                "visual_prompt": "Laboratory cryogenic dilution refrigerator glowing blue",
-                "duration_seconds": 6.0,
-                "voiceover_segment": "Scientists achieved breakthrough qubit coherence in lab tests.",
-                "shot_type": "WIDE",
-                "transition_in": "FADE",
-                "claim_ids": [claim_id],
-            }],
+            scenes_json=[
+                {
+                    "scene_index": 1,
+                    "visual_prompt": "Laboratory cryogenic dilution refrigerator glowing blue",
+                    "duration_seconds": 6.0,
+                    "voiceover_segment": (
+                        "Scientists achieved breakthrough qubit coherence in lab tests."
+                    ),
+                    "shot_type": "WIDE",
+                    "transition_in": "FADE",
+                    "claim_ids": [claim_id],
+                }
+            ],
             status="DRAFT",
             claim_ids_json=[claim_id],
             unverified_claim_ids_json=[],
@@ -219,7 +226,6 @@ def test_storyboard_blocked_when_autonomy_stopped(engine):
         generate_storyboard_from_script(engine, script_id, "MOTION_GRAPHIC", "9:16", corr_id)
 
 
-
 def _seeded_storyboard(engine, tmp_path: Path) -> tuple[str, str]:
     """Create an approved script with a SUPPORTED claim and return (storyboard_id, claim_id)."""
     now = utc_now()
@@ -286,6 +292,7 @@ def _seeded_storyboard(engine, tmp_path: Path) -> tuple[str, str]:
     sb = generate_storyboard_from_script(engine, script_id, "MOTION_GRAPHIC", "9:16", corr_id)
     return sb["id"], claim_id
 
+
 @requires_ffmpeg
 def test_end_to_end_assembly_provenance_and_qc(engine, tmp_path: Path):
     now = utc_now()
@@ -329,13 +336,20 @@ def test_end_to_end_assembly_provenance_and_qc(engine, tmp_path: Path):
             version=1,
             title="Riverbeds on Mars",
             target_duration_seconds=30,
-            voiceover_full_text="Perseverance rover has uncovered conclusive sediment layers from an ancient Martian lake.",
+            voiceover_full_text=(
+                "Perseverance rover has uncovered conclusive sediment layers "
+                "from an ancient Martian lake."
+            ),
             scenes_json=[
                 {
                     "scene_index": 1,
-                    "visual_prompt": "Red Martian landscape showing layered sedimentary rock strata",
+                    "visual_prompt": (
+                        "Red Martian landscape showing layered sedimentary rock strata"
+                    ),
                     "duration_seconds": 6.0,
-                    "voiceover_segment": "Perseverance rover has uncovered conclusive sediment layers.",
+                    "voiceover_segment": (
+                        "Perseverance rover has uncovered conclusive sediment layers."
+                    ),
                     "shot_type": "WIDE",
                     "transition_in": "FADE",
                     "claim_ids": [claim_id],
@@ -344,7 +358,9 @@ def test_end_to_end_assembly_provenance_and_qc(engine, tmp_path: Path):
                     "scene_index": 2,
                     "visual_prompt": "Close-up of robotic rover arm drilling into delta sandstone",
                     "duration_seconds": 6.0,
-                    "voiceover_segment": "Evidence points directly to a long-lived ancient river delta.",
+                    "voiceover_segment": (
+                        "Evidence points directly to a long-lived ancient river delta."
+                    ),
                     "shot_type": "CLOSE_UP",
                     "transition_in": "ZOOM",
                     "claim_ids": [claim_id],
@@ -450,15 +466,17 @@ def test_qc_fails_if_claim_is_refuted(engine, tmp_path: Path):
             title="Perpetual Motion Claim",
             target_duration_seconds=20,
             voiceover_full_text="New perpetual motion engine claims zero energy loss.",
-            scenes_json=[{
-                "scene_index": 1,
-                "visual_prompt": "Spinning wheel diagram",
-                "duration_seconds": 12.0,
-                "voiceover_segment": "New perpetual motion engine claims zero energy loss.",
-                "shot_type": "MEDIUM",
-                "transition_in": "CUT",
-                "claim_ids": [claim_id],
-            }],
+            scenes_json=[
+                {
+                    "scene_index": 1,
+                    "visual_prompt": "Spinning wheel diagram",
+                    "duration_seconds": 12.0,
+                    "voiceover_segment": "New perpetual motion engine claims zero energy loss.",
+                    "shot_type": "MEDIUM",
+                    "transition_in": "CUT",
+                    "claim_ids": [claim_id],
+                }
+            ],
             status="APPROVED",
             claim_ids_json=[claim_id],
             unverified_claim_ids_json=[],

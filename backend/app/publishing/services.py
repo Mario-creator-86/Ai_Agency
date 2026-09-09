@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 from pathlib import Path
-from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import Engine, select
@@ -18,9 +16,7 @@ from app.providers.publishing_base import PublishingProvider, UploadResult
 from app.publishing.models import ChannelBrandAsset, ChannelRecord, PublicationRecord
 from app.publishing.schemas import (
     ChannelView,
-    GateCheckItem,
     PublicationView,
-    PublishingGateEvaluationView,
 )
 from app.services import append_event, utc_now
 
@@ -67,9 +63,9 @@ DEFAULT_CHANNELS = [
 ]
 
 # Channel lifecycle, per 22_PROVIDER_INTEGRATION_CONTRACTS.md common provider state.
-CHANNEL_NOT_CONFIGURED = "NOT_CONFIGURED"   # no remote channel identity yet
-CHANNEL_AUTH_REQUIRED = "AUTH_REQUIRED"     # identity known, no verified credentials
-CHANNEL_AUTHENTICATED = "AUTHENTICATED"     # identity + credential reference present
+CHANNEL_NOT_CONFIGURED = "NOT_CONFIGURED"  # no remote channel identity yet
+CHANNEL_AUTH_REQUIRED = "AUTH_REQUIRED"  # identity known, no verified credentials
+CHANNEL_AUTHENTICATED = "AUTHENTICATED"  # identity + credential reference present
 
 
 #: Minimum QC score accepted for publication (documented in the Distribution Hub UI).
@@ -183,9 +179,7 @@ def configure_channel(
         return ChannelView.model_validate(ch).model_dump()
 
 
-def evaluate_publishing_gate(
-    engine: Engine, media_asset_id: str, channel_id: str
-) -> dict:
+def evaluate_publishing_gate(engine: Engine, media_asset_id: str, channel_id: str) -> dict:
     """Evaluate all 5 mandatory publishing gates per 50_CONTENT_GATE_MATRIX.md."""
     checks: list[dict] = []
     reasons: list[str] = []
@@ -194,23 +188,53 @@ def evaluate_publishing_gate(
         # Gate 1: Global Autonomy Stop check
         policy = session.get(OwnerPolicy, 1)
         if policy and policy.autonomy_stopped:
-            checks.append({"check_name": "AUTONOMY_GATE", "passed": False, "detail": "Global autonomy stop is active; Owner must clear it first."})
+            checks.append(
+                {
+                    "check_name": "AUTONOMY_GATE",
+                    "passed": False,
+                    "detail": "Global autonomy stop is active; Owner must clear it first.",
+                }
+            )
             reasons.append("Global autonomy stop is active")
         else:
-            checks.append({"check_name": "AUTONOMY_GATE", "passed": True, "detail": "Autonomy stop is cleared."})
+            checks.append(
+                {
+                    "check_name": "AUTONOMY_GATE",
+                    "passed": True,
+                    "detail": "Autonomy stop is cleared.",
+                }
+            )
 
         # Gate 2: Media Asset valid on disk
         asset = session.get(MediaAsset, media_asset_id)
         if not asset:
-            checks.append({"check_name": "MEDIA_ASSET_EXISTS", "passed": False, "detail": f"MediaAsset {media_asset_id} not found."})
+            checks.append(
+                {
+                    "check_name": "MEDIA_ASSET_EXISTS",
+                    "passed": False,
+                    "detail": f"MediaAsset {media_asset_id} not found.",
+                }
+            )
             reasons.append("MediaAsset does not exist")
         else:
             p = Path(asset.uri_or_path)
             if not p.is_file() or p.stat().st_size == 0:
-                checks.append({"check_name": "MEDIA_ASSET_ON_DISK", "passed": False, "detail": f"File {asset.uri_or_path} missing or empty."})
+                checks.append(
+                    {
+                        "check_name": "MEDIA_ASSET_ON_DISK",
+                        "passed": False,
+                        "detail": f"File {asset.uri_or_path} missing or empty.",
+                    }
+                )
                 reasons.append("Media file is missing or 0 bytes on disk")
             else:
-                checks.append({"check_name": "MEDIA_ASSET_ON_DISK", "passed": True, "detail": f"Valid file ({p.stat().st_size} bytes)."})
+                checks.append(
+                    {
+                        "check_name": "MEDIA_ASSET_ON_DISK",
+                        "passed": True,
+                        "detail": f"Valid file ({p.stat().st_size} bytes).",
+                    }
+                )
 
         # Gate 3: Technical & Quality Control (QC) Passed
         qc = session.scalars(
@@ -219,17 +243,31 @@ def evaluate_publishing_gate(
             .order_by(QualityControlReport.verified_at.desc())
         ).first()
         if not qc or qc.status != "PASSED":
-            checks.append({"check_name": "QC_GATE", "passed": False, "detail": f"QC Report is {qc.status if qc else 'MISSING'}; must be PASSED."})
+            checks.append(
+                {
+                    "check_name": "QC_GATE",
+                    "passed": False,
+                    "detail": f"QC Report is {qc.status if qc else 'MISSING'}; must be PASSED.",
+                }
+            )
             reasons.append(f"QC status is {qc.status if qc else 'MISSING'}")
         elif (qc.score or 0.0) < QC_MINIMUM_SCORE:
-            checks.append({
-                "check_name": "QC_GATE",
-                "passed": False,
-                "detail": f"QC score {qc.score} is below the {QC_MINIMUM_SCORE} minimum.",
-            })
+            checks.append(
+                {
+                    "check_name": "QC_GATE",
+                    "passed": False,
+                    "detail": f"QC score {qc.score} is below the {QC_MINIMUM_SCORE} minimum.",
+                }
+            )
             reasons.append(f"QC score {qc.score} below minimum {QC_MINIMUM_SCORE}")
         else:
-            checks.append({"check_name": "QC_GATE", "passed": True, "detail": f"QC PASSED with score {qc.score}."})
+            checks.append(
+                {
+                    "check_name": "QC_GATE",
+                    "passed": True,
+                    "detail": f"QC PASSED with score {qc.score}.",
+                }
+            )
 
         # Gate 4: Factual Claim Integrity Check
         job = session.scalars(
@@ -245,12 +283,33 @@ def evaluate_publishing_gate(
                     ).all()
                     unverified_claims = [c.id for c in claims if c.status != "SUPPORTED"]
                     if unverified_claims:
-                        checks.append({"check_name": "FACTUAL_INTEGRITY_GATE", "passed": False, "detail": f"Script contains unverified/refuted claims: {unverified_claims}."})
+                        checks.append(
+                            {
+                                "check_name": "FACTUAL_INTEGRITY_GATE",
+                                "passed": False,
+                                "detail": (
+                                    f"Script contains unverified/refuted claims: "
+                                    f"{unverified_claims}."
+                                ),
+                            }
+                        )
                         reasons.append(f"Unverified claims in script: {unverified_claims}")
                     else:
-                        checks.append({"check_name": "FACTUAL_INTEGRITY_GATE", "passed": True, "detail": f"All {len(claims)} referenced claims are SUPPORTED."})
+                        checks.append(
+                            {
+                                "check_name": "FACTUAL_INTEGRITY_GATE",
+                                "passed": True,
+                                "detail": f"All {len(claims)} referenced claims are SUPPORTED.",
+                            }
+                        )
         if not any(c["check_name"] == "FACTUAL_INTEGRITY_GATE" for c in checks):
-            checks.append({"check_name": "FACTUAL_INTEGRITY_GATE", "passed": True, "detail": "Asset has verified factual provenance."})
+            checks.append(
+                {
+                    "check_name": "FACTUAL_INTEGRITY_GATE",
+                    "passed": True,
+                    "detail": "Asset has verified factual provenance.",
+                }
+            )
 
         # Gate 5: Idempotency & Duplicate Publishing Check
         existing_pub = session.scalars(
@@ -270,10 +329,27 @@ def evaluate_publishing_gate(
             )
         ).first()
         if existing_pub:
-            checks.append({"check_name": "DUPLICATE_PROTECTION_GATE", "passed": False, "detail": f"Asset already published/in-flight on channel (remote_id: {existing_pub.remote_video_id})."})
-            reasons.append("Duplicate publishing prevented; asset already published to this channel")
+            checks.append(
+                {
+                    "check_name": "DUPLICATE_PROTECTION_GATE",
+                    "passed": False,
+                    "detail": (
+                        f"Asset already published/in-flight on channel "
+                        f"(remote_id: {existing_pub.remote_video_id})."
+                    ),
+                }
+            )
+            reasons.append(
+                "Duplicate publishing prevented; asset already published to this channel"
+            )
         else:
-            checks.append({"check_name": "DUPLICATE_PROTECTION_GATE", "passed": True, "detail": "No duplicate publication found."})
+            checks.append(
+                {
+                    "check_name": "DUPLICATE_PROTECTION_GATE",
+                    "passed": True,
+                    "detail": "No duplicate publication found.",
+                }
+            )
 
     eligible = len(reasons) == 0
     return {
@@ -297,7 +373,8 @@ def create_publication_intent(
     correlation_id: str,
     scheduled_publish_time: str | None = None,
 ) -> dict:
-    """Create publication record with DRAFT_INTENT, evaluate gate, transition to VALIDATED or BLOCKED_GATE."""
+    """Create publication record with DRAFT_INTENT, evaluate gate,
+    transition to VALIDATED or BLOCKED_GATE."""
     if not idempotency_key:
         idempotency_key = str(uuid4())
 
@@ -337,7 +414,9 @@ def create_publication_intent(
         status = "VALIDATED" if gate_result["eligible"] else "BLOCKED_GATE"
         error_detail = "; ".join(gate_result["reasons"]) if not gate_result["eligible"] else None
 
-        event_type = "publishing.intent_created" if gate_result["eligible"] else "publishing.gate_failed"
+        event_type = (
+            "publishing.intent_created" if gate_result["eligible"] else "publishing.gate_failed"
+        )
         event = append_event(
             session,
             event_type,
@@ -393,14 +472,14 @@ def execute_publication(
     correlation_id: str,
 ) -> dict:
     """Execute upload for a VALIDATED publication following 47_STATE_MACHINE_SPECIFICATIONS.md."""
-    now = utc_now()
-
     with Session(engine) as session, session.begin():
         pub = session.get(PublicationRecord, publication_id)
         if not pub:
             raise ValueError(f"Publication {publication_id} not found")
         if pub.status not in ("VALIDATED", "FAILED_RETRYABLE"):
-            raise ValueError(f"Cannot execute publication in status {pub.status!r}; must be VALIDATED")
+            raise ValueError(
+                f"Cannot execute publication in status {pub.status!r}; must be VALIDATED"
+            )
 
         asset = session.get(MediaAsset, pub.media_asset_id)
         if not asset:
@@ -564,8 +643,9 @@ def reconcile_publication(
     correlation_id: str,
 ) -> dict:
     """Reconcile an uncertain publication (REMOTE_UNKNOWN / FAILED_RETRYABLE) with remote state.
-    
-    Per 47_STATE_MACHINE_SPECIFICATIONS.md: Never re-upload from REMOTE_UNKNOWN without checking remote state.
+
+    Per 47_STATE_MACHINE_SPECIFICATIONS.md: Never re-upload from REMOTE_UNKNOWN
+    without checking remote state.
     """
     with Session(engine) as session, session.begin():
         pub = session.get(PublicationRecord, publication_id)
@@ -657,4 +737,3 @@ def publish_media_asset(
 
 
 execute_publish = execute_publication
-

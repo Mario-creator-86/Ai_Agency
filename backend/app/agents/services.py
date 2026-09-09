@@ -693,4 +693,3 @@ def seed_initial_workforce(engine: Engine) -> None:
                 event_id=event.event_id,
             )
             session.add(agent)
-

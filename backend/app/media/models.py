@@ -1,4 +1,5 @@
-"""Phase 5 ORM models: character bible, storyboards, scenes, media assets, render jobs, QC reports."""
+"""Phase 5 ORM models: character bible, storyboards, scenes, media assets,
+render jobs, QC reports."""
 
 from __future__ import annotations
 
@@ -79,9 +80,7 @@ class StoryboardScene(Base):
     )
     scene_index: Mapped[int] = mapped_column(Integer, nullable=False)
     visual_prompt: Mapped[str] = mapped_column(Text, nullable=False)
-    visual_type: Mapped[str] = mapped_column(
-        String(50), nullable=False, default="MOTION_GRAPHIC"
-    )
+    visual_type: Mapped[str] = mapped_column(String(50), nullable=False, default="MOTION_GRAPHIC")
     duration_seconds: Mapped[float] = mapped_column(Float, nullable=False, default=5.0)
     voiceover_segment: Mapped[str] = mapped_column(Text, nullable=False)
     shot_type: Mapped[str] = mapped_column(String(50), nullable=False, default="MEDIUM")
@@ -107,7 +106,9 @@ class MediaAsset(Base):
     width: Mapped[int | None] = mapped_column(Integer, nullable=True)
     height: Mapped[int | None] = mapped_column(Integer, nullable=True)
     duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
-    provider_name: Mapped[str] = mapped_column(String(100), nullable=False, default="STUDIO_INTERNAL")
+    provider_name: Mapped[str] = mapped_column(
+        String(100), nullable=False, default="STUDIO_INTERNAL"
+    )
     remote_job_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     # ORIGINAL_AI_GENERATED | PROPRIETARY_STUDIO | PUBLIC_DOMAIN | LICENSED
     license_status: Mapped[str] = mapped_column(

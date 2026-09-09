@@ -1,4 +1,5 @@
-"""Phase 5: media production, character bible, storyboards, scenes, assets, render jobs, and QC reports."""
+"""Phase 5: media production, character bible, storyboards, scenes,
+assets, render jobs, and QC reports."""
 
 import sqlalchemy as sa
 from alembic import op
@@ -30,7 +31,9 @@ def upgrade() -> None:
     op.create_table(
         "storyboard",
         sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("script_draft_id", sa.String(36), sa.ForeignKey("script_draft.id"), nullable=False),
+        sa.Column(
+            "script_draft_id", sa.String(36), sa.ForeignKey("script_draft.id"), nullable=False
+        ),
         sa.Column("title", sa.String(200), nullable=False),
         sa.Column("visual_style", sa.String(50), nullable=False),
         sa.Column("aspect_ratio", sa.String(20), nullable=False),

@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Path as FPath, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import Path as FPath
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -17,9 +18,7 @@ from app.factual.services import FactualGateError
 from app.media.assembler import RenderEngineUnavailable, assemble_video_job
 from app.media.models import MediaAsset, VideoRenderJob
 from app.media.qc import evaluate_media_qc, get_media_qc
-from app.services import append_event, utc_now
 from app.media.schemas import (
-    CharacterBibleView,
     GenerateStoryboardCommand,
     MediaAssetView,
     QCReportView,
@@ -35,6 +34,7 @@ from app.media.services import (
     seed_default_character_bibles,
 )
 from app.security import require_owner
+from app.services import append_event, utc_now
 
 
 def create_media_router() -> APIRouter:
@@ -90,7 +90,9 @@ def create_media_router() -> APIRouter:
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except SQLAlchemyError:
-            raise HTTPException(status_code=500, detail="Database error during storyboarding") from None
+            raise HTTPException(
+                status_code=500, detail="Database error during storyboarding"
+            ) from None
 
     @router.post("/storyboards/demo-fixture", status_code=201)
     def create_demo_fixture(request: Request) -> dict:
@@ -125,7 +127,9 @@ def create_media_router() -> APIRouter:
                 FactualClaim(
                     id=claim_id,
                     topic_id=topic_id,
-                    claim_text="Sistemul produce video 9:16 cu hash de proveniență SHA-256 și QC automat.",
+                    claim_text=(
+                        "Sistemul produce video 9:16 cu hash de proveniență SHA-256 și QC automat."
+                    ),
                     claim_type="SCIENTIFIC_FACT",
                     importance="CRITICAL",
                     status="UNVERIFIED",
@@ -151,29 +155,41 @@ def create_media_router() -> APIRouter:
                     scenes_json=[
                         {
                             "scene_index": 1,
-                            "visual_prompt": "Laborator high-tech cu servere modulare și ecrane holografice 9:16",
+                            "visual_prompt": (
+                                "Laborator high-tech cu servere modulare și ecrane holografice 9:16"
+                            ),
                             "visual_type": "GENERATED_IMAGE",
                             "shot_type": "WIDE_ESTABLISHING",
                             "duration_seconds": 6.0,
-                            "voiceover_segment": "Studioul AI produce conținut cu integritate garantată.",
+                            "voiceover_segment": (
+                                "Studioul AI produce conținut cu integritate garantată."
+                            ),
                             "transition_in": "FADE",
                         },
                         {
                             "scene_index": 2,
-                            "visual_prompt": "Inginer analizând date de telemetrie pe ecrane verticale",
+                            "visual_prompt": (
+                                "Inginer analizând date de telemetrie pe ecrane verticale"
+                            ),
                             "visual_type": "GENERATED_IMAGE",
                             "shot_type": "MEDIUM_CLOSEUP",
                             "duration_seconds": 6.0,
-                            "voiceover_segment": "Fiecare afirmație este validată factual înainte de producție.",
+                            "voiceover_segment": (
+                                "Fiecare afirmație este validată factual înainte de producție."
+                            ),
                             "transition_in": "DISSOLVE",
                         },
                         {
                             "scene_index": 3,
-                            "visual_prompt": "Linie de asamblare media digitală generând fluxul video 9:16 final",
+                            "visual_prompt": (
+                                "Linie de asamblare media digitală generând fluxul video 9:16 final"
+                            ),
                             "visual_type": "GENERATED_IMAGE",
                             "shot_type": "CLOSEUP_PRODUCT",
                             "duration_seconds": 6.0,
-                            "voiceover_segment": "Fiecare cadru este inspectat și certificat automat.",
+                            "voiceover_segment": (
+                                "Fiecare cadru este inspectat și certificat automat."
+                            ),
                             "transition_in": "FADE",
                         },
                     ],
@@ -242,9 +258,11 @@ def create_media_router() -> APIRouter:
         job_id: Annotated[str, FPath(min_length=36, max_length=36)],
     ) -> dict:
         with request.app.state.engine.connect() as conn:
-            job = conn.execute(
-                VideoRenderJob.__table__.select().where(VideoRenderJob.id == job_id)
-            ).mappings().first()
+            job = (
+                conn.execute(VideoRenderJob.__table__.select().where(VideoRenderJob.id == job_id))
+                .mappings()
+                .first()
+            )
             if not job:
                 raise HTTPException(status_code=404, detail="Render job not found")
             return dict(job)
@@ -255,9 +273,11 @@ def create_media_router() -> APIRouter:
         asset_id: Annotated[str, FPath(min_length=36, max_length=36)],
     ) -> dict:
         with request.app.state.engine.connect() as conn:
-            asset = conn.execute(
-                MediaAsset.__table__.select().where(MediaAsset.id == asset_id)
-            ).mappings().first()
+            asset = (
+                conn.execute(MediaAsset.__table__.select().where(MediaAsset.id == asset_id))
+                .mappings()
+                .first()
+            )
             if not asset:
                 raise HTTPException(status_code=404, detail="Media asset not found")
             return dict(asset)
@@ -268,9 +288,11 @@ def create_media_router() -> APIRouter:
         asset_id: Annotated[str, FPath(min_length=36, max_length=36)],
     ) -> FileResponse:
         with request.app.state.engine.connect() as conn:
-            asset = conn.execute(
-                MediaAsset.__table__.select().where(MediaAsset.id == asset_id)
-            ).mappings().first()
+            asset = (
+                conn.execute(MediaAsset.__table__.select().where(MediaAsset.id == asset_id))
+                .mappings()
+                .first()
+            )
             if not asset:
                 raise HTTPException(status_code=404, detail="Media asset not found")
             file_path = Path(asset["uri_or_path"])
@@ -289,7 +311,10 @@ def create_media_router() -> APIRouter:
             with Session(engine) as session:
                 job = session.scalars(
                     select(VideoRenderJob)
-                    .where(VideoRenderJob.storyboard_id == identifier, VideoRenderJob.status == "COMPLETED")
+                    .where(
+                        VideoRenderJob.storyboard_id == identifier,
+                        VideoRenderJob.status == "COMPLETED",
+                    )
                     .order_by(VideoRenderJob.finished_at.desc())
                 ).first()
                 if job and job.output_asset_id:
@@ -311,7 +336,10 @@ def create_media_router() -> APIRouter:
             if not asset:
                 job = session.scalars(
                     select(VideoRenderJob)
-                    .where(VideoRenderJob.storyboard_id == identifier, VideoRenderJob.status == "COMPLETED")
+                    .where(
+                        VideoRenderJob.storyboard_id == identifier,
+                        VideoRenderJob.status == "COMPLETED",
+                    )
                     .order_by(VideoRenderJob.finished_at.desc())
                 ).first()
                 if job and job.output_asset_id:

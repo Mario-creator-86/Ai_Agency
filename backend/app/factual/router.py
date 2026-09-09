@@ -152,9 +152,7 @@ def create_factual_router() -> APIRouter:
         cmd: ApproveScriptCommand,
     ) -> dict:
         try:
-            return approve_script_draft(
-                request.app.state.engine, script_id, str(cmd.command_id)
-            )
+            return approve_script_draft(request.app.state.engine, script_id, str(cmd.command_id))
         except FactualGateError as exc:
             raise HTTPException(
                 status_code=422,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from sqlalchemy import Engine, select
@@ -24,10 +24,10 @@ from app.analytics.schemas import (
     ContentStrategyView,
     DirectorRecommendationView,
 )
-from app.factual.models import FactualClaim, HookOption, ScriptDraft, TopicIdea
+from app.factual.models import HookOption, ScriptDraft, TopicIdea
 from app.media.models import Storyboard, VideoRenderJob
 from app.providers.analytics_base import AnalyticsProvider
-from app.publishing.models import ChannelRecord, PublicationRecord
+from app.publishing.models import PublicationRecord
 from app.services import append_event, utc_now
 
 logger = logging.getLogger("studio.analytics")
@@ -100,7 +100,7 @@ def get_active_strategy(engine: Engine, channel_id: str) -> dict | None:
     with Session(engine) as session:
         strat = session.scalar(
             select(ContentStrategy)
-            .where(ContentStrategy.channel_id == channel_id, ContentStrategy.is_active == True)
+            .where(ContentStrategy.channel_id == channel_id, ContentStrategy.is_active.is_(True))
             .order_by(ContentStrategy.version.desc())
         )
         if strat is None:
@@ -115,7 +115,8 @@ def ingest_publication_metrics(
     window: str = "LIFETIME",
     correlation_id: str = "",
 ) -> dict:
-    """Ingest performance metrics from the specified analytics provider into an AnalyticsSnapshot."""
+    """Ingest performance metrics from the specified analytics
+    provider into an AnalyticsSnapshot."""
     with Session(engine) as session:
         pub = session.get(PublicationRecord, publication_id)
         if pub is None:
@@ -191,7 +192,7 @@ def get_channel_summary(engine: Engine, channel_id: str) -> dict:
         )
         active_strat = session.scalar(
             select(ContentStrategy)
-            .where(ContentStrategy.channel_id == channel_id, ContentStrategy.is_active == True)
+            .where(ContentStrategy.channel_id == channel_id, ContentStrategy.is_active.is_(True))
             .order_by(ContentStrategy.version.desc())
         )
 
@@ -246,7 +247,7 @@ def _resolve_publication_metadata(session: Session, pub: PublicationRecord) -> t
                         topic = topic_obj.topic
                     selected_hook = session.scalar(
                         select(HookOption).where(
-                            HookOption.script_id == script.id, HookOption.is_selected == True
+                            HookOption.script_id == script.id, HookOption.is_selected.is_(True)
                         )
                     )
                     if selected_hook:
@@ -262,9 +263,7 @@ def _resolve_publication_metadata(session: Session, pub: PublicationRecord) -> t
     return topic, hook
 
 
-def compute_cohort_metrics(
-    engine: Engine, channel_id: str, cohort_by: str = "topic"
-) -> list[dict]:
+def compute_cohort_metrics(engine: Engine, channel_id: str, cohort_by: str = "topic") -> list[dict]:
     """Compute performance aggregated by cohort (topic, hook technique, or duration).
 
     Enforces minimum sample size threshold (N >= 3) and applies clickbait quality penalty.
@@ -340,7 +339,7 @@ def generate_director_recommendations(
     with Session(engine) as session, session.begin():
         strat = session.scalar(
             select(ContentStrategy)
-            .where(ContentStrategy.channel_id == channel_id, ContentStrategy.is_active == True)
+            .where(ContentStrategy.channel_id == channel_id, ContentStrategy.is_active.is_(True))
             .order_by(ContentStrategy.version.desc())
         )
         if strat is None:
@@ -379,7 +378,8 @@ def generate_director_recommendations(
                 weight_change = -0.15
                 evidence = (
                     f"Topic '{key}' shows sub-threshold retention ({mean_ret}% < 40%) "
-                    f"despite {mean_ctr}% CTR across N={n} publications. Penalized for clickbait/churn."
+                    f"despite {mean_ctr}% CTR across N={n} publications. "
+                    f"Penalized for clickbait/churn."
                 )
             elif mean_ret >= 60.0:
                 rec_type = "BOOST_TOPIC"
@@ -451,7 +451,8 @@ def generate_director_recommendations(
                 rec_id = str(uuid4())
                 confidence = min(0.95, round(0.5 + (n * 0.1), 2))
                 evidence = (
-                    f"Hook '{key}' delivers top-tier viewer retention ({mean_ret}%) across N={n} publications."
+                    f"Hook '{key}' delivers top-tier viewer retention ({mean_ret}%) "
+                    f"across N={n} publications."
                 )
                 rec = DirectorRecommendation(
                     id=rec_id,
@@ -511,7 +512,8 @@ def apply_director_recommendation(
         active_strat = session.scalar(
             select(ContentStrategy)
             .where(
-                ContentStrategy.channel_id == rec.channel_id, ContentStrategy.is_active == True
+                ContentStrategy.channel_id == rec.channel_id,
+                ContentStrategy.is_active.is_(True),
             )
             .order_by(ContentStrategy.version.desc())
         )
@@ -521,7 +523,7 @@ def apply_director_recommendation(
         # Check cooldown
         if active_strat.cooldown_until:
             cooldown_dt = datetime.fromisoformat(active_strat.cooldown_until)
-            now_dt = datetime.now(timezone.utc)
+            now_dt = datetime.now(UTC)
             if now_dt < cooldown_dt:
                 raise ValueError("Active strategy is currently in cooldown period")
 
@@ -553,7 +555,10 @@ def apply_director_recommendation(
             hook_weights_json=new_hook_weights,
             target_duration_seconds=active_strat.target_duration_seconds,
             cooldown_until=None,
-            notes=f"Promoted from v{active_strat.version} via recommendation {rec.recommendation_type} for '{rec.target_entity}'",
+            notes=(
+                f"Promoted from v{active_strat.version} via recommendation "
+                f"{rec.recommendation_type} for '{rec.target_entity}'"
+            ),
             is_active=True,
             created_at=utc_now(),
             event_id=None,
@@ -639,7 +644,11 @@ def create_experiment(
             "content_experiment",
             exp_id,
             1,
-            {"name": name, "target_metric": target_metric, "sample_size_target": sample_size_target},
+            {
+                "name": name,
+                "target_metric": target_metric,
+                "sample_size_target": sample_size_target,
+            },
             corr,
         )
         exp.event_id = event.event_id

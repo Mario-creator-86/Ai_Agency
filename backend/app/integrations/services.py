@@ -145,8 +145,9 @@ def load_registry(engine: Engine, vault: CredentialVault, registry: ProviderRegi
                 )
 
 
-def selected_youtube(engine: Engine, vault: CredentialVault,
-                     identifier: str | None = None) -> YouTubeProvider | None:
+def selected_youtube(
+    engine: Engine, vault: CredentialVault, identifier: str | None = None
+) -> YouTubeProvider | None:
     with Session(engine) as session:
         selection = session.get(ServiceSelection, "youtube")
         identifier = identifier or (selection.integration_id if selection else None)
@@ -214,9 +215,8 @@ def assign_agent(engine: Engine, agent_id: str, model_id: str, version: int) -> 
         if agent.lifecycle == "TERMINATED":
             raise ValueError("Agentul nu mai este activ în companie")
         agent.provider_id, agent.model_id = model.provider_id, model.id
-        from app.agents.services import _check_required_capabilities
+        from app.agents.services import PolicyKernelError, _check_required_capabilities
 
-        from app.agents.services import PolicyKernelError
         try:
             _check_required_capabilities(session, agent)
         except PolicyKernelError as exc:

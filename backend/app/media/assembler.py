@@ -6,6 +6,7 @@ Following docs/architecture/08_VIDEO_PIPELINE.md:
 - Uses safe subprocess argument arrays without shell interpolation.
 - Calculates SHA-256 byte digest for absolute asset provenance.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -15,6 +16,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import Engine, select
@@ -22,7 +24,6 @@ from sqlalchemy.orm import Session
 
 from app.config import ROOT
 from app.media.models import MediaAsset, Storyboard, StoryboardScene, VideoRenderJob
-from app.media.schemas import MediaAssetView, RenderJobView
 from app.providers.deterministic_media import (
     DeterministicTTSAdapter,
     DeterministicVisualAdapter,
@@ -153,7 +154,7 @@ def assemble_video_job(
             raise ValueError(f"Storyboard {storyboard_id} has no scenes")
 
         storyboard_title = sb.title
-        scenes_data = [
+        scenes_data: list[dict[str, Any]] = [
             {
                 "scene_index": s.scene_index,
                 "visual_prompt": s.visual_prompt,
@@ -261,20 +262,32 @@ def assemble_video_job(
     command_args = [
         ffmpeg_exe,
         "-y",
-        "-f", "concat",
-        "-safe", "0",
-        "-i", str(concat_list),
-        "-i", str(audio_file),
-        "-vf", "scale=1080:1920,fps=30,format=yuv420p",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        str(concat_list),
+        "-i",
+        str(audio_file),
+        "-vf",
+        "scale=1080:1920,fps=30,format=yuv420p",
         # Narration from the local TTS placeholder is usually shorter than the storyboard
         # timeline; pad it with silence rather than truncating the video to the audio.
-        "-af", "apad",
-        "-t", f"{total_duration:.3f}",
-        "-c:v", "libx264",
-        "-preset", "veryfast",
-        "-c:a", "aac",
-        "-b:a", "192k",
-        "-movflags", "+faststart",
+        "-af",
+        "apad",
+        "-t",
+        f"{total_duration:.3f}",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-movflags",
+        "+faststart",
         str(output_mp4),
     ]
     try:

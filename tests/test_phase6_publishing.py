@@ -2,46 +2,45 @@
 
 Tests:
 - Channel seeding and configuration (Channel A Main Factual, Channel B Office Serial).
-- 5-point Publishing Gate evaluation (Autonomy, File Existence, QC PASSED, Factual Claims, Duplicate Protection).
+- 5-point Publishing Gate evaluation (Autonomy, File Existence, QC PASSED,
+  Factual Claims, Duplicate Protection).
 - Idempotency guarantees: unique (channel_id, idempotency_key) prevents duplicate uploads.
 - Deterministic publishing flow: intent -> gate validation -> private upload -> remote ID/URL.
 - Remote reconciliation from REMOTE_UNKNOWN / FAILED_RETRYABLE.
 - REST API routes under /api/v1/publishing with Owner token authentication.
 """
+
 from __future__ import annotations
 
 from hashlib import sha256
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select
-from sqlalchemy.orm import Session
-
 from app.factual.models import FactualClaim, ScriptDraft, TopicIdea
 from app.media.models import MediaAsset, QualityControlReport, Storyboard, VideoRenderJob
 from app.models import OwnerPolicy
 from app.providers.deterministic_pub import DeterministicPublishingAdapter
-from app.publishing.models import ChannelRecord, PublicationRecord
+from app.publishing.models import PublicationRecord
 from app.publishing.services import (
     PublishingGateError,
     configure_channel,
     create_publication_intent,
     evaluate_publishing_gate,
-    execute_publication,
     get_channel,
-    get_publication,
     list_channels,
-    list_publications,
     publish_media_asset,
     reconcile_publication,
     seed_default_channels,
 )
 from app.services import utc_now
+from sqlalchemy.orm import Session
 
 
-def _create_verified_asset_bundle(engine, tmp_path, *, qc_passed: bool = True, refuted_claim: bool = False):
-    """Helper to create topic, claim, script, storyboard, render job, media asset on disk, and QC report."""
+def _create_verified_asset_bundle(
+    engine, tmp_path, *, qc_passed: bool = True, refuted_claim: bool = False
+):
+    """Helper to create topic, claim, script, storyboard, render job, media asset
+    on disk, and QC report."""
     now = utc_now()
     topic_id = str(uuid4())
     claim_id = str(uuid4())
@@ -95,15 +94,17 @@ def _create_verified_asset_bundle(engine, tmp_path, *, qc_passed: bool = True, r
             title="JWST Infrared Vision",
             target_duration_seconds=15,
             voiceover_full_text="JWST observes the universe in infrared.",
-            scenes_json=[{
-                "scene_index": 1,
-                "visual_prompt": "Infrared cosmic view",
-                "duration_seconds": 15.0,
-                "voiceover_segment": "JWST observes the universe in infrared.",
-                "shot_type": "WIDE",
-                "transition_in": "FADE",
-                "claim_ids": [claim_id],
-            }],
+            scenes_json=[
+                {
+                    "scene_index": 1,
+                    "visual_prompt": "Infrared cosmic view",
+                    "duration_seconds": 15.0,
+                    "voiceover_segment": "JWST observes the universe in infrared.",
+                    "shot_type": "WIDE",
+                    "transition_in": "FADE",
+                    "claim_ids": [claim_id],
+                }
+            ],
             status="APPROVED",
             claim_ids_json=[claim_id],
             unverified_claim_ids_json=[],
@@ -159,7 +160,10 @@ def _create_verified_asset_bundle(engine, tmp_path, *, qc_passed: bool = True, r
             media_asset_id=asset_id,
             status="PASSED" if qc_passed else "FAILED",
             score=0.96 if qc_passed else 0.40,
-            checks_json={"technical": {"passed": qc_passed}, "factual": {"passed": not refuted_claim}},
+            checks_json={
+                "technical": {"passed": qc_passed},
+                "factual": {"passed": not refuted_claim},
+            },
             failure_reasons_json=[] if (qc_passed and not refuted_claim) else ["QC test failure"],
             verified_at=now,
         )
@@ -224,7 +228,9 @@ def test_publishing_gate_evaluations(engine, tmp_path):
     assert any("QC Report is FAILED" in c["detail"] for c in eval_qc_fail["checks"])
 
     # 3. Rejection when Factual Claim is REFUTED
-    bundle_refuted = _create_verified_asset_bundle(engine, tmp_path, qc_passed=True, refuted_claim=True)
+    bundle_refuted = _create_verified_asset_bundle(
+        engine, tmp_path, qc_passed=True, refuted_claim=True
+    )
     eval_refuted = evaluate_publishing_gate(engine, bundle_refuted["asset_id"], ch_id)
     assert eval_refuted["eligible"] is False
     assert any("unverified/refuted claims" in c["detail"] for c in eval_refuted["checks"])
@@ -237,7 +243,9 @@ def test_publishing_gate_evaluations(engine, tmp_path):
 
     eval_stopped = evaluate_publishing_gate(engine, bundle_valid["asset_id"], ch_id)
     assert eval_stopped["eligible"] is False
-    assert any(c["check_name"] == "AUTONOMY_GATE" and not c["passed"] for c in eval_stopped["checks"])
+    assert any(
+        c["check_name"] == "AUTONOMY_GATE" and not c["passed"] for c in eval_stopped["checks"]
+    )
 
     # Clear stop
     with Session(engine) as session, session.begin():

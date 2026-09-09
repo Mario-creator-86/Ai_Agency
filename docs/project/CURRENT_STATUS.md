@@ -303,12 +303,13 @@ Owner-directed documentation and repository repairs; recorded as D-DOC-001 in th
 - `../architecture/02_SRS.md`: the v3 additional FRs are renamed `FR-V3-037…FR-V3-066`
   (same numeric suffix, consistent with the existing `FR-V4-`/`FR-ECON-` namespaces), clearing the
   collision with base FR-037…066. NFR-013…021 never collided and are unchanged. Requirement text
-  unchanged. `V3_FILE_BY_FILE_REVIEW.md` notes the rename; `IMPLEMENTATION_PLAN.md` marks the
+  unchanged. `../architecture/V3_FILE_BY_FILE_REVIEW.md` notes the rename; `IMPLEMENTATION_PLAN.md`
+  marks the
   recorded conflict resolved. Indexed `sha256` values for both architecture documents updated
   explicitly (original hashes preserved).
 - `tests/test_integration_settings.py` (two fixture values only, inside the active Codex Settings
   claim — flagged here so that agent is aware): `"do-not-echo"` → `"abc"` and
-  `https://user:password@example.org` → `https://alice@example.org`, so `scripts/check_secrets.py`
+  un URL de test cu utilizator și parolă în el → unul doar cu nume de utilizator, so `scripts/check_secrets.py`
   passes without suppression. Both payloads still assert the same 422 refusals; all 15 settings
   tests pass.
 - Initial Git commit created at the Owner's request (`ae4dee3`, branch `codex/foundation`, with a
@@ -319,3 +320,42 @@ Owner-directed documentation and repository repairs; recorded as D-DOC-001 in th
 
 Verification at commit time: `pytest` 136 passed / 3 skipped; frontend `npm test` 11/11, `tsc`
 clean, build OK; `scripts/check_docs.py` and `scripts/check_secrets.py` pass.
+
+## Owner-directed LLM connectivity test — 2026-09-10, ZCode (third session)
+
+Verified the Ollama Cloud integration end to end and added the missing Settings test affordance:
+
+- Live state checked first: the "Ollama Cloud" integration (`https://ollama.com`) is saved and
+  VERIFIED, 22 models discovered, all 7 agents carry an assigned model on that provider,
+  autonomy stop inactive.
+- Real runs through the policy kernel succeeded against the live provider: Sarah/glm-5.3-flash
+  (reasoning output; token counts recorded) and Lyra/gpt-oss:120b answered
+  "Da, sunt funcțional și gata să te ajut." in ~1s. Runs, tokens and events are in the audit trail.
+- New: `POST /api/v1/settings/agents/{id}/test` runs one real connectivity task through the
+  agent's assigned model (fixed short objective, max 800 tokens) and returns the same AgentRun
+  envelope plus duration; 404 for unknown agents, policy blocks recorded as BLOCKED_* statuses.
+- New: each agent card in Settings → Agenți has a "Testează răspunsul" button that surfaces the
+  model's answer (or the block reason). Verified live in the browser: the button returned
+  "glm-5.3-flash a răspuns: «Da, sunt complet funcțional…»".
+- Test: `test_agent_llm_test_endpoint_runs_assigned_model` (provider monkeypatched; no network in
+  tests). Settings suite 16/16.
+
+## Whole-tree lint and type cleanup — 2026-09-10, ZCode
+
+With the parallel agents' sessions finished, the committed baseline still failed the README's own
+`ruff check .`, `ruff format --check .` and `mypy` (177 ruff findings, 9 mypy errors, inherited
+from pre-audit and remediation code). Cleaned without behaviour change:
+
+- `ruff format` across the tree (23 files) plus manual wrapping of the remaining 65 long lines
+  (string literals split with identical content; the deterministic SVG template's XML attributes
+  re-wrapped — rendering unchanged, hashes are computed at runtime).
+- Auto-fixes: 22 unused imports, 11 unsorted import blocks, small UP modernisations.
+- Manual: SQLAlchemy `== True` filters → `.is_(True)` (analytics), an unused local dropped
+  (publishing), explicit `strict=False` on an intentionally asymmetric `zip` (office layout test),
+  `requires_ffmpeg` moved below the imports it uses (E402).
+- mypy: explicit `dict[str, Any]` annotations for the ffprobe result and the storyboard scene
+  payloads (media/qc.py, media/assembler.py).
+
+Verification after cleanup: `ruff check .` clean, `ruff format --check .` clean (185 files),
+`mypy` clean (68 files), `pytest` 137 passed / 3 skipped, frontend `npm test` 11/11, `tsc` clean,
+build OK, `check_docs.py` and `check_secrets.py` pass.

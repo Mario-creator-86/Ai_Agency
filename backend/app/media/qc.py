@@ -6,6 +6,7 @@ Following docs/architecture/08_VIDEO_PIPELINE.md:
 - Character Drift QC: check character continuity against Character Bible.
 - Rights/License QC: all assets must be clear of copyright blocks.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -53,8 +54,10 @@ def probe_media_file(file_path: Path) -> dict[str, Any]:
         res = subprocess.run(
             [
                 ffprobe,
-                "-v", "error",
-                "-print_format", "json",
+                "-v",
+                "error",
+                "-print_format",
+                "json",
                 "-show_format",
                 "-show_streams",
                 str(file_path),
@@ -111,7 +114,7 @@ def evaluate_media_qc(engine: Engine, media_asset_id: str, correlation_id: str) 
         file_bytes = file_path.read_bytes() if file_exists else b""
         file_size = len(file_bytes)
 
-        probe = (
+        probe: dict[str, Any] = (
             probe_media_file(file_path)
             if file_exists
             else {"available": False, "ok": False, "error": "file missing"}
@@ -122,17 +125,13 @@ def evaluate_media_qc(engine: Engine, media_asset_id: str, correlation_id: str) 
         elif not probe["available"]:
             failure_reasons.append("ffprobe is not installed: technical QC cannot be verified")
         elif not probe["ok"]:
-            failure_reasons.append(
-                f"File is not a decodable video: {probe.get('error')}"
-            )
+            failure_reasons.append(f"File is not a decodable video: {probe.get('error')}")
 
         measured_w = probe.get("width") or 0
         measured_h = probe.get("height") or 0
         measured_dur = probe.get("duration_seconds") or 0.0
         is_9_16 = (
-            measured_w > 0
-            and measured_h > 0
-            and abs((measured_w / measured_h) - (9 / 16)) < 0.01
+            measured_w > 0 and measured_h > 0 and abs((measured_w / measured_h) - (9 / 16)) < 0.01
         )
         dur_valid = 10.0 <= measured_dur <= 70.0  # Shorts bounds
 
@@ -150,9 +149,7 @@ def evaluate_media_qc(engine: Engine, media_asset_id: str, correlation_id: str) 
         actual_hash = hashlib.sha256(file_bytes).hexdigest() if file_exists else None
         provenance_ok = bool(asset.provenance_hash) and actual_hash == asset.provenance_hash
         if not provenance_ok:
-            failure_reasons.append(
-                "Provenance digest missing or does not match the file on disk"
-            )
+            failure_reasons.append("Provenance digest missing or does not match the file on disk")
 
         # Declared vs measured mismatch is itself a defect worth surfacing.
         declared_mismatch = probe.get("ok") and (
@@ -165,8 +162,13 @@ def evaluate_media_qc(engine: Engine, media_asset_id: str, correlation_id: str) 
             )
 
         tech_passed = bool(
-            file_exists and file_size > 0 and probe.get("ok") and is_9_16 and dur_valid
-            and provenance_ok and not declared_mismatch
+            file_exists
+            and file_size > 0
+            and probe.get("ok")
+            and is_9_16
+            and dur_valid
+            and provenance_ok
+            and not declared_mismatch
         )
 
         checks["technical_qc"] = {
@@ -185,7 +187,12 @@ def evaluate_media_qc(engine: Engine, media_asset_id: str, correlation_id: str) 
         }
 
         # 2. Rights / Licensing QC
-        valid_licenses = {"ORIGINAL_AI_GENERATED", "PROPRIETARY_STUDIO", "PUBLIC_DOMAIN", "LICENSED"}
+        valid_licenses = {
+            "ORIGINAL_AI_GENERATED",
+            "PROPRIETARY_STUDIO",
+            "PUBLIC_DOMAIN",
+            "LICENSED",
+        }
         rights_passed = asset.license_status in valid_licenses
         if not rights_passed:
             failure_reasons.append(f"Invalid license status: {asset.license_status}")
@@ -231,7 +238,7 @@ def evaluate_media_qc(engine: Engine, media_asset_id: str, correlation_id: str) 
                 ).all()
                 all_claim_ids = set()
                 for sc in scenes:
-                    for cid in (sc.claim_ids_json or []):
+                    for cid in sc.claim_ids_json or []:
                         all_claim_ids.add(cid)
 
                 for cid in all_claim_ids:
@@ -240,7 +247,9 @@ def evaluate_media_qc(engine: Engine, media_asset_id: str, correlation_id: str) 
                         claims_checked.append({"id": cid, "status": claim.status})
                         if claim.status != "SUPPORTED":
                             factual_passed = False
-                            failure_reasons.append(f"Claim '{claim.claim_text[:40]}' is {claim.status}, not SUPPORTED")
+                            failure_reasons.append(
+                                f"Claim '{claim.claim_text[:40]}' is {claim.status}, not SUPPORTED"
+                            )
                     else:
                         factual_passed = False
                         failure_reasons.append(f"Claim ID {cid} missing from database")
@@ -259,9 +268,7 @@ def evaluate_media_qc(engine: Engine, media_asset_id: str, correlation_id: str) 
             "status": "NOT_IMPLEMENTED",
             "passed": None,
             "characters_configured": len(chars_checked),
-            "detail": (
-                "No visual continuity comparison exists yet; this check certifies nothing."
-            ),
+            "detail": ("No visual continuity comparison exists yet; this check certifies nothing."),
         }
 
         # Overall Status
@@ -275,7 +282,12 @@ def evaluate_media_qc(engine: Engine, media_asset_id: str, correlation_id: str) 
             "quality_control_report",
             qc_id,
             1,
-            {"media_asset_id": media_asset_id, "status": status, "score": score, "failures": failure_reasons},
+            {
+                "media_asset_id": media_asset_id,
+                "status": status,
+                "score": score,
+                "failures": failure_reasons,
+            },
             correlation_id,
         )
 

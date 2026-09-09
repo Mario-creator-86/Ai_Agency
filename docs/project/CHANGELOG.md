@@ -257,3 +257,18 @@ Decision D-DESIGN-003.
 - The floor nameplate now carries the agent name only. The runtime state (IDLE, WORKING, …)
   floats above the character's head on a dark chip in the department accent, and the thinking
   bulb and sleeping Z marks were raised so none of the three overlap.
+
+## 2026-09-10 — Settings agent LLM test + verified Ollama Cloud connectivity
+
+- New `POST /api/v1/settings/agents/{id}/test`: one real run through the assigned model via the
+  policy kernel; the Settings → Agenți cards gained a "Testează răspunsul" button that shows the
+  model's answer or the block reason. Verified live against Ollama Cloud (glm-5.3-flash,
+  gpt-oss:120b). New settings test; suite 16/16.
+
+## 2026-09-10 — Whole-tree lint and type cleanup
+
+- `ruff format` across the tree, 65 long lines wrapped (string content preserved), unused/unsorted
+  imports removed, SQLAlchemy `== True` → `.is_(True)`, `zip(..., strict=False)`, import order fix.
+- mypy: typed the ffprobe result and storyboard scene payloads (`dict[str, Any]`).
+- Baseline now passes every README check: ruff, ruff format, mypy, pytest 137, frontend 11,
+  docs integrity, secret scan.

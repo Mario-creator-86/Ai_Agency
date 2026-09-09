@@ -34,7 +34,8 @@ from app.security import require_owner
 
 
 def get_analytics_provider() -> DeterministicAnalyticsAdapter | YouTubeAnalyticsProvider:
-    """Select the configured analytics provider (YouTube if OAuth configured, else Deterministic)."""
+    """Select the configured analytics provider
+    (YouTube if OAuth configured, else Deterministic)."""
     yt = YouTubeAnalyticsProvider()
     if yt.is_configured():
         return yt
