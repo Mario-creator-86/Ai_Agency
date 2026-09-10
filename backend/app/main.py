@@ -34,6 +34,7 @@ from app.providers.ollama import OllamaProvider
 from app.providers.registry import ProviderRegistry
 from app.publishing.router import create_publishing_router
 from app.runbook.router import create_runbook_router
+from app.runbook.stages import build_stage_runners
 from app.schemas import PolicyCommand, PolicyResult
 from app.security import require_owner
 from app.services import CommandConflict, change_stop, read_events, snapshot
@@ -127,6 +128,11 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
     app.state.registry = registry
     connection_manager = ConnectionManager()
     app.state.connection_manager = connection_manager
+    # The work behind the runbook's stages. Without this a daily run walks twelve stages and
+    # records eleven of them SKIPPED for want of an implementation — truthful, and idle.
+    app.state.stage_runners = build_stage_runners(
+        engine, settings, app.state.credential_vault, registry
+    )
 
     @app.middleware("http")
     async def request_context(request: Request, call_next):  # type: ignore[no-untyped-def]

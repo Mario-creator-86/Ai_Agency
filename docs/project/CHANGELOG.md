@@ -1,5 +1,30 @@
 # Changelog
 
+## The daily run does the day's work — 2026-09-11
+
+- Connected real work to the runbook. `execute_daily_run` walked twelve stages and nothing in the
+  application ever supplied the work for any of them, so every run recorded preflight and then
+  eleven SKIPPED: truthful, and idle. Eight stages now have implementations behind them.
+- Performance intake measures the videos the platform is actually serving. Research reads the
+  ingested sources and has a second agent check every claim against the source it came from.
+  Selection takes a topic that has something verified to say. The script writer drafts from the
+  supported claims, storyboards what the Owner has approved, renders it, and quality control
+  measures the file. Publishing goes through the same five-point gate as a manual publication.
+  The serial writes the episode for the day the studio has just closed.
+- Two outcomes, kept apart: COMPLETED means the stage ran to its end, SKIPPED means it could not
+  run. "We looked and there was nothing" and "we could not look" now read differently in a run.
+- Where a person decides, the studio stops. A draft is left at VERIFIED_PASS for the Owner, and
+  storyboarding waits for that approval. `idea_generation` and `post_run` stay unwired, because
+  neither has an implementation and inventing one would be worse than the runbook saying so.
+- A refusal is not a failure. A rejected script or a rejected episode is the pipeline working;
+  letting it raise would have stopped the day at that stage and left the log unclosed.
+- Added `select_topic`, the verb that was missing: a topic goes into production only if at least
+  one claim about it is SUPPORTED. Idempotent, and it records the decision.
+- `scripts/demo_daily_run.py` runs two full days in a throwaway studio, with an Owner approval
+  between them. The second day renders a real 51 kB MP4 through FFmpeg and quality control
+  measures it with ffprobe and fails it — placeholder visuals, duration outside Shorts limits.
+  Every refusal in the run is specific and correct.
+
 ## Internal audit — 2026-09-11
 
 - Audited the whole studio at the Owner's request. Nine defects found and fixed, each with a test

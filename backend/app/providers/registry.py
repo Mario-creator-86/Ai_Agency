@@ -21,6 +21,10 @@ class ProviderRegistry:
     def get(self, provider_id: str) -> LLMProvider | None:
         return self._adapters.get(provider_id)
 
+    def registered_ids(self) -> list[str]:
+        """The providers currently registered, so a caller can ask whether any model exists."""
+        return sorted(self._adapters)
+
     async def check_health(self, provider_id: str) -> HealthResult:
         adapter = self._adapters.get(provider_id)
         if adapter is None:

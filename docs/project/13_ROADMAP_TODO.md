@@ -140,6 +140,13 @@ verified content → valid 9:16 MP4 with provenance. ✅
 Acceptance:
 private test upload proven without duplicates. ✅
 
+> **2026-09-11 — the runbook now runs the pipeline.** Eight of the twelve daily stages have real
+> implementations behind them (`backend/app/runbook/stages.py`), so a day's run performs the work
+> of Phases 4 to 7 rather than recording it as unconnected. `idea_generation` and `post_run` have
+> no implementation and are still reported SKIPPED with that reason. The acceptance criteria of
+> the phases below are unchanged: what is wired is what exists, and the stages report honestly
+> where a provider or an approval is missing.
+
 ## PHASE 7 — Analytics / Growth
 - [ ] analytics ingestion
 - [ ] snapshots

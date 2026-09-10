@@ -11,7 +11,7 @@ import logging
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
 from app.factual.models import FactualClaim, HookOption, ScriptDraft, SourceSnapshot, TopicIdea
@@ -104,6 +104,55 @@ def propose_topic_idea(
         session.add(idea)
         session.flush()
         return TopicIdeaView.model_validate(idea).model_dump()
+
+
+class TopicNotProducible(ValueError):
+    """The topic cannot go into production, and the reason says why."""
+
+
+def select_topic(engine: Engine, topic_id: str, correlation_id: str) -> dict:
+    """Move a topic into production, but only if there is something true to say about it.
+
+    Selection is the point where a candidate becomes the day's work, so the condition is the one
+    that matters downstream: at least one claim about this topic has been verified as SUPPORTED.
+    A topic whose claims are all unverified or refuted has nothing a script could be written
+    from, and selecting it would only push the refusal one stage later.
+
+    Idempotent: selecting an already selected topic returns it unchanged rather than appending a
+    second event for a decision that was already taken.
+    """
+    with Session(engine) as session, session.begin():
+        topic = session.get(TopicIdea, topic_id)
+        if topic is None:
+            raise TopicNotProducible(f"Topic {topic_id} not found")
+        if topic.status == "SELECTED":
+            return TopicIdeaView.model_validate(topic).model_dump()
+        if topic.status not in ("PROPOSED", "RESEARCHED"):
+            raise TopicNotProducible(
+                f"Topic is {topic.status}; only a proposed or researched topic can be selected."
+            )
+        supported = session.scalar(
+            select(func.count())
+            .select_from(FactualClaim)
+            .where(FactualClaim.topic_id == topic_id, FactualClaim.status == "SUPPORTED")
+        )
+        if not supported:
+            raise TopicNotProducible(
+                "The topic has no SUPPORTED claim; there is nothing verified to write from."
+            )
+        event = append_event(
+            session,
+            "factual.topic_selected",
+            "topic_idea",
+            topic_id,
+            2,
+            {"title": topic.title, "supported_claims": int(supported)},
+            correlation_id,
+        )
+        topic.status = "SELECTED"
+        topic.event_id = event.event_id
+        session.flush()
+        return TopicIdeaView.model_validate(topic).model_dump()
 
 
 def list_topic_ideas(engine: Engine, status: str | None = None) -> list[dict]:
