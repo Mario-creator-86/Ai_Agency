@@ -20,6 +20,16 @@ class UploadResult:
     simulated: bool = False
 
 
+class RemoteStateUnavailable(RuntimeError):
+    """The platform could not be asked.
+
+    Distinct from an answer of "no". A provider raises this when the question failed — no
+    credentials, a network error, a rate limit, an expired token — so that no caller can read
+    silence as evidence that a video is absent. Recording "not there" on the strength of a failed
+    request is how a studio ends up uploading a second copy of a video that is already live.
+    """
+
+
 @dataclass
 class RemoteVideoStatus:
     remote_video_id: str
@@ -64,10 +74,19 @@ class PublishingProvider(abc.ABC):
 
     @abc.abstractmethod
     async def get_video_status(self, remote_video_id: str) -> RemoteVideoStatus:
-        """Query platform for authoritative remote publication state."""
+        """Query platform for authoritative remote publication state.
+
+        Raises `RemoteStateUnavailable` when the platform could not be asked. Returning
+        ``exists=False`` is a statement of fact and must be backed by an answer.
+        """
 
     @abc.abstractmethod
     async def reconcile_upload(
         self, idempotency_key: str, expected_title: str
     ) -> UploadResult | None:
-        """Reconcile in-flight or ambiguous uploads to prevent duplicate submissions."""
+        """Reconcile in-flight or ambiguous uploads to prevent duplicate submissions.
+
+        ``None`` means the platform was asked and holds no such upload. When it could not be
+        asked, raise `RemoteStateUnavailable`: the caller's next step is to upload, and it must
+        not take that step on the strength of a question that was never answered.
+        """

@@ -135,9 +135,7 @@ def create_economy_router() -> APIRouter:
         status: Annotated[str | None, Query(max_length=20)] = None,
         limit: Annotated[int, Query(ge=1, le=200)] = 100,
     ) -> dict:
-        return {
-            "evidence": list_evidence(request.app.state.engine, status=status, limit=limit)
-        }
+        return {"evidence": list_evidence(request.app.state.engine, status=status, limit=limit)}
 
     @router.get("/owner-funding")
     def get_owner_funding(request: Request) -> dict:
@@ -149,9 +147,7 @@ def create_economy_router() -> APIRouter:
         status: Annotated[str | None, Query(max_length=20)] = None,
         limit: Annotated[int, Query(ge=1, le=200)] = 100,
     ) -> dict:
-        return {
-            "costs": list_provider_costs(request.app.state.engine, status=status, limit=limit)
-        }
+        return {"costs": list_provider_costs(request.app.state.engine, status=status, limit=limit)}
 
     @router.post("/provider-costs")
     def post_provider_cost(request: Request, cmd: ProviderCostCommand) -> dict:

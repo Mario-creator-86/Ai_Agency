@@ -32,7 +32,7 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-CLIENT_SECRET = "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-leak"
+CLIENT_SECRET = "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-leak"  # pragma: allowlist secret
 FIRST_REFRESH = "1//refresh-token-alpha-never-shown"
 SECOND_REFRESH = "1//refresh-token-beta-never-shown"
 REDIRECT = "http://127.0.0.1:8000/auth/youtube/callback"
@@ -112,9 +112,7 @@ def connection(engine, vault):
 
 def connect(engine, vault, connection_id):
     """Run the flow the way the browser does: authorize, then come back with code and state."""
-    started = services.begin_authorization(
-        engine, connection_id, correlation_id=str(uuid4())
-    )
+    started = services.begin_authorization(engine, connection_id, correlation_id=str(uuid4()))
     state = parse_qs(urlparse(started["authorization_url"]).query)["state"][0]
     return services.complete_authorization(
         engine, vault, code="auth-code", state=state, correlation_id=str(uuid4())
@@ -159,25 +157,33 @@ def test_saving_credentials_authorises_nothing_and_encrypts_the_secret(engine, v
 def test_a_malformed_redirect_uri_is_refused(engine, vault, bad):
     with pytest.raises(services.YouTubeConnectionError):
         services.create_connection(
-            engine, vault, name=f"n{bad}", client_id="c", client_secret="s",
-            redirect_uri=bad, correlation_id=str(uuid4()),
+            engine,
+            vault,
+            name=f"n{bad}",
+            client_id="c",
+            client_secret="s",
+            redirect_uri=bad,
+            correlation_id=str(uuid4()),
         )
 
 
 def test_two_connections_cannot_share_a_name(engine, vault, connection):
     with pytest.raises(services.YouTubeConnectionError, match="Există deja"):
         services.create_connection(
-            engine, vault, name="NEXUS CURIOSITY", client_id="c2", client_secret="s2",
-            redirect_uri=REDIRECT, correlation_id=str(uuid4()),
+            engine,
+            vault,
+            name="NEXUS CURIOSITY",
+            client_id="c2",
+            client_secret="s2",  # pragma: allowlist secret
+            redirect_uri=REDIRECT,
+            correlation_id=str(uuid4()),
         )
 
 
 # ------------------------------------------------------------------- the authorisation URL --
 
 
-def test_the_consent_url_asks_for_offline_access_and_forces_consent_when_needed(
-    engine, connection
-):
+def test_the_consent_url_asks_for_offline_access_and_forces_consent_when_needed(engine, connection):
     started = services.begin_authorization(engine, connection["id"], correlation_id=str(uuid4()))
     url = urlparse(started["authorization_url"])
     query = {k: v[0] for k, v in parse_qs(url.query).items()}
@@ -370,7 +376,9 @@ def test_changing_the_google_client_drops_a_token_it_can_no_longer_use(
 ):
     connect(engine, vault, connection["id"])
     updated = services.update_connection(
-        engine, vault, connection["id"],
+        engine,
+        vault,
+        connection["id"],
         client_id="client-beta.apps.googleusercontent.com",
         correlation_id=str(uuid4()),
     )
@@ -378,9 +386,7 @@ def test_changing_the_google_client_drops_a_token_it_can_no_longer_use(
     assert updated["has_refresh_token"] is False
 
 
-def test_verify_re_reads_the_channel_and_records_a_revoked_grant(
-    engine, vault, google, connection
-):
+def test_verify_re_reads_the_channel_and_records_a_revoked_grant(engine, vault, google, connection):
     connect(engine, vault, connection["id"])
     google.channel = channel_payload("UC_alpha_test", "NEXUS CURIOSITY renamed")
     refreshed = services.verify_connection(
@@ -400,9 +406,13 @@ def test_verify_re_reads_the_channel_and_records_a_revoked_grant(
 
 def test_two_channels_are_two_independent_connections(engine, vault, google, connection):
     second = services.create_connection(
-        engine, vault, name="INSIDE THE NEXUS",
+        engine,
+        vault,
+        name="INSIDE THE NEXUS",
         client_id="client-beta.apps.googleusercontent.com",
-        client_secret="another-secret", redirect_uri=REDIRECT, correlation_id=str(uuid4()),
+        client_secret="another-secret",  # pragma: allowlist secret
+        redirect_uri=REDIRECT,
+        correlation_id=str(uuid4()),
     )
     connect(engine, vault, connection["id"])
 

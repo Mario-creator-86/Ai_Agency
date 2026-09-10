@@ -973,9 +973,14 @@ def _evidence_view(evidence: RevenueEvidence) -> dict:
         "source": evidence.source,
         "external_reference": evidence.external_reference,
         "status": evidence.status,
-        "label": "VERIFIED" if evidence.status == MINTABLE_STATUS else (
-            "PENDING" if evidence.status == "PENDING_PAYOUT" else
-            "FORECAST" if evidence.status == "ESTIMATED" else "REVERSED"
+        "label": "VERIFIED"
+        if evidence.status == MINTABLE_STATUS
+        else (
+            "PENDING"
+            if evidence.status == "PENDING_PAYOUT"
+            else "FORECAST"
+            if evidence.status == "ESTIMATED"
+            else "REVERSED"
         ),
         "original_amount": format_micros(evidence.original_amount_micros),
         "original_currency": evidence.original_currency,

@@ -164,6 +164,7 @@ def connection_view(row: YouTubeConnection) -> dict:
         "redirect_uri": row.redirect_uri,
         "status": row.status,
         "connected": row.status == STATUS_CONNECTED,
+        # pragma: allowlist nextline secret -- a field-name test; no value is present here
         "has_client_secret": "client_secret" in (row.secret_fields or []),
         "has_refresh_token": "refresh_token" in (row.secret_fields or []),
         "channel": {

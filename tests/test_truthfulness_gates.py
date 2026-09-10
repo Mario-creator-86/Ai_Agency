@@ -86,6 +86,77 @@ def _register_asset(engine, path: Path, *, provenance_hash: str | None = None) -
     return asset_id
 
 
+def _give_provenance(engine, asset_id: str) -> None:
+    """Attach the script -> storyboard -> render job chain that the factual gate walks.
+
+    A publishable asset has to be traceable back to a script; the gate now fails anything it
+    cannot trace, rather than passing it while claiming "verified factual provenance". The script
+    here asserts no factual claims, which is the honest shape for a test whose subject is how an
+    upload result gets recorded.
+    """
+    from app.factual.models import ScriptDraft, TopicIdea
+    from app.media.models import Storyboard, VideoRenderJob
+
+    now = utc_now()
+    script_id, storyboard_id, topic_id = str(uuid4()), str(uuid4()), str(uuid4())
+    with Session(engine) as session, session.begin():
+        session.add(
+            TopicIdea(
+                id=topic_id,
+                title="Subiect de test",
+                topic="Test",
+                angle="Test",
+                target_audience="test",
+                novelty_score=0.5,
+                status="SELECTED",
+                created_at=now,
+            )
+        )
+        session.add(
+            ScriptDraft(
+                id=script_id,
+                topic_id=topic_id,
+                version=1,
+                title="Fara afirmatii factuale",
+                target_duration_seconds=10,
+                voiceover_full_text="",
+                scenes_json=[],
+                status="APPROVED",
+                claim_ids_json=[],
+                unverified_claim_ids_json=[],
+                created_at=now,
+            )
+        )
+    # Committed in the same order the pipeline writes them: the storyboard's script must exist
+    # before the storyboard references it.
+    with Session(engine) as session, session.begin():
+        session.add(
+            Storyboard(
+                id=storyboard_id,
+                script_draft_id=script_id,
+                title="Storyboard",
+                visual_style="MOTION_GRAPHIC",
+                aspect_ratio="9:16",
+                target_duration_seconds=10,
+                status="APPROVED",
+                total_scenes=0,
+                created_at=now,
+            )
+        )
+        session.add(
+            VideoRenderJob(
+                id=str(uuid4()),
+                storyboard_id=storyboard_id,
+                output_asset_id=asset_id,
+                status="COMPLETED",
+                render_engine="test",
+                command_args_json={},
+                started_at=now,
+                finished_at=now,
+            )
+        )
+
+
 def test_seeded_channels_are_not_reported_as_configured(engine):
     """A channel slot is not a configured channel: no invented ID, no CONFIGURED status."""
     assert seed_default_channels(engine) == 2
@@ -132,6 +203,7 @@ def test_simulated_upload_is_never_recorded_as_a_real_publication(engine, tmp_pa
     video = tmp_path / "video.mp4"
     video.write_bytes(b"\x00" * 2048)
     asset_id = _register_asset(engine, video)
+    _give_provenance(engine, asset_id)
 
     # Bypass QC for this test by writing a PASSED report directly; the point under test is
     # the recording of the upload result, not the gate.
@@ -410,3 +482,59 @@ def test_an_unreachable_provider_reports_that_it_did_not_answer(seeded, client, 
     after = client.get("/api/v1/providers/", headers=headers).json()["providers"][0]
     assert after["status"] == "NOT_CONFIGURED"
     assert after["last_health_check"] is None
+
+
+def test_an_asset_with_no_provenance_is_refused_rather_than_declared_verified(engine, tmp_path):
+    """The factual gate used to pass anything it could not trace, saying "verified provenance".
+
+    Walking asset -> render job -> storyboard -> script is how the gate learns which claims a
+    video makes. When the walk fails it has learned nothing, and an unanswered gate must block
+    rather than sign off. 50_CONTENT_GATE_MATRIX.md keeps NOT_APPLICABLE separate from PASS.
+    """
+    from app.publishing.services import evaluate_publishing_gate
+
+    _clear_stop(engine)
+    seed_default_channels(engine)
+    channel_id = list_channels(engine)[0]["id"]
+    video = tmp_path / "orphan.mp4"
+    video.write_bytes(b"\x00" * 2048)
+    asset_id = _register_asset(engine, video)
+
+    verdict = evaluate_publishing_gate(engine, asset_id, channel_id)
+    gate = next(c for c in verdict["checks"] if c["check_name"] == "FACTUAL_INTEGRITY_GATE")
+
+    assert verdict["eligible"] is False
+    assert gate["passed"] is False
+    assert "no render job records this asset" in gate["detail"]
+    # The old wording is the thing being forbidden: it asserted a verification never performed.
+    assert "verified factual provenance" not in gate["detail"]
+
+
+def test_a_claim_referenced_but_absent_is_not_treated_as_supported(engine, tmp_path):
+    """A dangling claim id used to disappear from the check entirely.
+
+    The gate loaded the rows that existed and compared only those, so a script citing three
+    claims of which two were missing passed as "All 1 referenced claims are SUPPORTED".
+    """
+    from app.factual.models import ScriptDraft
+    from app.publishing.services import evaluate_publishing_gate
+
+    _clear_stop(engine)
+    seed_default_channels(engine)
+    channel_id = list_channels(engine)[0]["id"]
+    video = tmp_path / "dangling.mp4"
+    video.write_bytes(b"\x00" * 2048)
+    asset_id = _register_asset(engine, video)
+    _give_provenance(engine, asset_id)
+
+    invented = str(uuid4())
+    with Session(engine) as session, session.begin():
+        script = session.scalars(select(ScriptDraft)).first()
+        script.claim_ids_json = [invented]
+
+    verdict = evaluate_publishing_gate(engine, asset_id, channel_id)
+    gate = next(c for c in verdict["checks"] if c["check_name"] == "FACTUAL_INTEGRITY_GATE")
+
+    assert verdict["eligible"] is False
+    assert gate["passed"] is False
+    assert invented in gate["detail"]

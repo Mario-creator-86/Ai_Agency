@@ -95,9 +95,7 @@ def connect_youtube(engine, monkeypatch):
             redirect_uri="http://127.0.0.1:8000/auth/youtube/callback",
             correlation_id=str(uuid4()),
         )
-        started = youtube.begin_authorization(
-            engine, connection["id"], correlation_id=str(uuid4())
-        )
+        started = youtube.begin_authorization(engine, connection["id"], correlation_id=str(uuid4()))
         state = parse_qs(urlparse(started["authorization_url"]).query)["state"][0]
         youtube.complete_authorization(
             engine, vault, code="test-code", state=state, correlation_id=str(uuid4())

@@ -122,81 +122,129 @@ def main() -> int:
             return 0
 
         # 1. A platform payout that has not settled yet: visible, and not spendable.
-        pending = call(base, token, "POST", "/economy/evidence", {
-            "command_id": str(uuid4()),
-            "source": "YOUTUBE",
-            "external_reference": "PAY-2026-08",
-            "status": "PENDING_PAYOUT",
-            "amount": "734.22",
-            "currency": "USD",
-            "detail": {"period": "2026-08", "note": "estimated payout, not yet paid"},
-        })
+        pending = call(
+            base,
+            token,
+            "POST",
+            "/economy/evidence",
+            {
+                "command_id": str(uuid4()),
+                "source": "YOUTUBE",
+                "external_reference": "PAY-2026-08",
+                "status": "PENDING_PAYOUT",
+                "amount": "734.22",
+                "currency": "USD",
+                "detail": {"period": "2026-08", "note": "estimated payout, not yet paid"},
+            },
+        )
         # 2. It settles, then is minted: 734.22 verified dollars become 734.22 VR$.
         call(base, token, "POST", f"/economy/evidence/{pending['id']}/settle")
         call(base, token, "POST", f"/economy/evidence/{pending['id']}/mint")
 
         # 3. A forecast for next month. Recorded, never minted.
-        call(base, token, "POST", "/economy/evidence", {
-            "command_id": str(uuid4()),
-            "source": "YOUTUBE",
-            "external_reference": "EST-2026-09",
-            "status": "ESTIMATED",
-            "amount": "900",
-            "currency": "USD",
-        })
+        call(
+            base,
+            token,
+            "POST",
+            "/economy/evidence",
+            {
+                "command_id": str(uuid4()),
+                "source": "YOUTUBE",
+                "external_reference": "EST-2026-09",
+                "status": "ESTIMATED",
+                "amount": "900",
+                "currency": "USD",
+            },
+        )
         # 4. A sponsorship in euros, converted at a rate that is recorded, not invented.
-        fx = call(base, token, "POST", "/economy/fx", {
-            "command_id": str(uuid4()),
-            "base_currency": "EUR",
-            "quote_currency": "USD",
-            "rate": "1.08",
-            "source": "ECB reference rate",
-            "observed_at": "2026-09-10T12:00:00+00:00",
-        })
-        sponsor = call(base, token, "POST", "/economy/evidence", {
-            "command_id": str(uuid4()),
-            "source": "SPONSORSHIP",
-            "external_reference": "INV-2026-09-03",
-            "status": "SETTLED",
-            "amount": "500",
-            "currency": "EUR",
-            "fx_snapshot_id": fx["id"],
-        })
+        fx = call(
+            base,
+            token,
+            "POST",
+            "/economy/fx",
+            {
+                "command_id": str(uuid4()),
+                "base_currency": "EUR",
+                "quote_currency": "USD",
+                "rate": "1.08",
+                "source": "ECB reference rate",
+                "observed_at": "2026-09-10T12:00:00+00:00",
+            },
+        )
+        sponsor = call(
+            base,
+            token,
+            "POST",
+            "/economy/evidence",
+            {
+                "command_id": str(uuid4()),
+                "source": "SPONSORSHIP",
+                "external_reference": "INV-2026-09-03",
+                "status": "SETTLED",
+                "amount": "500",
+                "currency": "EUR",
+                "fx_snapshot_id": fx["id"],
+            },
+        )
         call(base, token, "POST", f"/economy/evidence/{sponsor['id']}/mint")
 
         # 5. The Owner puts money in: a contribution and a loan, which post differently.
-        call(base, token, "POST", "/economy/owner-funding", {
-            "command_id": str(uuid4()),
-            "funding_type": "CAPITAL_CONTRIBUTION",
-            "amount": "1000",
-            "currency": "USD",
-            "note": "Seed capital",
-        })
-        call(base, token, "POST", "/economy/owner-funding", {
-            "command_id": str(uuid4()),
-            "funding_type": "OWNER_LOAN",
-            "amount": "2000",
-            "currency": "USD",
-            "annual_rate_bps": 500,
-            "maturity_date": "2027-09-10",
-            "note": "Owner loan at 5%",
-        })
+        call(
+            base,
+            token,
+            "POST",
+            "/economy/owner-funding",
+            {
+                "command_id": str(uuid4()),
+                "funding_type": "CAPITAL_CONTRIBUTION",
+                "amount": "1000",
+                "currency": "USD",
+                "note": "Seed capital",
+            },
+        )
+        call(
+            base,
+            token,
+            "POST",
+            "/economy/owner-funding",
+            {
+                "command_id": str(uuid4()),
+                "funding_type": "OWNER_LOAN",
+                "amount": "2000",
+                "currency": "USD",
+                "annual_rate_bps": 500,
+                "maturity_date": "2027-09-10",
+                "note": "Owner loan at 5%",
+            },
+        )
         # 6. What the studio actually spent on models, and one estimate not yet invoiced.
-        call(base, token, "POST", "/economy/provider-costs", {
-            "command_id": str(uuid4()),
-            "provider": "openai",
-            "external_reference": "INV-2026-08",
-            "status": "BILLED",
-            "amount": "218.40",
-            "attribution": {"workflow": "daily-short"},
-        })
-        call(base, token, "POST", "/economy/provider-costs", {
-            "command_id": str(uuid4()),
-            "provider": "elevenlabs",
-            "external_reference": "USAGE-2026-09",
-            "status": "ESTIMATED",
-            "amount": "46.10",
-        })
+        call(
+            base,
+            token,
+            "POST",
+            "/economy/provider-costs",
+            {
+                "command_id": str(uuid4()),
+                "provider": "openai",
+                "external_reference": "INV-2026-08",
+                "status": "BILLED",
+                "amount": "218.40",
+                "attribution": {"workflow": "daily-short"},
+            },
+        )
+        call(
+            base,
+            token,
+            "POST",
+            "/economy/provider-costs",
+            {
+                "command_id": str(uuid4()),
+                "provider": "elevenlabs",
+                "external_reference": "USAGE-2026-09",
+                "status": "ESTIMATED",
+                "amount": "46.10",
+            },
+        )
 
         treasury = call(base, token, "GET", "/economy/treasury")
         print("\nSpendable      :", treasury["spendable"]["amount"], "VR$")

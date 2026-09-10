@@ -12,7 +12,11 @@ from sqlalchemy.orm import Session
 from app.factual.models import FactualClaim, ScriptDraft
 from app.media.models import MediaAsset, QualityControlReport, Storyboard, VideoRenderJob
 from app.models import OwnerPolicy
-from app.providers.publishing_base import PublishingProvider, UploadResult
+from app.providers.publishing_base import (
+    PublishingProvider,
+    RemoteStateUnavailable,
+    UploadResult,
+)
 from app.publishing.models import ChannelBrandAsset, ChannelRecord, PublicationRecord
 from app.publishing.schemas import (
     ChannelView,
@@ -271,46 +275,88 @@ def evaluate_publishing_gate(engine: Engine, media_asset_id: str, channel_id: st
             )
 
         # Gate 4: Factual Claim Integrity Check
+        #
+        # This gate answers one question: is every factual claim this video makes backed by a
+        # claim record marked SUPPORTED? Answering it requires walking asset -> render job ->
+        # storyboard -> script. If any link is missing the question has not been answered, and an
+        # unanswered gate is a failed gate. An earlier version fell through to "Asset has
+        # verified factual provenance" — passing the asset while asserting a verification that
+        # never took place, which is the exact defect the 2026-09-09 audit found elsewhere.
+        # 50_CONTENT_GATE_MATRIX.md gives NOT_APPLICABLE its own outcome ("record reason"); it is
+        # not a synonym for PASS.
         job = session.scalars(
             select(VideoRenderJob).where(VideoRenderJob.output_asset_id == media_asset_id)
         ).first()
-        if job and job.storyboard_id:
-            sb = session.get(Storyboard, job.storyboard_id)
-            if sb and sb.script_draft_id:
-                script = session.get(ScriptDraft, sb.script_draft_id)
-                if script:
-                    claims = session.scalars(
-                        select(FactualClaim).where(FactualClaim.id.in_(script.claim_ids_json))
-                    ).all()
-                    unverified_claims = [c.id for c in claims if c.status != "SUPPORTED"]
-                    if unverified_claims:
-                        checks.append(
-                            {
-                                "check_name": "FACTUAL_INTEGRITY_GATE",
-                                "passed": False,
-                                "detail": (
-                                    f"Script contains unverified/refuted claims: "
-                                    f"{unverified_claims}."
-                                ),
-                            }
-                        )
-                        reasons.append(f"Unverified claims in script: {unverified_claims}")
-                    else:
-                        checks.append(
-                            {
-                                "check_name": "FACTUAL_INTEGRITY_GATE",
-                                "passed": True,
-                                "detail": f"All {len(claims)} referenced claims are SUPPORTED.",
-                            }
-                        )
-        if not any(c["check_name"] == "FACTUAL_INTEGRITY_GATE" for c in checks):
+        storyboard = (
+            session.get(Storyboard, job.storyboard_id) if job and job.storyboard_id else None
+        )
+        script = (
+            session.get(ScriptDraft, storyboard.script_draft_id)
+            if storyboard and storyboard.script_draft_id
+            else None
+        )
+
+        if script is None:
+            missing = (
+                "no render job records this asset"
+                if job is None
+                else "the render job has no storyboard"
+                if storyboard is None
+                else "the storyboard has no script"
+            )
             checks.append(
                 {
                     "check_name": "FACTUAL_INTEGRITY_GATE",
-                    "passed": True,
-                    "detail": "Asset has verified factual provenance.",
+                    "passed": False,
+                    "detail": (
+                        f"Provenance could not be established: {missing}. The claims this video "
+                        f"makes cannot be checked against anything."
+                    ),
                 }
             )
+            reasons.append(f"Factual provenance unverifiable: {missing}")
+        else:
+            referenced = list(script.claim_ids_json or [])
+            claims = session.scalars(
+                select(FactualClaim).where(FactualClaim.id.in_(referenced))
+            ).all()
+            found = {claim.id for claim in claims}
+            # A claim id with no row behind it is not a verified claim; it is a dangling
+            # reference, and silently dropping it would let a script cite anything at all.
+            dangling = [claim_id for claim_id in referenced if claim_id not in found]
+            unverified_claims = [claim.id for claim in claims if claim.status != "SUPPORTED"]
+            if dangling or unverified_claims:
+                trouble = []
+                if unverified_claims:
+                    trouble.append(f"unverified or refuted: {unverified_claims}")
+                if dangling:
+                    trouble.append(f"referenced but missing: {dangling}")
+                checks.append(
+                    {
+                        "check_name": "FACTUAL_INTEGRITY_GATE",
+                        "passed": False,
+                        "detail": "Script contains claims " + "; ".join(trouble) + ".",
+                    }
+                )
+                reasons.append("Claims in script are not all supported: " + "; ".join(trouble))
+            elif referenced:
+                checks.append(
+                    {
+                        "check_name": "FACTUAL_INTEGRITY_GATE",
+                        "passed": True,
+                        "detail": f"All {len(claims)} referenced claims are SUPPORTED.",
+                    }
+                )
+            else:
+                # A script that asserts nothing factual has nothing to verify. Said plainly,
+                # rather than dressed up as a verification that happened.
+                checks.append(
+                    {
+                        "check_name": "FACTUAL_INTEGRITY_GATE",
+                        "passed": True,
+                        "detail": "The script references no factual claims; none to verify.",
+                    }
+                )
 
         # Gate 5: Idempotency & Duplicate Publishing Check
         existing_pub = session.scalars(
@@ -511,7 +557,32 @@ def execute_publication(
     # Never re-upload blindly after a failure: ask the platform whether the previous attempt
     # actually landed (47_STATE_MACHINE_SPECIFICATIONS.md, duplicate protection).
     if is_retry:
-        reconciled = asyncio.run(publisher.reconcile_upload(idempotency_key, title))
+        try:
+            reconciled = asyncio.run(publisher.reconcile_upload(idempotency_key, title))
+        except RemoteStateUnavailable as exc:
+            # The one thing that must not happen here is a second upload. The platform could not
+            # say whether the first attempt landed, so the publication stays retryable and the
+            # record says why, rather than the studio guessing and posting a duplicate.
+            with Session(engine) as session, session.begin():
+                pub = session.get(PublicationRecord, publication_id)
+                if pub is None:
+                    raise ValueError("Publication record lost during reconciliation") from None
+                pub.status = "FAILED_RETRYABLE"
+                pub.error_detail = (
+                    f"Retry stopped before uploading: {exc} A duplicate cannot be ruled out."
+                )
+                event = append_event(
+                    session,
+                    "publishing.reconcile_unavailable",
+                    "publication_record",
+                    publication_id,
+                    1,
+                    {"detail": str(exc), "uploaded": False},
+                    correlation_id,
+                )
+                pub.event_id = event.event_id
+                session.flush()
+                return PublicationView.model_validate(pub).model_dump()
         if reconciled is not None:
             with Session(engine) as session, session.begin():
                 pub = session.get(PublicationRecord, publication_id)
@@ -657,7 +728,29 @@ def reconcile_publication(
             return PublicationView.model_validate(pub).model_dump()
 
     # Query remote status via provider
-    status_res = asyncio.run(provider.get_video_status(remote_id))
+    try:
+        status_res = asyncio.run(provider.get_video_status(remote_id))
+    except RemoteStateUnavailable as exc:
+        # Staying REMOTE_UNKNOWN is the honest outcome. Calling it FAILED_RETRYABLE would tell
+        # the operator the video is not on the channel, which nobody has established.
+        with Session(engine) as session, session.begin():
+            pub = session.get(PublicationRecord, publication_id)
+            if not pub:
+                raise ValueError(f"Publication {publication_id} not found") from None
+            pub.status = "REMOTE_UNKNOWN"
+            pub.error_detail = f"Remote state could not be read: {exc}"
+            event = append_event(
+                session,
+                "publishing.reconcile_unavailable",
+                "publication_record",
+                publication_id,
+                1,
+                {"remote_video_id": remote_id, "detail": str(exc)},
+                correlation_id,
+            )
+            pub.event_id = event.event_id
+            session.flush()
+            return PublicationView.model_validate(pub).model_dump()
 
     with Session(engine) as session, session.begin():
         pub = session.get(PublicationRecord, publication_id)

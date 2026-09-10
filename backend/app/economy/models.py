@@ -285,9 +285,7 @@ class LedgerEntry(Base):
     __table_args__ = (
         # Exactly one side carries the amount. Both-or-neither is a malformed line, and a table
         # that accepts one will eventually be asked to explain a book that does not balance.
-        CheckConstraint(
-            "(debit_micros = 0) <> (credit_micros = 0)", name="ck_entry_one_sided"
-        ),
+        CheckConstraint("(debit_micros = 0) <> (credit_micros = 0)", name="ck_entry_one_sided"),
         CheckConstraint("debit_micros >= 0 AND credit_micros >= 0", name="ck_entry_non_negative"),
         Index("ix_ledger_entry_account", "account_code"),
         Index("ix_ledger_entry_transaction", "transaction_id"),

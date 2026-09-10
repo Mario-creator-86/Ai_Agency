@@ -233,7 +233,11 @@ def test_publishing_gate_evaluations(engine, tmp_path):
     )
     eval_refuted = evaluate_publishing_gate(engine, bundle_refuted["asset_id"], ch_id)
     assert eval_refuted["eligible"] is False
-    assert any("unverified/refuted claims" in c["detail"] for c in eval_refuted["checks"])
+    refuted_check = next(
+        c for c in eval_refuted["checks"] if c["check_name"] == "FACTUAL_INTEGRITY_GATE"
+    )
+    assert refuted_check["passed"] is False
+    assert bundle_refuted["claim_id"] in refuted_check["detail"]
 
     # 4. Rejection when Global Autonomy Stop is Active
     bundle_valid = _create_verified_asset_bundle(engine, tmp_path, qc_passed=True)

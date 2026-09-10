@@ -34,7 +34,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 #: Obviously invented. Real values never appear in a script that is committed.
-FAKE_SECRET = "demo-client-secret-not-real"
+FAKE_SECRET = "demo-client-secret-not-real"  # pragma: allowlist secret
 FAKE_REFRESH = "demo-refresh-token-not-real"
 
 

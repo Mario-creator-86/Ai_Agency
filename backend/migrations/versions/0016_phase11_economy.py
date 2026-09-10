@@ -92,9 +92,7 @@ def upgrade() -> None:
         sa.Column("usd_micros", sa.BigInteger(), nullable=False),
         sa.Column("fx_snapshot_id", sa.String(36), sa.ForeignKey("fx_snapshot.id")),
         sa.Column("detail_json", sa.JSON(), nullable=False),
-        sa.Column(
-            "minted_transaction_id", sa.String(36), sa.ForeignKey("ledger_transaction.id")
-        ),
+        sa.Column("minted_transaction_id", sa.String(36), sa.ForeignKey("ledger_transaction.id")),
         sa.Column("recorded_at", sa.String(40), nullable=False),
         sa.Column("settled_at", sa.String(40)),
         sa.Column("event_id", sa.String(36), sa.ForeignKey("domain_event.event_id")),

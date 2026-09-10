@@ -82,10 +82,7 @@ def rename_studio(engine, new_name: str, *, dry_run: bool = False) -> str:
             {"previous_name": previous, "name": name, "reason": "Owner renamed the agency"},
             str(uuid4()),
         )
-        return (
-            f"Renamed {previous!r} -> {name!r} "
-            f"(studio.renamed, version {next_version})."
-        )
+        return f"Renamed {previous!r} -> {name!r} (studio.renamed, version {next_version})."
 
 
 def main() -> int:

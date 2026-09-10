@@ -1,0 +1,90 @@
+"""Every route in the API, called without a credential, from the outside.
+
+Introspecting dependency trees proves what the code says. This calls the application instead, so
+it proves what the application does — including for any route added later, since the list comes
+from the OpenAPI surface rather than from a hand-written inventory.
+
+Three routes are public by design and are named here so that adding a fourth is a deliberate act:
+the two health probes, which must answer a load balancer, and the OAuth callback, which Google
+redirects a browser to and which therefore cannot carry the Owner credential. The callback's own
+protection is the single-use state, covered in `test_youtube_connections.py`.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+#: Public on purpose. Anything else answering an anonymous caller is a defect.
+PUBLIC = {
+    ("GET", "/health/live"),
+    ("GET", "/health/ready"),
+    ("GET", "/auth/youtube/callback"),
+}
+
+#: Rejections. 401 and 403 are the credential refusing; 405 is a method the route does not take.
+REFUSALS = {401, 403}
+
+
+def _fill(path: str) -> str:
+    """Give every path parameter a syntactically plausible value."""
+    out = []
+    for part in path.split("/"):
+        if part.startswith("{") and part.endswith("}"):
+            name = part[1:-1]
+            out.append(
+                "1"
+                if name.endswith(("_version", "_number"))
+                else "11111111-1111-4111-8111-111111111111"
+            )
+        else:
+            out.append(part)
+    return "/".join(out)
+
+
+def _operations(client) -> list[tuple[str, str]]:
+    schema = client.app.app.openapi()
+    return [
+        (method.upper(), path)
+        for path, operations in schema["paths"].items()
+        for method in operations
+        if method.upper() in {"GET", "POST", "PUT", "PATCH", "DELETE"}
+    ]
+
+
+def test_every_route_is_owner_only_except_the_three_that_cannot_be(client):
+    operations = _operations(client)
+    # A guard against the audit silently covering nothing if the schema shape ever changes.
+    assert len(operations) > 50, f"only {len(operations)} operations found"
+
+    leaks = []
+    for method, path in operations:
+        if (method, path) in PUBLIC:
+            continue
+        response = client.request(method, _fill(path))
+        if response.status_code not in REFUSALS:
+            leaks.append(f"{method} {path} -> {response.status_code}")
+    assert not leaks, "routes answered an anonymous caller:\n" + "\n".join(leaks)
+
+
+def test_the_public_routes_are_still_reachable(client):
+    """The other half of the same claim: the exceptions above are exceptions, not dead routes."""
+    assert client.get("/health/live").status_code == 200
+    assert client.get("/health/ready").status_code in {200, 503}
+    # The callback answers a browser, so every outcome must be a readable HTML page rather than
+    # a JSON error or a stack trace — including the ones that are nobody's fault.
+    for query, expected in [
+        ("", 400),  # someone typed the URL
+        ("?error=access_denied&state=x", 400),  # consent refused
+        ("?code=abc", 400),  # a code with no state
+    ]:
+        page = client.get("/auth/youtube/callback" + query)
+        assert page.status_code == expected, query
+        assert page.headers["content-type"].startswith("text/html"), query
+        assert "<h1>" in page.text, query
+
+
+@pytest.mark.parametrize("credential", ["", "Bearer ", "Bearer wrong-token", "Basic abc"])
+def test_a_wrong_credential_is_refused_everywhere_it_matters(client, credential):
+    headers = {"Authorization": credential} if credential else {}
+    response = client.get("/api/v1/settings", headers=headers)
+    assert response.status_code in REFUSALS

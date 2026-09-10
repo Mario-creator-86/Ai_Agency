@@ -41,9 +41,7 @@ def upgrade() -> None:
             "status IN ('AUTH_REQUIRED','CONNECTED','ERROR')", name="ck_youtube_connection_status"
         ),
     )
-    op.create_index(
-        "ix_youtube_connection_status", "youtube_connection", ["status", "created_at"]
-    )
+    op.create_index("ix_youtube_connection_status", "youtube_connection", ["status", "created_at"])
 
     op.create_table(
         "youtube_oauth_state",
@@ -58,9 +56,7 @@ def upgrade() -> None:
         sa.Column("expires_at", sa.String(40), nullable=False),
         sa.Column("used_at", sa.String(40)),
     )
-    op.create_index(
-        "ix_youtube_oauth_state_connection", "youtube_oauth_state", ["connection_id"]
-    )
+    op.create_index("ix_youtube_oauth_state_connection", "youtube_oauth_state", ["connection_id"])
 
 
 def downgrade() -> None:

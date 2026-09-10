@@ -75,8 +75,8 @@ def _page(title: str, lines: list[str], *, status_code: int = 200) -> HTMLRespon
     return HTMLResponse(
         status_code=status_code,
         content=(
-            "<!doctype html><html lang=\"ro\"><head><meta charset=\"utf-8\">"
-            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+            '<!doctype html><html lang="ro"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width, initial-scale=1">'
             f"<title>{html.escape(title)} · AMN-AI</title></head><body>"
             f"<h1>{html.escape(title)}</h1>{body}"
             "<p>Poți închide această filă și te poți întoarce în studio.</p>"

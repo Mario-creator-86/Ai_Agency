@@ -21,6 +21,7 @@ from urllib.request import Request, urlopen
 from app.providers.publishing_base import (
     PublishingHealthResult,
     PublishingProvider,
+    RemoteStateUnavailable,
     RemoteVideoStatus,
     UploadResult,
 )
@@ -269,7 +270,10 @@ class YouTubeProvider(PublishingProvider):
 
     async def get_video_status(self, remote_video_id: str) -> RemoteVideoStatus:
         if not self.is_configured:
-            return RemoteVideoStatus(remote_video_id=remote_video_id, exists=False)
+            raise RemoteStateUnavailable(
+                "No YouTube credentials are configured, so the channel cannot be asked "
+                "whether this video exists."
+            )
         token = self._get_access_token()
         url = f"{YOUTUBE_API_BASE}/videos?part=status&id={remote_video_id}"
         req = Request(url, headers={"Authorization": f"Bearer {token}"}, method="GET")
@@ -287,15 +291,18 @@ class YouTubeProvider(PublishingProvider):
                     upload_status=st.get("uploadStatus"),
                     rejection_reason=st.get("rejectionReason"),
                 )
-        except Exception:
-            return RemoteVideoStatus(remote_video_id=remote_video_id, exists=False)
+        except Exception as exc:  # noqa: BLE001
+            # An empty `items` list above is YouTube saying no. This is YouTube saying nothing.
+            raise RemoteStateUnavailable(f"YouTube could not be queried: {exc}") from None
 
     async def reconcile_upload(
         self, idempotency_key: str, expected_title: str
     ) -> UploadResult | None:
         """Search channel uploads by title to prevent duplicate submission."""
         if not self.is_configured:
-            return None
+            raise RemoteStateUnavailable(
+                "No YouTube credentials are configured, so a previous upload cannot be ruled out."
+            )
         token = self._get_access_token()
         params = urlencode(
             {"part": "snippet", "mine": "true", "type": "video", "q": expected_title[:50]}
@@ -315,6 +322,9 @@ class YouTubeProvider(PublishingProvider):
                                 remote_url=f"https://youtube.com/shorts/{vid_id}",
                                 status="CONFIRMED",
                             )
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001
+            raise RemoteStateUnavailable(
+                f"The channel's uploads could not be searched: {exc}"
+            ) from None
+        # Asked and answered: nothing on the channel matches this title.
         return None

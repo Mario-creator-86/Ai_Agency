@@ -111,9 +111,7 @@ def test_channel_binding_requires_a_connected_channel_and_can_be_removed(
     payload = {"connection_id": unauthorised["id"], "expected_event_id": channel["event_id"]}
     assert client.put(path, json=payload, headers=headers).status_code == 422
 
-    identifier, _ = connect_youtube(
-        name="Canal real", channel_id="UC_bound", title="Canal real"
-    )
+    identifier, _ = connect_youtube(name="Canal real", channel_id="UC_bound", title="Canal real")
     payload = {"connection_id": identifier, "expected_event_id": channel["event_id"]}
     assert client.put(path, json=payload, headers=headers).status_code == 200
     assert client.put(path, json=payload, headers=headers).status_code == 409
