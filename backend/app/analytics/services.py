@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime
+from typing import TypedDict
 from uuid import uuid4
 
 from sqlalchemy import Engine, select
@@ -27,72 +28,98 @@ from app.analytics.schemas import (
 from app.factual.models import HookOption, ScriptDraft, TopicIdea
 from app.media.models import Storyboard, VideoRenderJob
 from app.providers.analytics_base import AnalyticsProvider
-from app.publishing.models import PublicationRecord
+from app.publishing.models import ChannelRecord, PublicationRecord
 from app.services import append_event, utc_now
 
 logger = logging.getLogger("studio.analytics")
 
-CHANNEL_A_ID = "chan-a-main-0000-0000-000000000001"
-CHANNEL_B_ID = "chan-b-serial-0000-0000-000000000002"
 
 MIN_SAMPLE_THRESHOLD = 3
 MAX_WEIGHT_DELTA = 0.20
 
 
-def seed_default_strategy(engine: Engine) -> None:
-    """Seed baseline Strategy v1 for Channel A and Channel B if none exists."""
-    with Session(engine) as session, session.begin():
-        for chan_id, is_b in [(CHANNEL_A_ID, False), (CHANNEL_B_ID, True)]:
-            existing = session.scalar(
-                select(ContentStrategy).where(
-                    ContentStrategy.channel_id == chan_id, ContentStrategy.version == 1
-                )
-            )
-            if existing is None:
-                strat_id = str(uuid4())
-                if not is_b:
-                    topic_weights = {
-                        "space": 1.0,
-                        "physics": 1.0,
-                        "history": 1.0,
-                        "psychology": 1.0,
-                        "technology": 1.0,
-                    }
-                    hook_weights = {
-                        "CURIOSITY_GAP": 1.0,
-                        "CONTRARIAN": 1.0,
-                        "STATISTIC_SHOCK": 1.0,
-                        "STORY_IN_MEDIA_RES": 1.0,
-                    }
-                    notes = "Initial baseline editorial strategy for Channel A (Factual Short-form)"
-                    duration = 45
-                else:
-                    topic_weights = {
-                        "office_serial": 1.0,
-                        "character_vignette": 1.0,
-                        "studio_lore": 1.0,
-                    }
-                    hook_weights = {
-                        "STORY_IN_MEDIA_RES": 1.0,
-                        "CURIOSITY_GAP": 1.0,
-                    }
-                    notes = "Initial baseline editorial strategy for Channel B (Office Serial)"
-                    duration = 60
+class _Baseline(TypedDict):
+    topic_weights: dict[str, float]
+    hook_weights: dict[str, float]
+    target_duration_seconds: int
+    notes: str
 
-                strat = ContentStrategy(
-                    id=strat_id,
-                    channel_id=chan_id,
+
+#: Neutral starting weights per channel type. Every weight is 1.0 on purpose: the baseline
+#: expresses no preference, because no video has been measured yet. Preferences appear only
+#: after the Director applies a recommendation built from real snapshots.
+BASELINE_STRATEGY: dict[str, _Baseline] = {
+    "MAIN_FACTUAL": {
+        "topic_weights": {
+            "space": 1.0,
+            "physics": 1.0,
+            "history": 1.0,
+            "psychology": 1.0,
+            "technology": 1.0,
+        },
+        "hook_weights": {
+            "CURIOSITY_GAP": 1.0,
+            "CONTRARIAN": 1.0,
+            "STATISTIC_SHOCK": 1.0,
+            "STORY_IN_MEDIA_RES": 1.0,
+        },
+        "target_duration_seconds": 45,
+        "notes": "Baseline editorial strategy for Channel A (Factual Short-form). "
+        "All weights neutral: no performance has been measured yet.",
+    },
+    "OFFICE_SERIAL": {
+        "topic_weights": {
+            "office_serial": 1.0,
+            "character_vignette": 1.0,
+            "studio_lore": 1.0,
+        },
+        "hook_weights": {
+            "STORY_IN_MEDIA_RES": 1.0,
+            "CURIOSITY_GAP": 1.0,
+        },
+        "target_duration_seconds": 60,
+        "notes": "Baseline editorial strategy for Channel B (Office Serial). "
+        "All weights neutral: no performance has been measured yet.",
+    },
+}
+
+
+def seed_default_strategy(engine: Engine) -> int:
+    """Seed the neutral v1 strategy for each seeded channel that does not have one.
+
+    Channels are looked up by ``channel_type``; their ids are generated at seed time, so a
+    hardcoded id would leave the strategy pointing at a channel that does not exist.
+    """
+    created = 0
+    with Session(engine) as session, session.begin():
+        for channel_type, baseline in BASELINE_STRATEGY.items():
+            channel = session.scalar(
+                select(ChannelRecord).where(ChannelRecord.channel_type == channel_type)
+            )
+            if channel is None:
+                continue
+            existing = session.scalar(
+                select(ContentStrategy).where(ContentStrategy.channel_id == channel.id)
+            )
+            if existing is not None:
+                continue
+            session.add(
+                ContentStrategy(
+                    id=str(uuid4()),
+                    channel_id=channel.id,
                     version=1,
-                    topic_weights_json=topic_weights,
-                    hook_weights_json=hook_weights,
-                    target_duration_seconds=duration,
+                    topic_weights_json=dict(baseline["topic_weights"]),
+                    hook_weights_json=dict(baseline["hook_weights"]),
+                    target_duration_seconds=baseline["target_duration_seconds"],
                     cooldown_until=None,
-                    notes=notes,
+                    notes=baseline["notes"],
                     is_active=True,
                     created_at=utc_now(),
                     event_id=None,
                 )
-                session.add(strat)
+            )
+            created += 1
+    return created
 
 
 def get_active_strategy(engine: Engine, channel_id: str) -> dict | None:
@@ -108,6 +135,14 @@ def get_active_strategy(engine: Engine, channel_id: str) -> dict | None:
         return ContentStrategyView.model_validate(strat).model_dump()
 
 
+class MetricsUnavailable(RuntimeError):
+    """There is nothing measurable attached to this publication yet.
+
+    Distinct from a missing publication (404) and from a provider failure (502): the row is
+    there, the platform is reachable, but no real video exists to report on.
+    """
+
+
 def ingest_publication_metrics(
     engine: Engine,
     publication_id: str,
@@ -121,7 +156,16 @@ def ingest_publication_metrics(
         pub = session.get(PublicationRecord, publication_id)
         if pub is None:
             raise ValueError(f"Publication {publication_id} not found")
-        remote_id = pub.remote_video_id or pub.id
+        # Analytics describe a video the platform is actually serving. A publication that was
+        # only simulated, or that never received a remote video id, has no audience to measure;
+        # falling back to the internal row id here used to make the provider answer for an
+        # identifier that does not exist on any platform.
+        if pub.status != "PUBLISHED" or not pub.remote_video_id:
+            raise MetricsUnavailable(
+                "Publicarea nu are un videoclip real pe platformă "
+                f"(status {pub.status}), deci nu există performanță de măsurat."
+            )
+        remote_id = pub.remote_video_id
         channel_id = pub.channel_id
 
     # Fetch metrics asynchronously from provider

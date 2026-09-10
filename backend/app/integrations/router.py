@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.agents.models import Agent, ModelRecord
+from app.agents.models import Agent, ModelRecord, ProviderRecord
 from app.agents.services import (
     list_agents,
     list_provider_models,
@@ -58,6 +58,23 @@ def create_settings_router() -> APIRouter:
                 for row in session.scalars(select(ServiceSelection))
             }
             provider_ids = set(session.scalars(select(ModelRecord.provider_id)).all())
+            # Providers seeded before the Settings screen existed (the local Ollama
+            # endpoint) have no Integration row, so without this the Owner can see their
+            # models but has no control to verify them — and an unverifiable record can
+            # only ever stay an unverified claim.
+            integration_ids = {row.id for row in session.scalars(select(Integration))}
+            legacy_providers = [
+                dict(
+                    id=p.id,
+                    name=p.name,
+                    provider_type=p.provider_type,
+                    base_url=p.base_url,
+                    status=p.status,
+                    last_health_check=p.last_health_check,
+                )
+                for p in session.scalars(select(ProviderRecord))
+                if p.id not in integration_ids
+            ]
             channels = [
                 dict(
                     id=c.id,
@@ -78,6 +95,7 @@ def create_settings_router() -> APIRouter:
             agents=list_agents(engine),
             roles=list_roles(engine),
             models=[m for p in provider_ids for m in list_provider_models(engine, p)],
+            legacy_providers=legacy_providers,
             legacy_youtube_configured=request.app.state.settings.youtube_credentials_present,
         )
 

@@ -295,3 +295,60 @@ Decision D-DESIGN-003.
   speech bubble instead of raw JSON.
 - Verified live end to end: real IANA page fetched via the retrieval adapter -> Dr. Aris
   (nemotron-3-super) -> 9 accurate UNVERIFIED claims -> bubble in the office.
+
+## 2026-09-10 — Re-audit of third-party work; the seed stops claiming a healthy provider
+
+- **Independent verification of the newest external work.** Re-ran the full battery against a
+  clean checkout rather than trusting the tracking documents: pytest, ruff, ruff format, mypy,
+  `tsc`, the frontend unit tests, the Vite build, the documentation hash integrity check and
+  the three Playwright suites. Everything passed and nothing regressed. Read the new
+  security-sensitive modules line by line — the credential vault, the Settings save/check path,
+  the SSRF-hardened retrieval adapter and the research agent pipeline — and confirmed each of
+  their stated properties holds in the code: a saved connection is `SAVED` and never verified,
+  only a real probe writes `VERIFIED`, retrieval refuses anything but an allow-listed public
+  HTTPS host on a DNS-pinned connection, and every extracted claim is stored `UNVERIFIED`.
+  Confirmed the two edited architecture documents match their indexed hashes and that the
+  decision log records the edit, as the process requires.
+- **Fixed: the workforce seed asserted a health check that never happened.** A freshly
+  bootstrapped studio recorded the local Ollama endpoint as `HEALTHY` with a health-check
+  timestamp and three models as available and verified, on a machine with no Ollama installed —
+  the same falsehood the Owner first reported about the YouTube channel. The seed now records
+  the provider `NOT_CONFIGURED` and its models `SEEDED_UNVERIFIED` with no timestamps; only a
+  real model sync may record health, availability or a verification time. See D-TRUTH-002.
+- **Fixed: the seeded provider could not be verified at all.** It had no adapter registered, so
+  every check failed with "no adapter registered" and the unverified state was permanent. The
+  adapter is now registered at startup, Settings lists the endpoint with a working
+  "Verifică și încarcă modelele" button, and an unreachable endpoint answers 503 with what went
+  wrong instead of a generic internal error.
+- Migration `0009_unverified_seeded_provider` withdraws the claim from existing databases.
+- Baseline: ruff, ruff format, mypy, pytest 152 passed / 1 skipped, frontend 11, `tsc`, build,
+  docs integrity; Playwright 27/27 + 14/14 + 10/10 + 8/8 (new provider-honesty suite).
+
+## 2026-09-10 — Phase 7 analytics live; lift courier; the ground floor built out
+
+- **Analytics wired, simulator deleted.** The Phase 7 module now runs: router mounted, models in
+  `Base.metadata`, migration `0010_phase7_analytics`. Before wiring it, the deterministic
+  analytics adapter — which invented view counts, retention and CTR from a hash — was removed
+  outright, and the fallback that would have measured a never-uploaded publication under its
+  internal row id with it. With no verified YouTube connection, ingestion answers HTTP 503 and
+  says plainly that the studio does not estimate or simulate audience figures. This mattered
+  more than a display bug: the learning loop reads these numbers back and turns them into the
+  Director's recommendations, which change the topic and hook weights the studio writes to.
+- **The YouTube Analytics adapter stopped ignoring the reporting window.** Every query used to
+  send the same fixed date range, so an all-time report could be stored labelled "24h".
+  Impressions and CTR are now read from YouTube's own metrics or reported as zero — never
+  back-computed from views.
+- **The lift carries someone.** A workflow token changing floor now runs a full delivery: the
+  cab comes to the floor, doors open, a runner boards with the work, doors shut for the ride,
+  and the runner walks the token to its new department. Doors part only at a floor, as a real
+  lift's do. With no workflow running the cab still stands still.
+- **The double-height ground floor was built out** — ducting, a service mezzanine with railing,
+  pendant lights, and one wall fixture per department (rack status wall, canteen board, dispatch
+  board, and an empty "YOUR AD HERE" hoarding over the shopfront).
+- **Fixed: workflow tokens were drawn in the wrong departments.** The stage-to-position table
+  was hardcoded pixels that predated the taller building — research appeared in the executive
+  suite and publishing floated outside the wall — and because the lift is dispatched by the
+  zone a token lands in, it also sent the cab to the wrong floor. Stages now name a department
+  and the position comes from the layout the backend serves.
+- Baseline: ruff, ruff format, mypy, pytest 163 passed / 1 skipped, frontend 17, `tsc`, build,
+  docs integrity, secret scan; Playwright 27/27 + 14/14 + 10/10 + 8/8 + 9/9.

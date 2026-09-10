@@ -584,3 +584,163 @@ tracking documents would silently change meaning).
 
 **Test impact:** `scripts/check_docs.py` and `tests/test_documentation.py` pass with the updated
 index; no requirement text changed, so no product tests are affected.
+
+## D-TRUTH-002 — The seed may write intent, never observation (2026-09-10)
+
+**Problem:** an independent re-audit of the whole tree found the original falsehood pattern
+still alive in one place the earlier audit had not reached. `seed_initial_workforce` wrote,
+at bootstrap and without contacting anything:
+
+- `provider_record`: `local-ollama` at `http://127.0.0.1:11434` with `status = 'HEALTHY'` and
+  `last_health_check = <now>`;
+- `model_record`: `glm-5.2:cloud`, `kimi-k2.6:cloud`, `qwen3-coder:480b-cloud` with
+  `is_available = 1`, `last_verified = <now>` and `discovery_method = 'DECLARED_BY_PROVIDER'`.
+
+Nothing in that function makes a network call, so on a machine where Ollama is not installed
+the studio still displayed a healthy provider health-checked at a precise timestamp and three
+models verified at a precise timestamp. This is the same defect the Owner originally reported
+as "it says the YouTube channel is configured, but it is not", reproduced against a different
+subsystem. It was verified by inspection of a freshly bootstrapped database on a host with no
+Ollama: the rows above were present exactly as described.
+
+Two consequences made it worse than a cosmetic lie. The seeded provider had no adapter
+registered at startup — `load_registry` only registers Settings integrations — so both the
+health check and the model sync failed with "no adapter registered", and the Owner had **no
+way at all** to replace the seeded claim with a measured one. And any agent assigned to those
+"available" models failed at run time with the same message, while the interface said the
+model was ready.
+
+**Choice:**
+
+1. **The seed records intent only.** The provider is written `NOT_CONFIGURED` with
+   `last_health_check = NULL`; the models are written `is_available = False`,
+   `last_verified = NULL` and `discovery_method = 'SEEDED_UNVERIFIED'` — a new value that says
+   what is true, namely that this list came from configuration and not from the provider.
+2. **`sync_provider_models` is the only path to a positive claim.** It is the only code that
+   calls the endpoint, so it is now the only code that may set `provider.status = 'HEALTHY'`,
+   stamp `last_verified`, or promote a row to `DECLARED_BY_PROVIDER`. It raises on failure,
+   so reaching those lines means the endpoint answered.
+3. **The Owner gets a working control.** `register_seeded_ollama` registers a live adapter for
+   every seeded OLLAMA provider at startup (registering an adapter asserts nothing about
+   whether the service is running), `GET /settings` returns those providers as
+   `legacy_providers`, and Settings renders a card for each with a "Verifică și încarcă
+   modelele" button. Until it is pressed the card states plainly that the endpoint has never
+   been contacted and its models cannot be assigned yet.
+4. **A failure says what failed.** `POST /providers/{id}/sync-models` maps a connection error
+   to HTTP 503 with "Furnizorul nu a răspuns, deci nu s-a înregistrat niciun model" instead of
+   a generic 500, and the frontend now shows the server's own detail for `/providers` as it
+   already did for `/settings`.
+5. **Migration `0009_unverified_seeded_provider`** withdraws the claim from databases that
+   already carry it, in the conservative direction: an owner whose Ollama really is running
+   restores the true state with one click, whereas leaving the row alone would keep asserting
+   something false on every machine where it is not. Rows the provider genuinely declared
+   during a sync are left untouched.
+
+**Alternatives rejected:** probing Ollama during bootstrap (bootstrap must not depend on the
+network, and a slow or hanging endpoint would block first start); leaving the models available
+and merely relabelling the provider (the availability flag is what the Settings dropdown reads,
+so the lie would survive where it actually matters); deleting the seeded rows entirely (the
+Owner would lose the record of which models the studio expects, and the agents' assignments
+with it).
+
+**Test impact:** six new governance tests in `tests/test_truthfulness_gates.py` — the seed
+claims neither health nor availability; a model becomes available only after the provider names
+it, and only that model; a failed sync upgrades nothing; the seeded provider is checkable; an
+unreachable provider reports 503 with an actionable message. `scratch/verify_provider_honesty.mjs`
+checks the same rules through the running interface (8/8).
+
+## D-P7-001 — Phase 7 analytics wired, with the simulator removed (2026-09-10)
+
+**Problem:** roughly 40 KB of analytics code sat on disk passing ruff, mypy and pytest while
+never executing: `main.py` did not mount the router, the models were absent from
+`Base.metadata`, and no migration created the tables. Wiring it as it stood would have been
+worse than leaving it dead. `get_analytics_provider()` fell back to
+`DeterministicAnalyticsAdapter`, which manufactures 1,500–65,000 views, 40–75% retention and
+3.5–11% CTR by hashing a video id. `ingest_publication_metrics` then took
+`pub.remote_video_id or pub.id`, so a publication that was never uploaded would have been
+"measured" under its internal row id. The numbers would not merely have been displayed: the
+learning loop reads them back, turns them into Director recommendations, and those change the
+topic and hook weights the studio writes to. A fabricated view count would have steered real
+editorial decisions.
+
+**Choice:**
+
+1. **The simulator is gone.** `backend/app/providers/deterministic_analytics.py` was deleted,
+   and a test asserts the module cannot be imported. Analytics report what a platform
+   measured; there is no local substitute for that, so there is no fallback to reach for.
+2. **No provider means HTTP 503**, with the same shape as publishing: `get_analytics_provider`
+   returns the YouTube Analytics adapter built from a **VERIFIED** YouTube connection (or the
+   pre-Settings environment credentials) and otherwise refuses, saying in the response that the
+   studio does not estimate or simulate audience figures. Tests inject their own adapter
+   through `app.state.analytics_provider`; production has no such door.
+3. **Nothing is measured that does not exist.** Ingestion refuses (409) unless the publication
+   is `PUBLISHED` and carries a real `remote_video_id`; the internal-id fallback is removed.
+   A provider failure is a 502 and stores nothing.
+4. **The YouTube adapter stopped ignoring the window.** It used to send a fixed
+   2024-01-01…2026-12-31 range for every query, so a report stored as "24h" or "7d" covered all
+   time. Each window now maps to the date range actually requested. Impressions and CTR come
+   from the `impressions` and `impressionClickThroughRate` metrics; when the account does not
+   return them the adapter retries with the core metrics and reports zero with
+   `raw["impressions_reported"] = false`, instead of back-computing impressions from views as
+   before. `total_videos` is no longer guessed from the row count, and the channel report's
+   subscriber figure is labelled in `raw` as the net change over the window, which is what it is.
+5. **`seed_default_strategy` fixed and called.** It pointed at two hardcoded channel ids that
+   no database ever had, so the strategy would have been orphaned; it now looks channels up by
+   `channel_type`, and `scripts/bootstrap.py` runs it. Every seeded weight is 1.0: the baseline
+   expresses no preference because nothing has been measured.
+6. **Migration `0010_phase7_analytics`** creates the four tables with the invariants as database
+   constraints, not only service checks: a snapshot cannot store a negative count or a retention
+   outside 0–100, and a recommendation cannot exist with fewer than three observations or a
+   weight change beyond ±0.20.
+
+**Alternatives rejected:** keeping the deterministic adapter behind a flag (a flag that can be
+turned on is a fabrication that will eventually be believed, and this data feeds a control
+loop); leaving the module unwired (the Owner cannot see the analytics they were promised, and
+dead code drifts); shipping a UI panel in the same change (there is nothing true to show until
+a channel is connected).
+
+**Test impact:** `tests/test_phase7_analytics.py`, 11 tests. Total 163 passed, 1 skipped.
+
+## D-UI-004 — The lift carries a visible courier; the ground floor got its volume (2026-09-10)
+
+**Problem:** three defects in the same part of the scene.
+
+1. The cab moved between floors with nobody in it and its **doors parted while travelling** —
+   backwards from how a lift behaves.
+2. The **ground floor read as emptier than the floors above** despite holding four departments.
+   It is 200px tall against 130px upstairs, but every fixture stopped at desk height, leaving
+   the top two thirds of a double-height volume bare.
+3. `STAGE_COORDINATES` in `office_state.js` was a table of **hardcoded pixel positions that no
+   longer matched the building**. After the rebuild, `RESEARCH` at y=140 landed in the executive
+   suite, everything from asset generation to QC landed in the script room, and
+   `READY_TO_PUBLISH` at x=1010 sat outside the wall, in the lift shaft. This was not only
+   cosmetic: the lift is dispatched by which zone a token lands in, so the wrong coordinates
+   sent the cab to the wrong floor.
+
+**Choice:**
+
+1. **The token's journey is drawn as a journey.** A floor change now runs a four-stage
+   delivery: `summon` (the cab comes to the floor the work is on while a runner walks to the
+   doors), `board` (doors open, the runner steps into the shaft), `travel` (doors shut, the cab
+   carries the runner, visible through the glass), `alight` (doors open, the runner walks the
+   work to where the token now sits). Doors part only while the cab is standing at a floor.
+   The runner is not an agent and carries no name — it holds the same crate the token is drawn
+   as, and the token is not drawn twice. Every stage descends from the one backend fact that a
+   token changed floor; with no workflow running the cab still stands still with its doors shut.
+   A second floor change is not started until the current delivery finishes.
+2. **The tall ground floor is built.** `drawTallVolume` adds what a double-height street-level
+   volume actually has above head height: exposed ducting on hanger straps, a service mezzanine
+   with a railing, and pendant lights on their drops. `drawTallVolumeSign` mounts one fixture
+   per department above the rail — a rack status wall for infra, a clock and corkboard for the
+   commons, a dispatch board for publishing, an empty hoarding reading "YOUR AD HERE" over the
+   shopfront. All of it is architecture: no fixture displays a figure, because a board showing
+   numbers here would assert something the backend has not said.
+3. **Stage placement asks the layout.** `STAGE_ZONES` maps each stage to a department *by the
+   zone id the backend serves*, and the position is computed from that zone's own desks. A
+   token is not placed at all until a layout has arrived — a guessed position is worse than
+   none.
+
+**Test impact:** six new frontend tests (17 total) covering the still cab, the full delivery
+cycle, doors shut in transit, one delivery at a time, every stage landing inside a real
+department, and no placement before the layout. `scratch/verify_lift_courier.mjs` drives the
+running page through a real delivery and reads the engine's own trip state back (9/9).

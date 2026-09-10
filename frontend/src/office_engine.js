@@ -969,8 +969,16 @@ function drawElevatorCab(ctx, b, shaft, time, lift) {
   px(ctx, cx + 3, cy + 4, cw - 6, 12, '#6f9b8c');
   ctx.restore();
 
-  // Doors: shut while parked, parting while the cab is in motion.
-  const gap = lift.moving ? 5 : 1;
+  // Someone inside, seen through the glass while the cab travels.
+  const trip = lift.trip;
+  if (trip && trip.phase === 'travel') {
+    drawCourier(ctx, cx + cw / 2, cy + 48, time, 0, true);
+  }
+
+  // Doors part only while the cab is standing at a floor with someone stepping through;
+  // a travelling lift keeps them shut, as a real one does.
+  const dwelling = Boolean(trip && (trip.phase === 'board' || trip.phase === 'alight'));
+  const gap = dwelling ? 7 : 1;
   px(ctx, cx + cw / 2 - gap - 1, cy + 4, 2, 42, '#1a2a25');
   px(ctx, cx + cw / 2 + gap - 1, cy + 4, 2, 42, '#1a2a25');
 
@@ -982,8 +990,77 @@ function drawElevatorCab(ctx, b, shaft, time, lift) {
   } else {
     px(ctx, cx + cw / 2 - 2, cy - 5, 4, 4, '#2b3f37');
   }
-  const caption = lift.moving ? 'MOVING' : 'IDLE';
-  drawText(ctx, caption, cx + (cw - textWidth(caption, 1, 1)) / 2, cy + 46, lift.moving ? '#8fd8c4' : '#4d6b5c', 1, 1);
+  const caption = dwelling ? 'DOORS' : lift.moving ? 'MOVING' : 'IDLE';
+  const lit = dwelling || lift.moving;
+  drawText(
+    ctx,
+    caption,
+    cx + (cw - textWidth(caption, 1, 1)) / 2,
+    cy + 46,
+    lit ? '#8fd8c4' : '#4d6b5c',
+    1,
+    1,
+  );
+}
+
+/* ============================================================================
+   Lift courier: the visible carrier of a workflow token between floors.
+   ========================================================================== */
+
+/** Runner colours, fixed so the same figure is recognisable on every trip. */
+const COURIER_LOOK = {
+  coat: '#3f6b5c',
+  trousers: '#25352f',
+  skin: '#c8a284',
+  hair: '#2f2620',
+  crate: '#8a6a3a',
+  crateTop: '#d8b06a',
+};
+
+/**
+ * A runner walking a workflow token to or from the lift.
+ *
+ * This figure is not an agent and never carries a name: it is the token's own journey drawn
+ * as movement. It exists only while the backend says a token changed floor, and it is holding
+ * the same crate `drawProjectToken` draws, so what the viewer follows across the building is
+ * the work itself.
+ */
+function drawCourier(ctx, cx, floorY, time, facing, carrying) {
+  const height = 34;
+  const y = floorY - height;
+  const step = Math.sin(time * 9) * (facing === 0 ? 0 : 1);
+  const s = facing < 0 ? -1 : 1;
+
+  ctx.save();
+  ctx.globalAlpha = 0.32;
+  px(ctx, cx - 7, floorY - 2, 15, 3, '#070f0d');
+  ctx.restore();
+
+  // Legs, mid-stride.
+  px(ctx, cx - 4 + step * 3, y + height * 0.6, 5, height * 0.36, COURIER_LOOK.trousers);
+  px(ctx, cx + 1 - step * 3, y + height * 0.6, 5, height * 0.36, '#1b2622');
+  px(ctx, cx - 5 + step * 3, y + height * 0.95, 7, 3, '#131c19');
+  px(ctx, cx - step * 3, y + height * 0.95, 7, 3, '#131c19');
+
+  // Torso and the trailing arm.
+  px(ctx, cx - 7, y + height * 0.28, 15, height * 0.35, COURIER_LOOK.coat);
+  px(ctx, cx - 7, y + height * 0.28, 15, 1, '#ffffff22');
+  px(ctx, cx - 8 * s, y + height * 0.31 + step * 2, 3, height * 0.24, COURIER_LOOK.coat);
+
+  // Head.
+  px(ctx, cx - 5, y + height * 0.05, 11, 11, COURIER_LOOK.skin);
+  px(ctx, cx - 5, y + height * 0.03, 11, 3, COURIER_LOOK.hair);
+  px(ctx, cx - 2 + s, y + height * 0.15, 2, 2, '#2a211c');
+
+  // The crate, held out in front — the same object the token itself is drawn as.
+  if (carrying) {
+    const bx = cx + s * 9;
+    const by = y + height * 0.42;
+    px(ctx, cx + s * 5, y + height * 0.34, 4, 3, COURIER_LOOK.skin);
+    block(ctx, bx - 6, by - 6, 12, 12, COURIER_LOOK.crate, '#b08a4a', '#5c4626');
+    px(ctx, bx - 6, by - 1, 12, 2, COURIER_LOOK.crateTop);
+    px(ctx, bx - 1, by - 6, 2, 12, COURIER_LOOK.crateTop);
+  }
 }
 
 /* ============================================================================
@@ -1215,6 +1292,160 @@ function drawWallClock(ctx, x, y, time) {
    redrawn every frame.
    ========================================================================== */
 
+/**
+ * Fill the upper half of a double-height ground-floor unit.
+ *
+ * The ground floor is 200px tall against 130px upstairs, so furniture that stops at desk
+ * height leaves the top two thirds bare — the floor read as emptier than the ones above it
+ * even though it holds more departments. This draws what a tall street-level volume actually
+ * has above head height: a service mezzanine with a railing, pendant lights on their drops,
+ * exposed ducting, and one piece of wall furniture chosen per department.
+ *
+ * All of it is architecture, not activity: nothing here depends on or implies any agent state.
+ */
+function drawTallVolume(ctx, zone, st, live, seed) {
+  const rnd = mulberry32(seed ^ 0x5eed);
+  const x = zone.x;
+  const w = zone.width;
+  const railY = zone.y + Math.round(zone.height * 0.40);
+
+  // Exposed ducting under the slab above, with hanger straps.
+  px(ctx, x + 6, zone.y + 12, w - 12, 10, '#243530');
+  px(ctx, x + 6, zone.y + 12, w - 12, 2, '#33473d');
+  px(ctx, x + 6, zone.y + 20, w - 12, 2, '#1a2723');
+  for (let hx = x + 18; hx < x + w - 16; hx += 34) {
+    px(ctx, hx, zone.y + 6, 2, 7, '#2c403700');
+    px(ctx, hx, zone.y + 4, 2, 9, '#2c4037');
+    px(ctx, hx + 10, zone.y + 22, 12, 2, '#1f2e29');
+  }
+
+  // Service mezzanine: a walkway slab with a railing, the way a tall lobby is serviced.
+  px(ctx, x + 4, railY, w - 8, 5, '#22322c');
+  px(ctx, x + 4, railY, w - 8, 1, '#354a40');
+  px(ctx, x + 4, railY + 5, w - 8, 2, '#16241f');
+  px(ctx, x + 6, railY - 14, w - 12, 2, st.accent + '55');
+  for (let bx = x + 10; bx < x + w - 8; bx += 16) {
+    px(ctx, bx, railY - 13, 2, 13, '#2e433a');
+  }
+
+  // Pendant lights hanging from the ceiling into the volume.
+  const lamps = Math.max(2, Math.round(w / 90));
+  for (let i = 0; i < lamps; i += 1) {
+    const lx = Math.round(x + (w * (i + 0.5)) / lamps);
+    const drop = 26 + Math.round(rnd() * 10);
+    px(ctx, lx, zone.y + 22, 1, drop, '#2c4037');
+    px(ctx, lx - 7, zone.y + 22 + drop, 15, 4, '#33473d');
+    px(ctx, lx - 5, zone.y + 26 + drop, 11, 3, '#e8d9a8');
+    live.lamps.push({
+      x: lx,
+      y: zone.y + 28 + drop,
+      r: 74,
+      color: 'rgba(232,217,168,0.16)',
+    });
+  }
+  return railY;
+}
+
+/**
+ * One piece of wall furniture per ground-floor department, mounted above the mezzanine rail.
+ *
+ * Each is a fixture a real unit of that kind would have — a rack status wall, a canteen clock
+ * and noticeboard, a dispatch board, a hoarding. None of them display live figures: a board
+ * that showed numbers here would be asserting something the backend has not said.
+ */
+function drawTallVolumeSign(ctx, zone, st, live, railY, seed) {
+  const rnd = mulberry32(seed ^ 0x51a6);
+  const cx = Math.round(zone.x + zone.width / 2);
+  const top = railY - 62;
+
+  switch (zone.zone_type) {
+    case 'SERVER': {
+      // Rack status wall: a grid of indicator tiles and a cable ladder climbing to it.
+      const gw = Math.min(zone.width - 40, 132);
+      const gx = Math.round(cx - gw / 2);
+      block(ctx, gx, top, gw, 44, '#1a2a25', '#2a3f37', '#101c18');
+      for (let r = 0; r < 3; r += 1) {
+        for (let c = 0; c < Math.floor(gw / 22); c += 1) {
+          const tx = gx + 6 + c * 22;
+          const ty = top + 6 + r * 13;
+          px(ctx, tx, ty, 16, 9, '#12201c');
+          live.leds.push({
+            x: tx + 3,
+            y: ty + 3,
+            color: PAL.green,
+            phase: (r * 7 + c) * 0.6,
+            rate: 0.9 + rnd() * 0.6,
+          });
+        }
+      }
+      for (let ly = railY + 8; ly < zone.y + zone.height - 40; ly += 12) {
+        px(ctx, zone.x + 14, ly, 18, 2, '#2a3a33');
+      }
+      px(ctx, zone.x + 14, railY + 8, 2, zone.height * 0.4, '#243530');
+      px(ctx, zone.x + 30, railY + 8, 2, zone.height * 0.4, '#243530');
+      break;
+    }
+
+    case 'LOUNGE': {
+      // Canteen wall: a clock, a corkboard of pinned notes, and hanging planters.
+      const clockX = cx - 46;
+      px(ctx, clockX - 13, top + 6, 26, 26, '#2a3a33');
+      px(ctx, clockX - 10, top + 9, 20, 20, '#d8e0cf');
+      px(ctx, clockX - 1, top + 13, 2, 8, '#2a3a33');
+      px(ctx, clockX - 1, top + 19, 7, 2, '#2a3a33');
+      block(ctx, cx + 4, top, 74, 46, '#5a4632', '#755c42', '#3a2c20');
+      px(ctx, cx + 8, top + 4, 66, 38, '#7b6448');
+      for (let i = 0; i < 5; i += 1) {
+        const nx = cx + 12 + (i % 3) * 22;
+        const ny = top + 8 + Math.floor(i / 3) * 18;
+        px(ctx, nx, ny, 18, 14, pick(['#cfc5a4', '#c9d8c0', '#e0cfa8'], rnd));
+        px(ctx, nx + 8, ny - 1, 2, 2, PAL.red);
+      }
+      for (let i = 0; i < 2; i += 1) {
+        const hx = zone.x + 22 + i * (zone.width - 52);
+        px(ctx, hx + 5, zone.y + 24, 1, 20, '#2c4037');
+        px(ctx, hx, zone.y + 44, 12, 7, '#6a4f38');
+        px(ctx, hx - 2, zone.y + 44, 5, 12, PAL.leafDark);
+        px(ctx, hx + 9, zone.y + 44, 5, 15, PAL.leafDark);
+      }
+      break;
+    }
+
+    case 'PUBLISH': {
+      // Dispatch board: slot rows with no numbers on them, and a wall clock.
+      const bw = Math.min(zone.width - 36, 128);
+      const bx = Math.round(cx - bw / 2);
+      block(ctx, bx, top, bw, 48, '#1e2a24', '#2f4239', '#131e1a');
+      px(ctx, bx + 4, top + 4, bw - 8, 9, '#26332c');
+      drawText(ctx, 'DISPATCH', bx + 8, top + 6, st.accent, 1, 1);
+      for (let r = 0; r < 3; r += 1) {
+        const ry = top + 17 + r * 10;
+        px(ctx, bx + 6, ry, bw - 44, 6, '#22302a');
+        px(ctx, bx + bw - 34, ry, 26, 6, '#22302a');
+        live.leds.push({ x: bx + bw - 14, y: ry + 1, color: PAL.amber, phase: r * 1.1, rate: 1.4 });
+      }
+      break;
+    }
+
+    case 'SHOP': {
+      // Hoarding above the shopfront: the slot the studio is selling, empty until sold.
+      const bw = zone.width - 30;
+      const bx = zone.x + 15;
+      block(ctx, bx, top + 6, bw, 40, '#241d14', '#38301f', '#161009');
+      px(ctx, bx + 4, top + 10, bw - 8, 32, '#2e2618');
+      outline(ctx, bx + 4, top + 10, bw - 8, 32, PAL.gold + '66');
+      const label = 'YOUR AD HERE';
+      const lw = textWidth(label, 1, 1);
+      drawText(ctx, label, Math.round(cx - lw / 2), top + 24, PAL.gold, 1, 1);
+      live.lamps.push({ x: cx, y: top + 26, r: 62, color: 'rgba(221,174,106,0.18)' });
+      break;
+    }
+
+    default:
+      break;
+  }
+}
+
 function interiorFor(zone, ctx, live) {
   const st = zoneStyle(zone.zone_type);
   const floorY = zone.y + zone.height - 12;
@@ -1224,6 +1455,10 @@ function interiorFor(zone, ctx, live) {
 
   const addScreen = (kind, mx, my, w, h) =>
     live.screens.push({ kind, mx, my, w, h, seed: hash32(`${zone.id}${mx}${my}`), accent: st.accent, zoneId: zone.id, deskX: mx + w / 2 });
+
+  // The ground floor is double height; anything that tall needs its upper volume built.
+  const railY = zone.height >= 180 ? drawTallVolume(ctx, zone, st, live, seed) : null;
+  if (railY !== null) drawTallVolumeSign(ctx, zone, st, live, railY, seed);
 
   switch (zone.zone_type) {
     case 'DIRECTOR': {
@@ -2184,8 +2419,10 @@ export class OfficeEngine {
      * between departments. With no workflow running, the cab stands still with its doors
      * shut — the studio must not animate activity that is not happening.
      */
-    this.lift = { y: 0, target: 0, moving: false, restUntil: 0, parkedFloorY: null };
-    this.tokenFloors = new Map();
+    this.lift = { y: 0, target: 0, moving: false, restUntil: 0, parkedFloorY: null, trip: null };
+    //: tokenId -> the zone the token was last seen in, so a floor change knows where the
+    //: journey starts as well as where it ends.
+    this.tokenPlaces = new Map();
 
     this.viewport = new Viewport(canvas);
     this.animTime = 0;
@@ -2449,23 +2686,52 @@ export class OfficeEngine {
     if (!this.layout || !this.building) return;
     const zones = this.layout.zones || [];
     const cabTop = (zone) => zone.y + zone.height - 66;
+    const floorLine = (zone) => zone.y + zone.height - 12;
 
-    // A token that changed floor is a trip request.
+    // A token that changed floor is a trip request: the work itself has to be carried to
+    // another department. Nothing else starts the lift.
     for (const token of this.projectTokens) {
       const zone = zones.find((z) => token.y >= z.y && token.y <= z.y + z.height);
       if (!zone) continue;
-      const previous = this.tokenFloors.get(token.id);
-      if (previous !== undefined && previous !== zone.floor) {
-        this.lift.target = cabTop(zone);
-        this.lift.moving = true;
+      const previous = this.tokenPlaces.get(token.id);
+      if (previous && previous.floor !== zone.floor && !this.lift.trip) {
+        const from = zones.find((z) => z.id === previous.zoneId) || zone;
+        this.lift.trip = {
+          tokenId: token.id,
+          phase: 'summon',
+          fromY: cabTop(from),
+          toY: cabTop(zone),
+          boardLine: floorLine(from),
+          exitLine: floorLine(zone),
+          // The runner starts where the work was and ends where the work now is.
+          startX: previous.x,
+          x: previous.x,
+          exitX: token.x,
+          dwell: 0,
+        };
+        this.lift.target = cabTop(from);
+        this.lift.moving = Math.abs(this.lift.y - this.lift.target) > 1;
         this.lift.restUntil = 0;
       }
-      this.tokenFloors.set(token.id, zone.floor);
+      this.tokenPlaces.set(token.id, {
+        floor: zone.floor,
+        zoneId: zone.id,
+        x: token.x,
+        y: token.y,
+      });
     }
+
+    this._advanceCourier(dt);
 
     if (!this.lift.moving) {
       // Parked. After a delay at a delivery floor, return to the ground floor and stop.
-      if (this.lift.restUntil && this.animTime > this.lift.restUntil && this.lift.homeY !== undefined) {
+      const idle = !this.lift.trip;
+      if (
+        idle &&
+        this.lift.restUntil &&
+        this.animTime > this.lift.restUntil &&
+        this.lift.homeY !== undefined
+      ) {
         this.lift.target = this.lift.homeY;
         this.lift.moving = true;
         this.lift.restUntil = 0;
@@ -2480,11 +2746,85 @@ export class OfficeEngine {
       this.lift.y = this.lift.target;
       this.lift.moving = false;
       // Wait at the floor before returning home, so arrivals are readable.
-      if (this.lift.homeY !== undefined && Math.abs(this.lift.y - this.lift.homeY) > 1) {
+      if (
+        !this.lift.trip &&
+        this.lift.homeY !== undefined &&
+        Math.abs(this.lift.y - this.lift.homeY) > 1
+      ) {
         this.lift.restUntil = this.animTime + 6;
       }
     } else {
       this.lift.y += Math.sign(delta) * stepSize;
+    }
+  }
+
+  /**
+   * Walk the courier through the stages of one delivery.
+   *
+   * summon  the cab comes to the floor the work is on while the runner walks to the doors
+   * board   doors open, the runner steps into the shaft
+   * travel  doors shut, the cab carries the runner to the destination floor
+   * alight  doors open, the runner steps out and walks the work to where the token now sits
+   *
+   * Every stage is driven by the same single backend fact — a token changed floor — so the
+   * whole sequence is a rendering of that fact and not an animation invented to fill the eye.
+   */
+  _advanceCourier(dt) {
+    const trip = this.lift.trip;
+    if (!trip || !this.shaft) return;
+
+    const doorX = this.shaft.ex - 8;
+    const insideX = this.shaft.ex + this.shaft.ew / 2;
+    const walk = 78 * dt; // world pixels per second, a purposeful indoor pace
+
+    const stepToward = (target) => {
+      const gap = target - trip.x;
+      if (Math.abs(gap) <= walk) {
+        trip.x = target;
+        return true;
+      }
+      trip.x += Math.sign(gap) * walk;
+      return false;
+    };
+
+    if (trip.phase === 'summon') {
+      const atDoors = stepToward(doorX);
+      const cabHere = !this.lift.moving && Math.abs(this.lift.y - trip.fromY) <= 1;
+      if (atDoors && cabHere) {
+        trip.phase = 'board';
+        trip.dwell = 0;
+      }
+      return;
+    }
+
+    if (trip.phase === 'board') {
+      trip.dwell += dt;
+      stepToward(insideX);
+      if (trip.dwell > 1.1) {
+        trip.phase = 'travel';
+        this.lift.target = trip.toY;
+        this.lift.moving = Math.abs(this.lift.y - trip.toY) > 1;
+        if (!this.lift.moving) trip.phase = 'alight';
+      }
+      return;
+    }
+
+    if (trip.phase === 'travel') {
+      if (!this.lift.moving && Math.abs(this.lift.y - trip.toY) <= 1) {
+        trip.phase = 'alight';
+        trip.dwell = 0;
+        trip.x = insideX;
+      }
+      return;
+    }
+
+    // alight
+    trip.dwell += dt;
+    const delivered = stepToward(trip.exitX);
+    if (delivered && trip.dwell > 0.8) {
+      this.lift.trip = null;
+      // The cab waits, doors shut, then goes home by itself.
+      this.lift.restUntil = this.animTime + 4;
     }
   }
 
@@ -2691,7 +3031,23 @@ export class OfficeEngine {
     }
 
     // --- workflow tokens and speech ---------------------------------------
-    for (const token of this.projectTokens) drawProjectToken(ctx, token, time);
+    // A token in transit is drawn in the courier's hands, not twice.
+    const inTransit = this.lift.trip ? this.lift.trip.tokenId : null;
+    for (const token of this.projectTokens) {
+      if (token.id === inTransit) continue;
+      drawProjectToken(ctx, token, time);
+    }
+
+    // The courier, on the floor it is currently walking along. While riding it is drawn
+    // inside the cab instead, by drawElevatorCab.
+    const trip = this.lift.trip;
+    if (trip && trip.phase !== 'travel') {
+      const onOrigin = trip.phase === 'summon' || trip.phase === 'board';
+      const line = onOrigin ? trip.boardLine : trip.exitLine;
+      const target = onOrigin ? this.shaft.ex - 8 : trip.exitX;
+      const facing = Math.abs(target - trip.x) < 0.5 ? 0 : Math.sign(target - trip.x);
+      drawCourier(ctx, Math.round(trip.x), line, time, facing, true);
+    }
     for (const bubble of this.speechBubbles) {
       const agent = this.agents.find((a) => (a.id || a.agent_id) === bubble.agentId);
       const zone = agent ? zones.find((z) => agent.y >= z.y && agent.y <= z.y + z.height) : null;

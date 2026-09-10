@@ -42,7 +42,7 @@ async function api(path, options = {}) {
     response = await fetch(`/api/v1${path}`, {
       ...options,
       headers: { Authorization: `Bearer ${ownerToken}`, 'Content-Type': 'application/json' },
-      signal: AbortSignal.timeout(path.startsWith('/settings') ? 45000 : 10000),
+      signal: AbortSignal.timeout(path.startsWith('/settings') || path.startsWith('/providers') ? 45000 : 10000),
       cache: 'no-store',
     });
   } catch {
@@ -56,7 +56,10 @@ async function api(path, options = {}) {
         ? 'Starea s-a schimbat. Datele au fost reîncărcate; repetă comanda.'
         : 'Conexiunea nu a putut fi verificată. Încearcă din nou.'
     );
-    if (path.startsWith('/settings')) {
+    // Settings and provider checks explain what actually went wrong — "the provider did not
+    // answer" is the whole point of pressing the button, and a generic retry message would
+    // hide it. Other endpoints keep the generic wording.
+    if (path.startsWith('/settings') || path.startsWith('/providers')) {
       const detail = await response.json().catch(() => ({}));
       if (typeof detail.detail === 'string') error.message = detail.detail;
     }
@@ -80,6 +83,7 @@ function initOffice() {
         }
       },
     });
+    publishSceneHandle();
 
     // Wire camera zoom buttons
     element('zoom-in').addEventListener('click', () => {
@@ -213,6 +217,17 @@ async function loadOfficeLayout() {
   } catch (err) {
     console.error('Failed to load office layout', err);
   }
+}
+
+/**
+ * The office scene, exposed for automated verification.
+ *
+ * The scene is driven entirely by backend events, so the only way to check that the lift
+ * moves when — and only when — the backend says work changed floor is to read the engine's
+ * own state back. Read-only inspection handle; nothing in the app reads it.
+ */
+function publishSceneHandle() {
+  /** @type {any} */ (window).__studio = { engine: officeEngine, state: officeState };
 }
 
 function updateOfficeCanvas() {

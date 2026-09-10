@@ -2,7 +2,17 @@
 
 from __future__ import annotations
 
-from sqlalchemy import JSON, Boolean, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    CheckConstraint,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models import Base
@@ -13,6 +23,16 @@ class AnalyticsSnapshot(Base):
     """Time-series observation snapshot of an individual published video."""
 
     __tablename__ = "analytics_snapshot"
+    __table_args__ = (
+        # A stored measurement cannot be negative, and a retention percentage cannot exceed
+        # 100: the database refuses a figure that could not have come from a real report.
+        CheckConstraint("views >= 0 AND impressions >= 0", name="ck_snapshot_counts_positive"),
+        CheckConstraint(
+            "average_view_percentage >= 0 AND average_view_percentage <= 100",
+            name="ck_snapshot_retention_is_a_percentage",
+        ),
+        Index("ix_analytics_snapshot_publication", "publication_id", "window", "snapshot_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     publication_id: Mapped[str] = mapped_column(
@@ -47,6 +67,7 @@ class ContentExperiment(Base):
     """Controlled A/B editorial experiment tracking variants and outcomes."""
 
     __tablename__ = "content_experiment"
+    __table_args__ = (Index("ix_content_experiment_channel", "channel_id", "status"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     channel_id: Mapped[str] = mapped_column(
@@ -79,6 +100,7 @@ class ContentStrategy(Base):
     """Channel editorial strategy version with topic and hook technique weights."""
 
     __tablename__ = "content_strategy"
+    __table_args__ = (Index("ix_content_strategy_channel", "channel_id", "is_active"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     channel_id: Mapped[str] = mapped_column(
@@ -103,6 +125,16 @@ class DirectorRecommendation(Base):
     """Actionable editorial recommendation generated from cohort performance data."""
 
     __tablename__ = "director_recommendation"
+    __table_args__ = (
+        # A recommendation steers the editorial strategy, so it must rest on more than one
+        # observation and may never move a weight by more than 0.20 in a single step.
+        CheckConstraint("sample_size >= 3", name="ck_recommendation_has_evidence"),
+        CheckConstraint(
+            "suggested_weight_change >= -0.20 AND suggested_weight_change <= 0.20",
+            name="ck_recommendation_change_is_bounded",
+        ),
+        Index("ix_director_recommendation_channel", "channel_id", "status"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     channel_id: Mapped[str] = mapped_column(

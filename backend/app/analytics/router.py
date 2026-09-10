@@ -1,4 +1,11 @@
-"""Phase 7 FastAPI router for Autonomous Analytics & Continuous Learning."""
+"""Phase 7 FastAPI router for Autonomous Analytics & Continuous Learning.
+
+Analytics report what a platform measured. There is no local substitute for that, so when no
+analytics provider is configured these endpoints return HTTP 503 and record nothing. The studio
+never derives, estimates or simulates an audience figure — a fabricated view count would corrupt
+the learning loop that reads it back and, through the Director's recommendations, the editorial
+strategy itself.
+"""
 
 from __future__ import annotations
 
@@ -18,6 +25,7 @@ from app.analytics.schemas import (
     IngestMetricsCommand,
 )
 from app.analytics.services import (
+    MetricsUnavailable,
     apply_director_recommendation,
     compute_cohort_metrics,
     create_experiment,
@@ -28,18 +36,33 @@ from app.analytics.services import (
     list_channel_experiments,
     list_channel_recommendations,
 )
-from app.providers.deterministic_analytics import DeterministicAnalyticsAdapter
+from app.providers.analytics_base import AnalyticsProvider
 from app.providers.youtube_analytics import YouTubeAnalyticsProvider
 from app.security import require_owner
 
+ANALYTICS_NOT_CONFIGURED_DETAIL = (
+    "Analiza performanței nu este disponibilă: nu există nicio conexiune YouTube verificată. "
+    "Adaugă și verifică o conexiune YouTube în Settings. Studioul nu estimează și nu simulează "
+    "cifre de audiență."
+)
 
-def get_analytics_provider() -> DeterministicAnalyticsAdapter | YouTubeAnalyticsProvider:
-    """Select the configured analytics provider
-    (YouTube if OAuth configured, else Deterministic)."""
-    yt = YouTubeAnalyticsProvider()
-    if yt.is_configured():
-        return yt
-    return DeterministicAnalyticsAdapter()
+
+def get_analytics_provider(request: Request) -> AnalyticsProvider:
+    """Return the configured analytics provider, or refuse.
+
+    Tests inject their own adapter through ``app.state.analytics_provider``; there is no
+    production fallback, because the only thing a fallback could report is an invention.
+    """
+    injected = getattr(request.app.state, "analytics_provider", None)
+    if injected is not None:
+        return injected  # type: ignore[no-any-return]
+
+    provider = YouTubeAnalyticsProvider.from_verified_settings(
+        request.app.state.engine, request.app.state.credential_vault
+    )
+    if provider is None:
+        raise HTTPException(status_code=503, detail=ANALYTICS_NOT_CONFIGURED_DETAIL)
+    return provider
 
 
 def create_analytics_router() -> APIRouter:
@@ -67,7 +90,7 @@ def create_analytics_router() -> APIRouter:
         cmd: IngestMetricsCommand | None = None,
     ) -> dict:
         window = cmd.window if cmd else "LIFETIME"
-        provider = get_analytics_provider()
+        provider = get_analytics_provider(request)
         try:
             return ingest_publication_metrics(
                 request.app.state.engine,
@@ -76,10 +99,22 @@ def create_analytics_router() -> APIRouter:
                 window=window,
                 correlation_id=request.headers.get("X-Correlation-ID", ""),
             )
+        except MetricsUnavailable as exc:
+            # The publication exists but nothing measurable is attached to it yet.
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except SQLAlchemyError as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        except SQLAlchemyError:
+            raise HTTPException(status_code=500, detail="Internal error") from None
+        except (OSError, RuntimeError) as exc:
+            # The platform did not answer. Nothing was stored, and we say so.
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Platforma nu a returnat date de performanță, deci nu s-a înregistrat "
+                    "nicio măsurătoare. Încearcă din nou mai târziu."
+                ),
+            ) from exc
 
     @router.get("/strategy/{channel_id}", response_model=ContentStrategyView)
     def get_strategy(

@@ -118,6 +118,7 @@ export function initSettings(api) {
     });
     row.append(picker, add);
     content.append(row);
+    if (active === 'llm') renderLegacyProviders(content);
     const items = data.integrations.filter(item => data.catalog[item.kind].group === active);
     if (!items.length) content.append(node('p', 'Nu ai adăugat încă nicio conexiune în această secțiune.', 'helper'));
     const list = node('div', '', 'settings-connections');
@@ -233,6 +234,47 @@ export function initSettings(api) {
       });
       row.append(node('span', label), select, save);
       container.append(row);
+    }
+  }
+
+  /**
+   * Providers that predate the Settings screen — the local Ollama endpoint written by the
+   * seed. Their record says only what the seed knew, which is nothing about whether the
+   * endpoint answers; this card is the control that turns that into a measured state.
+   */
+  function renderLegacyProviders(container) {
+    for (const provider of data.legacy_providers || []) {
+      const card = node('article', '', 'settings-card');
+      const verified = Boolean(provider.last_health_check);
+      card.append(
+        node('h3', provider.name),
+        node('p', `${provider.provider_type} · ${provider.base_url}`, 'helper'),
+      );
+      card.append(
+        node(
+          'p',
+          verified
+            ? `Verificat: ${new Date(provider.last_health_check).toLocaleString('ro-RO')}`
+            : 'Adăugat automat la instalare. Nu a fost contactat niciodată, deci modelele lui nu pot fi alocate încă.',
+          verified ? 'helper' : 'settings-limitation',
+        ),
+      );
+      const actions = node('div', '', 'settings-actions');
+      const check = node('button', 'Verifică și încarcă modelele', 'secondary');
+      check.addEventListener('click', () => {
+        run(async () => {
+          const result = await api(`/providers/${provider.id}/sync-models`, { method: 'POST' });
+          const available = (result.models || []).filter(model => model.is_available).length;
+          return {
+            message: available
+              ? `${provider.name} a răspuns: ${available} modele disponibile.`
+              : `${provider.name} a răspuns, dar nu oferă niciun model.`,
+          };
+        }, '');
+      });
+      actions.append(check);
+      card.append(actions);
+      container.append(card);
     }
   }
 

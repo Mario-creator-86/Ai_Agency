@@ -11,12 +11,15 @@ from fastapi import APIRouter, Depends, FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import text
+from sqlalchemy import Engine, select, text
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.types import ASGIApp
 
+from app.agents.models import ProviderRecord
 from app.agents.router import create_agents_router, create_providers_router
+from app.analytics.router import create_analytics_router
 from app.config import ROOT, Settings
 from app.db import create_db_engine
 from app.factual.router import create_factual_router
@@ -26,6 +29,7 @@ from app.integrations.vault import CredentialVault
 from app.logging import configure_logging
 from app.media.router import create_media_router
 from app.office.router import create_office_router
+from app.providers.ollama import OllamaProvider
 from app.providers.registry import ProviderRegistry
 from app.publishing.router import create_publishing_router
 from app.schemas import PolicyCommand, PolicyResult
@@ -42,6 +46,22 @@ from app.workflows.router import (
 logger = logging.getLogger("studio.api")
 
 
+def register_seeded_ollama(engine: Engine, registry: ProviderRegistry) -> None:
+    """Give the seeded Ollama endpoint a live adapter so the owner can actually check it.
+
+    Without this the seeded provider has no adapter, so the health check and model sync both
+    fail with "no adapter registered" and the owner has no way to replace the seeded record's
+    unverified state with a measured one. Registering an adapter asserts nothing about whether
+    Ollama is running; only a check does that.
+    """
+    with Session(engine) as session:
+        for provider in session.scalars(
+            select(ProviderRecord).where(ProviderRecord.provider_type == "OLLAMA")
+        ):
+            if registry.get(provider.id) is None:
+                registry.register(provider.id, OllamaProvider(base_url=provider.base_url))
+
+
 def create_app(settings: Settings | None = None) -> ASGIApp:
     settings = settings or Settings()  # type: ignore[call-arg]
     configure_logging(settings.log_level)
@@ -52,11 +72,12 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
         # Migrations/bootstrap are explicit startup commands, never hidden destructive schema edits.
         with engine.connect() as connection:
             revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
-            if revision != "0008_integration_settings":
+            if revision != "0010_phase7_analytics":
                 raise RuntimeError("Run scripts/bootstrap.py with this application version")
             if connection.scalar(text("SELECT COUNT(*) FROM owner_policy")) != 1:
                 raise RuntimeError("Run scripts/bootstrap.py to initialize the studio")
         load_registry(engine, app.state.credential_vault, app.state.registry)
+        register_seeded_ollama(engine, app.state.registry)
 
         # Outbox dispatcher: broadcast committed events to WebSocket clients every second.
         # Runs on the server's own event loop on purpose — publish_pending_outbox schedules
@@ -199,6 +220,7 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
     app.include_router(create_media_router(), prefix="/api/v1", tags=["media"])
     # Phase 6: Autonomous Publishing & Distribution router
     app.include_router(create_publishing_router(), prefix="/api/v1", tags=["publishing"])
+    app.include_router(create_analytics_router(), prefix="/api/v1", tags=["analytics"])
 
     if (ROOT / "frontend/dist").is_dir():
         app.mount("/", StaticFiles(directory=ROOT / "frontend/dist", html=True), name="frontend")

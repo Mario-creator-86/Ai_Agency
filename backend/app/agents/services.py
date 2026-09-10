@@ -188,6 +188,9 @@ def sync_provider_models(
                 m_rec = existing_models[m_name]
                 m_rec.is_available = info.is_available
                 m_rec.last_verified = now_str
+                # The provider has now actually named this model, so a row that was only
+                # seeded from configuration stops being an unverified guess.
+                m_rec.discovery_method = "DECLARED_BY_PROVIDER"
                 if info.notes and info.notes not in m_rec.notes:
                     m_rec.notes = (m_rec.notes + " " + info.notes).strip()
             else:
@@ -233,6 +236,9 @@ def sync_provider_models(
                 m_rec.is_available = False
                 m_rec.last_verified = now_str
 
+        # Reaching this line means adapter.list_models() returned; the endpoint answered.
+        # This is the only place allowed to record the provider as healthy.
+        provider.status = "HEALTHY"
         provider.last_health_check = now_str
         session.flush()
 
@@ -516,7 +522,13 @@ def run_agent_task(
 
 
 def seed_initial_workforce(engine: Engine) -> None:
-    """Seed baseline roles, Ollama provider, cloud models, and active agents if not present."""
+    """Seed baseline roles, the Ollama endpoint, its expected models, and the agents.
+
+    Seeding writes intent, never observation. The provider is recorded NOT_CONFIGURED with no
+    health-check timestamp and its models unavailable with no verification timestamp, because
+    nothing in this function contacts Ollama. Only ``sync_provider_models`` — which does make
+    the call — may mark a model available or stamp ``last_verified``.
+    """
     with Session(engine) as session, session.begin():
         existing_agents = session.scalar(select(func.count()).select_from(Agent))
         if existing_agents and existing_agents > 0:
@@ -563,10 +575,15 @@ def seed_initial_workforce(engine: Engine) -> None:
                 name="local-ollama",
                 provider_type="OLLAMA",
                 base_url="http://127.0.0.1:11434",
-                status="HEALTHY",
-                last_health_check=utc_now(),
+                # Seeding registers an endpoint; it does not contact it. Nothing here may
+                # claim the provider answered — the owner runs the health check.
+                status="NOT_CONFIGURED",
+                last_health_check=None,
                 adapter_version="1.0.0",
-                notes="Ollama local & cloud models adapter",
+                notes=(
+                    "Ollama local & cloud models adapter. Endpoint declared at seed time and "
+                    "never contacted; run the provider check to establish whether it answers."
+                ),
                 created_at=utc_now(),
                 event_id=event.event_id,
             )
@@ -591,11 +608,13 @@ def seed_initial_workforce(engine: Engine) -> None:
                     id=str(uuid4()),
                     provider_id=provider.id,
                     model_name=m_name,
-                    discovery_method="DECLARED_BY_PROVIDER",
+                    # SEEDED_UNVERIFIED, not DECLARED_BY_PROVIDER: the provider never
+                    # declared anything here, this list is written from configuration.
+                    discovery_method="SEEDED_UNVERIFIED",
                     context_length=ctx_len,
-                    last_verified=utc_now(),
-                    is_available=True,
-                    notes=f"{notes}; cloud_model=true",
+                    last_verified=None,
+                    is_available=False,
+                    notes=f"{notes}; cloud_model=true; not verified against the provider",
                 )
                 session.add(model)
                 session.flush()

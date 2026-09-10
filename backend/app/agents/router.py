@@ -115,9 +115,20 @@ def create_providers_router(registry: ProviderRegistry) -> APIRouter:
         try:
             models = sync_provider_models(request.app.state.engine, registry, provider_id)
             return {"synced_count": len(models), "models": models}
-        except ValueError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
         except SQLAlchemyError:
             raise HTTPException(status_code=500, detail="Internal error") from None
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except OSError as exc:
+            # URLError, HTTPError, TimeoutError and ConnectionRefusedError all land here.
+            # The endpoint did not answer. Say so plainly instead of a generic server error:
+            # the Owner needs to know the provider is unreachable, and nothing was recorded.
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Furnizorul nu a răspuns, deci nu s-a înregistrat niciun model. "
+                    "Pornește serviciul sau verifică adresa, apoi încearcă din nou."
+                ),
+            ) from exc
 
     return router

@@ -68,8 +68,9 @@ class Room(Base):
     event_id: Mapped[str] = mapped_column(ForeignKey("domain_event.event_id"))
 
 
-# Register Phase 1, Phase 2, Phase 4, Phase 5, and Phase 6 models with Base.metadata
+# Register Phase 1, 2, 4, 5, 6 and 7 models with Base.metadata
 import app.agents.models  # noqa: F401, E402
+import app.analytics.models  # noqa: F401, E402
 import app.factual.models  # noqa: F401, E402
 import app.integrations.models  # noqa: F401, E402
 import app.media.models  # noqa: F401, E402

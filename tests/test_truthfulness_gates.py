@@ -11,6 +11,7 @@ Covers:
 - A gate refusal is persisted with its event (auditable), not rolled back.
 - QC measures the file: a non-video file named .mp4 cannot pass technical QC.
 - A missing media asset is a clean rejection, not a database integrity error.
+- The seed never records a provider as healthy or a model as verified without a response.
 """
 
 from __future__ import annotations
@@ -19,10 +20,16 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from app.agents.models import ModelRecord, ProviderRecord
+from app.agents.services import seed_initial_workforce, sync_provider_models
+from app.main import register_seeded_ollama
 from app.media.models import MediaAsset, QualityControlReport
 from app.media.qc import evaluate_media_qc
 from app.models import DomainEvent, OwnerPolicy
+from app.providers.base import ModelInfo
 from app.providers.deterministic_pub import DeterministicPublishingAdapter
+from app.providers.ollama import OllamaProvider
+from app.providers.registry import ProviderRegistry
 from app.publishing.models import PublicationRecord
 from app.publishing.services import (
     PublisherNotConfigured,
@@ -258,3 +265,148 @@ def test_character_drift_check_does_not_claim_to_pass(engine, tmp_path):
 
     assert drift["status"] == "NOT_IMPLEMENTED"
     assert drift["passed"] is None
+
+
+# ---------------------------------------------------------------------------
+# Seeded provider and model records
+#
+# The seed writes intent, never observation. It used to record the Ollama endpoint as
+# HEALTHY with a health-check timestamp and its three configured models as available and
+# verified, without contacting Ollama at all — so a studio on a machine with no Ollama
+# installed showed a healthy provider and three verified models.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def seeded(engine):
+    """The workforce seed, as scripts/bootstrap.py runs it."""
+    seed_initial_workforce(engine)
+    return engine
+
+
+def test_seeded_provider_is_not_reported_as_healthy(seeded):
+    with Session(seeded) as session:
+        providers = list(session.scalars(select(ProviderRecord)))
+
+    assert providers, "the seed must register the Ollama endpoint"
+    for provider in providers:
+        assert provider.status != "HEALTHY", (
+            f"provider {provider.name} is recorded HEALTHY but nothing contacted it"
+        )
+        assert provider.last_health_check is None, (
+            f"provider {provider.name} carries a health-check timestamp for a check that never ran"
+        )
+
+
+def test_seeded_models_are_not_reported_as_available_or_verified(seeded):
+    with Session(seeded) as session:
+        models = list(session.scalars(select(ModelRecord)))
+
+    assert models, "the seed must record the models the studio expects"
+    for model in models:
+        assert model.is_available is False, (
+            f"model {model.model_name} is marked available without any provider response"
+        )
+        assert model.last_verified is None, (
+            f"model {model.model_name} carries a verification timestamp for a check that never ran"
+        )
+        assert model.discovery_method == "SEEDED_UNVERIFIED", (
+            f"model {model.model_name} claims the provider declared it, but the seed did"
+        )
+
+
+def test_a_model_becomes_available_only_after_the_provider_answers(seeded):
+    """The sync is the only path from seeded intent to a measured, available model."""
+
+    class OneModelProvider:
+        ADAPTER_VERSION = "test"
+
+        async def list_models(self):
+            return [ModelInfo("glm-5.2:cloud", 131072, True)]
+
+    with Session(seeded) as session:
+        provider_id = session.scalars(select(ProviderRecord.id)).first()
+
+    registry = ProviderRegistry()
+    registry.register(provider_id, OneModelProvider())
+    sync_provider_models(seeded, registry, provider_id)
+
+    with Session(seeded) as session:
+        provider = session.get(ProviderRecord, provider_id)
+        by_name = {m.model_name: m for m in session.scalars(select(ModelRecord))}
+
+    # The model the provider actually named is now available and measured.
+    answered = by_name["glm-5.2:cloud"]
+    assert answered.is_available is True
+    assert answered.last_verified is not None
+    assert answered.discovery_method == "DECLARED_BY_PROVIDER"
+    assert provider is not None and provider.status == "HEALTHY"
+
+    # The models it did not name stay unavailable.
+    for name in ("kimi-k2.6:cloud", "qwen3-coder:480b-cloud"):
+        assert by_name[name].is_available is False, f"{name} was never named by the provider"
+
+
+def test_an_unreachable_provider_is_never_recorded_as_healthy(seeded):
+    """A failed sync leaves the record as it was; it must not upgrade anything."""
+
+    class UnreachableProvider:
+        ADAPTER_VERSION = "test"
+
+        async def list_models(self):
+            raise OSError("connection refused")
+
+    with Session(seeded) as session:
+        provider_id = session.scalars(select(ProviderRecord.id)).first()
+
+    registry = ProviderRegistry()
+    registry.register(provider_id, UnreachableProvider())
+    with pytest.raises(OSError):
+        sync_provider_models(seeded, registry, provider_id)
+
+    with Session(seeded) as session:
+        provider = session.get(ProviderRecord, provider_id)
+        models = list(session.scalars(select(ModelRecord)))
+
+    assert provider is not None and provider.status != "HEALTHY"
+    assert provider.last_health_check is None
+    assert all(m.is_available is False for m in models)
+
+
+def test_the_seeded_provider_can_actually_be_checked_by_the_owner(seeded):
+    """An unverified record is only honest if the Owner has a way to verify it.
+
+    The seeded provider previously had no adapter registered, so the check and the model
+    sync both failed with "no adapter registered" and the seeded claim could never be
+    replaced by a measured one.
+    """
+    registry = ProviderRegistry()
+    register_seeded_ollama(seeded, registry)
+
+    with Session(seeded) as session:
+        provider_id = session.scalars(select(ProviderRecord.id)).first()
+
+    assert registry.get(provider_id) is not None, (
+        "the seeded Ollama endpoint has no adapter, so the Owner cannot verify it"
+    )
+
+
+def test_an_unreachable_provider_reports_that_it_did_not_answer(seeded, client, headers):
+    """A dead endpoint must produce an honest 503, not a generic 500 the Owner can't act on."""
+    response = client.get("/api/v1/providers/", headers=headers)
+    provider_id = response.json()["providers"][0]["id"]
+    # A developer machine may genuinely run Ollama on the default port; point the adapter at
+    # a port nothing listens on so "unreachable" is deterministic, not environment luck.
+    client.app.app.state.registry.register(
+        provider_id, OllamaProvider(base_url="http://127.0.0.1:9")
+    )
+
+    result = client.post(f"/api/v1/providers/{provider_id}/sync-models", headers=headers)
+
+    assert result.status_code == 503, result.text
+    assert "nu a răspuns" in result.json()["detail"]
+    assert "nu s-a înregistrat niciun model" in result.json()["detail"]
+
+    after = client.get("/api/v1/providers/", headers=headers).json()["providers"][0]
+    assert after["status"] == "NOT_CONFIGURED"
+    assert after["last_health_check"] is None

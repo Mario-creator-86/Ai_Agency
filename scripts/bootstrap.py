@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
 from app.agents.services import seed_initial_workforce  # noqa: E402
+from app.analytics.services import seed_default_strategy  # noqa: E402
 from app.config import Settings  # noqa: E402
 from app.db import create_db_engine, migrate  # noqa: E402
 from app.media.services import seed_default_character_bibles  # noqa: E402
@@ -35,6 +36,9 @@ def main() -> None:
         seed_initial_workforce(engine)
         seed_default_character_bibles(engine)
         seed_default_channels(engine)
+        # Neutral v1 editorial strategy per channel; it expresses no preference until real
+        # analytics snapshots produce a recommendation the Owner applies.
+        seed_default_strategy(engine)
     finally:
         engine.dispose()
     print("Foundation database ready. Owner token is in .env (never share or commit it).")
