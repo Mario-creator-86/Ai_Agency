@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     )
 
     owner_token: SecretStr
-    name: str = Field(default="Autonomous AI Studio", min_length=1, max_length=100)
+    name: str = Field(default="AMN-AI", min_length=1, max_length=100)
     timezone: str = "Europe/Bucharest"
     database_url: str = "sqlite:///data/studio.db"
     host: str = "127.0.0.1"

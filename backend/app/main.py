@@ -109,7 +109,7 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
             engine.dispose()
 
     app = FastAPI(
-        title="Autonomous AI Studio",
+        title="AMN-AI",
         version="0.1.0",
         lifespan=lifespan,
         docs_url=None,

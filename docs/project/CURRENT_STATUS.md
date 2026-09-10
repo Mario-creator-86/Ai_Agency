@@ -12,6 +12,13 @@ remediation that followed it. Active edit claim: none.
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
 
+## Identity
+
+The agency is **AMN-AI — Autonomous Machine Nexus — Artificial Intelligence**. The name and logo
+assets, and the rule that the stored studio name is domain state rather than configuration, are
+documented in `BRAND_AMN_AI.md`. Renaming an existing studio is done with
+`scripts/rename_studio.py`, which appends a `studio.renamed` event; bootstrap never rewrites it.
+
 ## Baseline and document authority
 
 Started from 83 Markdown documents with no application code, tests, dependencies or Git history.
@@ -62,7 +69,8 @@ references were changed inside the architecture package. CI/local checks protect
 - Autonomy stop hard-gate: task worker and scheduler refuse to claim or run tasks when autonomy_stopped is active.
 - Alembic migration 0003_phase2_automation: 5 new tables (workflow, workflow_step, task_queue, scheduled_job, outbox_record) with zero schema drift.
 
-**Phase 3 (complete — upgraded to Lateral Cutaway Skyscraper 2026-09-09):**
+**Phase 3 (complete — visual system v2 2026-09-10, see `PIXEL_OFFICE_V2.md`):**
+- Premium pixel-art rebuild of the cutaway (palette module with hue-shifted ramps, compiled outlined character sprites with role costumes, per-department room shells and interiors, baked lighting, limestone facade, glass lift). Designed first in Figma (`AMN-AI Office · Pixel Art Design System`, file `bqTc0PoCbjL5dH5xw0FRDI`), then implemented frontend-only; backend, API and events untouched. Measured 60 FPS at ~6 ms/frame; 43 frontend tests pass.
 - Lateral cutaway multi-floor skyscraper canvas rendered at 60fps with zero simulated state, inspired by Space Haven, Anomaly President, and retro pixel-art simulation games.
 - Seniority-based corporate hierarchy from top to bottom:
   * Floor 4 (Penthouse / Executive Suite): Director / CEO (Sarah) with panoramic city view, executive mahogany desk, gold trendlines, and award trophies.

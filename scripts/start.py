@@ -1,4 +1,4 @@
-"""One command to bring the studio up: dependencies, database, frontend, server.
+"""One command to bring AMN-AI up: dependencies, database, frontend, server.
 
 Run it with::
 
@@ -103,7 +103,7 @@ def preflight_report() -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Start the Autonomous AI Studio.")
+    parser = argparse.ArgumentParser(description="Start AMN-AI (Autonomous Machine Nexus).")
     parser.add_argument("--skip-frontend", action="store_true")
     parser.add_argument("--skip-sync", action="store_true")
     parser.add_argument("--rebuild", action="store_true")

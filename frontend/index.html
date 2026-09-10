@@ -4,20 +4,32 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#172927" />
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <title>Autonomous AI Studio</title>
+    <meta
+      name="description"
+      content="AMN-AI — Autonomous Machine Nexus · Artificial Intelligence. Spațiul de lucru privat al Owner-ului: agenți, producție media și distribuție, cu stare verificată."
+    />
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta property="og:title" content="AMN-AI · Autonomous Machine Nexus" />
+    <meta property="og:description" content="Autonomous Machine Nexus — Artificial Intelligence. Real work. Verified state." />
+    <meta property="og:image" content="/amn-ai-logo.png" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary" />
+    <title>AMN-AI · Autonomous Machine Nexus</title>
   </head>
   <body>
     <header class="topbar">
-      <a href="/" class="brand"><span class="brand-symbol">A<span>·</span>S</span><span>Autonomous<br /><strong>AI Studio</strong></span></a>
+      <a href="/" class="brand" title="AMN-AI — Autonomous Machine Nexus · Artificial Intelligence"><img src="/amn-ai-mark.png" alt="" width="38" height="38" class="brand-logo" /><span><strong>AMN-AI</strong><br /><span class="brand-sub">Autonomous Machine Nexus</span></span></a>
       <span class="text-sm text-stone-300">OWNER WORKSPACE <span class="separator">/</span> LOCAL STUDIO</span>
       <span id="connection" class="connection" role="status">Neconectat</span>
     </header>
     <main>
       <section id="login" class="login panel">
-        <p class="eyebrow">STUDIO CONTROL</p>
+        <img src="/amn-ai-lockup.png" alt="AMN-AI — Autonomous Machine Nexus" class="login-lockup" width="200" height="212" />
+        <p class="eyebrow">AUTONOMOUS MACHINE NEXUS · ARTIFICIAL INTELLIGENCE</p>
         <h1>Un loc pentru<br />următoarea idee.</h1>
-        <p>Conectează-te la spațiul privat al studioului.</p>
+        <p>Conectează-te la spațiul privat al agenției AMN-AI.</p>
         <form id="login-form">
           <label for="owner-token">Cheia Owner</label>
           <input id="owner-token" type="password" required minlength="32" autocomplete="off" spellcheck="false" />
@@ -27,7 +39,7 @@
       </section>
       <section id="workspace" hidden>
         <div class="page-heading">
-          <div><p class="eyebrow">THE OBSERVABLE COMPANY</p><h1 id="studio-name">Studioul tău</h1><p>Activitatea reală a companiei, într-un singur loc.</p></div>
+          <div><p class="eyebrow">THE OBSERVABLE COMPANY</p><h1 id="studio-name">AMN-AI</h1><p>Activitatea reală a companiei, într-un singur loc.</p></div>
           <button id="logout" class="quiet">Închide sesiunea</button>
         </div>
         <div class="notice"><span class="notice-marker">01</span><div><strong>Fundația studioului</strong><p>Infrastructura locală este activă. Agenții și producția media urmează în etapele următoare.</p></div><span class="tag">FOUNDATION</span></div>
@@ -385,7 +397,7 @@
       </dialog>
       <p id="message" role="alert" class="message" hidden></p>
     </main>
-    <footer class="site-footer"><span>Autonomous AI Studio · Foundation 0.1</span><span>Real work. Verified state.</span></footer>
+    <footer class="site-footer"><span>AMN-AI · Autonomous Machine Nexus — Artificial Intelligence</span><span>Real work. Verified state.</span></footer>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

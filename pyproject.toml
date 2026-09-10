@@ -1,7 +1,7 @@
 [project]
-name = "autonomous-ai-studio"
+name = "amn-ai"
 version = "0.1.0"
-description = "Local-first, backend-authoritative AI media studio"
+description = "AMN-AI (Autonomous Machine Nexus) — local-first, backend-authoritative AI media studio"
 requires-python = ">=3.12,<3.15"
 dependencies = [
   "fastapi>=0.115,<1",

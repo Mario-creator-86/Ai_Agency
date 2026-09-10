@@ -1,4 +1,4 @@
-# Autonomous AI Studio — working instructions
+# AMN-AI (Autonomous Machine Nexus — Artificial Intelligence) — working instructions
 
 Read `docs/architecture/README.md` and `docs/architecture/00_MASTER_PROMPT.md` first.
 The complete architecture package is normative; preserve its invariants and follow its reading order.

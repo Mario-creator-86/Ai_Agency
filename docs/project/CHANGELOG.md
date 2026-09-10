@@ -1,5 +1,37 @@
 # Changelog
 
+## Agency identity: AMN-AI — 2026-09-10
+
+- Named the agency **AMN-AI (Autonomous Machine Nexus — Artificial Intelligence)** everywhere it is
+  stated: browser tab, share metadata, top bar, sign-in screen, footer, the 2D building's neon sign,
+  FastAPI title, `STUDIO_NAME` default, simulated channel title and Channel B tagline, README,
+  AGENTS, launcher scripts, and the distribution names (`amn-ai`, `amn-ai-ui`) with both lockfiles
+  regenerated — dependency resolution unchanged (44 packages identical, `uv sync --locked` and
+  `npm ci` clean).
+- Added the logo as a proper asset set derived from the source artwork: top-bar mark, sign-in
+  lockup with a transparent ground, `favicon.ico`, `favicon-32.png`, `apple-touch-icon.png` and a
+  512 px master used as `og:image`. Quantised from a single 1.16 MB PNG to ~8 kB per page load.
+  Removed the previous brand's unreferenced `favicon.svg`.
+- Added `scripts/rename_studio.py`: bootstrap deliberately never rewrites an existing studio name,
+  so renaming is an explicit Owner act that appends a `studio.renamed` event beside the row update.
+  Applied it to the local studio; the workspace H1 now reads AMN-AI because the database says so.
+- Documented the whole identity in `BRAND_AMN_AI.md`. Tests now assert the brand assets the page
+  actually references and cover the rename's audit trail, idempotence and refusals.
+
+## Pixel office v2 — 2026-09-10
+
+- Rebuilt the 2D office's visual layer to a modern pixel-art standard, frontend only: new
+  `office_palette.js` (hue-shifted five-tone ramps, one material story per department),
+  `pixel_sprites.js` (outlined compiled sprites, glow cache), `office_characters.js` (26×34
+  seated sprites, role costumes, deterministic looks, honest state poses), `office_rooms.js`
+  (room shells, baked light, nine department interiors, workstation occlusion layers),
+  `pixel_font.js`; `office_engine.js` rewritten around three cached layers with the same exports.
+- Designed the system in Figma before implementing (palette variables, quality-bar floor at 4x,
+  character and HUD components, building/layout spec).
+- Scene chrome: slim dark bezel and high-contrast dark controls; admin panels unchanged.
+- Removed the superseded `office_art.js`. Added 5 frontend tests (43 total), a standalone room
+  preview harness and screenshot/FPS review scripts. Backend, API, events and data untouched.
+
 ## Foundation 0.1 — 2026-09-09
 
 - Read the full original 83-document specification package; established its implementation baseline.

@@ -1,8 +1,11 @@
-# Autonomous AI Studio
+# AMN-AI — Autonomous Machine Nexus
 
-Local-first AI media studio. Phases 0–2 are complete; phases 4–6 are partially implemented and
+**AMN-AI** (Autonomous Machine Nexus — Artificial Intelligence) is a local-first AI media studio. Phases 0–2 are complete; phases 4–6 are partially implemented and
 their acceptance criteria are not met — see [Current status](docs/project/CURRENT_STATUS.md) and the
 [external audit](docs/project/AUDIT_2026-09-09_EXTERNAL.md). This is not a production AI company.
+
+The agency name and logo, and which asset belongs where, are documented in
+[Brand](docs/project/BRAND_AMN_AI.md).
 
 ## Documentation is authoritative
 

@@ -1,5 +1,5 @@
 @echo off
-REM One command to start the Autonomous AI Studio: dependencies, database, frontend, server.
+REM One command to start AMN-AI (Autonomous Machine Nexus): dependencies, database, frontend, server.
 REM Double-click this file, or run it from a terminal. Ctrl+C stops the studio.
 setlocal
 cd /d "%~dp0"

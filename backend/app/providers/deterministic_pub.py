@@ -29,7 +29,7 @@ class DeterministicPublishingAdapter(PublishingProvider):
 
     def __init__(self, channel_id: str = "UC_studio_main_sim") -> None:
         self.channel_id = channel_id
-        self.channel_title = "Autonomous AI Studio - Main Shorts (Simulated)"
+        self.channel_title = "AMN-AI - Main Shorts (Simulated)"
         self._published_videos: dict[str, dict[str, Any]] = {}
 
     async def health_check(self) -> PublishingHealthResult:

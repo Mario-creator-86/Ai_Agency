@@ -58,7 +58,7 @@ DEFAULT_CHANNELS = [
         "channel_type": "OFFICE_SERIAL",
         "platform": "YOUTUBE",
         "upload_privacy_default": "private",
-        "brand_tagline": "The Autonomous AI Studio: Unscripted Silicon Life.",
+        "brand_tagline": "AMN-AI (Autonomous Machine Nexus): Unscripted Silicon Life.",
     },
 ]
 

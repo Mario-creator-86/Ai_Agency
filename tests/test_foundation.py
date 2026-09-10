@@ -1,4 +1,6 @@
+import sys
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -7,7 +9,7 @@ from alembic.migration import MigrationContext
 from app.config import Settings
 from app.db import create_db_engine, migrate
 from app.main import create_app
-from app.models import Base, CommandRecord
+from app.models import Base, CommandRecord, DomainEvent
 from app.schemas import PolicyCommand
 from app.services import (
     CommandConflict,
@@ -46,7 +48,10 @@ def test_built_frontend_and_security_headers(client):
     assert response.status_code == 200
     assert 'id="owner-token"' in response.text
     assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
-    assert client.get("/favicon.svg").status_code == 200
+    # The brand assets the page actually references must be served, not a stale icon.
+    for asset in ("/favicon.ico", "/favicon-32.png", "/apple-touch-icon.png", "/amn-ai-mark.png"):
+        assert client.get(asset).status_code == 200, asset
+    assert "AMN-AI" in response.text
 
 
 def test_unmigrated_database_fails_closed(settings):
@@ -110,7 +115,39 @@ def test_bootstrap_is_idempotent_and_preserves_existing_studio(engine, settings)
     settings.name = "Changed environment default"
     bootstrap_studio(engine, settings)
     assert snapshot(engine)["cursor"] == 2
-    assert snapshot(engine)["studio"]["name"] == "Autonomous AI Studio"
+    assert snapshot(engine)["studio"]["name"] == "AMN-AI"
+
+
+def test_renaming_the_studio_is_explicit_idempotent_and_audited(engine):
+    """Bootstrap never rewrites an existing name, so a rename is its own recorded decision."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    from rename_studio import rename_studio
+
+    before = snapshot(engine)["cursor"]
+    assert "no changes written" in rename_studio(engine, "Renamed Agency", dry_run=True)
+    assert snapshot(engine)["studio"]["name"] == "AMN-AI"
+    assert snapshot(engine)["cursor"] == before, "a dry run writes nothing"
+
+    def renames():
+        with Session(engine) as session:
+            return session.scalars(
+                select(DomainEvent).where(DomainEvent.event_type == "studio.renamed")
+            ).all()
+
+    rename_studio(engine, "Renamed Agency")
+    assert snapshot(engine)["studio"]["name"] == "Renamed Agency"
+    recorded = renames()
+    assert len(recorded) == 1
+    assert recorded[0].payload["previous_name"] == "AMN-AI"
+    assert recorded[0].aggregate_version == 2, "the rename follows studio.created at version 1"
+
+    # Repeating it changes nothing and appends no second event.
+    assert "already named" in rename_studio(engine, "Renamed Agency")
+    assert len(renames()) == 1
+
+    for refused in ("", "   ", "x" * 101):
+        with pytest.raises(SystemExit):
+            rename_studio(engine, refused)
 
 
 def test_migration_repeat_and_schema_match(engine):

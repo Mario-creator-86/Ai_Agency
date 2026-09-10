@@ -447,6 +447,22 @@ This increment does not close Phase 4 acceptance. See `RESEARCH_HANDOFF.md`.
 
 Evidence: `PIXEL_OFFICE_REFINEMENT.md`. This does not close unrelated Phase 3 functionality or later world-builder procurement requirements.
 
+## Pixel office v2 — 2026-09-10
+- [x] Figma design system: Office Palette variables, quality-bar floor (Research, 4x), character and HUD components, building/layout spec.
+- [x] Frontend implementation of the same system across all nine departments: palette ramps, outlined compiled sprites with role costumes, room shells with baked light, workstation occlusion, limestone facade, glass lift, dark scene chrome.
+- [x] 60 FPS measured (~6 ms/frame); 43 frontend tests; live click-to-inspect verified; no backend/API/event changes.
+- [ ] Optional follow-ups: walking sprites for agents leaving their desks, daytime interior palette pass, street crowd rig on the new sprite compiler.
+
+Evidence: `PIXEL_OFFICE_V2.md`.
+
+## Agency identity — AMN-AI — 2026-09-10
+- [x] Name introduced across interface, backend, packaging, launcher scripts and documentation.
+- [x] Logo asset set derived from the source artwork (mark, lockup, favicon/ico/apple-touch, og master).
+- [x] Explicit audited rename of the existing studio row (`scripts/rename_studio.py`, `studio.renamed`).
+- [x] Brand rules documented; tests assert the referenced assets and the rename's audit trail.
+
+Evidence: `BRAND_AMN_AI.md`.
+
 ## Ambient street increment — 2026-09-10
 
 - [x] Round tires and correct traffic drawing depth.

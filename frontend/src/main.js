@@ -1739,7 +1739,7 @@ element('logout').addEventListener('click', () => {
   notify('');
   element('events').replaceChildren();
   element('modules').replaceChildren();
-  element('studio-name').textContent = 'Studioul tău';
+  element('studio-name').textContent = 'AMN-AI';
   element('connection').textContent = 'Neconectat';
 });
 
