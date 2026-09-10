@@ -48,12 +48,17 @@
   --info-line: #b3cfc4;
   --info-ink:  #1f6b5c;
 
-  /* The 2D office is a night scene: it keeps its own darkness, tinted to the
-     brand rather than to a foreign blue. */
-  --scene:       #16241f;
-  --scene-deep:  #101a17;
-  --scene-frame: #c4cebb;
-  --scene-frame-top: #a9b8a8;
+  /* The 2D office is a night scene in violet-navy (see office_palette.js). The frame
+     around it is a slim dark bezel, so the pixel art reads as a product window inside the
+     light admin surface rather than as a second application. */
+  --scene:       #0b1020;
+  --scene-deep:  #080c18;
+  --scene-frame: #1d2438;
+  --scene-frame-top: #2a3350;
+  --scene-chrome: #121a2e;
+  --scene-chrome-edge: #2c3552;
+  --scene-chrome-ink: #e9ecf5;
+  --scene-chrome-muted: #9aa5c0;
 
   --radius:    10px;
   --radius-sm: 6px;
@@ -77,8 +82,8 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
 .topbar { height: 92px; padding: 0 4vw; display: flex; align-items: center; justify-content: space-between; gap: 24px; background: var(--forest-deep); color: #fff; }
 .brand { display: flex; align-items: center; gap: 14px; color: inherit; text-decoration: none; line-height: 1.2; font-size: 13px; }
 .brand strong { font-size: 17px; letter-spacing: 1px; }
-.brand-symbol { font-size: 29px; font-weight: 650; letter-spacing: -2px; border: 1px solid #6c8173; padding: 4px 9px; border-radius: 8px; }
-.brand-symbol span { color: var(--gold); }
+.brand-logo { width: 38px; height: 38px; border-radius: 9px; border: 1px solid #6c8173; display: block; }
+.brand-sub { color: #8fa294; font-size: 11px; letter-spacing: 0.4px; }
 .separator { padding: 0 14px; color: #718d86; }
 .connection { font-size: 12px; padding: 8px 12px; border: 1px solid #829f89; border-radius: 30px; color: #dcdfca; white-space: nowrap; }
 main { max-width: 1460px; padding: 45px 4vw 32px; margin: auto; }
@@ -105,7 +110,7 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 .empty-office p { font-size: 13px; }.empty-symbol { display: block; font-size: 28px; color: #799479; }
 .floor-label { position: absolute; bottom: 9px; left: 15px; font-size: 8px; letter-spacing: 3px; color: var(--ink-3); }
 .rooms { position: absolute; top: 8px; left: 10px; font-size: 9px; text-transform: uppercase; letter-spacing: 1px; color: var(--ink-3); }
-.office-footer { padding: 16px 24px; display: flex; justify-content: space-between; gap: 12px; color: var(--ink-3); font-size: 10px; }
+.office-footer { padding: 14px 24px 18px; display: flex; justify-content: space-between; gap: 12px; color: var(--ink-3); font-size: 11px; letter-spacing: .02em; }
 .mode-row { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; margin: 16px 0; }
 .mode-row strong { font-size: 10px; letter-spacing: .4px; }
 .primary, .danger { padding: 13px 18px; border-radius: 7px; width: 100%; font-size: 13px; font-weight: 600; }
@@ -143,34 +148,41 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
      its enlarged size with nothing to shrink it back. */
   height: clamp(420px, 52vh, 620px);
   margin: 10px 24px 0;
-  border: 12px solid var(--scene-frame);
-  border-top: 20px solid var(--scene-frame-top);
-  border-radius: 7px;
+  border: 1px solid var(--scene-frame);
+  border-radius: 12px;
   overflow: hidden;
+  background: var(--scene);
+  box-shadow: 0 22px 48px -26px rgba(23, 41, 39, .55), inset 0 0 0 1px rgba(255, 255, 255, .04);
 }
 .office-canvas { width: 100%; height: 100%; display: block; background: var(--scene); cursor: grab; }
 .office-canvas:active { cursor: grabbing; }
 
 .camera-toolbar { position: absolute; top: 12px; right: 12px; display: flex; gap: 6px; z-index: 10; }
+/* Scene chrome: dark, high-contrast controls that sit on the night render without competing
+   with the pixel art. Text stays >= 12px and >= 7:1 against the chrome. */
 .cam-btn {
-  padding: 5px 11px;
-  background: rgba(255, 254, 250, .9);
-  color: var(--ink);
-  border: 1px solid rgba(23, 41, 39, .18);
-  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  background: var(--scene-chrome);
+  color: var(--scene-chrome-ink);
+  border: 1px solid var(--scene-chrome-edge);
+  border-radius: 8px;
   font-size: 12px;
   font-weight: 600;
-  backdrop-filter: blur(2px);
+  letter-spacing: .01em;
+  line-height: 1.2;
+  transition: background .15s, border-color .15s, transform .12s;
 }
-.cam-btn:hover { background: #fff; border-color: var(--forest); }
-.cam-btn-active { background: var(--forest); color: #fff; border-color: var(--forest); }
-.cam-btn-active:hover { background: var(--forest-lift); border-color: var(--forest-lift); }
-.cam-btn-media, .cam-btn-pub { background: rgba(255, 254, 250, .9); color: var(--ink); }
-.cam-btn-media:hover, .cam-btn-pub:hover { background: #fff; border-color: var(--forest); }
-.btn-fs { background: rgba(255, 254, 250, .9); color: var(--ink); }
-.btn-fs:hover { background: #fff; border-color: var(--forest); }
-.btn-exit-fs { background: var(--alert-bg); color: var(--alert-ink); border-color: var(--alert-line); }
-.btn-exit-fs:hover { background: #f2d9cd; }
+.cam-btn:hover { background: #1c2540; border-color: #4a5680; }
+.cam-btn:active { transform: translateY(1px); }
+.cam-btn:focus-visible { outline: 2px solid #7ff0d0; outline-offset: 2px; }
+.cam-btn-active { background: #2a5a50; border-color: #4ab39b; color: #fff; }
+.cam-btn-active:hover { background: #326a5e; }
+.cam-btn-media, .cam-btn-pub { background: var(--scene-chrome); color: var(--scene-chrome-ink); }
+.cam-btn-media:hover, .cam-btn-pub:hover { background: #1c2540; border-color: #4a5680; }
+.btn-fs { background: var(--scene-chrome); color: var(--scene-chrome-ink); }
+.btn-fs:hover { background: #1c2540; border-color: #4a5680; }
+.btn-exit-fs { background: #3a1e24; color: #ffc9bd; border-color: #7a3a40; }
+.btn-exit-fs:hover { background: #4a2630; }
 
 .office-scene-container:fullscreen,
 .office-scene-container.is-fullscreen {
