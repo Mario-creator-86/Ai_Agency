@@ -14,7 +14,6 @@ and would still only tell you about the moment it ran.
 
 from __future__ import annotations
 
-import os
 import shutil
 from typing import Any
 
@@ -24,6 +23,7 @@ from sqlalchemy.orm import Session
 from app.agents.models import Agent, ModelRecord
 from app.config import Settings
 from app.media.factory import describe as describe_media
+from app.media.toolchain import find_ffprobe
 from app.models import OwnerPolicy
 from app.services import utc_now
 from app.youtube.models import YouTubeConnection
@@ -112,7 +112,7 @@ def run_preflight(engine: Engine, settings: Settings, vault: Any) -> dict[str, A
             detail=str(ffmpeg or ""),
         )
     )
-    ffprobe = os.environ.get("STUDIO_FFPROBE_PATH") or shutil.which("ffprobe")
+    ffprobe = find_ffprobe(settings.ffmpeg_path)
     checks.append(
         _check(
             "media_inspection",
@@ -155,13 +155,26 @@ def run_preflight(engine: Engine, settings: Settings, vault: Any) -> dict[str, A
         )
     )
 
+    # Two different things can satisfy this check, and the Owner should be told which. Saying
+    # "connected by OAuth" when the credentials actually came from the server environment would
+    # describe a channel nobody authorised through the interface.
+    if youtube_connected is not None:
+        publishing_detail = f"Canal conectat: {youtube_connected.remote_channel_title or '—'}."
+        publishing_ready = "Canal YouTube conectat prin OAuth."
+    elif settings.youtube_credentials_present:
+        publishing_detail = "Credențiale din mediul serverului, neverificate prin OAuth."
+        publishing_ready = "Credențiale YouTube prezente în mediul serverului."
+    else:
+        publishing_detail = ""
+        publishing_ready = "Canal YouTube conectat prin OAuth."
     checks.append(
         _check(
             "publishing",
-            bool(youtube_connected) or settings.youtube_credentials_present,
+            youtube_connected is not None or settings.youtube_credentials_present,
             DEGRADING,
-            "Canal YouTube conectat prin OAuth.",
+            publishing_ready,
             "Niciun canal YouTube conectat; publicarea este oprită.",
+            detail=publishing_detail,
         )
     )
 

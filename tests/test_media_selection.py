@@ -9,13 +9,13 @@ though a provider had made it.
 
 from __future__ import annotations
 
-import shutil
 from uuid import uuid4
 
 import pytest
 from app.integrations.models import Integration, ServiceSelection
 from app.integrations.vault import CredentialVault
 from app.media.factory import describe, image_provider, tts_provider
+from app.media.toolchain import find_ffmpeg
 from app.providers.elevenlabs import ElevenLabsTTSAdapter
 from app.providers.openai_media import OpenAIImageAdapter
 from app.services import append_event
@@ -219,7 +219,7 @@ class StubImageAdapter:
         )
 
 
-@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+@pytest.mark.skipif(find_ffmpeg() is None, reason="ffmpeg not installed")
 def test_a_render_without_a_provider_is_labelled_placeholder_and_blocked_by_qc(engine, tmp_path):
     from app.media.assembler import PLACEHOLDER_VISUAL_PROVIDER, assemble_video_job
     from app.media.qc import evaluate_media_qc
@@ -237,7 +237,7 @@ def test_a_render_without_a_provider_is_labelled_placeholder_and_blocked_by_qc(e
     assert qc["checks_json"]["content_source_qc"]["passed"] is False
 
 
-@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+@pytest.mark.skipif(find_ffmpeg() is None, reason="ffmpeg not installed")
 def test_a_render_from_a_real_provider_records_that_provider_and_passes_content_qc(
     engine, tmp_path
 ):
@@ -322,7 +322,7 @@ def test_only_approved_scripts_are_offered_to_production(engine):
     assert [s["title"] for s in waiting] == ["Script APPROVED"]
 
 
-@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+@pytest.mark.skipif(find_ffmpeg() is None, reason="ffmpeg not installed")
 def test_a_script_leaves_the_queue_once_its_storyboard_exists(engine, tmp_path):
     from app.media.models import Storyboard
     from app.media.services import list_scripts_awaiting_storyboard

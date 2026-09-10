@@ -15,7 +15,6 @@ Tests:
 from __future__ import annotations
 
 import asyncio
-import shutil
 from pathlib import Path
 from uuid import uuid4
 
@@ -30,6 +29,7 @@ from app.media.services import (
     list_character_bibles,
     seed_default_character_bibles,
 )
+from app.media.toolchain import find_ffmpeg
 from app.models import OwnerPolicy
 from app.providers.deterministic_media import (
     DeterministicTTSAdapter,
@@ -39,8 +39,11 @@ from app.services import utc_now
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+# Skip when *the studio* cannot find an encoder, not when PATH happens not to carry one: the
+# Owner's ffmpeg is configured in .env and is not on PATH, so these tests were skipping while a
+# real encoder sat ready to use.
 requires_ffmpeg = pytest.mark.skipif(
-    shutil.which("ffmpeg") is None,
+    find_ffmpeg() is None,
     reason=(
         "FFmpeg not installed; the studio refuses to fake a render, so there is nothing to assert"
     ),

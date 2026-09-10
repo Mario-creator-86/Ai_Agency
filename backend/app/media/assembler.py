@@ -12,8 +12,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-import os
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -24,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.config import ROOT
 from app.media.models import MediaAsset, Storyboard, StoryboardScene, VideoRenderJob
+from app.media.toolchain import find_ffmpeg
 from app.providers.deterministic_media import (
     DeterministicTTSAdapter,
     DeterministicVisualAdapter,
@@ -50,11 +49,14 @@ class RenderEngineUnavailable(RuntimeError):
 
 
 def resolve_ffmpeg_path(custom_path: str | None = None) -> str | None:
-    """Return path to ffmpeg executable if available."""
-    custom = custom_path or os.environ.get("STUDIO_FFMPEG_PATH")
-    if custom and Path(custom).is_file():
-        return custom
-    return shutil.which("ffmpeg")
+    """Return path to ffmpeg executable if available.
+
+    Delegates to the one resolver the whole studio uses, so the renderer, quality control and
+    the preflight check can never disagree about whether an encoder exists. They did: this
+    function looked at the environment and PATH only, while the Owner's encoder was configured
+    in ``.env`` — so renders failed with "FFmpeg is not installed" on a machine that had it.
+    """
+    return find_ffmpeg(custom_path)
 
 
 def _scene_palette(scene_index: int) -> tuple[tuple[int, int, int], tuple[int, int, int]]:

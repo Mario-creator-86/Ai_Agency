@@ -12,8 +12,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -32,6 +30,7 @@ from app.media.models import (
     VideoRenderJob,
 )
 from app.media.schemas import QCReportView
+from app.media.toolchain import find_ffprobe
 from app.services import append_event, utc_now
 
 logger = logging.getLogger("studio.qc")
@@ -41,13 +40,16 @@ logger = logging.getLogger("studio.qc")
 PLACEHOLDER_PROVIDER_PREFIX = "PLACEHOLDER"
 
 
-def probe_media_file(file_path: Path) -> dict[str, Any]:
+def probe_media_file(file_path: Path, ffmpeg_path: str | None = None) -> dict[str, Any]:
     """Measure a media file with ffprobe. Returns measured facts, never assumptions.
 
     Result keys: ``available`` (ffprobe present), ``ok`` (file parsed and has a video stream),
     ``width``, ``height``, ``duration_seconds``, ``video_codec``, ``error``.
+
+    ``ffmpeg_path`` is the studio's configured encoder, used only to find ffprobe beside it when
+    the installer put one on PATH and not the other.
     """
-    ffprobe = os.environ.get("STUDIO_FFPROBE_PATH") or shutil.which("ffprobe")
+    ffprobe = find_ffprobe(ffmpeg_path)
     if not ffprobe:
         return {"available": False, "ok": False, "error": "ffprobe not installed"}
     try:
