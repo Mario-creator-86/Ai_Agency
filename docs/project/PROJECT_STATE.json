@@ -6,9 +6,9 @@
   "last_green_test_commit": null,
   "verification": "docs/project/AUDIT_2026-09-10_THIRD_PARTY.md",
   "tests": {
-    "python_passed": 304,
+    "python_passed": 311,
     "python_skipped": 1,
-    "javascript_passed": 17,
+    "javascript_passed": 38,
     "failed": 0
   },
   "known_blockers": [

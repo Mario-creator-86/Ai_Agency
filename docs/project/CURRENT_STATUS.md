@@ -500,3 +500,13 @@ two concurrent revisions after `0011_claim_attribution` (`0012_channel_verificat
 Combined tree verification: pytest **306 passed / 6 skipped**, ruff + ruff format clean,
 mypy clean (89 files), frontend `tsc` clean, **38/38 frontend tests**, Vite build OK
 (142.8 kB), docs integrity and secret scan pass. Live studio restarted on `0015_merge_heads`.
+
+## FFmpeg installed on the dev machine — 2026-09-10, ZCode
+
+Owner-approved system change: FFmpeg 9.0.1 (full build, via winget/Gyan) is installed and on
+the user PATH; `.env` pins `STUDIO_FFMPEG_PATH` to the absolute executable. The studio's
+live preflight moved from BLOCKED to **DEGRADED** — render_engine and media_inspection are
+now OK; the remaining degradations are exactly the unlinked credentials (image provider,
+voice provider, YouTube) and the empty research allowlist. Full suite with the real encoder
+on PATH: **311 passed / 1 skipped** (the render tests no longer skip and pass on the real
+FFmpeg path). Future `start.cmd` launches pick FFmpeg up from the registry PATH.
