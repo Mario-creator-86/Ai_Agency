@@ -6,9 +6,17 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
-from app.factual.agent_pipeline import agent_extract_claims
+from app.factual.agent_pipeline import (
+    NoIndependentVerifier,
+    NoVerifiedClaims,
+    ScriptRejected,
+    VerificationRejected,
+    agent_extract_claims,
+    agent_verify_claim,
+    agent_write_script,
+)
 from app.factual.schemas import (
     ApproveScriptCommand,
     ExtractClaimsCommand,
@@ -17,6 +25,7 @@ from app.factual.schemas import (
     GenerateScriptCommand,
     IngestSourceCommand,
     ProposeTopicCommand,
+    RetrievedSourceView,
     ScriptDraftView,
     SourceSnapshotView,
     TopicIdeaView,
@@ -36,6 +45,15 @@ from app.factual.services import (
     propose_topic_idea,
     verify_claim,
 )
+from app.research.retrieval import RateLimited, RetrievalError
+from app.research.service import (
+    NOT_CONFIGURED_DETAIL,
+    HostNotAllowed,
+    RetrievalNotConfigured,
+    allowed_hosts,
+    list_sources,
+    retrieve_and_ingest,
+)
 from app.security import require_owner
 
 
@@ -44,6 +62,31 @@ class AgentExtractCommand(BaseModel):
 
     command_id: UUID
     agent_id: UUID | None = None
+
+
+class WriteScriptCommand(BaseModel):
+    """Ask the script writer to draft from a topic's verified claims."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    command_id: UUID
+    topic_id: str = Field(min_length=36, max_length=36)
+    target_duration_seconds: int = Field(default=50, ge=15, le=180)
+    agent_id: UUID | None = None
+
+
+class RetrieveSourceCommand(BaseModel):
+    """Fetch a source the Owner named. The host must already be allow-listed in .env.
+
+    Deliberately carries no host, policy or timeout field: everything that decides where the
+    studio may connect comes from the Owner's configuration, never from the request.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    command_id: UUID
+    url: str = Field(min_length=8, max_length=1000)
+    topic_id: UUID | None = None
 
 
 def create_factual_router() -> APIRouter:
@@ -80,6 +123,60 @@ def create_factual_router() -> APIRouter:
             str(cmd.command_id),
             topic_id=cmd.topic_id,
         )
+
+    @router.get("/sources")
+    def get_sources(request: Request) -> dict:
+        """Stored sources, plus the hosts the Owner has authorised the studio to fetch."""
+        return {
+            "sources": list_sources(request.app.state.engine),
+            "allowed_hosts": list(allowed_hosts(request.app.state.settings)),
+        }
+
+    @router.post("/sources/retrieve", response_model=RetrievedSourceView)
+    def post_retrieve_source(request: Request, cmd: RetrieveSourceCommand) -> dict:
+        """Fetch a source the Owner named and store what actually came back.
+
+        Each failure is reported as itself: no allowlist, a host outside it, a source that
+        refused or did not answer. In every one of them nothing is stored, because a source
+        snapshot the studio could not verify it downloaded is exactly the kind of record this
+        system must never hold.
+        """
+        try:
+            return retrieve_and_ingest(
+                request.app.state.engine,
+                request.app.state.settings,
+                cmd.url,
+                str(cmd.command_id),
+                topic_id=str(cmd.topic_id) if cmd.topic_id else None,
+                retriever=getattr(request.app.state, "source_retriever", None),
+            )
+        except RetrievalNotConfigured:
+            raise HTTPException(status_code=503, detail=NOT_CONFIGURED_DETAIL) from None
+        except HostNotAllowed:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Adresa nu este permisă. Sunt acceptate doar linkuri HTTPS către gazdele "
+                    "din STUDIO_RESEARCH_ALLOWED_HOSTS, pe portul 443, fără date de "
+                    "autentificare în URL."
+                ),
+            ) from None
+        except RateLimited:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    "Sursa a limitat cererea și nu s-a preluat nimic. "
+                    "Nu am reîncercat automat; încearcă mai târziu."
+                ),
+            ) from None
+        except RetrievalError:
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Sursa nu a răspuns cu un document utilizabil, deci nu s-a salvat nimic. "
+                    "Verifică linkul sau încearcă mai târziu."
+                ),
+            ) from None
 
     @router.post("/claims/extract")
     def post_extract_claims(request: Request, cmd: ExtractClaimsCommand) -> dict:
@@ -136,6 +233,32 @@ def create_factual_router() -> APIRouter:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    @router.post("/claims/{claim_id}/verify-with-agent")
+    def post_verify_with_agent(
+        request: Request,
+        claim_id: Annotated[str, Path(min_length=36, max_length=36)],
+        cmd: AgentExtractCommand,
+    ) -> dict:
+        """Have a second agent check this claim against the source it came from.
+
+        A rejected verdict — one citing evidence that is not in the source — leaves the claim
+        UNVERIFIED and says so. That is the correct outcome, not an error to be smoothed over.
+        """
+        try:
+            return agent_verify_claim(
+                request.app.state.engine,
+                request.app.state.registry,
+                claim_id,
+                str(cmd.command_id),
+                agent_id=str(cmd.agent_id) if cmd.agent_id else None,
+            )
+        except NoIndependentVerifier as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        except VerificationRejected as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @router.get("/claims")
     def get_claims(
         request: Request,
@@ -186,14 +309,56 @@ def create_factual_router() -> APIRouter:
         try:
             return approve_script_draft(request.app.state.engine, script_id, str(cmd.command_id))
         except FactualGateError as exc:
+            # The gate runs again at approval on purpose: a claim that was SUPPORTED when the
+            # draft was written may have been refuted since, and the Owner needs to be told
+            # which one rather than reading a raw exception string.
+            count = len(exc.unverified_claim_ids)
             raise HTTPException(
                 status_code=422,
                 detail={
                     "error": "FactualGateError",
-                    "message": str(exc),
+                    "message": (
+                        f"Aprobarea a fost refuzată: {count} afirmații citate nu mai sunt "
+                        "susținute de o sursă. Verifică-le din nou sau rescrie scenariul."
+                    ),
                     "unverified_claims": exc.unverified_claim_ids,
                 },
             ) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @router.post("/scripts/write-with-agent")
+    def post_write_with_agent(request: Request, cmd: WriteScriptCommand) -> dict:
+        """Draft a voiceover from the topic's SUPPORTED claims, and only from those.
+
+        A draft citing a claim that was not supplied is rejected whole; the factual gate then
+        runs on the citations that survive, so a stored draft rests entirely on verified facts.
+        """
+        try:
+            return agent_write_script(
+                request.app.state.engine,
+                request.app.state.registry,
+                cmd.topic_id,
+                str(cmd.command_id),
+                target_duration_seconds=cmd.target_duration_seconds,
+                agent_id=str(cmd.agent_id) if cmd.agent_id else None,
+            )
+        except NoVerifiedClaims as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        except ScriptRejected as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        except FactualGateError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "FactualGateBlocked",
+                    "message": (
+                        "Poarta factuală a blocat scenariul: unele afirmații citate nu sunt "
+                        "susținute de o sursă."
+                    ),
+                    "unverified_claim_ids": exc.unverified_claim_ids,
+                },
+            ) from None
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 

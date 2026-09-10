@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from app.agents.models import Agent, Role
+from app.agents.models import Agent, ModelRecord, ProviderRecord, Role
 
 DEFAULT_OFFICE_LAYOUT: dict[str, Any] = {
     "width": 1200,
@@ -212,12 +212,26 @@ def get_office_layout_with_assignments(engine: Engine) -> dict[str, Any]:
     layout["zones"] = [dict(z) for z in DEFAULT_OFFICE_LAYOUT["zones"]]
 
     with Session(engine) as session:
+        provider_names = {p.id: p.name for p in session.scalars(select(ProviderRecord))}
         # Load all hired/active agents
         agents = session.scalars(
             select(Agent).where(Agent.lifecycle.in_(["HIRED", "ACTIVE", "PAUSED", "SUSPENDED"]))
         ).all()
 
         role_map = {r.id: r.name for r in session.scalars(select(Role)).all()}
+
+        # The model each agent is actually assigned, so the interface can show it instead of
+        # a value written into the page. `is_available` travels with it: an agent can hold an
+        # assignment to a model whose provider has not been verified, and saying "assigned"
+        # without saying "unverified" would be the same half-truth as before.
+        model_map = {
+            m.id: {
+                "model_name": m.model_name,
+                "model_is_available": m.is_available,
+                "provider_name": provider_names.get(m.provider_id, "Furnizor necunoscut"),
+            }
+            for m in session.scalars(select(ModelRecord))
+        }
 
         # Assign agents to desks matching role or sequentially
         assigned_agents = set()
@@ -258,6 +272,17 @@ def get_office_layout_with_assignments(engine: Engine) -> dict[str, Any]:
                             "lifecycle": desk_agent.lifecycle,
                             "x": desk["x"],
                             "y": desk["y"],
+                            # None when the Owner has not assigned a model yet; the
+                            # interface says so rather than showing a plausible default.
+                            "model_id": desk_agent.model_id,
+                            **(
+                                model_map.get(desk_agent.model_id or "")
+                                or {
+                                    "model_name": None,
+                                    "model_is_available": False,
+                                    "provider_name": None,
+                                }
+                            ),
                         }
                     )
 

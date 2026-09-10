@@ -61,7 +61,9 @@ def test_snapshot_is_real_and_no_secrets(client, headers, settings):
     data = response.json()
     assert data["cursor"] == 2
     assert data["policy"]["autonomy_stopped"] is True
-    assert set(data["modules"].values()) == {"NOT_IMPLEMENTED"}
+    assert data["modules"]["agents"] == "IMPLEMENTED"
+    assert data["modules"]["media"] == "PARTIAL"
+    assert data["modules"]["treasury"] == "NOT_IMPLEMENTED"
     assert data["office"]["rooms"][0]["event_id"] == data["events"][1]["event_id"]
     assert settings.owner_token.get_secret_value() not in response.text
     assert data["captured_at"].endswith("+00:00")

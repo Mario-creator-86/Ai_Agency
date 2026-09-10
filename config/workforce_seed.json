@@ -1,0 +1,56 @@
+{
+  "models_data": [
+    [
+      "glm-5.2:cloud",
+      null,
+      "General reasoning & direction"
+    ],
+    [
+      "kimi-k2.6:cloud",
+      null,
+      "Long-context research & fact-checking"
+    ],
+    [
+      "qwen3-coder:480b-cloud",
+      null,
+      "Code, script structure & media pipelines"
+    ]
+  ],
+  "agents_def": [
+    [
+      "Sarah (Director)",
+      "Director",
+      "glm-5.2:cloud"
+    ],
+    [
+      "Dr. Aris (Researcher)",
+      "LeadResearcher",
+      "kimi-k2.6:cloud"
+    ],
+    [
+      "Elena (Fact Checker)",
+      "FactChecker",
+      "glm-5.2:cloud"
+    ],
+    [
+      "Marcus (Script Writer)",
+      "ScriptWriter",
+      "qwen3-coder:480b-cloud"
+    ],
+    [
+      "Lyra (Voice Artist)",
+      "VoiceArtist",
+      "glm-5.2:cloud"
+    ],
+    [
+      "Kael (Video Editor)",
+      "VideoEditor",
+      "qwen3-coder:480b-cloud"
+    ],
+    [
+      "Vera (Publisher)",
+      "Publisher",
+      "glm-5.2:cloud"
+    ]
+  ]
+}

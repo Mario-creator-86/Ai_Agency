@@ -71,6 +71,15 @@ class FactualClaim(Base):
     evidence_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     verifier_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     verified_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # Who did each half of the work. Independence between them is a requirement
+    # (../architecture/02_SRS.md FR-038), and it can only be enforced if it is recorded.
+    # NULL means no agent: an older claim, or one the Owner judged themselves.
+    extracted_by_agent_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("agent.id"), nullable=True
+    )
+    verified_by_agent_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("agent.id"), nullable=True
+    )
     created_at: Mapped[str] = mapped_column(String(40), nullable=False)
     event_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("domain_event.event_id"), nullable=True

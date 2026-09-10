@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.factual.models import FactualClaim, ScriptDraft, TopicIdea
 from app.factual.services import FactualGateError
 from app.media.assembler import RenderEngineUnavailable, assemble_video_job
+from app.media.factory import describe, image_provider, tts_provider
 from app.media.models import MediaAsset, VideoRenderJob
 from app.media.qc import evaluate_media_qc, get_media_qc
 from app.media.schemas import (
@@ -30,9 +31,11 @@ from app.media.services import (
     get_character_bible,
     get_storyboard,
     list_character_bibles,
+    list_scripts_awaiting_storyboard,
     list_storyboards,
     seed_default_character_bibles,
 )
+from app.providers.media_http import MediaProviderError
 from app.security import require_owner
 from app.services import append_event, utc_now
 
@@ -59,6 +62,11 @@ def create_media_router() -> APIRouter:
     @router.get("/storyboards")
     def get_all_storyboards(request: Request) -> dict:
         return {"storyboards": list_storyboards(request.app.state.engine)}
+
+    @router.get("/scripts/awaiting-storyboard")
+    def get_scripts_awaiting_storyboard(request: Request) -> dict:
+        """Approved scripts that production has not picked up yet."""
+        return {"scripts": list_scripts_awaiting_storyboard(request.app.state.engine)}
 
     @router.get("/storyboards/{storyboard_id}")
     def get_single_storyboard(
@@ -227,12 +235,21 @@ def create_media_router() -> APIRouter:
         storyboard_id: Annotated[str, FPath(min_length=36, max_length=36)],
     ) -> dict:
         correlation_id = str(uuid4())
+        engine = request.app.state.engine
+        vault = request.app.state.credential_vault
+        # Only a provider the Owner selected *and* verified is used. With none, the render
+        # falls back to placeholder generators and is labelled as such, which QC then blocks
+        # from publication — a video to look at, never one presented as publishable.
         try:
             result = assemble_video_job(
-                request.app.state.engine,
+                engine,
                 storyboard_id,
                 correlation_id,
                 ffmpeg_path=getattr(request.app.state.settings, "ffmpeg_path", None),
+                image_adapter=getattr(request.app.state, "image_adapter", None)
+                or image_provider(engine, vault),
+                tts_adapter=getattr(request.app.state, "tts_adapter", None)
+                or tts_provider(engine, vault),
             )
             # Automatically trigger QC
             qc_result = evaluate_media_qc(
@@ -247,10 +264,40 @@ def create_media_router() -> APIRouter:
                 status_code=503,
                 detail={"error": "RenderEngineUnavailable", "message": str(exc)},
             ) from exc
+        except MediaProviderError as exc:
+            # The vendor did not deliver. Nothing partial is presented as a render.
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "error": "MediaProviderFailed",
+                    "message": (
+                        "Furnizorul media nu a livrat conținutul, deci randarea nu s-a produs. "
+                        "Verifică conexiunea în Settings și încearcă din nou."
+                    ),
+                    "detail": str(exc),
+                },
+            ) from exc
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Render execution failed: {exc}") from exc
+
+    @router.get("/providers")
+    def get_media_providers(request: Request) -> dict:
+        """Which media generators a render would actually use right now.
+
+        Reports the selection as it stands; it probes nothing, so this never asserts that a
+        provider is reachable — only that the Owner selected and verified it.
+        """
+        described = describe(request.app.state.engine, request.app.state.credential_vault)
+        return {
+            **described,
+            "renders_are_publishable": bool(described["image_provider"]),
+            "note": (
+                "Fără un furnizor de imagine verificat, randările folosesc cadre-substitut, "
+                "iar QC le blochează de la publicare."
+            ),
+        }
 
     @router.get("/renders/{job_id}", response_model=RenderJobView)
     def get_render_status(

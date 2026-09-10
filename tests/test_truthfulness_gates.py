@@ -102,7 +102,7 @@ def test_channel_status_is_derived_from_what_actually_exists():
     assert derive_channel_status(None, None) == "NOT_CONFIGURED"
     assert derive_channel_status(None, "oauth-ref") == "NOT_CONFIGURED"
     assert derive_channel_status("UCrealid", None) == "AUTH_REQUIRED"
-    assert derive_channel_status("UCrealid", "oauth-ref") == "AUTHENTICATED"
+    assert derive_channel_status("UCrealid", "oauth-ref") == "CONFIGURED"
 
 
 def test_publishing_without_a_provider_refuses_instead_of_simulating(engine, tmp_path):

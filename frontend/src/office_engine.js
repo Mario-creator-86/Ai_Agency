@@ -1,3 +1,8 @@
+import { drawHuman, drawAnimal } from './street_actor.js';
+import { drawDigitalTime } from './office_clock.js';
+import { refreshVehicle, mixColor, streetClock, randomSource, randomVehicle, depthSortedTraffic, pixelDisc, StreetLife } from './street_life.js';
+import { drawBotanical, drawRoomMaterials, drawFacadeMaterials } from './office_art.js';
+
 /**
  * Autonomous AI Studio — 2D office renderer.
  *
@@ -10,7 +15,7 @@
  *
  * Everything outside the building — sky, traffic, trees, pedestrians — is stage scenery. It is
  * deliberately disconnected from any data so it cannot be mistaken for activity: a passing car
- * means nothing happened. Scenery is drawn from a fixed seed, not from events.
+ * means nothing happened. Street randomness and local time do not emit operational events.
  *
  * RENDERING MODEL
  * ---------------
@@ -64,9 +69,9 @@ const lerp = (a, b, t) => a + (b - a) * t;
    ========================================================================== */
 
 const PAL = {
-  skyTop: '#0b1a20',
-  skyMid: '#123039',
-  skyWarm: '#3d4a3a',
+  skyTop: '#101e2d',
+  skyMid: '#203b43',
+  skyWarm: '#5c6351',
   skyHorizon: '#7d6a44',
   star: '#e8e4cf',
   moon: '#efe7c8',
@@ -91,11 +96,11 @@ const PAL = {
   lampPost: '#2c3a34',
   lampGlow: '#ffcf8a',
 
-  shell: '#1b2b26',
-  shellLight: '#243a33',
+  shell: '#31423b',
+  shellLight: '#61746a',
   shellDark: '#121f1c',
   slab: '#2b3f37',
-  slabEdge: '#3a5348',
+  slabEdge: '#8b9174',
   glass: '#16302f',
   glassLit: '#2a4b45',
 
@@ -113,13 +118,13 @@ const PAL = {
 
 /** Zone accents. Each department reads differently at a glance, inside one warm family. */
 const ZONE_STYLE = {
-  DIRECTOR: { accent: PAL.gold, wall: '#22332c', name: 'EXECUTIVE' },
-  RESEARCH: { accent: PAL.teal, wall: '#1b3230', name: 'RESEARCH' },
-  SCRIPT: { accent: PAL.amber, wall: '#2a2f26', name: 'WRITING' },
-  AUDIO: { accent: PAL.magenta, wall: '#252a30', name: 'AUDIO' },
-  VIDEO: { accent: PAL.blue, wall: '#1e2b31', name: 'VIDEO' },
+  DIRECTOR: { accent: PAL.gold, wall: '#41443b', name: 'EXECUTIVE' },
+  RESEARCH: { accent: PAL.teal, wall: '#284641', name: 'RESEARCH' },
+  SCRIPT: { accent: PAL.amber, wall: '#474236', name: 'WRITING' },
+  AUDIO: { accent: PAL.magenta, wall: '#3c3547', name: 'AUDIO' },
+  VIDEO: { accent: PAL.blue, wall: '#2f404e', name: 'VIDEO' },
   SERVER: { accent: PAL.green, wall: '#182722', name: 'INFRA' },
-  LOUNGE: { accent: PAL.amber, wall: '#2b2622', name: 'COMMONS' },
+  LOUNGE: { accent: PAL.amber, wall: '#494035', name: 'COMMONS' },
   PUBLISH: { accent: PAL.red, wall: '#26251f', name: 'DISTRIBUTION' },
   SHOP: { accent: PAL.gold, wall: '#2a2318', name: 'AD SPACE' },
   DEFAULT: { accent: PAL.inkDim, wall: '#1f2b26', name: 'STUDIO' },
@@ -248,7 +253,8 @@ export class Viewport {
     this.panX = 0;
     this.panY = 0;
     this.zoom = 1;
-    this.minZoom = 0.4;
+    this.minZoom = 0.1;
+    this.bottomInset = 0;
     this.maxZoom = 2.5;
   }
 
@@ -281,7 +287,7 @@ export class Viewport {
 
   fitToOffice(worldWidth, worldHeight) {
     const cw = this.canvas.width || 1;
-    const ch = this.canvas.height || 1;
+    const ch = Math.max(1, (this.canvas.height || 1) - this.bottomInset);
     const scale = Math.min(cw / worldWidth, ch / worldHeight);
     this.zoom = clamp(scale, this.minZoom, this.maxZoom);
     this.panX = (cw - worldWidth * this.zoom) / 2;
@@ -311,15 +317,19 @@ function setHorizon(y) {
   HORIZON = Math.round(y);
 }
 
-function drawSky(ctx, w, h) {
+function drawSky(ctx, w, h, daylight = 0) {
   const g = ctx.createLinearGradient(0, 0, 0, HORIZON);
-  g.addColorStop(0, PAL.skyTop);
-  g.addColorStop(0.45, PAL.skyMid);
-  g.addColorStop(0.78, PAL.skyWarm);
-  g.addColorStop(1, PAL.skyHorizon);
+  g.addColorStop(0, mixColor(PAL.skyTop, '#719cbd', daylight));
+  g.addColorStop(0.45, mixColor(PAL.skyMid, '#acd0d3', daylight));
+  g.addColorStop(0.78, mixColor(PAL.skyWarm, '#d9d9b8', daylight));
+  g.addColorStop(1, mixColor(PAL.skyHorizon, '#ebd7aa', daylight));
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, w, HORIZON);
 
+  if (daylight > 0.5) {
+    pixelDisc(ctx, 985, 96, 18, '#fff1b8');
+    return;
+  }
   // Stars, thinning towards the warm horizon.
   const rnd = mulberry32(0xa17c);
   for (let i = 0; i < 190; i += 1) {
@@ -514,7 +524,14 @@ function drawFoliage(ctx, tree, time) {
     const size = 9 + Math.floor(rnd() * 9);
     const depth = rnd();
     const color = depth > 0.66 ? PAL.leafLight : depth > 0.33 ? PAL.leafMid : PAL.leafDark;
-    px(ctx, tree.x + rx + sway * (0.4 + depth * 0.8) - size / 2, topY + ry - 6, size, size, color);
+    const lx = tree.x + rx + sway * (0.4 + depth * 0.8) - size / 2;
+    const ly = topY + ry - 6;
+    // Stepped clusters have volume and a lit rim without antialiased circles.
+    px(ctx, lx + 2, ly, size - 4, size, color);
+    px(ctx, lx, ly + 3, size, size - 6, color);
+    px(ctx, lx + 3, ly + 1, size - 6, 2, depth > 0.5 ? '#82a56d' : '#4c7955');
+    px(ctx, lx + 2, ly + size - 2, size - 4, 2, PAL.leafDark);
+    if (depth > 0.7) px(ctx, lx + 4, ly + 4, 2, 2, '#a6bb7c');
   }
   // Crown highlight catching the street lamp.
   px(ctx, tree.x - 6 + sway, topY - 16, 12, 7, PAL.leafLight);
@@ -551,22 +568,14 @@ function drawLampLight(ctx, x, time, i) {
   ctx.restore();
 }
 
-const CAR_STYLES = [
-  { body: '#8d5a4a', roof: '#6d4438', w: 90, h: 30, kind: 'sedan' },
-  { body: '#3f6d63', roof: '#2f544c', w: 86, h: 29, kind: 'sedan' },
-  { body: '#6a6a86', roof: '#4e4e68', w: 94, h: 31, kind: 'sedan' },
-  { body: '#a08243', roof: '#7c6432', w: 112, h: 40, kind: 'van' },
-  { body: '#4a5c78', roof: '#38485e', w: 168, h: 50, kind: 'bus' },
-  { body: '#7c4550', roof: '#5e343d', w: 88, h: 29, kind: 'sedan' },
-];
-
 // The road is a loop: cars travel from -180 to WORLD_W + 120 and wrap around.
 const TRAFFIC_LOOP_PAD_START = -180;
 const TRAFFIC_LOOP_PAD_END = 120;
 const TRAFFIC_MIN_GAP = 24;   // bumper-to-bumper distance a follower never crosses
 const TRAFFIC_SLOW_GAP = 90;  // within this, a follower matches the leader's speed
 
-export function makeTraffic(seed) {
+/** @param {number} seed @param {boolean | {vehicles: Record<string, number>}} night */
+export function makeTraffic(seed, night = false) {
   const rnd = mulberry32(seed);
   const cars = [];
   const loopLength = WORLD_W + TRAFFIC_LOOP_PAD_END - TRAFFIC_LOOP_PAD_START;
@@ -577,13 +586,15 @@ export function makeTraffic(seed) {
     const stretch = loopLength / count;
     for (let i = 0; i < count; i += 1) {
       cars.push({
-        style: CAR_STYLES[Math.floor(rnd() * CAR_STYLES.length)],
+        style: randomVehicle(rnd, night),
         dir,
         // Near lane travels right, far lane travels left.
         laneOffset: dir > 0 ? 0.78 : 0.34,
         x: TRAFFIC_LOOP_PAD_START + i * stretch + rnd() * (stretch - 200),
         speed: (52 + rnd() * 48) * dir,
         bobPhase: rnd() * TAU,
+        visible: undefined,
+        previousX: 0,
       });
     }
   }
@@ -631,14 +642,14 @@ export function updateTraffic(cars, worldW, dt) {
   }
 }
 
-function drawCar(ctx, car, time) {
+function drawCar(ctx, car, time, daylight = 0) {
   const s = car.style;
   const lane = roadTop() + ROAD_H * car.laneOffset;
-  const y = lane - s.h;
+  const y = lane - s.h - Math.max(4, Math.round(s.h * 0.23));
   const x = car.x;
   const bob = Math.sin(time * 9 + car.bobPhase) * 0.6;
   const flip = car.dir < 0;
-  const wheelR = Math.round(s.h * 0.32);
+  const wheelR = Math.max(4, Math.round(s.h * 0.23));
 
   ctx.save();
   ctx.translate(Math.round(x), Math.round(y + bob));
@@ -651,39 +662,57 @@ function drawCar(ctx, car, time) {
   px(ctx, 4, s.h - 2, s.w - 8, 5, '#0a1210');
   ctx.globalAlpha = 1;
 
-  if (s.kind === 'bus') {
+  if (s.kind === 'bus' || s.kind === 'minibus') {
     block(ctx, 0, 0, s.w, s.h, s.body, '#5f7189', '#26313f');
     px(ctx, 0, s.h * 0.34, s.w, 2, '#33445a');
     for (let wx = 8; wx < s.w - 16; wx += 22) px(ctx, wx, 8, 16, 18, '#9fc6d8');
     px(ctx, s.w - 14, 7, 11, 20, '#c9dfe8');
     px(ctx, 6, s.h - 16, 10, 14, '#2c3a48');   // door
-  } else if (s.kind === 'van') {
+  } else if (s.kind === 'van' || s.kind === 'pickup') {
     block(ctx, 0, 8, s.w, s.h - 8, s.body, '#b89a55', '#5d4a24');
     px(ctx, s.w - 42, 0, 42, 12, s.roof);
     px(ctx, s.w - 36, 3, 27, 12, '#9fc6d8');
-    px(ctx, 8, 16, 54, 14, '#8a7238');          // livery panel
+    if(s.kind==='pickup') { px(ctx,0,4,57,14,'#223d3c');px(ctx,0,16,57,3,s.body); }
+    else px(ctx, 8, 16, 54, 14, '#8a7238');          // livery panel
     px(ctx, 12, 20, 46, 3, '#d8c58a');
   } else {
     // Bonnet, cabin and boot read as one silhouette.
     block(ctx, 0, s.h * 0.42, s.w, s.h * 0.58, s.body, null, '#2a1c17');
-    px(ctx, s.w * 0.2, s.h * 0.05, s.w * 0.5, s.h * 0.4, s.roof);
+    const cabin = ['wagon','suv','hatchback'].includes(s.kind) ? 0.64 : 0.5;
+    px(ctx, s.w * 0.16, s.h * 0.05, s.w * cabin, s.h * 0.4, s.roof);
+    if(s.kind === 'taxi') block(ctx,s.w*0.43,-4,13,5,'#f4da7b','#fff0b3','#644e25');
     px(ctx, s.w * 0.24, s.h * 0.12, s.w * 0.2, s.h * 0.26, '#9fc6d8');
     px(ctx, s.w * 0.47, s.h * 0.12, s.w * 0.2, s.h * 0.26, '#8fb9cc');
     px(ctx, 0, s.h * 0.6, s.w, 2, '#00000033');
   }
 
-  // Wheels with a hub, sized to the body.
-  const wy = s.h - wheelR - 1;
-  for (const wx of [s.w * 0.16, s.w * 0.74]) {
-    px(ctx, wx, wy, wheelR * 2, wheelR * 2, '#141a18');
-    px(ctx, wx + 2, wy + 2, wheelR * 2 - 4, wheelR * 2 - 4, '#2c3733');
-    px(ctx, wx + wheelR - 2, wy + wheelR - 2, 4, 4, '#4a5a54');
+  // Coachwork: chrome beltline, door seams, handles and bumper highlights.
+  px(ctx, 5, s.h * 0.48, s.w - 10, 1, '#f7edd380');
+  px(ctx, 6, s.h - 5, s.w - 12, 2, '#151f2b55');
+  if (s.kind !== 'bus') {
+    px(ctx, s.w * 0.46, s.h * 0.44, 1, s.h * 0.37, '#10242c60');
+    px(ctx, s.w * 0.39, s.h * 0.5, 6, 2, '#d4dace');
+    px(ctx, s.w * 0.68, s.h * 0.5, 5, 2, '#d4dace');
+    px(ctx, s.w * 0.23, s.h * 0.14, 2, s.h * 0.2, '#e0f0e7');
+  }
+  px(ctx, 0, s.h - 6, 6, 2, '#adb9ad');
+  px(ctx, s.w - 6, s.h - 6, 6, 2, '#d0d7bd');
+  // Round raster wheels; their full silhouette ends at the lane baseline.
+  const wheelY = s.h - 1;
+  for (const wheelX of [s.w * 0.2, s.w * 0.8]) {
+    pixelDisc(ctx, wheelX, wheelY, wheelR + 1, '#0e191d');
+    pixelDisc(ctx, wheelX, wheelY, wheelR - 1, '#394449');
+    pixelDisc(ctx, wheelX, wheelY, Math.max(2, wheelR - 3), '#a7b7b6');
+    pixelDisc(ctx, wheelX, wheelY, 2, '#45565a');
+    const angle=time*car.dir*3;
+    px(ctx,wheelX+Math.cos(angle)*(wheelR-4),wheelY+Math.sin(angle)*(wheelR-4),1,1,'#e1e7d6');
   }
 
   px(ctx, s.w - 3, s.h * 0.5, 3, 5, '#ffe9b4');
   px(ctx, 0, s.h * 0.52, 3, 5, '#c4483a');
   ctx.restore();
 
+  if (daylight > 0.6) return;
   const beamX = flip ? x - 8 : x + s.w + 8;
   glow(ctx, beamX, y + s.h * 0.55, 66, 'rgba(255,226,164,0.30)', 0.55);
   ctx.save();
@@ -702,89 +731,26 @@ function drawCar(ctx, car, time) {
    Pedestrians — scenery only.
    ========================================================================== */
 
-const WALKER_COLORS = ['#8a6b4a', '#4f6b7a', '#7a5a6b', '#5c6b4f', '#6b5a4a'];
-
-function makeWalkers(seed) {
-  const rnd = mulberry32(seed);
-  const walkers = [];
-  for (let i = 0; i < 6; i += 1) {
-    walkers.push({
-      x: rnd() * WORLD_W,
-      dir: rnd() > 0.5 ? 1 : -1,
-      speed: 16 + rnd() * 14,
-      coat: WALKER_COLORS[Math.floor(rnd() * WALKER_COLORS.length)],
-      trousers: pick(['#2a3138', '#33302a', '#293530'], rnd),
-      skin: pick(SKIN_TONES, rnd),
-      hair: pick(HAIR_COLORS, rnd),
-      hat: rnd() > 0.66,
-      bag: rnd() > 0.55,
-      dog: rnd() > 0.82,
-      phase: rnd() * TAU,
-      scale: 0.94 + rnd() * 0.16,
-    });
-  }
-  return walkers;
-}
-
 /**
  * Pedestrians are drawn at the same human scale as the staff inside the building, and they
  * walk on the pavement below the base course — never across the studio floor.
  */
 function drawWalker(ctx, wkr, time) {
-  const baseY = walkLine();
-  const s = wkr.scale;
-  const step = Math.sin(time * 5 + wkr.phase);
-  const bob = Math.abs(Math.cos(time * 5 + wkr.phase)) * 1.8;
-  const x = Math.round(wkr.x);
-  const height = 34 * s;
-  const y = Math.round(baseY - height - bob);
-
-  ctx.save();
-  ctx.globalAlpha = 0.3;
-  px(ctx, x - 7, baseY - 2, 16, 3, '#0a1210');
-  ctx.globalAlpha = 1;
-
-  // Legs
-  px(ctx, x - 4 + step * 3, y + height * 0.62, 5, height * 0.36, wkr.trousers);
-  px(ctx, x + 1 - step * 3, y + height * 0.62, 5, height * 0.36, '#1c2522');
-  px(ctx, x - 5 + step * 3, y + height * 0.96, 7, 3, '#141c19');
-  px(ctx, x + step * -3, y + height * 0.96, 7, 3, '#141c19');
-
-  // Coat
-  px(ctx, x - 7, y + height * 0.3, 15, height * 0.36, wkr.coat);
-  px(ctx, x - 7, y + height * 0.3, 15, 1, '#ffffff26');
-  px(ctx, x - 2, y + height * 0.34, 2, height * 0.28, '#00000033');
-
-  // Arms swinging opposite the legs
-  px(ctx, x - 9, y + height * 0.33 + step * 2, 3, height * 0.26, wkr.coat);
-  px(ctx, x + 8, y + height * 0.33 - step * 2, 3, height * 0.26, wkr.coat);
-  px(ctx, x - 9, y + height * 0.58 + step * 2, 3, 4, wkr.skin);
-  px(ctx, x + 8, y + height * 0.58 - step * 2, 3, 4, wkr.skin);
-
-  if (wkr.bag) {
-    px(ctx, x + 9, y + height * 0.6 - step * 2, 8, 9, '#4a3a2a');
-    px(ctx, x + 11, y + height * 0.57 - step * 2, 4, 3, '#3a2c20');
+  const baseY=walkLine()-(wkr.depth||0);
+  if(wkr.activity==='cat'){drawAnimal(ctx,wkr,baseY);return;}
+  const human=drawHuman(ctx,wkr,baseY);
+  if(wkr.dog) {
+    const collar=drawAnimal(ctx,wkr,baseY,true);
+    ctx.strokeStyle='#bba77a';ctx.lineWidth=1;ctx.beginPath();
+    ctx.moveTo(human.hand.x,human.hand.y);
+    ctx.quadraticCurveTo((human.hand.x+collar.x)/2,baseY-4,collar.x,collar.y);ctx.stroke();
   }
-
-  // Head
-  const headW = 11;
-  px(ctx, x - 5, y + height * 0.06, headW, 11, wkr.skin);
-  px(ctx, x - 5, y + height * 0.04, headW, 3, wkr.hair);
-  px(ctx, x - 6, y + height * 0.1, 1, 4, wkr.hair);
-  px(ctx, x - 2, y + height * 0.16, 2, 2, '#2a211c');
-  px(ctx, x + 2, y + height * 0.16, 2, 2, '#2a211c');
-  if (wkr.hat) px(ctx, x - 7, y + height * 0.01, 15, 4, '#2c3a34');
-  ctx.restore();
-
-  if (wkr.dog) {
-    const dx = x + (wkr.dir > 0 ? -22 : 22);
-    const dstep = Math.sin(time * 8 + wkr.phase) * 2;
-    px(ctx, dx - 7, baseY - 13, 15, 8, '#6b563f');
-    px(ctx, dx + (wkr.dir > 0 ? -10 : 6), baseY - 18, 7, 7, '#6b563f');
-    px(ctx, dx + (wkr.dir > 0 ? -11 : 11), baseY - 18, 3, 3, '#54432f');
-    px(ctx, dx - 5, baseY - 5 + dstep * 0.3, 3, 5, '#5a4834');
-    px(ctx, dx + 4, baseY - 5 - dstep * 0.3, 3, 5, '#5a4834');
-    px(ctx, dx + (wkr.dir > 0 ? 7 : -9), baseY - 15, 4, 2, '#6b563f');
+  if(wkr.activity==='phone'&&wkr.age<wkr.talkUntil) {
+    const label=wkr.speech,bw=textWidth(label,1,0)+12;
+    const bx=clamp(wkr.x+15,4,WORLD_W-bw-4),by=HORIZON+PLINTH_H+2;
+    block(ctx,bx,by,bw,22,'#ede4c8','#fff7de','#ab9e7d');
+    drawText(ctx,'DECOR',bx+5,by+3,'#807552',1,0);
+    drawText(ctx,label,bx+5,by+12,'#344b46',1,0);
   }
 }
 
@@ -872,6 +838,7 @@ function drawBuildingShell(ctx, b) {
     if (rnd() > 0.6) px(ctx, cx - 2, y + 40, 9, 3, '#16241f');
   }
 
+  drawFacadeMaterials(ctx, b);
   // Parapet and roof plant.
   px(ctx, x - 18, y - 34, w + 36, 9, PAL.shellLight);
   px(ctx, x - 18, y - 34, w + 36, 2, '#31493f');
@@ -916,6 +883,27 @@ function drawRoofDetails(ctx, b, time) {
     px(ctx, x + w - 122, y - 99, 5, 4, PAL.red);
     glow(ctx, x + w - 120, y - 97, 20, 'rgba(217,112,90,0.85)', beat * 0.6);
   }
+}
+
+/** Freestanding street clock: sculptural stone support with a protected LED face. */
+function drawStreetClock(ctx, building, worldWidth, label) {
+  const x=Math.min(worldWidth-102,building.x+building.width+16);
+  const base=walkLine()+12, top=base-124;
+  // The stepped support bends outwards, leaving the face readable above pedestrians.
+  block(ctx,x+38,base-4,55,5,'#536961','#abb9a2','#263c34');
+  for(let i=0;i<14;i++) {
+    const sy=top+35+i*6;
+    const sx=x+64+Math.round(Math.sin(i/13*Math.PI)*17);
+    px(ctx,sx,sy,9,7,'#a7b39c');
+    px(ctx,sx,sy,2,7,'#d9d9bb');
+    px(ctx,sx+7,sy,3,7,'#536c5f');
+  }
+  block(ctx,x,top,93,43,'#a9b39e','#e2dfbd','#5d7365');
+  px(ctx,x+93,top+4,5,39,'#465c52');
+  px(ctx,x+3,top+4,86,34,'#112c28');
+  outline(ctx,x+4,top+5,84,32,'#375a48');
+  drawText(ctx,'BUCURESTI',x+17,top+8,'#a0b39b',1,0);
+  drawDigitalTime(ctx,x+16,top+18,label);
 }
 
 /** The studio's neon sign above the cutaway. */
@@ -1074,7 +1062,7 @@ function drawZoneShell(ctx, zone, b) {
   // Back wall with a subtle vertical gradient and panel seams.
   const g = ctx.createLinearGradient(0, y, 0, y + h);
   g.addColorStop(0, st.wall);
-  g.addColorStop(1, '#101c19');
+  g.addColorStop(1, '#26332d');
   ctx.fillStyle = g;
   ctx.fillRect(x, y, w, h);
 
@@ -1084,6 +1072,7 @@ function drawZoneShell(ctx, zone, b) {
     px(ctx, sx, y + 4, 1, h - 12, '#0c1614');
     ctx.globalAlpha = 1;
   }
+  drawRoomMaterials(ctx, zone, st.accent);
   // Skirting and floor slab.
   px(ctx, x, y + h - 12, w, 12, PAL.slab);
   px(ctx, x, y + h - 12, w, 2, PAL.slabEdge);
@@ -1101,7 +1090,7 @@ function drawZoneShell(ctx, zone, b) {
   }
 
   // Floor label. Several zones can share a floor, so only the first one carries the number.
-  drawText(ctx, st.name, x + 8, y + 8, '#4d6b5c', 1, 1);
+  drawText(ctx, st.name, x + 8, y + 8, '#a7b5a1', 1, 1);
   if (zone.isFloorLead) {
     const fl = `FLOOR ${zone.floor}`;
     const right = zone.floorRight !== undefined ? zone.floorRight : x + w;
@@ -1128,7 +1117,7 @@ function drawZoneShell(ctx, zone, b) {
 function drawDeskUnit(ctx, dx, dy, accent, variant) {
   // Desk top, legs and cable tray. dy is the floor line the desk stands on.
   const topY = dy - 26;
-  block(ctx, dx - 34, topY, 68, 6, '#5a4632', '#755c42', '#3a2c20');
+  block(ctx, dx - 34, topY, 68, 6, '#866346', '#c9ab7b', '#493727');
   px(ctx, dx - 30, topY + 6, 4, 20, '#3f3226');
   px(ctx, dx + 26, topY + 6, 4, 20, '#3f3226');
   px(ctx, dx - 26, topY + 18, 52, 2, '#2f2519');
@@ -1141,6 +1130,20 @@ function drawDeskUnit(ctx, dx, dy, accent, variant) {
     block(ctx, dx - 30, topY + 6, 20, 20, '#4a3a2a', '#5d4934', '#2e2419');
     px(ctx, dx - 26, topY + 12, 12, 2, '#7d654a');
   }
+  // Walnut grain, brass drawer pulls and a leather desk mat.
+  px(ctx, dx - 32, topY + 1, 63, 1, '#b99a69');
+  px(ctx, dx - 29, topY + 3, 20, 1, '#8d6847');
+  px(ctx, dx + 3, topY + 3, 25, 1, '#8d6847');
+  px(ctx, dx - 18, topY - 2, 35, 2, '#42564c');
+  px(ctx, dx - 17, topY - 2, 33, 1, '#829684');
+  // Upholstered chair, castor base and armrests.
+  block(ctx, dx - 9, dy - 25, 19, 12, '#40544d', '#7a8a74', '#26372f');
+  px(ctx, dx - 7, dy - 23, 1, 8, '#62786b');
+  px(ctx, dx + 7, dy - 23, 1, 8, '#273b32');
+  px(ctx, dx - 11, dy - 17, 5, 2, '#819083');
+  px(ctx, dx + 7, dy - 17, 5, 2, '#819083');
+  px(ctx, dx - 9, dy - 2, 3, 2, '#0e1917');
+  px(ctx, dx + 7, dy - 2, 3, 2, '#0e1917');
   // Chair
   px(ctx, dx - 6, dy - 16, 14, 3, '#2b3a33');
   px(ctx, dx - 1, dy - 13, 3, 10, '#243128');
@@ -1155,7 +1158,10 @@ function drawMonitor(ctx, mx, my, w, h, accent) {
   px(ctx, mx + 2, my + 2, w - 4, h - 4, '#0d1a20');
   px(ctx, mx + w / 2 - 3, my + h, 6, 4, '#2a3d35');
   px(ctx, mx + w / 2 - 8, my + h + 4, 16, 2, '#2a3d35');
-  px(ctx, mx, my, w, 1, accent);
+  px(ctx, mx, my, w, 1, '#91a69c');
+  px(ctx, mx + 1, my + 1, 1, h - 2, '#526c63');
+  px(ctx, mx + w - 4, my + h - 2, 1, 1, accent);
+  px(ctx, mx + w / 2 - 1, my - 1, 2, 1, '#0c1716');
 }
 
 /** Animated screen content. Each screen kind gets its own motion so nothing looks cloned. */
@@ -1251,15 +1257,7 @@ function drawScreenContent(ctx, kind, mx, my, w, h, time, seed, accent, active) 
 }
 
 function drawPlant(ctx, x, y, seed) {
-  const rnd = mulberry32(seed);
-  block(ctx, x - 7, y - 12, 14, 12, '#8a5a3c', '#a67049', '#5c3b26');
-  px(ctx, x - 7, y - 12, 14, 2, '#b07b52');
-  for (let i = 0; i < 7; i += 1) {
-    const lean = (rnd() - 0.5) * 16;
-    const hgt = 12 + rnd() * 16;
-    px(ctx, x + lean * 0.4, y - 12 - hgt, 3, hgt, rnd() > 0.5 ? PAL.leafMid : PAL.leafLight);
-    px(ctx, x + lean, y - 14 - hgt, 6, 5, PAL.leafLight);
-  }
+  drawBotanical(ctx, x, y, seed);
 }
 
 function drawMug(ctx, x, y, color) {
@@ -1393,7 +1391,7 @@ function drawTallVolumeSign(ctx, zone, st, live, railY, seed) {
       px(ctx, clockX - 10, top + 9, 20, 20, '#d8e0cf');
       px(ctx, clockX - 1, top + 13, 2, 8, '#2a3a33');
       px(ctx, clockX - 1, top + 19, 7, 2, '#2a3a33');
-      block(ctx, cx + 4, top, 74, 46, '#5a4632', '#755c42', '#3a2c20');
+      block(ctx, cx + 4, top, 74, 46, '#866346', '#c9ab7b', '#493727');
       px(ctx, cx + 8, top + 4, 66, 38, '#7b6448');
       for (let i = 0; i < 5; i += 1) {
         const nx = cx + 12 + (i % 3) * 22;
@@ -1834,7 +1832,7 @@ function interiorFor(zone, ctx, live) {
       }
 
       // Counter, till and a stool.
-      block(ctx, zone.x + 18, floorY - 34, 78, 12, '#5a4632', '#755c42', '#3a2c20');
+      block(ctx, zone.x + 18, floorY - 34, 78, 12, '#866346', '#c9ab7b', '#493727');
       px(ctx, zone.x + 22, floorY - 22, 70, 22, '#4a3a2a');
       px(ctx, zone.x + 62, floorY - 46, 22, 12, '#22302a');
       px(ctx, zone.x + 65, floorY - 43, 16, 6, '#6f9b8c');
@@ -2120,6 +2118,12 @@ function drawCharacter(ctx, cx, floorY, look, mode, time, selected) {
   px(ctx, cx - 8 * s, torsoY, 16 * s, torsoH, look.shirt);
   px(ctx, cx - 8 * s, torsoY, 16 * s, 1, '#ffffff26');
   px(ctx, cx - 8 * s, torsoY + torsoH - 2, 16 * s, 2, '#00000033');
+  // Tailoring reads through selective edge highlights instead of extra sprite size.
+  px(ctx, cx - 7 * s, torsoY + 2, 2, Math.max(2, torsoH - 4), '#ffffff20');
+  px(ctx, cx + 5 * s, torsoY + 3, 3, Math.max(2, torsoH - 4), '#071d2638');
+  px(ctx, cx + 3, torsoY + 5, 3, 1, '#dfdbc599');
+  px(ctx, cx, torsoY + 4, 1, 1, '#dbd3b4');
+  px(ctx, cx, torsoY + 8, 1, 1, '#dbd3b4');
   // Collar
   px(ctx, cx - 4, torsoY, 8, 2, '#00000033');
 
@@ -2174,6 +2178,9 @@ function drawCharacter(ctx, cx, floorY, look, mode, time, selected) {
   const tilt = mode === 'think' ? 2 : sleeping ? 3 : mode === 'idle' && idleCycle > 1.1 && idleCycle < 1.7 ? -1 : 0;
   px(ctx, headX + tilt, headY + headLift, headW, headH, look.skin);
   px(ctx, headX + tilt, headY + headH - 1, headW, 1, '#00000022');
+  px(ctx, headX + tilt + 1, headY + 3, 1, 5, '#fff1ce40');
+  px(ctx, headX + tilt + headW - 2, headY + 4, 2, headH - 5, '#5b322d40');
+  px(ctx, headX + tilt + 5, headY + 7, 2, 1, '#9a5c4344');
   // Ears
   px(ctx, headX + tilt - 1, headY + 5, 1, 3, look.skin);
   px(ctx, headX + tilt + headW, headY + 5, 1, 3, look.skin);
@@ -2199,6 +2206,10 @@ function drawCharacter(ctx, cx, floorY, look, mode, time, selected) {
   }
 
   drawHair(ctx, look.style, headX + tilt, headY, headW, look.hair);
+  if (look.style !== 'bald') {
+    px(ctx, headX + tilt + 2, headY - 2, 4, 1, '#fff0c530');
+    px(ctx, headX + tilt + 1, headY - 1, 2, 1, '#fff0c520');
+  }
 
   if (look.glasses) {
     px(ctx, headX + tilt + 1, eyeY - 1, 4, 4, '#00000000');
@@ -2401,10 +2412,27 @@ export class OfficeEngine {
     this.bgCtx = this.bgLayer.getContext('2d');
 
     this.live = this._emptyLive();
+    this.clock = streetClock();
+    const streetSeed = crypto.getRandomValues(new Uint32Array(1))[0];
+    this.streetRandom = randomSource(streetSeed);
+    this.streetLife = new StreetLife(streetSeed, this.worldW, this.clock);
+    // Own the scene's presentation independently of concurrent dashboard markup changes.
+    if(!document.getElementById('office-scene-theme')) {
+      const theme=document.createElement('link');theme.id='office-scene-theme';theme.rel='stylesheet';
+      theme.href=new URL('./office_scene.css?no-inline',import.meta.url).href;
+      theme.addEventListener('load',()=>{if(this.viewport)this.resize();});
+      document.head.append(theme);
+    }
+    this.clockLabel = this.canvas.parentElement?.querySelector('.street-clock');
+    if(!this.clockLabel && this.canvas.parentElement) {
+      this.clockLabel=document.createElement('span');this.clockLabel.className='street-clock';
+      this.clockLabel.setAttribute('title','Decor fictiv adaptat la ora și ziua din București.');
+      this.canvas.parentElement.append(this.clockLabel);
+    }
+    this._updateClockLabel();
     this.scenery = {
       trees: makeTrees(0x7ee1, this.worldW),
-      cars: makeTraffic(0x33aa),
-      walkers: makeWalkers(0x9c41),
+      cars: makeTraffic(streetSeed, this.clock),
       clouds: makeClouds(0x1f77),
       birds: makeBirds(0x60d2),
       dust: Array.from({ length: 40 }, (_, i) => {
@@ -2496,6 +2524,8 @@ export class OfficeEngine {
     this.canvas.width = Math.round(cssW * dpr);
     this.canvas.height = Math.round(cssH * dpr);
     this.dpr = dpr;
+    const toolbar = parent.querySelector('.camera-toolbar');
+    this.viewport.bottomInset = ((toolbar?.getBoundingClientRect().height || 0) + 24) * dpr;
     this.viewport.fitToOffice(this.worldW, this.worldH);
   }
 
@@ -2575,7 +2605,7 @@ export class OfficeEngine {
     // building instead of floating through the offices.
     const bg = this.bgCtx;
     bg.clearRect(0, 0, w, h);
-    drawSky(bg, w, h);
+    drawSky(bg, w, h, this.clock.daylight);
     drawSkyline(bg, w);
 
     const ctx = this.sctx;
@@ -2658,14 +2688,30 @@ export class OfficeEngine {
     requestAnimationFrame(this._loop);
   }
 
+  _updateClockLabel() {
+    if(this.clockLabel) this.clockLabel.textContent = this.clock.text+' · BUCUREȘTI · STRADĂ DECORATIVĂ';
+  }
+
   _update(dt) {
     this._updateLift(dt);
+    if(Math.floor(Date.now()/60000)!==this.clock.minute) {
+      this.clock=streetClock();
+      this._backdrop=null;
+      this._updateClockLabel();
+      drawSky(this.bgCtx,this.worldW,this.worldH,this.clock.daylight);
+      drawSkyline(this.bgCtx,this.worldW);
+    }
+    this.streetLife.update(dt, this.clock);
     const w = this.worldW;
+    for(const car of this.scenery.cars) {
+      if(car.visible===undefined) car.visible=this.streetRandom()<this.clock.traffic;
+      car.previousX=car.x;
+    }
     updateTraffic(this.scenery.cars, this.worldW, dt);
-    for (const wkr of this.scenery.walkers) {
-      wkr.x += wkr.speed * wkr.dir * dt;
-      if (wkr.x > w + 40) wkr.x = -30;
-      if (wkr.x < -40) wkr.x = w + 30;
+    for(const car of this.scenery.cars) {
+      if(Math.abs(car.x-car.previousX)>w/2) {
+        refreshVehicle(car,this.scenery.cars,w,this.streetRandom,this.clock);
+      }
     }
     for (const cloud of this.scenery.clouds) {
       cloud.x += cloud.speed * dt;
@@ -2673,8 +2719,12 @@ export class OfficeEngine {
     }
     for (const bird of this.scenery.birds) {
       bird.x += bird.speed * bird.dir * dt;
-      if (bird.x > w + 30) bird.x = -20;
-      if (bird.x < -30) bird.x = w + 20;
+      if (bird.x > w + 30 || bird.x < -30) {
+        bird.dir=this.streetRandom()<0.5?1:-1;
+        bird.x=bird.dir>0?-20:w+20;
+        bird.y=25+this.streetRandom()*250;
+        bird.speed=18+this.streetRandom()*35;
+      }
     }
   }
 
@@ -2840,14 +2890,23 @@ export class OfficeEngine {
     // drawn after the building would sail through the offices.
     if (this.staticReady) ctx.drawImage(this.bgLayer, 0, 0);
     for (const cloud of this.scenery.clouds) drawCloud(ctx, cloud);
-    for (const bird of this.scenery.birds) drawBird(ctx, bird, time);
+    if(this.clock.birds) for (const bird of this.scenery.birds) drawBird(ctx, bird, time);
     if (this.staticReady) ctx.drawImage(this.staticLayer, 0, 0);
 
+    ctx.save();
+    ctx.globalAlpha=this.clock.daylight*0.19;
+    px(ctx,0,HORIZON,w,h-HORIZON,'#e3d8aa');
+    ctx.restore();
     // --- street -----------------------------------------------------------
     for (const t of this.scenery.trees) drawFoliage(ctx, t, time);
-    for (let i = 0; i < LAMP_POSTS.length; i += 1) drawLampLight(ctx, LAMP_POSTS[i], time, i);
-    for (const car of this.scenery.cars) drawCar(ctx, car, time);
-    for (const wkr of this.scenery.walkers) drawWalker(ctx, wkr, time);
+    if(this.clock.daylight<0.65) for (let i = 0; i < LAMP_POSTS.length; i += 1) drawLampLight(ctx, LAMP_POSTS[i], time, i);
+
+    // Far lane first: a near bus must occlude every part of a far vehicle, including wheels.
+    for (const car of depthSortedTraffic(this.scenery.cars)) drawCar(ctx, car, time, this.clock.daylight);
+    for (const wkr of [...this.streetLife.people].sort((a,b)=>b.depth-a.depth)) drawWalker(ctx, wkr, time);
+    // Clock foundation is nearer the curb than every pedestrian lane.
+    // Its support therefore occludes passersby, with no path through the foundation.
+    if(this.building) drawStreetClock(ctx,this.building,this.worldW,this.clock.text);
 
     if (!this.layout) {
       this._blit();
@@ -3000,6 +3059,7 @@ export class OfficeEngine {
     drawRoofDetails(ctx, b, time);
     drawSignage(ctx, b, time);
 
+
     // --- people ------------------------------------------------------------
     const zones = this.layout.zones || [];
     for (const agent of this.agents) {
@@ -3082,7 +3142,7 @@ export class OfficeEngine {
     // Beyond the world edges, continue the night rather than showing a black band.
     if (!this._backdrop || this._backdropH !== this.canvas.height) {
       const g = ctx.createLinearGradient(0, 0, 0, this.canvas.height);
-      g.addColorStop(0, PAL.skyTop);
+      g.addColorStop(0, mixColor(PAL.skyTop, '#719cbd', this.clock.daylight));
       g.addColorStop(0.6, '#0d1a18');
       g.addColorStop(1, PAL.ground);
       this._backdrop = g;

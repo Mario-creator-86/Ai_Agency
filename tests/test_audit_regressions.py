@@ -1,0 +1,129 @@
+from uuid import uuid4
+
+import pytest
+from app.agents.models import Agent, ModelRecord
+from app.agents.services import run_agent_task, seed_initial_workforce
+from app.factual.schemas import ExtractClaimItem
+from app.factual.services import (
+    FactualGateError,
+    approve_script_draft,
+    extract_claims,
+    generate_script_draft,
+    ingest_source_snapshot,
+    propose_topic_idea,
+    verify_claim,
+)
+from app.integrations.models import Integration
+from app.models import OwnerPolicy
+from app.providers.registry import ProviderRegistry
+from app.publishing.services import seed_default_channels
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+
+@pytest.mark.parametrize(
+    "available,state,expected",
+    [
+        (False, "IDLE", "BLOCKED_PROVIDER"),
+        (True, "THINKING", "BLOCKED_POLICY"),
+    ],
+)
+def test_unverified_or_busy_agent_never_calls_provider(engine, available, state, expected):
+    seed_initial_workforce(engine)
+    with Session(engine) as session, session.begin():
+        session.get(OwnerPolicy, 1).autonomy_stopped = False
+        agent = session.scalar(select(Agent))
+        agent.runtime_state = state
+        session.get(ModelRecord, agent.model_id).is_available = available
+        agent_id, provider_id = agent.id, agent.provider_id
+
+    class Provider:
+        async def generate(self, *args, **kwargs):
+            pytest.fail("Blocked tasks must never reach the provider")
+
+    registry = ProviderRegistry()
+    registry.register(provider_id, Provider())
+    result = run_agent_task(
+        engine, registry, agent_id, "test", "test objective", "v1", str(uuid4())
+    )
+    assert result["status"] == expected
+    with Session(engine) as session:
+        assert session.get(Agent, agent_id).runtime_state == state
+
+
+def test_repeat_approval_rechecks_refuted_evidence(engine):
+    correlation = str(uuid4())
+    topic = propose_topic_idea(
+        engine, "Test topic", "Test subject", "Explanation", "General", correlation
+    )
+    source = ingest_source_snapshot(
+        engine,
+        "https://example.org/source",
+        "Test source",
+        "example.org",
+        None,
+        "Text representing a test source.",
+        0,
+        correlation,
+        topic["id"],
+    )
+    claim = extract_claims(
+        engine, source["id"], [ExtractClaimItem(claim_text="Test claim text")], correlation
+    )[0]
+    verify_claim(engine, claim["id"], "SUPPORTED", 0.9, "Test setup", "Test evidence", correlation)
+    draft = generate_script_draft(
+        engine,
+        topic["id"],
+        "Test draft",
+        50,
+        "A long enough voiceover for this test.",
+        [],
+        [claim["id"]],
+        correlation,
+    )
+    assert approve_script_draft(engine, draft["id"], correlation)["status"] == "APPROVED"
+    verify_claim(
+        engine, claim["id"], "REFUTED", 0.9, "Revised evidence", "Test evidence", correlation
+    )
+    with pytest.raises(FactualGateError):
+        approve_script_draft(engine, draft["id"], correlation)
+
+
+def test_channel_binding_requires_verified_identity_and_can_be_removed(client, headers, engine):
+    import secrets
+
+    seed_default_channels(engine)
+    identifier = str(uuid4())
+    result = client.put(
+        f"/api/v1/settings/integrations/{identifier}",
+        headers=headers,
+        json={
+            "kind": "youtube",
+            "name": "Test YouTube",
+            "expected_version": 0,
+            "config": {"client_id": "test-client", "channel_id": "test-channel"},
+            "secrets": {
+                "client_secret": secrets.token_urlsafe(32),
+                "refresh_token": secrets.token_urlsafe(32),
+            },
+        },
+    )
+    assert result.status_code == 200
+    channel = client.get("/api/v1/settings", headers=headers).json()["channels"][0]
+    path = f"/api/v1/settings/channels/{channel['id']}"
+    payload = {"integration_id": identifier, "expected_event_id": channel["event_id"]}
+    assert client.put(path, json=payload, headers=headers).status_code == 422
+    with Session(engine) as session, session.begin():
+        session.get(Integration, identifier).status = "VERIFIED"  # simulated handshake in test only
+    assert client.put(path, json=payload, headers=headers).status_code == 200
+    assert client.put(path, json=payload, headers=headers).status_code == 409
+    channel = client.get("/api/v1/settings", headers=headers).json()["channels"][0]
+    assert channel["credentials_ref"] == "integration:" + identifier
+    assert (
+        client.put(
+            path,
+            json={"integration_id": None, "expected_event_id": channel["event_id"]},
+            headers=headers,
+        ).status_code
+        == 200
+    )

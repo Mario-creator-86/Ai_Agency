@@ -144,8 +144,9 @@ CATALOG = {
         "ElevenLabs",
         "media",
         [KEY, MODEL, field("voice_id", "Voice ID")],
-        "stored",
-        "Configurația este salvată pentru voce; pipeline-ul TTS necesită conectarea adaptorului.",
+        "media",
+        "După verificare și selectare pentru Voce / TTS, narațiunea randărilor este "
+        "sintetizată de ElevenLabs.",
         "https://elevenlabs.io/docs/api-reference/introduction",
         ["voice"],
     ),
@@ -153,9 +154,9 @@ CATALOG = {
         "OpenAI media",
         "media",
         [KEY, MODEL, field("voice_id", "Voce (pentru TTS)", False)],
-        "stored",
-        "Adaugă separat configurațiile pentru imagine, video sau voce. Generarea "
-        "media nu este încă conectată aici.",
+        "media",
+        "Adaugă separat configurațiile pentru imagine, video sau voce. După verificare și "
+        "selectare pentru Imagini, randările folosesc imagini reale în loc de substitute.",
         "https://developers.openai.com/api/docs/guides/tools-image-generation",
         ["image", "video", "voice"],
     ),

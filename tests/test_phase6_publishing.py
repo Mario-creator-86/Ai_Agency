@@ -20,7 +20,7 @@ from app.factual.models import FactualClaim, ScriptDraft, TopicIdea
 from app.media.models import MediaAsset, QualityControlReport, Storyboard, VideoRenderJob
 from app.models import OwnerPolicy
 from app.providers.deterministic_pub import DeterministicPublishingAdapter
-from app.publishing.models import PublicationRecord
+from app.publishing.models import ChannelRecord, PublicationRecord
 from app.publishing.services import (
     PublishingGateError,
     configure_channel,
@@ -208,7 +208,7 @@ def test_channel_seeding_and_configuration(engine):
     )
     assert updated["channel_name"] == "Main Channel A - Renamed"
     assert updated["remote_channel_id"] == "UC_custom_youtube_id"
-    assert updated["status"] == "AUTHENTICATED"
+    assert updated["status"] == "CONFIGURED"
 
 
 def test_publishing_gate_evaluations(engine, tmp_path):
@@ -467,7 +467,10 @@ def test_publishing_api_endpoints_with_owner_auth(client, headers, engine, tmp_p
             "private",
             str(uuid4()),
         )
-        assert get_channel(engine, channel_id)["status"] == "AUTHENTICATED"
+        assert get_channel(engine, channel_id)["status"] == "CONFIGURED"
+        # Simulated verified identity, only for this injected publishing-adapter test.
+        with Session(engine) as session, session.begin():
+            session.get(ChannelRecord, channel_id).status = "AUTHENTICATED"
 
         res = client.post(
             f"/api/v1/publishing/publish-asset/{bundle['asset_id']}",

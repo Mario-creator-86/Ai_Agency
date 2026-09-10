@@ -307,6 +307,12 @@ def _assert_policy_allows_run(session: Session, agent: Agent, registry: Provider
             "BLOCKED_POLICY",
         )
 
+    model = session.get(ModelRecord, agent.model_id)
+    if model is None or model.provider_id != agent.provider_id or not model.is_available:
+        raise PolicyKernelError("Assigned model is unavailable or not verified", "BLOCKED_PROVIDER")
+    if agent.runtime_state not in ("IDLE", "BLOCKED", "ERROR"):
+        raise PolicyKernelError("Agent already has an active task", "BLOCKED_POLICY")
+
     # 3. Capabilities
     _check_required_capabilities(session, agent)
 
@@ -590,12 +596,11 @@ def seed_initial_workforce(engine: Engine) -> None:
             session.add(provider)
             session.flush()
 
-        # 3. Cloud Models (glm-5.2:cloud, kimi-k2.6:cloud, qwen3-coder:480b-cloud)
-        models_data = [
-            ("glm-5.2:cloud", 131072, "General reasoning & direction"),
-            ("kimi-k2.6:cloud", 262144, "Long-context research & fact-checking"),
-            ("qwen3-coder:480b-cloud", 131072, "Code, script structure & media pipelines"),
-        ]
+        # Initial model proposals come from editable seed configuration, never discovery.
+        from app.agents.seed_config import load_seed_config
+
+        seed_config = load_seed_config()
+        models_data = seed_config["models_data"]
         model_map: dict[str, str] = {}
         for m_name, ctx_len, notes in models_data:
             existing_model = session.scalars(
@@ -623,7 +628,7 @@ def seed_initial_workforce(engine: Engine) -> None:
                         ModelCapability(
                             model_id=model.id,
                             capability_id=c_id,
-                            confidence="DECLARED_BY_PROVIDER",
+                            confidence="SEEDED_UNVERIFIED",
                         )
                     )
                 model_map[m_name] = model.id
@@ -713,15 +718,7 @@ def seed_initial_workforce(engine: Engine) -> None:
                 role_map[r_name] = existing_role.id
 
         # 5. Hired Agents placed at their desks
-        agents_def = [
-            ("Sarah (Director)", "Director", "glm-5.2:cloud"),
-            ("Dr. Aris (Researcher)", "LeadResearcher", "kimi-k2.6:cloud"),
-            ("Elena (Fact Checker)", "FactChecker", "glm-5.2:cloud"),
-            ("Marcus (Script Writer)", "ScriptWriter", "qwen3-coder:480b-cloud"),
-            ("Lyra (Voice Artist)", "VoiceArtist", "glm-5.2:cloud"),
-            ("Kael (Video Editor)", "VideoEditor", "qwen3-coder:480b-cloud"),
-            ("Vera (Publisher)", "Publisher", "glm-5.2:cloud"),
-        ]
+        agents_def = seed_config["agents_def"]
         for display_name, r_name, m_name in agents_def:
             a_id = str(uuid4())
             event = append_event(

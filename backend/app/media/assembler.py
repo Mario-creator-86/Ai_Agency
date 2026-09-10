@@ -28,6 +28,7 @@ from app.providers.deterministic_media import (
     DeterministicTTSAdapter,
     DeterministicVisualAdapter,
 )
+from app.providers.media_base import ImageProvider, TTSProvider
 from app.services import append_event, utc_now
 
 logger = logging.getLogger("studio.assembler")
@@ -37,6 +38,7 @@ DEFAULT_STORAGE_ROOT = ROOT / "backend" / "storage" / "media"
 #: Recorded on every asset produced from locally synthesised placeholder frames. The QC gate
 #: refuses to pass such an asset for publication: placeholder cards are not real footage.
 PLACEHOLDER_VISUAL_PROVIDER = "PLACEHOLDER_DETERMINISTIC_VISUALS"
+PLACEHOLDER_VOICE_PROVIDER = "PLACEHOLDER_DETERMINISTIC_VOICE"
 
 
 class RenderEngineUnavailable(RuntimeError):
@@ -119,14 +121,64 @@ def generate_subtitles_srt(scenes: list[dict]) -> str:
     return "\n".join(srt_lines)
 
 
+def _concatenate_audio(ffmpeg_exe: str, segments: list[Path], work_dir: Path) -> Path:
+    """Join the per-scene narration files into one track, with ffmpeg rather than by hand.
+
+    The placeholder path can splice raw WAV bodies because it produced them itself and knows
+    their format. A provider's audio is whatever the vendor encoded, so it is concatenated by
+    the decoder instead of by byte surgery, which would silently corrupt a differing format.
+    """
+    if not segments:
+        raise RenderEngineUnavailable("No narration audio was produced for this storyboard")
+    listing = work_dir / "voice_segments.txt"
+    listing.write_text(
+        "".join(f"file '{segment.as_posix()}'\n" for segment in segments), encoding="utf-8"
+    )
+    output = work_dir / "master_audio.m4a"
+    result = subprocess.run(  # noqa: S603
+        [
+            ffmpeg_exe,
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(listing),
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            str(output),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=600,
+        check=False,
+    )
+    if result.returncode != 0 or not output.is_file() or output.stat().st_size == 0:
+        raise RenderEngineUnavailable(
+            f"FFmpeg could not join the narration segments (exit code {result.returncode})"
+        )
+    return output
+
+
 def assemble_video_job(
     engine: Engine,
     storyboard_id: str,
     correlation_id: str,
     storage_root: Path | None = None,
     ffmpeg_path: str | None = None,
+    image_adapter: ImageProvider | None = None,
+    tts_adapter: TTSProvider | None = None,
 ) -> dict:
     """Run end-to-end video assembly and provenance recording.
+
+    ``image_adapter`` and ``tts_adapter`` are the providers the Owner selected and verified.
+    When either is absent the corresponding deterministic placeholder generator is used, and
+    the asset is recorded under the placeholder provider name — which QC blocks from
+    publication. The recorded name always says which generator actually made the frames, so a
+    render can never be mistaken for publishable content it is not.
 
     Raises RenderEngineUnavailable when ffmpeg is missing or the encode fails. No MediaAsset
     is recorded in that case, so no downstream gate can pass on a non-existent render.
@@ -189,36 +241,71 @@ def assemble_video_job(
 
     # 2. Generate placeholder visual cards (SVG for the UI, raster PPM for the encoder)
     #    and voiceover segments.
-    visual_adapter = DeterministicVisualAdapter()
-    tts_adapter = DeterministicTTSAdapter()
+    visual_adapter: ImageProvider = image_adapter or DeterministicVisualAdapter()
+    voice_adapter: TTSProvider = tts_adapter or DeterministicTTSAdapter()
+    # The frames are real only when a real generator made them; this single name is what the
+    # asset, the event and the QC report are all written from.
+    visual_source = getattr(visual_adapter, "PROVIDER_NAME", PLACEHOLDER_VISUAL_PROVIDER)
+    voice_source = getattr(voice_adapter, "PROVIDER_NAME", PLACEHOLDER_VOICE_PROVIDER)
 
     total_duration = sum(s["duration_seconds"] for s in scenes_data)
     master_audio_bytes = bytearray()
     frame_files: list[Path] = []
 
+    generated_frames: list[Path] = []
+    voice_segments: list[Path] = []
+
     for scene in scenes_data:
+        index = scene["scene_index"]
         img_res = asyncio.run(
             visual_adapter.generate_image(
                 scene["visual_prompt"],
                 width=1080,
                 height=1920,
-                extra={"title": storyboard_title, "scene_index": scene["scene_index"]},
+                extra={"title": storyboard_title, "scene_index": index},
             )
         )
-        (work_dir / f"scene_{scene['scene_index']:02d}.svg").write_bytes(img_res.image_bytes)
+        suffix = img_res.format if img_res.format in ("png", "jpeg", "webp") else "svg"
+        still = work_dir / f"scene_{index:02d}.{suffix}"
+        still.write_bytes(img_res.image_bytes)
 
-        frame_path = work_dir / f"frame_{scene['scene_index']:02d}.ppm"
-        write_placeholder_frame_ppm(frame_path, scene["scene_index"])
-        frame_files.append(frame_path)
+        if image_adapter is not None:
+            # A real still goes to the encoder as it arrived; ffmpeg scales it to 1080x1920.
+            generated_frames.append(still)
+        else:
+            frame_path = work_dir / f"frame_{index:02d}.ppm"
+            write_placeholder_frame_ppm(frame_path, index)
+            frame_files.append(frame_path)
 
-        tts_res = asyncio.run(tts_adapter.synthesize(scene["voiceover_segment"]))
-        if not master_audio_bytes:
+        tts_res = asyncio.run(voice_adapter.synthesize(scene["voiceover_segment"]))
+        if tts_adapter is not None:
+            segment = work_dir / f"voice_{index:02d}.{tts_res.format}"
+            segment.write_bytes(tts_res.audio_bytes)
+            voice_segments.append(segment)
+            # The scene lasts as long as the narration actually recorded for it, measured from
+            # the returned audio. Keeping the storyboard's planned duration here would let the
+            # picture drift away from the voice while looking correct.
+            scene["duration_seconds"] = max(scene["duration_seconds"], tts_res.duration_seconds)
+        elif not master_audio_bytes:
             master_audio_bytes = bytearray(tts_res.audio_bytes)
         elif len(tts_res.audio_bytes) > 44:
             master_audio_bytes.extend(tts_res.audio_bytes[44:])
 
+    if image_adapter is not None:
+        frame_files = generated_frames
+    total_duration = sum(s["duration_seconds"] for s in scenes_data)
+
     audio_file = work_dir / "master_audio.wav"
-    audio_file.write_bytes(master_audio_bytes)
+    if tts_adapter is not None:
+        if not ffmpeg_exe:
+            # The encoder is checked again below, but joining the narration needs it first,
+            # and failing here keeps the reason specific.
+            raise RenderEngineUnavailable(
+                "FFmpeg is required to join provider narration audio, and it was not found."
+            )
+        audio_file = _concatenate_audio(ffmpeg_exe, voice_segments, work_dir)
+    else:
+        audio_file.write_bytes(master_audio_bytes)
 
     # 3. Encode the real 9:16 video. No encoder means no video; the job fails honestly.
     output_mp4 = work_dir / "final_short_9_16.mp4"
@@ -329,7 +416,8 @@ def assemble_video_job(
             {
                 "storyboard_id": storyboard_id,
                 "render_engine": "FFMPEG",
-                "visual_source": PLACEHOLDER_VISUAL_PROVIDER,
+                "visual_source": visual_source,
+                "voice_source": voice_source,
                 "provenance_hash": provenance_hash,
                 "file_size_bytes": file_size,
                 "duration_seconds": total_duration,
@@ -346,7 +434,7 @@ def assemble_video_job(
             width=1080,
             height=1920,
             duration_seconds=round(total_duration, 2),
-            provider_name=PLACEHOLDER_VISUAL_PROVIDER,
+            provider_name=visual_source,
             remote_job_id=None,
             license_status="PROPRIETARY_STUDIO",
             provenance_hash=provenance_hash,
@@ -379,5 +467,6 @@ def assemble_video_job(
         "duration_seconds": total_duration,
         "file_size_bytes": file_size,
         "render_engine": "FFMPEG",
-        "visual_source": PLACEHOLDER_VISUAL_PROVIDER,
+        "visual_source": visual_source,
+        "voice_source": voice_source,
     }

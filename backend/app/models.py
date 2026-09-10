@@ -75,4 +75,7 @@ import app.factual.models  # noqa: F401, E402
 import app.integrations.models  # noqa: F401, E402
 import app.media.models  # noqa: F401, E402
 import app.publishing.models  # noqa: F401, E402
+import app.runbook.models  # noqa: F401, E402
+import app.story.models  # noqa: F401, E402
 import app.workflows.models  # noqa: F401, E402
+import app.workforce.models  # noqa: F401, E402

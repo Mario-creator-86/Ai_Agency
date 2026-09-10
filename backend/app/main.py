@@ -32,9 +32,11 @@ from app.office.router import create_office_router
 from app.providers.ollama import OllamaProvider
 from app.providers.registry import ProviderRegistry
 from app.publishing.router import create_publishing_router
+from app.runbook.router import create_runbook_router
 from app.schemas import PolicyCommand, PolicyResult
 from app.security import require_owner
 from app.services import CommandConflict, change_stop, read_events, snapshot
+from app.story.router import create_story_router
 from app.workflows.publisher import ConnectionManager, publish_pending_outbox
 from app.workflows.router import (
     create_scheduler_router,
@@ -42,6 +44,7 @@ from app.workflows.router import (
     create_workflows_router,
     register_websocket_gateway,
 )
+from app.workforce.router import create_workforce_router
 
 logger = logging.getLogger("studio.api")
 
@@ -72,7 +75,7 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
         # Migrations/bootstrap are explicit startup commands, never hidden destructive schema edits.
         with engine.connect() as connection:
             revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
-            if revision != "0010_phase7_analytics":
+            if revision != "0015_merge_heads":
                 raise RuntimeError("Run scripts/bootstrap.py with this application version")
             if connection.scalar(text("SELECT COUNT(*) FROM owner_policy")) != 1:
                 raise RuntimeError("Run scripts/bootstrap.py to initialize the studio")
@@ -221,6 +224,9 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
     # Phase 6: Autonomous Publishing & Distribution router
     app.include_router(create_publishing_router(), prefix="/api/v1", tags=["publishing"])
     app.include_router(create_analytics_router(), prefix="/api/v1", tags=["analytics"])
+    app.include_router(create_workforce_router(), prefix="/api/v1", tags=["workforce"])
+    app.include_router(create_story_router(), prefix="/api/v1", tags=["story"])
+    app.include_router(create_runbook_router(), prefix="/api/v1", tags=["runbook"])
 
     if (ROOT / "frontend/dist").is_dir():
         app.mount("/", StaticFiles(directory=ROOT / "frontend/dist", html=True), name="frontend")

@@ -6,10 +6,12 @@ from typing import Annotated
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.factual.models import ScriptDraft
 from app.integrations.services import selected_youtube
-from app.media.models import MediaAsset
+from app.media.models import MediaAsset, Storyboard, VideoRenderJob
 from app.providers.publishing_base import PublishingProvider
 from app.providers.youtube import YouTubeProvider, youtube_provider_from_settings
 from app.publishing.schemas import (
@@ -37,9 +39,8 @@ from app.security import require_owner
 PUBLISHER_NOT_CONFIGURED_DETAIL = {
     "error": "PublisherNotConfigured",
     "message": (
-        "No YouTube credentials are configured, so nothing can be published. Set "
-        "STUDIO_YOUTUBE_CLIENT_ID, STUDIO_YOUTUBE_CLIENT_SECRET and "
-        "STUDIO_YOUTUBE_REFRESH_TOKEN in .env and restart the studio."
+        "No YouTube credentials are configured, so nothing can be published. "
+        "Configure and verify a YouTube connection in Settings."
     ),
     "required_settings": [
         "STUDIO_YOUTUBE_CLIENT_ID",
@@ -80,7 +81,10 @@ def get_active_publisher(request: Request) -> PublishingProvider:
     )
     try:
         configured = selected_youtube(
-            request.app.state.engine, request.app.state.credential_vault, identifier
+            request.app.state.engine,
+            request.app.state.credential_vault,
+            identifier,
+            require_verified=True,
         )
     except ValueError:
         raise HTTPException(409, "Selected YouTube credentials are unavailable") from None
@@ -91,6 +95,10 @@ def get_active_publisher(request: Request) -> PublishingProvider:
         )
     if not yt.is_configured:
         raise HTTPException(status_code=503, detail=PUBLISHER_NOT_CONFIGURED_DETAIL)
+    if channel and channel["status"] != "AUTHENTICATED":
+        raise HTTPException(
+            409, "Verify and bind the channel identity in Settings before publishing"
+        )
     return yt
 
 
@@ -263,12 +271,20 @@ def create_publishing_router() -> APIRouter:
             if not asset:
                 raise HTTPException(status_code=404, detail="Media asset not found")
 
-        title = "Autonomous AI Studio: Shorts Release"
-        description = (
-            "Produced autonomously by Autonomous AI Studio with full provenance "
-            "and QC verification. #shorts #ai"
-        )
-        tags = ["shorts", "autonomous", "ai", "technology"]
+        with engine.connect() as connection:
+            title = connection.scalar(
+                select(ScriptDraft.title)
+                .join(Storyboard, Storyboard.script_draft_id == ScriptDraft.id)
+                .join(VideoRenderJob, VideoRenderJob.storyboard_id == Storyboard.id)
+                .where(VideoRenderJob.output_asset_id == asset_id)
+            )
+        if not title:
+            raise HTTPException(
+                422, "Video has no source script title; create an explicit publication intent"
+            )
+        # Empty optional metadata is preferable to invented topic tags or quality claims.
+        description = ""
+        tags: list[str] = []
         cmd_id = uuid4()
         correlation_id = str(uuid4())
 

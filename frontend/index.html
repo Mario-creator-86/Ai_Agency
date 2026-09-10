@@ -46,6 +46,9 @@
                 <button id="open-research-btn" class="quiet cam-btn" title="Subiecte, surse și verificarea afirmațiilor">Cercetare</button>
                 <button id="open-media-btn" class="quiet cam-btn cam-btn-media" title="Storyboard-uri, randare video și control de calitate">Producție media</button>
                 <button id="open-publishing-btn" class="quiet cam-btn cam-btn-pub" title="Canale, verificări înainte de publicare și istoric">Distribuție</button>
+                <button id="open-workforce-btn" class="quiet cam-btn" title="Cum lucrează agenții și ce schimbări de personal susțin măsurătorile">Personal</button>
+                <button id="open-story-btn" class="quiet cam-btn" title="Jurnalul zilei și episodul Office Serial construit din el">Jurnal</button>
+                <button id="open-runbook-btn" class="quiet cam-btn" title="Ce poate face studioul acum și ce a făcut la fiecare rulare zilnică">Rulare zilnică</button>
               </div>
               <div id="rooms" class="rooms" hidden></div>
             </div>
@@ -86,7 +89,7 @@
         <div class="agent-stats-grid">
           <div><span class="stat-label">Stare runtime</span><strong id="inspector-state" class="stat-value text-accent">IDLE</strong></div>
           <div><span class="stat-label">Ciclu viață</span><strong id="inspector-lifecycle" class="stat-value text-success">ACTIVE</strong></div>
-          <div><span class="stat-label">Model configurat</span><strong id="inspector-model" class="stat-value">glm-5.2:cloud</strong></div>
+          <div><span class="stat-label">Model alocat</span><strong id="inspector-model" class="stat-value">—</strong></div>
           <div><span class="stat-label">Identificator</span><small id="inspector-id" class="stat-uuid">uuid</small></div>
         </div>
         <div class="dialog-btn-row">
@@ -134,7 +137,142 @@
             <div class="topics-loading">Se încarcă subiectele...</div>
           </div>
         </div>
+
+        <div class="dialog-section-top">
+          <div class="topics-header-row">
+            <h3 class="dialog-section-header-bright-compact">Surse și afirmații</h3>
+            <button id="refresh-sources-btn" class="quiet btn-refresh">Reîmprospătează</button>
+          </div>
+          <p id="sources-allowlist" class="helper-note">Se verifică site-urile autorizate…</p>
+          <form id="source-retrieve-form" class="dialog-form source-form">
+            <input id="source-url" type="url" placeholder="https://… link către o pagină de pe un site autorizat" required class="dialog-input" />
+            <button type="submit" class="primary dialog-submit-btn">Adu sursa ↓</button>
+          </form>
+          <div id="source-retrieve-status" class="dialog-status-msg" hidden></div>
+          <div id="sources-list" class="topics-container">
+            <div class="topics-loading">Se încarcă sursele…</div>
+          </div>
+        </div>
+
+        <div class="dialog-section-top">
+          <div class="topics-header-row">
+            <h3 class="dialog-section-header-bright-compact">Scenarii</h3>
+            <button id="refresh-scripts-btn" class="quiet btn-refresh">Reîmprospătează</button>
+          </div>
+          <p class="helper-note">Scenaristul scrie doar din afirmațiile SUSȚINUTE ale subiectului. Fiecare scenă citează afirmațiile pe care se sprijină; o citare inventată respinge tot scenariul.</p>
+          <form id="script-write-form" class="dialog-form source-form">
+            <select id="script-topic" aria-label="Subiect" class="dialog-input" required></select>
+            <button type="submit" class="primary dialog-submit-btn">Scrie scenariul ↗</button>
+          </form>
+          <div id="script-status" class="dialog-status-msg" hidden></div>
+          <div id="scripts-list" class="topics-container">
+            <div class="topics-loading">Se încarcă scenariile…</div>
+          </div>
+        </div>
       </dialog>
+      <!-- Phase 9: Daily log and Office Serial -->
+      <dialog id="story-modal" class="studio-dialog research-dialog">
+        <div class="dialog-header">
+          <div>
+            <h2 class="dialog-title">Jurnal zilnic și Office Serial</h2>
+            <p class="dialog-desc">Ziua, numărată din fluxul de evenimente. Episodul se scrie doar din ce s-a întâmplat: fiecare beat citează evenimentele reale pe care le dramatizează.</p>
+          </div>
+          <button id="close-story-btn" class="dialog-close">✕</button>
+        </div>
+        <div class="dialog-section-bottom">
+          <div class="topics-header-row">
+            <h3 class="dialog-section-header-bright-compact">Zile închise</h3>
+            <button id="close-day-btn" class="quiet btn-media-action">Închide ziua de azi</button>
+          </div>
+          <div id="story-status" class="dialog-status-msg" hidden></div>
+          <div id="story-logs" class="topics-container">
+            <div class="topics-loading">Se încarcă jurnalele…</div>
+          </div>
+        </div>
+        <div>
+          <h3 class="dialog-section-header-bright-compact">Episoade</h3>
+          <div id="story-episodes" class="topics-container">
+            <div class="topics-loading">Se încarcă episoadele…</div>
+          </div>
+        </div>
+      </dialog>
+
+      <!-- Phase 10: Daily runbook -->
+      <dialog id="runbook-modal" class="studio-dialog research-dialog">
+        <div class="dialog-header">
+          <div>
+            <h2 class="dialog-title">Rulare zilnică</h2>
+            <p class="dialog-desc">Preflight-ul spune ce poate face studioul acum, fără să contacteze nimic. Rularea consemnează ce a făcut fiecare etapă — inclusiv etapele sărite și motivul lor.</p>
+          </div>
+          <button id="close-runbook-btn" class="dialog-close">✕</button>
+        </div>
+
+        <div id="runbook-safe-mode" class="runbook-safe-mode" hidden>
+          <div class="runbook-safe-head">
+            <strong>Mod sigur activ</strong>
+            <span id="runbook-safe-since">—</span>
+          </div>
+          <p id="runbook-safe-reason" class="runbook-safe-reason">—</p>
+          <p class="runbook-note">Închiderea modului sigur nu repornește autonomia; aceea rămâne o decizie separată.</p>
+          <label class="runbook-label" for="runbook-safe-notes">Ce ai verificat</label>
+          <textarea id="runbook-safe-notes" class="runbook-textarea" rows="2" placeholder="Scrie ce ai verificat; nota rămâne în istoric."></textarea>
+          <button id="clear-safe-mode-btn" class="quiet btn-media-action">Închide modul sigur</button>
+        </div>
+
+        <div class="dialog-section-bottom">
+          <div class="topics-header-row">
+            <h3 class="dialog-section-header-bright-compact">Preflight</h3>
+            <button id="refresh-preflight-btn" class="quiet btn-refresh">Reîmprospătează</button>
+          </div>
+          <div id="runbook-preflight-summary" class="runbook-summary">
+            <div class="topics-loading">Se încarcă preflight-ul…</div>
+          </div>
+          <div id="runbook-checks" class="topics-container"></div>
+        </div>
+
+        <div>
+          <div class="topics-header-row">
+            <h3 class="dialog-section-header-bright-compact">Rulări</h3>
+            <button id="start-run-btn" class="quiet btn-media-action">Pornește rularea de azi</button>
+          </div>
+          <div id="runbook-status" class="dialog-status-msg" hidden></div>
+          <div id="runbook-runs" class="topics-container">
+            <div class="topics-loading">Se încarcă rulările…</div>
+          </div>
+        </div>
+      </dialog>
+
+      <!-- Phase 8: Workforce -->
+      <dialog id="workforce-modal" class="studio-dialog research-dialog">
+        <div class="dialog-header">
+          <div>
+            <h2 class="dialog-title">Personal și capacitate</h2>
+            <p class="dialog-desc">Cum lucrează agenții, măsurat din propriile rulări, și ce schimbări susțin cifrele. Angajările și încetările le decizi tu.</p>
+          </div>
+          <button id="close-workforce-btn" class="dialog-close">✕</button>
+        </div>
+        <div class="dialog-section-bottom">
+          <div class="topics-header-row">
+            <h3 class="dialog-section-header-bright-compact">Măsurători</h3>
+            <button id="refresh-workforce-btn" class="quiet btn-refresh">Reîmprospătează</button>
+          </div>
+          <div id="workforce-summary" class="workforce-summary">
+            <div class="topics-loading">Se încarcă măsurătorile…</div>
+          </div>
+          <div id="workforce-agents" class="topics-container"></div>
+        </div>
+        <div>
+          <div class="topics-header-row">
+            <h3 class="dialog-section-header-bright-compact">Propuneri</h3>
+            <button id="generate-proposals-btn" class="quiet btn-media-action">Recalculează propunerile</button>
+          </div>
+          <div id="workforce-status" class="dialog-status-msg" hidden></div>
+          <div id="workforce-proposals" class="topics-container">
+            <div class="topics-loading">Se încarcă propunerile…</div>
+          </div>
+        </div>
+      </dialog>
+
       <!-- Media Production & Video Assembly Modal -->
       <dialog id="media-modal" class="studio-dialog media-dialog">
         <div class="dialog-header">
@@ -161,6 +299,11 @@
               </div>
             </div>
             <div id="media-status-msg" class="dialog-status-msg" hidden></div>
+            <p id="media-provider-note" class="helper-note">Se verifică furnizorii media…</p>
+            <div id="awaiting-storyboard" class="awaiting-block" hidden>
+              <h4 class="awaiting-title">Scenarii aprobate, în așteptarea producției</h4>
+              <div id="awaiting-list" class="topics-container"></div>
+            </div>
             <div id="storyboards-list" class="storyboard-container">
               <div class="topics-loading">Se încarcă producția media...</div>
             </div>

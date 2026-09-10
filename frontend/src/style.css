@@ -377,3 +377,140 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
   .pub-item-card .pub-sim-note { align-self: flex-start; }
   .topic-input-grid { grid-template-columns: 1fr; }
 }
+
+/* --- Sources and claims -----------------------------------------------------
+   The Phase 4 loop: a fetched page, the claims read out of it, and their real
+   verification status. Status colour is carried by the same semantic tokens the
+   rest of the studio uses, so "unverified" reads the same here as anywhere. */
+
+.dialog-section-top { border-top: 1px solid var(--line); padding-top: 18px; margin-top: 18px; }
+.helper-note { font-size: 11.5px; line-height: 1.5; color: var(--ink-3); margin: 0 0 10px; }
+.helper-warn { color: var(--warn-ink); }
+.source-form { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: start; }
+.source-form .dialog-submit-btn { margin-top: 0; white-space: nowrap; }
+.source-card { border-left-color: var(--info-ink); }
+.source-url { font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 11px; word-break: break-all; color: var(--ink-3); }
+.source-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 9px; }
+
+.claims-list { display: grid; gap: 7px; margin-top: 10px; }
+.claim-row { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--line-strong); border-radius: var(--radius-sm); padding: 8px 10px; }
+.claim-text { font-size: 12.5px; line-height: 1.5; color: var(--ink); }
+.claim-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; font-size: 11px; color: var(--ink-3); }
+.claim-status { font-weight: 600; }
+
+/* Nothing is true until it was checked, and the colour says so. */
+.claim-unverified { border-left-color: var(--warn-ink); }
+.claim-unverified .claim-status { color: var(--warn-ink); }
+.claim-supported { border-left-color: var(--ok-ink); }
+.claim-supported .claim-status { color: var(--ok-ink); }
+.claim-refuted, .claim-disputed { border-left-color: var(--alert-ink); }
+.claim-refuted .claim-status, .claim-disputed .claim-status { color: var(--alert-ink); }
+.claim-uncertain { border-left-color: var(--ink-3); }
+
+@media (max-width: 560px) {
+  .source-form { grid-template-columns: 1fr; }
+}
+
+/* A stated fact that has not been confirmed yet — assigned but unverified. */
+.text-warn { color: var(--warn-ink); }
+
+/* The evidence a verdict rests on, shown under the claim it justifies. */
+.claim-evidence { margin: 7px 0 0; padding: 6px 10px; border-left: 2px solid var(--line-strong); background: var(--surface-sunk); font-size: 11.5px; line-height: 1.5; color: var(--ink-2); font-style: italic; }
+.claim-notes { margin-top: 6px; font-size: 11.5px; line-height: 1.5; color: var(--ink-2); }
+.owner-verdict-form { display: grid; gap: 6px; margin-top: 9px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.owner-verdict-form select, .owner-verdict-form input { width: 100%; padding: 6px 8px; font: inherit; font-size: 12px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.owner-verdict-form button { grid-column: 1 / -1; }
+@media (max-width: 560px) { .owner-verdict-form { grid-template-columns: 1fr; } }
+
+/* --- Scripts ----------------------------------------------------------------
+   A draft is shown scene by scene with its citation count, so the attribution
+   is visible rather than implied by the status badge alone. */
+
+.script-card { border-left-color: var(--info-ink); }
+.script-blocked_unverified_claims { border-left-color: var(--alert-ink); }
+.script-approved { border-left-color: var(--ok-ink); }
+.script-scenes { display: grid; gap: 6px; margin-top: 9px; }
+.scene-row { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 7px 9px; }
+.scene-narration { font-size: 12.5px; line-height: 1.5; color: var(--ink); }
+.scene-meta { margin-top: 4px; font-size: 11px; color: var(--ink-3); }
+
+/* The handover from research to production: approved scripts nothing has picked up yet. */
+.awaiting-block { border: 1px dashed var(--line-strong); border-radius: var(--radius-sm); padding: 11px 12px; margin-bottom: 14px; background: var(--surface-sunk); }
+.awaiting-title { margin: 0 0 9px; font-size: 12px; font-weight: 600; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.04em; }
+
+/* --- Workforce ---------------------------------------------------------------
+   Measurements first, conclusions second: a staffing proposal shows the numbers
+   it was built from, because "the studio recommended it" is not auditable. */
+
+.workforce-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 9px; margin-bottom: 12px; }
+.wf-stat { background: var(--surface-sunk); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 9px 11px; display: grid; gap: 2px; }
+.wf-stat-value { font-size: 20px; font-weight: 600; color: var(--ink); line-height: 1.1; }
+.wf-stat-label { font-size: 11px; color: var(--ink-3); }
+.wf-window { grid-column: 1 / -1; margin: 0; }
+.wf-agent-card { border-left-color: var(--line-strong); }
+.wf-proposal { border-left-color: var(--warn-ink); }
+.wf-applied { border-left-color: var(--ok-ink); }
+.wf-rejected { border-left-color: var(--ink-3); }
+.wf-evidence { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 7px; font-size: 11px; color: var(--ink-3); }
+.wf-notes { flex: 1 1 200px; min-width: 0; padding: 6px 8px; font: inherit; font-size: 12px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); }
+
+/* --- Daily log and Office Serial ---------------------------------------------
+   The two layers stay visually distinct: a log counts, an episode dramatises
+   and shows how many real events each beat rests on. */
+
+.story-log-card { border-left-color: var(--info-ink); }
+.story-episode { border-left-color: var(--gold-ink); }
+.story-beats { display: grid; gap: 6px; margin-top: 9px; }
+
+/* --- Daily runbook -----------------------------------------------------------
+   Status is carried by a word as well as a colour: a stage marked SKIPPED reads
+   as skipped on a monochrome screen too. The verdict block never uses green for
+   anything short of READY, so DEGRADED cannot be skimmed as "fine". */
+
+.runbook-summary { margin-bottom: 11px; }
+.runbook-verdict { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-left-width: 3px; border-radius: var(--radius-sm); background: var(--surface-sunk); }
+.runbook-verdict strong { font-size: 13px; letter-spacing: .04em; }
+.runbook-verdict span { flex: 1 1 240px; font-size: 12px; line-height: 1.5; color: var(--ink-2); }
+.runbook-verdict.rb-ready { background: var(--ok-bg); border-color: var(--ok-line); border-left-color: var(--ok-ink); }
+.runbook-verdict.rb-ready strong { color: var(--ok-ink); }
+.runbook-verdict.rb-degraded { background: var(--warn-bg); border-color: var(--warn-line); border-left-color: var(--warn-ink); }
+.runbook-verdict.rb-degraded strong { color: var(--warn-ink); }
+.runbook-verdict.rb-blocked { background: var(--alert-bg); border-color: var(--alert-line); border-left-color: var(--alert-ink); }
+.runbook-verdict.rb-blocked strong { color: var(--alert-ink); }
+
+.runbook-check { padding: 8px 11px; border: 1px solid var(--line); border-left: 3px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface); }
+.runbook-check .topic-card-meta { font-size: 11.5px; line-height: 1.5; color: var(--ink-2); }
+.runbook-check.rb-ok { border-left-color: var(--ok-ink); }
+.runbook-check.rb-fail.rb-degrading { border-left-color: var(--warn-ink); background: var(--warn-bg); }
+.runbook-check.rb-fail.rb-blocking { border-left-color: var(--alert-ink); background: var(--alert-bg); }
+
+.runbook-run { border-left-color: var(--line-strong); }
+.runbook-run.rb-completed { border-left-color: var(--ok-ink); }
+.runbook-run.rb-partial { border-left-color: var(--gold-ink); }
+.runbook-run.rb-blocked { border-left-color: var(--warn-ink); }
+.runbook-run.rb-failed { border-left-color: var(--alert-ink); }
+
+.runbook-stages { display: grid; gap: 3px; margin-top: 9px; }
+.runbook-stage { display: grid; grid-template-columns: minmax(120px, 1fr) 84px minmax(0, 2fr); gap: 8px; align-items: baseline; padding: 5px 8px; border-radius: var(--radius-sm); background: var(--surface-sunk); font-size: 11.5px; }
+.runbook-stage-name { color: var(--ink); font-weight: 500; }
+.runbook-stage-status { font-size: 10.5px; letter-spacing: .05em; color: var(--ink-3); }
+.runbook-stage-reason { color: var(--ink-2); line-height: 1.45; }
+.runbook-stage.rb-completed .runbook-stage-status { color: var(--ok-ink); }
+.runbook-stage.rb-skipped .runbook-stage-status { color: var(--gold-ink); }
+.runbook-stage.rb-blocked .runbook-stage-status { color: var(--warn-ink); }
+.runbook-stage.rb-failed .runbook-stage-status { color: var(--alert-ink); }
+.runbook-stage.rb-failed { background: var(--alert-bg); }
+
+.runbook-safe-mode { margin-bottom: 14px; padding: 12px 13px; border: 1px solid var(--alert-line); border-left: 3px solid var(--alert-ink); border-radius: var(--radius-sm); background: var(--alert-bg); display: grid; gap: 7px; }
+.runbook-safe-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; align-items: baseline; }
+.runbook-safe-head strong { color: var(--alert-ink); font-size: 13px; }
+.runbook-safe-head span { font-size: 11.5px; color: var(--ink-3); }
+.runbook-safe-reason { margin: 0; font-size: 12px; line-height: 1.5; color: var(--ink-2); }
+.runbook-note { margin: 0; font-size: 11.5px; line-height: 1.5; color: var(--ink-3); }
+.runbook-label { font-size: 11px; color: var(--ink-3); }
+.runbook-textarea { width: 100%; padding: 7px 9px; font: inherit; font-size: 12px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); resize: vertical; }
+.runbook-safe-mode button { justify-self: start; }
+
+@media (max-width: 640px) {
+  .runbook-stage { grid-template-columns: 1fr; gap: 2px; }
+}

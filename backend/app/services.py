@@ -166,7 +166,7 @@ def snapshot(engine: Engine) -> dict:
             "cursor": cursor,
             "captured_at": utc_now(),
             "studio": {"id": studio.id, "name": studio.name, "timezone": studio.timezone},
-            "maturity": "FOUNDATION",
+            "maturity": "DEVELOPMENT",
             "deployment_mode": "LOCAL_STUDIO",
             "policy": policy_view(policy).model_dump(),
             "office": {
@@ -182,20 +182,20 @@ def snapshot(engine: Engine) -> dict:
                     for r in rooms
                 ]
             },
+            # Implementation maturity is release metadata, not external provider health.
             "modules": {
-                name: "NOT_IMPLEMENTED"
-                for name in (
-                    "agents",
-                    "providers",
-                    "workflows",
-                    "research",
-                    "media",
-                    "publishing",
-                    "story",
-                    "treasury",
-                    "procurement",
-                    "financing",
-                )
+                "agents": "IMPLEMENTED",
+                "providers": "IMPLEMENTED",
+                "settings": "IMPLEMENTED",
+                "workflows": "PARTIAL",
+                "research": "PARTIAL",
+                "media": "PARTIAL",
+                "publishing": "PARTIAL",
+                "analytics": "PARTIAL",
+                "story": "NOT_IMPLEMENTED",
+                "treasury": "NOT_IMPLEMENTED",
+                "procurement": "NOT_IMPLEMENTED",
+                "financing": "NOT_IMPLEMENTED",
             },
             "events": [EventView.model_validate(e).model_dump() for e in reversed(recent)],
         }

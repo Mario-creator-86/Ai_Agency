@@ -363,6 +363,38 @@ def generate_storyboard_from_script(
     return get_storyboard(engine, storyboard_id) or {}
 
 
+def list_scripts_awaiting_storyboard(engine: Engine) -> list[dict]:
+    """Approved scripts that no storyboard has been built from yet.
+
+    This is the handover between research and production. It exists because the two halves of
+    the studio were only joined by a demo fixture: an Owner who had just approved a real script
+    had no way to carry it into production, and the only creation path in the interface produced
+    test data. Only APPROVED drafts appear — the factual gate is what approval represents, and
+    offering an unapproved one here would invite starting production on unverified claims.
+    """
+    with Session(engine) as session:
+        built = set(session.scalars(select(Storyboard.script_draft_id)).all())
+        drafts = session.scalars(
+            select(ScriptDraft)
+            .where(ScriptDraft.status == "APPROVED")
+            .order_by(ScriptDraft.created_at.desc())
+        ).all()
+        return [
+            {
+                "id": draft.id,
+                "topic_id": draft.topic_id,
+                "title": draft.title,
+                "version": draft.version,
+                "target_duration_seconds": draft.target_duration_seconds,
+                "scene_count": len(draft.scenes_json or []),
+                "claim_count": len(draft.claim_ids_json or []),
+                "created_at": draft.created_at,
+            }
+            for draft in drafts
+            if draft.id not in built
+        ]
+
+
 def get_storyboard(engine: Engine, storyboard_id: str) -> dict | None:
     with Session(engine) as session:
         sb = session.get(Storyboard, storyboard_id)

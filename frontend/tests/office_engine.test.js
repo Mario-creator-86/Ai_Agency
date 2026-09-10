@@ -340,3 +340,14 @@ test('a second floor change is not started while a delivery is in progress', () 
 
   assert.equal(engine.lift.trip, first, 'the cab finishes one delivery before taking another');
 });
+
+
+test('portrait fit keeps the entire world above the camera controls', () => {
+  const vp = new Viewport({width: 318, height: 468});
+  vp.bottomInset = 132;
+  vp.fitToOffice(1200, 1050);
+  const top = vp.worldToScreen(0, 0);
+  const bottom = vp.worldToScreen(1200, 1050);
+  assert.ok(top.x >= 0 && top.y >= 0);
+  assert.ok(bottom.x <= 318 && bottom.y <= 468 - 132);
+});

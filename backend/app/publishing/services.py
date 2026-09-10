@@ -65,7 +65,8 @@ DEFAULT_CHANNELS = [
 # Channel lifecycle, per 22_PROVIDER_INTEGRATION_CONTRACTS.md common provider state.
 CHANNEL_NOT_CONFIGURED = "NOT_CONFIGURED"  # no remote channel identity yet
 CHANNEL_AUTH_REQUIRED = "AUTH_REQUIRED"  # identity known, no verified credentials
-CHANNEL_AUTHENTICATED = "AUTHENTICATED"  # identity + credential reference present
+CHANNEL_AUTHENTICATED = "AUTHENTICATED"  # remote identity verified through Settings
+CHANNEL_CONFIGURED = "CONFIGURED"  # fields present; access not verified
 
 
 #: Minimum QC score accepted for publication (documented in the Distribution Hub UI).
@@ -78,7 +79,7 @@ def derive_channel_status(remote_channel_id: str | None, credentials_ref: str | 
         return CHANNEL_NOT_CONFIGURED
     if not credentials_ref:
         return CHANNEL_AUTH_REQUIRED
-    return CHANNEL_AUTHENTICATED
+    return CHANNEL_CONFIGURED
 
 
 def seed_default_channels(engine: Engine) -> int:

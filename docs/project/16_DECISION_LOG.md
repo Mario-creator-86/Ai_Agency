@@ -744,3 +744,401 @@ a channel is connected).
 cycle, doors shut in transit, one delivery at a time, every stage landing inside a real
 department, and no placement before the layout. `scratch/verify_lift_courier.mjs` drives the
 running page through a real delivery and reads the engine's own trip state back (9/9).
+
+## D-P4-002 — The research loop is reachable, and verification is independent (2026-09-10)
+
+**Problem:** the whole Phase 4 chain existed in the backend and could not be driven by the
+Owner. Sources could only be fetched by a shell script (`scripts/research_source.py`); there
+was no endpoint to retrieve one, no way to list stored sources, and the Research panel showed
+topics only. Verification had no interface at all. The first product milestone — manual topic →
+real research → verified claims → script — was therefore unreachable through the product.
+
+A separate defect sat inside the same area. `VerifyClaimCommand` takes a verdict, so any
+"verify" control has to supply one. The obvious design — a single button that marks a claim
+checked — would be a verdict with nothing behind it, and FR-038 asks the fact-check path to be
+independent of the research path. Nothing recorded who extracted a claim, so that independence
+could be asserted in a docstring but never enforced or audited.
+
+**Choice:**
+
+1. **The allowlist is configuration, not application state.** `STUDIO_RESEARCH_ALLOWED_HOSTS`
+   in `.env`, empty by default, which disables retrieval entirely rather than meaning
+   "anywhere". No endpoint, form or agent can extend it, and the retrieve command deliberately
+   carries no host field — a request-supplied allowlist is not an allowlist. Both the settings
+   validator and `RetrievalPolicy` now also refuse an entry naming this machine or a private
+   range, so a mistyped or hostile configuration fails at start-up instead of turning the
+   research feature into a reader of internal services.
+2. **`POST /factual/sources/retrieve` and `GET /factual/sources`.** Each failure is reported as
+   itself: 503 with no allowlist, 422 for a host outside it, 429 for a rate limit that is
+   respected rather than worked around, 502 when the source does not answer. In every one of
+   them nothing is stored. A stored source carries `credibility_score = 0` and a receipt with
+   the digests of the bytes received and the text extracted, so any figure on screen can be
+   traced to what was actually downloaded.
+3. **Claim attribution (migration `0011`).** `extracted_by_agent_id` and
+   `verified_by_agent_id`, both nullable, because a claim the Owner judged has no agent behind
+   it and a placeholder id would be a fabricated record.
+4. **`POST /factual/claims/{id}/verify-with-agent`.** A second agent — never the one that
+   extracted the claim — reads the stored source and returns a verdict. Two things make it a
+   check rather than a formality: the studio refuses (409) when no independent agent exists,
+   instead of letting an agent confirm its own reading; and a SUPPORTED or REFUTED verdict must
+   quote the source verbatim, matched against the stored text on words rather than formatting.
+   **A verdict whose quote is not in the source is rejected whole and the claim stays
+   UNVERIFIED** — a fluent verdict resting on invented evidence is indistinguishable from an
+   invention, so it is thrown away rather than stored with a caveat. UNCERTAIN was added as a
+   real outcome so a checker that finds nothing can say so instead of guessing.
+5. **The panel offers both honest routes** — the agent fact-check, and the Owner's own recorded
+   verdict with notes and an optional quote — and no single "mark verified" control. Each claim
+   shows its status, the evidence under it, and whether an agent or the Owner decided.
+
+**Alternatives rejected:** letting the request name an allowed host (the allowlist would be
+whatever the caller says); a one-click verify (a verdict with no reasoning, and the content gate
+downstream would then be gating on nothing); accepting a paraphrased quote (paraphrase is where
+an invention hides); storing a rejected verdict with a warning flag (a stored SUPPORTED is read
+back by the gate, and a caveat in a neighbouring column does not travel with it).
+
+**Test impact:** `tests/test_research_ingestion.py` (19) and `tests/test_claim_verification.py`
+(15). Total 199 passed, 1 skipped. `scratch/verify_research_loop.mjs` drives the panel through
+refusal, retrieval, extraction and verdict (18/18).
+
+## D-UI-005 — The agent inspector showed a model nobody had assigned (2026-09-10)
+
+**Problem:** reported by the Owner — choosing a model per agent in Settings changed nothing in
+the agent's panel. Two independent causes.
+
+1. `index.html` carried `<strong id="inspector-model">glm-5.2:cloud</strong>` and `showInspector`
+   never touched that element. Every agent displayed the same hardcoded string forever,
+   whatever was assigned. The office layout did not carry a model at all, so there was nothing
+   truthful to display even if the field had been filled.
+2. `loadOfficeLayout()` ran once, at login. Even a correct field would have shown the state from
+   before the change until the page was reloaded.
+
+**Choice:** each office assignment now carries `model_id`, `model_name`, `provider_name` and
+`model_is_available`, and the inspector renders three distinct states — no model assigned, a
+model assigned on a provider that has never answered ("· neverificat"), and a model the provider
+confirmed. Only the last enables the run button, because only the last can actually run.
+Settings calls back into the app after every successful change and on close, so the office
+reloads.
+
+A third defect surfaced while testing this: `api()` replaced the server's explanation with
+"Conexiunea nu a putut fi verificată" for every path except `/settings` and `/providers`. Every
+refusal this backend writes is a sentence meant for the Owner — which host is not authorised,
+why a provider did not answer — so the server's own detail is now preferred wherever there is
+one, with the generic wording as the fallback.
+
+**Test impact:** two tests in `tests/test_phase3_office.py` asserting each assignment carries its
+own model and that availability is reported as the provider left it;
+`scratch/verify_agent_model.mjs` opens all seven agents in the running page and compares each
+against the backend (9/9).
+
+## D-P4-003 — Scripts are written from verified claims, and cite them scene by scene (2026-09-10)
+
+**Problem:** the last link of the Phase 4 chain was unreachable. `POST /factual/scripts/generate`
+requires the full voiceover text and a list of claim ids, so the only way to produce a script was
+to write it by hand and pass the ids by `curl`. Nothing in the product drafted one, nothing
+displayed one, and the approval endpoint — which re-runs the factual gate — had no control at
+all. With phases 0–3 usable and verification now reachable, this was the single step still
+standing between the Owner and the Master Prompt's first product milestone.
+
+The interesting question was not how to call an LLM for the text. It was what stops the text from
+containing facts the evidence does not carry. A model writing "Hubble, launched in 1990 at a cost
+of 4.7 billion dollars" from a claim about the launch year produces one true clause and one
+invented one, in the same sentence, and the factual gate downstream cannot see it: the gate
+checks the claim ids a draft cites, not the prose.
+
+**Choice:**
+
+1. **Only SUPPORTED claims reach the writer.** `agent_write_script` selects the topic's claims
+   with status SUPPORTED and refuses (409) when there are none — a topic whose claims are all
+   unverified has nothing truthful to write from, and a draft written anyway would only be
+   blocked later, after the Owner had read it.
+2. **Every scene names the claims it rests on.** The agent returns scenes, each with its
+   narration and a `claim_ids` list, and the schema refuses a scene with an empty one. A framing
+   sentence attaches to the claim it frames; there is no "non-factual scene" escape hatch,
+   because that is precisely where an unsourced assertion would live.
+3. **A citation that was not supplied rejects the whole draft.** Not the offending scene — the
+   whole draft. An identifier the writer did not receive means that scene's narration came from
+   somewhere other than the evidence, and there is no way to tell how far that reaches into the
+   sentences around it. Nothing is stored, and the message names the scene.
+4. **The stored voiceover is assembled from the scene narrations**, so the text the studio will
+   speak is exactly the text that carries an attribution. It is not a separate field the model
+   could fill with something else.
+5. **The draft cites only the claims it used**, not every claim it was given: citing the whole
+   catalogue regardless of use would make the attribution decorative.
+6. **The panel shows a script scene by scene** with its citation counts and status, and offers
+   approval only on a draft that has passed the gate. Approval re-runs the gate, and its refusal
+   now says how many claims stopped being supported instead of returning a raw exception string.
+
+**Alternatives rejected:** dropping an unattributable scene and keeping the rest (the remaining
+prose was written by the same pass, under the same misapprehension); letting the model return a
+free-form voiceover and attributing it afterwards (attribution reconstructed after the fact is a
+guess); allowing scenes with no claims for hooks and outros (the hook is the most-watched
+sentence in a short, and the least supervised place to put an invention).
+
+**Test impact:** `tests/test_script_writing.py`, 12 tests. Total 211 passed, 1 skipped.
+`scratch/verify_script_loop.mjs` drives the chain in the running page: no supported claim → no
+script, gate blocks a draft citing an unverified claim, a fully supported draft passes, and
+approval fails once a cited claim is refuted (11/11).
+
+## D-P5-002 — Media adapters built ahead of the credentials, with the placeholder label intact (2026-09-10)
+
+**Context:** the Owner will supply media credentials themselves, later. The work that can be
+done before then is the part that decides what happens once they arrive, and that is where the
+truthfulness risk sits — not in the HTTP calls.
+
+**Problem:** `assemble_video_job` constructed `DeterministicVisualAdapter` and
+`DeterministicTTSAdapter` directly, so a render was always placeholder content no matter what the
+Owner configured, and the media entries in the Settings catalogue said as much ("Generarea nu este
+încă conectată"). Wiring providers in naively would have created two new ways to lie: an adapter
+that returned a plausible substitute when a vendor failed, and a render that kept the
+placeholder label after real frames were used, or lost it before they were.
+
+**Choice:**
+
+1. **Adapters return what arrived, or raise.** `ElevenLabsTTSAdapter` and `OpenAIImageAdapter`
+   call documented endpoints over HTTPS with bounded response sizes. A failure raises; there is
+   no fallback asset, because a substitute would enter the pipeline and be reasoned about by QC
+   and the publishing gate as though a vendor had produced it.
+2. **Every number is measured from the bytes.** An MP3's duration is counted by walking its
+   frame headers (`mp3_duration_seconds`), a WAV's from its own header, and an image's size is
+   read from the PNG header — not taken from what was requested. The assembler cuts video to
+   those durations, so a length estimated from the word count would desynchronise picture and
+   voice while looking like a measurement. Where a vendor genuinely offers nothing — ElevenLabs
+   returns no word alignment on this endpoint, the Images API takes no seed — the adapter
+   reports nothing rather than echoing the request back as if it had applied.
+3. **A URL-only image response raises** instead of being followed: fetching it would be a second,
+   unvalidated request to whatever host the response named.
+4. **Only a verified *and* selected provider is used.** `app/media/factory.py` resolves the
+   integration chosen for the "image" and "voice" purposes and uses it only at `VERIFIED` or
+   `ACCESS_VERIFIED` — the same rule publishing and analytics follow. `SAVED` means the key was
+   typed in, not that the vendor accepted it, and a render started on unaccepted credentials
+   would fail mid-pipeline after the Owner had been told it was under way. A catalogued vendor
+   with no adapter yet (Runway) resolves to no provider: that is "no generator", not a silent
+   substitution.
+5. **The recorded provider name is the generator that actually made the frames.** One value
+   drives the asset's `provider_name`, the `media.video_rendered` event and the QC report. With
+   no provider the render still happens — a video to look at — and is labelled placeholder, so
+   `content_source_qc` blocks it from publication exactly as before.
+6. **Provider narration is joined by ffmpeg, not by byte surgery.** The placeholder path can
+   splice raw WAV bodies because it produced them; a vendor's audio is whatever it encoded, and
+   concatenating that by hand would corrupt a differing format silently.
+7. **`GET /media/providers`** reports which generators a render would use, and states plainly
+   that renders are not publishable without a verified image provider. It probes nothing, so it
+   never asserts reachability — only what the Owner selected and verified.
+
+**Alternatives rejected:** falling back to a placeholder when a vendor call fails (the render
+would appear to have succeeded and the label would be the only trace); reporting the requested
+image size (a provider may return another, and the asset would carry a measurement nobody took);
+estimating narration duration from the text (the figure feeds the cut).
+
+**Test impact:** `tests/test_media_providers.py` (18) and `tests/test_media_selection.py` (12),
+including a full render proving that the placeholder block lifts only when a real generator made
+the frames, and that the asset names it. Total 241 passed, 1 skipped.
+
+## D-P5-003 — Research hands work to production, and the render says what it will be (2026-09-10)
+
+**Problem:** with Phase 4 usable end to end, the chain stopped at approval. An Owner who had just
+approved a real script — sources fetched, claims verified by a second agent, citations checked —
+opened Producție media and found no way to carry it forward. The only creation control there was
+"Creează fixture demo", which builds test data with a deliberately unverified claim. The two
+halves of the studio were joined by a fixture.
+
+A second, quieter problem sat next to it. Renders are placeholder content until the Owner
+configures a media provider, and QC blocks placeholder content from publication. That is correct,
+but the Owner only discovered it *after* pressing Randare and reading a failed QC report.
+
+**Choice:**
+
+1. **`GET /media/scripts/awaiting-storyboard`** lists approved drafts no storyboard has been
+   built from, and the Media panel shows them as the first thing in the pipeline, with the scene
+   count and the number of verified claims each rests on. Only APPROVED drafts appear: approval
+   is what passing the factual gate means, and offering a draft that had not passed would invite
+   starting production on unverified claims. A script leaves the queue as soon as its storyboard
+   exists, so nothing is produced twice by accident.
+2. **The storyboard is built from the panel**, through the same endpoint and the same gate as
+   before. A refusal is shown as it comes back — the gate runs again at this step, and a claim
+   refuted since approval must stop production here too.
+3. **The render says what it will be before it is asked for.** The panel reads
+   `GET /media/providers` on open and states plainly, as a warning, that without a verified image
+   provider the output is placeholder content that QC will block. Learning that from a failed QC
+   report is a worse way to learn it, and the fact is knowable in advance.
+4. Approving a script in Cercetare now refreshes the production queue, so the handover is visible
+   without reloading.
+
+**Alternatives rejected:** letting production pick up any script and relying on the gate to stop
+it later (the Owner would have built a storyboard, waited for a render and read a QC failure to
+learn something the studio knew at the start); hiding the demo fixture (it is genuinely useful
+for exercising the factual gate, and it is labelled as a fixture).
+
+**Test impact:** three tests in `tests/test_media_selection.py` — only approved scripts are
+offered, a script in production leaves the queue, and the endpoint is reachable. Total 244
+passed, 1 skipped. `scratch/verify_production_handover.mjs` drives approval → queue → storyboard
+→ render in the running page and confirms the asset is labelled placeholder and blocked by QC
+(11/11).
+
+## D-P8-001 — The studio may recommend changes to its own staff, and nothing more (2026-09-10)
+
+**Problem:** Phase 8 asks for evidence-driven workforce changes. This is the most consequential
+thing the studio can recommend, and the two obvious ways to build it are both wrong. Asking a
+model what it thinks of an employee produces a fluent judgement with nothing under it. Letting
+the studio act on its own conclusion makes an unaudited recommendation into a decision.
+
+**Choice:**
+
+1. **Evidence is counted, never asked for.** `measure_workforce` reads rows the studio already
+   has — agent runs and their outcomes over a 30-day window, task queue backlog, dead-lettered
+   tasks. No model is consulted about a colleague. The same call at the same moment always
+   yields the same numbers, so a proposal can be re-derived from them.
+2. **An unmeasured agent is unmeasured, not perfect.** An agent with no runs has
+   `failure_rate: None`, not `0.0`. Zero would read as a flawless record and could support a
+   favourable judgement nobody earned; the panel says "nicio rulare în fereastră".
+3. **A small sample never becomes a recommendation.** Fewer than five runs in the window
+   produces nothing, at any failure rate — four failures out of four is a bad day. The service
+   refuses to build such a proposal and a CHECK constraint refuses to store one, so the rule
+   survives a future caller that forgets it.
+4. **The proposal carries its own evidence.** `evidence_json` holds the counts, the window and
+   the status breakdown as they were read, and the panel displays them rather than only the
+   conclusion. "The studio recommended it" is not something anyone can audit six weeks later.
+5. **Failure proposes suspension, not termination.** A run fails for reasons that are usually
+   the model or the provider rather than the person doing the work, and suspension is
+   reversible. Termination exists but is not something the measurements reach for.
+6. **The Owner decides, and `decide_proposal` will not let a caller pass for the Owner by
+   omission.** It takes an explicit `owner_decision` flag and raises `AutonomousChangeBlocked`
+   when a non-Owner approves — raised, not quietly downgraded to a pending proposal, so a caller
+   that expected the change cannot continue as though it happened. Rejection requires a written
+   reason: an applied change leaves its own trail in the event log, a refusal leaves none.
+7. **Employment is a record, not a column.** `employment_record` gives each period of work its
+   own row. `../architecture/47_STATE_MACHINE_SPECIFICATIONS.md` forbids TERMINATED becoming ACTIVE by editing
+   state; a rehire opens a new period and leaves the closed one closed, so a return is an event
+   with a history and not a flipped field.
+8. **A hire is approved but not carried out here.** Which role, on which model, is a decision
+   the studio cannot make for the Owner, so approval is recorded and the Owner completes it in
+   Settings. Guessing would put an agent on a model nobody chose.
+
+**Alternatives rejected:** an LLM performance review (a judgement with no measurement under it,
+about a colleague, that would then be cited as evidence); proposing termination on a high
+failure rate (the evidence does not distinguish a bad agent from a broken provider); letting the
+studio suspend an agent autonomously while the `autonomous_firing_enabled` flag is off (the flag
+would be decorative).
+
+**Test impact:** `tests/test_phase8_workforce.py`, 19 tests, most of them about what is *not*
+proposed. Total 263 passed, 1 skipped. `scratch/verify_workforce.mjs` checks in the running page
+that an unmeasured agent is shown as such, that nothing is proposed without evidence, and that
+the server — not just the form — requires a reason for a rejection (9/9).
+
+## D-P9-001 — The serial is grounded in the day it dramatises (2026-09-10)
+
+**Problem:** Phase 9 asks the studio to turn its own operating day into an ongoing workplace
+serial. `../architecture/07_STORY_ENGINE.md` separates Operational Truth from the Narrative
+Layer, permits dramatisation — jokes, pauses, compressed dialogue, comic framing — and forbids a
+specific list of fabrications: a hire or departure that did not happen, a success or failure that
+did not happen, invented view counts, an invented provider outage, a decision attributed to the
+wrong person, staff who were not there.
+
+Read closely, those are one failure with several faces: a beat about something the event stream
+never recorded. So the design question was not "how do we write an episode" but "what makes a
+beat checkable".
+
+**Choice:**
+
+1. **The log is counted, never narrated.** `close_daily_log` reads the domain event stream for
+   one business date in the studio's own timezone and records what is in it — counts per event
+   type, the roster, and the events worth dramatising. No model writes any part of it. The log is
+   what every episode is checked against, so a narrative inside it would make the check circular.
+2. **A closed day does not change.** Re-closing returns the stored log untouched, and the date is
+   unique in the schema. Letting a log drift would let an episode become grounded after the fact,
+   and having two logs for one date would give an episode a choice of records to be grounded
+   against — which is no grounding at all.
+3. **Every beat cites its events, and a citation that is not in that day fails the whole
+   episode.** Not the beat: the prose around an invented citation was written under the same
+   misapprehension, and there is no way to tell how far it reaches. The forbidden-fabrication
+   list is enforced by this one rule — an invented outage or a fake hire has no event to cite.
+4. **The cast is the day's roster.** A character named in a beat must have been employed that
+   day. Putting someone in a room the record says they were not in is the same failure as citing
+   an event that did not happen.
+5. **A quiet day produces no episode.** `NothingHappened` is raised and the panel marks the day
+   rather than offering a button that would fail. Manufacturing a story from an empty log is
+   exactly the fabrication the spec forbids, dressed as productivity.
+6. **The claim can be re-checked later.** `GET /story/episodes/{id}/grounding` re-reads a stored
+   episode against its log and names any citation that is not there, so grounding is audited
+   rather than trusted — including if a row were ever written past the check.
+7. **Only narratable event types are offered as material.** A heartbeat is not a story beat, and
+   a shorter list of real material is better than a long one that invites padding. Everything
+   still counts towards the day's totals.
+
+**Alternatives rejected:** letting the showrunner write freely and checking afterwards
+(attribution reconstructed after the fact is a guess); dropping an ungrounded beat and keeping
+the episode; summarising the day with a model before handing it over (the summary would become
+the thing the episode is checked against, and it would already contain interpretation).
+
+**Test impact:** `tests/test_phase9_story.py`, 21 tests. Total 284 passed, 1 skipped.
+`scratch/verify_story.mjs` drives the panel and confirms a quiet day is reported as a fact, a day
+is closed once, and no episode is stored when the writing fails (11/11).
+
+## D-P10-001 — A run reports what it did, not what it was for (2026-09-10)
+
+**Problem:** Phase 10 asks for the daily autonomous runbook from
+`../architecture/39_DAILY_AUTONOMOUS_RUNBOOK.md`: a preflight, twelve stages in order, and abort
+behaviour when something fails. Every earlier phase guarded against inventing a fact about the
+world. Nothing in a daily run does that — and that is what makes this phase easy to get wrong.
+The falsehood available here is quieter: a run that *reports* more than it did. A stage that
+never ran because a provider is missing, left out of the list, reads as a stage that succeeded.
+A preflight that rounds a missing capability up to READY produces a failure that arrives hours
+after the Owner stopped watching. Neither needs a single false sentence to mislead.
+
+**Choice:**
+
+1. **The preflight never rounds up, and it probes nothing.** Each check reports one capability as
+   present or absent, with the severity that follows from it; the verdict is the worst of them.
+   Missing media providers *degrade* — the studio can still work, the output is unpublishable —
+   while a stopped autonomy gate, no verified model, or no FFmpeg *block*. The DEGRADED summary
+   says in words that stages will be skipped and output will be unpublishable, because the word
+   "DEGRADED" alone invites being read as "fine for now". Nothing is called over the network: a
+   preflight that made outbound calls would be slow, would fail for unrelated reasons, and would
+   still only describe the instant it ran.
+2. **The run's status is derived from its stages, never asserted.** `_derive_status` computes
+   FAILED > BLOCKED > PARTIAL > COMPLETED from what the stages actually recorded. A stage
+   returning COMPLETED cannot make the day completed while another was skipped.
+3. **Every stage appears in the record, including the ones that never ran.** A stage with no
+   implementation connected is recorded SKIPPED with that reason; the stages after a stop are
+   recorded BLOCKED naming where the run stopped. A page listing three stages when the runbook
+   has twelve would mislead by the arrangement of the page alone.
+4. **A blocked preflight closes nothing.** The daily log is closed on a partial day — a partial
+   day is still a day — but not on a day the studio never started. Writing a log for a blocked
+   preflight would put an entry in the record for work that did not happen, and tomorrow's
+   episode is checked against that record.
+5. **A failed stage enters safe mode and stops autonomy.** An unattended studio must not carry on
+   into the next day with an unexamined fault behind it. A second failure does not open a second
+   record, because that would obscure when the incident began.
+6. **Leaving safe mode requires a note and does not restart autonomy.** The note is kept.
+   Examining an incident and deciding the studio should act again are separate decisions, and
+   folding them into one click would let the second happen by accident while making the first.
+
+**Alternatives rejected:** probing providers during preflight (slow, flaky, and still only true
+for an instant); omitting unimplemented stages from the run record (the honest-looking version of
+the same lie); letting a caller pass the run's status; auto-clearing safe mode on the next
+schedule; restarting autonomy when the incident is closed.
+
+**A note on the test fixture.** A freshly bootstrapped studio ships with the STOP gate closed, so
+its preflight is correctly BLOCKED and no run starts. The Phase 10 tests were written assuming
+the opposite and failed for that reason; the fixture now opens the gate explicitly, because these
+tests are about what happens *after* the Owner has made that decision. The product default was
+not changed to make tests pass.
+
+**Test impact:** `tests/test_phase10_runbook.py`, 20 tests. Total 304 passed, 1 skipped.
+`scratch/verify_runbook.mjs` drives the panel: the preflight names every check it made and its
+verdict in words, reading it starts nothing, the run button follows the verdict, and a recorded
+run shows all twelve stages with the skipped ones and their reasons (16/16 including the run
+branch, which needs a verified model and is covered against a throwaway database — the script's
+header says how, and that flag never means a provider answered).
+
+## 2026-09-10 — Bucharest as scene timezone
+
+Owner requested an outdoor electronic clock showing Bucharest time in 24-hour format. Use Intl Europe/Bucharest (h23), not a fixed UTC offset. Align street day/hour with this clock to avoid contradictory rhythms when the device is elsewhere. HH:mm refreshes each minute, with DST handled by the runtime timezone database. No schema change. 35 frontend tests and browser checks passed.
+
+## 2026-09-10 — External street clock and CSP-safe scene CSS
+
+Owner references call for a freestanding street display rather than a facade plaque. Place it outside the building on the right, preserving HH:mm Europe/Bucharest. Force Vite to emit the dynamically attached scene stylesheet via ?no-inline: its previous data URL was blocked by style-src, making the live controls appear at the top. Preserve CSP and concurrent dashboard controls. No migration; browser verifies loaded same-origin stylesheet and bottom dock geometry.
+
+## 2026-09-10 — Resolve inspector assignments independently of legacy scene projections
+
+Observed live layout lacks model fields even though Settings and agent records contain real assignments. Read agent and provider model catalogs when opening the inspector; never infer no assignment from missing scene fields. Distinguish failures and guard response ordering. Avoid unnecessary backend restart while concurrent development is active. No migrations or credential changes. 38 frontend tests and all 7 live agent comparisons passed without writes/provider runs. See `INSPECTOR_MODEL_FIX.md`.

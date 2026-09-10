@@ -19,3 +19,5 @@
 .settings-limitation { font-size: .85rem; color: var(--ink-3); }
 .settings-routing { display: grid; grid-template-columns: 130px minmax(0, 1fr) auto; gap: .7rem; align-items: center; }
 @media (max-width: 640px) { .settings-fields { grid-template-columns: 1fr; } .settings-routing { grid-template-columns: 1fr; } .settings-dialog { padding: 1rem; } }
+
+.settings-tabs > button { width: auto; flex: 1 1 150px; }

@@ -8,7 +8,7 @@ configured provider.
 from uuid import uuid4
 
 import pytest
-from app.agents.models import Agent
+from app.agents.models import Agent, ModelRecord
 from app.agents.services import seed_initial_workforce
 from app.factual.services import ingest_source_snapshot
 from app.models import DomainEvent, OwnerPolicy
@@ -30,6 +30,7 @@ VALID_CLAIMS_JSON = """```json
 class _StubAdapter:
     def __init__(self, text: str) -> None:
         self.text = text
+        self.prompts: list[str] = []
 
     async def health_check(self):  # pragma: no cover - kernel reads cached status
         return HealthResult("HEALTHY")
@@ -38,7 +39,7 @@ class _StubAdapter:
         return []
 
     async def generate(self, model, prompt, **kwargs):
-        assert "untrusted_source_evidence" in prompt, "source must stay inside the inert boundary"
+        self.prompts.append(prompt)
         return GenerateResult(self.text, 10, 40, None)
 
 
@@ -47,6 +48,9 @@ def research_ready(client, engine, headers):
     seed_initial_workforce(engine)
     with Session(engine) as session, session.begin():
         session.get(OwnerPolicy, 1).autonomy_stopped = False
+        # This fixture deliberately supplies a simulated available provider.
+        for model in session.scalars(select(ModelRecord)):
+            model.is_available = True
     with Session(engine) as session:
         agent = session.scalar(select(Agent))
         provider_id = agent.provider_id
@@ -94,6 +98,11 @@ def test_agent_extracts_claims_staying_unverified(research_ready):
     claims = _claims_for_source(research_ready["engine"], research_ready["source_id"])
     assert len(claims) == 3
     assert all(status == "UNVERIFIED" for _, status in claims)
+    adapter = research_ready["client"].app.app.state.registry.get(research_ready["provider_id"])
+    assert adapter.prompts, "the agent must have been invoked"
+    assert all("untrusted_source_evidence" in p for p in adapter.prompts), (
+        "source content must stay inside the inert boundary"
+    )
 
     # The agent announced a human summary, not its raw JSON.
     with Session(research_ready["engine"]) as session:
@@ -158,3 +167,93 @@ def test_truncated_json_list_keeps_complete_claims_only(research_ready):
     claims = _claims_for_source(research_ready["engine"], research_ready["source_id"])
     assert len(claims) == 2
     assert all(text.startswith(("Prima", "A doua")) for text, _ in claims)
+
+
+VERDICT_SUPPORTED = """{"status": "SUPPORTED", "confidence": 0.9,
+ "notes": "Sursa confirmă explicit rezervarea domeniilor pentru documentație.",
+ "evidence_quote": "example.com is reserved for use in documentation"}"""
+
+VERDICT_LOW_CONFIDENCE = """{"status": "UNCERTAIN", "confidence": 0.4,
+ "notes": "Sursa pare să sugereze asta, dar nu explicit.", "evidence_quote": ""}"""
+
+VERDICT_REFUTED_NO_QUOTE = """{"status": "REFUTED", "confidence": 0.85,
+ "verifier_notes": "Sursa contrazice afirmația.", "evidence_text": null}"""
+
+
+def _make_claim(engine, source_id, text, status="UNVERIFIED"):
+    from app.factual.schemas import ExtractClaimItem
+    from app.factual.services import extract_claims, verify_claim
+
+    created = extract_claims(engine, source_id, [ExtractClaimItem(claim_text=text)], str(uuid4()))
+    claim = created[0]
+    if status != "UNVERIFIED":
+        verify_claim(
+            engine, claim["id"], status, 0.9, "manual test setup", "evidence", str(uuid4())
+        )
+    return claim["id"]
+
+
+def test_checker_agent_supports_claim_with_evidence(research_ready):
+    engine, client, headers = (
+        research_ready["engine"],
+        research_ready["client"],
+        research_ready["headers"],
+    )
+    claim_id = _make_claim(
+        engine,
+        research_ready["source_id"],
+        "Domeniul example.com este rezervat pentru documentație.",
+    )
+    client.app.app.state.registry.register(
+        research_ready["provider_id"], _StubAdapter(VERDICT_SUPPORTED)
+    )
+    response = client.post(
+        f"/api/v1/factual/claims/{claim_id}/verify-with-agent",
+        headers=headers,
+        json={"command_id": str(uuid4())},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["claim"]["status"] == "SUPPORTED"
+    assert body["claim"]["verified_by_agent_id"] == body["agent_id"]
+    assert "example.com is reserved" in body["claim"]["evidence_text"]
+
+
+def test_low_confidence_verdict_stays_unverified(research_ready):
+    engine, client, headers = (
+        research_ready["engine"],
+        research_ready["client"],
+        research_ready["headers"],
+    )
+    claim_id = _make_claim(
+        engine, research_ready["source_id"], "Domeniul example.net este rezervat oficial."
+    )
+    research_ready["client"].app.app.state.registry.register(
+        research_ready["provider_id"], _StubAdapter(VERDICT_LOW_CONFIDENCE)
+    )
+    response = client.post(
+        f"/api/v1/factual/claims/{claim_id}/verify-with-agent",
+        headers=headers,
+        json={"command_id": str(uuid4())},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["claim"]["status"] == "UNCERTAIN"
+    assert response.json()["claim"]["evidence_text"] is None
+
+
+def test_refuted_without_quote_is_rejected(research_ready):
+    engine, client, headers = (
+        research_ready["engine"],
+        research_ready["client"],
+        research_ready["headers"],
+    )
+    claim_id = _make_claim(engine, research_ready["source_id"], "Orice domeniu poate fi cumpărat.")
+    client.app.app.state.registry.register(
+        research_ready["provider_id"], _StubAdapter(VERDICT_REFUTED_NO_QUOTE)
+    )
+    response = client.post(
+        f"/api/v1/factual/claims/{claim_id}/verify-with-agent",
+        headers=headers,
+        json={"command_id": str(uuid4())},
+    )
+    assert response.status_code == 422

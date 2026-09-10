@@ -438,3 +438,28 @@ The economy data contracts and command boundaries should be designed early, but 
 - [ ] Worker/UI integration after coordination with the active UI developer.
 
 This increment does not close Phase 4 acceptance. See `RESEARCH_HANDOFF.md`.
+
+## Office visual refinement — 2026-09-10
+
+- [x] Premium pixel material and sprite detailing on the existing office scene.
+- [x] Camera dock clear of the building; portrait fit regression fixed.
+- [x] Desktop/fullscreen/mobile browser review and agent selection verification.
+
+Evidence: `PIXEL_OFFICE_REFINEMENT.md`. This does not close unrelated Phase 3 functionality or later world-builder procurement requirements.
+
+## Ambient street increment — 2026-09-10
+
+- [x] Round tires and correct traffic drawing depth.
+- [x] RNG vehicle replacement and varied street actors/animals.
+- [x] Device-local day/night schedule with lower night density.
+- [x] Ambient dialogue separated from real agent speech; simulation and browser tests.
+
+Evidence and deliberate limits: `STREET_LIFE.md`.
+
+- [x] Weekly street rhythms: weighted activities/vehicles, midnight weekend continuity, coordinated groups and ordinary-passersby capacity. Verified by 33 frontend tests and five fixed-clock browser scenarios; see `STREET_LIFE.md`.
+
+- [x] Exterior 24-hour Bucharest clock and timezone-aligned street rhythms; summer/winter transition tests passed.
+
+- [x] Place Bucharest LED clock on its own right-side street support; verify bottom toolbar CSS loads under the actual CSP.
+
+- [x] Inspector model assignment consistent with Settings, including older layout response compatibility, network failures and late responses. Evidence: `INSPECTOR_MODEL_FIX.md`.

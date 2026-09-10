@@ -175,8 +175,13 @@ def extract_claims(
     claims_data: list[ExtractClaimItem],
     correlation_id: str,
     topic_id: str | None = None,
+    extracted_by_agent_id: str | None = None,
 ) -> list[dict]:
-    """Record atomic claims extracted from a source snapshot with initial UNVERIFIED status."""
+    """Record atomic claims from a source snapshot, all UNVERIFIED.
+
+    ``extracted_by_agent_id`` names the agent that read the source, when one did. It is what
+    later lets verification refuse to use that same agent as its own fact-checker.
+    """
     now = utc_now()
     results = []
 
@@ -208,6 +213,7 @@ def extract_claims(
                 status="UNVERIFIED",
                 confidence=item.confidence,
                 created_at=now,
+                extracted_by_agent_id=extracted_by_agent_id,
                 event_id=event.event_id,
             )
             session.add(claim)
@@ -225,9 +231,15 @@ def verify_claim(
     verifier_notes: str,
     evidence_text: str | None,
     correlation_id: str,
+    verified_by_agent_id: str | None = None,
 ) -> dict:
-    """Validate or refute a factual claim with verifier evidence and notes."""
-    if status not in ("SUPPORTED", "REFUTED", "UNVERIFIED"):
+    """Record a verdict on a claim, with the evidence and the notes behind it.
+
+    UNCERTAIN is a real outcome, not a failure: a fact-checker that cannot find support in the
+    source must be able to say so, and the content gate treats anything short of SUPPORTED as
+    unusable. Forcing a binary verdict would push a guess into the record.
+    """
+    if status not in ("SUPPORTED", "REFUTED", "UNCERTAIN", "UNVERIFIED"):
         raise ValueError(f"Invalid claim verification status: {status}")
 
     now = utc_now()
@@ -241,6 +253,7 @@ def verify_claim(
         claim.verifier_notes = verifier_notes
         claim.evidence_text = evidence_text
         claim.verified_at = now
+        claim.verified_by_agent_id = verified_by_agent_id
 
         event = append_event(
             session,
@@ -248,7 +261,11 @@ def verify_claim(
             "factual_claim",
             claim_id,
             1,
-            {"status": status, "confidence": confidence},
+            {
+                "status": status,
+                "confidence": confidence,
+                "verified_by_agent_id": verified_by_agent_id,
+            },
             correlation_id,
         )
         claim.event_id = event.event_id
@@ -397,9 +414,8 @@ def approve_script_draft(engine: Engine, script_id: str, correlation_id: str) ->
         draft = session.get(ScriptDraft, script_id)
         if not draft:
             raise ValueError(f"Script draft {script_id} not found")
-        if draft.status == "APPROVED":
-            return ScriptDraftView.model_validate(draft).model_dump()
-        if draft.status not in ("DRAFT", "VERIFIED_PASS", "BLOCKED_UNVERIFIED_CLAIMS"):
+        already_approved = draft.status == "APPROVED"
+        if draft.status not in ("DRAFT", "VERIFIED_PASS", "APPROVED", "BLOCKED_UNVERIFIED_CLAIMS"):
             raise ValueError(f"Cannot approve a script with status {draft.status!r}")
 
         gate_passed, unverified_ids = evaluate_factual_gate(session, list(draft.claim_ids_json))
@@ -420,6 +436,9 @@ def approve_script_draft(engine: Engine, script_id: str, correlation_id: str) ->
                 f"Cannot approve: referenced claims {unverified_ids} are not SUPPORTED",
                 unverified_ids,
             )
+
+        if already_approved:
+            return ScriptDraftView.model_validate(draft).model_dump()
 
         event = append_event(
             session,

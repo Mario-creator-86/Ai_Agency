@@ -421,3 +421,82 @@ Tests: 4 pipeline tests (stubbed adapter: valid JSON with fences; unparseable ou
 with nothing stored; policy STOP blocks before any claim; truncated list keeps only complete
 claims), phase-1 run tests extended to assert THINKING/IDLE state events. Suite: 144 passed /
 3 skipped; ruff, ruff format, mypy, docs and secret checks pass.
+
+## Codex Settings completion and bug audit — 2026-09-10T09:23
+
+Scope resumed on current tree after ZCode additions: finish Settings channel binding UI, reproduce five factual-pipeline test failures, fix confirmed hardcoded operational claims and model availability guards. Preserve concurrent office/research additions. Baseline: 199 passed, 5 failed, 3 skipped; Ruff passed. No production credentials or messages will be generated during tests.
+
+## Codex premium pixel office — 2026-09-10T14:55
+
+Active claim: frontend/src/office_engine.js and a dedicated visual-art module; visual verification artifacts and tracking docs. Owner requested richer pixel characters, architecture, furniture, street people, dogs and cars. Preserve backend projections and concurrent Settings/research changes. Earlier audit verification/handoff remains to finish after this visual increment.
+
+## Codex pixel office — verified, scope released
+
+Visual increment completed; see `PIXEL_OFFICE_REFINEMENT.md`. Added material library, refined building/furniture/characters/dogs/cars/foliage, moved camera controls below the scene and fixed portrait framing. Frontend typecheck/build passed, 18 tests passed; Playwright desktop/fullscreen/mobile and real agent selection passed with zero page errors. Port 8000 serves the rebuilt assets. No backend or provider execution was part of this increment. Concurrent media changes preserved; earlier audit scope remains separately tracked.
+
+## Codex street simulation — active claim
+
+Owner requested round wheels/correct vehicle depth, randomized vehicle/pedestrian activities, animals and a local-clock day/night cycle. Scope: office_engine.js, new street simulation module, frontend tests and tracking docs. Decorative street events remain separate from operational agent events.
+
+## Codex ambient street — complete, scope released
+
+Round pixel wheels and far-to-near vehicle rendering fixed. Added session RNG, ten vehicle models, randomized pedestrian/animal activities, 48 shuffled decorative phrases and local-clock day/night density/lighting. 25 frontend tests, typecheck/build and browser 12:00/03:00 checks passed. Existing agent selection/mobile browser QA passed. See `STREET_LIFE.md` for limits, time semantics and screenshots. No operational backend changes.
+
+## Codex weekly street rhythm — active claim
+
+Refine ambient-life probabilities by local hour and weekday, including weekend nightlife crossing midnight, ordinary passersby throughout the day, coordinated groups and commute props. Scope limited to street simulation, renderer activity props, tests and docs.
+
+## Codex weekly street rhythm — verified, scope released
+
+Replaced exclusive time bins with blended weekday/hour activity and vehicle probabilities. Added morning runners, visible commuters/shoppers, coordinated social groups, weekend nightlife continuing after midnight and quieter Sunday evenings. Ordinary passersby remain possible throughout; groups cannot monopolize the scene. 33 frontend tests pass, typecheck/build pass, five fixed-clock weekly browser scenarios and desktop/mobile/agent selection pass. See `STREET_LIFE.md`. No backend/provider work in this scope.
+
+## Codex outdoor Bucharest clock — active claim
+
+Add a pixel electronic exterior clock, 24-hour HH:mm, Europe/Bucharest with DST. Align decorative street schedule with the same timezone. Scope: clock module, renderer, street time conversion and tests.
+
+## Codex Bucharest clock — verified
+
+Exterior seven-segment HH:mm display added at the building base. Intl Europe/Bucharest supplies DST-aware time and weekday independently of device timezone; street rhythms share this time basis. Typecheck/build, 35 frontend tests (including both DST transitions) and browser canvas/mobile/selection checks passed. Owner has asked about bar placement; clarification pending before changing its location.
+
+## Codex street clock placement / toolbar consistency — active
+
+Owner clarified: controls must match the bottom dock preview; electronic clock should be a freestanding street object to one side. Fix stylesheet packaging under existing CSP and place a sculptural pixel clock to the right. Preserve concurrent dashboard additions.
+
+## Codex clock placement / toolbar — verified, scope released
+
+Moved HH:mm Bucharest clock off the building base onto a sculptural freestanding support at the right pavement edge, based on Owner reference images. Fixed actual toolbar inconsistency: Vite inlined the small dynamic stylesheet as a data URL, blocked by the app CSP; ?no-inline now emits a same-origin CSS asset. No CSP relaxation. Browser asserts stylesheet loaded and dock bottom placement in normal/fullscreen, mobile overflow and real agent selection; zero page errors. Main port 8000 serves the new CSS with HTTP 200. Typecheck/build passed.
+
+## Codex inspector model mismatch — active claim
+
+Read-only live reproduction: /office/layout omits all model fields while /settings reports Sarah has a persisted model_id. Running server exposes an older layout shape. Fix inspector to resolve authoritative agent/provider model records on open, distinguish loading/error from no assignment, and discard stale responses. No model/provider execution or reassignment.
+
+## Codex inspector model mismatch — verified, scope released
+
+Resolved assigned models directly from persisted agent/provider catalogs when opening the inspector; old /office/layout omissions no longer imply no assignment. Loading/error/unverified states are distinct. Added stale-request guards including queued close events. 38 frontend tests and typecheck/build pass. Read-only browser verification on actual port 8000 matched all 7 agents to Settings, including Sarah/glm-5.3-flash; no LLM calls or writes. See `INSPECTOR_MODEL_FIX.md`.
+
+## Codex articulated street actors — active claim
+
+Owner rejects translated walking sprites and disconnected props. Replace ambient human rendering with contact-driven articulated poses for walk/run/cycle/skate/phone/briefcase; add varied appearances and fix clock occlusion. Research: BioMotionLab and Blender IK documentation. Scope street_actor module, ambient update/renderer, tests and visual QA; operational employees/backend preserved.
+
+## Migration-branch unification and full-tree verification — 2026-09-10, ZCode (sixth session)
+
+The parallel sessions had advanced the project massively but left the tree unable to run:
+two concurrent revisions after `0011_claim_attribution` (`0012_channel_verification` and
+`0012_workforce -> 0013_story -> 0014_runbook`) gave Alembic two heads, so every
+`upgrade head` — every test fixture and every bootstrap — failed with 243 errors, and
+`main.py` pinned yet another revision. Verified where each session had got to, then:
+
+- `0015_merge_heads` merges both branches into a single head (no schema of its own);
+  `main.py` now pins `0015_merge_heads`. Live database bootstrapped through it.
+- The 13 Phase-10 runbook failures were environmental, not logical: FFmpeg is a BLOCKING
+  preflight check and this machine (like CI) has no FFmpeg. The `studio` fixture now names
+  a stub path when no real encoder exists — the stage state machine stays observable
+  everywhere; the real encoder path remains covered by the Phase-5 skips.
+- ZCode's earlier writer tests were superseded by the parallel session's stronger
+  `script_agent.py` implementation (scene-level claim citations) and its
+  `test_script_writing.py` suite; the superseded tests were removed. The extraction
+  pipeline tests (7) remain.
+
+Combined tree verification: pytest **306 passed / 6 skipped**, ruff + ruff format clean,
+mypy clean (89 files), frontend `tsc` clean, **38/38 frontend tests**, Vite build OK
+(142.8 kB), docs integrity and secret scan pass. Live studio restarted on `0015_merge_heads`.

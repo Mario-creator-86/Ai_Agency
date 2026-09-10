@@ -58,6 +58,29 @@ class SourceSnapshotView(BaseModel):
     event_id: str | None = None
 
 
+class RetrievalReceiptView(BaseModel):
+    """What the studio actually downloaded, so a stored source can be traced to its fetch."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    requested_url: str
+    url: str
+    title: str
+    publisher: str
+    retrieved_at: str
+    #: SHA-256 of the raw bytes received, and of the text extracted from them.
+    body_sha256: str
+    content_sha256: str
+    content_type: str
+
+
+class RetrievedSourceView(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source: SourceSnapshotView
+    receipt: RetrievalReceiptView
+
+
 class ExtractClaimItem(BaseModel):
     claim_text: str = Field(min_length=5, max_length=2000)
     claim_type: Literal["STATISTIC", "HISTORICAL_EVENT", "SCIENTIFIC_FACT", "QUOTE", "GENERAL"] = (
@@ -78,7 +101,7 @@ class ExtractClaimsCommand(BaseModel):
 class VerifyClaimCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
     command_id: UUID
-    status: Literal["SUPPORTED", "REFUTED", "UNVERIFIED"]
+    status: Literal["SUPPORTED", "REFUTED", "UNCERTAIN", "UNVERIFIED"]
     confidence: float = Field(ge=0.0, le=1.0)
     verifier_notes: str = Field(min_length=3, max_length=2000)
     evidence_text: str | None = Field(default=None, max_length=4000)
@@ -105,6 +128,8 @@ class FactualClaimView(BaseModel):
     verifier_notes: str | None
     verified_at: str | None
     created_at: str
+    extracted_by_agent_id: str | None = None
+    verified_by_agent_id: str | None = None
     event_id: str | None = None
 
 

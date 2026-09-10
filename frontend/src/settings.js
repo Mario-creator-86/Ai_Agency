@@ -18,8 +18,15 @@ function option(select, value, text) {
   select.add(item);
 }
 
-/** @param {(path: string, options?: any) => Promise<any>} api */
-export function initSettings(api) {
+/**
+ * @param {(path: string, options?: any) => Promise<any>} api
+ * @param {{ onChange?: () => Promise<void> | void }} [hooks]
+ *   `onChange` runs after every successful change here. Assigning a model, verifying a
+ *   provider or binding a channel all alter what the rest of the app should be showing —
+ *   the office inspector in particular — and without this the app kept displaying the state
+ *   from before the change until the page was reloaded.
+ */
+export function initSettings(api, hooks = {}) {
   const heading = document.querySelector('#workspace .page-heading');
   const open = node('button', 'Settings', 'secondary');
   open.id = 'open-settings';
@@ -42,6 +49,10 @@ export function initSettings(api) {
     dialog.close();
     dialog.replaceChildren();
   }
+
+  dialog.addEventListener('close', () => {
+    void hooks.onChange?.();
+  });
 
   function message(text, error = false) {
     const output = dialog.querySelector('.settings-message');
@@ -67,6 +78,11 @@ export function initSettings(api) {
       const result = await operation();
       if (current !== generation) return;
       await refresh();
+      try {
+        await hooks.onChange?.();
+      } catch {
+        // Telling the rest of the app is best effort; the change itself already succeeded.
+      }
       message(result?.message || success);
     } catch (error) {
       if (current === generation) message(error.message, true);
@@ -127,7 +143,14 @@ export function initSettings(api) {
       const card = node('article', '', 'settings-card');
       card.append(node('h3', item.name), node('p', `${spec.label} · ${statuses[item.status] || item.status}`, 'helper'));
       if (item.checked_at) card.append(node('p', `Verificat: ${new Date(item.checked_at).toLocaleString('ro-RO')}`, 'helper'));
-      if (spec.runtime === 'stored') card.append(node('p', 'Date salvate. Folosirea în pipeline nu este încă disponibilă.', 'settings-limitation'));
+      // Three different truths, and the card says which one applies. "stored" means the
+      // credentials are kept but nothing in the pipeline calls this vendor yet; "media" means
+      // it will be called, but only once it is verified and selected for a purpose.
+      if (spec.runtime === 'stored') {
+        card.append(node('p', 'Date salvate. Folosirea în pipeline nu este încă disponibilă.', 'settings-limitation'));
+      } else if (spec.runtime === 'media' && item.status !== 'ACCESS_VERIFIED' && item.status !== 'VERIFIED') {
+        card.append(node('p', 'Verifică accesul, apoi selectează serviciul mai jos pentru scopul dorit. Până atunci randările folosesc substitute, iar QC le blochează de la publicare.', 'settings-limitation'));
+      }
       const actions = node('div', '', 'settings-actions');
       const modify = node('button', 'Editează', 'quiet');
       modify.addEventListener('click', () => edit(content, item.kind, item));

@@ -44,6 +44,19 @@ class RetrievalPolicy:
             for host in self.allowed_hosts
         ):
             raise ValueError("Configure explicit lowercase DNS hostnames")
+        # An allowlist naming an internal address defeats its own purpose. `resolve_public`
+        # already refuses to connect to one, but catching it here means a mistyped or hostile
+        # configuration fails when the policy is built rather than on the first fetch — and it
+        # closes the case where a name resolves publicly at check time and internally later.
+        for host in self.allowed_hosts:
+            if host in ("localhost", "localhost.localdomain") or host.endswith(".localhost"):
+                raise ValueError("The allowlist names public sources, not this machine")
+            try:
+                address = ipaddress.ip_address(host)
+            except ValueError:
+                continue  # A DNS name; resolve_public checks where it actually points.
+            if not address.is_global:
+                raise ValueError("The allowlist names public sources, not internal addresses")
         if not (0 < self.timeout_seconds <= 120 and 10 <= self.max_bytes <= 10_000_000):
             raise ValueError("Invalid timeout or response size limit")
         if not (10 <= self.max_text_chars <= 100_000 and 0 <= self.max_redirects <= 5):

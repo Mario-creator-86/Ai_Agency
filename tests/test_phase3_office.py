@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 from app.agents.models import Agent, Capability, ModelRecord, ProviderRecord, Role
-from app.agents.services import pause_agent, resume_agent
+from app.agents.services import pause_agent, resume_agent, seed_initial_workforce
 from app.db import create_db_engine, migrate
 from app.models import DomainEvent
 from app.office.services import get_office_layout_with_assignments
@@ -261,3 +261,53 @@ def test_cannot_pause_terminated_agent(phase3_engine):
 
     with pytest.raises(ValueError, match="Cannot resume a TERMINATED agent"):
         resume_agent(engine, agent_id)
+
+
+def test_each_assignment_carries_the_model_that_agent_is_actually_on(engine):
+    """Regression: the interface showed one hardcoded model name for every agent.
+
+    The office layout is where the interface reads an agent from, so the assignment has to
+    carry the agent's own model — and whether that model has been confirmed by its provider,
+    because "assigned" and "verified" are different facts and only one of them permits a run.
+    """
+    seed_initial_workforce(engine)
+
+    layout = get_office_layout_with_assignments(engine)
+    assignments = layout["assignments"]
+    assert assignments
+
+    with Session(engine) as session:
+        expected = {agent.id: agent.model_id for agent in session.scalars(select(Agent))}
+        model_names = {m.id: m.model_name for m in session.scalars(select(ModelRecord))}
+
+    for assignment in assignments:
+        model_id = expected[assignment["agent_id"]]
+        assert assignment["model_id"] == model_id
+        assert assignment["model_name"] == model_names.get(model_id)
+        assert "model_is_available" in assignment
+        assert "provider_name" in assignment
+
+    # The seed gives different roles different models; a single value for all of them is
+    # exactly the bug this test exists to catch.
+    assert len({a["model_name"] for a in assignments}) > 1
+
+
+def test_the_layout_reports_availability_as_the_provider_left_it(engine):
+    """ "Assigned" and "confirmed by the provider" are different facts, and the layout carries
+    both, so the interface can offer a run only for the second."""
+    seed_initial_workforce(engine)
+
+    before = get_office_layout_with_assignments(engine)["assignments"]
+    assert all(a["model_is_available"] is False for a in before), (
+        "the seed assigns models without contacting the provider, so none is available yet"
+    )
+
+    # Whatever the provider later confirms is what the layout reports.
+    with Session(engine) as session, session.begin():
+        model = session.scalars(select(ModelRecord)).first()
+        model.is_available = True
+        confirmed = model.id
+
+    after = get_office_layout_with_assignments(engine)["assignments"]
+    for assignment in after:
+        assert assignment["model_is_available"] is (assignment["model_id"] == confirmed)

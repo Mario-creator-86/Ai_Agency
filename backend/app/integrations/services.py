@@ -146,7 +146,11 @@ def load_registry(engine: Engine, vault: CredentialVault, registry: ProviderRegi
 
 
 def selected_youtube(
-    engine: Engine, vault: CredentialVault, identifier: str | None = None
+    engine: Engine,
+    vault: CredentialVault,
+    identifier: str | None = None,
+    *,
+    require_verified: bool = False,
 ) -> YouTubeProvider | None:
     with Session(engine) as session:
         selection = session.get(ServiceSelection, "youtube")
@@ -156,6 +160,8 @@ def selected_youtube(
         row = session.get(Integration, identifier)
         if row is None or row.kind != "youtube":
             raise ValueError("YouTube selection invalid")
+        if require_verified and row.status != "VERIFIED":
+            raise ValueError("Reverify YouTube credentials before publishing")
         secrets = vault.decrypt(row.encrypted_secrets)
         return YouTubeProvider(
             client_id=row.config["client_id"],

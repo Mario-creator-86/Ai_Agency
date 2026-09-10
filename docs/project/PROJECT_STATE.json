@@ -1,23 +1,25 @@
 {
-  "phase": "7",
+  "phase": "10",
   "completed_milestone": "Phase 2 Automation (last phase completed against its original acceptance criteria)",
-  "active_task": "Phase 7 analytics wired and honest; office lift courier and ground-floor volume",
-  "next_task": "Close the Phase 4-6 acceptance gaps: real search/research, real image/TTS providers, YouTube OAuth; then an analytics panel in the UI once a channel is connected",
+  "active_task": "Phase 10 complete: preflight, staged daily run, derived status, safe mode",
+  "next_task": "Phase 11: public/fan hooks",
   "last_green_test_commit": null,
   "verification": "docs/project/AUDIT_2026-09-10_THIRD_PARTY.md",
   "tests": {
-    "python_passed": 163,
+    "python_passed": 304,
     "python_skipped": 1,
     "javascript_passed": 17,
     "failed": 0
   },
   "known_blockers": [
     "No provider is verified on a clean install: the seeded Ollama endpoint is recorded NOT_CONFIGURED until the Owner runs the check, so no model is assignable until then",
-    "No search/research provider: sources must be supplied manually or by known URL, so Phase 4 acceptance ('real research, independent fact checks') is not met",
-    "No visual or TTS provider: renders use placeholder frames, which QC blocks from publication, so Phase 5 acceptance is not met",
+    "Research retrieval is off until the Owner lists hosts in STUDIO_RESEARCH_ALLOWED_HOSTS; there is still no search provider, so sources are supplied by URL rather than discovered",
+    "No media credentials yet: ElevenLabs and OpenAI image adapters are built and wired, but until the Owner verifies and selects one, renders use placeholder frames and QC blocks them from publication",
+    "Independent verification needs two active agents with verified models; with one, the studio refuses to verify rather than letting an agent confirm its own reading",
     "No YouTube OAuth credentials: publishing is disabled by design until a YouTube connection is saved and verified, so Phase 6 acceptance ('private upload verified') is not met",
     "Analytics returns HTTP 503 until a YouTube connection is verified, by design: there is no local substitute for what a platform measured, and nothing is estimated in its absence",
-    "Analytics has no UI panel yet; the endpoints are live and the data is empty until a channel is connected"
+    "Analytics has no UI panel yet; the endpoints are live and the data is empty until a channel is connected",
+    "The daily run has no stage implementations connected yet: every stage after the preflight is recorded SKIPPED with that reason, so a run reports PARTIAL rather than a completed day"
   ],
   "future_integration_dependencies": [
     "Configured LLM provider/model",
@@ -26,7 +28,7 @@
     "YouTube OAuth"
   ],
   "configured_provider_names": [],
-  "migration_version": "0010_phase7_analytics",
+  "migration_version": "0014_runbook",
   "autonomy_mode": "MANUAL",
   "feature_flags": {
     "public_publish_enabled": false,
