@@ -1,5 +1,20 @@
 # Changelog
 
+## The YouTube catalog form is gone — 2026-09-11
+
+- Deleted the `youtube` entry from the settings catalog. It still asked for a refresh token and an
+  ID canal YouTube beside the new OAuth section, which is exactly what the OAuth flow exists to
+  remove. Connecting a channel through Google is now the only way to give the studio YouTube
+  credentials.
+- Repointed every consumer at the connection: publishing credentials, channel binding (now
+  `connection_id`, with the remote channel id copied from the grant rather than from a typed
+  field), the analytics provider, the runbook preflight check, and the purpose selections.
+- With several channels connected and no binding, the studio refuses to choose one rather than
+  taking the first row. Publishing to the wrong channel is not recoverable.
+- Fixed a bug this uncovered: media providers (ElevenLabs, OpenAI media) were verified by a branch
+  that built a YouTube provider, so every check raised and reported FAILED. They now use the vendor
+  probe that already covered them.
+
 ## YouTube connections by OAuth, not by typing — 2026-09-11
 
 - Replaced the hand-typed refresh token and channel id with the Authorization Code flow. The Owner

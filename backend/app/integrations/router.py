@@ -1,4 +1,3 @@
-import asyncio
 from time import perf_counter
 from uuid import UUID, uuid4
 
@@ -21,10 +20,10 @@ from app.integrations.llm import ConfiguredLLM
 from app.integrations.models import Integration, ServiceSelection
 from app.integrations.probes import probe
 from app.integrations.services import SaveIntegration, assign_agent, public, save, select_service
-from app.providers.youtube import YouTubeProvider
 from app.publishing.models import ChannelRecord
 from app.security import require_owner
 from app.services import append_event, utc_now
+from app.youtube.models import YouTubeConnection
 
 
 class SelectionCommand(BaseModel):
@@ -41,7 +40,9 @@ class AssignmentCommand(BaseModel):
 
 class ChannelBindingCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    integration_id: UUID | None
+    #: A YouTube connection id. Credentials for a channel come from an OAuth grant, never from
+    #: a catalog entry someone filled in by hand.
+    connection_id: UUID | None
     expected_event_id: UUID | None
 
 
@@ -80,6 +81,9 @@ def create_settings_router() -> APIRouter:
                     id=c.id,
                     name=c.channel_name,
                     credentials_ref=c.credentials_ref,
+                    # Which account this channel actually publishes to, as reported by Google
+                    # when the connection behind it was authorised.
+                    remote_channel_id=c.remote_channel_id,
                     event_id=c.event_id,
                     status=c.status,
                 )
@@ -138,21 +142,12 @@ def create_settings_router() -> APIRouter:
             if runtime == "llm":
                 sync_provider_models(engine, request.app.state.registry, str(identifier))
                 status = "VERIFIED"
-            elif runtime == "stored":
-                status = "ACCESS_VERIFIED" if probe(kind, config, secrets) else "FAILED"
             else:
-                provider = YouTubeProvider(
-                    client_id=config["client_id"],
-                    client_secret=secrets["client_secret"],
-                    refresh_token=secrets["refresh_token"],
-                    channel_id=config["channel_id"],
-                )
-                health = asyncio.run(provider.health_check())
-                status = (
-                    "VERIFIED"
-                    if health.status == "HEALTHY" and health.channel_id == config["channel_id"]
-                    else "FAILED"
-                )
+                # "stored" and "media" both verify by calling the vendor and comparing the answer
+                # to what was saved. Media kinds used to fall through to a YouTube health check
+                # that could only ever raise, so verifying an ElevenLabs or OpenAI media key
+                # always reported FAILED; that branch is gone with the YouTube catalog entry.
+                status = "ACCESS_VERIFIED" if probe(kind, config, secrets) else "FAILED"
         except NotImplementedError:
             return {"status": "NOT_SUPPORTED", "message": "Verificarea nu este încă disponibilă."}
         except Exception:
@@ -240,12 +235,14 @@ def create_settings_router() -> APIRouter:
             expected = str(command.expected_event_id) if command.expected_event_id else None
             if channel.event_id != expected:
                 raise HTTPException(409, "Canalul s-a schimbat; reîncarcă")
-            if command.integration_id:
-                row = session.get(Integration, str(command.integration_id))
-                if row is None or row.kind != "youtube" or row.status != "VERIFIED":
-                    raise HTTPException(422, "Verifică întâi conexiunea YouTube")
-                channel.remote_channel_id = row.config["channel_id"]
-                channel.credentials_ref = "integration:" + row.id
+            if command.connection_id:
+                connection = session.get(YouTubeConnection, str(command.connection_id))
+                if connection is None or connection.status != "CONNECTED":
+                    raise HTTPException(422, "Conectează întâi canalul prin Google")
+                # Read back from the API during authorisation, so binding cannot attach a
+                # channel record to an account the grant does not actually open.
+                channel.remote_channel_id = connection.remote_channel_id
+                channel.credentials_ref = "youtube_connection:" + connection.id
                 channel.status = "AUTHENTICATED"
             else:
                 channel.credentials_ref = None
@@ -256,7 +253,7 @@ def create_settings_router() -> APIRouter:
                 "channel_record",
                 channel.id,
                 1,
-                {"integration_id": str(command.integration_id) if command.integration_id else None},
+                {"connection_id": str(command.connection_id) if command.connection_id else None},
                 str(uuid4()),
             )
             channel.event_id = event.event_id

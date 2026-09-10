@@ -48,6 +48,22 @@ const cards = await page.evaluate(() =>
   })),
 );
 
+// The catalog picker must no longer offer YouTube: a second form asking for a refresh token
+// beside the OAuth flow would put back exactly what the flow removes.
+const catalogOffers = await page.evaluate(() =>
+  [...document.querySelectorAll('.settings-add select option')].map((o) => o.textContent),
+);
+if (catalogOffers.some((label) => /youtube/i.test(label))) {
+  problems.push(`the catalog still offers YouTube: ${catalogOffers.join(', ')}`);
+}
+// No field anywhere in the section may ask for a refresh token or a channel id.
+const forbiddenFields = await page.evaluate(() =>
+  [...document.querySelectorAll('.settings-content label, .settings-content .yt-field-label')]
+    .map((l) => l.textContent.trim())
+    .filter((label) => /refresh token|id canal/i.test(label)),
+);
+if (forbiddenFields.length) problems.push(`hand-typed fields remain: ${forbiddenFields.join(', ')}`);
+
 // Nothing resembling a stored secret may appear anywhere in the rendered page.
 const leaks = await page.evaluate(() => {
   const text = document.body.innerText;

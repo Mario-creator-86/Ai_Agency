@@ -82,14 +82,6 @@ CATALOG = {
         "Modelele sunt citite din cont; nu sunt adăugate modele demonstrative.",
         "https://console.anthropic.com/settings/keys",
     ),
-    "youtube": service(
-        "YouTube",
-        "social",
-        [CLIENT, SECRET, REFRESH, field("channel_id", "ID canal YouTube"), REDIRECT],
-        "youtube",
-        "OAuth cu acces YouTube. Verificarea confirmă canalul; salvarea nu publică videoclipuri.",
-        "https://developers.google.com/youtube/v3/guides/auth/server-side-web-apps",
-    ),
     "tiktok": service(
         "TikTok",
         "social",

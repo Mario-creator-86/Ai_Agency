@@ -35,7 +35,7 @@ def public(row: Integration) -> dict:
         version=row.version,
         status=row.status,
         checked_at=row.checked_at,
-        runtime=CATALOG[row.kind]["runtime"],
+        runtime=CATALOG.get(row.kind, {}).get("runtime", "unavailable"),
     )
 
 
@@ -149,26 +149,40 @@ def selected_youtube(
     engine: Engine,
     vault: CredentialVault,
     identifier: str | None = None,
-    *,
-    require_verified: bool = False,
 ) -> YouTubeProvider | None:
-    with Session(engine) as session:
-        selection = session.get(ServiceSelection, "youtube")
-        identifier = identifier or (selection.integration_id if selection else None)
-        if not identifier:
+    """The credentials to publish with, taken from an OAuth connection and nowhere else.
+
+    ``identifier`` is a YouTube connection id — normally the one a channel record was bound to.
+    Without one there is a single defensible answer only while exactly one channel is connected:
+    AMN-AI runs more than one, and guessing which channel a publication belongs to is precisely
+    the mistake this subsystem exists to prevent, so an ambiguous studio refuses instead.
+    """
+    from app.youtube.models import YouTubeConnection  # noqa: PLC0415
+    from app.youtube.services import (  # noqa: PLC0415
+        STATUS_CONNECTED,
+        YouTubeConnectionError,
+        provider_for_connection,
+    )
+
+    if identifier is None:
+        with Session(engine) as session:
+            connected = session.scalars(
+                select(YouTubeConnection)
+                .where(YouTubeConnection.status == STATUS_CONNECTED)
+                .order_by(YouTubeConnection.created_at)
+            ).all()
+        if not connected:
             return None
-        row = session.get(Integration, identifier)
-        if row is None or row.kind != "youtube":
-            raise ValueError("YouTube selection invalid")
-        if require_verified and row.status != "VERIFIED":
-            raise ValueError("Reverify YouTube credentials before publishing")
-        secrets = vault.decrypt(row.encrypted_secrets)
-        return YouTubeProvider(
-            client_id=row.config["client_id"],
-            client_secret=secrets["client_secret"],
-            refresh_token=secrets["refresh_token"],
-            channel_id=row.config["channel_id"],
-        )
+        if len(connected) > 1:
+            raise ValueError(
+                "Mai multe canale YouTube sunt conectate. Leagă canalul de publicare "
+                "de o conexiune anume înainte de a publica."
+            )
+        identifier = connected[0].id
+    try:
+        return provider_for_connection(engine, vault, identifier)
+    except YouTubeConnectionError as exc:
+        raise ValueError(str(exc)) from None
 
 
 def select_service(
@@ -183,7 +197,6 @@ def select_service(
             "video",
             "voice",
             "music",
-            "youtube",
             "tiktok",
             "instagram",
             "facebook",

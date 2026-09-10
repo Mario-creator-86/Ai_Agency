@@ -40,7 +40,10 @@ def test_empty_settings_require_owner_and_have_no_example_accounts(client, heade
     assert client.get("/api/v1/settings").status_code == 401
     data = client.get("/api/v1/settings", headers=headers).json()
     assert data["integrations"] == [] and data["selections"] == {}
-    assert {"youtube", "tiktok", "instagram", "facebook", "email"} <= data["catalog"].keys()
+    assert {"tiktok", "instagram", "facebook", "email"} <= data["catalog"].keys()
+    # YouTube is deliberately absent: a channel is connected by OAuth, and offering a catalog
+    # form beside it would put back the hand-typed refresh token the flow exists to remove.
+    assert "youtube" not in data["catalog"]
 
 
 def test_secrets_encrypted_preserved_and_never_returned(client, headers, engine):
@@ -146,28 +149,28 @@ def test_service_selection_clear_and_delete(client, headers):
     )
 
 
-def test_youtube_selection_supplies_runtime_credentials(client, headers, engine):
-    payload = command(
-        "youtube",
-        config={"client_id": "owner-client", "channel_id": "owner-channel"},
-        secrets={
-            "client_secret": secrets.token_urlsafe(32),
-            "refresh_token": secrets.token_urlsafe(32),
-        },
+def test_youtube_credentials_come_from_the_oauth_connection(engine, connect_youtube):
+    """Publishing credentials are whatever the grant produced, never a typed-in row."""
+    identifier, vault = connect_youtube(
+        name="Canal unic", channel_id="UC_only_one", title="Canal unic"
     )
-    identifier, response = put(client, headers, payload)
-    assert response.status_code == 200
-    result = client.put(
-        "/api/v1/settings/selections/youtube",
-        headers=headers,
-        json={"integration_id": identifier, "expected_version": 0},
-    )
-    assert result.status_code == 200
-    vault = CredentialVault(Path(str(engine.url.database)).with_suffix(".credentials.key"))
     provider = selected_youtube(engine, vault)
     assert provider.is_configured
-    assert provider.channel_id == "owner-channel"
-    assert provider.refresh_token == payload["secrets"]["refresh_token"]
+    # The channel id was read back from the API during authorisation, not entered anywhere.
+    assert provider.channel_id == "UC_only_one"
+    assert provider.refresh_token == "test-refresh-UC_only_one"
+    assert selected_youtube(engine, vault, identifier).channel_id == "UC_only_one"
+
+
+def test_a_second_connected_channel_makes_the_studio_ask_which_one(engine, connect_youtube):
+    """Two channels and no binding is ambiguous, and publishing to the wrong one is not a
+    recoverable mistake, so the studio refuses instead of picking."""
+    connect_youtube(name="Canal unu", channel_id="UC_first", title="Canal unu")
+    second, vault = connect_youtube(name="Canal doi", channel_id="UC_second", title="Canal doi")
+    with pytest.raises(ValueError, match="Leagă canalul"):
+        selected_youtube(engine, vault)
+    # Naming the connection removes the ambiguity.
+    assert selected_youtube(engine, vault, second).channel_id == "UC_second"
 
 
 def test_agent_assignment_is_persistent_and_rejects_busy_or_stale(client, headers, engine):

@@ -76,15 +76,13 @@ def get_active_publisher(request: Request) -> PublishingProvider:
             None,
         )
     reference = (channel or {}).get("credentials_ref") or ""
-    identifier = (
-        reference.removeprefix("integration:") if reference.startswith("integration:") else None
-    )
+    prefix = "youtube_connection:"
+    identifier = reference.removeprefix(prefix) if reference.startswith(prefix) else None
     try:
         configured = selected_youtube(
             request.app.state.engine,
             request.app.state.credential_vault,
             identifier,
-            require_verified=True,
         )
     except ValueError:
         raise HTTPException(409, "Selected YouTube credentials are unavailable") from None

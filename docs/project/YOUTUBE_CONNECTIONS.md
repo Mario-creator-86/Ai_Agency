@@ -91,6 +91,9 @@ network layer, and asserts against what the page actually renders:
 - that the consent URL carries `access_type=offline`, `prompt=consent` and a long random state;
 - that pressing Connect opens a second tab instead of navigating the studio away.
 
+The same check also asserts that the catalog picker no longer offers YouTube and that no label
+anywhere in the section reads *Refresh token* or *ID canal*.
+
 Screenshots: `output/playwright/youtube-panel.png`, `output/playwright/youtube-form.png`.
 
 That last assertion was written because the check failed: `window.open('', '_blank', 'noopener')`
@@ -104,6 +107,35 @@ The visual pass also found that the CSS class `.secondary` — the affirmative b
 fifteen places across the admin surface, including the top bar's Settings control — had never been
 defined in any stylesheet, so all of them rendered as the browser's default box. It is defined
 now.
+
+## The old form had to go, not just be joined
+
+The first pass added the OAuth section beside the existing settings catalog, which still carried a
+`youtube` entry asking for a client id, a client secret, **a refresh token, an ID canal YouTube**
+and a redirect URI. Two forms, one of them still demanding exactly what the flow exists to remove.
+The Owner found it immediately.
+
+The catalog entry is now deleted, and every consumer of it reads the OAuth connection instead:
+
+| Consumer | Before | Now |
+| --- | --- | --- |
+| `selected_youtube` (publishing credentials) | a `VERIFIED` catalog row chosen by a purpose selection | the bound connection, or the only connected one |
+| channel binding (`PUT /settings/channels/{id}`) | `integration_id`, channel id copied from the typed field | `connection_id`, channel id copied from the grant |
+| analytics provider | first `VERIFIED` youtube row | the only connected channel, or none |
+| runbook preflight | a `VERIFIED` youtube row exists | a `CONNECTED` channel exists |
+| purpose selections | a "YouTube" row in *Conturile alese* | gone; the backend refuses the purpose |
+
+Two consequences worth stating plainly.
+
+**Ambiguity is refused, not guessed.** With two channels connected and no binding, `selected_youtube`
+raises instead of returning the first row. Publishing to the wrong channel is not a recoverable
+mistake, and AMN-AI runs more than one channel, so a channel record must name its connection.
+
+**A media verification bug fell out with it.** The check route branched `llm` → `stored` → *else*,
+and the *else* built a YouTube provider. The `media` kinds — ElevenLabs and OpenAI media — have no
+`client_id`, so verifying one raised, was swallowed by a bare `except`, and reported FAILED every
+time. With the YouTube branch gone, media and stored both verify through the vendor probe that was
+always meant to serve them.
 
 ## What this does not do
 

@@ -54,18 +54,22 @@ class YouTubeAnalyticsProvider(AnalyticsProvider):
         from sqlalchemy import select  # noqa: PLC0415
         from sqlalchemy.orm import Session  # noqa: PLC0415
 
-        from app.integrations.models import Integration  # noqa: PLC0415
+        from app.youtube.models import YouTubeConnection  # noqa: PLC0415
 
         with Session(engine) as session:  # type: ignore[arg-type]
-            row = session.scalars(
-                select(Integration).where(
-                    Integration.kind == "youtube", Integration.status == "VERIFIED"
-                )
-            ).first()
-            if row is not None:
+            connected = session.scalars(
+                select(YouTubeConnection)
+                .where(YouTubeConnection.status == "CONNECTED")
+                .order_by(YouTubeConnection.created_at)
+            ).all()
+            # Exactly one, or none: with several channels connected there is no way to tell
+            # whose statistics were asked for, and answering with the first row would attribute
+            # one channel's numbers to another.
+            if len(connected) == 1:
+                row = connected[0]
                 secrets = vault.decrypt(row.encrypted_secrets)  # type: ignore[attr-defined]
                 return cls(
-                    client_id=row.config.get("client_id"),
+                    client_id=row.client_id,
                     client_secret=secrets.get("client_secret"),
                     refresh_token=secrets.get("refresh_token"),
                 )

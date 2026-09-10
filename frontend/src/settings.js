@@ -3,7 +3,9 @@ import { renderYouTubeConnections } from './youtube_connections.js';
 import './settings.css';
 
 const sections = [['llm', 'Furnizori AI'], ['agents', 'Agenți'], ['media', 'Video și sunet'], ['social', 'Conturi și e-mail']];
-const purposes = { image: 'Imagini', video: 'Video', voice: 'Voce / TTS', music: 'Muzică / sunet', youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Instagram', facebook: 'Facebook', email: 'E-mail' };
+// No 'youtube' purpose: a YouTube channel is chosen by connecting it, not by picking a saved
+// credential row out of a list. The backend refuses that purpose for the same reason.
+const purposes = { image: 'Imagini', video: 'Video', voice: 'Voce / TTS', music: 'Muzică / sunet', tiktok: 'TikTok', instagram: 'Instagram', facebook: 'Facebook', email: 'E-mail' };
 const statuses = { SAVED: 'Salvat · neverificat', VERIFIED: 'Conexiune verificată', ACCESS_VERIFIED: 'Acces verificat · pipeline în așteptare', FAILED: 'Verificare eșuată' };
 
 /** @param {string} tag @param {string} [text] @param {string} [className] @returns {HTMLElement} */

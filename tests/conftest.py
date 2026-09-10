@@ -36,3 +36,72 @@ def headers(settings):
 def client(engine, settings):
     with TestClient(create_app(settings)) as client:
         yield client
+
+
+@pytest.fixture
+def connect_youtube(engine, monkeypatch):
+    """Build CONNECTED YouTube connections through the real OAuth code path.
+
+    Only the HTTP transport to Google is replaced. The state, the token exchange, the channel
+    read and the vault write are the code that runs in production, so a test binding to one of
+    these is binding to something the real flow could have produced.
+
+    Returns ``connect(name=..., channel_id=..., title=...) -> (connection_id, vault)``.
+    """
+    from pathlib import Path
+    from urllib.parse import parse_qs, urlparse
+    from uuid import uuid4
+
+    from app.integrations.vault import CredentialVault
+    from app.youtube import services as youtube
+
+    vault = CredentialVault(Path(str(engine.url.database)).with_suffix(".credentials.key"))
+
+    def connect(*, name, channel_id, title):
+        def post_form(url, form, timeout=20):
+            if url != youtube.GOOGLE_TOKEN_URL:
+                return {}
+            return {
+                "access_token": "test-access-token",
+                "refresh_token": f"test-refresh-{channel_id}",
+                "scope": youtube.SCOPES,
+            }
+
+        def get_json(url, access_token, timeout=20):
+            return {
+                "items": [
+                    {
+                        "id": channel_id,
+                        "snippet": {"title": title, "customUrl": "@" + channel_id.lower()},
+                        "contentDetails": {"relatedPlaylists": {"uploads": "UU" + channel_id[2:]}},
+                        "statistics": {
+                            "subscriberCount": "1",
+                            "videoCount": "1",
+                            "viewCount": "1",
+                        },
+                    }
+                ]
+            }
+
+        monkeypatch.setattr(youtube, "_post_form", post_form)
+        monkeypatch.setattr(youtube, "_get_json", get_json)
+
+        connection = youtube.create_connection(
+            engine,
+            vault,
+            name=name,
+            client_id=name.lower().replace(" ", "-") + ".apps.googleusercontent.com",
+            client_secret=secrets.token_urlsafe(32),
+            redirect_uri="http://127.0.0.1:8000/auth/youtube/callback",
+            correlation_id=str(uuid4()),
+        )
+        started = youtube.begin_authorization(
+            engine, connection["id"], correlation_id=str(uuid4())
+        )
+        state = parse_qs(urlparse(started["authorization_url"]).query)["state"][0]
+        youtube.complete_authorization(
+            engine, vault, code="test-code", state=state, correlation_id=str(uuid4())
+        )
+        return connection["id"], vault
+
+    return connect

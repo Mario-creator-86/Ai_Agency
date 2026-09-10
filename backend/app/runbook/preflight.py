@@ -23,10 +23,10 @@ from sqlalchemy.orm import Session
 
 from app.agents.models import Agent, ModelRecord
 from app.config import Settings
-from app.integrations.models import Integration
 from app.media.factory import describe as describe_media
 from app.models import OwnerPolicy
 from app.services import utc_now
+from app.youtube.models import YouTubeConnection
 
 #: A check that stops the day entirely. Everything else degrades it.
 BLOCKING = "BLOCKING"
@@ -97,10 +97,8 @@ def run_preflight(engine: Engine, settings: Settings, vault: Any) -> dict[str, A
             )
         )
 
-        youtube_verified = session.scalars(
-            select(Integration).where(
-                Integration.kind == "youtube", Integration.status == "VERIFIED"
-            )
+        youtube_connected = session.scalars(
+            select(YouTubeConnection).where(YouTubeConnection.status == "CONNECTED")
         ).first()
 
     ffmpeg = settings.ffmpeg_path or shutil.which("ffmpeg")
@@ -160,10 +158,10 @@ def run_preflight(engine: Engine, settings: Settings, vault: Any) -> dict[str, A
     checks.append(
         _check(
             "publishing",
-            bool(youtube_verified) or settings.youtube_credentials_present,
+            bool(youtube_connected) or settings.youtube_credentials_present,
             DEGRADING,
-            "Conexiune YouTube verificată.",
-            "Nicio conexiune YouTube verificată; publicarea este oprită.",
+            "Canal YouTube conectat prin OAuth.",
+            "Niciun canal YouTube conectat; publicarea este oprită.",
         )
     )
 

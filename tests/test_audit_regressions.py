@@ -1,3 +1,4 @@
+import secrets
 from uuid import uuid4
 
 import pytest
@@ -13,7 +14,6 @@ from app.factual.services import (
     propose_topic_idea,
     verify_claim,
 )
-from app.integrations.models import Integration
 from app.models import OwnerPolicy
 from app.providers.registry import ProviderRegistry
 from app.publishing.services import seed_default_channels
@@ -89,40 +89,42 @@ def test_repeat_approval_rechecks_refuted_evidence(engine):
         approve_script_draft(engine, draft["id"], correlation)
 
 
-def test_channel_binding_requires_verified_identity_and_can_be_removed(client, headers, engine):
-    import secrets
-
+def test_channel_binding_requires_a_connected_channel_and_can_be_removed(
+    client, headers, engine, connect_youtube
+):
     seed_default_channels(engine)
-    identifier = str(uuid4())
-    result = client.put(
-        f"/api/v1/settings/integrations/{identifier}",
+
+    # A connection that exists but was never authorised cannot back a channel.
+    unauthorised = client.post(
+        "/api/v1/youtube/connections",
         headers=headers,
         json={
-            "kind": "youtube",
-            "name": "Test YouTube",
-            "expected_version": 0,
-            "config": {"client_id": "test-client", "channel_id": "test-channel"},
-            "secrets": {
-                "client_secret": secrets.token_urlsafe(32),
-                "refresh_token": secrets.token_urlsafe(32),
-            },
+            "command_id": str(uuid4()),
+            "name": "Neconectat",
+            "client_id": "unauthorised.apps.googleusercontent.com",
+            "client_secret": secrets.token_urlsafe(32),
+            "redirect_uri": "http://127.0.0.1:8000/auth/youtube/callback",
         },
-    )
-    assert result.status_code == 200
+    ).json()
     channel = client.get("/api/v1/settings", headers=headers).json()["channels"][0]
     path = f"/api/v1/settings/channels/{channel['id']}"
-    payload = {"integration_id": identifier, "expected_event_id": channel["event_id"]}
+    payload = {"connection_id": unauthorised["id"], "expected_event_id": channel["event_id"]}
     assert client.put(path, json=payload, headers=headers).status_code == 422
-    with Session(engine) as session, session.begin():
-        session.get(Integration, identifier).status = "VERIFIED"  # simulated handshake in test only
+
+    identifier, _ = connect_youtube(
+        name="Canal real", channel_id="UC_bound", title="Canal real"
+    )
+    payload = {"connection_id": identifier, "expected_event_id": channel["event_id"]}
     assert client.put(path, json=payload, headers=headers).status_code == 200
     assert client.put(path, json=payload, headers=headers).status_code == 409
     channel = client.get("/api/v1/settings", headers=headers).json()["channels"][0]
-    assert channel["credentials_ref"] == "integration:" + identifier
+    assert channel["credentials_ref"] == "youtube_connection:" + identifier
+    # The remote id came from the grant, so a channel record cannot claim an unowned account.
+    assert channel["remote_channel_id"] == "UC_bound"
     assert (
         client.put(
             path,
-            json={"integration_id": None, "expected_event_id": channel["event_id"]},
+            json={"connection_id": None, "expected_event_id": channel["event_id"]},
             headers=headers,
         ).status_code
         == 200
