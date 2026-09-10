@@ -74,6 +74,11 @@ def main() -> int:
         "--port", type=int, default=None, help="Defaults to any free port on the loopback."
     )
     parser.add_argument("--keep-running", action="store_true", help="Leave the server up.")
+    parser.add_argument(
+        "--empty",
+        action="store_true",
+        help="Start the studio without recording anything, for driving the UI by hand.",
+    )
     args = parser.parse_args()
     args.port = free_port(args.port)
 
@@ -108,6 +113,13 @@ def main() -> int:
                 time.sleep(0.5)
         else:
             raise SystemExit("The isolated studio did not come up.")
+
+        if args.empty:
+            print(f"\nEmpty studio ready. Owner token: {token}")
+            print(f"Open http://127.0.0.1:{args.port} and press Trezorerie.")
+            if args.keep_running:
+                server.wait()
+            return 0
 
         # 1. A platform payout that has not settled yet: visible, and not spendable.
         pending = call(base, token, "POST", "/economy/evidence", {

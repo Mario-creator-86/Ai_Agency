@@ -542,3 +542,9 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 .treasury-tile-primary { grid-column: 1 / -1; background: var(--ok-bg); border-color: var(--ok-line); }
 .treasury-tile-primary .wf-stat-value { font-size: 30px; color: var(--ok-ink); }
 .treasury-summary .runbook-verdict { grid-column: 1 / -1; }
+
+/* The funding form sits inside the treasury panel; its inputs follow the dialog scale so the
+   panel does not turn into two competing form languages. */
+#funding-form select.dialog-input { appearance: auto; }
+#funding-history { margin-top: 12px; }
+#funding-history .topic-card-high { border-left-color: var(--ok-ink); }

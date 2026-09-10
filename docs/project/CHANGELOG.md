@@ -14,6 +14,10 @@
   report a deficit honestly. Estimates are shown but never posted.
 - No route in the entire API pays, buys, transfers or checks out; a test asserts it over the
   whole OpenAPI surface.
+- Owner funding has a form in the Trezorerie panel: contribution or loan, the rate entered as a
+  percentage and stored as basis points, loan terms required and contribution terms refused, an
+  ambiguous comma refused rather than guessed, and a non-USD amount recording its exchange rate
+  and source before it is converted.
 - `treasury` moves from NOT_IMPLEMENTED to PARTIAL in the snapshot module map; `procurement` and
   `financing` stay NOT_IMPLEMENTED. Evidence: `PHASE11_ECONOMY.md`.
 

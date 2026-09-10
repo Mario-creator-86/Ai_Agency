@@ -2142,14 +2142,210 @@ async function loadTreasury() {
   }
 }
 
+/* ---------------------------------------------------------------------------
+ * Owner funding.
+ *
+ * Two kinds of money that must not blur into each other: a contribution is equity and is never
+ * repaid, a loan is a liability with a rate and a maturity. The backend refuses the wrong
+ * combination, and the form mirrors that by only showing the fields the chosen kind allows.
+ *
+ * Amounts are typed, not parsed loosely. A comma is refused rather than guessed at: "1,000" is a
+ * thousand to one reader and one to another, and money is the last place to be accommodating
+ * about ambiguity. A rate is entered as a percentage because that is how people think about it,
+ * and converted to the basis points the API stores.
+ * ------------------------------------------------------------------------- */
+
+const AMOUNT_PATTERN = /^\d{1,12}(\.\d{1,6})?$/;
+
+function fundingStatus(message, isError) {
+  const box = element('funding-status');
+  box.hidden = false;
+  box.className = isError ? 'dialog-status-msg text-error' : 'dialog-status-msg';
+  box.textContent = message;
+}
+
+/** Show only the fields the chosen kind of funding is allowed to carry. */
+function syncFundingFields() {
+  const isLoan = /** @type {HTMLSelectElement} */ (element('funding-type')).value === 'OWNER_LOAN';
+  const currency = /** @type {HTMLInputElement} */ (element('funding-currency')).value
+    .trim()
+    .toUpperCase();
+  element('funding-loan-fields').hidden = !isLoan;
+  element('funding-fx-fields').hidden = currency === 'USD' || currency.length !== 3;
+}
+
+/** Percentage as a person writes it -> basis points as the ledger stores them. 7.25 -> 725. */
+function percentToBasisPoints(text) {
+  const value = Number(text);
+  if (!Number.isFinite(value) || value < 0 || value > 1000) return null;
+  return Math.round(value * 100);
+}
+
+async function loadFundingHistory() {
+  const box = element('funding-history');
+  try {
+    const { funding } = await api('/economy/owner-funding');
+    box.replaceChildren();
+    if (!funding.length) {
+      const empty = document.createElement('div');
+      empty.className = 'topics-loading';
+      empty.textContent = 'Nicio finanțare înregistrată încă.';
+      box.append(empty);
+      return;
+    }
+    for (const item of funding) {
+      const card = document.createElement('div');
+      const isLoan = item.funding_type === 'OWNER_LOAN';
+      card.className = `topic-card ${isLoan ? 'topic-card-low' : 'topic-card-high'}`;
+      const head = document.createElement('div');
+      head.className = 'topic-card-header';
+      const title = document.createElement('span');
+      title.className = 'topic-card-title';
+      title.textContent = isLoan ? 'Împrumut Owner' : 'Aport de capital';
+      const value = document.createElement('span');
+      value.className = 'topic-card-novelty';
+      value.textContent = `${item.vr} VR$`;
+      head.append(title, value);
+      const meta = document.createElement('div');
+      meta.className = 'topic-card-meta';
+      const parts = [`${item.amount} ${item.currency}`];
+      if (isLoan) {
+        parts.push(`${(item.annual_rate_bps / 100).toFixed(2)}% pe an`);
+        parts.push(`scadență ${item.maturity_date}`);
+      } else {
+        parts.push('fără dobândă, nu se restituie');
+      }
+      meta.textContent = parts.join(' · ');
+      card.append(head, meta);
+      if (item.note) {
+        const note = document.createElement('p');
+        note.className = 'topic-card-subject';
+        note.textContent = item.note;
+        card.append(note);
+      }
+      box.append(card);
+    }
+  } catch (err) {
+    box.replaceChildren();
+    const failure = document.createElement('div');
+    failure.className = 'dialog-status-msg text-error';
+    failure.textContent = `Istoricul finanțărilor nu a putut fi citit: ${err.message}`;
+    box.append(failure);
+  }
+}
+
+element('funding-type').addEventListener('change', syncFundingFields);
+element('funding-currency').addEventListener('input', syncFundingFields);
+
+element('funding-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const type = /** @type {HTMLSelectElement} */ (element('funding-type')).value;
+  const amount = /** @type {HTMLInputElement} */ (element('funding-amount')).value.trim();
+  const currency = /** @type {HTMLInputElement} */ (element('funding-currency')).value
+    .trim()
+    .toUpperCase();
+  const note = /** @type {HTMLInputElement} */ (element('funding-note')).value.trim();
+  const isLoan = type === 'OWNER_LOAN';
+
+  if (amount.includes(',')) {
+    fundingStatus('Scrie suma cu punct pentru zecimale și fără separator de mii: 5000.50', true);
+    return;
+  }
+  if (!AMOUNT_PATTERN.test(amount)) {
+    fundingStatus('Suma trebuie să fie un număr pozitiv, cu cel mult 6 zecimale.', true);
+    return;
+  }
+  if (currency.length !== 3) {
+    fundingStatus('Moneda are trei litere, ex. USD sau EUR.', true);
+    return;
+  }
+
+  const payload = {
+    command_id: crypto.randomUUID(),
+    funding_type: type,
+    amount,
+    currency,
+    note,
+  };
+
+  if (isLoan) {
+    const rate = percentToBasisPoints(
+      /** @type {HTMLInputElement} */ (element('funding-rate')).value.trim(),
+    );
+    const maturity = /** @type {HTMLInputElement} */ (element('funding-maturity')).value;
+    if (rate === null) {
+      fundingStatus('Dobânda se scrie în procente pe an, între 0 și 1000. Ex: 7 sau 7.25', true);
+      return;
+    }
+    if (!maturity) {
+      fundingStatus('Un împrumut are nevoie de o scadență; altfel înregistrează-l ca aport.', true);
+      return;
+    }
+    payload.annual_rate_bps = rate;
+    payload.maturity_date = maturity;
+  }
+
+  try {
+    // A non-USD amount needs a rate that was observed somewhere, not one the page invented, so
+    // the snapshot is recorded first and the funding cites it.
+    if (currency !== 'USD') {
+      const fxRate = /** @type {HTMLInputElement} */ (element('funding-fx-rate')).value.trim();
+      const fxSource = /** @type {HTMLInputElement} */ (element('funding-fx-source')).value.trim();
+      if (!AMOUNT_PATTERN.test(fxRate) || Number(fxRate) <= 0) {
+        fundingStatus(`Scrie cursul ${currency} către USD, ex. 1.08`, true);
+        return;
+      }
+      if (!fxSource) {
+        fundingStatus('Scrie de unde ai luat cursul; studioul nu inventează cursuri.', true);
+        return;
+      }
+      fundingStatus('Se înregistrează cursul…', false);
+      const snapshot = await api('/economy/fx', {
+        method: 'POST',
+        body: JSON.stringify({
+          command_id: crypto.randomUUID(),
+          base_currency: currency,
+          quote_currency: 'USD',
+          rate: fxRate,
+          source: fxSource,
+          observed_at: new Date().toISOString(),
+        }),
+      });
+      payload.fx_snapshot_id = snapshot.id;
+    }
+
+    fundingStatus('Se înregistrează finanțarea…', false);
+    const result = await api('/economy/owner-funding', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    fundingStatus(
+      `Înregistrat: ${result.vr} VR$ ${isLoan ? 'ca datorie' : 'în capitalul propriu'}. ` +
+        'Niciun ban real nu s-a mișcat.',
+      false,
+    );
+    /** @type {HTMLFormElement} */ (element('funding-form')).reset();
+    /** @type {HTMLInputElement} */ (element('funding-currency')).value = 'USD';
+    syncFundingFields();
+    await Promise.all([loadTreasury(), loadFundingHistory()]);
+  } catch (err) {
+    fundingStatus(err.message, true);
+  }
+});
+
 if (openTreasuryBtn) {
   openTreasuryBtn.addEventListener('click', () => {
     treasuryModal.showModal();
+    syncFundingFields();
     loadTreasury();
+    loadFundingHistory();
   });
 }
 element('close-treasury-btn').addEventListener('click', () => treasuryModal.close());
-element('refresh-treasury-btn').addEventListener('click', () => loadTreasury());
+element('refresh-treasury-btn').addEventListener('click', () => {
+  loadTreasury();
+  loadFundingHistory();
+});
 bindPanelToggle('open-treasury-btn', treasuryModal);
 
 const storyModal = /** @type {HTMLDialogElement} */ (element('story-modal'));

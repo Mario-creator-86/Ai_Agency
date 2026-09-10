@@ -14,7 +14,9 @@ first four bullets of `../architecture/26_MASTER_ACCEPTANCE_CRITERIA.md` §"V5 E
 - `backend/app/economy/router.py` — eleven Owner-only routes under `/api/v1/economy`.
 - `backend/migrations/versions/0016_phase11_economy.py` — seven additive tables.
 - `frontend` — a **Trezorerie** panel in the office toolbar.
-- `scripts/demo_treasury.py` — walks a full economic cycle against an isolated studio.
+- `scripts/demo_treasury.py` — walks a full economic cycle against an isolated studio
+  (`--empty` starts one with nothing recorded, for driving the UI by hand).
+- `scripts/verify_funding_form.mjs` — drives the Owner funding form in a real browser.
 
 ## The four invariants, and where each is enforced
 
@@ -66,12 +68,35 @@ The demo deliberately uses a throwaway database. Recording invented payouts in t
 books and reversing them afterwards would still leave fabricated history in an append-only audit
 trail, which is the exact failure this phase exists to prevent.
 
+## Owner funding from the interface
+
+The Trezorerie panel carries the one form an Owner needs to put money in, because that is the
+only economic action that starts with a person rather than with evidence from outside.
+
+- **Two kinds, never blurred.** A contribution credits Owner Capital and is refused a rate; a
+  loan credits Debt Principal and requires both a rate and a maturity. The form shows only the
+  fields the chosen kind may carry, mirroring what the service enforces.
+- **The rate is entered as a percentage** because that is how people think about it, and
+  converted to the basis points the ledger stores. 7.25 becomes 725.
+- **A comma is refused, not guessed.** "1,000" is a thousand to one reader and one to another;
+  for money the form asks again rather than choosing.
+- **A foreign amount records its rate first.** Choosing a currency other than USD reveals a rate
+  and a source field; the form records the FX snapshot and then cites it on the funding, so the
+  "never invent a rate" rule holds from the interface as well as from the API.
+
+Verified in a browser against an isolated, empty studio
+(`node scripts/verify_funding_form.mjs <port> <token>`): the comma refusal, the loan without a
+maturity refusal, the euro-without-a-rate and rate-without-a-source refusals, then a 2000 USD
+loan at 7.25% and a 500 EUR contribution at 1.08, giving 2540 VR$ spendable with 2000 VR$ of debt
+and a balanced ledger. Screenshot: `output/playwright/funding-form.png`.
+
 ## What Phase 11 does not do
 
 - **Nothing spends VR$.** There is no procurement, no purchase, no checkout and no payment route
   anywhere in the API; a test asserts that over the whole OpenAPI surface.
 - **No interest accrues.** `Accrued Interest` and `Interest Expense` exist in the chart of
-  accounts, but an Owner loan's rate is only stored. Accrual is Phase 14.
+  accounts, and a loan's rate and maturity are stored, but nothing computes interest yet, so a
+  debt stays at its principal. Accrual is Phase 14.
 - **No revenue arrives on its own.** Every figure is Owner-entered evidence. There is no YouTube
   payout importer, and analytics do not mint.
 - **No budgets, runway, P&L, balance sheet or forecast scenarios.** That is Phase 12, which the
