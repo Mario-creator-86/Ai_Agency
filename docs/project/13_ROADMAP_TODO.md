@@ -372,20 +372,23 @@ These phases are after core studio/channel reliability unless an earlier impleme
 # V5 Roadmap — Economy / Treasury / Procurement
 
 ## PHASE 11 — Financial Evidence + VR Ledger
-- [ ] RevenueSource adapters/interfaces
-- [ ] RevenueEvidence model
-- [ ] OwnerFundingEvent
-- [ ] FXSnapshot
-- [ ] immutable double-entry ledger
-- [ ] Treasury projection
-- [ ] mint/burn/reversal idempotency
-- [ ] actual provider-cost ingestion/reconciliation
-- [ ] financial audit trail
+- [ ] RevenueSource adapters/interfaces — no automatic importer yet; evidence is Owner-entered.
+- [x] RevenueEvidence model
+- [x] OwnerFundingEvent
+- [x] FXSnapshot
+- [x] immutable double-entry ledger
+- [x] Treasury projection
+- [x] mint/burn/reversal idempotency
+- [x] actual provider-cost ingestion (reconciliation of estimate vs invoice variance: Phase 12)
+- [x] financial audit trail
 
 Acceptance:
-- verified $1 event can produce exactly 1 VR$ once;
-- forecast/pending values remain non-spendable;
-- reversal works.
+- [x] verified $1 event can produce exactly 1 VR$ once;
+- [x] forecast/pending values remain non-spendable;
+- [x] reversal works.
+
+Evidence: `PHASE11_ECONOMY.md`. 31 tests; end-to-end through the HTTP API against an isolated
+studio. Nothing spends VR$ yet — that is Phase 13.
 
 ## PHASE 12 — Finance Dashboard / Forecast
 - [ ] treasury dashboard

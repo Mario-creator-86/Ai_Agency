@@ -1,5 +1,22 @@
 # Changelog
 
+## Phase 11 — Financial evidence and the VR$ ledger — 2026-09-10
+
+- Added `backend/app/economy/`: immutable double-entry books in VR$, posted only from real
+  external evidence. Seven tables (`0016_phase11_economy`), eleven Owner-only routes, and a
+  **Trezorerie** panel in the office.
+- The four invariants the economy exists for are enforced by schema and service, not convention:
+  one verified dollar mints exactly one VR$ once; forecasts and pending payouts can never be
+  spent; a reversal posts a mirror and never deletes; the books always balance. Money is integer
+  micros, and a non-USD amount without a recorded FX snapshot is refused rather than converted at
+  an invented rate.
+- Provider costs are mirrored too, so the treasury shows what running the studio costs and can
+  report a deficit honestly. Estimates are shown but never posted.
+- No route in the entire API pays, buys, transfers or checks out; a test asserts it over the
+  whole OpenAPI surface.
+- `treasury` moves from NOT_IMPLEMENTED to PARTIAL in the snapshot module map; `procurement` and
+  `financing` stay NOT_IMPLEMENTED. Evidence: `PHASE11_ECONOMY.md`.
+
 ## Agency identity: AMN-AI — 2026-09-10
 
 - Named the agency **AMN-AI (Autonomous Machine Nexus — Artificial Intelligence)** everywhere it is

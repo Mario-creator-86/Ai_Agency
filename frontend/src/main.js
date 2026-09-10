@@ -1975,6 +1975,183 @@ bindPanelToggle('open-workforce-btn', workforceModal);
  * a serial about an imaginary one.
  * ------------------------------------------------------------------------- */
 
+/* ---------------------------------------------------------------------------
+ * Phase 11: the VR$ treasury.
+ *
+ * The panel's whole job is to keep four kinds of number apart, because adding them together is
+ * exactly how a virtual company starts believing it is richer than it is:
+ *
+ *   VR VIRTUAL   what the ledger actually holds, and the only thing that could ever be spent
+ *   PENDING      earned outside, not settled — reported, never spendable
+ *   FORECAST     an estimate — reported, never spendable
+ *   ESTIMAT      a provider cost that has not become an invoice yet
+ *
+ * Every figure below is rendered from the backend's own labels rather than from a guess made
+ * here, so the page cannot quietly promote a forecast into cash.
+ * ------------------------------------------------------------------------- */
+
+const treasuryModal = /** @type {HTMLDialogElement} */ (element('treasury-modal'));
+const openTreasuryBtn = element('open-treasury-btn');
+
+const MONEY_CLASS_LABEL = {
+  VR_CASH: 'Numerar VR$ (cheltuibil)',
+  VR_RESTRICTED: 'Rezervat',
+  VR_RECEIVABLE: 'De încasat',
+  VR_DEBT: 'Datorie',
+  PENDING_EXTERNAL: 'Încasat, nedecontat',
+  FORECAST: 'Estimare',
+};
+
+const LEDGER_KIND_LABEL = {
+  MINT: 'Emisiune VR$',
+  REVERSAL: 'Stornare',
+  OWNER_CAPITAL: 'Aport Owner',
+  OWNER_LOAN: 'Împrumut Owner',
+  PROVIDER_COST: 'Cost furnizor',
+  ADJUSTMENT: 'Ajustare',
+};
+
+/** One figure with the label the backend gave it, so nothing is re-classified on the way out. */
+function treasuryTile(row, extraClass = '') {
+  const tile = document.createElement('div');
+  tile.className = `wf-stat treasury-tile ${extraClass}`.trim();
+  const value = document.createElement('span');
+  value.className = 'wf-stat-value';
+  value.textContent = `${row.amount} VR$`;
+  const label = document.createElement('span');
+  label.className = 'wf-stat-label';
+  label.textContent = MONEY_CLASS_LABEL[row.money_class] || row.money_class;
+  const badge = document.createElement('span');
+  badge.className = row.spendable ? 'tag live-badge' : 'tag';
+  badge.textContent = row.spendable ? `${row.label} · CHELTUIBIL` : `${row.label} · NECHELTUIBIL`;
+  tile.append(value, label, badge);
+  return tile;
+}
+
+async function loadTreasury() {
+  const summary = element('treasury-summary');
+  const accountsBox = element('treasury-accounts');
+  const ledgerBox = element('treasury-ledger');
+  try {
+    const [treasury, ledger] = await Promise.all([
+      api('/economy/treasury'),
+      api('/economy/ledger?limit=25'),
+    ]);
+
+    summary.replaceChildren();
+    summary.append(treasuryTile(treasury.spendable, 'treasury-tile-primary'));
+    for (const row of treasury.positions) {
+      if (row.money_class === 'VR_CASH') continue;
+      summary.append(treasuryTile(row));
+    }
+    for (const row of treasury.not_spendable) summary.append(treasuryTile(row));
+
+    const unbilled = treasury.unbilled_provider_costs;
+    if (unbilled) {
+      summary.append(
+        treasuryTile({
+          amount: unbilled.amount,
+          money_class: 'Costuri furnizor neînfacturate',
+          label: unbilled.label,
+          spendable: false,
+        }),
+      );
+    }
+
+    // The trial balance is the one number that says whether any of the rest can be trusted.
+    const balance = document.createElement('div');
+    const tb = treasury.trial_balance;
+    balance.className = `runbook-verdict ${tb.balanced ? 'rb-ready' : 'rb-blocked'}`;
+    const verdict = document.createElement('strong');
+    verdict.textContent = tb.balanced ? 'REGISTRU ECHILIBRAT' : 'REGISTRU DEZECHILIBRAT';
+    const detail = document.createElement('span');
+    detail.textContent = tb.balanced
+      ? `Debite ${tb.total_debits} = credite ${tb.total_credits}.${treasury.in_deficit ? ' Numerarul VR$ este negativ: trezoreria e în deficit.' : ''}`
+      : `Diferență ${tb.difference}. Nicio cifră de mai sus nu e de încredere până nu se lămurește.`;
+    balance.append(verdict, detail);
+    summary.append(balance);
+
+    element('treasury-disclaimer').textContent = treasury.disclaimer;
+
+    accountsBox.replaceChildren();
+    if (!treasury.accounts.length) {
+      const empty = document.createElement('div');
+      empty.className = 'topics-loading';
+      empty.textContent = 'Niciun cont nu are sold. Registrul e gol.';
+      accountsBox.append(empty);
+    }
+    for (const account of treasury.accounts) {
+      const row = document.createElement('div');
+      row.className = 'topic-card';
+      const head = document.createElement('div');
+      head.className = 'topic-card-header';
+      const name = document.createElement('span');
+      name.className = 'topic-card-title';
+      name.textContent = `${account.code} · ${account.name}`;
+      const value = document.createElement('span');
+      value.className = 'topic-card-novelty';
+      value.textContent = `${account.balance} VR$`;
+      head.append(name, value);
+      const meta = document.createElement('div');
+      meta.className = 'topic-card-meta';
+      meta.textContent = account.money_class
+        ? `${account.type} · ${MONEY_CLASS_LABEL[account.money_class] || account.money_class}`
+        : account.type;
+      row.append(head, meta);
+      accountsBox.append(row);
+    }
+
+    ledgerBox.replaceChildren();
+    if (!ledger.transactions.length) {
+      const empty = document.createElement('div');
+      empty.className = 'topics-loading';
+      empty.textContent = 'Nicio înregistrare încă. Nimic nu s-a emis și nimic nu s-a cheltuit.';
+      ledgerBox.append(empty);
+    }
+    for (const item of ledger.transactions) {
+      const card = document.createElement('div');
+      card.className = `topic-card ${item.kind === 'REVERSAL' ? 'topic-card-low' : ''}`.trim();
+      const head = document.createElement('div');
+      head.className = 'topic-card-header';
+      const title = document.createElement('span');
+      title.className = 'topic-card-title';
+      title.textContent = LEDGER_KIND_LABEL[item.kind] || item.kind;
+      const amount = document.createElement('span');
+      amount.className = 'topic-card-novelty';
+      amount.textContent = `${item.amount} VR$`;
+      head.append(title, amount);
+      const memo = document.createElement('p');
+      memo.className = 'topic-card-subject';
+      memo.textContent = item.memo;
+      const meta = document.createElement('div');
+      meta.className = 'topic-card-meta';
+      meta.textContent = item.lines
+        .map((line) =>
+          Number(line.debit) ? `D ${line.account} ${line.debit}` : `C ${line.account} ${line.credit}`,
+        )
+        .join(' · ');
+      card.append(head, memo, meta);
+      ledgerBox.append(card);
+    }
+  } catch (err) {
+    summary.replaceChildren();
+    const failure = document.createElement('div');
+    failure.className = 'dialog-status-msg text-error';
+    failure.textContent = `Trezoreria nu a putut fi citită: ${err.message}`;
+    summary.append(failure);
+  }
+}
+
+if (openTreasuryBtn) {
+  openTreasuryBtn.addEventListener('click', () => {
+    treasuryModal.showModal();
+    loadTreasury();
+  });
+}
+element('close-treasury-btn').addEventListener('click', () => treasuryModal.close());
+element('refresh-treasury-btn').addEventListener('click', () => loadTreasury());
+bindPanelToggle('open-treasury-btn', treasuryModal);
+
 const storyModal = /** @type {HTMLDialogElement} */ (element('story-modal'));
 
 function storyStatus(message, isError) {

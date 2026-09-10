@@ -193,7 +193,7 @@ def snapshot(engine: Engine) -> dict:
                 "publishing": "PARTIAL",
                 "analytics": "PARTIAL",
                 "story": "NOT_IMPLEMENTED",
-                "treasury": "NOT_IMPLEMENTED",
+                "treasury": "PARTIAL",
                 "procurement": "NOT_IMPLEMENTED",
                 "financing": "NOT_IMPLEMENTED",
             },

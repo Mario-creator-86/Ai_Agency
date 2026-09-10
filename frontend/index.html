@@ -61,6 +61,7 @@
                 <button id="open-workforce-btn" class="quiet cam-btn" title="Cum lucrează agenții și ce schimbări de personal susțin măsurătorile">Personal</button>
                 <button id="open-story-btn" class="quiet cam-btn" title="Jurnalul zilei și episodul Office Serial construit din el">Jurnal</button>
                 <button id="open-runbook-btn" class="quiet cam-btn" title="Ce poate face studioul acum și ce a făcut la fiecare rulare zilnică">Rulare zilnică</button>
+                <button id="open-treasury-btn" class="quiet cam-btn" title="Registrul VR$: dovezi reale, ce s-a emis din ele și ce nu se poate cheltui">Trezorerie</button>
               </div>
               <div id="rooms" class="rooms" hidden></div>
             </div>
@@ -250,6 +251,40 @@
           <div id="runbook-status" class="dialog-status-msg" hidden></div>
           <div id="runbook-runs" class="topics-container">
             <div class="topics-loading">Se încarcă rulările…</div>
+          </div>
+        </div>
+      </dialog>
+
+      <!-- Phase 11: Treasury and the VR$ ledger -->
+      <dialog id="treasury-modal" class="studio-dialog research-dialog">
+        <div class="dialog-header">
+          <div>
+            <h2 class="dialog-title">Trezorerie VR$</h2>
+            <p class="dialog-desc">Un dolar verificat devine un VR$, o singură dată. Estimările și încasările neîncasate se văd, dar nu se pot cheltui. Registrul e dublu-partid și nu se șterge nimic: o corecție e o înregistrare inversă.</p>
+          </div>
+          <button id="close-treasury-btn" class="dialog-close">✕</button>
+        </div>
+
+        <div class="dialog-section-bottom">
+          <div class="topics-header-row">
+            <h3 class="dialog-section-header-bright-compact">Poziții</h3>
+            <button id="refresh-treasury-btn" class="quiet btn-refresh">Reîmprospătează</button>
+          </div>
+          <div id="treasury-summary" class="treasury-summary">
+            <div class="topics-loading">Se încarcă trezoreria…</div>
+          </div>
+          <p id="treasury-disclaimer" class="helper-note"></p>
+        </div>
+
+        <div class="dialog-section-bottom">
+          <h3 class="dialog-section-header-bright-compact">Conturi cu sold</h3>
+          <div id="treasury-accounts" class="topics-container"></div>
+        </div>
+
+        <div>
+          <h3 class="dialog-section-header-bright-compact">Înregistrări recente</h3>
+          <div id="treasury-ledger" class="topics-container">
+            <div class="topics-loading">Se încarcă registrul…</div>
           </div>
         </div>
       </dialog>

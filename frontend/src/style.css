@@ -530,3 +530,15 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 @media (max-width: 640px) {
   .runbook-stage { grid-template-columns: 1fr; gap: 2px; }
 }
+
+/* --- Treasury -----------------------------------------------------------------
+   Four kinds of number sit side by side here, and only one of them can be spent.
+   The spendable tile is the only one with weight; everything else is visibly a
+   report rather than a balance, so the panel cannot be skimmed as one total. */
+
+.treasury-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.treasury-tile { gap: 4px; }
+.treasury-tile .tag { justify-self: start; font-size: 9px; letter-spacing: .06em; }
+.treasury-tile-primary { grid-column: 1 / -1; background: var(--ok-bg); border-color: var(--ok-line); }
+.treasury-tile-primary .wf-stat-value { font-size: 30px; color: var(--ok-ink); }
+.treasury-summary .runbook-verdict { grid-column: 1 / -1; }

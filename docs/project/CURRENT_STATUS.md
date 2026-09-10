@@ -131,6 +131,29 @@ references were changed inside the architecture package. CI/local checks protect
 - Frontend Distribution Hub Modal (`#publishing-modal`): shows real channel status with plain-language hints, a banner when no credentials are configured, the gate breakdown including what is not implemented, and publication history where a simulated run is labelled "SIMULAT (nepublicat)" and gets no link. Only a genuine `youtube.com` URL becomes a clickable link.
 - **Not met for Phase 6 acceptance** (`../architecture/26_MASTER_ACCEPTANCE_CRITERIA.md` §G): OAuth has never been exercised, no private upload has been verified, and no real remote ID has ever been persisted.
 
+**Phase 11 (complete for the ledger — verified 2026-09-10, see `PHASE11_ECONOMY.md`):**
+- Immutable double-entry VR$ books: `ledger_account`, `ledger_transaction`, `ledger_entry`, with
+  a seeded chart of accounts covering cash, restricted cash, receivables, fixed assets,
+  depreciation, debt, equity, revenue by source and expense lines.
+- External evidence layer: `revenue_evidence` (YouTube, donations, sponsorship, other),
+  `provider_cost_record`, `owner_funding_event` and `fx_snapshot`. Recording evidence mints
+  nothing; only SETTLED revenue mints, and only a BILLED invoice posts a cost.
+- The 1:1 rule holds under retry and re-import: `(source, external_reference)` is unique and a
+  minted row is stamped with its transaction, so one verified dollar becomes one VR$ exactly once.
+- Forecast and pending payouts are reported beside the treasury, labelled, and can never be
+  minted or spent. FX is never invented: a non-USD amount without a recorded rate is refused.
+- Reversals post a mirrored transaction and never delete; a transaction is reversible at most
+  once. A chargeback after real spending shows a deficit rather than hiding it.
+- Money is integer micros throughout, so the books cannot drift; `trial_balance` re-adds every
+  stored line and is surfaced in the UI.
+- Owner-only routes under `/api/v1/economy`; **no route anywhere in the API pays, buys, transfers
+  or checks out**, and a test asserts that across the whole OpenAPI surface.
+- Frontend **Trezorerie** panel renders the backend's own labels (VR VIRTUAL / PENDING / FORECAST
+  / ESTIMAT), the trial-balance verdict and the "not filed accounts" disclaimer.
+- Alembic migration `0016_phase11_economy`: 7 new tables. 31 new tests.
+- **Not met yet**: nothing spends VR$, no interest accrues, no budgets/runway/P&L, no depreciation,
+  and no automatic revenue import — those are Phases 12–14.
+
 ## Partial / exact limits
 
 - The application runs end to end locally: foundation, automation, 2D office, factual gating,
@@ -149,12 +172,11 @@ references were changed inside the architecture package. CI/local checks protect
 - Image and TTS providers (Phase 5 acceptance); character-continuity drift detection.
 - The remaining publish-time gates of `../architecture/50_CONTENT_GATE_MATRIX.md` (rights on final package,
   platform policy, novelty on final metadata, brand, budget, Channel B continuity/privacy).
-- Phase 7 analytics: `backend/app/analytics/` and `providers/youtube_analytics.py` exist on
-  disk from an unfinished work session, but they are **not mounted in `main.py`, not
-  registered in `Base.metadata`, and have no Alembic migration**. They are inert; do not
-  treat them as delivered, and add migration `0008` before wiring them.
-- Office Serial autonomous scriptwriter, dynamic departments, VR economy ledger, VendorShop,
-  financing.
+- Office Serial autonomous scriptwriter and dynamic departments.
+- Spending VR$: procurement/VendorShop (Phase 13) and treasury financing with interest accrual
+  (Phase 14). The ledger they will post to exists; nothing spends from it yet.
+- Finance dashboard: budgets, cost centres, runway/burn, P&L, balance sheet, cash flow and
+  30/90/180-day scenarios (Phase 12).
 
 ## Test evidence
 

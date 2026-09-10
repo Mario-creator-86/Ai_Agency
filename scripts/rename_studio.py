@@ -33,13 +33,12 @@ from uuid import uuid4
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
-from sqlalchemy import func, select  # noqa: E402
-from sqlalchemy.orm import Session  # noqa: E402
-
 from app.config import Settings  # noqa: E402
 from app.db import create_db_engine  # noqa: E402
 from app.models import DomainEvent, Studio  # noqa: E402
 from app.services import append_event  # noqa: E402
+from sqlalchemy import func, select  # noqa: E402
+from sqlalchemy.orm import Session  # noqa: E402
 
 MAX_NAME_LENGTH = 100
 
@@ -83,17 +82,24 @@ def rename_studio(engine, new_name: str, *, dry_run: bool = False) -> str:
             {"previous_name": previous, "name": name, "reason": "Owner renamed the agency"},
             str(uuid4()),
         )
-        return f"Renamed {previous!r} -> {name!r} (studio.renamed, version {next_version})."
+        return (
+            f"Renamed {previous!r} -> {name!r} "
+            f"(studio.renamed, version {next_version})."
+        )
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument(
         "name",
         nargs="?",
         help="The new studio name. Defaults to STUDIO_NAME from the environment/.env.",
     )
-    parser.add_argument("--dry-run", action="store_true", help="Report the change without writing it.")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Report the change without writing it."
+    )
     args = parser.parse_args()
 
     settings = Settings()  # type: ignore[call-arg]

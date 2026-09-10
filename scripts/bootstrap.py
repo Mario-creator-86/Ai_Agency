@@ -11,6 +11,7 @@ from app.agents.services import seed_initial_workforce  # noqa: E402
 from app.analytics.services import seed_default_strategy  # noqa: E402
 from app.config import Settings  # noqa: E402
 from app.db import create_db_engine, migrate  # noqa: E402
+from app.economy.services import seed_chart_of_accounts  # noqa: E402
 from app.media.services import seed_default_character_bibles  # noqa: E402
 from app.publishing.services import seed_default_channels  # noqa: E402
 from app.services import bootstrap_studio  # noqa: E402
@@ -36,6 +37,9 @@ def main() -> None:
         seed_initial_workforce(engine)
         seed_default_character_bibles(engine)
         seed_default_channels(engine)
+        # The virtual books need their accounts before anything can be posted. Seeding creates
+        # the structure only; the ledger stays empty until real evidence is recorded.
+        seed_chart_of_accounts(engine)
         # Neutral v1 editorial strategy per channel; it expresses no preference until real
         # analytics snapshots produce a recommendation the Owner applies.
         seed_default_strategy(engine)

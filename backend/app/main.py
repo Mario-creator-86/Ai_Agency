@@ -22,6 +22,7 @@ from app.agents.router import create_agents_router, create_providers_router
 from app.analytics.router import create_analytics_router
 from app.config import ROOT, Settings
 from app.db import create_db_engine
+from app.economy.router import create_economy_router
 from app.factual.router import create_factual_router
 from app.integrations.router import create_settings_router
 from app.integrations.services import load_registry
@@ -75,7 +76,7 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
         # Migrations/bootstrap are explicit startup commands, never hidden destructive schema edits.
         with engine.connect() as connection:
             revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
-            if revision != "0015_merge_heads":
+            if revision != "0016_phase11_economy":
                 raise RuntimeError("Run scripts/bootstrap.py with this application version")
             if connection.scalar(text("SELECT COUNT(*) FROM owner_policy")) != 1:
                 raise RuntimeError("Run scripts/bootstrap.py to initialize the studio")
@@ -224,6 +225,7 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
     # Phase 6: Autonomous Publishing & Distribution router
     app.include_router(create_publishing_router(), prefix="/api/v1", tags=["publishing"])
     app.include_router(create_analytics_router(), prefix="/api/v1", tags=["analytics"])
+    app.include_router(create_economy_router(), prefix="/api/v1", tags=["economy"])
     app.include_router(create_workforce_router(), prefix="/api/v1", tags=["workforce"])
     app.include_router(create_story_router(), prefix="/api/v1", tags=["story"])
     app.include_router(create_runbook_router(), prefix="/api/v1", tags=["runbook"])
