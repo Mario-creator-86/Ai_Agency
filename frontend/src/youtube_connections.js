@@ -11,8 +11,11 @@
  *   authorisation URL resolves. A popup opened after an await has lost the user gesture and is
  *   blocked by every browser, and a blocked popup here looks exactly like a broken feature.
  *
- *   The list refreshes when the window regains focus, because the moment the Owner comes back
- *   from Google is precisely the moment the status has changed. Nothing polls.
+ *   The list refreshes when the window regains focus, but only after the Owner has actually
+ *   been sent to Google, and never while a form is open. Copying a client secret out of the
+ *   Google console means leaving this window and coming back, and an earlier version rebuilt the
+ *   section on every return — throwing away everything typed so far. Whatever is in the form is
+ *   also kept in `draft`, so no redraw from any other cause can empty it either.
  *
  * No secret ever arrives here: the API returns whether a client secret and a refresh token exist,
  * never their values, so there is nothing in this module that could render one.
@@ -66,6 +69,13 @@ export function renderYouTubeConnections(host, { api, notify }) {
 
   let adding = false;
   let editing = null;
+  //: What has been typed but not yet saved, kept outside the DOM so a redraw cannot lose it.
+  //: `target` is the connection being edited, or null while adding, so an unsaved draft is never
+  //: shown in the wrong form.
+  let draft = null;
+  //: True between opening the consent tab and the next return to this window. Without it, every
+  //: switch to another application would refresh the list for no reason.
+  let awaitingAuthorization = false;
 
   const draw = async () => {
     section.replaceChildren();
@@ -186,6 +196,7 @@ export function renderYouTubeConnections(host, { api, notify }) {
       connection.connected ? 'quiet' : 'secondary',
     );
     connect.addEventListener('click', () => {
+      awaitingAuthorization = true;
       // Opened now, while the click is still a user gesture; the URL arrives a moment later.
       // No 'noopener' here: with it the browser returns null instead of a handle, and this
       // whole design depends on holding the handle long enough to set its location. The
@@ -205,6 +216,7 @@ export function renderYouTubeConnections(host, { api, notify }) {
         })
         .catch((err) => {
           if (tab) tab.close();
+          awaitingAuthorization = false;
           notify(err.message, true);
         });
     });
@@ -272,25 +284,49 @@ export function renderYouTubeConnections(host, { api, notify }) {
       ),
     );
 
+    // A draft belonging to this exact form wins over the saved values: it is what the Owner
+    // typed last, and it is the only copy that exists.
+    const target = existing ? existing.id : null;
+    const kept = draft && draft.target === target ? draft.values : null;
+
     const name = field('Nume conexiune', {
-      value: existing ? existing.name : '',
+      value: kept ? kept.name : existing ? existing.name : '',
       placeholder: 'Cum îi spui tu acestui canal',
     });
     const clientId = field('Google OAuth Client ID', {
-      value: existing ? existing.client_id : '',
+      value: kept ? kept.clientId : existing ? existing.client_id : '',
       placeholder: '…apps.googleusercontent.com',
     });
     const clientSecret = field('Google OAuth Client Secret', {
       type: 'password',
+      value: kept ? kept.clientSecret : '',
       placeholder: existing ? 'Lasă gol ca să păstrezi secretul salvat' : '',
       hint: existing ? 'Secretul salvat nu poate fi citit înapoi; completează doar ca să-l schimbi.' : '',
     });
     // Derived from where the application is actually served, so it is never a hardcoded host.
     const redirect = field('Redirect URI', {
-      value: existing ? existing.redirect_uri : `${window.location.origin}/auth/youtube/callback`,
+      value: kept
+        ? kept.redirect
+        : existing
+          ? existing.redirect_uri
+          : `${window.location.origin}/auth/youtube/callback`,
     });
 
-    for (const item of [name, clientId, clientSecret, redirect]) wrapper.append(item.wrap);
+    const remember = () => {
+      draft = {
+        target,
+        values: {
+          name: name.input.value,
+          clientId: clientId.input.value,
+          clientSecret: clientSecret.input.value,
+          redirect: redirect.input.value,
+        },
+      };
+    };
+    for (const item of [name, clientId, clientSecret, redirect]) {
+      item.input.addEventListener('input', remember);
+      wrapper.append(item.wrap);
+    }
 
     const actions = node('div', '', 'settings-actions');
     // 'secondary', not 'primary': .primary is the full-width submit of a login-style form and
@@ -302,6 +338,7 @@ export function renderYouTubeConnections(host, { api, notify }) {
     cancel.addEventListener('click', () => {
       adding = false;
       editing = null;
+      draft = null;
       draw();
     });
     actions.append(save, cancel);
@@ -318,12 +355,17 @@ export function renderYouTubeConnections(host, { api, notify }) {
       if (existing) {
         // An empty secret means "leave the stored one alone" — the interface never received it.
         if (clientSecret.input.value) payload.client_secret = clientSecret.input.value;
+        // Closed before the request, so the redraw that follows a success shows the cards. A
+        // failure leaves the DOM untouched, so the form and everything in it are still there;
+        // only the flags need putting back.
+        editing = null;
         const saved = await act(
           `/youtube/connections/${existing.id}`,
           { method: 'PATCH', body: JSON.stringify(payload) },
           (result) => `${result.name} a fost actualizată.`,
         );
-        if (saved) editing = null;
+        if (saved) draft = null;
+        else editing = existing;
         return;
       }
       payload.client_secret = clientSecret.input.value;
@@ -331,20 +373,26 @@ export function renderYouTubeConnections(host, { api, notify }) {
         notify('Client Secret este obligatoriu la prima salvare.', true);
         return;
       }
+      adding = false;
       const saved = await act(
         '/youtube/connections',
         { method: 'POST', body: JSON.stringify(payload) },
         (result) => `${result.name} a fost salvată. Acum apasă Conectează YouTube.`,
       );
-      if (saved) adding = false;
+      if (saved) draft = null;
+      else adding = true;
     });
 
     return wrapper;
   }
 
-  // Coming back from the Google tab is exactly when the status has changed.
+  // Coming back from the Google tab is exactly when the status has changed. Coming back from
+  // the password manager, the Google console or anywhere else is not, and rebuilding the section
+  // then would wipe an open form, so both conditions have to hold.
   const onFocus = () => {
-    if (section.isConnected) draw();
+    if (!section.isConnected || !awaitingAuthorization || adding || editing) return;
+    awaitingAuthorization = false;
+    draw();
   };
   window.addEventListener('focus', onFocus);
 

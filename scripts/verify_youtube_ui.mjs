@@ -98,6 +98,44 @@ if (fields[2]?.type !== 'password') problems.push('the client secret field is no
 if (!fields[3]?.value.endsWith('/auth/youtube/callback')) {
   problems.push(`redirect URI was not prefilled: ${fields[3]?.value}`);
 }
+// Filling this form means leaving the window to copy each value out of the Google console.
+// Whatever is typed has to survive that round trip, every time.
+const typed = {
+  name: 'Canal de probă',
+  client: 'probe-client.apps.googleusercontent.com',
+  secret: 'probe-secret-value',
+};
+const inputs = page.locator('.yt-form .yt-field input');
+await inputs.nth(0).fill(typed.name);
+await inputs.nth(1).fill(typed.client);
+await inputs.nth(2).fill(typed.secret);
+
+const elsewhere = await page.context().newPage();
+await elsewhere.goto('about:blank');
+await elsewhere.bringToFront();
+await page.bringToFront();
+await page.waitForTimeout(600);
+// Belt and braces: fire the event itself, in case the headless browser does not.
+await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+await page.waitForTimeout(600);
+await elsewhere.close();
+
+const survived = await page.evaluate(() =>
+  [...document.querySelectorAll('.yt-form .yt-field input')].map((i) => i.value),
+);
+if (survived[0] !== typed.name || survived[1] !== typed.client || survived[2] !== typed.secret) {
+  problems.push(`the form was reset by leaving the window: ${JSON.stringify(survived)}`);
+}
+
+await page.getByRole('button', { name: 'Renunță' }).click();
+await page.locator('.yt-card').first().waitFor();
+// Cancelling drops the draft: reopening must not resurrect a half-typed connection.
+await page.getByRole('button', { name: 'Adaugă un canal' }).click();
+await page.locator('.yt-form').waitFor();
+const reopened = await page.evaluate(
+  () => document.querySelector('.yt-form .yt-field input').value,
+);
+if (reopened !== '') problems.push(`a cancelled draft came back: ${reopened}`);
 await page.getByRole('button', { name: 'Renunță' }).click();
 await page.locator('.yt-card').first().waitFor();
 

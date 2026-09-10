@@ -137,6 +137,27 @@ and the *else* built a YouTube provider. The `media` kinds — ElevenLabs and Op
 time. With the YouTube branch gone, media and stored both verify through the vendor probe that was
 always meant to serve them.
 
+## The form used to empty itself
+
+Filling this form means leaving the window: the client id and the secret are copied out of the
+Google console one at a time. The first version refreshed the list whenever the window regained
+focus, which rebuilt the whole section — including the open form — so every trip away cleared
+what had been typed. Three fields, three trips, and the Owner could never finish.
+
+Two independent fixes, because either alone would have left the form fragile:
+
+- the refresh now happens only after the Owner has actually been sent to Google, and never while
+  a form is open, which is the condition the listener was always meant to express;
+- whatever is typed is mirrored into a `draft` held outside the DOM and restored when the form is
+  rebuilt, so no redraw from any cause can empty it. The draft is dropped on Renunță and after a
+  successful save, and it is keyed to the connection being edited so it cannot appear in the
+  wrong form.
+
+The browser check covers it: it types into the form, leaves the window and returns, and compares.
+Removing either protection alone still passes; removing both reproduces the original report
+exactly, with three fields emptied and only the prefilled redirect URI left standing. That
+negative control is how the check was shown to be worth anything.
+
 ## What this does not do
 
 It connects channels. It does not upload. The publishing pipeline still holds the Phase 6

@@ -1,5 +1,17 @@
 # Changelog
 
+## The YouTube form no longer empties itself — 2026-09-11
+
+- Fixed the connection form losing everything typed into it whenever the window lost focus.
+  Filling it means copying a client id and a secret out of the Google console one at a time, and
+  the refresh-on-focus listener rebuilt the whole section on every return, so the Owner could
+  never reach the end of the form.
+- The refresh now runs only after an authorisation has actually been started, and never while a
+  form is open. Independently, what is typed is mirrored into a draft held outside the DOM and
+  restored on any redraw, dropped on cancel and after a successful save.
+- Saving now closes the form before the request, so a success shows the cards instead of leaving
+  the filled form on screen; a failure leaves the form and its contents untouched.
+
 ## The YouTube catalog form is gone — 2026-09-11
 
 - Deleted the `youtube` entry from the settings catalog. It still asked for a refresh token and an
