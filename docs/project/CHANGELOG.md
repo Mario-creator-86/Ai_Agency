@@ -1,5 +1,22 @@
 # Changelog
 
+## Internal audit — 2026-09-11
+
+- Audited the whole studio at the Owner's request. Nine defects found and fixed, each with a test
+  that fails without the fix; five areas checked, found sound, and given tests so the finding
+  repeats on every run. Full account: `AUDIT_2026-09-11_INTERNAL.md`.
+- The serious ones: a failed question to YouTube was recorded as the answer "no", which could
+  produce a duplicate upload of a video already live; the factual gate passed assets whose
+  provenance it never established while claiming it had; a claim referenced but absent counted as
+  supported; and Owner funding was not idempotent, so a retried request doubled the money.
+- The quiet one: the studio could not find its own encoder. Three parts of the code resolved
+  FFmpeg three different ways, so media inspection reported unavailable with ffprobe sitting
+  beside the configured ffmpeg. One resolver now, and five media tests that had been skipping
+  themselves run against the real encoder: 402 passed, 1 skipped, from 391 passed, 6 skipped.
+- CI had been failing two of its eleven checks since Phase 11. Both green.
+- Migration `0018_audit_gaps` links an exchange rate and a scheduled job to the event that
+  created them.
+
 ## The YouTube form no longer empties itself — 2026-09-11
 
 - Fixed the connection form losing everything typed into it whenever the window lost focus.

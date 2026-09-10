@@ -19,6 +19,18 @@ assets, and the rule that the stored studio name is domain state rather than con
 documented in `BRAND_AMN_AI.md`. Renaming an existing studio is done with
 `scripts/rename_studio.py`, which appends a `studio.renamed` event; bootstrap never rewrites it.
 
+## Audit history
+
+- **2026-09-09**, external: found fabricated channel configuration, simulated uploads recorded as
+  real publications, a non-playable file named `.mp4`, a self-certifying QC gate. Remediated; see
+  `AUDIT_2026-09-09_EXTERNAL.md`.
+- **2026-09-10**, third party: `AUDIT_2026-09-10_THIRD_PARTY.md`.
+- **2026-09-11**, internal, at the Owner's request: nine defects found and fixed, five areas
+  verified and put under test. The most serious were an unanswered question to YouTube recorded as
+  a "no" (risking a duplicate upload), a factual gate passing assets it had never traced while
+  claiming verification, and Owner funding that a retried request could double. See
+  `AUDIT_2026-09-11_INTERNAL.md`.
+
 ## Connected accounts
 
 YouTube channels are connected by OAuth, not by pasting credentials. Settings → *Conturi și
