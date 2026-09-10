@@ -1,5 +1,27 @@
 # Changelog
 
+## YouTube connections by OAuth, not by typing — 2026-09-11
+
+- Replaced the hand-typed refresh token and channel id with the Authorization Code flow. The Owner
+  now enters four things — connection name, Google OAuth client id, client secret, redirect URI —
+  and presses **Conectează YouTube**. The studio requests `access_type=offline`, asks for consent
+  only when it has no refresh token or the Owner pressed Reconnect, stores the token in the Fernet
+  vault, reads the channel with `channels.list`, and shows which account was authorised.
+- Added `backend/app/youtube/` and migration `0017_youtube_connections`: two tables, eight
+  Owner-only routes, and one public callback protected by a single-use, ten-minute random state.
+  Neither the client secret nor the refresh token is a column, and no view model has a branch that
+  could return one.
+- Several channels are supported and none is special: no channel id, client id, token or account
+  name appears anywhere in the code, and a test greps for all five shapes.
+- Reconnect, Verify, Disconnect and Delete are Owner actions. Disconnect forgets the token locally
+  before revoking it at Google, so an unreachable Google still leaves the studio clean. Editing the
+  client id drops the stored refresh token, because a token issued to one OAuth client cannot be
+  used by another.
+- Fixed two defects the browser pass found: `window.open(..., 'noopener')` returns `null`, so the
+  consent tab fell through to a fallback that navigated the studio's own tab to Google; and the CSS
+  class `.secondary`, used by roughly fifteen affirmative buttons across the admin surface, had
+  never been defined in any stylesheet. Evidence: `YOUTUBE_CONNECTIONS.md`.
+
 ## Phase 11 — Financial evidence and the VR$ ledger — 2026-09-10
 
 - Added `backend/app/economy/`: immutable double-entry books in VR$, posted only from real

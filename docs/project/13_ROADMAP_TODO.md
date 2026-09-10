@@ -126,7 +126,9 @@ verified content → valid 9:16 MP4 with provenance. ✅
 ## PHASE 6 — YouTube Main Channel
 - [x] channel setup wizard (ChannelRecord model, default Channel A & Channel B seeding)
 - [x] brand assets workflow (ChannelBrandAsset model, tagline, avatar, banner associations)
-- [x] Google OAuth (OAuth2 token refresh handling in YouTubeProvider)
+- [x] Google OAuth — **real, 2026-09-11**: Authorization Code flow with offline access, vault-held
+  refresh tokens, single-use state, channel identity read from the API. Owner-managed connections,
+  several at once. See `YOUTUBE_CONNECTIONS.md`. The upload half of this phase is still unproven.
 - [x] official YouTube integration (YouTube Data API v3 resumable upload protocol)
 - [x] private upload (default privacy_status="private" enforced across all pipelines)
 - [x] remote ID verification (stores remote_video_id and full shorts URL upon confirmation)

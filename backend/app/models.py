@@ -80,3 +80,4 @@ import app.runbook.models  # noqa: F401, E402
 import app.story.models  # noqa: F401, E402
 import app.workflows.models  # noqa: F401, E402
 import app.workforce.models  # noqa: F401, E402
+import app.youtube.models  # noqa: F401, E402

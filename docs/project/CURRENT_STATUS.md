@@ -19,6 +19,16 @@ assets, and the rule that the stored studio name is domain state rather than con
 documented in `BRAND_AMN_AI.md`. Renaming an existing studio is done with
 `scripts/rename_studio.py`, which appends a `studio.renamed` event; bootstrap never rewrites it.
 
+## Connected accounts
+
+YouTube channels are connected by OAuth, not by pasting credentials. Settings → *Conturi și
+e-mail* takes a connection name, a Google OAuth client id and secret, and a redirect URI; the
+Authorization Code flow with `access_type=offline` does the rest, and the channel identity is read
+back from `channels.list` rather than typed. Refresh tokens and client secrets live in the Fernet
+vault and are never returned by any route. Multiple independent channels are supported, and no
+channel is named in the code. Connecting a channel is not the same as publishing to one — see the
+Phase 6 correction below. Evidence: `YOUTUBE_CONNECTIONS.md`.
+
 ## Baseline and document authority
 
 Started from 83 Markdown documents with no application code, tests, dependencies or Git history.

@@ -46,6 +46,7 @@ from app.workflows.router import (
     register_websocket_gateway,
 )
 from app.workforce.router import create_workforce_router
+from app.youtube.router import create_youtube_callback_router, create_youtube_router
 
 logger = logging.getLogger("studio.api")
 
@@ -76,7 +77,7 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
         # Migrations/bootstrap are explicit startup commands, never hidden destructive schema edits.
         with engine.connect() as connection:
             revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
-            if revision != "0016_phase11_economy":
+            if revision != "0017_youtube_connections":
                 raise RuntimeError("Run scripts/bootstrap.py with this application version")
             if connection.scalar(text("SELECT COUNT(*) FROM owner_policy")) != 1:
                 raise RuntimeError("Run scripts/bootstrap.py to initialize the studio")
@@ -226,6 +227,10 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
     app.include_router(create_publishing_router(), prefix="/api/v1", tags=["publishing"])
     app.include_router(create_analytics_router(), prefix="/api/v1", tags=["analytics"])
     app.include_router(create_economy_router(), prefix="/api/v1", tags=["economy"])
+    app.include_router(create_youtube_router(), prefix="/api/v1", tags=["youtube"])
+    # Public on purpose: Google redirects a browser here, and a redirect cannot carry the
+    # Owner credential. The single-use OAuth state is what protects it.
+    app.include_router(create_youtube_callback_router(), tags=["youtube"])
     app.include_router(create_workforce_router(), prefix="/api/v1", tags=["workforce"])
     app.include_router(create_story_router(), prefix="/api/v1", tags=["story"])
     app.include_router(create_runbook_router(), prefix="/api/v1", tags=["runbook"])

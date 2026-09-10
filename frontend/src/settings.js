@@ -1,3 +1,5 @@
+import { renderYouTubeConnections } from './youtube_connections.js';
+
 import './settings.css';
 
 const sections = [['llm', 'Furnizori AI'], ['agents', 'Agenți'], ['media', 'Video și sunet'], ['social', 'Conturi și e-mail']];
@@ -120,6 +122,14 @@ export function initSettings(api, hooks = {}) {
     dialog.append(content);
     if (!data) { content.append(node('p', 'Se încarcă setările…')); return; }
     if (active === 'agents') { renderAgents(content); return; }
+    // YouTube channels are not a generic catalog entry: they carry an OAuth grant, a channel
+    // identity read back from Google, and their own connect/reconnect/disconnect lifecycle.
+    // They lead the tab, and the catalog picker below gets its own heading so the two do not
+    // read as one list.
+    if (active === 'social') {
+      renderYouTubeConnections(content, { api, notify: message });
+      content.append(node('h3', 'Alte conturi și e-mail'));
+    }
     const row = node('div', '', 'settings-add');
     const picker = /** @type {HTMLSelectElement} */ (node('select'));
     picker.setAttribute('aria-label', 'Serviciu de adăugat');
@@ -136,7 +146,7 @@ export function initSettings(api, hooks = {}) {
     content.append(row);
     if (active === 'llm') renderLegacyProviders(content);
     const items = data.integrations.filter(item => data.catalog[item.kind].group === active);
-    if (!items.length) content.append(node('p', 'Nu ai adăugat încă nicio conexiune în această secțiune.', 'helper'));
+    if (!items.length) content.append(node('p', 'Nu ai adăugat încă nicio conexiune din catalog în această secțiune.', 'helper'));
     const list = node('div', '', 'settings-connections');
     for (const item of items) {
       const spec = data.catalog[item.kind];
