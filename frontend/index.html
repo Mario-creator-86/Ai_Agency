@@ -278,6 +278,7 @@
 
         <div class="dialog-section-bottom">
           <h3 class="dialog-section-header-bright-compact">Injectează capital</h3>
+          <p class="helper-note">Registrul e ținut exclusiv în VR$. Moneda de mai jos e a banilor reali pe care îi pui, pentru că un VR$ se naște dintr-un dolar verificat: <strong>1 USD = 1 VR$</strong>. Dacă pui altă monedă, spui la ce curs și de unde l-ai luat, iar registrul primește tot VR$.</p>
           <p class="helper-note">Aportul intră în capitalul propriu și nu se restituie. Împrumutul creează o datorie, cu rata și scadența pe care le stabilești tu. Nicio variantă nu mișcă bani reali: se consemnează doar că i-ai pus. Dobânda se înregistrează, dar încă nu se acumulează singură.</p>
           <form id="funding-form" class="dialog-form">
             <div class="topic-input-grid">
@@ -285,10 +286,10 @@
                 <option value="CAPITAL_CONTRIBUTION">Aport de capital · fără dobândă</option>
                 <option value="OWNER_LOAN">Împrumut Owner · cu dobândă</option>
               </select>
-              <input id="funding-amount" class="dialog-input" required maxlength="20" placeholder="Sumă, ex. 5000 sau 5000.50" />
+              <input id="funding-amount" class="dialog-input" required maxlength="20" placeholder="Suma reală depusă, ex. 5000" />
             </div>
             <div class="topic-input-grid">
-              <input id="funding-currency" class="dialog-input" value="USD" maxlength="3" aria-label="Monedă" placeholder="Monedă, ex. USD" />
+              <input id="funding-currency" class="dialog-input" value="USD" maxlength="3" aria-label="Moneda banilor reali" placeholder="Moneda reală, ex. USD" />
               <input id="funding-note" class="dialog-input" maxlength="2000" placeholder="Notă (opțional)" />
             </div>
             <div id="funding-fx-fields" class="topic-input-grid" hidden>
@@ -299,6 +300,7 @@
               <input id="funding-rate" class="dialog-input" maxlength="8" placeholder="Dobândă anuală %, ex. 7 sau 7.25" />
               <input id="funding-maturity" class="dialog-input" type="date" aria-label="Scadență" />
             </div>
+            <p id="funding-preview" class="funding-preview">Scrie suma ca să vezi câți VR$ intră în registru.</p>
             <button type="submit" class="primary dialog-submit-btn">Înregistrează finanțarea ↗</button>
           </form>
           <div id="funding-status" class="dialog-status-msg" hidden></div>

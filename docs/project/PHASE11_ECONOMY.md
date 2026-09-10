@@ -83,6 +83,13 @@ only economic action that starts with a person rather than with evidence from ou
 - **A foreign amount records its rate first.** Choosing a currency other than USD reveals a rate
   and a source field; the form records the FX snapshot and then cites it on the funding, so the
   "never invent a rate" rule holds from the interface as well as from the API.
+- **The books are VR$ only, and the form says so.** `ledger_transaction` and `ledger_entry` carry
+  no currency column at all; a currency exists solely on the evidence layer, describing the real
+  money that justifies an entry. The panel states the anchor (1 USD = 1 VR$) and prints a live
+  conversion line — "500 EUR × 1.08 → 540 VR$ în registru" — before anything is written, computed
+  in BigInt with the same rounding as the backend so the preview is the figure that will be
+  stored. In doubles, 500 × 1.08 is 540.0000000000001, and a preview that disagrees with the
+  ledger by a fraction teaches the Owner to distrust both.
 
 Verified in a browser against an isolated, empty studio
 (`node scripts/verify_funding_form.mjs <port> <token>`): the comma refusal, the loan without a

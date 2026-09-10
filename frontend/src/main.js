@@ -2156,6 +2156,61 @@ async function loadTreasury() {
  * ------------------------------------------------------------------------- */
 
 const AMOUNT_PATTERN = /^\d{1,12}(\.\d{1,6})?$/;
+const MICROS = 1000000n;
+
+/**
+ * Decimal text -> integer micros, rounding half away from zero.
+ *
+ * Deliberately the same arithmetic as `to_micros` in the backend, in BigInt rather than floats:
+ * 500 * 1.08 is 540.0000000000001 in IEEE doubles, and a preview that disagrees with the ledger
+ * by a fraction teaches the Owner to distrust both.
+ */
+function amountToMicros(text) {
+  const [whole, frac = ''] = String(text).split('.');
+  const padded = (frac + '0000000').slice(0, 7);
+  let micros = BigInt(whole || '0') * MICROS + BigInt(padded.slice(0, 6));
+  if (Number(padded[6]) >= 5) micros += 1n;
+  return micros;
+}
+
+function microsToAmount(micros) {
+  const text = `${micros / MICROS}.${(micros % MICROS).toString().padStart(6, '0')}`;
+  return text.replace(/\.?0+$/, '') || '0';
+}
+
+/**
+ * Say, before anything is written, exactly how many VR$ the entry will create.
+ *
+ * The ledger has no currency column: everything posted is VR$. The currency on this form belongs
+ * to the real money that justifies the entry, and this line is where the two are reconciled in
+ * front of the Owner instead of behind them.
+ */
+function updateFundingPreview() {
+  const box = element('funding-preview');
+  const amount = /** @type {HTMLInputElement} */ (element('funding-amount')).value.trim();
+  const currency = /** @type {HTMLInputElement} */ (element('funding-currency')).value
+    .trim()
+    .toUpperCase();
+  if (!AMOUNT_PATTERN.test(amount)) {
+    box.textContent = 'Scrie suma ca să vezi câți VR$ intră în registru.';
+    return;
+  }
+  if (currency === 'USD') {
+    box.textContent = `${amount} USD verificați → ${amount} VR$ în registru (1 USD = 1 VR$).`;
+    return;
+  }
+  if (currency.length !== 3) {
+    box.textContent = 'Moneda are trei litere, ex. USD sau EUR.';
+    return;
+  }
+  const rate = /** @type {HTMLInputElement} */ (element('funding-fx-rate')).value.trim();
+  if (!AMOUNT_PATTERN.test(rate) || Number(rate) <= 0) {
+    box.textContent = `Scrie cursul ${currency} → USD ca să vezi câți VR$ rezultă.`;
+    return;
+  }
+  const vr = (amountToMicros(amount) * amountToMicros(rate) + MICROS / 2n) / MICROS;
+  box.textContent = `${amount} ${currency} × ${rate} → ${microsToAmount(vr)} VR$ în registru.`;
+}
 
 function fundingStatus(message, isError) {
   const box = element('funding-status');
@@ -2235,7 +2290,12 @@ async function loadFundingHistory() {
 }
 
 element('funding-type').addEventListener('change', syncFundingFields);
-element('funding-currency').addEventListener('input', syncFundingFields);
+for (const id of ['funding-currency', 'funding-amount', 'funding-fx-rate']) {
+  element(id).addEventListener('input', () => {
+    syncFundingFields();
+    updateFundingPreview();
+  });
+}
 
 element('funding-form').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -2327,6 +2387,7 @@ element('funding-form').addEventListener('submit', async (event) => {
     /** @type {HTMLFormElement} */ (element('funding-form')).reset();
     /** @type {HTMLInputElement} */ (element('funding-currency')).value = 'USD';
     syncFundingFields();
+    updateFundingPreview();
     await Promise.all([loadTreasury(), loadFundingHistory()]);
   } catch (err) {
     fundingStatus(err.message, true);
@@ -2337,6 +2398,7 @@ if (openTreasuryBtn) {
   openTreasuryBtn.addEventListener('click', () => {
     treasuryModal.showModal();
     syncFundingFields();
+    updateFundingPreview();
     loadTreasury();
     loadFundingHistory();
   });

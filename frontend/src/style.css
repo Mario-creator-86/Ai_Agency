@@ -548,3 +548,6 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 #funding-form select.dialog-input { appearance: auto; }
 #funding-history { margin-top: 12px; }
 #funding-history .topic-card-high { border-left-color: var(--ok-ink); }
+
+/* The conversion line: what this entry will actually put in the books, stated before it does. */
+.funding-preview { margin: 2px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--ok-ink); background: var(--ok-bg); border: 1px solid var(--ok-line); border-radius: var(--radius-sm); padding: 8px 10px; }
