@@ -41,7 +41,13 @@ from app.economy.models import (
     ProviderCostRecord,
     RevenueEvidence,
 )
-from app.services import append_event, utc_now
+from app.services import (
+    append_event,
+    command_hash,
+    recall_command,
+    remember_command,
+    utc_now,
+)
 
 
 class EconomyError(Exception):
@@ -307,11 +313,18 @@ def record_fx_snapshot(
     rate: str,
     source: str,
     observed_at: str,
+    correlation_id: str | None = None,
 ) -> dict:
-    """Store an observed rate so a conversion can cite it later."""
+    """Store an observed rate so a conversion can cite it later.
+
+    This rate decides how a foreign payout becomes USD, and that USD figure is what mints VR$. It
+    therefore appends an event like every other money-touching operation here: without one, the
+    books could show a conversion whose rate arrived from nowhere.
+    """
     rate_micros = to_micros(rate)
     if rate_micros <= 0:
         raise EconomyError("An exchange rate must be positive.")
+    correlation = correlation_id or str(uuid4())
     with Session(engine) as session, session.begin():
         snapshot = FXSnapshot(
             id=str(uuid4()),
@@ -324,6 +337,21 @@ def record_fx_snapshot(
         )
         session.add(snapshot)
         session.flush()
+        event = append_event(
+            session,
+            "economy.fx_snapshot_recorded",
+            "fx_snapshot",
+            snapshot.id,
+            1,
+            {
+                "pair": f"{snapshot.base_currency}/{snapshot.quote_currency}",
+                "rate": format_micros(rate_micros),
+                "source": source,
+                "observed_at": observed_at,
+            },
+            correlation,
+        )
+        snapshot.event_id = event.event_id
         return _fx_view(snapshot)
 
 
@@ -562,11 +590,18 @@ def record_owner_funding(
     maturity_date: str | None = None,
     note: str = "",
     correlation_id: str | None = None,
+    command_id: str | None = None,
 ) -> dict:
     """Record Owner money going in, and post it according to what kind of money it is.
 
     A contribution credits equity; a loan credits a liability and carries its terms. The two are
     not interchangeable, and the ledger is where the difference has to show.
+
+    Pass ``command_id`` and the operation becomes idempotent: a retried request — a double
+    submit, a proxy replaying a POST, a client that did not see the response — returns the
+    original answer instead of funding the company a second time. Two deliberate contributions of
+    the same amount carry different command ids and are both recorded, which is the distinction
+    an amount-based check could not make.
     """
     funding_type = funding_type.upper()
     if funding_type not in {"CAPITAL_CONTRIBUTION", "OWNER_LOAN"}:
@@ -582,7 +617,24 @@ def record_owner_funding(
         raise EconomyError("Funding must be a positive amount.")
 
     correlation = correlation_id or str(uuid4())
+    fingerprint = command_hash(
+        {
+            "funding_type": funding_type,
+            "amount": amount,
+            "currency": currency.upper(),
+            "fx_snapshot_id": fx_snapshot_id,
+            "annual_rate_bps": annual_rate_bps,
+            "maturity_date": maturity_date,
+            "note": note.strip(),
+        }
+    )
     with Session(engine) as session, session.begin():
+        if command_id is not None:
+            # Read inside the writing transaction, so two callers arriving together cannot both
+            # find nothing and both post.
+            already = recall_command(session, command_id, fingerprint)
+            if already is not None:
+                return already
         usd_micros, used_fx = _convert_to_usd(session, amount_micros, currency, fx_snapshot_id)
         credit_account = "3000" if funding_type == "CAPITAL_CONTRIBUTION" else "2000"
         transaction = post_transaction(
@@ -624,7 +676,12 @@ def record_owner_funding(
         )
         funding.event_id = event.event_id
         session.flush()
-        return _funding_view(funding)
+        view = _funding_view(funding)
+        if command_id is not None:
+            # Written in the same transaction as the posting, so the record of what this command
+            # did cannot survive without the posting, or the posting without the record.
+            remember_command(session, command_id, "RecordOwnerFunding", fingerprint, view)
+        return view
 
 
 # ------------------------------------------------------------------------ provider costs --

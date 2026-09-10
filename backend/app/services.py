@@ -93,6 +93,41 @@ def bootstrap_studio(engine: Engine, settings: Settings) -> None:
         )
 
 
+def command_hash(payload: dict) -> str:
+    """A stable fingerprint of a command's input, for spotting a replay from a repeat."""
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def recall_command(session: Session, command_id: str, payload_hash: str) -> dict | None:
+    """The answer this command already produced, if it has run before.
+
+    Returning the original answer is what makes a retry safe: the caller sees what it would have
+    seen, and nothing happens a second time. A different payload under the same id is a mistake
+    worth refusing rather than guessing about.
+    """
+    previous = session.get(CommandRecord, command_id)
+    if previous is None:
+        return None
+    if previous.payload_hash != payload_hash:
+        raise CommandConflict("Command ID already used with different input")
+    return dict(previous.response)
+
+
+def remember_command(
+    session: Session, command_id: str, command_type: str, payload_hash: str, response: dict
+) -> None:
+    """Record what a command did, inside the same transaction that did it."""
+    session.add(
+        CommandRecord(
+            idempotency_key=command_id,
+            command_type=command_type,
+            payload_hash=payload_hash,
+            response=response,
+            created_at=utc_now(),
+        )
+    )
+
+
 def policy_view(policy: OwnerPolicy) -> PolicyView:
     return PolicyView(version=policy.version, autonomy_stopped=policy.autonomy_stopped)
 

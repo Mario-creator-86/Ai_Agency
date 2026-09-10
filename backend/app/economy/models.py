@@ -99,6 +99,11 @@ class FXSnapshot(Base):
     source: Mapped[str] = mapped_column(String(120), nullable=False)
     observed_at: Mapped[str] = mapped_column(String(40), nullable=False)
     recorded_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    #: The event that introduced this rate. Nullable because rows written before 0018 have none,
+    #: which is the truth about them rather than a value worth inventing.
+    event_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("domain_event.event_id"), nullable=True
+    )
 
 
 class RevenueEvidence(Base):

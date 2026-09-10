@@ -35,6 +35,7 @@ from app.economy.services import (
     treasury_snapshot,
 )
 from app.security import require_owner
+from app.services import CommandConflict
 
 #: Amounts arrive as strings so an exact decimal never passes through a float on the way in.
 AMOUNT = Annotated[str, Field(pattern=r"^\d{1,12}(\.\d{1,6})?$", max_length=20)]
@@ -110,6 +111,10 @@ def create_economy_router() -> APIRouter:
     def _guard(call: Callable[[], dict]) -> dict:
         try:
             return call()
+        except CommandConflict as exc:
+            # A command id reused with different input: the caller has two different intents
+            # under one identity, and guessing which one it meant is not available.
+            raise HTTPException(status_code=409, detail=str(exc)) from None
         except EconomyError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
 
@@ -249,6 +254,8 @@ def create_economy_router() -> APIRouter:
                 maturity_date=cmd.maturity_date,
                 note=cmd.note,
                 correlation_id=str(cmd.command_id),
+                # The same command id twice is a retry, not a second contribution.
+                command_id=str(cmd.command_id),
             )
         )
 

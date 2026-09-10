@@ -79,7 +79,11 @@ class TaskQueueItem(Base):
 
 
 class ScheduledJob(Base):
-    """A recurring or scheduled workflow trigger with singleton-safe leader leasing."""
+    """A recurring or scheduled workflow trigger with singleton-safe leader leasing.
+
+    Creating one is an autonomy decision — the studio will run this workflow again and again
+    without being asked — so it carries the event that created it.
+    """
 
     __tablename__ = "scheduled_job"
 
@@ -95,6 +99,9 @@ class ScheduledJob(Base):
     leader_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
     leader_expires_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
     created_at: Mapped[str] = mapped_column(String(40))
+    #: Nullable because jobs created before revision 0018 have no event behind them, which is
+    #: the truth about them rather than a value worth inventing.
+    event_id: Mapped[str | None] = mapped_column(ForeignKey("domain_event.event_id"), nullable=True)
 
 
 class OutboxRecord(Base):

@@ -445,7 +445,14 @@ def list_queue_tasks(
 def create_scheduled_job(
     engine: Engine,
     command: CreateScheduledJobCommand,
+    correlation_id: str | None = None,
 ) -> dict:
+    """Register a recurring trigger, and record that it was registered.
+
+    A scheduled job runs a workflow without anyone asking again, so its creation belongs in the
+    history beside the Owner's other autonomy decisions.
+    """
+    correlation = correlation_id or str(uuid4())
     now_dt = datetime.now(UTC)
     now_str = now_dt.isoformat()
     next_run = (now_dt + timedelta(seconds=command.interval_seconds)).isoformat()
@@ -466,6 +473,21 @@ def create_scheduled_job(
         )
         session.add(job)
         session.flush()
+        event = append_event(
+            session,
+            "workflow.job_scheduled",
+            "scheduled_job",
+            job.id,
+            1,
+            {
+                "name": job.name,
+                "workflow_type": job.workflow_type,
+                "interval_seconds": job.interval_seconds,
+                "missed_policy": job.missed_policy,
+            },
+            correlation,
+        )
+        job.event_id = event.event_id
         return ScheduledJobView.model_validate(job).model_dump()
 
 

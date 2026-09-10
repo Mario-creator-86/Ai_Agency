@@ -1,4 +1,5 @@
 import { loadAgentDetails } from './agent_details.js';
+import { escapeHtml } from './html.js';
 import './style.css';
 import { initSettings } from './settings.js';
 import { acceptSnapshot } from './projection.js';
@@ -515,20 +516,6 @@ if (refreshScriptsBtn) {
 }
 
 bindPanelToggle('open-research-btn', researchModal);
-
-function escapeHtml(str) {
-  return String(str ?? '').replace(
-    /[&<>"']/g,
-    (c) =>
-      ({
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#39;',
-      })[c],
-  );
-}
 
 async function loadTopics() {
   const listEl = element('topics-list');
