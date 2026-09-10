@@ -497,12 +497,116 @@ def list_scheduled_jobs(engine: Engine) -> list[dict]:
         return [ScheduledJobView.model_validate(j).model_dump() for j in jobs]
 
 
+def next_run_after(
+    due_at: datetime, now: datetime, interval_seconds: int, missed_policy: str
+) -> datetime:
+    """When a job that was due at ``due_at`` should run next.
+
+    Both policies fire the missed slot exactly once — this tick — because a studio coming back
+    from three days offline must not run three days' worth of production in a row
+    (`09_CHANNELS_AND_AUTOMATION.md`: "never create a backlog explosion"). They differ in what
+    happens after:
+
+    * SKIP re-anchors the cadence to now, so a daily job that was late by six hours is late by
+      six hours from then on;
+    * CATCH_UP keeps the original anchor: the next run is the first slot after now on the
+      schedule the job had before it was missed.
+    """
+    interval = timedelta(seconds=interval_seconds)
+    if missed_policy != "CATCH_UP":
+        return now + interval
+    candidate = due_at + interval
+    while candidate <= now:
+        candidate += interval
+    return candidate
+
+
+def ensure_scheduled_job(
+    engine: Engine,
+    *,
+    name: str,
+    workflow_type: str,
+    interval_seconds: int,
+    missed_policy: str = "CATCH_UP",
+    first_run_at: str | None = None,
+    active: bool = True,
+) -> dict:
+    """The named job, created if it does not exist and left alone if it does.
+
+    Idempotent on the unique name, so calling it at every start-up neither duplicates the job
+    nor appends a second "scheduled" event for a decision already recorded. ``active=False``
+    creates the schedule dormant: the studio knows when its day would start, and starting the
+    clock is left to the Owner.
+    """
+    with Session(engine) as session:
+        existing = session.scalars(select(ScheduledJob).where(ScheduledJob.name == name)).first()
+        if existing is not None:
+            return ScheduledJobView.model_validate(existing).model_dump()
+    created = create_scheduled_job(
+        engine,
+        CreateScheduledJobCommand(
+            command_id=uuid4(),
+            name=name,
+            workflow_type=workflow_type,
+            interval_seconds=interval_seconds,
+            missed_policy=missed_policy,  # type: ignore[arg-type]
+        ),
+    )
+    if first_run_at is not None or not active:
+        with Session(engine) as session, session.begin():
+            job = session.get(ScheduledJob, created["id"])
+            if job is not None:
+                if first_run_at is not None:
+                    job.next_run_at = first_run_at
+                job.is_active = active
+                created = ScheduledJobView.model_validate(job).model_dump()
+    return created
+
+
+def set_job_active(engine: Engine, job_id: str, active: bool, correlation_id: str) -> dict:
+    """Start or stop a schedule's clock, and record who decided.
+
+    Activating a daily job means the studio will begin a day on its own from now on. That is an
+    autonomy decision of the same weight as clearing the stop, so it is an event, not a flag
+    flipped in silence. A job already in the requested state is returned unchanged.
+    """
+    now_dt = datetime.now(UTC)
+    with Session(engine) as session, session.begin():
+        job = session.get(ScheduledJob, job_id)
+        if job is None:
+            raise ValueError(f"Scheduled job {job_id} not found")
+        if job.is_active == active:
+            return ScheduledJobView.model_validate(job).model_dump()
+        job.is_active = active
+        if active and job.next_run_at <= now_dt.isoformat():
+            # A job that lay dormant with a past slot would otherwise fire the moment it wakes,
+            # before the Owner has closed the panel. Waking sets the clock from now.
+            job.next_run_at = (now_dt + timedelta(seconds=job.interval_seconds)).isoformat()
+        event = append_event(
+            session,
+            "workflow.job_activated" if active else "workflow.job_deactivated",
+            "scheduled_job",
+            job.id,
+            2,
+            {"name": job.name, "workflow_type": job.workflow_type, "next_run_at": job.next_run_at},
+            correlation_id,
+        )
+        job.event_id = event.event_id
+        session.flush()
+        return ScheduledJobView.model_validate(job).model_dump()
+
+
 def scheduler_tick(
     engine: Engine,
     leader_id: str = "scheduler_main",
     lease_seconds: int = 15,
 ) -> list[dict]:
-    """Evaluate scheduled jobs with leader leasing and autonomy checks."""
+    """Fire the jobs that are due: a workflow record and a queued task for each.
+
+    Leader leasing keeps two schedulers from firing the same job; the task's idempotency key —
+    the job and the slot it was due for — keeps a restart from queueing the same run twice even
+    when the lease has lapsed. Nothing fires while the Owner's autonomy stop is set.
+    """
     now_dt = datetime.now(UTC)
     now_str = now_dt.isoformat()
     lease_expiry = (now_dt + timedelta(seconds=lease_seconds)).isoformat()
@@ -530,6 +634,24 @@ def scheduler_tick(
             job.leader_expires_at = lease_expiry
 
             if job.next_run_at <= now_str:
+                due_at = job.next_run_at
+                key = f"scheduled:{job.id}:{due_at}"
+                already_queued = session.scalars(
+                    select(TaskQueueItem).where(TaskQueueItem.idempotency_key == key)
+                ).first()
+                if already_queued is not None:
+                    # A restart put the slot back, but the slot already fired. Move on; the
+                    # queued task is the record and nothing new happened here.
+                    job.last_run_at = now_str
+                    job.next_run_at = next_run_after(
+                        datetime.fromisoformat(due_at),
+                        now_dt,
+                        job.interval_seconds,
+                        job.missed_policy,
+                    ).isoformat()
+                    job.leader_token = None
+                    job.leader_expires_at = None
+                    continue
                 # Trigger workflow
                 wf_cmd = CreateWorkflowCommand(
                     command_id=uuid4(),
@@ -559,10 +681,50 @@ def scheduler_tick(
                     event_id=event.event_id,
                 )
                 session.add(wf)
+                # Flushed before the task references it: the row must exist for the foreign key.
+                session.flush()
+
+                # The slot this run was due for names the task, so a second tick — or a second
+                # scheduler after a restart — finds the queued work rather than adding to it.
+                task = TaskQueueItem(
+                    id=str(uuid4()),
+                    workflow_id=wf.id,
+                    step_id=None,
+                    task_type=job.workflow_type,
+                    payload={
+                        "workflow_id": wf.id,
+                        "scheduled_job_id": job.id,
+                        "job_name": job.name,
+                        "due_at": due_at,
+                    },
+                    priority=0,
+                    status="QUEUED",
+                    attempts=0,
+                    max_attempts=1,
+                    backoff_seconds=5,
+                    next_attempt_at=now_str,
+                    lease_token=None,
+                    lease_expires_at=None,
+                    idempotency_key=key,
+                    error_detail=None,
+                    created_at=now_str,
+                    updated_at=now_str,
+                )
+                session.add(task)
 
                 job.last_run_at = now_str
-                job.next_run_at = (now_dt + timedelta(seconds=job.interval_seconds)).isoformat()
-                triggered.append({"job_id": job.id, "workflow_id": wf.id, "name": job.name})
+                job.next_run_at = next_run_after(
+                    datetime.fromisoformat(due_at), now_dt, job.interval_seconds, job.missed_policy
+                ).isoformat()
+                triggered.append(
+                    {
+                        "job_id": job.id,
+                        "workflow_id": wf.id,
+                        "task_id": task.id,
+                        "name": job.name,
+                        "due_at": due_at,
+                    }
+                )
 
             # Release leader
             job.leader_token = None

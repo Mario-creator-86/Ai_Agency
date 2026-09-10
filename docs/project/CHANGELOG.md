@@ -1,5 +1,28 @@
 # Changelog
 
+## The studio runs without the browser — 2026-09-11
+
+- Added the background worker (`backend/app/workflows/worker.py`), the part of the studio that
+  was missing for it to be autonomous at all. The scheduler could be ticked and the queue could
+  be claimed, and nothing did either on its own: a daily job would sit with `next_run_at` in the
+  past forever, and "autonomous" meant the Owner pressing a button every day.
+- One pass, every `worker_interval_seconds` (default 30): fire the due jobs, then run the queued
+  tasks through a dispatch table. `DAILY_RUN` executes the runbook. Nothing fires while the
+  autonomy stop is set. The scheduled daily run happens at most once per business date; a second
+  run on the same day stays the Owner's decision from the panel.
+- `scheduler_tick` now enqueues a task for each fired job, keyed on the job and the slot it was
+  due for, so a restart that puts the slot back finds the queued work instead of adding to it.
+  `missed_policy` is honoured: a missed slot fires once under either policy — three days offline
+  is one run, never three — and CATCH_UP keeps the original anchor while SKIP re-anchors to now.
+- The daily job is seeded at start-up **dormant**. A schedule that fired within thirty seconds of
+  the first start-up would begin a real day — agents, tokens, renders — on a decision nobody
+  took. Starting it is an Owner action from the panel, recorded as `workflow.job_activated`.
+- The daily-run panel shows the schedule: next and last run, the cadence, the missed-run policy,
+  a plain note when autonomy is stopped, and the toggle.
+- `scripts/demo_worker.py` starts the real server process with the worker on, activates the
+  schedule through the API, makes the slot due, and waits without touching anything. A daily run
+  appeared on its own in an isolated studio. `scripts/verify_runbook_ui.mjs` drives the panel.
+
 ## The daily run does the day's work — 2026-09-11
 
 - Connected real work to the runbook. `execute_daily_run` walked twelve stages and nothing in the

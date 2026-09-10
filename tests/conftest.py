@@ -15,6 +15,9 @@ def settings(tmp_path):
         owner_token=secrets.token_urlsafe(48),
         database_url=f"sqlite:///{(tmp_path / 'test.db').as_posix()}",
         allowed_hosts=["testserver", "127.0.0.1"],
+        # A background loop that starts the day on its own would make every other test's
+        # timing a coincidence. The worker has its own tests, which drive it by hand.
+        worker_enabled=False,
     )
 
 

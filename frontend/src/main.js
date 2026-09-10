@@ -2751,11 +2751,60 @@ async function loadRuns() {
   }
 }
 
+/**
+ * The schedule behind the button. A studio that runs itself has a job that fires the day; the
+ * panel says when, and says plainly that it will not fire while autonomy is stopped, because
+ * a "next run" time shown beside a stopped studio would promise something that cannot happen.
+ */
+async function loadRunbookSchedule() {
+  const box = element('runbook-schedule');
+  try {
+    const [jobs, snapshot] = await Promise.all([api('/scheduler/jobs'), api('/snapshot')]);
+    const daily = (jobs || []).find((job) => job.workflow_type === 'DAILY_RUN');
+    if (!daily) {
+      box.innerHTML = `<p class="runbook-note">Niciun job zilnic programat. Worker-ul de fundal îl creează la pornire când este activ.</p>`;
+      return;
+    }
+    const stopped = Boolean(snapshot?.policy?.autonomy_stopped);
+    const when = (iso) => (iso ? new Date(iso).toLocaleString('ro-RO') : '—');
+    box.innerHTML = `
+      <div class="runbook-check ${stopped ? 'rb-fail rb-degrading' : 'rb-ok'}">
+        <div class="topic-card-header">
+          <strong class="topic-card-title">${escapeHtml(daily.name)}</strong>
+          <span class="topic-card-novelty">${daily.is_active ? 'ACTIV' : 'INACTIV'}</span>
+        </div>
+        <div class="topic-card-meta">Următoarea rulare: ${escapeHtml(when(daily.next_run_at))} · ultima: ${escapeHtml(when(daily.last_run_at))} · la ${escapeHtml(String(Math.round(daily.interval_seconds / 3600)))} ore · rulări ratate: ${escapeHtml(daily.missed_policy === 'CATCH_UP' ? 'o singură recuperare, apoi cadența inițială' : 'sărite')}</div>
+        ${stopped ? `<p class="runbook-note">Autonomia este oprită: jobul nu va porni nimic până nu o repornești.</p>` : ''}
+        ${daily.is_active ? '' : `<p class="runbook-note">Programarea este oprită: studioul nu începe nicio zi singur. Pornirea ei este o decizie a ta și rămâne în istoric.</p>`}
+        <div class="settings-actions">
+          <button id="toggle-daily-job-btn" class="${daily.is_active ? 'quiet' : 'secondary'}" data-job-id="${escapeHtml(daily.id)}" data-active="${daily.is_active ? 'true' : 'false'}">${daily.is_active ? 'Oprește programarea' : 'Pornește programarea zilnică'}</button>
+        </div>
+      </div>`;
+    element('toggle-daily-job-btn').addEventListener('click', async (event) => {
+      const button = /** @type {HTMLButtonElement} */ (event.currentTarget);
+      button.disabled = true;
+      try {
+        await api(`/scheduler/jobs/${button.dataset.jobId}/active`, {
+          method: 'POST',
+          body: JSON.stringify({ command_id: crypto.randomUUID(), active: button.dataset.active !== 'true' }),
+        });
+        await loadRunbookSchedule();
+      } catch (err) {
+        runbookStatus(err.message, true);
+        button.disabled = false;
+      }
+    });
+  } catch (err) {
+    box.innerHTML = `<p class="runbook-note text-error">Programarea nu a putut fi citită: ${escapeHtml(err.message)}</p>`;
+  }
+}
+
 element('open-runbook-btn').addEventListener('click', () => {
   runbookModal.showModal();
   loadPreflight();
   loadSafeMode();
   loadRuns();
+  loadRunbookSchedule();
 });
 element('close-runbook-btn').addEventListener('click', () => runbookModal.close());
 element('refresh-preflight-btn').addEventListener('click', () => loadPreflight());

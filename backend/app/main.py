@@ -37,7 +37,7 @@ from app.runbook.router import create_runbook_router
 from app.runbook.stages import build_stage_runners
 from app.schemas import PolicyCommand, PolicyResult
 from app.security import require_owner
-from app.services import CommandConflict, change_stop, read_events, snapshot
+from app.services import CommandConflict, change_stop, read_events, snapshot, utc_now
 from app.story.router import create_story_router
 from app.workflows.publisher import ConnectionManager, publish_pending_outbox
 from app.workflows.router import (
@@ -46,6 +46,8 @@ from app.workflows.router import (
     create_workflows_router,
     register_websocket_gateway,
 )
+from app.workflows.services import ensure_scheduled_job
+from app.workflows.worker import DAILY_JOB_NAME, DAILY_RUN, build_task_handlers, worker_pass
 from app.workforce.router import create_workforce_router
 from app.youtube.router import create_youtube_callback_router, create_youtube_router
 
@@ -103,12 +105,61 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
                     pass
 
         dispatcher = asyncio.create_task(dispatch_outbox())
+
+        # The worker is what runs the studio without the browser: it fires due scheduled jobs
+        # and executes the tasks they enqueue. Each pass is synchronous database and agent
+        # work, so it runs in a thread and the request loop stays responsive. Nothing fires
+        # while the Owner's autonomy stop is set — the scheduler and the queue both refuse.
+        worker: asyncio.Task[None] | None = None
+        if settings.worker_enabled:
+            ensure_scheduled_job(
+                engine,
+                name=DAILY_JOB_NAME,
+                workflow_type=DAILY_RUN,
+                interval_seconds=86400,
+                missed_policy="CATCH_UP",
+                first_run_at=utc_now(),
+                # Dormant until the Owner starts it from the panel: a job that fired within
+                # thirty seconds of the first start-up would begin a real day — agents, tokens,
+                # renders — on a decision nobody took.
+                active=False,
+            )
+            handlers = build_task_handlers(
+                engine, settings, app.state.credential_vault, app.state.stage_runners
+            )
+
+            async def run_worker() -> None:
+                while not stop_dispatcher.is_set():
+                    try:
+                        summary = await asyncio.to_thread(worker_pass, engine, handlers)
+                        if summary["triggered"] or summary["ran"]:
+                            logger.info(
+                                "worker_pass",
+                                extra={
+                                    "triggered": len(summary["triggered"]),
+                                    "ran": [item["status"] for item in summary["ran"]],
+                                },
+                            )
+                    except Exception as exc:  # noqa: BLE001 - a pass failing must not end the loop
+                        logger.error("worker_pass_failed", extra={"error": type(exc).__name__})
+                    try:
+                        await asyncio.wait_for(
+                            stop_dispatcher.wait(), timeout=settings.worker_interval_seconds
+                        )
+                    except TimeoutError:
+                        pass
+
+            worker = asyncio.create_task(run_worker())
+
         try:
             yield
         finally:
             stop_dispatcher.set()
             with suppress(asyncio.CancelledError):
                 await dispatcher
+            if worker is not None:
+                with suppress(asyncio.CancelledError):
+                    await worker
             engine.dispose()
 
     app = FastAPI(

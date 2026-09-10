@@ -31,6 +31,15 @@ documented in `BRAND_AMN_AI.md`. Renaming an existing studio is done with
   claiming verification, and Owner funding that a retried request could double. See
   `AUDIT_2026-09-11_INTERNAL.md`.
 
+## Running on its own
+
+Since 2026-09-11 the application process carries a background worker that fires due scheduled
+jobs and executes the tasks they enqueue. The daily job (`daily_main`, `DAILY_RUN`, every 24
+hours, CATCH_UP on missed slots) is created at start-up but dormant; the Owner starts it from the
+daily-run panel, and that decision is an event. Nothing fires while the autonomy stop is set, and
+the scheduled run happens at most once per business date. Eight of the twelve runbook stages
+have real work behind them; `idea_generation` and `post_run` report SKIPPED with that reason.
+
 ## Connected accounts
 
 YouTube channels are connected by OAuth, not by pasting credentials. Settings → *Conturi și

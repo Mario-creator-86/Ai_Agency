@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import (
     APIRouter,
@@ -24,6 +25,7 @@ from app.workflows.schemas import (
     CreateScheduledJobCommand,
     CreateWorkflowCommand,
     ScheduledJobView,
+    SetJobActiveCommand,
     TaskQueueItemView,
     WorkflowDetailView,
     WorkflowView,
@@ -38,6 +40,7 @@ from app.workflows.services import (
     list_workflows,
     retry_dead_letter_task,
     scheduler_tick,
+    set_job_active,
     transition_workflow,
 )
 
@@ -136,6 +139,16 @@ def create_scheduler_router() -> APIRouter:
     @router.post("/jobs", response_model=ScheduledJobView)
     def post_job(request: Request, command: CreateScheduledJobCommand) -> dict:
         return create_scheduled_job(request.app.state.engine, command)
+
+    @router.post("/jobs/{job_id}/active")
+    def post_job_active(request: Request, job_id: UUID, command: SetJobActiveCommand) -> dict:
+        """Start or stop a schedule's clock. Recorded as an autonomy decision."""
+        try:
+            return set_job_active(
+                request.app.state.engine, str(job_id), command.active, str(command.command_id)
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
 
     @router.post("/tick")
     def post_tick(request: Request) -> dict:

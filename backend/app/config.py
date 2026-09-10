@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     # Absolute path to an ffmpeg executable. When unset, PATH is searched.
     ffmpeg_path: str | None = None
 
+    # The background worker is what makes the studio run without the browser: it fires due
+    # scheduled jobs and executes the tasks they enqueue. Off in tests, where a loop that starts
+    # the day on its own would make every other test's timing a coincidence.
+    worker_enabled: bool = True
+    worker_interval_seconds: int = Field(default=30, ge=5, le=3600)
+
     @property
     def youtube_credentials_present(self) -> bool:
         """True only when a real OAuth credential triple is configured."""

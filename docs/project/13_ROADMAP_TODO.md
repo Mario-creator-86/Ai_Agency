@@ -192,15 +192,16 @@ Acceptance:
 yesterday's real events → today's coherent episode with correct cast.
 
 ## PHASE 10 — Full Automation Hardening
-- [ ] daily main workflow
-- [ ] end-of-day log
-- [ ] next-day serial workflow
-- [ ] Manual/Supervised/Autonomous
-- [ ] approval queue
+- [x] daily main workflow — the background worker fires the scheduled `DAILY_RUN` and executes
+  the runbook with real stage work (2026-09-11). Seeded dormant; the Owner starts the clock.
+- [x] end-of-day log — closed by every run that did work (Phase 9/10).
+- [x] next-day serial workflow — the `serial_queue` stage writes the previous closed day's episode.
+- [ ] Manual/Supervised/Autonomous — today: STOP flag plus a dormant-by-default schedule.
+- [ ] approval queue — scripts wait at VERIFIED_PASS, but there is no queue view yet.
 - [ ] cost reservation
 - [ ] hard budgets
-- [ ] STOP AUTONOMY
-- [ ] stuck-job watchdog
+- [x] STOP AUTONOMY — the scheduler and the task queue both refuse while the stop is set.
+- [~] stuck-job watchdog — leases expire and are reclaimed; no separate watchdog process.
 - [ ] restart recovery
 - [ ] cloud/always-on deployment option
 - [ ] backup/restore

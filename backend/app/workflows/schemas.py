@@ -80,6 +80,13 @@ class CreateScheduledJobCommand(BaseModel):
     missed_policy: Literal["SKIP", "CATCH_UP"] = "SKIP"
 
 
+class SetJobActiveCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    schema_version: Literal[1] = 1
+    command_id: UUID
+    active: bool
+
+
 class ScheduledJobView(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str
