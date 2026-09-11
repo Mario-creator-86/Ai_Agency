@@ -232,6 +232,13 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
   box-shadow: var(--shadow-dialog);
 }
 .studio-dialog::backdrop { background: rgba(23, 41, 39, .32); }
+/* Expanded inspector: everything the employee is and said on one traversable page. The
+   history box stops scrolling internally — the dialog itself scrolls, top to bottom. */
+.studio-dialog.dialog-max { width: 97vw; height: 95vh; max-height: 95vh; }
+.dialog-max .chat-history { max-height: none; flex: 1; }
+.dialog-header-actions { display: flex; align-items: center; gap: 6px; }
+.dialog-expand { border: 1px solid var(--line); font-size: 14px; }
+.dialog-expand:hover { border-color: var(--line-strong); }
 .channel-bind { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 8px; }
 .channel-bind label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-3); }
 .channel-bind select { padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface); font-size: 12.5px; max-width: 320px; }

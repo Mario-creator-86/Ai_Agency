@@ -71,6 +71,29 @@ check('structured answers keep the exact model output collapsed', history.rawCou
 check('an answer cut off by the token limit is salvaged with a note', history.salvageNotes > 0, `${history.salvageNotes} notes`);
 await page.screenshot({ path: path.join(OUT, 'conversation-inspector.png') });
 
+// --- 1b. The extend button: the whole history on one traversable page. ---
+await page.evaluate(() => document.getElementById('inspector-expand').click());
+await page.waitForTimeout(300);
+const expanded = await page.evaluate(() => {
+  const dialog = document.getElementById('agent-inspector');
+  const box = document.getElementById('agent-history');
+  return {
+    hasClass: dialog.classList.contains('dialog-max'),
+    dialogHeight: dialog.getBoundingClientRect().height,
+    viewport: window.innerHeight,
+    historyMaxHeight: getComputedStyle(box).maxHeight,
+  };
+});
+check(
+  'extend fills the screen and the history stops cropping',
+  expanded.hasClass && expanded.dialogHeight > expanded.viewport * 0.9 && expanded.historyMaxHeight === 'none',
+  JSON.stringify(expanded),
+);
+await page.screenshot({ path: path.join(OUT, 'conversation-inspector-expanded.png') });
+await page.evaluate(() => document.getElementById('inspector-expand').click());
+const restored = await page.evaluate(() => !document.getElementById('agent-inspector').classList.contains('dialog-max'));
+check('extend restores the normal size', restored);
+
 // --- 2. A real chat turn on a free employee: indicator, exchange rendered, persists. ---
 const chosen = await page.evaluate(() => {
   const engine = window.__studio.engine;

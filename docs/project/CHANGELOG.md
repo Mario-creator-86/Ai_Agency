@@ -1,5 +1,37 @@
 # Changelog
 
+## What the Owner asked about the pipeline, and an expandable inspector — 2026-09-11, ZCode
+
+Investigation turn; one small frontend addition.
+
+- **Sarah did not write twice by accident.** The two 21:58/21:59 ledger lines are two real
+  `owner_chat` runs — the first verification pass sent the same question twice; each run has
+  its own row and its own freshly generated answer. No duplication bug.
+- **"Niciun cont YouTube verificat" was true when written, and no longer is.** The daily run
+  started 20:17:03; the channel slots were bound to their accounts at 20:18:54 and 20:19:02
+  (`channel.credentials_bound`). Re-ran the stage's own resolution against the live
+  database: both bindings `publisher_ready`, the analytics adapter builds. The next run
+  reports "Nicio publicare reală de măsurat" instead of the skip.
+- **Agents see only what their prompt carries.** No tool-calling exists anywhere in
+  `run_agent_task`: a run is one prompt to one model. Every STATUS/ESCALATE an employee
+  "says" is written by deterministic pipeline code in its name — Sarah never read the
+  YouTube state herself; the stage told the studio (and her report) what it found.
+- **Per-channel production criteria are implemented; the data is not dressed yet.** The full
+  hierarchy (organization → channel → series → episode → scene → character lock) is live in
+  `media/production_policy.py`, `render_plan` resolves it per scene into real ElevenLabs
+  TTS / Runway video adapters and records the plan on the render job. Channel A is FLEXIBLE
+  (episode/scene may swap voices and film models, `strategy: auto` ranks candidates by
+  stored quality/cost/speed/language), Channel B is CONSISTENCY_LOCKED (technology changes
+  at episode/scene are ignored with a note; a locked character keeps its bound voice;
+  visual locks refuse unapproved video models; changes go through the identity-change
+  approval workflow). What is missing is configuration, not code: no character has a bound
+  or locked voice, no storyboard names its channel, and no organization default model/voice
+  is chosen — until those are set, the locks have nothing to hold.
+- **«⛶ Extinde» on the Agent Inspector.** The dialog fills the screen and the entire
+  history — every run, message, memory, every question and answer — becomes one
+  traversable page instead of a box with its own scrollbar; the button restores the normal
+  size. Verified in Chromium (expand, restore, 16/16 checks).
+
 ## The conversation reads like one: answers in words, a chat, and a window into the work — 2026-09-11, ZCode
 
 Owner-reported: a structured answer printed as raw JSON, cramped cards, no way to watch an

@@ -504,3 +504,11 @@ Evidence and deliberate limits: `STREET_LIFE.md`.
 - [x] Dialogs confirmed wide in the served build (1180px measured); stale dist rebuilt.
 
 Evidence: `scratch/verify_conversation_live.mjs` 14/14 in Chromium; 79/79 frontend tests. No backend changes.
+
+## Pipeline answers for the Owner; expandable inspector — 2026-09-11
+
+- [x] Investigated the duplicate "Sarah said" lines: two real owner_chat runs from the verification pass, no duplication bug.
+- [x] Investigated `performance_intake` skip: the run predated the slot↔account binding by two minutes; live re-resolution confirms the next run proceeds.
+- [x] Confirmed agents have no tool access (single-prompt runs); STATUS reports are filed by deterministic stage code.
+- [x] Confirmed the per-channel production criteria (FLEXIBLE variants vs CONSISTENCY_LOCKED identity) are implemented end to end; open items are configuration: bind+lock character voices, route storyboards to channels (`channel_id`), pick organization defaults.
+- [x] «⛶ Extende» button on the Agent Inspector: fullscreen reading of the whole chat and history, restore included. Verified 16/16 in Chromium.

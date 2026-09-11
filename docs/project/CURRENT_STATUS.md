@@ -13,6 +13,31 @@ database resource discovery/refresh, separate production choices, UI and regress
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
 
+## ZCode investigation + inspector extend — 2026-09-11 (verified, scope released)
+
+Owner questions answered by investigation (no behaviour change): the double "Sarah said"
+line is two real `owner_chat` runs sent by the first verification pass, not duplication —
+each has its own run row and its own freshly generated answer (today's re-verification
+added a third turn). The `performance_intake` SKIPPED message was written at 20:17, before
+the channel slots were bound (20:18–20:19, events `channel.credentials_bound`); verified
+live against the current database that both bindings are `publisher_ready` and the
+analytics provider resolves — the next daily run will not repeat that skip (it will report
+"Nicio publicare reală de măsurat", which is the honest state while nothing is published).
+Per-channel production criteria are implemented end to end (`media/production_policy.py`
+hierarchy and locks, `media/factory.py render_plan` building real ElevenLabs/Runway
+adapters per scene, the plan recorded on the render job); the gaps are data, not code:
+no character has a bound/locked voice yet and no storyboard carries a `channel_id`, so on
+Channel B the "fixed voice" has nothing defined to enforce and nothing routes production
+to a channel. Agents have no tool-calling: a run is one prompt; the STATUS lines an
+employee "says" are written by deterministic stage code in its name.
+
+Code change: an «⛶ Extinde» button on the Agent Inspector header — the dialog fills the
+screen and the whole history reads as one traversable page (no inner scroll box); the
+choice persists while reopening the inspector during the session. Frontend only
+(`index.html`, `main.js`, `style.css`). Verified: frontend 79/79, tsc clean, build OK,
+browser checks 16/16 (`scratch/verify_conversation_live.mjs`, including expand/restore),
+zero page errors; screenshot `output/playwright/conversation-inspector-expanded.png`.
+
 ## The conversation reads like one — 2026-09-11, ZCode (verified, scope released)
 
 Owner-reported defects, fixed frontend-only against the data already recorded:

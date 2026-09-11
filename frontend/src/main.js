@@ -588,11 +588,29 @@ function renderInspector(agent) {
 
   element('agent-run-output').hidden = true;
   element('agent-run-output').textContent = '';
+  applyInspectorExpanded();
   if(!inspector.open) inspector.showModal();
 }
 
 // A queued close event from the previous agent must not cancel a newly opened inspector.
 inspector.addEventListener('close',()=>{if(!inspector.open) inspectorRequest++; updateTypingIndicator();});
+
+// Expanded mode: the inspector fills the screen and the whole history reads as one long
+// page — nothing cropped by the inner scroll box. The choice survives closing and reopening
+// the inspector during the session.
+let inspectorExpanded = false;
+function applyInspectorExpanded() {
+  inspector.classList.toggle('dialog-max', inspectorExpanded);
+  const btn = element('inspector-expand');
+  btn.textContent = inspectorExpanded ? '⤡' : '⛶';
+  btn.title = inspectorExpanded
+    ? 'Restrânge fereastra la dimensiunea obișnuită'
+    : 'Extinde: tot chatul și tot istoricul, parcurgabile de sus în jos';
+}
+element('inspector-expand').addEventListener('click', () => {
+  inspectorExpanded = !inspectorExpanded;
+  applyInspectorExpanded();
+});
 
 element('inspector-close').addEventListener('click', () => {
   inspector.close();
