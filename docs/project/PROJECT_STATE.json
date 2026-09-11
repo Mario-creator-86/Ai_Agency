@@ -6,9 +6,9 @@
   "last_green_test_commit": null,
   "verification": "docs/project/AUDIT_2026-09-10_THIRD_PARTY.md",
   "tests": {
-    "python_passed": 311,
+    "python_passed": 522,
     "python_skipped": 1,
-    "javascript_passed": 38,
+    "javascript_passed": 79,
     "failed": 0
   },
   "known_blockers": [
@@ -28,7 +28,7 @@
     "YouTube OAuth"
   ],
   "configured_provider_names": [],
-  "migration_version": "0014_runbook",
+  "migration_version": "0024_spending_budget",
   "autonomy_mode": "MANUAL",
   "feature_flags": {
     "public_publish_enabled": false,

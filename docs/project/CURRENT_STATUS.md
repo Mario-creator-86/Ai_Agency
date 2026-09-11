@@ -4,7 +4,7 @@ Last verified: 2026-09-09 by an independent audit (`AUDIT_2026-09-09_EXTERNAL.md
 remediation that followed it. Active edit claim: Codex, 2026-09-11 — ElevenLabs authentication,
 database resource discovery/refresh, separate production choices, UI and regression tests.
 
-> **Correction notice (2026-09-09).** An earlier revision of this document declared Phases 4, 5
+> **Correction notice (2026-09-09).** An earlier revision of this document declared Phases 4, 5 An earlier revision of this document declared Phases 4, 5
 > and 6 "complete — verified". That was not supported by the code. The audit found fabricated
 > channel configuration, simulated uploads recorded as real YouTube publications, a
 > non-playable file written with an `.mp4` name, a QC gate that verified its own metadata
@@ -12,6 +12,43 @@ database resource discovery/refresh, separate production choices, UI and regress
 > Those defects are fixed; the phases they belonged to are now marked partial, because the
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
+
+## The conversation reads like one — 2026-09-11, ZCode (verified, scope released)
+
+Owner-reported defects, fixed frontend-only against the data already recorded:
+
+- **Raw JSON is no longer shown to the Owner.** A run whose output is JSON (URL picks,
+  claims, topics, scenes, verdicts) renders as sentences and lists
+  (`frontend/src/friendly_text.js`); the exact model output stays collapsed under
+  «Răspunsul exact al modelului», and everything remains saved on the run. A truncated
+  answer (token limit mid-list) has its complete items salvaged and shown with a note —
+  the Owner-visible case came from Dr. Aris's stored runs and is unit-tested. Old runs
+  whose only line was the engineered prompt no longer print instructions as the headline;
+  the prompt stays under «Cererea completă».
+- **The inspector chat is a live, saved exchange.** Owner question right, employee answer
+  left; a "scrie…" indicator driven by the real THINKING/IDLE events; the history refreshes
+  itself on message/run events for the open employee, including runs fired from outside
+  the page. Proven with a real chat turn (Sarah/glm-5.3-flash) that survived a reload.
+- **A live window into an employee's work.** The inspector's «Fereastră live ↗» opens a
+  standalone popup (`frontend/src/live_window.js`): state pill, "Acum: …" line, and the
+  employee's own event chain, seeded with the day from the ledger and updated from every
+  newly recorded event via `Ledger`'s new `onEvents` callback (one funnel for socket,
+  snapshot and events endpoint). The inspector detail view is unchanged.
+- **The wide dialogs actually reach the page** — they were already styled at
+  `min(1180px, 94vw)`; the served build was stale. Rebuilt; measured 1180px in Chromium.
+
+Tests at release: frontend `npm test` 79/79 (14 new for the two modules), `tsc` clean,
+build OK; backend `pytest` 522 passed / 1 skipped (unchanged code); ruff, ruff format,
+mypy, documentation integrity pass. Browser verification: 14/14 checks in
+`scratch/verify_conversation_live.mjs` against the running studio on port 8000, zero page
+errors; screenshots `output/playwright/conversation-*.png`. One live chat turn was sent to
+an existing configured provider as part of verification.
+
+**Pre-existing baseline failure discovered, not mine and left for its owner:** since the
+ElevenLabs work landed (`backend/app/integrations/discovery.py:80`, commit 1c8de87/096dd26),
+`scripts/check_secrets.py` flags the dictionary key `"invalid_api_key"` — a keyword-detector
+false positive on a key *name*, not a credential. Confirmed present on a clean tree
+(stash/pop). `discovery.py` is inside Codex's active claim, so I did not touch it.
 
 ## The day starts without blocking the page (2026-09-11)
 

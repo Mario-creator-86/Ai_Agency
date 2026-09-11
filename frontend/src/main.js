@@ -6,6 +6,8 @@ import { acceptSnapshot } from './projection.js';
 import { OfficeEngine } from './office_engine.js';
 import { OfficeState } from './office_state.js';
 import { Ledger } from './ledger.js';
+import { friendlyAnswer } from './friendly_text.js';
+import { LiveWindows, eventMatchesAgent } from './live_window.js';
 
 /** @param {string} id @returns {HTMLElement} */
 function element(id) {
@@ -35,12 +37,73 @@ let officeEngine = null;
 let currentSelectedAgent = null;
 let inspectorRequest = 0;
 
+// Standalone live windows ("what is this employee doing right now"), fed by the same
+// event flow the ledger reads.
+const liveWindows = new LiveWindows();
+
+/** Employees currently THINKING/WORKING, from their own events; drives the chat indicator. */
+const thinkingAgents = new Set();
+let historyRefreshTimer = 0;
+
+/**
+ * One funnel for every newly recorded event, from whichever source it arrived: the live
+ * windows hear about it, the chat's "scrie…" indicator follows the employee's state, and an
+ * open conversation refreshes itself so an answer that lands while the Owner reads is not
+ * missed. Runs fired from outside the page (the daily run, another panel) appear here too.
+ */
+function noteAgentEvent(event) {
+  liveWindows.broadcast(event);
+  const type = String(event.event_type || '');
+  const payload = event.payload && typeof event.payload === 'object' ? event.payload : {};
+  if (type === 'agent.state_changed') {
+    const id = payload.agent_id || event.aggregate_id;
+    if (payload.runtime_state === 'THINKING' || payload.runtime_state === 'WORKING') {
+      thinkingAgents.add(id);
+    } else {
+      thinkingAgents.delete(id);
+    }
+    updateTypingIndicator();
+  } else if (type === 'agent.run_completed') {
+    thinkingAgents.delete(payload.agent_id);
+    updateTypingIndicator();
+  }
+  const current = currentSelectedAgent && (currentSelectedAgent.id || currentSelectedAgent.agent_id);
+  const refreshTypes = [
+    'agent.message_sent',
+    'agent.message_posted',
+    'agent.message_answered',
+    'agent.run_completed',
+  ];
+  if (current && refreshTypes.includes(type) && eventMatchesAgent(event, current)) {
+    scheduleHistoryRefresh(current);
+  }
+}
+
+function updateTypingIndicator() {
+  const indicator = element('agent-typing');
+  const current = currentSelectedAgent && (currentSelectedAgent.id || currentSelectedAgent.agent_id);
+  const active = Boolean(current && inspector.open && thinkingAgents.has(current));
+  indicator.hidden = !active;
+  if (active) indicator.textContent = `${currentSelectedAgent.display_name || 'Agentul'} lucrează acum… răspunsul apare aici.`;
+}
+
+function scheduleHistoryRefresh(agentId) {
+  clearTimeout(historyRefreshTimer);
+  historyRefreshTimer = setTimeout(() => {
+    const current = currentSelectedAgent && (currentSelectedAgent.id || currentSelectedAgent.agent_id);
+    if (inspector.open && current === agentId) loadAgentHistory(agentId);
+  }, 600);
+}
+
 /** Everything the studio does and says, read from its own events. */
 const ledger = new Ledger({
   list: element('ledger-list'),
   now: element('ledger-now'),
   filters: element('ledger-filters'),
   escape: escapeHtml,
+  onEvents: (events) => {
+    for (const event of events) noteAgentEvent(event);
+  },
 });
 
 function notify(message) {
@@ -392,11 +455,6 @@ const TASK_LABEL = {
   TEST_CONNECTIVITY: 'test de conexiune',
 };
 
-function shorten(text, max) {
-  const clean = String(text ?? '').replace(/\s+/g, ' ').trim();
-  return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
-}
-
 /** What a run without an answer means, in words. */
 const RUN_STATUS = {
   EMPTY_OUTPUT: 'Modelul nu a returnat niciun text de folosit.',
@@ -418,30 +476,34 @@ function timelineTime(iso) {
 /**
  * One line of history: what was asked and answered, or sent, or remembered.
  *
+ * The answer the Owner reads is written for a person. Structured pipelines consume the
+ * model's output as JSON — chosen pages, extracted claims, written scenes — and that JSON is
+ * exactly what used to be printed here; `friendlyAnswer` turns it into sentences and lists,
+ * with the model's exact output collapsed underneath. Nothing is lost: the run stores the
+ * full text either way.
+ *
  * The task line is the employee's own sentence about the job — "Verific afirmația «…»" — not
- * the prompt it was given. Five verifications in a row used to open with the same nine hundred
- * words of instructions and read as the same entry repeated; the part that differed was buried
- * in the middle. The prompt is still here, under «Cererea completă», for when it is the prompt
- * the Owner wants to see.
+ * the prompt it was given. Runs recorded before employees summarised their tasks only carry
+ * the engineered prompt; that prompt is not something a person should have to read as the
+ * headline, so the chip above says what kind of job it was and the whole prompt stays under
+ * «Cererea completă».
  */
 function timelineItem(item) {
   if (item.kind === 'run') {
-    const label = item.task_type === 'owner_chat' ? TIMELINE_LABEL.owner_chat : `${TIMELINE_LABEL.run} · ${taskLabel(item.task_type)}`;
+    const isChat = item.task_type === 'owner_chat';
+    const label = isChat ? TIMELINE_LABEL.owner_chat : `${TIMELINE_LABEL.run} · ${taskLabel(item.task_type)}`;
     const answer = item.answered
-      ? `<div class="chat-answer">${escapeHtml(item.answered)}</div>`
+      ? `<div class="chat-answer">${friendlyAnswer(item.answered)}</div>`
       : `<div class="chat-answer text-error">${escapeHtml(item.error || RUN_STATUS[item.status] || item.status)}</div>`;
     const meta = [item.model, item.memory_used ? `${item.memory_used} amintiri folosite` : '', item.cost_vr ? `${item.cost_vr} VR$` : '']
       .filter(Boolean).join(' · ');
-    // Runs recorded before employees summarised their own tasks still carry the prompt as
-    // the line. Cut it to a readable length rather than let one entry fill the column; the
-    // whole thing stays under the fold.
     const summarised = Boolean(item.prompt) && item.prompt !== item.asked;
-    const line = summarised ? item.asked : shorten(item.asked || '', 240);
+    const line = isChat || summarised ? item.asked || '' : '';
     const full = item.prompt || item.asked || '';
-    const prompt = full && full !== line
+    const prompt = !isChat && full
       ? `<details class="chat-prompt"><summary>Cererea completă</summary><pre>${escapeHtml(full)}</pre></details>`
       : '';
-    return `<div class="chat-item chat-run"><div class="chat-meta"><span class="policy-tag policy-flexible">${escapeHtml(label)}</span> <small>${escapeHtml(timelineTime(item.at))}${meta ? ` · ${escapeHtml(meta)}` : ''}</small></div><div class="chat-asked">${escapeHtml(line)}</div>${answer}${prompt}</div>`;
+    return `<div class="chat-item chat-run${isChat ? ' is-chat' : ''}"><div class="chat-meta"><span class="policy-tag policy-flexible">${escapeHtml(label)}</span> <small>${escapeHtml(timelineTime(item.at))}${meta ? ` · ${escapeHtml(meta)}` : ''}</small></div>${line ? `<div class="chat-asked">${escapeHtml(line)}</div>` : ''}${answer}${prompt}</div>`;
   }
   if (item.kind === 'message') {
     const direction = item.from_name ? `de la ${item.from_name}` : '';
@@ -530,11 +592,26 @@ function renderInspector(agent) {
 }
 
 // A queued close event from the previous agent must not cancel a newly opened inspector.
-inspector.addEventListener('close',()=>{if(!inspector.open) inspectorRequest++;});
+inspector.addEventListener('close',()=>{if(!inspector.open) inspectorRequest++; updateTypingIndicator();});
 
 element('inspector-close').addEventListener('click', () => {
   inspector.close();
   if (officeEngine) officeEngine.setSelectedAgent(null);
+});
+
+// The live window keeps streaming after the inspector closes — that is its purpose.
+element('agent-live-btn').addEventListener('click', () => {
+  if (!currentSelectedAgent) return;
+  const id = currentSelectedAgent.id || currentSelectedAgent.agent_id;
+  const known = officeState.agents.find((a) => (a.id || a.agent_id) === id);
+  const opened = liveWindows.open(currentSelectedAgent, {
+    events: ledger.sorted(),
+    runtimeState: known ? known.runtime_state : currentSelectedAgent.runtime_state,
+    timezone: state ? state.studio.timezone : undefined,
+  });
+  if (!opened) {
+    notify('Browserul a blocat fereastra live. Permite ferestrele pop-up pentru această pagină și apasă din nou.');
+  }
 });
 
 element('agent-pause-btn').addEventListener('click', async () => {
@@ -569,23 +646,36 @@ element('agent-run-form').addEventListener('submit', async (e) => {
   const agentId = currentSelectedAgent.id || currentSelectedAgent.agent_id;
   const objectiveInput = /** @type {HTMLInputElement} */ (element('agent-run-objective'));
   const outputDiv = element('agent-run-output');
-  outputDiv.hidden = false;
-  outputDiv.textContent = 'Trimitere comandă către model...';
+  const typing = element('agent-typing');
+  const submit = /** @type {HTMLButtonElement} */ (
+    element('agent-run-form').querySelector('button[type="submit"]')
+  );
+  const message = objectiveInput.value.trim();
+  if (!message) return;
+
+  outputDiv.hidden = true;
+  submit.disabled = true;
+  // A chat turn takes seconds; the question asked is already saved the moment the employee
+  // starts on it, and its answer joins it in the history when it lands.
+  typing.hidden = false;
+  typing.textContent = `Întrebarea a fost trimisă. ${currentSelectedAgent.display_name || 'Agentul'} scrie…`;
 
   try {
-    const message = objectiveInput.value;
-    const item = await api(`/agents/${agentId}/chat`, {
+    await api(`/agents/${agentId}/chat`, {
       method: 'POST',
       body: JSON.stringify({ message }),
     });
     objectiveInput.value = '';
-    outputDiv.hidden = true;
-    const box = element('agent-history');
-    if (box.querySelector('.helper') && !box.querySelector('.chat-item')) box.innerHTML = '';
-    box.insertAdjacentHTML('beforeend', timelineItem({ ...item, asked: message }));
-    box.scrollTop = box.scrollHeight;
+    // Reload instead of appending: the answer arrives rendered like every other entry, and
+    // anything the employee filed while answering is in the same pass.
+    await loadAgentHistory(agentId);
   } catch (err) {
+    outputDiv.hidden = false;
     outputDiv.textContent = `Eroare: ${err instanceof Error ? err.message : err}`;
+  } finally {
+    submit.disabled = false;
+    typing.hidden = true;
+    updateTypingIndicator();
   }
 });
 
@@ -1929,7 +2019,10 @@ function render(data) {
     `Actualizat ${new Date(data.captured_at).toLocaleTimeString('ro-RO', { timeZone: data.studio.timezone })}`;
   renderSwitch(data.policy.autonomy_stopped);
   ledger.timezone = data.studio.timezone;
-  ledger.setNames(Object.fromEntries(officeState.agents.map((a) => [a.id || a.agent_id, a.display_name])));
+  const agentNames = Object.fromEntries(officeState.agents.map((a) => [a.id || a.agent_id, a.display_name]));
+  ledger.setNames(agentNames);
+  liveWindows.timezone = data.studio.timezone;
+  liveWindows.setNames(agentNames);
   ledger.add(data.events || []);
   element('ledger-count').textContent = `${ledger.events.size} înregistrări`;
 
@@ -2031,6 +2124,8 @@ element('logout').addEventListener('click', () => {
   inspectorRequest++;
   inspector.close();
   currentSelectedAgent=null;
+  liveWindows.closeAll();
+  thinkingAgents.clear();
   settingsUI.reset();
   epoch++;
   ownerToken = '';
@@ -2094,6 +2189,9 @@ async function poll() {
   setTimeout(poll, 5000);
 }
 setTimeout(poll, 5000);
+
+// The live windows are the main page's dependents: when it goes away, they go with it.
+window.addEventListener('pagehide', () => liveWindows.closeAll());
 
 /* ---------------------------------------------------------------------------
  * Phase 8: workforce.

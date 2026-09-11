@@ -93,6 +93,7 @@
         <div class="dialog-btn-row">
           <button id="agent-pause-btn" class="secondary btn-pause">Pauză agent</button>
           <button id="agent-resume-btn" class="secondary btn-resume">Reia agent</button>
+          <button id="agent-live-btn" class="quiet btn-live" title="Deschide o fereastră separată, în timp real: ce face agentul acum, ce spune, ce termină">Fereastră live ↗</button>
         </div>
         <div class="dialog-section" id="inspector-identity">
           <h3 class="dialog-section-header">Identitate și contract de rol</h3>
@@ -112,6 +113,7 @@
           <h3 class="dialog-section-header">Conversație și istoric</h3>
           <p class="helper">Tot ce a fost întrebat, ce a răspuns, ce a decis și de ce, în ordine. Scrie-i direct: răspunde cu identitatea și memoria lui, iar schimbul rămâne în istoric.</p>
           <div id="agent-history" class="chat-history"><div class="helper">Se încarcă istoricul…</div></div>
+          <div id="agent-typing" class="chat-typing" hidden></div>
           <form id="agent-run-form" class="dialog-form chat-form">
             <input id="agent-run-objective" placeholder="Întreabă-l ceva (ex: Ce ai decis azi și de ce?)…" required class="dialog-input" />
             <button type="submit" class="primary dialog-submit-btn">Trimite ↗</button>

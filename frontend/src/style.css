@@ -373,7 +373,7 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 .identity-prompt { margin-top: 10px; font-size: 12.5px; }
 .identity-prompt summary { cursor: pointer; color: var(--ink-3); }
 .identity-prompt pre { max-height: 260px; }
-.chat-history { max-height: 420px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 10px; background: var(--surface-sunk); border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: 12.5px; line-height: 1.5; }
+.chat-history { max-height: 480px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 10px; background: var(--surface-sunk); border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: 12.5px; line-height: 1.5; }
 .chat-item { padding: 8px 10px; border-radius: var(--radius-sm); background: var(--surface); border: 1px solid var(--line); }
 .chat-item .chat-meta { margin-bottom: 4px; color: var(--ink-3); }
 .chat-asked { font-weight: 600; color: var(--ink); }
@@ -386,6 +386,43 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 .chat-message { border-left: 3px solid var(--warn-line); }
 .chat-memory { border-left: 3px solid var(--line-strong); }
 .chat-form { margin-top: 10px; }
+
+/* A chat turn reads as a conversation: the Owner's question on the right in the studio's
+   green, the employee's answer on the left on sunk paper. Tasks keep the card layout. */
+.chat-item.is-chat { display: flex; flex-direction: column; gap: 6px; }
+.chat-item.is-chat .chat-asked {
+  align-self: flex-end; max-width: 85%; margin: 2px 0 0;
+  background: var(--forest); color: #fff; padding: 8px 12px;
+  border-radius: 12px 12px 3px 12px; font-weight: 500; white-space: pre-wrap;
+}
+.chat-item.is-chat .chat-answer {
+  align-self: flex-start; max-width: 94%; margin-top: 0;
+  background: var(--surface-sunk); border: 1px solid var(--line);
+  padding: 8px 12px; border-radius: 12px 12px 12px 3px;
+}
+/* The employee is composing: a quiet line between the history and the form. */
+.chat-typing { margin: 8px 0 0; font-size: 12px; font-style: italic; color: var(--ink-3); }
+.chat-typing::after { content: '…'; }
+
+/* A structured answer, written for a person: sentences and lists, never raw JSON. */
+.chat-answer .friendly-head { font-weight: 600; color: var(--ink); margin: 2px 0 4px; }
+.chat-answer .friendly-list { margin: 2px 0 4px; padding-left: 18px; display: grid; gap: 4px; color: var(--ink-2); }
+.chat-answer .friendly-list a { color: var(--forest); word-break: break-all; }
+.chat-answer .friendly-why { color: var(--ink-3); font-size: 12px; margin-top: 1px; }
+.chat-answer .friendly-quote { margin: 4px 0; padding: 5px 10px; border-left: 2px solid var(--line-strong); background: var(--surface); font-size: 12px; font-style: italic; color: var(--ink-2); }
+.chat-answer .friendly-empty { margin: 2px 0; font-style: italic; color: var(--ink-3); }
+/* An answer cut off by the token limit says so, above the salvaged items. */
+.chat-answer .friendly-note { margin: 0 0 6px; font-size: 12px; color: var(--warn-ink); background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: var(--radius-sm); padding: 5px 9px; }
+.chat-answer .friendly-row { margin: 1px 0; }
+.chat-answer .friendly-key { color: var(--ink-3); }
+/* The model's exact output, one click away, for when the Owner audits an answer. */
+.chat-raw { margin-top: 6px; }
+.chat-raw summary { cursor: pointer; color: var(--ink-3); font-size: 11.5px; }
+.chat-raw pre { margin: 6px 0 0; padding: 8px; max-height: 200px; overflow: auto; white-space: pre-wrap; word-break: break-word; background: var(--surface-sunk); border: 1px solid var(--line); border-radius: var(--radius-sm); color: var(--ink-3); font-size: 11.5px; }
+
+/* The third action beside pause/resume: opens the standalone live window. */
+.btn-live { flex: 1; padding: 9px; font-size: 12.5px; font-weight: 600; color: var(--forest); border-color: var(--forest); }
+.btn-live:hover { background: var(--info-bg); border-color: var(--forest); color: var(--forest); }
 .budget-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin: 10px 0; }
 .budget-card { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px 12px; background: var(--surface); font-size: 12.5px; }
 .budget-card strong { font-size: 15px; display: block; }

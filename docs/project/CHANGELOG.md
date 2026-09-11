@@ -1,5 +1,38 @@
 # Changelog
 
+## The conversation reads like one: answers in words, a chat, and a window into the work — 2026-09-11, ZCode
+
+Owner-reported: a structured answer printed as raw JSON, cramped cards, no way to watch an
+employee at work. All three fixed in the frontend, against the already-recorded data.
+
+- **An answer is written for a person.** A run whose output is JSON — chosen pages, extracted
+  claims, proposed topics, scenes, a verdict — renders as sentences and lists with links;
+  the model's exact output stays one click away under «Răspunsul exact al modelului». An
+  answer cut off mid-list by the token limit now has its complete items salvaged and shown
+  with a note, instead of printing the broken JSON (the backend already kept those items;
+  the display finally agrees). Old runs whose only line was the engineered prompt no longer
+  print 240 characters of instructions as the headline — the chip says what the job was and
+  the full prompt stays under «Cererea completă». Nothing stopped being saved: everything
+  lives on the run, as before.
+- **The conversation is a conversation.** Owner questions render right in the studio green,
+  employee answers left on paper. While the employee works the panel says "scrie…", driven
+  by the real THINKING/IDLE events, and the history refreshes itself when the answer, a
+  report or a completed run lands — including runs fired from outside the page. Verified
+  with a real chat turn to Sarah (glm-5.3-flash), and again after a reload: the exchange
+  was on the run all along.
+- **A window into the work.** The inspector's new «Fereastră live ↗» opens a standalone
+  window for one employee: the current state as a pill ("THINKING"), a head line ("Acum:
+  lucrează la sarcina propose topics"), and the employee's own event chain — starting work,
+  what it says, what it finishes — seeded with the day and updated from every new event,
+  from the socket or the events endpoint alike. The inspector keeps every detail of each
+  action; the window is the live view. The popup is styled through CSSOM because the page
+  CSP (rightly) forbids inline styles in it.
+- New modules `friendly_text.js` and `live_window.js`, both pure-tested (14 new frontend
+  tests; 79 total). `Ledger` gained an `onEvents` callback so the live windows see exactly
+  the stream the ledger renders. Verified in Chromium against the running studio:
+  14/14 checks (`scratch/verify_conversation_live.mjs`), screenshots under
+  `output/playwright/conversation-*.png`.
+
 ## Three things the Owner reported: a silent start, a prompt for a task, twin entries — 2026-09-11
 
 - **Starting the day answers at once.** `POST /runbook/runs` executed the whole run inside the

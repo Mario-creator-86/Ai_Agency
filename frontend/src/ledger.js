@@ -450,13 +450,19 @@ export const LEDGER_CAPACITY = 400;
 
 export class Ledger {
   /**
-   * @param {{list: HTMLElement, now: HTMLElement, filters: HTMLElement, escape: (s: string) => string}} parts
+   * @param {{list: HTMLElement, now: HTMLElement, filters: HTMLElement, escape: (s: string) => string,
+   *          onEvents?: (events: any[]) => void}} parts
    */
   constructor(parts) {
     this.list = parts.list;
     this.now = parts.now;
     this.filters = parts.filters;
     this.escape = parts.escape;
+    // Called once per add() with the events that were actually new, whichever source they
+    // came from — the socket, the snapshot or the events endpoint. The live agent windows
+    // hang off this: they must see the same stream the ledger renders, without a second
+    // subscription that could drift from it.
+    this.onEvents = typeof parts.onEvents === 'function' ? parts.onEvents : null;
     /** @type {Map<string, any>} */
     this.events = new Map();
     this.names = {};
@@ -484,19 +490,22 @@ export class Ledger {
 
   /** Add events from any source; duplicates are ignored, order comes from the sequence. */
   add(events) {
-    let changed = false;
+    const fresh = [];
     for (const event of Array.isArray(events) ? events : [events]) {
       if (!event || !event.event_id || this.events.has(event.event_id)) continue;
       this.events.set(event.event_id, event);
+      fresh.push(event);
       if (Number.isFinite(event.sequence)) this.cursor = Math.max(this.cursor, event.sequence);
-      changed = true;
     }
     if (this.events.size > LEDGER_CAPACITY) {
       const sorted = this.sorted();
       for (const old of sorted.slice(LEDGER_CAPACITY)) this.events.delete(old.event_id);
     }
-    if (changed) this.render();
-    return changed;
+    if (fresh.length) {
+      this.render();
+      if (this.onEvents) this.onEvents(fresh);
+    }
+    return fresh.length > 0;
   }
 
   /** Newest first. */
