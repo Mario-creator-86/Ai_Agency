@@ -20,9 +20,10 @@ from app.integrations.discovery import production_resource
 from app.integrations.models import Integration, MediaProductionConfig, ServiceSelection
 from app.integrations.vault import CredentialVault
 from app.providers.elevenlabs import ElevenLabsTTSAdapter
-from app.providers.media_base import ImageProvider, TTSProvider
+from app.providers.media_base import ImageProvider, TTSProvider, VideoProvider
 from app.providers.media_http import MediaProviderNotConfigured
 from app.providers.openai_media import OpenAIImageAdapter
+from app.providers.runway import RunwayVideoAdapter
 
 #: Statuses that mean the vendor itself answered. Anything else is an untested claim.
 VERIFIED_STATUSES = ("VERIFIED", "ACCESS_VERIFIED")
@@ -115,13 +116,47 @@ def tts_provider_for(engine: Engine, vault: CredentialVault, resolved: dict) -> 
     return None
 
 
+def video_provider_for(
+    engine: Engine, vault: CredentialVault, resolved: dict
+) -> VideoProvider | None:
+    """A video adapter for one resolved `video` selection, carrying the model's contract.
+
+    The model's tasks, ratios and durations come from the discovered resource, so the adapter
+    generates with the terms the vendor published for that model rather than assumptions.
+    """
+    if not resolved or not resolved.get("valid") or not resolved.get("integration_id"):
+        return None
+    with Session(engine) as session:
+        row = session.get(Integration, resolved["integration_id"])
+        if row is None or row.status not in VERIFIED_STATUSES:
+            return None
+        kind = row.kind
+        secrets = vault.decrypt(row.encrypted_secrets)
+        resource = production_resource(session, row.id, "MODEL", resolved.get("model_id"))
+        if resource is None:
+            # A discovered kind generates only with a model the account was seen to have.
+            return None
+        metadata = dict(resource.api_metadata)
+        if isinstance(resource.capabilities, dict):
+            # Research may fill in a contract the refresh could not read, never the reverse.
+            for key in ("tasks", "ratios", "durations"):
+                if key not in metadata and resource.capabilities.get(key) is not None:
+                    metadata[key] = resource.capabilities[key]
+    try:
+        if kind == "runway":
+            return RunwayVideoAdapter(secrets.get("api_key", ""), resource.remote_id, metadata)
+    except MediaProviderNotConfigured:
+        return None
+    return None
+
+
 def render_plan(engine: Engine, vault: CredentialVault, storyboard_id: str) -> dict:
     """Resolve the production hierarchy for a storyboard and build its adapters.
 
-    Returns the plan (recorded on the render job as production_json) plus a `tts_for_scene`
-    callable and the image adapter. A storyboard without a channel resolves at the
-    Organization level, which is exactly what `tts_provider()` returned before policies
-    existed, so nothing changes for videos that never named a channel.
+    Returns the plan (recorded on the render job as production_json) plus `tts_for_scene`
+    and `video_for_scene` callables and the image adapter. A storyboard without a channel
+    resolves at the Organization level, which is exactly what `tts_provider()` returned
+    before policies existed, so nothing changes for videos that never named a channel.
     """
     from app.media.models import Storyboard
     from app.media.production_policy import resolve_storyboard_plan
@@ -133,18 +168,35 @@ def render_plan(engine: Engine, vault: CredentialVault, storyboard_id: str) -> d
         plan = resolve_storyboard_plan(session, board)
     adapters: dict[int, TTSProvider | None] = {}
     cache: dict[tuple, TTSProvider | None] = {}
+    video_adapters: dict[int, VideoProvider | None] = {}
+    video_cache: dict[tuple, VideoProvider | None] = {}
     for scene in plan["scenes"]:
         voice = scene["voice"]
         key = (voice.get("integration_id"), voice.get("model_id"), voice.get("voice_id"))
         if key not in cache:
             cache[key] = tts_provider_for(engine, vault, voice)
         adapters[scene["scene_index"]] = cache[key]
+        video = scene.get("video") or {}
+        # A locked look can make the same model invalid for one scene and fine for another.
+        video_key = (video.get("integration_id"), video.get("model_id"), bool(video.get("valid")))
+        if video_key not in video_cache:
+            video_cache[video_key] = video_provider_for(engine, vault, video)
+        video_adapters[scene["scene_index"]] = video_cache[video_key]
 
     def tts_for_scene(scene: dict) -> TTSProvider | None:
         index = scene.get("scene_index")
         return adapters.get(index) if isinstance(index, int) else None
 
-    return {"plan": plan, "tts_for_scene": tts_for_scene, "image": image_provider(engine, vault)}
+    def video_for_scene(scene: dict) -> VideoProvider | None:
+        index = scene.get("scene_index")
+        return video_adapters.get(index) if isinstance(index, int) else None
+
+    return {
+        "plan": plan,
+        "tts_for_scene": tts_for_scene,
+        "video_for_scene": video_for_scene,
+        "image": image_provider(engine, vault),
+    }
 
 
 def describe(engine: Engine, vault: CredentialVault) -> dict[str, str | None]:

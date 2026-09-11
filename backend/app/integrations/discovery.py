@@ -1,10 +1,17 @@
-"""Account inventory refresh. Authentication, API facts, and research facts are independent."""
+"""Account inventory refresh. Authentication, API facts, and research facts are independent.
+
+One discovery path serves every connection whose inventory is read from the vendor
+(`DISCOVERED_KINDS`): the key is verified, the account's models (and voices, where the vendor
+has them) are written to `ProviderResource`, and production chooses among them. Only the
+adapter and the Owner-facing wording differ per kind.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -20,9 +27,42 @@ from app.integrations.models import (
 from app.integrations.vault import CredentialVault
 from app.providers.elevenlabs import ElevenLabsTTSAdapter
 from app.providers.media_http import MediaProviderError
+from app.providers.runway import VIDEO_TASKS, RunwayVideoAdapter
 from app.services import append_event, utc_now
 
 logger = logging.getLogger("studio.provider_discovery")
+
+#: Connections whose account inventory is read from the vendor after the key is saved. The
+#: values are what the Settings card shows; nothing here names a model or a voice.
+DISCOVERED_KINDS: dict[str, dict[str, Any]] = {
+    "elevenlabs": {
+        "label": "ElevenLabs",
+        "title": "Configurație de producție · ElevenLabs",
+        "model_label": "Model implicit",
+        "voice_label": "Voce implicită",
+        "has_voices": True,
+        "refresh_label": "Actualizează modelele și vocile",
+        "syncing": "Se încarcă modelele și vocile…",
+        "verify_hint": "Verifică cheia pentru a alege modelul și vocea de producție.",
+        "select_hint": "Alege apoi această conexiune pentru Voce / TTS în serviciile de "
+        "producție. Autentificarea rămâne verificată independent de selecții.",
+        "unusable": "indisponibil pentru TTS",
+    },
+    "runway": {
+        "label": "Runway",
+        "title": "Configurație de producție · Runway",
+        "model_label": "Model video implicit",
+        "voice_label": None,
+        "has_voices": False,
+        "refresh_label": "Actualizează modelele video",
+        "syncing": "Se încarcă modelele video…",
+        "verify_hint": "Verifică cheia pentru a alege modelul video implicit.",
+        "select_hint": "Alege apoi această conexiune pentru Video în serviciile de producție. "
+        "Modelul implicit este doar o rezervă: producția poate alege alt model video "
+        "descoperit, per video sau per scenă, după politica fiecărui canal.",
+        "unusable": "nu generează video",
+    },
+}
 
 #: What the Owner can do about each vendor error identifier. Keys are ElevenLabs'
 #: `detail.status` values; the text never repeats the vendor's message or the key.
@@ -40,12 +80,36 @@ KEY_ERRORS = {
     "too_many_concurrent_requests": "ElevenLabs limitează cererile acestui cont chiar acum. "
     "Reîncearcă peste câteva minute.",
 }
+#: Runway keys carry no permission scopes: a key either belongs to an organization or it does
+#: not, so the only specific messages are about the key itself and the organization's access.
+RUNWAY_KEY_ERRORS = {
+    401: "Cheia Runway este invalidă sau a fost revocată. Generează o cheie nouă în "
+    "Runway → Developer Portal → API Keys și salveaz-o din nou.",
+    403: "Cheia Runway nu are acces la organizație. Verifică în Runway → Developer Portal "
+    "că organizația cheii este activă și are credit, apoi apasă „Verifică accesul”.",
+    429: "Runway limitează cererile acestui cont chiar acum. Reîncearcă peste câteva minute.",
+}
 
 
-def explain_key_error(exc: BaseException, authenticated: bool) -> str:
+def explain_key_error(exc: BaseException, authenticated: bool, kind: str = "elevenlabs") -> str:
     """An Owner-facing message for a failed refresh: specific when the vendor said why."""
     code = getattr(exc, "code", None)
     http_status = getattr(exc, "http_status", None)
+    label = DISCOVERED_KINDS.get(kind, {}).get("label", kind)
+    if kind == "runway":
+        if authenticated:
+            return (
+                "Cheia a fost verificată, dar lista de modele nu a putut fi încărcată. "
+                "Reîncearcă actualizarea catalogului."
+            )
+        if http_status in RUNWAY_KEY_ERRORS:
+            return RUNWAY_KEY_ERRORS[http_status]
+        if http_status is not None:
+            return (
+                f"Runway a refuzat verificarea (HTTP {http_status}). "
+                "Verifică cheia și accesul organizației la API-ul Runway."
+            )
+        return "Cheia nu a putut fi verificată. Verifică cheia și accesul la Runway."
     if authenticated:
         if code == "missing_permissions":
             return (
@@ -62,12 +126,46 @@ def explain_key_error(exc: BaseException, authenticated: bool) -> str:
         return KEY_ERRORS["invalid_api_key"]
     if http_status is not None:
         return (
-            f"ElevenLabs a refuzat verificarea (HTTP {http_status}). "
-            "Verifică cheia, permisiunea User și accesul la ElevenLabs."
+            f"{label} a refuzat verificarea (HTTP {http_status}). "
+            f"Verifică cheia, permisiunea User și accesul la {label}."
         )
     return (
-        "Cheia nu a putut fi verificată. Verifică cheia, permisiunea User și accesul la ElevenLabs."
+        f"Cheia nu a putut fi verificată. Verifică cheia, permisiunea User și accesul la {label}."
     )
+
+
+def discovery_adapter(kind: str, key: str) -> ElevenLabsTTSAdapter | RunwayVideoAdapter:
+    if kind == "elevenlabs":
+        return ElevenLabsTTSAdapter(key)
+    if kind == "runway":
+        return RunwayVideoAdapter(key)
+    raise ValueError("Conexiunea nu are un catalog de resurse")
+
+
+def model_usable(kind: str, resource: ProviderResource) -> bool:
+    """Whether a discovered MODEL can serve the purpose this kind of connection is for.
+
+    API evidence decides what a model can do; research (`capabilities`) may only restrict.
+    """
+    meta = resource.api_metadata if isinstance(resource.api_metadata, dict) else {}
+    caps = resource.capabilities if isinstance(resource.capabilities, dict) else {}
+    if kind == "elevenlabs":
+        return (
+            meta.get("can_do_text_to_speech") is True
+            and caps.get("can_do_text_to_speech") is not False
+        )
+    if kind == "runway":
+        tasks = meta.get("tasks")
+        if not isinstance(tasks, list):
+            # The contract could not be read at refresh time; research may fill the gap.
+            tasks = caps.get("tasks")
+        if not isinstance(tasks, list):
+            return False
+        return (
+            any(task in VIDEO_TASKS for task in tasks)
+            and caps.get("can_generate_video") is not False
+        )
+    return True
 
 
 def reset_discovery(session: Session, identifier: str) -> None:
@@ -89,13 +187,15 @@ def resource_available(resource: ProviderResource) -> bool:
     return resource.api_available and resource.availability_override is not False
 
 
-def resource_view(row: ProviderResource) -> dict:
+def resource_view(row: ProviderResource, kind: str) -> dict:
+    usable = resource_available(row) and (row.resource_type != "MODEL" or model_usable(kind, row))
     return dict(
         id=row.id,
         remote_id=row.remote_id,
         name=row.name,
         resource_type=row.resource_type,
         available=resource_available(row),
+        production_usable=usable,
         api_available=row.api_available,
         api_metadata=row.api_metadata,
         last_seen_at=row.last_seen_at,
@@ -109,6 +209,8 @@ def resource_view(row: ProviderResource) -> dict:
 
 
 def catalog_view(session: Session, identifier: str) -> dict:
+    integration = session.get(Integration, identifier)
+    kind = integration.kind if integration else ""
     state = session.get(ProviderDiscovery, identifier)
     production = session.get(MediaProductionConfig, identifier)
     resources = session.scalars(
@@ -117,8 +219,9 @@ def catalog_view(session: Session, identifier: str) -> dict:
         .order_by(ProviderResource.name, ProviderResource.remote_id)
     ).all()
     return dict(
-        models=[resource_view(r) for r in resources if r.resource_type == "MODEL"],
-        voices=[resource_view(r) for r in resources if r.resource_type == "VOICE"],
+        kind_info=dict(DISCOVERED_KINDS.get(kind, {})),
+        models=[resource_view(r, kind) for r in resources if r.resource_type == "MODEL"],
+        voices=[resource_view(r, kind) for r in resources if r.resource_type == "VOICE"],
         discovery=dict(
             status=state.status,
             last_success_at=state.last_success_at,
@@ -140,8 +243,18 @@ def catalog_view(session: Session, identifier: str) -> dict:
     )
 
 
-def _metadata(item: dict, resource_type: str) -> dict:
+def _metadata(item: dict, resource_type: str, kind: str = "elevenlabs") -> dict:
     # Only public catalog fields; voice samples, verification recordings and account data stay out.
+    if kind == "runway":
+        fields: tuple[str, ...] = (
+            "max_concurrent_generations",
+            "max_daily_generations",
+            "daily_generations",
+            "tasks",
+            "ratios",
+            "durations",
+        )
+        return {field: item[field] for field in fields if field in item}
     fields = (
         (
             "description",
@@ -183,9 +296,9 @@ def refresh_catalog(
     lease = str(uuid4())
     with Session(engine) as session, session.begin():
         row = session.get(Integration, identifier)
-        if row is None or row.kind != "elevenlabs":
-            raise ValueError("Conexiune ElevenLabs inexistentă")
-        version = row.version
+        if row is None or row.kind not in DISCOVERED_KINDS:
+            raise ValueError("Conexiunea nu are un catalog de resurse")
+        kind, version = row.kind, row.version
         state = session.get(ProviderDiscovery, identifier)
         if state is None:
             reset_discovery(session, identifier)
@@ -221,8 +334,10 @@ def refresh_catalog(
     models: list[dict] = []
     voices: list[dict] = []
     error = None
+    warning = None
+    has_voices = bool(DISCOVERED_KINDS[kind]["has_voices"])
     try:
-        adapter = ElevenLabsTTSAdapter(key)
+        adapter = discovery_adapter(kind, key)
         health = asyncio.run(adapter.health_check())
         if health["status"] != "HEALTHY":
             raise MediaProviderError(
@@ -232,7 +347,12 @@ def refresh_catalog(
             )
         authenticated = True
         models = asyncio.run(adapter.list_models())
-        voices = asyncio.run(adapter.list_voices())
+        voices = (
+            asyncio.run(adapter.list_voices())
+            if has_voices and isinstance(adapter, ElevenLabsTTSAdapter)
+            else []
+        )
+        warning = getattr(adapter, "capabilities_warning", None)
     except Exception as exc:
         # Vendor message text and credential values never become UI/log strings; the vendor's
         # short error identifier does, because it is what tells the Owner what to fix.
@@ -244,7 +364,7 @@ def refresh_catalog(
                 "http_status": getattr(exc, "http_status", None),
             },
         )
-        error = explain_key_error(exc, authenticated)
+        error = explain_key_error(exc, authenticated, kind)
 
     with Session(engine) as session, session.begin():
         row = session.get(Integration, identifier)
@@ -284,7 +404,7 @@ def refresh_catalog(
                         session.add(resource)
                         existing[(resource_type, remote_id)] = resource
                     resource.name = str(item.get("name") or remote_id)[:300]
-                    resource.api_metadata = _metadata(item, resource_type)
+                    resource.api_metadata = _metadata(item, resource_type, kind)
                     resource.api_available, resource.last_seen_at = True, utc_now()
             state.last_success_at = utc_now()
         event = append_event(
@@ -302,11 +422,15 @@ def refresh_catalog(
             str(uuid4()),
         )
         row.event_id = event.event_id
+        loaded = (
+            f"{len(models)} modele și {len(voices)} voci încărcate."
+            if has_voices
+            else f"{len(models)} modele încărcate."
+        )
         return {
             "status": row.status,
             "discovery_status": state.status,
-            "message": error
-            or f"Conexiune verificată. {len(models)} modele și {len(voices)} voci încărcate.",
+            "message": error or " ".join(filter(None, ["Conexiune verificată.", loaded, warning])),
         }
 
 
@@ -315,7 +439,7 @@ def refresh_due_catalogs(
 ) -> None:
     with Session(engine) as session:
         identifiers = session.scalars(
-            select(Integration.id).where(Integration.kind == "elevenlabs")
+            select(Integration.id).where(Integration.kind.in_(tuple(DISCOVERED_KINDS)))
         ).all()
     for identifier in identifiers:
         try:
@@ -344,13 +468,18 @@ class ProductionCommand(BaseModel):
 
 
 def production_resource(
-    session: Session, identifier: str, kind: str, remote_id: str | None
+    session: Session, identifier: str, resource_type: str, remote_id: str | None
 ) -> ProviderResource | None:
+    """A discovered, available resource production may use, or None.
+
+    A MODEL must also serve the connection's purpose (a TTS model on ElevenLabs, a video
+    model on Runway); the API's own evidence decides that, see `model_usable`.
+    """
     resource = (
         session.scalar(
             select(ProviderResource).where(
                 ProviderResource.integration_id == identifier,
-                ProviderResource.resource_type == kind,
+                ProviderResource.resource_type == resource_type,
                 ProviderResource.remote_id == remote_id,
             )
         )
@@ -359,24 +488,29 @@ def production_resource(
     )
     if resource is None or not resource_available(resource):
         return None
-    if kind == "MODEL" and resource.api_metadata.get("can_do_text_to_speech") is not True:
-        return None
-    if kind == "MODEL" and resource.capabilities.get("can_do_text_to_speech") is False:
-        return None
+    if resource_type == "MODEL":
+        integration = session.get(Integration, identifier)
+        if integration is None or not model_usable(integration.kind, resource):
+            return None
     return resource
 
 
 def save_production(engine: Engine, identifier: str, command: ProductionCommand) -> dict:
     with Session(engine) as session, session.begin():
         integration = session.get(Integration, identifier)
-        if integration is None or integration.kind != "elevenlabs":
-            raise ValueError("Conexiune ElevenLabs inexistentă")
+        if integration is None or integration.kind not in DISCOVERED_KINDS:
+            raise ValueError("Conexiunea nu are un catalog de resurse")
         if integration.status != "VERIFIED":
             raise ValueError("Verifică mai întâi conexiunea")
-        for kind, value in (("MODEL", command.model_id), ("VOICE", command.voice_id)):
-            if value and production_resource(session, identifier, kind, value) is None:
+        has_voices = bool(DISCOVERED_KINDS[integration.kind]["has_voices"])
+        if command.voice_id and not has_voices:
+            raise ValueError("Această conexiune nu are voci; alege doar modelul implicit")
+        for resource_type, value in (("MODEL", command.model_id), ("VOICE", command.voice_id)):
+            if value and production_resource(session, identifier, resource_type, value) is None:
                 raise ValueError(
                     "Alege un model TTS și o voce disponibile în catalogul acestui cont"
+                    if has_voices
+                    else "Alege un model video disponibil în catalogul acestui cont"
                 )
         row = session.get(MediaProductionConfig, identifier)
         if (row.version if row else 0) != command.expected_version:
@@ -442,4 +576,5 @@ def update_resource_metadata(
             {"source": command.source},
             str(uuid4()),
         )
-        return resource_view(row)
+        integration = session.get(Integration, row.integration_id)
+        return resource_view(row, integration.kind if integration else "")

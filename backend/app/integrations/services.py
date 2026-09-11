@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.models import Agent, ModelRecord, ProviderRecord
 from app.integrations.catalog import CATALOG
-from app.integrations.discovery import reset_discovery
+from app.integrations.discovery import DISCOVERED_KINDS, reset_discovery
 from app.integrations.llm import ConfiguredLLM
 from app.integrations.models import Integration, ServiceSelection
 from app.integrations.vault import CredentialVault
@@ -119,7 +119,7 @@ def save(engine: Engine, vault: CredentialVault, identifier: str, command: SaveI
         row.config, row.encrypted_secrets = command.config, vault.encrypt(secrets)
         row.secret_fields, row.version = sorted(secrets), version
         row.status, row.checked_at, row.event_id = "SAVED", None, event.event_id
-        if row.kind == "elevenlabs":
+        if row.kind in DISCOVERED_KINDS:
             session.flush()
             reset_discovery(session, identifier)
         if CATALOG[row.kind]["runtime"] == "llm":

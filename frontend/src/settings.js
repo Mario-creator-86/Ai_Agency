@@ -1,5 +1,5 @@
 import { renderYouTubeConnections } from './youtube_connections.js';
-import { renderElevenLabsProduction } from './elevenlabs_settings.js';
+import { renderProviderProduction } from './provider_production.js';
 
 import './settings.css';
 
@@ -168,11 +168,9 @@ export function initSettings(api, hooks = {}) {
       const modify = node('button', 'Editează', 'quiet');
       modify.addEventListener('click', () => edit(content, item.kind, item));
       actions.append(modify);
-      if (item.kind !== 'runway') {
-        const check = node('button', spec.runtime === 'llm' ? 'Verifică și încarcă modelele' : 'Verifică accesul', 'secondary');
-        check.addEventListener('click', () => run(() => api(`/settings/integrations/${item.id}/check`, { method: 'POST' }), 'Verificare terminată.'));
-        actions.append(check);
-      }
+      const check = node('button', spec.runtime === 'llm' ? 'Verifică și încarcă modelele' : 'Verifică accesul', 'secondary');
+      check.addEventListener('click', () => run(() => api(`/settings/integrations/${item.id}/check`, { method: 'POST' }), 'Verificare terminată.'));
+      actions.append(check);
       const remove = node('button', 'Șterge conexiunea', 'quiet');
       remove.addEventListener('click', () => {
         if (remove.dataset.armed !== 'yes') {
@@ -184,8 +182,10 @@ export function initSettings(api, hooks = {}) {
       });
       actions.append(remove);
       card.append(actions);
-      if (item.kind === 'elevenlabs') {
-        renderElevenLabsProduction(card, item, data.provider_catalogs?.[item.id], { api, run });
+      // A connection with a discovered catalog (the backend decides which kinds) gets the
+      // production defaults section; the labels come with the catalog.
+      if (data.provider_catalogs?.[item.id]) {
+        renderProviderProduction(card, item, data.provider_catalogs[item.id], { api, run });
       }
       list.append(card);
     }

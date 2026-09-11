@@ -155,9 +155,11 @@ CATALOG = {
     "runway": service(
         "Runway",
         "media",
-        [KEY, MODEL],
-        "stored",
-        "Selectarea salvează preferința. Adaptorul de generare video urmează să fie conectat.",
+        [KEY],
+        "media",
+        "Salvarea verifică cheia și încarcă din cont modelele video disponibile, cu limitele "
+        "lor. Modelul video implicit se alege separat, în configurația de producție, și "
+        "rămâne doar o rezervă: producția poate alege alt model descoperit.",
         "https://docs.dev.runwayml.com/",
         ["video"],
     ),

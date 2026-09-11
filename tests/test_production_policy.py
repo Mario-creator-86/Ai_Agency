@@ -717,3 +717,170 @@ def test_existing_integrations_and_discovery_survive_and_nothing_is_duplicated(
     from app.media import production_policy
 
     assert production_policy.production_resource is discovery.production_resource
+
+
+# --------------------------------------------------------------------------- TEST 5, video
+
+
+def connect_runway(client, headers):
+    identifier = str(uuid4())
+    response = client.put(
+        f"/api/v1/settings/integrations/{identifier}",
+        headers=headers,
+        json={
+            "kind": "runway",
+            "name": "Studio video account",
+            "secrets": {"api_key": f"k-{uuid4()}"},
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "VERIFIED"
+    return identifier
+
+
+def select_video(client, headers, identifier, default_model):
+    response = client.put(
+        "/api/v1/settings/selections/video",
+        headers=headers,
+        json={"integration_id": identifier, "expected_version": 0},
+    )
+    assert response.status_code == 200, response.text
+    response = client.put(
+        f"/api/v1/settings/integrations/{identifier}/production",
+        headers=headers,
+        json={"model_id": default_model, "expected_version": 0},
+    )
+    assert response.status_code == 200, response.text
+
+
+def scene_video(the_plan, index):
+    return next(s["video"] for s in the_plan["scenes"] if s["scene_index"] == index)
+
+
+def test_runway_models_are_picked_per_video_on_the_flexible_channel_and_per_series_on_the_locked(
+    client, headers, engine, tmp_path, studio, runway_api
+):
+    runway = connect_runway(client, headers)
+    video_a, video_b = runway_api.video_models
+    select_video(client, headers, runway, video_a)
+    flexible = studio["channels"]["MAIN_FACTUAL"]["id"]
+    locked = studio["channels"]["OFFICE_SERIAL"]["id"]
+
+    # Nexus Curiosity: the default is a fallback; a video may pick any discovered video model.
+    plain = make_storyboard(engine, tmp_path)
+    set_production(client, headers, plain, channel_id=flexible)
+    resolved = plan(client, headers, plain)["purposes"]["video"]
+    assert (resolved["model_id"], resolved["source_level"], resolved["valid"]) == (
+        video_a,
+        "organization",
+        True,
+    )
+    special = make_storyboard(engine, tmp_path)
+    wish = {"video": {"model_id": video_b}}
+    set_production(client, headers, special, channel_id=flexible, production_overrides_json=wish)
+    resolved = plan(client, headers, special)["purposes"]["video"]
+    assert (resolved["model_id"], resolved["source_level"], resolved["valid"]) == (
+        video_b,
+        "episode",
+        True,
+    )
+    # ...and a scene may differ from its video; the render plan builds one adapter per choice.
+    set_production(
+        client, headers, special, scene_overrides={"2": {"video": {"model_id": video_a}}}
+    )
+    the_plan = plan(client, headers, special)
+    assert scene_video(the_plan, 1)["model_id"] == video_b
+    assert scene_video(the_plan, 2)["model_id"] == video_a
+    vault = CredentialVault(Path(str(engine.url.database)).with_suffix(".credentials.key"))
+    planned = render_plan(engine, vault, special)
+    assert planned["video_for_scene"]({"scene_index": 1}).model == video_b
+    assert planned["video_for_scene"]({"scene_index": 2}).model == video_a
+    assert planned["video_for_scene"]({"scene_index": 2}).model_metadata["tasks"] == [
+        "image_to_video",
+        "text_to_video",
+    ]
+    # Not a model the account has that makes stills, and not one nobody discovered.
+    for wrong in (runway_api.image_model, "gen-imagined"):
+        set_production(
+            client, headers, special, production_overrides_json={"video": {"model_id": wrong}}
+        )
+        assert not plan(client, headers, special)["purposes"]["video"]["valid"]
+
+    # Inside The Nexus: an episode wish is ignored; the series decides, once approved there.
+    nexus = make_storyboard(engine, tmp_path)
+    set_production(client, headers, nexus, channel_id=locked, production_overrides_json=wish)
+    resolved = plan(client, headers, nexus)["purposes"]["video"]
+    assert resolved["model_id"] == video_a and resolved["valid"]
+    assert any("Consistency-locked" in note for note in resolved["notes"])
+    response = client.put(
+        f"/api/v1/publishing/channels/{locked}/production-policy",
+        headers=headers,
+        json={"series_rules_json": {"inside-the-nexus": {"video": {"model_id": video_b}}}},
+    )
+    assert response.status_code == 200, response.text
+    set_production(client, headers, nexus, series_key="inside-the-nexus")
+    resolved = plan(client, headers, nexus)["purposes"]["video"]
+    assert (resolved["model_id"], resolved["source_level"], resolved["valid"]) == (
+        video_b,
+        "series",
+        True,
+    )
+    # The ElevenLabs default and its discovery are untouched by a second discovered kind.
+    assert plan(client, headers, nexus)["purposes"]["voice"]["valid"]
+    with Session(engine) as session:
+        assert session.get(Integration, studio["integration"]).status == "VERIFIED"
+        assert (
+            session.get(MediaProductionConfig, studio["integration"]).model_id
+            == (studio["models"][0])
+        )
+
+
+def test_a_locked_look_accepts_only_video_models_approved_for_the_character(
+    client, headers, engine, tmp_path, studio, runway_api
+):
+    runway = connect_runway(client, headers)
+    video_a, video_b = runway_api.video_models
+    select_video(client, headers, runway, video_a)
+    sarah = character_named(client, headers, "Sarah")["id"]
+    locked = client.put(
+        f"/api/v1/media/character-bible/{sarah}/identity-locks",
+        headers=headers,
+        json={"visual": True},
+    )
+    assert locked.status_code == 200, locked.text
+    episode = make_storyboard(engine, tmp_path)
+    set_production(client, headers, episode, channel_id=studio["channels"]["OFFICE_SERIAL"]["id"])
+    cast(engine, episode, 2, [sarah])
+
+    the_plan = plan(client, headers, episode)
+    blocked = scene_video(the_plan, 2)
+    assert not blocked["valid"] and blocked["lock_applied"] and blocked["character_id"] == sarah
+    assert any("Visual identity locked" in note for note in blocked["notes"])
+    free = scene_video(the_plan, 1)
+    assert free["valid"] and not free["lock_applied"] and free["model_id"] == video_a
+    vault = CredentialVault(Path(str(engine.url.database)).with_suffix(".credentials.key"))
+    planned = render_plan(engine, vault, episode)
+    assert planned["video_for_scene"]({"scene_index": 2}) is None
+    assert planned["video_for_scene"]({"scene_index": 1}).model == video_a
+
+    # A consistency test passed: the Director approves the model for her. Her look is unchanged.
+    approved = client.post(
+        f"/api/v1/media/character-bible/{sarah}/approved-models",
+        headers=headers,
+        json={"integration_id": runway, "model_id": video_a, "decided_by": "Director"},
+    )
+    assert approved.status_code == 200, approved.text
+    allowed = scene_video(plan(client, headers, episode), 2)
+    assert allowed["valid"] and allowed["model_id"] == video_a and allowed["lock_applied"]
+    assert render_plan(engine, vault, episode)["video_for_scene"]({"scene_index": 2}).model == (
+        video_a
+    )
+    # A newer model must be approved for her too, even at series level.
+    client.put(
+        f"/api/v1/publishing/channels/{studio['channels']['OFFICE_SERIAL']['id']}/production-policy",
+        headers=headers,
+        json={"production_defaults_json": {"video": {"model_id": video_b}}},
+    )
+    again = scene_video(plan(client, headers, episode), 2)
+    assert not again["valid"] and again["model_id"] == video_b
+    assert scene_video(plan(client, headers, episode), 1)["valid"]

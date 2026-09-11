@@ -144,9 +144,9 @@ def test_deselecting_a_provider_takes_effect(engine, vault):
 
 
 def test_a_vendor_with_no_adapter_yet_yields_no_provider(engine, vault):
-    """Runway is in the catalogue but has no adapter. That is 'no generator', not a substitute."""
+    """Replicate is in the catalogue but has no adapter: 'no generator', not a substitute."""
     identifier = add_integration(
-        engine, vault, "runway", "ACCESS_VERIFIED", {"model": "gen3"}, {"api_key": "k"}
+        engine, vault, "replicate", "ACCESS_VERIFIED", {"model": "owner/model"}, {"api_key": "k"}
     )
     select(engine, "video", identifier)
 

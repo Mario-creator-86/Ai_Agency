@@ -1,5 +1,28 @@
 # Changelog
 
+## Runway: name and key only, models read from the account — 2026-09-11
+
+The Runway connection form asked for a "Model ID" and stored it as a preference; nothing
+verified the key or read the account. Now it is the same flow ElevenLabs has, through the same
+code: save name + key → key verified → models discovered → optional default → production.
+
+- `DISCOVERED_KINDS` (`integrations/discovery.py`) replaces the `kind == "elevenlabs"`
+  branches in save/verify/refresh/catalog/default/validation; ElevenLabs and Runway share one
+  discovery, one `ProviderResource` inventory and one `MediaProductionConfig` default.
+- `providers/runway.py`: a `VideoProvider`. Models come from `GET /v1/organization`
+  (`tier.models`, limits, usage); tasks, ratios and durations per model from Runway's
+  published OpenAPI contract for the same API version. No model id, ratio or duration in code.
+  `create_generation` / `get_generation_status` implement the task + poll flow;
+  `factory.video_provider_for()` and `render_plan()["video_for_scene"]` expose it.
+- `CATALOG["runway"]`: `[KEY]`, runtime `media`. The Settings card shows "Model video
+  implicit" with the override switch; only discovered models that make video are selectable.
+  The "Verify" button is no longer hidden for Runway. `elevenlabs_settings.js` became the
+  generic `provider_production.js`, driven by the catalog's `kind_info`.
+- Per-scene plans resolve `video` with the scene's cast: a character with a locked `visual`
+  identity accepts only video models in its approved list, on any channel. The flexible /
+  locked channel rules for video models were already in place and are now tested with a real
+  video catalogue (`tests/test_production_policy.py`), plus `tests/test_runway_connection.py`.
+
 ## Two channels, two production policies — 2026-09-11
 
 Technology (providers, models, voices) is replaceable; a recurring character is a persistent

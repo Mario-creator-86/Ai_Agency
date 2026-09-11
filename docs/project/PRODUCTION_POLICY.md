@@ -116,10 +116,68 @@ Identity workflow: PROPOSED → TESTING → APPROVED rewrites the binding, keeps
 the previous model as approved technology; REJECTED leaves the character as it was; a second
 open proposal for the same field is refused.
 
+## Runway: connection form and video models — 2026-09-11
+
+Owner brief: the Runway form must ask only for a connection name and an API key; the "Model
+ID" field must go. After saving, the key is verified, the account's models and their
+capabilities are read into the existing registry, and production chooses among them; any
+model choice on the connection is an optional "Default Video Model" (a fallback), which
+production may override. Audit first, reuse, extend, no duplicate systems.
+
+**Audit.** Runway was a catalog entry `[KEY, MODEL]` with runtime `stored` ("adapter to be
+connected"), no adapter, no probe, no discovery, and a UI branch that hid its "Verify" button.
+ElevenLabs already had the whole path the brief asks for: key-only save → `refresh_catalog`
+→ `ProviderResource` → `MediaProductionConfig` default with `allow_production_override` →
+the hierarchy. The path was ElevenLabs-only by a handful of `kind == "elevenlabs"` branches.
+
+**Reused, now generic.** `DISCOVERED_KINDS` in `integrations/discovery.py` lists the
+connections whose inventory is read from the vendor (ElevenLabs, Runway) with their
+Owner-facing labels. The save route, the verify route, the periodic refresh, the catalog in
+`GET /settings`, `save_production`, `production_resource` and the policy validator all key on
+it instead of on one vendor name. One discovery, one inventory, one default row, one
+hierarchy. `production_resource` asks `model_usable(kind, resource)`: a TTS model on
+ElevenLabs, a video model on Runway.
+
+**Runway adapter** (`providers/runway.py`, a `VideoProvider`). Runway has no model-listing
+endpoint; the models an account may call are the keys of `tier.models` in
+`GET /v1/organization`, with per-model concurrency and daily limits and today's usage. Which
+task each model serves (`text_to_video`, `image_to_video`, …) and the ratios and durations it
+accepts come from the vendor's published OpenAPI contract for the same API version
+(`docs.dev.runwayml.com/openapi.json`), parsed at refresh time into `api_metadata`
+(`tasks`, `ratios`, `durations`). No model name, ratio or duration is written in code. If the
+contract cannot be read, the models are still stored, marked as not usable for video until
+the next refresh or a research annotation (`capabilities.tasks`) says otherwise; research may
+add what the API did not say, never invent availability. `create_generation` posts to the
+task endpoint the contract names for the model, with the contract ratio closest to the
+requested aspect and a contract duration; `get_generation_status` polls `/v1/tasks/{id}` and
+downloads the output. `factory.video_provider_for()` builds the adapter from a valid resolved
+`video` selection, carrying the model's contract; `render_plan()` returns `video_for_scene`.
+
+**Form and default.** `CATALOG["runway"]` is `[KEY]`, runtime `media`, purpose `video`.
+The Settings card shows the same production section ElevenLabs has (`provider_production.js`,
+formerly `elevenlabs_settings.js`): "Model video implicit", no voice picker, the override
+switch, options limited to discovered models that make video. A Runway row saved earlier with
+a `model` in its config keeps working: `organization_default()` still reads it as the default
+until the Owner saves one from the catalog.
+
+**Channels.** Nothing new was needed for Nexus Curiosity: the FLEXIBLE policy already lets an
+episode or a scene name any discovered, available video model, and `strategy: auto` ranks
+them. For Inside The Nexus the CONSISTENCY_LOCKED rule already keeps model changes at
+channel/series level. Added: a character whose `visual` identity is locked is rendered only
+by video models in its `approved_fallbacks_json` (the same list a locked voice uses for TTS
+models; `POST …/approved-models` accepts any discovered model now). The per-scene plan gains a
+`video` entry resolved with the scene's cast, and an unapproved model makes that scene's
+video selection invalid with a note naming the characters. Approval after a consistency test
+is the evidence that the look is preserved.
+
+Tests: `tests/test_runway_connection.py` (form, discovery, contract, default, adapter) and
+two video scenarios in `tests/test_production_policy.py`. The ElevenLabs suites are unchanged
+and still pass.
+
 ## Remaining limitations
 
-- No video/music/sfx provider adapter exists yet; the hierarchy resolves those purposes and
-  records them, but only `voice` and `image` produce media today.
+- Runway generates clips (task + poll), but the assembler still builds videos from stills and
+  narration; feeding generated clips into the cut is the next step. Music/sfx have no adapter.
 - Cost estimates use `pricing.per_1k_characters_usd` when research has recorded it; there is
   no budget table, so "daily/monthly budget" checks are not enforced (none existed before).
 - Retries are recorded as `attempts: 1`; the assembler does not retry a vendor call.

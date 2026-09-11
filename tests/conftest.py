@@ -96,6 +96,97 @@ def elevenlabs_api(monkeypatch):
 
 
 @pytest.fixture
+def runway_api(monkeypatch):
+    """Stub Runway's HTTPS boundary: the organization endpoint and the published contract.
+
+    Model ids are test-generated. The stub account has two video models and one image model,
+    and the stubbed contract says which task each serves, as the real one does.
+    """
+    import json
+
+    from app.providers import runway
+    from app.providers.media_http import MediaProviderError
+
+    video_a, video_b = f"test-video-{uuid4()}", f"test-video-{uuid4()}"
+    image = f"test-image-{uuid4()}"
+    fake = SimpleNamespace(
+        models={
+            video_a: {"maxConcurrentGenerations": 2, "maxDailyGenerations": 50},
+            video_b: {"maxConcurrentGenerations": 1, "maxDailyGenerations": 20},
+            image: {"maxConcurrentGenerations": 4, "maxDailyGenerations": 500},
+        },
+        usage={video_a: {"dailyGenerations": 2}},
+        tasks={
+            video_a: ["text_to_video", "image_to_video"],
+            video_b: ["image_to_video"],
+            image: ["text_to_image"],
+        },
+        video_models=[video_a, video_b],
+        image_model=image,
+        calls=[],
+        bodies=[],
+        task=None,
+        fail=None,
+        spec_fail=False,
+    )
+
+    def contract():
+        paths = {}
+        for model_id, tasks in fake.tasks.items():
+            for task in tasks:
+                branch = {
+                    "properties": {
+                        "model": {"const": model_id},
+                        "ratio": {"enum": ["1280:720", "720:1280"]},
+                        "duration": {"enum": [5, 10]},
+                    }
+                }
+                schema = paths.setdefault(
+                    f"/v1/{task}", {"post": {"requestBody": {"content": {}}}}
+                )["post"]["requestBody"]["content"].setdefault(
+                    "application/json", {"schema": {"oneOf": []}}
+                )["schema"]["oneOf"]
+                schema.append(branch)
+        return {"openapi": "3.1.0", "paths": paths}
+
+    def transport(host, method, path, headers, body=None, **kwargs):
+        fake.calls.append((host, method, path))
+        if fake.fail:
+            fake.fail(host, path)
+        if host == "docs.dev.runwayml.com":
+            assert method == "GET" and path == "/openapi.json"
+            if fake.spec_fail:
+                raise MediaProviderError("docs.dev.runwayml.com could not be reached")
+            return contract(), b"", "application/json"
+        if host == "files.test":
+            return None, b"MP4BYTES", "video/mp4"
+        assert host == "api.dev.runwayml.com", host
+        assert headers["Authorization"].startswith("Bearer ") and headers["X-Runway-Version"]
+        if method == "GET" and path == "/v1/organization":
+            payload = {
+                "creditBalance": 1200,
+                "tier": {"maxMonthlyCreditSpend": 100000, "models": fake.models},
+                "usage": {"models": fake.usage},
+            }
+        elif method == "POST" and path in ("/v1/text_to_video", "/v1/image_to_video"):
+            fake.bodies.append(json.loads(body))
+            payload = {"id": "task-1", "estimatedCost": {"credits": 25}}
+        elif method == "GET" and path.startswith("/v1/tasks/"):
+            payload = fake.task or {
+                "id": path.rsplit("/", 1)[1],
+                "status": "PENDING",
+                "createdAt": "2026-09-11T00:00:00Z",
+                "estimatedCost": {"credits": 25},
+            }
+        else:
+            raise AssertionError((method, path))
+        return payload, b"", "application/json"
+
+    monkeypatch.setattr(runway, "request", transport)
+    return fake
+
+
+@pytest.fixture
 def connect_youtube(engine, monkeypatch):
     """Build CONNECTED YouTube connections through the real OAuth code path.
 

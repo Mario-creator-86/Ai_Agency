@@ -35,7 +35,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from app.integrations.discovery import production_resource, resource_available
+from app.integrations.discovery import (
+    DISCOVERED_KINDS,
+    production_resource,
+    resource_available,
+)
 from app.integrations.models import (
     Integration,
     MediaProductionConfig,
@@ -419,6 +423,24 @@ def resolve_purpose(
             character_id = character.id
             source = "character"
 
+    visual_blocked: list[str] = []
+    if purpose == "video":
+        # A character whose look is locked may only be rendered by video models approved for
+        # it (`approved_fallbacks_json`, the same list a locked voice uses for TTS models):
+        # approval is the evidence that the model preserves the character's appearance.
+        for character in characters or []:
+            if not (character.identity_locks_json or {}).get("visual"):
+                continue
+            lock_applied = True
+            character_id = character_id or character.id
+            approved = {
+                (f.get("integration_id"), f.get("model_id"))
+                for f in (character.approved_fallbacks_json or [])
+                if isinstance(f, dict)
+            }
+            if (merged.get("integration_id"), merged.get("model_id")) not in approved:
+                visual_blocked.append(character.canonical_name)
+
     ranking: list[dict[str, Any]] | None = None
     if merged.get("strategy") == "auto" and merged.get("integration_id"):
         if policy == POLICY_LOCKED and purpose == "voice":
@@ -443,6 +465,27 @@ def resolve_purpose(
     valid, why = _validate(session, purpose, merged)
     if why:
         notes.append(why)
+    if visual_blocked and merged.get("strategy") == "auto" and merged.get("model_id"):
+        # Ranking may have replaced the model after the lock check; re-check what it chose.
+        visual_blocked = [
+            c.canonical_name
+            for c in characters or []
+            if (c.identity_locks_json or {}).get("visual")
+            and (merged.get("integration_id"), merged.get("model_id"))
+            not in {
+                (f.get("integration_id"), f.get("model_id"))
+                for f in (c.approved_fallbacks_json or [])
+                if isinstance(f, dict)
+            }
+        ]
+    if visual_blocked:
+        valid = False
+        notes.append(
+            "Visual identity locked for "
+            + ", ".join(visual_blocked)
+            + f": video model '{merged.get('model_id')}' is not approved for them; approve it "
+            "through approved-models after a consistency test"
+        )
     return {
         "purpose": purpose,
         "policy": policy,
@@ -471,11 +514,15 @@ def _validate(session: Session, purpose: str, merged: dict[str, Any]) -> tuple[b
         return False, "Selected connection no longer exists"
     if integration.status not in ("VERIFIED", "ACCESS_VERIFIED"):
         return False, "Selected connection is not verified"
-    if integration.kind == "elevenlabs":
+    if integration.kind in DISCOVERED_KINDS:
         if production_resource(session, integration_id, "MODEL", merged.get("model_id")) is None:
-            return False, "Model is not a discovered, available TTS model of this connection"
+            return (
+                False,
+                "Model is not a discovered, available model of this connection for its purpose",
+            )
         if (
             purpose == "voice"
+            and DISCOVERED_KINDS[integration.kind]["has_voices"]
             and production_resource(session, integration_id, "VOICE", merged.get("voice_id"))
             is None
         ):
@@ -484,7 +531,7 @@ def _validate(session: Session, purpose: str, merged: dict[str, Any]) -> tuple[b
 
 
 def resolve_storyboard_plan(session: Session, storyboard: Storyboard) -> dict[str, Any]:
-    """Resolve every purpose for a storyboard, and the voice for every scene."""
+    """Resolve every purpose for a storyboard, and the voice and video model for every scene."""
     channel = session.get(ChannelRecord, storyboard.channel_id) if storyboard.channel_id else None
     scenes = session.scalars(
         select(StoryboardScene)
@@ -519,6 +566,15 @@ def resolve_storyboard_plan(session: Session, storyboard: Storyboard) -> dict[st
                 "voice": resolve_purpose(
                     session,
                     "voice",
+                    channel=channel,
+                    series_key=storyboard.series_key,
+                    episode_overrides=storyboard.production_overrides_json,
+                    scene_overrides=scene.production_overrides_json,
+                    characters=ordered,
+                ),
+                "video": resolve_purpose(
+                    session,
+                    "video",
                     channel=channel,
                     series_key=storyboard.series_key,
                     episode_overrides=storyboard.production_overrides_json,
@@ -856,15 +912,16 @@ def approve_model_fallback(
 ) -> dict[str, Any]:
     """Approve a model as technology for a locked character, without touching its identity.
 
-    This is how a newer TTS model reaches a locked voice: the voice id stays, the model is
-    added to the approved list, and production may then pick it through the hierarchy.
+    This is how a newer TTS model reaches a locked voice, and how a video model reaches a
+    locked look: the identity stays, the model is added to the approved list, and production
+    may then pick it through the hierarchy.
     """
     with Session(engine) as session, session.begin():
         row = session.get(CharacterBible, character_id)
         if row is None:
             raise PolicyError("Character not found")
         if production_resource(session, integration_id, "MODEL", model_id) is None:
-            raise PolicyError("Model is not a discovered, available TTS model of this connection")
+            raise PolicyError("Model is not a discovered, available model of this connection")
         fallbacks = list(row.approved_fallbacks_json or [])
         if any(
             f.get("integration_id") == integration_id and f.get("model_id") == model_id

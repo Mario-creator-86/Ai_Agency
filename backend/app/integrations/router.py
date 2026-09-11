@@ -17,6 +17,7 @@ from app.agents.services import (
 )
 from app.integrations.catalog import CATALOG
 from app.integrations.discovery import (
+    DISCOVERED_KINDS,
     ProductionCommand,
     ResourceMetadataCommand,
     catalog_view,
@@ -65,7 +66,7 @@ def create_settings_router() -> APIRouter:
             provider_catalogs = {
                 row["id"]: catalog_view(session, row["id"])
                 for row in integrations
-                if row["kind"] == "elevenlabs"
+                if row["kind"] in DISCOVERED_KINDS
             }
             selections = {
                 row.purpose: dict(integration_id=row.integration_id, version=row.version)
@@ -126,7 +127,7 @@ def create_settings_router() -> APIRouter:
                 str(identifier),
                 command,
             )
-            if command.kind == "elevenlabs":
+            if command.kind in DISCOVERED_KINDS:
                 checked = refresh_catalog(
                     request.app.state.engine,
                     request.app.state.credential_vault,
@@ -169,8 +170,8 @@ def create_settings_router() -> APIRouter:
                 raise HTTPException(404, "Conexiune inexistentă")
             kind, config, version = row.kind, row.config, row.version
             secrets = vault.decrypt(row.encrypted_secrets)
-        if kind == "elevenlabs":
-            return refresh_elevenlabs(identifier, request)
+        if kind in DISCOVERED_KINDS:
+            return refresh_resources(identifier, request)
         runtime = CATALOG[kind]["runtime"]
         try:
             if runtime == "llm":
@@ -210,7 +211,7 @@ def create_settings_router() -> APIRouter:
         }
 
     @router.post("/integrations/{identifier}/refresh-resources")
-    def refresh_elevenlabs(identifier: UUID, request: Request) -> dict:
+    def refresh_resources(identifier: UUID, request: Request) -> dict:
         try:
             return refresh_catalog(
                 request.app.state.engine,
