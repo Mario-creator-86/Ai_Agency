@@ -220,6 +220,9 @@ full simulated unattended cycle survives failures/restart without duplicate side
 The core VR$ Economy / VendorShop implementation is specified separately in PHASES 11–14 of the V5 economy roadmap section below; phase numbers should be normalized by the implementation lead into a single sequential project plan before coding.
 
 ## Always
+- [x] YouTube profile images: high → medium → default selection, per-connection persistence,
+  Verify/completed-Reconnect refresh, narrow CDN CSP and missing-thumbnail avatar (2026-09-11).
+  Both existing connections loaded real 800×800 images in Chromium; see `YOUTUBE_CONNECTIONS.md`.
 - [ ] Update CURRENT_STATUS.md
 - [ ] Update CHANGELOG.md
 - [ ] Update 16_DECISION_LOG.md for architecture decisions

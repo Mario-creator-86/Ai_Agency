@@ -132,7 +132,14 @@ def _channel_snapshot(item: dict) -> dict:
     statistics = item.get("statistics") or {}
     content = (item.get("contentDetails") or {}).get("relatedPlaylists") or {}
     thumbnails = snippet.get("thumbnails") or {}
-    thumbnail = (thumbnails.get("default") or thumbnails.get("medium") or {}).get("url")
+    thumbnail = next(
+        (
+            url
+            for size in ("high", "medium", "default")
+            if isinstance(url := (thumbnails.get(size) or {}).get("url"), str) and url.strip()
+        ),
+        None,
+    )
     return {
         "custom_url": snippet.get("customUrl"),
         "description": (snippet.get("description") or "")[:500],

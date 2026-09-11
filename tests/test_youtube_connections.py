@@ -119,6 +119,78 @@ def connect(engine, vault, connection_id):
     )
 
 
+@pytest.mark.parametrize(
+    ("thumbnails", "expected"),
+    [
+        (
+            {
+                "high": {"url": "https://example.invalid/high"},
+                "medium": {"url": "https://example.invalid/medium"},
+                "default": {"url": "https://example.invalid/default"},
+            },
+            "https://example.invalid/high",
+        ),
+        (
+            {"high": {"width": 800}, "medium": {"url": "https://example.invalid/medium"}},
+            "https://example.invalid/medium",
+        ),
+        (
+            {
+                "high": {"url": ""},
+                "medium": {"url": None},
+                "default": {"url": "https://example.invalid/default"},
+            },
+            "https://example.invalid/default",
+        ),
+        ({"high": {"url": "  "}, "medium": {}, "default": None}, None),
+        ({}, None),
+        (None, None),
+    ],
+)
+def test_thumbnail_quality_fallback(thumbnails, expected):
+    assert (
+        services._channel_snapshot({"snippet": {"thumbnails": thumbnails}})["thumbnail_url"]
+        == expected
+    )
+
+
+@pytest.mark.parametrize("action", ["verify", "reconnect"])
+def test_thumbnail_refresh_is_persisted_per_connection(
+    client, headers, engine, vault, google, connection, action
+):
+    first = connect(engine, vault, connection["id"])
+    second = services.create_connection(
+        engine,
+        vault,
+        name="Another connection",
+        client_id="other.apps.googleusercontent.com",
+        client_secret=CLIENT_SECRET,
+        redirect_uri=REDIRECT,
+        correlation_id=str(uuid4()),
+    )
+    google.channel = channel_payload("UC_other_test", "Other test channel")
+    other = connect(engine, vault, second["id"])
+    google.channel = channel_payload(first["channel"]["id"], first["channel"]["title"])
+
+    for thumbnail in ("https://example.invalid/refreshed-high.jpg", None):
+        google.channel["snippet"]["thumbnails"] = {"high": {"url": thumbnail}}
+        response = client.post(
+            f"/api/v1/youtube/connections/{first['id']}/{action}", headers=headers
+        )
+        assert response.status_code == 200
+        if action == "reconnect":
+            state = parse_qs(urlparse(response.json()["authorization_url"]).query)["state"][0]
+            response = client.get("/auth/youtube/callback", params={"code": "new", "state": state})
+            assert response.status_code == 200
+        else:
+            assert response.json()["channel"]["thumbnail_url"] == thumbnail
+        # A new request/session proves the URL was committed, not just returned by the action.
+        listed = client.get("/api/v1/youtube/connections", headers=headers).json()["connections"]
+        rows = {row["id"]: row for row in listed}
+        assert rows[first["id"]]["channel"]["thumbnail_url"] == thumbnail
+        assert rows[second["id"]]["channel"] == other["channel"]
+
+
 # --------------------------------------------------------------- what the Owner supplies --
 
 

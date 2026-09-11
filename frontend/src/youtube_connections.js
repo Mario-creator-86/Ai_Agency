@@ -147,11 +147,17 @@ export function renderYouTubeConnections(host, { api, notify }) {
       const identity = node('div', '', 'yt-channel');
       if (channel.thumbnail_url) {
         const avatar = /** @type {HTMLImageElement} */ (node('img', '', 'yt-avatar'));
+        avatar.referrerPolicy = 'no-referrer';
         avatar.src = channel.thumbnail_url;
         avatar.alt = '';
         avatar.width = 44;
         avatar.height = 44;
         identity.append(avatar);
+      } else {
+        const fallback = node('span', '', 'yt-avatar yt-avatar-fallback');
+        fallback.setAttribute('role', 'img');
+        fallback.setAttribute('aria-label', 'Canal fără imagine de profil');
+        identity.append(fallback);
       }
       const text = node('div');
       text.append(node('strong', channel.title || 'Canal fără nume'));

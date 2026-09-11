@@ -1,5 +1,22 @@
 # Architectural / Product Decision Log v5
 
+## ADR-YOUTUBE-AVATARS-001 — API thumbnail identity and narrow image CSP
+**Status:** Implemented and live verified, 2026-09-11
+
+The connection snapshot already stored a URL, but the browser's same-origin-only image policy
+blocked it. Select `snippet.thumbnails.high.url`, then medium, then default, skipping missing or
+empty URLs. Keep the URL unchanged in the existing per-connection JSON snapshot. Authorization
+and Verify already commit fresh snapshots; completed Reconnect uses the authorization callback.
+The existing channel request includes snippet/statistics plus id/contentDetails so the stored
+uploads-playlist metadata continues to work.
+
+Allow only `https://yt3.ggpht.com` and `https://yt3.googleusercontent.com` in addition to the existing
+image sources. Reject a broad `https:`/wildcard policy and an unnecessary backend image proxy.
+Use a neutral CSS silhouette only when there is no API thumbnail, not to mask a failed image load.
+No schema migration or channel-specific logic is needed. Rollback is a source rebuild/server
+restart; snapshots remain compatible. Regression tests cover quality fallback, per-connection
+refresh and CSP; live Chromium loaded both existing channel images at 800×800 after Verify.
+
 ## ADR-FOUNDATION-001 — Local modular monolith
 **Status:** Implemented, 2026-09-09
 

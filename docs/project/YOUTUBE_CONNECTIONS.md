@@ -72,6 +72,35 @@ tokens and account names; it caught a channel name sitting in a comment, which w
 
 ## Verification
 
+### Avatar repair — live check, 2026-09-11
+
+Both existing rows held valid Google thumbnail URLs, but the app sent `img-src 'self' data:`, so
+the browser blocked the images. The image policy now allows the two YouTube avatar origins
+`https://yt3.ggpht.com` and `https://yt3.googleusercontent.com`. Scripts, styles and connections
+remain same-origin. Images use `no-referrer` and a 44px circular cover layout.
+
+`_channel_snapshot` selects high → medium → default by nonempty URL, not by whether the size
+object exists. The selected URL is persisted unchanged in `channel_snapshot.thumbnail_url`.
+Verify and the completed Reconnect callback both replace that snapshot, including clearing a
+stale URL when YouTube returns no thumbnail. Only that missing-thumbnail case gets a neutral
+CSS silhouette. The existing request includes `snippet,statistics` and preserves its additional
+`id,contentDetails` parts for uploads-playlist metadata.
+
+`scripts/verify_youtube_avatars.mjs` was run against the real local studio with the Owner token
+passed privately through the environment. It clicked Verify for **Nexus Curiosity** and
+**Inside The Nexus**, re-read the saved connections, and confirmed each image decoded to
+**800×800**, with no image CSP violations. Evidence lives in
+`output/playwright/youtube-avatars-live.json` and `youtube-avatars-live.png`. Its separate
+browser-only missing-thumbnail fixture passed without changing the database. A real Google
+re-consent was not initiated; Reconnect callback refresh/isolation is covered by the automated
+stubbed-Google tests. The 62 targeted backend tests and 52 frontend tests passed, as did types
+and the frontend build.
+
+Official schema: [channels.list](https://developers.google.com/youtube/v3/docs/channels/list)
+and [channel thumbnails](https://developers.google.com/youtube/v3/docs/channels#snippet.thumbnails).
+
+### Original OAuth verification
+
 Backend: `tests/test_youtube_connections.py`, 30 tests against a stubbed Google — the token
 exchange, the channel read, single-use state, expiry, replay, an unknown state, the ERROR path
 surviving its own rollback, the client-change rule, multiple independent connections, and the
