@@ -3,6 +3,7 @@ import logging
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
+from datetime import UTC
 from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
@@ -36,6 +37,7 @@ from app.providers.registry import ProviderRegistry
 from app.publishing.router import create_publishing_router
 from app.runbook.router import create_runbook_router
 from app.runbook.stages import build_stage_runners
+from app.runbook.weekly import WEEKLY_JOB_NAME
 from app.schemas import PolicyCommand, PolicyResult
 from app.security import require_owner
 from app.services import CommandConflict, change_stop, read_events, snapshot, utc_now
@@ -53,6 +55,13 @@ from app.workforce.router import create_workforce_router
 from app.youtube.router import create_youtube_callback_router, create_youtube_router
 
 logger = logging.getLogger("studio.api")
+
+
+def _utc_now_plus(seconds: int) -> str:
+    """An ISO timestamp `seconds` from now; the scheduler stores strings."""
+    from datetime import datetime, timedelta
+
+    return (datetime.now(UTC) + timedelta(seconds=seconds)).isoformat()
 
 
 def register_seeded_ollama(engine: Engine, registry: ProviderRegistry) -> None:
@@ -81,7 +90,7 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
         # Migrations/bootstrap are explicit startup commands, never hidden destructive schema edits.
         with engine.connect() as connection:
             revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
-            if revision != "0024_spending_budget":
+            if revision != "0025_role_contracts_v2":
                 raise RuntimeError("Run scripts/bootstrap.py with this application version")
             if connection.scalar(text("SELECT COUNT(*) FROM owner_policy")) != 1:
                 raise RuntimeError("Run scripts/bootstrap.py to initialize the studio")
@@ -150,8 +159,21 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
                 # renders — on a decision nobody took.
                 active=False,
             )
+            # The Director's weekly performance review: standing policy ordered by the Owner,
+            # so the job is active from birth. The first pass waits an hour — a studio that
+            # has published nothing yet reports exactly that instead of spending tokens —
+            # and the autonomy stop gates every fire like any other scheduled work.
+            ensure_scheduled_job(
+                engine,
+                name=WEEKLY_JOB_NAME,
+                workflow_type="WEEKLY_REVIEW",
+                interval_seconds=7 * 86400,
+                missed_policy="CATCH_UP",
+                first_run_at=_utc_now_plus(3600),
+                active=True,
+            )
             handlers = build_task_handlers(
-                engine, settings, app.state.credential_vault, app.state.stage_runners
+                engine, settings, app.state.credential_vault, app.state.stage_runners, registry
             )
 
             async def run_worker() -> None:

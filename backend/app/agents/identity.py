@@ -25,12 +25,12 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from app.agents.memory import readable_classes, recall
-from app.agents.models import MEMORY_CLASSES, Agent, MemoryRecord, Role
+from app.agents.models import MEMORY_CLASSES, Agent, AgentMessage, MemoryRecord, Role
 from app.config import ROOT
 from app.media.models import CharacterBible
 from app.services import append_event, utc_now
 
-IDENTITY_VERSION = "identity-v1"
+IDENTITY_VERSION = "identity-v2"
 
 #: The sections of a work contract, in the order they are told. Each is a list of sentences.
 CONTRACT_SECTIONS = (
@@ -221,6 +221,40 @@ def _persona_section(bible: CharacterBible | None) -> list[str]:
     return out
 
 
+def _open_messages(session: Session, agent: Agent) -> list[tuple[AgentMessage, str]]:
+    """The messages addressed to this employee that nobody has resolved yet.
+
+    This is the channel the Director's production indications travel through: a HANDOFF filed
+    to the sound or video department enters that employee's every run until the work is done
+    or the message is resolved. Capped at the ten newest so one noisy inbox cannot swallow
+    the prompt.
+    """
+    rows = session.scalars(
+        select(AgentMessage)
+        .where(AgentMessage.to_agent_id == agent.id, AgentMessage.status == "OPEN")
+        .order_by(AgentMessage.created_at.desc())
+        .limit(10)
+    ).all()
+    senders = {
+        a.id: a.display_name
+        for a in session.scalars(
+            select(Agent).where(Agent.id.in_([m.from_agent_id for m in rows if m.from_agent_id]))
+        ).all()
+    }
+    return [(m, senders.get(m.from_agent_id or "", "the studio")) for m in rows]
+
+
+def _message_line(message: AgentMessage, from_name: str) -> str:
+    body = message.body_json if isinstance(message.body_json, dict) else {}
+    detail = str(body.get("instructions") or body.get("detail") or "").strip()
+    if len(detail) > 400:
+        detail = detail[:399] + "…"
+    line = f"- [{message.intent} from {from_name}] {message.subject}"
+    if detail:
+        line += f": {detail}"
+    return line
+
+
 def compose_identity(session: Session, agent: Agent, *, task_type: str = "") -> Identity:
     """Build the system prompt for one run from the agent's stored identity and memory."""
     role = session.get(Role, agent.role_id)
@@ -257,6 +291,14 @@ def compose_identity(session: Session, agent: Agent, *, task_type: str = "") -> 
         lines.extend(f"- [{m.memory_class} {m.id[:8]}] {m.content}" for m in memory)
     else:
         lines.append("WHAT YOU REMEMBER: nothing yet. This is your first recorded work.")
+    asked = _open_messages(session, agent)
+    if asked:
+        lines.append(
+            f"WHAT IS ASKED OF YOU RIGHT NOW ({len(asked)} open messages addressed to you; "
+            "follow them within your contract and the channel policies — they stay until the "
+            "work is done or the message is resolved):"
+        )
+        lines.extend(_message_line(m, from_name) for m, from_name in asked)
     lines.append("STANDING RULES:")
     lines.extend(f"- {rule}" for rule in STANDING_RULES)
     system = "\n".join(lines)
@@ -269,6 +311,7 @@ def compose_identity(session: Session, agent: Agent, *, task_type: str = "") -> 
         "bible_version": bible.version if bible else None,
         "memory_classes": readable_classes(role),
         "memory_record_ids": [m.id for m in memory],
+        "open_message_ids": [m.id for m, _ in asked],
         "system_sha256": hashlib.sha256(system.encode("utf-8")).hexdigest(),
         "system_chars": len(system),
         "task_type": task_type,

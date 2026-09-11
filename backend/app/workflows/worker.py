@@ -26,6 +26,11 @@ from sqlalchemy.orm import Session
 from app.config import Settings
 from app.runbook.models import DailyRun
 from app.runbook.services import DAILY_RUN_TASK, SafeModeActive, execute_daily_run
+from app.runbook.weekly import (
+    WEEKLY_REVIEW_TASK,
+    WeeklyReviewError,
+    execute_weekly_review,
+)
 from app.story.services import business_date
 from app.workflows.services import claim_task, complete_task, fail_task, scheduler_tick
 
@@ -38,6 +43,12 @@ DAILY_RUN = DAILY_RUN_TASK
 #: The job that starts the day. Seeded at start-up when the worker is enabled, so a fresh studio
 #: has its schedule without the Owner having to know the API for one.
 DAILY_JOB_NAME = "daily_main"
+
+#: The Director's weekly performance review, as a scheduled workflow type and a job name.
+#: Active from the first start-up — the Owner ordered the weekly check as standing policy —
+#: but still behind the autonomy stop like every other scheduled work, and a week that
+#: already had its review is skipped inside the task itself.
+WEEKLY_REVIEW = WEEKLY_REVIEW_TASK
 
 #: A daily run can take minutes — agents, a render, quality control. The lease has to outlast it,
 #: or the queue would hand the same run to the next pass while this one is still rendering.
@@ -55,7 +66,11 @@ class NonRetryable(RuntimeError):
 
 
 def build_task_handlers(
-    engine: Engine, settings: Settings, vault: Any, stage_runners: dict[str, Any] | None
+    engine: Engine,
+    settings: Settings,
+    vault: Any,
+    stage_runners: dict[str, Any] | None,
+    registry: Any = None,
 ) -> dict[str, TaskHandler]:
     """The dispatch table: task type to the function that performs it."""
 
@@ -90,7 +105,16 @@ def build_task_handlers(
             raise NonRetryable(str(exc)) from exc
         return {"status": result["status"], "run_id": result["id"], "date": today}
 
-    return {DAILY_RUN: daily_run}
+    def weekly_review(task: dict[str, Any]) -> dict[str, Any]:
+        if registry is None:
+            raise NonRetryable("Revizia săptămânală are nevoie de registrul de furnizori.")
+        try:
+            result = execute_weekly_review(engine, registry, correlation_id=task["id"])
+        except WeeklyReviewError as exc:
+            raise NonRetryable(str(exc)) from exc
+        return result
+
+    return {DAILY_RUN: daily_run, WEEKLY_REVIEW: weekly_review}
 
 
 def work_once(

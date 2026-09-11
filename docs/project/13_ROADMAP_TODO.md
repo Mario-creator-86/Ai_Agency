@@ -512,3 +512,12 @@ Evidence: `scratch/verify_conversation_live.mjs` 14/14 in Chromium; 79/79 fronte
 - [x] Confirmed agents have no tool access (single-prompt runs); STATUS reports are filed by deterministic stage code.
 - [x] Confirmed the per-channel production criteria (FLEXIBLE variants vs CONSISTENCY_LOCKED identity) are implemented end to end; open items are configuration: bind+lock character voices, route storyboards to channels (`channel_id`), pick organization defaults.
 - [x] «⛶ Extende» button on the Agent Inspector: fullscreen reading of the whole chat and history, restore included. Verified 16/16 in Chromium.
+
+## The Owner's roles: sound, video, weekly Director review — 2026-09-11
+
+- [x] Contracts v2: sound artist and video editor steward their technology within policy and follow the Director's written indications; the Director decides from analytics and verifies weekly. Migration 0025 re-seeds only never-Owner-edited roles.
+- [x] Open messages addressed to an agent enter its composed identity (identity v2) — the channel for the Director's indications.
+- [x] Weekly performance review: scheduled every 7 days (active) + Owner button + POST /runbook/weekly-review; digest from recorded metrics; Director's answer filed as HANDOFF to sound and video + STATUS to her inbox; nothing published → honest skip at zero tokens.
+- [ ] Owner configuration still open: bind + lock character voices (Channel B), route storyboards to channels (`channel_id`), pick organization default model/voice, connect real publications so the weekly review has numbers.
+
+Evidence: `scratch/verify_weekly_review_ui.mjs` 5/5 live; backend 526/1; frontend 79/79.

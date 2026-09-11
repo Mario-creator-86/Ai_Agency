@@ -14,7 +14,7 @@ from uuid import uuid4
 
 import pytest
 from app.agents.director import DirectorError, director_review, file_stage_reports
-from app.agents.identity import compose_identity, seed_role_contracts
+from app.agents.identity import compose_identity, load_role_contracts, seed_role_contracts
 from app.agents.memory import recall, remember
 from app.agents.messages import open_messages, post_message
 from app.agents.models import Agent, AgentMessage, AgentRun, MemoryRecord, ModelRecord, Role
@@ -89,11 +89,12 @@ def registry_with(staffed, answer):
 
 
 def test_every_employee_is_told_who_it_is_from_stored_data(engine, staffed):
+    seed_version = load_role_contracts().version
     with Session(engine) as session:
         for role_name, agent in staffed["agents"].items():
             row = session.get(Agent, agent.id)
             role = session.get(Role, row.role_id)
-            assert role.contract_version == 1 and role.work_contract_json["reports_to"]
+            assert role.contract_version == seed_version and role.work_contract_json["reports_to"]
             for section in ("watch_for", "investigate", "correct", "never_let_pass"):
                 assert role.work_contract_json[section], (role_name, section)
             assert set(role.memory_scope_json) == {"read", "write"}
@@ -107,11 +108,59 @@ def test_every_employee_is_told_who_it_is_from_stored_data(engine, staffed):
             assert "NEVER LET PASS:" in identity.system and "STANDING RULES:" in identity.system
             assert f"YOUR CHARACTER: {bible.canonical_name}." in identity.system
             assert "WHAT YOU REMEMBER: nothing yet" in identity.system
-            assert identity.context["identity_version"] == "identity-v1"
+            assert identity.context["identity_version"] == "identity-v2"
             assert identity.context["character_id"] == bible.id
             assert identity.context["memory_record_ids"] == []
         sarah = session.get(Agent, staffed["agents"]["Director"].id)
         assert "Show me the evidence" in compose_identity(session, sarah).system
+
+
+def test_an_open_message_reaches_the_employee_it_is_addressed_to(engine, staffed):
+    """The Director's written indications travel with the employee into every run.
+
+    A HANDOFF filed to the sound department appears in Lyra's composed identity — subject,
+    intent, sender — and in the context manifest; nobody else's copy does, and a resolved
+    message stops following the employee around.
+    """
+    with Session(engine) as session, session.begin():
+        sarah_id = staffed["agents"]["Director"].id
+        lyra_id = staffed["agents"]["VoiceArtist"].id
+        kael_id = staffed["agents"]["VideoEditor"].id
+        lyra = session.get(Agent, lyra_id)
+        before = compose_identity(session, lyra).system
+        assert "WHAT IS ASKED OF YOU RIGHT NOW" not in before
+        posted = post_message(
+            session,
+            intent="HANDOFF",
+            subject="Indicații de producție — voce mai caldă, ritm lent la cifre",
+            body={
+                "instructions": "Alege vocea potrivită pentru publicul RO; păstrează tonul calm."
+            },
+            from_agent_id=sarah_id,
+            to_agent_id=lyra_id,
+        )
+        posted_id = posted.id
+    with Session(engine) as session:
+        lyra_row = session.get(Agent, lyra_id)
+        identity = compose_identity(session, lyra_row)
+        assert "WHAT IS ASKED OF YOU RIGHT NOW (1 open messages addressed to you" in identity.system
+        assert "Indicații de producție — voce mai caldă" in identity.system
+        assert "[HANDOFF from Sarah" in identity.system
+        assert "Alege vocea potrivită pentru publicul RO" in identity.system
+        assert identity.context["open_message_ids"] == [posted_id]
+        kael_row = session.get(Agent, kael_id)
+        assert "WHAT IS ASKED OF YOU RIGHT NOW" not in compose_identity(session, kael_row).system
+        sarah_row = session.get(Agent, sarah_id)
+        assert "Indicații de producție" not in compose_identity(session, sarah_row).system
+    with Session(engine) as session, session.begin():
+        message = session.get(AgentMessage, posted_id)
+        message.status = "RESOLVED"
+        message.resolved_by = "Test"
+    with Session(engine) as session:
+        lyra_row = session.get(Agent, lyra_id)
+        after = compose_identity(session, lyra_row)
+        assert "WHAT IS ASKED OF YOU RIGHT NOW" not in after.system
+        assert after.context["open_message_ids"] == []
 
 
 def test_reseeding_keeps_the_owners_contract(client, headers, engine, staffed):
@@ -120,23 +169,24 @@ def test_reseeding_keeps_the_owners_contract(client, headers, engine, staffed):
         role = session.get(Role, role_id)
         contract = dict(role.work_contract_json)
         scope = dict(role.memory_scope_json)
+        seeded_version = role.contract_version
     contract["watch_for"] = ["the Owner's own rule about thumbnails"]
     response = client.put(
         f"/api/v1/agents/roles/{role_id}/contract",
         headers=headers,
-        json={"contract": {**contract, "memory_scope": scope}, "expected_version": 1},
+        json={"contract": {**contract, "memory_scope": scope}, "expected_version": seeded_version},
     )
     assert response.status_code == 200, response.text
-    assert response.json()["contract_version"] == 2
+    assert response.json()["contract_version"] == seeded_version + 1
     assert seed_role_contracts(engine) == 0
     with Session(engine) as session:
         role = session.get(Role, role_id)
         assert role.work_contract_json["watch_for"] == ["the Owner's own rule about thumbnails"]
-        assert role.contract_version == 2
+        assert role.contract_version == seeded_version + 1
     stale = client.put(
         f"/api/v1/agents/roles/{role_id}/contract",
         headers=headers,
-        json={"contract": {**contract, "memory_scope": scope}, "expected_version": 1},
+        json={"contract": {**contract, "memory_scope": scope}, "expected_version": seeded_version},
     )
     assert stale.status_code == 422
 
@@ -156,7 +206,7 @@ def test_a_run_carries_the_identity_and_records_what_the_model_was_given(
     assert model.calls[-1]["prompt"] == "Ești funcțională?"
     with Session(engine) as session:
         run = session.get(AgentRun, result["id"])
-        assert run.context_json["identity_version"] == "identity-v1"
+        assert run.context_json["identity_version"] == "identity-v2"
         assert run.context_json["role_name"] == "FactChecker"
         assert run.context_json["system_sha256"]
     view = client.get(f"/api/v1/agents/{elena.id}/identity", headers=headers).json()
@@ -374,10 +424,14 @@ def test_stage_reports_are_filed_by_their_owners_and_the_director_decides(
         assert session.scalar(
             select(DomainEvent).where(DomainEvent.event_type == "director.review_completed")
         )
-        # Kael sees the request in his identity; the publish report was acknowledged nobody's
-        # business but Sarah's, so it stays open until she reads it.
+        # The Director's request to Kael is an open message addressed to him, so it travels
+        # in his identity until it is resolved — that is how assignments reach the employee
+        # now. Kael's own report went to her inbox: not addressed to him, never in his
+        # prompt.
         kael_row = session.get(Agent, kael.id)
-        assert "Investigate: edit_and_qc" not in compose_identity(session, kael_row).system
+        kael_identity = compose_identity(session, kael_row).system
+        assert "Investigate: edit_and_qc" in kael_identity
+        assert "WHAT IS ASKED OF YOU RIGHT NOW (1 open messages addressed to you" in kael_identity
     listed = client.get("/api/v1/agents/messages?status=OPEN", headers=headers).json()["messages"]
     assert {m["intent"] for m in listed} == {"STATUS", "REQUEST_INFO"}
     # The Owner may ask for a review at any time; the app's own registry has no model here,

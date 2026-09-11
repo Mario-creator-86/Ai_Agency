@@ -3302,6 +3302,27 @@ element('start-run-btn').addEventListener('click', async (event) => {
   }
 });
 
+// The Director's weekly performance review, on demand: the same queued task the standing
+// schedule fires, so the outcome lands in the ledger and in the departments' inboxes the
+// same way. A week with nothing published reports exactly that, at no token cost.
+element('start-weekly-review-btn').addEventListener('click', async (event) => {
+  const button = /** @type {HTMLButtonElement} */ (event.currentTarget);
+  button.disabled = true;
+  runbookStatus('Predau revizia săptămânală Directorului…', false);
+  try {
+    const started = await api('/runbook/weekly-review', {
+      method: 'POST',
+      body: JSON.stringify({ command_id: crypto.randomUUID() }),
+    });
+    runbookStatus(started.message || 'Revizia săptămânală a fost pornită.', false);
+    watchTheRun();
+  } catch (err) {
+    runbookStatus(err.message, true);
+  } finally {
+    button.disabled = false;
+  }
+});
+
 /** While a day is on its way, the panel refreshes itself; it stops when the day is closed. */
 let runWatcher = null;
 function watchTheRun() {

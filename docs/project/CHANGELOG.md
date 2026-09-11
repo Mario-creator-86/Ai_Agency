@@ -1,5 +1,31 @@
 # Changelog
 
+## Sound, video and a Director who checks weekly — the roles the Owner ordered — 2026-09-11, ZCode
+
+- **The contracts say who does what now.** Seed v2 (migration 0025, data-only; a role the
+  Owner edited keeps the Owner's text): the sound artist chooses the voice and TTS model
+  where the policy allows and follows the Director's written indications; the video editor
+  picks film models by quality, recorded cost and what kept viewers watching; the Director
+  decides from measured performance, instructs the two departments in writing, and never
+  skips the weekly review while anything published exists.
+- **Indications travel.** Open messages addressed to an employee enter that employee's every
+  run ("WHAT IS ASKED OF YOU RIGHT NOW", identity v2, capped at ten, recorded on the run).
+  The Director files a HANDOFF to the sound or video department; from the next run onward
+  the employee works under it until it is resolved.
+- **The weekly review exists.** Every seven days (standing policy, autonomy stop still
+  gates) or on the Owner's new button in the runbook panel, the studio compiles the week's
+  measured picture — views, retention, click-through per published video, per-channel
+  totals, open strategy recommendations — and puts it in front of the Director through her
+  identity and memory. Her answer becomes HANDOFF indications to Lyra and Kael plus a STATUS
+  report in her inbox. A week with nothing published reports exactly that and spends no
+  tokens; the clock reviews a week once. Live-verified: the first run answered "Revizia
+  săptămânală 2026-S37: nimic publicat, nimic de măsurat".
+- Failed agent runs log the exception with its traceback.
+- Backend 526 passed / 1 skipped; ruff, format, mypy clean; frontend 79/79; UI checks 5/5
+  in Chromium. Limits, honestly: with no publications and no bound voices/models, the review
+  and the locks have nothing to chew on until the Owner configures them — the machinery
+  waits ready.
+
 ## What the Owner asked about the pipeline, and an expandable inspector — 2026-09-11, ZCode
 
 Investigation turn; one small frontend addition.

@@ -480,6 +480,7 @@ def run_agent_task(
         logger.error(
             "agent_run_failed",
             extra={"agent_id": agent_id, "error": type(exc).__name__},
+            exc_info=exc,
         )
         status = "FAILED"
         output_text = None

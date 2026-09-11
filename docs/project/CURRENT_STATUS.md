@@ -13,6 +13,46 @@ database resource discovery/refresh, separate production choices, UI and regress
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
 
+## The roles the Owner ordered: sound, video, and a Director who checks weekly — 2026-09-11, ZCode (verified, scope released)
+
+Owner directive implemented end to end, live-verified against the running studio:
+
+- **Contracts v2** (`config/role_contracts.json`, migration `0025_role_contracts_v2` data-only):
+  the sound artist stewards the audio — chooses voice and TTS model where the channel's
+  policy allows, weighs naturalness, recorded cost and measured retention, follows the
+  Director's written indications, escalates when an indication would break a lock; the video
+  editor the same for film models (quality/cost/what kept viewers watching); the Director
+  decides from measured performance, sends production indications as messages to the two
+  departments, and never skips the weekly review while anything published exists. A role the
+  Owner has edited keeps the Owner's text (the migration only offers the newer seed).
+- **The Director's indications now reach the employees.** Open messages addressed to an
+  agent enter that agent's composed identity ("WHAT IS ASKED OF YOU RIGHT NOW", capped at
+  ten, recorded in the context manifest) — identity v2. Resolved messages stop following
+  the employee.
+- **The weekly performance review** (`backend/app/runbook/weekly.py`): a scheduled job every
+  seven days (active standing policy, first fire an hour after birth) plus an Owner button
+  in the runbook panel and `POST /runbook/weekly-review`. It reads only what is recorded
+  (publications with measured views/retention/CTR, per-channel totals, open strategy
+  recommendations), puts the digest in front of the Director through her identity, and files
+  her answer as HANDOFF indications to the sound and video departments and a STATUS report
+  in her inbox. A week with nothing published reports exactly that and costs no tokens —
+  verified live: task `COMPLETED`, "Revizia săptămânală 2026-S37: nimic publicat, nimic de
+  măsurat". The autonomy stop gates both the schedule and the button; a week is reviewed at
+  most once by the clock.
+- Failed agent runs now log the exception with its traceback (`exc_info`), for diagnosis.
+
+Tests: backend 526 passed / 1 skipped (new: open-messages identity test, three weekly-review
+tests, scheduler asserts the two standing jobs); ruff, format, mypy clean; frontend 79/79,
+tsc clean, build OK; docs integrity passes. Live: server restarted on 0025, contracts at v2,
+both jobs registered (daily dormant, weekly active), UI checks 5/5
+(`scratch/verify_weekly_review_ui.mjs`). The pre-existing secret-scan flag
+(`discovery.py:80`, keyword false positive in Codex's file) stands, untouched.
+
+Honest limits: the review reads the numbers `performance_intake` has collected — with no
+publications yet there is nothing to judge, and the departments have no bound voices/models
+to be bound by indications until those are configured (the Owner's next configuration step,
+not code).
+
 ## ZCode investigation + inspector extend — 2026-09-11 (verified, scope released)
 
 Owner questions answered by investigation (no behaviour change): the double "Sarah said"

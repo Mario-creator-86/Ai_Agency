@@ -23,6 +23,7 @@ from app.integrations.vault import CredentialVault
 from app.models import OwnerPolicy
 from app.runbook.models import DailyRun
 from app.runbook.services import SafeModeActive
+from app.runbook.weekly import WEEKLY_JOB_NAME
 from app.workflows.models import ScheduledJob, TaskQueueItem
 from app.workflows.services import (
     enqueue_task,
@@ -260,13 +261,21 @@ def test_the_application_seeds_the_daily_job_only_when_the_worker_is_on(settings
     with TestClient(create_app(settings.model_copy(update={"worker_enabled": True}))):
         pass
     with Session(engine) as session:
-        jobs = list(session.scalars(select(ScheduledJob)))
-    assert [job.name for job in jobs] == [DAILY_JOB_NAME]
-    assert jobs[0].workflow_type == DAILY_RUN
-    assert jobs[0].missed_policy == "CATCH_UP"
+        jobs = {job.name: job for job in session.scalars(select(ScheduledJob))}
+    # Two standing jobs: the day (dormant until the Owner starts it) and the Director's
+    # weekly performance review (active standing policy, first fire an hour after birth).
+    assert set(jobs) == {DAILY_JOB_NAME, WEEKLY_JOB_NAME}
+    daily = jobs[DAILY_JOB_NAME]
+    assert daily.workflow_type == DAILY_RUN
+    assert daily.missed_policy == "CATCH_UP"
     # Dormant: a schedule that fired within seconds of first start-up would begin a real day —
     # agents, tokens, renders — on a decision nobody took.
-    assert jobs[0].is_active is False
+    assert daily.is_active is False
+    weekly = jobs[WEEKLY_JOB_NAME]
+    assert weekly.workflow_type == "WEEKLY_REVIEW"
+    assert weekly.missed_policy == "CATCH_UP"
+    assert weekly.is_active is True
+    assert weekly.interval_seconds == 7 * 86400
 
 
 def test_a_dormant_schedule_fires_nothing_and_activation_is_a_recorded_decision(engine):
