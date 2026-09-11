@@ -170,6 +170,54 @@ def test_migration_repeat_and_schema_match(engine):
         assert compare_metadata(MigrationContext.configure(connection), Base.metadata) == []
 
 
+def test_table_rebuild_migration_succeeds_when_rows_reference_the_table(settings):
+    """A batch migration rebuilds a table; rows in other tables that point at it must not
+    stop it. This is the live studio's shape: channels with brand assets bound to them.
+    Migrating passed on an empty database and failed on the Owner's, so the fixture is
+    the referencing row, and the engine is the real one (foreign keys enforced)."""
+    old = create_db_engine(settings.database_url)
+    migrate(old, "0020_character_persona")
+    channel, asset = str(uuid4()), str(uuid4())
+    with old.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO channel_record (id, channel_name, channel_type, platform, "
+                "upload_privacy_default, status, created_at) VALUES "
+                "(:id, 'Bound channel', 'MAIN_FACTUAL', 'YOUTUBE', 'PRIVATE', 'UNCONFIGURED', "
+                "'2026-09-11T00:00:00+00:00')"
+            ),
+            {"id": channel},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO channel_brand_asset (id, channel_id, asset_type, content_or_uri, "
+                "created_at) VALUES (:id, :channel, 'TAGLINE', 'x', '2026-09-11T00:00:00+00:00')"
+            ),
+            {"id": asset, "channel": channel},
+        )
+    migrate(old)
+    with old.connect() as connection:
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+            "0021_production_policy"
+        )
+        # Enforcement is back on for later work, and the rebuilt table kept its rows.
+        assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar() == 1
+        assert connection.exec_driver_sql("PRAGMA foreign_key_check").fetchall() == []
+        assert (
+            connection.scalar(
+                text("SELECT channel_id FROM channel_brand_asset WHERE id = :id"), {"id": asset}
+            )
+            == channel
+        )
+        assert (
+            connection.scalar(
+                text("SELECT production_policy FROM channel_record WHERE id = :id"), {"id": channel}
+            )
+            is None
+        )
+    old.dispose()
+
+
 def test_stale_write_conflict_and_no_change_audit(engine):
     unchanged = change_stop(engine, stop_command(stopped=True))
     assert unchanged.status == "NO_CHANGE" and unchanged.event_id is None

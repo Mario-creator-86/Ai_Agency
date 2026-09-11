@@ -41,6 +41,24 @@ def create_db_engine(database_url: str) -> Engine:
 def migrate(engine: Engine, revision: str = "head") -> None:
     config = Config(str(ROOT / "alembic.ini"))
     config.set_main_option("script_location", str(ROOT / "backend/migrations"))
-    with engine.begin() as connection:
-        config.attributes["connection"] = connection
-        command.upgrade(config, revision)
+    with engine.connect() as connection:
+        # Batch migrations rebuild a table (copy, drop, rename). With foreign keys enforced,
+        # SQLite refuses to drop a table that other rows still reference, so a migration that
+        # passed on an empty database failed on a studio with YouTube channels bound to
+        # channel records. Enforcement is suspended for this connection only, outside the
+        # transaction (the pragma is a no-op inside one), and the result is checked before
+        # it comes back on — the recipe SQLite and Alembic document for table rebuilds.
+        raw = connection.connection.driver_connection
+        if raw is None:
+            raise RuntimeError("The migration connection has no SQLite driver connection")
+        raw.execute("PRAGMA foreign_keys=OFF")
+        try:
+            with connection.begin():
+                config.attributes["connection"] = connection
+                command.upgrade(config, revision)
+            violations = raw.execute("PRAGMA foreign_key_check").fetchall()
+            if violations:
+                tables = sorted({str(row[0]) for row in violations})
+                raise RuntimeError("Migration left foreign key violations in: " + ", ".join(tables))
+        finally:
+            raw.execute("PRAGMA foreign_keys=ON")
