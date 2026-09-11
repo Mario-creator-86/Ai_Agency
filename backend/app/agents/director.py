@@ -18,11 +18,11 @@ import json
 from typing import Any
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from app.agents.identity import blocker_of, parse_structured
+from app.agents.identity import blocker_of, clipped, parse_structured
 from app.agents.memory import agent_for_role, remember
 from app.agents.messages import message_view, open_messages, post_message, resolve_message
 from app.agents.models import Agent, Role
@@ -33,6 +33,9 @@ from app.services import append_event
 from app.workforce.services import measure_workforce
 
 REVIEW_TEMPLATE_VERSION = "director-review-v1"
+#: How many inbox messages one review reads. A review is a decision per message; a model
+#: given sixty wrote about them instead of deciding.
+REVIEW_BATCH = 12
 ACTIONS = ("ACKNOWLEDGE", "REQUEST_INVESTIGATION", "APPROVE", "REJECT", "ESCALATE_TO_OWNER")
 
 
@@ -46,11 +49,13 @@ class Decision(BaseModel):
     action: str = Field(pattern="^(" + "|".join(ACTIONS) + ")$")
     note: str = Field(default="", max_length=1000)
     assign_to_role: str | None = Field(default=None, max_length=100)
+    _clip_note = field_validator("note", mode="before")(clipped(1000))
 
 
 class DirectorReview(BaseModel):
     model_config = ConfigDict(extra="ignore")
     summary: str = Field(min_length=1, max_length=2000)
+    _clip_summary = field_validator("summary", mode="before")(clipped(2000))
     decisions: list[Decision] = Field(default_factory=list, max_length=60)
     priorities: list[str] = Field(default_factory=list, max_length=3)
 
@@ -62,7 +67,10 @@ _INSTRUCTIONS = (
     "REQUEST_INVESTIGATION (name the role that must investigate, with what you need to see), "
     "APPROVE or REJECT (a hold, a proposal or a request), or ESCALATE_TO_OWNER (a decision "
     "that is the Owner's). Base every decision on the evidence in the data, not on preference, "
-    "and never on fewer than three samples where a sample size is given. Return only JSON: "
+    "and never on fewer than three samples where a sample size is given. Write the JSON "
+    "object and nothing else: do not list, restate or summarise the messages first — any "
+    "text before the object is discarded unread, and the object must be complete. Return "
+    "only JSON: "
     '{"summary": "...", "decisions": [{"message_id": "...", "action": "...", "note": "...", '
     '"assign_to_role": "RoleName" | null}], "priorities": ["...", "...", "..."]}.\n'
 )
@@ -334,7 +342,12 @@ def director_review(
             raise DirectorError("No active Director")
         director_id = director.id
         names = {a.id: a.display_name for a in session.scalars(select(Agent))}
-        inbox = [message_view(m, names) for m in open_messages(session, inbox=True, limit=60)]
+        # Twelve at a time. Given sixty messages in one prompt the Director on her model
+        # wrote twelve thousand tokens of inventory and never reached a decision; given a
+        # dozen she can finish. The evening review comes round again while more is open.
+        inbox = [
+            message_view(m, names) for m in open_messages(session, inbox=True, limit=REVIEW_BATCH)
+        ]
     if not inbox:
         return {"agent_id": director_id, "reviewed": 0, "applied": [], "summary": "Inbox empty."}
     facts = {
@@ -355,7 +368,9 @@ def director_review(
     }
     payload = json.dumps(facts, ensure_ascii=False, default=str)[:16000]
     prompt = _INSTRUCTIONS + wrap_in_inert_boundary(payload, "director-inbox")
-    result = run_agent_task(
+    from app.agents.structured import structured_run  # noqa: PLC0415
+
+    review, result, formatted = structured_run(
         engine,
         registry,
         director_id,
@@ -363,15 +378,18 @@ def director_review(
         prompt,
         REVIEW_TEMPLATE_VERSION,
         correlation,
+        DirectorReview,
+        '{"summary": "...", "decisions": [{"message_id": "...", "action": "ACKNOWLEDGE | '
+        'REQUEST_INVESTIGATION | APPROVE | REJECT | ESCALATE_TO_OWNER", "note": "...", '
+        '"assign_to_role": "RoleName" | null}], "priorities": ["...", "...", "..."]}',
         summary=(
             f"Citesc inboxul de seară: {len(facts['inbox'])} mesaje deschise și rezultatul "
             f"a {len(facts['stage_outcomes'])} etape."
         ),
-        max_tokens=7500,
+        max_tokens=24000,
         temperature=0.1,
-        emit_message=False,
     )
-    text = result.get("output_text") or ""
+    text = (formatted or result).get("output_text") or ""
     if result["status"] != "SUCCEEDED" or not text.strip():
         raise DirectorError(
             f"The Director produced no usable review ({result['status']}: "
@@ -395,7 +413,6 @@ def director_review(
             "reviewed": 0,
             "blocked": blocker.reason,
         }
-    review = parse_structured(text, DirectorReview)
     if not isinstance(review, DirectorReview):
         raise DirectorError("The Director's review did not match the schema; nothing was decided")
     with Session(engine) as session, session.begin():

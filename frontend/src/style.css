@@ -701,6 +701,8 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 .ledger-mail:hover { background: var(--surface-quiet); }
 .ledger-arrow { color: var(--ink-3); }
 .ledger-open { margin-top: 3px; font-size: 11px; color: var(--teal); font-weight: 600; }
+.ledger-subject { margin-top: 2px; color: var(--ink); font-weight: 600; overflow-wrap: anywhere; }
+.ledger-mail .ledger-text { margin-top: 1px; }
 .ledger-item.ledger-owner-mail { border-left-color: #c0392b; background: #fbf1ee; }
 .ledger-item.ledger-owner-mail .ledger-head, .ledger-item.ledger-owner-mail .ledger-head strong { color: #8e2b1f; }
 .ledger-item.ledger-owner-mail .ledger-open { color: #8e2b1f; }

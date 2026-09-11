@@ -128,7 +128,7 @@ function short(text, max = 160) {
  *
  * @param {{event_type: string, aggregate_id?: string, payload?: any}} event
  * @param {Record<string, string>} [names] agent id → display name
- * @returns {{who: string, label: string, text: string, kind: string, to?: string, thread?: string|null, forOwner?: boolean}}
+ * @returns {{who: string, label: string, text: string, kind: string, to?: string, thread?: string|null, forOwner?: boolean, subject?: string, excerpt?: string}}
  */
 export function describeEvent(event, names = {}) {
   const type = String(event.event_type || '');
@@ -161,6 +161,8 @@ export function describeEvent(event, names = {}) {
         to: payload.to_name || 'Director',
         thread: payload.thread_id || event.aggregate_id || null,
         forOwner: Boolean(payload.for_owner),
+        subject: payload.subject || '',
+        excerpt: payload.excerpt || '',
       };
     case 'agent.message_answered':
       label = 'a răspuns la un mesaj';
@@ -609,6 +611,13 @@ export class Ledger {
         .filter((e) => e.event_type === 'agent.message_answered' || e.event_type === 'agent.message_resolved')
         .map((e) => e.aggregate_id),
     );
+    // How long each thread is, so a letter says whether it is the first word or the fifth.
+    const threadLength = new Map();
+    for (const e of events) {
+      if (e.event_type !== 'agent.message_posted') continue;
+      const id = (e.payload && e.payload.thread_id) || e.aggregate_id;
+      threadLength.set(id, (threadLength.get(id) || 0) + 1);
+    }
     const rows = [];
     for (const event of events) {
       const item = describeEvent(event, this.names);
@@ -625,11 +634,16 @@ export class Ledger {
       const route = item.thread
         ? `<strong>${this.escape(item.who)}</strong> <span class="ledger-arrow">→</span> <strong>${this.escape(item.to)}</strong> · ${this.escape(item.label)}`
         : `${item.who ? `<strong>${this.escape(item.who)}</strong> ` : ''}${this.escape(item.label)}`;
+      const letters = item.thread ? threadLength.get(item.thread) || 1 : 0;
+      const body = item.thread
+        ? `<div class="ledger-subject">${this.escape(item.subject || item.text)}</div>` +
+          (item.excerpt ? `<div class="ledger-text">${this.escape(item.excerpt)}</div>` : '') +
+          `<div class="ledger-open">Deschide firul${letters > 1 ? ` · ${letters} scrisori` : ''} ↗</div>`
+        : item.text ? `<div class="ledger-text">${this.escape(item.text)}</div>` : '';
       rows.push(
         `<li class="ledger-item ledger-${item.kind}${mail}"><time>${this.escape(time)}</time><div>` +
           `<div class="ledger-head">${route}</div>` +
-          (item.text ? `<div class="ledger-text">${this.escape(item.text)}</div>` : '') +
-          (item.thread ? '<div class="ledger-open">Deschide firul ↗</div>' : '') +
+          body +
           `</div></li>`,
       );
       if (rows.length >= 150) break;

@@ -23,12 +23,12 @@ import logging
 from typing import Any
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from app.agents.director import DirectorError, director_review
-from app.agents.identity import parse_structured
+from app.agents.identity import blocker_of
 from app.agents.memory import agent_for_role
 from app.agents.messages import (
     open_messages,
@@ -37,7 +37,6 @@ from app.agents.messages import (
     thread_messages,
 )
 from app.agents.models import Agent, AgentMessage
-from app.agents.services import run_agent_task
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.models import OwnerPolicy
 from app.providers.registry import ProviderRegistry
@@ -76,6 +75,14 @@ class MailReply(BaseModel):
     reply: str = Field(min_length=1, max_length=4000)
     done: bool = False
     needs: str = Field(default="", max_length=600)
+
+    @field_validator("reply")
+    @classmethod
+    def _words_not_placeholder(cls, value: str) -> str:
+        # A model restating the schema's example writes {"reply": "..."}; that is not a letter.
+        if sum(ch.isalpha() for ch in value) < 3:
+            raise ValueError("a reply is written in words")
+        return value
 
 
 class MailError(ValueError):
@@ -125,7 +132,9 @@ def answer_mail(
             else letter.from_agent_id
         )
     prompt = _INSTRUCTIONS + wrap_in_inert_boundary(transcript, "mail-thread")
-    result = run_agent_task(
+    from app.agents.structured import structured_run  # noqa: PLC0415
+
+    answer, result, second = structured_run(
         engine,
         registry,
         agent_id,
@@ -133,25 +142,45 @@ def answer_mail(
         prompt,
         MAIL_TEMPLATE_VERSION,
         correlation,
+        MailReply,
+        '{"reply": "...", "done": true|false, "needs": "..."}',
         summary=f"Răspund la «{subject}» de la {sender_name}.",
         max_tokens=3600,
         temperature=0.3,
-        emit_message=False,
     )
-    text = result.get("output_text") or ""
-    if result["status"] != "SUCCEEDED" or not text.strip():
+    final = second or result
+    text = final.get("output_text") or ""
+    if final["status"] != "SUCCEEDED" or not text.strip():
         raise MailError(
-            f"{agent_id} did not answer ({result['status']}: "
-            f"{result.get('error_detail') or 'no visible text'})"
+            f"{agent_id} did not answer ({final['status']}: "
+            f"{final.get('error_detail') or 'no visible text'})"
         )
-    parsed = parse_structured(text, MailReply)
-    if not isinstance(parsed, MailReply):
+    result = final
+    blocker = blocker_of(text)
+    if blocker is not None:
+        # An employee who cannot do what the letter asks says so in words, not in a JSON
+        # blob pasted into a letter: what stops them and what they need.
+        parsed = MailReply(
+            reply=(
+                f"Nu pot răspunde la asta: {blocker.reason}"
+                + (f" Am nevoie de: {blocker.needs}" if blocker.needs else "")
+            )[:4000],
+            done=False,
+            needs=blocker.needs[:600],
+        )
+        intent_out = "ESCALATE"
+    else:
+        intent_out = "STATUS"
         # Prose instead of the schema is still a letter; it is sent as written.
-        parsed = MailReply(reply=" ".join(text.split())[:4000], done=False)
+        parsed = (
+            answer
+            if isinstance(answer, MailReply)
+            else MailReply(reply=" ".join(text.split())[:4000], done=False)
+        )
     with Session(engine) as session, session.begin():
         sent = post_message(
             session,
-            intent="STATUS",
+            intent=intent_out,
             subject=f"Re: {subject}"[:200],
             body={"done": parsed.done, "needs": parsed.needs, "about_message_id": message_id},
             body_text=parsed.reply,

@@ -26,11 +26,11 @@ import re
 from typing import Any
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from app.agents.identity import blocker_of, parse_structured
+from app.agents.identity import blocker_of, clipped, parse_structured
 from app.agents.memory import agent_for_role, remember
 from app.agents.messages import post_message
 from app.agents.services import run_agent_task
@@ -122,11 +122,24 @@ class TopicScores(BaseModel):
 class TopicCandidate(BaseModel):
     model_config = ConfigDict(extra="ignore")
     title: str = Field(min_length=5, max_length=200)
-    topic: str = Field(min_length=2, max_length=200)
+    topic: str = Field(min_length=2, max_length=600)
     angle: str = Field(min_length=5, max_length=2000)
-    target_audience: str = Field(default="general", max_length=100)
+    target_audience: str = Field(default="general", max_length=300)
     expected_hosts: list[str] = Field(default_factory=list, max_length=6)
     scores: TopicScores
+
+    _clip_title = field_validator("title", mode="before")(clipped(200))
+    _clip_topic = field_validator("topic", mode="before")(clipped(600))
+    _clip_angle = field_validator("angle", mode="before")(clipped(2000))
+    _clip_audience = field_validator("target_audience", mode="before")(clipped(300))
+
+
+class LooseProposal(BaseModel):
+    """The answer's shape before each candidate is judged on its own: one candidate that
+    breaks the schema is one candidate rejected with its reason, not a day without ideas."""
+
+    model_config = ConfigDict(extra="ignore")
+    candidates: list[dict[str, Any]] = Field(default_factory=list, max_length=40)
 
 
 class TopicProposal(BaseModel):
@@ -146,7 +159,8 @@ _IDEA_INSTRUCTIONS = (
     "given what people in the studio's country are searching for right now and what measured "
     "well or badly on the studio's own channels: a trend is a hook, not a source — use it only "
     "where the authorised sites can evidence it — and prefer the kinds of topic that measured "
-    "well over the kinds that did not. Return only "
+    "well over the kinds that did not. Begin your reply with the JSON object itself — no "
+    "analysis or preamble before it. Return only "
     'JSON: {{"candidates": [{{"title": "...", "topic": "...", "angle": "...", '
     '"target_audience": "...", "expected_hosts": ["..."], "scores": {{"interest": 0.0, '
     '"credibility": 0.0, "source_availability": 0.0, "visual_potential": 0.0, "novelty": 0.0, '
@@ -287,16 +301,24 @@ def propose_topics(
             "blocked": blocker.reason,
         }
 
-    proposal = parse_structured(text, TopicProposal)
-    if not isinstance(proposal, TopicProposal):
+    loose = parse_structured(text, LooseProposal)
+    if not isinstance(loose, LooseProposal):
         raise ResearchAgentError("Propunerile nu respectă schema; nimic nu a fost salvat")
-
+    candidates: list[TopicCandidate] = []
+    rejected: list[dict[str, str]] = []
+    for raw in loose.candidates[:MAX_CANDIDATES]:
+        try:
+            candidates.append(TopicCandidate.model_validate(raw))
+        except ValidationError as exc:
+            field = ".".join(str(x) for x in exc.errors()[0]["loc"]) if exc.errors() else "?"
+            rejected.append(
+                {"title": str(raw.get("title", "?"))[:200], "why": f"schemă: câmpul {field}"}
+            )
     allowed = set(hosts)
     stored: list[dict[str, Any]] = []
-    rejected: list[dict[str, str]] = []
     with Session(engine) as session, session.begin():
         existing = [row.title for row in session.scalars(select(TopicIdea))]
-        for candidate in proposal.candidates:
+        for candidate in candidates:
             duplicate = _too_similar(candidate.title, existing)
             if duplicate:
                 rejected.append({"title": candidate.title, "why": f"duplicat: «{duplicate[:60]}»"})

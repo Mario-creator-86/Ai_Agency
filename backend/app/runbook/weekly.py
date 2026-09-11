@@ -207,6 +207,7 @@ _REVIEW_INSTRUCTIONS = (
     "charge is growing views and retention; every judgement below must rest on the measured "
     "numbers, never on impressions. Below is what the audience measured for everything the "
     "studio has published, plus the strategy recommendations still waiting.\n"
+    "Begin your reply with the JSON object itself — no analysis before it; reason silently. "
     "Return ONLY a JSON object, in Romanian, with exactly these keys:\n"
     '{"verdict": "what performed and what underperformed, from the numbers",\n'
     ' "sound": "written indications for the SOUND department (Lyra): keep, change or adjust '

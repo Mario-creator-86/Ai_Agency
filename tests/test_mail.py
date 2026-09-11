@@ -278,6 +278,81 @@ def test_prose_instead_of_the_schema_is_still_a_letter(engine, staffed):
         assert session.get(AgentMessage, sent["message_id"]).body_text.startswith("Sarah, a picat")
 
 
+def test_a_schema_example_echoed_back_is_not_a_letter_and_the_second_try_is(engine, staffed):
+    """Nadia narrated and restated the example object; her letter read "..."."""
+    sarah, nadia = staffed["agents"]["Director"], staffed["agents"]["Accountant"]
+    with Session(engine) as session, session.begin():
+        asked = post_message(
+            session,
+            intent="REQUEST_INFO",
+            subject="Investigate: books",
+            body_text="Show me the evidence behind the zero. Sarah",
+            from_agent_id=sarah.id,
+            to_agent_id=nadia.id,
+        )
+        asked_id = asked.id
+    calls: list = []
+
+    class Narrator(ScriptedModel):
+        async def generate(self, model, prompt, **kwargs):
+            calls.append(kwargs.get("extra"))
+            if kwargs.get("extra") == {"think": True}:
+                text = json.dumps(
+                    {
+                        "reply": "Sarah, cele 59 de rulări sunt pe un model fără preț. Nadia",
+                        "done": True,
+                    }
+                )
+            else:
+                text = (
+                    'Let me think. The instructions say: Return only JSON: {"reply": "...", '
+                    '"done": true|false, "needs": "..."}. So, the runs are'
+                )
+            return GenerateResult(text, 10, 40, None)
+
+    registry = ProviderRegistry()
+    registry.register(staffed["provider_id"], Narrator(lambda p: ""))
+    sent = answer_mail(engine, registry, asked_id)
+    assert calls == [None, {"think": True}]
+    with Session(engine) as session:
+        reply = session.get(AgentMessage, sent["message_id"])
+        assert reply.body_text.startswith("Sarah, cele 59 de rulări")
+
+
+def test_an_employee_who_cannot_do_what_is_asked_says_so_in_words(engine, staffed):
+    """Lyra answered a render question with a JSON blocker pasted into the letter."""
+    sarah, lyra = staffed["agents"]["Director"], staffed["agents"]["VoiceArtist"]
+    with Session(engine) as session, session.begin():
+        asked = post_message(
+            session,
+            intent="REQUEST_INFO",
+            subject="Investigate: renders failed QC",
+            body_text="Find the root cause. Sarah",
+            from_agent_id=sarah.id,
+            to_agent_id=lyra.id,
+        )
+        asked_id = asked.id
+    registry, _ = registry_with(
+        staffed,
+        lambda p: json.dumps(
+            {
+                "blocker": {
+                    "reason": "I do not have access to the render logs.",
+                    "needs": "The render job logs.",
+                }
+            }
+        ),
+    )
+    sent = answer_mail(engine, registry, asked_id)
+    with Session(engine) as session:
+        reply = session.get(AgentMessage, sent["message_id"])
+        assert reply.intent == "ESCALATE"
+        assert reply.body_text.startswith("Nu pot răspunde la asta: I do not have access")
+        assert "Am nevoie de: The render job logs." in reply.body_text
+        assert "{" not in reply.body_text
+    assert sent["needs"] == "The render job logs."
+
+
 def test_a_letter_to_nobody_or_to_a_departed_employee_is_not_answered(engine, staffed):
     elena = staffed["agents"]["FactChecker"]
     with Session(engine) as session, session.begin():
@@ -644,3 +719,56 @@ def test_the_day_finishes_the_media_setup_the_account_already_determines(monkeyp
     )
     assert runbook_services.finish_media_setup(engine, None) is None
     assert calls == ["auto_configure"]
+
+
+def test_an_analysis_without_its_object_is_asked_again_with_native_thinking(engine, staffed):
+    """The Director wrote twelve thousand tokens of analysis and never reached the JSON; asked
+    to format it she narrated again. The second try is the same question with her own
+    thinking on, and that one answers with the object."""
+    from app.agents.director import director_review
+
+    vera = staffed["agents"]["Publisher"]
+    with Session(engine) as session, session.begin():
+        hold = post_message(
+            session,
+            intent="ESCALATE",
+            subject="Publication HOLD: title",
+            body_text="Nu public.",
+            from_agent_id=vera.id,
+        )
+        hold_id = hold.id
+    calls: list[dict] = []
+
+    class Narrator(ScriptedModel):
+        async def generate(self, model, prompt, **kwargs):
+            calls.append({"prompt": prompt, "extra": kwargs.get("extra")})
+            if kwargs.get("extra") == {"think": True}:
+                text = json.dumps(
+                    {
+                        "summary": "Hold read; nothing to add.",
+                        "decisions": [{"message_id": hold_id, "action": "ACKNOWLEDGE"}],
+                    }
+                )
+            else:
+                text = (
+                    "Let me work through this inbox carefully. 1. `" + hold_id + "` — Vera, "
+                    "HOLD: I will ACKNOWLEDGE this; the title needs the Owner. {not the object}"
+                )
+            return GenerateResult(text, 10, 40, None)
+
+    registry = ProviderRegistry()
+    registry.register(staffed["provider_id"], Narrator(lambda p: ""))
+    result = director_review(engine, registry, str(uuid4()))
+
+    assert result["reviewed"] == 1
+    assert [c["extra"] for c in calls] == [None, {"think": True}]
+    assert calls[0]["prompt"] == calls[1]["prompt"]
+    with Session(engine) as session:
+        runs = session.scalars(
+            select(AgentRun).where(AgentRun.task_type == "director_review")
+        ).all()
+        assert sorted(r.prompt_template_version for r in runs) == [
+            "director-review-v1",
+            "director-review-v1+think",
+        ]
+        assert session.get(AgentMessage, hold_id).status == "RESOLVED"

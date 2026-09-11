@@ -386,6 +386,7 @@ def run_agent_task(
     temperature: float | None = None,
     emit_message: bool = True,
     summary: str | None = None,
+    extra: dict | None = None,
 ) -> dict:
     """Execute an agent LLM run through the policy kernel. Returns AgentRunView dict.
 
@@ -522,6 +523,7 @@ def run_agent_task(
                 system=system_prompt,
                 max_tokens=max_tokens,
                 temperature=temperature,
+                extra=extra,
             )
         )
         output_text = gen_result.text

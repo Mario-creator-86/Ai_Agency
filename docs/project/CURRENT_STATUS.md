@@ -13,6 +13,14 @@ database resource discovery/refresh, separate production choices, UI and regress
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
 
+## The cycle, watched (2026-09-12)
+
+A real day run on a copy of the Owner's data: trends read, five topics proposed, claims
+verified, a stalled storyboard re-rendered with real visuals, the Accountant's close parsed,
+letters filed. Still short of a published video because the Researcher's guessed URLs 404
+(no search step; see the changelog) and the Director's long analysis needed the new
+formatting pass. The publish stage was disabled in the copy on purpose.
+
 ## Polish pass (2026-09-12)
 
 Every view read from a screenshot and set on one text scale, one radius and shadow, actions

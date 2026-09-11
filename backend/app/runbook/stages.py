@@ -42,6 +42,7 @@ from app.agents.director import (
     letter_to_owner,
 )
 from app.agents.memory import agent_for_role, remember
+from app.agents.models import AgentMessage
 from app.agents.reviews import (
     NoReviewer,
     ReviewError,
@@ -87,6 +88,7 @@ from app.research.agent import (
     gather_sources,
     propose_topics,
 )
+from app.services import utc_now
 from app.story.models import DailyStudioLog, StoryEpisode
 from app.story.services import StoryError, write_episode
 
@@ -234,16 +236,34 @@ def _gather_for_candidates(
         with_sources = {
             row for row in session.scalars(select(SourceSnapshot.topic_id)) if row is not None
         }
-        candidates = [
-            topic.id
-            for topic in session.scalars(
-                select(TopicIdea)
-                .where(TopicIdea.status.in_(("PROPOSED", "RESEARCHED", "SELECTED")))
-                .order_by(TopicIdea.novelty_score.desc(), TopicIdea.created_at.desc())
-                .limit(12)
+        # A topic whose pages could not be found today is not tried again today: the
+        # Researcher's escalation says so, and the same guesses would 404 the same way.
+        today = utc_now()[:10]
+        failed_today = set()
+        for message in session.scalars(
+            select(AgentMessage).where(
+                AgentMessage.intent == "ESCALATE", AgentMessage.created_at >= today
             )
-            if topic.id not in with_sources
-        ][:2]
+        ):
+            body = message.body_json if isinstance(message.body_json, dict) else {}
+            if body.get("failed") and body.get("topic_id"):
+                failed_today.add(str(body["topic_id"]))
+        seen_titles: set[str] = set()
+        candidates = []
+        for topic in session.scalars(
+            select(TopicIdea)
+            .where(TopicIdea.status.in_(("PROPOSED", "RESEARCHED")))
+            .order_by(TopicIdea.created_at.desc(), TopicIdea.novelty_score.desc())
+            .limit(30)
+        ):
+            if topic.id in with_sources or topic.id in failed_today:
+                continue
+            if topic.title in seen_titles:
+                continue  # the same title proposed twice needs one set of sources
+            seen_titles.add(topic.title)
+            candidates.append(topic.id)
+            if len(candidates) == 2:
+                break
     gathered = []
     for topic_id in candidates:
         try:
@@ -328,6 +348,50 @@ def _research_and_verification(
 # ------------------------------------------------------------------------- selection --
 
 
+def topics_in_production(session: Session) -> tuple[list[str], list[str]]:
+    """SELECTED topics with work genuinely in flight, and the ones that have stalled.
+
+    Seven topics sat SELECTED for days: each had a script, a storyboard and a render whose
+    quality control failed (placeholder visuals, before an image provider existed). Nothing
+    could move them and nothing new could be chosen past them. A topic is in production
+    while something is still owed on it — a script, a storyboard, a render, a QC verdict,
+    a publication; one whose newest render failed or lost its QC verdict is stalled, and a
+    stalled topic does not stop the studio from choosing the next one.
+    """
+    selected = list(session.scalars(select(TopicIdea).where(TopicIdea.status == "SELECTED")))
+    if not selected:
+        return [], []
+    scripts = {s.topic_id: s for s in session.scalars(select(ScriptDraft)) if s.topic_id}
+    boards = {b.script_draft_id: b for b in session.scalars(select(Storyboard))}
+    jobs: dict[str, VideoRenderJob] = {}
+    for row in session.scalars(select(VideoRenderJob).order_by(VideoRenderJob.started_at)):
+        if row.status == "COMPLETED":
+            jobs[row.storyboard_id] = row  # the newest completed render per storyboard
+    verdicts: dict[str, str] = {}
+    for verdict_row in session.scalars(
+        select(QualityControlReport).order_by(QualityControlReport.verified_at)
+    ):
+        verdicts[verdict_row.media_asset_id] = verdict_row.status  # the newest per asset
+    published = set(session.scalars(select(PublicationRecord.media_asset_id)))
+    live: list[str] = []
+    stalled: list[str] = []
+    for topic in selected:
+        script = scripts.get(topic.id)
+        board = boards.get(script.id) if script else None
+        last = jobs.get(board.id) if board else None
+        if last is None or not last.output_asset_id:
+            live.append(topic.id)  # writing, storyboarding or rendering still owed
+            continue
+        verdict = verdicts.get(last.output_asset_id)
+        if verdict == "PASSED" and last.output_asset_id not in published:
+            live.append(topic.id)  # waiting to be published
+        elif verdict is None:
+            live.append(topic.id)  # waiting for quality control
+        else:
+            stalled.append(topic.id)  # FAILED or INVALIDATED: nothing moves it on its own
+    return live, stalled
+
+
 def _selection(engine: Engine, registry: ProviderRegistry | None = None) -> dict[str, Any]:
     """Choose what the day produces (runbook §5): the Director decides, under policy.
 
@@ -337,12 +401,18 @@ def _selection(engine: Engine, registry: ProviderRegistry | None = None) -> dict
     to the deterministic order it used before — and says which of the two happened.
     """
     with Session(engine) as session:
-        already_selected = session.scalar(
-            select(TopicIdea.id).where(TopicIdea.status == "SELECTED").limit(1)
-        )
-        if already_selected:
+        in_production, stalled = topics_in_production(session)
+        if in_production:
             return _outcome(
-                COMPLETED, "Un subiect este deja în producție.", topic_id=already_selected
+                COMPLETED,
+                "Un subiect este deja în producție."
+                + (
+                    f" ({len(stalled)} selectate mai demult stau cu randări picate la QC.)"
+                    if stalled
+                    else ""
+                ),
+                topic_id=in_production[0],
+                stalled=stalled,
             )
         rows = list(
             session.scalars(
@@ -496,6 +566,42 @@ def _script_and_storyboard(engine: Engine, registry: ProviderRegistry) -> dict[s
 # ----------------------------------------------------------------------------- media --
 
 
+def stalled_storyboards(session: Session, engine: Engine, vault: Any) -> list[str]:
+    """Rendered storyboards whose render failed quality control for want of real visuals,
+    newest first, one per title — worth rendering again only once an image provider is
+    READY, or the day would make the same placeholder film twice."""
+    from app.media.factory import media_readiness  # noqa: PLC0415
+
+    if media_readiness(engine, vault).get("image", {}).get("status") != "READY":
+        return []
+    newest_job: dict[str, VideoRenderJob] = {}
+    for row in session.scalars(select(VideoRenderJob).order_by(VideoRenderJob.started_at)):
+        if row.status == "COMPLETED":
+            newest_job[row.storyboard_id] = row
+    verdicts: dict[str, QualityControlReport] = {}
+    for verdict_row in session.scalars(
+        select(QualityControlReport).order_by(QualityControlReport.verified_at)
+    ):
+        verdicts[verdict_row.media_asset_id] = verdict_row
+    seen_titles: set[str] = set()
+    out: list[str] = []
+    for board in session.scalars(select(Storyboard).order_by(Storyboard.created_at.desc())):
+        last = newest_job.get(board.id)
+        if last is None or not last.output_asset_id:
+            continue
+        verdict = verdicts.get(last.output_asset_id)
+        if verdict is None or verdict.status not in ("FAILED", "INVALIDATED"):
+            continue
+        reasons = " ".join(str(r) for r in (verdict.failure_reasons_json or [])).lower()
+        if "placeholder" not in reasons and verdict.status != "INVALIDATED":
+            continue
+        if board.title in seen_titles:
+            continue  # a duplicate of a title already queued: not worth a second render
+        seen_titles.add(board.title)
+        out.append(board.id)
+    return out
+
+
 def _media(
     engine: Engine, settings: Settings, vault: Any, registry: ProviderRegistry | None = None
 ) -> dict[str, Any]:
@@ -520,9 +626,11 @@ def _media(
             for board in session.scalars(select(Storyboard).where(Storyboard.status == "APPROVED"))
             if board.id not in rendered
         ][:1]
+        retry = [] if pending else stalled_storyboards(session, engine, vault)[:1]
 
-    if not pending:
+    if not pending and not retry:
         return _outcome(COMPLETED, "Niciun storyboard de randat.", rendered=0)
+    pending = pending or retry
 
     # The budget is asked before anything is generated (runbook §7, "reserve budget"). What
     # the render will cost is estimated from the plan at the stored price of each scene's
@@ -575,6 +683,10 @@ def _media(
 
     substitutes = images is None or voice is None
     reason = f"{len(produced)} videoclipuri randate."
+    if retry:
+        reason += (
+            " (o randare reluată: cea veche picase la QC cu substitute, acum sunt imagini reale.)"
+        )
     if substitutes:
         # Said here as well as in QC, because a run summary is read on its own.
         reason += " Fără furnizor de imagine sau voce, deci cu substitute — QC le va bloca."
@@ -598,7 +710,14 @@ def _edit_and_qc(engine: Engine, registry: ProviderRegistry | None = None) -> di
     work: a diagnosis and a proposed correction, filed as an escalation for the Director.
     """
     with Session(engine) as session:
-        checked = set(session.scalars(select(QualityControlReport.media_asset_id)))
+        # A verdict a migration invalidated is no verdict: the file is measured again.
+        checked = set(
+            session.scalars(
+                select(QualityControlReport.media_asset_id).where(
+                    QualityControlReport.status != "INVALIDATED"
+                )
+            )
+        )
         # Selected on what the file is, not on what it was labelled. The renderer writes
         # RENDERED_VIDEO and the test fixtures write VIDEO_COMPOSED; keying quality control to
         # either name would leave real renders unmeasured, which is how a video reaches the
@@ -606,7 +725,9 @@ def _edit_and_qc(engine: Engine, registry: ProviderRegistry | None = None) -> di
         pending = [
             asset.id
             for asset in session.scalars(
-                select(MediaAsset).where(MediaAsset.mime_type.startswith("video/"))
+                select(MediaAsset)
+                .where(MediaAsset.mime_type.startswith("video/"))
+                .order_by(MediaAsset.created_at.desc())
             )
             if asset.id not in checked
         ][:BATCH]
@@ -814,6 +935,33 @@ def _serial_queue(engine: Engine, registry: ProviderRegistry, settings: Settings
 # ------------------------------------------------------------------------- post_run --
 
 
+#: A stage report nobody read in this many days is archived: the day it reported on is
+#: gone, and an inbox of seventy-five old reports buries the letters that need an answer.
+REPORT_SHELF_DAYS = 3
+
+
+def archive_stale_reports(engine: Engine) -> int:
+    """Resolve STATUS reports in the Director's inbox that are older than the shelf life."""
+    from datetime import UTC, datetime, timedelta  # noqa: PLC0415
+
+    from app.agents.messages import open_messages, resolve_message  # noqa: PLC0415
+
+    limit = (datetime.now(UTC) - timedelta(days=REPORT_SHELF_DAYS)).isoformat()
+    archived = 0
+    with Session(engine) as session, session.begin():
+        for message in open_messages(session, inbox=True, limit=500):
+            if message.intent == "STATUS" and message.created_at < limit:
+                resolve_message(
+                    session,
+                    message.id,
+                    resolution=f"Arhivat: raport neexaminat în {REPORT_SHELF_DAYS} zile.",
+                    resolved_by="system",
+                    status="RESOLVED",
+                )
+                archived += 1
+    return archived
+
+
 def _post_run(
     engine: Engine, registry: ProviderRegistry, outcomes: dict[str, dict[str, Any]]
 ) -> dict[str, Any]:
@@ -847,8 +995,20 @@ def _post_run(
             "de limbaj.",
             reports=len(filed),
         )
+    archived = archive_stale_reports(engine)
     try:
+        # A dozen messages per review; the review comes round up to three times in one
+        # evening while the inbox still holds more, so a busy day is decided, not deferred.
         review = director_review(engine, registry, str(uuid4()), outcomes)
+        for _ in range(2):
+            if not review.get("left_open") or not review.get("reviewed"):
+                break
+            more = director_review(engine, registry, str(uuid4()), outcomes)
+            review = {
+                **more,
+                "reviewed": review.get("reviewed", 0) + more.get("reviewed", 0),
+                "applied": list(review.get("applied", [])) + list(more.get("applied", [])),
+            }
     except (DirectorError, ValueError) as exc:
         letter_to_owner(
             engine,
@@ -874,7 +1034,8 @@ def _post_run(
     return _outcome(
         COMPLETED,
         f"{len(filed)} rapoarte depuse; Directorul a revizuit {review.get('reviewed', 0)} mesaje, "
-        f"{len(review.get('applied', []))} decizii.",
+        f"{len(review.get('applied', []))} decizii."
+        + (f" {archived} rapoarte vechi arhivate." if archived else ""),
         reports=len(filed),
         reviewed=review.get("reviewed", 0),
         applied=review.get("applied", []),

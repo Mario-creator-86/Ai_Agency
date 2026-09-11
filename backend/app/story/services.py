@@ -25,10 +25,11 @@ from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
+from app.agents.identity import joined
 from app.agents.memory import agent_for_role, remember
 from app.agents.models import Agent, Role
 from app.agents.services import run_agent_task
@@ -88,8 +89,15 @@ class NothingHappened(StoryError):
 class _Beat(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    scene: str = Field(min_length=5, max_length=300)
-    dialogue: str = Field(min_length=5, max_length=1200)
+    scene: str = Field(min_length=5, max_length=800)
+    dialogue: str = Field(min_length=5, max_length=2400)
+    # A scene of 330 characters where 300 were allowed threw the whole episode away; so did
+    # a dialogue written as a list of lines.
+    _clip_scene = field_validator("scene", mode="before")(joined(800))
+    _clip_dialogue = field_validator("dialogue", mode="before")(joined(2400))
+    _one_character = field_validator("characters", mode="before")(
+        lambda value: [value] if isinstance(value, str) else value
+    )
     #: The events this beat dramatises. At least one, and each must be in the day's log.
     event_ids: list[str] = Field(min_length=1, max_length=10)
     #: Who appears. Checked against the roster: the serial cannot cast someone who was not there.

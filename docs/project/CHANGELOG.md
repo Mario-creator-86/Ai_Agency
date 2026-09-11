@@ -1,5 +1,55 @@
 # Changelog
 
+## A real cycle, watched live, and what it showed — 2026-09-12
+
+Run on a copy of the Owner's data with the worker on and publishing disabled in the copy;
+the previous night's run on the live studio read the same way. Found and fixed:
+
+- **Analysis instead of the object.** Asked not to think aloud, `glm-5.3` wrote twelve thousand
+  tokens of inventory and never reached the JSON; the Accountant's close did the same at
+  smaller scale. `parse_structured` now finds the first object that validates anywhere in
+  the text, and `structured_run` (`backend/app/agents/structured.py`) asks once more, with
+  the model's own thinking on (`think: true`) and the same budget, when the answer has no
+  object — a model that narrates with thinking off answers cleanly when it may think where
+  the text is not. Asked instead to "just format" its analysis, `glm-5.3` narrated again, so
+  that path was dropped. The Director's review and the Accountant's close use it. Live: the
+  close parsed (Nadia held unpriced runs and said why); the review's second attempt is what
+  the next cycle runs.
+- **A review the Director can finish.** Sixty inbox messages in one prompt were beyond her
+  model in either mode (narration at 12k tokens with thinking off; nothing at all with it
+  on). The review reads twelve at a time (`REVIEW_BATCH`), comes round up to three times an
+  evening while more is open, has a 24k budget, and STATUS reports nobody read in three days
+  are archived (`archive_stale_reports`) so the inbox holds letters, not history.
+- **Limits that threw work away.** A 220-character topic sentence rejected five proposals; a
+  330-character scene and a dialogue written as a list of lines rejected an episode. Text
+  fields clip (`clipped`) or join (`joined`) instead of refusing; proposals are validated one
+  candidate at a time. Live: five topics proposed where yesterday none were.
+- **A jammed line.** Seven topics sat SELECTED behind demo-era renders whose quality control
+  had failed or been invalidated; nothing could be chosen past them. `topics_in_production`
+  tells work in flight from work that stalled; a stalled storyboard is rendered again once,
+  with real visuals, when an image provider is READY; invalidated verdicts are measured
+  again, newest file first. Live: selection moved on, one storyboard was re-rendered with
+  Runway stills and ElevenLabs narration (18 s, decodable); the five demo-era files failed
+  QC honestly ("moov atom not found" — they never were videos).
+- **Sources that never existed.** The Researcher names deep URLs from memory and they 404
+  (`nasa.gov/mission_pages/...`); the studio fetches, it cannot search. Today's guesses are
+  not retried the same day, duplicates of a title share one attempt, and research reads for
+  topics that still need it — but the limit stands: without a search step, only hosts with
+  guessable pages (Wikipedia articles) work reliably. `www.wikipedia.org` on the allowlist is
+  the portal, not the articles: `en.wikipedia.org` / `ro.wikipedia.org` must be added.
+- **Watched to the end, live**: with twelve messages and a 24k budget the Director's review
+  parsed (22.8k tokens): three letters of investigation (to the Accountant, the sound
+  department, the Researcher), two letters to the Owner (link the YouTube account; rule on
+  the unpriced runs and the Accountant's hold), two approvals, five acknowledgements. Within
+  a minute the worker had the answers: the Researcher's in words; the Accountant's model
+  restated the schema's example and her letter read "..." — a reply must now be words, and
+  a narrated answer gets the native-thinking second attempt like every structured task; the
+  sound department answered with a blocker JSON pasted into the letter — a blocker is now
+  filed as an ESCALATE in words: what stops them, what they need.
+- **The ledger reads letters as envelopes**: from → to, subject, first line, and how many
+  letters the thread holds.
+- Tests: `tests/test_cycle_fixes.py` (7), `tests/test_mail.py` (+1); backend 566/1.
+
 ## Polish pass: rhythm, hierarchy, chrome — 2026-09-12
 
 Read from a screenshot of every view (login, workspace, research, media, publishing,

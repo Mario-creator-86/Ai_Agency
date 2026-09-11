@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
@@ -369,20 +370,66 @@ def identity_view(engine: Engine, agent_id: str) -> dict[str, Any] | None:
         }
 
 
+def clipped(limit: int) -> Callable[[Any], Any]:
+    """A before-validator that cuts a string to ``limit`` instead of refusing the answer.
+
+    A model asked for a scene description writes 330 characters where the schema allowed
+    300, and the whole episode was thrown away for it; a topic sentence ran to 220 and the
+    day's proposals with it. Text fields are clipped: the record stays honest (it is what the
+    model said, shortened) and one long field no longer costs the work of the whole run.
+    """
+
+    def clip(value: Any) -> Any:
+        return value[:limit] if isinstance(value, str) else value
+
+    return clip
+
+
+def joined(limit: int) -> Callable[[Any], Any]:
+    """A before-validator for a text field a model may write as a list of lines.
+
+    The showrunner wrote each beat's dialogue as an array of lines — a reasonable reading of
+    "dialogue" — and eight beats were thrown away for a bracket. Lines are joined, then
+    clipped like any other text.
+    """
+
+    def join(value: Any) -> Any:
+        if isinstance(value, list):
+            value = "\n".join(str(item) for item in value if item is not None)
+        return value[:limit] if isinstance(value, str) else value
+
+    return join
+
+
 def parse_structured(text: str, model: type[BaseModel]) -> BaseModel | None:
-    """Parse a model's answer as JSON (fenced or bare) against a schema; None when it is not."""
+    """Parse a model's answer as JSON against a schema; None when no object matches.
+
+    The object may be fenced, bare, or — as thinking models write when asked not to think
+    aloud — after paragraphs of analysis that themselves contain braces. Every ``{`` is
+    tried as the start of an object; the first that parses and validates is the answer.
+    """
     raw = (text or "").strip()
     if raw.startswith("```"):
         raw = raw.strip("`")
         if raw.startswith("json"):
             raw = raw[4:]
-    start, end = raw.find("{"), raw.rfind("}")
-    if start < 0 or end < start:
-        return None
-    try:
-        return model.model_validate(json.loads(raw[start : end + 1]))
-    except (ValueError, ValidationError):
-        return None
+    decoder = json.JSONDecoder()
+    start = raw.find("{")
+    tried = 0
+    while start >= 0 and tried < 400:
+        tried += 1
+        try:
+            data, _end = decoder.raw_decode(raw, start)
+        except ValueError:
+            start = raw.find("{", start + 1)
+            continue
+        if isinstance(data, dict):
+            try:
+                return model.model_validate(data)
+            except ValidationError:
+                pass
+        start = raw.find("{", start + 1)
+    return None
 
 
 class Blocker(BaseModel):
