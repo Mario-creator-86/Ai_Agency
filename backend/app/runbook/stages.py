@@ -41,6 +41,7 @@ from app.agents.director import (
     file_stage_reports,
     letter_to_owner,
 )
+from app.agents.editorial import EditorialError, editorial_review, latest_editorial
 from app.agents.memory import agent_for_role, remember
 from app.agents.models import AgentMessage
 from app.agents.reviews import (
@@ -68,7 +69,13 @@ from app.factual.agent_pipeline import (
 from app.factual.models import FactualClaim, ScriptDraft, SourceSnapshot, TopicIdea
 from app.factual.services import TopicNotProducible, select_topic
 from app.integrations.services import selected_youtube
-from app.media.models import MediaAsset, QualityControlReport, Storyboard, VideoRenderJob
+from app.media.models import (
+    EditorialReview,
+    MediaAsset,
+    QualityControlReport,
+    Storyboard,
+    VideoRenderJob,
+)
 from app.media.qc import evaluate_media_qc
 from app.media.services import generate_storyboard_from_script
 from app.providers.registry import ProviderRegistry
@@ -373,6 +380,9 @@ def topics_in_production(session: Session) -> tuple[list[str], list[str]]:
     ):
         verdicts[verdict_row.media_asset_id] = verdict_row.status  # the newest per asset
     published = set(session.scalars(select(PublicationRecord.media_asset_id)))
+    rejected = {
+        r.media_asset_id for r in session.scalars(select(EditorialReview)) if r.verdict == "REJECT"
+    }
     live: list[str] = []
     stalled: list[str] = []
     for topic in selected:
@@ -383,7 +393,9 @@ def topics_in_production(session: Session) -> tuple[list[str], list[str]]:
             live.append(topic.id)  # writing, storyboarding or rendering still owed
             continue
         verdict = verdicts.get(last.output_asset_id)
-        if verdict == "PASSED" and last.output_asset_id not in published:
+        if last.output_asset_id in rejected:
+            stalled.append(topic.id)  # the Director said no; the departments hold the notes
+        elif verdict == "PASSED" and last.output_asset_id not in published:
             live.append(topic.id)  # waiting to be published
         elif verdict is None:
             live.append(topic.id)  # waiting for quality control
@@ -588,6 +600,8 @@ def stalled_storyboards(session: Session, engine: Engine, vault: Any) -> list[st
     seen_titles: set[str] = set()
     out: list[str] = []
     for board in session.scalars(select(Storyboard).order_by(Storyboard.created_at.desc())):
+        if board.status == "REJECTED":
+            continue  # the Director closed it; a re-render would be the same film
         last = newest_job.get(board.id)
         if last is None or not last.output_asset_id:
             continue
@@ -770,6 +784,7 @@ def _publish(
     vault: Any,
     registry: ProviderRegistry | None = None,
     language: str = "en",
+    ffmpeg_path: str | None = None,
 ) -> dict[str, Any]:
     """Publish what the gate allows, to a channel that is actually connected.
 
@@ -808,18 +823,60 @@ def _publish(
 
     with Session(engine) as session:
         published_assets = set(session.scalars(select(PublicationRecord.media_asset_id)))
+        # A film the Director rejected stays out of the queue; the next one comes forward.
+        rejected_assets = {
+            review.media_asset_id
+            for review in session.scalars(select(EditorialReview))
+            if review.verdict == "REJECT"
+        }
         candidates = [
             (report.media_asset_id, report.id)
             for report in session.scalars(
-                select(QualityControlReport).where(QualityControlReport.status == "PASSED")
+                select(QualityControlReport)
+                .where(QualityControlReport.status == "PASSED")
+                .order_by(QualityControlReport.verified_at.desc())
             )
             if report.media_asset_id not in published_assets
+            and report.media_asset_id not in rejected_assets
         ][:1]
 
     if not candidates:
         return _outcome(COMPLETED, "Niciun material aprobat de QC în așteptarea publicării.")
 
     asset_id, _ = candidates[0]
+    # The Director watches the film before anyone prepares its publication. Nothing goes
+    # to a channel that she has not approved, and her refusal is a letter to whoever must
+    # change something, not a silent skip.
+    with Session(engine) as session:
+        editorial = latest_editorial(session, asset_id)
+    if editorial is None:
+        if registry is None or not _has_language_model(registry):
+            return _outcome(
+                SKIPPED, "Directorul nu poate viziona materialul: niciun model de limbaj."
+            )
+        try:
+            watched = editorial_review(
+                engine,
+                registry,
+                asset_id,
+                str(uuid4()),
+                language=language,
+                ffmpeg_path=ffmpeg_path,
+            )
+        except (EditorialError, ValueError) as exc:
+            return _outcome(SKIPPED, f"Directorul nu a putut viziona materialul: {exc}"[:300])
+        editorial_verdict, editorial_reasons = watched["verdict"], watched["reasons"]
+    else:
+        editorial_verdict = editorial.verdict
+        editorial_reasons = list(editorial.reasons_json or [])
+    if editorial_verdict != "APPROVE":
+        return _outcome(
+            COMPLETED,
+            "Directorul a respins materialul înainte de publicare: "
+            + "; ".join(str(r) for r in editorial_reasons)[:300],
+            rejected_asset=asset_id,
+            reasons=editorial_reasons,
+        )
     verdict = evaluate_publishing_gate(engine, asset_id, channel_id)
     if not verdict["eligible"]:
         return _outcome(
@@ -1098,7 +1155,10 @@ def build_stage_runners(
         "media": keep("media", lambda: _media(engine, settings, vault, registry)),
         "edit_and_qc": keep("edit_and_qc", lambda: _edit_and_qc(engine, registry)),
         "publish": keep(
-            "publish", lambda: _publish(engine, vault, registry, settings.content_language)
+            "publish",
+            lambda: _publish(
+                engine, vault, registry, settings.content_language, settings.ffmpeg_path
+            ),
         ),
         "post_run": lambda: _post_run(engine, registry, outcomes),
         "serial_queue": keep("serial_queue", lambda: _serial_queue(engine, registry, settings)),

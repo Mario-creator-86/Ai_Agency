@@ -350,6 +350,13 @@ export function describeEvent(event, names = {}) {
         .filter(Boolean)
         .join(' · ');
       break;
+    case 'media.editorial_reviewed':
+      label = payload.verdict === 'APPROVE' ? 'vizionat și aprobat' : 'vizionat și respins';
+      text = [payload.title, payload.story, Array.isArray(payload.reasons) ? payload.reasons.join('; ') : '']
+        .filter(Boolean)
+        .join(' — ');
+      kind = 'production';
+      break;
     case 'runbook.daily_run_started':
       label = 'ziua a început';
       text = `${payload.stages || ''} etape · preflight ${payload.preflight || ''}`.trim();

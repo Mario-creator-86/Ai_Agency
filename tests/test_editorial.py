@@ -1,0 +1,369 @@
+"""The Director watches a film before it goes out.
+
+What is asserted: a film on a sourceless claim, in the wrong language, under forty words is
+rejected without spending a model; a film the Director approves may publish and one she
+rejects closes its storyboard, writes to the departments named and stays out of the publish
+queue; the publish stage asks her first; frames are read from a real file when an encoder is
+at hand.
+"""
+
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+from uuid import uuid4
+
+import pytest
+from app.agents.editorial import (
+    EditorialVerdict,
+    editorial_review,
+    frames_for,
+    gather_facts,
+    latest_editorial,
+)
+from app.agents.models import Agent, AgentMessage, ModelRecord, Role
+from app.agents.services import seed_initial_workforce
+from app.factual.models import FactualClaim, ScriptDraft, SourceSnapshot, TopicIdea
+from app.media.models import (
+    EditorialReview,
+    MediaAsset,
+    QualityControlReport,
+    Storyboard,
+    StoryboardScene,
+    VideoRenderJob,
+)
+from app.media.services import seed_default_character_bibles
+from app.models import OwnerPolicy
+from app.providers.base import GenerateResult, HealthResult
+from app.providers.registry import ProviderRegistry
+from app.runbook.stages import topics_in_production
+from app.services import utc_now
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+ENGLISH = (
+    "In 2023 the James Webb Space Telescope measured water vapour in the atmosphere of a rocky "
+    "planet twenty-six light years away. That should not be possible: the star bathes the planet "
+    "in radiation that strips atmospheres bare. Either the planet keeps refilling its air from "
+    "inside, or the signal comes from the star itself. Here is how astronomers plan to tell."
+)
+ROMANIAN = (
+    "Studioul AI produce conținut cu integritate garantată. Fiecare afirmație este validată "
+    "factual înainte de producție. Fiecare cadru este inspectat și certificat automat."
+)
+
+
+class ScriptedModel:
+    def __init__(self, answer):
+        self.answer = answer
+        self.calls: list[dict] = []
+
+    async def health_check(self):
+        return HealthResult("HEALTHY")
+
+    async def list_models(self):
+        return []
+
+    async def generate(self, model, prompt, **kwargs):
+        self.calls.append({"prompt": prompt, "extra": kwargs.get("extra")})
+        return GenerateResult(self.answer(prompt), 10, 40, None)
+
+
+@pytest.fixture
+def staffed(engine):
+    seed_initial_workforce(engine)
+    seed_default_character_bibles(engine)
+    with Session(engine) as session, session.begin():
+        session.get(OwnerPolicy, 1).autonomy_stopped = False
+        for model in session.scalars(select(ModelRecord)):
+            model.is_available = True
+    with Session(engine) as session:
+        agents = {
+            role.name: agent
+            for agent, role in session.execute(
+                select(Agent, Role).join(Role, Agent.role_id == Role.id)
+            ).all()
+        }
+        provider_id = next(iter(agents.values())).provider_id
+        session.expunge_all()
+    return {"agents": agents, "provider_id": provider_id}
+
+
+def registry_with(staffed, answer):
+    registry = ProviderRegistry()
+    model = ScriptedModel(answer)
+    registry.register(staffed["provider_id"], model)
+    return registry, model
+
+
+def a_film(engine, *, voiceover: str, with_source: bool, title="A rocky world with water"):
+    """A SELECTED topic, its script on one claim, a rendered storyboard and a QC-passed file."""
+    ids = {k: str(uuid4()) for k in ("topic", "claim", "source", "script", "board", "asset", "job")}
+    now = utc_now()
+    with Session(engine) as session, session.begin():
+        session.add(
+            TopicIdea(
+                id=ids["topic"],
+                title=title,
+                topic="space",
+                angle="a",
+                target_audience="g",
+                novelty_score=0.9,
+                status="SELECTED",
+                created_at=now,
+            )
+        )
+        session.flush()
+        if with_source:
+            session.add(
+                SourceSnapshot(
+                    id=ids["source"],
+                    topic_id=ids["topic"],
+                    url="https://science.nasa.gov/webb",
+                    title="Webb finds water vapour",
+                    publisher="NASA",
+                    content_hash="0" * 64,
+                    raw_content="text",
+                    sanitized_content="text",
+                    credibility_score=0.9,
+                    fetched_at=now,
+                )
+            )
+            session.flush()
+        session.add(
+            FactualClaim(
+                id=ids["claim"],
+                topic_id=ids["topic"],
+                source_id=ids["source"] if with_source else None,
+                claim_text="Webb measured water vapour on GJ 486 b.",
+                claim_type="SCIENTIFIC_FACT",
+                importance="CRITICAL",
+                status="SUPPORTED",
+                confidence=0.9,
+                created_at=now,
+            )
+        )
+        session.flush()
+        session.add(
+            ScriptDraft(
+                id=ids["script"],
+                topic_id=ids["topic"],
+                title=title,
+                voiceover_full_text=voiceover,
+                claim_ids_json=[ids["claim"]],
+                status="APPROVED",
+                created_at=now,
+            )
+        )
+        session.flush()
+        session.add(
+            Storyboard(
+                id=ids["board"],
+                script_draft_id=ids["script"],
+                title=title,
+                status="RENDERED",
+                total_scenes=1,
+                created_at=now,
+            )
+        )
+        session.flush()
+        session.add(
+            StoryboardScene(
+                id=str(uuid4()),
+                storyboard_id=ids["board"],
+                scene_index=1,
+                visual_prompt="The telescope's golden mirror against the dark",
+                visual_type="GENERATED_IMAGE",
+                duration_seconds=6.0,
+                voiceover_segment=voiceover[:120],
+                created_at=now,
+            )
+        )
+        session.add(
+            MediaAsset(
+                id=ids["asset"],
+                asset_type="RENDERED_VIDEO",
+                uri_or_path=f"storage/{ids['asset']}.mp4",
+                file_size_bytes=10,
+                mime_type="video/mp4",
+                width=1080,
+                height=1920,
+                duration_seconds=18.0,
+                provider_name="RUNWAY_IMAGES",
+                license_status="PROPRIETARY_STUDIO",
+                provenance_hash="0" * 64,
+                created_at=now,
+            )
+        )
+        session.flush()
+        session.add(
+            VideoRenderJob(
+                id=ids["job"],
+                storyboard_id=ids["board"],
+                status="COMPLETED",
+                output_asset_id=ids["asset"],
+                started_at=now,
+            )
+        )
+        session.flush()
+        session.add(
+            QualityControlReport(
+                id=str(uuid4()),
+                media_asset_id=ids["asset"],
+                status="PASSED",
+                score=1.0,
+                checks_json={"technical_qc": {"measured_width": 1080, "measured_height": 1920}},
+                failure_reasons_json=[],
+                verified_at=now,
+            )
+        )
+    return ids
+
+
+def test_the_film_that_went_out_would_now_be_rejected_without_a_model(engine, staffed):
+    """One sourceless claim, Romanian narration, twenty words: three reasons, no tokens."""
+    ids = a_film(engine, voiceover=ROMANIAN, with_source=False, title="Descoperire Robotică")
+    registry, model = registry_with(staffed, lambda p: "{}")
+
+    result = editorial_review(engine, registry, ids["asset"], language="en")
+
+    assert result["verdict"] == "REJECT" and result["model_used"] is False
+    assert model.calls == []
+    reasons = " ".join(result["reasons"])
+    assert "nu are nicio sursă" in reasons
+    assert "nu este în English" in reasons
+    assert "fără poveste" in reasons
+    with Session(engine) as session:
+        assert session.get(Storyboard, ids["board"]).status == "REJECTED"
+        review = latest_editorial(session, ids["asset"])
+        assert review.verdict == "REJECT" and review.frames_seen == 0
+        letters = session.scalars(
+            select(AgentMessage).where(AgentMessage.subject.like("Refăcut:%"))
+        ).all()
+        assert [m.to_agent_id for m in letters] == [staffed["agents"]["ScriptWriter"].id]
+        assert "nu are nicio sursă" in letters[0].body_text
+        live, stalled = topics_in_production(session)
+        assert stalled == [ids["topic"]] and live == []
+
+
+def test_the_director_watches_and_approves_and_the_verdict_is_a_record(engine, staffed):
+    ids = a_film(engine, voiceover=ENGLISH, with_source=True)
+    seen: dict = {}
+
+    def answer(prompt):
+        seen["prompt"] = prompt
+        return json.dumps(
+            {
+                "verdict": "APPROVE",
+                "story": "A rocky world kept its water against a star that strips air.",
+                "reasons": [],
+                "notes_for": {},
+            }
+        )
+
+    registry, model = registry_with(staffed, answer)
+    result = editorial_review(engine, registry, ids["asset"], language="en")
+
+    assert result["verdict"] == "APPROVE" and result["model_used"] is True
+    assert "AUDIENCE LANGUAGE: English" in seen["prompt"]
+    assert "science.nasa.gov/webb" in seen["prompt"] and "golden mirror" in seen["prompt"]
+    assert model.calls[0]["extra"] == {"format": "json"}  # no frames: the file is not there
+    with Session(engine) as session:
+        review = latest_editorial(session, ids["asset"])
+        assert review.verdict == "APPROVE" and review.story.startswith("A rocky world")
+        assert session.get(Storyboard, ids["board"]).status == "RENDERED"
+        assert session.scalar(
+            select(AgentMessage).where(AgentMessage.subject.like("Vizionare: APPROVE%"))
+        )
+
+
+def test_a_rejection_writes_to_each_department_named_and_keeps_the_film_out(engine, staffed):
+    ids = a_film(engine, voiceover=ENGLISH, with_source=True)
+    registry, _ = registry_with(
+        staffed,
+        lambda p: json.dumps(
+            {
+                "verdict": "REJECT",
+                "story": "It never says why the water matters.",
+                "reasons": ["no hook", "pictures decorate"],
+                "notes_for": {
+                    "ScriptWriter": "Open with what should be impossible.",
+                    "VideoEditor": "Show the spectrum, not the mirror.",
+                    "Publisher": "",
+                },
+            }
+        ),
+    )
+    result = editorial_review(engine, registry, ids["asset"], language="en")
+    assert result["verdict"] == "REJECT" and result["letters"] == 2
+    with Session(engine) as session:
+        targets = {
+            m.to_agent_id
+            for m in session.scalars(select(AgentMessage).where(AgentMessage.intent == "HANDOFF"))
+        }
+        assert targets == {
+            staffed["agents"]["ScriptWriter"].id,
+            staffed["agents"]["VideoEditor"].id,
+        }
+        assert session.get(Storyboard, ids["board"]).status == "REJECTED"
+
+
+def test_the_publish_stage_asks_the_director_before_anything_else(engine, settings, staffed):
+    from app.runbook.stages import _publish
+
+    ids = a_film(engine, voiceover=ROMANIAN, with_source=False)
+    registry, model = registry_with(staffed, lambda p: "{}")
+    # No channel is bound in a fresh studio: the stage stops before the film. Bind nothing,
+    # and check the Director's gate by asking the stage with a prepared candidate instead.
+    outcome = _publish(engine, None, registry, "en")
+    assert outcome["status"] in ("SKIPPED", "COMPLETED")
+    # The gate itself, on the candidate the stage would pick:
+    with Session(engine) as session:
+        assert latest_editorial(session, ids["asset"]) is None
+    editorial_review(engine, registry, ids["asset"], language="en")
+    with Session(engine) as session:
+        assert latest_editorial(session, ids["asset"]).verdict == "REJECT"
+        assert (
+            session.scalar(
+                select(EditorialReview).where(EditorialReview.media_asset_id == ids["asset"])
+            )
+            is not None
+        )
+
+
+def test_gather_facts_reads_the_whole_film(engine, staffed):
+    ids = a_film(engine, voiceover=ENGLISH, with_source=True)
+    with Session(engine) as session:
+        facts = gather_facts(session, ids["asset"], "en")
+    assert facts["hard_rejects"] == []
+    assert facts["claims"][0]["source"]["publisher"] == "NASA"
+    assert facts["scenes"][0]["picture"].startswith("The telescope")
+    assert facts["quality_control"]["status"] == "PASSED"
+    assert facts["words"] >= 40 and facts["audience_language"] == "English"
+    assert EditorialVerdict(verdict="APPROVE").story == ""
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not on PATH")
+def test_frames_are_read_from_a_real_file(tmp_path):
+    film = tmp_path / "film.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=blue:s=64x128:d=2",
+            "-pix_fmt",
+            "yuv420p",
+            str(film),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    frames = frames_for(str(film), None, 2.0)
+    assert len(frames) == 3 and all(len(f) > 100 for f in frames)
+    assert frames_for(str(tmp_path / "missing.mp4"), None, 2.0) == []

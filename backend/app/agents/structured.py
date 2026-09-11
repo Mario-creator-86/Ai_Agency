@@ -53,6 +53,7 @@ def structured_run[T: BaseModel](
     max_tokens: int,
     temperature: float = 0.1,
     format_tokens: int = 0,
+    extra: dict[str, Any] | None = None,
 ) -> tuple[T | None, dict[str, Any], dict[str, Any] | None]:
     """Run the task; when no object validates, run it once more with native thinking.
 
@@ -80,7 +81,7 @@ def structured_run[T: BaseModel](
             max_tokens=max_tokens,
             temperature=temperature,
             emit_message=False,
-            extra=NATIVE_THINKING if native else JSON_ONLY,
+            extra={**(NATIVE_THINKING if native else JSON_ONLY), **(extra or {})},
         )
         attempts.append(result)
         text = result.get("output_text") or ""

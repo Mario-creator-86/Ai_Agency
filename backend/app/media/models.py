@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     CheckConstraint,
     Float,
     ForeignKey,
@@ -249,6 +250,37 @@ class CharacterIdentityChange(Base):
     decision_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(String(40), nullable=False)
     decided_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    event_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("domain_event.event_id"), nullable=True
+    )
+
+
+class EditorialReview(Base):
+    """The Director's verdict on a finished film before publication (migration 0029)."""
+
+    __tablename__ = "editorial_review"
+    __table_args__ = (Index("ix_editorial_review_asset", "media_asset_id", "created_at"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    media_asset_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("media_asset.id"), nullable=False
+    )
+    storyboard_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("storyboard.id"), nullable=True
+    )
+    verdict: Mapped[str] = mapped_column(String(10), nullable=False)
+    story: Mapped[str] = mapped_column(String(400), nullable=False, default="")
+    reasons_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    notes_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    reviewer_agent_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("agent.id"), nullable=True
+    )
+    run_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("agent_run.id"), nullable=True
+    )
+    frames_seen: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    model_used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False)
     event_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("domain_event.event_id"), nullable=True
     )

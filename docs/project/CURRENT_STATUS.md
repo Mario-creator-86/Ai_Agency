@@ -13,6 +13,14 @@ database resource discovery/refresh, separate production choices, UI and regress
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
 
+## The Director watches before publishing (2026-09-12)
+
+Nothing reaches a channel without the Director's editorial verdict (migration 0029): she
+reads the film as data and frames from the file, decides APPROVE or REJECT with reasons,
+and writes to the departments that must change something. The one video that went out —
+demo script, sourceless claim, Romanian narration, twenty words — would be rejected on
+three counts before any model is asked.
+
 ## English on the way out (2026-09-12)
 
 `STUDIO_CONTENT_LANGUAGE` (default `en`) is told to every employee whose words reach the

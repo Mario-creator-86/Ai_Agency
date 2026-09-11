@@ -1,5 +1,29 @@
 # Changelog
 
+## The Director watches the film before it goes out — 2026-09-12
+
+The Owner asked how a video with no story, in Romanian, resting on one claim, could be
+produced and published. From the record: the script was a demo of 2026-09-09 whose single
+claim ("the system produces 9:16 video with a SHA-256 provenance hash and automatic QC")
+has no source at all and was seeded SUPPORTED; the factual gate looked only at the status;
+quality control measured the file (decodable, 1080×1920, real images) and nothing else; the
+voice artist checked pronunciation; the Publisher checked that the title described the
+content (it did); the Director read her inbox after the upload. Every gate did its narrow
+job; nobody watched the film.
+
+- **Editorial gate** (`backend/app/agents/editorial.py`, migration 0029 `editorial_review`):
+  before the publish stage prepares anything, the Director reads the whole film as data —
+  topic, script, every claim with its source, each scene's picture and narration, what QC
+  measured, the audience language — and, when an encoder is at hand, three frames from the
+  file itself go to her model (`images` on the generate call; the assigned models declare
+  vision). Her verdict is a record, an event in the ledger ("vizionat și respins — …"), a
+  STATUS or ESCALATE in the inbox, and a HANDOFF letter to each department her notes name.
+  A REJECT closes the storyboard, keeps the film out of the queue, and lets selection move
+  on. Three things are decided without a model: a claim with no source, narration not in the
+  audience language, fewer than forty spoken words. The film that went out fails all three.
+- `structured_run` carries `extra` (the frames) through both attempts.
+- Tests: `tests/test_editorial.py` (6, one skipped without ffmpeg on PATH).
+
 ## The studio publishes in English, and the Director says what her model did — 2026-09-12
 
 - **Audience language** (`backend/app/agents/language.py`, `STUDIO_CONTENT_LANGUAGE`, default
