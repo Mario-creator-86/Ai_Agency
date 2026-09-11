@@ -1,5 +1,27 @@
 # Changelog
 
+## The Accountant keeps the books; every employee has a history and a chat — 2026-09-11
+
+Write-up: `ACCOUNTING_AND_HISTORY.md`.
+
+- **Speech bubbles read the whole answer.** Same box, three lines; the text pages through
+  at reading speed with a page counter, and the bubble stays up as long as reading takes.
+  `frontend/src/speech_bubble.js` (pure, tested); the event carries 1 200 characters.
+- **History and chat per employee.** `GET /agents/{id}/history` merges runs, typed messages
+  and memory into one timeline (what was asked, answered, decided and why);
+  `POST /agents/{id}/chat` puts the Owner's question through the employee's identity and
+  policy kernel. The Agent Inspector shows the timeline above a chat input.
+- **Nadia (Accountant)**: role, work contract, Character Bible, memory scope, a desk in the
+  new Accounting & Treasury office (the Coffee Lounge / Commons is gone). A studio staffed
+  before the role existed hires her through `seed_missing_workforce()`.
+- **Budget** (migration 0024, `spending_budget`): daily and monthly limits set by the Owner
+  in Trezorerie; spend measured from the books (estimates and bills), unpriced usage reported
+  as such. The media stage refuses a render an exceeded budget cannot afford; every render's
+  narration is costed per scene at the stored price; the Accountant closes the day in
+  `post_run` before the Director's review and escalates a warning or an exceeded budget.
+- API: `GET/PUT /economy/budget`, `GET /economy/books/daily`, `POST /economy/books/close`.
+- Tests: `tests/test_books_and_history.py`, `frontend/tests/speech_bubble.test.js`.
+
 ## The pipeline has no empty stages left, and a channel knows its account — 2026-09-11
 
 Everything was connected and nothing worked: the publishing screen answered "Internal error",

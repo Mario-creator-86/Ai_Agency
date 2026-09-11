@@ -17,6 +17,8 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.economy.accountant import AccountantError, daily_figures, reconcile_day
+from app.economy.budget import BudgetCommand, budget_status, set_budget
 from app.economy.services import (
     EconomyError,
     bill_provider_cost,
@@ -122,6 +124,32 @@ def create_economy_router() -> APIRouter:
     def get_treasury(request: Request) -> dict:
         """Balances by money class, with every figure labelled and the trial balance attached."""
         return treasury_snapshot(request.app.state.engine)
+
+    @router.get("/budget")
+    def get_budget(request: Request) -> dict:
+        """Active budgets against the period's spend, and the spend itself."""
+        return budget_status(request.app.state.engine)
+
+    @router.put("/budget")
+    def put_budget(command: BudgetCommand, request: Request) -> dict:
+        """Set or retire a period's budget. The previous limit is kept, marked replaced."""
+        try:
+            return set_budget(request.app.state.engine, command)
+        except EconomyError as exc:
+            raise HTTPException(422, str(exc)) from None
+
+    @router.get("/books/daily")
+    def get_daily_figures(request: Request) -> dict:
+        """The figures the Accountant closes the day with, computed from the books."""
+        return daily_figures(request.app.state.engine)
+
+    @router.post("/books/close")
+    def post_close_day(request: Request) -> dict:
+        """The Owner asks for the Accountant's close now, outside the daily run."""
+        try:
+            return reconcile_day(request.app.state.engine, request.app.state.registry)
+        except AccountantError as exc:
+            raise HTTPException(422, str(exc)) from None
 
     @router.get("/accounts")
     def get_accounts(request: Request) -> dict:

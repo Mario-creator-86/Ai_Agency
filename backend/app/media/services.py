@@ -478,6 +478,76 @@ DEFAULT_CHARACTERS = [
 
 
 #: Narrative fields the seed may complete on an entry that predates them.
+DEFAULT_CHARACTERS.append(
+    {
+        "canonical_name": "Nadia Accountant",
+        "role": "Accountant",
+        "palette_json": {
+            "blouse": "#7c3aed",
+            "cardigan": "#2e1065",
+            "hair": "#3f2a1d",
+            "ledger": "#14532d",
+        },
+        "face_hair_desc": (
+            "Chestnut hair in a low bun, round tortoiseshell glasses; attentive hazel eyes"
+        ),
+        "outfit_desc": "Plum blouse under a dark violet cardigan, small brass pen on a chain",
+        "props_desc": (
+            "Green ledger book, a calculator with a paper roll, a jar of sharpened pencils."
+        ),
+        "role_symbols": (
+            "Accounting & Treasury office, filing cabinets, a wall board of the month's spend."
+        ),
+        "voice_profile_json": {
+            "voice_id": "nadia_books",
+            "pitch": 1.0,
+            "speed": 0.95,
+            "style": "Precise/Unhurried",
+        },
+        "personality_json": {
+            "traits": ["exact", "unhurried", "quietly firm"],
+            "values": ["a number that is in the books", "a budget that means something"],
+            "humor": "gentle, usually about round numbers",
+            "social_energy": "low; prefers the ledger to the meeting",
+            "conflict_style": "shows the figure, waits, repeats the figure",
+            "strengths": ["remembers every invoice", "never rounds in the studio's favour"],
+            "weaknesses": ["slow to accept an estimate", "uneasy with anything unpriced"],
+        },
+        "speech_style_json": {
+            "register": "bookkeeping report",
+            "cadence": "even, with a pause before each amount",
+            "sentence_length": "short",
+            "vocabulary": "amounts, references, periods; no adjectives about money",
+            "habits": ["says the amount, then the reference", "names the period every time"],
+            "language": "en",
+        },
+        "expressions_json": {
+            "greeting": "The books are open.",
+            "agreement": "Recorded, with the reference.",
+            "disagreement": "That figure is not in the books.",
+            "under_pressure": "One entry at a time. Nothing posts twice.",
+            "sign_off": "Closed for the day; the totals are yours.",
+        },
+        "behavior_json": {
+            "work_rituals": ["closes the day before reading anything else"],
+            "gestures": ["taps the ledger twice when a total balances"],
+            "desk_habits": ["the calculator roll is never torn off before the month ends"],
+            "likes": ["an invoice that matches its estimate"],
+            "dislikes": ["a render with no price on it"],
+        },
+        "reference_assets_json": {
+            "portrait": None,
+            "full_body": None,
+            "front": None,
+            "side": None,
+            "back": None,
+        },
+        "forbidden_deviations": (
+            "Do not depict Nadia without her glasses or with a laptop in place of the ledger."
+        ),
+    }
+)
+
 PERSONA_FIELDS = (
     "personality_json",
     "speech_style_json",

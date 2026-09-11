@@ -527,7 +527,9 @@ def run_agent_task(
         # speech-bubble projection consumes — only real messages may become live bubbles
         # (../architecture/06_BACKEND_EVENT_MODEL.md §7). Reasoning models can succeed with
         # no visible text; then there is nothing real to say and no event is emitted.
-        message_text = " ".join((output_text or "").split())[:200]
+        # The bubble pages through the text at reading speed and the chat shows all of it;
+        # the payload is capped only so an event stays an event, not a document.
+        message_text = " ".join((output_text or "").split())[:1200]
         if emit_message and status == "SUCCEEDED" and message_text:
             append_event_with_outbox(
                 session,
@@ -539,6 +541,163 @@ def run_agent_task(
                 correlation_id,
             )
         return AgentRunView.model_validate(run).model_dump()
+
+
+_ROLE_DEFINITIONS = [
+    (
+        "Director",
+        "Supervise autonomous studio operations, strategy, and quality",
+        "plan,review,direct,decide",
+        "self_escalate,bypass_policy",
+    ),
+    (
+        "LeadResearcher",
+        "Discover and analyze viral, factual, high-retention topics and source evidence",
+        "research,ingest_source,extract_claims",
+        "unverified_speculation",
+    ),
+    (
+        "FactChecker",
+        "Verify atomic claims against authoritative sources and enforce factual gate",
+        "verify_claim,gate_check",
+        "bypass_unverified_claims",
+    ),
+    (
+        "ScriptWriter",
+        "Draft narrative scripts, scene breakdowns, and voiceover pacing",
+        "draft_script,write_scenes",
+        "fabricate_facts",
+    ),
+    (
+        "VoiceArtist",
+        "Synthesize speech, narration timing, and vocal emotional inflection",
+        "synthesize_voice,audio_align",
+        "unauthorized_cloning",
+    ),
+    (
+        "VideoEditor",
+        "Compose video assets, timeline pacing, transitions, and visual rendering",
+        "render_video,edit_scenes,qc_video",
+        "corrupt_timeline",
+    ),
+    (
+        "Publisher",
+        "Oversee final QC, metadata optimization, packaging, and distribution schedule",
+        "prepare_release,schedule_publish",
+        "bypass_owner_policy",
+    ),
+    (
+        "Accountant",
+        "Keep the books of what the studio spends, hold it to its budget, and close "
+        "every day with figures the Owner can read",
+        "reconcile_costs,report_budget,record_costs",
+        "post_without_reference,pay_anyone,change_budget",
+    ),
+]
+
+
+def seed_missing_workforce(engine: Engine) -> list[str]:
+    """Hire the seed employees a studio does not have yet. Returns the display names hired.
+
+    `seed_initial_workforce` stops at the first hire, by design: it never overwrites a studio
+    the Owner has shaped. But a role added to the seed later (the Accountant) has to reach a
+    studio that already exists. This creates the missing role from the seed's own definition
+    and hires its employee on the seed's model if that model exists, otherwise on the model
+    the Director already runs, so the new hire can work today. Every hire is an event.
+    """
+    from app.agents.seed_config import load_seed_config
+
+    seed_config = load_seed_config()
+    hired: list[str] = []
+    with Session(engine) as session, session.begin():
+        existing_roles = {r.name: r for r in session.scalars(select(Role))}
+        agents = list(session.scalars(select(Agent).where(Agent.lifecycle == "ACTIVE")))
+        if not agents:
+            return hired
+        held = {
+            role.name
+            for role in existing_roles.values()
+            if any(a.role_id == role.id for a in agents)
+        }
+        correlation_id = str(uuid4())
+        models = {m.model_name: m for m in session.scalars(select(ModelRecord))}
+        director = next(
+            (
+                a
+                for a in agents
+                if existing_roles.get("Director") and a.role_id == existing_roles["Director"].id
+            ),
+            agents[0],
+        )
+        role_specs = {
+            name: (mission, allowed, prohibited)
+            for name, mission, allowed, prohibited in _ROLE_DEFINITIONS
+        }
+        for display_name, role_name, model_name in seed_config["agents_def"]:
+            if role_name in held:
+                continue
+            role = existing_roles.get(role_name)
+            if role is None:
+                spec = role_specs.get(role_name)
+                if spec is None:
+                    continue
+                event = append_event(
+                    session,
+                    "role.created",
+                    "role",
+                    str(uuid4()),
+                    1,
+                    {"name": role_name, "mission": spec[0]},
+                    correlation_id,
+                )
+                role = Role(
+                    id=event.aggregate_id,
+                    name=role_name,
+                    mission=spec[0],
+                    allowed_task_types=spec[1],
+                    prohibited_actions=spec[2],
+                    created_at=utc_now(),
+                    event_id=event.event_id,
+                )
+                session.add(role)
+                session.flush()
+                existing_roles[role_name] = role
+            # The seed's model only if the provider has confirmed it; otherwise the model the
+            # Director already runs on, so the new hire can work today rather than wait for a
+            # verification nobody asked for.
+            model = models.get(model_name)
+            usable = model is not None and model.is_available
+            provider_id = model.provider_id if usable and model else director.provider_id
+            model_id = model.id if usable and model else director.model_id
+            event = append_event(
+                session,
+                "agent.hired",
+                "agent",
+                str(uuid4()),
+                1,
+                {"display_name": display_name, "role": role_name, "model": model_name},
+                correlation_id,
+            )
+            session.add(
+                Agent(
+                    id=event.aggregate_id,
+                    display_name=display_name,
+                    role_id=role.id,
+                    provider_id=provider_id,
+                    model_id=model_id,
+                    lifecycle="ACTIVE",
+                    runtime_state="IDLE",
+                    cost_limit_per_task=None,
+                    max_concurrent_tasks=1,
+                    version=1,
+                    hired_at=utc_now(),
+                    terminated_at=None,
+                    event_id=event.event_id,
+                )
+            )
+            held.add(role_name)
+            hired.append(display_name)
+    return hired
 
 
 def seed_initial_workforce(engine: Engine) -> None:
@@ -554,6 +713,7 @@ def seed_initial_workforce(engine: Engine) -> None:
     the call — may mark a model available or stamp ``last_verified``.
     """
     _seed_initial_workforce(engine)
+    seed_missing_workforce(engine)
     seed_role_contracts(engine)
 
 
@@ -659,50 +819,7 @@ def _seed_initial_workforce(engine: Engine) -> None:
                 model_map[m_name] = existing_model.id
 
         # 4. Roles matching office workstations
-        roles_def = [
-            (
-                "Director",
-                "Supervise autonomous studio operations, strategy, and quality",
-                "plan,review,direct,decide",
-                "self_escalate,bypass_policy",
-            ),
-            (
-                "LeadResearcher",
-                "Discover and analyze viral, factual, high-retention topics and source evidence",
-                "research,ingest_source,extract_claims",
-                "unverified_speculation",
-            ),
-            (
-                "FactChecker",
-                "Verify atomic claims against authoritative sources and enforce factual gate",
-                "verify_claim,gate_check",
-                "bypass_unverified_claims",
-            ),
-            (
-                "ScriptWriter",
-                "Draft narrative scripts, scene breakdowns, and voiceover pacing",
-                "draft_script,write_scenes",
-                "fabricate_facts",
-            ),
-            (
-                "VoiceArtist",
-                "Synthesize speech, narration timing, and vocal emotional inflection",
-                "synthesize_voice,audio_align",
-                "unauthorized_cloning",
-            ),
-            (
-                "VideoEditor",
-                "Compose video assets, timeline pacing, transitions, and visual rendering",
-                "render_video,edit_scenes,qc_video",
-                "corrupt_timeline",
-            ),
-            (
-                "Publisher",
-                "Oversee final QC, metadata optimization, packaging, and distribution schedule",
-                "prepare_release,schedule_publish",
-                "bypass_owner_policy",
-            ),
-        ]
+        roles_def = _ROLE_DEFINITIONS
         role_map: dict[str, str] = {}
         for r_name, mission, allowed, prohibited in roles_def:
             existing_role = session.scalars(select(Role).where(Role.name == r_name)).first()

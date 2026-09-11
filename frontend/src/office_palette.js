@@ -255,15 +255,15 @@ export const DEPARTMENTS = {
     trim: MAT.steel,
     lamp: '#d8ffe8',
   },
-  LOUNGE: {
-    name: 'COMMONS',
-    accent: '#ff9a76',
-    wall: ['#3a2422', '#5a3a34', '#7a5044', '#9c6a5a', '#c08c74'],
-    wallStyle: 'brick',
+  FINANCE: {
+    name: 'ACCOUNTING',
+    accent: '#c4a7ff',
+    wall: ['#1e1a2e', '#2c2542', '#3d3458', '#524770', '#6f6390'],
+    wallStyle: 'panelled',
     floor: MAT.oak,
     floorStyle: 'herringbone',
     trim: MAT.walnut,
-    lamp: '#ffcf9a',
+    lamp: '#e6dcff',
   },
   PUBLISH: {
     name: 'DISTRIBUTION',

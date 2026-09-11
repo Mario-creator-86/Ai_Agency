@@ -368,6 +368,21 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 .identity-prompt { margin-top: 10px; font-size: 12.5px; }
 .identity-prompt summary { cursor: pointer; color: var(--ink-3); }
 .identity-prompt pre { max-height: 260px; }
+.chat-history { max-height: 420px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 10px; background: var(--surface-sunk); border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: 12.5px; line-height: 1.5; }
+.chat-item { padding: 8px 10px; border-radius: var(--radius-sm); background: var(--surface); border: 1px solid var(--line); }
+.chat-item .chat-meta { margin-bottom: 4px; color: var(--ink-3); }
+.chat-asked { font-weight: 600; color: var(--ink); }
+.chat-answer { margin-top: 4px; white-space: pre-wrap; color: var(--ink-2); }
+.chat-run { border-left: 3px solid var(--forest); }
+.chat-message { border-left: 3px solid var(--warn-line); }
+.chat-memory { border-left: 3px solid var(--line-strong); }
+.chat-form { margin-top: 10px; }
+.budget-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin: 10px 0; }
+.budget-card { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px 12px; background: var(--surface); font-size: 12.5px; }
+.budget-card strong { font-size: 15px; display: block; }
+.budget-OK { border-left: 3px solid var(--forest); }
+.budget-WARNING { border-left: 3px solid var(--warn-line); }
+.budget-EXCEEDED { border-left: 3px solid #b3261e; }
 
 /* ============================================================== publishing -- */
 /* The channel slots carry a binding control now, so they get the wider column. */

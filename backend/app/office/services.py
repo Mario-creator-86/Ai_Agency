@@ -159,16 +159,24 @@ DEFAULT_OFFICE_LAYOUT: dict[str, Any] = {
             ],
         },
         {
-            "id": "lounge_area",
-            "name": "Ground Floor — Coffee Lounge & Commons",
-            "zone_type": "LOUNGE",
+            "id": "accounting_office",
+            "name": "Ground Floor — Accounting & Treasury",
+            "zone_type": "FINANCE",
             "floor": 0,
             "x": 350,
             "y": 600,
             "width": 230,
             "height": 200,
-            "color": "#1c1917",
-            "desks": [],
+            "color": "#1f1a2e",
+            "desks": [
+                {
+                    "id": "desk_accounting",
+                    "name": "Accountant Desk",
+                    "x": 465,
+                    "y": 788,
+                    "role_name": "Accountant",
+                }
+            ],
         },
         {
             "id": "publish_desk",

@@ -25,7 +25,9 @@ from __future__ import annotations
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
     CheckConstraint,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -305,3 +307,32 @@ class LedgerEntry(Base):
     )
     debit_micros: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     credit_micros: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+
+
+class SpendingBudget(Base):
+    """How much the studio may spend in a period, set by the Owner (see economy/budget.py).
+
+    One active row per period; a new limit deactivates the previous one and keeps it, so the
+    books can say what the allowance was on any given day. Amounts in USD micros, like every
+    other figure here.
+    """
+
+    __tablename__ = "spending_budget"
+    __table_args__ = (
+        CheckConstraint("period IN ('DAILY','MONTHLY')", name="ck_spending_budget_period"),
+        CheckConstraint("limit_usd_micros > 0", name="ck_spending_budget_positive"),
+        Index("ix_spending_budget_active", "period", "active"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    period: Mapped[str] = mapped_column(String(10), nullable=False)
+    limit_usd_micros: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    warn_ratio: Mapped[float] = mapped_column(Float, nullable=False, default=0.8)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    set_by: Mapped[str] = mapped_column(String(100), nullable=False, default="owner")
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    replaced_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    event_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("domain_event.event_id"), nullable=True
+    )

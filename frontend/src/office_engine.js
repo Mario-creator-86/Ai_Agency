@@ -1,3 +1,4 @@
+import { bubbleFrame, bubblePages } from './speech_bubble.js';
 import { drawHuman, drawAnimal } from './street_actor.js';
 import { drawDigitalTime } from './office_clock.js';
 import { refreshVehicle, mixColor, streetClock, randomSource, randomVehicle, depthSortedTraffic, pixelDisc, StreetLife } from './street_life.js';
@@ -977,25 +978,25 @@ function drawNamePlate(ctx, cx, y, name, accent, selected) {
   drawText(ctx, label, x + 13, top + 3, UI.ink, 1, 1);
 }
 
-/** Speech bubble raised by a backend agent.message_sent event. */
-function drawSpeechBubble(ctx, x, y, text, time) {
-  const words = String(text).toUpperCase().split(/\s+/);
-  const maxChars = 24;
-  const lines = [];
-  let line = '';
-  for (const word of words) {
-    if ((line + ' ' + word).trim().length > maxChars) {
-      lines.push(line.trim());
-      line = word;
-    } else {
-      line = `${line} ${word}`;
-    }
-    if (lines.length >= 3) break;
-  }
-  if (line && lines.length < 3) lines.push(line.trim());
+/**
+ * Speech bubble raised by a backend agent.message_sent event.
+ *
+ * The box keeps the size of three short lines; the answer pages through it at a readable
+ * pace (see speech_bubble.js), and a counter says how many pages are left. The box is
+ * sized to the whole current page rather than to the characters typed so far, so it does
+ * not jitter.
+ */
+function drawSpeechBubble(ctx, x, y, bubble, time) {
+  const pages = bubble.pages || bubblePages(bubble.text);
+  if (!pages.length) return;
+  const elapsed = (Date.now() - (bubble.createdAt || Date.now())) / 1000;
+  const frame = bubbleFrame(pages, elapsed);
+  const page = pages[frame.pageIndex];
+  const lines = frame.lines;
+  const counter = frame.pageCount > 1 ? `${frame.pageIndex + 1}/${frame.pageCount}` : '';
 
-  const w = Math.max(...lines.map((l) => textWidth(l, 1, 1))) + 16;
-  const h = lines.length * 10 + 12;
+  const w = Math.max(...page.map((l) => textWidth(l, 1, 1)), textWidth(counter, 1, 1) + 4) + 16;
+  const h = page.length * 10 + 12 + (counter ? 8 : 0);
   const bx = Math.round(x - w / 2);
   const by = Math.round(y - h - 12 + Math.sin(time * 1.6) * 1.5);
 
@@ -1012,6 +1013,11 @@ function drawSpeechBubble(ctx, x, y, text, time) {
   px(ctx, bx + w / 2 - 1, by + h + 2, 1, 1, UI.paper);
   px(ctx, bx + w / 2 - 1, by + h + 3, 1, 1, AMBIENT.shadow);
   lines.forEach((l, i) => drawText(ctx, l, bx + 8, by + 7 + i * 10, UI.ink, 1, 1));
+  if (counter) {
+    // Bottom-right, in the paper's shade: a page count is a hint, not part of what was said.
+    const cw = textWidth(counter, 1, 1);
+    drawText(ctx, counter, bx + w - cw - 6, by + h - 9, UI.paperShade, 1, 1);
+  }
 }
 
 /** Workflow token: a small parcel that sits at the stage the backend reports. */
@@ -1766,7 +1772,7 @@ export class OfficeEngine {
       const p = placed.find((q) => q.id === bubble.agentId);
       const x = p ? p.place.seatX : bubble.x;
       const y = p ? p.body.headY - 22 : bubble.y;
-      drawSpeechBubble(ctx, x, y, bubble.text, time);
+      drawSpeechBubble(ctx, x, y, bubble, time);
     }
 
     // --- atmosphere --------------------------------------------------------

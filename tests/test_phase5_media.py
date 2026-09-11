@@ -53,11 +53,11 @@ requires_ffmpeg = pytest.mark.skipif(
 def test_character_bible_seeding_and_retrieval(engine):
     # 1. Seed defaults
     seeded = seed_default_character_bibles(engine)
-    assert seeded == 7  # 7 studio characters
+    assert seeded == 8  # 8 studio characters: the seven producers and the Accountant
 
     # 2. List characters
     chars = list_character_bibles(engine)
-    assert len(chars) == 7
+    assert len(chars) == 8
 
     sarah = next(c for c in chars if "Sarah" in c["canonical_name"])
     assert sarah["voice_profile_json"]["voice_id"] == "sarah_executive"

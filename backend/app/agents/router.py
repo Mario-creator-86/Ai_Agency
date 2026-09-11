@@ -10,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.agents.director import DirectorError, director_review
+from app.agents.history import agent_timeline, chat
 from app.agents.identity import ContractCommand, identity_view, set_role_contract
 from app.agents.memory import MemoryError, invalidate, list_memory
 from app.agents.messages import MessageError, list_messages, resolve_message
@@ -32,6 +33,11 @@ from app.security import require_owner
 class ResolveMessageCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
     resolution: str = Field(min_length=1, max_length=2000)
+
+
+class ChatCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    message: str = Field(min_length=1, max_length=4000)
 
 
 class InvalidateMemoryCommand(BaseModel):
@@ -115,6 +121,32 @@ def create_agents_router(registry: ProviderRegistry) -> APIRouter:
             raise HTTPException(status_code=404, detail="Agent not found")
         identity["messages"] = list_messages(request.app.state.engine, agent_id=agent_id, limit=20)
         return identity
+
+    @router.get("/{agent_id}/history")
+    def get_agent_history(
+        request: Request,
+        agent_id: Annotated[str, Path(min_length=36, max_length=36)],
+    ) -> dict:
+        """What the employee was asked, answered, decided and remembered, newest first."""
+        if get_agent(request.app.state.engine, agent_id) is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        return {"timeline": agent_timeline(request.app.state.engine, agent_id)}
+
+    @router.post("/{agent_id}/chat")
+    def post_agent_chat(
+        request: Request,
+        agent_id: Annotated[str, Path(min_length=36, max_length=36)],
+        command: ChatCommand,
+    ) -> dict:
+        """The Owner asks the employee directly; the exchange is a run like any other."""
+        try:
+            return chat(
+                request.app.state.engine, request.app.state.registry, agent_id, command.message
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except SQLAlchemyError:
+            raise HTTPException(status_code=500, detail="Internal error") from None
 
     @router.get("/{agent_id}/memory")
     def get_agent_memory(

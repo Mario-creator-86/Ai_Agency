@@ -123,11 +123,13 @@
           <ul id="inspector-memory" class="identity-list"></ul>
           <ul id="inspector-messages" class="identity-list"></ul>
         </div>
-        <div class="dialog-section">
-          <h3 class="dialog-section-header">Rulează o sarcină</h3>
-          <form id="agent-run-form" class="dialog-form">
-            <input id="agent-run-objective" placeholder="Obiectiv sarcină (ex: Planifică tema episodului 1)..." required class="dialog-input" />
-            <button type="submit" class="primary dialog-submit-btn">Execută cu modelul alocat ↗</button>
+        <div class="dialog-section" id="inspector-chat-section">
+          <h3 class="dialog-section-header">Conversație și istoric</h3>
+          <p class="helper">Tot ce a fost întrebat, ce a răspuns, ce a decis și de ce, în ordine. Scrie-i direct: răspunde cu identitatea și memoria lui, iar schimbul rămâne în istoric.</p>
+          <div id="agent-history" class="chat-history"><div class="helper">Se încarcă istoricul…</div></div>
+          <form id="agent-run-form" class="dialog-form chat-form">
+            <input id="agent-run-objective" placeholder="Întreabă-l ceva (ex: Ce ai decis azi și de ce?)…" required class="dialog-input" />
+            <button type="submit" class="primary dialog-submit-btn">Trimite ↗</button>
           </form>
           <div id="agent-run-output" class="dialog-output" hidden></div>
         </div>
@@ -302,6 +304,24 @@
             <div class="topics-loading">Se încarcă trezoreria…</div>
           </div>
           <p id="treasury-disclaimer" class="helper-note"></p>
+        </div>
+
+        <div class="dialog-section-bottom">
+          <h3 class="dialog-section-header-bright-compact">Buget și cheltuieli</h3>
+          <p class="helper-note">Cheltuielile vin din registru: estimările (o randare la prețul modelului) și facturile. Bugetul e limita pe care o stabilești tu; peste linia de avertizare Nadia (Contabil) escaladează, iar peste limită studioul nu mai randează.</p>
+          <div id="budget-cards" class="budget-grid"><div class="topics-loading">Se încarcă bugetul…</div></div>
+          <form id="budget-form" class="dialog-form">
+            <div class="topic-input-grid">
+              <select id="budget-period" class="dialog-input" aria-label="Perioada bugetului">
+                <option value="DAILY">Buget zilnic</option>
+                <option value="MONTHLY">Buget lunar</option>
+              </select>
+              <input id="budget-limit" class="dialog-input" maxlength="20" placeholder="Limită în USD, ex. 25 (0 = fără buget)" />
+            </div>
+            <button type="submit" class="secondary dialog-submit-btn">Stabilește bugetul</button>
+          </form>
+          <div id="budget-status" class="dialog-status-msg" hidden></div>
+          <button id="close-books-btn" class="quiet btn-refresh">Cere închiderea zilei de la Contabil</button>
         </div>
 
         <div class="dialog-section-bottom">

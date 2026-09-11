@@ -1,3 +1,4 @@
+import { bubblePages, bubbleDurationMs } from './speech_bubble.js';
 /**
  * Office State Manager.
  *
@@ -63,17 +64,22 @@ export class OfficeState {
     }
   }
 
-  addSpeechBubble(agentId, text, durationMs = 6000) {
+  addSpeechBubble(agentId, text, durationMs = null) {
     const agent = this.agents.find(a => (a.id || a.agent_id) === agentId);
     if (!agent) return;
 
+    // The bubble stays up as long as reading the whole answer takes: it pages through the
+    // text at a readable pace, so a long answer is long, never cut.
+    const pages = bubblePages(text);
     const bubble = {
       id: `${agentId}_${Date.now()}`,
       agentId,
       text,
+      pages,
       x: agent.x,
       y: agent.y,
-      expiresAt: Date.now() + durationMs,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + (durationMs ?? bubbleDurationMs(pages)),
     };
 
     // Remove existing bubble for this agent

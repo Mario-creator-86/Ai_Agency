@@ -52,6 +52,9 @@ from app.agents.reviews import (
 )
 from app.analytics.services import MetricsUnavailable, ingest_publication_metrics
 from app.config import Settings
+from app.economy.accountant import AccountantError, reconcile_day, record_render_costs
+from app.economy.budget import may_spend
+from app.economy.services import EconomyError
 from app.factual.agent_pipeline import (
     NoVerifiedClaims,
     ScriptRejected,
@@ -516,10 +519,18 @@ def _media(
     if not pending:
         return _outcome(COMPLETED, "Niciun storyboard de randat.", rendered=0)
 
+    # The budget is asked before anything is generated (runbook §7, "reserve budget"). What
+    # the render will cost is estimated from the plan at the stored price of each scene's
+    # model; scenes without a price count as zero here and are reported as unpriced later.
+    budget = may_spend(engine, 0)
+    if not budget["allowed"]:
+        return _outcome(SKIPPED, budget["reason"], budget=budget["period"])
+
     images = image_provider(engine, vault)
     voice = tts_provider(engine, vault)
     produced = []
     narration_reviews = []
+    costs_recorded = 0
     for storyboard_id in pending:
         if registry is not None and _has_language_model(registry):
             try:
@@ -548,6 +559,14 @@ def _media(
         except RenderEngineUnavailable as exc:
             return _outcome(SKIPPED, f"Randarea nu poate rula: {exc}")
         produced.append(result["output_asset_id"])
+        # Into the books at once, at the stored price, so the day's close and the next
+        # budget check see what was just spent.
+        try:
+            costs_recorded += record_render_costs(engine, result["job_id"], str(uuid4()))[
+                "recorded"
+            ]
+        except (EconomyError, KeyError):
+            logger.info("render_cost_not_recorded", extra={"storyboard_id": storyboard_id})
 
     substitutes = images is None or voice is None
     reason = f"{len(produced)} videoclipuri randate."
@@ -560,6 +579,7 @@ def _media(
         assets=produced,
         used_substitutes=substitutes,
         narration_reviews=narration_reviews,
+        costs_recorded=costs_recorded,
     )
 
 
@@ -792,7 +812,19 @@ def _serial_queue(engine: Engine, registry: ProviderRegistry, settings: Settings
 def _post_run(
     engine: Engine, registry: ProviderRegistry, outcomes: dict[str, dict[str, Any]]
 ) -> dict[str, Any]:
-    """File every department's report for the day, then have the Director review the inbox."""
+    """Close the books, file every department's report, then have the Director review the inbox.
+
+    The Accountant closes first (runbook §10, "reconcile cost"): her figures are in the inbox
+    when the Director reads it, and a budget exceeded reaches the Owner the same evening.
+    """
+    close: dict[str, Any] | None = None
+    if _has_language_model(registry):
+        try:
+            close = reconcile_day(engine, registry, str(uuid4()))
+        except (AccountantError, ValueError) as exc:
+            logger.info("daily_close_refused", extra={"reason": str(exc)[:200]})
+            close = {"error": str(exc)[:200]}
+    outcomes = {**outcomes, "books": close or {"status": "SKIPPED", "reason": "fără model"}}
     filed = file_stage_reports(engine, outcomes, str(uuid4()))
     if not _has_language_model(registry):
         return _outcome(

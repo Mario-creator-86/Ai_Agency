@@ -376,9 +376,60 @@ async function showInspector(agent) {
     const identity = await api(`/agents/${encodeURIComponent(id)}/identity`);
     if(request!==inspectorRequest||session!==epoch||!inspector.open) return;
     renderIdentity(identity);
+    await loadAgentHistory(id);
   } catch(error) {
     if(request!==inspectorRequest||session!==epoch||!inspector.open) return;
     element('inspector-mission').textContent = error instanceof Error ? error.message : 'Identitatea nu a putut fi încărcată.';
+  }
+}
+
+const TIMELINE_LABEL = {
+  run: 'Sarcină',
+  owner_chat: 'Întrebare',
+  message: 'Mesaj',
+  memory: 'Memorie',
+  AGENT_OPINION: 'Decizie',
+  HISTORICAL_EVENT: 'Eveniment',
+  TEMP_CONTEXT: 'Context',
+  OWNER_POLICY: 'Politică',
+  VERIFIED_FACT: 'Fapt verificat',
+  STRATEGY: 'Strategie',
+};
+
+function timelineTime(iso) {
+  return iso ? new Date(iso).toLocaleString('ro-RO', { dateStyle: 'short', timeStyle: 'short' }) : '';
+}
+
+/** One line of history: what was asked and answered, or sent, or remembered. */
+function timelineItem(item) {
+  if (item.kind === 'run') {
+    const label = item.task_type === 'owner_chat' ? TIMELINE_LABEL.owner_chat : `${TIMELINE_LABEL.run} · ${item.task_type}`;
+    const answer = item.answered
+      ? `<div class="chat-answer">${escapeHtml(item.answered)}</div>`
+      : `<div class="chat-answer text-error">${escapeHtml(item.error || item.status)}</div>`;
+    const meta = [item.model, item.memory_used ? `${item.memory_used} amintiri folosite` : '', item.cost_vr ? `${item.cost_vr} VR$` : '']
+      .filter(Boolean).join(' · ');
+    return `<div class="chat-item chat-run"><div class="chat-meta"><span class="policy-tag policy-flexible">${escapeHtml(label)}</span> <small>${escapeHtml(timelineTime(item.at))}${meta ? ` · ${escapeHtml(meta)}` : ''}</small></div><div class="chat-asked">${escapeHtml(item.asked || '')}</div>${answer}</div>`;
+  }
+  if (item.kind === 'message') {
+    const direction = item.from_name ? `de la ${item.from_name}` : '';
+    const to = item.to_name ? `către ${item.to_name}` : '';
+    return `<div class="chat-item chat-message"><div class="chat-meta"><span class="policy-tag policy-locked">${escapeHtml(item.intent)}</span> <small>${escapeHtml(timelineTime(item.at))} ${escapeHtml([direction, to].filter(Boolean).join(' '))} · ${escapeHtml(item.status)}</small></div><div>${escapeHtml(item.subject)}</div>${item.resolution ? `<div class="helper">${escapeHtml(item.resolution)}</div>` : ''}</div>`;
+  }
+  return `<div class="chat-item chat-memory"><div class="chat-meta"><span class="policy-tag">${escapeHtml(TIMELINE_LABEL[item.memory_class] || item.memory_class)}</span> <small>${escapeHtml(timelineTime(item.at))}</small></div><div>${escapeHtml(item.content)}</div></div>`;
+}
+
+async function loadAgentHistory(agentId) {
+  const box = element('agent-history');
+  try {
+    const data = await api(`/agents/${encodeURIComponent(agentId)}/history`);
+    const items = (data.timeline || []).slice().reverse();
+    box.innerHTML = items.length
+      ? items.map(timelineItem).join('')
+      : '<div class="helper">Nimic încă: nicio sarcină, niciun mesaj, nicio decizie înregistrată.</div>';
+    box.scrollTop = box.scrollHeight;
+  } catch (error) {
+    box.innerHTML = `<div class="text-error">${escapeHtml(error instanceof Error ? error.message : 'Istoricul nu a putut fi încărcat.')}</div>`;
   }
 }
 
@@ -490,22 +541,19 @@ element('agent-run-form').addEventListener('submit', async (e) => {
   outputDiv.textContent = 'Trimitere comandă către model...';
 
   try {
-    const command = {
-      schema_version: 1,
-      command_id: crypto.randomUUID(),
-      task_type: 'direct_task',
-      objective: objectiveInput.value,
-      prompt_template_version: 'v1',
-    };
-    const result = await api(`/agents/${agentId}/run`, {
+    const message = objectiveInput.value;
+    const item = await api(`/agents/${agentId}/chat`, {
       method: 'POST',
-      body: JSON.stringify(command),
+      body: JSON.stringify({ message }),
     });
-    outputDiv.textContent = `Status: ${result.status}\n${result.output_text || result.error_detail || 'Niciun răspuns.'}`;
     objectiveInput.value = '';
-    await refresh();
+    outputDiv.hidden = true;
+    const box = element('agent-history');
+    if (box.querySelector('.helper') && !box.querySelector('.chat-item')) box.innerHTML = '';
+    box.insertAdjacentHTML('beforeend', timelineItem({ ...item, asked: message }));
+    box.scrollTop = box.scrollHeight;
   } catch (err) {
-    outputDiv.textContent = `Eroare: ${err.message}`;
+    outputDiv.textContent = `Eroare: ${err instanceof Error ? err.message : err}`;
   }
 });
 
@@ -1598,6 +1646,47 @@ if (closePublishingBtn) {
   });
 }
 
+const budgetForm = document.getElementById('budget-form');
+if (budgetForm) {
+  budgetForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const status = element('budget-status');
+    status.hidden = false;
+    status.className = 'dialog-status-msg';
+    try {
+      const result = await api('/economy/budget', {
+        method: 'PUT',
+        body: JSON.stringify({
+          period: /** @type {HTMLSelectElement} */ (element('budget-period')).value,
+          limit_usd: /** @type {HTMLInputElement} */ (element('budget-limit')).value.trim(),
+        }),
+      });
+      status.textContent = result.active === false ? 'Bugetul a fost retras.' : `Buget ${result.period === 'DAILY' ? 'zilnic' : 'lunar'} de ${result.limit_usd} USD stabilit.`;
+      await loadBudget();
+    } catch (error) {
+      status.className = 'dialog-status-msg text-error';
+      status.textContent = error instanceof Error ? error.message : 'Bugetul nu a putut fi salvat.';
+    }
+  });
+}
+const closeBooksBtn = document.getElementById('close-books-btn');
+if (closeBooksBtn) {
+  closeBooksBtn.addEventListener('click', async () => {
+    const status = element('budget-status');
+    status.hidden = false;
+    status.className = 'dialog-status-msg';
+    status.textContent = 'Contabilul închide ziua…';
+    try {
+      const result = await api('/economy/books/close', { method: 'POST' });
+      status.textContent = `${result.headline}. ${result.report ? result.report.summary : result.blocked || ''}`;
+      await loadBudget();
+    } catch (error) {
+      status.className = 'dialog-status-msg text-error';
+      status.textContent = error instanceof Error ? error.message : 'Închiderea a eșuat.';
+    }
+  });
+}
+
 if (refreshPublishingBtn) {
   refreshPublishingBtn.addEventListener('click', loadPublishingHub);
 }
@@ -2236,7 +2325,25 @@ function treasuryTile(row, extraClass = '') {
   return tile;
 }
 
+function budgetCard(period) {
+  const label = period.period === 'DAILY' ? 'Zilnic' : 'Lunar';
+  return `<div class="budget-card budget-${escapeHtml(period.state)}"><span class="stat-label">${escapeHtml(label)} · ${escapeHtml(period.state)}</span><strong>${escapeHtml(period.spent_usd)} / ${escapeHtml(period.limit_usd)} USD</strong><span>rămas ${escapeHtml(period.remaining_usd)} USD · ${Math.round(period.ratio * 100)}%</span>${period.unpriced_agent_runs ? `<div class="helper">${period.unpriced_agent_runs} rulări fără preț înregistrat</div>` : ''}</div>`;
+}
+
+async function loadBudget() {
+  const cards = element('budget-cards');
+  try {
+    const data = await api('/economy/budget');
+    const spend = `<div class="budget-card"><span class="stat-label">Cheltuit</span><strong>azi ${escapeHtml(data.today.spent_usd)} USD</strong><span>luna aceasta ${escapeHtml(data.month.spent_usd)} USD · ${data.month.agent_runs} rulări de agenți, ${data.month.unpriced_agent_runs} fără preț</span></div>`;
+    const providers = data.month.by_provider.map((p) => `<div class="budget-card"><span class="stat-label">${escapeHtml(p.provider)}</span><strong>${escapeHtml(((p.estimated_usd_micros + p.billed_usd_micros) / 1e6).toFixed(2))} USD</strong><span>${p.records} înregistrări · facturat ${escapeHtml((p.billed_usd_micros / 1e6).toFixed(2))}</span></div>`).join('');
+    cards.innerHTML = spend + (data.budgets.length ? data.budgets.map(budgetCard).join('') : '<div class="budget-card"><span class="stat-label">Buget</span><strong>nesetat</strong><span>fără limită, nimic nu oprește cheltuiala</span></div>') + providers;
+  } catch (error) {
+    cards.innerHTML = `<div class="text-error">${escapeHtml(error instanceof Error ? error.message : 'Bugetul nu a putut fi citit.')}</div>`;
+  }
+}
+
 async function loadTreasury() {
+  loadBudget();
   const summary = element('treasury-summary');
   const accountsBox = element('treasury-accounts');
   const ledgerBox = element('treasury-ledger');

@@ -3,7 +3,11 @@
   "roles": {
     "Director": {
       "reports_to": "Owner",
-      "stages": ["performance_intake", "selection", "post_run"],
+      "stages": [
+        "performance_intake",
+        "selection",
+        "post_run"
+      ],
       "watch_for": [
         "reports from every department at the end of the day: what was produced, what failed, what was skipped and why",
         "an agent whose failure rate rises across days, or who did nothing while work was queued",
@@ -39,13 +43,26 @@
         "priorities for tomorrow, three at most"
       ],
       "memory_scope": {
-        "read": ["VERIFIED_FACT", "STRATEGY", "OWNER_POLICY", "HISTORICAL_EVENT", "AGENT_OPINION", "TEMP_CONTEXT"],
-        "write": ["STRATEGY", "AGENT_OPINION", "TEMP_CONTEXT"]
+        "read": [
+          "VERIFIED_FACT",
+          "STRATEGY",
+          "OWNER_POLICY",
+          "HISTORICAL_EVENT",
+          "AGENT_OPINION",
+          "TEMP_CONTEXT"
+        ],
+        "write": [
+          "STRATEGY",
+          "AGENT_OPINION",
+          "TEMP_CONTEXT"
+        ]
       }
     },
     "LeadResearcher": {
       "reports_to": "Director",
-      "stages": ["research_and_verification"],
+      "stages": [
+        "research_and_verification"
+      ],
       "watch_for": [
         "sources with a publisher, an author and a date; anonymous text is a lead, not evidence",
         "claims that are specific, atomic and checkable: one fact per claim, with a number or a name",
@@ -74,13 +91,25 @@
         "atomic claims with type, importance and confidence, each tied to its source"
       ],
       "memory_scope": {
-        "read": ["VERIFIED_FACT", "STRATEGY", "OWNER_POLICY", "HISTORICAL_EVENT", "AGENT_OPINION", "TEMP_CONTEXT"],
-        "write": ["AGENT_OPINION", "TEMP_CONTEXT"]
+        "read": [
+          "VERIFIED_FACT",
+          "STRATEGY",
+          "OWNER_POLICY",
+          "HISTORICAL_EVENT",
+          "AGENT_OPINION",
+          "TEMP_CONTEXT"
+        ],
+        "write": [
+          "AGENT_OPINION",
+          "TEMP_CONTEXT"
+        ]
       }
     },
     "FactChecker": {
       "reports_to": "Director",
-      "stages": ["research_and_verification"],
+      "stages": [
+        "research_and_verification"
+      ],
       "watch_for": [
         "whether the source actually contains the claim, in its own words",
         "numbers, dates, names and units: one changed digit refutes the claim",
@@ -109,13 +138,26 @@
         "a verdict (SUPPORTED, REFUTED or UNVERIFIED), a confidence, the exact evidence quote and a one-line reason"
       ],
       "memory_scope": {
-        "read": ["VERIFIED_FACT", "OWNER_POLICY", "HISTORICAL_EVENT", "AGENT_OPINION", "TEMP_CONTEXT"],
-        "write": ["VERIFIED_FACT", "AGENT_OPINION", "TEMP_CONTEXT"]
+        "read": [
+          "VERIFIED_FACT",
+          "OWNER_POLICY",
+          "HISTORICAL_EVENT",
+          "AGENT_OPINION",
+          "TEMP_CONTEXT"
+        ],
+        "write": [
+          "VERIFIED_FACT",
+          "AGENT_OPINION",
+          "TEMP_CONTEXT"
+        ]
       }
     },
     "ScriptWriter": {
       "reports_to": "Director",
-      "stages": ["script_and_storyboard", "serial_queue"],
+      "stages": [
+        "script_and_storyboard",
+        "serial_queue"
+      ],
       "watch_for": [
         "every sentence of narration rests on a supported claim you were given; cite it",
         "the channel's themes: factual curiosity for Nexus Curiosity, the studio's own day for Inside The Nexus",
@@ -145,13 +187,25 @@
         "serial episodes grounded in the day's recorded events"
       ],
       "memory_scope": {
-        "read": ["VERIFIED_FACT", "STRATEGY", "OWNER_POLICY", "HISTORICAL_EVENT", "AGENT_OPINION", "TEMP_CONTEXT"],
-        "write": ["AGENT_OPINION", "TEMP_CONTEXT"]
+        "read": [
+          "VERIFIED_FACT",
+          "STRATEGY",
+          "OWNER_POLICY",
+          "HISTORICAL_EVENT",
+          "AGENT_OPINION",
+          "TEMP_CONTEXT"
+        ],
+        "write": [
+          "AGENT_OPINION",
+          "TEMP_CONTEXT"
+        ]
       }
     },
     "VoiceArtist": {
       "reports_to": "Director",
-      "stages": ["media"],
+      "stages": [
+        "media"
+      ],
       "watch_for": [
         "narration that is hard to speak: numbers without units, acronyms, foreign names, run-on sentences",
         "the voice bound to a recurring character: it is locked; you do not swap it",
@@ -181,13 +235,24 @@
         "a narration review per storyboard: pass or flag, with pronunciation hints per scene"
       ],
       "memory_scope": {
-        "read": ["OWNER_POLICY", "HISTORICAL_EVENT", "AGENT_OPINION", "TEMP_CONTEXT"],
-        "write": ["AGENT_OPINION", "TEMP_CONTEXT"]
+        "read": [
+          "OWNER_POLICY",
+          "HISTORICAL_EVENT",
+          "AGENT_OPINION",
+          "TEMP_CONTEXT"
+        ],
+        "write": [
+          "AGENT_OPINION",
+          "TEMP_CONTEXT"
+        ]
       }
     },
     "VideoEditor": {
       "reports_to": "Director",
-      "stages": ["media", "edit_and_qc"],
+      "stages": [
+        "media",
+        "edit_and_qc"
+      ],
       "watch_for": [
         "quality control measured from the file: resolution, duration, audio, placeholder frames",
         "a render made with substitute images or voice: it may be looked at, never published",
@@ -215,13 +280,23 @@
         "a diagnosis and a proposed correction for every failed report; a status line for passes"
       ],
       "memory_scope": {
-        "read": ["OWNER_POLICY", "HISTORICAL_EVENT", "AGENT_OPINION", "TEMP_CONTEXT"],
-        "write": ["AGENT_OPINION", "TEMP_CONTEXT"]
+        "read": [
+          "OWNER_POLICY",
+          "HISTORICAL_EVENT",
+          "AGENT_OPINION",
+          "TEMP_CONTEXT"
+        ],
+        "write": [
+          "AGENT_OPINION",
+          "TEMP_CONTEXT"
+        ]
       }
     },
     "Publisher": {
       "reports_to": "Director",
-      "stages": ["publish"],
+      "stages": [
+        "publish"
+      ],
       "watch_for": [
         "the five publishing gates: autonomy stop, file present, quality control passed, factual provenance, no duplicate",
         "title, description and tags that describe only what the video says; nothing promised that the script does not contain",
@@ -251,8 +326,71 @@
         "publication metadata (title, description, tags) and a READY or HOLD verdict with reasons"
       ],
       "memory_scope": {
-        "read": ["STRATEGY", "OWNER_POLICY", "HISTORICAL_EVENT", "AGENT_OPINION", "TEMP_CONTEXT"],
-        "write": ["AGENT_OPINION", "TEMP_CONTEXT"]
+        "read": [
+          "STRATEGY",
+          "OWNER_POLICY",
+          "HISTORICAL_EVENT",
+          "AGENT_OPINION",
+          "TEMP_CONTEXT"
+        ],
+        "write": [
+          "AGENT_OPINION",
+          "TEMP_CONTEXT"
+        ]
+      }
+    },
+    "Accountant": {
+      "reports_to": "Director",
+      "stages": [
+        "post_run"
+      ],
+      "watch_for": [
+        "every provider charge in the books, today and this month, per provider and per status (estimated or billed)",
+        "the active budgets: how much of each is spent, and whether the day would cross the warning line or the limit",
+        "usage the books cannot price: a model or a render with no stored price is a cost nobody has measured, not a free one",
+        "a cost recorded twice, or a bill that never became an estimate first",
+        "the treasury's spendable balance against what is committed but not yet billed"
+      ],
+      "investigate": [
+        "a day whose spend is far above the month's daily average",
+        "a provider that appears in the books for the first time, or a reference that repeats",
+        "an estimate that stays unbilled for weeks: either the invoice is missing or the estimate was wrong"
+      ],
+      "correct": [
+        "ask for a price to be recorded on any resource that was used unpriced, so tomorrow's figures are complete",
+        "propose a hold on a purpose, a provider or a stage when the budget is at the warning line; the hold is the Director's to decide"
+      ],
+      "let_pass": [
+        "a day of spending that is within budget and priced end to end",
+        "a small estimate variance once the bill arrives"
+      ],
+      "never_let_pass": [
+        "a day that continues spending past an exceeded budget",
+        "a number in a report that is not in the books",
+        "posting a bill to the ledger that has no reference from the provider"
+      ],
+      "escalate_when": [
+        "a budget is exceeded, or would be by the next render",
+        "the spendable balance would go negative",
+        "spend cannot be attributed to any video, agent or channel"
+      ],
+      "deliverables": [
+        "a daily close: spend today and this month per provider, budget state, holds proposed, unpriced usage, and one line the Owner can read",
+        "the cost record of every render the studio made, at the stored price of the model that voiced it"
+      ],
+      "memory_scope": {
+        "read": [
+          "STRATEGY",
+          "OWNER_POLICY",
+          "HISTORICAL_EVENT",
+          "AGENT_OPINION",
+          "TEMP_CONTEXT"
+        ],
+        "write": [
+          "AGENT_OPINION",
+          "TEMP_CONTEXT",
+          "HISTORICAL_EVENT"
+        ]
       }
     }
   }

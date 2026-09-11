@@ -13,6 +13,17 @@ database resource discovery/refresh, separate production choices, UI and regress
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
 
+## Books, budget, history (2026-09-11)
+
+Eight employees: Nadia (Accountant) joined, with contract, Bible and a desk in the Accounting
+& Treasury office that replaced the Commons. The Owner sets a daily or monthly budget in
+Trezorerie; spend is measured from the books, the media stage refuses what an exceeded
+budget cannot afford, every render's narration is costed per scene at the stored price, and
+the Accountant closes each day before the Director's review. Every employee has a history
+(runs, messages, decisions with reasons) and a chat in the Agent Inspector; speech bubbles
+page through the whole answer at reading speed. Details and limits:
+`ACCOUNTING_AND_HISTORY.md`. Migration 0024.
+
 ## The pipeline has no empty stages left (2026-09-11)
 
 Every stage of `../architecture/39_DAILY_AUTONOMOUS_RUNBOOK.md` now has work behind it. New:
