@@ -1,5 +1,36 @@
 # Changelog
 
+## The Character Bible says who each employee is, not only how they look — 2026-09-11
+
+The bible stored appearance and a voice profile. Everything the Owner listed as needed next —
+personality, speaking style, expressions, behaviour, reference assets — had nowhere to live, so
+a story engine asked to write for Elena had no stored answer for how Elena talks and would have
+invented one per episode, which `../architecture/64_NARRATIVE_PERSONA_RELATIONSHIP_ENGINE.md` forbids.
+
+- `character_bible` gains five columns (migration 0020): `personality_json` (traits, values,
+  humor, social energy, conflict style, strengths and weaknesses), `speech_style_json`
+  (register, cadence, sentence length, vocabulary, habits, language), `expressions_json`
+  (greeting, agreement, disagreement, under pressure, sign-off, recurring joke),
+  `behavior_json` (work rituals, gestures, desk habits, likes, dislikes) and
+  `reference_assets_json`.
+- The canonical seven are authored in full, consistent with the voice style and role each
+  already had. Narrative only: none of it may change what an agent may do or whether a gate
+  passes, which is the persona spec's core rule.
+- Reference assets are declared slots — portrait, full body, front, side, back, as
+  `../architecture/24_VISUAL_CONTINUITY_ASSET_SYSTEM.md` asks — and every one is null, because none have been
+  produced. A description standing in for a missing image would let continuity QC believe a
+  reference exists.
+- Rows seeded before these fields are completed once on the next read; a field an Owner has
+  edited is never overwritten. Rehearsed on a copy of the live database: revision 0019 → 0020,
+  seven rows kept, thirty-five fields completed, second run writes nothing.
+- The Character Bible panel showed `visual_profile_json.archetype`, `appearance_notes` and
+  `voice.pace`, none of which the record has, so every card read "Specialist / Design canonic
+  studio / default (normal)". It now shows the stored values and omits a line the bible does
+  not carry.
+
+Verified: 458 backend tests (3 new), 53 frontend tests, lint, types, format, documentation
+integrity and the secret scan pass.
+
 ## ElevenLabs verification says what the key lacks — 2026-09-11
 
 - Diagnosis of the Owner's "Cheia nu a putut fi verificată" after the dynamic-catalogue rework:

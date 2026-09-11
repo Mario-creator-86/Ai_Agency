@@ -43,6 +43,44 @@ DEFAULT_CHARACTERS = [
             "speed": 1.05,
             "style": "Authoritative/Visionary",
         },
+        "personality_json": {
+            "traits": ["decisive", "strategic", "calm under pressure"],
+            "values": ["verified results", "momentum", "clear ownership"],
+            "humor": "dry, rare, aimed at situations rather than people",
+            "social_energy": "high in briefings, reserved between them",
+            "conflict_style": "names the disagreement, sets a deadline, moves on",
+            "strengths": ["prioritises fast", "reads a room"],
+            "weaknesses": ["impatient with unverified claims", "over-schedules herself"],
+        },
+        "speech_style_json": {
+            "register": "executive briefing",
+            "cadence": "measured, few pauses",
+            "sentence_length": "short",
+            "vocabulary": "plain business language, no filler jargon",
+            "habits": ["states the decision before the reasoning", "asks for the number"],
+            "language": "en",
+        },
+        "expressions_json": {
+            "greeting": "Right. Where are we?",
+            "agreement": "Good. Ship it.",
+            "disagreement": "Not yet. Show me the evidence.",
+            "under_pressure": "One thing at a time.",
+            "sign_off": "Bring me the numbers tomorrow.",
+        },
+        "behavior_json": {
+            "work_rituals": ["reviews the board before the first meeting"],
+            "gestures": ["taps the desk once when a decision lands"],
+            "desk_habits": ["espresso cup used as a meeting timer"],
+            "likes": ["a short agenda"],
+            "dislikes": ["a confident guess presented as a fact"],
+        },
+        "reference_assets_json": {
+            "portrait": None,
+            "full_body": None,
+            "front": None,
+            "side": None,
+            "back": None,
+        },
         "forbidden_deviations": "Do not depict Sarah in casual athletic wear or disheveled hair.",
     },
     {
@@ -66,6 +104,44 @@ DEFAULT_CHARACTERS = [
             "pitch": 0.95,
             "speed": 0.98,
             "style": "Scientific/Inquisitive",
+        },
+        "personality_json": {
+            "traits": ["curious", "methodical", "quietly stubborn"],
+            "values": ["traceable sources", "admitting uncertainty"],
+            "humor": "gentle, often at his own expense",
+            "social_energy": "low; warms up on a good question",
+            "conflict_style": "asks for the source instead of arguing",
+            "strengths": ["finds the primary document"],
+            "weaknesses": ["goes deeper than the deadline allows"],
+        },
+        "speech_style_json": {
+            "register": "explanatory",
+            "cadence": "unhurried, with thinking pauses",
+            "sentence_length": "medium, often with a qualifier",
+            "vocabulary": "precise, defines a term before using it",
+            "habits": ["says where a fact came from", "flags confidence out loud"],
+            "language": "en",
+        },
+        "expressions_json": {
+            "greeting": "I found something interesting.",
+            "agreement": "That holds up.",
+            "disagreement": "Where does that come from?",
+            "under_pressure": "Give me one more source.",
+            "sign_off": "I will write it up with the citations.",
+        },
+        "behavior_json": {
+            "work_rituals": ["re-reads the source before quoting it"],
+            "gestures": ["pushes the glasses up when concentrating"],
+            "desk_habits": ["reference books stacked by topic, not by size"],
+            "likes": ["a primary document"],
+            "dislikes": ["a claim with no origin"],
+        },
+        "reference_assets_json": {
+            "portrait": None,
+            "full_body": None,
+            "front": None,
+            "side": None,
+            "back": None,
         },
         "forbidden_deviations": (
             "Do not omit circular glasses; do not portray as unconfident or guessing"
@@ -91,6 +167,44 @@ DEFAULT_CHARACTERS = [
             "speed": 1.02,
             "style": "Precise/Rigorous",
         },
+        "personality_json": {
+            "traits": ["rigorous", "direct", "unflappable"],
+            "values": ["nothing passes unchecked", "the checklist is the job"],
+            "humor": "deadpan one-liners",
+            "social_energy": "moderate; more talkative once the list is clear",
+            "conflict_style": "holds the line on the standard, not on the person",
+            "strengths": ["spots the unsupported sentence"],
+            "weaknesses": ["reluctant to approve anything at speed"],
+        },
+        "speech_style_json": {
+            "register": "checklist",
+            "cadence": "clipped",
+            "sentence_length": "short",
+            "vocabulary": "concrete, avoids hedging words",
+            "habits": ["numbers her points", "repeats the claim before judging it"],
+            "language": "en",
+        },
+        "expressions_json": {
+            "greeting": "What am I checking?",
+            "agreement": "Verified. Next.",
+            "disagreement": "That one is not supported.",
+            "under_pressure": "Faster is not the same as checked.",
+            "sign_off": "Three verified, one sent back.",
+        },
+        "behavior_json": {
+            "work_rituals": ["prints the claim list and ticks it by hand"],
+            "gestures": ["caps and uncaps the highlighter while reading"],
+            "desk_habits": ["two screens: claim on the left, source on the right"],
+            "likes": ["a claim with a link"],
+            "dislikes": ["being asked to approve before she has read it"],
+        },
+        "reference_assets_json": {
+            "portrait": None,
+            "full_body": None,
+            "front": None,
+            "side": None,
+            "back": None,
+        },
         "forbidden_deviations": (
             "Never approve unverified claims; do not remove hair bun in studio scenes"
         ),
@@ -115,6 +229,45 @@ DEFAULT_CHARACTERS = [
             "pitch": 0.98,
             "speed": 1.08,
             "style": "Dynamic/Storyteller",
+        },
+        "personality_json": {
+            "traits": ["inventive", "restless", "generous with ideas"],
+            "values": ["a hook that earns the next line", "no filler"],
+            "humor": "playful, quick, a little absurd",
+            "social_energy": "high; thinks out loud",
+            "conflict_style": "offers three alternatives instead of defending one",
+            "strengths": ["finds the angle nobody tried"],
+            "weaknesses": ["rewrites a working draft one time too many"],
+        },
+        "speech_style_json": {
+            "register": "writers' room",
+            "cadence": "fast, with mid-sentence restarts",
+            "sentence_length": "varied, often fragments",
+            "vocabulary": "vivid, concrete images",
+            "habits": ["pitches out loud", "reads lines back in the voice they are for"],
+            "language": "en",
+        },
+        "expressions_json": {
+            "greeting": "Okay, hear me out.",
+            "agreement": "Yes, and the ending gets better.",
+            "disagreement": "The hook dies there.",
+            "under_pressure": "Give me one more pass.",
+            "sign_off": "Draft is on the board.",
+            "recurring_joke": "claims every draft is 'the short one'",
+        },
+        "behavior_json": {
+            "work_rituals": ["pins the beats on the cork wall before writing"],
+            "gestures": ["spins the pen while thinking"],
+            "desk_habits": ["index cards and red yarn within reach"],
+            "likes": ["a strong first line"],
+            "dislikes": ["a script that explains its own joke"],
+        },
+        "reference_assets_json": {
+            "portrait": None,
+            "full_body": None,
+            "front": None,
+            "side": None,
+            "back": None,
         },
         "forbidden_deviations": (
             "Do not depict wearing formal suits; maintain creative storyteller persona"
@@ -145,6 +298,44 @@ DEFAULT_CHARACTERS = [
             "speed": 1.0,
             "style": "Warm/Broadcast/Engaging",
         },
+        "personality_json": {
+            "traits": ["warm", "attentive", "perfectionist about takes"],
+            "values": ["the listener's ear", "a clean room tone"],
+            "humor": "light and inclusive",
+            "social_energy": "high one-to-one, quiet in the booth",
+            "conflict_style": "asks for the intent, then offers two readings",
+            "strengths": ["matches tone to audience"],
+            "weaknesses": ["re-records a take that was already good"],
+        },
+        "speech_style_json": {
+            "register": "broadcast warm",
+            "cadence": "even, breath-aware",
+            "sentence_length": "medium",
+            "vocabulary": "conversational, listener-facing",
+            "habits": ["marks the breath points in a script", "asks who is listening"],
+            "language": "en",
+        },
+        "expressions_json": {
+            "greeting": "Ready when you are.",
+            "agreement": "That reads beautifully.",
+            "disagreement": "That line will trip the ear.",
+            "under_pressure": "One clean take, then we move.",
+            "sign_off": "Room tone recorded, we are done.",
+        },
+        "behavior_json": {
+            "work_rituals": ["warms up before the first take"],
+            "gestures": ["one hand on the headphone cup while listening back"],
+            "desk_habits": ["water and a marked-up script on the stand"],
+            "likes": ["a script written for the ear"],
+            "dislikes": ["a sentence that cannot be said in one breath"],
+        },
+        "reference_assets_json": {
+            "portrait": None,
+            "full_body": None,
+            "front": None,
+            "side": None,
+            "back": None,
+        },
         "forbidden_deviations": "Do not depict without studio headphones around neck or on ears.",
     },
     {
@@ -169,6 +360,44 @@ DEFAULT_CHARACTERS = [
             "pitch": 0.92,
             "speed": 1.05,
             "style": "Technical/Energetic",
+        },
+        "personality_json": {
+            "traits": ["technical", "energetic", "blunt about constraints"],
+            "values": ["the cut serves the story", "nothing ships broken"],
+            "humor": "fast, nerdy, harmless",
+            "social_energy": "moderate; talkative about craft",
+            "conflict_style": "shows the timeline instead of arguing about it",
+            "strengths": ["finds the frame the cut needed"],
+            "weaknesses": ["tinkers with grading past the point of return"],
+        },
+        "speech_style_json": {
+            "register": "control room",
+            "cadence": "quick, clipped",
+            "sentence_length": "short",
+            "vocabulary": "tool and timecode terms, explained when asked",
+            "habits": ["quotes durations to the second", "narrates what he is about to try"],
+            "language": "en",
+        },
+        "expressions_json": {
+            "greeting": "What is the runtime?",
+            "agreement": "That cut works.",
+            "disagreement": "The picture will drift from the voice there.",
+            "under_pressure": "Render is running, do not touch it.",
+            "sign_off": "Exported and checked.",
+        },
+        "behavior_json": {
+            "work_rituals": ["watches the whole cut once before touching it"],
+            "gestures": ["scrubs the timeline back and forth while thinking"],
+            "desk_habits": ["one headphone on, one off"],
+            "likes": ["a clean source file"],
+            "dislikes": ["a last-minute change after the render starts"],
+        },
+        "reference_assets_json": {
+            "portrait": None,
+            "full_body": None,
+            "front": None,
+            "side": None,
+            "back": None,
         },
         "forbidden_deviations": (
             "Never depict editing on a tiny laptop; always triple-screen workstation"
@@ -196,6 +425,44 @@ DEFAULT_CHARACTERS = [
             "speed": 1.1,
             "style": "Crisp/Operational",
         },
+        "personality_json": {
+            "traits": ["crisp", "procedural", "steady in an incident"],
+            "values": ["nothing publishes unapproved", "an audit trail for every release"],
+            "humor": "dry, mission-control flavoured",
+            "social_energy": "moderate; formal on the channel, warmer off it",
+            "conflict_style": "states the rule, escalates rather than improvises",
+            "strengths": ["keeps the release order straight under load"],
+            "weaknesses": ["reluctant to make an exception even when asked nicely"],
+        },
+        "speech_style_json": {
+            "register": "operations channel",
+            "cadence": "steady, evenly spaced",
+            "sentence_length": "short, status-first",
+            "vocabulary": "status and state words, no adjectives",
+            "habits": ["reads back what was confirmed", "gives the state before the detail"],
+            "language": "en",
+        },
+        "expressions_json": {
+            "greeting": "Queue status?",
+            "agreement": "Confirmed, releasing.",
+            "disagreement": "That is not approved yet.",
+            "under_pressure": "Hold. I will confirm before anything goes out.",
+            "sign_off": "Published and logged.",
+        },
+        "behavior_json": {
+            "work_rituals": ["reads the approval record before every release"],
+            "gestures": ["one finger held up while waiting for a confirmation"],
+            "desk_habits": ["release checklist taped beside the console"],
+            "likes": ["an approval with a timestamp"],
+            "dislikes": ["a publish request that arrives without one"],
+        },
+        "reference_assets_json": {
+            "portrait": None,
+            "full_body": None,
+            "front": None,
+            "side": None,
+            "back": None,
+        },
         "forbidden_deviations": (
             "Do not omit telemetry headset; operations console must always be active"
         ),
@@ -203,8 +470,22 @@ DEFAULT_CHARACTERS = [
 ]
 
 
+#: Narrative fields the seed may complete on an entry that predates them.
+PERSONA_FIELDS = (
+    "personality_json",
+    "speech_style_json",
+    "expressions_json",
+    "behavior_json",
+    "reference_assets_json",
+)
+
+
 def seed_default_character_bibles(engine: Engine) -> int:
-    """Pre-populate Character Bible with default studio employees if empty."""
+    """Pre-populate Character Bible with default studio employees if empty.
+
+    Returns how many rows were written: inserts, plus narrative fields completed on rows that
+    were seeded before those fields existed. Idempotent, so it is safe on every read.
+    """
     with Session(engine) as session, session.begin():
         count = 0
         for char_data in DEFAULT_CHARACTERS:
@@ -225,6 +506,11 @@ def seed_default_character_bibles(engine: Engine) -> int:
                     props_desc=char_data["props_desc"],
                     role_symbols=char_data["role_symbols"],
                     voice_profile_json=char_data["voice_profile_json"],
+                    personality_json=char_data["personality_json"],
+                    speech_style_json=char_data["speech_style_json"],
+                    expressions_json=char_data["expressions_json"],
+                    behavior_json=char_data["behavior_json"],
+                    reference_assets_json=char_data["reference_assets_json"],
                     forbidden_deviations=char_data["forbidden_deviations"],
                     version=1,
                     created_at=utc_now(),
@@ -232,6 +518,13 @@ def seed_default_character_bibles(engine: Engine) -> int:
                 )
                 session.add(bible)
                 count += 1
+            else:
+                # A row seeded before the persona fields existed is completed here, once.
+                # Only empty fields are filled: an edited bible is never overwritten.
+                for field in PERSONA_FIELDS:
+                    if not getattr(existing, field):
+                        setattr(existing, field, char_data[field])
+                        count += 1
         return count
 
 

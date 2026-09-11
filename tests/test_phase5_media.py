@@ -68,6 +68,71 @@ def test_character_bible_seeding_and_retrieval(engine):
     assert seed_default_character_bibles(engine) == 0
 
 
+def test_every_character_carries_persona_speech_expressions_and_behaviour(engine):
+    """Look and voice were stored; who the character is was not. A story engine that cannot
+    read a speaking style from the bible invents one per episode, which is what the persona
+    specification forbids."""
+    seed_default_character_bibles(engine)
+
+    for character in list_character_bibles(engine):
+        personality = character["personality_json"]
+        speech = character["speech_style_json"]
+        assert personality["traits"] and personality["values"]
+        assert personality["conflict_style"] and personality["humor"]
+        assert speech["register"] and speech["cadence"] and speech["language"]
+        expressions = character["expressions_json"]
+        assert expressions["greeting"] and expressions["agreement"]
+        assert expressions["disagreement"] and expressions["under_pressure"]
+        behaviour = character["behavior_json"]
+        assert behaviour["work_rituals"] and behaviour["likes"] and behaviour["dislikes"]
+
+    elena = next(c for c in list_character_bibles(engine) if "Elena" in c["canonical_name"])
+    assert elena["speech_style_json"]["register"] == "checklist"
+    assert "not supported" in elena["expressions_json"]["disagreement"]
+
+
+def test_reference_slots_are_declared_empty_rather_than_filled_with_invented_assets(engine):
+    """Doc 24 wants a portrait and body references. None have been produced, so every slot is
+    declared and null; a description standing in for a missing image would let continuity QC
+    believe a reference exists."""
+    seed_default_character_bibles(engine)
+
+    for character in list_character_bibles(engine):
+        slots = character["reference_assets_json"]
+        assert set(slots) == {"portrait", "full_body", "front", "side", "back"}
+        assert all(value is None for value in slots.values())
+
+
+def test_an_entry_seeded_before_the_persona_fields_is_completed_but_never_overwritten(engine):
+    """Databases seeded by an earlier version hold the canonical seven with empty persona
+    fields. The seed completes them once; an Owner's edit survives the next read."""
+    from app.media.models import CharacterBible
+    from sqlalchemy import select as sa_select
+
+    seed_default_character_bibles(engine)
+    with Session(engine) as session, session.begin():
+        rows = session.scalars(sa_select(CharacterBible)).all()
+        for row in rows:
+            row.personality_json = {}
+            row.speech_style_json = {}
+            row.expressions_json = {}
+            row.behavior_json = {}
+            row.reference_assets_json = {}
+        edited = next(r for r in rows if "Lyra" in r.canonical_name)
+        edited.expressions_json = {"greeting": "Owner's own line."}
+
+    assert seed_default_character_bibles(engine) > 0
+
+    characters = {c["canonical_name"]: c for c in list_character_bibles(engine)}
+    assert characters["Kael Video Editor"]["speech_style_json"]["register"] == "control room"
+    lyra = next(c for c in characters.values() if "Lyra" in c["canonical_name"])
+    assert lyra["expressions_json"] == {"greeting": "Owner's own line."}
+    assert lyra["personality_json"]["traits"], "empty fields beside an edited one are filled"
+
+    # And a third read changes nothing further.
+    assert seed_default_character_bibles(engine) == 0
+
+
 def test_deterministic_visual_and_tts_adapters():
     visual_adapter = DeterministicVisualAdapter()
     tts_adapter = DeterministicTTSAdapter()

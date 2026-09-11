@@ -19,6 +19,11 @@ class CharacterBibleView(BaseModel):
     props_desc: str
     role_symbols: str
     voice_profile_json: dict[str, Any]
+    personality_json: dict[str, Any]
+    speech_style_json: dict[str, Any]
+    expressions_json: dict[str, Any]
+    behavior_json: dict[str, Any]
+    reference_assets_json: dict[str, Any]
     forbidden_deviations: str
     version: int
     created_at: str
@@ -35,6 +40,11 @@ class CreateCharacterBibleCommand(BaseModel):
     props_desc: str = Field(default="")
     role_symbols: str = Field(default="")
     voice_profile_json: dict[str, Any] = Field(default_factory=dict)
+    personality_json: dict[str, Any] = Field(default_factory=dict)
+    speech_style_json: dict[str, Any] = Field(default_factory=dict)
+    expressions_json: dict[str, Any] = Field(default_factory=dict)
+    behavior_json: dict[str, Any] = Field(default_factory=dict)
+    reference_assets_json: dict[str, Any] = Field(default_factory=dict)
     forbidden_deviations: str = Field(default="")
 
 

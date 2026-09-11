@@ -32,6 +32,15 @@ class CharacterBible(Base):
     props_desc: Mapped[str] = mapped_column(Text, nullable=False)
     role_symbols: Mapped[str] = mapped_column(String(200), nullable=False)
     voice_profile_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    # Who the character is, beyond how they look and sound. Narrative only: none of this may
+    # change what an agent is allowed to do, which model it runs on, or whether a gate passes.
+    personality_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    speech_style_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    expressions_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    behavior_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    # Declared reference-image slots. A slot holds a stored asset id or null; it never holds a
+    # description standing in for an image that was never produced.
+    reference_assets_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     forbidden_deviations: Mapped[str] = mapped_column(Text, nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[str] = mapped_column(String(40), nullable=False)

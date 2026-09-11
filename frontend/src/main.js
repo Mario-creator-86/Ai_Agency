@@ -1085,6 +1085,49 @@ if (refreshMediaBtn) {
   });
 }
 
+/** One line of a bible entry, omitted entirely when the record does not carry it. */
+function charRow(label, value) {
+  const text = Array.isArray(value) ? value.filter(Boolean).join(' · ') : value;
+  if (!text) return '';
+  return `<div class="char-row"><span class="char-label">${escapeHtml(label)}</span>${escapeHtml(String(text))}</div>`;
+}
+
+/**
+ * A Character Bible card. Every line shows what the record actually holds; a field the bible
+ * has not been given is left out rather than filled with a plausible default, because the
+ * bible is what the office renderer and the story engine read as canon.
+ */
+function characterCard(c) {
+  const voice = c.voice_profile_json || {};
+  const personality = c.personality_json || {};
+  const speech = c.speech_style_json || {};
+  const expressions = c.expressions_json || {};
+  const behavior = c.behavior_json || {};
+  const references = c.reference_assets_json || {};
+  const slots = Object.keys(references);
+  const present = slots.filter((slot) => references[slot]);
+  const voiceLine = [voice.voice_id, voice.style, voice.speed ? `x${voice.speed}` : '']
+    .filter(Boolean)
+    .join(' · ');
+  const greeting = expressions.greeting || expressions.agreement;
+  return `
+    <div class="character-card">
+      <div class="char-header">
+        <span class="char-name">${escapeHtml(c.canonical_name)}</span>
+        ${c.role_symbols ? `<span class="char-archetype">${escapeHtml(String(c.role_symbols).split(',')[0])}</span>` : ''}
+      </div>
+      <p class="char-desc">${escapeHtml([c.face_hair_desc, c.outfit_desc].filter(Boolean).join(' '))}</p>
+      ${charRow('Personalitate', personality.traits)}
+      ${charRow('Vorbire', [speech.register, speech.cadence].filter(Boolean))}
+      ${greeting ? `<div class="char-row"><span class="char-label">Expresie</span><em>„${escapeHtml(greeting)}”</em></div>` : ''}
+      ${charRow('Comportament', behavior.work_rituals)}
+      ${charRow('Nu devia', c.forbidden_deviations)}
+      ${voiceLine ? `<div class="char-voice">Voce: ${escapeHtml(voiceLine)}</div>` : ''}
+      ${slots.length ? `<div class="char-voice">Referințe vizuale: ${present.length}/${slots.length}${present.length ? '' : ' · niciuna produsă încă'}</div>` : ''}
+    </div>
+  `;
+}
+
 async function loadCharacterBibles() {
   const listEl = element('characters-list');
   try {
@@ -1095,22 +1138,7 @@ async function loadCharacterBibles() {
         '<div class="topics-loading">Niciun caracter înregistrat în Character Bible.</div>';
       return;
     }
-    listEl.innerHTML = chars
-      .map((c) => {
-        const vis = c.visual_profile_json || {};
-        const voice = c.voice_profile_json || {};
-        return `
-        <div class="character-card">
-          <div class="char-header">
-            <span class="char-name">${escapeHtml(c.canonical_name)}</span>
-            <span class="char-archetype">${escapeHtml(vis.archetype || 'Specialist')}</span>
-          </div>
-          <p class="char-desc">${escapeHtml(vis.appearance_notes || 'Design canonic studio.')}</p>
-          <div class="char-voice">Voce: ${escapeHtml(voice.voice_id || 'default')} (${escapeHtml(voice.pace || 'normal')})</div>
-        </div>
-      `;
-      })
-      .join('');
+    listEl.innerHTML = chars.map(characterCard).join('');
   } catch (err) {
     listEl.innerHTML = `<div class="text-error">Eroare la încărcarea caracterelor: ${escapeHtml(err.message)}</div>`;
   }

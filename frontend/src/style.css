@@ -338,6 +338,8 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 .char-archetype { font-size: 11px; color: var(--gold-ink); background: var(--warn-bg); border: 1px solid var(--warn-line); padding: 2px 7px; border-radius: 4px; white-space: nowrap; }
 .char-desc { color: var(--ink-2); font-size: 12px; line-height: 1.45; margin: 0; }
 .char-voice { font-size: 11px; color: var(--ink-3); font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }
+.char-row { color: var(--ink-2); font-size: 12px; line-height: 1.45; display: flex; gap: 6px; }
+.char-label { color: var(--ink-3); flex-shrink: 0; min-width: 92px; }
 
 /* ============================================================== publishing -- */
 .pub-overview-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
