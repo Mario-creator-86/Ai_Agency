@@ -145,10 +145,51 @@ def seed_default_channels(engine: Engine) -> int:
         return count
 
 
+#: How a channel record names the OAuth connection it publishes through.
+CREDENTIALS_PREFIX = "youtube_connection:"
+
+
+def bound_connection_id(channel: ChannelRecord) -> str | None:
+    """The YouTube connection a channel slot publishes through, or None when unbound."""
+    reference = channel.credentials_ref or ""
+    if not reference.startswith(CREDENTIALS_PREFIX):
+        return None
+    return reference[len(CREDENTIALS_PREFIX) :]
+
+
+def channel_bindings(engine: Engine) -> dict[str, dict]:
+    """Per channel id: which connected YouTube account it is bound to, if any.
+
+    A slot is publishable only when its binding points at a connection that is still
+    CONNECTED — a revoked grant leaves the reference in place, and reading it as "ready"
+    is how a studio comes to believe it can publish to an account it can no longer reach.
+    """
+    from app.youtube.models import YouTubeConnection  # noqa: PLC0415
+
+    with Session(engine) as session:
+        connections = {c.id: c for c in session.scalars(select(YouTubeConnection))}
+        bindings: dict[str, dict] = {}
+        for channel in session.scalars(select(ChannelRecord)):
+            identifier = bound_connection_id(channel)
+            connection = connections.get(identifier or "")
+            bindings[channel.id] = {
+                "youtube_connection_id": identifier,
+                "youtube_connection_name": connection.name if connection else None,
+                "youtube_channel_title": connection.remote_channel_title if connection else None,
+                "youtube_connection_status": connection.status if connection else None,
+                "publisher_ready": bool(connection and connection.status == "CONNECTED"),
+            }
+        return bindings
+
+
 def list_channels(engine: Engine) -> list[dict]:
+    bindings = channel_bindings(engine)
     with Session(engine) as session:
         channels = session.scalars(select(ChannelRecord).order_by(ChannelRecord.created_at)).all()
-        return [ChannelView.model_validate(c).model_dump() for c in channels]
+        return [
+            {**ChannelView.model_validate(c).model_dump(), **bindings.get(c.id, {})}
+            for c in channels
+        ]
 
 
 def get_channel(engine: Engine, channel_id: str) -> dict | None:

@@ -1619,8 +1619,12 @@ async function loadPublishingHub() {
     ]);
 
     const channels = chData.channels || [];
+    const accounts = (chData.youtube_accounts || []).filter((a) => a.status === 'CONNECTED');
     if (publisherBanner) {
-      if (chData.publisher_configured) {
+      if (chData.binding_hint) {
+        publisherBanner.className = 'dialog-status-msg text-error';
+        publisherBanner.textContent = chData.binding_hint;
+      } else if (chData.publisher_configured) {
         publisherBanner.className = 'dialog-status-msg';
         publisherBanner.textContent =
           'Credențiale YouTube prezente. Publicarea folosește API-ul oficial.';
@@ -1645,11 +1649,44 @@ async function loadPublishingHub() {
             <div class="channel-meta">${escapeHtml(CHANNEL_STATUS_HINT[c.status] || 'Stare necunoscută.')}</div>
             <div class="channel-meta">Politică de producție: <span class="policy-tag ${c.production_policy === 'CONSISTENCY_LOCKED' ? 'policy-locked' : 'policy-flexible'}">${escapeHtml(PRODUCTION_POLICY_LABEL[c.production_policy] || 'nesetată')}</span>${c.allow_production_override === false ? ' · suprascrieri per episod dezactivate' : ''}</div>
           </div>
-          <span class="channel-status-tag ${c.status === 'AUTHENTICATED' ? 'channel-status-ok' : 'channel-status-warn'}">${escapeHtml(CHANNEL_STATUS_LABEL[c.status] || c.status)}</span>
+          <div class="channel-meta channel-bind">
+            <label>Cont YouTube
+              <select data-bind-select="${escapeHtml(c.id)}" aria-label="Cont YouTube pentru ${escapeHtml(c.channel_name)}">
+                <option value="">Nelegat</option>
+                ${accounts.map((a) => `<option value="${escapeHtml(a.id)}" ${a.id === c.youtube_connection_id ? 'selected' : ''}>${escapeHtml(a.name)}${a.channel_title ? ` · ${escapeHtml(a.channel_title)}` : ''}</option>`).join('')}
+              </select>
+            </label>
+            <button class="secondary" data-bind-channel="${escapeHtml(c.id)}" data-event="${escapeHtml(c.event_id || '')}">Leagă</button>
+            <span class="helper">${c.publisher_ready ? `Publică pe ${escapeHtml(c.youtube_channel_title || c.youtube_connection_name || '')}` : 'Fără legătură, acest slot nu publică și nu are analytics.'}</span>
+          </div>
         </div>
-      `,
+        <span class="channel-status-tag ${c.status === 'AUTHENTICATED' ? 'channel-status-ok' : 'channel-status-warn'}">${escapeHtml(CHANNEL_STATUS_LABEL[c.status] || c.status)}</span>
+      </div>
+    `,
         )
         .join('');
+      // Binding is what tells publishing and analytics which account a slot belongs to;
+      // without it the studio refuses rather than guess between two connected channels.
+      channelsEl.querySelectorAll('[data-bind-channel]').forEach((button) => {
+        button.addEventListener('click', async () => {
+          const id = /** @type {HTMLElement} */ (button).dataset.bindChannel;
+          const select = /** @type {HTMLSelectElement} */ (
+            channelsEl.querySelector(`[data-bind-select="${id}"]`)
+          );
+          const expected = /** @type {HTMLElement} */ (button).dataset.event || null;
+          try {
+            await api(`/settings/channels/${id}`, {
+              method: 'PUT',
+              body: JSON.stringify({ connection_id: select.value || null, expected_event_id: expected }),
+            });
+            await loadPublishingHub();
+          } catch (err) {
+            publishingStatusMsg.hidden = false;
+            publishingStatusMsg.className = 'dialog-status-msg text-error';
+            publishingStatusMsg.textContent = err instanceof Error ? err.message : 'Legarea a eșuat.';
+          }
+        });
+      });
     }
 
     const publications = pubData.publications || [];

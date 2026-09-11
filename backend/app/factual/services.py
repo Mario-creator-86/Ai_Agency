@@ -110,7 +110,13 @@ class TopicNotProducible(ValueError):
     """The topic cannot go into production, and the reason says why."""
 
 
-def select_topic(engine: Engine, topic_id: str, correlation_id: str) -> dict:
+def select_topic(
+    engine: Engine,
+    topic_id: str,
+    correlation_id: str,
+    decided_by: str | None = None,
+    decision_notes: str | None = None,
+) -> dict:
     """Move a topic into production, but only if there is something true to say about it.
 
     Selection is the point where a candidate becomes the day's work, so the condition is the one
@@ -151,6 +157,10 @@ def select_topic(engine: Engine, topic_id: str, correlation_id: str) -> dict:
         )
         topic.status = "SELECTED"
         topic.event_id = event.event_id
+        topic.selected_at = utc_now()
+        if decided_by:
+            topic.decided_by = decided_by[:100]
+            topic.decision_notes = (decision_notes or "").strip()[:2000] or None
         session.flush()
         return TopicIdeaView.model_validate(topic).model_dump()
 

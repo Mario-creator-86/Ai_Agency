@@ -66,6 +66,9 @@ export function initSettings(api, hooks = {}) {
     output.classList.toggle('settings-error', error);
   }
 
+  /** What the last auto-configure chose, kept so the reload it triggers can show it. */
+  let autoConfigReport = [];
+
   async function refresh() {
     const current = generation;
     const result = await api('/settings');
@@ -190,6 +193,7 @@ export function initSettings(api, hooks = {}) {
       list.append(card);
     }
     content.append(list);
+    if (active === 'media') renderAutoConfigure(content);
     if (active === 'media' || active === 'social') renderSelections(content, items);
     if (active === 'social' && data.legacy_youtube_configured) content.append(node('p', 'Există și o configurație YouTube în mediul serverului. O selecție YouTube salvată aici are prioritate.', 'helper'));
   }
@@ -254,6 +258,35 @@ export function initSettings(api, hooks = {}) {
     });
     container.prepend(form);
     form.querySelector('input')?.focus();
+  }
+
+  /**
+   * One action for what a verified connection leaves unfinished: the service for a purpose
+   * with a single candidate, and the defaults that are still empty. It reports every choice
+   * with its reason, and changes nothing that was already chosen. The report survives the
+   * reload that follows, because the reload is what shows those choices taking effect.
+   */
+  function renderAutoConfigure(container) {
+    const box = node('div', '', 'settings-autoconfig');
+    const button = node('button', 'Configurează automat serviciile și valorile implicite', 'secondary');
+    button.addEventListener('click', () => run(async () => {
+      const result = await api('/settings/auto-configure', { method: 'POST' });
+      autoConfigReport = [
+        ...(result.applied || []).map(item => `${item.purpose}: ${item.connection} — ${item.why}`),
+        ...(result.ambiguous || []).map(item => `${item.purpose}: ${item.why} (${(item.candidates || []).join(', ')})`),
+      ];
+      return { message: autoConfigReport.length ? `${(result.applied || []).length} completate.` : 'Nimic de completat: totul era deja ales.' };
+    }, 'Configurare aplicată.'));
+    box.append(
+      node('p', 'Ai conectat furnizorii, dar producția are nevoie și de o alegere per scop (Imagini, Video, Voce) și de valori implicite. Butonul alege doar acolo unde există un singur candidat și completează doar ce este gol; poți schimba orice pe cardul conexiunii.', 'helper'),
+      button,
+    );
+    if (autoConfigReport.length) {
+      const list = node('ul', '', 'settings-autoconfig-list');
+      for (const line of autoConfigReport) list.append(node('li', line));
+      box.append(list);
+    }
+    container.append(box);
   }
 
   function renderSelections(container, items) {

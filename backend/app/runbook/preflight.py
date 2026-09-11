@@ -26,6 +26,7 @@ from app.media.factory import describe as describe_media
 from app.media.factory import media_readiness
 from app.media.toolchain import find_ffprobe
 from app.models import OwnerPolicy
+from app.publishing.services import channel_bindings
 from app.research.service import allowed_host_rows
 from app.services import utc_now
 from app.youtube.models import YouTubeConnection
@@ -102,6 +103,11 @@ def run_preflight(engine: Engine, settings: Settings, vault: Any) -> dict[str, A
         youtube_connected = session.scalars(
             select(YouTubeConnection).where(YouTubeConnection.status == "CONNECTED")
         ).first()
+        connected_accounts = list(
+            session.scalars(
+                select(YouTubeConnection).where(YouTubeConnection.status == "CONNECTED")
+            )
+        )
 
     ffmpeg = settings.ffmpeg_path or shutil.which("ffmpeg")
     checks.append(
@@ -122,6 +128,31 @@ def run_preflight(engine: Engine, settings: Settings, vault: Any) -> dict[str, A
             DEGRADING,
             "FFprobe disponibil pentru controlul calității.",
             "FFprobe lipsește; QC nu poate măsura randarea, deci va eșua întotdeauna.",
+        )
+    )
+
+    # A connected account is not yet a place to publish: the channel slot has to name it, or
+    # publishing and analytics cannot tell which channel a video and its numbers belong to.
+    bindings = channel_bindings(engine)
+    bound = [b for b in bindings.values() if b.get("publisher_ready")]
+    checks.append(
+        _check(
+            "youtube_channel_binding",
+            bool(bound),
+            DEGRADING,
+            f"{len(bound)} sloturi de canal legate de conturi YouTube conectate.",
+            (
+                f"{len(connected_accounts)} conturi YouTube conectate, dar niciun slot de canal "
+                "nu este legat de vreunul. Leagă-le în Publicare → Sloturi de canale: "
+                "publicarea și analytics folosesc legătura."
+                if connected_accounts
+                else "Niciun cont YouTube conectat; publicarea și analytics nu au unde citi "
+                "sau scrie. Conectează un cont în Settings → Conturi și e-mail."
+            ),
+            detail=", ".join(
+                f"{b['youtube_connection_name']} → {b['youtube_channel_title'] or '—'}"
+                for b in bound
+            ),
         )
     )
 

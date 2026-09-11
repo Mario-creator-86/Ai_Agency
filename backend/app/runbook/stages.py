@@ -34,7 +34,12 @@ from uuid import uuid4
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
-from app.agents.director import DirectorError, director_review, file_stage_reports
+from app.agents.director import (
+    DirectorError,
+    choose_topic,
+    director_review,
+    file_stage_reports,
+)
 from app.agents.memory import agent_for_role, remember
 from app.agents.reviews import (
     NoReviewer,
@@ -66,8 +71,16 @@ from app.publishing.models import ChannelRecord, PublicationRecord
 from app.publishing.services import (
     PublisherNotConfigured,
     PublishingGateError,
+    channel_bindings,
     evaluate_publishing_gate,
     publish_media_asset,
+)
+from app.research.agent import (
+    NoAuthorisedHosts,
+    NoResearcher,
+    ResearchAgentError,
+    gather_sources,
+    propose_topics,
 )
 from app.story.models import DailyStudioLog, StoryEpisode
 from app.story.services import StoryError, write_episode
@@ -96,6 +109,54 @@ def _has_language_model(registry: ProviderRegistry) -> bool:
     return bool(registry.registered_ids())
 
 
+# ---------------------------------------------------------------------- idea generation --
+
+#: Enough candidates in the pool that proposing more would only add noise; the day picks one.
+IDEA_POOL_TARGET = 6
+
+
+def _idea_generation(
+    engine: Engine, registry: ProviderRegistry, settings: Settings
+) -> dict[str, Any]:
+    """Ask the Lead Researcher for candidate topics when the pool is thin (runbook §3)."""
+    if not _has_language_model(registry):
+        return _outcome(SKIPPED, "Niciun model de limbaj disponibil; agenții nu pot rula.")
+    with Session(engine) as session:
+        pool = (
+            session.scalar(
+                select(func.count())
+                .select_from(TopicIdea)
+                .where(TopicIdea.status.in_(("PROPOSED", "RESEARCHED")))
+            )
+            or 0
+        )
+    if pool >= IDEA_POOL_TARGET:
+        return _outcome(
+            COMPLETED,
+            f"{pool} teme candidate sunt deja în așteptare; nu s-au propus altele.",
+            pool=pool,
+        )
+    try:
+        proposal = propose_topics(
+            engine, registry, settings, str(uuid4()), wanted=IDEA_POOL_TARGET - pool
+        )
+    except NoAuthorisedHosts as exc:
+        return _outcome(SKIPPED, str(exc))
+    except (ResearchAgentError, NoResearcher, ValueError) as exc:
+        # A refused proposal is the validation working; it must not take the day with it.
+        return _outcome(COMPLETED, f"Propunerile au fost respinse: {exc}"[:300], proposed=0)
+    if proposal.get("blocked"):
+        return _outcome(
+            COMPLETED, f"Cercetătorul a escaladat: {proposal['blocked']}"[:300], proposed=0
+        )
+    stored = proposal.get("proposed", [])
+    rejected = proposal.get("rejected", [])
+    reason = f"{len(stored)} teme propuse de cercetător."
+    if rejected:
+        reason += f" {len(rejected)} respinse (duplicat sau site neautorizat)."
+    return _outcome(COMPLETED, reason, proposed=[t["title"] for t in stored], rejected=rejected)
+
+
 # ------------------------------------------------------------------ performance intake --
 
 
@@ -106,11 +167,17 @@ def _performance_intake(engine: Engine, vault: Any) -> dict[str, Any]:
     none, and asking an analytics API about an internal row id would produce numbers about
     nothing.
     """
-    provider = YouTubeAnalyticsProvider.from_verified_settings(engine, vault)
+    # The bound slot names the account whose numbers these are. Without a binding the adapter
+    # can still answer when exactly one account is connected; with several it cannot, and
+    # attributing one channel's retention to another is worse than measuring nothing.
+    bound = [b for b in channel_bindings(engine).values() if b.get("publisher_ready")]
+    connection_id = bound[0]["youtube_connection_id"] if bound else None
+    provider = YouTubeAnalyticsProvider.from_verified_settings(engine, vault, connection_id)
     if provider is None:
         return _outcome(
             SKIPPED,
-            "Niciun cont YouTube verificat pentru analytics; nu există de unde citi performanța.",
+            "Niciun cont YouTube legat de un slot de canal pentru analytics. Leagă contul în "
+            "Publicare → Sloturi de canale; fără legătură nu se știe ale cui sunt cifrele.",
         )
 
     with Session(engine) as session:
@@ -147,7 +214,40 @@ def _performance_intake(engine: Engine, vault: Any) -> dict[str, Any]:
 # ------------------------------------------------------- research and verification --
 
 
-def _research_and_verification(engine: Engine, registry: ProviderRegistry) -> dict[str, Any]:
+def _gather_for_candidates(
+    engine: Engine, registry: ProviderRegistry, settings: Settings
+) -> list[dict[str, Any]]:
+    """Fetch pages for the best candidates that have none yet (runbook §4, retrieval half).
+
+    Bounded to a couple of candidates a day: the point is to give verification something real
+    to read, not to crawl. Every page is downloaded by the studio itself.
+    """
+    with Session(engine) as session:
+        with_sources = {
+            row for row in session.scalars(select(SourceSnapshot.topic_id)) if row is not None
+        }
+        candidates = [
+            topic.id
+            for topic in session.scalars(
+                select(TopicIdea)
+                .where(TopicIdea.status.in_(("PROPOSED", "RESEARCHED", "SELECTED")))
+                .order_by(TopicIdea.novelty_score.desc(), TopicIdea.created_at.desc())
+                .limit(12)
+            )
+            if topic.id not in with_sources
+        ][:2]
+    gathered = []
+    for topic_id in candidates:
+        try:
+            gathered.append(gather_sources(engine, registry, settings, topic_id, str(uuid4())))
+        except (ResearchAgentError, NoResearcher, NoAuthorisedHosts, ValueError) as exc:
+            logger.info("source_gathering_skipped", extra={"reason": type(exc).__name__})
+    return gathered
+
+
+def _research_and_verification(
+    engine: Engine, registry: ProviderRegistry, settings: Settings | None = None
+) -> dict[str, Any]:
     """Read the ingested sources, then have a second agent check what the first extracted.
 
     Extraction and verification are deliberately the same stage: a claim nobody checked is not
@@ -156,6 +256,11 @@ def _research_and_verification(engine: Engine, registry: ProviderRegistry) -> di
     """
     if not _has_language_model(registry):
         return _outcome(SKIPPED, "Niciun model de limbaj disponibil; agenții nu pot rula.")
+
+    # The studio reads for itself before it reads what it was given: a candidate topic with no
+    # source can never be verified, and waiting for the Owner to paste a link is not research.
+    gathered = _gather_for_candidates(engine, registry, settings) if settings else []
+    pages = sum(len(item["fetched"]) for item in gathered)
 
     with Session(engine) as session:
         # A source nobody has extracted from yet.
@@ -196,11 +301,16 @@ def _research_and_verification(engine: Engine, registry: ProviderRegistry) -> di
             logger.info("verification_refused", extra={"claim_id": claim_id, "reason": str(exc)})
             refused += 1
 
-    if not pending_sources and not unverified:
+    if not pending_sources and not unverified and not pages:
         return _outcome(COMPLETED, "Nicio sursă nouă și nicio afirmație neverificată.", claims=0)
+    reason = (
+        f"{pages} pagini preluate, {extracted} surse citite, {verified} afirmații verificate, "
+        f"{refused} verdicte respinse."
+    )
     return _outcome(
         COMPLETED,
-        f"{extracted} surse citite, {verified} afirmații verificate, {refused} verdicte respinse.",
+        reason,
+        pages_fetched=pages,
         sources_read=extracted,
         claims_verified=verified,
         verdicts_refused=refused,
@@ -210,8 +320,14 @@ def _research_and_verification(engine: Engine, registry: ProviderRegistry) -> di
 # ------------------------------------------------------------------------- selection --
 
 
-def _selection(engine: Engine) -> dict[str, Any]:
-    """Choose what the day produces: a topic with something verified to say."""
+def _selection(engine: Engine, registry: ProviderRegistry | None = None) -> dict[str, Any]:
+    """Choose what the day produces (runbook §5): the Director decides, under policy.
+
+    Only a topic with at least one SUPPORTED claim can be produced, so the shortlist is
+    computed first and the Director chooses among those. With one candidate there is nothing
+    to decide and asking would only spend a run; with no model available the studio falls back
+    to the deterministic order it used before — and says which of the two happened.
+    """
     with Session(engine) as session:
         already_selected = session.scalar(
             select(TopicIdea.id).where(TopicIdea.status == "SELECTED").limit(1)
@@ -220,22 +336,63 @@ def _selection(engine: Engine) -> dict[str, Any]:
             return _outcome(
                 COMPLETED, "Un subiect este deja în producție.", topic_id=already_selected
             )
-        candidates = [
-            topic.id
-            for topic in session.scalars(
+        rows = list(
+            session.scalars(
                 select(TopicIdea)
                 .where(TopicIdea.status.in_(("PROPOSED", "RESEARCHED")))
                 .order_by(TopicIdea.novelty_score.desc())
                 .limit(20)
             )
+        )
+        supported = {
+            topic_id: count
+            for topic_id, count in session.execute(
+                select(FactualClaim.topic_id, func.count())
+                .where(FactualClaim.status == "SUPPORTED", FactualClaim.topic_id.is_not(None))
+                .group_by(FactualClaim.topic_id)
+            ).all()
+        }
+        shortlist = [
+            {
+                "id": topic.id,
+                "title": topic.title,
+                "angle": topic.angle[:300],
+                "scores": topic.scores_json or {},
+                "supported_claims": supported.get(topic.id, 0),
+            }
+            for topic in rows
+            if supported.get(topic.id, 0) > 0
         ]
+        candidates = [topic.id for topic in rows]
+
+    decided_by, notes = None, None
+    if len(shortlist) > 1 and registry is not None and _has_language_model(registry):
+        try:
+            decision = choose_topic(engine, registry, shortlist, str(uuid4()))
+            candidates = [decision["topic_id"]] + [
+                c for c in candidates if c != decision["topic_id"]
+            ]
+            decided_by, notes = "Director", decision["reason"]
+        except (DirectorError, ValueError) as exc:
+            # An unusable choice falls back to the deterministic order rather than stopping
+            # the day; the Owner is told the Director did not decide it.
+            logger.info("director_choice_refused", extra={"reason": str(exc)[:200]})
 
     for topic_id in candidates:
         try:
-            chosen = select_topic(engine, topic_id, str(uuid4()))
+            chosen = select_topic(engine, topic_id, str(uuid4()), decided_by, notes)
         except TopicNotProducible:
             continue
-        return _outcome(COMPLETED, f"Subiect selectat: {chosen['title']}.", topic_id=topic_id)
+        reason = f"Subiect selectat: {chosen['title']}."
+        if decided_by:
+            reason += f" Ales de Director: {notes}"[:220]
+        return _outcome(
+            COMPLETED,
+            reason,
+            topic_id=topic_id,
+            decided_by=decided_by,
+            shortlist=len(shortlist),
+        )
 
     # A verified claim that belongs to no topic can never be selected, and the Owner would
     # otherwise be told only that there was "nothing to produce" while the work sat right there.
@@ -470,20 +627,35 @@ def _publish(
     are checked by code either way. Without a language model the Publisher cannot do her
     work, and the studio does not publish with a bare title in her place.
     """
+    # Which account a video is published to is the binding on the channel slot, never "the
+    # only connection" or "the first row": a studio with two channels would otherwise upload
+    # one channel's video to the other, which no later check could undo.
+    bindings = channel_bindings(engine)
+    with Session(engine) as session:
+        slots = [
+            (channel.id, channel.channel_name, bindings.get(channel.id, {}))
+            for channel in session.scalars(
+                select(ChannelRecord).where(ChannelRecord.platform == "YOUTUBE")
+            )
+        ]
+    ready = [(cid, name, b) for cid, name, b in slots if b.get("publisher_ready")]
+    if not ready:
+        if not slots:
+            return _outcome(SKIPPED, "Niciun canal configurat în studio.")
+        return _outcome(
+            SKIPPED,
+            "Niciun slot de canal nu este legat de un cont YouTube conectat. Leagă-le în "
+            "Publicare → Sloturi de canale; publicarea și analytics folosesc legătura.",
+        )
+    channel_id, channel_name, binding = ready[0]
     try:
-        provider = selected_youtube(engine, vault)
+        provider = selected_youtube(engine, vault, binding["youtube_connection_id"])
     except ValueError as exc:
         return _outcome(SKIPPED, str(exc))
     if provider is None:
-        return _outcome(SKIPPED, "Niciun canal YouTube conectat; nu există unde publica.")
+        return _outcome(SKIPPED, "Contul YouTube legat de acest canal nu mai este conectat.")
 
     with Session(engine) as session:
-        channel = session.scalars(
-            select(ChannelRecord).where(ChannelRecord.platform == "YOUTUBE").limit(1)
-        ).first()
-        if channel is None:
-            return _outcome(SKIPPED, "Niciun canal configurat în studio.")
-        channel_id, channel_name = channel.id, channel.channel_name
         published_assets = set(session.scalars(select(PublicationRecord.media_asset_id)))
         candidates = [
             (report.media_asset_id, report.id)
@@ -665,9 +837,11 @@ def build_stage_runners(
 ) -> dict[str, Callable[[], dict[str, Any]]]:
     """The runners for the stages that have real work behind them.
 
-    Stages absent from this mapping are recorded SKIPPED by the runbook with its own reason, and
-    that is the correct outcome for them: `idea_generation` has no implementation — topics are
-    proposed by the Owner. `post_run` is the Director's desk: the day's reports and her review.
+    Every stage of `../architecture/39_DAILY_AUTONOMOUS_RUNBOOK.md` now has work behind it:
+    §3 idea generation (the Lead Researcher proposes a scored, deduplicated pool), §4 research
+    (the studio fetches its own pages from the authorised sites, then extracts and verifies),
+    §5 selection (the Director chooses among producible candidates) and §10 post-run (the
+    Director's review of the day's reports).
     """
     # Each stage's outcome is kept for the day so post_run can report on it; the runbook
     # writes the run record only after every stage, so the record is not readable yet.
@@ -685,10 +859,14 @@ def build_stage_runners(
         "performance_intake": keep(
             "performance_intake", lambda: _performance_intake(engine, vault)
         ),
-        "research_and_verification": keep(
-            "research_and_verification", lambda: _research_and_verification(engine, registry)
+        "idea_generation": keep(
+            "idea_generation", lambda: _idea_generation(engine, registry, settings)
         ),
-        "selection": keep("selection", lambda: _selection(engine)),
+        "research_and_verification": keep(
+            "research_and_verification",
+            lambda: _research_and_verification(engine, registry, settings),
+        ),
+        "selection": keep("selection", lambda: _selection(engine, registry)),
         "script_and_storyboard": keep(
             "script_and_storyboard", lambda: _script_and_storyboard(engine, registry)
         ),

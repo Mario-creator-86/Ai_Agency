@@ -26,6 +26,11 @@ class TopicIdeaView(BaseModel):
     target_audience: str
     novelty_score: float
     status: str
+    scores_json: dict = {}
+    source_plan_json: list = []
+    proposed_by_agent_id: str | None = None
+    decided_by: str | None = None
+    decision_notes: str | None = None
     created_at: str
     selected_at: str | None = None
     event_id: str | None = None

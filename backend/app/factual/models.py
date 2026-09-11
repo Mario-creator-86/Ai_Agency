@@ -18,6 +18,16 @@ class TopicIdea(Base):
     target_audience: Mapped[str] = mapped_column(String(100), nullable=False, default="general")
     novelty_score: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="PROPOSED")
+    #: The runbook's six criteria as the proposer scored them, plus their mean as "composite".
+    #: A score is an opinion about a candidate, never evidence about the world.
+    scores_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    #: Authorised hosts the proposer expects to find evidence on. Retrieval still has to fetch.
+    source_plan_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    proposed_by_agent_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("agent.id", name="fk_topic_idea_proposed_by"), nullable=True
+    )
+    decided_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    decision_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(String(40), nullable=False)
     selected_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
     event_id: Mapped[str | None] = mapped_column(

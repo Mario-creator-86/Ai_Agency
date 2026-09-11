@@ -217,14 +217,21 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
   color: var(--ink);
   border-radius: 14px;
   padding: 26px;
-  max-width: 520px;
-  width: 92%;
+  /* One size for every dialog: the Owner reads long reports, role contracts, source
+     lists and production plans in these, and a 520px column turned each of them into a
+     narrow strip with its own inner scrollbar. */
+  width: min(1180px, 94vw);
+  max-width: none;
+  max-height: 88vh;
+  overflow-y: auto;
   box-shadow: var(--shadow-dialog);
 }
 .studio-dialog::backdrop { background: rgba(23, 41, 39, .32); }
-.research-dialog { max-width: 660px; }
-.media-dialog { max-width: 880px; max-height: 85vh; overflow-y: auto; }
-.publishing-dialog { width: 90vw; max-width: 950px; }
+.channel-bind { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 8px; }
+.channel-bind label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-3); }
+.channel-bind select { padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface); font-size: 12.5px; max-width: 320px; }
+.settings-autoconfig { border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; margin: 14px 0; background: var(--surface-sunk); }
+.settings-autoconfig-list { margin: 8px 0 0; padding-left: 18px; font-size: 12.5px; line-height: 1.6; }
 
 .dialog-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 18px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
 .dialog-title { margin: 0; font-size: 19px; font-weight: 600; letter-spacing: -.3px; color: var(--ink); }
@@ -250,7 +257,7 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 .btn-pause:hover { background: var(--line); }
 .btn-resume { background: var(--forest); color: #fff; border: 1px solid var(--forest); }
 .btn-resume:hover { background: var(--forest-lift); }
-.dialog-output { margin-top: 12px; padding: 12px; background: var(--surface-sunk); border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: 12.5px; line-height: 1.55; color: var(--ink-2); max-height: 140px; overflow-y: auto; white-space: pre-wrap; }
+.dialog-output { margin-top: 12px; max-width: 100%; padding: 12px; background: var(--surface-sunk); border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: 12.5px; line-height: 1.55; color: var(--ink-2); max-height: 320px; overflow-y: auto; white-space: pre-wrap; }
 .dialog-status-msg { margin-top: 10px; font-size: 12.5px; line-height: 1.5; color: var(--ok-ink); }
 
 .agent-stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 20px; background: var(--surface-sunk); border: 1px solid var(--line); padding: 14px; border-radius: var(--radius); }
@@ -272,7 +279,7 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 .topics-header-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; }
 .btn-refresh { font-size: 11px; padding: 5px 10px; background: transparent; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); color: var(--ink-2); }
 .btn-refresh:hover { background: var(--surface-quiet); color: var(--ink); }
-.topics-container { max-height: 210px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; font-size: 12.5px; }
+.topics-container { max-height: 420px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; font-size: 12.5px; }
 .topic-card { background: var(--surface-sunk); padding: 11px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); border-left: 3px solid var(--line-strong); }
 .topic-card-high { border-left-color: var(--ok-ink); }
 .topic-card-low { border-left-color: var(--warn-ink); }
@@ -363,7 +370,8 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 .identity-prompt pre { max-height: 260px; }
 
 /* ============================================================== publishing -- */
-.pub-overview-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+/* The channel slots carry a binding control now, so they get the wider column. */
+.pub-overview-grid { display: grid; grid-template-columns: 1.45fr 1fr; gap: 16px; margin-bottom: 16px; align-items: start; }
 @media (max-width: 768px) { .pub-overview-grid { grid-template-columns: 1fr; } }
 .pub-card { background: var(--surface-sunk); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .pub-card-header { display: flex; justify-content: space-between; align-items: center; gap: 10px; border-bottom: 1px solid var(--line); padding-bottom: 10px; }
@@ -380,7 +388,8 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 .pub-gate-note code { color: var(--ink-2); font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }
 
 .channels-container { display: flex; flex-direction: column; gap: 8px; }
-.channel-item { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 12px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.channel-item { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 12px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 6px 12px; }
+.channel-item .channel-bind { grid-column: 1 / -1; }
 .channel-info h4 { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--ink); }
 .channel-meta { font-size: 11.5px; line-height: 1.5; color: var(--ink-3); }
 .channel-meta code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; color: var(--ink-2); }

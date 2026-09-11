@@ -103,7 +103,9 @@ def test_a_stage_that_ran_and_found_nothing_is_completed_with_a_count(runners, e
 def test_publishing_is_skipped_when_no_channel_is_connected(runners):
     outcome = runners["publish"]()
     assert outcome["status"] == "SKIPPED"
-    assert "Niciun canal YouTube conectat" in outcome["reason"]
+    # No channel row at all in this fixture: the studio says so rather than naming a binding
+    # that could not exist yet.
+    assert "Niciun canal configurat" in outcome["reason"]
 
 
 def test_performance_intake_is_skipped_without_an_analytics_account(runners):

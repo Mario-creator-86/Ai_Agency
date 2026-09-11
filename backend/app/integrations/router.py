@@ -15,6 +15,7 @@ from app.agents.services import (
     run_agent_task,
     sync_provider_models,
 )
+from app.integrations.autoconfig import auto_configure
 from app.integrations.catalog import CATALOG
 from app.integrations.discovery import (
     DISCOVERED_KINDS,
@@ -239,6 +240,19 @@ def create_settings_router() -> APIRouter:
     ) -> dict:
         try:
             return update_resource_metadata(request.app.state.engine, str(identifier), command)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+
+    @router.post("/auto-configure")
+    def post_auto_configure(request: Request) -> dict:
+        """Finish what the verified connections leave unfinished, and say what was chosen.
+
+        Selects a service only where one candidate exists and fills only empty defaults; an
+        ambiguous purpose is reported, never resolved. Every choice is an event and can be
+        changed on the connection's own card.
+        """
+        try:
+            return auto_configure(request.app.state.engine, request.app.state.credential_vault)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from None
 

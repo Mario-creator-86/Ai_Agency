@@ -68,6 +68,85 @@ _INSTRUCTIONS = (
 )
 
 
+class TopicChoice(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    topic_id: str = Field(min_length=1, max_length=36)
+    reason: str = Field(default="", max_length=1000)
+
+
+_CHOOSE_INSTRUCTIONS = (
+    "Choose the topic the studio produces today. Every candidate below already has at least "
+    "one claim verified against a source, so any of them can be written; decide on the "
+    "evidence in the data — the scores the researcher gave, how many verified claims stand "
+    "behind each, and the channel's strategy. Return only JSON: "
+    '{"topic_id": "...", "reason": "..."}.\n'
+)
+
+
+def choose_topic(
+    engine: Engine,
+    registry: ProviderRegistry,
+    candidates: list[dict[str, Any]],
+    correlation_id: str | None = None,
+) -> dict[str, Any]:
+    """The Director picks the day's production candidate (runbook §5).
+
+    Returns the chosen topic id and the reason. A choice that names something not on the list
+    is refused rather than corrected: the point of asking is that the Director decided, and a
+    silently substituted candidate would record a decision nobody took.
+    """
+    correlation = correlation_id or str(uuid4())
+    if not candidates:
+        raise DirectorError("No candidate to choose from")
+    with Session(engine) as session:
+        director = agent_for_role(session, "Director")
+        if director is None:
+            raise DirectorError("No active Director")
+        director_id = director.id
+    payload = json.dumps({"candidates": candidates}, ensure_ascii=False, default=str)[:12000]
+    prompt = _CHOOSE_INSTRUCTIONS + wrap_in_inert_boundary(payload, "production-candidates")
+    result = run_agent_task(
+        engine,
+        registry,
+        director_id,
+        "choose_topic",
+        prompt,
+        REVIEW_TEMPLATE_VERSION,
+        correlation,
+        max_tokens=800,
+        temperature=0.1,
+        emit_message=False,
+    )
+    text = result.get("output_text") or ""
+    if result["status"] != "SUCCEEDED" or not text.strip():
+        raise DirectorError(
+            f"The Director did not choose ({result['status']}: "
+            f"{result.get('error_detail') or 'no visible text'})"
+        )
+    choice = parse_structured(text, TopicChoice)
+    allowed = {c["id"] for c in candidates}
+    if not isinstance(choice, TopicChoice) or choice.topic_id not in allowed:
+        raise DirectorError("The Director's choice did not name one of the candidates")
+    with Session(engine) as session, session.begin():
+        remember(
+            session,
+            memory_class="AGENT_OPINION",
+            content=f"Chose today's topic {choice.topic_id[:8]}: {choice.reason}"[:500],
+            source_type="run",
+            source_id=result["id"],
+            agent_id=director_id,
+        )
+    return {
+        "agent_id": director_id,
+        "run_id": result["id"],
+        "topic_id": choice.topic_id,
+        "reason": choice.reason,
+        "decided_by": next(
+            (c.get("director_name") for c in candidates if c.get("director_name")), "Director"
+        ),
+    }
+
+
 def file_stage_reports(
     engine: Engine, outcomes: dict[str, dict[str, Any]], correlation_id: str | None = None
 ) -> list[str]:

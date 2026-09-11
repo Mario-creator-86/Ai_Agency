@@ -1,5 +1,37 @@
 # Changelog
 
+## The pipeline has no empty stages left, and a channel knows its account — 2026-09-11
+
+Everything was connected and nothing worked: the publishing screen answered "Internal error",
+images and voice were reported missing, analytics found no account, and idea generation was
+skipped. Audit and fixes: `PIPELINE_COVERAGE.md`.
+
+- **The 500 is gone.** `GET /publishing/channels` asked `selected_youtube()` for the studio's
+  one publisher; with two accounts connected and no channel naming either, that refusal became
+  a 500, and the screen printed it into both panels. Publishing is per slot, so the endpoint
+  answers per slot: the account each channel is bound to, and the accounts available to bind.
+- **Channel ↔ account binding is visible and one click** in Publicare → Sloturi de canale. The
+  publish stage uploads through the bound account instead of "the first channel row", the
+  analytics stage measures through it, and the preflight names an unbound slot as the missing
+  step.
+- **`POST /settings/auto-configure`** (a button in Settings → Video și sunet) selects a service
+  for a purpose where exactly one verified connection can serve it and fills only empty
+  defaults, preferring a model the pipeline can call from a prompt. It reports every choice
+  with its reason, refuses to resolve an ambiguous purpose, and never replaces the Owner's own.
+- **Idea generation exists** (runbook §3): the Lead Researcher proposes candidates scored on
+  the six criteria, deduplicated by title similarity, limited to hosts the Owner authorised;
+  duplicates and unauthorised sites are dropped with the reason.
+- **Research fetches its own pages** (§4): the Researcher names URLs on authorised hosts and
+  the studio downloads each one itself, so an invented URL simply fails and a real one is
+  stored with the text that came back.
+- **The Director selects the day's topic** (§5) among candidates that have a verified claim,
+  and the decision is recorded on the topic (`decided_by`, `decision_notes`); a choice that
+  names nothing on the shortlist falls back to the deterministic order.
+- **Every dialog is one width** (1180px, 94vw) instead of 520–950px: reports, contracts,
+  source lists and production plans were being read through a narrow strip.
+- Migration 0023 (`topic_idea`: scores, source plan, proposer, decision);
+  `tests/test_pipeline_coverage.py`.
+
 ## The preflight names the missing step; Runway makes stills; sites are added and tested — 2026-09-11
 
 The Owner had a verified ElevenLabs key selected for voice and a verified Runway key, and the

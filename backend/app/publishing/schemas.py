@@ -27,6 +27,16 @@ class ChannelView(BaseModel):
     allow_production_override: bool = True
     created_at: str
     last_sync_at: str | None
+    # The binding endpoint refuses a stale write, so the screen that offers the
+    # binding has to know which version of the row it is looking at.
+    event_id: str | None = None
+    # Which OAuth connection this slot publishes through. Filled by `list_channels` from the
+    # connection rows, never stored twice: `credentials_ref` remains the single source.
+    youtube_connection_id: str | None = None
+    youtube_connection_name: str | None = None
+    youtube_channel_title: str | None = None
+    youtube_connection_status: str | None = None
+    publisher_ready: bool = False
 
 
 class ConfigureChannelCommand(BaseModel):

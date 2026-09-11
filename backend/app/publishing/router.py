@@ -8,6 +8,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Path, Request
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from app.factual.models import ScriptDraft
 from app.integrations.services import selected_youtube
@@ -36,6 +37,7 @@ from app.publishing.services import (
     seed_default_channels,
 )
 from app.security import require_owner
+from app.youtube.models import YouTubeConnection
 
 PUBLISHER_NOT_CONFIGURED_DETAIL = {
     "error": "PublisherNotConfigured",
@@ -106,15 +108,44 @@ def create_publishing_router() -> APIRouter:
 
     @router.get("/channels")
     def get_all_channels(request: Request) -> dict:
-        """Read-only listing. Seeding is an explicit command, never a side effect of a GET."""
+        """Read-only listing. Seeding is an explicit command, never a side effect of a GET.
+
+        This used to ask `selected_youtube()` whether a publisher existed, which refuses to
+        answer while several accounts are connected and no channel names one — so a studio
+        with two connected accounts got a 500 here and the screen said "Internal error" for
+        both channels and publications. Publishing is per slot, so the answer is per slot:
+        which connection each channel is bound to, and which accounts are available to bind.
+        """
         engine = request.app.state.engine
         settings = request.app.state.settings
+        channels = list_channels(engine)
+        with Session(engine) as session:
+            accounts = [
+                {
+                    "id": row.id,
+                    "name": row.name,
+                    "status": row.status,
+                    "channel_title": row.remote_channel_title,
+                    "remote_channel_id": row.remote_channel_id,
+                }
+                for row in session.scalars(
+                    select(YouTubeConnection).order_by(YouTubeConnection.created_at)
+                )
+            ]
+        connected = [a for a in accounts if a["status"] == "CONNECTED"]
+        bound = [c for c in channels if c.get("publisher_ready")]
         return {
-            "channels": list_channels(engine),
-            "publisher_configured": bool(
-                selected_youtube(engine, request.app.state.credential_vault)
-            )
+            "channels": channels,
+            "youtube_accounts": accounts,
+            "publisher_configured": bool(bound)
             or bool(getattr(settings, "youtube_credentials_present", False)),
+            "binding_hint": (
+                f"{len(connected)} conturi YouTube conectate, niciun slot de canal legat de "
+                "vreunul. Alege contul pentru fiecare slot mai jos: publicarea și analytics "
+                "folosesc legătura, nu contul „primul găsit”."
+                if connected and not bound
+                else ""
+            ),
         }
 
     @router.post("/channels/seed")

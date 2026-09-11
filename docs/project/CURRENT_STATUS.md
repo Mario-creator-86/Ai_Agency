@@ -13,6 +13,19 @@ database resource discovery/refresh, separate production choices, UI and regress
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
 
+## The pipeline has no empty stages left (2026-09-11)
+
+Every stage of `../architecture/39_DAILY_AUTONOMOUS_RUNBOOK.md` now has work behind it. New:
+§3 idea generation (the Lead Researcher proposes candidates scored on the runbook's six
+criteria, deduplicated, limited to authorised hosts), the retrieval half of §4 (the studio
+fetches its own pages and keeps only what actually came back) and §5 selection (the Director
+chooses among topics that have a verified claim, and the decision is recorded on the topic).
+A channel slot now names the YouTube account it publishes through; publishing and analytics
+use that binding instead of "the first row", and `GET /publishing/channels` no longer answers
+500 when several accounts are connected. `POST /settings/auto-configure` finishes what a
+verified connection leaves unfinished, only where the choice is forced. Details and limits:
+`PIPELINE_COVERAGE.md`. Migration 0023.
+
 ## Employees: identity, memory, reports (2026-09-11)
 
 Every agent run now carries the employee's identity as the system prompt, composed from stored

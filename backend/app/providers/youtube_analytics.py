@@ -43,7 +43,7 @@ class YouTubeAnalyticsProvider(AnalyticsProvider):
 
     @classmethod
     def from_verified_settings(
-        cls, engine: object, vault: object
+        cls, engine: object, vault: object, connection_id: str | None = None
     ) -> YouTubeAnalyticsProvider | None:
         """Build the adapter from a *verified* YouTube connection, or return None.
 
@@ -57,11 +57,12 @@ class YouTubeAnalyticsProvider(AnalyticsProvider):
         from app.youtube.models import YouTubeConnection  # noqa: PLC0415
 
         with Session(engine) as session:  # type: ignore[arg-type]
-            connected = session.scalars(
-                select(YouTubeConnection)
-                .where(YouTubeConnection.status == "CONNECTED")
-                .order_by(YouTubeConnection.created_at)
-            ).all()
+            query = select(YouTubeConnection).where(YouTubeConnection.status == "CONNECTED")
+            # A channel slot that names its account removes the ambiguity below: these are that
+            # account's numbers because that is the account this channel publishes through.
+            if connection_id:
+                query = query.where(YouTubeConnection.id == connection_id)
+            connected = session.scalars(query.order_by(YouTubeConnection.created_at)).all()
             # Exactly one, or none: with several channels connected there is no way to tell
             # whose statistics were asked for, and answering with the first row would attribute
             # one channel's numbers to another.
