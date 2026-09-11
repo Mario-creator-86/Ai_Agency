@@ -48,6 +48,19 @@ def test_built_frontend_and_security_headers(client):
     assert response.status_code == 200
     assert 'id="owner-token"' in response.text
     assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
+    directives = {
+        parts[0]: parts[1:]
+        for directive in response.headers["Content-Security-Policy"].split(";")
+        if (parts := directive.split())
+    }
+    assert set(directives["img-src"]) == {
+        "'self'",
+        "data:",
+        "https://yt3.ggpht.com",
+        "https://yt3.googleusercontent.com",
+    }
+    assert directives["script-src"] == ["'self'"]
+    assert directives["connect-src"] == ["'self'"]
     # The brand assets the page actually references must be served, not a stale icon.
     for asset in ("/favicon.ico", "/favicon-32.png", "/apple-touch-icon.png", "/amn-ai-mark.png"):
         assert client.get(asset).status_code == 200, asset

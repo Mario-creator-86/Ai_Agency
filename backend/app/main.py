@@ -24,6 +24,7 @@ from app.config import ROOT, Settings
 from app.db import create_db_engine
 from app.economy.router import create_economy_router
 from app.factual.router import create_factual_router
+from app.integrations.discovery import refresh_due_catalogs
 from app.integrations.router import create_settings_router
 from app.integrations.services import load_registry
 from app.integrations.vault import CredentialVault
@@ -80,7 +81,7 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
         # Migrations/bootstrap are explicit startup commands, never hidden destructive schema edits.
         with engine.connect() as connection:
             revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
-            if revision != "0018_audit_gaps":
+            if revision != "0019_provider_resources":
                 raise RuntimeError("Run scripts/bootstrap.py with this application version")
             if connection.scalar(text("SELECT COUNT(*) FROM owner_policy")) != 1:
                 raise RuntimeError("Run scripts/bootstrap.py to initialize the studio")
@@ -105,6 +106,31 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
                     pass
 
         dispatcher = asyncio.create_task(dispatch_outbox())
+        catalog_refresher: asyncio.Task[None] | None = None
+        if settings.provider_catalog_refresh_enabled:
+
+            async def refresh_provider_catalogs() -> None:
+                while not stop_dispatcher.is_set():
+                    try:
+                        await asyncio.to_thread(
+                            refresh_due_catalogs,
+                            engine,
+                            app.state.credential_vault,
+                            interval_seconds=settings.provider_catalog_refresh_seconds,
+                            retry_seconds=settings.provider_catalog_retry_seconds,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "catalog_refresh_failed", extra={"error_class": type(exc).__name__}
+                        )
+                    try:
+                        await asyncio.wait_for(
+                            stop_dispatcher.wait(), timeout=settings.provider_catalog_poll_seconds
+                        )
+                    except TimeoutError:
+                        pass
+
+            catalog_refresher = asyncio.create_task(refresh_provider_catalogs())
 
         # The worker is what runs the studio without the browser: it fires due scheduled jobs
         # and executes the tasks they enqueue. Each pass is synchronous database and agent
@@ -160,6 +186,9 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
             if worker is not None:
                 with suppress(asyncio.CancelledError):
                     await worker
+            if catalog_refresher is not None:
+                with suppress(asyncio.CancelledError):
+                    await catalog_refresher
             engine.dispose()
 
     app = FastAPI(
@@ -205,7 +234,8 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Cache-Control"] = "no-store"
         response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+            "default-src 'self'; script-src 'self'; style-src 'self'; "
+            "img-src 'self' data: https://yt3.ggpht.com https://yt3.googleusercontent.com; "
             "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
         )
         logger.info(

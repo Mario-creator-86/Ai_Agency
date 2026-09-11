@@ -16,6 +16,14 @@ from app.agents.services import (
     sync_provider_models,
 )
 from app.integrations.catalog import CATALOG
+from app.integrations.discovery import (
+    ProductionCommand,
+    ResourceMetadataCommand,
+    catalog_view,
+    refresh_catalog,
+    save_production,
+    update_resource_metadata,
+)
 from app.integrations.llm import ConfiguredLLM
 from app.integrations.models import Integration, ServiceSelection
 from app.integrations.probes import probe
@@ -54,6 +62,11 @@ def create_settings_router() -> APIRouter:
         engine = request.app.state.engine
         with Session(engine) as session:
             integrations = [public(row) for row in session.scalars(select(Integration))]
+            provider_catalogs = {
+                row["id"]: catalog_view(session, row["id"])
+                for row in integrations
+                if row["kind"] == "elevenlabs"
+            }
             selections = {
                 row.purpose: dict(integration_id=row.integration_id, version=row.version)
                 for row in session.scalars(select(ServiceSelection))
@@ -95,6 +108,7 @@ def create_settings_router() -> APIRouter:
             catalog=CATALOG,
             channels=channels,
             integrations=integrations,
+            provider_catalogs=provider_catalogs,
             selections=selections,
             agents=list_agents(engine),
             roles=list_roles(engine),
@@ -112,6 +126,24 @@ def create_settings_router() -> APIRouter:
                 str(identifier),
                 command,
             )
+            if command.kind == "elevenlabs":
+                checked = refresh_catalog(
+                    request.app.state.engine,
+                    request.app.state.credential_vault,
+                    str(identifier),
+                    interval_seconds=request.app.state.settings.provider_catalog_refresh_seconds,
+                    retry_seconds=request.app.state.settings.provider_catalog_retry_seconds,
+                    force=True,
+                )
+                with Session(request.app.state.engine) as session:
+                    saved = session.get(Integration, str(identifier))
+                    if saved is None:
+                        raise HTTPException(409, "Conexiunea a fost ștearsă")
+                    return {
+                        **public(saved),
+                        **checked,
+                        "catalog": catalog_view(session, str(identifier)),
+                    }
             if CATALOG[command.kind]["runtime"] == "llm":
                 with Session(request.app.state.engine) as session:
                     row = session.get(Integration, str(identifier))
@@ -137,6 +169,8 @@ def create_settings_router() -> APIRouter:
                 raise HTTPException(404, "Conexiune inexistentă")
             kind, config, version = row.kind, row.config, row.version
             secrets = vault.decrypt(row.encrypted_secrets)
+        if kind == "elevenlabs":
+            return refresh_elevenlabs(identifier, request)
         runtime = CATALOG[kind]["runtime"]
         try:
             if runtime == "llm":
@@ -174,6 +208,38 @@ def create_settings_router() -> APIRouter:
             if status in ("VERIFIED", "ACCESS_VERIFIED")
             else "Verificarea a eșuat. Verifică datele, permisiunile și accesul la serviciu.",
         }
+
+    @router.post("/integrations/{identifier}/refresh-resources")
+    def refresh_elevenlabs(identifier: UUID, request: Request) -> dict:
+        try:
+            return refresh_catalog(
+                request.app.state.engine,
+                request.app.state.credential_vault,
+                str(identifier),
+                interval_seconds=request.app.state.settings.provider_catalog_refresh_seconds,
+                retry_seconds=request.app.state.settings.provider_catalog_retry_seconds,
+                force=True,
+            )
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from None
+
+    @router.put("/integrations/{identifier}/production")
+    def configure_production(
+        identifier: UUID, command: ProductionCommand, request: Request
+    ) -> dict:
+        try:
+            return save_production(request.app.state.engine, str(identifier), command)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+
+    @router.patch("/resources/{identifier}/metadata")
+    def configure_resource_metadata(
+        identifier: UUID, command: ResourceMetadataCommand, request: Request
+    ) -> dict:
+        try:
+            return update_resource_metadata(request.app.state.engine, str(identifier), command)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
 
     @router.put("/selections/{purpose}")
     def set_selection(purpose: str, command: SelectionCommand, request: Request) -> dict:

@@ -16,7 +16,8 @@ from __future__ import annotations
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-from app.integrations.models import Integration, ServiceSelection
+from app.integrations.discovery import production_resource
+from app.integrations.models import Integration, MediaProductionConfig, ServiceSelection
 from app.integrations.vault import CredentialVault
 from app.providers.elevenlabs import ElevenLabsTTSAdapter
 from app.providers.media_base import ImageProvider, TTSProvider
@@ -63,6 +64,16 @@ def tts_provider(engine: Engine, vault: CredentialVault) -> TTSProvider | None:
         if row is None:
             return None
         kind, config = row.kind, dict(row.config)
+        if kind == "elevenlabs":
+            production = session.get(MediaProductionConfig, row.id)
+            if production is None or not all(
+                (
+                    production_resource(session, row.id, "MODEL", production.model_id),
+                    production_resource(session, row.id, "VOICE", production.voice_id),
+                )
+            ):
+                return None
+            config = {"model": production.model_id, "voice_id": production.voice_id}
         secrets = vault.decrypt(row.encrypted_secrets)
 
     try:

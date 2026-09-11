@@ -2,7 +2,8 @@
 
 Uses the documented REST API at https://elevenlabs.io/docs/api-reference/introduction:
 
-  GET  /v1/voices                    -> the voices this key can use
+  GET  /v1/models                  -> models returned for this key
+  GET  /v2/voices                  -> paginated voices this key can use
   POST /v1/text-to-speech/{voice_id} -> narration audio
 
 The duration attached to a result is measured from the audio that came back, never derived from
@@ -15,7 +16,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any
+from urllib.parse import quote, urlencode
 
 from app.providers.media_base import TTSProvider, TTSResult
 from app.providers.media_http import (
@@ -26,7 +29,6 @@ from app.providers.media_http import (
 )
 
 HOST = "api.elevenlabs.io"
-DEFAULT_MODEL = "eleven_multilingual_v2"
 
 
 class ElevenLabsTTSAdapter(TTSProvider):
@@ -43,7 +45,7 @@ class ElevenLabsTTSAdapter(TTSProvider):
             raise MediaProviderNotConfigured("ElevenLabs needs an API key")
         self.api_key = api_key
         self.voice_id = voice_id or ""
-        self.model = model or DEFAULT_MODEL
+        self.model = model or ""
 
     def _headers(self, accept: str) -> dict[str, str]:
         return {"xi-api-key": self.api_key, "Accept": accept, "Content-Type": "application/json"}
@@ -52,28 +54,68 @@ class ElevenLabsTTSAdapter(TTSProvider):
         """Ask the API who this key is. Reachability is reported, never assumed."""
         try:
             data, _, _ = await asyncio.to_thread(
-                request, HOST, "GET", "/v1/user", self._headers("application/json")
+                request, HOST, "GET", "/v1/user", self._headers("application/json"), timeout=20
             )
         except MediaProviderError as exc:
-            return {"status": "OFFLINE", "detail": str(exc)}
-        return {"status": "HEALTHY", "detail": "", "user_id": (data or {}).get("user_id")}
+            return {
+                "status": "OFFLINE",
+                "detail": str(exc),
+                "code": exc.code,
+                "http_status": exc.http_status,
+            }
+        if not isinstance(data, dict) or not data.get("user_id"):
+            return {"status": "OFFLINE", "detail": "ElevenLabs did not identify the account"}
+        return {"status": "HEALTHY", "detail": ""}
+
+    async def list_models(self) -> list[dict[str, Any]]:
+        data, _, _ = await asyncio.to_thread(
+            request, HOST, "GET", "/v1/models", self._headers("application/json"), timeout=20
+        )
+        return self._resources(data, "model_id")
+
+    @staticmethod
+    def _resources(data: Any, id_field: str) -> list[dict[str, Any]]:
+        if not isinstance(data, list):
+            raise MediaProviderError("ElevenLabs did not return a resource list")
+        for item in data:
+            identifier = item.get(id_field) if isinstance(item, dict) else None
+            if not isinstance(identifier, str) or not identifier.strip() or len(identifier) > 200:
+                raise MediaProviderError("ElevenLabs returned a resource without a valid ID")
+        return data
 
     async def list_voices(self) -> list[dict[str, Any]]:
-        data, _, _ = await asyncio.to_thread(
-            request, HOST, "GET", "/v1/voices", self._headers("application/json")
-        )
-        voices = (data or {}).get("voices")
-        if not isinstance(voices, list):
-            raise MediaProviderError("ElevenLabs did not return a voice list")
-        return [
-            {
-                "voice_id": voice.get("voice_id", ""),
-                "name": voice.get("name", ""),
-                "category": voice.get("category", ""),
-            }
-            for voice in voices
-            if isinstance(voice, dict)
-        ]
+        voices: dict[str, dict[str, Any]] = {}
+        seen_tokens: set[str] = set()
+        params = {"page_size": "100"}
+        deadline = time.monotonic() + 120
+        for _ in range(1000):
+            if time.monotonic() >= deadline:
+                raise MediaProviderError("ElevenLabs voice discovery timed out before completion")
+            data, _, _ = await asyncio.to_thread(
+                request,
+                HOST,
+                "GET",
+                "/v2/voices?" + urlencode(params),
+                self._headers("application/json"),
+                timeout=20,
+            )
+            if not isinstance(data, dict):
+                raise MediaProviderError("ElevenLabs did not return a voice list")
+            for voice in self._resources(data.get("voices"), "voice_id"):
+                voices[voice["voice_id"]] = voice
+            if data.get("has_more") is False:
+                return list(voices.values())
+            token = data.get("next_page_token")
+            if (
+                data.get("has_more") is not True
+                or not isinstance(token, str)
+                or not token
+                or token in seen_tokens
+            ):
+                raise MediaProviderError("ElevenLabs returned incomplete voice pagination")
+            seen_tokens.add(token)
+            params["next_page_token"] = token
+        raise MediaProviderError("ElevenLabs voice pagination exceeded the safety limit")
 
     async def synthesize(
         self,
@@ -92,6 +134,8 @@ class ElevenLabsTTSAdapter(TTSProvider):
             raise MediaProviderNotConfigured(
                 "No ElevenLabs voice is selected; set a voice id in Settings"
             )
+        if not self.model:
+            raise MediaProviderNotConfigured("Select an ElevenLabs production model in Settings")
 
         payload = json.dumps(
             {
@@ -107,7 +151,7 @@ class ElevenLabsTTSAdapter(TTSProvider):
             request,
             HOST,
             "POST",
-            f"/v1/text-to-speech/{voice}",
+            f"/v1/text-to-speech/{quote(voice, safe='')}",
             self._headers("audio/mpeg"),
             payload,
             expect_json=False,

@@ -117,11 +117,11 @@ def test_verification_loads_real_response_models_and_marks_failure(client, heade
     assert "secret-external-error" not in result.text
 
 
-def test_service_selection_clear_and_delete(client, headers):
+def test_service_selection_clear_and_delete(client, headers, elevenlabs_api):
     identifier, response = put(
         client,
         headers,
-        command("elevenlabs", config={"model": "owner-model", "voice_id": "owner-voice"}),
+        command("elevenlabs"),
     )
     assert response.status_code == 200
 
@@ -136,14 +136,14 @@ def test_service_selection_clear_and_delete(client, headers):
     assert select_service("voice", identifier, 0).status_code == 200
     assert (
         client.delete(
-            f"/api/v1/settings/integrations/{identifier}?expected_version=1", headers=headers
+            f"/api/v1/settings/integrations/{identifier}?expected_version=2", headers=headers
         ).status_code
         == 409
     )
     assert select_service("voice", None, 1).status_code == 200
     assert (
         client.delete(
-            f"/api/v1/settings/integrations/{identifier}?expected_version=1", headers=headers
+            f"/api/v1/settings/integrations/{identifier}?expected_version=2", headers=headers
         ).status_code
         == 200
     )
@@ -269,3 +269,61 @@ def test_agent_llm_test_endpoint_runs_assigned_model(client, headers, engine, mo
         ).status_code
         == 404
     )
+
+
+def test_a_restricted_elevenlabs_key_is_told_which_permissions_it_lacks(
+    client, headers, elevenlabs_api
+):
+    """A key created with restricted scopes answers 401 missing_permissions on /v1/user. The
+    Owner must be told that, not just that "the key could not be verified"."""
+    from app.providers.media_http import MediaProviderError
+
+    def refuse(path):
+        if path.startswith("/v1/user"):
+            raise MediaProviderError(
+                "api.elevenlabs.io refused the request (HTTP 401)",
+                code="missing_permissions",
+                http_status=401,
+            )
+
+    elevenlabs_api.fail = refuse
+    identifier, response = put(client, headers, command("elevenlabs"))
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "FAILED"
+    assert "permisiuni restrânse" in body["message"]
+    assert "User (Read)" in body["message"] and "Voices (Read)" in body["message"]
+    assert body["catalog"]["discovery"]["status"] == "ERROR"
+    assert body["catalog"]["models"] == [] and body["catalog"]["voices"] == []
+
+    # Once the key can read the account but not the catalogue, the message says so too.
+    def refuse_lists(path):
+        if path.startswith("/v1/models"):
+            raise MediaProviderError(
+                "api.elevenlabs.io refused the request (HTTP 401)",
+                code="missing_permissions",
+                http_status=401,
+            )
+
+    elevenlabs_api.fail = refuse_lists
+    retry = client.post(
+        f"/api/v1/settings/integrations/{identifier}/refresh-resources", headers=headers
+    )
+    assert retry.status_code == 200
+    assert retry.json()["status"] == "VERIFIED"
+    assert "Models (Read)" in retry.json()["message"]
+
+    # An invalid key is a different message: no permissions advice for a key that is not one.
+    def invalid(path):
+        raise MediaProviderError(
+            "api.elevenlabs.io refused the request (HTTP 401)",
+            code="invalid_api_key",
+            http_status=401,
+        )
+
+    elevenlabs_api.fail = invalid
+    again = client.post(
+        f"/api/v1/settings/integrations/{identifier}/refresh-resources", headers=headers
+    )
+    assert again.json()["status"] == "FAILED"
+    assert "invalidă sau a fost revocată" in again.json()["message"]

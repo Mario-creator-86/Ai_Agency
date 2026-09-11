@@ -11,13 +11,26 @@ from __future__ import annotations
 
 import http.client
 import json
+import re
 import struct
 from typing import Any
 from urllib.parse import urlsplit
 
 
 class MediaProviderError(RuntimeError):
-    """The provider did not return a usable result, so the caller must not continue."""
+    """The provider did not return a usable result, so the caller must not continue.
+
+    `code` is the vendor's own short error identifier when the response carried one (for
+    ElevenLabs, `detail.status`, e.g. ``missing_permissions``); it is a closed-vocabulary
+    slug, never free text, so it can be shown to the Owner and matched by callers.
+    """
+
+    def __init__(
+        self, message: str, *, code: str | None = None, http_status: int | None = None
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.http_status = http_status
 
 
 class MediaProviderNotConfigured(MediaProviderError):
@@ -55,8 +68,13 @@ def request(
             raise MediaProviderError(f"{host} returned more data than the adapter accepts")
         if response.status != 200:
             # The provider's own error text is not echoed: it can carry request details, and
-            # the Owner needs the status and the fact that nothing was stored.
-            raise MediaProviderError(f"{host} refused the request (HTTP {response.status})")
+            # the Owner needs the status and the fact that nothing was stored. Only the
+            # vendor's short error identifier travels with the exception.
+            raise MediaProviderError(
+                f"{host} refused the request (HTTP {response.status})",
+                code=error_code(payload),
+                http_status=response.status,
+            )
         content_type = response.headers.get_content_type()
         if not expect_json:
             return None, payload, content_type
@@ -68,6 +86,37 @@ def request(
         raise MediaProviderError(f"{host} could not be reached") from exc
     finally:
         connection.close()
+
+
+_CODE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
+
+
+def error_code(payload: bytes) -> str | None:
+    """The vendor's error identifier from an error body, if it is a plain slug.
+
+    Accepts ``{"detail": {"status": "missing_permissions"}}`` (ElevenLabs) and
+    ``{"detail": "slug"}`` / ``{"error": {"code": "slug"}}`` shapes; anything else is None.
+    """
+    try:
+        body = json.loads(payload)
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if not isinstance(body, dict):
+        return None
+    candidates = []
+    detail = body.get("detail")
+    if isinstance(detail, dict):
+        candidates.append(detail.get("status"))
+        candidates.append(detail.get("code"))
+    else:
+        candidates.append(detail)
+    error = body.get("error")
+    if isinstance(error, dict):
+        candidates.append(error.get("code"))
+    for candidate in candidates:
+        if isinstance(candidate, str) and _CODE.match(candidate):
+            return candidate
+    return None
 
 
 def host_of(base_url: str, default: str) -> str:

@@ -142,7 +142,7 @@ def test_tts_reports_the_duration_of_the_audio_it_received(monkeypatch):
 
     recorder = Recorder((None, mp3_bytes(120), "audio/mpeg"))
     monkeypatch.setattr(elevenlabs, "request", recorder)
-    adapter = ElevenLabsTTSAdapter("key", voice_id="v1")
+    adapter = ElevenLabsTTSAdapter("key", voice_id="v1", model="test-model")
 
     import asyncio
 
@@ -181,7 +181,7 @@ def test_a_non_audio_response_raises_rather_than_producing_a_silent_segment(monk
     monkeypatch.setattr(
         elevenlabs, "request", Recorder((None, b'{"error": "quota"}', "application/json"))
     )
-    adapter = ElevenLabsTTSAdapter("key", voice_id="v1")
+    adapter = ElevenLabsTTSAdapter("key", voice_id="v1", model="test-model")
 
     import asyncio
 
@@ -269,3 +269,16 @@ def test_an_empty_prompt_never_reaches_the_vendor(monkeypatch):
         asyncio.run(OpenAIImageAdapter("key").generate_image("   "))
 
     assert recorder.calls == []
+
+
+def test_vendor_error_identifiers_are_read_from_error_bodies_but_never_free_text():
+    from app.providers.media_http import error_code
+
+    assert error_code(b'{"detail": {"status": "missing_permissions", "message": "x"}}') == (
+        "missing_permissions"
+    )
+    assert error_code(b'{"detail": "invalid_api_key"}') == "invalid_api_key"
+    assert error_code(b'{"error": {"code": "rate_limited"}}') == "rate_limited"
+    assert error_code(b'{"detail": "The key sk_live_123 is not valid"}') is None
+    assert error_code(b'{"detail": {"status": "Bad Request"}}') is None
+    assert error_code(b"<html>") is None

@@ -1,4 +1,7 @@
 import secrets
+from types import SimpleNamespace
+from urllib.parse import parse_qs, urlsplit
+from uuid import uuid4
 
 import pytest
 from app.config import Settings
@@ -18,6 +21,7 @@ def settings(tmp_path):
         # A background loop that starts the day on its own would make every other test's
         # timing a coincidence. The worker has its own tests, which drive it by hand.
         worker_enabled=False,
+        provider_catalog_refresh_enabled=False,
     )
 
 
@@ -39,6 +43,56 @@ def headers(settings):
 def client(engine, settings):
     with TestClient(create_app(settings)) as client:
         yield client
+
+
+@pytest.fixture
+def elevenlabs_api(monkeypatch):
+    """Stub only the HTTPS boundary; IDs are test-generated, not real provider claims."""
+    from app.providers import elevenlabs
+
+    fake = SimpleNamespace(
+        models=[
+            {
+                "model_id": f"test-model-{uuid4()}",
+                "name": "Test TTS model",
+                "can_do_text_to_speech": True,
+            }
+        ],
+        voices=[
+            {"voice_id": f"test-voice-{uuid4()}", "name": "Test voice one"},
+            {"voice_id": f"test-voice-{uuid4()}", "name": "Test voice two"},
+        ],
+        calls=[],
+        fail=None,
+        before_response=None,
+    )
+
+    def transport(host, method, path, headers, *args, **kwargs):
+        assert host == "api.elevenlabs.io" and method == "GET"
+        assert headers["xi-api-key"]
+        fake.calls.append(path)
+        if fake.before_response:
+            fake.before_response(path)
+        if fake.fail:
+            fake.fail(path)
+        parsed = urlsplit(path)
+        if parsed.path == "/v1/user":
+            payload = {"user_id": "test-account"}
+        elif parsed.path == "/v1/models":
+            payload = fake.models
+        elif parsed.path == "/v2/voices":
+            second = parse_qs(parsed.query).get("next_page_token") == ["second-page"]
+            payload = {
+                "voices": fake.voices[1:] if second else fake.voices[:1],
+                "has_more": not second and len(fake.voices) > 1,
+                "next_page_token": "second-page" if not second and len(fake.voices) > 1 else None,
+            }
+        else:
+            raise AssertionError(path)
+        return payload, b"", "application/json"
+
+    monkeypatch.setattr(elevenlabs, "request", transport)
+    return fake
 
 
 @pytest.fixture

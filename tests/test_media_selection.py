@@ -12,13 +12,18 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
-from app.integrations.models import Integration, ServiceSelection
+from app.integrations.models import (
+    Integration,
+    MediaProductionConfig,
+    ProviderResource,
+    ServiceSelection,
+)
 from app.integrations.vault import CredentialVault
 from app.media.factory import describe, image_provider, tts_provider
 from app.media.toolchain import find_ffmpeg
 from app.providers.elevenlabs import ElevenLabsTTSAdapter
 from app.providers.openai_media import OpenAIImageAdapter
-from app.services import append_event
+from app.services import append_event, utc_now
 from sqlalchemy.orm import Session
 
 
@@ -47,6 +52,35 @@ def add_integration(engine, vault, kind: str, status: str, config: dict, secrets
                 event_id=event.event_id,
             )
         )
+        if kind == "elevenlabs" and config.get("model") and config.get("voice_id"):
+            session.flush()
+            session.add(
+                MediaProductionConfig(
+                    integration_id=identifier,
+                    model_id=config["model"],
+                    voice_id=config["voice_id"],
+                    version=1,
+                    updated_at=utc_now(),
+                )
+            )
+            for resource_type, remote_id in (
+                ("MODEL", config["model"]),
+                ("VOICE", config["voice_id"]),
+            ):
+                session.add(
+                    ProviderResource(
+                        id=str(uuid4()),
+                        integration_id=identifier,
+                        resource_type=resource_type,
+                        remote_id=remote_id,
+                        name=remote_id,
+                        api_available=True,
+                        last_seen_at=utc_now(),
+                        api_metadata={"can_do_text_to_speech": True}
+                        if resource_type == "MODEL"
+                        else {},
+                    )
+                )
     return identifier
 
 
@@ -95,7 +129,12 @@ def test_a_verified_connection_that_was_never_selected_is_not_used(engine, vault
 
 def test_deselecting_a_provider_takes_effect(engine, vault):
     identifier = add_integration(
-        engine, vault, "elevenlabs", "ACCESS_VERIFIED", {"voice_id": "v1"}, {"api_key": "k"}
+        engine,
+        vault,
+        "elevenlabs",
+        "VERIFIED",
+        {"voice_id": "v1", "model": "test-model"},
+        {"api_key": "k"},
     )
     select(engine, "voice", identifier)
     assert tts_provider(engine, vault) is not None
@@ -148,7 +187,7 @@ def test_a_verified_and_selected_voice_provider_carries_its_voice(engine, vault)
         vault,
         "elevenlabs",
         "ACCESS_VERIFIED",
-        {"voice_id": "v-narrator", "model": "eleven_multilingual_v2"},
+        {"voice_id": "v-narrator", "model": "test-model"},
         {"api_key": "k"},
     )
     select(engine, "voice", identifier)
@@ -162,7 +201,12 @@ def test_a_verified_and_selected_voice_provider_carries_its_voice(engine, vault)
 
 def test_image_and_voice_are_selected_independently(engine, vault):
     voice = add_integration(
-        engine, vault, "elevenlabs", "ACCESS_VERIFIED", {"voice_id": "v1"}, {"api_key": "k"}
+        engine,
+        vault,
+        "elevenlabs",
+        "VERIFIED",
+        {"voice_id": "v1", "model": "test-model"},
+        {"api_key": "k"},
     )
     select(engine, "voice", voice)
 

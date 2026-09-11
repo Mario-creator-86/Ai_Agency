@@ -135,10 +135,10 @@ CATALOG = {
     "elevenlabs": service(
         "ElevenLabs",
         "media",
-        [KEY, MODEL, field("voice_id", "Voice ID")],
+        [KEY],
         "media",
-        "După verificare și selectare pentru Voce / TTS, narațiunea randărilor este "
-        "sintetizată de ElevenLabs.",
+        "Salvarea verifică cheia și încarcă modelele și vocile din cont. "
+        "Modelul și vocea se aleg separat, în configurația de producție.",
         "https://elevenlabs.io/docs/api-reference/introduction",
         ["voice"],
     ),

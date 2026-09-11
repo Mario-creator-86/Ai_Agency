@@ -1,4 +1,5 @@
 import { renderYouTubeConnections } from './youtube_connections.js';
+import { renderElevenLabsProduction } from './elevenlabs_settings.js';
 
 import './settings.css';
 
@@ -87,7 +88,7 @@ export function initSettings(api, hooks = {}) {
       } catch {
         // Telling the rest of the app is best effort; the change itself already succeeded.
       }
-      message(result?.message || success);
+      message(result?.message || success, result?.status === 'FAILED' || result?.discovery_status === 'ERROR');
     } catch (error) {
       if (current === generation) message(error.message, true);
     } finally {
@@ -183,6 +184,9 @@ export function initSettings(api, hooks = {}) {
       });
       actions.append(remove);
       card.append(actions);
+      if (item.kind === 'elevenlabs') {
+        renderElevenLabsProduction(card, item, data.provider_catalogs?.[item.id], { api, run });
+      }
       list.append(card);
     }
     content.append(list);
