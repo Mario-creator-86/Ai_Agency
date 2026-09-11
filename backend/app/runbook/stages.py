@@ -497,7 +497,9 @@ def _selection(engine: Engine, registry: ProviderRegistry | None = None) -> dict
 # ------------------------------------------------------------- script and storyboard --
 
 
-def _script_and_storyboard(engine: Engine, registry: ProviderRegistry) -> dict[str, Any]:
+def _script_and_storyboard(
+    engine: Engine, registry: ProviderRegistry, language: str = "en"
+) -> dict[str, Any]:
     """Draft the voiceover for the selected topic, and storyboard what the Owner has approved.
 
     The draft stops at VERIFIED_PASS. Turning a draft into an APPROVED script is the Owner's
@@ -518,7 +520,7 @@ def _script_and_storyboard(engine: Engine, registry: ProviderRegistry) -> dict[s
 
     for topic_id in needing_script:
         try:
-            agent_write_script(engine, registry, topic_id, str(uuid4()))
+            agent_write_script(engine, registry, topic_id, str(uuid4()), language=language)
             drafted += 1
         except (ScriptRejected, NoVerifiedClaims) as exc:
             # The draft was refused and nothing was stored — which is the pipeline working, not
@@ -764,7 +766,10 @@ def _edit_and_qc(engine: Engine, registry: ProviderRegistry | None = None) -> di
 
 
 def _publish(
-    engine: Engine, vault: Any, registry: ProviderRegistry | None = None
+    engine: Engine,
+    vault: Any,
+    registry: ProviderRegistry | None = None,
+    language: str = "en",
 ) -> dict[str, Any]:
     """Publish what the gate allows, to a channel that is actually connected.
 
@@ -841,7 +846,9 @@ def _publish(
                 "Publisher-ul nu poate pregăti metadatele: niciun model de limbaj disponibil.",
             )
         try:
-            prepared = prepare_publication(engine, registry, asset_id, channel_id, str(uuid4()))
+            prepared = prepare_publication(
+                engine, registry, asset_id, channel_id, str(uuid4()), language=language
+            )
         except (ReviewError, NoReviewer, ValueError) as exc:
             return _outcome(SKIPPED, f"Publisher-ul nu a pregătit publicarea: {exc}"[:300])
         if prepared["verdict"] != "READY":
@@ -918,7 +925,9 @@ def _serial_queue(engine: Engine, registry: ProviderRegistry, settings: Settings
         return _outcome(COMPLETED, "Nicio zi închisă fără episod.", episodes=0)
 
     try:
-        episode = write_episode(engine, registry, pending[0], str(uuid4()))
+        episode = write_episode(
+            engine, registry, pending[0], str(uuid4()), language=settings.content_language
+        )
     except StoryError as exc:
         # Same reasoning as a rejected script: the episode was refused and nothing was stored,
         # which is the grounding check working. It must not take the rest of the day with it.
@@ -1083,11 +1092,14 @@ def build_stage_runners(
         ),
         "selection": keep("selection", lambda: _selection(engine, registry)),
         "script_and_storyboard": keep(
-            "script_and_storyboard", lambda: _script_and_storyboard(engine, registry)
+            "script_and_storyboard",
+            lambda: _script_and_storyboard(engine, registry, settings.content_language),
         ),
         "media": keep("media", lambda: _media(engine, settings, vault, registry)),
         "edit_and_qc": keep("edit_and_qc", lambda: _edit_and_qc(engine, registry)),
-        "publish": keep("publish", lambda: _publish(engine, vault, registry)),
+        "publish": keep(
+            "publish", lambda: _publish(engine, vault, registry, settings.content_language)
+        ),
         "post_run": lambda: _post_run(engine, registry, outcomes),
         "serial_queue": keep("serial_queue", lambda: _serial_queue(engine, registry, settings)),
     }

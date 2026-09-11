@@ -395,6 +395,24 @@ def director_review(
             f"The Director produced no usable review ({result['status']}: "
             f"{result.get('error_detail') or 'no visible text'})"
         )
+    if review is None and blocker_of(text) is None:
+        # Say what the model did, so the Owner can decide about the model, not the prompt.
+        model = result.get("model_name") or "modelul"
+        first_chars = len(result.get("output_text") or "")
+        second_note = ""
+        if formatted is not None:
+            second_note = (
+                f"; a doua încercare, cu gândire proprie, {formatted.get('completion_tokens')} "
+                "tokeni și niciun răspuns"
+                if formatted.get("status") == "EMPTY_OUTPUT"
+                else f"; a doua încercare, {len(formatted.get('output_text') or '')} caractere, "
+                "tot fără obiect"
+            )
+        raise DirectorError(
+            f"modelul {model} a scris {first_chars} caractere de analiză și nu a ajuns la "
+            f"decizii{second_note}. Un model care răspunde direct cu obiectul cerut ar termina "
+            "revizia; alegerea lui este a ta, în Setări → Agenți"
+        )
     blocker = blocker_of(text)
     if blocker is not None:
         with Session(engine) as session, session.begin():

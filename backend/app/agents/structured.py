@@ -32,6 +32,10 @@ logger = logging.getLogger("studio.structured")
 NATIVE_THINKING_MODELS: set[str] = set()
 
 NATIVE_THINKING = {"think": True}
+#: The first attempt also asks the provider to constrain the output to JSON. A model that
+#: answers plainly (qwen3.5 did, in 133 tokens) is held to the object; one that narrates
+#: regardless (glm-5.3 did, even so) is caught by the parse and gets its second attempt.
+JSON_ONLY = {"format": "json"}
 
 
 def structured_run[T: BaseModel](
@@ -76,7 +80,7 @@ def structured_run[T: BaseModel](
             max_tokens=max_tokens,
             temperature=temperature,
             emit_message=False,
-            extra=NATIVE_THINKING if native else None,
+            extra=NATIVE_THINKING if native else JSON_ONLY,
         )
         attempts.append(result)
         text = result.get("output_text") or ""

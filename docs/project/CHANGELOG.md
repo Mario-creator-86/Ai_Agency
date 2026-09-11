@@ -1,5 +1,25 @@
 # Changelog
 
+## The studio publishes in English, and the Director says what her model did — 2026-09-12
+
+- **Audience language** (`backend/app/agents/language.py`, `STUDIO_CONTENT_LANGUAGE`, default
+  `en`): the Owner's rule that everything posted is in English, whatever language the office
+  works in. The script writer, the showrunner and the Publisher are told the audience
+  language at the top of their prompts; on the way out, a title or description that carries
+  the marks of Romanian holds the publication with the reason (`publication_language_hold`),
+  so the Director sees it rather than the audience. The first real publication went out with
+  a Romanian title — that is the case this closes.
+- **The first structured attempt asks the provider for JSON** (`format: "json"`): a model
+  that answers plainly is held to the object (qwen3.5: 133 tokens); one that narrates
+  regardless still gets the native-thinking second attempt — which, live, is what let the
+  Director decide twelve messages on `glm-5.3` (five minutes narrating for nothing, six
+  thinking, 22k tokens, then letters to two employees). Slow and dear; the model is the
+  Owner's choice.
+- **When neither attempt yields decisions, the Director's letter to the Owner says what the
+  model did** — how many characters of analysis, whether the second attempt thought its whole
+  budget away — and that a model answering with the object directly would finish the review.
+- Tests: `tests/test_language.py` (4), `tests/test_mail.py`.
+
 ## A real cycle, watched live, and what it showed — 2026-09-12
 
 Run on a copy of the Owner's data with the worker on and publishing disabled in the copy;

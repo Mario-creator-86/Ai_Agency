@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
+from app.agents.language import audience_language_line
 from app.agents.memory import remember
 from app.agents.models import Agent, Role
 from app.agents.services import run_agent_task
@@ -493,6 +494,7 @@ def agent_write_script(
     correlation_id: str,
     target_duration_seconds: int = 50,
     agent_id: str | None = None,
+    language: str = "en",
 ) -> dict[str, Any]:
     """Have the script writer draft a voiceover from a topic's verified claims.
 
@@ -528,7 +530,8 @@ def agent_write_script(
 
     catalogue = "\n".join(f'- {cid}: "{text}"' for cid, text in allowed.items())
     prompt = (
-        _WRITE_INSTRUCTIONS.format(duration=target_duration_seconds, max_scenes=MAX_SCENES)
+        audience_language_line(language)
+        + _WRITE_INSTRUCTIONS.format(duration=target_duration_seconds, max_scenes=MAX_SCENES)
         + catalogue
         + f"\n\nSUBIECT: {topic_title}\n"
     )

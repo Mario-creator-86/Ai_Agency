@@ -27,6 +27,7 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from app.agents.identity import blocker_of, parse_structured
+from app.agents.language import audience_language_line, publication_language_hold
 from app.agents.memory import agent_for_role, remember
 from app.agents.messages import open_messages, post_message
 from app.agents.services import run_agent_task
@@ -368,6 +369,7 @@ def prepare_publication(
     media_asset_id: str,
     channel_id: str,
     correlation_id: str | None = None,
+    language: str = "en",
 ) -> dict[str, Any]:
     correlation = correlation_id or str(uuid4())
     with Session(engine) as session:
@@ -396,7 +398,11 @@ def prepare_publication(
             "scenes": _scene_lines(session, board.id),
         }
     payload = json.dumps(facts, ensure_ascii=False)[:12000]
-    prompt = _PUBLICATION_INSTRUCTIONS + wrap_in_inert_boundary(payload, "publication-candidate")
+    prompt = (
+        audience_language_line(language)
+        + _PUBLICATION_INSTRUCTIONS
+        + wrap_in_inert_boundary(payload, "publication-candidate")
+    )
     result = _run(
         engine,
         registry,
@@ -421,6 +427,13 @@ def prepare_publication(
     metadata = parse_structured(text, PublicationMetadata)
     if not isinstance(metadata, PublicationMetadata):
         raise ReviewError("Publication metadata did not match the schema; nothing was stored")
+    # The rule on the way out: what the audience reads is in the audience's language, or it
+    # does not go out. A hold here reaches the Director like any other.
+    language_hold = publication_language_hold(metadata.title, metadata.description, language)
+    if language_hold:
+        metadata = metadata.model_copy(
+            update={"verdict": "HOLD", "hold_reasons": [*metadata.hold_reasons, language_hold]}
+        )
     tags = [" ".join(t.split())[:30] for t in metadata.tags if str(t).strip()][:15]
     with Session(engine) as session, session.begin():
         remember(

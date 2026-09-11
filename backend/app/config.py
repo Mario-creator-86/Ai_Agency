@@ -75,6 +75,11 @@ class Settings(BaseSettings):
     trends_enabled: bool = True
     trends_geo: str = Field(default="RO", min_length=2, max_length=8, pattern="^[A-Za-z-]+$")
 
+    # The language the audience reads and hears: narration, titles, descriptions, tags. The
+    # Owner's rule is English regardless of the language the office works in; a publication
+    # whose metadata is not in this language holds. STUDIO_CONTENT_LANGUAGE=en.
+    content_language: str = Field(default="en", min_length=2, max_length=5, pattern="^[a-z-]+$")
+
     # The background worker is what makes the studio run without the browser: it fires due
     # scheduled jobs and executes the tasks they enqueue. Off in tests, where a loop that starts
     # the day on its own would make every other test's timing a coincidence.

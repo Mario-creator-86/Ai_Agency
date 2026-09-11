@@ -13,6 +13,15 @@ database resource discovery/refresh, separate production choices, UI and regress
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
 
+## English on the way out (2026-09-12)
+
+`STUDIO_CONTENT_LANGUAGE` (default `en`) is told to every employee whose words reach the
+audience, and a publication whose title or description is not in that language holds. The
+Owner's first real upload (private, Main Channel A, title in Romanian) is the case that
+motivated it. Structured tasks ask the provider for JSON on the first attempt and think
+natively on the second; the Director on `glm-5.3` needs the second, at ~11 minutes and ~46k
+tokens per twelve messages.
+
 ## The cycle, watched (2026-09-12)
 
 A real day run on a copy of the Owner's data: trends read, five topics proposed, claims

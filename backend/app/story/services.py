@@ -30,6 +30,7 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from app.agents.identity import joined
+from app.agents.language import audience_language_line
 from app.agents.memory import agent_for_role, remember
 from app.agents.models import Agent, Role
 from app.agents.services import run_agent_task
@@ -344,6 +345,7 @@ def write_episode(
     log_id: str,
     correlation_id: str = "",
     agent_id: str | None = None,
+    language: str = "en",
 ) -> dict:
     """Draft the Office Serial episode for one closed day, and check it against that day."""
     correlation = correlation_id or str(uuid4())
@@ -378,7 +380,7 @@ def write_episode(
         showrunner_id = showrunner.id
         date_iso = log.business_date
 
-    prompt = _INSTRUCTIONS.format(
+    prompt = audience_language_line(language) + _INSTRUCTIONS.format(
         max_beats=MAX_BEATS,
         roster="\n".join(
             f"- {m['display_name']} ({m['role_name']}, {m['lifecycle']})" for m in roster
