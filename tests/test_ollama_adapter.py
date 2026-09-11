@@ -141,6 +141,44 @@ def test_generate_with_system_and_options():
     assert captured_body["stream"] is False
 
 
+def test_generation_asks_for_thinking_off_so_the_budget_goes_to_the_answer():
+    """Ollama counts private reasoning against num_predict; the answer would get none."""
+    provider = OllamaProvider()
+    captured_body: dict = {}
+
+    def fake_urlopen(req, timeout=None):
+        import json as _json
+
+        captured_body.update(_json.loads(req.data))
+        return _make_response({"response": "ok", "eval_count": 1, "done": True})
+
+    with patch("app.providers.ollama.urlopen", side_effect=fake_urlopen):
+        run(provider.generate("qwen3.5:397b", "Hello", max_tokens=700))
+
+    assert captured_body["think"] is False
+
+
+def test_an_answer_eaten_by_reasoning_comes_back_empty_and_says_why():
+    """What the studio actually saw: eval_count at the cap, no response, done_reason length."""
+    provider = OllamaProvider()
+    body = {
+        "response": "",
+        "thinking": "Thinking Process: the user asks..." * 20,
+        "done_reason": "length",
+        "eval_count": 702,
+        "done": True,
+    }
+    with patch("app.providers.ollama.urlopen", return_value=_make_response(body)):
+        result = run(provider.generate("qwen3.5:397b", "Verify this", max_tokens=700))
+
+    assert result.text == ""
+    assert result.completion_tokens == 702
+    assert result.raw_response["done_reason"] == "length"
+    # The reasoning itself is measured, never carried out of the adapter as an answer.
+    assert result.raw_response["thinking_chars"] > 0
+    assert "thinking" not in result.raw_response
+
+
 def test_generate_propagates_connection_error():
     provider = OllamaProvider()
     with patch("app.providers.ollama.urlopen", side_effect=URLError("refused")):

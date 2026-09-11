@@ -77,6 +77,7 @@ def _run(
     correlation_id: str,
     *,
     max_tokens: int,
+    summary: str,
 ) -> dict[str, Any]:
     result = run_agent_task(
         engine,
@@ -86,6 +87,7 @@ def _run(
         prompt,
         REVIEW_TEMPLATE_VERSION,
         correlation_id,
+        summary=summary,
         max_tokens=max_tokens,
         temperature=0.1,
         emit_message=False,
@@ -166,7 +168,14 @@ def review_narration(
     payload = json.dumps({"title": title, "scenes": scenes}, ensure_ascii=False)
     prompt = _NARRATION_INSTRUCTIONS + wrap_in_inert_boundary(payload, "storyboard-narration")
     result = _run(
-        engine, registry, reviewer_id, "review_narration", prompt, correlation, max_tokens=1500
+        engine,
+        registry,
+        reviewer_id,
+        "review_narration",
+        prompt,
+        correlation,
+        max_tokens=1500,
+        summary=f"Citesc naratiunea storyboardului «{title}» ({len(scenes)} scene).",
     )
     text = result["output_text"]
     blocked = _escalate_blocker(
@@ -261,17 +270,28 @@ def review_failed_render(
             select(VideoRenderJob).where(VideoRenderJob.output_asset_id == report.media_asset_id)
         )
         production = dict(job.production_json or {}) if job and job.production_json else {}
+        report_reasons = list(report.failure_reasons_json or [])
         facts = {
             "asset_id": report.media_asset_id,
             "provider_name": asset.provider_name if asset else None,
-            "failure_reasons": list(report.failure_reasons_json or []),
+            "failure_reasons": report_reasons,
             "checks": report.checks_json,
             "production_purposes": production.get("purposes"),
         }
     payload = json.dumps(facts, ensure_ascii=False, default=str)[:12000]
     prompt = _RENDER_INSTRUCTIONS + wrap_in_inert_boundary(payload, "qc-report")
     result = _run(
-        engine, registry, reviewer_id, "review_failed_render", prompt, correlation, max_tokens=1200
+        engine,
+        registry,
+        reviewer_id,
+        "review_failed_render",
+        prompt,
+        correlation,
+        max_tokens=1200,
+        summary=(
+            f"Diagnostichez randarea picată {facts['asset_id']}: "
+            f"{len(report_reasons)} motive de eșec."
+        ),
     )
     text = result["output_text"]
     blocked = _escalate_blocker(
@@ -365,6 +385,7 @@ def prepare_publication(
         if board is None:
             raise ReviewError("The candidate has no storyboard; nothing to describe")
         script_title = board.title
+        channel_name = channel.channel_name
         facts = {
             "script_title": script_title,
             "channel": {
@@ -377,7 +398,14 @@ def prepare_publication(
     payload = json.dumps(facts, ensure_ascii=False)[:12000]
     prompt = _PUBLICATION_INSTRUCTIONS + wrap_in_inert_boundary(payload, "publication-candidate")
     result = _run(
-        engine, registry, publisher_id, "prepare_publication", prompt, correlation, max_tokens=1500
+        engine,
+        registry,
+        publisher_id,
+        "prepare_publication",
+        prompt,
+        correlation,
+        max_tokens=1500,
+        summary=f"Pregătesc publicarea «{script_title}» pe canalul {channel_name}.",
     )
     text = result["output_text"]
     blocked = _escalate_blocker(

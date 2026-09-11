@@ -25,14 +25,15 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.runbook.models import DailyRun
-from app.runbook.services import SafeModeActive, execute_daily_run
+from app.runbook.services import DAILY_RUN_TASK, SafeModeActive, execute_daily_run
 from app.story.services import business_date
 from app.workflows.services import claim_task, complete_task, fail_task, scheduler_tick
 
 logger = logging.getLogger("studio.worker")
 
-#: The workflow type the scheduled daily run is registered under.
-DAILY_RUN = "DAILY_RUN"
+#: The workflow type the scheduled daily run is registered under. The Owner's own button
+#: queues the same task type, so both go through this handler and the same lease.
+DAILY_RUN = DAILY_RUN_TASK
 
 #: The job that starts the day. Seeded at start-up when the worker is enabled, so a fresh studio
 #: has its schedule without the Owner having to know the API for one.
@@ -60,11 +61,15 @@ def build_task_handlers(
 
     def daily_run(task: dict[str, Any]) -> dict[str, Any]:
         today = business_date(settings.timezone)
+        # A run the Owner asked for is a decision already taken: it repeats a day that has
+        # run, because that is what the button in the panel is for. Only the clock is held
+        # to one run per day.
+        manual = bool((task.get("payload") or {}).get("manual"))
         with Session(engine) as session:
             already = session.scalars(
                 select(DailyRun).where(DailyRun.business_date == today).limit(1)
             ).first()
-        if already is not None:
+        if already is not None and not manual:
             # Fired again on a day that already ran — a restart, a manual run earlier, a job
             # interval shorter than a day. The scheduled run does not repeat a day.
             return {

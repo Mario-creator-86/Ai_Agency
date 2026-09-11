@@ -15,6 +15,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from app.agents.director import file_stage_reports
 from app.agents.history import agent_timeline, chat
 from app.agents.messages import post_message
 from app.agents.models import Agent, AgentMessage, MemoryRecord, ModelRecord, Role
@@ -149,6 +150,43 @@ def test_the_owner_can_talk_to_an_employee_and_the_exchange_is_in_its_history(
 
 
 # --------------------------------------------------------------------------- the accountant
+
+
+def test_a_task_reads_as_a_sentence_in_the_history_and_keeps_its_prompt(engine, staffed):
+    """What the Owner saw: five identical walls of prompt, no answer, no way to tell apart."""
+    nadia = staffed["agents"]["Accountant"]
+    registry, _ = registry_with(
+        staffed,
+        lambda prompt: json.dumps(
+            {"summary": "Zi fără cheltuieli.", "recommendations": [], "holds": []},
+            ensure_ascii=False,
+        ),
+    )
+    reconcile_day(engine, registry, str(uuid4()))
+
+    run = next(item for item in agent_timeline(engine, nadia.id) if item["kind"] == "run")
+    assert run["asked"].startswith("Închid ziua:")
+    assert "USD" in run["asked"] and len(run["asked"]) < 200
+    # The engineered prompt is not lost — it is one click away, not the headline.
+    assert run["prompt"] != run["asked"] and len(run["prompt"]) > len(run["asked"])
+    assert run["answered"] and "Zi fără cheltuieli" in run["answered"]
+
+
+def test_a_report_an_employee_filed_is_not_shown_again_as_its_own_memory(engine, staffed):
+    """The message and the memory of it say the same sentence; the timeline shows it once."""
+    vera = staffed["agents"]["Publisher"]
+    file_stage_reports(
+        engine, {"publish": {"status": "SKIPPED", "reason": "Niciun canal legat."}}, str(uuid4())
+    )
+
+    items = agent_timeline(engine, vera.id)
+    assert [item["kind"] for item in items] == ["message"]
+    with Session(engine) as session:
+        # Dropped from the view, kept in the record: the next run still remembers it.
+        remembered = session.scalars(
+            select(MemoryRecord).where(MemoryRecord.agent_id == vera.id)
+        ).all()
+        assert len(remembered) == 1
 
 
 def test_the_accountant_is_hired_into_an_existing_studio_with_a_bible_and_a_desk(engine):

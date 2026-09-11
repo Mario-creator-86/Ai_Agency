@@ -528,8 +528,13 @@ def test_failed_run_emits_no_agent_message(seeded):
     assert _message_events(seeded["engine"]) == []
 
 
-def test_successful_run_without_visible_text_emits_nothing(seeded):
-    """Reasoning models can finish with an empty visible answer; nothing real to bubble."""
+def test_a_run_that_produced_no_text_is_not_recorded_as_a_success(seeded):
+    """An answer nobody can read is not an answer: the run says so, and bubbles nothing.
+
+    Thinking models spend the token budget on private reasoning and can return an empty
+    visible answer. Recorded as SUCCEEDED, that put a green line in the employee's history
+    with nothing under it while every caller failed on "no usable answer".
+    """
     clear_stop(seeded["engine"])
     registry = ProviderRegistry()
     registry.register(seeded["provider_id"], _StubAdapter("   "))
@@ -544,5 +549,6 @@ def test_successful_run_without_visible_text_emits_nothing(seeded):
         str(uuid4()),
     )
 
-    assert result["status"] == "SUCCEEDED"
+    assert result["status"] == "EMPTY_OUTPUT"
+    assert "niciun text" in (result["error_detail"] or "").lower()
     assert _message_events(seeded["engine"]) == []

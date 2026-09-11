@@ -378,6 +378,10 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 .chat-item .chat-meta { margin-bottom: 4px; color: var(--ink-3); }
 .chat-asked { font-weight: 600; color: var(--ink); }
 .chat-answer { margin-top: 4px; white-space: pre-wrap; color: var(--ink-2); }
+.chat-prompt { margin-top: 6px; }
+.chat-prompt summary { cursor: pointer; color: var(--ink-3); font-size: 12px; }
+.chat-prompt pre { margin: 6px 0 0; padding: 8px; max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-word; background: var(--surface-sunk); border: 1px solid var(--line); border-radius: var(--radius-sm); color: var(--ink-3); font-size: 12px; }
+.runbook-run.rb-running { border-left: 3px solid var(--teal); }
 .chat-run { border-left: 3px solid var(--forest); }
 .chat-message { border-left: 3px solid var(--warn-line); }
 .chat-memory { border-left: 3px solid var(--line-strong); }

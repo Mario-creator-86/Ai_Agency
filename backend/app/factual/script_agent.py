@@ -78,6 +78,7 @@ def draft_with_agent(
         prompt,
         "v1",
         correlation_id,
+        summary=f"Scriu scenariul pentru «{topic.title}» din {len(evidence)} afirmații.",
         max_tokens=3000,
         emit_message=False,
     )

@@ -24,6 +24,7 @@ from app.runbook.preflight import run_preflight
 from app.runbook.services import (
     BLOCKED,
     COMPLETED,
+    DAILY_RUN_TASK,
     FAILED,
     SKIPPED,
     STAGES,
@@ -31,8 +32,13 @@ from app.runbook.services import (
     SafeModeActive,
     clear_safe_mode,
     execute_daily_run,
+    pending_daily_run,
     safe_mode_state,
+    start_daily_run,
 )
+from app.services import read_events
+from app.workflows.services import claim_task, complete_task
+from app.workflows.worker import build_task_handlers
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -333,6 +339,130 @@ def test_a_second_failure_does_not_obscure_when_safe_mode_began(engine, settings
 # ---------------------------------------------------------------------------
 # Through the API
 # ---------------------------------------------------------------------------
+
+
+def test_starting_the_day_returns_at_once_and_says_it_started(
+    client, headers, engine, settings, studio
+):
+    """The run takes minutes; the browser gave up after ten seconds and said the connection
+    was unavailable while the studio kept working. The button queues the day instead."""
+    settings.worker_enabled = True
+    make_a_model_available(engine)
+
+    response = client.post(
+        "/api/v1/runbook/runs", json={"command_id": str(uuid4())}, headers=headers
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "QUEUED" and body["task_id"]
+    assert "pornit" in body["message"]
+    # Queued, not run: nothing is recorded as a day until the worker has done one.
+    with Session(engine) as session:
+        assert session.scalars(select(DailyRun)).all() == []
+    assert pending_daily_run(engine)["task_type"] == DAILY_RUN_TASK
+
+    listed = client.get("/api/v1/runbook/runs", headers=headers).json()
+    assert listed["pending"]["id"] == body["task_id"]
+
+
+def test_a_second_start_while_one_is_on_its_way_is_refused_with_the_reason(
+    client, headers, engine, settings, studio
+):
+    settings.worker_enabled = True
+    make_a_model_available(engine)
+    client.post("/api/v1/runbook/runs", json={"command_id": str(uuid4())}, headers=headers)
+
+    again = client.post("/api/v1/runbook/runs", json={"command_id": str(uuid4())}, headers=headers)
+
+    assert again.status_code == 409
+    assert "deja în lucru" in again.json()["detail"]
+
+
+def test_the_day_does_not_start_while_autonomy_is_stopped_and_says_so(
+    client, headers, engine, settings, studio
+):
+    settings.worker_enabled = True
+    stop_autonomy(engine, True)
+
+    response = client.post(
+        "/api/v1/runbook/runs", json={"command_id": str(uuid4())}, headers=headers
+    )
+
+    assert response.status_code == 409
+    assert "AUTONOMIE" in response.json()["detail"]
+    assert pending_daily_run(engine) is None
+
+
+def test_safe_mode_refuses_to_queue_a_day_just_as_it_refuses_to_run_one(
+    engine, settings, vault, studio
+):
+    settings.worker_enabled = True
+    make_a_model_available(engine)
+    execute_daily_run(engine, settings, vault, stage_runners={"media": lambda: 1 / 0})
+
+    with pytest.raises(SafeModeActive):
+        start_daily_run(engine, settings, str(uuid4()))
+    assert pending_daily_run(engine) is None
+
+
+def test_the_day_is_not_queued_when_nobody_would_pick_it_up(client, headers, engine, studio):
+    """The worker is what runs a queued day; with it off, the button would queue silence."""
+    response = client.post(
+        "/api/v1/runbook/runs", json={"command_id": str(uuid4())}, headers=headers
+    )
+
+    assert response.status_code == 409
+    assert "worker_enabled" in response.json()["detail"]
+    assert pending_daily_run(engine) is None
+
+
+def test_a_run_the_owner_asked_for_repeats_a_day_the_clock_would_not(
+    engine, settings, vault, studio
+):
+    """One run per day is the schedule's rule. The Owner's button is a decision, not a tick."""
+    make_a_model_available(engine)
+    execute_daily_run(engine, settings, vault)
+    handlers = build_task_handlers(engine, settings, vault, None)
+
+    scheduled = handlers[DAILY_RUN_TASK]({"id": str(uuid4()), "payload": {}})
+    manual = handlers[DAILY_RUN_TASK]({"id": str(uuid4()), "payload": {"manual": True}})
+
+    assert scheduled["status"] == "SKIPPED" and "rulat deja" in scheduled["reason"]
+    assert manual["status"] in ("PARTIAL", "COMPLETED", "BLOCKED", "FAILED")
+    assert manual["run_id"] != scheduled["run_id"]
+
+
+def test_the_worker_runs_the_day_the_owner_queued(client, headers, engine, settings, vault, studio):
+    settings.worker_enabled = True
+    make_a_model_available(engine)
+    client.post("/api/v1/runbook/runs", json={"command_id": str(uuid4())}, headers=headers)
+    handlers = build_task_handlers(engine, settings, vault, None)
+
+    task = claim_task(engine, "worker_test", lease_duration_seconds=600)
+    assert task is not None and task["task_type"] == DAILY_RUN_TASK
+    result = handlers[DAILY_RUN_TASK](task)
+    complete_task(engine, task["id"], task["lease_token"])
+
+    assert result["run_id"]
+
+    with Session(engine) as session:
+        assert len(session.scalars(select(DailyRun)).all()) == 1
+    assert pending_daily_run(engine) is None
+
+
+def test_every_stage_says_when_it_starts_and_how_it_ended(engine, settings, vault, studio):
+    """Where production is, while it is there: the ledger reads these as they happen."""
+    make_a_model_available(engine)
+
+    execute_daily_run(engine, settings, vault)
+
+    types = [e["event_type"] for e in read_events(engine, after=0, limit=300)["events"]]
+    assert "runbook.daily_run_started" in types
+    assert types.count("runbook.stage_started") == len(STAGES) - 1
+    assert types.count("runbook.stage_finished") == len(STAGES) - 1
+    assert types.index("runbook.daily_run_started") < types.index("runbook.stage_started")
+    assert types.index("runbook.stage_finished") < types.index("runbook.daily_run_finished")
 
 
 def test_the_api_reports_preflight_without_running_anything(client, headers, engine, studio):

@@ -342,6 +342,7 @@ def run_agent_task(
     max_tokens: int | None = None,
     temperature: float | None = None,
     emit_message: bool = True,
+    summary: str | None = None,
 ) -> dict:
     """Execute an agent LLM run through the policy kernel. Returns AgentRunView dict.
 
@@ -349,6 +350,10 @@ def run_agent_task(
     contract, persona and memory (`compose_identity`) — and records what it was given as the
     run's context manifest. The task text is the user prompt; it never has to repeat who the
     agent is.
+
+    ``summary`` is that prompt in one sentence the Owner can read — "Verific afirmația «…»"
+    rather than nine hundred words of instructions with the claim buried in the middle. The
+    history shows it in place of the prompt; the prompt itself stays one click away.
     """
     run_id = str(uuid4())
     started_at = utc_now()
@@ -361,6 +366,8 @@ def run_agent_task(
             raise ValueError(f"Agent {agent_id} not found")
         identity = compose_identity(session, agent, task_type=task_type)
         system_prompt, context = identity.system, identity.context
+        if summary:
+            context = {**context, "task_summary": " ".join(str(summary).split())[:300]}
 
         provider_rec = session.get(ProviderRecord, agent.provider_id)
         model_rec = session.get(ModelRecord, agent.model_id)
@@ -448,9 +455,24 @@ def run_agent_task(
                 temperature=temperature,
             )
         )
-        status = "SUCCEEDED"
         output_text = gen_result.text
-        error_detail = None
+        # A call that returned no text is not a run that succeeded. It costs tokens, it takes
+        # a minute of the day, and every caller that needs an answer then fails on its own
+        # with "no usable answer" — while the history showed the Owner a green SUCCEEDED with
+        # nothing under it. The usual cause is a model that reasoned until the token budget
+        # was gone; `raw_response` says so when the provider reports it.
+        raw = gen_result.raw_response if isinstance(gen_result.raw_response, dict) else {}
+        if (output_text or "").strip():
+            status = "SUCCEEDED"
+            error_detail = None
+        else:
+            status = "EMPTY_OUTPUT"
+            error_detail = (
+                "Modelul a atins limita de tokeni înainte să răspundă: a folosit bugetul pe "
+                "raționament intern. Niciun răspuns de folosit."
+                if raw.get("done_reason") == "length"
+                else "Modelul a răspuns fără niciun text. Niciun răspuns de folosit."
+            )
         cost_vr = gen_result.cost_vr
         prompt_tokens = gen_result.prompt_tokens
         completion_tokens = gen_result.completion_tokens

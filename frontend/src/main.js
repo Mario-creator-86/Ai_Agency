@@ -374,20 +374,74 @@ const TIMELINE_LABEL = {
   STRATEGY: 'Strategie',
 };
 
+/** Task types as the Owner would name them. Unknown types read as their own words. */
+const TASK_LABEL = {
+  propose_topics: 'idei de subiect',
+  gather_sources: 'căutare de surse',
+  extract_claims: 'extragere de afirmații',
+  verify_claim: 'verificare factuală',
+  choose_topic: 'alegerea subiectului',
+  write_script: 'scenariu',
+  write_episode: 'episodul serialului',
+  review_narration: 'revizuirea narațiunii',
+  review_failed_render: 'diagnoza randării',
+  prepare_publication: 'pregătirea publicării',
+  director_review: 'revizuirea Directorului',
+  reconcile_day: 'închiderea zilei',
+  direct_task: 'sarcină directă',
+  TEST_CONNECTIVITY: 'test de conexiune',
+};
+
+function shorten(text, max) {
+  const clean = String(text ?? '').replace(/\s+/g, ' ').trim();
+  return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
+}
+
+/** What a run without an answer means, in words. */
+const RUN_STATUS = {
+  EMPTY_OUTPUT: 'Modelul nu a returnat niciun text de folosit.',
+  // Runs recorded before an empty answer counted as a failure.
+  SUCCEEDED: 'Fără text în răspuns.',
+  BLOCKED_POLICY: 'Blocat de politică.',
+  BLOCKED_PROVIDER: 'Blocat: furnizorul sau modelul nu este disponibil.',
+  FAILED: 'A eșuat.',
+};
+
+function taskLabel(type) {
+  return TASK_LABEL[type] || String(type || '').replace(/_/g, ' ');
+}
+
 function timelineTime(iso) {
   return iso ? new Date(iso).toLocaleString('ro-RO', { dateStyle: 'short', timeStyle: 'short' }) : '';
 }
 
-/** One line of history: what was asked and answered, or sent, or remembered. */
+/**
+ * One line of history: what was asked and answered, or sent, or remembered.
+ *
+ * The task line is the employee's own sentence about the job — "Verific afirmația «…»" — not
+ * the prompt it was given. Five verifications in a row used to open with the same nine hundred
+ * words of instructions and read as the same entry repeated; the part that differed was buried
+ * in the middle. The prompt is still here, under «Cererea completă», for when it is the prompt
+ * the Owner wants to see.
+ */
 function timelineItem(item) {
   if (item.kind === 'run') {
-    const label = item.task_type === 'owner_chat' ? TIMELINE_LABEL.owner_chat : `${TIMELINE_LABEL.run} · ${item.task_type}`;
+    const label = item.task_type === 'owner_chat' ? TIMELINE_LABEL.owner_chat : `${TIMELINE_LABEL.run} · ${taskLabel(item.task_type)}`;
     const answer = item.answered
       ? `<div class="chat-answer">${escapeHtml(item.answered)}</div>`
-      : `<div class="chat-answer text-error">${escapeHtml(item.error || item.status)}</div>`;
+      : `<div class="chat-answer text-error">${escapeHtml(item.error || RUN_STATUS[item.status] || item.status)}</div>`;
     const meta = [item.model, item.memory_used ? `${item.memory_used} amintiri folosite` : '', item.cost_vr ? `${item.cost_vr} VR$` : '']
       .filter(Boolean).join(' · ');
-    return `<div class="chat-item chat-run"><div class="chat-meta"><span class="policy-tag policy-flexible">${escapeHtml(label)}</span> <small>${escapeHtml(timelineTime(item.at))}${meta ? ` · ${escapeHtml(meta)}` : ''}</small></div><div class="chat-asked">${escapeHtml(item.asked || '')}</div>${answer}</div>`;
+    // Runs recorded before employees summarised their own tasks still carry the prompt as
+    // the line. Cut it to a readable length rather than let one entry fill the column; the
+    // whole thing stays under the fold.
+    const summarised = Boolean(item.prompt) && item.prompt !== item.asked;
+    const line = summarised ? item.asked : shorten(item.asked || '', 240);
+    const full = item.prompt || item.asked || '';
+    const prompt = full && full !== line
+      ? `<details class="chat-prompt"><summary>Cererea completă</summary><pre>${escapeHtml(full)}</pre></details>`
+      : '';
+    return `<div class="chat-item chat-run"><div class="chat-meta"><span class="policy-tag policy-flexible">${escapeHtml(label)}</span> <small>${escapeHtml(timelineTime(item.at))}${meta ? ` · ${escapeHtml(meta)}` : ''}</small></div><div class="chat-asked">${escapeHtml(line)}</div>${answer}${prompt}</div>`;
   }
   if (item.kind === 'message') {
     const direction = item.from_name ? `de la ${item.from_name}` : '';
@@ -3023,18 +3077,27 @@ function renderRunCard(run) {
     </div>`;
 }
 
+/** Renders the runs and returns whether one is still on its way. */
 async function loadRuns() {
   const listEl = element('runbook-runs');
   try {
     const data = await api('/runbook/runs');
     const runs = data.runs || [];
-    if (!runs.length) {
-      listEl.innerHTML = '<div class="topics-loading">Nicio rulare încă.</div>';
-      return;
-    }
-    listEl.innerHTML = runs.map(renderRunCard).join('');
+    const pending = data.pending
+      ? `<div class="topic-card runbook-run rb-running">
+          <div class="topic-card-header">
+            <strong class="topic-card-title">Rularea de azi</strong>
+            <span class="topic-card-novelty">ÎN LUCRU</span>
+          </div>
+          <div class="topic-card-meta">Pusă la coadă la ${escapeHtml(timelineTime(data.pending.created_at))}</div>
+          <div class="claim-notes">Etapele apar în registrul din stânga pe măsură ce se întâmplă.</div>
+        </div>`
+      : '';
+    listEl.innerHTML = pending + (runs.length ? runs.map(renderRunCard).join('') : (pending ? '' : '<div class="topics-loading">Nicio rulare încă.</div>'));
+    return Boolean(data.pending);
   } catch (err) {
     listEl.innerHTML = `<div class="text-error">${escapeHtml(err.message)}</div>`;
+    return false;
   }
 }
 
@@ -3096,30 +3159,51 @@ element('open-runbook-btn').addEventListener('click', () => {
 element('close-runbook-btn').addEventListener('click', () => runbookModal.close());
 element('refresh-preflight-btn').addEventListener('click', () => loadPreflight());
 
+/**
+ * A day takes minutes — agents think, a render is waited on, quality control reads the file.
+ * The Owner's click asks for it to start, and that is what is answered: the studio queues the
+ * day and says so at once. Where it has got to is in the ledger, stage by stage, and the runs
+ * list below fills in as soon as the day closes.
+ */
 element('start-run-btn').addEventListener('click', async (event) => {
   const button = /** @type {HTMLButtonElement} */ (event.currentTarget);
   button.disabled = true;
-  runbookStatus('Rularea zilei este în curs…', false);
+  runbookStatus('Pornesc rularea de azi…', false);
   try {
-    const run = await api('/runbook/runs', {
+    const started = await api('/runbook/runs', {
       method: 'POST',
       body: JSON.stringify({ command_id: crypto.randomUUID() }),
     });
-    runbookStatus(
-      `${run.status}: ${run.stages_completed}/${run.stages_total} etape încheiate` +
-        (run.stopped_at_stage ? `, oprit la «${stageLabel(run.stopped_at_stage)}».` : '.'),
-      run.status === 'FAILED' || run.status === 'BLOCKED',
-    );
-    await loadRuns();
-    await loadSafeMode();
+    runbookStatus(started.message || 'Rularea de azi a fost pornită.', false);
+    watchTheRun();
   } catch (err) {
-    // Safe mode and a blocking preflight both refuse here; the refusal is the message.
+    // Safe mode, a stopped autonomy and a run already on its way all refuse here; the
+    // refusal is the message.
     runbookStatus(err.message, true);
   } finally {
     button.disabled = false;
     await loadPreflight();
   }
 });
+
+/** While a day is on its way, the panel refreshes itself; it stops when the day is closed. */
+let runWatcher = null;
+function watchTheRun() {
+  if (runWatcher) clearInterval(runWatcher);
+  const started = Date.now();
+  const tick = async () => {
+    const pending = await loadRuns();
+    // Two hours is longer than any day the studio has had; past that the panel stops
+    // polling and the runs list stays the record.
+    if (!pending || Date.now() - started > 2 * 60 * 60 * 1000) {
+      clearInterval(runWatcher);
+      runWatcher = null;
+      await loadSafeMode();
+    }
+  };
+  runWatcher = setInterval(tick, 5000);
+  tick();
+}
 
 element('clear-safe-mode-btn').addEventListener('click', async () => {
   const field = /** @type {HTMLTextAreaElement} */ (element('runbook-safe-notes'));

@@ -29,6 +29,14 @@ from app.runbook.models import DailyRun, SafeModeRecord
 from app.runbook.preflight import run_preflight
 from app.services import append_event, utc_now
 from app.story.services import business_date, close_daily_log
+from app.workflows.services import append_event_with_outbox, enqueue_task, list_queue_tasks
+
+#: The queue task type the daily run is executed under, by the schedule and by the Owner.
+DAILY_RUN_TASK = "DAILY_RUN"
+
+#: Queue states that mean a run is already on its way: starting a second one would have two
+#: days running over each other on the same books.
+PENDING_STATES = ("QUEUED", "RETRYING", "CLAIMED", "RUNNING")
 
 #: The stages of the daily runbook, in order.
 STAGES = (
@@ -58,6 +66,25 @@ class RunbookError(RuntimeError):
 
 class SafeModeActive(RunbookError):
     """The studio is in safe mode and will not act autonomously until a person clears it."""
+
+
+def _announce(
+    engine: Engine,
+    event_type: str,
+    run_id: str,
+    payload: dict[str, Any],
+    correlation_id: str,
+) -> None:
+    """Say what the day is doing, as it does it.
+
+    A run used to be silent until it was over: one `runbook.daily_run_finished` event after
+    ten minutes of work. The Owner watching the ledger saw employees talking with no idea
+    which stage they were in. These go through the outbox, so they reach the open page live.
+    """
+    with Session(engine) as session, session.begin():
+        append_event_with_outbox(
+            session, event_type, "daily_run", run_id, 1, payload, correlation_id
+        )
 
 
 def _open_safe_mode(session: Session, reason: str, trigger: str, run_id: str | None) -> None:
@@ -191,6 +218,80 @@ def _close_the_day(
     return [stage if stage["stage"] != "daily_log" else closed for stage in stages]
 
 
+def _finished(
+    engine: Engine, run_id: str, stage: str, status: str, reason: str, correlation_id: str
+) -> None:
+    _announce(
+        engine,
+        "runbook.stage_finished",
+        run_id,
+        {"stage": stage, "status": status, "reason": reason[:300]},
+        correlation_id,
+    )
+
+
+def pending_daily_run(engine: Engine) -> dict[str, Any] | None:
+    """The queued or running daily run, if the studio has one on its way."""
+    for task in list_queue_tasks(engine, limit=50):
+        if task["task_type"] == DAILY_RUN_TASK and task["status"] in PENDING_STATES:
+            return task
+    return None
+
+
+def start_daily_run(
+    engine: Engine, settings: Settings, command_id: str, worker_enabled: bool = True
+) -> dict[str, Any]:
+    """Put today's run in the queue and return — the worker does the day.
+
+    The run itself takes minutes: agents think, a render is waited on, quality control reads
+    the file. Executing it inside the Owner's request meant the browser gave up long before
+    the studio did and said the connection was unavailable, while the studio went on working.
+    So the button queues the work and says so; what happens next is in the ledger, stage by
+    stage, and in the runs list when the day is closed.
+    """
+    safe = safe_mode_state(engine)
+    if safe["active"]:
+        raise SafeModeActive(
+            f"Studioul este în mod sigur din {safe['entered_at']}: {safe['reason']} "
+            "Nu pornește nicio rulare până nu închizi modul sigur."
+        )
+    if not worker_enabled:
+        raise RunbookError(
+            "Lucrătorul de fundal este oprit în configurație, deci nimeni nu ar prelua "
+            "rularea. Pornește-l (worker_enabled) și încearcă din nou."
+        )
+    with Session(engine) as session:
+        policy = session.get(OwnerPolicy, 1)
+        if policy is not None and policy.autonomy_stopped:
+            raise RunbookError(
+                "Autonomia este oprită: nimic nu pornește până nu o repornești de la "
+                "comutatorul AUTONOMIE."
+            )
+    existing = pending_daily_run(engine)
+    if existing is not None:
+        raise RunbookError(
+            f"O rulare zilnică este deja în lucru (pusă la coadă la {existing['created_at']}). "
+            "Așteapt-o pe aceasta."
+        )
+    task = enqueue_task(
+        engine,
+        DAILY_RUN_TASK,
+        {"manual": True, "requested_at": utc_now(), "date": business_date(settings.timezone)},
+        priority=10,
+        max_attempts=1,
+        idempotency_key=f"manual-run-{command_id}",
+    )
+    return {
+        "status": "QUEUED",
+        "task_id": task["id"],
+        "queued_at": task["created_at"],
+        "message": (
+            "Rularea de azi a fost pornită. Prima etapă începe în câteva secunde; "
+            "urmărește-o în registrul din stânga."
+        ),
+    }
+
+
 def execute_daily_run(
     engine: Engine,
     settings: Settings,
@@ -230,6 +331,14 @@ def execute_daily_run(
     stopped_at: str | None = None
     stop_reason: str | None = None
 
+    _announce(
+        engine,
+        "runbook.daily_run_started",
+        run_id,
+        {"date": date_iso, "preflight": preflight["status"], "stages": len(STAGES)},
+        correlation,
+    )
+
     if preflight["status"] == "BLOCKED":
         stopped_at = "preflight"
         stop_reason = preflight["summary"]
@@ -241,19 +350,24 @@ def execute_daily_run(
                 stages.append(_stage(name, BLOCKED, f"Rularea s-a oprit la etapa «{stopped_at}»."))
                 continue
             runner = runners.get(name)
+            _announce(
+                engine,
+                "runbook.stage_started",
+                run_id,
+                {"stage": name, "index": STAGES.index(name) + 1, "total": len(STAGES)},
+                correlation,
+            )
             if runner is None:
-                stages.append(
-                    _stage(
-                        name,
-                        SKIPPED,
-                        "Nicio implementare conectată pentru această etapă în această rulare.",
-                    )
-                )
+                reason = "Nicio implementare conectată pentru această etapă în această rulare."
+                stages.append(_stage(name, SKIPPED, reason))
+                _finished(engine, run_id, name, SKIPPED, reason, correlation)
                 continue
             try:
                 outcome = runner()
             except Exception as exc:  # noqa: BLE001 - the stage's failure is the record
-                stages.append(_stage(name, FAILED, f"{type(exc).__name__}: {exc}"[:500]))
+                reason = f"{type(exc).__name__}: {exc}"[:500]
+                stages.append(_stage(name, FAILED, reason))
+                _finished(engine, run_id, name, FAILED, reason, correlation)
                 stopped_at = name
                 stop_reason = f"Etapa «{name}» a eșuat: {type(exc).__name__}"
                 continue
@@ -261,6 +375,7 @@ def execute_daily_run(
             stages.append(
                 _stage(name, status, str(outcome.get("reason", "")), outcome.get("artefacts"))
             )
+            _finished(engine, run_id, name, status, str(outcome.get("reason", "")), correlation)
             if status in (BLOCKED, FAILED):
                 stopped_at = name
                 stop_reason = str(outcome.get("reason", "")) or f"Etapa «{name}» s-a oprit."

@@ -58,3 +58,39 @@ test('production status reads the newest stage and the last daily run', () => {
   assert.equal(status.text, 'Producția: Control calitate · ultima rulare zilnică parțială');
   assert.equal(productionStatus([]).text, 'Nicio producție în curs.');
 });
+
+test('a stage of the daily run is named in words, with its place in the day', () => {
+  const started = describeEvent({
+    event_type: 'runbook.stage_started',
+    payload: { stage: 'script_and_storyboard', index: 6, total: 12 },
+  });
+  assert.equal(started.label, 'etapă pornită');
+  assert.equal(started.text, 'scenariu și storyboard (6/12)');
+  assert.equal(started.kind, 'production');
+
+  const finished = describeEvent({
+    event_type: 'runbook.stage_finished',
+    payload: { stage: 'publish', status: 'SKIPPED', reason: 'Niciun canal legat.' },
+  });
+  assert.equal(finished.label, 'etapă sărită');
+  assert.equal(finished.text, 'publicare — Niciun canal legat.');
+});
+
+test('the head line says which stage the day is in while it is in it', () => {
+  const running = productionStatus([
+    { event_type: 'runbook.stage_started', payload: { stage: 'media', index: 7, total: 12 } },
+    { event_type: 'runbook.daily_run_started', payload: { stages: 12 } },
+    { event_type: 'runbook.daily_run_finished', payload: { status: 'PARTIAL' } },
+  ]);
+  assert.equal(running.running, 'media');
+  assert.equal(running.text, 'Acum: producția media · ultima rulare zilnică parțială');
+
+  // A stage that has finished is not where the day is; only the run's own outcome remains.
+  const between = productionStatus([
+    { event_type: 'runbook.stage_finished', payload: { stage: 'media', status: 'COMPLETED' } },
+    { event_type: 'runbook.stage_started', payload: { stage: 'media' } },
+    { event_type: 'runbook.daily_run_finished', payload: { status: 'COMPLETED' } },
+  ]);
+  assert.equal(between.running, null);
+  assert.equal(between.text, 'Ultima rulare zilnică finalizată');
+});

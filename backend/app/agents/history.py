@@ -35,14 +35,23 @@ _CHAT_INSTRUCTIONS = (
 
 
 def _run_item(run: AgentRun) -> dict[str, Any]:
+    """One run as a line of history.
+
+    ``asked`` is the employee's own sentence about the task when the caller wrote one; the
+    engineered prompt stays in ``prompt``, where the Owner can open it, because a timeline
+    that shows nine hundred words of instructions per entry shows the same thing every time
+    and hides the claim, the topic or the figures that made this run different from the last.
+    """
     context = run.context_json if isinstance(run.context_json, dict) else {}
+    summary = str(context.get("task_summary") or "").strip()
     return {
         "kind": "run",
         "id": run.id,
         "at": run.started_at,
         "finished_at": run.finished_at,
         "task_type": run.task_type,
-        "asked": run.objective,
+        "asked": summary or run.objective,
+        "prompt": run.objective,
         "answered": run.output_text,
         "status": run.status,
         "error": run.error_detail,
@@ -82,7 +91,19 @@ def agent_timeline(engine: Engine, agent_id: str, limit: int = 80) -> list[dict[
         items.extend(
             {"kind": "message", "at": m.created_at, **message_view(m, names)} for m in messages
         )
-        items.extend({"kind": "memory", "at": m.created_at, **memory_view(m)} for m in memory)
+        # A message an employee files is also remembered, in the same words, with the
+        # message's id as its source. Both records are right to exist — one is the message,
+        # the other is what the employee carries into the next run — but shown one after the
+        # other they read as the studio saying everything twice. The memory of a message
+        # already on the timeline is dropped from the view, not from the record. A memory
+        # whose source is a run is kept: that is what the employee concluded, not a copy of
+        # what it said.
+        filed = {m.id for m in messages}
+        items.extend(
+            {"kind": "memory", "at": m.created_at, **memory_view(m)}
+            for m in memory
+            if (m.source_id or "") not in filed
+        )
     items.sort(key=lambda item: str(item.get("at") or ""), reverse=True)
     return items[:limit]
 
@@ -107,6 +128,7 @@ def chat(
         prompt,
         CHAT_TEMPLATE_VERSION,
         correlation_id or str(uuid4()),
+        summary=text,
         max_tokens=1200,
         temperature=0.4,
     )

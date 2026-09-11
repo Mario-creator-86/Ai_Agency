@@ -68,6 +68,22 @@ const STAGE_LABEL = {
   LEARNING: 'Învățare',
 };
 
+/** The stages of the daily runbook, as the Owner reads them in the panel. */
+const RUN_STAGE_LABEL = {
+  preflight: 'verificarea de dinainte',
+  performance_intake: 'preluarea performanței',
+  idea_generation: 'generarea de idei',
+  research_and_verification: 'cercetare și verificare',
+  selection: 'selecția subiectului',
+  script_and_storyboard: 'scenariu și storyboard',
+  media: 'producția media',
+  edit_and_qc: 'montaj și control calitate',
+  publish: 'publicare',
+  post_run: 'raportare și închiderea zilei',
+  daily_log: 'jurnalul zilei',
+  serial_queue: 'episodul serialului',
+};
+
 const STATUS_LABEL = {
   COMPLETED: 'finalizată',
   PARTIAL: 'parțială',
@@ -82,6 +98,10 @@ const STATUS_LABEL = {
 
 function stageLabel(stage) {
   return STAGE_LABEL[stage] || String(stage || '').replace(/_/g, ' ').toLowerCase();
+}
+
+function runStageLabel(stage) {
+  return RUN_STAGE_LABEL[stage] || String(stage || '').replace(/_/g, ' ');
 }
 
 function statusLabel(status) {
@@ -221,6 +241,81 @@ export function describeEvent(event, names = {}) {
       label = 'publicare eșuată';
       text = payload.reason || payload.error || '';
       break;
+    case 'provider.model_discovered':
+      label = 'model găsit la furnizor';
+      text = payload.model_name || '';
+      break;
+    case 'provider.registered':
+      label = 'furnizor înregistrat';
+      text = [payload.name, payload.provider_type].filter(Boolean).join(' · ');
+      break;
+    case 'agent.model_assigned':
+      label = 'model atribuit';
+      break;
+    case 'role.created':
+      label = 'rol creat';
+      text = [payload.name, payload.mission].filter(Boolean).join(' — ');
+      break;
+    case 'role.contract_seeded':
+      label = 'contract de muncă scris';
+      text = payload.name || '';
+      break;
+    case 'settings.service_selected':
+      label = 'serviciu ales pentru o sarcină';
+      break;
+    case 'settings.integration_deleted':
+      label = 'integrare ștearsă';
+      text = payload.kind || '';
+      break;
+    case 'youtube.authorization_started':
+      label = 'autorizare YouTube pornită';
+      break;
+    case 'youtube.connection_created':
+      label = 'conexiune YouTube creată';
+      text = payload.name || '';
+      break;
+    case 'youtube.verified':
+      label = 'canal YouTube verificat';
+      text = payload.channel_title || payload.channel_id || '';
+      break;
+    case 'channel.created':
+      label = 'canal creat';
+      text = [payload.channel_name, payload.channel_type].filter(Boolean).join(' · ');
+      break;
+    case 'publishing.intent_created':
+      label = 'publicare pregătită';
+      text = payload.title || '';
+      break;
+    case 'publishing.video_published':
+      label = 'video publicat';
+      text = payload.title || payload.remote_url || '';
+      break;
+    case 'economy.transaction_posted':
+      label = 'înregistrare în registrul contabil';
+      text = [payload.kind, payload.memo, payload.amount_vr ? `${payload.amount_vr} VR$` : '']
+        .filter(Boolean)
+        .join(' · ');
+      break;
+    case 'research.host_revoked':
+      label = 'sursă interzisă';
+      text = payload.host || '';
+      break;
+    case 'studio.renamed':
+      label = 'studioul a fost redenumit';
+      text = [payload.previous_name, payload.name].filter(Boolean).join(' → ');
+      break;
+    case 'runbook.daily_run_started':
+      label = 'ziua a început';
+      text = `${payload.stages || ''} etape · preflight ${payload.preflight || ''}`.trim();
+      break;
+    case 'runbook.stage_started':
+      label = 'etapă pornită';
+      text = `${runStageLabel(payload.stage)}${payload.index ? ` (${payload.index}/${payload.total})` : ''}`;
+      break;
+    case 'runbook.stage_finished':
+      label = `etapă ${statusLabel(payload.status)}`;
+      text = [runStageLabel(payload.stage), payload.reason].filter(Boolean).join(' — ');
+      break;
     case 'runbook.daily_run_finished':
       label = `rulare zilnică ${statusLabel(payload.status)}`;
       text = payload.preflight ? `preflight ${payload.preflight}` : '';
@@ -319,25 +414,35 @@ export function describeEvent(event, names = {}) {
  * Where production stands, from the newest events that say so.
  *
  * @param {Array<{event_type: string, payload?: any, sequence?: number}>} events newest first
- * @returns {{stage: string|null, run: string|null, text: string}}
+ * @returns {{stage: string|null, run: string|null, running: string|null, text: string}}
  */
 export function productionStatus(events) {
   let stage = null;
   let run = null;
+  let running = null;
   for (const event of events) {
     const payload = event.payload || {};
-    if (!stage && String(event.event_type).startsWith('workflow.') && payload.current_stage) {
+    const type = String(event.event_type);
+    // A stage that started and has not been seen finishing is where the day is right now;
+    // it is newer than anything the workflow can say, so it is read first and wins.
+    if (running === null && (type === 'runbook.stage_started' || type === 'runbook.stage_finished')) {
+      running = type === 'runbook.stage_started' ? payload.stage || null : false;
+    }
+    if (!stage && type.startsWith('workflow.') && payload.current_stage) {
       stage = payload.current_stage;
     }
-    if (!run && event.event_type === 'runbook.daily_run_finished') {
+    if (!run && type === 'runbook.daily_run_finished') {
       run = payload.status || null;
     }
-    if (stage && run) break;
+    if (stage && run && running !== null) break;
   }
   const parts = [];
-  if (stage) parts.push(`Producția: ${stageLabel(stage)}`);
+  if (running) parts.push(`Acum: ${runStageLabel(running)}`);
+  if (stage) parts.push(`producția: ${stageLabel(stage)}`);
   if (run) parts.push(`ultima rulare zilnică ${statusLabel(run)}`);
-  return { stage, run, text: parts.length ? parts.join(' · ') : 'Nicio producție în curs.' };
+  if (!parts.length) return { stage, run, running: null, text: 'Nicio producție în curs.' };
+  const text = parts.join(' · ');
+  return { stage, run, running: running || null, text: text[0].toUpperCase() + text.slice(1) };
 }
 
 /** How many entries the ledger keeps on screen. Older ones are in the events endpoint. */

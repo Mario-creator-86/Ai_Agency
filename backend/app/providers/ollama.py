@@ -5,7 +5,8 @@ Uses the official Ollama REST API:
   POST /api/generate -> text generation (non-streaming)
 
 If Ollama is not running, returns OFFLINE status.
-Never fabricates a model response.
+Never fabricates a model response, and never presents a model's private reasoning as one:
+generation asks for thinking off, and what comes back in `response` is the whole answer.
 """
 
 from __future__ import annotations
@@ -110,6 +111,14 @@ class OllamaProvider(LLMProvider):
             "model": model,
             "prompt": prompt,
             "stream": False,
+            # Thinking off, deliberately. Ollama counts a model's private reasoning against
+            # `num_predict`, so a thinking model asked for 700 tokens can spend all 700 on
+            # reasoning and return `response: ""` with `done_reason: "length"` — a run that
+            # cost tokens and said nothing. Every model on this provider accepts the flag,
+            # including those that do not declare the capability. It also matches the rule
+            # that no hidden chain-of-thought is required or persisted
+            # (../../../docs/architecture/README.md).
+            "think": False,
         }
         if system:
             body["system"] = system
@@ -123,10 +132,16 @@ class OllamaProvider(LLMProvider):
         text = data.get("response", "")
         prompt_tokens = data.get("prompt_eval_count")
         completion_tokens = data.get("eval_count")
+        # `thinking` is reported by models that reason anyway; it is never the answer and is
+        # not stored. Its length is kept so an empty answer can say what happened instead.
+        thinking = data.get("thinking") or ""
         return GenerateResult(
             text=text,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             cost_vr=None,  # Ollama is local; no monetary cost tracked
-            raw_response=data,
+            raw_response={
+                "done_reason": data.get("done_reason"),
+                "thinking_chars": len(thinking),
+            },
         )

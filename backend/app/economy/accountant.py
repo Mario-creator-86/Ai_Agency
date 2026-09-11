@@ -198,6 +198,11 @@ def reconcile_day(
         prompt,
         TEMPLATE_VERSION,
         correlation,
+        summary=(
+            f"Închid ziua: {figures['today']['spent_usd']} USD azi, "
+            f"{figures['month']['spent_usd']} USD luna aceasta, "
+            f"{len(figures['budgets'])} bugete active."
+        ),
         max_tokens=1200,
         temperature=0.1,
         emit_message=False,

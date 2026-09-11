@@ -12,9 +12,10 @@ from app.runbook.services import (
     RunbookError,
     SafeModeActive,
     clear_safe_mode,
-    execute_daily_run,
     list_runs,
+    pending_daily_run,
     safe_mode_state,
+    start_daily_run,
 )
 from app.security import require_owner
 
@@ -46,18 +47,21 @@ def create_runbook_router() -> APIRouter:
 
     @router.get("/runs")
     def get_runs(request: Request) -> dict:
-        return {"runs": list_runs(request.app.state.engine)}
+        """The days that have closed, and the one on its way if there is one."""
+        return {
+            "runs": list_runs(request.app.state.engine),
+            "pending": pending_daily_run(request.app.state.engine),
+        }
 
     @router.post("/runs")
     def post_run(request: Request, cmd: RunCommand) -> dict:
-        """Execute the daily runbook and record what each stage actually did."""
+        """Start today's run. Returns as soon as it is queued; the worker does the day."""
         try:
-            return execute_daily_run(
+            return start_daily_run(
                 request.app.state.engine,
                 request.app.state.settings,
-                request.app.state.credential_vault,
                 str(cmd.command_id),
-                stage_runners=getattr(request.app.state, "stage_runners", None),
+                worker_enabled=request.app.state.settings.worker_enabled,
             )
         except SafeModeActive as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None

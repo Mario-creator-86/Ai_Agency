@@ -204,6 +204,7 @@ def agent_extract_claims(
         _EXTRACT_INSTRUCTIONS + evidence,
         "v1",
         correlation_id,
+        summary=f"Extrag afirmațiile din sursa «{title}».",
         max_tokens=2400,
         temperature=0.2,
         emit_message=False,
@@ -363,6 +364,7 @@ def agent_verify_claim(
         prompt,
         "v1",
         correlation_id,
+        summary=f"Verific afirmația: «{claim_text}»",
         max_tokens=700,
         temperature=0.0,
         emit_message=False,
@@ -538,6 +540,9 @@ def agent_write_script(
         prompt,
         "v1",
         correlation_id,
+        summary=(
+            f"Scriu scenariul pentru «{topic_title}» din {len(allowed)} afirmații confirmate."
+        ),
         max_tokens=2400,
         temperature=0.4,
         emit_message=False,

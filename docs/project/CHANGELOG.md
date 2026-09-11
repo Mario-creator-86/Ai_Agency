@@ -1,5 +1,37 @@
 # Changelog
 
+## Three things the Owner reported: a silent start, a prompt for a task, twin entries — 2026-09-11
+
+- **Starting the day answers at once.** `POST /runbook/runs` executed the whole run inside the
+  request — twelve stages, minutes of work — while the page gave up after ten seconds and said
+  "Conexiune indisponibilă", though the studio kept working. The button now queues the day
+  (the same `DAILY_RUN` task the schedule uses, `manual: true` so it may repeat a day the
+  clock would not) and answers "Rularea de azi a fost pornită". A second press, a stopped
+  autonomy, safe mode and a disabled worker each refuse with their own sentence.
+  `GET /runbook/runs` also returns `pending`, and the panel shows the day on its way.
+- **Where production is, while it is there.** `runbook.daily_run_started`,
+  `runbook.stage_started` and `runbook.stage_finished` go through the outbox, so the ledger
+  reads "etapă pornită · producția media (7/12)" as it happens and its head line says
+  "Acum: producția media".
+- **A task reads as a sentence.** Runs recorded the engineered prompt as what was asked, so
+  five fact-checks in a row opened with the same nine hundred words and looked like one entry
+  repeated — the claim was buried in the middle. `run_agent_task(..., summary=...)` carries
+  the employee's own sentence ("Verific afirmația: «…»", "Închid ziua: 0 USD azi…"); the
+  history shows it, with the full prompt under «Cererea completă». Older runs keep their
+  prompt, trimmed to a readable line.
+- **An answer nobody can read is not an answer.** Ollama counts a thinking model's private
+  reasoning against `num_predict`: `qwen3.5:397b` asked for 700 tokens spent all 700 thinking
+  and returned an empty response with `done_reason: length` — recorded as SUCCEEDED with
+  nothing under it (17 of 18 fact-checks, both Director reviews, the Accountant's close).
+  Generation now asks for thinking off, and a run with no text is recorded `EMPTY_OUTPUT`
+  with the reason instead of a green line.
+- **Nothing is said twice.** A report an employee files is both a message and a memory in the
+  same words; the timeline now shows the message and drops the copy — the memory itself is
+  untouched, so the next run still has it.
+- Tests: `tests/test_phase10_runbook.py` (queued start, refusals, stage events),
+  `tests/test_books_and_history.py`, `tests/test_ollama_adapter.py`,
+  `tests/test_phase1_agents.py`, `frontend/tests/ledger.test.js`.
+
 ## The Owner watches the pipeline live from a ledger beside the office — 2026-09-11
 
 - **Live ledger** (`frontend/src/ledger.js`, pure and tested): the left column of the

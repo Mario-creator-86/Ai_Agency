@@ -113,6 +113,7 @@ def choose_topic(
         prompt,
         REVIEW_TEMPLATE_VERSION,
         correlation,
+        summary=f"Aleg subiectul zilei dintre {len(candidates)} propuneri.",
         max_tokens=800,
         temperature=0.1,
         emit_message=False,
@@ -322,6 +323,10 @@ def director_review(
         prompt,
         REVIEW_TEMPLATE_VERSION,
         correlation,
+        summary=(
+            f"Citesc inboxul de seară: {len(facts['inbox'])} mesaje deschise și rezultatul "
+            f"a {len(facts['stage_outcomes'])} etape."
+        ),
         max_tokens=2500,
         temperature=0.1,
         emit_message=False,

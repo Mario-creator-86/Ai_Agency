@@ -13,6 +13,15 @@ database resource discovery/refresh, separate production choices, UI and regress
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
 
+## The day starts without blocking the page (2026-09-11)
+
+The Owner's "Pornește rularea de azi" queues the day on the background worker and says so;
+the run panel shows the day on its way, and the ledger names each stage as it starts and
+ends. Agent runs carry a one-sentence summary of their task, so a history reads as work done
+rather than as the prompt behind it, and a run that returned no visible text is recorded
+EMPTY_OUTPUT with its reason — thinking models were spending the whole token budget on
+reasoning, which is now switched off for Ollama generation.
+
 ## Live ledger and the office first (2026-09-11)
 
 The workspace opens on the office, wide, with a live ledger in the left column: every message
