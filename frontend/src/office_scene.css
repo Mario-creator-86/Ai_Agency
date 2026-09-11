@@ -1,17 +1,19 @@
 /* Isolated office presentation; shared dashboard styles may evolve independently. */
 #office-scene-container { height: clamp(520px, 72vh, 900px); }
 #office-scene-container .camera-toolbar {
-  top: auto; right: auto; bottom: 12px; left: 50%; transform: translateX(-50%);
-  height: max-content; display: flex; align-items: center; flex-wrap: wrap; justify-content: center; gap: 6px;
-  width: max-content; max-width: calc(100% - 24px); padding: 8px;
+  top: auto; right: 14px; bottom: 14px; left: 14px; transform: none;
+  height: max-content; display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 8px 16px;
+  width: auto; max-width: none; padding: 8px 10px;
   border: 1px solid #2c3552; border-radius: 12px;
   background: rgba(11, 16, 32, .86); box-shadow: 0 10px 30px rgba(4, 8, 20, .55);
   backdrop-filter: blur(6px);
 }
-#office-scene-container .camera-toolbar::before {
-  /* Group divider between camera controls and the module openers. */
-  content: none;
-}
+/* Two groups: the scene's own controls on the left, the doors to each module on the right.
+   On a narrow scene the groups stack, each keeping its own order. */
+#office-scene-container .toolbar-group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+#office-scene-container .toolbar-modules { justify-content: flex-end; margin-left: auto; }
+#office-scene-container .toolbar-modules .cam-btn { background: rgba(255, 255, 255, .04); }
+#office-scene-container .toolbar-modules .cam-btn:hover { background: #1c2540; }
 #office-scene-container:fullscreen .camera-toolbar,
 #office-scene-container.is-fullscreen .camera-toolbar { top: auto; bottom: 20px; right: auto; }
 .street-clock {

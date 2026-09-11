@@ -13,6 +13,12 @@ database resource discovery/refresh, separate production choices, UI and regress
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
 
+## Polish pass (2026-09-12)
+
+Every view read from a screenshot and set on one text scale, one radius and shadow, actions
+sized to their words, the scene chrome as one bar in two groups, the ledger breathing, and
+Settings on the same dialog pattern as the rest. Details in `CHANGELOG.md`.
+
 ## Signals: vendor pages and search trends (2026-09-12)
 
 Kael and Lyra choose their models by reading the vendors' own pages (fetched by the studio,

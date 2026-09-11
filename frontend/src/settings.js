@@ -34,7 +34,7 @@ function option(select, value, text) {
 export function initSettings(api, hooks = {}) {
   // The page heading is gone; the Settings button lives in the top bar with the session.
   const heading = document.querySelector('.topbar-right') || document.querySelector('#workspace');
-  const open = node('button', 'Settings', 'secondary');
+  const open = node('button', 'Setări', 'secondary');
   open.id = 'open-settings';
   open.classList.add('topbar-logout');
   heading.prepend(open);
@@ -108,14 +108,16 @@ export function initSettings(api, hooks = {}) {
     dialog.replaceChildren();
 
     const header = node('div', '', 'dialog-header');
-    const title = node('h2', 'Settings');
+    const title = node('h2', 'Setări');
     title.id = 'settings-title';
-    const close = node('button', 'Închide', 'quiet');
+    const close = node('button', '✕', 'dialog-close');
+    close.setAttribute('aria-label', 'Închide');
+    close.title = 'Închide';
     close.addEventListener('click', reset);
     header.append(title, close);
     dialog.append(header, node('p', 'Conectează doar serviciile pe care vrei să le folosească studioul.', 'settings-intro'));
     const nav = node('nav', '', 'settings-tabs');
-    nav.setAttribute('aria-label', 'Secțiuni Settings');
+    nav.setAttribute('aria-label', 'Secțiuni Setări');
     for (const [key, label] of sections) {
       const button = node('button', label, key === active ? 'primary' : 'quiet');
       button.setAttribute('aria-current', key === active ? 'page' : 'false');

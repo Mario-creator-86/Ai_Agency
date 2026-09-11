@@ -540,6 +540,6 @@ Evidence: `scratch/verify_weekly_review_ui.mjs` 5/5 live; backend 526/1; fronten
 - [x] Thread window on the page; the inspector's inbox opens threads.
 - [x] Employees choosing a video/image/voice model by reading the vendors' pages (fetched by the studio, vendor hosts only): scores and prices recorded on the resources, `rank_candidates` reads them, fallback defaults follow, locked ones are reported on; weekly job + Owner button.
 - [x] Analytics-driven adaptation wired: Google Trends (daily, `trend_snapshot`) and the studio's measured cohorts reach the Researcher's proposals and the weekly digest; the numbers themselves still wait for real publications.
-- [ ] Visual polish pass on the whole page (spacing, type, dialog rhythm, the office chrome) — a dedicated task with screenshots per view.
+- [x] Visual polish pass on the whole page, from a screenshot of every view: one text scale, actions sized to their words, the scene chrome as one bar in two groups, the ledger breathing, Settings on the dialog pattern, the inspector's contract as lists.
 
 Evidence: `tests/test_mail.py` 18/18; backend 544/1; frontend 86/86; live on a copy of the Owner's data (`scratch` review scripts).

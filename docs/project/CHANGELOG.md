@@ -1,5 +1,25 @@
 # Changelog
 
+## Polish pass: rhythm, hierarchy, chrome — 2026-09-12
+
+Read from a screenshot of every view (login, workspace, research, media, publishing,
+workforce, story, runbook, treasury, settings, inspector), then changed:
+
+- **One text scale**: 13px for reading, 12px for meta, 10.5px letter-spaced labels; panels and
+  dialogs share one radius and shadow; the top bar's crumb is a label, not a Tailwind class.
+- **Actions sized to their words**: dialog submit buttons and the inspector's action row no
+  longer span the column (the login button alone stays full-width).
+- **The scene chrome is one bar in two groups**: the scene's own controls (autonomy switch,
+  zoom, fit, fullscreen) on the left, the doors to each module on the right; they wrap by
+  group on a narrow scene.
+- **The ledger breathes**: 13px rows with hover, tabular times, filter chips that fit, and
+  the production line as a status pill.
+- **Settings**: titled «Setări», tabs on a segmented track, ✕ to close like every dialog,
+  cards on the panel radius, inputs with the same focus ring as everywhere else.
+- **Inspector**: four stat columns, the mission set apart from the contract, contract
+  items with marks.
+- Evidence: `scratch` before/after screenshots per view; frontend 86/86, tsc clean.
+
 ## The stewards read the vendors' pages; the studio reads what people search for — 2026-09-12
 
 The Owner asked how employees could choose a video model by researching online, and that

@@ -21,7 +21,7 @@
   <body>
     <header class="topbar">
       <a href="/" class="brand" title="AMN-AI — Autonomous Machine Nexus · Artificial Intelligence"><img src="/amn-ai-mark.png" alt="" width="38" height="38" class="brand-logo" /><span><strong>AMN-AI</strong><br /><span class="brand-sub">Autonomous Machine Nexus</span></span></a>
-      <span class="text-sm text-stone-300"><span id="studio-name">AMN-AI</span> <span class="separator">/</span> OWNER WORKSPACE</span>
+      <span class="topbar-crumb"><span id="studio-name">AMN-AI</span> <span class="separator">/</span> Owner workspace</span>
       <span class="topbar-right"><span id="connection" class="connection" role="status">Neconectat</span><button id="logout" class="quiet topbar-logout" hidden>Închide sesiunea</button></span>
     </header>
     <main>
@@ -53,6 +53,7 @@
             <div class="office-scene office-scene-container" id="office-scene-container">
               <canvas id="office-canvas" class="office-canvas"></canvas>
               <div class="camera-toolbar">
+                <div class="toolbar-group toolbar-scene">
                 <button id="stop-toggle" class="cam-btn cam-switch" disabled title="Autonomia studioului: pornită sau oprită. Oprirea este persistentă și nu pornește agenți sau publicări."><span class="switch-label">AUTONOMIE</span><span class="switch-track"><span class="switch-knob"></span></span><span id="switch-state" class="switch-state">—</span></button>
                 <button id="zoom-in" class="quiet cam-btn" title="Apropie">+</button>
                 <button id="zoom-out" class="quiet cam-btn" title="Depărtează">−</button>
@@ -60,6 +61,8 @@
                 <button id="zoom-reset" class="quiet cam-btn" title="Scară 1:1">1:1</button>
                 <button id="fullscreen-btn" class="quiet cam-btn btn-fs" title="Ecran complet">Ecran complet</button>
                 <button id="exit-fullscreen-btn" class="quiet cam-btn btn-exit-fs hidden" title="Ieșire din ecran complet">✕ Ieși</button>
+                </div>
+                <div class="toolbar-group toolbar-modules">
                 <button id="open-research-btn" class="quiet cam-btn" title="Subiecte, surse și verificarea afirmațiilor">Cercetare</button>
                 <button id="open-media-btn" class="quiet cam-btn cam-btn-media" title="Storyboard-uri, randare video și control de calitate">Producție media</button>
                 <button id="open-publishing-btn" class="quiet cam-btn cam-btn-pub" title="Canale, verificări înainte de publicare și istoric">Distribuție</button>
@@ -67,6 +70,7 @@
                 <button id="open-story-btn" class="quiet cam-btn" title="Jurnalul zilei și episodul Office Serial construit din el">Jurnal</button>
                 <button id="open-runbook-btn" class="quiet cam-btn" title="Ce poate face studioul acum și ce a făcut la fiecare rulare zilnică">Rulare zilnică</button>
                 <button id="open-treasury-btn" class="quiet cam-btn" title="Registrul VR$: dovezi reale, ce s-a emis din ele și ce nu se poate cheltui">Trezorerie</button>
+                </div>
               </div>
               <div id="rooms" class="rooms" hidden></div>
             </div>
