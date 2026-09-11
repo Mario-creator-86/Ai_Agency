@@ -1,27 +1,36 @@
 """Owner-initiated retrieval of a public source, from the interface rather than a shell.
 
-The retrieval policy itself is not built here from anything a request supplied. It is read from
-the Owner's configuration, so the set of hosts the studio may reach is fixed outside the running
-application: an endpoint that accepted a host alongside the URL would be a request-controlled
-allowlist, which is no allowlist at all.
+The retrieval policy is never built from anything a fetch request supplied. Its hosts come from
+two places the Owner controls: the configuration file (`STUDIO_RESEARCH_ALLOWED_HOSTS`) and the
+`research_allowed_host` table, written only through Owner-authenticated endpoints. A fetch
+request that named its own host would be a request-controlled allowlist, which is no allowlist
+at all; that is why the host is a separate, authenticated action with its own test.
+
+The test matters as much as the entry: an authorised site the studio cannot actually read (a
+bot wall, a script-only page, a redirect off the host) is not a source, and the Owner should
+see that before a research stage silently finds nothing there.
 """
 
 from __future__ import annotations
 
 from typing import Any
+from uuid import uuid4
 
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
-from app.config import Settings
+from app.config import Settings, validate_public_host
 from app.factual.models import FactualClaim, SourceSnapshot
 from app.factual.services import ingest_source_snapshot
+from app.research.models import ResearchAllowedHost
 from app.research.retrieval import (
+    RateLimited,
     RetrievalError,
     RetrievalPolicy,
     SourceRetriever,
     validate_url,
 )
+from app.services import append_event, utc_now
 
 
 class RetrievalNotConfigured(RuntimeError):
@@ -34,18 +43,184 @@ class HostNotAllowed(ValueError):
 
 NOT_CONFIGURED_DETAIL = (
     "Preluarea surselor este dezactivată: nu ai autorizat niciun site. "
-    "Adaugă gazdele permise în .env, la STUDIO_RESEARCH_ALLOWED_HOSTS "
-    '(exemplu: STUDIO_RESEARCH_ALLOWED_HOSTS=["www.iana.org"]), apoi repornește studioul. '
-    "Lista rămâne în fișierul de configurare — nici agenții, nici interfața nu o pot extinde."
+    "Adaugă un site în Cercetare → Surse → «Site-uri autorizate» și testează-l, sau pune "
+    'gazdele în .env la STUDIO_RESEARCH_ALLOWED_HOSTS (exemplu: ["www.iana.org"]). '
+    "Doar Owner-ul poate extinde lista; agenții nu au nicio unealtă pentru asta."
 )
 
 
-def allowed_hosts(settings: Settings) -> tuple[str, ...]:
-    return tuple(settings.research_allowed_hosts)
+class HostError(ValueError):
+    """An allowlist entry that is not a bare public hostname, or does not exist."""
 
 
-def _policy(settings: Settings) -> RetrievalPolicy:
-    hosts = allowed_hosts(settings)
+def allowed_hosts(settings: Settings, engine: Engine | None = None) -> tuple[str, ...]:
+    """Every authorised host: the configuration file's, then the Owner's, without duplicates."""
+    hosts = list(settings.research_allowed_hosts)
+    if engine is not None:
+        with Session(engine) as session:
+            for row in session.scalars(
+                select(ResearchAllowedHost).order_by(ResearchAllowedHost.added_at)
+            ):
+                if row.host not in hosts:
+                    hosts.append(row.host)
+    return tuple(hosts)
+
+
+def allowed_host_rows(settings: Settings, engine: Engine | None) -> list[dict[str, Any]]:
+    """The allowlist as the interface shows it: where each host came from and its last test."""
+    rows: list[dict[str, Any]] = [
+        {
+            "host": host,
+            "source": "env",
+            "added_at": None,
+            "last_test_at": None,
+            "last_test_status": None,
+            "last_test_detail": None,
+        }
+        for host in settings.research_allowed_hosts
+    ]
+    if engine is None:
+        return rows
+    seen = {row["host"]: row for row in rows}
+    with Session(engine) as session:
+        for row in session.scalars(
+            select(ResearchAllowedHost).order_by(ResearchAllowedHost.added_at)
+        ):
+            view = {
+                "host": row.host,
+                "source": "owner",
+                "added_at": row.added_at,
+                "last_test_at": row.last_test_at,
+                "last_test_status": row.last_test_status,
+                "last_test_detail": row.last_test_detail,
+            }
+            if row.host in seen:
+                # Configured in both places: the file entry is shown with the test result.
+                seen[row.host].update({k: v for k, v in view.items() if k.startswith("last_test")})
+            else:
+                rows.append(view)
+    return rows
+
+
+def add_allowed_host(engine: Engine, host: str, correlation_id: str = "") -> dict[str, Any]:
+    """The Owner authorises a host. Validated like the configuration file's entries."""
+    try:
+        clean = validate_public_host(host.strip(), "Site-uri autorizate")
+    except ValueError as exc:
+        raise HostError(str(exc)) from None
+    with Session(engine) as session, session.begin():
+        row = session.get(ResearchAllowedHost, clean)
+        if row is None:
+            event = append_event(
+                session,
+                "research.host_authorised",
+                "research_allowed_host",
+                clean,
+                1,
+                {"host": clean},
+                correlation_id or str(uuid4()),
+            )
+            row = ResearchAllowedHost(
+                host=clean, added_by="owner", added_at=utc_now(), event_id=event.event_id
+            )
+            session.add(row)
+        session.flush()
+        return _host_view(row)
+
+
+def remove_allowed_host(engine: Engine, host: str, correlation_id: str = "") -> None:
+    with Session(engine) as session, session.begin():
+        row = session.get(ResearchAllowedHost, host.strip().lower())
+        if row is None:
+            raise HostError("Site-ul nu este în lista Owner-ului (cele din .env se scot din .env)")
+        append_event(
+            session,
+            "research.host_revoked",
+            "research_allowed_host",
+            row.host,
+            2,
+            {"host": row.host},
+            correlation_id or str(uuid4()),
+        )
+        session.delete(row)
+
+
+def test_allowed_host(
+    engine: Engine,
+    settings: Settings,
+    host: str,
+    correlation_id: str = "",
+    retriever: SourceRetriever | None = None,
+) -> dict[str, Any]:
+    """Fetch the host's front page through the real retriever and record what happened.
+
+    Nothing is stored as a source: this establishes whether the studio can read the site at
+    all (DNS to a public address, TLS, an answer, HTML or text the extractor can use). A
+    PASSED test says the site is usable as a source; a FAILED one says why it is not.
+    """
+    clean = host.strip().lower()
+    hosts = allowed_hosts(settings, engine)
+    if clean not in hosts:
+        raise HostError("Site-ul nu este autorizat; adaugă-l întâi")
+    fetcher = retriever or SourceRetriever(RetrievalPolicy((clean,)))
+    status, detail, summary = "PASSED", "", {}
+    try:
+        source = fetcher.fetch(f"https://{clean}/")
+        summary = {
+            "title": source.title,
+            "characters": len(source.text),
+            "content_type": source.content_type,
+            "url": source.url,
+        }
+        detail = f"Răspunde; titlu «{source.title[:80]}», {len(source.text)} caractere de text."
+    except RateLimited as exc:
+        status, detail = "FAILED", "Site-ul limitează cererile (HTTP 429)."
+        if exc.retry_after:
+            detail += f" Retry-After: {exc.retry_after}."
+    except RetrievalError as exc:
+        status, detail = "FAILED", str(exc)
+    except OSError as exc:
+        status, detail = "FAILED", f"Conexiunea a eșuat: {type(exc).__name__}"
+    tested_at = utc_now()
+    with Session(engine) as session, session.begin():
+        row = session.get(ResearchAllowedHost, clean)
+        if row is not None:
+            row.last_test_at, row.last_test_status, row.last_test_detail = (
+                tested_at,
+                status,
+                detail[:2000],
+            )
+        append_event(
+            session,
+            "research.host_tested",
+            "research_allowed_host",
+            clean,
+            3,
+            {"host": clean, "status": status},
+            correlation_id or str(uuid4()),
+        )
+    return {
+        "host": clean,
+        "status": status,
+        "detail": detail,
+        "tested_at": tested_at,
+        "summary": summary,
+    }
+
+
+def _host_view(row: ResearchAllowedHost) -> dict[str, Any]:
+    return {
+        "host": row.host,
+        "source": "owner",
+        "added_at": row.added_at,
+        "last_test_at": row.last_test_at,
+        "last_test_status": row.last_test_status,
+        "last_test_detail": row.last_test_detail,
+    }
+
+
+def _policy(settings: Settings, engine: Engine | None = None) -> RetrievalPolicy:
+    hosts = allowed_hosts(settings, engine)
     if not hosts:
         raise RetrievalNotConfigured(NOT_CONFIGURED_DETAIL)
     return RetrievalPolicy(hosts)
@@ -69,7 +244,7 @@ def retrieve_and_ingest(
     from it starts UNVERIFIED: fetching a page establishes that the page said something, not
     that it is true.
     """
-    policy = _policy(settings)
+    policy = _policy(settings, engine)
     # Reject a host outside the allowlist before any network call, and distinguish it from a
     # source that simply did not answer, so the Owner knows which of the two happened.
     try:

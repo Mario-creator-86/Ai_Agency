@@ -20,6 +20,7 @@ from uuid import uuid4
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
+from app.agents.memory import agent_for_role, remember
 from app.factual.models import FactualClaim
 from app.media.models import (
     CharacterBible,
@@ -305,6 +306,22 @@ def evaluate_media_qc(engine: Engine, media_asset_id: str, correlation_id: str) 
         )
         session.add(report)
         session.flush()
+
+        # The result is the Video Editor's own history, whatever produced the render.
+        editor = agent_for_role(session, "VideoEditor")
+        if editor is not None:
+            remember(
+                session,
+                memory_class="HISTORICAL_EVENT",
+                content=(
+                    f"Render {media_asset_id[:8]} {status} quality control"
+                    + (": " + "; ".join(failure_reasons)[:400] if failure_reasons else ".")
+                ),
+                source_type="event",
+                source_id=qc_id,
+                event_id=event.event_id,
+                agent_id=editor.id,
+            )
 
         return QCReportView.model_validate(report).model_dump()
 

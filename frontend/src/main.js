@@ -372,6 +372,36 @@ async function showInspector(agent) {
     if(request!==inspectorRequest||session!==epoch||!inspector.open) return;
     renderInspector({...agent,model_error:error instanceof Error?error.message:'Datele modelului nu pot fi încărcate.',model_is_available:false});
   }
+  try {
+    const identity = await api(`/agents/${encodeURIComponent(id)}/identity`);
+    if(request!==inspectorRequest||session!==epoch||!inspector.open) return;
+    renderIdentity(identity);
+  } catch(error) {
+    if(request!==inspectorRequest||session!==epoch||!inspector.open) return;
+    element('inspector-mission').textContent = error instanceof Error ? error.message : 'Identitatea nu a putut fi încărcată.';
+  }
+}
+
+/** Who the agent is, as the model is told: contract, character, memory, open messages. */
+function renderIdentity(identity) {
+  const contract = identity.contract || {};
+  const work = contract.work_contract_json || {};
+  const who = identity.character ? `${identity.display_name} este ${identity.character.canonical_name}.` : identity.display_name;
+  element('inspector-mission').textContent = `${who} Misiune: ${contract.mission || 'nedefinită'}. Raportează către ${work.reports_to || '—'}.`;
+  const sections = [['watch_for', 'Este atent la'], ['investigate', 'Investighează'], ['correct', 'Corectează'], ['let_pass', 'Lasă să treacă'], ['never_let_pass', 'Nu lasă niciodată'], ['escalate_when', 'Escaladează când'], ['deliverables', 'Livrabile']];
+  element('inspector-contract').innerHTML = sections
+    .filter(([key]) => Array.isArray(work[key]) && work[key].length)
+    .map(([key, label]) => `<div class="identity-block"><span class="stat-label">${escapeHtml(label)}</span><ul>${work[key].map((item) => `<li>${escapeHtml(String(item))}</li>`).join('')}</ul></div>`)
+    .join('') || '<p class="helper">Rolul nu are încă un contract de lucru. Rulează bootstrap-ul pentru a-l însămânța.</p>';
+  element('inspector-system-prompt').textContent = identity.system_prompt || '';
+  const memory = identity.memory || [];
+  element('inspector-memory').innerHTML = memory.length
+    ? memory.map((m) => `<li><span class="policy-tag policy-flexible">${escapeHtml(m.memory_class)}</span> ${escapeHtml(m.content)}</li>`).join('')
+    : '<li class="helper">Nu își amintește nimic încă: nicio verificare, decizie sau publicare înregistrată.</li>';
+  const messages = (identity.messages || []).filter((m) => m.status !== 'RESOLVED').slice(0, 8);
+  element('inspector-messages').innerHTML = messages.length
+    ? messages.map((m) => `<li><span class="policy-tag policy-locked">${escapeHtml(m.intent)}</span> ${escapeHtml(m.subject)}${m.from_name ? ` <small>· de la ${escapeHtml(m.from_name)}</small>` : ''}</li>`).join('')
+    : '<li class="helper">Niciun mesaj deschis.</li>';
 }
 
 function renderInspector(agent) {
@@ -593,16 +623,106 @@ function claimCountsSummary(counts) {
   return entries.map(([status, n]) => `${n} ${CLAIM_STATUS_LABEL[status] || status}`).join(' · ');
 }
 
+const HOST_TEST_LABEL = { PASSED: 'citibil', FAILED: 'nu poate fi citit' };
+
+/**
+ * The authorised sites, each with the result of its last connectivity test. A site is a
+ * source only if the studio can actually read it, so the test is next to the entry, and a
+ * site that never passed is marked as such rather than assumed fine.
+ */
+function renderAllowedHosts(rows) {
+  const box = element('allowed-hosts');
+  const allowEl = element('sources-allowlist');
+  if (!rows.length) {
+    allowEl.textContent = 'Niciun site autorizat. Adaugă unul mai jos și testează-l; până atunci preluarea surselor este oprită.';
+    allowEl.className = 'helper-note helper-warn';
+    box.innerHTML = '';
+    return;
+  }
+  const passed = rows.filter((r) => r.last_test_status === 'PASSED').length;
+  allowEl.textContent = `${rows.length} site-uri autorizate, ${passed} testate cu succes. Doar Owner-ul poate schimba lista; agenții nu au nicio unealtă pentru asta.`;
+  allowEl.className = passed ? 'helper-note' : 'helper-note helper-warn';
+  box.innerHTML = rows
+    .map((r) => {
+      const status = r.last_test_status
+        ? `<span class="host-test host-test-${escapeHtml(r.last_test_status.toLowerCase())}" title="${escapeHtml(r.last_test_detail || '')}">${escapeHtml(HOST_TEST_LABEL[r.last_test_status] || r.last_test_status)}${r.last_test_at ? ` · ${escapeHtml(new Date(r.last_test_at).toLocaleString('ro-RO'))}` : ''}</span>`
+        : '<span class="host-test host-test-untested">netestat</span>';
+      const origin = r.source === 'env' ? '<span class="host-origin">.env</span>' : '';
+      const remove = r.source === 'owner'
+        ? `<button class="quiet btn-host-remove" data-host="${escapeHtml(r.host)}">Șterge</button>`
+        : '';
+      return `
+        <div class="allowed-host-row" data-host="${escapeHtml(r.host)}">
+          <code class="allowed-host-name">${escapeHtml(r.host)}</code> ${origin} ${status}
+          <span class="allowed-host-actions">
+            <button class="quiet btn-host-test" data-host="${escapeHtml(r.host)}">Testează</button>
+            ${remove}
+          </span>
+          ${r.last_test_status === 'FAILED' && r.last_test_detail ? `<div class="host-test-detail text-error">${escapeHtml(r.last_test_detail)}</div>` : ''}
+        </div>`;
+    })
+    .join('');
+  box.querySelectorAll('.btn-host-test').forEach((btn) => {
+    btn.addEventListener('click', () => testAllowedHost(btn.getAttribute('data-host'), btn));
+  });
+  box.querySelectorAll('.btn-host-remove').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      try {
+        await api(`/factual/sources/allowed-hosts/${encodeURIComponent(btn.getAttribute('data-host') || '')}`, { method: 'DELETE' });
+        await loadSources();
+      } catch (err) {
+        showSourceStatus(err.message, true);
+      }
+    });
+  });
+}
+
+function showSourceStatus(text, isError) {
+  const status = element('source-retrieve-status');
+  status.hidden = false;
+  status.textContent = text;
+  status.className = `dialog-status-msg ${isError ? 'text-error' : 'text-success'}`;
+}
+
+async function testAllowedHost(host, btn) {
+  if (!host) return;
+  const button = /** @type {HTMLButtonElement | null} */ (btn);
+  if (button) { button.disabled = true; button.textContent = 'Se testează…'; }
+  try {
+    const result = await api(`/factual/sources/allowed-hosts/${encodeURIComponent(host)}/test`, { method: 'POST' });
+    showSourceStatus(
+      result.status === 'PASSED'
+        ? `${host}: poate fi citit. ${result.detail}`
+        : `${host}: nu poate fi folosit ca sursă. ${result.detail}`,
+      result.status !== 'PASSED',
+    );
+  } catch (err) {
+    showSourceStatus(err.message, true);
+  } finally {
+    await loadSources();
+  }
+}
+
+element('allowed-host-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const input = /** @type {HTMLInputElement} */ (element('allowed-host-input'));
+  const host = input.value.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+  if (!host) return;
+  try {
+    await api(`/factual/sources/allowed-hosts/${encodeURIComponent(host)}`, { method: 'PUT' });
+    input.value = '';
+    await loadSources();
+    await testAllowedHost(host, null);
+  } catch (err) {
+    showSourceStatus(err.message, true);
+  }
+});
+
 async function loadSources() {
   const listEl = element('sources-list');
-  const allowEl = element('sources-allowlist');
   try {
     const data = await api('/factual/sources');
-    const hosts = data.allowed_hosts || [];
-    allowEl.textContent = hosts.length
-      ? `Site-uri autorizate: ${hosts.join(', ')}. Lista se schimbă doar în .env (STUDIO_RESEARCH_ALLOWED_HOSTS).`
-      : 'Niciun site autorizat. Adaugă gazdele în .env la STUDIO_RESEARCH_ALLOWED_HOSTS și repornește studioul; până atunci preluarea surselor este oprită.';
-    allowEl.className = hosts.length ? 'helper-note' : 'helper-note helper-warn';
+    renderAllowedHosts(data.allowed_host_rows || []);
 
     const sources = data.sources || [];
     if (!sources.length) {

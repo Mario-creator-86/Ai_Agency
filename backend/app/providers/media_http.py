@@ -140,6 +140,40 @@ def png_dimensions(data: bytes) -> tuple[int, int]:
     return int(width), int(height)
 
 
+def jpeg_dimensions(data: bytes) -> tuple[int, int]:
+    """Read width and height from a JPEG's first frame header (SOF marker)."""
+    if len(data) < 4 or data[:2] != b"\xff\xd8":
+        raise MediaProviderError("The provider did not return a JPEG image")
+    index = 2
+    while index + 9 < len(data):
+        if data[index] != 0xFF:
+            index += 1
+            continue
+        marker = data[index + 1]
+        if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
+            index += 2
+            continue
+        (length,) = struct.unpack(">H", data[index + 2 : index + 4])
+        if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+            height, width = struct.unpack(">HH", data[index + 5 : index + 9])
+            if not (0 < width <= 8192 and 0 < height <= 8192):
+                raise MediaProviderError("The returned image has implausible dimensions")
+            return int(width), int(height)
+        index += 2 + length
+    raise MediaProviderError("The JPEG image has no readable frame header")
+
+
+def image_dimensions(data: bytes, content_type: str) -> tuple[str, int, int]:
+    """(format, width, height) measured from the bytes; the content type only picks the parser."""
+    if data[:8] == b"\x89PNG\r\n\x1a\n" or "png" in content_type:
+        width, height = png_dimensions(data)
+        return "png", width, height
+    if data[:3] == b"\xff\xd8\xff" or "jpeg" in content_type or "jpg" in content_type:
+        width, height = jpeg_dimensions(data)
+        return "jpeg", width, height
+    raise MediaProviderError("The provider returned an image format the studio cannot measure")
+
+
 def mp3_duration_seconds(data: bytes) -> float:
     """Estimate an MP3's duration by walking its frame headers.
 

@@ -157,11 +157,11 @@ CATALOG = {
         "media",
         [KEY],
         "media",
-        "Salvarea verifică cheia și încarcă din cont modelele video disponibile, cu limitele "
-        "lor. Modelul video implicit se alege separat, în configurația de producție, și "
-        "rămâne doar o rezervă: producția poate alege alt model descoperit.",
+        "Salvarea verifică cheia și încarcă din cont modelele video și de imagine disponibile, "
+        "cu limitele lor. Modelele implicite se aleg separat, în configurația de producție, și "
+        "rămân doar o rezervă: producția poate alege alt model descoperit.",
         "https://docs.dev.runwayml.com/",
-        ["video"],
+        ["video", "image"],
     ),
     "replicate": service(
         "Replicate",

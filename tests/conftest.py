@@ -159,6 +159,17 @@ def runway_api(monkeypatch):
                 raise MediaProviderError("docs.dev.runwayml.com could not be reached")
             return contract(), b"", "application/json"
         if host == "files.test":
+            if path.split("?", 1)[0].endswith(".png"):
+                # A 720x1280 PNG header: enough for the adapter to measure, nothing more.
+                import struct
+
+                png = (
+                    b"\x89PNG\r\n\x1a\n"
+                    + b"\x00\x00\x00\x0dIHDR"
+                    + struct.pack(">II", 720, 1280)
+                    + b"\x08\x06\x00\x00\x00"
+                )
+                return None, png, "image/png"
             return None, b"MP4BYTES", "video/mp4"
         assert host == "api.dev.runwayml.com", host
         assert headers["Authorization"].startswith("Bearer ") and headers["X-Runway-Version"]
@@ -168,7 +179,11 @@ def runway_api(monkeypatch):
                 "tier": {"maxMonthlyCreditSpend": 100000, "models": fake.models},
                 "usage": {"models": fake.usage},
             }
-        elif method == "POST" and path in ("/v1/text_to_video", "/v1/image_to_video"):
+        elif method == "POST" and path in (
+            "/v1/text_to_video",
+            "/v1/image_to_video",
+            "/v1/text_to_image",
+        ):
             fake.bodies.append(json.loads(body))
             payload = {"id": "task-1", "estimatedCost": {"credits": 25}}
         elif method == "GET" and path.startswith("/v1/tasks/"):

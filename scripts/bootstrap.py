@@ -34,8 +34,8 @@ def main() -> None:
     try:
         migrate(engine)
         bootstrap_studio(engine, settings)
-        seed_initial_workforce(engine)
-        seed_default_character_bibles(engine)
+        seed_initial_workforce(engine)  # roles, agents, and their work contracts
+        seed_default_character_bibles(engine)  # linked to the employees holding each role
         seed_default_channels(engine)
         # The virtual books need their accounts before anything can be posted. Seeding creates
         # the structure only; the ledger stays empty until real evidence is recorded.

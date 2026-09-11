@@ -17,6 +17,7 @@ from uuid import uuid4
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
+from app.agents.identity import compose_identity, seed_role_contracts
 from app.agents.models import (
     Agent,
     AgentRun,
@@ -342,14 +343,24 @@ def run_agent_task(
     temperature: float | None = None,
     emit_message: bool = True,
 ) -> dict:
-    """Execute an agent LLM run through the policy kernel. Returns AgentRunView dict."""
+    """Execute an agent LLM run through the policy kernel. Returns AgentRunView dict.
+
+    Every run carries the agent's identity as the system prompt — name, role, mission,
+    contract, persona and memory (`compose_identity`) — and records what it was given as the
+    run's context manifest. The task text is the user prompt; it never has to repeat who the
+    agent is.
+    """
     run_id = str(uuid4())
     started_at = utc_now()
+    system_prompt: str | None = None
+    context: dict = {}
 
     with Session(engine) as session, session.begin():
         agent = session.get(Agent, agent_id)
         if agent is None:
             raise ValueError(f"Agent {agent_id} not found")
+        identity = compose_identity(session, agent, task_type=task_type)
+        system_prompt, context = identity.system, identity.context
 
         provider_rec = session.get(ProviderRecord, agent.provider_id)
         model_rec = session.get(ModelRecord, agent.model_id)
@@ -379,6 +390,7 @@ def run_agent_task(
                 started_at=started_at,
                 finished_at=utc_now(),
                 event_id=None,
+                context_json=context,
             )
             session.add(run)
             session.flush()
@@ -431,6 +443,7 @@ def run_agent_task(
             adapter.generate(
                 model_name,
                 objective,
+                system=system_prompt,
                 max_tokens=max_tokens,
                 temperature=temperature,
             )
@@ -504,6 +517,7 @@ def run_agent_task(
             started_at=started_at,
             finished_at=finished_at,
             event_id=event.event_id,
+            context_json=context,
         )
         session.add(run)
         session.flush()
@@ -530,11 +544,20 @@ def run_agent_task(
 def seed_initial_workforce(engine: Engine) -> None:
     """Seed baseline roles, the Ollama endpoint, its expected models, and the agents.
 
+    Role work contracts (config/role_contracts.json) are seeded afterwards, on every call,
+    because they also have to reach a studio whose roles were created before contracts
+    existed; that seed fills only what the Owner has not written.
+
     Seeding writes intent, never observation. The provider is recorded NOT_CONFIGURED with no
     health-check timestamp and its models unavailable with no verification timestamp, because
     nothing in this function contacts Ollama. Only ``sync_provider_models`` — which does make
     the call — may mark a model available or stamp ``last_verified``.
     """
+    _seed_initial_workforce(engine)
+    seed_role_contracts(engine)
+
+
+def _seed_initial_workforce(engine: Engine) -> None:
     with Session(engine) as session, session.begin():
         existing_agents = session.scalar(select(func.count()).select_from(Agent))
         if existing_agents and existing_agents > 0:

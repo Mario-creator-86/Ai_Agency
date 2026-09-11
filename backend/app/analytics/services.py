@@ -627,6 +627,20 @@ def apply_director_recommendation(
             corr,
         )
         new_strat.event_id = event.event_id
+        from app.agents.memory import remember
+
+        remember(
+            session,
+            memory_class="STRATEGY",
+            content=(
+                f"Strategy v{new_version} on channel {rec.channel_id}: "
+                f"{rec.recommendation_type} for '{rec.target_entity}' "
+                f"(weight change {delta:+.2f}), from cohort evidence."
+            ),
+            source_type="event",
+            source_id=new_strat_id,
+            event_id=event.event_id,
+        )
 
         session.flush()
         return ContentStrategyView.model_validate(new_strat).model_dump()

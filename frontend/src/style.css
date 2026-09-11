@@ -341,9 +341,26 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 .char-row { color: var(--ink-2); font-size: 12px; line-height: 1.45; display: flex; gap: 6px; }
 .char-label { color: var(--ink-3); flex-shrink: 0; min-width: 92px; }
 .policy-tag { font-size: 11px; padding: 2px 7px; border-radius: 4px; border: 1px solid var(--line-strong); }
+.allowed-hosts { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 10px; }
+.allowed-host-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12.5px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; }
+.allowed-host-name { font-size: 12.5px; }
+.allowed-host-actions { margin-left: auto; display: flex; gap: 6px; }
+.host-origin { font-size: 10.5px; color: var(--ink-3); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
+.host-test { font-size: 11px; padding: 2px 7px; border-radius: 4px; border: 1px solid var(--line-strong); }
+.host-test-passed { color: var(--ink-2); background: var(--surface-quiet); }
+.host-test-failed { color: var(--gold-ink); background: var(--warn-bg); border-color: var(--warn-line); }
+.host-test-untested { color: var(--ink-3); }
+.host-test-detail { flex-basis: 100%; font-size: 12px; }
 .policy-flexible { color: var(--ink-2); background: var(--surface-quiet); }
 .policy-locked { color: var(--gold-ink); background: var(--warn-bg); border-color: var(--warn-line); }
 .settings-toggle { display: flex; align-items: center; gap: 6px; font-size: 12.5px; }
+.identity-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; font-size: 12.5px; }
+.identity-block ul { margin: 0; padding-left: 16px; color: var(--ink-2); }
+.identity-list { list-style: none; margin: 0 0 8px; padding: 0; font-size: 12.5px; line-height: 1.5; }
+.identity-list li { padding: 3px 0; border-bottom: 1px dashed var(--line); }
+.identity-prompt { margin-top: 10px; font-size: 12.5px; }
+.identity-prompt summary { cursor: pointer; color: var(--ink-3); }
+.identity-prompt pre { max-height: 260px; }
 
 /* ============================================================== publishing -- */
 .pub-overview-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }

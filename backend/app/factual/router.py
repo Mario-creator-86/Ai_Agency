@@ -48,11 +48,16 @@ from app.factual.services import (
 from app.research.retrieval import RateLimited, RetrievalError
 from app.research.service import (
     NOT_CONFIGURED_DETAIL,
+    HostError,
     HostNotAllowed,
     RetrievalNotConfigured,
+    add_allowed_host,
+    allowed_host_rows,
     allowed_hosts,
     list_sources,
+    remove_allowed_host,
     retrieve_and_ingest,
+    test_allowed_host,
 )
 from app.security import require_owner
 
@@ -129,8 +134,46 @@ def create_factual_router() -> APIRouter:
         """Stored sources, plus the hosts the Owner has authorised the studio to fetch."""
         return {
             "sources": list_sources(request.app.state.engine),
-            "allowed_hosts": list(allowed_hosts(request.app.state.settings)),
+            "allowed_hosts": list(
+                allowed_hosts(request.app.state.settings, request.app.state.engine)
+            ),
+            "allowed_host_rows": allowed_host_rows(
+                request.app.state.settings, request.app.state.engine
+            ),
         }
+
+    @router.get("/sources/allowed-hosts")
+    def get_allowed_hosts(request: Request) -> dict:
+        return {"hosts": allowed_host_rows(request.app.state.settings, request.app.state.engine)}
+
+    @router.put("/sources/allowed-hosts/{host}")
+    def put_allowed_host(host: str, request: Request) -> dict:
+        """The Owner authorises a site. Agents have no tool that reaches this endpoint."""
+        try:
+            return add_allowed_host(request.app.state.engine, host)
+        except HostError as exc:
+            raise HTTPException(422, str(exc)) from None
+
+    @router.delete("/sources/allowed-hosts/{host}")
+    def delete_allowed_host(host: str, request: Request) -> dict:
+        try:
+            remove_allowed_host(request.app.state.engine, host)
+        except HostError as exc:
+            raise HTTPException(404, str(exc)) from None
+        return {"removed": host.strip().lower()}
+
+    @router.post("/sources/allowed-hosts/{host}/test")
+    def post_test_allowed_host(host: str, request: Request) -> dict:
+        """Fetch the site's front page for real and report whether the studio can read it."""
+        try:
+            return test_allowed_host(
+                request.app.state.engine,
+                request.app.state.settings,
+                host,
+                retriever=getattr(request.app.state, "source_retriever", None),
+            )
+        except HostError as exc:
+            raise HTTPException(404, str(exc)) from None
 
     @router.post("/sources/retrieve", response_model=RetrievedSourceView)
     def post_retrieve_source(request: Request, cmd: RetrieveSourceCommand) -> dict:

@@ -20,12 +20,23 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import time
 from collections.abc import Iterator
 from typing import Any
 from urllib.parse import quote, urlsplit
 
-from app.providers.media_base import VideoGenerationResult, VideoProvider
-from app.providers.media_http import MediaProviderError, MediaProviderNotConfigured, request
+from app.providers.media_base import (
+    ImageProvider,
+    ImageResult,
+    VideoGenerationResult,
+    VideoProvider,
+)
+from app.providers.media_http import (
+    MediaProviderError,
+    MediaProviderNotConfigured,
+    image_dimensions,
+    request,
+)
 
 HOST = "api.dev.runwayml.com"
 DOCS_HOST = "docs.dev.runwayml.com"
@@ -35,6 +46,12 @@ API_VERSION = "2024-11-06"
 #: Task endpoints whose output is a video clip. Endpoint names are part of the API contract
 #: (the paths above), not model names; a model serves a task only if the contract says so.
 VIDEO_TASKS = ("text_to_video", "image_to_video", "video_to_video", "character_performance")
+#: Task endpoints whose output is a still image.
+IMAGE_TASKS = ("text_to_image",)
+#: How long a still may take. Runway queues tasks; polling stops at the deadline, and a task
+#: still running then is reported as such rather than waited for indefinitely.
+IMAGE_DEADLINE_SECONDS = 240
+IMAGE_POLL_SECONDS = 3.0
 
 #: Runway task states -> the studio's VideoGenerationResult states.
 TASK_STATES = {
@@ -193,7 +210,9 @@ def _image_data_uri(image: bytes) -> str:
     return f"data:{mime};base64," + base64.b64encode(image).decode("ascii")
 
 
-class RunwayVideoAdapter(VideoProvider):
+class _RunwayClient:
+    """What every Runway adapter shares: the key, the model's contract, the task plumbing."""
+
     PROVIDER_NAME = "RUNWAY"
     ADAPTER_VERSION = "1.0.0"
 
@@ -220,6 +239,139 @@ class RunwayVideoAdapter(VideoProvider):
             "Accept": "application/json",
         }
 
+    def _require_task(self, task: str) -> None:
+        if not self.model:
+            raise MediaProviderNotConfigured("Select a Runway model in Settings")
+        tasks = self.model_metadata.get("tasks")
+        if isinstance(tasks, list) and task not in tasks:
+            raise MediaProviderError(
+                f"Model {self.model} does not serve {task} according to Runway's contract"
+            )
+
+    def _ratio_for(self, task: str, aspect_ratio: str) -> str:
+        ratios = self.model_metadata.get("ratios", {})
+        return pick_ratio(ratios.get(task) if isinstance(ratios, dict) else None, aspect_ratio)
+
+    async def _submit(self, task: str, body: dict[str, Any]) -> str:
+        data, _, _ = await asyncio.to_thread(
+            request,
+            HOST,
+            "POST",
+            f"/v1/{task}",
+            self._headers(),
+            json.dumps(body).encode("utf-8"),
+            timeout=60,
+        )
+        task_id = data.get("id") if isinstance(data, dict) else None
+        if not isinstance(task_id, str) or not task_id:
+            raise MediaProviderError("Runway did not return a task id")
+        return task_id
+
+    async def _task(self, job_id: str) -> dict[str, Any]:
+        data, _, _ = await asyncio.to_thread(
+            request, HOST, "GET", f"/v1/tasks/{quote(job_id, safe='')}", self._headers(), timeout=30
+        )
+        if not isinstance(data, dict) or not isinstance(data.get("status"), str):
+            raise MediaProviderError("Runway did not return the task status")
+        return data
+
+    async def _download(self, url: str) -> tuple[bytes, str]:
+        parts = urlsplit(url)
+        if parts.scheme != "https" or not parts.hostname:
+            raise MediaProviderError("Runway returned an output that is not an HTTPS URL")
+        path = parts.path + ("?" + parts.query if parts.query else "")
+        _, payload, content_type = await asyncio.to_thread(
+            request, parts.hostname, "GET", path, {}, timeout=120, expect_json=False
+        )
+        if not payload:
+            raise MediaProviderError("Runway's output could not be downloaded")
+        return payload, content_type
+
+
+class RunwayImageAdapter(_RunwayClient, ImageProvider):
+    """Stills through Runway's text_to_image task, with the model's contract for the ratio.
+
+    A task is queued and polled; the still comes back as the bytes Runway served, measured
+    from those bytes. A task that has not finished by the deadline raises — nothing invents
+    a picture for a scene.
+    """
+
+    PROVIDER_NAME = "RUNWAY_IMAGES"
+
+    async def health_check(self) -> dict[str, Any]:
+        try:
+            data, _, _ = await asyncio.to_thread(
+                request, HOST, "GET", "/v1/organization", self._headers(), timeout=20
+            )
+        except MediaProviderError as exc:
+            return {"status": "OFFLINE", "detail": str(exc), "code": exc.code}
+        if not isinstance(data, dict) or not isinstance(data.get("tier"), dict):
+            return {"status": "OFFLINE", "detail": "Runway did not describe the organization"}
+        return {"status": "HEALTHY", "detail": ""}
+
+    async def generate_image(
+        self,
+        prompt: str,
+        *,
+        width: int = 1080,
+        height: int = 1920,
+        style: str | None = None,
+        seed: int | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> ImageResult:
+        task = "text_to_image"
+        self._require_task(task)
+        described = " ".join(f"{prompt} {style or ''}".split())[:1000]
+        if not described:
+            raise MediaProviderError("There is no prompt to generate an image from")
+        body: dict[str, Any] = {
+            "model": self.model,
+            "promptText": described,
+            "ratio": self._ratio_for(task, f"{width}:{height}"),
+        }
+        if isinstance(seed, int):
+            body["seed"] = seed
+        job_id = await self._submit(task, body)
+        deadline = time.monotonic() + IMAGE_DEADLINE_SECONDS
+        while True:
+            data = await self._task(job_id)
+            remote = data["status"]
+            if remote == "SUCCEEDED":
+                break
+            if remote in ("FAILED", "CANCELLED"):
+                code = data.get("failureCode")
+                raise MediaProviderError(
+                    f"Runway image task {remote.lower()}",
+                    code=code if isinstance(code, str) else None,
+                )
+            if time.monotonic() >= deadline:
+                raise MediaProviderError("Runway image task did not finish before the deadline")
+            await asyncio.sleep(IMAGE_POLL_SECONDS)
+        outputs = data.get("output")
+        url = outputs[0] if isinstance(outputs, list) and outputs else None
+        if not isinstance(url, str):
+            raise MediaProviderError("Runway reported success without an output")
+        image, content_type = await self._download(url)
+        fmt, actual_width, actual_height = image_dimensions(image, content_type)
+        return ImageResult(
+            image_bytes=image,
+            format=fmt,
+            width=actual_width,
+            height=actual_height,
+            seed=seed if isinstance(seed, int) else None,
+            prompt=described,
+            raw_response={
+                "provider": self.PROVIDER_NAME,
+                "model": self.model,
+                "task_id": job_id,
+                "ratio": body["ratio"],
+                "content_type": content_type,
+                "bytes": len(image),
+            },
+        )
+
+
+class RunwayVideoAdapter(_RunwayClient, VideoProvider):
     async def organization(self) -> dict[str, Any]:
         data, _, _ = await asyncio.to_thread(
             request, HOST, "GET", "/v1/organization", self._headers(), timeout=20
@@ -296,19 +448,13 @@ class RunwayVideoAdapter(VideoProvider):
         if not self.model:
             raise MediaProviderNotConfigured("Select a Runway video model in Settings")
         task = "image_to_video" if image_ref else "text_to_video"
-        tasks = self.model_metadata.get("tasks")
-        if isinstance(tasks, list) and task not in tasks:
-            raise MediaProviderError(
-                f"Model {self.model} does not serve {task} according to Runway's contract"
-            )
-        ratios = self.model_metadata.get("ratios", {})
+        self._require_task(task)
         durations = self.model_metadata.get("durations", {})
-        task_ratios = ratios.get(task) if isinstance(ratios, dict) else None
         task_durations = durations.get(task) if isinstance(durations, dict) else None
         body: dict[str, Any] = {
             "model": self.model,
             "promptText": text,
-            "ratio": pick_ratio(task_ratios, aspect_ratio),
+            "ratio": self._ratio_for(task, aspect_ratio),
             "duration": pick_duration(task_durations, duration_seconds),
         }
         if not text and task == "text_to_video":
@@ -317,26 +463,10 @@ class RunwayVideoAdapter(VideoProvider):
             body["promptImage"] = _image_data_uri(image_ref)
         if isinstance(extra, dict) and isinstance(extra.get("seed"), int):
             body["seed"] = extra["seed"]
-        data, _, _ = await asyncio.to_thread(
-            request,
-            HOST,
-            "POST",
-            f"/v1/{task}",
-            self._headers(),
-            json.dumps(body).encode("utf-8"),
-            timeout=60,
-        )
-        task_id = data.get("id") if isinstance(data, dict) else None
-        if not isinstance(task_id, str) or not task_id:
-            raise MediaProviderError("Runway did not return a task id")
-        return task_id
+        return await self._submit(task, body)
 
     async def get_generation_status(self, job_id: str) -> VideoGenerationResult:
-        data, _, _ = await asyncio.to_thread(
-            request, HOST, "GET", f"/v1/tasks/{quote(job_id, safe='')}", self._headers(), timeout=30
-        )
-        if not isinstance(data, dict) or not isinstance(data.get("status"), str):
-            raise MediaProviderError("Runway did not return the task status")
+        data = await self._task(job_id)
         remote = data["status"]
         status = TASK_STATES.get(remote)
         if status is None:
@@ -354,15 +484,7 @@ class RunwayVideoAdapter(VideoProvider):
             url = outputs[0] if isinstance(outputs, list) and outputs else None
             if not isinstance(url, str):
                 raise MediaProviderError("Runway reported success without an output")
-            parts = urlsplit(url)
-            if parts.scheme != "https" or not parts.hostname:
-                raise MediaProviderError("Runway returned an output that is not an HTTPS URL")
-            path = parts.path + ("?" + parts.query if parts.query else "")
-            _, video, content_type = await asyncio.to_thread(
-                request, parts.hostname, "GET", path, {}, timeout=120, expect_json=False
-            )
-            if not video:
-                raise MediaProviderError("Runway's output could not be downloaded")
+            video, content_type = await self._download(url)
             raw["content_type"] = content_type
             raw["bytes"] = len(video)
         return VideoGenerationResult(

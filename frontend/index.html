@@ -109,6 +109,20 @@
           <button id="agent-pause-btn" class="secondary btn-pause">Pauză agent</button>
           <button id="agent-resume-btn" class="secondary btn-resume">Reia agent</button>
         </div>
+        <div class="dialog-section" id="inspector-identity">
+          <h3 class="dialog-section-header">Identitate și contract de rol</h3>
+          <p id="inspector-mission" class="helper">Se încarcă identitatea…</p>
+          <div id="inspector-contract" class="identity-grid"></div>
+          <details class="identity-prompt">
+            <summary>Promptul de sistem, exact cum îl primește modelul</summary>
+            <pre id="inspector-system-prompt" class="dialog-output"></pre>
+          </details>
+        </div>
+        <div class="dialog-section" id="inspector-memory-section">
+          <h3 class="dialog-section-header">Memorie și mesaje</h3>
+          <ul id="inspector-memory" class="identity-list"></ul>
+          <ul id="inspector-messages" class="identity-list"></ul>
+        </div>
         <div class="dialog-section">
           <h3 class="dialog-section-header">Rulează o sarcină</h3>
           <form id="agent-run-form" class="dialog-form">
@@ -157,6 +171,11 @@
             <button id="refresh-sources-btn" class="quiet btn-refresh">Reîmprospătează</button>
           </div>
           <p id="sources-allowlist" class="helper-note">Se verifică site-urile autorizate…</p>
+          <div id="allowed-hosts" class="allowed-hosts"></div>
+          <form id="allowed-host-form" class="dialog-form source-form">
+            <input id="allowed-host-input" placeholder="Adaugă un site autorizat (ex: www.nasa.gov)" required class="dialog-input" autocomplete="off" spellcheck="false" />
+            <button type="submit" class="secondary dialog-submit-btn">Autorizează și testează ↗</button>
+          </form>
           <form id="source-retrieve-form" class="dialog-form source-form">
             <input id="source-url" type="url" placeholder="https://… link către o pagină de pe un site autorizat" required class="dialog-input" />
             <button type="submit" class="primary dialog-submit-btn">Adu sursa ↓</button>

@@ -167,6 +167,20 @@ def change_stop(engine: Engine, command: PolicyCommand) -> PolicyResult:
                 command_id,
             )
             event_id = event.event_id
+            from app.agents.memory import remember
+
+            remember(
+                session,
+                memory_class="OWNER_POLICY",
+                content=(
+                    "The Owner stopped autonomy: no autonomous work until it is cleared."
+                    if command.stopped
+                    else "The Owner cleared the autonomy stop: the studio may work on its own."
+                ),
+                source_type="owner",
+                source_id=event_id,
+                event_id=event_id,
+            )
         result = PolicyResult(
             command_id=command_id,
             status="COMMITTED" if changed else "NO_CHANGE",

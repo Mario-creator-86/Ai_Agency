@@ -28,6 +28,7 @@ logger = logging.getLogger("studio.media")
 DEFAULT_CHARACTERS = [
     {
         "canonical_name": "Sarah Executive",
+        "role": "Director",
         "palette_json": {"suit": "#1e3a8a", "tie": "#38bdf8", "hair": "#451a03", "desk": "#854d0e"},
         "face_hair_desc": (
             "Brunette professional bob with warm highlights; expressive determined brown eyes"
@@ -85,6 +86,7 @@ DEFAULT_CHARACTERS = [
     },
     {
         "canonical_name": "Dr. Aris Researcher",
+        "role": "LeadResearcher",
         "palette_json": {
             "coat": "#f8fafc",
             "shirt": "#0d9488",
@@ -149,6 +151,7 @@ DEFAULT_CHARACTERS = [
     },
     {
         "canonical_name": "Elena Fact-Checker",
+        "role": "FactChecker",
         "palette_json": {
             "vest": "#4d7c0f",
             "bun": "#78350f",
@@ -211,6 +214,7 @@ DEFAULT_CHARACTERS = [
     },
     {
         "canonical_name": "Marcus Scriptwriter",
+        "role": "ScriptWriter",
         "palette_json": {
             "hoodie": "#7c3aed",
             "hair": "#1e293b",
@@ -275,6 +279,7 @@ DEFAULT_CHARACTERS = [
     },
     {
         "canonical_name": "Lyra Voice Artist",
+        "role": "VoiceArtist",
         "palette_json": {
             "headphones": "#f43f5e",
             "sweater": "#ec4899",
@@ -340,6 +345,7 @@ DEFAULT_CHARACTERS = [
     },
     {
         "canonical_name": "Kael Video Editor",
+        "role": "VideoEditor",
         "palette_json": {
             "headset": "#06b6d4",
             "shirt": "#ea580c",
@@ -405,6 +411,7 @@ DEFAULT_CHARACTERS = [
     },
     {
         "canonical_name": "Vera Distribution Hub",
+        "role": "Publisher",
         "palette_json": {
             "console": "#22c55e",
             "suit": "#065f46",
@@ -486,19 +493,32 @@ def seed_default_character_bibles(engine: Engine) -> int:
     Returns how many rows were written: inserts, plus narrative fields completed on rows that
     were seeded before those fields existed. Idempotent, so it is safe on every read.
     """
+    from app.agents.models import Agent, Role
+
     with Session(engine) as session, session.begin():
         count = 0
+        # The employee each character is: the active agent holding the character's role.
+        # Filled only while empty, so an Owner's own assignment is never replaced.
+        agents_by_role = {
+            role.name: agent.id
+            for agent, role in session.execute(
+                select(Agent, Role)
+                .join(Role, Agent.role_id == Role.id)
+                .where(Agent.lifecycle == "ACTIVE")
+            ).all()
+        }
         for char_data in DEFAULT_CHARACTERS:
             existing = session.scalar(
                 select(CharacterBible).where(
                     CharacterBible.canonical_name == char_data["canonical_name"]
                 )
             )
+            employee_id = agents_by_role.get(char_data.get("role", ""))
             if not existing:
                 char_id = str(uuid4())
                 bible = CharacterBible(
                     id=char_id,
-                    employee_id=None,
+                    employee_id=employee_id,
                     canonical_name=char_data["canonical_name"],
                     palette_json=char_data["palette_json"],
                     face_hair_desc=char_data["face_hair_desc"],
@@ -525,6 +545,9 @@ def seed_default_character_bibles(engine: Engine) -> int:
                     if not getattr(existing, field):
                         setattr(existing, field, char_data[field])
                         count += 1
+                if existing.employee_id is None and employee_id:
+                    existing.employee_id = employee_id
+                    count += 1
         return count
 
 

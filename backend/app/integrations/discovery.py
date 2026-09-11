@@ -27,7 +27,7 @@ from app.integrations.models import (
 from app.integrations.vault import CredentialVault
 from app.providers.elevenlabs import ElevenLabsTTSAdapter
 from app.providers.media_http import MediaProviderError
-from app.providers.runway import VIDEO_TASKS, RunwayVideoAdapter
+from app.providers.runway import IMAGE_TASKS, VIDEO_TASKS, RunwayVideoAdapter
 from app.services import append_event, utc_now
 
 logger = logging.getLogger("studio.provider_discovery")
@@ -40,6 +40,8 @@ DISCOVERED_KINDS: dict[str, dict[str, Any]] = {
         "title": "Configurație de producție · ElevenLabs",
         "model_label": "Model implicit",
         "voice_label": "Voce implicită",
+        "image_model_label": None,
+        "purposes": ["voice"],
         "has_voices": True,
         "refresh_label": "Actualizează modelele și vocile",
         "syncing": "Se încarcă modelele și vocile…",
@@ -53,6 +55,8 @@ DISCOVERED_KINDS: dict[str, dict[str, Any]] = {
         "title": "Configurație de producție · Runway",
         "model_label": "Model video implicit",
         "voice_label": None,
+        "image_model_label": "Model imagine implicit",
+        "purposes": ["video", "image"],
         "has_voices": False,
         "refresh_label": "Actualizează modelele video",
         "syncing": "Se încarcă modelele video…",
@@ -142,30 +146,40 @@ def discovery_adapter(kind: str, key: str) -> ElevenLabsTTSAdapter | RunwayVideo
     raise ValueError("Conexiunea nu are un catalog de resurse")
 
 
-def model_usable(kind: str, resource: ProviderResource) -> bool:
-    """Whether a discovered MODEL can serve the purpose this kind of connection is for.
+def usable_purposes(kind: str, resource: ProviderResource) -> list[str]:
+    """The production purposes a discovered MODEL can serve, from the API's own evidence.
 
-    API evidence decides what a model can do; research (`capabilities`) may only restrict.
+    Research (`capabilities`) may restrict, or supply tasks the contract could not be read
+    for; it never makes a model able to do what the API did not say.
     """
     meta = resource.api_metadata if isinstance(resource.api_metadata, dict) else {}
     caps = resource.capabilities if isinstance(resource.capabilities, dict) else {}
     if kind == "elevenlabs":
-        return (
+        usable = (
             meta.get("can_do_text_to_speech") is True
             and caps.get("can_do_text_to_speech") is not False
         )
+        return ["voice"] if usable else []
     if kind == "runway":
         tasks = meta.get("tasks")
         if not isinstance(tasks, list):
             # The contract could not be read at refresh time; research may fill the gap.
             tasks = caps.get("tasks")
         if not isinstance(tasks, list):
-            return False
-        return (
-            any(task in VIDEO_TASKS for task in tasks)
-            and caps.get("can_generate_video") is not False
-        )
-    return True
+            return []
+        purposes = []
+        if any(t in VIDEO_TASKS for t in tasks) and caps.get("can_generate_video") is not False:
+            purposes.append("video")
+        if any(t in IMAGE_TASKS for t in tasks) and caps.get("can_generate_image") is not False:
+            purposes.append("image")
+        return purposes
+    return list(DISCOVERED_KINDS.get(kind, {}).get("purposes", ["voice", "image", "video"]))
+
+
+def model_usable(kind: str, resource: ProviderResource, purpose: str | None = None) -> bool:
+    """Whether a discovered MODEL can serve `purpose` (or any purpose, when None)."""
+    purposes = usable_purposes(kind, resource)
+    return bool(purposes) if purpose is None else purpose in purposes
 
 
 def reset_discovery(session: Session, identifier: str) -> None:
@@ -188,14 +202,19 @@ def resource_available(resource: ProviderResource) -> bool:
 
 
 def resource_view(row: ProviderResource, kind: str) -> dict:
-    usable = resource_available(row) and (row.resource_type != "MODEL" or model_usable(kind, row))
+    purposes = (
+        (usable_purposes(kind, row) if row.resource_type == "MODEL" else ["voice"])
+        if resource_available(row)
+        else []
+    )
     return dict(
         id=row.id,
         remote_id=row.remote_id,
         name=row.name,
         resource_type=row.resource_type,
         available=resource_available(row),
-        production_usable=usable,
+        production_usable=bool(purposes),
+        usable_purposes=purposes,
         api_available=row.api_available,
         api_metadata=row.api_metadata,
         last_seen_at=row.last_seen_at,
@@ -235,11 +254,18 @@ def catalog_view(session: Session, identifier: str) -> dict:
         production=dict(
             model_id=production.model_id,
             voice_id=production.voice_id,
+            image_model_id=production.image_model_id,
             allow_production_override=bool(production.allow_production_override),
             version=production.version,
         )
         if production
-        else dict(model_id=None, voice_id=None, allow_production_override=True, version=0),
+        else dict(
+            model_id=None,
+            voice_id=None,
+            image_model_id=None,
+            allow_production_override=True,
+            version=0,
+        ),
     )
 
 
@@ -460,6 +486,8 @@ class ProductionCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
     model_id: str | None = Field(default=None, min_length=1, max_length=200)
     voice_id: str | None = Field(default=None, min_length=1, max_length=200)
+    #: The default still-image model, for a connection that makes images too (Runway).
+    image_model_id: str | None = Field(default=None, min_length=1, max_length=200)
     #: True: channels, series, episodes and scenes may choose differently (the default is a
     #: fallback). False: every video on this connection uses exactly this model and voice,
     #: except a character whose voice identity is locked.
@@ -468,12 +496,17 @@ class ProductionCommand(BaseModel):
 
 
 def production_resource(
-    session: Session, identifier: str, resource_type: str, remote_id: str | None
+    session: Session,
+    identifier: str,
+    resource_type: str,
+    remote_id: str | None,
+    purpose: str | None = None,
 ) -> ProviderResource | None:
     """A discovered, available resource production may use, or None.
 
-    A MODEL must also serve the connection's purpose (a TTS model on ElevenLabs, a video
-    model on Runway); the API's own evidence decides that, see `model_usable`.
+    A MODEL must also serve `purpose` (a TTS model for voice, a video model for video, a
+    still model for image; any of them when no purpose is named); the API's own evidence
+    decides that, see `usable_purposes`.
     """
     resource = (
         session.scalar(
@@ -490,7 +523,7 @@ def production_resource(
         return None
     if resource_type == "MODEL":
         integration = session.get(Integration, identifier)
-        if integration is None or not model_usable(integration.kind, resource):
+        if integration is None or not model_usable(integration.kind, resource, purpose):
             return None
     return resource
 
@@ -502,15 +535,30 @@ def save_production(engine: Engine, identifier: str, command: ProductionCommand)
             raise ValueError("Conexiunea nu are un catalog de resurse")
         if integration.status != "VERIFIED":
             raise ValueError("Verifică mai întâi conexiunea")
-        has_voices = bool(DISCOVERED_KINDS[integration.kind]["has_voices"])
+        info = DISCOVERED_KINDS[integration.kind]
+        has_voices = bool(info["has_voices"])
         if command.voice_id and not has_voices:
             raise ValueError("Această conexiune nu are voci; alege doar modelul implicit")
-        for resource_type, value in (("MODEL", command.model_id), ("VOICE", command.voice_id)):
-            if value and production_resource(session, identifier, resource_type, value) is None:
+        if command.image_model_id and "image" not in info["purposes"]:
+            raise ValueError("Această conexiune nu generează imagini")
+        primary = "voice" if has_voices else "video"
+        for resource_type, value, purpose in (
+            ("MODEL", command.model_id, primary),
+            ("VOICE", command.voice_id, "voice"),
+            ("MODEL", command.image_model_id, "image"),
+        ):
+            if (
+                value
+                and production_resource(session, identifier, resource_type, value, purpose) is None
+            ):
                 raise ValueError(
                     "Alege un model TTS și o voce disponibile în catalogul acestui cont"
                     if has_voices
-                    else "Alege un model video disponibil în catalogul acestui cont"
+                    else (
+                        "Alege un model imagine disponibil în catalogul acestui cont"
+                        if purpose == "image"
+                        else "Alege un model video disponibil în catalogul acestui cont"
+                    )
                 )
         row = session.get(MediaProductionConfig, identifier)
         if (row.version if row else 0) != command.expected_version:
@@ -519,6 +567,7 @@ def save_production(engine: Engine, identifier: str, command: ProductionCommand)
             row = MediaProductionConfig(integration_id=identifier)
             session.add(row)
         row.model_id, row.voice_id = command.model_id, command.voice_id
+        row.image_model_id = command.image_model_id
         row.allow_production_override = command.allow_production_override
         row.version, row.updated_at = command.expected_version + 1, utc_now()
         append_event(
@@ -530,6 +579,7 @@ def save_production(engine: Engine, identifier: str, command: ProductionCommand)
             {
                 "model_id": row.model_id,
                 "voice_id": row.voice_id,
+                "image_model_id": row.image_model_id,
                 "allow_production_override": row.allow_production_override,
             },
             str(uuid4()),

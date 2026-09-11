@@ -1,5 +1,52 @@
 # Changelog
 
+## The preflight names the missing step; Runway makes stills; sites are added and tested — 2026-09-11
+
+The Owner had a verified ElevenLabs key selected for voice and a verified Runway key, and the
+preflight still said "no verified image/voice provider". The connections were fine; no default
+model and voice had been chosen, and nothing said so.
+
+- `media.factory.media_readiness()`: per purpose, READY / NO_SELECTION / NOT_VERIFIED /
+  NO_DEFAULT / NO_ADAPTER with the next action in the Owner's words; the preflight's image and
+  voice checks use it ("X este verificat și ales pentru Voce / TTS, dar nu are un model și o
+  voce implicită…").
+- Runway serves images too: `RunwayImageAdapter` (text_to_image task, polled, measured from
+  the bytes), a per-purpose usability from the discovered contract (`usable_purposes`), an
+  image default on the connection (`MediaProductionConfig.image_model_id`, "Model imagine
+  implicit" in Settings) and purpose-aware validation in the hierarchy. `CATALOG["runway"]`
+  now lists `video` and `image`.
+- Authorised source sites are an Owner action in the interface, not only a line in `.env`:
+  `research_allowed_host` (migration 0022), `PUT/DELETE /factual/sources/allowed-hosts/{host}`
+  with the same public-hostname rules as the configuration file, and
+  `POST …/{host}/test`, which fetches the site's front page through the real retriever and
+  records PASSED or the exact reason it cannot be read. The research modal lists hosts with
+  their origin and last test; the preflight counts the tested ones. No agent has a tool that
+  reaches these endpoints. Tests: `tests/test_sources_and_readiness.py`.
+- `migrate()` runs table rebuilds with foreign keys suspended (the live studio's 0021 failed
+  on referenced rows); regression test in `tests/test_foundation.py`.
+
+## Every employee has an identity, a memory and a report to file — 2026-09-11
+
+The model was never told who it was: `run_agent_task` sent the task text alone. Now every run
+carries a system prompt composed from stored data (name, role, mission, allowed and prohibited
+tasks, work contract, character voice, memory the role may read, standing rules) and records
+the manifest of it on the run. Write-up: `AGENT_IDENTITY_MEMORY.md`.
+
+- `config/role_contracts.json` → `role.work_contract_json` / `memory_scope_json` (what each
+  role watches, investigates, corrects, lets pass, never lets pass, escalates; who it reports
+  to; which stages it owns). Seeded, Owner-editable, never overwritten by a reseed.
+- Character Bible entries are linked to the employees holding their roles.
+- `memory_record` (04_AGENT_SYSTEM §9 classes) written by services on real outcomes with
+  provenance, expiry and invalidation; read by role scope; ids recorded per run.
+- `agent_message` with the spec's intents; the Director's inbox; events through the outbox.
+- Lyra reviews narration, Kael diagnoses failed renders, Vera prepares publication metadata
+  and may HOLD a candidate; the runbook publishes with her metadata or not at all.
+- `post_run` is the Director's desk: stage reports filed by their owners, then Sarah's review
+  (ACKNOWLEDGE / REQUEST_INVESTIGATION / APPROVE / REJECT / ESCALATE_TO_OWNER) as messages and
+  memory, never as a change to a gate.
+- API and Agent Inspector expose identity, contract, memory, messages and the prompt itself.
+- Migration 0022; `tests/test_agent_identity.py`.
+
 ## Runway: name and key only, models read from the account — 2026-09-11
 
 The Runway connection form asked for a "Model ID" and stored it as a preference; nothing

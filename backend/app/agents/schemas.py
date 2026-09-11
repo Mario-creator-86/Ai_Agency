@@ -92,3 +92,4 @@ class AgentRunView(BaseModel):
     started_at: str
     finished_at: str | None
     event_id: str | None
+    context_json: dict = {}

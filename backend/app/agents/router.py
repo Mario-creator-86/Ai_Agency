@@ -5,8 +5,14 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
+from app.agents.director import DirectorError, director_review
+from app.agents.identity import ContractCommand, identity_view, set_role_contract
+from app.agents.memory import MemoryError, invalidate, list_memory
+from app.agents.messages import MessageError, list_messages, resolve_message
 from app.agents.schemas import AgentRunView, RunAgentCommand
 from app.agents.services import (
     get_agent,
@@ -23,12 +29,66 @@ from app.providers.registry import ProviderRegistry
 from app.security import require_owner
 
 
+class ResolveMessageCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    resolution: str = Field(min_length=1, max_length=2000)
+
+
+class InvalidateMemoryCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(min_length=1, max_length=600)
+
+
 def create_agents_router(registry: ProviderRegistry) -> APIRouter:
     router = APIRouter(prefix="/agents", dependencies=[Depends(require_owner)])
 
     @router.get("/roles")
     def get_roles(request: Request) -> dict:
         return {"roles": list_roles(request.app.state.engine)}
+
+    @router.put("/roles/{role_id}/contract")
+    def put_role_contract(
+        request: Request,
+        role_id: Annotated[str, Path(min_length=36, max_length=36)],
+        command: ContractCommand,
+    ) -> dict:
+        try:
+            return set_role_contract(request.app.state.engine, role_id, command)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @router.get("/messages")
+    def get_messages(
+        request: Request, status: str | None = None, agent_id: str | None = None
+    ) -> dict:
+        return {
+            "messages": list_messages(request.app.state.engine, status=status, agent_id=agent_id)
+        }
+
+    @router.post("/messages/{message_id}/resolve")
+    def post_resolve_message(
+        request: Request,
+        message_id: Annotated[str, Path(min_length=36, max_length=36)],
+        command: ResolveMessageCommand,
+    ) -> dict:
+        from app.agents.messages import message_view
+
+        try:
+            with Session(request.app.state.engine) as session, session.begin():
+                row = resolve_message(
+                    session, message_id, resolution=command.resolution, resolved_by="Owner"
+                )
+                return message_view(row)
+        except MessageError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @router.post("/director/review")
+    def post_director_review(request: Request) -> dict:
+        """The Owner asks the Director to review the inbox now, outside the daily run."""
+        try:
+            return director_review(request.app.state.engine, request.app.state.registry)
+        except DirectorError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @router.get("/")
     def get_agents(request: Request) -> dict:
@@ -43,6 +103,42 @@ def create_agents_router(registry: ProviderRegistry) -> APIRouter:
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
         return agent
+
+    @router.get("/{agent_id}/identity")
+    def get_agent_identity(
+        request: Request,
+        agent_id: Annotated[str, Path(min_length=36, max_length=36)],
+    ) -> dict:
+        """The identity the model is given: contract, character, memory, the prompt itself."""
+        identity = identity_view(request.app.state.engine, agent_id)
+        if identity is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        identity["messages"] = list_messages(request.app.state.engine, agent_id=agent_id, limit=20)
+        return identity
+
+    @router.get("/{agent_id}/memory")
+    def get_agent_memory(
+        request: Request,
+        agent_id: Annotated[str, Path(min_length=36, max_length=36)],
+    ) -> dict:
+        if get_agent(request.app.state.engine, agent_id) is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        return {"memory": list_memory(request.app.state.engine, agent_id)}
+
+    @router.post("/{agent_id}/memory/{record_id}/invalidate")
+    def post_invalidate_memory(
+        request: Request,
+        agent_id: Annotated[str, Path(min_length=36, max_length=36)],
+        record_id: Annotated[str, Path(min_length=36, max_length=36)],
+        command: InvalidateMemoryCommand,
+    ) -> dict:
+        from app.agents.memory import memory_view
+
+        try:
+            with Session(request.app.state.engine) as session, session.begin():
+                return memory_view(invalidate(session, record_id, command.reason))
+        except MemoryError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @router.post("/{agent_id}/run", response_model=AgentRunView)
     def run_agent(

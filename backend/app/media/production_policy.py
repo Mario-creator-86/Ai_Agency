@@ -150,7 +150,13 @@ def organization_default(session: Session, purpose: str) -> tuple[dict[str, Any]
     allow = True
     config = session.get(MediaProductionConfig, integration.id)
     if config is not None:
-        value["model_id"] = config.model_id
+        # A connection serving two purposes keeps a default per purpose: its image default is
+        # not its video default. Other purposes read the primary default.
+        value["model_id"] = (
+            config.image_model_id
+            if purpose == "image" and config.image_model_id
+            else config.model_id
+        )
         value["voice_id"] = config.voice_id
         allow = bool(config.allow_production_override)
     elif isinstance(integration.config, dict) and integration.config.get("model"):
@@ -197,7 +203,11 @@ def _number(value: Any, default: float) -> float:
 
 
 def rank_candidates(
-    session: Session, integration_id: str, kind: str, criteria: dict[str, Any] | None
+    session: Session,
+    integration_id: str,
+    kind: str,
+    criteria: dict[str, Any] | None,
+    purpose: str | None = None,
 ) -> list[dict[str, Any]]:
     """Order discovered, available resources of one connection for an `auto` strategy.
 
@@ -237,7 +247,7 @@ def rank_candidates(
             continue
         if (
             kind == "MODEL"
-            and production_resource(session, integration_id, kind, row.remote_id) is None
+            and production_resource(session, integration_id, kind, row.remote_id, purpose) is None
         ):
             continue
         caps = row.capabilities if isinstance(row.capabilities, dict) else {}
@@ -449,7 +459,7 @@ def resolve_purpose(
             # The level that asked for `auto` may still fix a model or a voice by hand; the
             # ranking decides only what it left open, and it replaces inherited choices.
             models = rank_candidates(
-                session, merged["integration_id"], "MODEL", merged.get("criteria")
+                session, merged["integration_id"], "MODEL", merged.get("criteria"), purpose
             )
             if models and "model_id" not in auto_fixed:
                 merged["model_id"] = models[0]["remote_id"]
@@ -515,10 +525,13 @@ def _validate(session: Session, purpose: str, merged: dict[str, Any]) -> tuple[b
     if integration.status not in ("VERIFIED", "ACCESS_VERIFIED"):
         return False, "Selected connection is not verified"
     if integration.kind in DISCOVERED_KINDS:
-        if production_resource(session, integration_id, "MODEL", merged.get("model_id")) is None:
+        if (
+            production_resource(session, integration_id, "MODEL", merged.get("model_id"), purpose)
+            is None
+        ):
             return (
                 False,
-                "Model is not a discovered, available model of this connection for its purpose",
+                f"Model is not a discovered, available {purpose} model of this connection",
             )
         if (
             purpose == "voice"
@@ -993,6 +1006,21 @@ def decide_identity_change(
         )
         change.event_id = event.event_id
         row.event_id = event.event_id
+        if command.status in ("APPROVED", "REJECTED"):
+            from app.agents.memory import remember
+
+            remember(
+                session,
+                memory_class="OWNER_POLICY",
+                content=(
+                    f"Identity change for {row.canonical_name} ({change.field}) was "
+                    f"{command.status.lower()} by {command.decided_by}"
+                    + (f": {command.notes}" if command.notes else ".")
+                ),
+                source_type="owner",
+                source_id=change.id,
+                event_id=event.event_id,
+            )
         return identity_change_view(change)
 
 

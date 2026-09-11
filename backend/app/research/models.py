@@ -1,0 +1,28 @@
+"""Hosts the Owner authorised for source retrieval, with the result of their last test."""
+
+from __future__ import annotations
+
+from sqlalchemy import ForeignKey, String, Text
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.models import Base
+
+
+class ResearchAllowedHost(Base):
+    """One Owner-authorised host (bare lowercase DNS name), next to the ones in .env.
+
+    Only the Owner writes here, through an authenticated endpoint; no agent has a tool that
+    reaches it, so the allowlist stays the Owner's. A host is a source only if the studio can
+    actually read it, which is what the test columns record.
+    """
+
+    __tablename__ = "research_allowed_host"
+
+    host: Mapped[str] = mapped_column(String(253), primary_key=True)
+    added_by: Mapped[str] = mapped_column(String(50), nullable=False, default="owner")
+    added_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    last_test_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    #: PASSED | FAILED — what happened when the studio last fetched the host's front page.
+    last_test_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    last_test_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    event_id: Mapped[str | None] = mapped_column(ForeignKey("domain_event.event_id"), nullable=True)

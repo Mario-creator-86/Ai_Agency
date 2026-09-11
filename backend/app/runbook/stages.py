@@ -34,6 +34,17 @@ from uuid import uuid4
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
+from app.agents.director import DirectorError, director_review, file_stage_reports
+from app.agents.memory import agent_for_role, remember
+from app.agents.reviews import (
+    NoReviewer,
+    ReviewError,
+    approved_metadata,
+    prepare_publication,
+    publication_hold,
+    review_failed_render,
+    review_narration,
+)
 from app.analytics.services import MetricsUnavailable, ingest_publication_metrics
 from app.config import Settings
 from app.factual.agent_pipeline import (
@@ -320,8 +331,16 @@ def _script_and_storyboard(engine: Engine, registry: ProviderRegistry) -> dict[s
 # ----------------------------------------------------------------------------- media --
 
 
-def _media(engine: Engine, settings: Settings, vault: Any) -> dict[str, Any]:
-    """Render the storyboards that have no finished video yet."""
+def _media(
+    engine: Engine, settings: Settings, vault: Any, registry: ProviderRegistry | None = None
+) -> dict[str, Any]:
+    """Render the storyboards that have no finished video yet.
+
+    Before a storyboard is voiced, the Voice Artist reviews its narration (pronunciation,
+    pacing). Her review is filed as a report; a FLAG escalates to the Director. It does not
+    hold the render: the words rest on verified claims and the day's output is not blocked
+    on an opinion about delivery.
+    """
     from app.media.assembler import RenderEngineUnavailable, assemble_video_job
     from app.media.factory import image_provider, render_plan, tts_provider
 
@@ -343,7 +362,16 @@ def _media(engine: Engine, settings: Settings, vault: Any) -> dict[str, Any]:
     images = image_provider(engine, vault)
     voice = tts_provider(engine, vault)
     produced = []
+    narration_reviews = []
     for storyboard_id in pending:
+        if registry is not None and _has_language_model(registry):
+            try:
+                review = review_narration(engine, registry, storyboard_id, str(uuid4()))
+                narration_reviews.append(
+                    {"storyboard_id": storyboard_id, "verdict": review["verdict"]}
+                )
+            except (ReviewError, NoReviewer, ValueError) as exc:
+                narration_reviews.append({"storyboard_id": storyboard_id, "error": str(exc)[:200]})
         try:
             # Channel policy, series rules, overrides and locked character voices decide per
             # scene; the Organization default is the fallback for scenes nothing else names.
@@ -353,7 +381,9 @@ def _media(engine: Engine, settings: Settings, vault: Any) -> dict[str, Any]:
                 storyboard_id,
                 str(uuid4()),
                 ffmpeg_path=settings.ffmpeg_path,
-                image_adapter=images,
+                # The plan resolves the hierarchy's image choice (Runway included); the
+                # Organization-level adapter is the fallback for a plan that names none.
+                image_adapter=planned.get("image") or images,
                 tts_adapter=voice,
                 tts_adapter_for_scene=planned["tts_for_scene"],
                 production_plan=planned["plan"],
@@ -367,14 +397,24 @@ def _media(engine: Engine, settings: Settings, vault: Any) -> dict[str, Any]:
     if substitutes:
         # Said here as well as in QC, because a run summary is read on its own.
         reason += " Fără furnizor de imagine sau voce, deci cu substitute — QC le va bloca."
-    return _outcome(COMPLETED, reason, assets=produced, used_substitutes=substitutes)
+    return _outcome(
+        COMPLETED,
+        reason,
+        assets=produced,
+        used_substitutes=substitutes,
+        narration_reviews=narration_reviews,
+    )
 
 
 # ---------------------------------------------------------------------- edit and QC --
 
 
-def _edit_and_qc(engine: Engine) -> dict[str, Any]:
-    """Measure every rendered file that has not been measured yet."""
+def _edit_and_qc(engine: Engine, registry: ProviderRegistry | None = None) -> dict[str, Any]:
+    """Measure every rendered file that has not been measured yet.
+
+    Quality control is measured, never opined. What follows a failure is the Video Editor's
+    work: a diagnosis and a proposed correction, filed as an escalation for the Director.
+    """
     with Session(engine) as session:
         checked = set(session.scalars(select(QualityControlReport.media_asset_id)))
         # Selected on what the file is, not on what it was labelled. The renderer writes
@@ -393,22 +433,43 @@ def _edit_and_qc(engine: Engine) -> dict[str, Any]:
         return _outcome(COMPLETED, "Niciun material nou de verificat.", checked=0)
 
     passed, failed = 0, 0
+    diagnoses = []
     for asset_id in pending:
         report = evaluate_media_qc(engine, asset_id, str(uuid4()))
         if report["status"] == "PASSED":
             passed += 1
-        else:
-            failed += 1
+            continue
+        failed += 1
+        if registry is not None and _has_language_model(registry):
+            try:
+                diagnosis = review_failed_render(engine, registry, report["id"], str(uuid4()))
+                diagnoses.append(
+                    {"report_id": report["id"], "correction": diagnosis.get("correction")}
+                )
+            except (ReviewError, NoReviewer, ValueError) as exc:
+                diagnoses.append({"report_id": report["id"], "error": str(exc)[:200]})
     return _outcome(
-        COMPLETED, f"{passed} au trecut QC, {failed} au picat.", passed=passed, failed=failed
+        COMPLETED,
+        f"{passed} au trecut QC, {failed} au picat.",
+        passed=passed,
+        failed=failed,
+        diagnoses=diagnoses,
     )
 
 
 # --------------------------------------------------------------------------- publish --
 
 
-def _publish(engine: Engine, vault: Any) -> dict[str, Any]:
-    """Publish what the gate allows, to a channel that is actually connected."""
+def _publish(
+    engine: Engine, vault: Any, registry: ProviderRegistry | None = None
+) -> dict[str, Any]:
+    """Publish what the gate allows, to a channel that is actually connected.
+
+    The Publisher prepares the title, description and tags from the script and says READY
+    or HOLD. A HOLD keeps the candidate out until the Director lifts it; the five gates
+    are checked by code either way. Without a language model the Publisher cannot do her
+    work, and the studio does not publish with a bare title in her place.
+    """
     try:
         provider = selected_youtube(engine, vault)
     except ValueError as exc:
@@ -446,23 +507,47 @@ def _publish(engine: Engine, vault: Any) -> dict[str, Any]:
         )
 
     with Session(engine) as session:
-        script_title = "AMN-AI"
-        job = session.scalars(
-            select(VideoRenderJob).where(VideoRenderJob.output_asset_id == asset_id)
-        ).first()
-        if job:
-            board = session.get(Storyboard, job.storyboard_id)
-            if board:
-                script_title = board.title
+        hold = publication_hold(session, asset_id)
+        metadata = approved_metadata(session, asset_id)
+    if hold:
+        return _outcome(
+            COMPLETED,
+            "Publisher-ul ține materialul în așteptare: " + "; ".join(hold["hold_reasons"])[:300],
+            held_asset=asset_id,
+            hold_message_id=hold["message_id"],
+        )
+    if metadata is None:
+        if registry is None or not _has_language_model(registry):
+            return _outcome(
+                SKIPPED,
+                "Publisher-ul nu poate pregăti metadatele: niciun model de limbaj disponibil.",
+            )
+        try:
+            prepared = prepare_publication(engine, registry, asset_id, channel_id, str(uuid4()))
+        except (ReviewError, NoReviewer, ValueError) as exc:
+            return _outcome(SKIPPED, f"Publisher-ul nu a pregătit publicarea: {exc}"[:300])
+        if prepared["verdict"] != "READY":
+            return _outcome(
+                COMPLETED,
+                "Publisher-ul ține materialul în așteptare: "
+                + "; ".join(prepared.get("hold_reasons", []))[:300],
+                held_asset=asset_id,
+                hold_message_id=prepared.get("message_id"),
+            )
+        metadata = {
+            "title": prepared["title"],
+            "description": prepared["description"],
+            "tags": prepared["tags"],
+        }
 
     try:
         published = publish_media_asset(
             engine,
             media_asset_id=asset_id,
             channel_id=channel_id,
-            title=script_title[:100],
-            description="",
-            tags=[],
+            title=metadata["title"][:100],
+            description=metadata["description"],
+            tags=metadata["tags"],
             privacy_status="private",
             correlation_id=str(uuid4()),
             provider=provider,
@@ -470,11 +555,26 @@ def _publish(engine: Engine, vault: Any) -> dict[str, Any]:
     except (PublishingGateError, PublisherNotConfigured) as exc:
         return _outcome(SKIPPED, str(exc))
 
+    with Session(engine) as session, session.begin():
+        publisher = agent_for_role(session, "Publisher")
+        if publisher is not None:
+            remember(
+                session,
+                memory_class="HISTORICAL_EVENT",
+                content=(
+                    f"Published “{metadata['title'][:100]}” to {channel_name}: "
+                    f"{published['status']}."
+                ),
+                source_type="event",
+                source_id=published["id"],
+                agent_id=publisher.id,
+            )
     return _outcome(
         COMPLETED,
         f"Publicat pe {channel_name}: {published['status']}.",
         publication_id=published["id"],
         publication_status=published["status"],
+        title=metadata["title"],
     )
 
 
@@ -514,6 +614,49 @@ def _serial_queue(engine: Engine, registry: ProviderRegistry, settings: Settings
     )
 
 
+# ------------------------------------------------------------------------- post_run --
+
+
+def _post_run(
+    engine: Engine, registry: ProviderRegistry, outcomes: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    """File every department's report for the day, then have the Director review the inbox."""
+    filed = file_stage_reports(engine, outcomes, str(uuid4()))
+    if not _has_language_model(registry):
+        return _outcome(
+            SKIPPED,
+            f"{len(filed)} rapoarte depuse; Directorul nu le poate revizui fără un model "
+            "de limbaj.",
+            reports=len(filed),
+        )
+    try:
+        review = director_review(engine, registry, str(uuid4()), outcomes)
+    except (DirectorError, ValueError) as exc:
+        return _outcome(
+            COMPLETED,
+            f"{len(filed)} rapoarte depuse; revizuirea Directorului a fost respinsă: {exc}"[:300],
+            reports=len(filed),
+            review_rejected=str(exc)[:200],
+        )
+    if review.get("blocked"):
+        return _outcome(
+            COMPLETED,
+            f"{len(filed)} rapoarte depuse; Directorul a escaladat: {review['blocked']}"[:300],
+            reports=len(filed),
+            blocked=review["blocked"],
+        )
+    return _outcome(
+        COMPLETED,
+        f"{len(filed)} rapoarte depuse; Directorul a revizuit {review.get('reviewed', 0)} mesaje, "
+        f"{len(review.get('applied', []))} decizii.",
+        reports=len(filed),
+        reviewed=review.get("reviewed", 0),
+        applied=review.get("applied", []),
+        left_open=review.get("left_open", 0),
+        priorities=review.get("priorities", []),
+    )
+
+
 # --------------------------------------------------------------------------- wiring --
 
 
@@ -524,16 +667,34 @@ def build_stage_runners(
 
     Stages absent from this mapping are recorded SKIPPED by the runbook with its own reason, and
     that is the correct outcome for them: `idea_generation` has no implementation — topics are
-    proposed by the Owner — and `post_run` has no defined work yet. Naming them here with an
-    invented body would be worse than leaving the runbook to say so.
+    proposed by the Owner. `post_run` is the Director's desk: the day's reports and her review.
     """
+    # Each stage's outcome is kept for the day so post_run can report on it; the runbook
+    # writes the run record only after every stage, so the record is not readable yet.
+    outcomes: dict[str, dict[str, Any]] = {}
+
+    def keep(name: str, runner: Callable[[], dict[str, Any]]) -> Callable[[], dict[str, Any]]:
+        def run() -> dict[str, Any]:
+            outcome = runner()
+            outcomes[name] = outcome
+            return outcome
+
+        return run
+
     return {
-        "performance_intake": lambda: _performance_intake(engine, vault),
-        "research_and_verification": lambda: _research_and_verification(engine, registry),
-        "selection": lambda: _selection(engine),
-        "script_and_storyboard": lambda: _script_and_storyboard(engine, registry),
-        "media": lambda: _media(engine, settings, vault),
-        "edit_and_qc": lambda: _edit_and_qc(engine),
-        "publish": lambda: _publish(engine, vault),
-        "serial_queue": lambda: _serial_queue(engine, registry, settings),
+        "performance_intake": keep(
+            "performance_intake", lambda: _performance_intake(engine, vault)
+        ),
+        "research_and_verification": keep(
+            "research_and_verification", lambda: _research_and_verification(engine, registry)
+        ),
+        "selection": keep("selection", lambda: _selection(engine)),
+        "script_and_storyboard": keep(
+            "script_and_storyboard", lambda: _script_and_storyboard(engine, registry)
+        ),
+        "media": keep("media", lambda: _media(engine, settings, vault, registry)),
+        "edit_and_qc": keep("edit_and_qc", lambda: _edit_and_qc(engine, registry)),
+        "publish": keep("publish", lambda: _publish(engine, vault, registry)),
+        "post_run": lambda: _post_run(engine, registry, outcomes),
+        "serial_queue": keep("serial_queue", lambda: _serial_queue(engine, registry, settings)),
     }

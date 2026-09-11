@@ -40,7 +40,7 @@ def test_form_needs_only_a_name_and_a_key_and_discovers_the_accounts_video_model
 ):
     spec = settings_view(client, headers)["catalog"]["runway"]
     assert [field["key"] for field in spec["fields"]] == ["api_key"]
-    assert spec["runtime"] == "media" and spec["purposes"] == ["video"]
+    assert spec["runtime"] == "media" and spec["purposes"] == ["video", "image"]
 
     identifier, response = connect(client, headers)
     assert response.status_code == 200, response.text
@@ -60,11 +60,13 @@ def test_form_needs_only_a_name_and_a_key_and_discovers_the_accounts_video_model
     limits = runway_api.models[first]
     assert by_id[first]["api_metadata"]["max_daily_generations"] == limits["maxDailyGenerations"]
     assert by_id[first]["api_metadata"]["daily_generations"] == 2
-    # The account has an image model too; it is listed, but production cannot make video with it.
-    assert by_id[runway_api.image_model]["production_usable"] is False
+    # The account has an image model too: listed, usable for stills, never for video.
+    assert by_id[runway_api.image_model]["usable_purposes"] == ["image"]
+    assert by_id[first]["usable_purposes"] == ["video"]
     assert catalog["production"] == {
         "model_id": None,
         "voice_id": None,
+        "image_model_id": None,
         "allow_production_override": True,
         "version": 0,
     }

@@ -29,6 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
+from app.agents.memory import agent_for_role, remember
 from app.agents.models import Agent, Role
 from app.agents.services import run_agent_task
 from app.models import DomainEvent
@@ -483,6 +484,19 @@ def decide_episode(
             {"log_id": episode.log_id},
             correlation,
         ).event_id
+        showrunner = agent_for_role(session, PREFERRED_SHOWRUNNER_ROLE)
+        remember(
+            session,
+            memory_class="OWNER_POLICY",
+            content=(
+                f"The Owner {'approved' if approve else 'rejected'} the episode "
+                f"“{episode.title[:120]}”" + (f": {episode.notes}" if episode.notes else ".")
+            ),
+            source_type="owner",
+            source_id=episode.id,
+            event_id=episode.event_id,
+            agent_id=showrunner.id if showrunner else None,
+        )
         session.flush()
         return _public_episode(episode)
 

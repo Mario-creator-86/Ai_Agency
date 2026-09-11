@@ -17,13 +17,18 @@ from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
 from app.integrations.discovery import production_resource
-from app.integrations.models import Integration, MediaProductionConfig, ServiceSelection
+from app.integrations.models import (
+    Integration,
+    MediaProductionConfig,
+    ProviderResource,
+    ServiceSelection,
+)
 from app.integrations.vault import CredentialVault
 from app.providers.elevenlabs import ElevenLabsTTSAdapter
 from app.providers.media_base import ImageProvider, TTSProvider, VideoProvider
 from app.providers.media_http import MediaProviderNotConfigured
 from app.providers.openai_media import OpenAIImageAdapter
-from app.providers.runway import RunwayVideoAdapter
+from app.providers.runway import RunwayImageAdapter, RunwayVideoAdapter
 
 #: Statuses that mean the vendor itself answered. Anything else is an untested claim.
 VERIFIED_STATUSES = ("VERIFIED", "ACCESS_VERIFIED")
@@ -39,6 +44,18 @@ def _selected(session: Session, purpose: str) -> Integration | None:
     return row
 
 
+def _runway_metadata(resource: ProviderResource | None) -> dict:
+    """The model's contract from the catalog; research may add what the refresh could not."""
+    if resource is None:
+        return {}
+    metadata = dict(resource.api_metadata)
+    if isinstance(resource.capabilities, dict):
+        for key in ("tasks", "ratios", "durations"):
+            if key not in metadata and resource.capabilities.get(key) is not None:
+                metadata[key] = resource.capabilities[key]
+    return metadata
+
+
 def image_provider(engine: Engine, vault: CredentialVault) -> ImageProvider | None:
     """The image generator selected for the "image" purpose, if it has been verified."""
     with Session(engine) as session:
@@ -46,15 +63,60 @@ def image_provider(engine: Engine, vault: CredentialVault) -> ImageProvider | No
         if row is None:
             return None
         kind, config = row.kind, dict(row.config)
+        metadata: dict = {}
+        if kind == "runway":
+            production = session.get(MediaProductionConfig, row.id)
+            resource = production_resource(
+                session, row.id, "MODEL", production.image_model_id if production else None, "image"
+            )
+            if resource is None:
+                return None
+            config = {"model": resource.remote_id}
+            metadata = _runway_metadata(resource)
         secrets = vault.decrypt(row.encrypted_secrets)
 
     try:
         if kind == "openai_media":
             return OpenAIImageAdapter(secrets.get("api_key", ""), config.get("model"))
+        if kind == "runway":
+            return RunwayImageAdapter(secrets.get("api_key", ""), config.get("model"), metadata)
     except MediaProviderNotConfigured:
         return None
     # A vendor with no adapter yet is not an error and not a silent substitution: the studio
     # simply has no image generator, and says so through the placeholder path.
+    return None
+
+
+def image_provider_for(
+    engine: Engine, vault: CredentialVault, resolved: dict
+) -> ImageProvider | None:
+    """An image adapter for one resolved `image` selection (see production_policy)."""
+    if not resolved or not resolved.get("valid") or not resolved.get("integration_id"):
+        return None
+    with Session(engine) as session:
+        row = session.get(Integration, resolved["integration_id"])
+        if row is None or row.status not in VERIFIED_STATUSES:
+            return None
+        kind, config = row.kind, dict(row.config)
+        secrets = vault.decrypt(row.encrypted_secrets)
+        metadata: dict = {}
+        if kind == "runway":
+            resource = production_resource(
+                session, row.id, "MODEL", resolved.get("model_id"), "image"
+            )
+            if resource is None:
+                return None
+            config = {"model": resource.remote_id}
+            metadata = _runway_metadata(resource)
+        elif resolved.get("model_id"):
+            config["model"] = resolved["model_id"]
+    try:
+        if kind == "openai_media":
+            return OpenAIImageAdapter(secrets.get("api_key", ""), config.get("model"))
+        if kind == "runway":
+            return RunwayImageAdapter(secrets.get("api_key", ""), config.get("model"), metadata)
+    except MediaProviderNotConfigured:
+        return None
     return None
 
 
@@ -132,16 +194,11 @@ def video_provider_for(
             return None
         kind = row.kind
         secrets = vault.decrypt(row.encrypted_secrets)
-        resource = production_resource(session, row.id, "MODEL", resolved.get("model_id"))
+        resource = production_resource(session, row.id, "MODEL", resolved.get("model_id"), "video")
         if resource is None:
             # A discovered kind generates only with a model the account was seen to have.
             return None
-        metadata = dict(resource.api_metadata)
-        if isinstance(resource.capabilities, dict):
-            # Research may fill in a contract the refresh could not read, never the reverse.
-            for key in ("tasks", "ratios", "durations"):
-                if key not in metadata and resource.capabilities.get(key) is not None:
-                    metadata[key] = resource.capabilities[key]
+        metadata = _runway_metadata(resource)
     try:
         if kind == "runway":
             return RunwayVideoAdapter(secrets.get("api_key", ""), resource.remote_id, metadata)
@@ -195,7 +252,10 @@ def render_plan(engine: Engine, vault: CredentialVault, storyboard_id: str) -> d
         "plan": plan,
         "tts_for_scene": tts_for_scene,
         "video_for_scene": video_for_scene,
-        "image": image_provider(engine, vault),
+        # The hierarchy's image choice, when it resolves to a usable adapter; else the
+        # Organization's selection, exactly as before policies existed.
+        "image": image_provider_for(engine, vault, plan["purposes"].get("image") or {})
+        or image_provider(engine, vault),
     }
 
 
@@ -207,3 +267,86 @@ def describe(engine: Engine, vault: CredentialVault) -> dict[str, str | None]:
         "image_provider": getattr(image, "PROVIDER_NAME", None),
         "voice_provider": getattr(voice, "PROVIDER_NAME", None),
     }
+
+
+#: Why a purpose has no adapter, in the Owner's words. "NO_DEFAULT" is the case a verified,
+#: selected connection lands in until a default model (and voice) is chosen — the one the
+#: preflight used to report as "no verified provider", which sent the Owner to check a key
+#: that was fine.
+READINESS_MESSAGES = {
+    "READY": "",
+    "NO_SELECTION": (
+        "Niciun serviciu ales pentru {purpose}. Alege conexiunea în Settings → Video și sunet → "
+        "Serviciile alese pentru producție."
+    ),
+    "NOT_VERIFIED": (
+        "{name} este ales pentru {purpose}, dar cheia nu este verificată. Apasă «Verifică "
+        "accesul» pe conexiune."
+    ),
+    "NO_DEFAULT": (
+        "{name} este verificat și ales pentru {purpose}, dar nu are {needs}. Alege-le pe cardul "
+        "conexiunii (Settings → Video și sunet), sau setează-le per canal în politica de producție."
+    ),
+    "NO_ADAPTER": (
+        "{name} este ales pentru {purpose}, dar studioul nu are încă un adaptor de generare "
+        "pentru acest serviciu."
+    ),
+}
+PURPOSE_LABEL = {"image": "Imagini", "voice": "Voce / TTS"}
+
+
+def media_readiness(engine: Engine, vault: CredentialVault) -> dict[str, dict]:
+    """Per purpose: whether an adapter exists and, if not, which step is missing.
+
+    Reads the same rows the adapters read, probes nothing, and names the next action.
+    """
+    result: dict[str, dict] = {}
+    with Session(engine) as session:
+        for purpose in ("image", "voice"):
+            selection = session.get(ServiceSelection, purpose)
+            row = (
+                session.get(Integration, selection.integration_id)
+                if selection is not None and selection.integration_id
+                else None
+            )
+            status, needs, name = "READY", "", ""
+            if row is None:
+                status = "NO_SELECTION"
+            elif row.status not in VERIFIED_STATUSES:
+                status, name = "NOT_VERIFIED", row.name
+            else:
+                name = row.name
+                production = session.get(MediaProductionConfig, row.id)
+                if row.kind == "elevenlabs":
+                    ok = production is not None and all(
+                        (
+                            production_resource(
+                                session, row.id, "MODEL", production.model_id, "voice"
+                            ),
+                            production_resource(session, row.id, "VOICE", production.voice_id),
+                        )
+                    )
+                    if not ok:
+                        status, needs = "NO_DEFAULT", "un model și o voce implicită"
+                elif row.kind == "runway":
+                    ok = production is not None and (
+                        production_resource(
+                            session, row.id, "MODEL", production.image_model_id, "image"
+                        )
+                        is not None
+                    )
+                    if not ok:
+                        status, needs = "NO_DEFAULT", "un model imagine implicit"
+                elif row.kind == "openai_media":
+                    if not (row.config or {}).get("model"):
+                        status, needs = "NO_DEFAULT", "un model configurat"
+                else:
+                    status = "NO_ADAPTER"
+            result[purpose] = {
+                "status": status,
+                "connection": name or None,
+                "message": READINESS_MESSAGES[status].format(
+                    purpose=PURPOSE_LABEL[purpose], name=name, needs=needs
+                ),
+            }
+    return result

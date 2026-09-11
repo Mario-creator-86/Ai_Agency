@@ -9,6 +9,33 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def validate_public_host(host: str, where: str = "the allowlist") -> str:
+    """A bare lowercase public DNS hostname, or a ValueError saying what is wrong with it."""
+    if (
+        not host
+        or host != host.lower()
+        or len(host) > 253
+        or any(c in host for c in "/:*@ \\?#")
+        or host.startswith(".")
+        or host.endswith(".")
+    ):
+        raise ValueError(
+            f"Use bare lowercase hostnames in {where}, for example www.iana.org — no scheme, "
+            "port, path or wildcard"
+        )
+    # Naming this machine or a private range here would turn a research allowlist into a
+    # way to read internal services, so the studio refuses such an entry outright.
+    if host in ("localhost", "localhost.localdomain") or host.endswith(".localhost"):
+        raise ValueError(f"{where} names public sources, not this machine")
+    try:
+        address = ip_address(host)
+    except ValueError:
+        return host
+    if not address.is_global:
+        raise ValueError(f"{where} names public sources, not internal addresses")
+    return host
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="STUDIO_", env_file=ROOT / ".env", extra="ignore", hide_input_in_errors=True
@@ -33,10 +60,10 @@ class Settings(BaseSettings):
     # Hosts the research retriever may fetch from, e.g.
     # STUDIO_RESEARCH_ALLOWED_HOSTS=["www.iana.org","www.nasa.gov"]
     #
-    # Empty by default, which disables retrieval entirely. This list is the studio's SSRF
-    # boundary, so it lives in the Owner's configuration file and nothing inside the
-    # application — no endpoint, no form, no agent — can extend it. An allowlist an agent
-    # could add to would not be an allowlist.
+    # Empty by default. This list is one half of the studio's SSRF boundary; the other half
+    # is the table of hosts the Owner adds and tests from the interface
+    # (`research_allowed_host`, Owner-authenticated endpoints only). No agent has a tool that
+    # reaches either: an allowlist an agent could add to would not be an allowlist.
     research_allowed_hosts: list[str] = []
 
     # Absolute path to an ffmpeg executable. When unset, PATH is searched.
@@ -69,31 +96,14 @@ class Settings(BaseSettings):
     @field_validator("research_allowed_hosts")
     @classmethod
     def plain_hostnames(cls, value: list[str]) -> list[str]:
-        """Reject anything that is not a bare lowercase DNS hostname.
+        """Reject anything that is not a bare lowercase public DNS hostname.
 
         A scheme, a port, a path or a wildcard here would silently widen the boundary; the
-        retriever compares the parsed hostname against these entries exactly.
+        retriever compares the parsed hostname against these entries exactly. The same rule
+        guards the hosts the Owner adds from the interface (`validate_public_host`).
         """
         for host in value:
-            if not host or host != host.lower() or any(c in host for c in "/:*@ "):
-                raise ValueError(
-                    "Use bare lowercase hostnames in STUDIO_RESEARCH_ALLOWED_HOSTS, "
-                    "for example www.iana.org — no scheme, port, path or wildcard"
-                )
-            # Naming this machine or a private range here would turn a research allowlist
-            # into a way to read internal services, so the studio refuses to start on one.
-            if host in ("localhost", "localhost.localdomain") or host.endswith(".localhost"):
-                raise ValueError(
-                    "STUDIO_RESEARCH_ALLOWED_HOSTS names public sources, not this machine"
-                )
-            try:
-                address = ip_address(host)
-            except ValueError:
-                continue
-            if not address.is_global:
-                raise ValueError(
-                    "STUDIO_RESEARCH_ALLOWED_HOSTS names public sources, not internal addresses"
-                )
+            validate_public_host(host, "STUDIO_RESEARCH_ALLOWED_HOSTS")
         return value
 
     @field_validator("timezone")

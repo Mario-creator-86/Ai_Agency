@@ -197,8 +197,9 @@ def test_table_rebuild_migration_succeeds_when_rows_reference_the_table(settings
         )
     migrate(old)
     with old.connect() as connection:
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0021_production_policy"
+        # Head moved past 0021; what matters is that the rebuild in 0021 was crossed.
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) >= (
+            "0022_agent_identity_memory"
         )
         # Enforcement is back on for later work, and the rebuilt table kept its rows.
         assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar() == 1

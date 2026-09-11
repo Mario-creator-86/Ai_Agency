@@ -21,6 +21,7 @@ from uuid import uuid4
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
+from app.agents.memory import remember
 from app.agents.models import Agent, AgentRun, Role
 from app.models import OwnerPolicy
 from app.services import append_event, utc_now
@@ -312,6 +313,18 @@ def decide_proposal(
             correlation,
         )
         row.event_id = event.event_id
+        remember(
+            session,
+            memory_class="OWNER_POLICY",
+            content=(
+                f"The Owner {'approved' if approve else 'rejected'} a workforce proposal "
+                f"({row.proposal_type}): {row.summary[:300]}"
+                + (f" Notes: {row.decision_notes}" if row.decision_notes else "")
+            ),
+            source_type="owner",
+            source_id=row.id,
+            event_id=event.event_id,
+        )
 
         if approve:
             _apply(session, row, correlation, now)

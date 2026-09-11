@@ -34,18 +34,20 @@ export function renderProviderProduction(host, connection, catalog, { api, run }
     host.append(section);
     return;
   }
-  const production = catalog?.production || { model_id: null, voice_id: null, allow_production_override: true, version: 0 };
+  const production = catalog?.production || { model_id: null, voice_id: null, image_model_id: null, allow_production_override: true, version: 0 };
   section.append(node('p', hasVoices
     ? 'Modelul și vocea de mai jos sunt valorile implicite ale organizației: producția le folosește când niciun canal, serial, episod sau scenă nu alege altceva. Identitatea blocată a unui personaj recurent are întotdeauna prioritate.'
     : 'Modelul de mai jos este valoarea implicită a organizației, doar o rezervă: producția îl folosește când niciun canal, serial, episod sau scenă nu alege alt model descoperit. Un personaj recurent cu aspect blocat acceptă doar modelele aprobate pentru el.', 'helper'));
   const fields = node('div', '', 'settings-fields');
-  const picker = (label, resources, selected) => {
+  const picker = (label, resources, selected, purpose = null) => {
     const wrap = node('label', label);
     const select = document.createElement('select');
     select.setAttribute('aria-label', label);
     select.add(new Option('Fără selecție', ''));
     for (const resource of resources) {
-      const usable = resource.production_usable === true;
+      const usable = purpose
+        ? (resource.usable_purposes || []).includes(purpose)
+        : resource.production_usable === true;
       const option = new Option(`${resource.name}${resource.name === resource.remote_id ? '' : ` · ${resource.remote_id}`}${usable ? '' : ` · ${info.unusable || 'indisponibil'}`}`, resource.remote_id);
       option.disabled = !usable;
       select.add(option);
@@ -59,8 +61,13 @@ export function renderProviderProduction(host, connection, catalog, { api, run }
     fields.append(wrap);
     return select;
   };
-  const model = picker(info.model_label || 'Model implicit', catalog?.models || [], production.model_id);
+  const purposes = info.purposes || [];
+  const primary = hasVoices ? 'voice' : (purposes[0] || null);
+  const model = picker(info.model_label || 'Model implicit', catalog?.models || [], production.model_id, primary);
   const voice = hasVoices ? picker(info.voice_label || 'Voce implicită', catalog?.voices || [], production.voice_id) : null;
+  const imageModel = purposes.includes('image') && info.image_model_label
+    ? picker(info.image_model_label, catalog?.models || [], production.image_model_id, 'image')
+    : null;
   const overrideWrap = node('label', '', 'settings-toggle');
   const override = document.createElement('input');
   override.type = 'checkbox';
@@ -72,6 +79,7 @@ export function renderProviderProduction(host, connection, catalog, { api, run }
   save.addEventListener('click', () => run(() => api(
     `/settings/integrations/${connection.id}/production`,
     { method: 'PUT', body: JSON.stringify({ model_id: model.value || null, voice_id: voice?.value || null,
+      image_model_id: imageModel?.value || null,
       allow_production_override: override.checked, expected_version: production.version }) },
   ), 'Valori implicite salvate.'));
   section.append(fields, save);

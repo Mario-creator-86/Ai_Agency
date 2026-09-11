@@ -23,8 +23,10 @@ from sqlalchemy.orm import Session
 from app.agents.models import Agent, ModelRecord
 from app.config import Settings
 from app.media.factory import describe as describe_media
+from app.media.factory import media_readiness
 from app.media.toolchain import find_ffprobe
 from app.models import OwnerPolicy
+from app.research.service import allowed_host_rows
 from app.services import utc_now
 from app.youtube.models import YouTubeConnection
 
@@ -123,26 +125,32 @@ def run_preflight(engine: Engine, settings: Settings, vault: Any) -> dict[str, A
         )
     )
 
-    hosts = list(settings.research_allowed_hosts)
+    hosts = allowed_host_rows(settings, engine)
+    tested = [h for h in hosts if h["last_test_status"] == "PASSED"]
+    untested = [h["host"] for h in hosts if h["last_test_status"] != "PASSED"]
     checks.append(
         _check(
             "research_sources",
             bool(hosts),
             DEGRADING,
-            f"{len(hosts)} site-uri autorizate pentru preluarea surselor.",
-            "Niciun site autorizat; sursele trebuie introduse manual.",
+            f"{len(hosts)} site-uri autorizate pentru preluarea surselor, {len(tested)} "
+            "testate cu succes.",
+            "Niciun site autorizat; adaugă și testează site-uri în Cercetare → Surse.",
+            detail=("Netestate sau picate: " + ", ".join(untested)) if untested else "",
         )
     )
 
     media = describe_media(engine, vault)
+    readiness = media_readiness(engine, vault)
     checks.append(
         _check(
             "image_provider",
             bool(media["image_provider"]),
             DEGRADING,
             f"Imagini: {media['image_provider']}.",
-            "Niciun furnizor de imagine verificat; randările folosesc substitute, iar QC le "
-            "blochează de la publicare.",
+            readiness["image"]["message"]
+            + " Până atunci randările folosesc substitute, iar QC le blochează de la publicare.",
+            detail=readiness["image"]["status"],
         )
     )
     checks.append(
@@ -151,7 +159,8 @@ def run_preflight(engine: Engine, settings: Settings, vault: Any) -> dict[str, A
             bool(media["voice_provider"]),
             DEGRADING,
             f"Voce: {media['voice_provider']}.",
-            "Niciun furnizor de voce verificat; naratiunea folosește un substitut.",
+            readiness["voice"]["message"] + " Până atunci narațiunea folosește un substitut.",
+            detail=readiness["voice"]["status"],
         )
     )
 

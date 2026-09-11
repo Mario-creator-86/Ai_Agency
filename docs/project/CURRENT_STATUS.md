@@ -13,6 +13,21 @@ database resource discovery/refresh, separate production choices, UI and regress
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
 
+## Employees: identity, memory, reports (2026-09-11)
+
+Every agent run now carries the employee's identity as the system prompt, composed from stored
+data (role mission, allowed/prohibited tasks, the role's work contract from
+`config/role_contracts.json`, the character's speech style and phrases, the memory its role may
+read, standing rules) and records the context manifest on the run. Character Bible entries are
+linked to the employees holding their roles. Memory (`memory_record`, classes per
+`../architecture/04_AGENT_SYSTEM.md` §9) is written by services on real outcomes with
+provenance and read by role scope. Typed messages (`agent_message`) carry STATUS reports and
+escalations to the Director; the runbook's `post_run` stage files the day's reports and runs
+Sarah's review. Lyra reviews narration, Kael diagnoses failed renders, Vera prepares
+publication metadata and may hold a candidate. Details and limits: `AGENT_IDENTITY_MEMORY.md`.
+Migration 0022. No new agents were added: hiring stays evidence-driven through workforce
+proposals.
+
 ## Identity
 
 The agency is **AMN-AI — Autonomous Machine Nexus — Artificial Intelligence**. The name and logo

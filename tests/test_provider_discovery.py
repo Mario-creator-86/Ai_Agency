@@ -66,6 +66,7 @@ def test_save_key_only_verifies_discovers_all_pages_and_survives_restart(
     assert saved["catalog"]["production"] == {
         "model_id": None,
         "voice_id": None,
+        "image_model_id": None,
         "allow_production_override": True,
         "version": 0,
     }

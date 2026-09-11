@@ -68,6 +68,9 @@ class MediaProductionConfig(Base):
     )
     model_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     voice_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    #: A connection that also makes stills (Runway) keeps its image default apart from its
+    #: video default: one model cannot serve both purposes.
+    image_model_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     #: These two are the Organization default for this connection. When False, channel, series,
     #: episode and scene levels may not replace them; character identity locks still apply.
     allow_production_override: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

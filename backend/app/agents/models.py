@@ -8,6 +8,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -28,6 +29,13 @@ class Role(Base):
     mission: Mapped[str] = mapped_column(Text)
     allowed_task_types: Mapped[str] = mapped_column(Text)
     prohibited_actions: Mapped[str] = mapped_column(Text)
+    #: What the role watches for, investigates, corrects, lets pass, never lets pass and
+    #: escalates; who it reports to; which runbook stages it owns. Data, seeded from
+    #: config/role_contracts.json, editable by the Owner, read into every run's identity.
+    work_contract_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    #: {"read": [memory classes], "write": [memory classes]} — the role's memory scope.
+    memory_scope_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    contract_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[str] = mapped_column(String(40))
     event_id: Mapped[str] = mapped_column(ForeignKey("domain_event.event_id"))
 
@@ -143,6 +151,9 @@ class AgentRun(Base):
     started_at: Mapped[str] = mapped_column(String(40))
     finished_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
     event_id: Mapped[str | None] = mapped_column(ForeignKey("domain_event.event_id"), nullable=True)
+    #: Context manifest (04_AGENT_SYSTEM §16): identity version, contract and bible versions,
+    #: memory record ids the run was given. What the model knew, recorded with what it said.
+    context_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
 
 
 class ToolReceipt(Base):
@@ -162,3 +173,67 @@ class ToolReceipt(Base):
     cost_vr: Mapped[str | None] = mapped_column(String(20), nullable=True)
     called_at: Mapped[str] = mapped_column(String(40))
     returned_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
+
+MEMORY_CLASSES = (
+    "VERIFIED_FACT",
+    "STRATEGY",
+    "OWNER_POLICY",
+    "HISTORICAL_EVENT",
+    "AGENT_OPINION",
+    "TEMP_CONTEXT",
+)
+MESSAGE_INTENTS = ("REQUEST_INFO", "REQUEST_REVIEW", "CHALLENGE", "HANDOFF", "STATUS", "ESCALATE")
+MESSAGE_STATUSES = ("OPEN", "ANSWERED", "RESOLVED")
+
+
+class MemoryRecord(Base):
+    """One remembered fact (04_AGENT_SYSTEM §9).
+
+    `agent_id` NULL means studio-wide (a verified fact, an Owner policy, a strategy); set, it
+    is one employee's own memory (an opinion, an event they were part of). Records are written
+    by backend services from real outcomes with their provenance, never from a model's free
+    text, and are invalidated rather than deleted.
+    """
+
+    __tablename__ = "memory_record"
+    __table_args__ = (
+        Index("ix_memory_record_agent_class", "agent_id", "memory_class", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    agent_id: Mapped[str | None] = mapped_column(ForeignKey("agent.id"), nullable=True)
+    memory_class: Mapped[str] = mapped_column(String(20), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    source_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    source_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    expires_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    invalidated_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    invalidation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    event_id: Mapped[str | None] = mapped_column(ForeignKey("domain_event.event_id"), nullable=True)
+
+
+class AgentMessage(Base):
+    """A typed message between employees (20_EMPLOYEE_AGENT_SPEC, Communication).
+
+    `to_agent_id` NULL is the Director's inbox: escalations and status reports land there and
+    the Director's review answers them. Free-form chatter is not stored; intents are.
+    """
+
+    __tablename__ = "agent_message"
+    __table_args__ = (Index("ix_agent_message_status", "status", "to_agent_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    intent: Mapped[str] = mapped_column(String(20), nullable=False)
+    from_agent_id: Mapped[str | None] = mapped_column(ForeignKey("agent.id"), nullable=True)
+    to_agent_id: Mapped[str | None] = mapped_column(ForeignKey("agent.id"), nullable=True)
+    subject: Mapped[str] = mapped_column(String(200), nullable=False)
+    body_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("agent_run.id"), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="OPEN")
+    resolution: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolved_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    resolved_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    event_id: Mapped[str | None] = mapped_column(ForeignKey("domain_event.event_id"), nullable=True)

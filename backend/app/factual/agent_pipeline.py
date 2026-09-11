@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
+from app.agents.memory import remember
 from app.agents.models import Agent, Role
 from app.agents.services import run_agent_task
 from app.factual.models import FactualClaim, SourceSnapshot, TopicIdea
@@ -403,6 +404,26 @@ def agent_verify_claim(
         result["id"],
         correlation_id,
     )
+    with Session(engine) as session, session.begin():
+        if verdict["status"] == "SUPPORTED":
+            # Web text enters VERIFIED_FACT only after this validation: a verbatim quote
+            # from the stored source, checked above (04_AGENT_SYSTEM §9).
+            remember(
+                session,
+                memory_class="VERIFIED_FACT",
+                content=f"Supported claim: {claim_text} (evidence: “{quote[:200]}”)",
+                source_type="run",
+                source_id=result["id"],
+            )
+        elif verdict["status"] == "REFUTED":
+            remember(
+                session,
+                memory_class="HISTORICAL_EVENT",
+                content=f"Refuted claim: {claim_text} (source says: “{quote[:200]}”)",
+                source_type="run",
+                source_id=result["id"],
+                agent_id=verifier_id,
+            )
     return {"agent_id": verifier_id, "run_id": result["id"], "claim": updated}
 
 
