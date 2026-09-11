@@ -84,6 +84,16 @@ const RUN_STAGE_LABEL = {
   serial_queue: 'episodul serialului',
 };
 
+/** What each kind of letter is, as the Owner would name it. */
+const MAIL_INTENT = {
+  REQUEST_INFO: 'întrebare',
+  REQUEST_REVIEW: 'cerere de revizuire',
+  CHALLENGE: 'contestare',
+  HANDOFF: 'indicație',
+  STATUS: 'raport',
+  ESCALATE: 'escaladare',
+};
+
 const STATUS_LABEL = {
   COMPLETED: 'finalizată',
   PARTIAL: 'parțială',
@@ -118,7 +128,7 @@ function short(text, max = 160) {
  *
  * @param {{event_type: string, aggregate_id?: string, payload?: any}} event
  * @param {Record<string, string>} [names] agent id → display name
- * @returns {{who: string, label: string, text: string, kind: string}}
+ * @returns {{who: string, label: string, text: string, kind: string, to?: string, thread?: string|null, forOwner?: boolean}}
  */
 export function describeEvent(event, names = {}) {
   const type = String(event.event_type || '');
@@ -137,10 +147,21 @@ export function describeEvent(event, names = {}) {
       kind = 'speech';
       break;
     case 'agent.message_posted':
-      label = `mesaj ${payload.intent || ''}`.trim();
-      text = payload.subject || '';
+      label = `${payload.in_reply_to ? 'răspunde' : 'scrie'} · ${MAIL_INTENT[payload.intent] || payload.intent || 'mesaj'}`;
+      text = [payload.subject, payload.excerpt].filter(Boolean).join(' — ');
       kind = 'speech';
-      break;
+      // A letter: the ledger names both ends and opens the thread it belongs to. One
+      // addressed to the Owner is the Owner's business: it files under the Owner chip and
+      // is drawn in red until it is answered.
+      return {
+        who: who || payload.from_name || 'Owner',
+        label: payload.for_owner ? `${label} · CĂTRE TINE` : label,
+        text,
+        kind: payload.for_owner ? 'owner' : kind,
+        to: payload.to_name || 'Director',
+        thread: payload.thread_id || event.aggregate_id || null,
+        forOwner: Boolean(payload.for_owner),
+      };
     case 'agent.message_answered':
       label = 'a răspuns la un mesaj';
       text = payload.subject || '';
@@ -451,7 +472,7 @@ export const LEDGER_CAPACITY = 400;
 export class Ledger {
   /**
    * @param {{list: HTMLElement, now: HTMLElement, filters: HTMLElement, escape: (s: string) => string,
-   *          onEvents?: (events: any[]) => void}} parts
+   *          onEvents?: (events: any[]) => void, onThread?: (threadId: string) => void}} parts
    */
   constructor(parts) {
     this.list = parts.list;
@@ -463,6 +484,12 @@ export class Ledger {
     // hang off this: they must see the same stream the ledger renders, without a second
     // subscription that could drift from it.
     this.onEvents = typeof parts.onEvents === 'function' ? parts.onEvents : null;
+    // A letter in the ledger opens its thread; the page decides in which window.
+    this.onThread = typeof parts.onThread === 'function' ? parts.onThread : null;
+    this.list.addEventListener('click', (event) => {
+      const target = event.target instanceof Element ? event.target.closest('[data-thread]') : null;
+      if (target && this.onThread) this.onThread(target.getAttribute('data-thread'));
+    });
     /** @type {Map<string, any>} */
     this.events = new Map();
     this.names = {};
@@ -553,6 +580,12 @@ export class Ledger {
   render() {
     const events = this.sorted();
     this.now.textContent = productionStatus(events).text;
+    // A letter the Owner has answered is no longer red: the answer's event names it.
+    const answered = new Set(
+      events
+        .filter((e) => e.event_type === 'agent.message_answered' || e.event_type === 'agent.message_resolved')
+        .map((e) => e.aggregate_id),
+    );
     const rows = [];
     for (const event of events) {
       const item = describeEvent(event, this.names);
@@ -563,10 +596,17 @@ export class Ledger {
         second: '2-digit',
         timeZone: this.timezone,
       });
+      const mail = item.thread
+        ? `${item.forOwner ? ` ledger-owner-mail${answered.has(event.aggregate_id) ? ' is-answered' : ''}` : ''} ledger-mail" data-thread="${this.escape(item.thread)}" title="Deschide firul de corespondență`
+        : '';
+      const route = item.thread
+        ? `<strong>${this.escape(item.who)}</strong> <span class="ledger-arrow">→</span> <strong>${this.escape(item.to)}</strong> · ${this.escape(item.label)}`
+        : `${item.who ? `<strong>${this.escape(item.who)}</strong> ` : ''}${this.escape(item.label)}`;
       rows.push(
-        `<li class="ledger-item ledger-${item.kind}"><time>${this.escape(time)}</time><div>` +
-          `<div class="ledger-head">${item.who ? `<strong>${this.escape(item.who)}</strong> ` : ''}${this.escape(item.label)}</div>` +
+        `<li class="ledger-item ledger-${item.kind}${mail}"><time>${this.escape(time)}</time><div>` +
+          `<div class="ledger-head">${route}</div>` +
           (item.text ? `<div class="ledger-text">${this.escape(item.text)}</div>` : '') +
+          (item.thread ? '<div class="ledger-open">Deschide firul ↗</div>' : '') +
           `</div></li>`,
       );
       if (rows.length >= 150) break;

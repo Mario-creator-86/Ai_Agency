@@ -2,7 +2,7 @@ import secrets
 from uuid import uuid4
 
 import pytest
-from app.agents.models import Agent, ModelRecord
+from app.agents.models import Agent, AgentRun, ModelRecord
 from app.agents.services import run_agent_task, seed_initial_workforce
 from app.factual.schemas import ExtractClaimItem
 from app.factual.services import (
@@ -17,6 +17,7 @@ from app.factual.services import (
 from app.models import OwnerPolicy
 from app.providers.registry import ProviderRegistry
 from app.publishing.services import seed_default_channels
+from app.services import utc_now
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -36,6 +37,24 @@ def test_unverified_or_busy_agent_never_calls_provider(engine, available, state,
         agent.runtime_state = state
         session.get(ModelRecord, agent.model_id).is_available = available
         agent_id, provider_id = agent.id, agent.provider_id
+        if state == "THINKING":
+            # Busy means a run genuinely in flight; a THINKING flag with no run behind it
+            # is stale and is cleared, not obeyed.
+            session.add(
+                AgentRun(
+                    id=str(uuid4()),
+                    agent_id=agent_id,
+                    task_type="plan",
+                    objective="in flight",
+                    prompt_template_version="v1",
+                    model_name="m",
+                    provider_name="p",
+                    status="RUNNING",
+                    correlation_id=str(uuid4()),
+                    started_at=utc_now(),
+                    context_json={},
+                )
+            )
 
     class Provider:
         async def generate(self, *args, **kwargs):

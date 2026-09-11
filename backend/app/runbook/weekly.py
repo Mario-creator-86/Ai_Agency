@@ -301,7 +301,7 @@ def execute_weekly_review(
         prompt,
         _WEEKLY_PROMPT_VERSION,
         correlation_id,
-        max_tokens=1600,
+        max_tokens=4800,
         temperature=0.3,
         summary=f"Revizia săptămânală a performanței ({digest['week']})",
         emit_message=False,

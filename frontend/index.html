@@ -392,6 +392,26 @@
         </div>
       </dialog>
 
+      <!-- Mail thread: one exchange between employees, read as letters -->
+      <dialog id="mail-modal" class="studio-dialog mail-dialog">
+        <div class="dialog-header">
+          <div>
+            <span class="eyebrow eyebrow-accent">CORESPONDENȚĂ</span>
+            <h2 id="mail-title" class="dialog-title">Fir de corespondență</h2>
+            <p class="dialog-desc">Cine a scris cui, când și de ce — tot schimbul, în ordine. Răspunsul tău pleacă la cel care a scris ultimul, în același fir.</p>
+          </div>
+          <button id="mail-close" class="dialog-close" aria-label="Închide">✕</button>
+        </div>
+        <div id="mail-thread" class="mail-thread"></div>
+        <form id="mail-reply-form" class="mail-reply">
+          <textarea id="mail-reply-text" class="dialog-input" rows="3" placeholder="Scrie-i înapoi… (ex: Vreau sursa pe masă până diseară.)" required></textarea>
+          <div class="mail-reply-row">
+            <span id="mail-status" class="helper" hidden></span>
+            <button type="submit" class="primary dialog-submit-btn">Trimite ↗</button>
+          </div>
+        </form>
+      </dialog>
+
       <!-- Media Production & Video Assembly Modal -->
       <dialog id="media-modal" class="studio-dialog media-dialog">
         <div class="dialog-header">

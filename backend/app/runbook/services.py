@@ -16,6 +16,7 @@ step four is not a completed day. So:
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import Any
 from uuid import uuid4
@@ -30,6 +31,8 @@ from app.runbook.preflight import run_preflight
 from app.services import append_event, utc_now
 from app.story.services import business_date, close_daily_log
 from app.workflows.services import append_event_with_outbox, enqueue_task, list_queue_tasks
+
+logger = logging.getLogger("studio.runbook")
 
 #: The queue task type the daily run is executed under, by the schedule and by the Owner.
 DAILY_RUN_TASK = "DAILY_RUN"
@@ -292,6 +295,20 @@ def start_daily_run(
     }
 
 
+def finish_media_setup(engine: Engine, vault: Any) -> dict[str, Any] | None:
+    """Fill the empty media defaults from the account's own catalogue, if any are empty."""
+    from app.integrations.autoconfig import auto_configure  # noqa: PLC0415
+    from app.media.factory import media_readiness  # noqa: PLC0415
+
+    if all(item["status"] == "READY" for item in media_readiness(engine, vault).values()):
+        return None
+    try:
+        return auto_configure(engine, vault)
+    except Exception as exc:  # noqa: BLE001 - setup that cannot finish must not stop the day
+        logger.info("media_setup_not_finished", extra={"error": type(exc).__name__})
+        return None
+
+
 def execute_daily_run(
     engine: Engine,
     settings: Settings,
@@ -315,6 +332,12 @@ def execute_daily_run(
             "Nu pornește nicio rulare până nu închizi modul sigur."
         )
 
+    # A verified connection with no default model or voice is the studio's own unfinished
+    # setup, not a fact about the world: the catalogue already says what the account can
+    # do. The day fills what is empty before it judges itself, so an Owner who connected a
+    # voice and an image service gets narration and stills, not a DEGRADED preflight about
+    # a form in Settings.
+    finish_media_setup(engine, vault)
     preflight = run_preflight(engine, settings, vault)
     date_iso = business_date(settings.timezone)
     run_id = str(uuid4())
@@ -390,6 +413,17 @@ def execute_daily_run(
 
     status = _derive_status(stages)
     finished_at = utc_now()
+    if stopped_at is not None:
+        # A day that stopped is the Owner's to unblock: the Director says where and why.
+        from app.agents.director import letter_to_owner  # noqa: PLC0415
+
+        letter_to_owner(
+            engine,
+            f"Ziua s-a oprit la etapa «{stopped_at}»",
+            f"Rularea din {date_iso} s-a oprit la etapa «{stopped_at}»: {stop_reason}. "
+            "Etapele de după ea nu au rulat. Spune-mi ce ai reparat și pornesc din nou. — Sarah",
+            correlation,
+        )
 
     with Session(engine) as session, session.begin():
         event = append_event(

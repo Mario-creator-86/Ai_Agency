@@ -13,6 +13,21 @@ database resource discovery/refresh, separate production choices, UI and regress
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
 
+## Correspondence, and the day that stopped (2026-09-12)
+
+Messages are letters in threads (migration 0027): the ledger names both ends and opens the
+thread; the Owner reads the exchange and writes back. Employees answer the letters that ask
+for something at each worker pass, and the Director reads the answers at once; a letter to
+the Owner (a decision that is hers, a day that stopped, a review that could not run) is red,
+under the Owner chip, and waits for the Owner's reply. The empty answers of 2026-09-11 came
+from the adapter the studio actually uses (`ConfiguredLLM`, thinking now off, ten-minute
+timeout), a stale THINKING flag (runs are records while they run), and media defaults never
+chosen (the day finishes its own setup). Token budgets are three times larger.
+
+Still open from the Owner's office-logic request: employees choosing a video model by
+researching online (cost, capability, examples), analytics-driven adaptation from Google
+Trends and channel numbers, and the visual polish pass — tracked in `13_ROADMAP_TODO.md`.
+
 ## The Director's mandate: grow views and retention — 2026-09-11, ZCode (verified, scope released)
 
 Owner's second decree of the day, implemented and live-verified:

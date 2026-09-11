@@ -222,7 +222,10 @@ class AgentMessage(Base):
     """
 
     __tablename__ = "agent_message"
-    __table_args__ = (Index("ix_agent_message_status", "status", "to_agent_id"),)
+    __table_args__ = (
+        Index("ix_agent_message_status", "status", "to_agent_id"),
+        Index("ix_agent_message_thread", "thread_id", "created_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     intent: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -237,3 +240,9 @@ class AgentMessage(Base):
     created_at: Mapped[str] = mapped_column(String(40), nullable=False)
     resolved_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
     event_id: Mapped[str | None] = mapped_column(ForeignKey("domain_event.event_id"), nullable=True)
+    #: Correspondence (migration 0027): the thread this message belongs to — the first
+    #: message's id, inherited by replies and forwards — the message it answers, and the
+    #: letter as written beside the structured body.
+    thread_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    in_reply_to: Mapped[str | None] = mapped_column(ForeignKey("agent_message.id"), nullable=True)
+    body_text: Mapped[str | None] = mapped_column(Text, nullable=True)

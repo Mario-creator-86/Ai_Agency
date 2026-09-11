@@ -129,7 +129,7 @@ def chat(
         CHAT_TEMPLATE_VERSION,
         correlation_id or str(uuid4()),
         summary=text,
-        max_tokens=1200,
+        max_tokens=3600,
         temperature=0.4,
     )
     with Session(engine) as session:

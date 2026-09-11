@@ -114,7 +114,7 @@ def choose_topic(
         REVIEW_TEMPLATE_VERSION,
         correlation,
         summary=f"Aleg subiectul zilei dintre {len(candidates)} propuneri.",
-        max_tokens=800,
+        max_tokens=2400,
         temperature=0.1,
         emit_message=False,
     )
@@ -184,6 +184,7 @@ def file_stage_reports(
                 intent="STATUS",
                 subject=f"{stage}: {status} — {reason}"[:200],
                 body={"stage": stage, **outcome},
+                body_text=str(outcome.get("reason", ""))[:2000] or None,
                 from_agent_id=reporter,
                 to_agent_id=None,
                 correlation_id=correlation,
@@ -241,9 +242,11 @@ def _apply_decisions(
                     "note": decision.note,
                     "requested_by": who,
                 },
+                body_text=decision.note,
                 from_agent_id=director.id,
                 to_agent_id=target.id,
                 run_id=run_id,
+                in_reply_to=message.id,
                 correlation_id=correlation,
             )
             resolve_message(
@@ -263,6 +266,20 @@ def _apply_decisions(
                 "owner_attention": True,
                 "director_note": decision.note,
             }
+            # The Owner gets a letter, in the thread, saying what is needed — not a flag on
+            # a message she would have to find.
+            post_message(
+                session,
+                intent="ESCALATE",
+                subject=f"Am nevoie de decizia ta: {message.subject}"[:200],
+                body={"about_message_id": message.id},
+                body_text=decision.note or "Aceasta este o decizie care îți aparține.",
+                from_agent_id=director.id,
+                to_owner=True,
+                run_id=run_id,
+                in_reply_to=message.id,
+                correlation_id=correlation,
+            )
             applied.append({"message_id": message.id, "action": decision.action})
         else:
             resolve_message(
@@ -278,6 +295,29 @@ def _apply_decisions(
             applied.append({"message_id": message.id, "action": decision.action})
         del inbox[message.id]
     return {"applied": applied, "dropped": dropped, "left_open": len(inbox)}
+
+
+def letter_to_owner(
+    engine: Engine, subject: str, text: str, correlation_id: str | None = None
+) -> str | None:
+    """The Director writes to the Owner: what stopped, what she needs, what must be fixed.
+
+    Deterministic — the day's own facts, not a model's account of them — so it is written
+    even when no model answers, which is exactly when the Owner most needs to hear it.
+    """
+    with Session(engine) as session, session.begin():
+        director = agent_for_role(session, "Director")
+        row = post_message(
+            session,
+            intent="ESCALATE",
+            subject=subject,
+            body={"kind": "owner_letter"},
+            body_text=text,
+            from_agent_id=director.id if director else None,
+            to_owner=True,
+            correlation_id=correlation_id,
+        )
+        return row.id
 
 
 def director_review(
@@ -327,7 +367,7 @@ def director_review(
             f"Citesc inboxul de seară: {len(facts['inbox'])} mesaje deschise și rezultatul "
             f"a {len(facts['stage_outcomes'])} etape."
         ),
-        max_tokens=2500,
+        max_tokens=7500,
         temperature=0.1,
         emit_message=False,
     )

@@ -1,4 +1,15 @@
-"""Configured LLM adapter; bounded responses and no credential-bearing redirects."""
+"""Configured LLM adapter; bounded responses and no credential-bearing redirects.
+
+This is the adapter behind every connection made in Settings — the Owner's Ollama Cloud
+included — not `app.providers.ollama`, which serves only the seeded local endpoint. Anything
+that must hold for the studio's real runs belongs here first.
+
+Ollama generation asks for thinking off. Ollama counts a model's private reasoning against
+`num_predict`, so a thinking model asked for 700 tokens could spend all 700 reasoning and
+return an empty `response` — seventeen of eighteen fact-checks did exactly that, recorded
+as successes with nothing under them. The whole budget now goes to the answer, and the
+response's `done_reason` travels back so an empty answer can say why.
+"""
 
 import asyncio
 import http.client
@@ -9,6 +20,10 @@ from urllib.parse import urlsplit
 from app.providers.base import GenerateResult, HealthResult, LLMProvider, ModelInfo
 
 BASE_URLS = {"openai": "https://api.openai.com/v1", "anthropic": "https://api.anthropic.com/v1"}
+
+#: How long one generation may take. The daily run's worker lease is an hour; an answer that
+#: needs ten minutes is slow, not broken.
+REQUEST_TIMEOUT_SECONDS = 600
 
 
 class ConfiguredLLM(LLMProvider):
@@ -24,7 +39,9 @@ class ConfiguredLLM(LLMProvider):
         cls = (
             http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
         )
-        connection = cls(parsed.hostname, parsed.port, timeout=30)
+        # A cloud model writing several thousand tokens takes minutes, not seconds; a
+        # thirty-second socket timeout turned long, good answers into "time-out" failures.
+        connection = cls(parsed.hostname, parsed.port, timeout=REQUEST_TIMEOUT_SECONDS)
         headers = {"Content-Type": "application/json"}
         if self.kind == "anthropic":
             headers.update({"x-api-key": self.key, "anthropic-version": "2023-06-01"})
@@ -69,7 +86,7 @@ class ConfiguredLLM(LLMProvider):
     ) -> GenerateResult:
         body: dict[str, Any] = {"model": model}
         if self.kind == "ollama":
-            body.update(prompt=prompt, stream=False)
+            body.update(prompt=prompt, stream=False, think=False)
             if system:
                 body["system"] = system
             options: dict[str, Any] = {}
@@ -78,9 +95,19 @@ class ConfiguredLLM(LLMProvider):
             if temperature is not None:
                 options["temperature"] = temperature
             body["options"] = options
+            if extra:
+                body.update(extra)
             data = await asyncio.to_thread(self.request, "POST", "/api/generate", body)
             return GenerateResult(
-                data["response"], data.get("prompt_eval_count"), data.get("eval_count"), None
+                data.get("response") or "",
+                data.get("prompt_eval_count"),
+                data.get("eval_count"),
+                None,
+                # Never the reasoning itself — only that there was some, and how the call ended.
+                raw_response={
+                    "done_reason": data.get("done_reason"),
+                    "thinking_chars": len(data.get("thinking") or ""),
+                },
             )
         messages = [{"role": "user", "content": prompt}]
         if self.kind == "anthropic":

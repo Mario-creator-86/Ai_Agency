@@ -697,6 +697,34 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 .ledger-head strong { font-weight: 650; }
 .ledger-text { color: var(--ink-2); margin-top: 2px; overflow-wrap: anywhere; }
 .ledger-speech { border-left-color: var(--forest); }
+.ledger-mail { cursor: pointer; }
+.ledger-mail:hover { background: var(--surface-quiet); }
+.ledger-arrow { color: var(--ink-3); }
+.ledger-open { margin-top: 3px; font-size: 11px; color: var(--teal); font-weight: 600; }
+.ledger-item.ledger-owner-mail { border-left-color: #c0392b; background: #fbf1ee; }
+.ledger-item.ledger-owner-mail .ledger-head, .ledger-item.ledger-owner-mail .ledger-head strong { color: #8e2b1f; }
+.ledger-item.ledger-owner-mail .ledger-open { color: #8e2b1f; }
+.ledger-item.ledger-owner-mail.is-answered { border-left-color: #e2b3aa; background: transparent; }
+.ledger-item.ledger-owner-mail.is-answered .ledger-head, .ledger-item.ledger-owner-mail.is-answered .ledger-head strong { color: var(--ink-2); }
+.mail-letter.is-owner { border-color: #e2b3aa; border-left: 3px solid #c0392b; background: #fdf6f4; }
+.mail-owner-flag { margin: -4px 0 8px; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: #8e2b1f; }
+
+/* Mail thread window: letters, oldest first. */
+.mail-dialog { width: min(820px, 94vw); }
+.mail-thread { display: flex; flex-direction: column; gap: 12px; max-height: 58vh; overflow-y: auto; padding: 2px 2px 8px; }
+.mail-letter { padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); box-shadow: 0 1px 0 rgba(23, 41, 39, .04); }
+.mail-letter.is-first { border-left: 3px solid var(--forest); }
+.mail-meta { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 12px; color: var(--ink-3); }
+.mail-route strong { color: var(--ink); font-weight: 650; }
+.mail-arrow { color: var(--ink-3); padding: 0 2px; }
+.mail-meta time { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.mail-subject { margin-top: 6px; font-weight: 600; color: var(--ink); }
+.mail-body { margin-top: 8px; white-space: pre-wrap; line-height: 1.55; color: var(--ink-2); overflow-wrap: anywhere; }
+.mail-empty { color: var(--ink-3); font-style: italic; }
+.mail-footer { margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--line); font-size: 12px; color: var(--ink-3); }
+.mail-reply { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
+.mail-reply textarea { width: 100%; resize: vertical; font: inherit; }
+.mail-reply-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .ledger-production { border-left-color: #4a7fb5; }
 .ledger-money { border-left-color: var(--gold-ink, #b08a2e); }
 .ledger-owner { border-left-color: var(--warn-line); }

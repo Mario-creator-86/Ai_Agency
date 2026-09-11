@@ -154,8 +154,14 @@ def worker_pass(
     engine: Engine,
     handlers: dict[str, TaskHandler],
     worker_id: str = "worker_main",
+    registry: Any = None,
 ) -> dict[str, Any]:
-    """One pass: fire what is due, then run what is queued."""
+    """One pass: fire what is due, run what is queued, then answer the mail.
+
+    The mail comes last and only with a registry to run models through: a letter to an
+    employee is answered by that employee within the pass, so an exchange the Director
+    starts in the evening is a conversation by the next pass, not a note that waits a day.
+    """
     triggered = scheduler_tick(engine, leader_id=worker_id)
     ran: list[dict[str, Any]] = []
     for _ in range(TASKS_PER_PASS):
@@ -163,4 +169,9 @@ def worker_pass(
         if result is None:
             break
         ran.append(result)
-    return {"triggered": triggered, "ran": ran}
+    mail: dict[str, Any] = {"answered": [], "refused": []}
+    if registry is not None:
+        from app.agents.mail import correspondence_round  # noqa: PLC0415
+
+        mail = correspondence_round(engine, registry)
+    return {"triggered": triggered, "ran": ran, "mail": mail}

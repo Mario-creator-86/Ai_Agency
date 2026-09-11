@@ -39,6 +39,7 @@ from app.agents.director import (
     choose_topic,
     director_review,
     file_stage_reports,
+    letter_to_owner,
 )
 from app.agents.memory import agent_for_role, remember
 from app.agents.reviews import (
@@ -845,6 +846,14 @@ def _post_run(
     try:
         review = director_review(engine, registry, str(uuid4()), outcomes)
     except (DirectorError, ValueError) as exc:
+        letter_to_owner(
+            engine,
+            "Nu am putut revizui ziua",
+            f"Revizuirea de seară nu a putut rula: {str(exc)[:300]}. Rapoartele "
+            f"({len(filed)}) sunt în inbox, nedecise. Verifică modelul meu în Settings sau "
+            "spune-mi ce să fac cu ele. — Sarah",
+            str(uuid4()),
+        )
         return _outcome(
             COMPLETED,
             f"{len(filed)} rapoarte depuse; revizuirea Directorului a fost respinsă: {exc}"[:300],

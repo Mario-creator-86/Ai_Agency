@@ -90,7 +90,7 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
         # Migrations/bootstrap are explicit startup commands, never hidden destructive schema edits.
         with engine.connect() as connection:
             revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
-            if revision != "0026_director_mandate":
+            if revision != "0027_mail_threads":
                 raise RuntimeError("Run scripts/bootstrap.py with this application version")
             if connection.scalar(text("SELECT COUNT(*) FROM owner_policy")) != 1:
                 raise RuntimeError("Run scripts/bootstrap.py to initialize the studio")
@@ -179,7 +179,9 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
             async def run_worker() -> None:
                 while not stop_dispatcher.is_set():
                     try:
-                        summary = await asyncio.to_thread(worker_pass, engine, handlers)
+                        summary = await asyncio.to_thread(
+                            worker_pass, engine, handlers, "worker_main", registry
+                        )
                         if summary["triggered"] or summary["ran"]:
                             logger.info(
                                 "worker_pass",

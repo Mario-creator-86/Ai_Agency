@@ -204,7 +204,7 @@ def reconcile_day(
             f"{figures['month']['spent_usd']} USD luna aceasta, "
             f"{len(figures['budgets'])} bugete active."
         ),
-        max_tokens=1200,
+        max_tokens=3600,
         temperature=0.1,
         emit_message=False,
     )

@@ -246,13 +246,28 @@ def _open_messages(session: Session, agent: Agent) -> list[tuple[AgentMessage, s
 
 def _message_line(message: AgentMessage, from_name: str) -> str:
     body = message.body_json if isinstance(message.body_json, dict) else {}
-    detail = str(body.get("instructions") or body.get("detail") or "").strip()
-    if len(detail) > 400:
-        detail = detail[:399] + "…"
-    line = f"- [{message.intent} from {from_name}] {message.subject}"
+    detail = str(message.body_text or body.get("instructions") or body.get("detail") or "").strip()
+    if len(detail) > 600:
+        detail = detail[:599] + "…"
+    line = f"- [{message.intent} from {from_name}, {message.created_at[:16]}] {message.subject}"
     if detail:
         line += f": {detail}"
     return line
+
+
+def _thread_lines(session: Session, message: AgentMessage, names: dict[str, str]) -> list[str]:
+    """What was said earlier in this letter's thread, newest three, so the reply fits."""
+    from app.agents.messages import thread_messages  # noqa: PLC0415
+
+    earlier = [
+        m for m in thread_messages(session, message.thread_id or message.id) if m.id != message.id
+    ][-3:]
+    lines = []
+    for m in earlier:
+        who = names.get(m.from_agent_id or "", "the Owner" if m.from_agent_id is None else "?")
+        text = " ".join((m.body_text or "").split())[:240]
+        lines.append(f"    earlier, {who}: {m.subject}" + (f" — {text}" if text else ""))
+    return lines
 
 
 def compose_identity(session: Session, agent: Agent, *, task_type: str = "") -> Identity:
@@ -298,7 +313,10 @@ def compose_identity(session: Session, agent: Agent, *, task_type: str = "") -> 
             "follow them within your contract and the channel policies — they stay until the "
             "work is done or the message is resolved):"
         )
-        lines.extend(_message_line(m, from_name) for m, from_name in asked)
+        thread_names = {a.id: a.display_name for a in session.scalars(select(Agent))}
+        for m, from_name in asked:
+            lines.append(_message_line(m, from_name))
+            lines.extend(_thread_lines(session, m, thread_names))
     lines.append("STANDING RULES:")
     lines.extend(f"- {rule}" for rule in STANDING_RULES)
     system = "\n".join(lines)

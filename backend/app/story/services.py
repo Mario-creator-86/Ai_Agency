@@ -387,7 +387,7 @@ def write_episode(
         "v1",
         correlation,
         summary=f"Scriu episodul serialului pentru ziua {date_iso}.",
-        max_tokens=2400,
+        max_tokens=7200,
         temperature=0.7,
         emit_message=False,
     )

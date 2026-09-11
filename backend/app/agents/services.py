@@ -291,6 +291,33 @@ def _check_required_capabilities(session: Session, agent: Agent) -> None:
         )
 
 
+#: A run still marked RUNNING after this long is one the process never came back to.
+RUN_STALE_AFTER_SECONDS = 45 * 60
+
+
+def _has_live_run(session: Session, agent_id: str) -> bool:
+    """Whether a run of this employee is genuinely in progress.
+
+    A run is written when it starts, so "in progress" is a RUNNING row younger than the
+    stale limit. Older RUNNING rows are closed as ABANDONED here, with the reason, so the
+    record says what happened instead of pretending the model is still thinking.
+    """
+    from datetime import UTC, datetime, timedelta  # noqa: PLC0415
+
+    live = False
+    limit = (datetime.now(UTC) - timedelta(seconds=RUN_STALE_AFTER_SECONDS)).isoformat()
+    for run in session.scalars(
+        select(AgentRun).where(AgentRun.agent_id == agent_id, AgentRun.status == "RUNNING")
+    ):
+        if run.started_at >= limit:
+            live = True
+            continue
+        run.status = "ABANDONED"
+        run.error_detail = "Rularea nu s-a mai încheiat: procesul s-a oprit în timpul apelului."
+        run.finished_at = utc_now()
+    return live
+
+
 def _assert_policy_allows_run(session: Session, agent: Agent, registry: ProviderRegistry) -> None:
     """Full policy kernel gate. Raises PolicyKernelError on any block."""
     # 1. Autonomy stop
@@ -312,7 +339,23 @@ def _assert_policy_allows_run(session: Session, agent: Agent, registry: Provider
     if model is None or model.provider_id != agent.provider_id or not model.is_available:
         raise PolicyKernelError("Assigned model is unavailable or not verified", "BLOCKED_PROVIDER")
     if agent.runtime_state not in ("IDLE", "BLOCKED", "ERROR"):
-        raise PolicyKernelError("Agent already has an active task", "BLOCKED_POLICY")
+        if _has_live_run(session, agent.id):
+            raise PolicyKernelError("Agent already has an active task", "BLOCKED_POLICY")
+        # THINKING with no run in flight is a flag left behind — a restart mid-call, a
+        # process killed between the two transactions. Dr. Aris sat like that for a whole
+        # day and every stage that needed him was refused with "already has an active
+        # task". A state nothing is backing is cleared, not obeyed.
+        agent.runtime_state = "IDLE"
+        agent.version += 1
+        append_event_with_outbox(
+            session,
+            "agent.state_changed",
+            "agent",
+            agent.id,
+            agent.version,
+            {"runtime_state": "IDLE", "reason": "stale THINKING with no run in flight"},
+            str(uuid4()),
+        )
 
     # 3. Capabilities
     _check_required_capabilities(session, agent)
@@ -440,8 +483,34 @@ def run_agent_task(
             "agent",
             agent_id,
             agent.version,
-            {"runtime_state": "THINKING", "task_type": task_type},
+            {"runtime_state": "THINKING", "task_type": task_type, "run_id": run_id},
             correlation_id,
+        )
+        # The run exists from the moment the model is called. What the employee is doing
+        # right now is then a fact in the record, and a process that dies mid-call leaves a
+        # RUNNING row to be closed as ABANDONED, not a THINKING flag nothing can explain.
+        session.add(
+            AgentRun(
+                id=run_id,
+                agent_id=agent_id,
+                task_type=task_type,
+                objective=objective,
+                prompt_template_version=prompt_template_version,
+                model_name=model_name,
+                provider_name=provider_name,
+                status="RUNNING",
+                output=None,
+                output_text=None,
+                error_detail=None,
+                cost_vr=None,
+                prompt_tokens=None,
+                completion_tokens=None,
+                correlation_id=correlation_id,
+                started_at=started_at,
+                finished_at=None,
+                event_id=None,
+                context_json=context,
+            )
         )
 
     # Execute outside the DB transaction to avoid holding locks during LLM call
@@ -521,29 +590,19 @@ def run_agent_task(
             },
             correlation_id,
         )
-        run = AgentRun(
-            id=run_id,
-            agent_id=agent_id,
-            task_type=task_type,
-            objective=objective,
-            prompt_template_version=prompt_template_version,
-            model_name=model_name,
-            provider_name=provider_name,
-            status=status,
-            output=None,
-            output_text=output_text,
-            error_detail=error_detail,
-            cost_vr=cost_vr,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            correlation_id=correlation_id,
-            started_at=started_at,
-            finished_at=finished_at,
-            event_id=event.event_id,
-            context_json=context,
-        )
-        session.add(run)
+        stored = session.get(AgentRun, run_id)
+        if stored is None:  # pragma: no cover - the row was written when the call started
+            raise RuntimeError(f"Run {run_id} vanished while the model was answering")
+        stored.status = status
+        stored.output_text = output_text
+        stored.error_detail = error_detail
+        stored.cost_vr = cost_vr
+        stored.prompt_tokens = prompt_tokens
+        stored.completion_tokens = completion_tokens
+        stored.finished_at = finished_at
+        stored.event_id = event.event_id
         session.flush()
+        run = stored
 
         # The model's real output is the agent's operational message. Emitting it as
         # agent.message_sent (through the outbox, so it reaches the live office) is what the

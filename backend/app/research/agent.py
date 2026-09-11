@@ -198,7 +198,7 @@ def propose_topics(
         TEMPLATE_VERSION,
         correlation,
         summary=f"Caut {min(wanted, MAX_CANDIDATES)} idei de subiect pentru studio.",
-        max_tokens=2500,
+        max_tokens=7500,
         temperature=0.4,
         emit_message=False,
     )
@@ -382,7 +382,7 @@ def gather_sources(
         TEMPLATE_VERSION,
         correlation,
         summary=f"Caut surse pentru subiectul «{title}».",
-        max_tokens=1200,
+        max_tokens=3600,
         temperature=0.2,
         emit_message=False,
     )

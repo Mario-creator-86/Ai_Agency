@@ -1,5 +1,47 @@
 # Changelog
 
+## The office writes letters, and the Director writes to the Owner — 2026-09-12
+
+What stopped the day of 2026-09-11 (12/12 stages "completed", nothing produced), and the
+correspondence the Owner asked for.
+
+- **The real adapter.** The studio's connections run through `ConfiguredLLM`
+  (`backend/app/integrations/llm.py`), not `app.providers.ollama`; the thinking-off fix of
+  2026-09-11 had gone into the wrong class, so every run on the Owner's Ollama Cloud still
+  spent its whole token budget on reasoning and returned nothing. `think: false` is now sent
+  by the adapter the studio uses, `done_reason` travels back, and the socket timeout is ten
+  minutes instead of thirty seconds ("time-out" was the browser and the socket, not the model).
+- **A stuck employee.** Dr. Aris sat in THINKING all day — a flag left by a run the process
+  never came back to — and every stage that needed him was refused "already has an active
+  task". A run is now a record from the moment the model is called (`RUNNING`, closed as
+  `ABANDONED` after 45 minutes); a THINKING flag with no run behind it is cleared, not obeyed.
+- **Token budgets ×3** on every task (fact-check 2 100, Director review 7 500, scripts 9 000…).
+- **Media setup finishes itself.** A verified image or voice connection with no default model
+  or voice reported `NO_DEFAULT` until the Owner found a form; the day now runs the existing
+  `auto_configure` before its preflight when readiness says something is empty.
+- **Letters** (migration 0027): a message has a thread, a reply, and the letter itself
+  (`thread_id`, `in_reply_to`, `body_text`). Forwarding keeps the thread, so everyone on it
+  reads the same exchange. The Director's decisions are letters in the thread they answer;
+  stage reports carry their reason as text. An employee's open letters enter its prompt with
+  the last three turns of their thread.
+- **Employees answer their mail** (`backend/app/agents/mail.py`): the worker answers, each
+  pass, the letters that ask for something — in the employee's voice, in the thread — and
+  the Director reads what came back at once. A question closes with its answer; a HANDOFF
+  stays open until the employee says the work is done; a report waits for nobody; a thread
+  past eight letters is left to the evening review or the Owner.
+- **Letters to the Owner.** When a decision is the Owner's, or the day stopped, or the
+  evening review could not run, the Director writes to the Owner: what stopped, where, what
+  she needs. Such letters are out of her own inbox, in red in the ledger under the Owner
+  chip, and wait for the Owner's reply, which closes them and reaches her; her answer to the
+  Owner is again addressed to the Owner. `GET /agents/messages/owner`.
+- **The page**: a letter in the ledger names both ends and opens its thread
+  (`frontend/src/mail_thread.js`): who wrote to whom, when, about what, the text, how it
+  ended; the Owner writes back from the bottom. The inspector's inbox opens threads too.
+- API: `GET /agents/messages/threads/{id}`, `POST /agents/messages/{id}/reply`,
+  `POST /agents/messages/{id}/forward`, `GET /agents/messages/owner`.
+- Tests: `tests/test_mail.py` (18), `tests/test_audit_regressions.py`,
+  `frontend/tests/mail_thread.test.js`, `frontend/tests/ledger.test.js`.
+
 ## The Director's mandate: grow views and retention — 2026-09-11, ZCode
 
 The Owner's decree, made mechanical:

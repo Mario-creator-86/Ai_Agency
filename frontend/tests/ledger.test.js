@@ -18,8 +18,10 @@ test('a typed message shows its intent and subject, and the sender by name', () 
     names,
   );
   assert.equal(item.who, 'Vera (Publisher)');
-  assert.equal(item.label, 'mesaj ESCALATE');
+  assert.equal(item.label, 'scrie · escaladare');
   assert.equal(item.text, 'Publication HOLD');
+  assert.equal(item.to, 'Director');
+  assert.equal(item.thread, 'm-1');
 });
 
 test('work, production, money and owner events get plain labels and the right kind', () => {
@@ -93,4 +95,47 @@ test('the head line says which stage the day is in while it is in it', () => {
   ]);
   assert.equal(between.running, null);
   assert.equal(between.text, 'Ultima rulare zilnică finalizată');
+});
+
+test('a letter names both ends, says what kind it is, and carries its thread', () => {
+  const item = describeEvent(
+    {
+      event_type: 'agent.message_posted',
+      aggregate_id: 'm-9',
+      payload: {
+        intent: 'REQUEST_INFO',
+        subject: 'Sursa cifrei de 40%',
+        from_agent_id: 'a-2',
+        from_name: 'Sarah (Director)',
+        to_name: 'Elena (Fact Checker)',
+        thread_id: 't-1',
+        excerpt: 'Elena, pe ce stă 40%?',
+      },
+    },
+    names,
+  );
+  assert.equal(item.who, 'Sarah (Director)');
+  assert.equal(item.to, 'Elena (Fact Checker)');
+  assert.equal(item.label, 'scrie · întrebare');
+  assert.equal(item.text, 'Sursa cifrei de 40% — Elena, pe ce stă 40%?');
+  assert.equal(item.thread, 't-1');
+  const reply = describeEvent({
+    event_type: 'agent.message_posted',
+    aggregate_id: 'm-10',
+    payload: { intent: 'STATUS', subject: 'Re: Sursa', in_reply_to: 'm-9', thread_id: 't-1' },
+  });
+  assert.equal(reply.label, 'răspunde · raport');
+  assert.equal(reply.who, 'Owner');
+});
+
+test('a letter to the Owner files under the Owner chip and says so', () => {
+  const item = describeEvent({
+    event_type: 'agent.message_posted',
+    aggregate_id: 'm-11',
+    payload: { intent: 'ESCALATE', subject: 'Ziua s-a oprit la etapa «media»', from_name: 'Sarah (Director)', to_name: 'Owner', for_owner: true, thread_id: 'm-11' },
+  });
+  assert.equal(item.kind, 'owner');
+  assert.equal(item.to, 'Owner');
+  assert.equal(item.forOwner, true);
+  assert.equal(item.label, 'scrie · escaladare · CĂTRE TINE');
 });

@@ -297,7 +297,7 @@ def create_settings_router() -> APIRouter:
                 "Răspunde într-o singură propoziție scurtă: ești funcțional?",
                 "v1",
                 str(uuid4()),
-                max_tokens=800,
+                max_tokens=2400,
                 temperature=0.2,
             )
         except ValueError as exc:

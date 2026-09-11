@@ -79,7 +79,7 @@ def draft_with_agent(
         "v1",
         correlation_id,
         summary=f"Scriu scenariul pentru «{topic.title}» din {len(evidence)} afirmații.",
-        max_tokens=3000,
+        max_tokens=9000,
         emit_message=False,
     )
     if result["status"] != "SUCCEEDED" or not result.get("output_text"):

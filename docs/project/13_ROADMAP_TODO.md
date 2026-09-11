@@ -528,3 +528,18 @@ Evidence: `scratch/verify_weekly_review_ui.mjs` 5/5 live; backend 526/1; fronten
 - [x] Contract v3: instruct any employee in writing, steer channels/topics from measured performance, request budget from the Accountant with justification; Accountant answers budget requests from the books and escalates (Owner alone decides budgets).
 - [x] Weekly review v2: structured answer routed to all departments + Accountant + Owner escalation; STRATEGY memory for direction; spoken summary in the office; schema violations file nothing.
 - [ ] Until real publications and per-channel production exist, the mandate has no numbers to act on — the machinery waits for Phase 5/6 configuration.
+
+## Office logic: correspondence and the day that stopped — 2026-09-12
+
+- [x] `ConfiguredLLM` (the studio's real adapter) asks Ollama for thinking off, reports `done_reason`, and waits ten minutes; a run with no text is `EMPTY_OUTPUT` with the reason.
+- [x] Runs are records while they run (`RUNNING` → final; `ABANDONED` after 45 min); a stale THINKING flag is cleared, not obeyed.
+- [x] Token budgets ×3; the day runs `auto_configure` before preflight when media readiness says `NO_DEFAULT`.
+- [x] Letters: thread, reply, forward, text (migration 0027); open letters enter the employee's prompt with their thread.
+- [x] Employees answer their mail each worker pass; the Director reads what came back at once; a question closes, a HANDOFF stays open until done, a long thread waits for the evening or the Owner.
+- [x] Letters to the Owner (decision hers / day stopped / review refused): red in the ledger, `GET /agents/messages/owner`, answered from the thread window.
+- [x] Thread window on the page; the inspector's inbox opens threads.
+- [ ] Employees choosing a video/image model by researching online (cost, capability, examples) — needs a web-research tool for agents beyond the source allowlist, and the resource metadata (`pricing`, `capabilities`) filled from vendor pages.
+- [ ] Analytics-driven adaptation: Google Trends and channel numbers into the Director's weekly review and the Researcher's topic proposals (Phase 7 machinery, real publications first).
+- [ ] Visual polish pass on the whole page (spacing, type, dialog rhythm, the office chrome) — a dedicated task with screenshots per view.
+
+Evidence: `tests/test_mail.py` 18/18; backend 544/1; frontend 86/86; live on a copy of the Owner's data (`scratch` review scripts).

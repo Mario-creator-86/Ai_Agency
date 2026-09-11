@@ -13,7 +13,17 @@ from app.agents.director import DirectorError, director_review
 from app.agents.history import agent_timeline, chat
 from app.agents.identity import ContractCommand, identity_view, set_role_contract
 from app.agents.memory import MemoryError, invalidate, list_memory
-from app.agents.messages import MessageError, list_messages, resolve_message
+from app.agents.messages import (
+    MessageError,
+    forward_message,
+    is_for_owner,
+    letters_for_owner,
+    list_messages,
+    message_view,
+    post_message,
+    resolve_message,
+    thread_view,
+)
 from app.agents.schemas import AgentRunView, RunAgentCommand
 from app.agents.services import (
     get_agent,
@@ -33,6 +43,20 @@ from app.security import require_owner
 class ResolveMessageCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
     resolution: str = Field(min_length=1, max_length=2000)
+
+
+class ReplyCommand(BaseModel):
+    """The Owner writes back into a thread; the letter goes to whoever wrote last."""
+
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(min_length=1, max_length=8000)
+    to_agent_id: str | None = Field(default=None, min_length=36, max_length=36)
+
+
+class ForwardCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    to_agent_id: str = Field(min_length=36, max_length=36)
+    note: str = Field(min_length=1, max_length=8000)
 
 
 class ChatCommand(BaseModel):
@@ -71,14 +95,80 @@ def create_agents_router(registry: ProviderRegistry) -> APIRouter:
             "messages": list_messages(request.app.state.engine, status=status, agent_id=agent_id)
         }
 
+    @router.get("/messages/owner")
+    def get_owner_letters(request: Request, open_only: bool = True) -> dict:
+        """What the studio has written to the Owner — the letters that wait for an answer."""
+        return {"letters": letters_for_owner(request.app.state.engine, open_only=open_only)}
+
+    @router.get("/messages/threads/{thread_id}")
+    def get_thread(
+        request: Request, thread_id: Annotated[str, Path(min_length=36, max_length=36)]
+    ) -> dict:
+        """One exchange, oldest first: who wrote to whom, when, about what, and the letters."""
+        return thread_view(request.app.state.engine, thread_id)
+
+    @router.post("/messages/{message_id}/reply")
+    def post_reply(
+        request: Request,
+        message_id: Annotated[str, Path(min_length=36, max_length=36)],
+        command: ReplyCommand,
+    ) -> dict:
+        """The Owner answers a letter in its thread. Addressed to the sender unless told."""
+        try:
+            with Session(request.app.state.engine) as session, session.begin():
+                from app.agents.models import AgentMessage  # noqa: PLC0415
+
+                parent = session.get(AgentMessage, message_id)
+                if parent is None:
+                    raise HTTPException(status_code=404, detail="Mesajul nu există")
+                row = post_message(
+                    session,
+                    intent="REQUEST_INFO",
+                    subject=("Re: " + parent.subject)[:200],
+                    body={"from": "Owner"},
+                    body_text=command.text,
+                    from_agent_id=None,
+                    to_agent_id=command.to_agent_id or parent.from_agent_id,
+                    in_reply_to=message_id,
+                )
+                # A letter to the Owner is answered by the Owner's reply: it stops waiting.
+                if parent.status == "OPEN" and is_for_owner(parent):
+                    resolve_message(
+                        session,
+                        parent.id,
+                        resolution=command.text[:2000],
+                        resolved_by="Owner",
+                        status="ANSWERED",
+                    )
+                return message_view(row)
+        except MessageError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @router.post("/messages/{message_id}/forward")
+    def post_forward(
+        request: Request,
+        message_id: Annotated[str, Path(min_length=36, max_length=36)],
+        command: ForwardCommand,
+    ) -> dict:
+        try:
+            with Session(request.app.state.engine) as session, session.begin():
+                row = forward_message(
+                    session,
+                    message_id,
+                    to_agent_id=command.to_agent_id,
+                    from_agent_id=None,
+                    note=command.note,
+                )
+                return message_view(row)
+        except MessageError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     @router.post("/messages/{message_id}/resolve")
     def post_resolve_message(
         request: Request,
         message_id: Annotated[str, Path(min_length=36, max_length=36)],
         command: ResolveMessageCommand,
     ) -> dict:
-        from app.agents.messages import message_view
-
         try:
             with Session(request.app.state.engine) as session, session.begin():
                 row = resolve_message(

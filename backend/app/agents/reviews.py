@@ -174,7 +174,7 @@ def review_narration(
         "review_narration",
         prompt,
         correlation,
-        max_tokens=1500,
+        max_tokens=4500,
         summary=f"Citesc naratiunea storyboardului «{title}» ({len(scenes)} scene).",
     )
     text = result["output_text"]
@@ -287,7 +287,7 @@ def review_failed_render(
         "review_failed_render",
         prompt,
         correlation,
-        max_tokens=1200,
+        max_tokens=3600,
         summary=(
             f"Diagnostichez randarea picată {facts['asset_id']}: "
             f"{len(report_reasons)} motive de eșec."
@@ -404,7 +404,7 @@ def prepare_publication(
         "prepare_publication",
         prompt,
         correlation,
-        max_tokens=1500,
+        max_tokens=4500,
         summary=f"Pregătesc publicarea «{script_title}» pe canalul {channel_name}.",
     )
     text = result["output_text"]

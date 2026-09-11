@@ -45,7 +45,7 @@ class OllamaProvider(LLMProvider):
         with urlopen(req, timeout=timeout) as resp:
             return _json.loads(resp.read())
 
-    def _post(self, path: str, body: dict, timeout: int = 120) -> dict:
+    def _post(self, path: str, body: dict, timeout: int = 600) -> dict:
         url = f"{self.base_url}{path}"
         data = _json.dumps(body).encode()
         req = Request(

@@ -8,6 +8,7 @@ import { OfficeState } from './office_state.js';
 import { Ledger } from './ledger.js';
 import { friendlyAnswer } from './friendly_text.js';
 import { LiveWindows, eventMatchesAgent } from './live_window.js';
+import { MailThread } from './mail_thread.js';
 
 /** @param {string} id @returns {HTMLElement} */
 function element(id) {
@@ -95,6 +96,19 @@ function scheduleHistoryRefresh(agentId) {
   }, 600);
 }
 
+/** One exchange of letters, opened from the ledger or from an employee's inbox. */
+const mailThread = new MailThread({
+  dialog: /** @type {HTMLDialogElement} */ (element('mail-modal')),
+  title: element('mail-title'),
+  body: element('mail-thread'),
+  form: /** @type {HTMLFormElement} */ (element('mail-reply-form')),
+  input: /** @type {HTMLTextAreaElement} */ (element('mail-reply-text')),
+  status: element('mail-status'),
+  api: (path, options) => api(path, options),
+  escape: escapeHtml,
+});
+element('mail-close').addEventListener('click', () => mailThread.dialog.close());
+
 /** Everything the studio does and says, read from its own events. */
 const ledger = new Ledger({
   list: element('ledger-list'),
@@ -104,6 +118,7 @@ const ledger = new Ledger({
   onEvents: (events) => {
     for (const event of events) noteAgentEvent(event);
   },
+  onThread: (threadId) => mailThread.open(threadId),
 });
 
 function notify(message) {
@@ -545,7 +560,7 @@ function renderIdentity(identity) {
     : '<li class="helper">Nu își amintește nimic încă: nicio verificare, decizie sau publicare înregistrată.</li>';
   const messages = (identity.messages || []).filter((m) => m.status !== 'RESOLVED').slice(0, 8);
   element('inspector-messages').innerHTML = messages.length
-    ? messages.map((m) => `<li><span class="policy-tag policy-locked">${escapeHtml(m.intent)}</span> ${escapeHtml(m.subject)}${m.from_name ? ` <small>· de la ${escapeHtml(m.from_name)}</small>` : ''}</li>`).join('')
+    ? messages.map((m) => `<li class="inspector-mail" data-thread="${escapeHtml(m.thread_id || m.id)}" title="Deschide firul"><span class="policy-tag policy-locked">${escapeHtml(m.intent)}</span> ${escapeHtml(m.subject)}${m.from_name ? ` <small>· de la ${escapeHtml(m.from_name)}</small>` : ''} <small class="ledger-open">fir ↗</small></li>`).join('')
     : '<li class="helper">Niciun mesaj deschis.</li>';
 }
 
@@ -610,6 +625,11 @@ function applyInspectorExpanded() {
 element('inspector-expand').addEventListener('click', () => {
   inspectorExpanded = !inspectorExpanded;
   applyInspectorExpanded();
+});
+
+element('inspector-messages').addEventListener('click', (event) => {
+  const target = event.target instanceof Element ? event.target.closest('[data-thread]') : null;
+  if (target) mailThread.open(target.getAttribute('data-thread'));
 });
 
 element('inspector-close').addEventListener('click', () => {
@@ -2040,6 +2060,7 @@ function render(data) {
   const agentNames = Object.fromEntries(officeState.agents.map((a) => [a.id || a.agent_id, a.display_name]));
   ledger.setNames(agentNames);
   liveWindows.timezone = data.studio.timezone;
+  mailThread.timezone = data.studio.timezone;
   liveWindows.setNames(agentNames);
   ledger.add(data.events || []);
   element('ledger-count').textContent = `${ledger.events.size} înregistrări`;
