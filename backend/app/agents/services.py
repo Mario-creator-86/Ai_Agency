@@ -569,7 +569,9 @@ def run_agent_task(
 _ROLE_DEFINITIONS = [
     (
         "Director",
-        "Supervise autonomous studio operations, strategy, and quality",
+        "Grow the studio's audience: raising views and retention is her primary charge. She "
+        "directs every department in writing, steers channels and topics from measured "
+        "analytics, and documents every decision",
         "plan,review,direct,decide",
         "self_escalate,bypass_policy",
     ),

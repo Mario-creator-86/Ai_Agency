@@ -25,14 +25,18 @@ from __future__ import annotations
 from typing import Any
 from uuid import uuid4
 
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
+from app.agents.identity import blocker_of, parse_structured
+from app.agents.memory import remember
 from app.agents.messages import post_message
 from app.agents.models import Agent, AgentRun, Role
 from app.analytics.models import AnalyticsSnapshot, DirectorRecommendation
 from app.publishing.models import ChannelRecord, PublicationRecord
 from app.services import utc_now
+from app.workflows.services import append_event_with_outbox
 
 WEEKLY_REVIEW_TASK = "WEEKLY_REVIEW"
 WEEKLY_JOB_NAME = "weekly_review"
@@ -169,26 +173,51 @@ def _digest_as_text(digest: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+class WeeklyReviewAnswer(BaseModel):
+    """The Director's weekly review, structured so it can be routed where it does work."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    verdict: str = Field(min_length=1, max_length=4000)
+    #: Written indications for the sound department (Lyra), within the channel policies.
+    sound: str = Field(default="", max_length=2000)
+    #: Written indications for the video department (Kael), same limits.
+    video: str = Field(default="", max_length=2000)
+    #: Channel direction and topic changes, for research and writing.
+    topics: str = Field(default="", max_length=2000)
+    #: A budget increase she is requesting from the Accountant, with the reason. The Owner
+    #: alone decides budgets; the request documents the need and reaches them.
+    budget_request_amount_usd: float | None = Field(default=None, gt=0)
+    budget_request_justification: str = Field(default="", max_length=2000)
+    #: What the Owner must hear about regardless of departments.
+    escalate_to_owner: str = Field(default="", max_length=2000)
+
+
 _REVIEW_INSTRUCTIONS = (
-    "You are doing your weekly performance review, as your contract requires. Below is what "
-    "the audience measured for everything the studio has published, plus the strategy "
-    "recommendations still waiting.\n"
-    "Write, in Romanian, in this order:\n"
-    "1. Verdict: what performed and what underperformed, judged from the measured numbers "
-    "(views, retention, click-through), never from impressions.\n"
-    "2. Production indications for the SOUND department (Lyra): what to keep, what to change "
-    "or adjust in voice, pace or settings — only where the channel's production policy allows "
-    "the change; say explicitly when something must go through an approved identity change "
-    "because the channel or the character is locked.\n"
-    "3. Production indications for the VIDEO department (Kael): which direction the video "
-    "models and visual choices should take, weighed by quality, recorded cost and what kept "
-    "viewers watching — same policy limits.\n"
-    "4. What must reach the Owner: budget, personnel, a locked identity change.\n"
-    "Base every statement on the numbers below or on what you remember; when the data is too "
-    "thin to judge (fewer than three videos of a kind), say so instead of guessing.\n\n"
+    "You are doing your weekly performance review, as your contract requires. Your primary "
+    "charge is growing views and retention; every judgement below must rest on the measured "
+    "numbers, never on impressions. Below is what the audience measured for everything the "
+    "studio has published, plus the strategy recommendations still waiting.\n"
+    "Return ONLY a JSON object, in Romanian, with exactly these keys:\n"
+    '{"verdict": "what performed and what underperformed, from the numbers",\n'
+    ' "sound": "written indications for the SOUND department (Lyra): keep, change or adjust '
+    "in voice, pace, settings — only where the channel policy allows; name what must go "
+    'through an approved identity change because a channel or character is locked",\n'
+    ' "video": "written indications for the VIDEO department (Kael): which way the video '
+    "models and visual choices should move, weighed by quality, recorded cost and what kept "
+    'viewers watching — same policy limits",\n'
+    ' "topics": "channel direction and topic changes: what to chase, what to drop, why — '
+    'this is how you steer the channels",\n'
+    ' "budget_request_amount_usd": null,\n'
+    ' "budget_request_justification": "only when the measured plan needs more money than the '
+    'budget allows: how much, and the reason, written for the Accountant and the Owner",\n'
+    ' "escalate_to_owner": "what only the Owner can decide: hiring, a locked identity, a '
+    'budget, a hold that stood"}\n'
+    "Leave a section empty rather than invent work; when the data is too thin to judge "
+    "(fewer than three videos of a kind), say so in the verdict instead of guessing.\n\n"
 )
 
-_WEEKLY_PROMPT_VERSION = "weekly-review-v1"
+_WEEKLY_PROMPT_VERSION = "weekly-review-v2"
 
 
 def _agent_for_role(session: Session, role_name: str) -> Agent | None:
@@ -249,11 +278,17 @@ def execute_weekly_review(
         director = _agent_for_role(session, "Director")
         if director is None:
             raise WeeklyReviewError("Nu există un Director activ căruia să-i predau revizia.")
-        sound = _agent_for_role(session, "VoiceArtist")
-        video = _agent_for_role(session, "VideoEditor")
+        departments = {
+            role_name: (_agent.id if (_agent := _agent_for_role(session, role_name)) else None)
+            for role_name in (
+                "VoiceArtist",
+                "VideoEditor",
+                "LeadResearcher",
+                "ScriptWriter",
+                "Accountant",
+            )
+        }
         director_id = director.id
-        sound_id = sound.id if sound else None
-        video_id = video.id if video else None
 
     from app.agents.services import run_agent_task
 
@@ -266,9 +301,10 @@ def execute_weekly_review(
         prompt,
         _WEEKLY_PROMPT_VERSION,
         correlation_id,
-        max_tokens=1400,
+        max_tokens=1600,
         temperature=0.3,
         summary=f"Revizia săptămânală a performanței ({digest['week']})",
+        emit_message=False,
     )
     if result["status"] != "SUCCEEDED" or not (result.get("output_text") or "").strip():
         return {
@@ -280,39 +316,138 @@ def execute_weekly_review(
             "run_id": result["id"],
             "week": digest["week"],
         }
-    review_text = result["output_text"].strip()
-    week_label = digest["week"]
+    text = result["output_text"].strip()
+    blocker = blocker_of(text)
+    verdict = ""
+    handoffs: list[tuple[str, Any, str]] = []
+    wants_budget = False
+    budget_amount: float | None = None
+    budget_justification = ""
+    review_dump: dict[str, Any] | None = None
+    strategy_text = ""
+    body: dict[str, Any] = {"digest": digest["per_channel"], "week": digest["week"]}
+    if blocker is not None:
+        # The Director answered with a structured blocker instead of a review: it is filed
+        # as such, nothing is routed, and the report records why.
+        verdict = blocker.reason
+        body.update({"blocker": blocker.reason, "needs": blocker.needs})
+    else:
+        answer = parse_structured(text, WeeklyReviewAnswer)
+        if not isinstance(answer, WeeklyReviewAnswer):
+            return {
+                "status": "FAILED",
+                "reason": "Revizia Directorului nu a respectat schema; nimic nu a fost distribuit.",
+                "run_id": result["id"],
+                "week": digest["week"],
+            }
+        verdict = answer.verdict
+        handoffs = [
+            ("sunet", departments["VoiceArtist"], answer.sound),
+            ("video", departments["VideoEditor"], answer.video),
+            ("cercetare și subiecte", departments["LeadResearcher"], answer.topics),
+            ("scenarii", departments["ScriptWriter"], answer.topics),
+        ]
+        wants_budget = bool(
+            answer.budget_request_amount_usd and answer.budget_request_justification.strip()
+        )
+        budget_amount = answer.budget_request_amount_usd
+        budget_justification = answer.budget_request_justification.strip()
+        review_dump = answer.model_dump()
+        strategy_text = answer.topics
 
+    week_label = digest["week"]
     with Session(engine) as session, session.begin():
-        for role_name, agent_id in (("VoiceArtist", sound_id), ("VideoEditor", video_id)):
-            if agent_id is None:
+        filed = 0
+        for department, agent_id, instructions in handoffs:
+            if agent_id is None or not instructions.strip():
                 continue
-            department = "sunet" if role_name == "VoiceArtist" else "video"
             post_message(
                 session,
                 intent="HANDOFF",
                 subject=(
                     f"Indicațiile Directorului pentru departamentul de {department} — {week_label}"
                 ),
-                body={"instructions": review_text, "week": week_label},
+                body={"instructions": instructions.strip(), "week": week_label},
                 from_agent_id=director_id,
                 to_agent_id=agent_id,
                 run_id=result["id"],
                 correlation_id=correlation_id,
             )
-        headline = " ".join(review_text.split())[:140]
+            filed += 1
+        budget_requested = False
+        if wants_budget and budget_amount:
+            accountant_id = departments["Accountant"]
+            if accountant_id is not None:
+                post_message(
+                    session,
+                    intent="REQUEST_INFO",
+                    subject=f"Cerere de buget: +{budget_amount:g} USD — {week_label}",
+                    body={
+                        "budget_request": True,
+                        "amount_usd": budget_amount,
+                        "justification": budget_justification,
+                        "week": week_label,
+                    },
+                    from_agent_id=director_id,
+                    to_agent_id=accountant_id,
+                    run_id=result["id"],
+                    correlation_id=correlation_id,
+                )
+                budget_requested = True
+        headline = " ".join(verdict.split())[:140]
+        if review_dump is not None:
+            body["review"] = review_dump
         post_message(
             session,
             intent="STATUS",
             subject=f"Revizia săptămânală {week_label}: {headline}",
-            body={"review": review_text, "digest": digest["per_channel"]},
+            body=body,
             from_agent_id=director_id,
+            run_id=result["id"],
             correlation_id=correlation_id,
         )
+        # A direction the Director sets is strategy: it stays with her and shapes the next
+        # choices even after the message is resolved.
+        if strategy_text.strip():
+            remember(
+                session,
+                memory_class="STRATEGY",
+                content=f"Week {week_label}: {strategy_text.strip()[:400]}",
+                source_type="run",
+                source_id=result["id"],
+                agent_id=director_id,
+            )
+    _announce(
+        engine,
+        director_id,
+        (
+            f"Revizia {week_label} e predată: {filed} departamente instruite"
+            + (", cerere de buget trimisă Contabilului" if budget_requested else "")
+            + "."
+        ),
+        result["id"],
+        correlation_id,
+    )
     return {
         "status": "COMPLETED",
         "run_id": result["id"],
         "week": week_label,
         "videos_reviewed": len(digest["videos"]),
-        "instructions_filed": sum(1 for id_ in (sound_id, video_id) if id_),
+        "instructions_filed": filed,
+        "budget_requested": budget_requested,
     }
+
+
+def _announce(engine: Engine, agent_id: str, text: str, run_id: str, correlation_id: str) -> None:
+    """The Director's operational summary as her live speech-bubble message."""
+    with Session(engine) as session, session.begin():
+        agent = session.get(Agent, agent_id)
+        append_event_with_outbox(
+            session,
+            "agent.message_sent",
+            "agent",
+            agent_id,
+            agent.version if agent else 1,
+            {"text": text[:200], "run_id": run_id, "task_type": WEEKLY_REVIEW_TASK},
+            correlation_id,
+        )

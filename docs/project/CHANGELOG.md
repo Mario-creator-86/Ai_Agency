@@ -1,5 +1,30 @@
 # Changelog
 
+## The Director's mandate: grow views and retention — 2026-09-11, ZCode
+
+The Owner's decree, made mechanical:
+
+- **Sarah's mission** (role row + migration 0026): growing views and retention is her
+  primary charge; she directs every department in writing, steers channels and topics from
+  measured analytics, documents every decision.
+- **Contract v3**: she may instruct any employee, change channel direction and topics on
+  the measured evidence, and request a larger budget from the Accountant with the numbers
+  and the reason written down. The Accountant must answer every budget request from the
+  books and escalate it — only the Owner can raise a budget, and nothing in this change
+  gives an agent that power.
+- **The weekly review became the mandate's instrument.** Her answer is structured JSON,
+  validated before anything is stored: verdict; sound indications → Lyra; video indications
+  → Kael; channel direction and topic changes → LeadResearcher and ScriptWriter (and
+  remembered as STRATEGY); budget request → the Accountant; escalation → the Owner. Every
+  piece lands as a message that enters that employee's runs, the office hears her spoken
+  summary, and her inbox keeps the full review. An answer that breaks the schema files
+  nothing and says so.
+- **The Accountant answers at the daily close**: every open budget request is answered with
+  the day's computed figures, resolved as transmitted, and the close escalates to the Owner.
+
+Backend 528 passed / 1 skipped; ruff, format, mypy clean; frontend 79/79. Live: server on
+0026, mission and contracts confirmed, weekly review re-run honestly skipped at zero tokens.
+
 ## Sound, video and a Director who checks weekly — the roles the Owner ordered — 2026-09-11, ZCode
 
 - **The contracts say who does what now.** Seed v2 (migration 0025, data-only; a role the

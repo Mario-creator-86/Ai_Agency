@@ -10,10 +10,11 @@ clock; and the worker's dispatch table knows the task.
 
 from __future__ import annotations
 
+import json
 from uuid import uuid4
 
 import pytest
-from app.agents.models import Agent, AgentMessage, AgentRun, ModelRecord, Role
+from app.agents.models import Agent, AgentMessage, AgentRun, MemoryRecord, ModelRecord, Role
 from app.agents.services import seed_initial_workforce
 from app.analytics.models import AnalyticsSnapshot
 from app.media.models import MediaAsset
@@ -29,15 +30,21 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from test_agent_identity import ScriptedModel
 
-REVIEW_ANSWER = (
-    "1. Verdict: „Test publication” a ținut publicul 62% din video, cu CTR 8% — peste "
-    "pragul nostru; publicul a rămas până la capăt.\n"
-    "2. Sunet (Lyra): păstrează vocea caldă, rarind ritmul la cifre; fără schimbări de "
-    "model — costul înregistrat e rezonabil.\n"
-    "3. Video (Kael): ținem modelul actual; alternativa mai ieftină a avut reținere mai "
-    "slabă în eșantionul mic, deci nu schimbăm încă.\n"
-    "4. Pentru Owner: nimic de escaladat săptămâna aceasta."
-)
+REVIEW_JSON = {
+    "verdict": (
+        "„Test publication” a ținut publicul 62% din video, cu CTR 8% — peste pragul "
+        "nostru; publicul a rămas până la capăt."
+    ),
+    "sound": "Păstrează vocea caldă; rarind ritmul la cifre. Fără schimbare de model.",
+    "video": "Ținem modelul actual; alternativa mai ieftină are reținere mai slabă.",
+    "topics": "Urmărim roboțica autonomă; scădem subiectele cu retenție sub 40%.",
+    "budget_request_amount_usd": 20,
+    "budget_request_justification": (
+        "Planul măsurat necesită încă 20 USD pentru extrageri suplimentare de surse."
+    ),
+    "escalate_to_owner": "",
+}
+REVIEW_ANSWER = json.dumps(REVIEW_JSON, ensure_ascii=False)
 
 
 @pytest.fixture
@@ -174,27 +181,53 @@ def test_the_review_reaches_the_departments_as_instructions(engine, staffed, cha
     registry, model = registry_with(staffed, REVIEW_ANSWER)
     result = execute_weekly_review(engine, registry)
     assert result["status"] == "COMPLETED", result
-    assert result["instructions_filed"] == 2
+    assert result["instructions_filed"] == 4
+    assert result["budget_requested"] is True
     # The Director saw the measured numbers, not a summary of them.
     assert "1000 vizualizări" in model.calls[0]["prompt"]
+    # The run announces itself to the office in words, never as raw JSON.
+    assert not any("verdict" in call.get("bubble", "") for call in model.calls)
 
     with Session(engine) as session:
+        sarah_id = staffed["agents"]["Director"].id
         handoffs = session.scalars(
             select(AgentMessage).where(AgentMessage.intent == "HANDOFF")
         ).all()
-        targets = {str(m.to_agent_id) for m in handoffs}
-        assert targets == {
+        by_department = {}
+        for message in handoffs:
+            assert message.from_agent_id == sarah_id
+            assert message.status == "OPEN"
+            by_department[message.to_agent_id] = message
+        assert set(by_department) == {
             staffed["agents"]["VoiceArtist"].id,
             staffed["agents"]["VideoEditor"].id,
+            staffed["agents"]["LeadResearcher"].id,
+            staffed["agents"]["ScriptWriter"].id,
         }
-        for message in handoffs:
-            assert message.from_agent_id == staffed["agents"]["Director"].id
-            assert "Indicațiile Directorului" in message.subject
-            assert message.body_json["instructions"] == REVIEW_ANSWER
-            assert message.status == "OPEN"
+        assert (
+            by_department[staffed["agents"]["VoiceArtist"].id].body_json["instructions"]
+            == REVIEW_JSON["sound"]
+        )
+        assert (
+            by_department[staffed["agents"]["LeadResearcher"].id].body_json["instructions"]
+            == REVIEW_JSON["topics"]
+        )
+        # The budget request goes to the Accountant, with the amount and the reason.
+        request = session.scalar(select(AgentMessage).where(AgentMessage.intent == "REQUEST_INFO"))
+        assert request is not None
+        assert request.to_agent_id == staffed["agents"]["Accountant"].id
+        assert request.body_json["budget_request"] is True
+        assert request.body_json["amount_usd"] == 20
+        assert REVIEW_JSON["budget_request_justification"] in request.body_json["justification"]
+        # The review itself lands in the Director's inbox, in full.
         report = session.scalar(select(AgentMessage).where(AgentMessage.to_agent_id.is_(None)))
         assert report is not None and report.subject.startswith("Revizia săptămânală")
-        assert REVIEW_ANSWER in report.body_json["review"]
+        assert REVIEW_JSON["verdict"] in report.body_json["review"]["verdict"]
+        # A direction the Director set is strategy: it stays with her.
+        strategy = session.scalar(
+            select(MemoryRecord).where(MemoryRecord.memory_class == "STRATEGY")
+        )
+        assert strategy is not None and REVIEW_JSON["topics"][:40] in strategy.content
         run = session.scalar(select(AgentRun).where(AgentRun.task_type == WEEKLY_REVIEW_TASK))
         assert run is not None and run.status == "SUCCEEDED"
 
@@ -203,6 +236,46 @@ def test_the_review_reaches_the_departments_as_instructions(engine, staffed, cha
     # week or an explicit Owner decision, not through this path.
     second = execute_weekly_review(engine, registry)
     assert second["status"] == "SKIPPED" and "deja revizuită" in second["reason"]
+
+
+def test_an_answer_that_breaks_the_schema_files_nothing(engine, staffed, channel):
+    make_published(engine, channel)
+    registry, model = registry_with(staffed, "Am revizuit săptămâna și totul e bine, cred.")
+    result = execute_weekly_review(engine, registry)
+    assert result["status"] == "FAILED" and "schema" in result["reason"]
+    with Session(engine) as session:
+        remaining = session.scalars(select(AgentMessage)).all()
+        assert remaining == []
+
+
+def test_the_accountant_answers_a_budget_request_at_the_close(engine, staffed, channel):
+    from app.economy.accountant import reconcile_day
+
+    make_published(engine, channel)
+    registry, _ = registry_with(staffed, REVIEW_ANSWER)
+    assert execute_weekly_review(engine, registry)["status"] == "COMPLETED"
+
+    close_registry, close_model = registry_with(
+        staffed,
+        json.dumps(
+            {
+                "summary": "Ziua e închisă.",
+                "recommendations": [],
+                "holds": [],
+                "continue_spending": True,
+            }
+        ),
+    )
+    outcome = reconcile_day(engine, close_registry)
+    assert outcome["intent"] == "ESCALATE"
+    assert outcome["budget_requests"][0]["amount_usd"] == 20
+    assert close_model.calls  # the Accountant ran; the request text reached her inbox earlier
+    with Session(engine) as session:
+        request = session.scalar(select(AgentMessage).where(AgentMessage.intent == "REQUEST_INFO"))
+        assert request.status == "RESOLVED"
+        assert "Numai Owner-ul stabilește bugetul" in request.resolution
+        close = session.get(AgentMessage, outcome["message_id"])
+        assert close.body_json["budget_requests"][0]["justification"].startswith("Planul măsurat")
 
 
 def test_the_worker_dispatch_table_knows_the_weekly_review(engine, settings, staffed):

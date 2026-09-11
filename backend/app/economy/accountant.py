@@ -26,12 +26,13 @@ from typing import Any
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import Engine
+from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from app.agents.identity import blocker_of, parse_structured
 from app.agents.memory import agent_for_role, remember
 from app.agents.messages import post_message
+from app.agents.models import AgentMessage
 from app.agents.services import run_agent_task
 from app.economy.budget import budget_status
 from app.economy.services import EconomyError, format_micros, record_provider_cost
@@ -238,6 +239,36 @@ def reconcile_day(
     if exceeded:
         body["owner_attention"] = True
     with Session(engine) as session, session.begin():
+        # The Director's budget requests are answered here, from the books: the figures the
+        # close just computed stand next to her justification, the request is resolved as
+        # "answered and passed to the Owner", and the close escalates — because only the
+        # Owner can raise a budget. The Accountant documents; the Owner decides.
+        requests = session.scalars(
+            select(AgentMessage)
+            .where(
+                AgentMessage.to_agent_id == accountant_id,
+                AgentMessage.status == "OPEN",
+                AgentMessage.intent == "REQUEST_INFO",
+            )
+            .order_by(AgentMessage.created_at)
+        ).all()
+        budget_requests = [
+            m
+            for m in requests
+            if isinstance(m.body_json, dict) and m.body_json.get("budget_request")
+        ]
+        if budget_requests:
+            body["budget_requests"] = [
+                {
+                    "message_id": m.id,
+                    "amount_usd": m.body_json.get("amount_usd"),
+                    "justification": str(m.body_json.get("justification") or "")[:500],
+                    "week": m.body_json.get("week"),
+                }
+                for m in budget_requests
+            ]
+            body["owner_attention"] = True
+            intent = "ESCALATE"
         message = post_message(
             session,
             intent=intent,
@@ -277,6 +308,13 @@ def reconcile_day(
                 source_id=result["id"],
                 agent_id=accountant_id,
             )
+        for request in budget_requests:
+            request.status = "RESOLVED"
+            request.resolved_by = "Nadia (Accountant)"
+            request.resolution = (
+                "Înscrisă în închiderea zilei și transmisă Owner-ului cu cifrele cărții: "
+                f"{headline}. Numai Owner-ul stabilește bugetul."
+            )
         message_id = message.id
     return {
         "agent_id": accountant_id,
@@ -287,6 +325,7 @@ def reconcile_day(
         "figures": figures,
         "report": report.model_dump() if isinstance(report, AccountantReport) else None,
         "blocked": blocker.reason if blocker else None,
+        "budget_requests": body.get("budget_requests", []),
     }
 
 

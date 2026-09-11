@@ -13,6 +13,37 @@ database resource discovery/refresh, separate production choices, UI and regress
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
 
+## The Director's mandate: grow views and retention — 2026-09-11, ZCode (verified, scope released)
+
+Owner's second decree of the day, implemented and live-verified:
+
+- **Sarah's mission is now the growth of the audience** — raising views and retention is her
+  primary charge (`_ROLE_DEFINITIONS` + migration `0026_director_mandate`, which also offers
+  contract seed v3 to roles never Owner-edited).
+- **Contract v3 powers**: she directs ANY employee in writing (every instruction, choice and
+  request documented as a message), steers each channel's direction and changes or
+  deprioritises topics when the measured performance says so, and requests a larger budget
+  from the Accountant with the numbers and the reason written down — the Owner alone
+  decides budgets, so a justified request also reaches the Owner. The Accountant's matching
+  duty: answer every budget request from the books, in writing.
+- **The weekly review routes the mandate.** Its answer is now structured
+  (`weekly-review-v2`): verdict, sound indications (→ Lyra), video indications (→ Kael),
+  channel direction and topic changes (→ LeadResearcher and ScriptWriter, and remembered as
+  STRATEGY memory), a budget request (→ the Accountant, amount + justification) and an
+  Owner escalation — all filed as messages that enter each employee's runs, plus her spoken
+  summary in the office and the full review in her inbox. A schema-breaking answer files
+  nothing and says so; a week with nothing published still reports that at zero tokens.
+- **The Accountant answers budget requests at the daily close**: each open request is
+  answered with the books' figures, resolved as "transmitted to the Owner", and the close
+  escalates — documentation without ever granting a budget (Owner-only, unchanged).
+
+Live verification: server restarted on `0026_director_mandate` (mission + contracts at v3
+confirmed in the database), weekly review triggered and completed with the honest
+"nimic publicat, nimic de măsurat" STATUS. Tests: backend 528 passed / 1 skipped (new:
+schema-break files nothing; the Accountant's budget-request close); ruff, format, mypy
+clean; frontend 79/79; docs integrity passes. The pre-existing secret-scan false positive
+(`discovery.py:80`) stands, untouched, in Codex's file.
+
 ## The roles the Owner ordered: sound, video, and a Director who checks weekly — 2026-09-11, ZCode (verified, scope released)
 
 Owner directive implemented end to end, live-verified against the running studio:

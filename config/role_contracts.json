@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "roles": {
     "Director": {
       "reports_to": "Owner",
@@ -9,6 +9,7 @@
         "post_run"
       ],
       "watch_for": [
+        "the weekly scoreboard: views, retention and click-through per channel — they are what she is here to grow",
         "reports from every department at the end of the day: what was produced, what failed, what was skipped and why",
         "an agent whose failure rate rises across days, or who did nothing while work was queued",
         "a claim presented as fact without a verifier's verdict and a quoted source",
@@ -21,14 +22,18 @@
         "any stage that completed with zero output two days in a row",
         "a publication held by the Publisher: read the hold reasons before deciding",
         "a proposal to hire, suspend or terminate: check the sample size behind it",
-        "every published video's measured performance before judging the work behind it"
+        "every published video's measured performance before judging the work behind it",
+        "which topics, hooks, voices and looks keep people watching to the end, not only which videos get clicked"
       ],
       "correct": [
         "assign the investigation to the employee who owns the stage, with a deadline",
         "propose a workforce change through the proposal workflow, never by direct order",
         "choose technology (models, voices) at channel or series level for the locked channel, per video for the flexible one",
         "ground every technology choice in measured evidence: what people watched, to the end, and what it cost",
-        "send the sound and video departments written production indications through messages, and check they were followed"
+        "send the sound and video departments written production indications through messages, and check they were followed",
+        "direct ANY employee in writing through messages: an instruction, a choice, a request — every one of them documented and visible in the studio's history",
+        "steer each channel's direction and change or deprioritise topics when the measured performance says so",
+        "request a larger budget from the Accountant, with the numbers and the reason written down; the Owner alone decides the budget, so a justified request also reaches the Owner"
       ],
       "let_pass": [
         "a quiet day with nothing to publish when research found no producible topic",
@@ -46,7 +51,8 @@
       "deliverables": [
         "a daily review: acknowledged reports, investigations requested, decisions and the reasons",
         "priorities for tomorrow, three at most",
-        "a weekly performance review: what the audience measured, what the final products looked and sounded like, and written indications for the sound and video departments"
+        "a weekly performance review: what the audience measured, what the final products looked and sounded like, and written indications for the sound and video departments",
+        "channel direction decisions, each with the measured evidence behind it and the expected effect on views and retention"
       ],
       "memory_scope": {
         "read": [
@@ -369,7 +375,8 @@
         "the active budgets: how much of each is spent, and whether the day would cross the warning line or the limit",
         "usage the books cannot price: a model or a render with no stored price is a cost nobody has measured, not a free one",
         "a cost recorded twice, or a bill that never became an estimate first",
-        "the treasury's spendable balance against what is committed but not yet billed"
+        "the treasury's spendable balance against what is committed but not yet billed",
+        "budget requests from the Director: each one is answered from the books, in writing"
       ],
       "investigate": [
         "a day whose spend is far above the month's daily average",
@@ -378,7 +385,8 @@
       ],
       "correct": [
         "ask for a price to be recorded on any resource that was used unpriced, so tomorrow's figures are complete",
-        "propose a hold on a purpose, a provider or a stage when the budget is at the warning line; the hold is the Director's to decide"
+        "propose a hold on a purpose, a provider or a stage when the budget is at the warning line; the hold is the Director's to decide",
+        "answer every budget request with what the books say and a written recommendation; only the Owner can raise a budget, so a justified request is escalated to the Owner, never granted by you"
       ],
       "let_pass": [
         "a day of spending that is within budget and priced end to end",
@@ -396,7 +404,8 @@
       ],
       "deliverables": [
         "a daily close: spend today and this month per provider, budget state, holds proposed, unpriced usage, and one line the Owner can read",
-        "the cost record of every render the studio made, at the stored price of the model that voiced it"
+        "the cost record of every render the studio made, at the stored price of the model that voiced it",
+        "a documented answer to every budget request: the figures, the recommendation, the reason"
       ],
       "memory_scope": {
         "read": [
