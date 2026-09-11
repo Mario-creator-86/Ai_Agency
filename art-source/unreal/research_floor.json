@@ -1,0 +1,36 @@
+{
+  "zone": {
+    "id": "research_lab",
+    "name": "Floor 3 \u2014 Research & Fact-Check Lab",
+    "zone_type": "RESEARCH",
+    "floor": 3,
+    "x": 130,
+    "y": 195,
+    "width": 840,
+    "height": 130,
+    "color": "#0f3460",
+    "desks": [
+      {
+        "id": "desk_research_1",
+        "name": "Lead Researcher",
+        "x": 350,
+        "y": 275,
+        "role_name": "Researcher"
+      },
+      {
+        "id": "desk_research_2",
+        "name": "Fact Checker",
+        "x": 680,
+        "y": 275,
+        "role_name": "FactChecker"
+      }
+    ]
+  },
+  "wall_h": 111,
+  "floor_depth_px": 10,
+  "room_depth_px": 60,
+  "pitch_deg": 16.0,
+  "fixtures": 7,
+  "lamp": "#e8f4ff",
+  "accent": "#5ee0c8"
+}

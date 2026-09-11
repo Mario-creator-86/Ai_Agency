@@ -16,6 +16,7 @@ import { department, MAT, FACADE, UI, AMBIENT, SKY, CITY, rgba, withAlpha, mix }
 import { glow, contactShadow, cachedSprite, PixelGrid, drawSprite } from './pixel_sprites.js';
 import { drawChair, characterMetrics } from './office_characters.js';
 import { drawText, textWidth } from './pixel_font.js';
+import { atlas, propReady, drawProp, propPoint, tileProp } from './office_atlas.js';
 
 const TAU = Math.PI * 2;
 
@@ -39,6 +40,41 @@ function mulberry32(seed) {
   };
 }
 const pick = (list, rnd) => list[Math.floor(rnd() * list.length) % list.length];
+
+/* ------------------------------------------------------------------- atlas */
+
+/**
+ * Floors drawn from the Blender sprite atlas (art-source/blender). Empty on purpose: the
+ * Owner compared the atlas RESEARCH floor with the hand-drawn floors on 2026-09-11 and judged
+ * the hand-drawn rooms and furniture the better art, so every floor draws the procedural art
+ * below. The pipeline and its assets stay in the repository; adding a zone type here turns the
+ * atlas back on for that floor.
+ */
+export const ATLAS_ZONES = new Set();
+
+export function usesAtlas(zone) {
+  return atlas.ready && ATLAS_ZONES.has(zone.zone_type);
+}
+
+/**
+ * Floors whose *people* come from the Blender character parts. Empty on purpose: the Owner
+ * judged the rendered characters a regression against the hand-drawn sprites (boxier heads,
+ * hair reading as a cap), so every floor draws the hand-drawn characters while the atlas
+ * still supplies rooms and furniture. Add a zone type here to compare again.
+ */
+export const ATLAS_CHARACTER_ZONES = new Set();
+
+export function usesAtlasCharacters(zone) {
+  return atlas.ready && ATLAS_CHARACTER_ZONES.has(zone.zone_type);
+}
+
+/** A floor-standing atlas prop with a contact shadow, anchored at (x, floorY). */
+function placeProp(ctx, name, x, floorY) {
+  const e = atlas.props[name];
+  if (!e) return null;
+  contactShadow(ctx, x - e.anchor.x + e.w / 2, floorY + 2, e.w / 2 + 1, 2, 0.4);
+  return drawProp(ctx, name, x, floorY);
+}
 
 /* --------------------------------------------------------------- primitives */
 
@@ -85,6 +121,7 @@ function vband(ctx, x, y, w, h, top, bottom, steps = 6) {
 
 export const SLAB_H = 12;        // floor slab thickness the backend's zone box includes
 export const FLOOR_SURFACE = 7;  // visible floor surface depth (top of the slab)
+export const PREMIUM_FLOOR_SURFACE = 10;  // atlas floors show a deeper 3/4 floor plane
 export const CEILING_H = 7;      // ceiling band at the top of each zone
 
 export function floorLine(zone) {
@@ -112,7 +149,16 @@ export function drawZoneShell(ctx, zone) {
 
   // Back wall: lit under the ceiling, falling into shadow at the floor.
   vband(ctx, x, wallTop, w, wallH, dept.wall[3], dept.wall[1], 14);
-  drawWallFinish(ctx, zone, dept, wallTop, wallH, rnd);
+  const wallTile = `wall_${zone.zone_type}_h${wallH}`;
+  if (usesAtlas(zone) && propReady(wallTile)) {
+    // Plaster speckle from the procedural finish, then the moulded wainscot and rails.
+    for (let i = 0; i < w * wallH * 0.004; i += 1) {
+      px(ctx, x + rnd() * w, wallTop + 4 + rnd() * (wallH - 8), 1, 1, withAlpha(AMBIENT.light, 0.04));
+    }
+    tileProp(ctx, wallTile, x, x + w, floorY);
+  } else {
+    drawWallFinish(ctx, zone, dept, wallTop, wallH, rnd);
+  }
 
   // Ambient occlusion where the wall meets the ceiling and the floor.
   px(ctx, x, wallTop, w, 1, withAlpha(AMBIENT.shadow, 0.55));
@@ -135,6 +181,14 @@ export function drawZoneShell(ctx, zone) {
 
   // Tall street-level volumes show their services: ducting, a pipe run, pendant drops.
   if (h >= 180) drawTallVolume(ctx, zone, wallTop, rnd);
+
+  // Skirting board where a finished wall meets the floor (not in the server room or the booth).
+  if (dept.wallStyle === 'plaster' || dept.wallStyle === 'panelled' || dept.wallStyle === 'brick') {
+    px(ctx, x, floorY - 4, w, 4, dept.trim[2]);
+    px(ctx, x, floorY - 4, w, 1, dept.trim[4]);
+    px(ctx, x, floorY - 1, w, 1, dept.trim[0]);
+    px(ctx, x, floorY - 5, w, 1, withAlpha(AMBIENT.shadow, 0.35));
+  }
 
   // Floor slab: surface pattern on top, concrete edge below.
   drawFloor(ctx, zone, dept, floorY, rnd);
@@ -226,6 +280,16 @@ function drawFloor(ctx, zone, dept, floorY, rnd) {
   const { x, width: w } = zone;
   const f = dept.floor;
   const bottom = zone.y + zone.height;
+  const floorTile = `floor_${zone.zone_type}`;
+  if (usesAtlas(zone) && propReady(floorTile)) {
+    // 3/4 floor strip from the atlas, then the remaining slab edge in concrete.
+    const surface = PREMIUM_FLOOR_SURFACE;
+    tileProp(ctx, floorTile, x, x + w, floorY);
+    const edgeTop = floorY + surface + 2;
+    px(ctx, x, edgeTop, w, bottom - edgeTop, FACADE.slab[2]);
+    px(ctx, x, bottom - 1, w, 1, FACADE.slab[0]);
+    return;
+  }
   // Surface (seen from a little above), then the slab's front edge.
   px(ctx, x, floorY, w, FLOOR_SURFACE, f[2]);
   px(ctx, x, floorY, w, 1, f[4]);
@@ -326,21 +390,23 @@ function drawWallSign(ctx, zone, dept) {
 }
 
 /** Light baked into the static layer: a soft cone from each fixture and a pool on the floor. */
-export function bakeRoomLight(ctx, zone) {
+export function bakeRoomLight(ctx, zone, daylight = 0) {
   const dept = department(zone.zone_type);
   const floorY = floorLine(zone);
   const top = zone.y + CEILING_H;
+  // By day the fixtures only fill in what the windows light; at night they carry the room.
+  const dim = 1 - daylight * 0.55;
   if (zone.height >= 180) {
     const lamps = Math.max(1, Math.round(zone.width / 110));
     for (let i = 0; i < lamps; i += 1) {
       const lx = Math.round(zone.x + (zone.width * (i + 0.5)) / lamps);
-      glow(ctx, lx, top + 70, 58, rgba(dept.lamp, 0.34), 1);
+      glow(ctx, lx, top + 70, 58, rgba(dept.lamp, 0.34), dim);
     }
   }
   for (const fx of fixtures(zone)) {
     const cone = ctx.createLinearGradient(0, top, 0, floorY);
-    cone.addColorStop(0, rgba(dept.lamp, 0.16));
-    cone.addColorStop(0.5, rgba(dept.lamp, 0.05));
+    cone.addColorStop(0, rgba(dept.lamp, 0.16 * dim));
+    cone.addColorStop(0.5, rgba(dept.lamp, 0.05 * dim));
     cone.addColorStop(1, rgba(dept.lamp, 0.0));
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
@@ -353,11 +419,11 @@ export function bakeRoomLight(ctx, zone) {
     ctx.closePath();
     ctx.fill();
     ctx.restore();
-    glow(ctx, fx, top + 2, 30, rgba('#fff3d0', 0.45), 0.9);
+    glow(ctx, fx, top + 2, 30, rgba('#fff3d0', 0.45), 0.9 * dim);
     // Pool on the floor surface.
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
-    ctx.globalAlpha = 0.16;
+    ctx.globalAlpha = 0.16 * dim;
     ctx.fillStyle = dept.lamp;
     ctx.beginPath();
     ctx.ellipse(fx, floorY + 3, 46, 4, 0, 0, TAU);
@@ -366,29 +432,84 @@ export function bakeRoomLight(ctx, zone) {
   }
 }
 
-/** A window punched through the back wall, showing the night outside. */
-export function drawWindow(ctx, x, y, w, h, daylight = 0) {
-  px(ctx, x - 2, y - 2, w + 4, h + 4, AMBIENT.shadow);
-  px(ctx, x - 1, y - 1, w + 2, h + 2, FACADE.mullion[3]);
-  px(ctx, x, y, w, h, FACADE.mullion[1]);
-  const gx = x + 1, gy = y + 1, gw = w - 2, gh = h - 2;
+/** Light from a window falling down the wall onto the floor: warm by day, cool blue at night. */
+function drawWindowSpill(ctx, x, y, w, h, daylight, floorY) {
+  const color = daylight > 0.5 ? '#ffe9b4' : '#8fb8e0';
+  const strength = 0.05 + daylight * 0.09;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const g = ctx.createLinearGradient(0, y + h, 0, floorY + FLOOR_SURFACE);
+  g.addColorStop(0, rgba(color, strength));
+  g.addColorStop(1, rgba(color, strength * 0.35));
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(x, y + h);
+  ctx.lineTo(x + w, y + h);
+  ctx.lineTo(x + w + 12, floorY + FLOOR_SURFACE);
+  ctx.lineTo(x - 12, floorY + FLOOR_SURFACE);
+  ctx.closePath();
+  ctx.fill();
+  ctx.globalAlpha = strength * 1.6;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.ellipse(x + w / 2, floorY + 3, w / 2 + 10, 3, 0, 0, TAU);
+  ctx.fill();
+  ctx.restore();
+}
+
+/**
+ * The view through a window. With a backdrop (the scene's own sky-and-skyline layer) the
+ * window is a hole: it shows exactly what stands behind the building at these world
+ * coordinates, so a penthouse looks out on sky and tower tops and a low floor on the roofs
+ * and lit windows across the street. Without a backdrop (the standalone room preview) a
+ * plausible view is drawn, with towers shrinking on higher floors.
+ */
+export function drawWindowView(ctx, gx, gy, gw, gh, daylight = 0, backdrop = null, floor = 0) {
+  if (backdrop) {
+    ctx.drawImage(backdrop, gx, gy, gw, gh, gx, gy, gw, gh);
+    // Glazing: a faint cool tint and reflection of the room light so the hole reads as glass.
+    ctx.save();
+    ctx.globalAlpha = 0.08;
+    ctx.fillStyle = mix(SKY.upper, '#ffffff', 0.6);
+    ctx.fillRect(gx, gy, gw, gh);
+    ctx.restore();
+    return;
+  }
+  const towerScale = Math.max(0.12, 1 - floor * 0.24);
   const g = ctx.createLinearGradient(0, gy, 0, gy + gh);
   g.addColorStop(0, mix(SKY.upper, SKY.dayUpper, daylight));
   g.addColorStop(1, mix(SKY.dusk, SKY.dayBand, daylight));
   ctx.fillStyle = g;
   ctx.fillRect(gx, gy, gw, gh);
-  // Distant towers and a few lit windows.
-  const rnd = mulberry32(hash32(`win${x}${y}`));
+  const rnd = mulberry32(hash32(`win${gx}${gy}`));
   let tx = gx;
   while (tx < gx + gw) {
     const tw = 5 + Math.floor(rnd() * 8);
-    const th = 6 + Math.floor(rnd() * (gh * 0.5));
+    const th = Math.max(2, Math.floor((6 + rnd() * (gh * 0.5)) * towerScale));
     px(ctx, tx, gy + gh - th, Math.min(tw, gx + gw - tx), th, CITY.mid);
     for (let wy = gy + gh - th + 2; wy < gy + gh - 2; wy += 3) {
       if (rnd() > 0.55) px(ctx, tx + 1 + Math.floor(rnd() * Math.max(1, tw - 3)), wy, 1, 1, rnd() > 0.5 ? CITY.windowWarm : CITY.windowCool);
     }
     tx += tw + 1;
   }
+}
+
+/** A window punched through the back wall, showing the night outside. */
+export function drawWindow(ctx, x, y, w, h, daylight = 0, premium = false, floorY = null, view = null) {
+  if (floorY !== null) drawWindowSpill(ctx, x, y, w, h, daylight, floorY);
+  const backdrop = view ? view.backdrop : null;
+  const floor = view ? view.floor : 0;
+  const spriteName = `window_${w}x${h}`;
+  if (premium && propReady(spriteName)) {
+    drawWindowView(ctx, x, y, w, h, daylight, backdrop, floor);
+    drawProp(ctx, spriteName, x, y);
+    return;
+  }
+  px(ctx, x - 2, y - 2, w + 4, h + 4, AMBIENT.shadow);
+  px(ctx, x - 1, y - 1, w + 2, h + 2, FACADE.mullion[3]);
+  px(ctx, x, y, w, h, FACADE.mullion[1]);
+  const gx = x + 1, gy = y + 1, gw = w - 2, gh = h - 2;
+  drawWindowView(ctx, gx, gy, gw, gh, daylight, backdrop, floor);
   // Mullions and a glass sheen.
   px(ctx, x + Math.floor(w / 2) - 1, y, 2, h, FACADE.mullion[2]);
   px(ctx, x, y + Math.floor(h / 2), w, 1, FACADE.mullion[2]);
@@ -417,13 +538,34 @@ export function drawWindow(ctx, x, y, w, h, daylight = 0) {
  *   desk.front(): the desk itself, keyboard and clutter (call after the character)
  * Returns the geometry the engine needs to place screens and hands.
  */
-export function workstation(zone, dept, deskX, variant = 0) {
+export function workstation(zone, dept, deskX, variant = 0, premium = false) {
   const floorY = floorLine(zone);
   const deskTop = floorY - 24;
   const w = 76;
   const x = deskX - w / 2;
   const wood = variant % 2 === 0 ? MAT.walnut : MAT.oak;
   const seatX = deskX + 8;
+  const propName = `workstation_${variant % 2 === 0 ? 'walnut' : 'oak'}`;
+  if (premium && propReady(propName) && propReady(`${propName}_back`)) {
+    // Sprite workstation: same desk plane and seat, so characters and hit-tests are unchanged.
+    const screen = propPoint(propName, 'screen', deskX, floorY);
+    const lamp = propPoint(propName, 'lamp', deskX, floorY);
+    return {
+      deskTop,
+      seatX,
+      monitorX: x + 4,
+      premium: true,
+      screen: screen ? { mx: screen.x, my: screen.y, w: screen.w, h: screen.h } : null,
+      lamp,
+      back(ctx) {
+        drawProp(ctx, `${propName}_back`, deskX, floorY);
+      },
+      front(ctx) {
+        contactShadow(ctx, deskX, floorY + 4, w / 2 + 4, 2, 0.45);
+        drawProp(ctx, propName, deskX, floorY);
+      },
+    };
+  }
   return {
     deskTop,
     seatX,
@@ -432,32 +574,43 @@ export function workstation(zone, dept, deskX, variant = 0) {
       drawChair(ctx, seatX, deskTop, dept.trim, MAT.fabricBlue);
     },
     front(ctx) {
-      // Contact shadow under the whole desk.
-      contactShadow(ctx, deskX, floorY + 2, w / 2 + 4, 2, 0.45);
-      // Legs: slim steel frame.
-      px(ctx, x + 4, deskTop + 9, 3, 14, MAT.steel[1]);
-      px(ctx, x + w - 7, deskTop + 9, 3, 14, MAT.steel[1]);
-      px(ctx, x + 4, deskTop + 9, 1, 14, MAT.steel[3]);
-      px(ctx, x + w - 7, deskTop + 9, 1, 14, MAT.steel[3]);
-      // Modesty panel / drawers under the top.
+      // Contact shadow on the floor plane under the whole desk.
+      contactShadow(ctx, deskX, floorY + 4, w / 2 + 4, 2, 0.45);
+      // Legs: slim steel frame standing on the floor surface, with feet.
+      const legH = floorY + 3 - (deskTop + 9);
+      for (const lx of [x + 4, x + w - 7]) {
+        px(ctx, lx - 1, deskTop + 9, 5, legH + 1, AMBIENT.shadow);
+        px(ctx, lx, deskTop + 9, 3, legH, MAT.steel[1]);
+        px(ctx, lx, deskTop + 9, 1, legH, MAT.steel[3]);
+        px(ctx, lx - 1, floorY + 2, 5, 1, MAT.steel[0]);
+      }
+      // Drawer pedestal down to the floor, with a shadow gap under the top.
       const drawerX = variant % 2 === 0 ? x + w - 30 : x + 8;
-      slab(ctx, drawerX, deskTop + 9, 22, 13, wood.map((c, i) => (i < 2 ? c : mix(c, AMBIENT.shadow, 0.25))));
-      px(ctx, drawerX + 7, deskTop + 13, 8, 1, MAT.brass[3]);
-      px(ctx, drawerX + 7, deskTop + 18, 8, 1, MAT.brass[3]);
-      // Top: a thick plane seen from slightly above, lit on top, shadowed on its front lip.
-      px(ctx, x - 1, deskTop - 1, w + 2, 11, AMBIENT.shadow);
+      const pedH = floorY + 2 - (deskTop + 10);
+      slab(ctx, drawerX, deskTop + 10, 22, pedH, wood.map((c, i) => (i < 2 ? c : mix(c, AMBIENT.shadow, 0.25))));
+      px(ctx, drawerX + 1, deskTop + 10, 20, 1, withAlpha(AMBIENT.shadow, 0.4));
+      px(ctx, drawerX + 2, deskTop + 10 + Math.floor(pedH / 2), 18, 1, wood[0]);
+      px(ctx, drawerX + 7, deskTop + 14, 8, 1, MAT.brass[3]);
+      px(ctx, drawerX + 7, deskTop + 14 + Math.floor(pedH / 2), 8, 1, MAT.brass[3]);
+      // Top: a thick plane seen from slightly above, lit on top, a bevelled front lip.
+      px(ctx, x - 1, deskTop - 1, w + 2, 12, AMBIENT.shadow);
       px(ctx, x, deskTop, w, 7, wood[3]);
       px(ctx, x, deskTop, w, 1, wood[4]);
-      px(ctx, x, deskTop + 7, w, 2, wood[1]);
-      px(ctx, x, deskTop + 9, w, 1, wood[0]);
+      px(ctx, x, deskTop, 1, 7, wood[4]);
+      px(ctx, x + w - 1, deskTop + 1, 1, 6, wood[2]);
+      px(ctx, x, deskTop + 7, w, 1, wood[2]);
+      px(ctx, x, deskTop + 8, w, 2, wood[1]);
+      px(ctx, x, deskTop + 10, w, 1, wood[0]);
       // Grain.
       for (let gx = x + 6; gx < x + w - 6; gx += 17) px(ctx, gx, deskTop + 3, 9, 1, wood[2]);
-      // Keyboard in front of the seat, mouse to its right.
+      // Mousepad, keyboard in front of the seat, mouse to its right, a cable to the floor.
+      px(ctx, seatX + 12, deskTop + 2, 10, 5, mix(wood[1], AMBIENT.shadow, 0.35));
       px(ctx, seatX - 11, deskTop + 2, 22, 4, MAT.black[1]);
       px(ctx, seatX - 11, deskTop + 2, 22, 1, MAT.black[3]);
       for (let kx = seatX - 9; kx < seatX + 10; kx += 2) px(ctx, kx, deskTop + 4, 1, 1, MAT.black[4]);
       px(ctx, seatX + 14, deskTop + 3, 4, 3, MAT.chrome[3]);
       px(ctx, seatX + 14, deskTop + 3, 4, 1, MAT.chrome[4]);
+      px(ctx, x + w - 12, deskTop + 11, 1, legH - 3, MAT.black[1]);
     },
   };
 }
@@ -529,25 +682,50 @@ export function plant(ctx, x, floorY, seed, size = 1) {
   px(ctx, x - potW / 2, floorY - potH + 2, 2, potH - 2, MAT.terracotta[3]);
   px(ctx, x + potW / 2 - 3, floorY - potH + 2, 3, potH - 2, MAT.terracotta[1]);
   px(ctx, x - potW / 2, floorY - 2, potW, 2, MAT.terracotta[0]);
-  // Leaves: layered clusters, darkest at the back, a lit crown at the top.
+  // Leaves: pointed blades fanning out from the pot on thin stems; the back ones sit in
+  // shade, the front ones catch the ceiling light along their upper edge and a pale vein.
   const top = floorY - potH;
-  const leaves = 5 + Math.floor(rnd() * 3);
-  const spread = Math.round(12 * size);
-  const height = Math.round(24 * size);
+  const leaves = 6 + Math.floor(rnd() * 3);
+  const spread = Math.round(13 * size);
+  const height = Math.round(26 * size);
+  const blades = [];
   for (let i = 0; i < leaves; i += 1) {
-    const a = (i / leaves) * Math.PI + rnd() * 0.5;
-    const lx = x + Math.round(Math.cos(a) * spread * (0.4 + rnd() * 0.6));
-    const ly = top - Math.round(Math.sin(a) * height * (0.5 + rnd() * 0.5)) - 2;
-    const lw = 5 + Math.floor(rnd() * 5);
-    const lh = 4 + Math.floor(rnd() * 3);
-    const tone = rnd();
-    const c = tone > 0.66 ? MAT.plant[3] : tone > 0.33 ? MAT.plant[2] : MAT.plant[1];
-    px(ctx, lx - lw / 2 - 1, ly - 1, lw + 2, lh + 2, AMBIENT.shadow);
-    px(ctx, lx - lw / 2, ly, lw, lh, c);
-    px(ctx, lx - lw / 2 + 1, ly, lw - 3, 1, MAT.plant[4]);
-    px(ctx, lx - lw / 2, ly + lh - 1, lw, 1, MAT.plant[0]);
-    // Stem
-    px(ctx, x + Math.round((lx - x) * 0.4), ly + lh, 1, top - ly - lh, MAT.plant[1]);
+    const a = 0.25 + (i / (leaves - 1)) * (Math.PI - 0.5) + (rnd() - 0.5) * 0.3;
+    const len = height * (0.55 + rnd() * 0.45);
+    blades.push({ a, len, depth: rnd(), lean: Math.cos(a) });
+  }
+  blades.sort((p, q) => p.depth - q.depth);
+  const segments = (b) => {
+    const dx = Math.cos(b.a) * spread * 1.1;
+    const tipY = top - Math.round(Math.sin(b.a) * b.len) - 2;
+    const steps = Math.max(4, Math.round(Math.hypot(dx, top - tipY)));
+    const out = [];
+    for (let sIdx = 0; sIdx <= steps; sIdx += 1) {
+      const t = sIdx / steps;
+      const w = t < 0.85 ? (t < 0.45 ? 2 + Math.round(size) : 3 + Math.round(size)) : 1;
+      out.push({ t, w, x: Math.round(x + dx * (0.35 + t * 0.65)), y: Math.round(top - (top - tipY) * (0.35 + t * 0.65)) });
+    }
+    return { dx, tipY, out };
+  };
+  // Pass 1: stems and the outline of every blade, so no blade's outline cuts another's fill.
+  for (const b of blades) {
+    const { dx, tipY, out } = segments(b);
+    for (let sIdx = 0; sIdx <= 6; sIdx += 1) {
+      const t = sIdx / 6;
+      px(ctx, Math.round(x + dx * t * 0.35), Math.round(top - (top - tipY) * t * 0.35), 1, 1, MAT.plant[1]);
+    }
+    for (const seg of out) px(ctx, seg.x - Math.floor(seg.w / 2) - 1, seg.y - 2, seg.w + 2, 4, AMBIENT.shadow);
+  }
+  // Pass 2: fills, back blades in shade, front blades lit along the top with a pale vein.
+  for (const b of blades) {
+    const base = b.depth > 0.6 ? MAT.plant[3] : b.depth > 0.3 ? MAT.plant[2] : MAT.plant[1];
+    for (const seg of segments(b).out) {
+      const left = seg.x - Math.floor(seg.w / 2);
+      px(ctx, left, seg.y - 1, seg.w, 2, base);
+      if (seg.t > 0.85) px(ctx, left, seg.y - 1, seg.w, 1, MAT.plant[4]);
+      else if (b.depth > 0.3 && seg.w >= 3) px(ctx, left + (b.lean < 0 ? 0 : seg.w - 1), seg.y - 1, 1, 1, MAT.plant[4]);
+      if (seg.t > 0.2 && seg.t < 0.8 && seg.w >= 3) px(ctx, seg.x, seg.y, 1, 1, b.depth > 0.3 ? MAT.plant[4] : MAT.plant[2]);
+    }
   }
 }
 
@@ -848,8 +1026,9 @@ export function drawScreenContent(ctx, kind, mx, my, w, h, time, seed, accent, a
    Static parts are drawn now; moving parts are registered in `live`.
    ========================================================================== */
 
-export function interiorFor(zone, ctx, live, daylight = 0) {
+export function interiorFor(zone, ctx, live, daylight = 0, backdrop = null) {
   const dept = department(zone.zone_type);
+  const view = { backdrop, floor: zone.floor || 0 };
   const floorY = floorLine(zone);
   const seed = hash32(zone.id);
   const rnd = mulberry32(seed);
@@ -863,8 +1042,10 @@ export function interiorFor(zone, ctx, live, daylight = 0) {
   /** Wall spans taken by fixed props, so fillers never overlap them. */
   const occupied = desks.map((d) => [d.x - 48, d.x + 48]);
   const reserve = (x0, w) => occupied.push([x0 - 6, x0 + w + 6]);
+  const premium = usesAtlas(zone);
+  const useProp = (name) => premium && propReady(name);
   const station = (d, variant) => {
-    const s = workstation(zone, dept, d.x, variant);
+    const s = workstation(zone, dept, d.x, variant, premium);
     stations.set(d.id || d.x, s);
     return s;
   };
@@ -872,20 +1053,26 @@ export function interiorFor(zone, ctx, live, daylight = 0) {
   switch (zone.zone_type) {
     case 'RESEARCH': {
       // Evidence wall between the two desks, archive shelving, reference books.
+      // Each prop comes from the sprite atlas when it is loaded, else from the drawing below.
       const cx = zone.x + zone.width / 2;
-      evidenceBoard(ctx, cx - 70, wallTop + 12, 140, 52, rnd);
+      if (useProp('evidence_board')) drawProp(ctx, 'evidence_board', cx - 70, wallTop + 12);
+      else evidenceBoard(ctx, cx - 70, wallTop + 12, 140, 52, rnd);
       reserve(cx - 72, 144);
-      drawWindow(ctx, zone.x + 100, wallTop + 14, 46, 38, daylight);
+      drawWindow(ctx, zone.x + 100, wallTop + 14, 46, 38, daylight, premium, floorY, view);
       reserve(zone.x + 96, 54);
-      drawWindow(ctx, zone.x + zone.width - 150, wallTop + 14, 46, 38, daylight);
+      drawWindow(ctx, zone.x + zone.width - 150, wallTop + 14, 46, 38, daylight, premium, floorY, view);
       reserve(zone.x + zone.width - 154, 54);
-      bookshelf(ctx, zone.x + 16, floorY, 66, 72, seed + 3, MAT.ash);
+      if (useProp('bookshelf_ash')) placeProp(ctx, 'bookshelf_ash', zone.x + 16, floorY);
+      else bookshelf(ctx, zone.x + 16, floorY, 66, 72, seed + 3, MAT.ash);
       reserve(zone.x + 14, 70);
-      labBench(ctx, zone.x + zone.width - 236, floorY, rnd);
+      if (useProp('lab_bench')) placeProp(ctx, 'lab_bench', zone.x + zone.width - 236, floorY);
+      else labBench(ctx, zone.x + zone.width - 236, floorY, rnd, live, zone.id);
       reserve(zone.x + zone.width - 240, 96);
-      archiveBoxes(ctx, zone.x + zone.width - 72, floorY, rnd);
+      if (useProp('archive_boxes')) placeProp(ctx, 'archive_boxes', zone.x + zone.width - 72, floorY);
+      else archiveBoxes(ctx, zone.x + zone.width - 72, floorY, rnd);
       reserve(zone.x + zone.width - 76, 62);
-      plant(ctx, zone.x + zone.width - 20, floorY, seed + 7, 1.1);
+      if (useProp('plant_large')) placeProp(ctx, 'plant_large', zone.x + zone.width - 20, floorY);
+      else plant(ctx, zone.x + zone.width - 20, floorY, seed + 7, 1.1);
       desks.forEach((d, i) => {
         const s = station(d, i);
         s.back(ctx);
@@ -895,9 +1082,9 @@ export function interiorFor(zone, ctx, live, daylight = 0) {
     case 'DIRECTOR': {
       bookshelf(ctx, zone.x + 16, floorY, 84, 74, seed + 3, MAT.walnut);
       reserve(zone.x + 14, 88);
-      drawWindow(ctx, zone.x + 150, wallTop + 12, 74, 44, daylight);
+      drawWindow(ctx, zone.x + 150, wallTop + 12, 74, 44, daylight, false, floorY, view);
       reserve(zone.x + 146, 82);
-      drawWindow(ctx, zone.x + zone.width - 300, wallTop + 12, 74, 44, daylight);
+      drawWindow(ctx, zone.x + zone.width - 300, wallTop + 12, 74, 44, daylight, false, floorY, view);
       reserve(zone.x + zone.width - 304, 82);
       awardsShelf(ctx, zone.x + zone.width - 150, wallTop + 30, 70);
       reserve(zone.x + zone.width - 154, 78);
@@ -915,7 +1102,7 @@ export function interiorFor(zone, ctx, live, daylight = 0) {
     case 'SCRIPT': {
       storyboardWall(ctx, zone.x + 110, wallTop + 10, 180, 56, rnd);
       reserve(zone.x + 106, 188);
-      drawWindow(ctx, zone.x + zone.width - 230, wallTop + 12, 50, 40, daylight);
+      drawWindow(ctx, zone.x + zone.width - 230, wallTop + 12, 50, 40, daylight, false, floorY, view);
       reserve(zone.x + zone.width - 234, 58);
       bookshelf(ctx, zone.x + zone.width - 150, floorY, 64, 52, seed + 9, MAT.oak);
       reserve(zone.x + zone.width - 154, 70);
@@ -944,7 +1131,7 @@ export function interiorFor(zone, ctx, live, daylight = 0) {
       reserve(zone.x + 20, 64);
       driveStack(ctx, zone.x + zone.width - 62, floorY, live, dept.accent);
       reserve(zone.x + zone.width - 66, 52);
-      drawWindow(ctx, zone.x + 110, wallTop + 14, 46, 36, daylight);
+      drawWindow(ctx, zone.x + 110, wallTop + 14, 46, 36, daylight, false, floorY, view);
       reserve(zone.x + 106, 54);
       plant(ctx, zone.x + zone.width - 96, floorY, seed + 5, 0.9);
       lightStand(ctx, zone.x + zone.width - 126, floorY, live);
@@ -996,6 +1183,12 @@ export function drawDeskFronts(ctx, zone, interior, live) {
     const deskTop = s.deskTop;
     switch (zone.zone_type) {
       case 'RESEARCH': {
+        if (s.premium) {
+          // The sprite already carries monitor, papers, mug and lamp; register the live parts.
+          if (s.screen) addScreen(i === 0 ? 'doc' : 'graph', s.screen, d.id);
+          if (s.lamp) live.lamps.push({ x: s.lamp.x, y: s.lamp.y, r: 34, color: rgba(dept.lamp, 0.35) });
+          break;
+        }
         const m1 = monitor(ctx, s.monitorX, deskTop, 28, 22, i);
         addScreen(i === 0 ? 'doc' : 'graph', m1, d.id);
         papers(ctx, s.seatX + 20, deskTop + 2, 3);
@@ -1083,7 +1276,7 @@ function evidenceBoard(ctx, x, y, w, h, rnd) {
   ctx.stroke();
 }
 
-function labBench(ctx, x, floorY, rnd) {
+function labBench(ctx, x, floorY, rnd, live = null, zoneId = null) {
   // A steel bench with instruments: flasks, a microscope, a notebook.
   contactShadow(ctx, x + 44, floorY + 2, 46, 2, 0.4);
   px(ctx, x + 3, floorY - 24, 3, 24, MAT.steel[1]);
@@ -1102,6 +1295,7 @@ function labBench(ctx, x, floorY, rnd) {
     px(ctx, fx, floorY - 38, 6, 8, MAT.glass[2]);
     px(ctx, fx, floorY - 35, 6, 5, c);
     px(ctx, fx, floorY - 38, 1, 8, MAT.glass[4]);
+    if (live) live.bubbles.push({ x: fx + 2, y: floorY - 36, zoneId, color: c });
   }
   // Microscope.
   px(ctx, x + 50, floorY - 52, 12, 23, AMBIENT.shadow);
@@ -1529,6 +1723,8 @@ export function fillZone(ctx, zone, live, interior = null) {
   const clear = (x, w) => occupied.every(([a, b]) => x + w < a || x > b);
   const wallTop = zone.y + CEILING_H;
   const exitX = (zone.floorRight ?? zone.x + zone.width) - 34;
+  const premium = usesAtlas(zone);
+  const useProp = (name) => premium && propReady(name);
 
   if (zone.zone_type === 'SERVER' || zone.zone_type === 'SHOP' || zone.zone_type === 'LOUNGE') {
     if (zone.isFloorLead) exitSign(ctx, exitX, wallTop + 6);
@@ -1543,23 +1739,44 @@ export function fillZone(ctx, zone, live, interior = null) {
     occupied.push([x - 6, x + 46]);
     placed += 1;
     const roll = rnd();
-    if (roll < 0.2) filingCabinet(ctx, x, floorY, dept.accent);
-    else if (roll < 0.35) plant(ctx, x + 12, floorY, hash32(`p${zone.id}${x}`), 0.8 + rnd() * 0.5);
-    else if (roll < 0.45) coatStand(ctx, x + 10, floorY, hash32(`c${zone.id}${x}`));
-    else if (roll < 0.58) bin(ctx, x + 6, floorY);
-    else if (roll < 0.68) extinguisher(ctx, x + 8, floorY);
-    else if (roll < 0.9) poster(ctx, x, wallTop + 14 + Math.floor(rnd() * 10), hash32(`po${zone.id}${x}`), dept.accent);
-    else wallShelf(ctx, x, wallTop + 30, hash32(`sh${zone.id}${x}`));
+    if (roll < 0.2) {
+      if (useProp('filing_cabinet')) placeProp(ctx, 'filing_cabinet', x, floorY);
+      else filingCabinet(ctx, x, floorY, dept.accent);
+    } else if (roll < 0.35) {
+      const size = 0.8 + rnd() * 0.5;
+      if (useProp('plant_small')) placeProp(ctx, size > 1.05 ? 'plant_large' : 'plant_small', x + 12, floorY);
+      else plant(ctx, x + 12, floorY, hash32(`p${zone.id}${x}`), size);
+    } else if (roll < 0.45) {
+      if (useProp('coat_stand')) placeProp(ctx, 'coat_stand', x + 10, floorY);
+      else coatStand(ctx, x + 10, floorY, hash32(`c${zone.id}${x}`));
+    } else if (roll < 0.58) {
+      if (useProp('bin')) placeProp(ctx, 'bin', x + 6, floorY);
+      else bin(ctx, x + 6, floorY);
+    } else if (roll < 0.68) {
+      if (useProp('extinguisher')) placeProp(ctx, 'extinguisher', x + 8, floorY);
+      else extinguisher(ctx, x + 8, floorY);
+    } else if (roll < 0.9) {
+      const py = wallTop + 14 + Math.floor(rnd() * 10);
+      const which = hash32(`po${zone.id}${x}`) % 2 ? 'poster_a' : 'poster_b';
+      if (useProp(which)) drawProp(ctx, which, x, py);
+      else poster(ctx, x, py, hash32(`po${zone.id}${x}`), dept.accent);
+    } else if (useProp('wall_shelf')) {
+      drawProp(ctx, 'wall_shelf', x, wallTop + 30);
+    } else {
+      wallShelf(ctx, x, wallTop + 30, hash32(`sh${zone.id}${x}`));
+    }
   }
 
   // A whiteboard on the right of most floors, where the wall is free.
   const wbX = zone.x + zone.width - 150;
   if (clear(wbX, 110) && zone.zone_type !== 'AUDIO' && zone.zone_type !== 'DIRECTOR' && zone.zone_type !== 'SCRIPT') {
-    whiteboard(ctx, wbX, wallTop + 14, 104, 48, dept.accent, hash32(`wb${zone.id}`));
+    if (useProp('whiteboard')) drawProp(ctx, 'whiteboard', wbX, wallTop + 14);
+    else whiteboard(ctx, wbX, wallTop + 14, 104, 48, dept.accent, hash32(`wb${zone.id}`));
   }
   if (zone.isFloorLead) exitSign(ctx, exitX, wallTop + 6);
 
-  // Sockets along the skirting.
+  // Sockets along the skirting (the atlas wall tile carries its own).
+  if (premium && propReady(`wall_${zone.zone_type}_h${floorY - wallTop}`)) return;
   for (let x = zone.x + 40; x < zone.x + zone.width - 30; x += 96) {
     px(ctx, x, floorY - 8, 5, 4, MAT.ceramic[2]);
     px(ctx, x + 1, floorY - 7, 1, 2, MAT.black[1]);

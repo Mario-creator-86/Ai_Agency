@@ -1,0 +1,363 @@
+{
+  "version": 1,
+  "sprites": {
+    "workstation_walnut": {
+      "file": "workstation_walnut.png",
+      "path": "pixel/office/workstation_walnut.png",
+      "shadow": null,
+      "shadow_path": null,
+      "w": 89,
+      "h": 61,
+      "anchor": {
+        "x": 40,
+        "y": 48
+      },
+      "kind": "floor",
+      "points": {
+        "screen": {
+          "x": 8,
+          "y": 4,
+          "w": 24,
+          "h": 18
+        },
+        "lamp": {
+          "x": 78,
+          "y": 19
+        }
+      }
+    },
+    "workstation_walnut_back": {
+      "file": "workstation_walnut_back.png",
+      "path": "pixel/office/workstation_walnut_back.png",
+      "shadow": null,
+      "shadow_path": null,
+      "w": 42,
+      "h": 46,
+      "anchor": {
+        "x": 13,
+        "y": 65
+      },
+      "kind": "floor",
+      "points": {}
+    },
+    "bookshelf_ash": {
+      "file": "bookshelf_ash.png",
+      "path": "pixel/office/bookshelf_ash.png",
+      "shadow": null,
+      "shadow_path": null,
+      "w": 70,
+      "h": 78,
+      "anchor": {
+        "x": 2,
+        "y": 71
+      },
+      "kind": "floor",
+      "points": {}
+    },
+    "evidence_board": {
+      "file": "evidence_board.png",
+      "path": "pixel/office/evidence_board.png",
+      "shadow": null,
+      "shadow_path": null,
+      "w": 147,
+      "h": 58,
+      "anchor": {
+        "x": 2,
+        "y": 3
+      },
+      "kind": "wall",
+      "points": {}
+    },
+    "workstation_oak_back": {
+      "file": "workstation_oak_back.png",
+      "path": "pixel/office/workstation_oak_back.png",
+      "shadow": null,
+      "shadow_path": null,
+      "w": 42,
+      "h": 46,
+      "anchor": {
+        "x": 13,
+        "y": 65
+      },
+      "kind": "floor",
+      "points": {}
+    },
+    "workstation_oak": {
+      "file": "workstation_oak.png",
+      "path": "pixel/office/workstation_oak.png",
+      "shadow": null,
+      "shadow_path": null,
+      "w": 89,
+      "h": 61,
+      "anchor": {
+        "x": 40,
+        "y": 48
+      },
+      "kind": "floor",
+      "points": {
+        "screen": {
+          "x": 8,
+          "y": 4,
+          "w": 24,
+          "h": 18
+        },
+        "lamp": {
+          "x": 78,
+          "y": 19
+        }
+      }
+    },
+    "bookshelf_walnut": {
+      "file": "bookshelf_walnut.png",
+      "path": "pixel/office/bookshelf_walnut.png",
+      "shadow": null,
+      "shadow_path": null,
+      "w": 88,
+      "h": 80,
+      "anchor": {
+        "x": 2,
+        "y": 73
+      },
+      "kind": "floor",
+      "points": {}
+    },
+    "window_46x38": {
+      "file": "window_46x38.png",
+      "path": "pixel/office/window_46x38.png",
+      "shadow": null,
+      "shadow_path": null,
+      "w": 56,
+      "h": 47,
+      "anchor": {
+        "x": 5,
+        "y": 3
+      },
+      "kind": "wall",
+      "points": {
+        "opening": {
+          "x": 5,
+          "y": 3,
+          "w": 46,
+          "h": 38
+        }
+      }
+    },
+    "lab_bench": {
+      "file": "lab_bench.png",
+      "path": "pixel/office/lab_bench.png",
+      "shadow": null,
+      "shadow_path": null,
+      "w": 92,
+      "h": 52,
+      "anchor": {
+        "x": 2,
+        "y": 43
+      },
+      "kind": "floor",
+      "points": {}
+    },
+    "archive_boxes": {
+      "file": "archive_boxes.png",
+      "path": "pixel/office/archive_boxes.png",
+      "shadow": null,
+      "shadow_path": null,
+      "w": 62,
+      "h": 36,
+      "anchor": {
+        "x": 2,
+        "y": 31
+      },
+      "kind": "floor",
+      "points": {}
+    },
+    "plant_large": {
+      "file": "plant_large.png",
+      "path": "pixel/office/plant_large.png",
+      "shadow": null,
+      "shadow_path": null,
+      "w": 26,
+      "h": 40,
+      "anchor": {
+        "x": 13,
+        "y": 33
+      },
+      "kind": "floor",
+      "points": {}
+    },
+    "plant_small": {
+      "file": "plant_small.png",
+      "path": "pixel/office/plant_small.png",
+      "shadow": null,
+      "shadow_path": null,
+      "w": 26,
+      "h": 34,
+      "anchor": {
+        "x": 13,
+        "y": 27
+      },
+      "kind": "floor",
+      "points": {}
+    },
+    "filing_cabinet": {
+      "file": "filing_cabinet.png",
+      "path": "pixel/office/filing_cabinet.png",
+      "shadow": null,
+      "shadow_path": null,
+      "w": 28,
+      "h": 40,
+      "anchor": {
+        "x": 2,
+        "y": 33
+      },
+      "kind": "floor",
+      "points": {}
+    },
+    "coat_stand": {
+      "file": "coat_stand.png",
+      "path": "pixel/office/coat_stand.png",
+      "shadow": null,
+      "shadow_path": null,
+      "w": 23,
+      "h": 67,
+      "anchor": {
+        "x": 13,
+        "y": 61
+      },
+      "kind": "floor",
+      "points": {}
+    },
+    "bin": {
+      "file": "bin.png",
+      "path": "pixel/office/bin.png",
+      "shadow": null,
+      "shadow_path": null,
+      "w": 16,
+      "h": 19,
+      "anchor": {
+        "x": 2,
+        "y": 11
+      },
+      "kind": "floor",
+      "points": {}
+    },
+    "extinguisher": {
+      "file": "extinguisher.png",
+      "path": "pixel/office/extinguisher.png",
+      "shadow": null,
+      "shadow_path": null,
+      "w": 14,
+      "h": 27,
+      "anchor": {
+        "x": 5,
+        "y": 29
+      },
+      "kind": "floor",
+      "points": {}
+    },
+    "poster_a": {
+      "file": "poster_a.png",
+      "path": "pixel/office/poster_a.png",
+      "shadow": null,
+      "shadow_path": null,
+      "w": 34,
+      "h": 43,
+      "anchor": {
+        "x": 2,
+        "y": 2
+      },
+      "kind": "wall",
+      "points": {}
+    },
+    "poster_b": {
+      "file": "poster_b.png",
+      "path": "pixel/office/poster_b.png",
+      "shadow": null,
+      "shadow_path": null,
+      "w": 30,
+      "h": 39,
+      "anchor": {
+        "x": 2,
+        "y": 2
+      },
+      "kind": "wall",
+      "points": {}
+    },
+    "wall_shelf": {
+      "file": "wall_shelf.png",
+      "path": "pixel/office/wall_shelf.png",
+      "shadow": null,
+      "shadow_path": null,
+      "w": 44,
+      "h": 24,
+      "anchor": {
+        "x": 2,
+        "y": 1
+      },
+      "kind": "wall",
+      "points": {}
+    },
+    "whiteboard": {
+      "file": "whiteboard.png",
+      "path": "pixel/office/whiteboard.png",
+      "shadow": null,
+      "shadow_path": null,
+      "w": 110,
+      "h": 58,
+      "anchor": {
+        "x": 3,
+        "y": 3
+      },
+      "kind": "wall",
+      "points": {}
+    },
+    "water_cooler": {
+      "file": "water_cooler.png",
+      "path": "pixel/office/water_cooler.png",
+      "shadow": null,
+      "shadow_path": null,
+      "w": 24,
+      "h": 66,
+      "anchor": {
+        "x": 2,
+        "y": 59
+      },
+      "kind": "floor",
+      "points": {
+        "bubbles": {
+          "x": 12,
+          "y": 9
+        }
+      }
+    },
+    "wall_RESEARCH_h111": {
+      "file": "wall_RESEARCH_h111.png",
+      "path": "environment/wall_RESEARCH_h111.png",
+      "shadow": null,
+      "shadow_path": null,
+      "w": 56,
+      "h": 112,
+      "anchor": {
+        "x": 0,
+        "y": 110
+      },
+      "kind": "floor",
+      "points": {}
+    },
+    "floor_RESEARCH": {
+      "file": "floor_RESEARCH.png",
+      "path": "environment/floor_RESEARCH.png",
+      "shadow": null,
+      "shadow_path": null,
+      "w": 84,
+      "h": 13,
+      "anchor": {
+        "x": 0,
+        "y": 0
+      },
+      "kind": "floor",
+      "points": {}
+    }
+  },
+  "shadow_alpha": 0.34,
+  "outline": "#1a1630"
+}

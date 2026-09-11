@@ -1,5 +1,95 @@
 # Changelog
 
+## ElevenLabs verification says what the key lacks — 2026-09-11
+
+- Diagnosis of the Owner's "Cheia nu a putut fi verificată" after the dynamic-catalogue rework:
+  the flow was correct; ElevenLabs answered HTTP 401 `missing_permissions` on `/v1/user`,
+  `/v1/models` and `/v2/voices` because the key was created with restricted scopes. The
+  message hid that behind a generic sentence.
+- `MediaProviderError` now carries the vendor's short error identifier (`code`, e.g.
+  `missing_permissions`, `invalid_api_key`) and the HTTP status; `media_http.error_code()`
+  reads only closed-vocabulary slugs from error bodies, never free text, so no vendor message
+  or key fragment can reach the UI or the log.
+- Discovery maps the identifier to an Owner-facing instruction: restricted key → grant User
+  (Read), Models (Read), Voices (Read) and Text to Speech in ElevenLabs → Developers → API
+  Keys; invalid/revoked key → generate a new one; quota/concurrency → wait or check the plan.
+  A key that reads the account but not the catalogue gets its own message.
+- Tests: restricted key, catalogue-only restriction and invalid key are each explained
+  (`test_integration_settings.py`); error-identifier parsing rejects free text
+  (`test_media_providers.py`).
+
+## Detail pass on the hand-drawn office — 2026-09-11
+
+Owner direction after the Blender comparison: keep the hand-drawn art and raise it with
+details, shadows and subtle animation, on every floor. Frontend only.
+
+- Windows are now holes onto the scene's own backdrop: each one shows exactly what stands
+  behind the building at its world coordinates, so the penthouse looks out on sky and tower
+  tops while lower floors see the roofs and lit windows across the street, and the view
+  follows the Bucharest clock (day/night). Six distant high-rises were added to the far
+  skyline so upper floors are not looking at empty sky. The standalone room preview keeps a
+  floor-aware fallback view.
+- Window light spills down the wall and pools on the floor (warm by day, cool blue at night).
+- Chairs are high-backed with a headrest and show around the seated figure; desks stand on the
+  floor plane with feet, a pedestal to the floor, a bevelled lip, a mousepad and a cable.
+- Characters: lit forehead, shadow under the chin and along the jaw, shaded right side of the
+  torso, a second hair highlight; an idle glance every few seconds; the monitor's light
+  catches the near cheek and shoulder while WORKING (state-driven, never decorative).
+- Skirting boards on plaster, panelled and brick walls; the research lab's flasks bubble
+  in their own colours.
+- By day the ceiling fixtures dim to fill light and desk/floor lamps fade, so the windows
+  carry the room; at night the fixtures and lamps carry it. Steam curls off the mug during the
+  idle sip. Plants are pointed blades on stems, back blades in shade, front blades lit with a
+  pale vein, instead of stacked blocks.
+- The sun follows the real Bucharest clock across the sky (east at sunrise, high at noon,
+  west at dusk). A desk's screen animates only while the agent seated at that desk is
+  WORKING; screens without a desk (shopfront, dispatch) still follow their zone.
+- Verified: 53 frontend tests, tsc/build clean, 61 FPS at fit and 2.2x (median draw 7.7 ms).
+
+## YouTube channel avatars — 2026-09-11
+
+- Select the API-provided thumbnail URL in high, medium, default order and persist it in each
+  connection's existing JSON snapshot on authorization, completed reconnect and Verify.
+- Fix the actual browser failure: `img-src` now permits the two YouTube avatar CDN origins.
+  Keep all other CSP directives unchanged. No image URL or channel identity is hardcoded.
+- Render a neutral CSS avatar only for a missing thumbnail; real images retain their API URL
+  and send no referrer. The full frontend build and 52 frontend tests pass.
+- Live Chromium verification clicked Verify for Nexus Curiosity and Inside The Nexus: both
+  URLs persisted, both images decoded at 800×800, and no image CSP violations occurred.
+  `scripts/verify_youtube_avatars.mjs` records live evidence separately from its missing-image fixture.
+  Reconnect callback refresh and connection isolation are covered by stubbed Google regression tests.
+
+## Pixel-art pipeline: the Research floor rendered from Blender — 2026-09-11
+
+- The 2D office's art can now come from Blender renders instead of hand-placed rectangles.
+  `art-source/blender/` builds every prop, wall/floor tile and character part in 3D from the
+  palette exported out of `office_palette.js`, renders it at 1 world px = 1 sprite px with toon
+  ramps (no anti-aliasing), snaps every pixel to the palette and adds the renderer's 1 px
+  outline. Output lands in `frontend/public/assets/{pixel/office,environment,sprites/characters}`
+  with `atlas.json` / `parts.json` manifests (anchors, screen rectangles, lamp points).
+- `frontend/src/office_atlas.js` loads the manifests and recolours the key-coloured character
+  parts per agent look, so identity, costume-per-role and posture-from-backend-state rules are
+  unchanged. `office_rooms.js` draws a zone from the atlas only if it is in `ATLAS_ZONES`
+  (RESEARCH, the quality bar) **and** the atlas has loaded; every other case is the procedural
+  art, so nothing ever renders as a hole.
+- The premium floor shows a 10 px 3/4 floor plane, wainscot with dado, skirting and picture
+  rail, volumetric desks and chairs, a lab bench, shelves, evidence board and fillers, all under
+  one key light. Desk plane, seat and hit-test geometry are the same numbers as before.
+- Unreal Engine 5.8 is used as a reference tool only: `export_floor_scene.py` composes the floor
+  as glTF and `art-source/unreal/build_reference_scene.py` builds a lit, ortho-camera level in
+  the `AMNReference` project for lighting/composition checks. Nothing from it ships.
+- Outcome: after the live comparison the Owner judged both the rendered characters and the
+  rendered rooms/furniture below the hand-drawn art, so `ATLAS_ZONES` and
+  `ATLAS_CHARACTER_ZONES` are empty and every floor draws the procedural art. The pipeline and
+  its assets stay in the repository, switched off.
+- The Character Bible (`/media/character-bible`) is now authoritative for how the office draws
+  each employee: hair colour and style, glasses, headset and outfit colours come from the
+  bible entry matched by employee link or first name; the per-agent hash only fills what the
+  bible leaves open. Applies to every floor, procedural or atlas.
+- Verified: 53 frontend tests (5 new), tsc/build clean, ruff/mypy/docs/secrets clean, live
+  studio with seven agents at 61 FPS (fit and 2.2×). Write-up and honest before/after in
+  `PIXEL_ART_PIPELINE.md`.
+
 ## The studio runs without the browser — 2026-09-11
 
 - Added the background worker (`backend/app/workflows/worker.py`), the part of the studio that

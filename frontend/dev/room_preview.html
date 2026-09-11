@@ -7,7 +7,12 @@ import { drawZoneShell, bakeRoomLight, interiorFor, drawDeskFronts, fillZone, dr
 import { drawCharacterBody, drawCharacterHands, drawStateMark, agentLook, characterMetrics } from '../src/office_characters.js';
 import { glow } from '../src/pixel_sprites.js';
 import { department } from '../src/office_palette.js';
+import { loadAtlas } from '../src/office_atlas.js';
+import { usesAtlasCharacters } from '../src/office_rooms.js';
 const params = new URLSearchParams(location.search);
+// atlas=0 renders the procedural art (the "before"); anything else loads the sprite atlas.
+window.__ATLAS_BASE = '/public/';
+if (params.get('atlas') !== '0') await loadAtlas();
 const scale = Number(params.get('scale') || 4);
 const zoneType = params.get('zone') || 'RESEARCH';
 const time = Number(params.get('t') || 1.3);
@@ -35,24 +40,26 @@ function renderZone(zone, modeList) {
   drawZoneShell(ctx, zone);
   const interior = interiorFor(zone, ctx, live, 0);
   fillZone(ctx, zone, live, interior);
-  bakeRoomLight(ctx, zone);
+  bakeRoomLight(ctx, zone, Number(params.get('daylight') || 0));
   const looks = zone.desks.map((d, i) => agentLook(`agent-${i}-${zone.zone_type}`, d.role_name));
   zone.desks.forEach((d, i) => {
     const s = interior.stations.get(d.id);
     if (!s) return;
-    drawCharacterBody(ctx, s.seatX, s.deskTop, looks[i], modeList[i % modeList.length], time, i === 0 && params.get('sel') === '1');
+    const mode = modeList[i % modeList.length];
+    drawCharacterBody(ctx, s.seatX, s.deskTop, looks[i], mode, time, i === 0 && params.get('sel') === '1', false, usesAtlasCharacters(zone), mode === 'work' ? department(zone.zone_type).accent : null);
   });
   drawDeskFronts(ctx, zone, interior, live);
   zone.desks.forEach((d, i) => {
     const s = interior.stations.get(d.id);
     if (!s) return;
-    drawCharacterHands(ctx, s.seatX, s.deskTop, looks[i], modeList[i % modeList.length], time);
+    drawCharacterHands(ctx, s.seatX, s.deskTop, looks[i], modeList[i % modeList.length], time, usesAtlasCharacters(zone));
     const m = characterMetrics(s.deskTop);
     drawStateMark(ctx, s.seatX, m.headTop, modeList[i % modeList.length], time);
   });
   for (const lamp of live.lamps) glow(ctx, lamp.x, lamp.y, lamp.r, lamp.color, 1);
   for (const scr of live.screens) drawScreenContent(ctx, scr.kind, scr.mx, scr.my, scr.w, scr.h, time, scr.seed, scr.accent, true);
   for (const led of live.leds) { ctx.fillStyle = led.color; ctx.fillRect(led.x, led.y, 2, 2); }
+  for (const bub of live.bubbles) { ctx.fillStyle = bub.color || '#cdeaf4'; ctx.fillRect(bub.x, bub.y - 4, 1, 1); ctx.fillRect(bub.x + 1, bub.y - 7, 1, 1); }
   return { world, zone };
 }
 const rendered = list.map((k) => renderZone(ZONES[k], modes));

@@ -234,9 +234,24 @@ async function loadOfficeLayout() {
     if (officeEngine) {
       officeEngine.setLayout(layout);
       updateOfficeCanvas();
+      await loadOfficeCharacterBible();
     }
   } catch (err) {
     console.error('Failed to load office layout', err);
+  }
+}
+
+/**
+ * The Character Bible drives how each recurring employee is drawn (hair, glasses, headset,
+ * outfit colours). Read-only; the office falls back to its deterministic looks if the read fails.
+ */
+async function loadOfficeCharacterBible() {
+  if (!officeEngine) return;
+  try {
+    const data = await api('/media/character-bible');
+    officeEngine.setCharacterBible(data.characters || []);
+  } catch (err) {
+    console.warn('Character bible unavailable for the office', err);
   }
 }
 

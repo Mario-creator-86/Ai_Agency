@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ramp, mix, withAlpha, DEPARTMENTS, department, AMBIENT, SKIN, HAIR, CLOTH, MAT } from '../src/office_palette.js';
 import { PixelGrid } from '../src/pixel_sprites.js';
-import { agentLook, modeForAgent, characterMetrics, CHARACTER_BODY_ROWS, HAIR_STYLES, CHARACTER_SPRITE_W } from '../src/office_characters.js';
+import { agentLook, matchBible, lookFromBible, modeForAgent, characterMetrics, CHARACTER_BODY_ROWS, HAIR_STYLES, CHARACTER_SPRITE_W } from '../src/office_characters.js';
 
 test('ramps are five tones ordered dark to light and hue-shifted towards the ambient ends', () => {
   const r = ramp('#8a6a3a');
@@ -65,4 +65,48 @@ test('an agent always looks the same; costume follows the role; posture follows 
   const m = characterMetrics(100);
   assert.ok(m.headTop < m.headBottom && m.headBottom < m.shoulders && m.shoulders < m.waist);
   assert.ok(m.waist <= 100, 'the waist sits at or behind the desk plane so the desk hides it');
+});
+
+test('the Character Bible decides hair, glasses, headset and outfit colours; the hash fills the rest', () => {
+  const aris = {
+    id: 'b1', canonical_name: 'Dr. Aris Researcher', version: 1,
+    palette_json: { coat: '#f8fafc', shirt: '#0d9488', hair: '#334155', glasses: '#e2e8f0' },
+    face_hair_desc: 'Dark hair with silver temples; thin circular silver spectacles with white lens glare',
+    outfit_desc: 'Immaculate white laboratory scientist coat over teal button-down shirt.',
+  };
+  const lyra = {
+    id: 'b2', canonical_name: 'Lyra Voice Artist',
+    palette_json: { headphones: '#f43f5e', sweater: '#ec4899', hair: '#0f172a' },
+    face_hair_desc: 'Sleek jet-black hair with neon pink streak', outfit_desc: 'Fuchsia sound-booth sweater, headphones.',
+  };
+  const elena = { id: 'b3', canonical_name: 'Elena Fact-Checker', palette_json: { vest: '#4d7c0f', bun: '#78350f' },
+    face_hair_desc: 'Auburn hair pulled tightly into a neat high bun; reading glasses perched on nose', outfit_desc: 'Olive utility vest over cream blouse' };
+  const bibles = [aris, lyra, elena];
+
+  assert.equal(matchBible({ id: 'a1', display_name: 'Dr. Aris' }, bibles), aris, 'honorifics are ignored when matching names');
+  assert.equal(matchBible({ id: 'a2', display_name: 'Lyra Voice' }, bibles), lyra);
+  assert.equal(matchBible({ id: 'a9', display_name: 'Nobody Here' }, bibles), null);
+  assert.equal(matchBible({ id: 'x', display_name: 'Someone Else' }, [{ ...lyra, employee_id: 'x' }]).canonical_name, 'Lyra Voice Artist', 'an explicit employee link wins');
+
+  const a = lookFromBible(aris);
+  assert.equal(a.glasses, 'round');
+  assert.equal(a.garment[2], '#f8fafc', 'the lab coat is the garment base tone');
+  assert.equal(a.second[2], '#0d9488', 'the teal shirt is the second colour');
+  assert.equal(a.hair[2], '#334155');
+  assert.equal(a.headset, undefined);
+  const l = lookFromBible(lyra);
+  assert.equal(l.headset, true);
+  assert.equal(l.hairStyle, 'long');
+  assert.equal(l.trim[2], '#f43f5e');
+  const e = lookFromBible(elena);
+  assert.equal(e.hairStyle, 'bun');
+  assert.equal(e.glasses, 'square');
+  assert.equal(e.hair[2], '#78350f', 'the bun colour is the hair colour');
+
+  const look = agentLook('a1', 'Researcher', aris);
+  assert.equal(look.glasses, 'round');
+  assert.equal(look.garment[2], '#f8fafc');
+  assert.equal(look.skin, agentLook('a1', 'Researcher').skin, 'skin tone still comes from the deterministic hash');
+  assert.notEqual(look.key, agentLook('a1', 'Researcher').key, 'a bible look never shares a sprite cache key with the plain look');
+  assert.equal(HAIR_STYLES[look.hairStyle] !== undefined, true);
 });

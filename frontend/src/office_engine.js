@@ -6,10 +6,11 @@ import { SKY, CITY, STREET, FACADE, MAT, UI, AMBIENT, department, rgba, withAlph
 import { glow, contactShadow, cachedSprite, PixelGrid, drawSprite } from './pixel_sprites.js';
 import {
   px, slab, outlineRect, drawZoneShell, bakeRoomLight, interiorFor, drawDeskFronts, fillZone,
-  drawScreenContent, floorLine, SLAB_H, CEILING_H,
+  drawScreenContent, floorLine, usesAtlasCharacters, SLAB_H, CEILING_H,
 } from './office_rooms.js';
+import { loadAtlas } from './office_atlas.js';
 import {
-  agentLook, modeForAgent, drawCharacterBody, drawCharacterHands, drawStateMark, characterMetrics,
+  agentLook, matchBible, modeForAgent, drawCharacterBody, drawCharacterHands, drawStateMark, characterMetrics,
 } from './office_characters.js';
 
 /**
@@ -138,7 +139,7 @@ function setHorizon(y) {
   HORIZON = Math.round(y);
 }
 
-function drawSky(ctx, w, h, daylight = 0) {
+function drawSky(ctx, w, h, daylight = 0, hour = 12) {
   const g = ctx.createLinearGradient(0, 0, 0, HORIZON);
   g.addColorStop(0, mixColor(SKY.zenith, SKY.dayZenith, daylight));
   g.addColorStop(0.42, mixColor(SKY.upper, SKY.dayUpper, daylight));
@@ -149,8 +150,12 @@ function drawSky(ctx, w, h, daylight = 0) {
   ctx.fillRect(0, 0, w, HORIZON);
 
   if (daylight > 0.5) {
-    pixelDisc(ctx, 985, 96, 18, '#fff4c0');
-    glow(ctx, 985, 96, 90, 'rgba(255,240,190,0.5)', 0.6);
+    // The sun follows the real Bucharest clock: east at sunrise, high at noon, west at dusk.
+    const t = clamp((hour - 6) / 14, 0, 1);
+    const sunX = Math.round(w * (0.08 + 0.84 * t));
+    const sunY = Math.round(52 + (1 - Math.sin(Math.PI * t)) * 230);
+    pixelDisc(ctx, sunX, sunY, 18, '#fff4c0');
+    glow(ctx, sunX, sunY, 90, 'rgba(255,240,190,0.5)', 0.6);
     return;
   }
   // Stars, thinning towards the warm horizon; a few twinkle brighter.
@@ -188,6 +193,27 @@ function drawSkyline(ctx, w, daylight = 0) {
     { seed: 0x7c31, color: mixColor(CITY.near, '#4a5d78', daylight * 0.7), top: mixColor(CITY.mid, '#5c6f8a', daylight * 0.7), base: HORIZON - 12, min: 90, max: 270, width: [34, 80], lit: 0.32, step: 1 },
   ];
   const lit = daylight > 0.5 ? 0.25 : 1;
+  // A few distant high-rises behind everything, so the upper floors look out on tower tops
+  // and aircraft-warning lights rather than empty sky.
+  const spires = [[70, 470, 30], [300, 560, 24], [520, 420, 36], [760, 520, 26], [1010, 600, 22], [1130, 500, 30]];
+  const spireColor = mixColor(CITY.far, '#8fb0cc', daylight * 0.7);
+  const spireTop = mixColor(CITY.farTop, '#a8c4da', daylight * 0.7);
+  const spireRnd = mulberry32(0x5e1a);
+  for (const [sx, sh, sw] of spires) {
+    const top = HORIZON - sh;
+    px(ctx, sx, top, sw, sh, spireColor);
+    px(ctx, sx, top, sw, 2, spireTop);
+    px(ctx, sx, top, 1, sh, spireTop);
+    px(ctx, sx + sw / 2 - 1, top - 14, 2, 14, spireColor);
+    if (daylight < 0.5) px(ctx, sx + sw / 2 - 1, top - 16, 2, 2, CITY.beacon);
+    for (let wy = top + 10; wy < HORIZON - 40; wy += 9) {
+      for (let wx = sx + 4; wx < sx + sw - 4; wx += 6) {
+        const r = spireRnd();
+        if (r < 0.1 * lit) px(ctx, wx, wy, 2, 3, r < 0.04 ? CITY.windowCool : CITY.windowWarm);
+        else if (r < 0.3) px(ctx, wx, wy, 2, 3, CITY.windowDim);
+      }
+    }
+  }
   for (const band of bands) {
     const rnd = mulberry32(band.seed);
     let x = -30;
@@ -1029,6 +1055,7 @@ export class OfficeEngine {
     this.projectTokens = [];
     this.selectedAgentId = null;
     this.looks = new Map();
+    this.bibles = [];
 
     this.worldW = WORLD_W;
     this.worldH = WORLD_H;
@@ -1094,6 +1121,10 @@ export class OfficeEngine {
     this.resize();
     this._loop = this._loop.bind(this);
     requestAnimationFrame(this._loop);
+    // The sprite atlas arrives asynchronously; the static layers are baked again when it does.
+    loadAtlas().then((ok) => {
+      if (ok && this.running) this._renderStatic();
+    });
   }
 
   _buffer() {
@@ -1133,8 +1164,15 @@ export class OfficeEngine {
     this.agents = agents || [];
     for (const a of this.agents) {
       const id = a.id || a.agent_id;
-      if (!this.looks.has(id)) this.looks.set(id, agentLook(id, a.role_name));
+      if (!this.looks.has(id)) this.looks.set(id, agentLook(id, a.role_name, matchBible(a, this.bibles)));
     }
+  }
+
+  /** The Character Bible from the backend; every look is derived again so it follows the bible. */
+  setCharacterBible(bibles) {
+    this.bibles = Array.isArray(bibles) ? bibles : [];
+    this.looks = new Map();
+    this.setAgents(this.agents);
   }
 
   setSpeechBubbles(bubbles) {
@@ -1263,7 +1301,7 @@ export class OfficeEngine {
 
     const bg = this.bgCtx;
     bg.clearRect(0, 0, w, h);
-    drawSky(bg, w, h, this.clock.daylight);
+    drawSky(bg, w, h, this.clock.daylight, this.clock.hour);
     drawSkyline(bg, w, this.clock.daylight);
 
     const ctx = this.sctx;
@@ -1328,9 +1366,9 @@ export class OfficeEngine {
     drawBuildingShell(ctx, b, zones);
     for (const zone of zones) {
       drawZoneShell(ctx, zone);
-      const interior = interiorFor(zone, ctx, this.live, this.clock.daylight);
+      const interior = interiorFor(zone, ctx, this.live, this.clock.daylight, this.bgLayer);
       fillZone(ctx, zone, this.live, interior);
-      bakeRoomLight(ctx, zone);
+      bakeRoomLight(ctx, zone, this.clock.daylight);
       this.interiors.set(zone.id, interior);
       // Party walls between departments that share a floor.
       if (!zone.isFloorLead) {
@@ -1344,7 +1382,8 @@ export class OfficeEngine {
       drawDeskFronts(front, zone, this.interiors.get(zone.id), this.live);
     }
     // Desk and floor lamps are static: bake their pools into the front layer once.
-    for (const lamp of this.live.lamps) glow(front, lamp.x, lamp.y, lamp.r, lamp.color, 1);
+    // Desk and floor lamps are switched down by day; the pools fade with the daylight.
+    for (const lamp of this.live.lamps) glow(front, lamp.x, lamp.y, lamp.r, lamp.color, 1 - this.clock.daylight * 0.6);
 
     this.shaft = drawElevatorShaft(ctx, b, zones);
     this.building = b;
@@ -1381,7 +1420,7 @@ export class OfficeEngine {
       this.clock = streetClock();
       this._backdrop = null;
       this._updateClockLabel();
-      drawSky(this.bgCtx, this.worldW, this.worldH, this.clock.daylight);
+      drawSky(this.bgCtx, this.worldW, this.worldH, this.clock.daylight, this.clock.hour);
       drawSkyline(this.bgCtx, this.worldW, this.clock.daylight);
       // Windows show the sky: repaint the static layers when the light outside changes.
       if (Math.abs(wasDaylight - this.clock.daylight) > 0.05) this._renderStatic();
@@ -1560,11 +1599,15 @@ export class OfficeEngine {
     const zones = this.layout.zones || [];
 
     // Zone activity is derived from the agents the backend placed in that zone.
+    // Zone activity (VU meters, ON AIR) and per-desk activity (a screen animates only while
+    // the agent seated at that desk is WORKING) are both derived from backend state.
     const activeZones = new Set();
+    const activeDesks = new Set();
     for (const agent of this.agents) {
       if (modeForAgent(agent) === 'work') {
         const zone = zones.find((z) => agent.y >= z.y && agent.y <= z.y + z.height);
         if (zone) activeZones.add(zone.id);
+        if (agent.desk_id) activeDesks.add(agent.desk_id);
       }
     }
 
@@ -1572,27 +1615,30 @@ export class OfficeEngine {
     const placed = [];
     for (const agent of this.agents) {
       const id = agent.id || agent.agent_id;
-      const look = this.looks.get(id) || agentLook(id, agent.role_name);
+      const look = this.looks.get(id) || agentLook(id, agent.role_name, matchBible(agent, this.bibles));
       const place = this._placeFor(agent);
       const mode = modeForAgent(agent);
       const selected = this.selectedAgentId === id;
       const talking = this.speechBubbles.some((bub) => bub.agentId === id);
       if (place) {
-        const body = drawCharacterBody(ctx, place.seatX, place.deskTop, look, mode, time, selected, talking);
-        placed.push({ agent, id, look, place, mode, selected, body });
+        const premium = usesAtlasCharacters(place.zone);
+        const screenLight = mode === 'work' ? department(place.zone.zone_type).accent : null;
+        const body = drawCharacterBody(ctx, place.seatX, place.deskTop, look, mode, time, selected, talking, premium, screenLight);
+        placed.push({ agent, id, look, place, mode, selected, body, premium });
       } else {
         // No desk for this agent in the layout: stand them on the floor of their zone.
         const zone = zones.find((z) => agent.y >= z.y && agent.y <= z.y + z.height);
         const deskTop = zone ? floorLine(zone) - 20 : agent.y;
-        const body = drawCharacterBody(ctx, agent.x, deskTop, look, mode, time, selected, talking);
-        placed.push({ agent, id, look, place: { seatX: agent.x, deskTop, zone }, mode, selected, body });
+        const premium = zone ? usesAtlasCharacters(zone) : false;
+        const body = drawCharacterBody(ctx, agent.x, deskTop, look, mode, time, selected, talking, premium);
+        placed.push({ agent, id, look, place: { seatX: agent.x, deskTop, zone }, mode, selected, body, premium });
       }
     }
 
     if (this.staticReady) ctx.drawImage(this.frontLayer, 0, 0);
 
     for (const p of placed) {
-      drawCharacterHands(ctx, p.place.seatX, p.place.deskTop, p.look, p.mode, time);
+      drawCharacterHands(ctx, p.place.seatX, p.place.deskTop, p.look, p.mode, time, p.premium);
     }
 
     // --- desk equipment that moves -----------------------------------------
@@ -1613,7 +1659,7 @@ export class OfficeEngine {
       px(ctx, led.x, led.y, 2, 2, on ? led.color : MAT.black[1]);
     }
     for (const scr of this.live.screens) {
-      const active = activeZones.has(scr.zoneId);
+      const active = scr.deskId ? activeDesks.has(scr.deskId) : activeZones.has(scr.zoneId);
       drawScreenContent(ctx, scr.kind, scr.mx, scr.my, scr.w, scr.h, time, scr.seed, scr.accent, active);
       ctx.save();
       ctx.globalAlpha = active ? 0.18 : 0.09;
@@ -1649,10 +1695,11 @@ export class OfficeEngine {
       ctx.globalAlpha = 1;
     }
     for (const bub of this.live.bubbles) {
+      const rise = bub.color ? 6 : 14;
       for (let i = 0; i < 3; i += 1) {
-        const t = (time * 0.4 + i * 0.33) % 1;
+        const t = (time * 0.4 + i * 0.33 + bub.x * 0.01) % 1;
         ctx.globalAlpha = 0.6 - t * 0.4;
-        px(ctx, bub.x + Math.sin(t * 8 + i) * 2, bub.y - t * 14, 2, 2, '#cdeaf4');
+        px(ctx, bub.x + Math.sin(t * 8 + i) * (bub.color ? 1 : 2), bub.y - t * rise, bub.color ? 1 : 2, bub.color ? 1 : 2, bub.color ? mix(bub.color, '#ffffff', 0.5) : '#cdeaf4');
       }
       ctx.globalAlpha = 1;
     }

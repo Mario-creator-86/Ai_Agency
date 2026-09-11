@@ -1,7 +1,8 @@
 # CURRENT STATUS — Phases 0-2 complete; Phases 4-6 partially implemented
 
 Last verified: 2026-09-09 by an independent audit (`AUDIT_2026-09-09_EXTERNAL.md`) and the
-remediation that followed it. Active edit claim: none.
+remediation that followed it. Active edit claim: Codex, 2026-09-11 — ElevenLabs authentication,
+database resource discovery/refresh, separate production choices, UI and regression tests.
 
 > **Correction notice (2026-09-09).** An earlier revision of this document declared Phases 4, 5
 > and 6 "complete — verified". That was not supported by the code. The audit found fabricated
@@ -41,6 +42,17 @@ the scheduled run happens at most once per business date. Eight of the twelve ru
 have real work behind them; `idea_generation` and `post_run` report SKIPPED with that reason.
 
 ## Connected accounts
+
+Avatar repair verified 2026-09-11: the CSP now permits YouTube's two avatar origins and the
+snapshot selects high → medium → default. Both existing connections (Nexus Curiosity and Inside
+The Nexus) were refreshed through the real Verify buttons and displayed their own 800×800 API
+images in Chromium, with persisted URLs and zero image-policy violations. Missing-thumbnail
+fallback passed a separate browser fixture; completed-Reconnect refresh passed stubbed API tests.
+Changed: YouTube snapshot selection, HTTP image CSP, connection-card avatar/CSS, regression tests
+and `scripts/verify_youtube_avatars.mjs`. No migration. The local server was rebuilt/restarted.
+Validation: 435 backend tests passed, 1 skipped (unconfigured real Ollama); 52 frontend tests
+passed; Python/JS type checks, lint, frontend build, documentation integrity and secret scan passed.
+Evidence and scope limits are in `YOUTUBE_CONNECTIONS.md`. No remaining avatar blocker.
 
 YouTube channels are connected by OAuth, not by pasting credentials. Settings → *Conturi și
 e-mail* takes a connection name, a Google OAuth client id and secret, and a redirect URI; the
@@ -100,7 +112,7 @@ references were changed inside the architecture package. CI/local checks protect
 - Autonomy stop hard-gate: task worker and scheduler refuse to claim or run tasks when autonomy_stopped is active.
 - Alembic migration 0003_phase2_automation: 5 new tables (workflow, workflow_step, task_queue, scheduled_job, outbox_record) with zero schema drift.
 
-**Phase 3 (complete — visual system v2 2026-09-10, see `PIXEL_OFFICE_V2.md`):**
+**Phase 3 (complete — visual system v2 2026-09-10, see `PIXEL_OFFICE_V2.md`; Blender sprite pipeline tried on the RESEARCH floor 2026-09-11 and switched off after the Owner's comparison; Character Bible now drives character looks, see `PIXEL_ART_PIPELINE.md`):**
 - Premium pixel-art rebuild of the cutaway (palette module with hue-shifted ramps, compiled outlined character sprites with role costumes, per-department room shells and interiors, baked lighting, limestone facade, glass lift). Designed first in Figma (`AMN-AI Office · Pixel Art Design System`, file `bqTc0PoCbjL5dH5xw0FRDI`), then implemented frontend-only; backend, API and events untouched. Measured 60 FPS at ~6 ms/frame; 43 frontend tests pass.
 - Lateral cutaway multi-floor skyscraper canvas rendered at 60fps with zero simulated state, inspired by Space Haven, Anomaly President, and retro pixel-art simulation games.
 - Seniority-based corporate hierarchy from top to bottom:
