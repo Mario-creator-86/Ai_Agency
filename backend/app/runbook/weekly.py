@@ -78,9 +78,13 @@ def _latest_metrics(session: Session, publication_ids: list[str]) -> dict[str, A
     return latest
 
 
-def weekly_digest(engine: Engine) -> dict[str, Any]:
-    """The week's recorded performance picture, from the studio's own tables."""
+def weekly_digest(engine: Engine, geo: str | None = None) -> dict[str, Any]:
+    """The week's recorded performance picture, from the studio's own tables — and, when a
+    country is given, what people there searched for this week."""
+    from app.analytics.trends import trending_now  # noqa: PLC0415
+
     now = utc_now()
+    trends = trending_now(engine, geo, hours=7 * 24, limit=10) if geo else []
     with Session(engine) as session:
         channels = {c.id: c for c in session.scalars(select(ChannelRecord))}
         publications = session.scalars(
@@ -145,6 +149,7 @@ def weekly_digest(engine: Engine) -> dict[str, Any]:
         "videos": videos,
         "per_channel": per_channel,
         "open_recommendations": recommendations,
+        "trends": trends,
         "anything_published": bool(videos),
     }
 
@@ -170,6 +175,10 @@ def _digest_as_text(digest: dict[str, Any]) -> str:
         )
     for rec in digest["open_recommendations"]:
         lines.append(f"- Recomandare deschisă: {rec['type']} {rec['target']} — {rec['evidence']}")
+    if digest.get("trends"):
+        from app.analytics.trends import trends_as_text  # noqa: PLC0415
+
+        lines.append(trends_as_text(digest["trends"], "săptămâna aceasta"))
     return "\n".join(lines)
 
 
@@ -207,7 +216,8 @@ _REVIEW_INSTRUCTIONS = (
     "models and visual choices should move, weighed by quality, recorded cost and what kept "
     'viewers watching — same policy limits",\n'
     ' "topics": "channel direction and topic changes: what to chase, what to drop, why — '
-    'this is how you steer the channels",\n'
+    "this is how you steer the channels; when the digest lists what people are searching for, "
+    'say which of it the channels can honestly cover and which is noise",\n'
     ' "budget_request_amount_usd": null,\n'
     ' "budget_request_justification": "only when the measured plan needs more money than the '
     'budget allows: how much, and the reason, written for the Accountant and the Owner",\n'
@@ -247,10 +257,11 @@ def execute_weekly_review(
     engine: Engine,
     registry: Any,
     correlation_id: str | None = None,
+    geo: str | None = None,
 ) -> dict[str, Any]:
     """One weekly review: digest, the Director's run, her indications filed as messages."""
     correlation_id = correlation_id or str(uuid4())
-    digest = weekly_digest(engine)
+    digest = weekly_digest(engine, geo)
 
     if not digest["anything_published"]:
         with Session(engine) as session, session.begin():

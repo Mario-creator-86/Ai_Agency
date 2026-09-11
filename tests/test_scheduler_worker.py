@@ -34,6 +34,10 @@ from app.workflows.services import (
 from app.workflows.worker import (
     DAILY_JOB_NAME,
     DAILY_RUN,
+    MODEL_RESEARCH,
+    MODEL_RESEARCH_JOB_NAME,
+    TRENDS_JOB_NAME,
+    TRENDS_REFRESH,
     NonRetryable,
     build_task_handlers,
     work_once,
@@ -262,9 +266,20 @@ def test_the_application_seeds_the_daily_job_only_when_the_worker_is_on(settings
         pass
     with Session(engine) as session:
         jobs = {job.name: job for job in session.scalars(select(ScheduledJob))}
-    # Two standing jobs: the day (dormant until the Owner starts it) and the Director's
-    # weekly performance review (active standing policy, first fire an hour after birth).
-    assert set(jobs) == {DAILY_JOB_NAME, WEEKLY_JOB_NAME}
+    # Four standing jobs: the day (dormant until the Owner starts it), the Director's
+    # weekly performance review (active standing policy, first fire an hour after birth),
+    # the daily reading of what people search for, and the stewards' weekly reading of
+    # their vendors' pages — the last two active from birth, behind the autonomy stop.
+    assert set(jobs) == {
+        DAILY_JOB_NAME,
+        WEEKLY_JOB_NAME,
+        TRENDS_JOB_NAME,
+        MODEL_RESEARCH_JOB_NAME,
+    }
+    assert jobs[TRENDS_JOB_NAME].workflow_type == TRENDS_REFRESH
+    assert jobs[TRENDS_JOB_NAME].is_active and jobs[TRENDS_JOB_NAME].interval_seconds == 86400
+    assert jobs[MODEL_RESEARCH_JOB_NAME].workflow_type == MODEL_RESEARCH
+    assert jobs[MODEL_RESEARCH_JOB_NAME].interval_seconds == 7 * 86400
     daily = jobs[DAILY_JOB_NAME]
     assert daily.workflow_type == DAILY_RUN
     assert daily.missed_policy == "CATCH_UP"

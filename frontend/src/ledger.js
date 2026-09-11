@@ -325,6 +325,29 @@ export function describeEvent(event, names = {}) {
       label = 'studioul a fost redenumit';
       text = [payload.previous_name, payload.name].filter(Boolean).join(' → ');
       break;
+    case 'trends.snapshot_recorded':
+      label = 'tendințe citite';
+      text = `${payload.count ?? 0} noi din ${payload.seen ?? 0} (${payload.geo || ''})${Array.isArray(payload.top) && payload.top.length ? ` · ${payload.top.slice(0, 3).join(', ')}` : ''}`;
+      break;
+    case 'trends.unavailable':
+      label = 'tendințele nu au putut fi citite';
+      text = payload.reason || '';
+      break;
+    case 'media.model_research_recorded':
+      label = `cercetare de modele · ${payload.purpose || ''}`;
+      text = `${payload.steward ? `${payload.steward}: ` : ''}${payload.annotated ?? 0} modele judecate din ${payload.pages ?? 0} pagini${payload.recommended ? ` · recomandat ${payload.recommended}` : ''}${payload.changed ? ' · pus ca implicit' : ''}`;
+      kind = 'production';
+      break;
+    case 'provider.resource_metadata_updated':
+      label = 'fișă de model actualizată';
+      text = payload.source || '';
+      break;
+    case 'media.production_configured':
+      label = 'valori implicite de producție';
+      text = [payload.model_id ? `model ${payload.model_id}` : '', payload.voice_id ? `voce ${payload.voice_id}` : '', payload.image_model_id ? `imagine ${payload.image_model_id}` : '']
+        .filter(Boolean)
+        .join(' · ');
+      break;
     case 'runbook.daily_run_started':
       label = 'ziua a început';
       text = `${payload.stages || ''} etape · preflight ${payload.preflight || ''}`.trim();

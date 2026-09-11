@@ -142,12 +142,67 @@ _IDEA_INSTRUCTIONS = (
     "not restate one idea in different words. Score each candidate 0..1 on the studio's "
     "criteria: interest (would a viewer stop scrolling), credibility (can it be sourced), "
     "source_availability (is it on the authorised sites), visual_potential (is there something "
-    "to show), novelty (has the studio done it), cost (1 means cheap to produce). Return only "
+    "to show), novelty (has the studio done it), cost (1 means cheap to produce). You are also "
+    "given what people in the studio's country are searching for right now and what measured "
+    "well or badly on the studio's own channels: a trend is a hook, not a source — use it only "
+    "where the authorised sites can evidence it — and prefer the kinds of topic that measured "
+    "well over the kinds that did not. Return only "
     'JSON: {{"candidates": [{{"title": "...", "topic": "...", "angle": "...", '
     '"target_audience": "...", "expected_hosts": ["..."], "scores": {{"interest": 0.0, '
     '"credibility": 0.0, "source_availability": 0.0, "visual_potential": 0.0, "novelty": 0.0, '
     '"cost": 0.0}}}}]}}.\n'
 )
+
+
+def _signals(engine: Engine, settings: Settings) -> dict[str, Any]:
+    """What is trending and what measured, for the proposal prompt. Empty when unknown."""
+    from app.analytics.services import compute_cohort_metrics  # noqa: PLC0415
+    from app.analytics.trends import trending_now  # noqa: PLC0415
+    from app.publishing.models import ChannelRecord  # noqa: PLC0415
+
+    trends = trending_now(engine, settings.trends_geo) if settings.trends_enabled else []
+    best: list[dict[str, Any]] = []
+    worst: list[dict[str, Any]] = []
+    with Session(engine) as session:
+        channel_ids = [c.id for c in session.scalars(select(ChannelRecord))]
+    for channel_id in channel_ids:
+        cohorts = [
+            c for c in compute_cohort_metrics(engine, channel_id, "topic") if c["sample_size"] >= 3
+        ]
+        for item in cohorts[:3]:
+            best.append(
+                {
+                    "topic": item["cohort_key"],
+                    "mean_views": item["mean_views"],
+                    "mean_retention": item["mean_retention"],
+                    "videos": item["sample_size"],
+                }
+            )
+        for item in cohorts[-3:]:
+            if item not in cohorts[:3]:
+                worst.append(
+                    {
+                        "topic": item["cohort_key"],
+                        "mean_views": item["mean_views"],
+                        "mean_retention": item["mean_retention"],
+                        "videos": item["sample_size"],
+                    }
+                )
+    return {
+        "trending_now": [
+            {"query": t["title"], "searches": t["approx_traffic"], "news": t["news"]}
+            for t in trends
+        ],
+        "measured_performance": {
+            "best": best[:6],
+            "worst": worst[:6],
+            "note": (
+                "no measured performance yet; nothing published and measured"
+                if not best and not worst
+                else "from the studio's own analytics, cohorts of three or more videos"
+            ),
+        },
+    }
 
 
 def propose_topics(
@@ -183,7 +238,12 @@ def propose_topics(
         weights = dict(strategy.topic_weights_json or {}) if strategy else {}
 
     payload = json.dumps(
-        {"authorised_hosts": hosts, "recent_topics": recent, "topic_weights": weights},
+        {
+            "authorised_hosts": hosts,
+            "recent_topics": recent,
+            "topic_weights": weights,
+            **_signals(engine, settings),
+        },
         ensure_ascii=False,
     )
     prompt = _IDEA_INSTRUCTIONS.format(wanted=min(wanted, MAX_CANDIDATES)) + wrap_in_inert_boundary(

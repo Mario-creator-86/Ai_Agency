@@ -159,3 +159,25 @@ class DirectorRecommendation(Base):
 
     strategy: Mapped[ContentStrategy | None] = relationship("ContentStrategy")
     channel: Mapped[ChannelRecord] = relationship("ChannelRecord")
+
+
+class TrendSnapshot(Base):
+    """One trending query for the studio's country, as read from Google's public feed.
+
+    Kept beside the measured numbers so proposals and reviews can read what people search
+    for today; never a source, never a claim (migration 0028).
+    """
+
+    __tablename__ = "trend_snapshot"
+    __table_args__ = (Index("ix_trend_snapshot_geo_time", "geo", "fetched_at"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    geo: Mapped[str] = mapped_column(String(8), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    approx_traffic: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    news_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    published_at: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    fetched_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    event_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("domain_event.event_id"), nullable=True
+    )

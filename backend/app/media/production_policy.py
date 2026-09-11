@@ -202,6 +202,22 @@ def _number(value: Any, default: float) -> float:
     return number if 0.0 <= number <= 1.0 else default
 
 
+#: The price a resource's research recorded, whatever the unit — voice is priced per
+#: thousand characters, video per second, stills per image. Within one connection and kind
+#: the units agree, so the cheapest of a kind is the cheapest whichever key holds it.
+PRICE_KEYS = ("per_1k_characters_usd", "per_second_usd", "per_image_usd", "price_usd")
+
+
+def _recorded_price(pricing: Any) -> float | None:
+    if not isinstance(pricing, dict):
+        return None
+    for key in PRICE_KEYS:
+        value = pricing.get(key)
+        if isinstance(value, int | float) and not isinstance(value, bool):
+            return float(value)
+    return None
+
+
 def rank_candidates(
     session: Session,
     integration_id: str,
@@ -233,14 +249,7 @@ def rank_candidates(
         )
     ).all()
     ranked: list[dict[str, Any]] = []
-    prices = [
-        float(price)
-        for r in rows
-        for price in [
-            r.pricing.get("per_1k_characters_usd") if isinstance(r.pricing, dict) else None
-        ]
-        if isinstance(price, int | float)
-    ]
+    prices = [price for r in rows for price in [_recorded_price(r.pricing)] if price is not None]
     max_price = max(prices) if prices else None
     for row in rows:
         if not resource_available(row):
@@ -255,9 +264,9 @@ def rank_candidates(
         quality = _number(caps.get("quality_score"), 0.5)
         reliability = _number(caps.get("reliability_score"), 0.5)
         speed = _number(caps.get("latency_score"), 0.5)
-        price = pricing.get("per_1k_characters_usd")
-        if isinstance(price, int | float) and max_price:
-            cost = 1.0 - min(1.0, float(price) / max_price)
+        price = _recorded_price(pricing)
+        if price is not None and max_price:
+            cost = 1.0 - min(1.0, price / max_price)
         else:
             cost = 0.5
         score = quality * w_quality + cost * w_cost + speed * w_speed + reliability * w_reliability
@@ -282,7 +291,7 @@ def rank_candidates(
                 "quality_score": quality,
                 "reliability_score": reliability,
                 "latency_score": speed,
-                "per_1k_characters_usd": price if isinstance(price, int | float) else None,
+                "per_1k_characters_usd": price,
                 "language_match": language_match,
                 "annotated": bool(caps or pricing),
             }

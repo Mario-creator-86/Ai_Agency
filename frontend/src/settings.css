@@ -21,3 +21,4 @@
 @media (max-width: 640px) { .settings-fields { grid-template-columns: 1fr; } .settings-routing { grid-template-columns: 1fr; } .settings-dialog { padding: 1rem; } }
 
 .settings-tabs > button { width: auto; flex: 1 1 150px; }
+.settings-autoconfig-actions { display: flex; flex-wrap: wrap; gap: 8px; }

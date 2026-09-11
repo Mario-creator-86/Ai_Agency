@@ -256,6 +256,15 @@ def create_settings_router() -> APIRouter:
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from None
 
+    @router.post("/model-research")
+    def post_model_research(request: Request) -> dict:
+        """The stewards read their vendors' pages now and choose. Says what each decided."""
+        from app.media.model_research import research_all  # noqa: PLC0415
+
+        return research_all(
+            request.app.state.engine, request.app.state.registry, request.app.state.settings
+        )
+
     @router.put("/selections/{purpose}")
     def set_selection(purpose: str, command: SelectionCommand, request: Request) -> dict:
         try:

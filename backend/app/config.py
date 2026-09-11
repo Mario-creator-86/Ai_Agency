@@ -69,6 +69,12 @@ class Settings(BaseSettings):
     # Absolute path to an ffmpeg executable. When unset, PATH is searched.
     ffmpeg_path: str | None = None
 
+    # Google's public "trending now" feed for this country code, read once a day and kept as
+    # a signal for the Researcher's proposals and the Director's weekly review. A trend is a
+    # hook, never a source. STUDIO_TRENDS_GEO=RO; STUDIO_TRENDS_ENABLED=false turns it off.
+    trends_enabled: bool = True
+    trends_geo: str = Field(default="RO", min_length=2, max_length=8, pattern="^[A-Za-z-]+$")
+
     # The background worker is what makes the studio run without the browser: it fires due
     # scheduled jobs and executes the tasks they enqueue. Off in tests, where a loop that starts
     # the day on its own would make every other test's timing a coincidence.

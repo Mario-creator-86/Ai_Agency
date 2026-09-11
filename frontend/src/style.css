@@ -725,6 +725,13 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 .mail-reply { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
 .mail-reply textarea { width: 100%; resize: vertical; font: inherit; }
 .mail-reply-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+
+/* What people search for now: one line per trend, the strongest first. */
+.trends-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.trends-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px 14px; font-size: 12.5px; }
+.trends-list li { display: flex; justify-content: space-between; gap: 10px; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); }
+.trends-list li small { color: var(--ink-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.trends-list li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ledger-production { border-left-color: #4a7fb5; }
 .ledger-money { border-left-color: var(--gold-ink, #b08a2e); }
 .ledger-owner { border-left-color: var(--warn-line); }

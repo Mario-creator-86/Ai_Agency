@@ -52,6 +52,7 @@ from app.agents.reviews import (
     review_narration,
 )
 from app.analytics.services import MetricsUnavailable, ingest_publication_metrics
+from app.analytics.trends import is_fresh, refresh_trends
 from app.config import Settings
 from app.economy.accountant import AccountantError, reconcile_day, record_render_costs
 from app.economy.budget import may_spend
@@ -140,6 +141,9 @@ def _idea_generation(
             f"{pool} teme candidate sunt deja în așteptare; nu s-au propus altele.",
             pool=pool,
         )
+    # Today's trends before today's ideas; a feed that does not answer is recorded, not fatal.
+    if settings.trends_enabled and not is_fresh(engine, settings.trends_geo):
+        refresh_trends(engine, settings, str(uuid4()))
     try:
         proposal = propose_topics(
             engine, registry, settings, str(uuid4()), wanted=IDEA_POOL_TARGET - pool

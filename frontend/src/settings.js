@@ -270,6 +270,17 @@ export function initSettings(api, hooks = {}) {
    */
   function renderAutoConfigure(container) {
     const box = node('div', '', 'settings-autoconfig');
+    // The stewards read their vendors' pages and choose; the lines they report join the
+    // same list the auto-configure report uses, so both show after the reload.
+    const research = node('button', 'Cercetare de modele acum (Kael și Lyra citesc documentația)', 'secondary');
+    research.title = 'Responsabilii citesc paginile furnizorilor conectați, notează prețuri și capabilități și aleg modelul implicit acolo unde nu l-ai blocat. Durează câteva minute.';
+    research.addEventListener('click', () => run(async () => {
+      const result = await api('/settings/model-research', { method: 'POST' });
+      autoConfigReport = Object.values(result).map((r) => r.status === 'COMPLETED'
+        ? `${r.purpose}: ${r.steward} recomandă ${r.recommended || '—'}${r.changed ? ' (pus ca implicit)' : ''}${r.reason ? ` — ${r.reason}` : ''}`
+        : `${r.purpose}: ${r.reason}`);
+      return { message: 'Cercetarea de modele s-a încheiat.' };
+    }, 'Cercetare de modele încheiată.'));
     const button = node('button', 'Configurează automat serviciile și valorile implicite', 'secondary');
     button.addEventListener('click', () => run(async () => {
       const result = await api('/settings/auto-configure', { method: 'POST' });
@@ -280,9 +291,10 @@ export function initSettings(api, hooks = {}) {
       return { message: autoConfigReport.length ? `${(result.applied || []).length} completate.` : 'Nimic de completat: totul era deja ales.' };
     }, 'Configurare aplicată.'));
     box.append(
-      node('p', 'Ai conectat furnizorii, dar producția are nevoie și de o alegere per scop (Imagini, Video, Voce) și de valori implicite. Butonul alege doar acolo unde există un singur candidat și completează doar ce este gol; poți schimba orice pe cardul conexiunii.', 'helper'),
-      button,
+      node('p', 'Ai conectat furnizorii, dar producția are nevoie și de o alegere per scop (Imagini, Video, Voce) și de valori implicite. Butonul alege doar acolo unde există un singur candidat și completează doar ce este gol; poți schimba orice pe cardul conexiunii. Cercetarea de modele merge mai departe: responsabilii citesc documentația furnizorilor și aleg pe dovezi.', 'helper'),
+      node('div', '', 'settings-autoconfig-actions'),
     );
+    box.querySelector('.settings-autoconfig-actions').append(button, research);
     if (autoConfigReport.length) {
       const list = node('ul', '', 'settings-autoconfig-list');
       for (const line of autoConfigReport) list.append(node('li', line));

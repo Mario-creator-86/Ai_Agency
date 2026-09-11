@@ -538,8 +538,8 @@ Evidence: `scratch/verify_weekly_review_ui.mjs` 5/5 live; backend 526/1; fronten
 - [x] Employees answer their mail each worker pass; the Director reads what came back at once; a question closes, a HANDOFF stays open until done, a long thread waits for the evening or the Owner.
 - [x] Letters to the Owner (decision hers / day stopped / review refused): red in the ledger, `GET /agents/messages/owner`, answered from the thread window.
 - [x] Thread window on the page; the inspector's inbox opens threads.
-- [ ] Employees choosing a video/image model by researching online (cost, capability, examples) — needs a web-research tool for agents beyond the source allowlist, and the resource metadata (`pricing`, `capabilities`) filled from vendor pages.
-- [ ] Analytics-driven adaptation: Google Trends and channel numbers into the Director's weekly review and the Researcher's topic proposals (Phase 7 machinery, real publications first).
+- [x] Employees choosing a video/image/voice model by reading the vendors' pages (fetched by the studio, vendor hosts only): scores and prices recorded on the resources, `rank_candidates` reads them, fallback defaults follow, locked ones are reported on; weekly job + Owner button.
+- [x] Analytics-driven adaptation wired: Google Trends (daily, `trend_snapshot`) and the studio's measured cohorts reach the Researcher's proposals and the weekly digest; the numbers themselves still wait for real publications.
 - [ ] Visual polish pass on the whole page (spacing, type, dialog rhythm, the office chrome) — a dedicated task with screenshots per view.
 
 Evidence: `tests/test_mail.py` 18/18; backend 544/1; frontend 86/86; live on a copy of the Owner's data (`scratch` review scripts).

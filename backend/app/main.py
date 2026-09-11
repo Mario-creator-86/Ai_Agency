@@ -50,7 +50,16 @@ from app.workflows.router import (
     register_websocket_gateway,
 )
 from app.workflows.services import ensure_scheduled_job
-from app.workflows.worker import DAILY_JOB_NAME, DAILY_RUN, build_task_handlers, worker_pass
+from app.workflows.worker import (
+    DAILY_JOB_NAME,
+    DAILY_RUN,
+    MODEL_RESEARCH,
+    MODEL_RESEARCH_JOB_NAME,
+    TRENDS_JOB_NAME,
+    TRENDS_REFRESH,
+    build_task_handlers,
+    worker_pass,
+)
 from app.workforce.router import create_workforce_router
 from app.youtube.router import create_youtube_callback_router, create_youtube_router
 
@@ -90,7 +99,7 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
         # Migrations/bootstrap are explicit startup commands, never hidden destructive schema edits.
         with engine.connect() as connection:
             revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
-            if revision != "0027_mail_threads":
+            if revision != "0028_trend_snapshot":
                 raise RuntimeError("Run scripts/bootstrap.py with this application version")
             if connection.scalar(text("SELECT COUNT(*) FROM owner_policy")) != 1:
                 raise RuntimeError("Run scripts/bootstrap.py to initialize the studio")
@@ -170,6 +179,28 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
                 interval_seconds=7 * 86400,
                 missed_policy="CATCH_UP",
                 first_run_at=_utc_now_plus(3600),
+                active=True,
+            )
+            # What people search for, once a day, so proposals and reviews can read it; the
+            # stewards' reading of their vendors' pages, once a week, so the model choice
+            # rests on prices and capabilities they recorded, not on catalogue order.
+            if settings.trends_enabled:
+                ensure_scheduled_job(
+                    engine,
+                    name=TRENDS_JOB_NAME,
+                    workflow_type=TRENDS_REFRESH,
+                    interval_seconds=86400,
+                    missed_policy="CATCH_UP",
+                    first_run_at=_utc_now_plus(120),
+                    active=True,
+                )
+            ensure_scheduled_job(
+                engine,
+                name=MODEL_RESEARCH_JOB_NAME,
+                workflow_type=MODEL_RESEARCH,
+                interval_seconds=7 * 86400,
+                missed_policy="CATCH_UP",
+                first_run_at=_utc_now_plus(7200),
                 active=True,
             )
             handlers = build_task_handlers(

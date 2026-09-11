@@ -770,6 +770,39 @@ if (refreshScriptsBtn) {
 
 bindPanelToggle('open-research-btn', researchModal);
 
+/** What people search for now, as the studio last read it; the button reads it again. */
+async function loadTrends() {
+  const list = element('trends-list');
+  try {
+    const data = await api('/analytics/trends');
+    if (!data.enabled) {
+      list.innerHTML = '<li class="helper">Tendințele sunt oprite în configurație (STUDIO_TRENDS_ENABLED).</li>';
+      return;
+    }
+    list.innerHTML = data.items.length
+      ? data.items.map((t) => `<li title="${escapeHtml((t.news || []).join(' · '))}"><span>${escapeHtml(t.title)}</span><small>${t.approx_traffic ? `~${Number(t.approx_traffic).toLocaleString('ro-RO')}` : '—'}</small></li>`).join('')
+      : `<li class="helper">Nimic citit încă pentru ${escapeHtml(data.geo)}. Apasă «Citește tendințele».</li>`;
+  } catch (error) {
+    list.innerHTML = `<li class="text-error">${escapeHtml(error instanceof Error ? error.message : 'Tendințele nu au putut fi citite.')}</li>`;
+  }
+}
+element('open-research-btn').addEventListener('click', () => { loadTrends(); });
+element('trends-refresh').addEventListener('click', async (event) => {
+  const button = /** @type {HTMLButtonElement} */ (event.currentTarget);
+  button.disabled = true;
+  try {
+    const result = await api('/analytics/trends/refresh', { method: 'POST' });
+    notify(result.status === 'COMPLETED'
+      ? `Tendințe citite (${result.geo}): ${result.count} noi din ${result.seen}.`
+      : `Tendințele nu au putut fi citite: ${result.reason || result.status}`);
+    await loadTrends();
+  } catch (error) {
+    notify(error instanceof Error ? error.message : 'Tendințele nu au putut fi citite.');
+  } finally {
+    button.disabled = false;
+  }
+});
+
 async function loadTopics() {
   const listEl = element('topics-list');
   try {

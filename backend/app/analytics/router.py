@@ -68,6 +68,25 @@ def get_analytics_provider(request: Request) -> AnalyticsProvider:
 def create_analytics_router() -> APIRouter:
     router = APIRouter(prefix="/analytics", dependencies=[Depends(require_owner)])
 
+    @router.get("/trends")
+    def get_trends(request: Request) -> dict:
+        """What people in the studio's country are searching for, as last read."""
+        from app.analytics.trends import trending_now  # noqa: PLC0415
+
+        settings = request.app.state.settings
+        return {
+            "geo": settings.trends_geo,
+            "enabled": settings.trends_enabled,
+            "items": trending_now(request.app.state.engine, settings.trends_geo, limit=25),
+        }
+
+    @router.post("/trends/refresh")
+    def post_trends_refresh(request: Request) -> dict:
+        """Read the feed now. Says what happened, including a feed that did not answer."""
+        from app.analytics.trends import refresh_trends  # noqa: PLC0415
+
+        return refresh_trends(request.app.state.engine, request.app.state.settings)
+
     @router.get("/channels/{channel_id}/summary", response_model=ChannelAnalyticsSummaryView)
     def get_summary(
         request: Request,

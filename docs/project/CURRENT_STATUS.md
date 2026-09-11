@@ -13,6 +13,15 @@ database resource discovery/refresh, separate production choices, UI and regress
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
 
+## Signals: vendor pages and search trends (2026-09-12)
+
+Kael and Lyra choose their models by reading the vendors' own pages (fetched by the studio,
+restricted to the vendor's hosts) and scoring the account's models where the production
+hierarchy reads scores; a fallback default follows the recommendation, a locked one is
+reported on. Google Trends for the studio's country is read daily (migration 0028) and, with
+the studio's own measured cohorts, reaches the Researcher's proposals and the Director's
+weekly review — so the adaptation loop runs the day real numbers appear. `STUDIO_TRENDS_GEO`.
+
 ## Correspondence, and the day that stopped (2026-09-12)
 
 Messages are letters in threads (migration 0027): the ledger names both ends and opens the

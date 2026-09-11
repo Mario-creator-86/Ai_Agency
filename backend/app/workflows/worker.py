@@ -50,6 +50,13 @@ DAILY_JOB_NAME = "daily_main"
 #: already had its review is skipped inside the task itself.
 WEEKLY_REVIEW = WEEKLY_REVIEW_TASK
 
+#: The outside signal, read once a day, and the stewards' reading of their vendors' pages,
+#: once a week. Both active from the first start-up and both behind the autonomy stop.
+TRENDS_REFRESH = "TRENDS_REFRESH"
+TRENDS_JOB_NAME = "trends_daily"
+MODEL_RESEARCH = "MODEL_RESEARCH"
+MODEL_RESEARCH_JOB_NAME = "model_research_weekly"
+
 #: A daily run can take minutes — agents, a render, quality control. The lease has to outlast it,
 #: or the queue would hand the same run to the next pass while this one is still rendering.
 TASK_LEASE_SECONDS = 3600
@@ -109,12 +116,34 @@ def build_task_handlers(
         if registry is None:
             raise NonRetryable("Revizia săptămânală are nevoie de registrul de furnizori.")
         try:
-            result = execute_weekly_review(engine, registry, correlation_id=task["id"])
+            result = execute_weekly_review(
+                engine,
+                registry,
+                correlation_id=task["id"],
+                geo=settings.trends_geo if settings.trends_enabled else None,
+            )
         except WeeklyReviewError as exc:
             raise NonRetryable(str(exc)) from exc
         return result
 
-    return {DAILY_RUN: daily_run, WEEKLY_REVIEW: weekly_review}
+    def trends_refresh(task: dict[str, Any]) -> dict[str, Any]:
+        from app.analytics.trends import refresh_trends  # noqa: PLC0415
+
+        return refresh_trends(engine, settings, correlation_id=task["id"])
+
+    def model_research(task: dict[str, Any]) -> dict[str, Any]:
+        if registry is None:
+            raise NonRetryable("Cercetarea de modele are nevoie de registrul de furnizori.")
+        from app.media.model_research import research_all  # noqa: PLC0415
+
+        return research_all(engine, registry, settings, correlation_id=task["id"])
+
+    return {
+        DAILY_RUN: daily_run,
+        WEEKLY_REVIEW: weekly_review,
+        TRENDS_REFRESH: trends_refresh,
+        MODEL_RESEARCH: model_research,
+    }
 
 
 def work_once(

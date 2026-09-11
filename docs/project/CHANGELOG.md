@@ -1,5 +1,34 @@
 # Changelog
 
+## The stewards read the vendors' pages; the studio reads what people search for — 2026-09-12
+
+The Owner asked how employees could choose a video model by researching online, and that
+the analytics machinery exist before the numbers do.
+
+- **Model research** (`backend/app/media/model_research.py`): the steward of a purpose
+  (Kael for video and image, Lyra for voice) names up to three pages worth reading on the
+  vendor's own site, the studio fetches them over the source retriever restricted to the
+  vendor's hosts (`vendor_hosts` from the catalogue's documentation URL — no employee has
+  a tool that reaches anywhere else), and the steward scores every model the account
+  exposes (quality, reliability, speed, price with its unit, a note, the page as evidence).
+  Scores and prices go into `provider_resource.capabilities/pricing` with the source, where
+  `rank_candidates` and `strategy: auto` already read them (`per_second_usd` and
+  `per_image_usd` now count as prices too). The recommended model becomes the default only
+  where the Owner left it as a fallback (`allow_production_override`); a locked default is
+  reported on. Every run ends in a letter to the Director. Weekly job
+  `model_research_weekly`, Owner button in Settings → Video și sunet, `POST
+  /settings/model-research`.
+- **Trends** (`backend/app/analytics/trends.py`, migration 0028 `trend_snapshot`): Google's
+  public "trending now" feed for the studio's country (`STUDIO_TRENDS_GEO`, default RO), read
+  once a day over pinned HTTPS, kept as rows; a feed that does not answer is recorded as
+  `trends.unavailable`. The Researcher's proposals get `trending_now` and
+  `measured_performance` (the studio's own cohorts of three or more videos, best and worst);
+  the weekly digest lists the week's trends; a trend is a hook, never a source. Daily job
+  `trends_daily`, the idea stage refreshes when stale, `GET/POST /analytics/trends`, and a
+  «Ce caută lumea acum» block in the research dialog.
+- Tests: `tests/test_signals.py` (10), `tests/test_scheduler_worker.py`; live: the RO feed
+  read once (10 trends, with traffic and news).
+
 ## The office writes letters, and the Director writes to the Owner — 2026-09-12
 
 What stopped the day of 2026-09-11 (12/12 stages "completed", nothing produced), and the
