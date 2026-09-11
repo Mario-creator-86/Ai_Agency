@@ -56,6 +56,8 @@ DEFAULT_CHANNELS = [
         "platform": "YOUTUBE",
         "upload_privacy_default": "private",
         "brand_tagline": "Real World. Verified Facts. 60-Second Deep Dives.",
+        # Seed default only: production may pick technology per video. Editable in the API.
+        "production_policy": "FLEXIBLE",
     },
     {
         "channel_name": "Channel B - Office Serial",
@@ -63,6 +65,8 @@ DEFAULT_CHANNELS = [
         "platform": "YOUTUBE",
         "upload_privacy_default": "private",
         "brand_tagline": "AMN-AI (Autonomous Machine Nexus): Unscripted Silicon Life.",
+        # Seed default only: recurring characters keep their locked identity. Editable in the API.
+        "production_policy": "CONSISTENCY_LOCKED",
     },
 ]
 
@@ -87,13 +91,20 @@ def derive_channel_status(remote_channel_id: str | None, credentials_ref: str | 
 
 
 def seed_default_channels(engine: Engine) -> int:
-    """Pre-seed Channel A (Main) and Channel B (Office Serial) if not present."""
+    """Pre-seed Channel A (Main) and Channel B (Office Serial) if not present.
+
+    A channel row created before production policies existed has a NULL policy; the seed
+    fills it from the same list, once. A policy the Owner has set is never touched.
+    """
     with Session(engine) as session, session.begin():
         count = 0
         for ch in DEFAULT_CHANNELS:
             existing = session.scalars(
                 select(ChannelRecord).where(ChannelRecord.channel_type == ch["channel_type"])
             ).first()
+            if existing is not None and existing.production_policy is None:
+                existing.production_policy = ch["production_policy"]
+                count += 1
             if not existing:
                 now = utc_now()
                 ch_id = str(uuid4())
@@ -115,6 +126,7 @@ def seed_default_channels(engine: Engine) -> int:
                     credentials_ref=None,
                     upload_privacy_default=ch["upload_privacy_default"],
                     status=CHANNEL_NOT_CONFIGURED,
+                    production_policy=ch["production_policy"],
                     created_at=now,
                     last_sync_at=None,
                     event_id=event.event_id,

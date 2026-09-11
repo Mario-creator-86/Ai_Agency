@@ -1123,9 +1123,23 @@ function characterCard(c) {
       ${charRow('Comportament', behavior.work_rituals)}
       ${charRow('Nu devia', c.forbidden_deviations)}
       ${voiceLine ? `<div class="char-voice">Voce: ${escapeHtml(voiceLine)}</div>` : ''}
+      ${identityLine(c)}
       ${slots.length ? `<div class="char-voice">Referințe vizuale: ${present.length}/${slots.length}${present.length ? '' : ' · niciuna produsă încă'}</div>` : ''}
     </div>
   `;
+}
+
+/** Persistent production identity: the bound voice, which fields are locked, and the status. */
+function identityLine(c) {
+  const binding = c.voice_binding_json || {};
+  const locks = c.identity_locks_json || {};
+  const lockedFields = Object.keys(locks).filter((k) => locks[k]);
+  const parts = [];
+  if (binding.voice_id) parts.push(`Voce legată: ${escapeHtml(binding.voice_id)}${binding.model_id ? ` · model ${escapeHtml(binding.model_id)}` : ''}`);
+  if (lockedFields.length) parts.push(`Blocat: ${escapeHtml(lockedFields.join(', '))}`);
+  if (c.consistency_status) parts.push(`Consistență: ${escapeHtml(c.consistency_status)}`);
+  if ((c.approved_fallbacks_json || []).length) parts.push(`${c.approved_fallbacks_json.length} modele aprobate`);
+  return parts.length ? `<div class="char-voice">${parts.join(' · ')}</div>` : '';
 }
 
 async function loadCharacterBibles() {
@@ -1468,6 +1482,12 @@ if (refreshPublishingBtn) {
   refreshPublishingBtn.addEventListener('click', loadPublishingHub);
 }
 
+/** Labels for the stored production policy; the value itself lives on the channel row. */
+const PRODUCTION_POLICY_LABEL = {
+  FLEXIBLE: 'FLEXIBILĂ · tehnologia se alege per video',
+  CONSISTENCY_LOCKED: 'CONSISTENȚĂ BLOCATĂ · identitatea personajelor nu se schimbă',
+};
+
 async function loadPublishingHub() {
   const channelsEl = element('channels-list');
   const pubListEl = element('publications-list');
@@ -1503,6 +1523,7 @@ async function loadPublishingHub() {
             <h4>${escapeHtml(c.channel_name)}</h4>
             <div class="channel-meta">Tip: <strong>${escapeHtml(c.channel_type)}</strong> · ID la distanță: <code>${escapeHtml(c.remote_channel_id || 'nesetat')}</code></div>
             <div class="channel-meta">${escapeHtml(CHANNEL_STATUS_HINT[c.status] || 'Stare necunoscută.')}</div>
+            <div class="channel-meta">Politică de producție: <span class="policy-tag ${c.production_policy === 'CONSISTENCY_LOCKED' ? 'policy-locked' : 'policy-flexible'}">${escapeHtml(PRODUCTION_POLICY_LABEL[c.production_policy] || 'nesetată')}</span>${c.allow_production_override === false ? ' · suprascrieri per episod dezactivate' : ''}</div>
           </div>
           <span class="channel-status-tag ${c.status === 'AUTHENTICATED' ? 'channel-status-ok' : 'channel-status-warn'}">${escapeHtml(CHANNEL_STATUS_LABEL[c.status] || c.status)}</span>
         </div>

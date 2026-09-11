@@ -13,6 +13,8 @@ import asyncio
 import hashlib
 import logging
 import subprocess
+import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -173,6 +175,8 @@ def assemble_video_job(
     ffmpeg_path: str | None = None,
     image_adapter: ImageProvider | None = None,
     tts_adapter: TTSProvider | None = None,
+    tts_adapter_for_scene: Callable[[dict[str, Any]], TTSProvider | None] | None = None,
+    production_plan: dict[str, Any] | None = None,
 ) -> dict:
     """Run end-to-end video assembly and provenance recording.
 
@@ -182,10 +186,22 @@ def assemble_video_job(
     publication. The recorded name always says which generator actually made the frames, so a
     render can never be mistaken for publishable content it is not.
 
+    ``tts_adapter_for_scene`` resolves a voice per scene (a recurring character's locked
+    voice, or a scene override); when it returns None for a scene, ``tts_adapter`` is used,
+    and when that is None too the placeholder narrator is. ``production_plan`` is the
+    resolved hierarchy the caller built; it is stored on the job with what each scene
+    actually used, so a render can be audited without re-running the resolution.
+
     Raises RenderEngineUnavailable when ffmpeg is missing or the encode fails. No MediaAsset
     is recorded in that case, so no downstream gate can pass on a non-existent render.
     """
     render_job_id = str(uuid4())
+    production: dict[str, Any] = {
+        "plan": production_plan or {},
+        "scenes": [],
+        "image": {"provider": None, "model": None},
+        "voice": {"provider": None},
+    }
     started_at = utc_now()
     ffmpeg_exe = resolve_ffmpeg_path(ffmpeg_path)
 
@@ -244,11 +260,27 @@ def assemble_video_job(
     # 2. Generate placeholder visual cards (SVG for the UI, raster PPM for the encoder)
     #    and voiceover segments.
     visual_adapter: ImageProvider = image_adapter or DeterministicVisualAdapter()
-    voice_adapter: TTSProvider = tts_adapter or DeterministicTTSAdapter()
+    placeholder_voice = DeterministicTTSAdapter()
     # The frames are real only when a real generator made them; this single name is what the
     # asset, the event and the QC report are all written from.
     visual_source = getattr(visual_adapter, "PROVIDER_NAME", PLACEHOLDER_VISUAL_PROVIDER)
-    voice_source = getattr(voice_adapter, "PROVIDER_NAME", PLACEHOLDER_VOICE_PROVIDER)
+    production["image"] = {
+        "provider": visual_source,
+        "model": getattr(visual_adapter, "model", None),
+    }
+    # One real narrator for the whole video, or the placeholder: a video whose narration is
+    # partly placeholder is labelled placeholder as a whole, so QC blocks it.
+    scene_voices: list[TTSProvider | None] = []
+    for scene in scenes_data:
+        chosen = tts_adapter_for_scene(scene) if tts_adapter_for_scene else None
+        scene_voices.append(chosen or tts_adapter)
+    all_real = bool(scene_voices) and all(v is not None for v in scene_voices)
+    voice_source = (
+        getattr(scene_voices[0], "PROVIDER_NAME", PLACEHOLDER_VOICE_PROVIDER)
+        if all_real
+        else PLACEHOLDER_VOICE_PROVIDER
+    )
+    production["voice"]["provider"] = voice_source
 
     total_duration = sum(s["duration_seconds"] for s in scenes_data)
     master_audio_bytes = bytearray()
@@ -279,8 +311,25 @@ def assemble_video_job(
             write_placeholder_frame_ppm(frame_path, index)
             frame_files.append(frame_path)
 
+        real_voice = scene_voices[scenes_data.index(scene)]
+        voice_adapter: TTSProvider = (real_voice if all_real else None) or placeholder_voice
+        voice_started = time.monotonic()
         tts_res = asyncio.run(voice_adapter.synthesize(scene["voiceover_segment"]))
-        if tts_adapter is not None:
+        production["scenes"].append(
+            {
+                "scene_index": index,
+                "voice_provider": getattr(
+                    voice_adapter, "PROVIDER_NAME", PLACEHOLDER_VOICE_PROVIDER
+                ),
+                "model_id": getattr(voice_adapter, "model", None) or None,
+                "voice_id": getattr(voice_adapter, "voice_id", None) or None,
+                "characters": len(scene["voiceover_segment"]),
+                "audio_seconds": round(tts_res.duration_seconds, 3),
+                "synthesis_ms": round((time.monotonic() - voice_started) * 1000, 1),
+                "attempts": 1,
+            }
+        )
+        if all_real:
             segment = work_dir / f"voice_{index:02d}.{tts_res.format}"
             segment.write_bytes(tts_res.audio_bytes)
             voice_segments.append(segment)
@@ -298,7 +347,7 @@ def assemble_video_job(
     total_duration = sum(s["duration_seconds"] for s in scenes_data)
 
     audio_file = work_dir / "master_audio.wav"
-    if tts_adapter is not None:
+    if all_real:
         if not ffmpeg_exe:
             # The encoder is checked again below, but joining the narration needs it first,
             # and failing here keeps the reason specific.
@@ -451,6 +500,7 @@ def assemble_video_job(
             job_rec.output_asset_id = output_asset_id
             job_rec.status = "COMPLETED"
             job_rec.command_args_json = command_args
+            job_rec.production_json = production
             job_rec.execution_log = log_output[-8000:]
             job_rec.finished_at = finished_at
             job_rec.event_id = event.event_id
@@ -471,4 +521,5 @@ def assemble_video_job(
         "render_engine": "FFMPEG",
         "visual_source": visual_source,
         "voice_source": voice_source,
+        "production": production,
     }

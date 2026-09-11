@@ -16,8 +16,24 @@ from sqlalchemy.orm import Session
 from app.factual.models import FactualClaim, ScriptDraft, TopicIdea
 from app.factual.services import FactualGateError
 from app.media.assembler import RenderEngineUnavailable, assemble_video_job
-from app.media.factory import describe, image_provider, tts_provider
-from app.media.models import MediaAsset, VideoRenderJob
+from app.media.factory import describe, render_plan, tts_provider
+from app.media.models import MediaAsset, Storyboard, VideoRenderJob
+from app.media.production_policy import (
+    IdentityChangeCommand,
+    IdentityDecisionCommand,
+    IdentityLocksCommand,
+    PolicyError,
+    StoryboardProductionCommand,
+    VoiceBindingCommand,
+    approve_model_fallback,
+    decide_identity_change,
+    list_identity_changes,
+    propose_identity_change,
+    resolve_storyboard_plan,
+    set_identity_locks,
+    set_storyboard_production,
+    set_voice_binding,
+)
 from app.media.qc import evaluate_media_qc, get_media_qc
 from app.media.schemas import (
     GenerateStoryboardCommand,
@@ -241,15 +257,20 @@ def create_media_router() -> APIRouter:
         # falls back to placeholder generators and is labelled as such, which QC then blocks
         # from publication — a video to look at, never one presented as publishable.
         try:
+            # The hierarchy decides per storyboard and per scene: channel policy, series rules,
+            # episode/scene overrides and locked character voices. A test-injected adapter on
+            # app.state still wins, as before.
+            planned = render_plan(engine, vault, storyboard_id)
+            injected_tts = getattr(request.app.state, "tts_adapter", None)
             result = assemble_video_job(
                 engine,
                 storyboard_id,
                 correlation_id,
                 ffmpeg_path=getattr(request.app.state.settings, "ffmpeg_path", None),
-                image_adapter=getattr(request.app.state, "image_adapter", None)
-                or image_provider(engine, vault),
-                tts_adapter=getattr(request.app.state, "tts_adapter", None)
-                or tts_provider(engine, vault),
+                image_adapter=getattr(request.app.state, "image_adapter", None) or planned["image"],
+                tts_adapter=injected_tts or tts_provider(engine, vault),
+                tts_adapter_for_scene=None if injected_tts else planned["tts_for_scene"],
+                production_plan=planned["plan"],
             )
             # Automatically trigger QC
             qc_result = evaluate_media_qc(
@@ -281,6 +302,96 @@ def create_media_router() -> APIRouter:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Render execution failed: {exc}") from exc
+
+    @router.get("/storyboards/{storyboard_id}/production-plan")
+    def get_production_plan(
+        request: Request,
+        storyboard_id: Annotated[str, FPath(min_length=36, max_length=36)],
+    ) -> dict:
+        """What a render of this storyboard would use, resolved through the hierarchy now."""
+        with Session(request.app.state.engine) as session:
+            board = session.get(Storyboard, storyboard_id)
+            if board is None:
+                raise HTTPException(status_code=404, detail="Storyboard not found")
+            return resolve_storyboard_plan(session, board)
+
+    @router.put("/storyboards/{storyboard_id}/production")
+    def put_storyboard_production(
+        request: Request,
+        storyboard_id: Annotated[str, FPath(min_length=36, max_length=36)],
+        command: StoryboardProductionCommand,
+    ) -> dict:
+        """Channel, series and episode/scene overrides for one video."""
+        try:
+            return set_storyboard_production(request.app.state.engine, storyboard_id, command)
+        except PolicyError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @router.put("/character-bible/{character_id}/voice-binding")
+    def put_voice_binding(
+        request: Request,
+        character_id: Annotated[str, FPath(min_length=36, max_length=36)],
+        command: VoiceBindingCommand,
+    ) -> dict:
+        try:
+            return set_voice_binding(request.app.state.engine, character_id, command)
+        except PolicyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @router.put("/character-bible/{character_id}/identity-locks")
+    def put_identity_locks(
+        request: Request,
+        character_id: Annotated[str, FPath(min_length=36, max_length=36)],
+        command: IdentityLocksCommand,
+    ) -> dict:
+        try:
+            return set_identity_locks(request.app.state.engine, character_id, command)
+        except PolicyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @router.post("/character-bible/{character_id}/approved-models")
+    def post_approved_model(
+        request: Request,
+        character_id: Annotated[str, FPath(min_length=36, max_length=36)],
+        command: dict,
+    ) -> dict:
+        """Approve a model as technology for a locked character; the voice identity stays."""
+        try:
+            return approve_model_fallback(
+                request.app.state.engine,
+                character_id,
+                str(command.get("integration_id") or ""),
+                str(command.get("model_id") or ""),
+                str(command.get("decided_by") or "Owner"),
+            )
+        except PolicyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @router.post("/character-bible/{character_id}/identity-changes", status_code=201)
+    def post_identity_change(
+        request: Request,
+        character_id: Annotated[str, FPath(min_length=36, max_length=36)],
+        command: IdentityChangeCommand,
+    ) -> dict:
+        try:
+            return propose_identity_change(request.app.state.engine, character_id, command)
+        except PolicyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @router.get("/identity-changes")
+    def get_identity_changes(request: Request, character_id: str | None = None) -> dict:
+        return {"changes": list_identity_changes(request.app.state.engine, character_id)}
+
+    @router.post("/identity-changes/{change_id}/decision")
+    def post_identity_decision(
+        request: Request,
+        change_id: Annotated[str, FPath(min_length=36, max_length=36)],
+        command: IdentityDecisionCommand,
+    ) -> dict:
+        try:
+            return decide_identity_change(request.app.state.engine, change_id, command)
+        except PolicyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @router.get("/providers")
     def get_media_providers(request: Request) -> dict:

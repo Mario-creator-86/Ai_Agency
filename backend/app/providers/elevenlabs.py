@@ -46,6 +46,8 @@ class ElevenLabsTTSAdapter(TTSProvider):
         self.api_key = api_key
         self.voice_id = voice_id or ""
         self.model = model or ""
+        #: Per-character voice settings from the bible's binding; the API's defaults otherwise.
+        self.voice_settings: dict[str, Any] = {}
 
     def _headers(self, accept: str) -> dict[str, str]:
         return {"xi-api-key": self.api_key, "Accept": accept, "Content-Type": "application/json"}
@@ -143,7 +145,12 @@ class ElevenLabsTTSAdapter(TTSProvider):
                 "model_id": self.model,
                 # The API exposes no pitch control, so the adapter does not pretend to have one:
                 # a pitch argument it silently dropped would read as applied.
-                "voice_settings": {"stability": 0.5, "similarity_boost": 0.75, "speed": speed},
+                "voice_settings": {
+                    "stability": 0.5,
+                    "similarity_boost": 0.75,
+                    **{k: v for k, v in self.voice_settings.items() if k != "speed"},
+                    "speed": speed,
+                },
             }
         ).encode("utf-8")
 

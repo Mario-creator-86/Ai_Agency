@@ -12,6 +12,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.factual.models import ScriptDraft
 from app.integrations.services import selected_youtube
 from app.media.models import MediaAsset, Storyboard, VideoRenderJob
+from app.media.production_policy import ChannelPolicyCommand, PolicyError, set_channel_policy
 from app.providers.publishing_base import PublishingProvider
 from app.providers.youtube import YouTubeProvider, youtube_provider_from_settings
 from app.publishing.schemas import (
@@ -121,6 +122,20 @@ def create_publishing_router() -> APIRouter:
         """Create the default channel slots if they are missing. Idempotent."""
         created = seed_default_channels(request.app.state.engine)
         return {"created": created, "channels": list_channels(request.app.state.engine)}
+
+    @router.put("/channels/{channel_id}/production-policy")
+    def set_production_policy(
+        request: Request,
+        channel_id: Annotated[str, Path(min_length=36, max_length=36)],
+        cmd: ChannelPolicyCommand,
+    ) -> dict:
+        """Policy, channel defaults and series rules. Locked character identities are not
+        touched here: they live on the character and change only through an approved
+        identity change."""
+        try:
+            return set_channel_policy(request.app.state.engine, channel_id, cmd)
+        except PolicyError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @router.get("/channels/{channel_id}", response_model=ChannelView)
     def get_single_channel(

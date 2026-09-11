@@ -323,7 +323,7 @@ def _script_and_storyboard(engine: Engine, registry: ProviderRegistry) -> dict[s
 def _media(engine: Engine, settings: Settings, vault: Any) -> dict[str, Any]:
     """Render the storyboards that have no finished video yet."""
     from app.media.assembler import RenderEngineUnavailable, assemble_video_job
-    from app.media.factory import image_provider, tts_provider
+    from app.media.factory import image_provider, render_plan, tts_provider
 
     with Session(engine) as session:
         rendered = set(
@@ -345,6 +345,9 @@ def _media(engine: Engine, settings: Settings, vault: Any) -> dict[str, Any]:
     produced = []
     for storyboard_id in pending:
         try:
+            # Channel policy, series rules, overrides and locked character voices decide per
+            # scene; the Organization default is the fallback for scenes nothing else names.
+            planned = render_plan(engine, vault, storyboard_id)
             result = assemble_video_job(
                 engine,
                 storyboard_id,
@@ -352,6 +355,8 @@ def _media(engine: Engine, settings: Settings, vault: Any) -> dict[str, Any]:
                 ffmpeg_path=settings.ffmpeg_path,
                 image_adapter=images,
                 tts_adapter=voice,
+                tts_adapter_for_scene=planned["tts_for_scene"],
+                production_plan=planned["plan"],
             )
         except RenderEngineUnavailable as exc:
             return _outcome(SKIPPED, f"Randarea nu poate rula: {exc}")

@@ -63,7 +63,12 @@ def test_save_key_only_verifies_discovers_all_pages_and_survives_restart(
         "fields"
     ]
     assert [field["key"] for field in fields] == ["api_key"]
-    assert saved["catalog"]["production"] == {"model_id": None, "voice_id": None, "version": 0}
+    assert saved["catalog"]["production"] == {
+        "model_id": None,
+        "voice_id": None,
+        "allow_production_override": True,
+        "version": 0,
+    }
     assert {r["remote_id"] for r in saved["catalog"]["models"]} == {
         elevenlabs_api.models[0]["model_id"]
     }

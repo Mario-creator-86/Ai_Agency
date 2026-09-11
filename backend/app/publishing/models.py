@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import JSON, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models import Base
@@ -24,6 +24,17 @@ class ChannelRecord(Base):
     )
     # UNCONFIGURED | CONFIGURED | AUTHENTICATED | ERROR | ACTIVE
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="UNCONFIGURED")
+    #: How production may choose technology for this channel. FLEXIBLE: every level of the
+    #: configuration hierarchy may override the level above it, per video. CONSISTENCY_LOCKED:
+    #: overrides never touch a locked character identity. NULL until the seed fills it from the
+    #: stored channel type; editable through the API afterwards, never decided in code.
+    production_policy: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    #: Channel-level defaults per purpose ({"voice": {...}, "image": {...}, "video": {...}}).
+    production_defaults_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    #: Rules per series/format key, each shaped like production_defaults_json.
+    series_rules_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    #: False freezes production at the channel defaults (episode/scene overrides are ignored).
+    allow_production_override: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[str] = mapped_column(String(40), nullable=False)
     last_sync_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
     event_id: Mapped[str | None] = mapped_column(

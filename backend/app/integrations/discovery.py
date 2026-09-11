@@ -127,11 +127,16 @@ def catalog_view(session: Session, identifier: str) -> dict:
         )
         if state
         else None,
+        # The connection's model/voice are the Organization default: a fallback for production,
+        # not a rule, unless allow_production_override is switched off.
         production=dict(
-            model_id=production.model_id, voice_id=production.voice_id, version=production.version
+            model_id=production.model_id,
+            voice_id=production.voice_id,
+            allow_production_override=bool(production.allow_production_override),
+            version=production.version,
         )
         if production
-        else dict(model_id=None, voice_id=None, version=0),
+        else dict(model_id=None, voice_id=None, allow_production_override=True, version=0),
     )
 
 
@@ -331,6 +336,10 @@ class ProductionCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
     model_id: str | None = Field(default=None, min_length=1, max_length=200)
     voice_id: str | None = Field(default=None, min_length=1, max_length=200)
+    #: True: channels, series, episodes and scenes may choose differently (the default is a
+    #: fallback). False: every video on this connection uses exactly this model and voice,
+    #: except a character whose voice identity is locked.
+    allow_production_override: bool = True
     expected_version: int = Field(ge=0)
 
 
@@ -376,6 +385,7 @@ def save_production(engine: Engine, identifier: str, command: ProductionCommand)
             row = MediaProductionConfig(integration_id=identifier)
             session.add(row)
         row.model_id, row.voice_id = command.model_id, command.voice_id
+        row.allow_production_override = command.allow_production_override
         row.version, row.updated_at = command.expected_version + 1, utc_now()
         append_event(
             session,
@@ -383,7 +393,11 @@ def save_production(engine: Engine, identifier: str, command: ProductionCommand)
             "integration",
             identifier,
             row.version,
-            {"model_id": row.model_id, "voice_id": row.voice_id},
+            {
+                "model_id": row.model_id,
+                "voice_id": row.voice_id,
+                "allow_production_override": row.allow_production_override,
+            },
             str(uuid4()),
         )
         return {"saved": True, "version": row.version}

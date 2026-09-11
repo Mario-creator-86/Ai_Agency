@@ -112,7 +112,7 @@ references were changed inside the architecture package. CI/local checks protect
 - Autonomy stop hard-gate: task worker and scheduler refuse to claim or run tasks when autonomy_stopped is active.
 - Alembic migration 0003_phase2_automation: 5 new tables (workflow, workflow_step, task_queue, scheduled_job, outbox_record) with zero schema drift.
 
-**Phase 3 (complete — visual system v2 2026-09-10, see `PIXEL_OFFICE_V2.md`; Blender sprite pipeline tried on the RESEARCH floor 2026-09-11 and switched off after the Owner's comparison; Character Bible now drives character looks, see `PIXEL_ART_PIPELINE.md`):**
+**Phase 3 (complete — visual system v2 2026-09-10, see `PIXEL_OFFICE_V2.md`; Blender sprite pipeline tried on the RESEARCH floor 2026-09-11 and switched off after the Owner's comparison; Character Bible now drives character looks, see `PIXEL_ART_PIPELINE.md`; per-channel production policies with locked character identities 2026-09-11, see `PRODUCTION_POLICY.md`):**
 - Premium pixel-art rebuild of the cutaway (palette module with hue-shifted ramps, compiled outlined character sprites with role costumes, per-department room shells and interiors, baked lighting, limestone facade, glass lift). Designed first in Figma (`AMN-AI Office · Pixel Art Design System`, file `bqTc0PoCbjL5dH5xw0FRDI`), then implemented frontend-only; backend, API and events untouched. Measured 60 FPS at ~6 ms/frame; 43 frontend tests pass.
 - Lateral cutaway multi-floor skyscraper canvas rendered at 60fps with zero simulated state, inspired by Space Haven, Anomaly President, and retro pixel-art simulation games.
 - Seniority-based corporate hierarchy from top to bottom:

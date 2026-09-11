@@ -19,6 +19,12 @@ class ChannelView(BaseModel):
     credentials_ref: str | None
     upload_privacy_default: str
     status: str
+    # Production policy: FLEXIBLE (technology may change per video) or CONSISTENCY_LOCKED
+    # (locked character identities are never replaced by production). NULL until seeded.
+    production_policy: str | None = None
+    production_defaults_json: dict = {}
+    series_rules_json: dict = {}
+    allow_production_override: bool = True
     created_at: str
     last_sync_at: str | None
 

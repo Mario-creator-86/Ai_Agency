@@ -5,8 +5,10 @@ from __future__ import annotations
 
 from sqlalchemy import (
     JSON,
+    CheckConstraint,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -41,6 +43,20 @@ class CharacterBible(Base):
     # Declared reference-image slots. A slot holds a stored asset id or null; it never holds a
     # description standing in for an image that was never produced.
     reference_assets_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    #: The voice this character is produced with: {"integration_id", "voice_id", "model_id",
+    #: "voice_settings", "language", "pronunciation_rules"}. Points at discovered resources;
+    #: no id in it exists anywhere in source.
+    voice_binding_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    #: {"voice": bool, "visual": bool, "personality": bool, "speech_style": bool}. A locked
+    #: field is replaced only by an APPROVED CharacterIdentityChange, never by production.
+    identity_locks_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    #: Technology the character may be produced with while keeping its identity:
+    #: [{"integration_id", "model_id", "approved_at", "change_id"}].
+    approved_fallbacks_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    #: UNVERIFIED | CONSISTENT | CHANGE_PENDING | DRIFT_SUSPECTED
+    consistency_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="UNVERIFIED"
+    )
     forbidden_deviations: Mapped[str] = mapped_column(Text, nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[str] = mapped_column(String(40), nullable=False)
@@ -65,6 +81,14 @@ class Storyboard(Base):
     # DRAFT | APPROVED | IN_PRODUCTION | COMPLETED | REJECTED
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="DRAFT")
     total_scenes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: The channel this video is produced for, and the series/format inside it. Both optional:
+    #: a storyboard without them resolves at the Organization level only.
+    channel_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("channel_record.id"), nullable=True
+    )
+    series_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    #: Episode/video-level production choices per purpose.
+    production_overrides_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[str] = mapped_column(String(40), nullable=False)
     event_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("domain_event.event_id"), nullable=True
@@ -96,6 +120,8 @@ class StoryboardScene(Base):
     transition_in: Mapped[str] = mapped_column(String(50), nullable=False, default="CUT")
     character_ids_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     claim_ids_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    #: Scene-level production choices per purpose.
+    production_overrides_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[str] = mapped_column(String(40), nullable=False)
 
     storyboard: Mapped[Storyboard] = relationship("Storyboard", back_populates="scenes")
@@ -148,6 +174,10 @@ class VideoRenderJob(Base):
         String(50), nullable=False, default="DETERMINISTIC_ASSEMBLER"
     )
     command_args_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    #: What this render actually used, per purpose and per scene: integration, model, voice,
+    #: which hierarchy level decided it, whether a character lock applied, retries, timings and
+    #: a cost estimate when pricing is known. Analytics joins here through the output asset.
+    production_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     execution_log: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[str] = mapped_column(String(40), nullable=False)
     finished_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
@@ -172,6 +202,53 @@ class QualityControlReport(Base):
     checks_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     failure_reasons_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     verified_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    event_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("domain_event.event_id"), nullable=True
+    )
+
+
+class CharacterIdentityChange(Base):
+    """A proposed change to a locked part of a character's identity.
+
+    PROPOSED -> TESTING -> APPROVED | REJECTED. Only APPROVED rewrites the bible, in one
+    transaction with the event that records who approved it. A newer or cheaper model is never
+    a reason for the system to take this path on its own: proposals are made by people or by
+    agents in their roles, and decided by the Director or the Owner.
+    """
+
+    __tablename__ = "character_identity_change"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('PROPOSED','TESTING','APPROVED','REJECTED')",
+            name="ck_identity_change_status",
+        ),
+        CheckConstraint(
+            "field IN ('voice','visual','personality','speech_style')",
+            name="ck_identity_change_field",
+        ),
+        Index("ix_identity_change_character", "character_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    character_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("character_bible.id"), nullable=False
+    )
+    field: Mapped[str] = mapped_column(String(20), nullable=False)
+    #: The full replacement for the field (a voice binding, a visual profile, ...).
+    proposed_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    #: What the field held when the change was proposed, so the decision is reviewable.
+    previous_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="PROPOSED")
+    proposed_by_agent_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("agent.id"), nullable=True
+    )
+    #: Test evidence attached while TESTING (renders compared, QA notes).
+    test_evidence_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    decided_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    decision_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    decided_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
     event_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("domain_event.event_id"), nullable=True
     )

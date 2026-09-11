@@ -1,5 +1,41 @@
 # Changelog
 
+## Two channels, two production policies — 2026-09-11
+
+Technology (providers, models, voices) is replaceable; a recurring character is a persistent
+creative asset. Nexus Curiosity (MAIN_FACTUAL) may pick its technology per video; Inside The
+Nexus (OFFICE_SERIAL) keeps its characters' identities whatever the technology underneath.
+Audit first, reuse second, extend third: no new agents, registry, discovery or production path.
+
+- The connection's model/voice (`MediaProductionConfig`) is now the Organization default with
+  `allow_production_override`; the Settings card calls them "Model implicit" / "Voce implicită".
+- A configuration hierarchy in `backend/app/media/production_policy.py`: Organization → Channel
+  (`production_policy`, `production_defaults_json`, `series_rules_json`) → Series → Episode
+  (`Storyboard.channel_id`, `series_key`, overrides) → Scene → Character. Later levels win,
+  except a locked character field, which wins over everything. A selection is valid only if
+  it names a verified connection and discovered, available resources.
+- FLEXIBLE channels may ask for `strategy: auto`, ranked from stored research annotations
+  (quality, reliability, latency, price, language) — never from a preference in code.
+  CONSISTENCY_LOCKED channels keep technology decisions at channel/series level and refuse
+  automatic voice choice.
+- Character identity locks: `voice_binding_json`, `identity_locks_json` (voice, visual,
+  personality, speech style), `approved_fallbacks_json`, `consistency_status`. A newer model
+  reaches a locked voice only through an approved fallback. Identity changes go through
+  `CharacterIdentityChange`: PROPOSED → TESTING → APPROVED | REJECTED; only APPROVED rewrites
+  the bible. Rebinding a locked voice directly returns 409.
+- Renders (API and daily runbook) resolve a plan per storyboard and per scene, so a scene that
+  casts a locked character is voiced by that character's voice; `VideoRenderJob.production_json`
+  records provider, model, voice, characters, audio seconds, synthesis time and attempts.
+- Migration 0021 adds the columns and the workflow table with neutral defaults; the channel
+  seed fills only a NULL policy from `DEFAULT_CHANNELS`. Rehearsed on a copy of the live
+  database: connections, secrets, discovered resources, defaults, both YouTube channels and
+  all characters unchanged.
+- UI: channel cards show the policy (FLEXIBILĂ / CONSISTENȚĂ BLOCATĂ), the ElevenLabs card shows
+  defaults with an override switch, character cards show the bound voice, locks and status.
+- Tests: `tests/test_production_policy.py` covers the seven acceptance scenarios from the brief
+  plus the identity workflow. 467 backend tests, 53 frontend tests, lint, types, format,
+  documentation integrity and the secret scan pass. Write-up: `PRODUCTION_POLICY.md`.
+
 ## The Character Bible says who each employee is, not only how they look — 2026-09-11
 
 The bible stored appearance and a voice profile. Everything the Owner listed as needed next —

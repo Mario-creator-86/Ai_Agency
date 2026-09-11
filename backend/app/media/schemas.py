@@ -24,6 +24,10 @@ class CharacterBibleView(BaseModel):
     expressions_json: dict[str, Any]
     behavior_json: dict[str, Any]
     reference_assets_json: dict[str, Any]
+    voice_binding_json: dict[str, Any]
+    identity_locks_json: dict[str, Any]
+    approved_fallbacks_json: list[dict[str, Any]]
+    consistency_status: str
     forbidden_deviations: str
     version: int
     created_at: str
@@ -113,6 +117,7 @@ class RenderJobView(BaseModel):
     status: str
     render_engine: str
     command_args_json: list[str]
+    production_json: dict[str, Any] = {}
     execution_log: str | None
     started_at: str
     finished_at: str | None

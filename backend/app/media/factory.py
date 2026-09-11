@@ -86,6 +86,67 @@ def tts_provider(engine: Engine, vault: CredentialVault) -> TTSProvider | None:
     return None
 
 
+def tts_provider_for(engine: Engine, vault: CredentialVault, resolved: dict) -> TTSProvider | None:
+    """A voice adapter for one resolved selection (see production_policy.resolve_purpose).
+
+    Only a selection the resolver marked valid — a verified connection and discovered,
+    available resources — becomes an adapter. Anything else returns None, and the render
+    records a placeholder for that scene rather than guessing a voice.
+    """
+    if not resolved or not resolved.get("valid") or not resolved.get("integration_id"):
+        return None
+    with Session(engine) as session:
+        row = session.get(Integration, resolved["integration_id"])
+        if row is None or row.status not in VERIFIED_STATUSES:
+            return None
+        kind = row.kind
+        secrets = vault.decrypt(row.encrypted_secrets)
+    try:
+        if kind == "elevenlabs":
+            adapter = ElevenLabsTTSAdapter(
+                secrets.get("api_key", ""), resolved.get("voice_id"), resolved.get("model_id")
+            )
+            settings = resolved.get("voice_settings")
+            if isinstance(settings, dict) and settings:
+                adapter.voice_settings = settings
+            return adapter
+    except MediaProviderNotConfigured:
+        return None
+    return None
+
+
+def render_plan(engine: Engine, vault: CredentialVault, storyboard_id: str) -> dict:
+    """Resolve the production hierarchy for a storyboard and build its adapters.
+
+    Returns the plan (recorded on the render job as production_json) plus a `tts_for_scene`
+    callable and the image adapter. A storyboard without a channel resolves at the
+    Organization level, which is exactly what `tts_provider()` returned before policies
+    existed, so nothing changes for videos that never named a channel.
+    """
+    from app.media.models import Storyboard
+    from app.media.production_policy import resolve_storyboard_plan
+
+    with Session(engine) as session:
+        board = session.get(Storyboard, storyboard_id)
+        if board is None:
+            raise ValueError(f"Storyboard {storyboard_id} not found")
+        plan = resolve_storyboard_plan(session, board)
+    adapters: dict[int, TTSProvider | None] = {}
+    cache: dict[tuple, TTSProvider | None] = {}
+    for scene in plan["scenes"]:
+        voice = scene["voice"]
+        key = (voice.get("integration_id"), voice.get("model_id"), voice.get("voice_id"))
+        if key not in cache:
+            cache[key] = tts_provider_for(engine, vault, voice)
+        adapters[scene["scene_index"]] = cache[key]
+
+    def tts_for_scene(scene: dict) -> TTSProvider | None:
+        index = scene.get("scene_index")
+        return adapters.get(index) if isinstance(index, int) else None
+
+    return {"plan": plan, "tts_for_scene": tts_for_scene, "image": image_provider(engine, vault)}
+
+
 def describe(engine: Engine, vault: CredentialVault) -> dict[str, str | None]:
     """What the interface should say about media generation, without probing anything."""
     image = image_provider(engine, vault)
