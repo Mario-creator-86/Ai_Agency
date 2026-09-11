@@ -1,0 +1,60 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { describeEvent, productionStatus } from '../src/ledger.js';
+
+const names = { 'a-1': 'Dr. Aris (Researcher)', 'a-2': 'Sarah (Director)' };
+
+test('what an employee said is shown with its name and text, as speech', () => {
+  const item = describeEvent(
+    { event_type: 'agent.message_sent', aggregate_id: 'a-1', payload: { text: 'Am citit patru pagini.' } },
+    names,
+  );
+  assert.deepEqual(item, { who: 'Dr. Aris (Researcher)', label: 'a spus', text: 'Am citit patru pagini.', kind: 'speech' });
+});
+
+test('a typed message shows its intent and subject, and the sender by name', () => {
+  const item = describeEvent(
+    { event_type: 'agent.message_posted', aggregate_id: 'm-1', payload: { intent: 'ESCALATE', subject: 'Publication HOLD', from_name: 'Vera (Publisher)' } },
+    names,
+  );
+  assert.equal(item.who, 'Vera (Publisher)');
+  assert.equal(item.label, 'mesaj ESCALATE');
+  assert.equal(item.text, 'Publication HOLD');
+});
+
+test('work, production, money and owner events get plain labels and the right kind', () => {
+  assert.equal(describeEvent({ event_type: 'agent.state_changed', aggregate_id: 'a-2', payload: { runtime_state: 'THINKING', task_type: 'director_review' } }, names).label, 'lucrează');
+  const stage = describeEvent({ event_type: 'workflow.created', payload: { current_stage: 'SCRIPTING' } });
+  assert.equal(stage.kind, 'production');
+  assert.equal(stage.text, 'etapa: Scenariu');
+  const cost = describeEvent({ event_type: 'economy.provider_cost_recorded', payload: { provider: 'elevenlabs', status: 'ESTIMATED', vr: '0.45' } });
+  assert.equal(cost.kind, 'money');
+  assert.equal(cost.text, 'elevenlabs · 0.45 VR$');
+  assert.equal(describeEvent({ event_type: 'autonomy.stop_cleared', payload: {} }).kind, 'owner');
+});
+
+test('an unknown event still reads as words, with its first payload fields', () => {
+  const item = describeEvent({ event_type: 'vendorshop.order_placed', payload: { vendor: 'acme', total: 12, nested: { a: 1 } } });
+  assert.equal(item.label, 'order placed');
+  assert.equal(item.text, 'vendor: acme · total: 12');
+  assert.equal(item.kind, 'system');
+});
+
+test('long text is cut with an ellipsis so one entry cannot swallow the column', () => {
+  const item = describeEvent({ event_type: 'agent.message_sent', payload: { text: 'x'.repeat(500) } });
+  assert.equal(item.text.length, 160);
+  assert.ok(item.text.endsWith('…'));
+});
+
+test('production status reads the newest stage and the last daily run', () => {
+  const events = [
+    { event_type: 'agent.message_sent', payload: {} },
+    { event_type: 'runbook.daily_run_finished', payload: { status: 'PARTIAL' } },
+    { event_type: 'workflow.job_activated', payload: { current_stage: 'QUALITY_CONTROL' } },
+    { event_type: 'workflow.created', payload: { current_stage: 'RESEARCH' } },
+  ];
+  const status = productionStatus(events);
+  assert.equal(status.stage, 'QUALITY_CONTROL');
+  assert.equal(status.text, 'Producția: Control calitate · ultima rulare zilnică parțială');
+  assert.equal(productionStatus([]).text, 'Nicio producție în curs.');
+});

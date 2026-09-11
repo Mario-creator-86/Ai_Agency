@@ -1,5 +1,26 @@
 # Changelog
 
+## The Owner watches the pipeline live from a ledger beside the office — 2026-09-11
+
+- **Live ledger** (`frontend/src/ledger.js`, pure and tested): the left column of the
+  workspace lists what is happening now and what happened today — every message an employee
+  sends or files (by name, with its intent and subject), every task started or finished,
+  every workflow stage, provider cost, budget event and Owner action — in words, newest
+  first, with filters (Vorbe / Producție / Personal / Bani / Owner). The head line says where
+  production stands (current stage, last daily run). Events arrive over the WebSocket as
+  before; on load the ledger backfills up to 600 events through `GET /events` (limit now up
+  to 300 per page).
+- **Layout**: the office is first and wide (`380px | rest`, height up to 76 vh); Owner Control
+  and Workforce panels, the page heading and the FOUNDATION notice are gone. Connection
+  status, Settings and logout live in the top bar.
+- **Autonomy switch**: one ON/OFF toggle in the office toolbar, styled as game chrome,
+  replaces the STOP AUTONOMY button; it still posts `POST /owner/autonomy-stop`.
+- **The books report carries the Accountant's name.** `post_run` turned Nadia's close into a
+  stage report with no status and filed it as the Director's. The report now carries her
+  intent, headline and holds, and is filed by her (`config/role_contracts.json`,
+  `backend/app/runbook/stages.py`, `backend/app/agents/director.py`).
+- Tests: `frontend/tests/ledger.test.js`, `tests/test_books_and_history.py`.
+
 ## The Accountant keeps the books; every employee has a history and a chat — 2026-09-11
 
 Write-up: `ACCOUNTING_AND_HISTORY.md`.

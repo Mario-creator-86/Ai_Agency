@@ -21,8 +21,8 @@
   <body>
     <header class="topbar">
       <a href="/" class="brand" title="AMN-AI — Autonomous Machine Nexus · Artificial Intelligence"><img src="/amn-ai-mark.png" alt="" width="38" height="38" class="brand-logo" /><span><strong>AMN-AI</strong><br /><span class="brand-sub">Autonomous Machine Nexus</span></span></a>
-      <span class="text-sm text-stone-300">OWNER WORKSPACE <span class="separator">/</span> LOCAL STUDIO</span>
-      <span id="connection" class="connection" role="status">Neconectat</span>
+      <span class="text-sm text-stone-300"><span id="studio-name">AMN-AI</span> <span class="separator">/</span> OWNER WORKSPACE</span>
+      <span class="topbar-right"><span id="connection" class="connection" role="status">Neconectat</span><button id="logout" class="quiet topbar-logout" hidden>Închide sesiunea</button></span>
     </header>
     <main>
       <section id="login" class="login panel">
@@ -38,17 +38,22 @@
         <p class="helper">Cheia locală este în fișierul .env, la STUDIO_OWNER_TOKEN. Rămâne doar în memoria acestei pagini.</p>
       </section>
       <section id="workspace" hidden>
-        <div class="page-heading">
-          <div><p class="eyebrow">THE OBSERVABLE COMPANY</p><h1 id="studio-name">AMN-AI</h1><p>Activitatea reală a companiei, într-un singur loc.</p></div>
-          <button id="logout" class="quiet">Închide sesiunea</button>
-        </div>
-        <div class="notice"><span class="notice-marker">01</span><div><strong>Fundația studioului</strong><p>Infrastructura locală este activă. Agenții și producția media urmează în etapele următoare.</p></div><span class="tag">FOUNDATION</span></div>
         <div class="workspace-grid">
+          <aside class="ledger-column">
+            <section class="panel ledger-panel">
+              <div class="section-heading"><div><p class="eyebrow">REGISTRU LIVE</p><h2>Ce se întâmplă acum</h2></div><span id="ledger-count" class="tag">—</span></div>
+              <p id="ledger-now" class="ledger-now">Se încarcă…</p>
+              <div id="ledger-filters" class="ledger-filters" role="tablist" aria-label="Filtre registru"></div>
+              <ol id="ledger-list" class="ledger-list"></ol>
+            </section>
+            <section class="panel modules-panel"><p class="eyebrow">CAPABILITIES</p><h2>Stadiul modulelor</h2><ul id="modules" class="modules"></ul></section>
+          </aside>
           <section class="panel office-panel">
             <div class="section-heading"><div><p class="eyebrow">WORKSPACE</p><h2>Biroul studioului</h2></div><span id="office-status" class="tag">Stare salvată</span></div>
             <div class="office-scene office-scene-container" id="office-scene-container">
               <canvas id="office-canvas" class="office-canvas"></canvas>
               <div class="camera-toolbar">
+                <button id="stop-toggle" class="cam-btn cam-switch" disabled title="Autonomia studioului: pornită sau oprită. Oprirea este persistentă și nu pornește agenți sau publicări."><span class="switch-label">AUTONOMIE</span><span class="switch-track"><span class="switch-knob"></span></span><span id="switch-state" class="switch-state">—</span></button>
                 <button id="zoom-in" class="quiet cam-btn" title="Apropie">+</button>
                 <button id="zoom-out" class="quiet cam-btn" title="Depărtează">−</button>
                 <button id="zoom-fit" class="quiet cam-btn" title="Încadrează">Fit</button>
@@ -67,26 +72,6 @@
             </div>
             <div class="office-footer"><span id="room-caption">—</span><span id="snapshot-time">—</span></div>
           </section>
-          <aside class="side-column">
-            <section class="panel control-panel">
-              <p class="eyebrow">OWNER CONTROL</p><h2>Controlul autonomiei</h2>
-              <div class="mode-row"><span>Mod curent</span><strong>MANUAL</strong></div>
-              <div class="mode-row"><span>Oprire persistentă</span><strong id="stop-status">—</strong></div>
-              <button id="stop-toggle" class="danger" disabled>STOP AUTONOMY</button>
-              <p class="helper">Eliberarea opririi păstrează modul Manual. Nu pornește agenți sau publicări.</p>
-              <div class="control-note">Publicare externă și plăți externe: dezactivate.</div>
-            </section>
-            <section class="panel">
-              <p class="eyebrow">WORKFORCE & PIPELINE</p>
-              <h2>Studioul 2D Activ</h2>
-              <p class="body-copy">Apasă pe orice agent sau birou pentru inspectare detaliată și control direct.</p>
-              <span class="tag live-badge">LIVE RENDERER · 60 FPS</span>
-            </section>
-          </aside>
-        </div>
-        <div class="lower-grid">
-          <section class="panel"><div class="section-heading"><div><p class="eyebrow">ACTIVITY LOG</p><h2>Evenimente confirmate</h2></div><span id="cursor" class="tag">—</span></div><ol id="events" class="events"></ol></section>
-          <section class="panel"><p class="eyebrow">CAPABILITIES</p><h2>Stadiul modulelor</h2><ul id="modules" class="modules"></ul></section>
         </div>
       </section>
 

@@ -283,7 +283,7 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
 
     @router.get("/events")
     def get_events(
-        after: Annotated[int, Query(ge=0)] = 0, limit: Annotated[int, Query(ge=1, le=200)] = 50
+        after: Annotated[int, Query(ge=0)] = 0, limit: Annotated[int, Query(ge=1, le=300)] = 50
     ) -> dict:
         return read_events(engine, after, limit)
 

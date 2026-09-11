@@ -35,6 +35,7 @@ from app.models import OwnerPolicy
 from app.office.services import get_office_layout_with_assignments
 from app.providers.base import GenerateResult, HealthResult
 from app.providers.registry import ProviderRegistry
+from app.runbook.stages import _post_run
 from app.services import append_event, utc_now
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -285,6 +286,28 @@ def test_the_accountant_closes_the_day_from_the_books_and_an_exceeded_budget_esc
     registry, _ = registry_with(staffed, lambda prompt: "All good, I think.")
     with pytest.raises(AccountantError):
         reconcile_day(engine, registry, str(uuid4()))
+
+
+def test_the_books_report_in_the_evening_inbox_is_filed_by_the_accountant(engine, staffed):
+    """post_run turns the close into a stage report; it must carry Nadia's name, not Sarah's."""
+    nadia, sarah = staffed["agents"]["Accountant"], staffed["agents"]["Director"]
+    registry, _ = registry_with(
+        staffed,
+        lambda prompt: json.dumps(
+            {"summary": "Zi fără cheltuieli.", "recommendations": [], "holds": []}
+        ),
+    )
+    outcome = _post_run(engine, registry, {})
+    assert outcome["artefacts"]["reports"] == 1
+    with Session(engine) as session:
+        report = session.scalar(
+            select(AgentMessage)
+            .where(AgentMessage.subject.like("books:%"))
+            .order_by(AgentMessage.created_at.desc())
+        )
+        assert report is not None and report.from_agent_id == nadia.id
+        assert report.from_agent_id != sarah.id
+        assert report.subject.startswith("books: STATUS — Azi 0 USD")
 
 
 def test_without_an_accountant_the_close_says_so(engine, staffed):

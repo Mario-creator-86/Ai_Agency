@@ -171,7 +171,11 @@ def file_stage_reports(
         for stage, outcome in outcomes.items():
             if not isinstance(outcome, dict):
                 continue
-            reporter = owners.get(stage) or (director.id if director else None)
+            # An outcome that names who produced it (the Accountant's close) reports as
+            # that employee; otherwise the contract that owns the stage, else the Director.
+            reporter = (
+                outcome.get("agent_id") or owners.get(stage) or (director.id if director else None)
+            )
             status = str(outcome.get("status", ""))
             reason = str(outcome.get("reason", ""))[:200]
             message = post_message(

@@ -13,6 +13,15 @@ database resource discovery/refresh, separate production choices, UI and regress
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
 
+## Live ledger and the office first (2026-09-11)
+
+The workspace opens on the office, wide, with a live ledger in the left column: every message
+an employee sends or files, every task, stage, cost and Owner action, in words and by name,
+newest first, filtered by kind, with the production stage and the last daily run in the
+head line. The ledger streams over the WebSocket and backfills the day from `GET /events`.
+Owner Control and Workforce panels are gone; autonomy is one ON/OFF switch in the office
+toolbar. The evening books report is filed by the Accountant, with her headline and holds.
+
 ## Books, budget, history (2026-09-11)
 
 Eight employees: Nadia (Accountant) joined, with contract, Bible and a desk in the Accounting

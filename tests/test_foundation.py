@@ -289,7 +289,7 @@ def test_events_pagination_and_query_validation(client, headers, engine):
     second = client.get("/api/v1/events?after=2&limit=2", headers=headers).json()
     assert len(second["events"]) == 1 and second["has_more"] is False
     assert read_events(engine, 3, 2)["events"] == []
-    for query in ("after=-1", "limit=0", "limit=201", "after=abc"):
+    for query in ("after=-1", "limit=0", "limit=301", "after=abc"):
         assert client.get(f"/api/v1/events?{query}", headers=headers).status_code == 422
 
 

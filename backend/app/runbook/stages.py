@@ -824,7 +824,16 @@ def _post_run(
         except (AccountantError, ValueError) as exc:
             logger.info("daily_close_refused", extra={"reason": str(exc)[:200]})
             close = {"error": str(exc)[:200]}
-    outcomes = {**outcomes, "books": close or {"status": "SKIPPED", "reason": "fără model"}}
+    if close and "headline" in close:
+        books = {
+            "status": close["intent"],
+            "reason": close["headline"],
+            "agent_id": close["agent_id"],
+            "holds": (close.get("report") or {}).get("holds", []),
+        }
+    else:
+        books = {"status": "SKIPPED", "reason": (close or {}).get("error") or "fără model"}
+    outcomes = {**outcomes, "books": books}
     filed = file_stage_reports(engine, outcomes, str(uuid4()))
     if not _has_language_model(registry):
         return _outcome(

@@ -32,10 +32,12 @@ function option(select, value, text) {
  *   from before the change until the page was reloaded.
  */
 export function initSettings(api, hooks = {}) {
-  const heading = document.querySelector('#workspace .page-heading');
+  // The page heading is gone; the Settings button lives in the top bar with the session.
+  const heading = document.querySelector('.topbar-right') || document.querySelector('#workspace');
   const open = node('button', 'Settings', 'secondary');
   open.id = 'open-settings';
-  heading.append(open);
+  open.classList.add('topbar-logout');
+  heading.prepend(open);
   const dialog = /** @type {HTMLDialogElement} */ (node('dialog', '', 'studio-dialog settings-dialog'));
   dialog.id = 'settings-dialog';
   dialog.setAttribute('aria-labelledby', 'settings-title');

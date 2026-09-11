@@ -342,7 +342,7 @@
     "Accountant": {
       "reports_to": "Director",
       "stages": [
-        "post_run"
+        "books"
       ],
       "watch_for": [
         "every provider charge in the books, today and this month, per provider and per status (estimated or billed)",

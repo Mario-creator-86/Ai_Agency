@@ -5,6 +5,7 @@ import { initSettings } from './settings.js';
 import { acceptSnapshot } from './projection.js';
 import { OfficeEngine } from './office_engine.js';
 import { OfficeState } from './office_state.js';
+import { Ledger } from './ledger.js';
 
 /** @param {string} id @returns {HTMLElement} */
 function element(id) {
@@ -33,6 +34,14 @@ const officeState = new OfficeState();
 let officeEngine = null;
 let currentSelectedAgent = null;
 let inspectorRequest = 0;
+
+/** Everything the studio does and says, read from its own events. */
+const ledger = new Ledger({
+  list: element('ledger-list'),
+  now: element('ledger-now'),
+  filters: element('ledger-filters'),
+  escape: escapeHtml,
+});
 
 function notify(message) {
   element('message').textContent = message;
@@ -300,8 +309,8 @@ function connectWebSocket() {
           const eventData = payload.data;
           officeState.handleDomainEvent(eventData);
           updateOfficeCanvas();
-          // Update activity log
-          addEventToLog(eventData);
+          ledger.add(eventData);
+          element('ledger-count').textContent = `${ledger.events.size} înregistrări`;
         }
       } catch (e) {
         console.error('Malformed WS message', e);
@@ -315,37 +324,6 @@ function connectWebSocket() {
     };
   } catch (e) {
     console.error('WS init failed', e);
-  }
-}
-
-function addEventToLog(event) {
-  const eventList = element('events');
-  const eventLabels = {
-    'studio.created': 'Studioul a fost inițializat',
-    'office.room_created': 'Spațiul de lucru a fost creat',
-    'autonomy.stopped': 'Owner a activat oprirea autonomiei',
-    'autonomy.stop_cleared': 'Owner a eliberat oprirea · modul rămâne Manual',
-    'agent.paused': 'Agentul a fost pus pe pauză',
-    'agent.resumed': 'Agentul a fost reactivat',
-    'agent.run_completed': 'Sarcină finalizată cu succes',
-    'agent.message_sent': 'Agentul a răspuns',
-    'workflow.created': 'Flux de producție creat',
-    'provider.model_discovered': 'Model nou descoperit prin provider',
-  };
-  const item = document.createElement('li');
-  const dot = document.createElement('span');
-  dot.className = 'event-dot';
-  const label = document.createElement('div');
-  label.textContent = eventLabels[event.event_type] || event.event_type;
-  const id = document.createElement('small');
-  id.textContent = `EVENT ${event.event_id || ''}`;
-  label.append(id);
-  const time = document.createElement('time');
-  time.textContent = new Date(event.timestamp || Date.now()).toLocaleTimeString('ro-RO');
-  item.append(dot, label, time);
-  eventList.prepend(item);
-  if (event.sequence) {
-    element('cursor').textContent = `CURSOR ${event.sequence}`;
   }
 }
 
@@ -1895,56 +1873,11 @@ function render(data) {
   element('room-caption').textContent = `${data.office.rooms.length} cameră · Studioul 2D Activ`;
   element('snapshot-time').textContent =
     `Actualizat ${new Date(data.captured_at).toLocaleTimeString('ro-RO', { timeZone: data.studio.timezone })}`;
-  element('stop-status').textContent = data.policy.autonomy_stopped ? 'ACTIVĂ' : 'ELIBERATĂ';
-  stopButton.textContent = pendingCommand
-    ? 'Reverifică ultima comandă'
-    : data.policy.autonomy_stopped
-      ? 'Eliberează oprirea · rămâne Manual'
-      : 'STOP AUTONOMY';
-  element('cursor').textContent = `CURSOR ${data.cursor}`;
-
-  const eventList = element('events');
-  eventList.replaceChildren();
-  const eventLabels = {
-    'studio.created': 'Studioul a fost inițializat',
-    'office.room_created': 'Spațiul de lucru a fost creat',
-    'autonomy.stopped': 'Owner a activat oprirea autonomiei',
-    'autonomy.stop_cleared': 'Owner a eliberat oprirea · modul rămâne Manual',
-    'agent.paused': 'Agentul a fost pus pe pauză',
-    'agent.resumed': 'Agentul a fost reactivat',
-    'agent.run_completed': 'Sarcină finalizată cu succes',
-    'agent.message_sent': 'Agentul a răspuns',
-    'storyboard.created': 'Storyboard generat din scenariu',
-    'media.video_rendered': 'Video 9:16 asamblat cu succes',
-    'media.qc_evaluated': 'Control Calitate (QC) evaluat',
-    'channel.created': 'Slot de canal creat (neconfigurat)',
-    'channel.configured': 'Configurație canal actualizată',
-    'publishing.intent_created': 'Intenție de publicare validată',
-    'publishing.started': 'Încărcare video pornită',
-    'publishing.video_published': 'Video publicat pe YouTube Shorts (Mod PRIVAT)',
-    'publishing.video_published_simulated': 'Publicare SIMULATĂ (niciun video real)',
-    'publishing.retry_reconciled': 'Reîncercare oprită: încărcarea anterioară există deja',
-    'media.render_failed': 'Randare video eșuată',
-    'factual.demo_fixture_created': 'Fixture demo creat (afirmații NEVERIFICATE)',
-    'publishing.gate_failed': 'Publicare blocată de Content Gate',
-  };
-  for (const event of [...data.events].reverse()) {
-    const item = document.createElement('li');
-    const dot = document.createElement('span');
-    dot.className = 'event-dot';
-    const label = document.createElement('div');
-    label.textContent = eventLabels[event.event_type] || event.event_type;
-    const id = document.createElement('small');
-    id.textContent = `EVENT ${event.event_id}`;
-    label.append(id);
-    const time = document.createElement('time');
-    time.dateTime = event.timestamp;
-    time.textContent = new Date(event.timestamp).toLocaleTimeString('ro-RO', {
-      timeZone: data.studio.timezone,
-    });
-    item.append(dot, label, time);
-    eventList.append(item);
-  }
+  renderSwitch(data.policy.autonomy_stopped);
+  ledger.timezone = data.studio.timezone;
+  ledger.setNames(Object.fromEntries(officeState.agents.map((a) => [a.id || a.agent_id, a.display_name])));
+  ledger.add(data.events || []);
+  element('ledger-count').textContent = `${ledger.events.size} înregistrări`;
 
   const labels = {
     agents: 'Agenți',
@@ -1970,6 +1903,23 @@ function render(data) {
   }
 }
 
+/**
+ * The autonomy switch in the office frame: one control, ON or OFF, in the scene's chrome.
+ * OFF is the persistent stop the Owner sets; ON means the studio may work on its own.
+ */
+function renderSwitch(stopped) {
+  const on = !stopped;
+  stopButton.classList.toggle('is-on', on);
+  stopButton.classList.toggle('is-pending', Boolean(pendingCommand));
+  element('switch-state').textContent = pendingCommand ? '…' : on ? 'ON' : 'OFF';
+  stopButton.setAttribute('aria-pressed', String(on));
+  stopButton.title = pendingCommand
+    ? 'Ultima comandă nu a fost confirmată; apasă pentru a o reverifica.'
+    : on
+      ? 'Autonomia este pornită. Apasă pentru oprire persistentă.'
+      : 'Autonomia este oprită. Apasă pentru a o porni; modul rămâne Manual.';
+}
+
 async function refresh() {
   const generation = epoch;
   try {
@@ -1980,6 +1930,13 @@ async function refresh() {
     connected = true;
     render(state);
     stopButton.disabled = busy;
+    // Everything recorded since the ledger last looked, not only the twenty in the snapshot.
+    try {
+      await ledger.sync(api, state.cursor);
+      element('ledger-count').textContent = `${ledger.events.size} înregistrări`;
+    } catch (error) {
+      console.warn('ledger sync failed', error);
+    }
     return true;
   } catch (error) {
     if (generation !== epoch) return false;
@@ -2004,6 +1961,7 @@ element('login-form').addEventListener('submit', async (event) => {
   if (success) {
     login.hidden = true;
     workspace.hidden = false;
+    element('logout').hidden = false;
     input.value = '';
     initOffice();
     await loadOfficeLayout();
@@ -2034,10 +1992,11 @@ element('logout').addEventListener('click', () => {
   login.hidden = false;
   input.value = '';
   notify('');
-  element('events').replaceChildren();
+  ledger.clear();
   element('modules').replaceChildren();
   element('studio-name').textContent = 'AMN-AI';
   element('connection').textContent = 'Neconectat';
+  element('logout').hidden = true;
 });
 
 stopButton.addEventListener('click', async () => {
