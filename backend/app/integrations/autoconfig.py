@@ -40,6 +40,7 @@ from app.integrations.models import Integration, MediaProductionConfig, ServiceS
 from app.integrations.services import select_service
 from app.integrations.vault import CredentialVault
 from app.media.factory import VERIFIED_STATUSES
+from app.media.production_policy import GENERATIVE_TASKS
 
 #: The purposes a media connection can be chosen for, in the order the report lists them.
 PURPOSES = ("voice", "image", "video")
@@ -80,9 +81,6 @@ def _candidates(session: Session, purpose: str) -> list[Integration]:
                 continue
         found.append(row)
     return found
-
-
-from app.media.production_policy import GENERATIVE_TASKS  # noqa: E402
 
 
 def _top_resource(engine: Engine, integration_id: str, kind: str, purpose: str) -> str | None:
@@ -183,12 +181,24 @@ def auto_configure(engine: Engine, vault: CredentialVault) -> dict[str, Any]:
         reasons: list[str] = []
         for purpose in sorted(purposes):
             field, _ = DEFAULTS.get(purpose, ("model_id", "MODEL"))
-            if wanted.get(field):
-                continue
+            stored = wanted.get(field)
+            if stored:
+                # A default the API's own evidence no longer supports is not a default: a
+                # model the vendor lists for editing pictures, not drawing them, stayed the
+                # studio's image choice and refused every scene of a day. It is replaced,
+                # and the reason says which model was dropped.
+                with Session(engine) as session:
+                    usable = (
+                        production_resource(session, integration_id, "MODEL", stored, purpose)
+                        is not None
+                    )
+                if usable:
+                    continue
             top = _top_resource(engine, integration_id, "MODEL", purpose)
-            if top:
+            if top and top != stored:
                 wanted[field] = top
-                reasons.append(f"{purpose}: {top}")
+                dropped = f" (în locul lui {stored}, care nu mai poate servi scopul)"
+                reasons.append(f"{purpose}: {top}" + (dropped if stored else ""))
         if DISCOVERED_KINDS[row.kind]["has_voices"] and not wanted["voice_id"]:
             with Session(engine) as session:
                 from app.media.production_policy import rank_candidates  # noqa: PLC0415

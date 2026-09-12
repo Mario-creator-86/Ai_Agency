@@ -387,3 +387,90 @@ def test_a_model_that_needs_reference_images_is_neither_chosen_nor_called(engine
         asyncio.run(adapter.generate_image("a starry sky"))
     assert excinfo.value.code == "reference_images_required"
     assert "needs reference images" in str(excinfo.value)
+
+
+def test_auto_configure_replaces_a_default_the_api_no_longer_supports(engine, monkeypatch):
+    """The Owner's stored image default was an editing model; the studio kept it because a
+    default existed, and every render refused. A default the API's own evidence cannot
+    support is replaced, and the reason names the model that was dropped."""
+    from app.integrations.autoconfig import auto_configure
+    from app.integrations.models import MediaProductionConfig
+    from app.integrations.services import select_service
+    from app.services import append_event, utc_now
+
+    integration_id = str(uuid4())
+    vault = CredentialVault(Path(str(engine.url.database)).with_suffix(".credentials.key"))
+    with Session(engine) as session, session.begin():
+        event = append_event(
+            session,
+            "settings.integration_saved",
+            "integration",
+            integration_id,
+            1,
+            {},
+            str(uuid4()),
+        )
+        session.add(
+            Integration(
+                id=integration_id,
+                kind="runway",
+                name="runway",
+                config={},
+                encrypted_secrets=vault.encrypt({"api_key": "k"}),
+                secret_fields=["api_key"],
+                version=1,
+                status="VERIFIED",
+                checked_at=utc_now(),
+                event_id=event.event_id,
+            )
+        )
+        session.flush()
+        for remote_id, needs, tasks in (
+            ("editing_only", True, ["text_to_image"]),
+            ("draws_from_words", False, ["text_to_image"]),
+            ("makes_video", False, ["text_to_video"]),
+        ):
+            session.add(
+                ProviderResource(
+                    id=str(uuid4()),
+                    integration_id=integration_id,
+                    resource_type="MODEL",
+                    remote_id=remote_id,
+                    name=remote_id,
+                    api_metadata={
+                        "tasks": tasks,
+                        "ratios": {tasks[0]: ["1080:1920"]},
+                        "needs_references": {tasks[0]: needs},
+                    },
+                    api_available=True,
+                    last_seen_at=utc_now(),
+                    pricing={},
+                    capabilities={},
+                    metadata_version=1,
+                )
+            )
+    for purpose in ("image", "video"):
+        select_service(engine, purpose, integration_id, 0)
+    # The Owner's stored defaults, written before the contract was understood.
+    with Session(engine) as session, session.begin():
+        session.add(
+            MediaProductionConfig(
+                integration_id=integration_id,
+                model_id="makes_video",
+                voice_id=None,
+                image_model_id="editing_only",
+                version=1,
+                updated_at=utc_now(),
+                allow_production_override=True,
+            )
+        )
+
+    result = auto_configure(engine, vault)
+
+    applied = [a for a in result["applied"] if a["connection"] == "runway"]
+    assert applied and "image: draws_from_words" in applied[0]["why"]
+    assert "editing_only" in applied[0]["why"]
+    with Session(engine) as session:
+        config = session.get(MediaProductionConfig, integration_id)
+        assert config.image_model_id == "draws_from_words"
+        assert config.model_id == "makes_video"  # a usable default is left alone

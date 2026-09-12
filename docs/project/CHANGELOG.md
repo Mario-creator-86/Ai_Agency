@@ -68,7 +68,9 @@ the studio's identity and returns pages that exist (Wikipedia's does, tested).
   ability to serve that purpose. So the model is not offered in Settings, is not a candidate
   for automatic selection, and a stored default naming it is unusable rather than tried; the
   adapter also refuses before spending a call (`code="reference_images_required"`). Nothing
-  is hardcoded: the fact comes from Runway's own published contract.
+  is hardcoded: the fact comes from Runway's own published contract. `auto_configure` also
+  replaces a stored default the API's evidence no longer supports (it used to keep any
+  default that existed), naming the dropped model in its report.
 - Tests: `tests/test_search_step.py` (13), three more in `tests/test_script_writing.py`,
   one in `tests/test_runway_connection.py`.
 
