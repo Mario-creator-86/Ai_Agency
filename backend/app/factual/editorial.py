@@ -381,9 +381,23 @@ def story_checks(
             bool(payoff_indexes) and payoff_indexes[0] >= max(1, len(scenes) // 2),
             "Trebuie să existe o scenă de REVEAL sau PAYOFF, în a doua jumătate a filmului.",
         ),
+        # Does the film close — not: is there a scene wearing the label. A draft was sent
+        # back twice for this while ending on "after eleven years of defending the planet, it
+        # became a streak of fire in the sky" and a CTA of its own: the writer had spent all
+        # five scenes the brief allowed on HOOK, SETUP, DEVELOPMENT, EVIDENCE and PAYOFF, and
+        # delivered the close inside the last of them. The label is evidence, not the fact.
         "has_ending": _check(
-            "ENDING" in purposes or "CTA" in purposes,
-            "Filmul trebuie să se închidă, nu să se opreasca.",
+            "ENDING" in purposes
+            or "CTA" in purposes
+            or (
+                len(str(story.get("ending") or "").strip()) >= 12
+                and bool(
+                    content_words(str(story.get("ending")))
+                    & content_words(narrations[-1] if narrations else "")
+                )
+            ),
+            "Filmul trebuie să se închidă, nu să se opreasca: ultima scenă duce finalul "
+            "declarat în «ending», sau poartă eticheta ENDING / CTA.",
         ),
         "ending_answers_the_hook": _check(
             bool(content_words(hook_text) & content_words(tail)) if tail else False,

@@ -484,6 +484,9 @@ Scrie {scenes} scene. Fiecare scenă:
   apare în listă face ca întregul scenariu să fie respins;
 - declară de ce există, în "purpose": HOOK, SETUP, DEVELOPMENT, EVIDENCE, REVEAL, PAYOFF,
   ENDING sau CTA. O scenă care nu joacă niciun rol nu se scrie;
+- ULTIMA scenă închide filmul: duce finalul din "ending" și îndemnul din "cta", și se
+  etichetează ENDING sau CTA. Nu termina pe EVIDENCE sau PAYOFF și nu lăsa finalul doar în
+  câmpurile de sus — se rostește în scenă;
 - spune în "visual" ce se VEDE, nu ce se aude: arată informația (nori care se strâng, apa
   care urcă, reacția unui om), nu repeta în imagine ce spune deja naratorul.
 

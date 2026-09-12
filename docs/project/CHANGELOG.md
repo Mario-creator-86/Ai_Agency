@@ -1,5 +1,27 @@
 # Changelog
 
+## Does the film close, or is there a scene wearing the label — 2026-09-12
+
+The revision loop converged for the first time: *How NASA Tracks Asteroids That Could Hit
+Earth*, draft one refused on two counts, draft two — with the draft it was revising in front of
+it — fixed the causal progression and kept its length. One check still refused it, twice, and
+the check was wrong.
+
+`has_ending` asked whether any scene carried the label `ENDING` or `CTA`. The draft ended on
+*"after ten years defending the planet, it became a streak of fire in the sky"*, declared that
+ending, and carried a CTA of its own — but the writer had spent all five scenes the brief
+allows on HOOK, SETUP, DEVELOPMENT, EVIDENCE and PAYOFF, and delivered the close inside the
+last of them. The film closed; only the label was missing.
+
+- The check now asks whether the film ends: a labelled `ENDING`/`CTA` scene, **or** a declared
+  ending that the last scene actually speaks. A film that just stops still fails, and so does
+  one whose ending is written in the fields but never said out loud.
+- The brief says the missing half plainly: the last scene closes the film, carries the ending
+  and the CTA, and is labelled `ENDING` or `CTA` — do not finish on `EVIDENCE` or `PAYOFF`.
+
+`uv run pytest -q` — **719 passed, 1 skipped**. `ruff`, `mypy`, `scripts/check_docs.py` clean.
+
+
 ## A revision revises the draft — 2026-09-12
 
 Three watched cycles in a row, on the same topic, showed the writer getting worse instead of

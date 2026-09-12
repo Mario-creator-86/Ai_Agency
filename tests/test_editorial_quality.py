@@ -1319,3 +1319,67 @@ def test_a_first_draft_is_not_handed_a_previous_one(engine, studio):
 
     with Session(engine) as session:
         assert previous_draft(session, a_topic(engine)) is None
+
+
+def test_a_film_that_closes_passes_whatever_its_last_scene_is_called():
+    """Found live on 2026-09-12: a draft was sent back twice for having no ending while ending
+    on "after eleven years of defending the planet, it became a streak of fire in the sky",
+    with a CTA of its own. The writer had spent all five scenes the brief allows on HOOK,
+    SETUP, DEVELOPMENT, EVIDENCE and PAYOFF and delivered the close inside the last one. The
+    check was reading the label, not the film."""
+    scenes = [
+        {"purpose": "HOOK", "narration": "A telescope watched for asteroids that could hit us."},
+        {"purpose": "SETUP", "narration": "It flew for a decade, looking where nobody looked."},
+        {
+            "purpose": "DEVELOPMENT",
+            "narration": "Because infrared sees rock that visible light misses.",
+        },
+        {"purpose": "EVIDENCE", "narration": "So it found the ones sunlight had been hiding."},
+        {
+            "purpose": "PAYOFF",
+            "narration": (
+                "Until, after ten years defending the planet, it became a streak of fire "
+                "in the sky."
+            ),
+        },
+    ]
+    story = {
+        "hook": "A telescope watched for asteroids that could hit us.",
+        "ending": (
+            "After eleven years of defending the planet, it became a streak of fire in the sky."
+        ),
+        "cta": "Follow to see what replaces this asteroid watch.",
+        "cta_kind": "FOLLOW",
+        "core_message": "The telescope that hunted asteroids burned up defending us.",
+    }
+    checks = story_checks(
+        title="The asteroid hunter", scenes=scenes, story=story, target_seconds=30
+    )
+    assert checks["has_ending"]["passed"]
+
+    # A film that simply stops still fails: no ENDING label, no declared ending, nothing in the
+    # last scene that closes anything.
+    open_ended = story_checks(
+        title="The asteroid hunter",
+        scenes=scenes,
+        story={**story, "ending": ""},
+        target_seconds=30,
+    )
+    assert not open_ended["has_ending"]["passed"]
+
+    # And a declared ending nobody says out loud does not count either.
+    unspoken = story_checks(
+        title="The asteroid hunter",
+        scenes=scenes,
+        story={**story, "ending": "Yet the budget committee never met again."},
+        target_seconds=30,
+    )
+    assert not unspoken["has_ending"]["passed"]
+
+
+def test_the_brief_tells_the_writer_the_last_scene_closes_the_film():
+    from app.factual.agent_pipeline import _write_instructions
+
+    brief = _write_instructions(30)
+    assert "ULTIMA scenă închide filmul" in brief
+    assert "etichetează ENDING sau CTA" in brief
