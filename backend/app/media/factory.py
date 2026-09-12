@@ -244,6 +244,29 @@ def video_provider_for(
     return None
 
 
+def test_motion_provider(engine: Engine, vault: CredentialVault) -> VideoProvider | None:
+    """The adapter a test render films with: the cheapest prompt-to-video model available.
+
+    Production uses the best model the account has, from the still the Director approved.
+    A test only has to show how a film reads, so it films from the words directly on the
+    cheapest model that can — the difference measured on the Owner's account is about
+    2.60 USD a shot against a few cents.
+    """
+    from app.media.production_policy import cheapest_prompt_to_video  # noqa: PLC0415
+
+    with Session(engine) as session:
+        row = _selected(session, "video")
+        if row is None:
+            return None
+        model_id = cheapest_prompt_to_video(session, row.id)
+        integration_id = row.id
+    if not model_id:
+        return None
+    return video_provider_for(
+        engine, vault, {"valid": True, "integration_id": integration_id, "model_id": model_id}
+    )
+
+
 def render_plan(engine: Engine, vault: CredentialVault, storyboard_id: str) -> dict:
     """Resolve the production hierarchy for a storyboard and build its adapters.
 

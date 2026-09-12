@@ -213,27 +213,39 @@ def _first_frame(ffmpeg_exe: str, still: Path, seconds: float) -> bytes:
 def _generate_motion(
     adapter: VideoProvider,
     scene: dict[str, Any],
-    still: Path,
+    still: Path | None,
     seconds: float,
     ffmpeg_exe: str,
 ) -> tuple[bytes, dict[str, Any]]:
-    """Ask the scene's model to move its approved still, and wait for the clip.
+    """Ask the scene's model for its shot, and wait for the clip.
 
-    The still is the first frame, so the picture the Director approves is the picture that
-    moves. A task that has not finished by the deadline raises — nothing invents a shot.
+    With a still, the still is the first frame, so the picture the Director approved is the
+    picture that moves — that is production. Without one the model films from the scene's
+    words, which is what a test does on the cheapest model. A task that has not finished by
+    the deadline raises; nothing invents a shot.
     """
     prompt = " ".join(str(scene.get("visual_prompt") or "").split())[:900]
     job_id = asyncio.run(
         adapter.create_generation(
             prompt,
-            image_ref=_first_frame(ffmpeg_exe, still, seconds),
+            image_ref=_first_frame(ffmpeg_exe, still, seconds) if still is not None else None,
             duration_seconds=seconds,
             aspect_ratio="9:16",
         )
     )
     deadline = time.monotonic() + MOTION_DEADLINE_SECONDS
+    attempts = 0
     while True:
-        result = asyncio.run(adapter.get_generation_status(job_id))
+        try:
+            result = asyncio.run(adapter.get_generation_status(job_id))
+        except MediaProviderError:
+            # The shot exists and is paid for; a failed download is worth a second attempt
+            # before it is written off.
+            attempts += 1
+            if attempts > 2 or time.monotonic() >= deadline:
+                raise
+            time.sleep(MOTION_POLL_SECONDS)
+            continue
         if result.status == "COMPLETED" and result.video_bytes:
             return result.video_bytes, result.raw_response
         if result.status == "FAILED":
@@ -242,6 +254,19 @@ def _generate_motion(
         if time.monotonic() >= deadline:
             raise MediaProviderError("the motion task did not finish before the deadline")
         time.sleep(MOTION_POLL_SECONDS)
+
+
+def _credit_price(engine: Engine) -> float | None:
+    """What a credit costs, from the connection the Owner recorded it on."""
+    from app.integrations.models import Integration  # noqa: PLC0415
+    from app.media.production_policy import credit_usd  # noqa: PLC0415
+
+    with Session(engine) as session:
+        for row in session.scalars(select(Integration)):
+            price = credit_usd(session, row.id)
+            if price is not None:
+                return price
+    return None
 
 
 def _video_stream_seconds(ffmpeg_exe: str, path: Path) -> float | None:
@@ -382,6 +407,9 @@ def assemble_video_job(
     tts_adapter: TTSProvider | None = None,
     tts_adapter_for_scene: Callable[[dict[str, Any]], TTSProvider | None] | None = None,
     video_adapter_for_scene: Callable[[dict[str, Any]], VideoProvider | None] | None = None,
+    motion_budget_usd: float | None = None,
+    motion_scene_limit: int | None = None,
+    motion_from_prompt: bool = False,
     production_plan: dict[str, Any] | None = None,
 ) -> dict:
     """Run end-to-end video assembly and provenance recording.
@@ -391,6 +419,15 @@ def assemble_video_job(
     the asset is recorded under the placeholder provider name — which QC blocks from
     publication. The recorded name always says which generator actually made the frames, so a
     render can never be mistaken for publishable content it is not.
+
+    ``motion_from_prompt`` films each shot from the scene's words instead of its approved
+    still — what a test render does, on the cheapest model that accepts a prompt, so looking
+    at how a film reads costs cents instead of dollars.
+
+    ``motion_budget_usd`` is the most this render may spend on generated motion; after each
+    shot the vendor's own stated cost is subtracted, and the pass stops before the shot that
+    would cross the line. ``motion_scene_limit`` generates motion for the first N scenes
+    only — what a test render uses, so seeing how a film reads costs one shot and not eight.
 
     ``video_adapter_for_scene`` resolves the motion model for a scene. With one, the scene's
     approved still is the first frame of a generated clip and the film moves; without one the
@@ -569,8 +606,26 @@ def assemble_video_job(
     motion_clips: list[Path | None] = [None] * len(scenes_data)
     motion_seconds = 0.0
     motion_credits = 0.0
+    credit_price = _credit_price(engine)
+    remaining_usd = motion_budget_usd
+    shots_made = 0
     if image_adapter is not None and video_adapter_for_scene is not None and ffmpeg_exe:
         for position, (scene, still) in enumerate(zip(scenes_data, frame_files, strict=False)):
+            if motion_scene_limit is not None and position >= max(0, motion_scene_limit):
+                production.setdefault("motion_notes", []).append(
+                    f"scene {scene['scene_index']}: not generated (test limit {motion_scene_limit})"
+                )
+                continue
+            # What a shot costs is known only after the vendor names it, so the first shot
+            # teaches the price and every shot after it is checked against what remains: a
+            # ceiling that stops at zero would still allow one shot too many.
+            likely = (motion_credits * credit_price / max(1, shots_made)) if credit_price else 0.0
+            if remaining_usd is not None and shots_made and remaining_usd < likely:
+                production.setdefault("motion_notes", []).append(
+                    f"scene {scene['scene_index']}: not generated (the render's motion budget "
+                    f"leaves {remaining_usd:.2f} USD and a shot costs about {likely:.2f})"
+                )
+                continue
             adapter = video_adapter_for_scene(scene)
             if adapter is None:
                 continue
@@ -582,11 +637,20 @@ def assemble_video_job(
                 "asked_seconds": round(wanted, 3),
             }
             try:
-                clip_bytes, raw = _generate_motion(adapter, scene, still, wanted, ffmpeg_exe)
+                clip_bytes, raw = _generate_motion(
+                    adapter,
+                    scene,
+                    None if motion_from_prompt else still,
+                    wanted,
+                    ffmpeg_exe,
+                )
                 credits = getattr(adapter, "last_estimated_credits", None)
                 if isinstance(credits, int | float):
                     record["estimated_credits"] = float(credits)
                     motion_credits += float(credits)
+                    shots_made += 1
+                    if remaining_usd is not None and credit_price:
+                        remaining_usd -= float(credits) * credit_price
                 clip = work_dir / f"motion_{scene['scene_index']:02d}.mp4"
                 clip.write_bytes(clip_bytes)
                 motion_clips[position] = clip
@@ -595,6 +659,17 @@ def assemble_video_job(
                 motion_seconds += wanted
             except (MediaProviderError, MediaProviderNotConfigured, ValueError, OSError) as exc:
                 record["refused"] = str(exc)[:200]
+                # The vendor charges for a shot it generated even when the studio failed to
+                # bring it home; two such shots cost six dollars and were thrown away. What
+                # was paid for is recorded as paid, whether or not it reached the film.
+                credits = getattr(adapter, "last_estimated_credits", None)
+                if isinstance(credits, int | float):
+                    record["estimated_credits"] = float(credits)
+                    record["paid_but_lost"] = True
+                    motion_credits += float(credits)
+                    shots_made += 1
+                    if remaining_usd is not None and credit_price:
+                        remaining_usd -= float(credits) * credit_price
                 logger.info(
                     "motion_not_generated",
                     extra={"scene_index": scene["scene_index"], "reason": str(exc)[:160]},
@@ -608,6 +683,19 @@ def assemble_video_job(
         "scenes": len(scenes_data),
         "seconds": round(motion_seconds, 3),
         "estimated_credits": round(motion_credits, 2) or None,
+        "estimated_usd": round(motion_credits * credit_price, 4) if credit_price else None,
+        "lost_credits": round(
+            sum(
+                float((s.get("motion") or {}).get("estimated_credits") or 0)
+                for s in production["scenes"]
+                if (s.get("motion") or {}).get("paid_but_lost")
+            ),
+            2,
+        )
+        or None,
+        "budget_usd": motion_budget_usd,
+        "scene_limit": motion_scene_limit,
+        "from_prompt": motion_from_prompt,
         "transition_seconds": TRANSITION_SECONDS,
     }
 

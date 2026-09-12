@@ -361,6 +361,62 @@ def rank_candidates(
     return ranked
 
 
+def credit_usd(session: Session, integration_id: str) -> float | None:
+    """What one of this connection's credits costs, as the Owner recorded it.
+
+    Vendors that bill in credits state the credits a task will cost and nothing about money;
+    the exchange is the Owner's own purchase (for Runway: one dollar, a hundred credits).
+    Kept on the connection because it is a fact about the account, not about a model.
+    """
+    row = session.get(Integration, integration_id)
+    config = row.config if row is not None and isinstance(row.config, dict) else {}
+    raw = config.get("credit_usd")
+    try:
+        price = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return price if price > 0 else None
+
+
+#: The task a test render uses: a prompt straight into video, with no still bought first.
+PROMPT_TO_VIDEO = "text_to_video"
+
+
+def cheapest_prompt_to_video(session: Session, integration_id: str) -> str | None:
+    """The cheapest model on this connection that turns a prompt into video.
+
+    What a test render films with. Cheapest by the recorded price per second, among the
+    models whose contract says they accept `text_to_video`; a model with no recorded price
+    is not chosen over one with a price, because an unpriced test is how twenty-one dollars
+    left the account in an afternoon.
+    """
+    priced: list[tuple[float, str]] = []
+    unpriced: list[str] = []
+    for row in session.scalars(
+        select(ProviderResource).where(
+            ProviderResource.integration_id == integration_id,
+            ProviderResource.resource_type == "MODEL",
+        )
+    ):
+        if not resource_available(row):
+            continue
+        meta = row.api_metadata if isinstance(row.api_metadata, dict) else {}
+        tasks = meta.get("tasks")
+        if not isinstance(tasks, list) or PROMPT_TO_VIDEO not in tasks:
+            continue
+        needs = meta.get("needs_references")
+        if isinstance(needs, dict) and needs.get(PROMPT_TO_VIDEO):
+            continue
+        price = _recorded_price(row.pricing)
+        if price is None:
+            unpriced.append(str(row.remote_id))
+        else:
+            priced.append((price, str(row.remote_id)))
+    if priced:
+        return min(priced)[1]
+    return sorted(unpriced)[0] if unpriced else None
+
+
 def estimate_cost_usd(
     session: Session,
     integration_id: str,
@@ -369,6 +425,7 @@ def estimate_cost_usd(
     characters: int = 0,
     images: int = 0,
     seconds: float = 0.0,
+    credits: float = 0.0,
 ) -> float | None:
     """A cost estimate from recorded pricing, or None when no price covers what was used.
 
@@ -379,6 +436,12 @@ def estimate_cost_usd(
     """
     if not model_id:
         return None
+    # Credits the vendor itself named outrank any price written down elsewhere: they are what
+    # the account was actually charged, and the only conversion needed is the Owner's.
+    if credits:
+        per_credit = credit_usd(session, integration_id)
+        if per_credit is not None:
+            return round(credits * per_credit, 6)
     row = session.scalar(
         select(ProviderResource).where(
             ProviderResource.integration_id == integration_id,

@@ -24,6 +24,13 @@ EXPIRY = field("expires_at", "Expiră la (opțional)", False, kind="datetime-loc
 REDIRECT = field(
     "redirect_uri", "Redirect URI din aplicația developer (opțional)", False, kind="url"
 )
+#: What one of the vendor's credits costs the Owner. A vendor that bills in credits states
+#: the credits a task will cost and nothing about money; the exchange is the Owner's own
+#: purchase, so only the Owner can record it — and until they do, a film's cost is reported
+#: in credits rather than guessed in dollars.
+CREDIT_USD = field(
+    "credit_usd", "Preț pentru un credit, în USD (ex. 0.01 pentru 100 credite = 1 $)", False
+)
 
 
 def service(
@@ -155,7 +162,7 @@ CATALOG = {
     "runway": service(
         "Runway",
         "media",
-        [KEY],
+        [KEY, CREDIT_USD],
         "media",
         "Salvarea verifică cheia și încarcă din cont modelele video și de imagine disponibile, "
         "cu limitele lor. Modelele implicite se aleg separat, în configurația de producție, și "

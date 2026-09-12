@@ -1,5 +1,32 @@
 # Changelog
 
+## Twenty-one dollars, and the guards that were missing — 2026-09-12
+
+The Owner's credits fell to 1 878 and he asked who spent them. The answer, from Runway's own
+usage: the studio generated eight `seedance2_5` shots for one film — 3 986 → 1 878 credits,
+**21.08 USD** at the Owner's price of a hundred credits to the dollar. Six shots reached the
+film. **Two were generated, charged for and thrown away** because the studio's own download
+cap (32 MB) was smaller than a 7.6-second shot: 14.8 paid seconds, about six dollars, lost to
+a bug. No agent and no worker did this; the render was started from here. Measured cost, far
+from the catalogue's 0.025 USD a second: **43 credits a second — 0.43 USD — about 2.60 USD a
+six-second shot.**
+
+What was missing, now built:
+
+- **A credit has a price** (`credit_usd` on the connection, in Settings): vendors that bill
+  in credits state the credits a task costs and nothing about money. With the Owner's number
+  the books convert it, so a film's cost is a figure and the daily budget can bite.
+- **A ceiling per render** (`STUDIO_MOTION_BUDGET_USD`, default 12): the first shot teaches
+  what a shot costs, and every shot after it is refused when what remains would not cover
+  one. A film finishes with camera pushes rather than quietly spending the week.
+- **A paid shot is never discarded**: a failed download is retried, and a shot that is paid
+  for and still lost is recorded as `paid_but_lost` with its credits.
+- **A test renders the minimum, on the cheapest model that films from words**
+  (`?mode=test`, `test_motion_provider`, `cheapest_prompt_to_video`): no still bought first,
+  two scenes by default. Production keeps the best model the account has, from the still the
+  Director approved. The Owner's rule: test cheap, production best.
+- Tests: two more in `tests/test_motion.py`.
+
 ## A premium studio, and the frame it films in — 2026-09-12
 
 The steward read the vendor's pages, scored eighteen video models and recommended

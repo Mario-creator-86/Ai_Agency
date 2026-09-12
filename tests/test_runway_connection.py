@@ -40,7 +40,10 @@ def test_form_needs_only_a_name_and_a_key_and_discovers_the_accounts_video_model
     client, headers, engine, runway_api
 ):
     spec = settings_view(client, headers)["catalog"]["runway"]
-    assert [field["key"] for field in spec["fields"]] == ["api_key"]
+    # The key is what the connection needs; the credit price is optional and the Owner's,
+    # and without it a film's cost is reported in credits rather than guessed in dollars.
+    assert [field["key"] for field in spec["fields"]] == ["api_key", "credit_usd"]
+    assert [f["required"] for f in spec["fields"]] == [True, False]
     assert spec["runtime"] == "media" and spec["purposes"] == ["video", "image"]
 
     identifier, response = connect(client, headers)

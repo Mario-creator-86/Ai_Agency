@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi import Path as FPath
 from fastapi.responses import FileResponse
 from sqlalchemy import select
@@ -18,7 +18,7 @@ from app.economy.services import EconomyError
 from app.factual.models import FactualClaim, ScriptDraft, TopicIdea
 from app.factual.services import FactualGateError
 from app.media.assembler import RenderEngineUnavailable, assemble_video_job
-from app.media.factory import describe, render_plan, tts_provider
+from app.media.factory import describe, render_plan, test_motion_provider, tts_provider
 from app.media.models import MediaAsset, Storyboard, VideoRenderJob
 from app.media.production_policy import (
     IdentityChangeCommand,
@@ -251,6 +251,8 @@ def create_media_router() -> APIRouter:
     def start_render(
         request: Request,
         storyboard_id: Annotated[str, FPath(min_length=36, max_length=36)],
+        motion_scenes: Annotated[int | None, Query(ge=0, le=24)] = None,
+        mode: Annotated[str, Query(pattern="^(production|test)$")] = "production",
     ) -> dict:
         correlation_id = str(uuid4())
         engine = request.app.state.engine
@@ -263,6 +265,9 @@ def create_media_router() -> APIRouter:
             # episode/scene overrides and locked character voices. A test-injected adapter on
             # app.state still wins, as before.
             planned = render_plan(engine, vault, storyboard_id)
+            # A test films on the cheapest prompt-to-video model, for as few scenes as it
+            # takes to see how the film reads: one experiment must never cost a film again.
+            test_motion = test_motion_provider(engine, vault) if mode == "test" else None
             injected_tts = getattr(request.app.state, "tts_adapter", None)
             result = assemble_video_job(
                 engine,
@@ -277,7 +282,19 @@ def create_media_router() -> APIRouter:
                 video_adapter_for_scene=(
                     None
                     if getattr(request.app.state, "image_adapter", None)
-                    else planned["video_for_scene"]
+                    else (
+                        (lambda scene: test_motion)
+                        if mode == "test" and test_motion is not None
+                        else planned["video_for_scene"]
+                    )
+                ),
+                motion_from_prompt=mode == "test",
+                # `motion_scenes=1` is how a test render costs one shot instead of eight.
+                motion_budget_usd=request.app.state.settings.motion_budget_usd,
+                motion_scene_limit=(
+                    motion_scenes
+                    if motion_scenes is not None
+                    else (2 if mode == "test" else request.app.state.settings.motion_scenes_max)
                 ),
                 production_plan=planned["plan"],
             )

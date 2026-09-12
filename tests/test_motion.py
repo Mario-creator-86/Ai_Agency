@@ -386,3 +386,91 @@ def test_the_render_records_the_credits_the_vendor_named(engine, tmp_path):
     assert production["motion"]["estimated_credits"] == 48.0 * len(scenes)
     # And the connection behind the voice is named, so narration can be priced at all.
     assert "integration_id" in production["voice"]
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="ffmpeg not installed")
+def test_a_ceiling_stops_the_motion_pass_and_a_test_renders_the_minimum(engine, tmp_path):
+    """Twenty-one dollars went on one film while the daily budget read zero, because
+    nothing priced a shot. A render now carries what it may spend and how many scenes may
+    be generated; both stop the pass rather than letting it run to the end of the money."""
+    from test_phase5_media import _seeded_storyboard
+
+    storyboard_id, _ = _seeded_storyboard(engine, tmp_path)
+
+    class Costly(StubMotion):
+        def __init__(self, clip):
+            super().__init__(clip)
+            self.last_estimated_credits = None
+
+        async def create_generation(self, prompt, **kwargs):
+            job = await super().create_generation(prompt, **kwargs)
+            self.last_estimated_credits = 260.0  # what a six-second shot really cost
+            return job
+
+    # One scene only: what a test render asks for.
+    limited = Costly(a_clip(tmp_path))
+    render = assemble_video_job(
+        engine,
+        storyboard_id,
+        str(uuid4()),
+        storage_root=tmp_path / "media",
+        image_adapter=StubImages(),
+        video_adapter_for_scene=lambda scene: limited,
+        motion_scene_limit=1,
+    )
+    with Session(engine) as session:
+        production = session.get(VideoRenderJob, render["job_id"]).production_json
+    assert len(limited.asked) == 1 and production["motion"]["clips"] == 1
+    assert production["motion"]["scene_limit"] == 1
+    assert any("test limit" in note for note in production.get("motion_notes", []))
+
+    # And a ceiling. It bites only because a credit has a price: the studio must know what
+    # the vendor's credits cost before it can stop at a number of dollars.
+    from app.integrations.models import Integration
+    from app.integrations.vault import CredentialVault
+    from app.services import append_event, utc_now
+
+    integration_id = str(uuid4())
+    vault = CredentialVault(Path(str(engine.url.database)).with_suffix(".credentials.key"))
+    with Session(engine) as session, session.begin():
+        event = append_event(
+            session,
+            "settings.integration_saved",
+            "integration",
+            integration_id,
+            1,
+            {},
+            str(uuid4()),
+        )
+        session.add(
+            Integration(
+                id=integration_id,
+                kind="runway",
+                name="runway",
+                config={"credit_usd": "0.01"},
+                encrypted_secrets=vault.encrypt({"api_key": "k"}),
+                secret_fields=["api_key"],
+                version=1,
+                status="VERIFIED",
+                checked_at=utc_now(),
+                event_id=event.event_id,
+            )
+        )
+
+    storyboard_two, _ = _seeded_storyboard(engine, tmp_path / "two")
+    capped = Costly(a_clip(tmp_path))
+    render_two = assemble_video_job(
+        engine,
+        storyboard_two,
+        str(uuid4()),
+        storage_root=tmp_path / "media2",
+        image_adapter=StubImages(),
+        video_adapter_for_scene=lambda scene: capped,
+        motion_budget_usd=3.0,  # one shot at 2.60, then the line is crossed
+    )
+    with Session(engine) as session:
+        production_two = session.get(VideoRenderJob, render_two["job_id"]).production_json
+    assert len(capped.asked) == 1, "the second shot must not be generated"
+    assert production_two["motion"]["estimated_usd"] == 2.6
+    assert any("motion budget" in note for note in production_two.get("motion_notes", []))
+    assert production_two["motion"]["clips"] == 1

@@ -128,7 +128,12 @@ def record_render_costs(
                     "motion",
                     motion.get("integration_id"),
                     motion.get("model"),
-                    {"seconds": float(motion.get("asked_seconds") or 0)},
+                    # The credits Runway named for this shot, and the seconds as the fallback
+                    # for a vendor that priced the model but said nothing per task.
+                    {
+                        "credits": float(motion.get("estimated_credits") or 0),
+                        "seconds": float(motion.get("asked_seconds") or 0),
+                    },
                 ),
             ]
             for unit, integration_id, model_id, quantity in wanted:
@@ -141,6 +146,7 @@ def record_render_costs(
                     characters=int(quantity.get("characters", 0)),
                     images=int(quantity.get("images", 0)),
                     seconds=quantity.get("seconds", 0.0),
+                    credits=quantity.get("credits", 0.0),
                 )
                 if estimate is None or estimate <= 0:
                     unpriced += 1

@@ -87,6 +87,18 @@ class Settings(BaseSettings):
     #: means; every channel may still override them per purpose.
     production_priority: Literal["premium", "balanced", "thrifty"] = "premium"
 
+    #: The most one film may spend on generated motion, in dollars. Measured on the Owner's
+    #: account: a six-second shot on `seedance2_5` costs about 2.60 USD, so eight shots are
+    #: twenty. A film is worth that; a day of experiments is not, and nothing priced a shot
+    #: until the Owner recorded what a credit costs — so the daily budget saw a day that had
+    #: spent nothing while twenty-one dollars went out.
+    motion_budget_usd: float = 12.0
+
+    #: How many scenes of a render may be generated as motion. None means every scene; a
+    #: small number is what a test render uses, so seeing how a film reads costs one shot
+    #: instead of eight. The Owner's instruction: "la teste redam doar minimul".
+    motion_scenes_max: int | None = None
+
     # The background worker is what makes the studio run without the browser: it fires due
     # scheduled jobs and executes the tasks they enqueue. Off in tests, where a loop that starts
     # the day on its own would make every other test's timing a coincidence.

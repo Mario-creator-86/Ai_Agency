@@ -634,6 +634,18 @@ def stalled_storyboards(session: Session, engine: Engine, vault: Any) -> list[st
     return out
 
 
+def _budget_left_usd(engine: Engine, settings: Settings) -> float:
+    """What the tightest active budget still allows today, in dollars."""
+    from app.economy.budget import budget_status  # noqa: PLC0415
+
+    left = float(settings.motion_budget_usd)
+    for period in budget_status(engine).get("budgets", []):
+        micros = period.get("remaining_usd_micros")
+        if isinstance(micros, int | float):
+            left = min(left, max(0.0, float(micros) / 1_000_000))
+    return left
+
+
 def _media(
     engine: Engine, settings: Settings, vault: Any, registry: ProviderRegistry | None = None
 ) -> dict[str, Any]:
@@ -704,6 +716,13 @@ def _media(
                 # The hierarchy's motion choice per scene: with it the film moves, without
                 # it the stills push slowly. Either way the shots dissolve.
                 video_adapter_for_scene=planned["video_for_scene"],
+                # What this film may spend on motion, and how many scenes may be generated.
+                # The ceiling is the smaller of the studio's per-film limit and what the
+                # day's budget still allows, so one film cannot spend the week.
+                motion_budget_usd=min(
+                    settings.motion_budget_usd, _budget_left_usd(engine, settings)
+                ),
+                motion_scene_limit=settings.motion_scenes_max,
                 production_plan=planned["plan"],
             )
         except RenderEngineUnavailable as exc:
