@@ -1725,6 +1725,8 @@ async function loadMediaStoryboards() {
             return `<div class="qc-score-item"><div>${label}</div><div class="qc-score-num">${value}</div></div>`;
           };
           const tech = checks.technical_qc || {};
+          // The film itself: the asset quality control measured is the one to watch.
+          const assetId = qcReport ? qcReport.media_asset_id : null;
           const qcScoresHtml = qcReport
             ? `
           <div class="qc-scores-grid">
@@ -1739,9 +1741,18 @@ async function loadMediaStoryboards() {
           renderHtml = `
           <div class="video-preview-card">
             <div class="video-container-9-16">
-              <div class="tag">9:16 Video</div>
+              ${
+                assetId
+                  ? `<button class="video-play" data-asset="${escapeHtml(assetId)}" title="Redă filmul">▶ Redă</button>`
+                  : '<div class="tag">9:16 Video</div>'
+              }
             </div>
             <div class="video-details">
+              ${
+                assetId
+                  ? `<div class="video-actions"><a class="quiet" href="#" data-download="${escapeHtml(assetId)}">Descarcă fișierul</a></div>`
+                  : ''
+              }
               <div><strong>Format măsurat:</strong> ${
                 tech.measured_width
                   ? `${tech.measured_width}x${tech.measured_height} · ${tech.measured_duration_seconds}s · ${escapeHtml(String(tech.video_codec || '—'))}`
@@ -1784,6 +1795,66 @@ async function loadMediaStoryboards() {
     );
 
     listEl.innerHTML = itemsHtml.join('');
+
+    // The film plays where the film is. The Owner's key travels in a header, so the bytes
+    // are fetched once and played from a blob rather than handed to <video src>, which
+    // could not authenticate. The same bytes are what the download link saves.
+    const playFilm = async (assetId, container, trigger) => {
+      const button = /** @type {HTMLButtonElement | null} */ (trigger);
+      if (button) { button.disabled = true; button.textContent = 'Se încarcă…'; }
+      try {
+        const response = await fetch(`/api/v1/media/assets/${assetId}/stream`, {
+          headers: { Authorization: `Bearer ${ownerToken}` },
+          cache: 'no-store',
+        });
+        if (!response.ok) throw new Error(`Fișierul nu a putut fi citit (${response.status}).`);
+        const url = URL.createObjectURL(await response.blob());
+        const video = document.createElement('video');
+        video.src = url;
+        video.controls = true;
+        video.autoplay = true;
+        video.playsInline = true;
+        video.className = 'video-player-9-16';
+        container.innerHTML = '';
+        container.append(video);
+        return url;
+      } catch (err) {
+        if (button) { button.disabled = false; button.textContent = '▶ Redă'; }
+        alert(`Nu am putut reda filmul: ${err.message}`);
+        return null;
+      }
+    };
+
+    listEl.querySelectorAll('.video-play').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const assetId = btn.getAttribute('data-asset');
+        const container = btn.parentElement;
+        if (assetId && container) playFilm(assetId, container, btn);
+      });
+    });
+
+    listEl.querySelectorAll('[data-download]').forEach((link) => {
+      link.addEventListener('click', async (event) => {
+        event.preventDefault();
+        const assetId = link.getAttribute('data-download');
+        if (!assetId) return;
+        try {
+          const response = await fetch(`/api/v1/media/assets/${assetId}/stream`, {
+            headers: { Authorization: `Bearer ${ownerToken}` },
+            cache: 'no-store',
+          });
+          if (!response.ok) throw new Error(`Fișierul nu a putut fi citit (${response.status}).`);
+          const url = URL.createObjectURL(await response.blob());
+          const save = document.createElement('a');
+          save.href = url;
+          save.download = `short_9_16_${assetId.slice(0, 8)}.mp4`;
+          save.click();
+          setTimeout(() => URL.revokeObjectURL(url), 30000);
+        } catch (err) {
+          alert(`Nu am putut descărca filmul: ${err.message}`);
+        }
+      });
+    });
 
     listEl.querySelectorAll('.btn-render-video').forEach((btn) => {
       btn.addEventListener('click', async () => {

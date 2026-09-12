@@ -1,5 +1,24 @@
 # Changelog
 
+## The film plays where the film is — 2026-09-12
+
+"Ar trebui sa pot sa il vad in Producție media, NU?" — yes, and it could not be seen: the
+card drew a black rectangle labelled "9:16 Video" beside the measurements, and the endpoint
+that serves the file (`GET /media/assets/{id}/stream`, there all along) was never called.
+
+- **Redă** plays the rendered short in the card, at 9:16. The Owner's key travels in a
+  header, which `<video src>` cannot send, so the bytes are fetched once with the key and
+  played from a blob — the same bytes the new **Descarcă fișierul** link saves.
+- Where a film lives, for the record: `backend/storage/media/<storyboard_id>/` holds the
+  stills (`scene_NN.png`), the first frames sent to the motion model (`first_scene_NN.jpg`),
+  the generated clips (`motion_NN.mp4`), the normalised shots (`shot_NN.mp4`), the narration
+  (`voice_NN.mp3`, `master_audio.wav`) and the film (`final_short_9_16.mp4`). The MediaAsset
+  row keeps the path and the SHA-256 of the bytes.
+- Measured, for the question "does it take this long?": eight stills took eight and a half
+  minutes, eight generated shots twenty-five — because the account's tier allows
+  `maxConcurrentGenerations: 1` for every video model (and 2 for the still model), so the
+  shots are made one at a time by the vendor, not by choice.
+
 ## A shot is a file, and a film is its picture — 2026-09-12
 
 The first dissolving render looked right and was not: forty-six seconds of narration over
