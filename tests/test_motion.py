@@ -108,10 +108,8 @@ def test_the_shots_dissolve_and_the_picture_never_drifts_from_the_voice():
     that overlap, so shot N starts where scene N's words start."""
     from app.media.assembler import _dissolve_command
 
-    stills = [Path(f"scene_{i}.png") for i in (1, 2, 3)]
-    args = _dissolve_command(
-        "ffmpeg", stills, [None, None, None], SCENES, Path("audio.wav"), Path("out.mp4")
-    )
+    shots = [Path(f"shot_{i:02d}.mp4") for i in (1, 2, 3)]
+    args = _dissolve_command("ffmpeg", shots, SCENES, Path("audio.wav"), Path("out.mp4"))
     chain = args[args.index("-filter_complex") + 1]
     # Offsets are the cumulative narration lengths: 4.0 and 10.0, not 4.0 and 9.6.
     assert "offset=4.000" in chain and "offset=10.000" in chain
@@ -120,8 +118,18 @@ def test_the_shots_dissolve_and_the_picture_never_drifts_from_the_voice():
     # The film is exactly as long as the narration it carries (the output -t, after -map).
     tail = args[args.index("-map") :]
     assert "trim=duration=15.000" in chain and tail[tail.index("-t") + 1] == "15.000"
-    # Every scene is a shot: three inputs plus the audio.
-    assert args.count("-i") == 4 and chain.count("zoompan") == 3
+    # Every scene is a shot file of its own, plus the audio.
+    assert args.count("-i") == 4
+    assert all(str(shot) in args for shot in shots)
+    # And a shot is built from the still with a push, or from the clip, each on its own.
+    from app.media.assembler import _shot_command
+
+    push = _shot_command("ffmpeg", Path("scene_01.png"), None, 4.4, Path("shot_01.mp4"))
+    assert "zoompan" in " ".join(push) and "-loop" in push
+    moved = _shot_command("ffmpeg", Path("scene_01.png"), Path("motion_01.mp4"), 4.4, Path("s.mp4"))
+    assert "motion_01.mp4" in moved and "tpad=stop_mode=clone:stop_duration=4.400" in " ".join(
+        moved
+    )
 
 
 @pytest.mark.skipif(find_ffmpeg() is None, reason="ffmpeg not installed")
@@ -279,3 +287,64 @@ def test_the_books_price_narration_by_the_character_a_still_by_the_image_and_mot
 
     result = record_render_costs(engine, job_id, str(uuid4()))
     assert result["recorded"] == 3  # narration, still, motion — each once, each referenced
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="ffmpeg not installed")
+def test_a_film_whose_picture_ends_early_is_not_recorded(engine, tmp_path, monkeypatch):
+    """Six seconds of picture under forty-six of narration passed quality control once,
+    because a container is as long as its longest stream. The render measures the picture
+    stream itself and fails rather than record a film that is mostly silence to look at."""
+    from app.media import assembler
+    from app.media.models import MediaAsset
+    from test_phase5_media import _seeded_storyboard
+
+    storyboard_id, _ = _seeded_storyboard(engine, tmp_path)
+    monkeypatch.setattr(assembler, "_video_stream_seconds", lambda exe, path: 1.0)
+
+    with pytest.raises(assembler.RenderEngineUnavailable) as excinfo:
+        assembler.assemble_video_job(
+            engine,
+            storyboard_id,
+            str(uuid4()),
+            storage_root=tmp_path / "media",
+            image_adapter=StubImages(),
+        )
+    assert "picture is 1.00s" in str(excinfo.value)
+    with Session(engine) as session:
+        assert session.query(MediaAsset).count() == 0
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="ffmpeg not installed")
+def test_quality_control_measures_the_picture_not_the_container(tmp_path):
+    """What ffprobe is asked for: the video stream's own length, frames and rate."""
+    import subprocess
+
+    from app.media.qc import probe_media_file
+
+    film = tmp_path / "short.mp4"
+    subprocess.run(
+        [
+            find_ffmpeg(),
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=108x192:d=3",
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=r=44100:cl=mono",
+            "-shortest",
+            "-pix_fmt",
+            "yuv420p",
+            str(film),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    probe = probe_media_file(film, find_ffmpeg())
+    assert probe["ok"] and probe["has_audio"]
+    assert probe["video_frames"] and probe["video_fps"]
+    assert 2.5 <= probe["video_duration_seconds"] <= 3.5

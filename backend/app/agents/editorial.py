@@ -241,10 +241,14 @@ def frames_for(path: str, ffmpeg_path: str | None, duration: float | None) -> li
                     str(file),
                     "-frames:v",
                     "1",
+                    # JPEG is a full-range format, and the dissolve chain writes a film
+                    # whose range is limited: without setrange the encoder refuses every
+                    # frame, and the Director is handed a film she cannot look at. The
+                    # frames come back down a pipe, so the muxer is image2pipe.
                     "-vf",
-                    f"scale={FRAME_WIDTH}:-2",
+                    f"scale={FRAME_WIDTH}:-2,setrange=pc",
                     "-f",
-                    "image2",
+                    "image2pipe",
                     "-c:v",
                     "mjpeg",
                     "pipe:1",

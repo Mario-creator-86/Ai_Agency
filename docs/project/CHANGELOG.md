@@ -1,5 +1,27 @@
 # Changelog
 
+## A shot is a file, and a film is its picture — 2026-09-12
+
+The first dissolving render looked right and was not: forty-six seconds of narration over
+**six and a half seconds of picture**. One filter graph over eight inputs failed quietly
+after the first dissolve, and quality control passed the file — because a container is as
+long as its longest stream, and the longest stream was the audio.
+
+- **Each shot is built and checked on its own** (`_shot_command`): one ffmpeg call per scene
+  writes `shot_NN.mp4`, exactly as long as the scene, from the generated clip or from the
+  still pushed in; a shot that does not come out fails the render there, named. The dissolve
+  pass then works over finished files, so `_dissolve_command` has nothing left to hide.
+- **The render measures the picture before recording anything** (`_video_stream_seconds`):
+  a film whose video stream is more than a second shorter than its narration fails, and no
+  MediaAsset is written for it.
+- **Quality control measures the video stream** (`probe_media_file`): `video_duration_seconds`,
+  `video_frames` and `video_fps` come from the stream itself, next to the container's
+  duration, so the old "45 seconds" cannot be claimed by audio alone again.
+- The Director's frame extraction asks for full range (`setrange=pc`) through `image2pipe`:
+  the dissolve chain writes limited-range video, and the JPEG encoder had refused every
+  frame — she was approving films she could not look at.
+- Tests: three more in `tests/test_motion.py`.
+
 ## A short that moves — 2026-09-12
 
 The Owner watched the first finished film and said what it was: "sunt doar niste imagini

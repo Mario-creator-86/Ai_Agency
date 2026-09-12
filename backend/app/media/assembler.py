@@ -244,60 +244,105 @@ def _generate_motion(
         time.sleep(MOTION_POLL_SECONDS)
 
 
+def _video_stream_seconds(ffmpeg_exe: str, path: Path) -> float | None:
+    """How long the picture actually lasts, or None when it cannot be measured."""
+    from app.media.qc import probe_media_file  # noqa: PLC0415
+
+    probe = probe_media_file(path, ffmpeg_exe)
+    frames = probe.get("video_frames")
+    fps = probe.get("video_fps")
+    if isinstance(frames, int) and frames > 0 and isinstance(fps, int | float) and fps > 0:
+        return frames / float(fps)
+    seconds = probe.get("video_duration_seconds")
+    return float(seconds) if isinstance(seconds, int | float) and seconds > 0 else None
+
+
+def _shot_command(
+    ffmpeg_exe: str, still: Path, clip: Path | None, span: float, target: Path
+) -> list[str]:
+    """One scene as one file, exactly `span` long: the generated clip, or the still pushed in.
+
+    A shot is built and measured on its own because a single filter graph over eight inputs
+    hid its own failure: the first dissolve render wrote six seconds of picture under
+    forty-six seconds of audio and reported success.
+    """
+    if clip is not None:
+        return [
+            ffmpeg_exe,
+            "-y",
+            "-i",
+            str(clip),
+            "-an",
+            "-vf",
+            "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,"
+            f"tpad=stop_mode=clone:stop_duration={span:.3f},trim=duration={span:.3f},"
+            "setpts=PTS-STARTPTS,setrange=pc,format=yuv420p",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            str(target),
+        ]
+    frames = max(2, int(round(span * 30)))
+    return [
+        ffmpeg_exe,
+        "-y",
+        "-loop",
+        "1",
+        "-framerate",
+        "30",
+        "-t",
+        f"{span:.3f}",
+        "-i",
+        str(still),
+        "-an",
+        "-vf",
+        "scale=1188:2112:force_original_aspect_ratio=increase,crop=1188:2112,"
+        f"zoompan=z='min(1+0.10*on/{frames},1.10)':d=1:"
+        "x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=30,"
+        f"trim=duration={span:.3f},setpts=PTS-STARTPTS,setrange=pc,format=yuv420p",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        str(target),
+    ]
+
+
 def _dissolve_command(
     ffmpeg_exe: str,
-    stills: list[Path],
-    clips: list[Path | None],
+    shots: list[Path],
     scenes_data: list[dict[str, Any]],
     audio_file: Path,
     output_mp4: Path,
 ) -> list[str]:
-    """One ffmpeg call: every scene as a shot of its own length, dissolved into the next.
+    """One ffmpeg call over the shot files: each dissolves into the next.
 
-    Each shot is made one transition longer than its narration, and each dissolve consumes
-    exactly that overlap, so shot N still starts where scene N's words start — the picture
-    never drifts away from the voice.
+    Each shot is one transition longer than its narration and each dissolve consumes exactly
+    that overlap, so shot N still starts where scene N's words start — the picture never
+    drifts away from the voice.
     """
     args = [ffmpeg_exe, "-y"]
-    filters: list[str] = []
-    for index, scene in enumerate(scenes_data):
-        span = float(scene["duration_seconds"]) + TRANSITION_SECONDS
-        clip = clips[index] if index < len(clips) else None
-        if clip is not None:
-            # A generated clip: held to the shot's length if it came back shorter.
-            args += ["-i", str(clip)]
-            filters.append(
-                f"[{index}:v]scale=1080:1920:force_original_aspect_ratio=increase,"
-                f"crop=1080:1920,fps=30,setpts=PTS-STARTPTS,"
-                f"tpad=stop_mode=clone:stop_duration={span:.3f},trim=duration={span:.3f},"
-                f"setpts=PTS-STARTPTS,format=yuv420p[v{index}]"
-            )
-        else:
-            # No motion for this scene: the still pushes in slowly, so it still reads as a shot.
-            frames = max(1, int(round(span * 30)))
-            still = stills[index] if index < len(stills) else stills[-1]
-            args += ["-loop", "1", "-t", f"{span:.3f}", "-i", str(still)]
-            filters.append(
-                f"[{index}:v]scale=2160:3840:force_original_aspect_ratio=increase,"
-                f"crop=2160:3840,zoompan=z='min(1+0.12*on/{frames},1.12)':d=1:"
-                f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=30,"
-                f"trim=duration={span:.3f},setpts=PTS-STARTPTS,format=yuv420p[v{index}]"
-            )
+    for shot in shots:
+        args += ["-i", str(shot)]
     args += ["-i", str(audio_file)]
 
-    chain = "".join(f"{f};" for f in filters)
-    current = "v0"
+    chain = ""
+    current = "0:v"
     offset = 0.0
-    for index in range(1, len(scenes_data)):
+    for index in range(1, len(shots)):
         offset += float(scenes_data[index - 1]["duration_seconds"])
         nxt = f"x{index}"
         chain += (
-            f"[{current}][v{index}]xfade=transition=fade:"
+            f"[{current}][{index}:v]xfade=transition=fade:"
             f"duration={TRANSITION_SECONDS:.3f}:offset={offset:.3f}[{nxt}];"
         )
         current = nxt
     total = sum(float(s["duration_seconds"]) for s in scenes_data)
-    chain += f"[{current}]trim=duration={total:.3f},setpts=PTS-STARTPTS[vout]"
+    if chain:
+        chain += f"[{current}]trim=duration={total:.3f},setpts=PTS-STARTPTS[vout]"
+    else:
+        chain = f"[0:v]trim=duration={total:.3f},setpts=PTS-STARTPTS[vout]"
 
     args += [
         "-filter_complex",
@@ -305,7 +350,7 @@ def _dissolve_command(
         "-map",
         "[vout]",
         "-map",
-        f"{len(scenes_data)}:a",
+        f"{len(shots)}:a",
         "-af",
         "apad",
         "-t",
@@ -602,9 +647,28 @@ def assemble_video_job(
     # dissolve into one another. A film reads as a film; a slideshow reads as a slideshow, and
     # the Owner's first short was the second thing.
     if image_adapter is not None and frame_files:
-        command_args = _dissolve_command(
-            ffmpeg_exe, frame_files, motion_clips, scenes_data, audio_file, output_mp4
-        )
+        shots: list[Path] = []
+        for position, scene in enumerate(scenes_data):
+            span = float(scene["duration_seconds"]) + TRANSITION_SECONDS
+            still = frame_files[min(position, len(frame_files) - 1)]
+            target = work_dir / f"shot_{scene['scene_index']:02d}.mp4"
+            shot_args = _shot_command(ffmpeg_exe, still, motion_clips[position], span, target)
+            shot = subprocess.run(
+                shot_args,
+                cwd=str(work_dir),
+                capture_output=True,
+                text=True,
+                timeout=600,
+                check=False,
+            )
+            if shot.returncode != 0 or not target.is_file() or target.stat().st_size == 0:
+                log = f"shot {scene['scene_index']} failed\n{shot.stdout}\n{shot.stderr}"
+                _fail_job(f"Shot {scene['scene_index']} could not be built", log)
+                raise RenderEngineUnavailable(
+                    f"FFmpeg could not build shot {scene['scene_index']}. See render job log."
+                )
+            shots.append(target)
+        command_args = _dissolve_command(ffmpeg_exe, shots, scenes_data, audio_file, output_mp4)
     else:
         concat_list = work_dir / "inputs.txt"
         with open(concat_list, "w", encoding="utf-8") as f:
@@ -665,6 +729,18 @@ def assemble_video_job(
         raise RenderEngineUnavailable(
             f"FFmpeg failed to encode the video (exit code {res.returncode}). See render job log."
         )
+
+    # A film is its picture. The first dissolve render put six seconds of video under
+    # forty-six of narration and reported success, because a container's duration is its
+    # longest stream. The video stream is measured here, before anything is recorded.
+    picture = _video_stream_seconds(ffmpeg_exe, output_mp4)
+    if picture is not None and picture + 1.0 < total_duration:
+        reason = (
+            f"The picture is {picture:.2f}s long but the film is {total_duration:.2f}s: "
+            "the encode dropped shots. Nothing was recorded."
+        )
+        _fail_job(reason, f"{log_output}\n{reason}")
+        raise RenderEngineUnavailable(reason)
 
     # 4. Calculate Provenance Digest
     file_bytes = output_mp4.read_bytes()

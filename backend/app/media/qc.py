@@ -86,12 +86,37 @@ def probe_media_file(file_path: Path, ffmpeg_path: str | None = None) -> dict[st
         duration = float(data.get("format", {}).get("duration", 0.0))
     except (TypeError, ValueError):
         duration = 0.0
+
+    # A container is as long as its longest stream, so a film with six seconds of picture
+    # under forty-six seconds of narration measures as forty-six. The picture is measured
+    # on its own stream — frames over frame rate where both are known.
+    def _number(value: Any) -> float | None:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return number if number > 0 else None
+
+    fps = None
+    rate = str(video.get("avg_frame_rate") or video.get("r_frame_rate") or "")
+    if "/" in rate:
+        top, _, bottom = rate.partition("/")
+        top_value, bottom_value = _number(top), _number(bottom)
+        if top_value and bottom_value:
+            fps = top_value / bottom_value
+    frames = _number(video.get("nb_frames"))
+    stream_seconds = _number(video.get("duration"))
+    if frames and fps:
+        stream_seconds = frames / fps
     return {
         "available": True,
         "ok": True,
         "width": int(video.get("width") or 0),
         "height": int(video.get("height") or 0),
         "duration_seconds": round(duration, 2),
+        "video_duration_seconds": round(stream_seconds, 2) if stream_seconds else None,
+        "video_frames": int(frames) if frames else None,
+        "video_fps": round(fps, 3) if fps else None,
         "video_codec": video.get("codec_name"),
         "has_audio": any(st.get("codec_type") == "audio" for st in data.get("streams", [])),
         "error": None,
