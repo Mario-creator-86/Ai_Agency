@@ -58,7 +58,17 @@ the studio's identity and returns pages that exist (Wikipedia's does, tested).
 - **One live storyboard per script**: rebuilding a storyboard supersedes an earlier one
   nobody has rendered (it is marked REJECTED), so the render stage never picks the stale
   board over the new one.
-- Tests: `tests/test_search_step.py` (13), three more in `tests/test_script_writing.py`.
+- **Why Runway refused: a model that edits pictures, not one that draws them.** The eighth
+  clean day's HTTP 400 body said `referenceImages: expected array, received undefined`.
+  `gen4_image_turbo` is listed under `text_to_image` and *requires* one to three reference
+  images — it edits pictures it is given — and it was the studio's image default because it
+  is the cheapest still model in the account. The contract parser now records
+  `needs_references` per model and task, `rank_candidates` never offers such a model for a
+  purpose the storyboard feeds with words alone (`serves_from_prompt`), and the adapter
+  refuses before spending a call (`code="reference_images_required"`). Nothing is
+  hardcoded: the fact comes from Runway's own published contract.
+- Tests: `tests/test_search_step.py` (13), three more in `tests/test_script_writing.py`,
+  one in `tests/test_runway_connection.py`.
 
 ## A review that fed itself, and a studio that can start over — 2026-09-12
 

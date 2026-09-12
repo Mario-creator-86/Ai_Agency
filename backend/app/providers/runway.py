@@ -147,14 +147,23 @@ def parse_model_contract(spec: Any) -> dict[str, dict[str, Any]]:
                     if isinstance(duration_node.get(field), int | float)
                 }
                 durations = bounds or None
+            # What the model must be given besides words. gen4_image_turbo lists
+            # referenceImages as required: an editing model, not a text-to-image one, and a
+            # studio that generates stills from a prompt alone cannot use it — a fact the
+            # contract states per model, and the choice of a model has to read.
+            required = branch.get("required")
+            needs_references = isinstance(required, list) and "referenceImages" in required
             for model in models:
-                entry = contract.setdefault(model, {"tasks": [], "ratios": {}, "durations": {}})
+                entry = contract.setdefault(
+                    model, {"tasks": [], "ratios": {}, "durations": {}, "needs_references": {}}
+                )
                 if task not in entry["tasks"]:
                     entry["tasks"].append(task)
                 if ratios:
                     entry["ratios"][task] = sorted(set(ratios) | set(entry["ratios"].get(task, [])))
                 if durations and task not in entry["durations"]:
                     entry["durations"][task] = durations
+                entry.setdefault("needs_references", {})[task] = needs_references
     for entry in contract.values():
         entry["tasks"].sort()
     return contract
@@ -321,6 +330,16 @@ class RunwayImageAdapter(_RunwayClient, ImageProvider):
     ) -> ImageResult:
         task = "text_to_image"
         self._require_task(task)
+        needs = self.model_metadata.get("needs_references", {})
+        if isinstance(needs, dict) and needs.get(task):
+            # Known from the contract before any call: gen4_image_turbo edits pictures it is
+            # given and cannot draw one from words alone. Runway answered HTTP 400 to every
+            # scene of a day before this was read.
+            raise MediaProviderError(
+                f"{self.model} needs reference images and cannot generate a still from a "
+                "prompt alone; choose a text-to-image model in Settings",
+                code="reference_images_required",
+            )
         described = " ".join(f"{prompt} {style or ''}".split())[:1000]
         if not described:
             raise MediaProviderError("There is no prompt to generate an image from")

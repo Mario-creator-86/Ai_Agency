@@ -244,7 +244,9 @@ def test_contract_parser_reads_tasks_ratios_and_durations_per_model():
                                                     "minimum": 2,
                                                     "maximum": 10,
                                                 },
-                                            }
+                                                "referenceImages": {"type": "array"},
+                                            },
+                                            "required": ["model", "ratio", "referenceImages"],
                                         },
                                     ]
                                 }
@@ -273,9 +275,107 @@ def test_contract_parser_reads_tasks_ratios_and_durations_per_model():
         "tasks": ["text_to_video"],
         "ratios": {"text_to_video": ["16:9", "9:16"]},
         "durations": {"text_to_video": [4, 8]},
+        "needs_references": {"text_to_video": False},
     }
     assert contract["m2"]["durations"] == {"text_to_video": {"min": 2, "max": 10}}
+    # What the model must be given besides words is part of its contract: m2 and m3 require
+    # reference images, m1 does not.
+    assert contract["m2"]["needs_references"] == {"text_to_video": True}
+    assert contract["m3"]["needs_references"] == {"text_to_video": True}
     assert set(contract) == {"m1", "m2", "m3"}
     with pytest.raises(MediaProviderError):
         parse_model_contract([])
     assert pick_ratio(["1280:720", "720:1280"], "16:9") == "1280:720"
+
+
+# --------------------------------------------------------------------- what words alone can do
+
+
+def test_a_model_that_needs_reference_images_is_neither_chosen_nor_called(engine):
+    """gen4_image_turbo is listed under text_to_image and requires reference images: the
+    cheapest still model in the account, chosen by price, answered HTTP 400 to every scene
+    of a day. The contract says so per model, so the choice skips it and the adapter refuses
+    before spending a call."""
+    from app.media.production_policy import rank_candidates, serves_from_prompt
+    from app.providers.runway import RunwayImageAdapter
+    from app.services import append_event, utc_now
+
+    integration_id = str(uuid4())
+    vault = CredentialVault(Path(str(engine.url.database)).with_suffix(".credentials.key"))
+    with Session(engine) as session, session.begin():
+        event = append_event(
+            session,
+            "settings.integration_saved",
+            "integration",
+            integration_id,
+            1,
+            {},
+            str(uuid4()),
+        )
+        session.add(
+            Integration(
+                id=integration_id,
+                kind="runway",
+                name="runway",
+                config={},
+                encrypted_secrets=vault.encrypt({"api_key": "k"}),
+                secret_fields=["api_key"],
+                version=1,
+                status="ACCESS_VERIFIED",
+                checked_at=None,
+                event_id=event.event_id,
+            )
+        )
+        session.flush()
+        for remote_id, needs, price in (
+            ("editing_only", True, 0.015),
+            ("draws_from_words", False, 0.02),
+        ):
+            session.add(
+                ProviderResource(
+                    id=str(uuid4()),
+                    integration_id=integration_id,
+                    resource_type="MODEL",
+                    remote_id=remote_id,
+                    name=remote_id,
+                    api_metadata={
+                        "tasks": ["text_to_image"],
+                        "ratios": {"text_to_image": ["1080:1920"]},
+                        "needs_references": {"text_to_image": needs},
+                    },
+                    api_available=True,
+                    last_seen_at=utc_now(),
+                    pricing={"per_image_usd": price, "unit": "per image"},
+                    capabilities={},
+                    metadata_version=1,
+                )
+            )
+
+    with Session(engine) as session:
+        ranked = [
+            c["remote_id"] for c in rank_candidates(session, integration_id, "MODEL", None, "image")
+        ]
+    # The cheaper one is the editing model; it is not a candidate for a still from a prompt.
+    assert ranked == ["draws_from_words"]
+    assert serves_from_prompt({"tasks": ["text_to_image"]}, "image") is True  # contract unknown
+    assert serves_from_prompt({}, "image") is True
+    assert (
+        serves_from_prompt(
+            {"tasks": ["text_to_image"], "needs_references": {"text_to_image": True}}, "video"
+        )
+        is True
+    )
+
+    adapter = RunwayImageAdapter(
+        api_key="k",
+        model="editing_only",
+        model_metadata={
+            "tasks": ["text_to_image"],
+            "ratios": {"text_to_image": ["1080:1920"]},
+            "needs_references": {"text_to_image": True},
+        },
+    )
+    with pytest.raises(MediaProviderError) as excinfo:
+        asyncio.run(adapter.generate_image("a starry sky"))
+    assert excinfo.value.code == "reference_images_required"
+    assert "needs reference images" in str(excinfo.value)

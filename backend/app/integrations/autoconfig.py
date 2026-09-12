@@ -82,13 +82,7 @@ def _candidates(session: Session, purpose: str) -> list[Integration]:
     return found
 
 
-#: The task the studio actually calls for each purpose. A model may serve a purpose through
-#: some other task — Runway's character performance is a video task, but it needs a driving
-#: performance video, so it cannot be the default a storyboard scene renders through.
-GENERATIVE_TASKS: dict[str, tuple[str, ...]] = {
-    "video": ("text_to_video", "image_to_video"),
-    "image": ("text_to_image",),
-}
+from app.media.production_policy import GENERATIVE_TASKS  # noqa: E402
 
 
 def _top_resource(engine: Engine, integration_id: str, kind: str, purpose: str) -> str | None:
