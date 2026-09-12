@@ -535,7 +535,12 @@ def test_a_providers_refusal_fails_the_render_not_the_day(engine, settings, stud
     monkeypatch.setattr(
         factory,
         "render_plan",
-        lambda engine_, vault, board: {"image": None, "tts_for_scene": lambda *a: None, "plan": {}},
+        lambda engine_, vault, board: {
+            "image": None,
+            "tts_for_scene": lambda *a: None,
+            "video_for_scene": lambda *a: None,
+            "plan": {},
+        },
     )
     outcome = stages._media(engine, settings, None, None)
     assert outcome["status"] == "COMPLETED"

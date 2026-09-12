@@ -701,6 +701,9 @@ def _media(
                 image_adapter=planned.get("image") or images,
                 tts_adapter=voice,
                 tts_adapter_for_scene=planned["tts_for_scene"],
+                # The hierarchy's motion choice per scene: with it the film moves, without
+                # it the stills push slowly. Either way the shots dissolve.
+                video_adapter_for_scene=planned["video_for_scene"],
                 production_plan=planned["plan"],
             )
         except RenderEngineUnavailable as exc:

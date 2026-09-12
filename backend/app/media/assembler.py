@@ -29,12 +29,21 @@ from app.providers.deterministic_media import (
     DeterministicTTSAdapter,
     DeterministicVisualAdapter,
 )
-from app.providers.media_base import ImageProvider, TTSProvider
+from app.providers.media_base import ImageProvider, TTSProvider, VideoProvider
+from app.providers.media_http import MediaProviderError, MediaProviderNotConfigured
 from app.services import append_event, utc_now
 
 logger = logging.getLogger("studio.assembler")
 
 DEFAULT_STORAGE_ROOT = ROOT / "backend" / "storage" / "media"
+
+#: How long one shot dissolves into the next. Long enough to read as a film, short enough
+#: that a forty-five second short does not spend its time in transitions.
+TRANSITION_SECONDS = 0.4
+
+#: How long one scene's motion may take, and how often the task is asked about.
+MOTION_DEADLINE_SECONDS = 600
+MOTION_POLL_SECONDS = 5
 
 #: Recorded on every asset produced from locally synthesised placeholder frames. The QC gate
 #: refuses to pass such an asset for publication: placeholder cards are not real footage.
@@ -167,6 +176,119 @@ def _concatenate_audio(ffmpeg_exe: str, segments: list[Path], work_dir: Path) ->
     return output
 
 
+def _generate_motion(
+    adapter: VideoProvider, scene: dict[str, Any], still: Path, seconds: float
+) -> tuple[bytes, dict[str, Any]]:
+    """Ask the scene's model to move its approved still, and wait for the clip.
+
+    The still is the first frame, so the picture the Director approves is the picture that
+    moves. A task that has not finished by the deadline raises — nothing invents a shot.
+    """
+    prompt = " ".join(str(scene.get("visual_prompt") or "").split())[:900]
+    job_id = asyncio.run(
+        adapter.create_generation(
+            prompt,
+            image_ref=still.read_bytes(),
+            duration_seconds=seconds,
+            aspect_ratio="9:16",
+        )
+    )
+    deadline = time.monotonic() + MOTION_DEADLINE_SECONDS
+    while True:
+        result = asyncio.run(adapter.get_generation_status(job_id))
+        if result.status == "COMPLETED" and result.video_bytes:
+            return result.video_bytes, result.raw_response
+        if result.status == "FAILED":
+            code = (result.raw_response or {}).get("failure_code")
+            raise MediaProviderError(f"the motion task failed ({code or 'no reason given'})")
+        if time.monotonic() >= deadline:
+            raise MediaProviderError("the motion task did not finish before the deadline")
+        time.sleep(MOTION_POLL_SECONDS)
+
+
+def _dissolve_command(
+    ffmpeg_exe: str,
+    stills: list[Path],
+    clips: list[Path | None],
+    scenes_data: list[dict[str, Any]],
+    audio_file: Path,
+    output_mp4: Path,
+) -> list[str]:
+    """One ffmpeg call: every scene as a shot of its own length, dissolved into the next.
+
+    Each shot is made one transition longer than its narration, and each dissolve consumes
+    exactly that overlap, so shot N still starts where scene N's words start — the picture
+    never drifts away from the voice.
+    """
+    args = [ffmpeg_exe, "-y"]
+    filters: list[str] = []
+    for index, scene in enumerate(scenes_data):
+        span = float(scene["duration_seconds"]) + TRANSITION_SECONDS
+        clip = clips[index] if index < len(clips) else None
+        if clip is not None:
+            # A generated clip: held to the shot's length if it came back shorter.
+            args += ["-i", str(clip)]
+            filters.append(
+                f"[{index}:v]scale=1080:1920:force_original_aspect_ratio=increase,"
+                f"crop=1080:1920,fps=30,setpts=PTS-STARTPTS,"
+                f"tpad=stop_mode=clone:stop_duration={span:.3f},trim=duration={span:.3f},"
+                f"setpts=PTS-STARTPTS,format=yuv420p[v{index}]"
+            )
+        else:
+            # No motion for this scene: the still pushes in slowly, so it still reads as a shot.
+            frames = max(1, int(round(span * 30)))
+            still = stills[index] if index < len(stills) else stills[-1]
+            args += ["-loop", "1", "-t", f"{span:.3f}", "-i", str(still)]
+            filters.append(
+                f"[{index}:v]scale=2160:3840:force_original_aspect_ratio=increase,"
+                f"crop=2160:3840,zoompan=z='min(1+0.12*on/{frames},1.12)':d=1:"
+                f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=30,"
+                f"trim=duration={span:.3f},setpts=PTS-STARTPTS,format=yuv420p[v{index}]"
+            )
+    args += ["-i", str(audio_file)]
+
+    chain = "".join(f"{f};" for f in filters)
+    current = "v0"
+    offset = 0.0
+    for index in range(1, len(scenes_data)):
+        offset += float(scenes_data[index - 1]["duration_seconds"])
+        nxt = f"x{index}"
+        chain += (
+            f"[{current}][v{index}]xfade=transition=fade:"
+            f"duration={TRANSITION_SECONDS:.3f}:offset={offset:.3f}[{nxt}];"
+        )
+        current = nxt
+    total = sum(float(s["duration_seconds"]) for s in scenes_data)
+    chain += f"[{current}]trim=duration={total:.3f},setpts=PTS-STARTPTS[vout]"
+
+    args += [
+        "-filter_complex",
+        chain,
+        "-map",
+        "[vout]",
+        "-map",
+        f"{len(scenes_data)}:a",
+        "-af",
+        "apad",
+        "-t",
+        f"{total:.3f}",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-movflags",
+        "+faststart",
+        str(output_mp4),
+    ]
+    return args
+
+
 def assemble_video_job(
     engine: Engine,
     storyboard_id: str,
@@ -176,6 +298,7 @@ def assemble_video_job(
     image_adapter: ImageProvider | None = None,
     tts_adapter: TTSProvider | None = None,
     tts_adapter_for_scene: Callable[[dict[str, Any]], TTSProvider | None] | None = None,
+    video_adapter_for_scene: Callable[[dict[str, Any]], VideoProvider | None] | None = None,
     production_plan: dict[str, Any] | None = None,
 ) -> dict:
     """Run end-to-end video assembly and provenance recording.
@@ -185,6 +308,11 @@ def assemble_video_job(
     the asset is recorded under the placeholder provider name — which QC blocks from
     publication. The recorded name always says which generator actually made the frames, so a
     render can never be mistaken for publishable content it is not.
+
+    ``video_adapter_for_scene`` resolves the motion model for a scene. With one, the scene's
+    approved still is the first frame of a generated clip and the film moves; without one the
+    still becomes a slow push, and either way the shots dissolve into one another instead of
+    cutting. What made each shot is recorded per scene, so a film can always be read back.
 
     ``tts_adapter_for_scene`` resolves a voice per scene (a recurring character's locked
     voice, or a scene override); when it returns None for a scene, ``tts_adapter`` is used,
@@ -267,6 +395,7 @@ def assemble_video_job(
     production["image"] = {
         "provider": visual_source,
         "model": getattr(visual_adapter, "model", None),
+        "integration_id": getattr(visual_adapter, "integration_id", None),
     }
     # One real narrator for the whole video, or the placeholder: a video whose narration is
     # partly placeholder is labelled placeholder as a whole, so QC blocks it.
@@ -346,6 +475,48 @@ def assemble_video_job(
         frame_files = generated_frames
     total_duration = sum(s["duration_seconds"] for s in scenes_data)
 
+    # The motion pass runs after the narration, because a shot lasts as long as its words and
+    # that length is measured, not planned. A scene whose model refuses is a still that pushes
+    # slowly; the film is still a film.
+    motion_clips: list[Path | None] = [None] * len(scenes_data)
+    motion_seconds = 0.0
+    if image_adapter is not None and video_adapter_for_scene is not None and ffmpeg_exe:
+        for position, (scene, still) in enumerate(zip(scenes_data, frame_files, strict=False)):
+            adapter = video_adapter_for_scene(scene)
+            if adapter is None:
+                continue
+            wanted = float(scene["duration_seconds"]) + TRANSITION_SECONDS
+            record: dict[str, Any] = {
+                "provider": getattr(adapter, "PROVIDER_NAME", "unknown"),
+                "model": getattr(adapter, "model", None),
+                "integration_id": getattr(adapter, "integration_id", None),
+                "asked_seconds": round(wanted, 3),
+            }
+            try:
+                clip_bytes, raw = _generate_motion(adapter, scene, still, wanted)
+                clip = work_dir / f"motion_{scene['scene_index']:02d}.mp4"
+                clip.write_bytes(clip_bytes)
+                motion_clips[position] = clip
+                record["bytes"] = len(clip_bytes)
+                record["task"] = (raw or {}).get("task_status")
+                motion_seconds += wanted
+            except (MediaProviderError, MediaProviderNotConfigured, ValueError, OSError) as exc:
+                record["refused"] = str(exc)[:200]
+                logger.info(
+                    "motion_not_generated",
+                    extra={"scene_index": scene["scene_index"], "reason": str(exc)[:160]},
+                )
+            for entry in production["scenes"]:
+                if entry.get("scene_index") == scene["scene_index"]:
+                    entry["motion"] = record
+                    break
+    production["motion"] = {
+        "clips": sum(1 for clip in motion_clips if clip is not None),
+        "scenes": len(scenes_data),
+        "seconds": round(motion_seconds, 3),
+        "transition_seconds": TRANSITION_SECONDS,
+    }
+
     audio_file = work_dir / "master_audio.wav"
     if all_real:
         if not ffmpeg_exe:
@@ -389,45 +560,53 @@ def assemble_video_job(
         _fail_job(reason, reason)
         raise RenderEngineUnavailable(reason)
 
-    concat_list = work_dir / "inputs.txt"
-    with open(concat_list, "w", encoding="utf-8") as f:
-        for frame_path, scene in zip(frame_files, scenes_data, strict=True):
-            f.write(f"file '{frame_path.name}'\n")
-            f.write(f"duration {scene['duration_seconds']}\n")
-        if frame_files:
-            f.write(f"file '{frame_files[-1].name}'\n")
+    # One shot per scene — a generated clip, or the still given a slow push — and the shots
+    # dissolve into one another. A film reads as a film; a slideshow reads as a slideshow, and
+    # the Owner's first short was the second thing.
+    if image_adapter is not None and frame_files:
+        command_args = _dissolve_command(
+            ffmpeg_exe, frame_files, motion_clips, scenes_data, audio_file, output_mp4
+        )
+    else:
+        concat_list = work_dir / "inputs.txt"
+        with open(concat_list, "w", encoding="utf-8") as f:
+            for frame_path, scene in zip(frame_files, scenes_data, strict=True):
+                f.write(f"file '{frame_path.name}'\n")
+                f.write(f"duration {scene['duration_seconds']}\n")
+            if frame_files:
+                f.write(f"file '{frame_files[-1].name}'\n")
 
-    command_args = [
-        ffmpeg_exe,
-        "-y",
-        "-f",
-        "concat",
-        "-safe",
-        "0",
-        "-i",
-        str(concat_list),
-        "-i",
-        str(audio_file),
-        "-vf",
-        "scale=1080:1920,fps=30,format=yuv420p",
-        # Narration from the local TTS placeholder is usually shorter than the storyboard
-        # timeline; pad it with silence rather than truncating the video to the audio.
-        "-af",
-        "apad",
-        "-t",
-        f"{total_duration:.3f}",
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "192k",
-        "-movflags",
-        "+faststart",
-        str(output_mp4),
-    ]
+        command_args = [
+            ffmpeg_exe,
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(concat_list),
+            "-i",
+            str(audio_file),
+            "-vf",
+            "scale=1080:1920,fps=30,format=yuv420p",
+            # Narration from the local TTS placeholder is usually shorter than the storyboard
+            # timeline; pad it with silence rather than truncating the video to the audio.
+            "-af",
+            "apad",
+            "-t",
+            f"{total_duration:.3f}",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-movflags",
+            "+faststart",
+            str(output_mp4),
+        ]
     try:
         res = subprocess.run(
             command_args,

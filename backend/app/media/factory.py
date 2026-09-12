@@ -13,6 +13,8 @@ assemble a video to look at, but it may never present one as publishable content
 
 from __future__ import annotations
 
+from typing import TypeVar
+
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
@@ -56,6 +58,23 @@ def _runway_metadata(resource: ProviderResource | None) -> dict:
     return metadata
 
 
+def _from_connection(adapter: _A, integration_id: str) -> _A:
+    """Mark an adapter with the connection it was built from.
+
+    The books price a scene by the model that made it, and a model belongs to a connection;
+    without this the Accountant sees a still and a shot with no owner and reports them as
+    unpriced. Set here, where the connection is known, rather than passed through every call.
+    """
+    if adapter is not None:
+        # The adapters are vendor classes, not a studio protocol; the mark is an attribute
+        # the Accountant reads and nothing else depends on.
+        adapter.integration_id = integration_id  # type: ignore[attr-defined]
+    return adapter
+
+
+_A = TypeVar("_A")
+
+
 def image_provider(engine: Engine, vault: CredentialVault) -> ImageProvider | None:
     """The image generator selected for the "image" purpose, if it has been verified."""
     with Session(engine) as session:
@@ -74,12 +93,18 @@ def image_provider(engine: Engine, vault: CredentialVault) -> ImageProvider | No
             config = {"model": resource.remote_id}
             metadata = _runway_metadata(resource)
         secrets = vault.decrypt(row.encrypted_secrets)
+        row_id = row.id
 
     try:
         if kind == "openai_media":
-            return OpenAIImageAdapter(secrets.get("api_key", ""), config.get("model"))
+            return _from_connection(
+                OpenAIImageAdapter(secrets.get("api_key", ""), config.get("model")), row_id
+            )
         if kind == "runway":
-            return RunwayImageAdapter(secrets.get("api_key", ""), config.get("model"), metadata)
+            return _from_connection(
+                RunwayImageAdapter(secrets.get("api_key", ""), config.get("model"), metadata),
+                row_id,
+            )
     except MediaProviderNotConfigured:
         return None
     # A vendor with no adapter yet is not an error and not a silent substitution: the studio
@@ -112,9 +137,14 @@ def image_provider_for(
             config["model"] = resolved["model_id"]
     try:
         if kind == "openai_media":
-            return OpenAIImageAdapter(secrets.get("api_key", ""), config.get("model"))
+            return _from_connection(
+                OpenAIImageAdapter(secrets.get("api_key", ""), config.get("model")), row.id
+            )
         if kind == "runway":
-            return RunwayImageAdapter(secrets.get("api_key", ""), config.get("model"), metadata)
+            return _from_connection(
+                RunwayImageAdapter(secrets.get("api_key", ""), config.get("model"), metadata),
+                row.id,
+            )
     except MediaProviderNotConfigured:
         return None
     return None
@@ -201,7 +231,10 @@ def video_provider_for(
         metadata = _runway_metadata(resource)
     try:
         if kind == "runway":
-            return RunwayVideoAdapter(secrets.get("api_key", ""), resource.remote_id, metadata)
+            return _from_connection(
+                RunwayVideoAdapter(secrets.get("api_key", ""), resource.remote_id, metadata),
+                row.id,
+            )
     except MediaProviderNotConfigured:
         return None
     return None

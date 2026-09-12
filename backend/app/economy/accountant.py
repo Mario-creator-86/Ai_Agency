@@ -101,31 +101,65 @@ def record_render_costs(
         for scene in scenes:
             if not isinstance(scene, dict):
                 continue
-            integration_id = scene.get("integration_id") or (
+            index = scene.get("scene_index")
+            voice_integration = scene.get("integration_id") or (
                 (production.get("voice") or {}).get("integration_id")
             )
-            model_id = scene.get("model_id")
-            characters = int(scene.get("characters") or 0)
-            if not integration_id or not model_id or not characters:
-                continue
-            estimate = estimate_cost_usd(session, integration_id, model_id, characters)
-            if estimate is None or estimate <= 0:
-                unpriced += 1
-                continue
-            integration = session.get(Integration, integration_id)
-            priced.append(
-                {
-                    "provider": integration.kind if integration else "unknown",
-                    "reference": f"render:{render_job_id}:scene:{scene.get('scene_index')}",
-                    "amount": f"{estimate:.6f}",
-                    "attribution": {
-                        "render_job_id": render_job_id,
-                        "scene_index": scene.get("scene_index"),
-                        "model_id": model_id,
-                        "characters": characters,
-                    },
-                }
-            )
+            # Three things can be bought for one scene, each by its own model and unit:
+            # the narration, the still, and the seconds of film the still was moved for.
+            raw_motion = scene.get("motion")
+            motion: dict[str, Any] = raw_motion if isinstance(raw_motion, dict) else {}
+            raw_image = production.get("image")
+            image: dict[str, Any] = raw_image if isinstance(raw_image, dict) else {}
+            wanted: list[tuple[str, Any, Any, dict[str, float]]] = [
+                (
+                    "voice",
+                    voice_integration,
+                    scene.get("model_id"),
+                    {"characters": float(scene.get("characters") or 0)},
+                ),
+                (
+                    "image",
+                    image.get("integration_id"),
+                    image.get("model"),
+                    {"images": 0.0 if scene.get("still") is False else 1.0},
+                ),
+                (
+                    "motion",
+                    motion.get("integration_id"),
+                    motion.get("model"),
+                    {"seconds": float(motion.get("asked_seconds") or 0)},
+                ),
+            ]
+            for unit, integration_id, model_id, quantity in wanted:
+                if not integration_id or not model_id or not any(quantity.values()):
+                    continue
+                estimate = estimate_cost_usd(
+                    session,
+                    integration_id,
+                    model_id,
+                    characters=int(quantity.get("characters", 0)),
+                    images=int(quantity.get("images", 0)),
+                    seconds=quantity.get("seconds", 0.0),
+                )
+                if estimate is None or estimate <= 0:
+                    unpriced += 1
+                    continue
+                integration = session.get(Integration, integration_id)
+                priced.append(
+                    {
+                        "provider": integration.kind if integration else "unknown",
+                        "reference": f"render:{render_job_id}:scene:{index}:{unit}",
+                        "amount": f"{estimate:.6f}",
+                        "attribution": {
+                            "render_job_id": render_job_id,
+                            "scene_index": index,
+                            "unit": unit,
+                            "model_id": model_id,
+                            **quantity,
+                        },
+                    }
+                )
     recorded = 0
     for item in priced:
         try:

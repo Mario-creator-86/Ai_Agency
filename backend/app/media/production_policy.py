@@ -310,9 +310,21 @@ def rank_candidates(
 
 
 def estimate_cost_usd(
-    session: Session, integration_id: str, model_id: str | None, characters: int
+    session: Session,
+    integration_id: str,
+    model_id: str | None,
+    *,
+    characters: int = 0,
+    images: int = 0,
+    seconds: float = 0.0,
 ) -> float | None:
-    """A cost estimate from research pricing, or None when no price is recorded."""
+    """A cost estimate from recorded pricing, or None when no price covers what was used.
+
+    Three units, because a scene can cost in three ways: narration by the thousand
+    characters, a still by the image, a shot by the second of film. Only the units with a
+    recorded price are counted; a model priced in none returns None and is reported as
+    unpriced rather than counted as free.
+    """
     if not model_id:
         return None
     row = session.scalar(
@@ -324,10 +336,18 @@ def estimate_cost_usd(
     )
     if row is None or not isinstance(row.pricing, dict):
         return None
-    price = row.pricing.get("per_1k_characters_usd")
-    if not isinstance(price, int | float):
-        return None
-    return round(float(price) * characters / 1000.0, 6)
+    total = 0.0
+    priced = False
+    for key, quantity, per in (
+        ("per_1k_characters_usd", characters, 1000.0),
+        ("per_image_usd", images, 1.0),
+        ("per_second_usd", seconds, 1.0),
+    ):
+        price = row.pricing.get(key)
+        if isinstance(price, int | float) and quantity:
+            total += float(price) * float(quantity) / per
+            priced = True
+    return round(total, 6) if priced else None
 
 
 # ----------------------------------------------------------------------------- resolution

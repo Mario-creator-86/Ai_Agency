@@ -1,5 +1,29 @@
 # Changelog
 
+## A short that moves — 2026-09-12
+
+The Owner watched the first finished film and said what it was: "sunt doar niste imagini
+lipite… Eu vreau un filmulet, cursiv." He was right. Every scene was a still held on screen
+for the length of its narration, joined by hard cuts. The account has sixteen video models,
+six of them priced per second, and the production hierarchy already resolved a `video`
+choice for every scene — the assembler simply never asked for it.
+
+- **A shot per scene, and the shots dissolve** (`_dissolve_command`): every scene becomes a
+  clip of its own length, one ffmpeg call fades each into the next, and each dissolve
+  consumes only the overlap the shot was made longer by — so shot N still starts exactly
+  where scene N's words start, and the film is as long as the narration it carries.
+- **The approved still is the first frame of generated motion** (`_generate_motion`): the
+  scene's still goes to the scene's video model as `promptImage` with the scene's length, and
+  the clip that comes back is the shot. A model that refuses leaves that scene as a slow push
+  into the still — a shot, not a held frame — and the film is still made; what happened is
+  recorded per scene in the render job.
+- **What a scene costs is priced in its own unit**: narration by the thousand characters, the
+  still by the image, motion by the second of film (`estimate_cost_usd`, `record_render_costs`).
+  An adapter now carries the connection it was built from, so the Accountant can find the
+  price at all; a unit with no recorded price is reported unpriced, never counted as free.
+  At the account's prices a forty-five second short costs about $0.45–$1.15 in motion.
+- Tests: `tests/test_motion.py` (4).
+
 ## The Director could not see, and nothing said so — 2026-09-12
 
 The clean studio produced a real film: 45.6 s, 1080×1920, eight scenes on seven claims from
