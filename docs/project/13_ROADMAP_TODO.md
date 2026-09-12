@@ -12,6 +12,23 @@ Implementation 2026-09-09: Phase 0 acceptance verified. See [VERIFICATION.md](VE
 >   Update 2026-09-12: the Researcher proposes topics and names pages; the studio finds pages
 >   through each authorised site's own search address (OpenSearch, recorded by the Owner) and
 >   reads them; the Fact Checker verifies claims against the fetched text.
+
+### Voice stays its own connection (decided 2026-09-12)
+
+Runway's API does expose ElevenLabs models — `eleven_v3` and `eleven_multilingual_v2` on
+`/v1/text_to_speech`, plus dubbing, isolation and sound effects — and the Owner's tier
+includes them, so one connection for picture and voice is technically possible. It was
+examined and set aside, for reasons that are facts rather than preferences:
+
+- `eleven_v3` there accepts only Runway's own preset voices (49 names), not an ElevenLabs
+  `voice_id`; the character identity locks bind ElevenLabs voices, which have no equivalent.
+- Each `eleven_*` model on Runway allows 50 generations a day; an eight-scene film spends
+  eight, so roughly six films a day. Direct ElevenLabs limits characters, not calls.
+- Runway bills in credits (measured: about sixteen credits a second of generated video),
+  ElevenLabs in characters; which is cheaper for narration is not known without measuring.
+
+The Owner's decision: keep the ElevenLabs connection separate. Revisit only with a measured
+cost comparison, and never at the price of a locked character's voice.
 > - **Phase 5** — FFmpeg now produces a real 1080x1920 H.264 file, but there is no image provider
 >   and no TTS provider, so the frames are placeholders and QC blocks them from publication.
 >   Character continuity is unimplemented. Acceptance ("provenance-backed media") open.
