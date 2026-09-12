@@ -94,6 +94,11 @@ class Settings(BaseSettings):
     #: spent nothing while twenty-one dollars went out.
     motion_budget_usd: float = 12.0
 
+    #: How long a short should be. The Owner's answer: about thirty seconds, and the story
+    #: decides — twenty-four when that is the film, thirty-four when a premium story needs it.
+    #: The writer is briefed with it, and the story review measures the narration against it.
+    target_video_seconds: int = 30
+
     #: How many scenes of a render may be generated as motion. None means every scene; a
     #: small number is what a test render uses, so seeing how a film reads costs one shot
     #: instead of eight. The Owner's instruction: "la teste redam doar minimul".

@@ -26,7 +26,14 @@ import re
 from typing import Any
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
@@ -36,6 +43,7 @@ from app.agents.messages import post_message
 from app.agents.services import run_agent_task
 from app.analytics.models import ContentStrategy
 from app.config import Settings
+from app.factual.editorial import IDEA_WEIGHTS, composite, idea_rejections
 from app.factual.models import SourceSnapshot, TopicIdea
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.providers.registry import ProviderRegistry
@@ -53,9 +61,18 @@ logger = logging.getLogger("studio.research.agent")
 RESEARCHER_ROLE = "LeadResearcher"
 TEMPLATE_VERSION = "research-agent-v1"
 
-#: The runbook's scoring criteria (§3). The proposer scores each 0..1; the composite is their
-#: mean, so a candidate cannot be pushed up by one strong number alone.
-CRITERIA = ("interest", "credibility", "source_availability", "visual_potential", "novelty", "cost")
+#: The studio's editorial dimensions, and the older names they replaced. Six equal criteria
+#: had the studio proposing whatever looked good; the weights and the floors now live in
+#: `app.factual.editorial`, because whether an idea is worth producing is an editorial
+#: question, not a research one. Legacy names are still read so an answer in the old shape is
+#: scored on what it did say rather than thrown away.
+CRITERIA = tuple(IDEA_WEIGHTS)
+LEGACY_SCORE_NAMES = {
+    "interest": ("hook_potential", "curiosity"),
+    "credibility": ("fact_confidence",),
+    "novelty": ("originality",),
+    "cost": ("production_feasibility",),
+}
 
 #: Two titles this similar are the same idea. Measured on word sets, so re-ordering or a
 #: synonym in the middle does not smuggle yesterday's topic back in as new.
@@ -112,16 +129,81 @@ def _tested_hosts(settings: Settings, engine: Engine) -> list[str]:
 
 
 class TopicScores(BaseModel):
+    """What the proposer thinks of a candidate, on the dimensions that decide a film.
+
+    A score is an opinion about a candidate and never evidence about the world. The weights
+    are the studio's (`IDEA_WEIGHTS`): hook, payoff, story and fact confidence carry most,
+    because a beautiful topic with nothing to say is what the old even average kept choosing.
+    """
+
     model_config = ConfigDict(extra="ignore")
-    interest: float = Field(ge=0, le=1)
-    credibility: float = Field(ge=0, le=1)
-    source_availability: float = Field(ge=0, le=1)
+    hook_potential: float = Field(ge=0, le=1)
+    curiosity: float = Field(ge=0, le=1)
+    story_potential: float = Field(ge=0, le=1)
+    payoff_strength: float = Field(ge=0, le=1)
     visual_potential: float = Field(ge=0, le=1)
-    novelty: float = Field(ge=0, le=1)
-    cost: float = Field(ge=0, le=1)
+    fact_confidence: float = Field(ge=0, le=1)
+    channel_fit: float = Field(ge=0, le=1)
+    originality: float = Field(ge=0, le=1)
+    shareability: float = Field(ge=0, le=1)
+    retention_potential: float = Field(ge=0, le=1)
+    cta_opportunity: float = Field(ge=0, le=1)
+    production_feasibility: float = Field(ge=0, le=1)
+    #: Whether the authorised sites can actually evidence this. Not an editorial dimension —
+    #: it decides whether the topic can be researched at all, which retrieval reads.
+    source_availability: float = Field(default=0.5, ge=0, le=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _read_legacy_names(cls, data: Any) -> Any:
+        """Accept an answer in the older six-criteria shape by mapping what it did say."""
+        if not isinstance(data, dict):
+            return data
+        filled = dict(data)
+        for legacy, replacements in LEGACY_SCORE_NAMES.items():
+            value = filled.get(legacy)
+            if not isinstance(value, int | float):
+                continue
+            for key in replacements:
+                filled.setdefault(key, value)
+        return filled
 
     def composite(self) -> float:
-        return round(sum(getattr(self, key) for key in CRITERIA) / len(CRITERIA), 4)
+        return composite(self.model_dump())
+
+
+class TopicThesis(BaseModel):
+    """Why this video should exist, which is the question nothing in the studio used to ask.
+
+    "The James Webb telescope discovered something interesting" is not an idea. "A newly
+    observed exoplanet is unusual, and the video ends by revealing the one characteristic
+    astronomers care about" is. Every field here is part of that difference, and
+    `idea_rejections` refuses a candidate that cannot fill them.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+    core_fact: str = Field(default="", max_length=600)
+    why_it_matters: str = Field(default="", max_length=600)
+    why_now: str = Field(default="", max_length=400)
+    payoff: str = Field(default="", max_length=600)
+    hook: str = Field(default="", max_length=400)
+    ending: str = Field(default="", max_length=400)
+    cta: str = Field(default="", max_length=300)
+    cta_kind: str = Field(default="", max_length=20)
+    channel_fit: str = Field(default="", max_length=300)
+    visual_potential: str = Field(default="", max_length=600)
+    risk: str = Field(default="", max_length=600)
+    expected_seconds: float = Field(default=30.0, ge=0, le=600)
+
+    _clip_fact = field_validator("core_fact", mode="before")(clipped(600))
+    _clip_matters = field_validator("why_it_matters", mode="before")(clipped(600))
+    _clip_now = field_validator("why_now", mode="before")(clipped(400))
+    _clip_payoff = field_validator("payoff", mode="before")(clipped(600))
+    _clip_hook = field_validator("hook", mode="before")(clipped(400))
+    _clip_ending = field_validator("ending", mode="before")(clipped(400))
+    _clip_cta = field_validator("cta", mode="before")(clipped(300))
+    _clip_visual = field_validator("visual_potential", mode="before")(clipped(600))
+    _clip_risk = field_validator("risk", mode="before")(clipped(600))
 
 
 class TopicCandidate(BaseModel):
@@ -132,6 +214,7 @@ class TopicCandidate(BaseModel):
     target_audience: str = Field(default="general", max_length=300)
     expected_hosts: list[str] = Field(default_factory=list, max_length=6)
     scores: TopicScores
+    thesis: TopicThesis = Field(default_factory=TopicThesis)
 
     _clip_title = field_validator("title", mode="before")(clipped(200))
     _clip_topic = field_validator("topic", mode="before")(clipped(600))
@@ -153,23 +236,53 @@ class TopicProposal(BaseModel):
 
 
 _IDEA_INSTRUCTIONS = (
-    "Propose {wanted} candidate topics for the factual shorts channel. Each must be something "
-    "the sites listed below could actually evidence — you may only name hosts from that list, "
-    "and the studio will fetch the pages itself, so a site that cannot support the topic is a "
-    "topic that dies at verification. Do not repeat anything in the recent topics list, and do "
-    "not restate one idea in different words. Score each candidate 0..1 on the studio's "
-    "criteria: interest (would a viewer stop scrolling), credibility (can it be sourced), "
-    "source_availability (is it on the authorised sites), visual_potential (is there something "
-    "to show), novelty (has the studio done it), cost (1 means cheap to produce). You are also "
-    "given what people in the studio's country are searching for right now and what measured "
-    "well or badly on the studio's own channels: a trend is a hook, not a source — use it only "
-    "where the authorised sites can evidence it — and prefer the kinds of topic that measured "
-    "well over the kinds that did not. Begin your reply with the JSON object itself — no "
-    "analysis or preamble before it. Return only "
-    'JSON: {{"candidates": [{{"title": "...", "topic": "...", "angle": "...", '
-    '"target_audience": "...", "expected_hosts": ["..."], "scores": {{"interest": 0.0, '
-    '"credibility": 0.0, "source_availability": 0.0, "visual_potential": 0.0, "novelty": 0.0, '
-    '"cost": 0.0}}}}]}}.\n'
+    "Propose {wanted} candidate topics for the factual shorts channel, each about thirty "
+    "seconds long. A topic is not an idea. An idea answers why the video should exist: what "
+    "the one fact is, why anyone should care, what makes a viewer stop scrolling in the first "
+    "three seconds, what they know or feel at the end, and how the film closes. "
+    '"The James Webb telescope discovered something interesting" is not an idea. "A newly '
+    "observed exoplanet is unusual, and the film ends by revealing the one characteristic "
+    'astronomers care about" is. "Napoleon facts" is not an idea. "Most people picture '
+    "Napoleon as unusually short; the film starts from that assumption, shows where the myth "
+    'came from, and ends with his actual height for his time" is.\n\n'
+    "Each candidate must be something the sites listed below could actually evidence — you "
+    "may only name hosts from that list, and the studio fetches the pages itself, so a site "
+    "that cannot support the topic is a topic that dies at verification. Do not repeat "
+    "anything in the recent topics list, and do not restate one idea in different words. Do "
+    "not propose a topic because it is trending, recent, or would look beautiful: a trend is "
+    "a hook, not a source, and a film with nothing to say fails however good the pictures "
+    "are. You are given what people in the studio's country are searching for and what "
+    "measured well or badly on the studio's own channels; prefer the kinds of topic that "
+    "measured well.\n\n"
+    "Score each candidate 0..1, honestly — a low score on a real weakness is more useful "
+    "than a high one everywhere: hook_potential (would a viewer stop scrolling), curiosity "
+    "(does it open an information gap), story_potential (is there a thirty-second story, not "
+    "a list of facts), payoff_strength (is the ending worth the wait), visual_potential (is "
+    "there something to show, not just to say), fact_confidence (can every statement be "
+    "sourced on the authorised sites), channel_fit, originality, shareability, "
+    "retention_potential (would they watch to the end), cta_opportunity (is there a natural "
+    "question to leave them with), production_feasibility (1 means easy), source_availability "
+    "(is the evidence on the authorised sites).\n\n"
+    "Begin your reply with the JSON object itself — no analysis or preamble before it. "
+    'Return only JSON: {{"candidates": [{{"title": "...", "topic": "...", "angle": "...", '
+    '"target_audience": "...", "expected_hosts": ["..."], '
+    '"scores": {{"hook_potential": 0.0, "curiosity": 0.0, "story_potential": 0.0, '
+    '"payoff_strength": 0.0, "visual_potential": 0.0, "fact_confidence": 0.0, '
+    '"channel_fit": 0.0, "originality": 0.0, "shareability": 0.0, '
+    '"retention_potential": 0.0, "cta_opportunity": 0.0, "production_feasibility": 0.0, '
+    '"source_availability": 0.0}}, '
+    '"thesis": {{"core_fact": "the one verified fact the film rests on", '
+    '"why_it_matters": "why this is worth thirty seconds of a stranger\'s life", '
+    '"why_now": "why today rather than any day", '
+    '"payoff": "what the viewer knows, feels or understands at the end", '
+    '"hook": "the first sentence, which must open a gap the film then closes", '
+    '"ending": "how the film closes", '
+    '"cta": "a closing line that belongs to this story and invites a comment", '
+    '"cta_kind": "CURIOSITY|DECISION|KNOWLEDGE|DEBATE|FOLLOW|SERIES|COMMENT", '
+    '"channel_fit": "why it suits this channel", '
+    '"visual_potential": "what is actually shown, shot by shot in one line", '
+    '"risk": "what could be wrong, unverifiable or misread", '
+    '"expected_seconds": 30}}}}]}}.\n'
 )
 
 
@@ -336,6 +449,47 @@ def propose_topics(
                 continue
             scores = candidate.scores
             identifier = str(uuid4())
+            # The editorial rules, before anyone is asked to choose: an idea with no hook, no
+            # payoff, no reason to exist or a hook its ending does not answer is refused here.
+            # It is kept with its reasons rather than dropped, because what the studio turned
+            # down is also what it learns from (and what the Owner can argue with).
+            refusals = idea_rejections(candidate.thesis.model_dump(), scores.model_dump())
+            if refusals:
+                event = append_event(
+                    session,
+                    "factual.topic_refused",
+                    "topic_idea",
+                    identifier,
+                    1,
+                    {"title": candidate.title, "reasons": refusals[:4]},
+                    correlation,
+                )
+                session.add(
+                    TopicIdea(
+                        id=identifier,
+                        title=candidate.title,
+                        topic=candidate.topic,
+                        angle=candidate.angle,
+                        target_audience=candidate.target_audience or "general",
+                        novelty_score=scores.originality,
+                        status="REJECTED",
+                        created_at=utc_now(),
+                        selected_at=None,
+                        event_id=event.event_id,
+                        scores_json={**scores.model_dump(), "composite": scores.composite()},
+                        source_plan_json=list(candidate.expected_hosts),
+                        proposed_by_agent_id=researcher_id,
+                        thesis_json=candidate.thesis.model_dump(),
+                        rejection_reasons_json=refusals,
+                        decided_by="editorial rules",
+                        decision_notes="; ".join(refusals)[:2000],
+                    )
+                )
+                existing.append(candidate.title)
+                rejected.append(
+                    {"title": candidate.title, "why": "editorial: " + "; ".join(refusals[:2])}
+                )
+                continue
             event = append_event(
                 session,
                 "factual.topic_proposed",
@@ -352,7 +506,7 @@ def propose_topics(
                     topic=candidate.topic,
                     angle=candidate.angle,
                     target_audience=candidate.target_audience or "general",
-                    novelty_score=scores.novelty,
+                    novelty_score=scores.originality,
                     status="PROPOSED",
                     created_at=utc_now(),
                     selected_at=None,
@@ -360,6 +514,8 @@ def propose_topics(
                     scores_json={**scores.model_dump(), "composite": scores.composite()},
                     source_plan_json=list(candidate.expected_hosts),
                     proposed_by_agent_id=researcher_id,
+                    thesis_json=candidate.thesis.model_dump(),
+                    rejection_reasons_json=[],
                 )
             )
             existing.append(candidate.title)
@@ -369,6 +525,8 @@ def propose_topics(
                     "title": candidate.title,
                     "composite": scores.composite(),
                     "expected_hosts": list(candidate.expected_hosts),
+                    "payoff": candidate.thesis.payoff,
+                    "hook": candidate.thesis.hook,
                 }
             )
         if stored:

@@ -59,6 +59,8 @@ def test_a_field_longer_than_the_schema_allows_is_clipped_not_refused():
             "topic": "T" * 900,
             "angle": "A" * 3000,
             "target_audience": "Space enthusiasts " * 30,
+            # The older six names still map onto the dimensions they correspond to, so an
+            # answer in the previous shape is scored on what it did say.
             "scores": {
                 "interest": 0.9,
                 "credibility": 0.9,
@@ -66,11 +68,19 @@ def test_a_field_longer_than_the_schema_allows_is_clipped_not_refused():
                 "visual_potential": 0.8,
                 "novelty": 0.8,
                 "cost": 0.3,
+                "story_potential": 0.7,
+                "payoff_strength": 0.8,
+                "channel_fit": 0.8,
+                "shareability": 0.6,
+                "retention_potential": 0.7,
+                "cta_opportunity": 0.6,
             },
         }
     )
     assert len(candidate.topic) == 600 and len(candidate.angle) == 2000
     assert len(candidate.target_audience) == 300
+    assert candidate.scores.hook_potential == 0.9, "interest still names the hook"
+    assert candidate.scores.production_feasibility == 0.3, "cost still names the feasibility"
 
     episode = _parse_episode(
         json.dumps(

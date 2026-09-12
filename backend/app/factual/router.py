@@ -7,6 +7,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.orm import Session
 
 from app.factual.agent_pipeline import (
     NoIndependentVerifier,
@@ -47,6 +48,7 @@ from app.factual.services import (
     propose_topic_idea,
     verify_claim,
 )
+from app.factual.story_review import StoryReviewError, latest_review, review_story
 from app.research.retrieval import RateLimited, RetrievalError
 from app.research.service import (
     NOT_CONFIGURED_DETAIL,
@@ -438,6 +440,48 @@ def create_factual_router() -> APIRouter:
         topic_id: Annotated[str | None, Query(max_length=36)] = None,
     ) -> dict:
         return {"scripts": list_scripts(request.app.state.engine, topic_id=topic_id)}
+
+    @router.post("/scripts/{script_id}/story-review")
+    def run_story_review(
+        request: Request,
+        script_id: Annotated[str, Path(min_length=36, max_length=36)],
+    ) -> dict:
+        """Read the story before anything is generated, and record the verdict.
+
+        The runbook does this on its own for every script it writes. This is the same review
+        for a script the Owner wrote or approved by hand — nothing reaches the prompt agent
+        or the render until it has passed.
+        """
+        try:
+            return review_story(
+                request.app.state.engine,
+                getattr(request.app.state, "registry", None),
+                script_id,
+            )
+        except StoryReviewError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @router.get("/scripts/{script_id}/story-review")
+    def read_story_review(
+        request: Request,
+        script_id: Annotated[str, Path(min_length=36, max_length=36)],
+    ) -> dict:
+        """The latest story review of this script, or the reason there is none."""
+        with Session(request.app.state.engine) as session:
+            review = latest_review(session, script_id)
+            if review is None:
+                return {"script_id": script_id, "verdict": "NONE", "notes": [], "checks": {}}
+            return {
+                "script_id": script_id,
+                "verdict": review.verdict,
+                "checks": review.checks_json,
+                "retention": review.retention_json,
+                "scores": review.scores_json,
+                "notes": (review.notes_json or {}).get("notes", []),
+                "failed": (review.notes_json or {}).get("failed", []),
+                "estimated_seconds": review.estimated_seconds,
+                "created_at": review.created_at,
+            }
 
     @router.post("/hooks/generate")
     def post_generate_hooks(request: Request, cmd: GenerateHooksCommand) -> dict:

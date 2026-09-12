@@ -17,6 +17,7 @@ from app.economy.accountant import record_render_costs
 from app.economy.services import EconomyError
 from app.factual.models import FactualClaim, ScriptDraft, TopicIdea
 from app.factual.services import FactualGateError
+from app.factual.story_review import story_gate
 from app.media.assembler import RenderEngineUnavailable, assemble_video_job
 from app.media.factory import describe, motion_for_scene, render_plan, tts_provider
 from app.media.models import MediaAsset, Storyboard, VideoRenderJob
@@ -36,6 +37,7 @@ from app.media.production_policy import (
     set_storyboard_production,
     set_voice_binding,
 )
+from app.media.prompt_agent import PromptError, production_package, write_shot_prompts
 from app.media.qc import evaluate_media_qc, get_media_qc
 from app.media.schemas import (
     GenerateStoryboardCommand,
@@ -257,6 +259,15 @@ def create_media_router() -> APIRouter:
         correlation_id = str(uuid4())
         engine = request.app.state.engine
         vault = request.app.state.credential_vault
+        # Nothing is generated for a film whose story has not been read and passed. Every
+        # other gate in this studio used to run after the money was spent.
+        with Session(engine) as session:
+            board = session.get(Storyboard, storyboard_id)
+            if board is None:
+                raise HTTPException(status_code=404, detail="Storyboard not found")
+            passed, why = story_gate(session, board.script_draft_id)
+        if not passed:
+            raise HTTPException(status_code=422, detail=why)
         # Only a provider the Owner selected *and* verified is used. With none, the render
         # falls back to placeholder generators and is labelled as such, which QC then blocks
         # from publication — a video to look at, never one presented as publishable.
@@ -375,6 +386,37 @@ def create_media_router() -> APIRouter:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Render execution failed: {exc}") from exc
+
+    @router.post("/storyboards/{storyboard_id}/prompts")
+    def write_prompts(
+        request: Request,
+        storyboard_id: Annotated[str, FPath(min_length=36, max_length=36)],
+    ) -> dict:
+        """Write the master visual bible and the full prompt package for every shot.
+
+        The step between an approved story and the generator. It refuses a film whose story
+        has not been read and passed: describing shots is the last thing before money.
+        """
+        try:
+            return write_shot_prompts(
+                request.app.state.engine,
+                getattr(request.app.state, "registry", None),
+                storyboard_id,
+                str(uuid4()),
+            )
+        except PromptError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @router.get("/storyboards/{storyboard_id}/production-package")
+    def read_production_package(
+        request: Request,
+        storyboard_id: Annotated[str, FPath(min_length=36, max_length=36)],
+    ) -> dict:
+        """Everything the generator is given, and everything a person needs to audit it."""
+        try:
+            return production_package(request.app.state.engine, storyboard_id)
+        except PromptError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @router.get("/storyboards/{storyboard_id}/production-plan")
     def get_production_plan(

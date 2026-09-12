@@ -68,6 +68,7 @@ from app.factual.agent_pipeline import (
 )
 from app.factual.models import FactualClaim, ScriptDraft, SourceSnapshot, TopicIdea
 from app.factual.services import TopicNotProducible, select_topic
+from app.factual.story_review import review_story, story_gate
 from app.integrations.services import selected_youtube
 from app.media.models import (
     EditorialReview,
@@ -76,6 +77,7 @@ from app.media.models import (
     Storyboard,
     VideoRenderJob,
 )
+from app.media.prompt_agent import PromptError, write_shot_prompts
 from app.media.qc import evaluate_media_qc
 from app.media.services import generate_storyboard_from_script
 from app.providers.registry import ProviderRegistry
@@ -526,7 +528,10 @@ def _selection(engine: Engine, registry: ProviderRegistry | None = None) -> dict
 
 
 def _script_and_storyboard(
-    engine: Engine, registry: ProviderRegistry, language: str = "en"
+    engine: Engine,
+    registry: ProviderRegistry,
+    language: str = "en",
+    target_seconds: int = 30,
 ) -> dict[str, Any]:
     """Draft the voiceover for the selected topic, and storyboard what the Owner has approved.
 
@@ -546,10 +551,40 @@ def _script_and_storyboard(
         scripted = set(session.scalars(select(ScriptDraft.topic_id)))
         needing_script = [topic_id for topic_id in selected if topic_id not in scripted][:1]
 
+    reviews: list[dict[str, Any]] = []
     for topic_id in needing_script:
         try:
-            agent_write_script(engine, registry, topic_id, str(uuid4()), language=language)
+            written = agent_write_script(
+                engine,
+                registry,
+                topic_id,
+                str(uuid4()),
+                target_duration_seconds=target_seconds,
+                language=language,
+            )
             drafted += 1
+            # The story is read before anything is generated, and a script the review sends
+            # back is rewritten once with its notes. Rewriting text costs nothing; a shot
+            # regenerated because the story was weak costs dollars.
+            review = review_story(
+                engine, registry, written["script"]["id"], target_seconds=target_seconds
+            )
+            reviews.append({"verdict": review["verdict"], "failed": review["failed"][:4]})
+            if review["verdict"] == "REVISE":
+                again = agent_write_script(
+                    engine,
+                    registry,
+                    topic_id,
+                    str(uuid4()),
+                    target_duration_seconds=target_seconds,
+                    language=language,
+                    notes=review["notes"],
+                )
+                drafted += 1
+                second = review_story(
+                    engine, registry, again["script"]["id"], target_seconds=target_seconds
+                )
+                reviews.append({"verdict": second["verdict"], "failed": second["failed"][:4]})
         except (ScriptRejected, NoVerifiedClaims) as exc:
             # The draft was refused and nothing was stored — which is the pipeline working, not
             # the day breaking. A model that writes narration it cannot attribute to a verified
@@ -569,9 +604,20 @@ def _script_and_storyboard(
         ][:BATCH]
 
     boards = 0
+    prompted = 0
     for script_id in approved:
-        generate_storyboard_from_script(engine, script_id, "MOTION_GRAPHIC", "9:16", str(uuid4()))
+        board = generate_storyboard_from_script(
+            engine, script_id, "MOTION_GRAPHIC", "9:16", str(uuid4())
+        )
         boards += 1
+        # One look for the whole film, then a full prompt package per shot. This is where a
+        # story becomes instructions a camera would understand — the step the studio did not
+        # have when it sent "a spinning galaxy" to a model at 2.60 USD a shot.
+        try:
+            written = write_shot_prompts(engine, registry, board["id"], str(uuid4()))
+            prompted += len(written["shots"])
+        except PromptError as exc:
+            logger.info("shot_prompts_skipped", extra={"reason": str(exc)[:160]})
 
     with Session(engine) as session:
         awaiting = session.scalar(
@@ -579,6 +625,10 @@ def _script_and_storyboard(
         )
 
     reason = f"{drafted} scenarii scrise, {boards} storyboard-uri generate."
+    if prompted:
+        reason += f" {prompted} cadre descrise complet."
+    if reviews:
+        reason += " Recenzia poveștii: " + ", ".join(r["verdict"] for r in reviews) + "."
     if rejected:
         reason += f" {len(rejected)} respinse: {rejected[0][:120]}"
     if awaiting:
@@ -588,6 +638,8 @@ def _script_and_storyboard(
         reason,
         scripts=drafted,
         storyboards=boards,
+        shots_described=prompted,
+        story_reviews=reviews,
         rejected=rejected,
         awaiting_approval=bool(awaiting),
     )
@@ -677,6 +729,28 @@ def _media(
     if not pending and not retry:
         return _outcome(COMPLETED, "Niciun storyboard de randat.", rendered=0)
     pending = pending or retry
+
+    # Nothing is generated for a film whose story has not been read and passed. This is the
+    # gate before the money: every other gate in the studio used to run after it was spent.
+    held: list[str] = []
+    with Session(engine) as session:
+        allowed = []
+        for storyboard_id in pending:
+            board = session.get(Storyboard, storyboard_id)
+            passed, why = (
+                story_gate(session, board.script_draft_id) if board else (False, "fără storyboard")
+            )
+            if passed:
+                allowed.append(storyboard_id)
+            else:
+                held.append(f"{storyboard_id[:8]}: {why}")
+    if not allowed:
+        return _outcome(
+            SKIPPED,
+            "Niciun film nu a trecut recenzia de poveste: " + (held[0] if held else "—"),
+            held=held,
+        )
+    pending = allowed
 
     # The budget is asked before anything is generated (runbook §7, "reserve budget"). What
     # the render will cost is estimated from the plan at the stored price of each scene's
@@ -1245,7 +1319,12 @@ def build_stage_runners(
         "selection": keep("selection", lambda: _selection(engine, registry)),
         "script_and_storyboard": keep(
             "script_and_storyboard",
-            lambda: _script_and_storyboard(engine, registry, settings.content_language),
+            lambda: _script_and_storyboard(
+                engine,
+                registry,
+                settings.content_language,
+                settings.target_video_seconds,
+            ),
         ),
         "media": keep("media", lambda: _media(engine, settings, vault, registry)),
         "edit_and_qc": keep("edit_and_qc", lambda: _edit_and_qc(engine, registry)),

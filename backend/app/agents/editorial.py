@@ -46,6 +46,7 @@ from app.media.models import (
     StoryboardScene,
     VideoRenderJob,
 )
+from app.media.prompt_agent import record_prompt_lesson
 from app.media.toolchain import find_ffmpeg
 from app.providers.registry import ProviderRegistry
 from app.services import append_event, utc_now
@@ -410,6 +411,16 @@ def editorial_review(
             run_id=run_id,
             correlation_id=correlation,
         )
+        # What the Director says about the pictures is a lesson about prompting: if a
+        # wording keeps producing the wrong camera move, or a character who changes coat
+        # between shots, the next film's prompt agent should know it before it writes.
+        picture_note = verdict.notes_for.get("VideoEditor")
+        if picture_note:
+            record_prompt_lesson(
+                session,
+                f"{verdict.story or facts['title']}: {picture_note}",
+                source_id=run_id,
+            )
         sent = 0
         if verdict.verdict == "REJECT":
             for role_name, note in verdict.notes_for.items():

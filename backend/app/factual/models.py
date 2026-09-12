@@ -2,7 +2,17 @@
 
 from __future__ import annotations
 
-from sqlalchemy import JSON, Boolean, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    CheckConstraint,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models import Base
@@ -23,6 +33,13 @@ class TopicIdea(Base):
     scores_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     #: Authorised hosts the proposer expects to find evidence on. Retrieval still has to fetch.
     source_plan_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    #: Why this video should exist (migration 0032): the core fact, why now, why the audience
+    #: should care, the payoff, a hook, an ending, a call to action, the risk, the length. A
+    #: score is an opinion about a candidate; this is the argument it rests on.
+    thesis_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    #: The editorial rules this idea failed, if any. An idea the studio refused is kept with
+    #: its reasons, because what was turned down is also what the studio learns from.
+    rejection_reasons_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
     proposed_by_agent_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("agent.id", name="fk_topic_idea_proposed_by"), nullable=True
     )
@@ -112,6 +129,10 @@ class ScriptDraft(Base):
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="DRAFT")
     claim_ids_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     unverified_claim_ids_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    #: The story this script tells (migration 0032): one message, the viewer's takeaway, the
+    #: hook, the ending, the call to action and its kind, the structure, and the narration
+    #: length estimated at the studio's measured speaking rate.
+    story_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[str] = mapped_column(String(40), nullable=False)
     event_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("domain_event.event_id"), nullable=True
@@ -135,3 +156,42 @@ class HookOption(Base):
     created_at: Mapped[str] = mapped_column(String(40), nullable=False)
 
     script: Mapped[ScriptDraft] = relationship("ScriptDraft", back_populates="hooks")
+
+
+class StoryReview(Base):
+    """The review that happens before anything is generated (migration 0032).
+
+    Quality control measured the file, the voice artist checked pronunciation, the factual
+    gate checked attribution — and nobody asked whether the thing was worth watching until
+    after it had been paid for. This is that question, asked while the answer is still text:
+    does the opening earn the next three seconds, does every sentence advance the story, is
+    there a payoff that answers the hook, can the narration be said in the target length, and
+    where would a viewer stop watching. It is cheaper to rewrite text than to buy a shot.
+    """
+
+    __tablename__ = "story_review"
+    __table_args__ = (
+        CheckConstraint("verdict IN ('PASS','REVISE','REJECT')", name="ck_story_review_verdict"),
+        Index("ix_story_review_script", "script_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    script_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("script_draft.id"), nullable=False
+    )
+    verdict: Mapped[str] = mapped_column(String(10), nullable=False)
+    checks_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    retention_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    scores_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    notes_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    estimated_seconds: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    reviewer_agent_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("agent.id"), nullable=True
+    )
+    run_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("agent_run.id"), nullable=True
+    )
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    event_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("domain_event.event_id"), nullable=True
+    )

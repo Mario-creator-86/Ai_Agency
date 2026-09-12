@@ -35,6 +35,7 @@ from app.analytics.services import (
     ingest_publication_metrics,
     list_channel_experiments,
     list_channel_recommendations,
+    story_performance,
 )
 from app.providers.analytics_base import AnalyticsProvider
 from app.providers.youtube_analytics import YouTubeAnalyticsProvider
@@ -93,6 +94,11 @@ def create_analytics_router() -> APIRouter:
         channel_id: Annotated[str, Path(min_length=36, max_length=36)],
     ) -> dict:
         return get_channel_summary(request.app.state.engine, channel_id)
+
+    @router.get("/story-performance")
+    def read_story_performance(request: Request, channel_id: str | None = None) -> dict:
+        """What the studio predicted about each film, beside what the audience actually did."""
+        return story_performance(request.app.state.engine, channel_id)
 
     @router.get("/cohorts/{channel_id}", response_model=list[CohortMetricView])
     def get_cohorts(

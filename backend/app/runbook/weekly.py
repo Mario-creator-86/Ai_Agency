@@ -34,6 +34,7 @@ from app.agents.memory import remember
 from app.agents.messages import post_message
 from app.agents.models import Agent, AgentRun, Role
 from app.analytics.models import AnalyticsSnapshot, DirectorRecommendation
+from app.analytics.services import story_performance
 from app.publishing.models import ChannelRecord, PublicationRecord
 from app.services import utc_now
 from app.workflows.services import append_event_with_outbox
@@ -150,6 +151,10 @@ def weekly_digest(engine: Engine, geo: str | None = None) -> dict[str, Any]:
         "per_channel": per_channel,
         "open_recommendations": recommendations,
         "trends": trends,
+        # What the studio expected of these films before it made them, beside what the
+        # audience did. A hook the studio scored at 0.9 that nobody watched past three
+        # seconds is a fact about the studio's judgement, not about the audience.
+        "editorial_accuracy": story_performance(engine),
         "anything_published": bool(videos),
     }
 
@@ -157,6 +162,15 @@ def weekly_digest(engine: Engine, geo: str | None = None) -> dict[str, Any]:
 def _digest_as_text(digest: dict[str, Any]) -> str:
     """The digest in sentences, because a prompt reads text, not JSON trees."""
     lines = [f"Săptămâna {digest['week']} — performanța măsurată:"]
+    accuracy = digest.get("editorial_accuracy") or {}
+    if accuracy.get("sample_size"):
+        gap = accuracy.get("retention_gap")
+        lines.append(
+            f"- Judecata editorială: am prezis o reținere de "
+            f"{accuracy.get('predicted_retention')} pe {accuracy['sample_size']} filme, "
+            f"măsurat {accuracy.get('measured_view_percentage')}%"
+            + (f" (diferență {gap} puncte)." if gap is not None else ".")
+        )
     if not digest["anything_published"]:
         lines.append("Niciun video publicat. Nimic de măsurat.")
         return "\n".join(lines)

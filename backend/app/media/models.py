@@ -90,6 +90,10 @@ class Storyboard(Base):
     series_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
     #: Episode/video-level production choices per purpose.
     production_overrides_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    #: The master visual bible this film's every shot inherits (migration 0032): style,
+    #: period, world, palette, lighting philosophy, camera language, continuity rules and
+    #: what to avoid. One film, one look — not several AI clips that happen to be adjacent.
+    visual_bible_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[str] = mapped_column(String(40), nullable=False)
     event_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("domain_event.event_id"), nullable=True
@@ -123,6 +127,14 @@ class StoryboardScene(Base):
     claim_ids_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     #: Scene-level production choices per purpose.
     production_overrides_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    #: The full prompt package for this shot (migration 0032): subject, action, environment,
+    #: camera, lighting, composition, motion, emotion, background, continuity, audio intent,
+    #: transition, negatives and story purpose. `visual_prompt` holds what is actually sent
+    #: to the model, composed from this, so the whole render path is unchanged by it.
+    prompt_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    #: Why this shot is in the film: HOOK, SETUP, DEVELOPMENT, EVIDENCE, REVEAL, PAYOFF,
+    #: ENDING or CTA. A shot that serves nothing is cut or redesigned, not filmed.
+    story_purpose: Mapped[str | None] = mapped_column(String(20), nullable=True)
     created_at: Mapped[str] = mapped_column(String(40), nullable=False)
 
     storyboard: Mapped[Storyboard] = relationship("Storyboard", back_populates="scenes")

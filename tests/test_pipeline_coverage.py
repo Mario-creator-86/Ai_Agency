@@ -282,12 +282,33 @@ def test_the_researcher_proposes_scored_topics_and_duplicates_are_dropped(engine
             "target_audience": "general",
             "expected_hosts": ["www.iana.org"],
             "scores": {
-                "interest": 0.8,
-                "credibility": 0.9,
-                "source_availability": 1.0,
+                "hook_potential": 0.8,
+                "curiosity": 0.8,
+                "story_potential": 0.7,
+                "payoff_strength": 0.8,
                 "visual_potential": 0.4,
-                "novelty": 0.7,
-                "cost": 0.9,
+                "fact_confidence": 0.9,
+                "channel_fit": 0.8,
+                "originality": 0.7,
+                "shareability": 0.6,
+                "retention_potential": 0.7,
+                "cta_opportunity": 0.6,
+                "production_feasibility": 0.9,
+                "source_availability": 1.0,
+            },
+            "thesis": {
+                "core_fact": "One domain exists only to be used as an example.",
+                "why_it_matters": "Everyone has typed it and nobody knows why it is reserved.",
+                "why_now": "The registry page was refreshed this week.",
+                "payoff": "The address is reserved by the registry so nobody can own it.",
+                "hook": "There is one web address nobody is allowed to buy.",
+                "ending": "Reserved on purpose, by the registry itself.",
+                "cta": "Which reserved address surprised you most?",
+                "cta_kind": "COMMENT",
+                "channel_fit": "Short, verifiable, one idea.",
+                "visual_potential": "A browser bar, a registry page, a padlock.",
+                "risk": "Nothing beyond the registry's own wording.",
+                "expected_seconds": 30,
             },
         }
         return json.dumps(
@@ -307,9 +328,14 @@ def test_the_researcher_proposes_scored_topics_and_duplicates_are_dropped(engine
     assert {r["why"].split(":")[0] for r in result["rejected"]} == {"duplicat", "site neautorizat"}
     with Session(engine) as session:
         topic = session.scalar(select(TopicIdea).where(TopicIdea.status == "PROPOSED"))
-        assert topic.scores_json["composite"] == pytest.approx(0.7833, abs=0.001)
+        # Weighted, not averaged: hook, payoff, story and fact confidence decide, so a
+        # topic with little to show is not sunk by its visual score alone.
+        assert topic.scores_json["composite"] == pytest.approx(0.75, abs=0.001)
         assert topic.source_plan_json == ["www.iana.org"]
         assert topic.proposed_by_agent_id and topic.novelty_score == 0.7
+        # And the argument for making it at all is stored with it.
+        assert topic.thesis_json["payoff"].startswith("The address is reserved")
+        assert topic.rejection_reasons_json == []
 
     # Proposing again finds the stored title and adds nothing.
     assert propose_topics(engine, registry, settings, str(uuid4()))["proposed"] == []

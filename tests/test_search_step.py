@@ -525,6 +525,24 @@ def test_a_providers_refusal_fails_the_render_not_the_day(engine, settings, stud
             )
         )
     generate_storyboard_from_script(engine, script_id, "MOTION_GRAPHIC", "9:16", "c")
+    # The story was read and passed before production; without that the render stage holds
+    # the film rather than buying shots for a story nobody judged.
+    with Session(engine) as session, session.begin():
+        from app.factual.models import StoryReview
+
+        session.add(
+            StoryReview(
+                id=str(uuid4()),
+                script_id=script_id,
+                verdict="PASS",
+                checks_json={},
+                retention_json={},
+                scores_json={},
+                notes_json={},
+                estimated_seconds=30.0,
+                created_at=utc_now(),
+            )
+        )
 
     def refuse(*args, **kwargs):
         raise MediaProviderError("api.dev.runwayml.com refused the request (HTTP 400)")

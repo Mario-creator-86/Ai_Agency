@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime
-from typing import TypedDict
+from typing import Any, TypedDict
 from uuid import uuid4
 
 from sqlalchemy import Engine, select
@@ -25,7 +25,7 @@ from app.analytics.schemas import (
     ContentStrategyView,
     DirectorRecommendationView,
 )
-from app.factual.models import HookOption, ScriptDraft, TopicIdea
+from app.factual.models import HookOption, ScriptDraft, StoryReview, TopicIdea
 from app.media.models import Storyboard, VideoRenderJob
 from app.providers.analytics_base import AnalyticsProvider
 from app.publishing.models import ChannelRecord, PublicationRecord
@@ -305,6 +305,99 @@ def _resolve_publication_metadata(session: Session, pub: PublicationRecord) -> t
                 break
 
     return topic, hook
+
+
+def story_performance(engine: Engine, channel_id: str | None = None) -> dict[str, Any]:
+    """What the studio expected of each film, beside what the audience actually did.
+
+    The studio scores an idea before it exists — hook potential, retention potential, whether
+    there is a natural question to leave people with — and the Director estimates where
+    interest will collapse. None of that was ever compared with a measurement, so the
+    editorial judgement could be wrong for a year without anyone noticing.
+
+    This is the comparison, per published film and as a mean: predicted hook against measured
+    three-second retention (the closest thing a platform reports), predicted retention against
+    the average percentage viewed, predicted call-to-action strength against the comments and
+    shares a film actually earned. Nothing here optimises for views: a film that is watched
+    and wrong is worth less than nothing to a factual channel.
+    """
+    rows: list[dict[str, Any]] = []
+    with Session(engine) as session:
+        query = select(AnalyticsSnapshot)
+        if channel_id:
+            query = query.where(AnalyticsSnapshot.channel_id == channel_id)
+        for snapshot in session.scalars(query):
+            pub = session.get(PublicationRecord, snapshot.publication_id)
+            if pub is None or not pub.media_asset_id:
+                continue
+            job = session.scalar(
+                select(VideoRenderJob).where(VideoRenderJob.output_asset_id == pub.media_asset_id)
+            )
+            board = session.get(Storyboard, job.storyboard_id) if job else None
+            script = session.get(ScriptDraft, board.script_draft_id) if board else None
+            if script is None:
+                continue
+            topic = session.get(TopicIdea, script.topic_id)
+            scores = dict((topic.scores_json or {}) if topic else {})
+            review = session.scalars(
+                select(StoryReview)
+                .where(StoryReview.script_id == script.id)
+                .order_by(StoryReview.created_at.desc())
+            ).first()
+            retention = dict((review.retention_json or {}) if review else {})
+            engagement = (
+                (snapshot.comments + snapshot.shares) / snapshot.views * 100.0
+                if snapshot.views
+                else None
+            )
+            rows.append(
+                {
+                    "publication_id": pub.id,
+                    "title": pub.title,
+                    "predicted_hook": scores.get("hook_potential"),
+                    "predicted_retention": scores.get("retention_potential"),
+                    "predicted_cta": scores.get("cta_opportunity"),
+                    "director_at_3_seconds": retention.get("at_3"),
+                    "director_at_end": retention.get("at_end"),
+                    "measured_view_percentage": snapshot.average_view_percentage,
+                    "measured_ctr": snapshot.ctr_percentage,
+                    "measured_engagement_percentage": (
+                        round(engagement, 2) if engagement is not None else None
+                    ),
+                    "views": snapshot.views,
+                    "story_review": review.verdict if review else "NONE",
+                }
+            )
+
+    def mean(key: str) -> float | None:
+        values = [row[key] for row in rows if isinstance(row.get(key), int | float)]
+        return round(sum(values) / len(values), 3) if values else None
+
+    # A prediction on a scale of 0..1 against a measurement in percent: the comparison is the
+    # gap between them, stated in the same unit, so a systematic optimism is visible.
+    predicted = mean("predicted_retention")
+    measured = mean("measured_view_percentage")
+    return {
+        "videos": rows,
+        "sample_size": len(rows),
+        "predicted_retention": predicted,
+        "measured_view_percentage": measured,
+        "retention_gap": (
+            round(predicted * 100 - measured, 2)
+            if predicted is not None and measured is not None
+            else None
+        ),
+        "predicted_hook": mean("predicted_hook"),
+        "director_at_3_seconds": mean("director_at_3_seconds"),
+        "predicted_cta": mean("predicted_cta"),
+        "measured_engagement_percentage": mean("measured_engagement_percentage"),
+        "note": (
+            "nothing published and measured yet"
+            if not rows
+            else "means over every measured film; a gap above 20 points means the studio's "
+            "editorial scoring is systematically optimistic"
+        ),
+    }
 
 
 def compute_cohort_metrics(engine: Engine, channel_id: str, cohort_by: str = "topic") -> list[dict]:

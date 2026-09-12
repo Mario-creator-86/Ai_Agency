@@ -21,6 +21,7 @@ from app.agents.language import audience_language_line
 from app.agents.memory import remember
 from app.agents.models import Agent, Role
 from app.agents.services import run_agent_task
+from app.factual.editorial import WORDS_PER_SECOND, expected_seconds
 from app.factual.models import FactualClaim, SourceSnapshot, TopicIdea
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.factual.schemas import ExtractClaimItem
@@ -451,21 +452,49 @@ MAX_SCENES = 12
 
 _WRITE_INSTRUCTIONS = """Ești scenaristul unui studio de short-uri factuale de {duration} secunde.
 
-Scrie un scenariu de voiceover FOLOSIND EXCLUSIV afirmațiile verificate de mai jos. Nu adăuga
-niciun fapt, cifră, dată, nume sau context care nu apare în ele. Dacă o tranziție are nevoie de
-o informație pe care nu o ai, rescrie propoziția ca să nu mai aibă nevoie de ea.
+Scrie o POVESTE de {duration} secunde, nu o listă de fapte. Un short bun are o singură idee,
+un cârlig care deschide o întrebare în primele trei secunde, o progresie care o duce înainte,
+o răsplată care răspunde exact la ce a promis cârligul, un final și un îndemn care aparține
+acestei povești. Un film care e doar "fapt, fapt, fapt, abonează-te" nu se uită nimeni la el.
 
-Împarte textul în maximum {max_scenes} scene. Fiecare scenă trebuie să se sprijine pe cel puțin
-o afirmație, iar "claim_ids" conține EXACT identificatorii afirmațiilor pe care le folosește,
-copiați din lista de mai jos. Un identificator care nu apare în listă face ca întregul scenariu
-să fie respins.
+FOLOSEȘTE EXCLUSIV afirmațiile verificate de mai jos. Nu adăuga niciun fapt, cifră, dată,
+nume sau context care nu apare în ele. Dacă o tranziție are nevoie de o informație pe care nu
+o ai, rescrie propoziția ca să nu mai aibă nevoie de ea. Nu transforma o speculație în
+certitudine ca să sune mai dramatic: un canal factual care greșește nu valorează nimic.
+
+STRUCTURA, ca ghid (nu ca șablon rigid — folosește ce servește povestea):
+  0-3s    HOOK: o contradicție, o întrebare, un mister, o consecință, o idee greșită. NU
+          începe cu "Did you know", "In this video", "Today we" — pierzi singurele trei
+          secunde care decid dacă cineva se uită.
+  3-8s    SETUP: contextul minim ca răsplata să aibă sens.
+  8-18s   DEVELOPMENT / EVIDENCE: fiecare scenă răspunde la o întrebare și deschide
+          următoarea. Leagă-le cauzal: "pentru că", "așa că", "dar", "până", "ceea ce
+          înseamnă". NU "and then… and then…".
+  18-26s  REVEAL / PAYOFF: răsplata. Trebuie să răspundă la cârlig. Fără momeală.
+  26-30s  ENDING + CTA: închide filmul și lasă o întrebare care ține de povestea asta.
+
+Împarte textul în maximum {max_scenes} scene. Fiecare scenă:
+- se sprijină pe cel puțin o afirmație, iar "claim_ids" conține EXACT identificatorii
+  afirmațiilor pe care le folosește, copiați din lista de mai jos. Un identificator care nu
+  apare în listă face ca întregul scenariu să fie respins;
+- declară de ce există, în "purpose": HOOK, SETUP, DEVELOPMENT, EVIDENCE, REVEAL, PAYOFF,
+  ENDING sau CTA. O scenă care nu joacă niciun rol nu se scrie;
+- spune în "visual" ce se VEDE, nu ce se aude: arată informația (nori care se strâng, apa
+  care urcă, reacția unui om), nu repeta în imagine ce spune deja naratorul.
+
+RITMUL: naratorul spune aproximativ {wps} cuvinte pe secundă. {duration} secunde înseamnă în
+total cam {words} de cuvinte de narațiune, pentru TOATE scenele la un loc. Nu scrie 60 de
+secunde de text pentru un film de {duration}.
 
 Răspunde EXCLUSIV cu un obiect JSON valid, fără text în plus:
-{{"title": "...", "scenes": [{{"narration": "...", "visual": "...", "claim_ids": ["..."]}}]}}
+{{"title": "...", "core_message": "o propoziție: ideea filmului", "takeaway": "ce rămâne
+spectatorului", "hook": "prima propoziție", "ending": "cum se închide", "cta": "îndemnul
+final, care vorbește despre povestea asta", "cta_kind": "CURIOSITY|DECISION|KNOWLEDGE|DEBATE|
+FOLLOW|SERIES|COMMENT", "scenes": [{{"narration": "...", "visual": "...", "purpose": "HOOK",
+"claim_ids": ["..."]}}]}}
 
-- "title": titlul episodului, 3-200 de caractere.
+- "title": titlul episodului, 3-200 de caractere, care promite exact ce livrează filmul.
 - "narration": textul rostit în scenă, 10-800 de caractere.
-- "visual": o descriere scurtă a ce se vede.
 
 AFIRMAȚII VERIFICATE (singura sursă de fapte permisă):
 """
@@ -491,6 +520,9 @@ class _Scene(BaseModel):
     narration: str = Field(min_length=10, max_length=800)
     visual: str = Field(default="", max_length=500)
     claim_ids: list[str] = Field(min_length=1, max_length=20)
+    #: Why this shot is in the film. A scene that plays no part in the story is decoration,
+    #: and decoration is what the Owner paid eight generated shots for.
+    purpose: str = Field(default="", max_length=20)
 
 
 class _Script(BaseModel):
@@ -498,6 +530,14 @@ class _Script(BaseModel):
 
     title: str = Field(min_length=3, max_length=200)
     scenes: list[_Scene] = Field(min_length=1, max_length=MAX_SCENES)
+    #: The story around the scenes: one message, what the viewer leaves with, the hook, the
+    #: ending, and a call to action that belongs to this film rather than to any film.
+    core_message: str = Field(default="", max_length=240)
+    takeaway: str = Field(default="", max_length=400)
+    hook: str = Field(default="", max_length=400)
+    ending: str = Field(default="", max_length=400)
+    cta: str = Field(default="", max_length=300)
+    cta_kind: str = Field(default="", max_length=20)
 
 
 _SCRIPT = TypeAdapter(_Script)
@@ -511,6 +551,7 @@ def agent_write_script(
     target_duration_seconds: int = 50,
     agent_id: str | None = None,
     language: str = "en",
+    notes: list[str] | None = None,
 ) -> dict[str, Any]:
     """Have the script writer draft a voiceover from a topic's verified claims.
 
@@ -547,10 +588,24 @@ def agent_write_script(
     catalogue = "\n".join(f'- {cid}: "{text}"' for cid, text in allowed.items())
     prompt = (
         audience_language_line(language)
-        + _WRITE_INSTRUCTIONS.format(duration=target_duration_seconds, max_scenes=MAX_SCENES)
+        + _WRITE_INSTRUCTIONS.format(
+            duration=target_duration_seconds,
+            max_scenes=MAX_SCENES,
+            wps=WORDS_PER_SECOND,
+            words=int(target_duration_seconds * WORDS_PER_SECOND),
+        )
         + catalogue
         + f"\n\nSUBIECT: {topic_title}\n"
     )
+    if notes:
+        # The story review sent the last draft back. What it said goes to the writer as the
+        # brief for this one: a rewrite that is not told what was wrong produces the same
+        # weakness in different words.
+        prompt += (
+            "\nVERSIUNEA ANTERIOARĂ A FOST TRIMISĂ ÎNAPOI. Ce trebuie schimbat:\n"
+            + "\n".join(f"- {note}" for note in notes[:8])
+            + "\nScrie povestea din nou, de la început, ținând cont de fiecare punct.\n"
+        )
     result = run_agent_task(
         engine,
         registry,
@@ -635,11 +690,28 @@ def agent_write_script(
             "narration": narration,
             "visual_description": scene.visual.strip(),
             "claim_ids": scene.claim_ids,
+            # The part this shot plays. Kept on the scene so the storyboard, the prompt agent
+            # and the story review all read the same answer to "why is this shot here".
+            "purpose": (scene.purpose or "").strip().upper()
+            or _implied_purpose(index, len(draft.scenes)),
         }
         for index, (scene, narration) in enumerate(
             zip(draft.scenes, narrations, strict=True), start=1
         )
     ]
+    # The story around the scenes, and how long it actually takes to say at the studio's own
+    # speaking rate — the number the review compares with the target length.
+    story = {
+        "core_message": draft.core_message.strip(),
+        "takeaway": draft.takeaway.strip(),
+        "hook": draft.hook.strip() or narrations[0],
+        "ending": draft.ending.strip(),
+        "cta": draft.cta.strip(),
+        "cta_kind": draft.cta_kind.strip().upper(),
+        "estimated_seconds": expected_seconds(scenes),
+        "target_seconds": target_duration_seconds,
+        "structure": [scene["purpose"] for scene in scenes],
+    }
     # What the studio will speak is exactly the text that carries an attribution.
     voiceover = "\n\n".join(narrations)
 
@@ -652,6 +724,7 @@ def agent_write_script(
         scenes,
         cited,
         correlation_id,
+        story=story,
     )
     _announce(
         engine,
@@ -661,7 +734,30 @@ def agent_write_script(
         result["id"],
         correlation_id,
     )
-    return {"agent_id": writer_id, "run_id": result["id"], "script": stored, "cut_scenes": cut}
+    return {
+        "agent_id": writer_id,
+        "run_id": result["id"],
+        "script": stored,
+        "cut_scenes": cut,
+        "story": story,
+    }
+
+
+def _implied_purpose(index: int, total: int) -> str:
+    """The part a shot plays when the writer did not say, from where it falls in the film.
+
+    A guess, and marked as one by being a fallback: the first shot is the hook and the last
+    closes the film, whatever else is true. The story review still asks whether the film has
+    a payoff, and a script whose middle is all DEVELOPMENT is a script the review will send
+    back rather than one the studio quietly produces.
+    """
+    if index <= 1:
+        return "HOOK"
+    if index >= total:
+        return "ENDING"
+    if total >= 4 and index >= total - 1:
+        return "PAYOFF"
+    return "DEVELOPMENT" if index > 2 else "SETUP"
 
 
 def _script_object(raw: str) -> Any:

@@ -378,8 +378,15 @@ def generate_script_draft(
     scenes: list[dict[str, Any]],
     referenced_claim_ids: list[str],
     correlation_id: str,
+    story: dict[str, Any] | None = None,
 ) -> dict:
-    """Generate script draft, enforcing strict factual verification gate."""
+    """Generate script draft, enforcing strict factual verification gate.
+
+    `story` is what the script is about as a story — one message, the takeaway, the hook, the
+    ending, the call to action and its kind, the structure and the narration length. It is
+    stored with the draft because the review before production, the prompt agent and the
+    Director all need the same answer to "what is this film for".
+    """
     draft_id = str(uuid4())
     now = utc_now()
 
@@ -419,6 +426,7 @@ def generate_script_draft(
                 status="BLOCKED_UNVERIFIED_CLAIMS",
                 claim_ids_json=referenced_claim_ids,
                 unverified_claim_ids_json=unverified_ids,
+                story_json=dict(story or {}),
                 created_at=now,
                 event_id=event.event_id,
             )
@@ -450,6 +458,7 @@ def generate_script_draft(
             status="VERIFIED_PASS",
             claim_ids_json=referenced_claim_ids,
             unverified_claim_ids_json=[],
+            story_json=dict(story or {}),
             created_at=now,
             event_id=event.event_id,
         )
