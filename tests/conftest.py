@@ -128,6 +128,9 @@ def runway_api(monkeypatch):
         task=None,
         fail=None,
         spec_fail=False,
+        #: {model_id: [task, ...]} — tasks the stubbed contract marks as needing reference
+        #: images, the way Runway marks its editing models.
+        needs_references={},
     )
 
     def contract():
@@ -141,6 +144,9 @@ def runway_api(monkeypatch):
                         "duration": {"enum": [5, 10]},
                     }
                 }
+                if task in fake.needs_references.get(model_id, []):
+                    branch["properties"]["referenceImages"] = {"type": "array", "minItems": 1}
+                    branch["required"] = ["model", "ratio", "referenceImages"]
                 schema = paths.setdefault(
                     f"/v1/{task}", {"post": {"requestBody": {"content": {}}}}
                 )["post"]["requestBody"]["content"].setdefault(

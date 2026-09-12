@@ -474,3 +474,20 @@ def test_auto_configure_replaces_a_default_the_api_no_longer_supports(engine, mo
         config = session.get(MediaProductionConfig, integration_id)
         assert config.image_model_id == "draws_from_words"
         assert config.model_id == "makes_video"  # a usable default is left alone
+
+
+def test_an_image_model_that_only_edits_is_not_offered_for_images(client, headers, runway_api):
+    """Through the whole path: the account's only image model requires reference images, so
+    after a refresh the connection offers no image model and is not an image provider."""
+    runway_api.needs_references = {runway_api.image_model: ["text_to_image"]}
+    identifier, response = connect(client, headers)
+    assert response.status_code == 200, response.text
+    by_id = {m["remote_id"]: m for m in response.json()["catalog"]["models"]}
+    editing = by_id[runway_api.image_model]
+    assert editing["api_metadata"]["needs_references"] == {"text_to_image": True}
+    assert editing["usable_purposes"] == [] and editing["production_usable"] is False
+    # A video model in the same account is untouched.
+    assert "video" in by_id[runway_api.video_models[0]]["usable_purposes"]
+    chosen = client.post("/api/v1/settings/auto-configure", headers=headers).json()
+    assert "image" not in [a["purpose"] for a in chosen["applied"]]
+    assert identifier

@@ -70,7 +70,9 @@ the studio's identity and returns pages that exist (Wikipedia's does, tested).
   adapter also refuses before spending a call (`code="reference_images_required"`). Nothing
   is hardcoded: the fact comes from Runway's own published contract. `auto_configure` also
   replaces a stored default the API's evidence no longer supports (it used to keep any
-  default that existed), naming the dropped model in its report.
+  default that existed), naming the dropped model in its report. `needs_references` is
+  stored with the rest of a model's public catalogue metadata at refresh, so the rule holds
+  for the account as it is today, not as the code imagined it.
 - Tests: `tests/test_search_step.py` (13), three more in `tests/test_script_writing.py`,
   one in `tests/test_runway_connection.py`.
 

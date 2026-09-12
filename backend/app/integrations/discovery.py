@@ -290,6 +290,9 @@ def _metadata(item: dict, resource_type: str, kind: str = "elevenlabs") -> dict:
             "tasks",
             "ratios",
             "durations",
+            # What a task needs besides words: a model that requires reference images edits
+            # pictures and cannot draw one, and `usable_purposes` reads this to decide.
+            "needs_references",
         )
         return {field: item[field] for field in fields if field in item}
     fields = (
