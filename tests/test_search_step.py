@@ -384,3 +384,60 @@ def test_pages_are_found_query_by_query_and_never_listed_twice(engine, settings,
     pages = find_pages(settings, engine, ["Higgs Boson Lifetime", "Higgs Boson", "CERN"], 6, stub)
     assert [p["url"].rsplit("/", 1)[1] for p in pages] == ["Higgs_boson", "Higgs_field", "CERN"]
     assert len(stub.asked) == 3
+
+
+def test_one_mistyped_claim_is_skipped_and_the_others_kept():
+    """ "confidence": 0.95.0 in one object of the third clean day's answer stopped the whole
+    run and put the studio in safe mode. One broken object is one claim lost."""
+    from app.factual.agent_pipeline import _parse_claims
+
+    raw = (
+        '[{"claim_text": "Dark matter makes up about 27% of the universe.", '
+        '"claim_type": "SCIENTIFIC_FACT", "importance": "CRITICAL", "confidence": 0.95}, '
+        '{"claim_text": "Dark energy makes up approximately 68% of the universe.", '
+        '"claim_type": "SCIENTIFIC_FACT", "importance": "CRITICAL", "confidence": 0.95.0}, '
+        '{"claim_text": "Normal matter is five percent.", "claim_type": "SCIENTIFIC_FACT", '
+        '"importance": "SUPPORTING", "confidence": 0.9}]'
+    )
+    items = _parse_claims(raw)
+    assert [i.claim_text[:11] for i in items] == ["Dark matter", "Dark energy", "Normal matt"]
+    with pytest.raises(ValueError):
+        _parse_claims("no list here at all")
+
+
+def test_a_source_whose_claims_cannot_be_read_does_not_stop_the_day(
+    engine, settings, studio, monkeypatch
+):
+    from app.runbook import stages
+
+    with Session(engine) as session, session.begin():
+        for index in range(2):
+            session.add(
+                SourceSnapshot(
+                    id=str(uuid4()),
+                    url=f"https://en.wikipedia.org/wiki/Page_{index}",
+                    title=f"Page {index}",
+                    publisher="en.wikipedia.org",
+                    content_hash=str(index) * 64,
+                    raw_content="text",
+                    sanitized_content="text",
+                    credibility_score=0.0,
+                    fetched_at=utc_now(),
+                )
+            )
+    calls: list[str] = []
+
+    def extract(engine_, registry, source_id, correlation):
+        calls.append(source_id)
+        if len(calls) == 1:
+            raise ValueError("Răspunsul agentului nu este o listă JSON validă")
+
+    monkeypatch.setattr(stages, "agent_extract_claims", extract)
+    monkeypatch.setattr(stages, "_gather_for_candidates", lambda *a, **k: [])
+    monkeypatch.setattr(stages, "_has_language_model", lambda registry: True)
+    outcome = stages._research_and_verification(engine, ProviderRegistry(), settings)
+    assert outcome["status"] == "COMPLETED" and len(calls) == 2
+    assert (
+        "1 surse citite" in outcome["reason"]
+        and "1 surse fără afirmații citibile" in (outcome["reason"])
+    )

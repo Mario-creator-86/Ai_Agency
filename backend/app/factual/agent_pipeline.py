@@ -9,6 +9,7 @@ verifies it (independent verification, `../architecture/02_SRS.md` FR-038).
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any, Literal
 
@@ -98,6 +99,9 @@ def _role_ids(session: Session, role_name: str) -> list[str]:
     return list(session.scalars(select(Role.id).where(Role.name == role_name)).all())
 
 
+logger = logging.getLogger("studio.factual.pipeline")
+
+
 def _salvage_complete_objects(text: str) -> list[Any]:
     """Recover the complete top-level objects from a JSON list truncated mid-item.
 
@@ -128,8 +132,20 @@ def _salvage_complete_objects(text: str) -> list[Any]:
         elif char == "}":
             depth -= 1
             if depth == 0 and start is not None:
-                items.append(json.loads(text[start : index + 1]))
+                # One object the model mistyped ("confidence": 0.95.0 stopped a whole day)
+                # is one claim lost, not a list lost: it is skipped and the others kept.
+                piece = text[start : index + 1]
+                try:
+                    items.append(json.loads(piece))
+                except json.JSONDecodeError:
+                    repaired = re.sub(r"(\d+\.\d+)\.\d+", r"\1", piece)
+                    try:
+                        items.append(json.loads(repaired))
+                    except json.JSONDecodeError:
+                        logger.info("claim_object_skipped", extra={"piece": piece[:120]})
                 start = None
+    if not items:
+        raise json.JSONDecodeError("no complete object", text, 0)
     return items
 
 

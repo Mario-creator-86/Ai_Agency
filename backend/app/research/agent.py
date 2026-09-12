@@ -563,8 +563,10 @@ def gather_sources(
         already.add(url)
 
     for candidate in plan.urls[:limit]:
-        if candidate.url not in already:
-            read(candidate.url)
+        # ".../webb" and ".../webb/" are one page; the third clean day stored it twice.
+        url = candidate.url.strip()
+        if url.rstrip("/") not in {u.rstrip("/") for u in already}:
+            read(url)
     # The Researcher's guesses all failed: the pages the studio found are read anyway. A
     # plan is his choice among pages; it is not a way to lose the ones that exist.
     if not fetched:

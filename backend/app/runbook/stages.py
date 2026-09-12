@@ -310,10 +310,17 @@ def _research_and_verification(
             if source.id not in extracted_source_ids
         ][:BATCH]
 
-    extracted = 0
+    extracted, unreadable = 0, 0
     for source_id in pending_sources:
-        agent_extract_claims(engine, registry, source_id, str(uuid4()))
-        extracted += 1
+        try:
+            agent_extract_claims(engine, registry, source_id, str(uuid4()))
+            extracted += 1
+        except ValueError as exc:
+            # An answer the parser cannot read is that source's loss for today, not the
+            # day's: a mistyped number once stopped the whole run and put the studio in
+            # safe mode. The next source is read; the reason says how many were not.
+            logger.info("extraction_unreadable", extra={"source_id": source_id, "reason": str(exc)})
+            unreadable += 1
 
     with Session(engine) as session:
         unverified = [
@@ -341,6 +348,7 @@ def _research_and_verification(
     reason = (
         f"{pages} pagini preluate, {extracted} surse citite, {verified} afirmații verificate, "
         f"{refused} verdicte respinse."
+        + (f" {unreadable} surse fără afirmații citibile." if unreadable else "")
     )
     return _outcome(
         COMPLETED,

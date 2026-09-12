@@ -28,7 +28,15 @@ the studio's identity and returns pages that exist (Wikipedia's does, tested).
   what the site answered, and says the studio fetched with its own identity.
 - **A later evening pass that fails does not undo the first** (`_post_run`): the third
   review of the clean day returned no text and the stage reported the whole review refused.
-- Tests: `tests/test_search_step.py` (6).
+- **One mistyped claim is one claim lost, not a day lost**: the third clean day read real
+  pages (CERN's dark-matter page, NASA's Webb page, Wikipedia's High-Luminosity LHC page —
+  the search step works), then the Researcher's claim list carried `"confidence": 0.95.0`
+  in one object; the parser refused the whole list, the stage failed, the day failed and the
+  studio entered safe mode. `_salvage_complete_objects` now keeps the objects that parse
+  (a doubled decimal is repaired), and `_research_and_verification` counts a source whose
+  answer cannot be read ("N surse fără afirmații citibile") and reads the next one.
+- The same page named with and without a trailing slash is read once.
+- Tests: `tests/test_search_step.py` (10).
 
 ## A review that fed itself, and a studio that can start over — 2026-09-12
 
