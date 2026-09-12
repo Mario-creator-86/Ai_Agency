@@ -489,6 +489,8 @@ Scrie {scenes} scene. Fiecare scenă:
   câmpurile de sus — se rostește în scenă;
 - spune în "visual" ce se VEDE, nu ce se aude: arată informația (nori care se strâng, apa
   care urcă, reacția unui om), nu repeta în imagine ce spune deja naratorul.
+  Niciodată text în imagine: fără "text overlay", titluri, etichete, cifre scrise sau
+  subtitrări — generatorul desenează literele greșit, iar textul se pune la montaj.
 
 LUNGIMEA — ținta, nu o cămașă de forță:
 - naratorul spune {wps} cuvinte pe secundă, deci {duration} secunde ≈ {words} de cuvinte de

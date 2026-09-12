@@ -226,13 +226,23 @@ def create_publishing_router() -> APIRouter:
         request: Request,
         cmd: CreatePublicationIntentCommand,
     ) -> dict:
+        # The Owner's own intent carries the disclosure and the creator's channel as well: no
+        # road to YouTube leaves them out.
+        from app.publishing.services import publication_footer, with_footer  # noqa: PLC0415
+
+        settings = request.app.state.settings
+        footer = publication_footer(
+            request.app.state.engine,
+            getattr(settings, "ai_disclosure_url", None),
+            getattr(settings, "creator_channel_title", None),
+        )
         try:
             return create_publication_intent(
                 request.app.state.engine,
                 cmd.channel_id,
                 cmd.media_asset_id,
                 cmd.title,
-                cmd.description,
+                with_footer(cmd.description, footer),
                 cmd.tags,
                 cmd.privacy_status,
                 cmd.idempotency_key,
@@ -326,8 +336,19 @@ def create_publishing_router() -> APIRouter:
             raise HTTPException(
                 422, "Video has no source script title; create an explicit publication intent"
             )
-        # Empty optional metadata is preferable to invented topic tags or quality claims.
-        description = ""
+        # Empty optional metadata is preferable to invented topic tags or quality claims — but
+        # the disclosure and the creator's channel are not optional: every film carries them.
+        from app.publishing.services import publication_footer, with_footer  # noqa: PLC0415
+
+        settings = request.app.state.settings
+        description = with_footer(
+            "",
+            publication_footer(
+                engine,
+                getattr(settings, "ai_disclosure_url", None),
+                getattr(settings, "creator_channel_title", None),
+            ),
+        )
         tags: list[str] = []
         cmd_id = uuid4()
         correlation_id = str(uuid4())

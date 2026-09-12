@@ -570,3 +570,27 @@ def test_production_work_shows_on_the_employee_doing_it(engine):
 
     with at_work(engine, "NoSuchRole", "anything", "nobody"):
         pass
+
+
+def test_a_render_cost_is_read_from_the_credits(engine):
+    """The Owner's instruction: verify the cost from the credits, before and after."""
+    from app.economy.credits import credit_balances, credit_spend
+
+    before = {
+        "rw": {"kind": "runway", "unit": "credits", "balance": 1700.0},
+        "el": {"kind": "elevenlabs", "unit": "characters", "used": 1411.0, "limit": 10000},
+    }
+    after = {
+        "rw": {"kind": "runway", "unit": "credits", "balance": 1662.0},
+        "el": {"kind": "elevenlabs", "unit": "characters", "used": 1608.0, "limit": 10000},
+    }
+    spent = credit_spend(before, after)
+    assert spent["rw"]["spent"] == 38.0 and spent["rw"]["before"] == 1700.0
+    assert spent["el"]["spent"] == 197.0 and spent["el"]["after"] == 1608.0
+    assert credit_spend(before, {}) == {}  # a vendor that did not answer the second time
+
+    class NoVault:
+        def decrypt(self, value):
+            raise AssertionError("nothing to decrypt in a studio with no connections")
+
+    assert credit_balances(engine, NoVault()) == {}

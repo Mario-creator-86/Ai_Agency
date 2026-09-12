@@ -58,6 +58,8 @@ TEMPLATE_VERSION = "editorial-v1"
 #: Under this many spoken words there is no story to tell, whatever the pictures.
 MIN_WORDS = 40
 FRAMES = 3
+#: One frame per scene, up to this many.
+MAX_FRAMES = 8
 FRAME_WIDTH = 480
 
 DEPARTMENTS = {
@@ -84,7 +86,9 @@ _INSTRUCTIONS = (
     "with their sources, each scene's picture and narration, what quality control measured"
     "{frames_note}. Judge it as the audience will: does it tell one clear story with a hook "
     "and a point; is every sentence something a viewer learns, backed by a real source; is it "
-    "in the audience's language; do the pictures show the story rather than decorate it; is "
+    "in the audience's language; do the pictures show the story rather than decorate it — one "
+    "frame from every scene is attached, and a blank field, stripes, noise or garbled writing "
+    "in any of them means REJECT, however good the rest is; is "
     "it worth their time. A film about the studio itself, a film that only describes its own "
     "process, or narration nobody would understand is REJECTED. Return only JSON: "
     '{{"verdict": "APPROVE" | "REJECT", "story": "one sentence: what the viewer learns", '
@@ -221,15 +225,36 @@ def model_can_see(session: Session, agent_id: str) -> bool:
     )
 
 
-def frames_for(path: str, ffmpeg_path: str | None, duration: float | None) -> list[str]:
-    """Up to three frames from the film, as base64 JPEG, for a model that can see."""
+def frames_for(
+    path: str,
+    ffmpeg_path: str | None,
+    duration: float | None,
+    scene_seconds: list[float | None] | None = None,
+) -> list[str]:
+    """One frame from the middle of every scene, as base64 JPEG, for a model that can see.
+
+    It used to be three frames at 20, 50 and 80 per cent of the film. A five-scene film showed
+    the Director three of its scenes, and the payoff of the ATLAS film — eleven seconds of
+    stripes — was approved on that. The planned scene lengths are scaled to the film's real
+    length, because a scene lasts as long as its narration was recorded.
+    """
     ffmpeg = find_ffmpeg(ffmpeg_path)
     file = Path(path)
     if not ffmpeg or not file.is_file() or not duration or duration <= 0:
         return []
+    planned = [float(seconds) for seconds in (scene_seconds or []) if seconds]
+    moments: list[float] = []
+    if planned:
+        scale = duration / sum(planned)
+        start = 0.0
+        for seconds in planned[:MAX_FRAMES]:
+            moments.append(start + seconds * scale / 2)
+            start += seconds * scale
+    else:
+        moments = [duration * fraction for fraction in (0.2, 0.5, 0.8)[:FRAMES]]
     frames: list[str] = []
-    for fraction in (0.2, 0.5, 0.8)[:FRAMES]:
-        moment = max(0.0, duration * fraction)
+    for moment in moments:
+        moment = max(0.0, moment)
         try:
             result = subprocess.run(  # noqa: S603 - argument list, no shell
                 [
@@ -306,7 +331,12 @@ def editorial_review(
         with Session(engine) as session:
             can_see = model_can_see(session, director_id)
         if can_see:
-            frames = frames_for(facts["path"], ffmpeg_path, facts["duration_seconds"])
+            frames = frames_for(
+                facts["path"],
+                ffmpeg_path,
+                facts["duration_seconds"],
+                scene_seconds=[scene.get("seconds") for scene in facts.get("scenes") or []],
+            )
         shown = {k: v for k, v in facts.items() if k not in ("path", "hard_rejects")}
         prompt = (
             audience_language_line(language)

@@ -723,6 +723,40 @@ def assemble_video_job(
         suffix = img_res.format if img_res.format in ("png", "jpeg", "webp") else "svg"
         still = work_dir / f"scene_{index:02d}.{suffix}"
         still.write_bytes(img_res.image_bytes)
+        if image_adapter is not None:
+            from app.media.prompt_agent import strip_on_screen_text  # noqa: PLC0415
+            from app.media.qc import still_is_degenerate  # noqa: PLC0415
+
+            measuring = find_ffmpeg(ffmpeg_path)
+            broken = still_is_degenerate(measuring, still)
+            if broken:
+                # One more attempt, told plainly what a picture is. A still costs cents; a scene
+                # of stripes costs the film.
+                production.setdefault("image_retries", []).append(
+                    {"scene_index": index, "reason": broken}
+                )
+                with _at_work(
+                    engine,
+                    "VideoEditor",
+                    "generate_image",
+                    f"imaginea scenei {index} (reluare)",
+                ):
+                    again = asyncio.run(
+                        visual_adapter.generate_image(
+                            strip_on_screen_text(scene["visual_prompt"])
+                            + " A real, detailed scene: no text, no letters, no stripes, "
+                            "no repeating pattern.",
+                            width=1080,
+                            height=1920,
+                            extra={"title": storyboard_title, "scene_index": index},
+                        )
+                    )
+                still.write_bytes(again.image_bytes)
+                broken = still_is_degenerate(measuring, still)
+                if broken:
+                    production.setdefault("degenerate_stills", []).append(
+                        {"scene_index": index, "reason": broken}
+                    )
 
         if image_adapter is not None:
             # A real still goes to the encoder as it arrived; ffmpeg scales it to 1080x1920.

@@ -35,6 +35,7 @@ from app.publishing.services import (
     seed_default_channels,
 )
 from app.services import utc_now
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 
@@ -709,3 +710,84 @@ def test_a_publication_that_failed_does_not_block_the_film(engine, tmp_path):
     assert evaluate_publishing_gate(engine, retake, ch_id)["eligible"] is True
     with Session(engine) as session:
         assert published_films(session, ch_id) == {}
+
+
+def test_every_description_carries_the_disclosure_and_the_creator(engine, tmp_path):
+    """The Owner's rule: every film's description says it was made with generative AI by the
+    AMN-AI pipeline, links the studio's site once there is one, and credits INSIDE THE NEXUS.
+    Added on the one road every upload takes, once, whatever the Publisher wrote."""
+    from types import SimpleNamespace
+
+    from app.publishing.services import (
+        AI_DISCLOSURE,
+        channel_link,
+        publication_footer,
+        with_footer,
+    )
+
+    with_site = publication_footer(engine, "https://example.org/amn-ai", None)
+    assert with_site == f"{AI_DISCLOSURE} https://example.org/amn-ai"
+    assert publication_footer(engine, "", None) == AI_DISCLOSURE  # no site yet: the sentence stands
+
+    handle = SimpleNamespace(
+        channel_snapshot={"custom_url": "@insidethenexusai"}, remote_channel_id="UC1"
+    )
+    assert channel_link(handle) == "https://www.youtube.com/@insidethenexusai"
+    as_text = SimpleNamespace(
+        channel_snapshot='{"custom_url": "@insidethenexusai"}', remote_channel_id="UC1"
+    )
+    assert channel_link(as_text) == "https://www.youtube.com/@insidethenexusai"
+    bare = SimpleNamespace(channel_snapshot=None, remote_channel_id="UC1")
+    assert channel_link(bare) == "https://www.youtube.com/channel/UC1"
+
+    credited = publication_footer(engine, None, "INSIDE THE NEXUS")
+    assert credited.endswith("Created by INSIDE THE NEXUS")  # no connection in a fresh studio
+
+    once = with_footer("What the film shows.", with_site)
+    assert once == f"What the film shows.\n\n{with_site}"
+    assert with_footer(once, with_site) == once  # passed through twice, written once
+    long = with_footer("x" * 6000, with_site)
+    assert len(long) <= 5000 and long.endswith(with_site)
+
+    seed_default_channels(engine)
+    channel_id = list_channels(engine)[0]["id"]
+    bundle = _create_verified_asset_bundle(engine, tmp_path)
+    published = publish_media_asset(
+        engine,
+        media_asset_id=bundle["asset_id"],
+        channel_id=channel_id,
+        title="JWST Deep Field Discovery",
+        description="Exploring early galaxies.",
+        tags=[],
+        privacy_status="private",
+        correlation_id=str(uuid4()),
+        provider=DeterministicPublishingAdapter(),
+        footer=with_site,
+    )
+    assert published["description"] == f"Exploring early galaxies.\n\n{with_site}"
+
+
+def test_a_film_of_stripes_fails_quality_control(engine, tmp_path):
+    """A still still broken after one more attempt is named in quality control, and fails it."""
+    from app.media.qc import evaluate_media_qc
+
+    bundle = _create_verified_asset_bundle(engine, tmp_path)
+    with Session(engine) as session, session.begin():
+        job = session.scalars(
+            select(VideoRenderJob).where(VideoRenderJob.output_asset_id == bundle["asset_id"])
+        ).first()
+        job.production_json = {
+            "degenerate_stills": [
+                {"scene_index": 5, "reason": "vertical stripes, no scene (structure 0.96)"}
+            ]
+        }
+    evaluate_media_qc(engine, bundle["asset_id"], str(uuid4()))
+    with Session(engine) as session:
+        report = session.scalars(
+            select(QualityControlReport)
+            .where(QualityControlReport.media_asset_id == bundle["asset_id"])
+            .order_by(QualityControlReport.verified_at.desc())
+        ).first()
+        assert report.status == "FAILED"
+        assert report.checks_json["content_integrity_qc"]["passed"] is False
+        assert any("Scene 5: vertical stripes" in reason for reason in report.failure_reasons_json)

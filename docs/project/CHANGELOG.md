@@ -1,5 +1,70 @@
 # Changelog
 
+## Watching the film: stripes, a discarded shot plan, and a disclosure it never carried — 2026-09-13
+
+The Owner watched *How ATLAS Caught the Higgs Boson in Real Time* and named what was wrong:
+text in the picture that should not be there, a weak voice, pictures that were poor and
+sometimes made no sense — and he asked whether it was because the studio buys the cheapest.
+Mostly it was not. The film was watched frame by frame and every fault traced to its cause.
+
+**What the film is.** 0–4s old theory pages whose printed words are gibberish; 4–7s a light
+net, two spheres colliding, a fully white frame; 7–10s a particle burst; 10–14s ATLAS drawn as
+a futuristic tower in a canyon (it is a horizontal cylinder in a cavern); 14–19s abstract neon
+spirals; **19–30s eleven seconds of vertical beige stripes** — the film's payoff. Quality
+control scored it 1.0, and the Director approved it having seen three frames.
+
+**Why.**
+- The video editor wrote a 14,036-character shot plan — lens, light direction and colour,
+  composition — and **the studio threw all of it away** because two `audio_intent` lines ran
+  past 200 characters. One field failed validation, so the whole pack did, and every shot was
+  rebuilt from the writer's one-line description, repeated into subject, action, environment
+  and lighting.
+- His visual bible went the same way for describing the palette, the light and the camera as
+  objects instead of sentences; the film was shot on an empty default look.
+- The writer's line for the payoff asked for *"a text overlay appears: 'Top quark or W
+  boson?'"*, and the prompt passed it to the image model, which drew stripes.
+- Quality control measures the file, never the picture; the Director was shown frames at 20,
+  50 and 80 per cent, so two of five scenes were never seen.
+- The cheap choices are real but secondary: in TEST the motion model was `seedance2_mini`
+  (catalogue quality 0.6, against 0.8 for `seedance2`), and the narration was ElevenLabs'
+  lowest-latency `eleven_flash_v2` on the free plan.
+
+**What changed.**
+- A model's answer is fitted to the schema instead of refused for its shape: an overlong field
+  is shortened, a structured value is said as a sentence, and a shot that cannot be placed
+  costs only itself. Kael's real plan now keeps all five shots.
+- Pictures are never asked to draw writing: text requests are stripped from every positive
+  field, and both the writer's and the editor's briefs say so. Text belongs to the edit.
+- A composed prompt says each thing once.
+- Every still is measured when it is made — squeezed along each axis and compared with itself
+  by SSIM, with the encoder the studio already has. Real stills measured 0.18–0.76 (a plain sky
+  0.89/0.91); the ATLAS stripes 0.961. Above 0.94 on one axis is stripes or bands, on both a
+  blank field. A broken still is generated once more, told plainly what a picture is; still
+  broken, it is recorded and **quality control fails the film** and names the scene.
+- The Director is shown one frame from the middle of every scene, and told that a blank field,
+  stripes, noise or garbled writing in any of them is a REJECT.
+
+**The description.** The Owner's rule: every film says it was made with generative AI by the
+AMN-AI studio pipeline, links the studio's site, and credits INSIDE THE NEXUS. It is added on
+every road to YouTube — the day's publish stage, the one-click route and the Owner's own intent
+— once, inside YouTube's 5,000 characters, whatever the Publisher wrote. The site
+(`STUDIO_AI_DISCLOSURE_URL`, empty until it exists) and the creator channel
+(`STUDIO_CREATOR_CHANNEL_TITLE=INSIDE THE NEXUS`) are configuration; the link to the channel is
+read from its stored connection (`@insidethenexusai`), not written in code. The two films
+already on the channel keep their old descriptions: the upload adapter cannot edit a published
+video, and editing one is the Owner's call.
+
+**The cost, from the credits.** The studio had never written a vendor balance down, so the
+ATLAS render's "before" cannot be proven after the fact, and Runway's usage report does not yet
+include the day. What is exact: Runway holds **1,662 credits** now; ElevenLabs counted the
+render's narration **1,411 → 1,608 characters (197)**, the flash model billing half a credit
+per character. From now on the media stage reads each vendor's balance immediately before and
+after every render and writes the difference on the render and in the event stream, with the
+dollar value of Runway credits at the Owner's recorded rate. The 30 credits on 2026-09-11 and
+the six `gemini_2.5_flash` generations on the same key are not made by any code in the studio.
+
+`uv run pytest -q` — **735 passed, 1 skipped**, including tests built from the ATLAS film's own failures. `ruff`, `mypy`, `scripts/check_docs.py` clean.
+
 ## The studio published a new film end to end, and the office showed nobody working — 2026-09-13
 
 The first complete cycle under the corrected rules ran on the evening of 2026-09-12 and went

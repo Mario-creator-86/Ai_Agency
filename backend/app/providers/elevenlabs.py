@@ -69,6 +69,20 @@ class ElevenLabsTTSAdapter(TTSProvider):
             return {"status": "OFFLINE", "detail": "ElevenLabs did not identify the account"}
         return {"status": "HEALTHY", "detail": ""}
 
+    async def subscription(self) -> dict[str, Any]:
+        """What this key's plan has used and allows, counted the way the vendor bills it."""
+        data, _, _ = await asyncio.to_thread(
+            request,
+            HOST,
+            "GET",
+            "/v1/user/subscription",
+            self._headers("application/json"),
+            timeout=20,
+        )
+        if not isinstance(data, dict):
+            raise MediaProviderError("ElevenLabs did not describe the subscription")
+        return data
+
     async def list_models(self) -> list[dict[str, Any]]:
         data, _, _ = await asyncio.to_thread(
             request, HOST, "GET", "/v1/models", self._headers("application/json"), timeout=20

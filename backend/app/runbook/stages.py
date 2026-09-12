@@ -100,6 +100,7 @@ from app.publishing.services import (
     channel_bindings,
     evaluate_publishing_gate,
     film_identity,
+    publication_footer,
     publish_media_asset,
     published_films,
 )
@@ -859,6 +860,7 @@ def _media(
     hold the render: the words rest on verified claims and the day's output is not blocked
     on an opinion about delivery.
     """
+    from app.economy.credits import credit_balances, record_credit_spend
     from app.media.assembler import RenderEngineUnavailable, assemble_video_job
     from app.media.factory import image_provider, motion_for_scene, render_plan, tts_provider
     from app.media.production_policy import named_model
@@ -918,6 +920,7 @@ def _media(
     refused: list[dict[str, str]] = []
     narration_reviews = []
     costs_recorded = 0
+    credit_lines: list[str] = []
     for storyboard_id in pending:
         if registry is not None and _has_language_model(registry):
             try:
@@ -927,6 +930,9 @@ def _media(
                 )
             except (ReviewError, NoReviewer, ValueError) as exc:
                 narration_reviews.append({"storyboard_id": storyboard_id, "error": str(exc)[:200]})
+        # What the vendors say the account holds, read just before the money is spent, so the
+        # render's cost can be proven from the credits and not only estimated from prices.
+        balances_before = credit_balances(engine, vault)
         try:
             # Channel policy, series rules, overrides and locked character voices decide per
             # scene; the Organization default is the fallback for scenes nothing else names.
@@ -996,6 +1002,11 @@ def _media(
             logger.info("render_refused", extra={"storyboard_id": storyboard_id})
             continue
         produced.append(result["output_asset_id"])
+        measured = record_credit_spend(
+            engine, result["job_id"], balances_before, credit_balances(engine, vault)
+        )
+        if measured:
+            credit_lines.append(measured)
         # Into the books at once, at the stored price, so the day's close and the next
         # budget check see what was just spent.
         try:
@@ -1010,6 +1021,8 @@ def _media(
 
     substitutes = images is None or voice is None
     reason = f"{len(produced)} videoclipuri randate."
+    if credit_lines:
+        reason += " Credite măsurate la furnizor: " + " | ".join(credit_lines) + "."
     if refused:
         reason += f" {len(refused)} randări refuzate de furnizor: {refused[0]['error']}."
     if retry:
@@ -1098,6 +1111,7 @@ def _publish(
     registry: ProviderRegistry | None = None,
     language: str = "en",
     ffmpeg_path: str | None = None,
+    footer: str | None = None,
 ) -> dict[str, Any]:
     """Publish what the gate allows, to a channel that is actually connected.
 
@@ -1262,6 +1276,7 @@ def _publish(
             privacy_status="private",
             correlation_id=str(uuid4()),
             provider=provider,
+            footer=footer,
         )
     except (PublishingGateError, PublisherNotConfigured) as exc:
         return _outcome(SKIPPED, str(exc))
@@ -1498,7 +1513,14 @@ def build_stage_runners(
         "publish": keep(
             "publish",
             lambda: _publish(
-                engine, vault, registry, settings.content_language, settings.ffmpeg_path
+                engine,
+                vault,
+                registry,
+                settings.content_language,
+                settings.ffmpeg_path,
+                footer=publication_footer(
+                    engine, settings.ai_disclosure_url, settings.creator_channel_title
+                ),
             ),
         ),
         "post_run": lambda: _post_run(engine, registry, outcomes),

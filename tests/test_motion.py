@@ -514,3 +514,62 @@ def test_a_ceiling_stops_the_motion_pass_and_a_test_renders_the_minimum(engine, 
         assert outcome.accepted and outcome.first_pass
         assert outcome.credits == 260.0
         assert outcome.usd == 2.6
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="ffmpeg not installed")
+def test_a_still_of_stripes_or_of_nothing_is_caught_and_a_real_picture_is_not(tmp_path):
+    """The ATLAS payoff was eleven seconds of vertical stripes, scored 1.0 by quality control."""
+    import subprocess
+
+    from app.media.qc import still_is_degenerate
+
+    ffmpeg = find_ffmpeg()
+
+    def make(name: str, source: str):
+        path = tmp_path / name
+        subprocess.run(
+            [ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", source, "-frames:v", "1", str(path)],
+            check=True,
+            capture_output=True,
+        )
+        return path
+
+    stripes = make("stripes.png", "nullsrc=s=540x960,format=gray,geq=lum='128+100*sin(X/4)'")
+    blank = make("blank.png", "color=c=white:s=540x960")
+    noise = make("scene.png", "life=s=540x960:ratio=0.5:random_seed=7,format=rgb24")
+
+    assert "stripes" in (still_is_degenerate(ffmpeg, stripes) or "")
+    assert "blank" in (still_is_degenerate(ffmpeg, blank) or "")
+    assert still_is_degenerate(ffmpeg, noise) is None
+    assert still_is_degenerate(None, noise) is None  # unmeasurable is not a refusal
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="ffmpeg not installed")
+def test_the_director_sees_a_frame_from_every_scene(tmp_path):
+    import subprocess
+
+    from app.agents.editorial import frames_for
+
+    ffmpeg = find_ffmpeg()
+    film = tmp_path / "film.mp4"
+    subprocess.run(
+        [
+            ffmpeg,
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=s=180x320:r=10",
+            "-t",
+            "10",
+            "-pix_fmt",
+            "yuv420p",
+            str(film),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    assert len(frames_for(str(film), ffmpeg, 10.0, scene_seconds=[2, 2, 2, 2, 2])) == 5
+    assert len(frames_for(str(film), ffmpeg, 10.0)) == 3  # no scenes known: the old three

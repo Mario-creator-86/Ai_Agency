@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import Engine, select
@@ -233,6 +235,77 @@ def channel_bindings(engine: Engine) -> dict[str, dict]:
                 "publisher_ready": bool(connection and connection.status == "CONNECTED"),
             }
         return bindings
+
+
+#: What the audience reads under every film, in the Owner's words. English, because what the
+#: studio publishes is English.
+AI_DISCLOSURE = (
+    "Disclosure: this video was produced with generative AI by the AMN-AI studio pipeline."
+)
+#: The line that marks where the studio's own block begins, so it is written once however many
+#: times a description passes through here.
+FOOTER_MARKER = "Disclosure: this video was produced with generative AI"
+YOUTUBE_DESCRIPTION_LIMIT = 5000
+
+
+def channel_link(connection: Any) -> str | None:
+    """The public address of a connected channel: its handle when it has one, else its id."""
+    snapshot = getattr(connection, "channel_snapshot", None)
+    if isinstance(snapshot, str):
+        try:
+            snapshot = json.loads(snapshot)
+        except ValueError:
+            snapshot = None
+    handle = (
+        str((snapshot or {}).get("custom_url") or "").strip() if isinstance(snapshot, dict) else ""
+    )
+    if handle:
+        return f"https://www.youtube.com/{handle if handle.startswith('@') else '@' + handle}"
+    remote = str(getattr(connection, "remote_channel_id", "") or "").strip()
+    return f"https://www.youtube.com/channel/{remote}" if remote else None
+
+
+def publication_footer(
+    engine: Engine, disclosure_url: str | None, creator_channel_title: str | None
+) -> str:
+    """The disclosure, the studio's site when one is configured, and the creator's channel.
+
+    The creator is named by the title of a connected YouTube channel and linked from that
+    connection, so the address is the one the studio actually holds — not one typed here.
+    A title that matches no connection is still credited, without a link, rather than dropped.
+    """
+    from app.youtube.models import YouTubeConnection  # noqa: PLC0415
+
+    url = (disclosure_url or "").strip()
+    lines = [f"{AI_DISCLOSURE} {url}" if url else AI_DISCLOSURE]
+    title = (creator_channel_title or "").strip()
+    if title:
+        with Session(engine) as session:
+            match = next(
+                (
+                    row
+                    for row in session.scalars(select(YouTubeConnection))
+                    if (row.remote_channel_title or "").strip().casefold() == title.casefold()
+                ),
+                None,
+            )
+            link = channel_link(match) if match is not None else None
+        lines.append(f"Created by {title}: {link}" if link else f"Created by {title}")
+    return "\n".join(lines)
+
+
+def with_footer(description: str, footer: str | None) -> str:
+    """The description with the studio's block at the end, once, inside YouTube's limit."""
+    if not footer:
+        return description
+    body = description or ""
+    cut = body.find(FOOTER_MARKER)
+    if cut >= 0:
+        body = body[:cut]
+    body = body.rstrip()
+    room = YOUTUBE_DESCRIPTION_LIMIT - len(footer) - 2
+    body = body[: max(0, room)].rstrip()
+    return f"{body}\n\n{footer}" if body else footer
 
 
 def list_channels(engine: Engine) -> list[dict]:
@@ -920,9 +993,13 @@ def publish_media_asset(
     correlation_id: str | None = None,
     provider: PublishingProvider | None = None,
     idempotency_key: str | None = None,
+    footer: str | None = None,
 ) -> dict:
     """End-to-end publishing pipeline: intent -> gate validation -> upload -> remote URL."""
     corr_id = correlation_id or str(uuid4())
+    # The disclosure and the creator's channel are not the Publisher's to remember: they are
+    # added here, on the one road every upload takes, whatever she wrote above them.
+    description = with_footer(description, footer)
 
     # Refuse before creating any record: without a provider nothing can be published, and a
     # DRAFT_INTENT row would only suggest an attempt that could never happen.

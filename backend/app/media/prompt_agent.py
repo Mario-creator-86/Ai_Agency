@@ -38,7 +38,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from app.agents.identity import parse_structured
 from app.agents.memory import agent_for_role, remember
 from app.factual.editorial import SCENE_PURPOSES
 from app.factual.models import FactualClaim, ScriptDraft
@@ -171,7 +170,9 @@ _SHOTS_INSTRUCTIONS = (
     "subject; what must match the previous shot (continuity); what the last frame should be "
     "left on; the audio intent; the transition into the next shot; and what to avoid.\n\n"
     "Show the information rather than narrating it twice: if the narration says a storm grew "
-    "stronger, the picture shows cloud, wind, water and a reaction, not a caption. Do not "
+    "stronger, the picture shows cloud, wind, water and a reaction, not a caption. Never ask "
+    "for writing in the picture — no text overlay, title, label, caption or written number: a "
+    "generator draws letters as gibberish or stripes, and text is added in the edit. Do not "
     "add facts, numbers, dates or events that are not in the narration or the claims. Do not "
     "make the film more spectacular than the story: no explosions, crowds, battles or aliens "
     "unless the scene says so. Detailed does not mean long — every phrase must earn its "
@@ -286,6 +287,122 @@ def new_numbers(text: str, allowed: str) -> list[str]:
     return sorted({value for value in found if value not in permitted})
 
 
+#: Words that ask a picture generator to draw writing. Image and video models draw letters as
+#: gibberish — the "theory" pages of the ATLAS film read "Theam Thory Thory" — and a scene that
+#: asked for "a text overlay appears: 'Top quark or W boson?'" came back as eleven seconds of
+#: stripes, the film's whole payoff. Text belongs to the edit, never to the shot.
+_TEXT_REQUEST = re.compile(
+    r"text overlay|on[- ]?screen text|\bcaptions?\b|\bsubtitles?\b|title card|\blettering\b|"
+    r"\btypography\b|\bheadline\b|(?:reads|reading|says|saying|appears?)\s*:?\s*['\"“‘]",
+    re.IGNORECASE,
+)
+
+
+def strip_on_screen_text(text: str) -> str:
+    """The description with every clause that asks for writing in the picture removed."""
+    parts = re.split(r"(?<=[.!?])\s+|\s*;\s*", str(text or ""))
+    kept = [part for part in parts if part.strip() and not _TEXT_REQUEST.search(part)]
+    return " ".join(" ".join(kept).split())
+
+
+def _flatten(value: Any) -> str:
+    """A structured answer said as one line: "key: value; key: value"."""
+    if isinstance(value, dict):
+        return "; ".join(
+            f"{key}: {_flatten(item)}" for key, item in value.items() if _flatten(item)
+        )
+    if isinstance(value, list | tuple):
+        return ", ".join(_flatten(item) for item in value if _flatten(item))
+    return "" if value is None else str(value)
+
+
+def _max_length(field: Any) -> int | None:
+    for meta in getattr(field, "metadata", None) or []:
+        limit = getattr(meta, "max_length", None)
+        if isinstance(limit, int):
+            return limit
+    return None
+
+
+def _coerce(data: dict[str, Any], model: type[BaseModel]) -> dict[str, Any]:
+    """Fit a model's answer to the schema instead of refusing it for its shape.
+
+    Kael's shot plan for the ATLAS film was 14,036 characters of camera, lens, light and
+    composition — and all of it was thrown away because two `audio_intent` lines ran past 200
+    characters, so the whole pack failed validation and every shot was rebuilt from the
+    writer's one-line description. His visual bible went the same way for describing the
+    palette, the light and the camera as objects instead of sentences. A field that is too
+    long is shortened, a structured value is said as a sentence; nothing good is discarded
+    for its formatting.
+    """
+    fitted: dict[str, Any] = {}
+    for name, field in model.model_fields.items():
+        if name not in data:
+            continue
+        value = data[name]
+        limit = _max_length(field)
+        if field.annotation is str:
+            text = " ".join(_flatten(value).split())
+            fitted[name] = text[:limit] if limit else text
+        elif field.annotation == list[str]:
+            items = value if isinstance(value, list) else [value]
+            cleaned = [" ".join(_flatten(item).split()) for item in items]
+            cleaned = [item for item in cleaned if item]
+            fitted[name] = cleaned[:limit] if limit else cleaned
+        else:
+            fitted[name] = value
+    return fitted
+
+
+def _first_object(text: str, wanted: tuple[str, ...]) -> dict[str, Any] | None:
+    """The first JSON object in a model's answer that carries one of the fields asked for."""
+    raw = (text or "").strip()
+    decoder = json.JSONDecoder()
+    start = raw.find("{")
+    tried = 0
+    while start >= 0 and tried < 400:
+        tried += 1
+        try:
+            data, _end = decoder.raw_decode(raw, start)
+        except ValueError:
+            start = raw.find("{", start + 1)
+            continue
+        if isinstance(data, dict) and any(key in data for key in wanted):
+            return data
+        start = raw.find("{", start + 1)
+    return None
+
+
+def _parse_shot_pack(text: str) -> ShotPack | None:
+    """Every shot that can be placed, fitted to the schema; a broken shot costs only itself."""
+    from pydantic import ValidationError  # noqa: PLC0415
+
+    data = _first_object(text, ("shots",))
+    if data is None:
+        return None
+    shots: list[ShotPrompt] = []
+    for raw in data.get("shots") or []:
+        if not isinstance(raw, dict):
+            continue
+        try:
+            shots.append(ShotPrompt.model_validate(_coerce(raw, ShotPrompt)))
+        except ValidationError:
+            continue
+    return ShotPack(shots=shots[:60]) if shots else None
+
+
+def _parse_bible(text: str) -> VisualBible | None:
+    from pydantic import ValidationError  # noqa: PLC0415
+
+    data = _first_object(text, tuple(VisualBible.model_fields))
+    if data is None:
+        return None
+    try:
+        return VisualBible.model_validate(_coerce(data, VisualBible))
+    except ValidationError:
+        return None
+
+
 # ------------------------------------------------------------------ the bible
 
 
@@ -327,8 +444,7 @@ def build_visual_bible(
         )
         if result is not None:
             run_id = result["id"]
-            parsed = parse_structured(result.get("output_text") or "", VisualBible)
-            bible = parsed if isinstance(parsed, VisualBible) else None
+            bible = _parse_bible(result.get("output_text") or "")
 
     record = (bible or VisualBible()).model_dump()
     record["avoid"] = _avoid_list(record.get("avoid"))
@@ -434,8 +550,8 @@ def write_shot_prompts(
         )
         if result is not None:
             run_id = result["id"]
-            parsed = parse_structured(result.get("output_text") or "", ShotPack)
-            if isinstance(parsed, ShotPack):
+            parsed = _parse_shot_pack(result.get("output_text") or "")
+            if parsed is not None:
                 packs = {shot.scene_index: shot for shot in parsed.shots}
 
     allowed = _allowed_text(facts)
@@ -537,9 +653,17 @@ def _validated_package(
         "avoid": _avoid_list(shot.avoid if shot else None),
         "characters": scene.get("characters") or [],
     }
+    for key in ("subject", "action", "environment", "background", "composition", "ending_frame"):
+        original = str(package.get(key) or "")
+        cleaned = strip_on_screen_text(original)
+        if cleaned != " ".join(original.split()):
+            package[key] = cleaned
+            if "cerere de text în imagine scoasă" not in notes:
+                notes.append("cerere de text în imagine scoasă")
+    writer_line = strip_on_screen_text(str(scene.get("writer_visual") or ""))
     for field in REQUIRED_SHOT_FIELDS:
         if not str(package.get(field) or "").strip():
-            package[field] = str(scene.get("writer_visual") or bible.get("style") or "")
+            package[field] = writer_line or str(bible.get("style") or "")
             notes.append(f"{field} lipsea")
     invented = new_numbers(
         " ".join(str(package[k]) for k in ("subject", "action", "environment", "background")),
@@ -562,29 +686,48 @@ def compose_prompt(package: dict[str, Any], bible: dict[str, Any]) -> str:
     then what must match the shot before it; and the exclusions last. Trimmed to a length
     that keeps the important half readable — a thousand meaningless words teach nothing.
     """
+    # Each value is said once. When the shot plan was missing, the writer's single line filled
+    # the subject, the action, the environment and the lighting, and the model received the
+    # same sentence four times with nothing about light or place in it.
+    seen: set[str] = set()
+
+    def once(value: Any) -> str:
+        said = " ".join(str(value or "").split()).rstrip(". ")
+        if not said or said.casefold() in seen:
+            return ""
+        seen.add(said.casefold())
+        return said
+
     characters = package.get("characters") or []
     who = "; ".join(
         f"{c.get('name')}: {c.get('face_hair')}, wearing {c.get('outfit')}"
         for c in characters
         if isinstance(c, dict)
     )
-    parts = [
-        str(package.get("subject") or "").strip(),
-        str(package.get("action") or "").strip(),
-        f"Character: {who}." if who else "",
-        f"Environment: {package.get('environment')}." if package.get("environment") else "",
-        f"Camera: {package.get('camera')}." if package.get("camera") else "",
-        f"Lighting: {package.get('lighting')}." if package.get("lighting") else "",
-        f"Composition: {package.get('composition')}." if package.get("composition") else "",
-        f"Motion: {package.get('motion')}." if package.get("motion") else "",
-        f"Emotion: {package.get('emotion')}." if package.get("emotion") else "",
-        f"Background: {package.get('background')}." if package.get("background") else "",
-        f"Style: {bible.get('style')}, {bible.get('realism')}." if bible.get("style") else "",
-        f"Palette: {bible.get('palette')}." if bible.get("palette") else "",
-        f"Continuity: {package.get('continuity')}." if package.get("continuity") else "",
-        f"Avoid: {', '.join(str(a) for a in (package.get('avoid') or [])[:6])}.",
-    ]
-    text = " ".join(part for part in parts if part)
+    style = ", ".join(
+        part
+        for part in (str(bible.get("style") or "").strip(), str(bible.get("realism") or "").strip())
+        if part
+    )
+    parts = [once(package.get("subject")), once(package.get("action"))]
+    for label, value in (
+        ("Character", who),
+        ("Environment", package.get("environment")),
+        ("Camera", package.get("camera")),
+        ("Lighting", package.get("lighting")),
+        ("Composition", package.get("composition")),
+        ("Motion", package.get("motion")),
+        ("Emotion", package.get("emotion")),
+        ("Background", package.get("background")),
+        ("Style", style),
+        ("Palette", bible.get("palette")),
+        ("Continuity", package.get("continuity")),
+    ):
+        said = once(value)
+        if said:
+            parts.append(f"{label}: {said}")
+    parts.append(f"Avoid: {', '.join(str(a) for a in (package.get('avoid') or [])[:6])}")
+    text = " ".join(f"{part}." for part in parts if part)
     text = " ".join(text.split())
     return text[:MAX_PROMPT_CHARS]
 

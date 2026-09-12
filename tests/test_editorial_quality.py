@@ -1634,3 +1634,90 @@ def test_a_story_that_keeps_improving_keeps_the_room(engine, studio):
 
     # And one real improvement after a stall reopens it.
     assert stalled_rounds(going_nowhere + [Review([])]) == 0
+
+
+def test_a_shot_plan_is_not_thrown_away_for_one_long_field():
+    """Found live on 2026-09-13: Kael's plan for the ATLAS film — 14,036 characters of lens,
+    light and composition — was discarded whole because two audio lines ran past 200
+    characters, and every shot was rebuilt from the writer's one-line description."""
+    from app.media.prompt_agent import _parse_bible, _parse_shot_pack
+
+    long_audio = "A rising electronic swoosh as the leptons converge, then a sharp ding. " * 6
+    answer = (
+        "```json\n"
+        + json.dumps(
+            {
+                "shots": [
+                    {
+                        "scene_index": 1,
+                        "story_purpose": "HOOK",
+                        "subject": "A yellowed 1964 physics paper.",
+                        "lighting": "Soft amber from the front, no harsh shadows.",
+                        "audio_intent": "narration dominates",
+                    },
+                    {
+                        "scene_index": 2,
+                        "story_purpose": "PAYOFF",
+                        "subject": "Four lepton tracks.",
+                        "audio_intent": long_audio,
+                    },
+                    {"story_purpose": "ENDING", "subject": "no index: this shot cannot be placed"},
+                ]
+            }
+        )
+        + "\n```"
+    )
+    pack = _parse_shot_pack(answer)
+    assert pack is not None
+    assert [shot.scene_index for shot in pack.shots] == [1, 2]
+    assert len(pack.shots[1].audio_intent) <= 200
+    assert pack.shots[0].lighting == "Soft amber from the front, no harsh shadows."
+
+    bible = _parse_bible(
+        json.dumps(
+            {
+                "style": "MOTION_GRAPHICS_WITH_CGI_SIMULATION",
+                "palette": {"primary": ["#0A1E2A", "#1A3E5A"]},
+                "lighting": {"ambient": "dark, moody", "key": "high contrast"},
+                "avoid": ["daylight"],
+            }
+        )
+    )
+    assert bible is not None
+    assert bible.lighting == "ambient: dark, moody; key: high contrast"
+    assert "#0A1E2A" in bible.palette
+
+
+def test_a_picture_is_never_asked_to_draw_writing():
+    """The ATLAS payoff asked for a caption and came back as eleven seconds of stripes."""
+    from app.factual.agent_pipeline import _write_instructions
+    from app.media.prompt_agent import strip_on_screen_text
+
+    visual = (
+        "Four glowing lepton tracks converging on a full-screen histogram, stacking into a "
+        "sharp peak at 125 GeV; a text overlay appears: 'Top quark or W boson?'"
+    )
+    cleaned = strip_on_screen_text(visual)
+    assert "overlay" not in cleaned and "Top quark" not in cleaned
+    assert cleaned.startswith("Four glowing lepton tracks")
+    unchanged = "A cavern opens beneath green hills."
+    assert strip_on_screen_text(unchanged) == unchanged
+    assert "Niciodată text în imagine" in _write_instructions(30)
+
+
+def test_a_prompt_says_each_thing_once():
+    """With no shot plan, one line filled four fields and the model read it four times."""
+    line = "A cavern opening beneath the countryside, revealing the layered cylinder of ATLAS."
+    package = {
+        "subject": line,
+        "action": line,
+        "environment": line,
+        "lighting": line,
+        "camera": "medium shot, locked camera",
+        "composition": "subject centred in a vertical frame",
+        "avoid": ["on-screen text or captions"],
+    }
+    prompt = compose_prompt(package, {"style": "motion graphic, cinematic"})
+    assert prompt.count("A cavern opening") == 1
+    assert "Style: motion graphic, cinematic." in prompt
+    assert ", ." not in prompt

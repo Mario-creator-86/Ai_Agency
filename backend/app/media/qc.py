@@ -123,6 +123,67 @@ def probe_media_file(file_path: Path, ffmpeg_path: str | None = None) -> dict[st
     }
 
 
+#: How much of a still survives being flattened along one axis, measured as SSIM against the
+#: original. A real picture loses most of its structure: 0.18–0.76 across the thirteen stills
+#: of the studio's two September films, and 0.89/0.91 for the smoothest of them, a plain sky.
+#: Vertical stripes lose nothing when every column is squeezed to one pixel — 0.961 for the
+#: payoff of "How ATLAS Caught the Higgs Boson", eleven seconds of beige bars that quality
+#: control scored 1.0 and the Director approved. A blank field loses nothing either way.
+DEGENERATE_SSIM = 0.94
+
+
+def still_is_degenerate(ffmpeg: str | None, path: Path) -> str | None:
+    """Why a still is not a picture (stripes, bands, a blank field), or None when it is one.
+
+    Measured with the encoder the studio already has: the still is squeezed to a single row
+    (and then to a single column), stretched back, and compared with itself. No image library,
+    no model, no opinion. None also when it cannot be measured — this check refuses pictures,
+    it never invents a refusal.
+    """
+    import re  # noqa: PLC0415
+    import subprocess  # noqa: PLC0415
+
+    if not ffmpeg or not Path(path).is_file():
+        return None
+    scores: dict[str, float] = {}
+    for axis, collapse in (("columns", "270:1"), ("rows", "1:480")):
+        try:
+            result = subprocess.run(  # noqa: S603 - argument list, no shell
+                [
+                    ffmpeg,
+                    "-v",
+                    "info",
+                    "-nostats",
+                    "-i",
+                    str(path),
+                    "-filter_complex",
+                    f"[0]scale=270:480,split[a][b];[b]scale={collapse}:flags=area,"
+                    "scale=270:480:flags=neighbor[c];[a][c]ssim",
+                    "-f",
+                    "null",
+                    "-",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        match = re.search(r"All:([0-9.]+)", result.stderr or "")
+        if not match:
+            return None
+        scores[axis] = float(match.group(1))
+    columns, rows = scores["columns"], scores["rows"]
+    if columns >= DEGENERATE_SSIM and rows >= DEGENERATE_SSIM:
+        return f"blank or uniform picture, no scene (structure {columns:.2f}/{rows:.2f})"
+    if columns >= DEGENERATE_SSIM:
+        return f"vertical stripes, no scene (structure {columns:.2f})"
+    if rows >= DEGENERATE_SSIM:
+        return f"horizontal bands, no scene (structure {rows:.2f})"
+    return None
+
+
 def evaluate_media_qc(engine: Engine, media_asset_id: str, correlation_id: str) -> dict:
     """Run comprehensive Quality Control check on a rendered media asset."""
     qc_id = str(uuid4())
@@ -299,8 +360,31 @@ def evaluate_media_qc(engine: Engine, media_asset_id: str, correlation_id: str) 
             "detail": ("No visual continuity comparison exists yet; this check certifies nothing."),
         }
 
+        # 3b. Content integrity — a still the generator returned as stripes or an empty field,
+        #     measured when it was made and still broken after one more attempt. A technically
+        #     perfect file of nothing is not a film.
+        degenerate: list[dict] = []
+        if render_job is not None and isinstance(render_job.production_json, dict):
+            degenerate = [
+                item
+                for item in render_job.production_json.get("degenerate_stills") or []
+                if isinstance(item, dict)
+            ]
+        for item in degenerate:
+            failure_reasons.append(f"Scene {item.get('scene_index')}: {item.get('reason')}")
+        checks["content_integrity_qc"] = {
+            "passed": not degenerate,
+            "degenerate_stills": degenerate,
+        }
+
         # Overall Status
-        overall_passed = tech_passed and rights_passed and factual_passed and not is_placeholder
+        overall_passed = (
+            tech_passed
+            and rights_passed
+            and factual_passed
+            and not is_placeholder
+            and not degenerate
+        )
         status = "PASSED" if overall_passed else "FAILED"
         score = 1.0 if overall_passed else round(max(0.0, 1.0 - (len(failure_reasons) * 0.25)), 2)
 

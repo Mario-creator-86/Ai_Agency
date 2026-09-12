@@ -80,6 +80,15 @@ class Settings(BaseSettings):
     # whose metadata is not in this language holds. STUDIO_CONTENT_LANGUAGE=en.
     content_language: str = Field(default="en", min_length=2, max_length=5, pattern="^[a-z-]+$")
 
+    #: Every published description ends with the studio's AI disclosure and a pointer to the
+    #: channel that made the film. Both halves are configuration, never code: the site the
+    #: disclosure links to (STUDIO_AI_DISCLOSURE_URL, empty until the Owner publishes it) and
+    #: the title of the connected YouTube channel credited as the creator
+    #: (STUDIO_CREATOR_CHANNEL_TITLE). The link to that channel is read from its stored
+    #: connection.
+    ai_disclosure_url: str | None = None
+    creator_channel_title: str | None = None
+
     #: What the studio optimises for when it picks a model itself. The Owner's standing
     #: instruction is premium: the best picture the account can make, cost secondary — "no
     #: sense having a film company that cannot deliver good films". `balanced` weighs the
