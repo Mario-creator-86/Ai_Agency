@@ -1606,9 +1606,17 @@ async function loadAwaitingStoryboard() {
     block.hidden = scripts.length === 0;
     if (!scripts.length) return;
 
+    // The story is read before anything is generated. What the review said is the first
+    // thing on the card, because it decides whether this film may be produced at all.
+    const reviews = await Promise.all(
+      scripts.map((script) =>
+        api(`/factual/scripts/${script.id}/story-review`).catch(() => ({ verdict: 'NONE' })),
+      ),
+    );
+
     listEl.innerHTML = scripts
       .map(
-        (script) => `
+        (script, index) => `
         <div class="topic-card script-card">
           <div class="topic-card-header">
             <strong class="topic-card-title">${escapeHtml(script.title)}</strong>
@@ -1619,7 +1627,9 @@ async function loadAwaitingStoryboard() {
             · <span>${script.scene_count} scene</span>
             · <span>${script.claim_count} afirmații verificate</span>
           </div>
+          ${storyReviewBlock(reviews[index])}
           <div class="source-actions">
+            <button class="quiet btn-story-review" data-script-id="${escapeHtml(script.id)}">Citește povestea</button>
             <button class="secondary btn-make-storyboard" data-script-id="${escapeHtml(script.id)}">Creează storyboard</button>
           </div>
         </div>`,
@@ -1629,9 +1639,58 @@ async function loadAwaitingStoryboard() {
     listEl.querySelectorAll('.btn-make-storyboard').forEach((btn) => {
       btn.addEventListener('click', () => makeStoryboard(btn));
     });
+    listEl.querySelectorAll('.btn-story-review').forEach((btn) => {
+      btn.addEventListener('click', () => runStoryReview(btn));
+    });
   } catch (err) {
     block.hidden = false;
     listEl.innerHTML = `<div class="text-error">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+// The verdict, the checks that failed, and where the Director expects to lose the viewer.
+// A verdict of NONE is not a complaint: it means nobody has read this story yet.
+function storyReviewBlock(review) {
+  if (!review || review.verdict === 'NONE') {
+    return `<div class="story-review is-none">Povestea nu a fost citită încă. Nimic nu intră
+      în producție înainte de asta.</div>`;
+  }
+  const failed = (review.failed || []).slice(0, 4);
+  const marks = ['at_0', 'at_3', 'at_5', 'at_10', 'at_15', 'at_20', 'at_25', 'at_end'];
+  const retention = review.retention || {};
+  const curve = marks
+    .filter((mark) => typeof retention[mark] === 'number')
+    .map((mark) => `${mark.replace('at_', '')}: ${retention[mark]}%`)
+    .join(' · ');
+  const state = review.verdict === 'PASS' ? 'is-pass' : 'is-hold';
+  return `
+    <div class="story-review ${state}">
+      <div class="story-review-head">
+        <strong>${escapeHtml(review.verdict)}</strong>
+        <span>${Number(review.estimated_seconds || 0).toFixed(1)}s de narațiune</span>
+      </div>
+      ${failed.length ? `<div class="story-review-failed">Nu trece: ${failed.map(escapeHtml).join(', ')}</div>` : ''}
+      ${curve ? `<div class="story-review-curve">Reținere estimată — ${escapeHtml(curve)}</div>` : ''}
+      ${retention.collapse_at ? `<div class="story-review-curve">Se pierde la ${escapeHtml(String(retention.collapse_at))}s: ${escapeHtml(String(retention.why || ''))}</div>` : ''}
+      ${(review.notes || []).slice(0, 3).map((note) => `<div class="motion-reason">${escapeHtml(String(note))}</div>`).join('')}
+    </div>`;
+}
+
+async function runStoryReview(button) {
+  const scriptId = button.getAttribute('data-script-id');
+  button.disabled = true;
+  mediaStatusMsg.hidden = false;
+  mediaStatusMsg.className = 'dialog-status-msg';
+  mediaStatusMsg.textContent = 'Directoarea citește povestea înainte de producție…';
+  try {
+    const review = await api(`/factual/scripts/${scriptId}/story-review`, { method: 'POST' });
+    mediaStatusMsg.textContent = `Verdict: ${review.verdict}. ${(review.notes || [])[0] || ''}`;
+    await loadAwaitingStoryboard();
+  } catch (err) {
+    mediaStatusMsg.className = 'dialog-status-msg text-error';
+    mediaStatusMsg.textContent = err.message;
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -1658,6 +1717,45 @@ async function makeStoryboard(button) {
     mediaStatusMsg.textContent = err.message;
     button.disabled = false;
   }
+}
+
+// Why this film exists, in the studio's own words: the idea's argument, the one message,
+// the hook, the closing question, and the look every shot inherits. Folded away by default.
+function productionPackageBlock(pack) {
+  if (!pack) return '';
+  const why = pack.why_this_video_should_exist || {};
+  const bible = pack.master_visual_bible || {};
+  const shots = pack.shot_list || [];
+  const line = (label, value) =>
+    value ? `<div><strong>${label}:</strong> ${escapeHtml(String(value))}</div>` : '';
+  return `
+    <details class="motion-explain">
+      <summary>De ce acest film</summary>
+      ${line('Faptul', why.core_fact)}
+      ${line('De ce contează', why.why_it_matters)}
+      ${line('Mesajul', pack.core_message)}
+      ${line('Hook', pack.hook)}
+      ${line('Răsplata', why.payoff)}
+      ${line('Îndemn', `${(pack.cta || {}).text || ''} (${(pack.cta || {}).kind || '—'})`)}
+      ${line('Recenzia poveștii', (pack.approval || {}).story_review)}
+      ${line('Durată așteptată', `${Number(pack.expected_duration_seconds || 0).toFixed(1)}s`)}
+      ${line('Privirea filmului', [bible.style, bible.palette, bible.lighting].filter(Boolean).join(' · '))}
+      ${
+        shots.length
+          ? `<div><strong>Cadre:</strong> ${shots
+              .map((shot) => `#${shot.scene_index} ${escapeHtml(String(shot.story_purpose || '—'))}`)
+              .join(', ')}</div>`
+          : ''
+      }
+      ${
+        (pack.trusted_sources || []).length
+          ? `<div><strong>Surse:</strong> ${(pack.trusted_sources || [])
+              .slice(0, 4)
+              .map((source) => escapeHtml(String(source.publisher || source.url)))
+              .join(', ')}</div>`
+          : ''
+      }
+    </details>`;
 }
 
 // Why each scene was filmed the way it was. The router states what the scene required and
@@ -1726,6 +1824,10 @@ async function loadMediaStoryboards() {
         let motion = null;
         let motionScenes = [];
         let motionNotes = [];
+        let pack = null;
+        try {
+          pack = await api(`/media/storyboards/${sb.id}/production-package`);
+        } catch (_) {}
         try {
           const detail = await api(`/media/storyboards/${sb.id}`);
           scenes = detail.scenes || [];
@@ -1836,6 +1938,8 @@ async function loadMediaStoryboards() {
               <button class="btn-qc-video" data-id="${sb.id}">Verifică QC</button>
             </div>
           </div>
+
+          ${productionPackageBlock(pack)}
 
           <div class="storyboard-scenes-grid">
             ${scenesHtml}

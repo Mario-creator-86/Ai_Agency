@@ -895,3 +895,38 @@ main { font-size: 13px; }
   opacity: 0.75;
   line-height: 1.35;
 }
+
+/* The story review, on the card of the script it belongs to. A film whose story nobody has
+   read cannot be produced, so the verdict is the first thing on the card. */
+.story-review {
+  margin: 0.4rem 0;
+  padding: 0.45rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  font-size: 0.78rem;
+  display: grid;
+  gap: 0.25rem;
+}
+.story-review.is-pass {
+  background: #14301f;
+  border-color: #2f7d52;
+}
+.story-review.is-hold {
+  background: #4a2c12;
+  border-color: #f5a623;
+}
+.story-review.is-none {
+  background: #22242a;
+  border-color: #3a3d45;
+  opacity: 0.85;
+}
+.story-review-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.story-review-failed,
+.story-review-curve {
+  opacity: 0.85;
+  line-height: 1.35;
+}

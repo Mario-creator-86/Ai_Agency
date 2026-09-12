@@ -1,5 +1,52 @@
 # Changelog
 
+## The idea has to argue for itself — 2026-09-12
+
+The Owner's principle, in the order it has to be enforced: a good idea, then a good story,
+then a good script, then a good prompt, and only then a video. A powerful video model cannot
+rescue a weak idea. The studio could research a fact, verify it, write narration that cited
+it, and produce a film nobody would watch, because nothing in the pipeline ever asked *why
+this video should exist* — and what reached the video model was the single line the writer had
+typed under `visual`, at about 2.60 USD a shot.
+
+Nothing here is a second pipeline. The research agent, the trusted-source registry, the
+independent fact checker, the script writer, the Owner's script approval, the Director's
+selection and her final viewing, the production stages and the model routing are all the ones
+that existed; each gained what it was missing (migration 0032).
+
+- **An idea now carries a thesis**: the core fact, why it matters, why now, the payoff, a
+  hook, an ending, a call to action that belongs to this story, the risk and the length. It is
+  scored on twelve editorial dimensions that are **weighted, not averaged** — hook, payoff,
+  story and fact confidence decide — so a beautiful topic with nothing to say stops winning.
+  An idea that fails the editorial rules is kept with its reasons instead of dropped.
+- **A script now has a shape**: the writer is briefed on the thirty-second structure, on
+  causal progression instead of "and then", on showing rather than narrating twice, and on the
+  studio's own speaking rate, so thirty seconds of film no longer carries sixty seconds of
+  words. Every scene declares the part it plays, and the story — one message, the takeaway,
+  the hook, the ending, the CTA and its kind — is stored with the draft.
+- **The story is read before anything is bought** (`story_review`). The computed checks ask
+  whether the film has a hook that is not "did you know", a purpose and an attribution behind
+  every scene, a payoff in the second half that answers the hook, an ending, a closing
+  question about *this* story, and narration that fits the length. The Director says where
+  interest would collapse, second by second. A script that is sent back is rewritten once with
+  the notes. This is the first gate in this studio that runs **before** the money.
+- **The prompt carries the film**: one master visual bible (style, world, palette, light,
+  camera language, continuity rules, what to avoid) and a full package per shot — subject,
+  action, environment, camera, lighting, composition, motion, emotion, background, continuity
+  with the shot before it, audio intent, transition, negatives and story purpose. It may not
+  invent a number the story never stated, may not make the film more spectacular than the
+  story, and is capped in length because a thousand meaningless words bury the fields that
+  matter. `visual_prompt` still holds what is sent, so the render path is untouched.
+- **Prompt quality is constant across environments.** The prompt agent is never told which
+  environment it is in; TEST saves money by choosing a cheaper model, never by thinking less.
+- **The loop closes**: the Director's notes about the pictures become prompt lessons the next
+  film's prompt agent reads, and the weekly review compares what the studio predicted about a
+  film with what the audience actually did.
+- Tests: `tests/test_editorial_quality.py`, the twenty-one the Owner asked for. Two real
+  defects surfaced while writing them: the prompt agent was not checking the story gate, and a
+  second prompt pass read its own output as the writer's line. Both fixed. 645 pass.
+- The full report is in `EDITORIAL_PIPELINE.md`.
+
 ## Two environments, and a model that has to earn its place — 2026-09-12
 
 The Owner found in one search what the studio's own steward had not: models at 0.05-0.12 USD

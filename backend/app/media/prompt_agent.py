@@ -234,7 +234,15 @@ def _film_facts(session: Session, board: Storyboard) -> dict[str, Any]:
                 "story_purpose": scene.story_purpose
                 or str(script_scenes.get(scene.scene_index, {}).get("purpose") or ""),
                 "narration": scene.voiceover_segment,
-                "writer_visual": scene.visual_prompt,
+                # The writer's own line about what is seen, from the script — not from
+                # `visual_prompt`, which this step overwrites with what it composed. Reading
+                # it back would feed a second run its own output, and each pass would drift
+                # a little further from what the writer actually asked for.
+                "writer_visual": str(
+                    script_scenes.get(scene.scene_index, {}).get("visual_description")
+                    or (scene.prompt_json or {}).get("writer_visual")
+                    or scene.visual_prompt
+                ),
                 "shot_type": scene.shot_type,
                 "claims": [claims.get(cid, "") for cid in (scene.claim_ids_json or [])],
                 "characters": [
@@ -381,15 +389,20 @@ def write_shot_prompts(
     bought, never how well the shot is described. `visual_prompt` is rewritten from the
     package, so the render, the costing and quality control need to know nothing about this.
     """
+    from app.factual.story_review import story_gate  # noqa: PLC0415
+
     correlation = correlation_id or str(uuid4())
     with Session(engine) as session:
         board = session.get(Storyboard, storyboard_id)
         if board is None:
             raise PromptError(f"Storyboard {storyboard_id} not found")
-        if not board.visual_bible_json:
-            need_bible = True
-        else:
-            need_bible = False
+        # Describing the shots is the last step before money, so it is where the story gate
+        # is enforced: a film whose story nobody judged does not get described, and one the
+        # review sent back waits for the rewrite.
+        passed, why = story_gate(session, board.script_draft_id)
+        if not passed:
+            raise PromptError(why)
+        need_bible = not board.visual_bible_json
         facts = _film_facts(session, board)
         editor = agent_for_role(session, PROMPT_ROLE)
         editor_id = editor.id if editor else None
@@ -503,6 +516,8 @@ def _validated_package(
     package: dict[str, Any] = {
         "story_purpose": purpose,
         "narration": str(scene.get("narration") or ""),
+        # Kept so a rerun starts from the writer's line again, whatever this step composed.
+        "writer_visual": str(scene.get("writer_visual") or ""),
         "seconds": float(scene.get("seconds") or 0),
         "subject": (shot.subject if shot else "") or str(scene.get("writer_visual") or ""),
         "action": (shot.action if shot else "") or str(scene.get("writer_visual") or ""),

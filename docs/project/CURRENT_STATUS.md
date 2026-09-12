@@ -13,6 +13,20 @@ database resource discovery/refresh, separate production choices, UI and regress
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
 
+## The content decides, before the generation (2026-09-12)
+
+A film now has to be worth making before it can be made. A topic carries an argument — the
+fact, why it matters, the payoff, the hook, the ending, a call to action — scored on twelve
+weighted editorial dimensions, and an idea that fails the rules is kept with its reasons. A
+script carries its story and declares the part every scene plays. Before anything is
+generated, the story is reviewed: computed checks for hook, progression, payoff, ending, CTA
+and pacing, plus the Director's estimate of where a viewer would stop watching; a script that
+is sent back is rewritten once. The render and the prompt agent both refuse a film whose story
+has not passed. Then one master visual bible and a full prompt package per shot replace the
+single line that used to be sent to a model at 2.60 USD a shot — the same package in both
+environments, because TEST saves money on the model, not on the thinking. The report is
+`EDITORIAL_PIPELINE.md`.
+
 ## Two environments, decided by the studio (2026-09-12)
 
 The studio knows whether it is testing or publishing (`owner_policy.environment`, migration
