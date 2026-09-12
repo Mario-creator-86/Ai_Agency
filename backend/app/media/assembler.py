@@ -15,6 +15,7 @@ import logging
 import subprocess
 import time
 from collections.abc import Callable
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -34,6 +35,16 @@ from app.providers.deterministic_media import (
 from app.providers.media_base import ImageProvider, TTSProvider, VideoProvider
 from app.providers.media_http import MediaProviderError, MediaProviderNotConfigured
 from app.services import append_event, utc_now
+
+
+def _at_work(engine: Engine | None, role_name: str, task_type: str, detail: str) -> Any:
+    """The employee doing this step shows as WORKING while it runs. Nothing for placeholders."""
+    if engine is None:
+        return nullcontext()
+    from app.agents.services import at_work  # noqa: PLC0415 - agents imports media models
+
+    return at_work(engine, role_name, task_type, detail)
+
 
 logger = logging.getLogger("studio.assembler")
 
@@ -695,14 +706,20 @@ def assemble_video_job(
 
     for scene in scenes_data:
         index = scene["scene_index"]
-        img_res = asyncio.run(
-            visual_adapter.generate_image(
-                scene["visual_prompt"],
-                width=1080,
-                height=1920,
-                extra={"title": storyboard_title, "scene_index": index},
+        with _at_work(
+            engine if image_adapter is not None else None,
+            "VideoEditor",
+            "generate_image",
+            f"imaginea scenei {index}",
+        ):
+            img_res = asyncio.run(
+                visual_adapter.generate_image(
+                    scene["visual_prompt"],
+                    width=1080,
+                    height=1920,
+                    extra={"title": storyboard_title, "scene_index": index},
+                )
             )
-        )
         suffix = img_res.format if img_res.format in ("png", "jpeg", "webp") else "svg"
         still = work_dir / f"scene_{index:02d}.{suffix}"
         still.write_bytes(img_res.image_bytes)
@@ -718,7 +735,13 @@ def assemble_video_job(
         real_voice = scene_voices[scenes_data.index(scene)]
         voice_adapter: TTSProvider = (real_voice if all_real else None) or placeholder_voice
         voice_started = time.monotonic()
-        tts_res = asyncio.run(voice_adapter.synthesize(scene["voiceover_segment"]))
+        with _at_work(
+            engine if all_real else None,
+            "VoiceArtist",
+            "synthesize_voice",
+            f"vocea scenei {index}",
+        ):
+            tts_res = asyncio.run(voice_adapter.synthesize(scene["voiceover_segment"]))
         production["scenes"].append(
             {
                 "scene_index": index,
@@ -869,13 +892,19 @@ def assemble_video_job(
                         break
                 continue
             try:
-                clip_bytes, raw = _generate_motion(
-                    adapter,
-                    scene,
-                    None if motion_from_prompt else still,
-                    wanted,
-                    ffmpeg_exe,
-                )
+                with _at_work(
+                    engine,
+                    "VideoEditor",
+                    "generate_motion",
+                    f"mișcarea scenei {scene['scene_index']}",
+                ):
+                    clip_bytes, raw = _generate_motion(
+                        adapter,
+                        scene,
+                        None if motion_from_prompt else still,
+                        wanted,
+                        ffmpeg_exe,
+                    )
                 credits = getattr(adapter, "last_estimated_credits", None)
                 if isinstance(credits, int | float):
                     record["estimated_credits"] = float(credits)
@@ -961,7 +990,13 @@ def assemble_video_job(
     output_mp4 = work_dir / "final_short_9_16.mp4"
     command_args: list[str] = []
 
+    editor_id: str | None = None
+
     def _fail_job(reason: str, log: str) -> None:
+        if editor_id is not None:
+            from app.agents.services import mark_idle  # noqa: PLC0415
+
+            mark_idle(engine, editor_id, "assemble_video")
         with Session(engine) as session, session.begin():
             job_rec = session.get(VideoRenderJob, render_job_id)
             if job_rec:
@@ -987,6 +1022,10 @@ def assemble_video_job(
         )
         _fail_job(reason, reason)
         raise RenderEngineUnavailable(reason)
+
+    from app.agents.services import mark_idle, mark_working  # noqa: PLC0415
+
+    editor_id = mark_working(engine, "VideoEditor", "assemble_video", "montajul filmului")
 
     # One shot per scene — a generated clip, or the still given a slow push — and the shots
     # dissolve into one another. A film reads as a film; a slideshow reads as a slideshow, and
@@ -1074,6 +1113,7 @@ def assemble_video_job(
         raise RenderEngineUnavailable(
             f"FFmpeg failed to encode the video (exit code {res.returncode}). See render job log."
         )
+    mark_idle(engine, editor_id, "assemble_video")
 
     # A film is its picture. The first dissolve render put six seconds of video under
     # forty-six of narration and reported success, because a container's duration is its

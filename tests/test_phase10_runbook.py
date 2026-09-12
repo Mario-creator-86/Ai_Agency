@@ -527,3 +527,46 @@ def test_a_write_that_takes_the_lock_first_survives_a_commit_beside_it(tmp_path)
         session.execute(text("UPDATE note SET n = 42 WHERE id = 1"))
     with engine.connect() as check:
         assert check.execute(text("SELECT n FROM note WHERE id = 1")).scalar() == 42
+
+
+def test_production_work_shows_on_the_employee_doing_it(engine):
+    """Found live on 2026-09-12: Lyra's voice was recorded for five minutes while the office
+    showed her IDLE and the ledger was silent. WORKING for as long as the work runs, IDLE after
+    — also when the vendor fails — and nothing at all for a role nobody holds."""
+    from app.agents.memory import agent_for_role
+    from app.agents.services import at_work, seed_initial_workforce
+    from app.models import DomainEvent
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
+    seed_initial_workforce(engine)
+
+    def state() -> str:
+        with Session(engine) as session:
+            return agent_for_role(session, "VoiceArtist").runtime_state
+
+    during: list[str] = []
+    with at_work(engine, "VoiceArtist", "synthesize_voice", "vocea scenei 3"):
+        during.append(state())
+    assert during == ["WORKING"]
+    assert state() == "IDLE"
+
+    with Session(engine) as session:
+        changes = [
+            event.payload
+            for event in session.scalars(
+                select(DomainEvent)
+                .where(DomainEvent.event_type == "agent.state_changed")
+                .order_by(DomainEvent.sequence)
+            )
+        ]
+    assert [c["runtime_state"] for c in changes[-2:]] == ["WORKING", "IDLE"]
+    assert changes[-2]["detail"] == "vocea scenei 3"
+
+    with pytest.raises(RuntimeError):
+        with at_work(engine, "VoiceArtist", "synthesize_voice", "vocea scenei 4"):
+            raise RuntimeError("the vendor refused")
+    assert state() == "IDLE"
+
+    with at_work(engine, "NoSuchRole", "anything", "nobody"):
+        pass

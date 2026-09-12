@@ -35,6 +35,15 @@ test('work, production, money and owner events get plain labels and the right ki
   assert.equal(describeEvent({ event_type: 'autonomy.stop_cleared', payload: {} }).kind, 'owner');
 });
 
+test('production work without a model reads as work, and says what is being made', () => {
+  const working = describeEvent({ event_type: 'agent.state_changed', aggregate_id: 'a-3', payload: { runtime_state: 'WORKING', task_type: 'synthesize_voice', detail: 'vocea scenei 3' } }, { 'a-3': 'Lyra (Voice Artist)' });
+  assert.equal(working.who, 'Lyra (Voice Artist)');
+  assert.equal(working.label, 'lucrează');
+  assert.equal(working.text, 'vocea scenei 3');
+  const done = describeEvent({ event_type: 'agent.state_changed', aggregate_id: 'a-3', payload: { runtime_state: 'IDLE', task_type: 'synthesize_voice' } }, { 'a-3': 'Lyra (Voice Artist)' });
+  assert.equal(done.label, 'a terminat');
+});
+
 test('an unknown event still reads as words, with its first payload fields', () => {
   const item = describeEvent({ event_type: 'vendorshop.order_placed', payload: { vendor: 'acme', total: 12, nested: { a: 1 } } });
   assert.equal(item.label, 'order placed');

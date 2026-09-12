@@ -1,5 +1,47 @@
 # Changelog
 
+## The studio published a new film end to end, and the office showed nobody working — 2026-09-13
+
+The first complete cycle under the corrected rules ran on the evening of 2026-09-12 and went
+all the way: the Director chose *How CERN's ATLAS Measured a Higgs Boson in Real Time*, the
+writer and she worked the story for seven exchanges, she passed and approved it herself, the
+video editor wrote the visual bible and five shot prompts, and the media stage produced five
+Runway stills, five ElevenLabs narration clips and two Runway motion clips (the TEST limit),
+cut them into a 30.2-second film, QC scored it 1.0, the Director watched it and approved it,
+and the Publisher uploaded it privately to Main Channel A as `sDEtt-WQGh8`. Media stage start
+to publication: seven and a half minutes.
+
+While that happened, the Owner watched the office and asked why it was stuck at Lyra. It was
+not stuck. Her narration review was the last model call (THINKING, then IDLE at 20:51:30), and
+for the next seven minutes her voice was recorded, the stills and shots were generated and the
+film was cut — in her name and Kael's — while both showed IDLE and the ledger said nothing.
+An employee's state changed only when she thought with a model; the paid part of the day ran
+beside it. The office already draws `WORKING` as typing and the live window already counts it
+as busy. The backend simply never said it.
+
+- `mark_working` / `mark_idle` / `at_work` in `agents/services.py`: the employee holding a
+  role is WORKING for exactly as long as a production step runs, with a detail the ledger can
+  read (*vocea scenei 3*, *mișcarea scenei 2*, *montajul filmului*), and IDLE after — also when
+  the vendor fails. Best effort by design: a status line that cannot be written is logged, and a
+  paid render never dies because of it.
+- The assembler wraps each paid step in the employee who owns it: stills, motion and the cut
+  are the video editor's, narration is the voice artist's. Placeholders mark nobody.
+- The stale-state sweeper no longer flips a WORKING employee to IDLE: production has no model
+  run behind it by nature, and a model task may run beside it.
+- The ledger read every state that was not THINKING as *a terminat* (finished) — so WORKING
+  would have read "finished" at the moment work began. It reads *lucrează*, with the detail.
+
+**Two things the cycle's books showed, recorded and not papered over.** The render's recorded
+cost is 0.316 USD and it is incomplete. The ElevenLabs narration has no cost row at all:
+`eleven_flash_v2` carries no price in the catalogue, so the Accountant correctly counts the
+scene as unpriced rather than free — the gap is the catalogue, not the arithmetic. And both
+motion shots were priced at `seedance2_mini`'s documented 0.02 USD a second, because Runway
+named no credits on the prompt-only path; the render's own summary therefore says 0 USD for
+motion while the books say 0.216. No price was written into code to fill either gap.
+
+`uv run pytest -q` — **727 passed, 1 skipped**. `npm test` — **87 passed**, including the ledger's WORKING
+case. `ruff`, `mypy` clean.
+
 ## Time to fix it — 2026-09-12
 
 The run finished without crashing for the first time since the room opened, and the story was

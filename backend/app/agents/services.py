@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from uuid import uuid4
 
 from sqlalchemy import Engine, func, select
@@ -36,6 +38,88 @@ from app.services import append_event, utc_now
 from app.workflows.services import append_event_with_outbox
 
 logger = logging.getLogger("studio.agents")
+
+
+# ------------------------------------------------------------------ work without a model --
+
+
+def mark_working(engine: Engine, role_name: str, task_type: str, detail: str = "") -> str | None:
+    """Say that the employee holding this role is working, and on what. Returns her id.
+
+    An employee's state used to change only when she thought with a model. Recording a voice,
+    generating a shot, cutting the film — the paid part of the day — ran in her name without
+    touching it: Lyra read the narration (THINKING, then IDLE) and her voice was then recorded
+    for five minutes while the office showed her IDLE and the ledger said nothing at all. The
+    Owner watched a studio spending money look like a studio doing nothing. The office already
+    draws WORKING as typing; the backend simply never said it.
+
+    Best effort by design: a state that could not be written is logged and the work goes on.
+    A paid render must never die because a status line failed.
+    """
+    from app.agents.memory import agent_for_role  # noqa: PLC0415
+
+    try:
+        with Session(engine) as session, session.begin():
+            lock_for_write(session)
+            agent = agent_for_role(session, role_name)
+            if agent is None:
+                return None
+            agent.runtime_state = "WORKING"
+            agent.version += 1
+            append_event_with_outbox(
+                session,
+                "agent.state_changed",
+                "agent",
+                agent.id,
+                agent.version,
+                {"runtime_state": "WORKING", "task_type": task_type, "detail": detail[:160]},
+                str(uuid4()),
+            )
+            return agent.id
+    except Exception as exc:  # noqa: BLE001 - a status line must not stop a paid render
+        logger.warning(
+            "work_state_not_recorded",
+            extra={"role": role_name, "state": "WORKING", "error": type(exc).__name__},
+        )
+        return None
+
+
+def mark_idle(engine: Engine, agent_id: str | None, task_type: str) -> None:
+    """The work `mark_working` announced is over. A no-op when nobody was marked."""
+    if agent_id is None:
+        return
+    try:
+        with Session(engine) as session, session.begin():
+            lock_for_write(session)
+            agent = session.get(Agent, agent_id)
+            if agent is None or agent.runtime_state != "WORKING":
+                return  # something else already took her state; do not overwrite it
+            agent.runtime_state = "IDLE"
+            agent.version += 1
+            append_event_with_outbox(
+                session,
+                "agent.state_changed",
+                "agent",
+                agent.id,
+                agent.version,
+                {"runtime_state": "IDLE", "task_type": task_type},
+                str(uuid4()),
+            )
+    except Exception as exc:  # noqa: BLE001 - same reason as above
+        logger.warning(
+            "work_state_not_recorded",
+            extra={"agent_id": agent_id, "state": "IDLE", "error": type(exc).__name__},
+        )
+
+
+@contextmanager
+def at_work(engine: Engine, role_name: str, task_type: str, detail: str = "") -> Iterator[None]:
+    """WORKING for exactly as long as the block runs — and IDLE again even if it fails."""
+    agent_id = mark_working(engine, role_name, task_type, detail)
+    try:
+        yield
+    finally:
+        mark_idle(engine, agent_id, task_type)
 
 
 # ---------------------------------------------------------------------------
@@ -416,7 +500,9 @@ def _assert_policy_allows_run(session: Session, agent: Agent, registry: Provider
     model = session.get(ModelRecord, agent.model_id)
     if model is None or model.provider_id != agent.provider_id or not model.is_available:
         raise PolicyKernelError("Assigned model is unavailable or not verified", "BLOCKED_PROVIDER")
-    if agent.runtime_state not in ("IDLE", "BLOCKED", "ERROR"):
+    # WORKING is production without a model (a voice being recorded) and has no AgentRun
+    # behind it by nature, so it is not "stale" — a model task may run beside it.
+    if agent.runtime_state not in ("IDLE", "BLOCKED", "ERROR", "WORKING"):
         if _has_live_run(session, agent.id):
             raise PolicyKernelError("Agent already has an active task", "BLOCKED_POLICY")
         # THINKING with no run in flight is a flag left behind — a restart mid-call, a

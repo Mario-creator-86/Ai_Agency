@@ -175,8 +175,10 @@ export function describeEvent(event, names = {}) {
       kind = 'speech';
       break;
     case 'agent.state_changed':
-      label = payload.runtime_state === 'THINKING' ? 'lucrează' : 'a terminat';
-      text = payload.task_type ? `sarcina ${payload.task_type}` : '';
+      // WORKING is production without a model — a voice being recorded, a shot generated. It
+      // used to read "a terminat" (finished) while the work was only starting.
+      label = payload.runtime_state === 'THINKING' || payload.runtime_state === 'WORKING' ? 'lucrează' : 'a terminat';
+      text = payload.detail || (payload.task_type ? `sarcina ${payload.task_type}` : '');
       break;
     case 'agent.run_completed':
       label = `sarcină ${statusLabel(payload.status)}`;
