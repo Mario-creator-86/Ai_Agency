@@ -26,9 +26,11 @@ from app.publishing.services import (
     configure_channel,
     create_publication_intent,
     evaluate_publishing_gate,
+    film_identity,
     get_channel,
     list_channels,
     publish_media_asset,
+    published_films,
     reconcile_publication,
     seed_default_channels,
 )
@@ -491,3 +493,219 @@ def test_publishing_api_endpoints_with_owner_auth(client, headers, engine, tmp_p
     res = client.get(f"/api/v1/publishing/publications/{pub_data['id']}", headers=headers)
     assert res.status_code == 200
     assert res.json()["id"] == pub_data["id"]
+
+
+# --------------------------------------------------------------------------------------------
+# One film, many renders.
+#
+# Found live on 2026-09-12: the studio had rendered one storyboard four times and published
+# the newest. The other three sat QC-PASSED in the queue and passed every gate, because the
+# duplicate check compared `media_asset_id` — the FILE — and each render is a new file. The
+# channel would have received the same video four days running. These tests describe identity
+# as the film, which is what the audience actually sees.
+# --------------------------------------------------------------------------------------------
+
+
+def _another_render(engine, tmp_path, *, storyboard_id: str, script_id: str | None = None):
+    """A second rendered file for a film that already has one.
+
+    With ``script_id`` a second storyboard is written from the same script, which is the case
+    a storyboard-only check would miss: two shot plans, one film.
+    """
+    now = utc_now()
+    asset_id = str(uuid4())
+    board_id = storyboard_id
+    video_file = tmp_path / "media" / f"{asset_id}.mp4"
+    video_file.parent.mkdir(parents=True, exist_ok=True)
+    video_file.write_bytes(b"A second render of the same film, a different file entirely")
+
+    with Session(engine) as session, session.begin():
+        if script_id is not None:
+            board_id = str(uuid4())
+            session.add(
+                Storyboard(
+                    id=board_id,
+                    script_draft_id=script_id,
+                    title="Second storyboard, same script",
+                    visual_style="MOTION_GRAPHIC",
+                    aspect_ratio="9:16",
+                    target_duration_seconds=15,
+                    status="APPROVED",
+                    total_scenes=1,
+                    created_at=now,
+                )
+            )
+        session.add(
+            MediaAsset(
+                id=asset_id,
+                asset_type="VIDEO_COMPOSED",
+                uri_or_path=str(video_file),
+                file_size_bytes=video_file.stat().st_size,
+                mime_type="video/mp4",
+                width=1080,
+                height=1920,
+                duration_seconds=15.0,
+                provider_name="deterministic_assembler",
+                license_status="OWNED_INTERNAL",
+                provenance_hash=sha256(video_file.read_bytes()).hexdigest(),
+                created_at=now,
+            )
+        )
+        session.add(
+            VideoRenderJob(
+                id=str(uuid4()),
+                storyboard_id=board_id,
+                output_asset_id=asset_id,
+                status="COMPLETED",
+                render_engine="opencv_deterministic",
+                command_args_json={},
+                started_at=now,
+                finished_at=now,
+            )
+        )
+        session.add(
+            QualityControlReport(
+                id=str(uuid4()),
+                media_asset_id=asset_id,
+                status="PASSED",
+                score=0.97,
+                checks_json={"technical": {"passed": True}},
+                failure_reasons_json=[],
+                verified_at=now,
+            )
+        )
+    return asset_id
+
+
+def _storyboard_of(engine, asset_id: str) -> str:
+    with Session(engine) as session:
+        _, storyboard_id = film_identity(session, asset_id)
+    assert storyboard_id is not None
+    return storyboard_id
+
+
+def test_film_identity_reads_the_script_behind_a_rendered_file(engine, tmp_path):
+    bundle = _create_verified_asset_bundle(engine, tmp_path)
+    with Session(engine) as session:
+        script_id, storyboard_id = film_identity(session, bundle["asset_id"])
+        assert script_id == bundle["script_id"]
+        assert storyboard_id is not None
+        # A file nothing rendered has no film behind it, and that is said as "unknown" —
+        # never as "new", which would let an unprovenanced file through as a first release.
+        assert film_identity(session, str(uuid4())) == (None, None)
+
+
+def test_a_second_render_of_a_published_film_is_refused_by_the_gate(engine, tmp_path):
+    seed_default_channels(engine)
+    ch_id = list_channels(engine)[0]["id"]
+    bundle = _create_verified_asset_bundle(engine, tmp_path)
+
+    published = publish_media_asset(
+        engine,
+        media_asset_id=bundle["asset_id"],
+        channel_id=ch_id,
+        title="JWST Deep Field Discovery",
+        description="Exploring early galaxies.",
+        tags=["#shorts"],
+        privacy_status="private",
+        correlation_id=str(uuid4()),
+        provider=DeterministicPublishingAdapter(),
+    )
+
+    retake = _another_render(
+        engine, tmp_path, storyboard_id=_storyboard_of(engine, bundle["asset_id"])
+    )
+    verdict = evaluate_publishing_gate(engine, retake, ch_id)
+
+    assert verdict["eligible"] is False
+    duplicate = next(c for c in verdict["checks"] if c["check_name"] == "DUPLICATE_PROTECTION_GATE")
+    assert duplicate["passed"] is False
+    # The refusal names the video already on the channel, so the Owner can go and look at it.
+    assert published["remote_video_id"] in duplicate["detail"]
+    assert "another render of the same script" in duplicate["detail"]
+    assert any("same film is already on this channel" in r for r in verdict["reasons"])
+
+
+def test_a_second_storyboard_from_one_script_is_still_the_same_film(engine, tmp_path):
+    seed_default_channels(engine)
+    ch_id = list_channels(engine)[0]["id"]
+    bundle = _create_verified_asset_bundle(engine, tmp_path)
+    publish_media_asset(
+        engine,
+        media_asset_id=bundle["asset_id"],
+        channel_id=ch_id,
+        title="JWST Deep Field Discovery",
+        description="Exploring early galaxies.",
+        tags=[],
+        privacy_status="private",
+        correlation_id=str(uuid4()),
+        provider=DeterministicPublishingAdapter(),
+    )
+
+    # Re-planned, re-shot, re-rendered — and the same script, so the same film.
+    replanned = _another_render(
+        engine,
+        tmp_path,
+        storyboard_id=_storyboard_of(engine, bundle["asset_id"]),
+        script_id=bundle["script_id"],
+    )
+    assert evaluate_publishing_gate(engine, replanned, ch_id)["eligible"] is False
+
+
+def test_the_same_film_may_still_go_to_a_second_channel(engine, tmp_path):
+    seed_default_channels(engine)
+    channels = list_channels(engine)
+    first, second = channels[0]["id"], channels[1]["id"]
+    bundle = _create_verified_asset_bundle(engine, tmp_path)
+    publish_media_asset(
+        engine,
+        media_asset_id=bundle["asset_id"],
+        channel_id=first,
+        title="JWST Deep Field Discovery",
+        description="Exploring early galaxies.",
+        tags=[],
+        privacy_status="private",
+        correlation_id=str(uuid4()),
+        provider=DeterministicPublishingAdapter(),
+    )
+
+    # The gate is per channel on purpose: a studio with two channels may carry one film on
+    # both. What it must not do is put the same film on the SAME channel twice.
+    retake = _another_render(
+        engine, tmp_path, storyboard_id=_storyboard_of(engine, bundle["asset_id"])
+    )
+    assert evaluate_publishing_gate(engine, retake, second)["eligible"] is True
+    with Session(engine) as session:
+        assert bundle["script_id"] in published_films(session, first)
+        assert published_films(session, second) == {}
+
+
+def test_a_publication_that_failed_does_not_block_the_film(engine, tmp_path):
+    seed_default_channels(engine)
+    ch_id = list_channels(engine)[0]["id"]
+    bundle = _create_verified_asset_bundle(engine, tmp_path)
+
+    # Nothing reached the channel, so nothing must stand in the way of trying again.
+    with Session(engine) as session, session.begin():
+        session.add(
+            PublicationRecord(
+                id=str(uuid4()),
+                channel_id=ch_id,
+                media_asset_id=bundle["asset_id"],
+                title="JWST Deep Field Discovery",
+                description="Exploring early galaxies.",
+                tags_json=[],
+                privacy_status="private",
+                status="FAILED_PERMANENT",
+                idempotency_key=str(uuid4()),
+                error_detail="The upload was refused.",
+                created_at=utc_now(),
+            )
+        )
+
+    retake = _another_render(
+        engine, tmp_path, storyboard_id=_storyboard_of(engine, bundle["asset_id"])
+    )
+    assert evaluate_publishing_gate(engine, retake, ch_id)["eligible"] is True
+    with Session(engine) as session:
+        assert published_films(session, ch_id) == {}

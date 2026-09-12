@@ -1,5 +1,42 @@
 # Changelog
 
+## A film is not a file — 2026-09-12
+
+The studio published its first video: *The Universe's Missing Pieces: Why the LHC Upgrade
+Matters*, private, on Main Channel A. Watching the ledger, the Owner asked the right question
+about what was left behind in the queue — and the answer was that the same film would have
+gone out three more times.
+
+One storyboard had been rendered four times during the day: a retake, a re-edit, another pass.
+Each render is a new `MediaAsset` with a new id, each one passed quality control, and the
+duplicate gate compared `media_asset_id` — the **file**. So three QC-passed files, all of the
+same film, sat eligible on every gate. One per daily run, the channel would have received the
+same video four days running. Proven on a copy of the live database before the fix: all three
+returned `eligible: True`.
+
+- **Identity is the film, not the file.** `film_identity` walks asset → render job →
+  storyboard → script, and `published_films` keys what a channel already carries by both the
+  script and the storyboard. A candidate matches on whichever of the two it can establish;
+  when provenance cannot be walked at all the answer is "unknown", never "new".
+- **The duplicate gate refuses a second render** of a script the channel already carries, and
+  says which video it already has: *this film is already on the channel as “…” (remote_id: …);
+  this asset is another render of the same script*.
+- **Cross-posting is untouched.** The gate is per channel, so one film may go to two channels;
+  what it may not do is go to the same channel twice.
+- **A failed upload blocks nothing.** Only live publications count, so a retry after a refused
+  upload still works.
+- **The publish stage offers each film once.** The queue is collapsed to the newest render per
+  film, and a film the channel already carries is not a candidate at all — so the stage walks
+  on to the next real film instead of stopping on a refusal.
+- Gate 4 (factual integrity) now uses the same provenance walk instead of its own copy.
+
+Five tests in `tests/test_phase6_publishing.py` describe it: a retake refused and naming the
+earlier video, a second storyboard from one script still the same film, the same film allowed
+on a second channel, a failed publication not blocking, and the provenance walk itself.
+
+`uv run pytest -q` — **698 passed, 1 skipped**. `ruff`, `mypy`, `scripts/check_docs.py` clean.
+
+
 ## An employee may think with more than one model — 2026-09-12
 
 Every agent ran on exactly one model, and that single slot could not express the thing the

@@ -80,6 +80,59 @@ CHANNEL_CONFIGURED = "CONFIGURED"  # fields present; access not verified
 #: Minimum QC score accepted for publication (documented in the Distribution Hub UI).
 QC_MINIMUM_SCORE = 0.90
 
+#: Statuses that mean a publication exists on the channel or is on its way there. A record in
+#: one of these states is a video the audience can already reach, or will.
+LIVE_PUBLICATION_STATES = [
+    "PUBLISHED",
+    "PUBLISHED_SIMULATED",
+    "REMOTE_CONFIRMED",
+    "REMOTE_UNKNOWN",
+    "STARTED",
+    "SCHEDULED",
+]
+
+
+def film_identity(session: Session, media_asset_id: str) -> tuple[str | None, str | None]:
+    """Which film a rendered file belongs to: its script, and the storyboard it was shot from.
+
+    A file is not a film. The same script can be rendered many times — a retake, a fix to one
+    shot, a second pass at the edit — and each render is a new `MediaAsset` with a new id. The
+    audience does not see files; it sees the film. So identity for anything that asks "have we
+    already put this out?" is the script, with the storyboard as the fallback when a storyboard
+    has no script behind it. Returns ``(None, None)`` when provenance cannot be walked at all,
+    which callers must treat as "unknown", never as "new".
+    """
+    job = session.scalars(
+        select(VideoRenderJob).where(VideoRenderJob.output_asset_id == media_asset_id)
+    ).first()
+    if job is None or not job.storyboard_id:
+        return (None, None)
+    storyboard = session.get(Storyboard, job.storyboard_id)
+    if storyboard is None:
+        return (None, job.storyboard_id)
+    return (storyboard.script_draft_id, storyboard.id)
+
+
+def published_films(session: Session, channel_id: str) -> dict[str, PublicationRecord]:
+    """Every film this channel already carries, keyed by the identity above.
+
+    Keyed by both the script and the storyboard, so a candidate matches whichever of the two
+    it can establish. Only live publications count: a failed upload left nothing on the
+    channel and must not block the retry.
+    """
+    carried: dict[str, PublicationRecord] = {}
+    for record in session.scalars(
+        select(PublicationRecord).where(
+            PublicationRecord.channel_id == channel_id,
+            PublicationRecord.status.in_(LIVE_PUBLICATION_STATES),
+        )
+    ):
+        script_id, storyboard_id = film_identity(session, record.media_asset_id)
+        for key in (script_id, storyboard_id):
+            if key is not None:
+                carried.setdefault(key, record)
+    return carried
+
 
 def derive_channel_status(remote_channel_id: str | None, credentials_ref: str | None) -> str:
     """Derive channel status from what is actually present. Never assume configuration."""
@@ -337,24 +390,13 @@ def evaluate_publishing_gate(engine: Engine, media_asset_id: str, channel_id: st
         # never took place, which is the exact defect the 2026-09-09 audit found elsewhere.
         # 50_CONTENT_GATE_MATRIX.md gives NOT_APPLICABLE its own outcome ("record reason"); it is
         # not a synonym for PASS.
-        job = session.scalars(
-            select(VideoRenderJob).where(VideoRenderJob.output_asset_id == media_asset_id)
-        ).first()
-        storyboard = (
-            session.get(Storyboard, job.storyboard_id) if job and job.storyboard_id else None
-        )
-        script = (
-            session.get(ScriptDraft, storyboard.script_draft_id)
-            if storyboard and storyboard.script_draft_id
-            else None
-        )
+        script_id, storyboard_id = film_identity(session, media_asset_id)
+        script = session.get(ScriptDraft, script_id) if script_id else None
 
         if script is None:
             missing = (
                 "no render job records this asset"
-                if job is None
-                else "the render job has no storyboard"
-                if storyboard is None
+                if storyboard_id is None
                 else "the storyboard has no script"
             )
             checks.append(
@@ -412,22 +454,29 @@ def evaluate_publishing_gate(engine: Engine, media_asset_id: str, channel_id: st
                 )
 
         # Gate 5: Idempotency & Duplicate Publishing Check
+        #
+        # The check used to compare `media_asset_id`, which protects against uploading the same
+        # FILE twice and nothing more. A film rendered a second time — a retake, a re-edit, a
+        # repeated render — is a different asset id carrying the same script, and every gate
+        # passed it: the channel would receive the same video again, and again, once per render
+        # sitting in the queue. Identity here is the film (see `film_identity`), so a script
+        # already on this channel is not offered to it twice, whichever file it was rendered
+        # into. Cross-posting to a DIFFERENT channel stays allowed: the gate is per channel.
         existing_pub = session.scalars(
             select(PublicationRecord).where(
                 PublicationRecord.channel_id == channel_id,
                 PublicationRecord.media_asset_id == media_asset_id,
-                PublicationRecord.status.in_(
-                    [
-                        "PUBLISHED",
-                        "PUBLISHED_SIMULATED",
-                        "REMOTE_CONFIRMED",
-                        "REMOTE_UNKNOWN",
-                        "STARTED",
-                        "SCHEDULED",
-                    ]
-                ),
+                PublicationRecord.status.in_(LIVE_PUBLICATION_STATES),
             )
         ).first()
+        same_film = None
+        if existing_pub is None:
+            script_id, storyboard_id = film_identity(session, media_asset_id)
+            carried = published_films(session, channel_id)
+            for key in (script_id, storyboard_id):
+                if key is not None and key in carried:
+                    same_film = carried[key]
+                    break
         if existing_pub:
             checks.append(
                 {
@@ -441,6 +490,22 @@ def evaluate_publishing_gate(engine: Engine, media_asset_id: str, channel_id: st
             )
             reasons.append(
                 "Duplicate publishing prevented; asset already published to this channel"
+            )
+        elif same_film is not None:
+            checks.append(
+                {
+                    "check_name": "DUPLICATE_PROTECTION_GATE",
+                    "passed": False,
+                    "detail": (
+                        f"This film is already on the channel as “{same_film.title}” "
+                        f"(remote_id: {same_film.remote_video_id}); this asset is another "
+                        f"render of the same script."
+                    ),
+                }
+            )
+            reasons.append(
+                "Duplicate publishing prevented; the same film is already on this channel "
+                f"as {same_film.remote_video_id or same_film.id}"
             )
         else:
             checks.append(

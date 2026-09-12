@@ -93,7 +93,9 @@ from app.publishing.services import (
     PublishingGateError,
     channel_bindings,
     evaluate_publishing_gate,
+    film_identity,
     publish_media_asset,
+    published_films,
 )
 from app.research.agent import (
     NoAuthorisedHosts,
@@ -1015,16 +1017,32 @@ def _publish(
             for review in session.scalars(select(EditorialReview))
             if review.verdict == "REJECT"
         }
-        candidates = [
-            (report.media_asset_id, report.id)
-            for report in session.scalars(
-                select(QualityControlReport)
-                .where(QualityControlReport.status == "PASSED")
-                .order_by(QualityControlReport.verified_at.desc())
-            )
-            if report.media_asset_id not in published_assets
-            and report.media_asset_id not in rejected_assets
-        ][:1]
+        # The queue holds files, but the channel receives films. One film rendered four times
+        # is four QC-passed assets: publishing them in turn would put the same video on the
+        # channel four times, once per day. So the queue is collapsed to one entry per film —
+        # the newest render of it — and a film this channel already carries is not a candidate
+        # at all. The gate refuses a duplicate as well; this is what lets the stage walk past
+        # it to the next real film instead of stopping on a refusal.
+        carried = published_films(session, channel_id)
+        offered: set[str] = set()
+        candidates: list[tuple[str, str]] = []
+        for report in session.scalars(
+            select(QualityControlReport)
+            .where(QualityControlReport.status == "PASSED")
+            .order_by(QualityControlReport.verified_at.desc())
+        ):
+            if report.media_asset_id in published_assets:
+                continue
+            if report.media_asset_id in rejected_assets:
+                continue
+            script_id, storyboard_id = film_identity(session, report.media_asset_id)
+            keys = [key for key in (script_id, storyboard_id) if key is not None]
+            if any(key in carried for key in keys):
+                continue  # already on this channel, under whatever file name
+            if any(key in offered for key in keys):
+                continue  # an older render of a film already queued above
+            offered.update(keys)
+            candidates.append((report.media_asset_id, report.id))
 
     if not candidates:
         return _outcome(COMPLETED, "Niciun material aprobat de QC în așteptarea publicării.")
