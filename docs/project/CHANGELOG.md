@@ -1,5 +1,22 @@
 # Changelog
 
+## What a film costs reaches the books — 2026-09-12
+
+The Owner asked what has been spent so far. The honest answer was that nothing had been
+recorded: `provider_cost_record` was empty after four renders. Three reasons, each fixed:
+
+- **The Owner's render button never asked the Accountant anything.** The day's media stage
+  called `record_render_costs`; the button did not, so every render started from the page
+  left the books untouched. It records now, and reports what it recorded with the render.
+- **The production record named the voice provider but not its connection**, and a price
+  belongs to a model on a connection — so narration could not be priced even where a price
+  existed. The adapter that actually spoke is named, with its connection and model.
+- **Runway bills credits, and the studio's prices are in dollars.** Runway answers every new
+  task with `estimatedCost` in credits: the only number the vendor itself states about the
+  money. It is kept per scene and per render (`motion.estimated_credits`), so a film that
+  spent credits can be read back even while no dollar price for a credit is recorded.
+- Tests: one more in `tests/test_motion.py`.
+
 ## The film plays where the film is — 2026-09-12
 
 "Ar trebui sa pot sa il vad in Producție media, NU?" — yes, and it could not be seen: the

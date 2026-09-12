@@ -239,6 +239,8 @@ class _RunwayClient:
         self.model_metadata: dict[str, Any] = dict(model_metadata or {})
         #: Set by list_models() when the account answered but the contract could not be read.
         self.capabilities_warning: str | None = None
+        #: The credits the vendor said the last submitted task may cost, when it said.
+        self.last_estimated_credits: float | None = None
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -271,6 +273,11 @@ class _RunwayClient:
             json.dumps(body).encode("utf-8"),
             timeout=60,
         )
+        # Runway answers a new task with the most it may charge, in credits. It is the only
+        # number the vendor states about the money, so it is kept for the books rather than
+        # dropped in favour of a price someone wrote down elsewhere.
+        if isinstance(data, dict) and isinstance(data.get("estimatedCost"), int | float):
+            self.last_estimated_credits = float(data["estimatedCost"])
         task_id = data.get("id") if isinstance(data, dict) else None
         if not isinstance(task_id, str) or not task_id:
             raise MediaProviderError("Runway did not return a task id")

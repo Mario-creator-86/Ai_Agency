@@ -348,3 +348,41 @@ def test_quality_control_measures_the_picture_not_the_container(tmp_path):
     assert probe["ok"] and probe["has_audio"]
     assert probe["video_frames"] and probe["video_fps"]
     assert 2.5 <= probe["video_duration_seconds"] <= 3.5
+
+
+def test_the_render_records_the_credits_the_vendor_named(engine, tmp_path):
+    """Runway answers a new task with the credits it may charge. That number is the only
+    thing the vendor says about the money, so the render keeps it per scene and in total —
+    a render that spent credits can be read back even when no dollar price is recorded."""
+    from test_phase5_media import _seeded_storyboard
+
+    storyboard_id, _ = _seeded_storyboard(engine, tmp_path)
+
+    class Priced(StubMotion):
+        def __init__(self, clip):
+            super().__init__(clip)
+            self.last_estimated_credits = None
+
+        async def create_generation(self, prompt, **kwargs):
+            job = await super().create_generation(prompt, **kwargs)
+            self.last_estimated_credits = 48.0
+            return job
+
+    motion = Priced(a_clip(tmp_path)) if find_ffmpeg() else None
+    if motion is None:
+        pytest.skip("ffmpeg not installed")
+    render = assemble_video_job(
+        engine,
+        storyboard_id,
+        str(uuid4()),
+        storage_root=tmp_path / "media",
+        image_adapter=StubImages(),
+        video_adapter_for_scene=lambda scene: motion,
+    )
+    with Session(engine) as session:
+        production = session.get(VideoRenderJob, render["job_id"]).production_json
+    scenes = production["scenes"]
+    assert all(s["motion"]["estimated_credits"] == 48.0 for s in scenes)
+    assert production["motion"]["estimated_credits"] == 48.0 * len(scenes)
+    # And the connection behind the voice is named, so narration can be priced at all.
+    assert "integration_id" in production["voice"]

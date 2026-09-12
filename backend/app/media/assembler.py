@@ -493,6 +493,11 @@ def assemble_video_job(
         else PLACEHOLDER_VOICE_PROVIDER
     )
     production["voice"]["provider"] = voice_source
+    # Which connection the voice came from: the books price a scene by its model, and a
+    # model belongs to a connection. Naming only the provider left narration unpriceable.
+    used_voice = scene_voices[0] if all_real and scene_voices else None
+    production["voice"]["integration_id"] = getattr(used_voice, "integration_id", None)
+    production["voice"]["model"] = getattr(used_voice, "model", None)
 
     total_duration = sum(s["duration_seconds"] for s in scenes_data)
     master_audio_bytes = bytearray()
@@ -563,6 +568,7 @@ def assemble_video_job(
     # slowly; the film is still a film.
     motion_clips: list[Path | None] = [None] * len(scenes_data)
     motion_seconds = 0.0
+    motion_credits = 0.0
     if image_adapter is not None and video_adapter_for_scene is not None and ffmpeg_exe:
         for position, (scene, still) in enumerate(zip(scenes_data, frame_files, strict=False)):
             adapter = video_adapter_for_scene(scene)
@@ -577,6 +583,10 @@ def assemble_video_job(
             }
             try:
                 clip_bytes, raw = _generate_motion(adapter, scene, still, wanted, ffmpeg_exe)
+                credits = getattr(adapter, "last_estimated_credits", None)
+                if isinstance(credits, int | float):
+                    record["estimated_credits"] = float(credits)
+                    motion_credits += float(credits)
                 clip = work_dir / f"motion_{scene['scene_index']:02d}.mp4"
                 clip.write_bytes(clip_bytes)
                 motion_clips[position] = clip
@@ -597,6 +607,7 @@ def assemble_video_job(
         "clips": sum(1 for clip in motion_clips if clip is not None),
         "scenes": len(scenes_data),
         "seconds": round(motion_seconds, 3),
+        "estimated_credits": round(motion_credits, 2) or None,
         "transition_seconds": TRANSITION_SECONDS,
     }
 

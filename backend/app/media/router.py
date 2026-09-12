@@ -13,6 +13,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.economy.accountant import record_render_costs
+from app.economy.services import EconomyError
 from app.factual.models import FactualClaim, ScriptDraft, TopicIdea
 from app.factual.services import FactualGateError
 from app.media.assembler import RenderEngineUnavailable, assemble_video_job
@@ -279,6 +281,13 @@ def create_media_router() -> APIRouter:
                 ),
                 production_plan=planned["plan"],
             )
+            # What the render bought goes into the books here too. The day's stage recorded
+            # it and the Owner's own button did not, so four renders left the books empty.
+            try:
+                result["costs"] = record_render_costs(engine, result["job_id"], correlation_id)
+            except (EconomyError, KeyError, ValueError) as exc:
+                result["costs"] = {"error": str(exc)[:200]}
+
             # Automatically trigger QC
             qc_result = evaluate_media_qc(
                 request.app.state.engine,

@@ -168,11 +168,15 @@ def tts_provider(engine: Engine, vault: CredentialVault) -> TTSProvider | None:
                 return None
             config = {"model": production.model_id, "voice_id": production.voice_id}
         secrets = vault.decrypt(row.encrypted_secrets)
+        row_id = row.id
 
     try:
         if kind == "elevenlabs":
-            return ElevenLabsTTSAdapter(
-                secrets.get("api_key", ""), config.get("voice_id"), config.get("model")
+            return _from_connection(
+                ElevenLabsTTSAdapter(
+                    secrets.get("api_key", ""), config.get("voice_id"), config.get("model")
+                ),
+                row_id,
             )
     except MediaProviderNotConfigured:
         return None
@@ -202,7 +206,7 @@ def tts_provider_for(engine: Engine, vault: CredentialVault, resolved: dict) -> 
             settings = resolved.get("voice_settings")
             if isinstance(settings, dict) and settings:
                 adapter.voice_settings = settings
-            return adapter
+            return _from_connection(adapter, row.id)
     except MediaProviderNotConfigured:
         return None
     return None
