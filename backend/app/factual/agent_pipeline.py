@@ -570,6 +570,7 @@ def agent_write_script(
         detail = result.get("error_detail") or "fără text vizibil"
         raise ScriptRejected(f"Scenaristul nu a produs un rezultat ({result['status']}: {detail})")
 
+    cut: list[str] = []
     uncited = _uncited_scenes(result["output_text"])
     if uncited:
         # The writer told the topic's ending from his own knowledge — the LHC upgrade, in a
@@ -604,13 +605,18 @@ def agent_write_script(
                 f"{detail})"
             )
         still = _uncited_scenes(result["output_text"])
-        if still:
+        total = len(_scene_dicts(result["output_text"]))
+        if still and len(still) * 3 > total:
             raise ScriptRejected(
-                f"Scenariul a fost respins: {len(still)} scene nu citează nicio afirmație "
-                f"verificată nici după rescriere («{still[0]}»…). Nimic nu a fost salvat."
+                f"Scenariul a fost respins: {len(still)} scene din {total} nu citează nicio "
+                f"afirmație verificată nici după rescriere («{still[0]}»…). Nimic nu a fost salvat."
             )
+        # A scene or two the claims cannot carry — "the LHC is being upgraded", when no page
+        # read said so — is cut, not the film: what the studio speaks is exactly the text
+        # that carries an attribution, and the Director judges the story before it goes out.
+        cut = list(still)
 
-    draft = _parse_script(result["output_text"])
+    draft = _parse_script(result["output_text"], drop_uncited=bool(cut))
 
     cited: list[str] = []
     for index, scene in enumerate(draft.scenes, start=1):
@@ -650,11 +656,12 @@ def agent_write_script(
     _announce(
         engine,
         writer_id,
-        f"Am scris «{draft.title[:50]}» — {len(scenes)} scene, {len(cited)} afirmații citate.",
+        f"Am scris «{draft.title[:50]}» — {len(scenes)} scene, {len(cited)} afirmații citate."
+        + (f" {len(cut)} scene tăiate: nicio afirmație în spatele lor." if cut else ""),
         result["id"],
         correlation_id,
     )
-    return {"agent_id": writer_id, "run_id": result["id"], "script": stored}
+    return {"agent_id": writer_id, "run_id": result["id"], "script": stored, "cut_scenes": cut}
 
 
 def _script_object(raw: str) -> Any:
@@ -675,34 +682,30 @@ def _script_object(raw: str) -> Any:
             return None
 
 
-def _uncited_scenes(raw: str) -> list[str]:
-    """The narrations of the scenes that cite no claim — what the writer is told to fix."""
+def _scene_dicts(raw: str) -> list[dict[str, Any]]:
     data = _script_object(raw)
     scenes = data.get("scenes") if isinstance(data, dict) else None
-    if not isinstance(scenes, list):
-        return []
+    return [s for s in scenes if isinstance(s, dict)] if isinstance(scenes, list) else []
+
+
+def _uncited_scenes(raw: str) -> list[str]:
+    """The narrations of the scenes that cite no claim — what the writer is told to fix."""
     return [
         " ".join(str(scene.get("narration", "")).split())[:80]
-        for scene in scenes
-        if isinstance(scene, dict) and not scene.get("claim_ids")
+        for scene in _scene_dicts(raw)
+        if not scene.get("claim_ids")
     ]
 
 
-def _parse_script(raw: str) -> _Script:
-    text = raw.strip()
-    fenced = re.search(r"```(?:json)?\s*(.+?)\s*```", text, re.DOTALL)
-    if fenced:
-        text = fenced.group(1)
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        start, end = text.find("{"), text.rfind("}")
-        if start == -1 or end <= start:
-            raise ScriptRejected("Scenaristul nu a răspuns cu un obiect JSON.") from None
-        try:
-            data = json.loads(text[start : end + 1])
-        except json.JSONDecodeError:
-            raise ScriptRejected("Scenaristul nu a răspuns cu un obiect JSON.") from None
+def _parse_script(raw: str, *, drop_uncited: bool = False) -> _Script:
+    data = _script_object(raw)
+    if data is None:
+        raise ScriptRejected("Scenaristul nu a răspuns cu un obiect JSON.")
+    if drop_uncited and isinstance(data, dict) and isinstance(data.get("scenes"), list):
+        data = {
+            **data,
+            "scenes": [s for s in data["scenes"] if not isinstance(s, dict) or s.get("claim_ids")],
+        }
     try:
         return _SCRIPT.validate_python(data)
     except ValidationError as exc:

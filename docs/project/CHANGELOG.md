@@ -41,8 +41,11 @@ the studio's identity and returns pages that exist (Wikipedia's does, tested).
   verified: five claims a day out of thirty extracted). Now the day verifies up to
   `VERIFY_BATCH = 24` claims, CRITICAL first, and a draft with uncited scenes is sent back
   to the writer once with those scenes named ("write the film the claims allow"); the second
-  draft is the one stored, and only a second failure rejects the script.
-- Tests: `tests/test_search_step.py` (10), one more in `tests/test_script_writing.py`.
+  draft is the one stored. The fifth clean day's rewrite still had one scene of seven with
+  no fact behind it ("the LHC is getting stronger" — no page read said so): a minority of
+  uncited scenes is now cut and the attributed film kept (`cut_scenes` in the result, named
+  in the writer's announcement); a rewrite that still rests mostly on nothing is refused.
+- Tests: `tests/test_search_step.py` (10), three more in `tests/test_script_writing.py`.
 
 ## A review that fed itself, and a studio that can start over — 2026-09-12
 
