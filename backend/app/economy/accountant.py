@@ -205,7 +205,7 @@ def record_render_costs(
                 ):
                     alerts.append({**move, "model_id": model_id})
     if alerts:
-        _price_alert(engine, alerts, correlation)
+        price_change_alert(engine, alerts, correlation)
 
     recorded = 0
     for item in priced:
@@ -231,12 +231,14 @@ def record_render_costs(
     }
 
 
-def _price_alert(engine: Engine, alerts: list[dict[str, Any]], correlation: str) -> None:
+def price_change_alert(engine: Engine, alerts: list[dict[str, Any]], correlation: str) -> None:
     """Tell the Owner that a model's price moved, in the Accountant's own words.
 
     A vendor can change a price without telling anyone, and a studio that notices only at
     the end of the month has already paid the difference. The threshold is the Owner's
     (`STUDIO_PRICE_CHANGE_ALERT_PERCENT`); below it, the change is recorded and not sent.
+    Called from two places, because a price changes in two ways: the Accountant measures
+    what a render was charged, and a steward reads the vendor's page.
     """
     lines = []
     for alert in alerts:

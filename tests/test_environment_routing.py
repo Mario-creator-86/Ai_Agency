@@ -16,6 +16,9 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import uuid4
 
+from app.agents.models import AgentMessage
+from app.agents.services import seed_initial_workforce
+from app.economy.accountant import price_change_alert
 from app.integrations.models import Integration, ModelOutcome, ProviderResource
 from app.integrations.vault import CredentialVault
 from app.services import append_event, utc_now
@@ -452,6 +455,18 @@ def test_17_a_price_that_moves_keeps_the_old_one_and_a_big_move_reaches_the_owne
     # A first price is a fact, not a change; an unchanged price moves nothing.
     assert price_changes({}, {"per_second_usd": 0.1}) == []
     assert record_measured_price(engine, connection, "m", 0.43, "per second of video") == []
+
+    # And a move this size reaches the Owner, in the Accountant's own words. One letter,
+    # written in one place, whether the Accountant measured the price or a steward read it.
+    seed_initial_workforce(engine)
+    price_change_alert(engine, [{**moves[0], "model_id": "m"}], str(uuid4()))
+    with Session(engine) as session:
+        letters = session.scalars(
+            select(AgentMessage).where(AgentMessage.subject.like("Preț schimbat%"))
+        ).all()
+    assert len(letters) == 1
+    assert letters[0].body_json.get("owner_attention") is True
+    assert "0.4300" in letters[0].body_text and "0.0250" in letters[0].body_text
 
 
 def test_18_a_vendors_quote_can_mark_a_stored_price_stale_and_a_new_model_waits_outside(engine):

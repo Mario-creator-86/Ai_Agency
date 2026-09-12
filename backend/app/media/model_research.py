@@ -38,6 +38,7 @@ from app.agents.memory import agent_for_role
 from app.agents.messages import post_message
 from app.agents.services import run_agent_task
 from app.config import Settings
+from app.economy.accountant import price_change_alert
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.integrations.autoconfig import DEFAULTS
 from app.integrations.catalog import CATALOG
@@ -370,6 +371,7 @@ def research_models(
                 )
             )
         }
+    moved: list[dict[str, Any]] = []
     for note in research.models:
         if note.remote_id not in known or note.remote_id not in versions:
             continue
@@ -382,7 +384,7 @@ def research_models(
                 "unit": note.price_unit or purpose,
             }
         try:
-            update_resource_metadata(
+            written = update_resource_metadata(
                 engine,
                 resource_id,
                 ResourceMetadataCommand(
@@ -399,8 +401,18 @@ def research_models(
                 ),
             )
             annotated += 1
+            # A price the steward read that moved past the Owner's threshold is a letter,
+            # the same letter the Accountant writes when a render measures a new price.
+            for move in written.get("price_moves") or []:
+                percent = move.get("percent")
+                if isinstance(percent, int | float) and abs(float(percent)) >= float(
+                    settings.price_change_alert_percent
+                ):
+                    moved.append({**move, "model_id": note.remote_id})
         except ValueError as exc:
             logger.info("model_research_note_refused", extra={"reason": str(exc)[:120]})
+    if moved:
+        price_change_alert(engine, moved, correlation)
 
     # 4. The choice, where the Owner left it to the studio.
     field, _ = DEFAULTS[purpose]
