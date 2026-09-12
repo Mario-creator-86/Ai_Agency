@@ -394,12 +394,28 @@ def topics_in_production(session: Session) -> tuple[list[str], list[str]]:
     while something is still owed on it — a script, a storyboard, a render, a QC verdict,
     a publication; one whose newest render failed or lost its QC verdict is stalled, and a
     stalled topic does not stop the studio from choosing the next one.
+
+    Two more ways a topic can be finished with, both found live on 2026-09-12. A story the
+    review REJECTED will never be rewritten — that is the revision budget working — so a topic
+    holding one is owed nothing and must not block the next choice; it was blocking it. And a
+    topic whose film has been published is simply done: it used to fall through to the stalled
+    bucket and be reported as "selected earlier, renders failed quality control", which was
+    said of a film that had gone out an hour before.
     """
     selected = list(session.scalars(select(TopicIdea).where(TopicIdea.status == "SELECTED")))
     if not selected:
         return [], []
-    scripts = {s.topic_id: s for s in session.scalars(select(ScriptDraft)) if s.topic_id}
-    boards = {b.script_draft_id: b for b in session.scalars(select(Storyboard))}
+    # Newest per topic and per script: with two drafts of one topic, or two storyboards of one
+    # script, which row won used to depend on the order the rows came back in.
+    scripts = {
+        s.topic_id: s
+        for s in session.scalars(select(ScriptDraft).order_by(ScriptDraft.created_at))
+        if s.topic_id
+    }
+    boards = {
+        b.script_draft_id: b
+        for b in session.scalars(select(Storyboard).order_by(Storyboard.created_at))
+    }
     jobs: dict[str, VideoRenderJob] = {}
     for row in session.scalars(select(VideoRenderJob).order_by(VideoRenderJob.started_at)):
         if row.status == "COMPLETED":
@@ -419,13 +435,24 @@ def topics_in_production(session: Session) -> tuple[list[str], list[str]]:
         script = scripts.get(topic.id)
         board = boards.get(script.id) if script else None
         last = jobs.get(board.id) if board else None
+        if script is not None and board is None:
+            # Nothing has been shot yet, so what happens next depends on the reading of the
+            # page. A refused story is nobody's to retry; anything else is still owed work.
+            review = latest_review(session, script.id)
+            if review is not None and review.verdict == "REJECT":
+                stalled.append(topic.id)
+            else:
+                live.append(topic.id)
+            continue
         if last is None or not last.output_asset_id:
             live.append(topic.id)  # writing, storyboarding or rendering still owed
             continue
         verdict = verdicts.get(last.output_asset_id)
+        if last.output_asset_id in published:
+            continue  # the film is out; this topic is finished, neither live nor stuck
         if last.output_asset_id in rejected:
             stalled.append(topic.id)  # the Director said no; the departments hold the notes
-        elif verdict == "PASSED" and last.output_asset_id not in published:
+        elif verdict == "PASSED":
             live.append(topic.id)  # waiting to be published
         elif verdict is None:
             live.append(topic.id)  # waiting for quality control

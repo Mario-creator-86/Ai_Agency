@@ -1195,3 +1195,30 @@ def test_a_story_she_sent_back_is_not_approved(engine, studio):
     assert _director_approves(engine, script_id, {"verdict": "REVISE", "failed": ["x"]}) is None
     with Session(engine) as session:
         assert session.get(ScriptDraft, script_id).status != "APPROVED"
+
+
+def test_a_refused_story_stops_holding_the_studio_up(engine, studio):
+    """The last link: `script_work` will never rewrite a REJECTED story, so if the topic still
+    counted as in production nothing could be rewritten and nothing new could be chosen — a
+    corner one step further along than the one before it."""
+    from app.runbook.stages import topics_in_production
+
+    topic_id = a_topic(engine)
+    script_id = a_script(engine, topic_id, status="VERIFIED_PASS")
+    a_sent_back_review(engine, script_id, verdict="REJECT")
+
+    with Session(engine) as session:
+        live, stalled = topics_in_production(session)
+    assert live == []  # nothing is owed on it
+    assert stalled == [topic_id]  # and the Owner is told it is stuck, not that it is working
+
+
+def test_a_story_still_being_written_is_in_production(engine, studio):
+    from app.runbook.stages import topics_in_production
+
+    topic_id = a_topic(engine)
+    a_sent_back_review(engine, a_script(engine, topic_id, status="VERIFIED_PASS"))
+    with Session(engine) as session:
+        live, stalled = topics_in_production(session)
+    # A rewrite is owed, and the studio is the one who owes it.
+    assert live == [topic_id] and stalled == []
