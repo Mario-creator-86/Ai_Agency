@@ -72,7 +72,29 @@ class ConfiguredLLM(LLMProvider):
         path = "/api/tags" if self.kind == "ollama" else "/models"
         data = await asyncio.to_thread(self.request, "GET", path)
         items = data.get("models", []) if self.kind == "ollama" else data.get("data", [])
-        return [ModelInfo(item.get("name") or item["id"], None, True) for item in items]
+        names = [item.get("name") or item["id"] for item in items]
+        declared = await asyncio.to_thread(self._declared_capabilities, names)
+        return [ModelInfo(name, None, True, capabilities=declared.get(name, ())) for name in names]
+
+    def _declared_capabilities(self, names: list[str]) -> dict[str, tuple[str, ...]]:
+        """What the provider says each model can do. Ollama answers this per model.
+
+        The editorial gate sends frames of a film to the Director's model; a model without
+        vision refuses the whole call, so a review could never happen. What a model can see
+        is the provider's statement, asked for here and stored — never assumed from a name.
+        """
+        if self.kind != "ollama":
+            return {}
+        found: dict[str, tuple[str, ...]] = {}
+        for name in names:
+            try:
+                shown = self.request("POST", "/api/show", {"model": name})
+            except (OSError, ValueError, KeyError):
+                continue  # the model answered nothing about itself; the studio assumes nothing
+            listed = shown.get("capabilities") if isinstance(shown, dict) else None
+            if isinstance(listed, list):
+                found[name] = tuple(str(c) for c in listed if isinstance(c, str))
+        return found
 
     async def generate(
         self,

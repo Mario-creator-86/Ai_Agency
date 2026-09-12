@@ -367,3 +367,55 @@ def test_frames_are_read_from_a_real_file(tmp_path):
     frames = frames_for(str(film), None, 2.0)
     assert len(frames) == 3 and all(len(f) > 100 for f in frames)
     assert frames_for(str(tmp_path / "missing.mp4"), None, 2.0) == []
+
+
+def _give_vision(engine, agent_id):
+    """What a provider declares about a model, as the model sync records it."""
+    from app.agents.models import Capability, ModelCapability
+
+    with Session(engine) as session, session.begin():
+        agent = session.get(Agent, agent_id)
+        capability = Capability(id=str(uuid4()), name="vision", description="sees pictures")
+        session.add(capability)
+        session.flush()
+        session.add(
+            ModelCapability(
+                model_id=agent.model_id,
+                capability_id=capability.id,
+                confidence="DECLARED_BY_PROVIDER",
+            )
+        )
+
+
+def test_frames_are_sent_only_to_a_model_the_provider_says_can_see(engine, staffed, tmp_path):
+    """A model without vision refuses the whole call, so the Director could never give a
+    verdict: on the live studio her glm-5.3 answered nothing and a finished film waited.
+    Frames go only to a model the provider says can see; without one she judges the written
+    film and the prompt tells her she is judging it blind."""
+    from app.agents.editorial import model_can_see
+
+    ids = a_film(engine, voiceover=ENGLISH, with_source=True)
+    film = tmp_path / "film.mp4"
+    film.write_bytes(b"0" * 128)
+    with Session(engine) as session, session.begin():
+        session.get(MediaAsset, ids["asset"]).uri_or_path = str(film)
+
+    seen: dict = {}
+
+    def answer(prompt):
+        seen["prompt"] = prompt
+        return json.dumps({"verdict": "APPROVE", "story": "A rocky world.", "reasons": []})
+
+    registry, model = registry_with(staffed, answer)
+    director = staffed["agents"]["Director"]
+    with Session(engine) as session:
+        assert model_can_see(session, director.id) is False
+
+    blind = editorial_review(engine, registry, ids["asset"], language="en")
+    assert blind["frames_seen"] == 0 and blind["verdict"] == "APPROVE"
+    assert "You cannot see the film itself" in seen["prompt"]
+    assert model.calls[0]["extra"] == {"format": "json"}
+
+    _give_vision(engine, director.id)
+    with Session(engine) as session:
+        assert model_can_see(session, director.id) is True

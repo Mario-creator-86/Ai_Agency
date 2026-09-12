@@ -1,5 +1,25 @@
 # Changelog
 
+## The Director could not see, and nothing said so — 2026-09-12
+
+The clean studio produced a real film: 45.6 s, 1080×1920, eight scenes on seven claims from
+CERN's dark-matter page, Runway stills, an ElevenLabs voice, quality control passed on
+technical, rights, source and factual checks. Then the editorial gate sent three frames of
+it to the Director's model and the whole call failed: `glm-5.3` declares `completion`,
+`thinking` and `tools` — not `vision`. A model that cannot see does not answer worse; it
+refuses the request, so no film could ever be approved.
+
+- **What a model can do is the provider's statement, and it is stored**: `ModelInfo` carries
+  `capabilities`, the configured adapter asks Ollama's `/api/show` per model, and the model
+  sync records every declared capability (creating the row for a word the studio has not
+  heard before — the vocabulary is the provider's). `kimi-k3`, `qwen3.5:397b`,
+  `mistral-large-3:675b`, `glm-5.3-flash`, `kimi-k2.6`, `deepseek-v4.1-flash`, `minimax-m3`
+  and `gemma4:31b` declare vision; the rest of the account does not.
+- **Frames go only to a model that can see** (`model_can_see`): otherwise the Director
+  reviews the written film — script, claims with sources, scenes, what QC measured — and the
+  prompt tells her she is judging it blind and to say if the pictures are what she needs.
+- Tests: one more in `tests/test_editorial.py`.
+
 ## The studio finds pages before the Researcher names them — 2026-09-12
 
 The first day of the clean studio, watched live: six real topics in English on authorised

@@ -82,6 +82,7 @@ class OllamaProvider(LLMProvider):
                 note_parts.append(f"parameter_size={ctx}")
             if is_cloud:
                 note_parts.append("cloud_model=true")
+            listed = m.get("capabilities")
             models.append(
                 ModelInfo(
                     model_name=name,
@@ -89,6 +90,11 @@ class OllamaProvider(LLMProvider):
                     is_available=True,
                     notes=", ".join(note_parts),
                     is_cloud=is_cloud,
+                    capabilities=(
+                        tuple(str(c) for c in listed if isinstance(c, str))
+                        if isinstance(listed, list)
+                        else ()
+                    ),
                 )
             )
         return models

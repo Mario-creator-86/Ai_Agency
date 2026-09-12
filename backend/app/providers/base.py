@@ -18,6 +18,10 @@ class ModelInfo:
     is_available: bool
     notes: str = ""
     is_cloud: bool = False
+    #: What the provider itself says this model can do, in the provider's own words
+    #: (Ollama answers "completion", "thinking", "tools", "vision"). Empty when the
+    #: provider does not say; never a guess of the studio's.
+    capabilities: tuple[str, ...] = ()
 
 
 @dataclass

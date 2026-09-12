@@ -35,7 +35,7 @@ from app.agents.identity import clipped
 from app.agents.language import audience_language_line, language_name, looks_like_english
 from app.agents.memory import agent_for_role, remember
 from app.agents.messages import post_message
-from app.agents.models import Agent, Role
+from app.agents.models import Agent, Capability, ModelCapability, Role
 from app.factual.models import FactualClaim, ScriptDraft, SourceSnapshot, TopicIdea
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.media.models import (
@@ -194,6 +194,32 @@ def gather_facts(session: Session, media_asset_id: str, language: str) -> dict[s
     }
 
 
+#: The word a provider uses for "this model can look at an image". Ollama answers it in a
+#: model's own capability list; nothing here decides it from a model's name.
+VISION = "vision"
+
+
+def model_can_see(session: Session, agent_id: str) -> bool:
+    """Whether the provider says this employee's model can look at a picture.
+
+    Sending frames to a model without vision does not degrade the answer — the provider
+    refuses the whole call, so the Director could never give a verdict. Her model
+    (glm-5.3) declares completion, thinking and tools; qwen3.5 and mistral-large-3 declare
+    vision as well. The gate reads the declaration instead of hoping.
+    """
+    agent = session.get(Agent, agent_id)
+    if agent is None or not agent.model_id:
+        return False
+    return bool(
+        session.scalar(
+            select(ModelCapability.capability_id)
+            .join(Capability, Capability.id == ModelCapability.capability_id)
+            .where(ModelCapability.model_id == agent.model_id, Capability.name == VISION)
+            .limit(1)
+        )
+    )
+
+
 def frames_for(path: str, ffmpeg_path: str | None, duration: float | None) -> list[str]:
     """Up to three frames from the film, as base64 JPEG, for a model that can see."""
     ffmpeg = find_ffmpeg(ffmpeg_path)
@@ -272,7 +298,10 @@ def editorial_review(
     elif registry is not None and registry.registered_ids():
         from app.agents.structured import structured_run  # noqa: PLC0415
 
-        frames = frames_for(facts["path"], ffmpeg_path, facts["duration_seconds"])
+        with Session(engine) as session:
+            can_see = model_can_see(session, director_id)
+        if can_see:
+            frames = frames_for(facts["path"], ffmpeg_path, facts["duration_seconds"])
         shown = {k: v for k, v in facts.items() if k not in ("path", "hard_rejects")}
         prompt = (
             audience_language_line(language)
@@ -280,7 +309,11 @@ def editorial_review(
                 frames_note=(
                     f", and {len(frames)} frames from the file itself are attached"
                     if frames
-                    else ""
+                    else (
+                        ". You cannot see the film itself — your model has no vision — so "
+                        "judge it from what is written here and say so if the pictures are "
+                        "what you would need to decide"
+                    )
                 )
             )
             + wrap_in_inert_boundary(json.dumps(shown, ensure_ascii=False)[:14000], "the-film")

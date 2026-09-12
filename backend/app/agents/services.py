@@ -183,6 +183,51 @@ def sync_provider_models(
             select(Capability).where(Capability.name == "text_generation")
         ).first()
 
+        def record_declared(model_id: str, declared: tuple[str, ...]) -> None:
+            """Store what the provider said this model can do, in the provider's own words.
+
+            A capability the studio has never heard of is created as a row rather than
+            dropped: the vocabulary is the provider's, and the editorial gate needs to know
+            which models can actually see a frame.
+            """
+            if not declared:
+                return
+            known = {
+                row.name: row.id
+                for row in session.scalars(
+                    select(Capability).where(Capability.name.in_(list(declared)))
+                )
+            }
+            held = set(
+                session.scalars(
+                    select(ModelCapability.capability_id).where(
+                        ModelCapability.model_id == model_id
+                    )
+                )
+            )
+            for name in declared:
+                capability_id = known.get(name)
+                if capability_id is None:
+                    capability_id = str(uuid4())
+                    session.add(
+                        Capability(
+                            id=capability_id,
+                            name=name,
+                            description=f"Declared by the provider for its models ({name}).",
+                        )
+                    )
+                    session.flush()
+                    known[name] = capability_id
+                if capability_id not in held:
+                    session.add(
+                        ModelCapability(
+                            model_id=model_id,
+                            capability_id=capability_id,
+                            confidence="DECLARED_BY_PROVIDER",
+                        )
+                    )
+                    held.add(capability_id)
+
         for info in discovered_models:
             m_name = info.model_name
             if m_name in existing_models:
@@ -194,6 +239,7 @@ def sync_provider_models(
                 m_rec.discovery_method = "DECLARED_BY_PROVIDER"
                 if info.notes and info.notes not in m_rec.notes:
                     m_rec.notes = (m_rec.notes + " " + info.notes).strip()
+                record_declared(m_rec.id, tuple(info.capabilities))
             else:
                 m_id = str(uuid4())
                 m_rec = ModelRecord(
@@ -216,6 +262,8 @@ def sync_provider_models(
                         confidence="DECLARED_BY_PROVIDER",
                     )
                     session.add(mc)
+                    session.flush()
+                record_declared(m_id, tuple(info.capabilities))
 
                 append_event(
                     session,
