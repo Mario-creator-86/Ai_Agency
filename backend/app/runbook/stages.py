@@ -121,6 +121,12 @@ SKIPPED = "SKIPPED"
 #: How many items one stage will process in a single run. A day's run should finish; a backlog of
 #: two hundred sources is not a reason to hold the whole day open, and what is left is picked up
 #: by tomorrow's run.
+#: How many drafts of one story a single run will work through. The Owner's instruction:
+#: "we can have ten or twenty exchanges until we have a film. The day closes when the short is
+#: published." The story review has its own budget (`MAX_REVISIONS`) and refuses first when a
+#: story cannot be supported; this is the wall that keeps one topic from owning the whole day.
+MAX_SCRIPT_EXCHANGES = 16
+
 BATCH = 5
 #: Claims verified in one day. Verification is one short call per claim; extraction from
 #: three pages produces thirty, and a film needs the ones about its own subject checked.
@@ -657,52 +663,57 @@ def _script_and_storyboard(
     reviews: list[dict[str, Any]] = []
     approvals: list[str] = []
     for topic_id, carried_notes in pending:
-        try:
-            written = agent_write_script(
-                engine,
-                registry,
-                topic_id,
-                str(uuid4()),
-                target_duration_seconds=target_seconds,
-                language=language,
-                notes=carried_notes or None,
-            )
-            drafted += 1
-            # The story is read before anything is generated, and a script the review sends
-            # back is rewritten once with its notes. Rewriting text costs nothing; a shot
-            # regenerated because the story was weak costs dollars.
-            review = review_story(
-                engine, registry, written["script"]["id"], target_seconds=target_seconds
-            )
-            reviews.append({"verdict": review["verdict"], "failed": review["failed"][:4]})
-            decided = _director_approves(engine, written["script"]["id"], review)
-            if decided:
-                approvals.append(decided)
-            if review["verdict"] == "REVISE":
-                again = agent_write_script(
+        # The writer and the Director keep working the story until it passes, is refused, or
+        # the room closes. It used to be exactly two drafts a day: a story one note away from
+        # passing waited until tomorrow, and the day ended with nothing made. Text is the
+        # cheapest thing the studio produces — a render is where the money is — so the
+        # conversation happens now, in full, and the film reaches the camera in the same day.
+        notes = list(carried_notes or [])
+        for attempt in range(1, MAX_SCRIPT_EXCHANGES + 1):
+            try:
+                written = agent_write_script(
                     engine,
                     registry,
                     topic_id,
                     str(uuid4()),
                     target_duration_seconds=target_seconds,
                     language=language,
-                    notes=review["notes"],
+                    notes=notes or None,
                 )
                 drafted += 1
-                second = review_story(
-                    engine, registry, again["script"]["id"], target_seconds=target_seconds
+                # The story is read before anything is generated: a shot regenerated because
+                # the story was weak costs dollars, and reading costs a few seconds.
+                review = review_story(
+                    engine, registry, written["script"]["id"], target_seconds=target_seconds
                 )
-                reviews.append({"verdict": second["verdict"], "failed": second["failed"][:4]})
-                decided = _director_approves(engine, again["script"]["id"], second)
+                reviews.append(
+                    {
+                        "verdict": review["verdict"],
+                        "failed": review["failed"][:4],
+                        "exchange": attempt,
+                    }
+                )
+                decided = _director_approves(engine, written["script"]["id"], review)
                 if decided:
                     approvals.append(decided)
-        except (ScriptRejected, NoVerifiedClaims) as exc:
-            # The draft was refused and nothing was stored — which is the pipeline working, not
-            # the day breaking. A model that writes narration it cannot attribute to a verified
-            # claim is a content problem; letting it stop the run would also stop the day's log
-            # and every stage after it, over an outcome the studio handled correctly.
-            logger.info("script_rejected", extra={"topic_id": topic_id, "reason": str(exc)})
-            rejected.append(str(exc))
+                    break  # she approved it; the camera is next
+                if review["verdict"] == "REJECT":
+                    break  # the budget is spent or the story is unsupportable; let it go
+                notes = list(review["notes"])
+            except (ScriptRejected, NoVerifiedClaims) as exc:
+                # The draft was refused and nothing was stored — which is the pipeline working,
+                # not the day breaking. A model that writes narration it cannot attribute to a
+                # verified claim is a content problem; letting it stop the run would also stop
+                # the day's log and every stage after it, over an outcome the studio handled
+                # correctly. The room closes for this topic; the day goes on.
+                logger.info("script_rejected", extra={"topic_id": topic_id, "reason": str(exc)})
+                rejected.append(str(exc))
+                break
+        else:
+            logger.info(
+                "script_room_closed",
+                extra={"topic_id": topic_id, "exchanges": MAX_SCRIPT_EXCHANGES},
+            )
 
     with Session(engine) as session:
         storyboarded = set(session.scalars(select(Storyboard.script_draft_id)))
@@ -755,8 +766,8 @@ def _script_and_storyboard(
         )
 
     reason = (
-        f"{drafted} scenarii scrise, {len(approvals)} aprobate de Director, "
-        f"{boards} storyboard-uri generate."
+        f"{drafted} scenarii scrise în {len(reviews)} schimburi, "
+        f"{len(approvals)} aprobate de Director, {boards} storyboard-uri generate."
     )
     if prompted:
         reason += f" {prompted} cadre descrise complet."

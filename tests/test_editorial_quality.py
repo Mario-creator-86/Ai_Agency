@@ -1383,3 +1383,83 @@ def test_the_brief_tells_the_writer_the_last_scene_closes_the_film():
     brief = _write_instructions(30)
     assert "ULTIMA scenă închide filmul" in brief
     assert "etichetează ENDING sau CTA" in brief
+
+
+def test_the_writers_room_stays_open_until_the_story_passes(engine, studio):
+    """The Owner's rule: the day does not close after two attempts.
+
+    It used to write exactly two drafts and stop, so a story one note away from passing waited
+    until tomorrow and the day ended with nothing made. Text is the cheapest thing the studio
+    produces; the conversation happens now, and the film reaches the camera the same day.
+    """
+    from app.factual.story_review import MAX_REVISIONS
+    from app.runbook.stages import MAX_SCRIPT_EXCHANGES, _script_and_storyboard
+
+    # The instruction, as a guard: these must stay a real conversation, not a pair of tries.
+    assert MAX_REVISIONS >= 10
+    assert MAX_SCRIPT_EXCHANGES >= 10
+
+    topic_id = a_topic(engine)
+    written = {"count": 0}
+
+    def script_json(*, long: bool):
+        scenes = [
+            {
+                "narration": scene["narration"] * (4 if long else 1),
+                "visual": scene["visual_description"],
+                "purpose": scene["purpose"],
+                "claim_ids": scene["claim_ids"],
+            }
+            for scene in GOOD_SCENES
+        ]
+        return json.dumps(
+            {
+                "title": "The address nobody may buy",
+                "core_message": GOOD_STORY["core_message"],
+                "takeaway": GOOD_STORY["takeaway"],
+                "hook": GOOD_STORY["hook"],
+                "ending": GOOD_STORY["ending"],
+                "cta": GOOD_STORY["cta"],
+                "cta_kind": "COMMENT",
+                "scenes": scenes,
+            }
+        )
+
+    def answer(prompt):
+        if "You are the Director" in prompt:
+            return json.dumps(
+                {
+                    "verdict": "PASS",
+                    "hook_strength": 8,
+                    "clarity": 8,
+                    "payoff": 8,
+                    "cta_fit": 8,
+                    "retention": {"at_3": 80, "at_end": 55},
+                    "notes": [],
+                }
+            )
+        written["count"] += 1
+        # Four drafts too long for the band, then one that fits — six exchanges would once
+        # have been five more than the studio was willing to have.
+        return script_json(long=written["count"] <= 4)
+
+    registry, _ = registry_with(studio, answer)
+    outcome = _script_and_storyboard(engine, registry, "en", 20)
+
+    # Five drafts in five exchanges: it kept working instead of stopping at two. (The writer
+    # may also re-ask its own model within one draft, so the model-call count is higher than
+    # the number of drafts; what matters is how many drafts the stage was willing to work.)
+    assert written["count"] >= 5
+    assert "5 scenarii scrise în 5 schimburi" in outcome["reason"]
+    assert "1 aprobate de Director" in outcome["reason"]
+    with Session(engine) as session:
+        approved = session.scalars(
+            select(ScriptDraft).where(
+                ScriptDraft.topic_id == topic_id, ScriptDraft.status == "APPROVED"
+            )
+        ).all()
+        # One story, approved by her, and the storyboard made from it in the same run.
+        assert len(approved) == 1
+        assert session.scalars(
+            select(Storyboard).where(Storyboard.script_draft_id == approved[0].id)
+        ).first()

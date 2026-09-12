@@ -54,9 +54,16 @@ MARKS = ("0", "3", "5", "10", "15", "20", "25", "end")
 #: verified claim behind it is a research problem: the film waits for evidence, not for prose.
 FATAL_CHECKS = ("every_scene_is_attributed",)
 
-#: How many times the studio asks for a rewrite before the story is refused. A third attempt
-#: on the same evidence produces a third version of the same weakness.
-MAX_REVISIONS = 2
+#: How many times the studio asks for a rewrite before the story is refused.
+#:
+#: It was two, on the reasoning that a third attempt on the same evidence produces a third
+#: version of the same weakness. That reasoning was about cost, and cost is not the constraint
+#: here — the Owner settled it: "we have plenty of tokens; the day does not close after two
+#: attempts. We can have ten or twenty exchanges until we have a film. The day closes when the
+#: short is published." Rewriting text is the cheapest thing the studio does; a render is not.
+#: So the writer's room stays open, and the number is high enough to be a real conversation
+#: and finite enough that a story the evidence cannot support is eventually let go of.
+MAX_REVISIONS = 15
 
 
 class StoryReviewError(ValueError):

@@ -1,5 +1,27 @@
 # Changelog
 
+## The writers' room stays open — 2026-09-12
+
+Four watched cycles ended the same way: the studio wrote two drafts, the second was one note
+from passing, and the day closed with nothing made. The Owner settled what the rule should be:
+*"we have plenty of tokens. The day does not close after two attempts. We can have ten or
+twenty exchanges until we have a film. The day closes when the short is published."*
+
+- `MAX_REVISIONS` was **2**, on the reasoning that a third attempt on the same evidence
+  produces a third version of the same weakness. That reasoning was about cost, and cost is not
+  the constraint: rewriting text is the cheapest thing the studio does, while a render is where
+  the money goes. It is **15** — high enough to be a real conversation, finite enough that a
+  story the evidence cannot support is eventually let go of.
+- The script stage no longer writes exactly two drafts. The writer and the Director work the
+  story until she approves it, until the review refuses it, or until `MAX_SCRIPT_EXCHANGES`
+  (16) closes the room — and on her approval the storyboard is made in the same run, so the
+  film reaches the camera the same day.
+- What the Owner reads says how long the conversation took: *"5 scenarii scrise în 5 schimburi,
+  1 aprobate de Director, 1 storyboard-uri generate."*
+
+`uv run pytest -q` — **720 passed, 1 skipped**. `ruff`, `mypy`, `scripts/check_docs.py` clean.
+
+
 ## Does the film close, or is there a scene wearing the label — 2026-09-12
 
 The revision loop converged for the first time: *How NASA Tracks Asteroids That Could Hit
