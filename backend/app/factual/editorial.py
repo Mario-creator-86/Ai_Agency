@@ -128,6 +128,75 @@ GENERIC_CTAS = (
 WORDS_PER_SECOND = 2.6
 SCENE_BEAT_SECONDS = 0.35
 
+#: How far a narration may sit from its target before the story review sends it back. The
+#: brief the writer receives and the check that judges him read this same number, because a
+#: writer told "78 words" and refused at 102 was never told where the line was.
+DURATION_TOLERANCE = 0.3
+
+#: What one beat of narration weighs. A scene under this is not a beat of its own; a scene far
+#: over it is two beats wearing one number, and the film runs long while every scene looks
+#: short. Measured against the drafts the studio actually produced: left to itself the writer
+#: lands near 21 words a scene, which is a 40-second film wearing a 30-second brief.
+WORDS_PER_SCENE = 15
+
+#: The most scenes a short may carry, wherever the number is needed: the writer's schema
+#: rejects a draft with more, and the budget never asks for more.
+MAX_STORY_SCENES = 12
+
+#: The shape of a short, as fractions of its own length. At 30 seconds this is the table the
+#: studio has always used — 0-3s hook, 3-8s setup, 8-18s development, 18-26s payoff, 26-30s
+#: ending — and at any other length it stays true instead of promising seconds the film does
+#: not have.
+STORY_BEATS = (
+    ("HOOK", 0.0, 0.10),
+    ("SETUP", 0.10, 0.27),
+    ("DEVELOPMENT / EVIDENCE", 0.27, 0.60),
+    ("REVEAL / PAYOFF", 0.60, 0.87),
+    ("ENDING + CTA", 0.87, 1.0),
+)
+
+
+def narration_budget(target_seconds: float) -> dict[str, Any]:
+    """How much narration a film of this length affords — and how many scenes that is.
+
+    The writer used to be told the total words and nothing else, while the same brief offered
+    him up to twelve scenes and eight story purposes to fill. Seventy-eight words across seven
+    scenes is eleven words a scene, which no one writes; he wrote twenty-one, and the duration
+    check refused a film that was otherwise sound. The arithmetic belongs in the brief, not in
+    the writer's head: this returns the total, the window the check will actually allow, the
+    number of scenes the budget affords, and what one scene may weigh.
+    """
+    target = max(float(target_seconds), 0.0)
+    total = target * WORDS_PER_SECOND
+    ceiling = target * (1.0 + DURATION_TOLERANCE) * WORDS_PER_SECOND
+    floor = target * (1.0 - DURATION_TOLERANCE) * WORDS_PER_SECOND
+    # Three scenes is the fewest that can hold a hook, a middle and a payoff; beyond the cap
+    # the film is a list again. Between those, the length decides.
+    scenes = max(3, min(MAX_STORY_SCENES, int(round(total / WORDS_PER_SCENE)))) if total else 0
+    per_scene = total / scenes if scenes else 0.0
+    return {
+        "target_seconds": round(target, 1),
+        "total_words": int(round(total)),
+        "max_words": int(ceiling),
+        "min_words": int(round(floor)) + 1,
+        "scenes": scenes,
+        "words_per_scene_low": max(6, int(per_scene * 0.8)),
+        "words_per_scene_high": int(per_scene * 1.2) + 1,
+        "beats": [
+            (name, round(target * start, 1), round(target * end, 1))
+            for name, start, end in STORY_BEATS
+        ],
+    }
+
+
+def beat_table(target_seconds: float, indent: str = "  ") -> str:
+    """The shape of the film, written out in its own seconds."""
+    return "\n".join(
+        f"{indent}{start:.0f}-{end:.0f}s{' ' * max(1, 8 - len(f'{start:.0f}-{end:.0f}s'))}{name}"
+        for name, start, end in narration_budget(target_seconds)["beats"]
+    )
+
+
 #: Words that carry no subject. Used to ask whether an ending answers its own hook, and
 #: whether a call to action belongs to this story — both by shared content words, which is
 #: crude, checkable, and impossible to fake by writing more.
@@ -245,7 +314,7 @@ def story_checks(
     scenes: list[dict[str, Any]],
     story: dict[str, Any],
     target_seconds: float,
-    tolerance: float = 0.3,
+    tolerance: float = DURATION_TOLERANCE,
 ) -> dict[str, dict[str, Any]]:
     """Everything about a script that can be checked without asking a model.
 
@@ -323,7 +392,9 @@ def story_checks(
         "duration_is_realistic": _check(
             target_seconds <= 0 or abs(seconds - target_seconds) <= target_seconds * tolerance,
             f"Narațiunea durează {seconds:.1f}s la {WORDS_PER_SECOND} cuvinte/secundă, "
-            f"față de ținta de {target_seconds:.0f}s.",
+            f"față de ținta de {target_seconds:.0f}s. Limita este "
+            f"{int(target_seconds * (1 + tolerance) * WORDS_PER_SECOND)} de cuvinte în total, "
+            f"iar ținta {int(target_seconds * WORDS_PER_SECOND)}.",
         ),
     }
     return checks

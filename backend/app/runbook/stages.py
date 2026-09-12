@@ -67,7 +67,12 @@ from app.factual.agent_pipeline import (
     agent_write_script,
 )
 from app.factual.models import FactualClaim, ScriptDraft, SourceSnapshot, TopicIdea
-from app.factual.services import TopicNotProducible, select_topic
+from app.factual.services import (
+    FactualGateError,
+    TopicNotProducible,
+    approve_script_draft,
+    select_topic,
+)
 from app.factual.story_review import (
     StoryReviewError,
     latest_review,
@@ -534,6 +539,71 @@ def _selection(engine: Engine, registry: ProviderRegistry | None = None) -> dict
 # ------------------------------------------------------------- script and storyboard --
 
 
+def script_work(session: Session, selected: list[str]) -> list[tuple[str, list[str]]]:
+    """The topics that owe a script, and what the last reading of each one said.
+
+    A topic used to be skipped the moment any draft existed for it. So a story the review sent
+    back twice sat SELECTED with two refused drafts and no storyboard: nothing would write a
+    third, because a script existed, and nothing else could be chosen, because the topic still
+    counted as in production. The studio had written itself into a corner it could not leave.
+
+    A topic owes work while its newest draft has no storyboard and the review sent it back. The
+    notes come with it, so the rewrite is briefed rather than guessed. A draft the review
+    REJECTED is not rewritten here — the revision budget is spent and the letters have gone to
+    the departments; it is the Director's matter now, and the topic stops holding the studio up.
+    """
+    newest: dict[str, ScriptDraft] = {}
+    for draft in session.scalars(select(ScriptDraft).order_by(ScriptDraft.created_at)):
+        if draft.topic_id:
+            newest[draft.topic_id] = draft  # ordered by age, so the last one wins
+    storyboarded = set(session.scalars(select(Storyboard.script_draft_id)))
+    owed: list[tuple[str, list[str]]] = []
+    for topic_id in selected:
+        latest = newest.get(topic_id)
+        if latest is None:
+            owed.append((topic_id, []))
+            continue
+        if latest.id in storyboarded:
+            continue  # the film is past the page
+        review = latest_review(session, latest.id)
+        if review is None or review.verdict != "REVISE":
+            continue  # approved and waiting to be shot, or refused and not ours to retry
+        notes = list((review.notes_json or {}).get("notes") or [])
+        owed.append((topic_id, notes))
+    return owed
+
+
+def _director_approves(engine: Engine, script_id: str, review: dict[str, Any]) -> str | None:
+    """A story the Director passed is a story she approves, in the same breath.
+
+    Approval is hers (the Owner said so): a script she has just read and passed does not wait
+    in his inbox for a button. The factual gate is re-checked inside `approve_script_draft`, so
+    her approval cannot carry a claim that stopped being supported while the script was written.
+    """
+    if review["verdict"] != "PASS":
+        return None
+    with Session(engine) as session:
+        director = agent_for_role(session, "Director")
+        director_id = director.id if director else None
+    try:
+        approve_script_draft(
+            engine,
+            script_id,
+            str(uuid4()),
+            approved_by=director_id,
+            # A PASS means no check was broken, so there is nothing to enumerate here: what the
+            # record needs is who decided and on what reading, and the review itself holds the
+            # scores and the notes behind that reading.
+            reason="Recenzia Directorului: PASS. Povestea a trecut toate verificările editoriale.",
+        )
+    except (FactualGateError, ValueError) as exc:
+        # The gate refused at approval time — a claim was refuted after the script was written.
+        # That is the gate working, and it must not take the rest of the day with it.
+        logger.info("script_approval_refused", extra={"script_id": script_id, "reason": str(exc)})
+        return None
+    return script_id
+
+
 def _script_and_storyboard(
     engine: Engine,
     registry: ProviderRegistry,
@@ -555,11 +625,11 @@ def _script_and_storyboard(
             topic.id
             for topic in session.scalars(select(TopicIdea).where(TopicIdea.status == "SELECTED"))
         ]
-        scripted = set(session.scalars(select(ScriptDraft.topic_id)))
-        needing_script = [topic_id for topic_id in selected if topic_id not in scripted][:1]
+        pending = script_work(session, selected)[:1]
 
     reviews: list[dict[str, Any]] = []
-    for topic_id in needing_script:
+    approvals: list[str] = []
+    for topic_id, carried_notes in pending:
         try:
             written = agent_write_script(
                 engine,
@@ -568,6 +638,7 @@ def _script_and_storyboard(
                 str(uuid4()),
                 target_duration_seconds=target_seconds,
                 language=language,
+                notes=carried_notes or None,
             )
             drafted += 1
             # The story is read before anything is generated, and a script the review sends
@@ -577,6 +648,9 @@ def _script_and_storyboard(
                 engine, registry, written["script"]["id"], target_seconds=target_seconds
             )
             reviews.append({"verdict": review["verdict"], "failed": review["failed"][:4]})
+            decided = _director_approves(engine, written["script"]["id"], review)
+            if decided:
+                approvals.append(decided)
             if review["verdict"] == "REVISE":
                 again = agent_write_script(
                     engine,
@@ -592,6 +666,9 @@ def _script_and_storyboard(
                     engine, registry, again["script"]["id"], target_seconds=target_seconds
                 )
                 reviews.append({"verdict": second["verdict"], "failed": second["failed"][:4]})
+                decided = _director_approves(engine, again["script"]["id"], second)
+                if decided:
+                    approvals.append(decided)
         except (ScriptRejected, NoVerifiedClaims) as exc:
             # The draft was refused and nothing was stored — which is the pipeline working, not
             # the day breaking. A model that writes narration it cannot attribute to a verified
@@ -650,7 +727,10 @@ def _script_and_storyboard(
             select(ScriptDraft.id).where(ScriptDraft.status == "VERIFIED_PASS").limit(1)
         )
 
-    reason = f"{drafted} scenarii scrise, {boards} storyboard-uri generate."
+    reason = (
+        f"{drafted} scenarii scrise, {len(approvals)} aprobate de Director, "
+        f"{boards} storyboard-uri generate."
+    )
     if prompted:
         reason += f" {prompted} cadre descrise complet."
     if reviews:

@@ -964,3 +964,234 @@ def test_a_prompt_with_nothing_to_inherit_still_says_something():
     than an empty string sent to a model that charges by the second."""
     text = compose_prompt({"subject": "a padlock", "action": "closing", "avoid": ["text"]}, {})
     assert "padlock" in text and "Avoid: text." in text
+
+
+# --------------------------------------------------------------------------------------------
+# How long is a short?
+#
+# Found live on 2026-09-12: the writer was told "30 seconds ≈ 78 words" and, in the same brief,
+# offered up to twelve scenes across eight story purposes with a five-line beat table. Seventy-
+# eight words over seven scenes is eleven words a scene, which nobody writes — he wrote twenty-
+# one, twice, and the duration check refused both drafts (57.5s, then 41.2s against a 39s
+# ceiling). The brief asked for a film its own budget could not pay for. These tests hold the
+# arithmetic in one place, so the instruction and the refusal cannot disagree.
+# --------------------------------------------------------------------------------------------
+
+
+def test_the_budget_states_the_window_the_check_enforces():
+    from app.factual.editorial import DURATION_TOLERANCE, WORDS_PER_SECOND, narration_budget
+
+    budget = narration_budget(30)
+    assert budget["total_words"] == int(30 * WORDS_PER_SECOND)  # 78
+    # The ceiling the brief names is the ceiling the check applies, to the word.
+    assert budget["max_words"] == int(30 * (1 + DURATION_TOLERANCE) * WORDS_PER_SECOND)
+
+    # A narration written to the stated total passes; one over the stated ceiling does not.
+    at_target = " ".join(["word"] * budget["total_words"])
+    over = " ".join(["word"] * (budget["max_words"] + 6))
+    assert story_checks(
+        title="t",
+        scenes=[{"narration": at_target, "purpose": "HOOK"}],
+        story={},
+        target_seconds=30,
+    )["duration_is_realistic"]["passed"]
+    assert not story_checks(
+        title="t",
+        scenes=[{"narration": over, "purpose": "HOOK"}],
+        story={},
+        target_seconds=30,
+    )["duration_is_realistic"]["passed"]
+
+
+def test_the_budget_asks_for_scenes_it_can_pay_for():
+    from app.factual.editorial import MAX_STORY_SCENES, narration_budget
+
+    budget = narration_budget(30)
+    # Five scenes at twelve to nineteen words each is a brief a writer can actually satisfy;
+    # the old one offered twelve scenes for the same 78 words.
+    assert budget["scenes"] == 5
+    assert budget["words_per_scene_low"] >= 10
+    assert budget["scenes"] * budget["words_per_scene_high"] <= budget["max_words"]
+    assert budget["scenes"] * budget["words_per_scene_low"] >= budget["min_words"] - 1
+    # And the cap is never exceeded, however long the film is asked to be.
+    assert narration_budget(600)["scenes"] == MAX_STORY_SCENES
+    assert narration_budget(0)["scenes"] == 0
+
+
+def test_a_longer_film_scales_instead_of_promising_seconds_it_lacks():
+    from app.factual.editorial import narration_budget
+
+    thirty, forty_five = narration_budget(30), narration_budget(45)
+    assert forty_five["total_words"] > thirty["total_words"]
+    assert forty_five["scenes"] > thirty["scenes"]
+    # The beat table always ends where the film ends. A 45-second brief that still said
+    # "26-30s ENDING" would be telling the writer to finish fifteen seconds early.
+    assert thirty["beats"][-1][2] == 30.0
+    assert forty_five["beats"][-1][2] == 45.0
+    assert thirty["beats"][0][1] == 0.0
+
+
+def test_the_writers_brief_carries_the_budgets_own_numbers():
+    from app.factual.agent_pipeline import _write_instructions
+    from app.factual.editorial import narration_budget
+
+    budget = narration_budget(30)
+    brief = _write_instructions(30)
+    # Every number the writer is given comes from the budget, not from prose written once and
+    # left behind when a constant changed.
+    assert f"{budget['total_words']} de cuvinte" in brief
+    assert f"{budget['scenes']} scene" in brief
+    assert f"{budget['words_per_scene_low']}-{budget['words_per_scene_high']} cuvinte" in brief
+    assert str(budget["max_words"]) in brief
+    # The brief says what is measured, because the writer had been filling duration_seconds
+    # with numbers that summed to the target while writing twice the narration.
+    assert "duration_seconds" in brief
+    # It no longer offers more scenes than the budget affords.
+    assert "maximum 12 scene" not in brief
+
+
+def test_the_refusal_tells_the_writer_where_the_line_is():
+    from app.factual.editorial import narration_budget
+
+    budget = narration_budget(30)
+    checks = story_checks(
+        title="t",
+        scenes=[{"narration": " ".join(["word"] * 150), "purpose": "HOOK"}],
+        story={},
+        target_seconds=30,
+    )
+    reason = checks["duration_is_realistic"]["reason"]
+    # "Too long" is not a brief. The number to aim at and the number that refuses are both in
+    # the sentence the writer receives on the rewrite.
+    assert str(budget["max_words"]) in reason
+    assert str(budget["total_words"]) in reason
+
+
+# --------------------------------------------------------------------------------------------
+# Who approves a script, and what happens to one that was sent back.
+#
+# Found live on 2026-09-12, in one chain: the writer overshot the duration, the review sent the
+# draft back twice, and then the studio wedged. The stage skipped the topic because a draft
+# existed, the topic still counted as in production, and nothing else could be selected past
+# it. The revision budget that should have escalated never fired either, because it counted
+# reviews of one draft row while every rewrite wrote a new row. And a story the Director had
+# passed still waited for the Owner to approve it by hand — his inbox doing her job.
+# --------------------------------------------------------------------------------------------
+
+
+def a_sent_back_review(engine, script_id, verdict="REVISE", notes=None) -> None:
+    with Session(engine) as session, session.begin():
+        session.add(
+            StoryReview(
+                id=str(uuid4()),
+                script_id=script_id,
+                verdict=verdict,
+                checks_json={},
+                retention_json={},
+                scores_json={},
+                notes_json={"notes": notes if notes is not None else ["Narațiunea durează 57.5s"]},
+                estimated_seconds=57.5,
+                created_at=utc_now(),
+            )
+        )
+
+
+def test_a_topic_with_no_script_owes_one(engine, studio):
+    from app.runbook.stages import script_work
+
+    topic_id = a_topic(engine)
+    with Session(engine) as session:
+        assert script_work(session, [topic_id]) == [(topic_id, [])]
+
+
+def test_a_sent_back_draft_owes_a_rewrite_and_carries_its_notes(engine, studio):
+    from app.runbook.stages import script_work
+
+    topic_id = a_topic(engine)
+    script_id = a_script(engine, topic_id, status="VERIFIED_PASS")
+    a_sent_back_review(engine, script_id, notes=["Narațiunea durează 57.5s", "hook slab"])
+
+    with Session(engine) as session:
+        owed = script_work(session, [topic_id])
+    # Still owed work, and the rewrite is briefed with what the reading said. This is the case
+    # that used to be skipped, leaving the studio with nothing it was able to do.
+    assert owed == [(topic_id, ["Narațiunea durează 57.5s", "hook slab"])]
+
+
+def test_a_refused_story_is_not_retried_and_stops_holding_the_studio_up(engine, studio):
+    from app.runbook.stages import script_work
+
+    topic_id = a_topic(engine)
+    a_sent_back_review(engine, a_script(engine, topic_id, status="VERIFIED_PASS"), verdict="REJECT")
+    with Session(engine) as session:
+        # The revision budget is spent and the letters have gone to the departments. A fourth
+        # draft against the same evidence is what the budget exists to prevent.
+        assert script_work(session, [topic_id]) == []
+
+
+def test_a_draft_she_passed_is_not_rewritten(engine, studio):
+    from app.runbook.stages import script_work
+
+    topic_id = a_topic(engine)
+    a_passed_review(engine, a_script(engine, topic_id, status="VERIFIED_PASS"))
+    with Session(engine) as session:
+        assert script_work(session, [topic_id]) == []
+
+
+def test_a_storyboarded_script_is_past_the_page(engine, studio):
+    from app.runbook.stages import script_work
+
+    topic_id = a_topic(engine)
+    script_id = a_script(engine, topic_id)
+    a_passed_review(engine, script_id)
+    generate_storyboard_from_script(engine, script_id, "MOTION_GRAPHIC", "9:16", str(uuid4()))
+    with Session(engine) as session:
+        assert script_work(session, [topic_id]) == []
+
+
+def test_the_revision_budget_counts_the_story_not_the_row(engine, studio):
+    from app.factual.story_review import MAX_REVISIONS, review_story
+
+    topic_id = a_topic(engine)
+    # Two rewrites, each a new draft row, each sent back once. Counted per row this was always
+    # "the first revision of this draft", so the budget never ran out and the topic never
+    # escalated to anyone.
+    for _ in range(MAX_REVISIONS):
+        a_sent_back_review(engine, a_script(engine, topic_id, status="VERIFIED_PASS"))
+
+    long_scenes = [{**scene, "narration": scene["narration"] * 6} for scene in GOOD_SCENES]
+    third = a_script(engine, topic_id, scenes=long_scenes, status="VERIFIED_PASS")
+    verdict = review_story(engine, None, third, str(uuid4()), target_seconds=20)
+    assert verdict["verdict"] == "REJECT"
+    assert any("trimis înapoi" in note for note in verdict["notes"])
+
+
+def test_the_director_approves_what_she_passed(engine, studio):
+    from app.agents.memory import agent_for_role
+    from app.models import DomainEvent
+    from app.runbook.stages import _director_approves
+
+    topic_id = a_topic(engine)
+    script_id = a_script(engine, topic_id, status="VERIFIED_PASS")
+    approved = _director_approves(engine, script_id, {"verdict": "PASS", "failed": []})
+
+    assert approved == script_id
+    with Session(engine) as session:
+        assert session.get(ScriptDraft, script_id).status == "APPROVED"
+        director = agent_for_role(session, "Director")
+        event = session.scalars(
+            select(DomainEvent).where(DomainEvent.event_type == "factual.script_approved")
+        ).first()
+        # The record says whose decision it was: "approved" with nobody behind it is not a
+        # decision anyone can question later.
+        assert event.payload["approved_by"] == (director.id if director else None)
+        assert "Recenzia Directorului: PASS" in event.payload["reason"]
+
+
+def test_a_story_she_sent_back_is_not_approved(engine, studio):
+    from app.runbook.stages import _director_approves
+
+    script_id = a_script(engine, a_topic(engine), status="VERIFIED_PASS")
+    assert _director_approves(engine, script_id, {"verdict": "REVISE", "failed": ["x"]}) is None
+    with Session(engine) as session:
+        assert session.get(ScriptDraft, script_id).status != "APPROVED"

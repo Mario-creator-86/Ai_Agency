@@ -1,5 +1,51 @@
 # Changelog
 
+## The Director approves her own scripts, and the brief can be satisfied — 2026-09-12
+
+A watched cycle produced a new film for the first time: the Director chose *How the James Webb
+Space Telescope Sees the First Galaxies* over the asteroid topic on 16 supported claims, the
+writer drafted it, and the story review sent it back. Twice. Then the studio stopped — and
+what stopped it was four separate faults in one chain.
+
+**The brief asked for a film its own budget could not pay for.** The writer was told "30
+seconds, about 78 words" and, in the same breath, offered up to twelve scenes across eight
+story purposes under a five-line beat table. Seventy-eight words over seven scenes is eleven
+words a scene, which nobody writes; he wrote twenty-one, twice (57.5s, then 41.2s against a
+39s ceiling). The arithmetic now lives in `narration_budget` and the brief states it: at 30
+seconds, **5 scenes of 12–19 words**, 78 words in total, refused over 101 — and it says the
+count is on the spoken text, not on the `duration_seconds` numbers the model fills in. The
+beat table is expressed as fractions of the film's own length, so it reproduces the historic
+0–3 / 3–8 / 8–18 / 18–26 / 26–30 table at 30 seconds and stays true at any other. The refusal
+now names the ceiling and the target too, because "too long" is not a brief.
+
+**The revision budget never fired.** `MAX_REVISIONS` counted the reviews of one draft row while
+every rewrite wrote a new row, so each attempt was the first revision of a brand-new draft and
+nothing ever escalated. It counts the story now — the topic behind the drafts.
+
+**The studio had written itself into a corner.** The script stage skipped a topic the moment
+any draft existed for it, while the topic still counted as in production, so a story sent back
+twice could neither be rewritten nor got past: nothing new could be selected, and nothing would
+write a third draft. `script_work` replaces that test — a topic owes work while its newest
+draft has no storyboard and the review sent it back, and the reading's notes travel with the
+rewrite. A REJECTED story is not retried here; its budget is spent, the letters have gone to
+the departments, and it stops holding the studio up.
+
+**Approval was in the Owner's inbox.** A script the Director had read and passed still waited
+for him to press a button — "I don't have to approve the new scripts, the Director does", as he
+put it. She approves what she passed, in the same decision, and the record carries `approved_by`
+and the reason. The factual gate is still re-checked at approval, so she cannot approve a script
+whose claim stopped being supported while it was written. The Owner keeps the same API route and
+can still refuse what she allowed.
+
+`uv run pytest -q` — **711 passed, 1 skipped**. Thirteen new checks across
+`tests/test_editorial_quality.py`. `ruff`, `mypy`, `scripts/check_docs.py` clean.
+
+One consequence worth stating: the James Webb topic has already spent its revision budget, so
+under the corrected rule its next reading refuses it and the selection moves to the next topic
+with verified claims. The corrected brief gets its first run on a story that has not been
+refused yet, which is the honest way round.
+
+
 ## A film is not a file — 2026-09-12
 
 The studio published its first video: *The Universe's Missing Pieces: Why the LHC Upgrade

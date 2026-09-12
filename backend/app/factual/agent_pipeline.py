@@ -21,7 +21,13 @@ from app.agents.language import audience_language_line
 from app.agents.memory import remember
 from app.agents.models import Agent, Role
 from app.agents.services import run_agent_task
-from app.factual.editorial import WORDS_PER_SECOND, expected_seconds
+from app.factual.editorial import (
+    MAX_STORY_SCENES,
+    WORDS_PER_SECOND,
+    beat_table,
+    expected_seconds,
+    narration_budget,
+)
 from app.factual.models import FactualClaim, SourceSnapshot, TopicIdea
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.factual.schemas import ExtractClaimItem
@@ -448,7 +454,7 @@ def agent_verify_claim(
 
 
 PREFERRED_WRITER_ROLE = "ScriptWriter"
-MAX_SCENES = 12
+MAX_SCENES = MAX_STORY_SCENES
 
 _WRITE_INSTRUCTIONS = """Ești scenaristul unui studio de short-uri factuale de {duration} secunde.
 
@@ -463,17 +469,16 @@ o ai, rescrie propoziția ca să nu mai aibă nevoie de ea. Nu transforma o spec
 certitudine ca să sune mai dramatic: un canal factual care greșește nu valorează nimic.
 
 STRUCTURA, ca ghid (nu ca șablon rigid — folosește ce servește povestea):
-  0-3s    HOOK: o contradicție, o întrebare, un mister, o consecință, o idee greșită. NU
-          începe cu "Did you know", "In this video", "Today we" — pierzi singurele trei
-          secunde care decid dacă cineva se uită.
-  3-8s    SETUP: contextul minim ca răsplata să aibă sens.
-  8-18s   DEVELOPMENT / EVIDENCE: fiecare scenă răspunde la o întrebare și deschide
-          următoarea. Leagă-le cauzal: "pentru că", "așa că", "dar", "până", "ceea ce
-          înseamnă". NU "and then… and then…".
-  18-26s  REVEAL / PAYOFF: răsplata. Trebuie să răspundă la cârlig. Fără momeală.
-  26-30s  ENDING + CTA: închide filmul și lasă o întrebare care ține de povestea asta.
+{beats}
+  HOOK: o contradicție, o întrebare, un mister, o consecință, o idee greșită. NU începe cu
+  "Did you know", "In this video", "Today we" — pierzi singurele trei secunde care decid dacă
+  cineva se uită. SETUP: contextul minim ca răsplata să aibă sens. DEVELOPMENT / EVIDENCE:
+  fiecare scenă răspunde la o întrebare și deschide următoarea, legate cauzal ("pentru că",
+  "așa că", "dar", "până", "ceea ce înseamnă") — NU "and then… and then…". REVEAL / PAYOFF:
+  răsplata, care răspunde la cârlig, fără momeală. ENDING + CTA: închide filmul și lasă o
+  întrebare care ține de povestea asta.
 
-Împarte textul în maximum {max_scenes} scene. Fiecare scenă:
+Scrie {scenes} scene. Fiecare scenă:
 - se sprijină pe cel puțin o afirmație, iar "claim_ids" conține EXACT identificatorii
   afirmațiilor pe care le folosește, copiați din lista de mai jos. Un identificator care nu
   apare în listă face ca întregul scenariu să fie respins;
@@ -482,9 +487,13 @@ STRUCTURA, ca ghid (nu ca șablon rigid — folosește ce servește povestea):
 - spune în "visual" ce se VEDE, nu ce se aude: arată informația (nori care se strâng, apa
   care urcă, reacția unui om), nu repeta în imagine ce spune deja naratorul.
 
-RITMUL: naratorul spune aproximativ {wps} cuvinte pe secundă. {duration} secunde înseamnă în
-total cam {words} de cuvinte de narațiune, pentru TOATE scenele la un loc. Nu scrie 60 de
-secunde de text pentru un film de {duration}.
+LUNGIMEA — fă socoteala înainte de a scrie, și numără la final:
+- naratorul spune {wps} cuvinte pe secundă, deci {duration} secunde = {words} de cuvinte de
+  narațiune pentru TOATE scenele la un loc;
+- {scenes} scene × {per_scene_low}-{per_scene_high} cuvinte de narațiune fiecare. Nu mai mult;
+- peste {max_words} de cuvinte în total, filmul e respins și rescris. Nu e o sugestie: e
+  măsurat pe textul rostit, nu pe numerele pe care le scrii tu în "duration_seconds".
+O scenă de 25 de cuvinte pare scurtă și nu este: sunt aproape zece secunde de vorbit.
 
 Răspunde EXCLUSIV cu un obiect JSON valid, fără text în plus:
 {{"title": "...", "core_message": "o propoziție: ideea filmului", "takeaway": "ce rămâne
@@ -543,6 +552,25 @@ class _Script(BaseModel):
 _SCRIPT = TypeAdapter(_Script)
 
 
+def _write_instructions(target_seconds: int) -> str:
+    """The writer's brief, with the arithmetic of the length already done for him.
+
+    Every number here comes from `narration_budget`, which is the same function the duration
+    check rests on — so the brief and the refusal can never disagree about where the line is.
+    """
+    budget = narration_budget(target_seconds)
+    return _WRITE_INSTRUCTIONS.format(
+        duration=int(budget["target_seconds"]),
+        wps=WORDS_PER_SECOND,
+        words=budget["total_words"],
+        max_words=budget["max_words"],
+        scenes=budget["scenes"],
+        per_scene_low=budget["words_per_scene_low"],
+        per_scene_high=budget["words_per_scene_high"],
+        beats=beat_table(target_seconds),
+    )
+
+
 def agent_write_script(
     engine: Engine,
     registry: ProviderRegistry,
@@ -588,12 +616,7 @@ def agent_write_script(
     catalogue = "\n".join(f'- {cid}: "{text}"' for cid, text in allowed.items())
     prompt = (
         audience_language_line(language)
-        + _WRITE_INSTRUCTIONS.format(
-            duration=target_duration_seconds,
-            max_scenes=MAX_SCENES,
-            wps=WORDS_PER_SECOND,
-            words=int(target_duration_seconds * WORDS_PER_SECOND),
-        )
+        + _write_instructions(target_duration_seconds)
         + catalogue
         + f"\n\nSUBIECT: {topic_title}\n"
     )

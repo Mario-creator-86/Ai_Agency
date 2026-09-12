@@ -467,8 +467,25 @@ def generate_script_draft(
         return ScriptDraftView.model_validate(draft).model_dump()
 
 
-def approve_script_draft(engine: Engine, script_id: str, correlation_id: str) -> dict:
-    """Owner approval of a script draft, re-checking the factual gate at approval time.
+def approve_script_draft(
+    engine: Engine,
+    script_id: str,
+    correlation_id: str,
+    *,
+    approved_by: str | None = None,
+    reason: str | None = None,
+) -> dict:
+    """Approval of a script draft, re-checking the factual gate at approval time.
+
+    Who approves: the Director. Deciding which scripts are worth producing is her job, not the
+    Owner's inbox — a studio whose every script waits for the Owner to press a button is not
+    autonomous, it is a queue with his name on it. She reads the story first (`review_story`)
+    and approves only what she passed, so the approval and the reading are the same decision.
+    The Owner keeps the same route through the API and can still refuse what she allowed.
+
+    `approved_by` records whose decision it was and `reason` records what it rested on, because
+    "the script was approved" with nobody behind it is the kind of record that cannot be
+    questioned later.
 
     Without this step a draft created through the real API (`VERIFIED_PASS`) could never reach
     the `APPROVED` status that storyboarding requires — before the audit, only a fixture
@@ -514,7 +531,11 @@ def approve_script_draft(engine: Engine, script_id: str, correlation_id: str) ->
             "script_draft",
             script_id,
             1,
-            {"claims_count": len(draft.claim_ids_json)},
+            {
+                "claims_count": len(draft.claim_ids_json),
+                "approved_by": approved_by,
+                "reason": (reason or "")[:300],
+            },
             correlation_id,
         )
         draft.status = "APPROVED"

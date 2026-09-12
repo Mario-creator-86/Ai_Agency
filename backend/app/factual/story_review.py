@@ -174,9 +174,22 @@ def review_story(
         earlier = session.scalar(
             select(StoryReview).where(StoryReview.script_id == script_id).limit(1)
         )
+        # How many times this STORY has been sent back — not this row. Every rewrite is a
+        # new `ScriptDraft` with a new id, so counting per row meant the budget never ran out:
+        # a topic could collect draft after draft, each sent back for the first time. The
+        # budget belongs to the story, which is what the evidence supports or does not.
         revisions = len(
             list(
                 session.scalars(
+                    select(StoryReview)
+                    .join(ScriptDraft, ScriptDraft.id == StoryReview.script_id)
+                    .where(
+                        ScriptDraft.topic_id == script.topic_id,
+                        StoryReview.verdict == "REVISE",
+                    )
+                )
+                if script.topic_id
+                else session.scalars(
                     select(StoryReview).where(
                         StoryReview.script_id == script_id, StoryReview.verdict == "REVISE"
                     )
