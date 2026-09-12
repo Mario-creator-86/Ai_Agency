@@ -646,6 +646,7 @@ def _media(
     """
     from app.media.assembler import RenderEngineUnavailable, assemble_video_job
     from app.media.factory import image_provider, render_plan, tts_provider
+    from app.providers.media_http import MediaProviderError
 
     with Session(engine) as session:
         rendered = set(
@@ -674,6 +675,7 @@ def _media(
     images = image_provider(engine, vault)
     voice = tts_provider(engine, vault)
     produced = []
+    refused: list[dict[str, str]] = []
     narration_reviews = []
     costs_recorded = 0
     for storyboard_id in pending:
@@ -703,6 +705,13 @@ def _media(
             )
         except RenderEngineUnavailable as exc:
             return _outcome(SKIPPED, f"Randarea nu poate rula: {exc}")
+        except MediaProviderError as exc:
+            # A provider's refusal is that render's failure, not the day's: the storyboard
+            # stays approved and unrendered, tomorrow's stage tries it again, and the Owner
+            # reads why in the Director's report — not in a safe-mode banner.
+            refused.append({"storyboard_id": storyboard_id, "error": str(exc)[:200]})
+            logger.info("render_refused", extra={"storyboard_id": storyboard_id})
+            continue
         produced.append(result["output_asset_id"])
         # Into the books at once, at the stored price, so the day's close and the next
         # budget check see what was just spent.
@@ -715,6 +724,8 @@ def _media(
 
     substitutes = images is None or voice is None
     reason = f"{len(produced)} videoclipuri randate."
+    if refused:
+        reason += f" {len(refused)} randări refuzate de furnizor: {refused[0]['error']}."
     if retry:
         reason += (
             " (o randare reluată: cea veche picase la QC cu substitute, acum sunt imagini reale.)"

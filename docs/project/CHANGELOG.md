@@ -45,7 +45,20 @@ the studio's identity and returns pages that exist (Wikipedia's does, tested).
   no fact behind it ("the LHC is getting stronger" — no page read said so): a minority of
   uncited scenes is now cut and the attributed film kept (`cut_scenes` in the result, named
   in the writer's announcement); a rewrite that still rests mostly on nothing is refused.
-- Tests: `tests/test_search_step.py` (10), three more in `tests/test_script_writing.py`.
+- **The storyboard speaks the writer's words**: the seventh clean day built eight silent
+  scenes called "Scene 1"… "Scene 8" from a real script — `generate_storyboard_from_script`
+  read the demo fixture's keys (`voiceover_segment`, `visual_prompt`) and not the writer's
+  (`narration`, `visual_description`); the voice artist passed it ("nothing to pronounce").
+  Both spellings are read now, and a scene without a stated duration lasts as long as its
+  words take to say (3–9 s).
+- **A provider's refusal fails the render, not the day**: Runway answered HTTP 400 and the
+  media stage raised, the day failed and the studio entered safe mode. The refusal is now
+  counted in the stage report ("N randări refuzate de furnizor"), the storyboard stays
+  approved for tomorrow's attempt, and the day goes on.
+- **One live storyboard per script**: rebuilding a storyboard supersedes an earlier one
+  nobody has rendered (it is marked REJECTED), so the render stage never picks the stale
+  board over the new one.
+- Tests: `tests/test_search_step.py` (13), three more in `tests/test_script_writing.py`.
 
 ## A review that fed itself, and a studio that can start over — 2026-09-12
 

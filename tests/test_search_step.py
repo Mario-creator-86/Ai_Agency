@@ -441,3 +441,137 @@ def test_a_source_whose_claims_cannot_be_read_does_not_stop_the_day(
         "1 surse citite" in outcome["reason"]
         and "1 surse fără afirmații citibile" in (outcome["reason"])
     )
+
+
+def test_a_storyboard_speaks_the_writers_narration_and_shows_his_pictures(engine, studio):
+    """The seventh clean day built a storyboard of eight silent scenes called "Scene 1"…
+    "Scene 8" from a real script: the builder read the demo fixture's keys, not the
+    writer's. The narration and the picture come from the script; a scene lasts as long
+    as its words take to say."""
+    from app.factual.models import ScriptDraft
+    from app.media.services import generate_storyboard_from_script
+
+    topic_id = a_topic(engine)
+    script_id = str(uuid4())
+    with Session(engine) as session, session.begin():
+        session.add(
+            ScriptDraft(
+                id=script_id,
+                topic_id=topic_id,
+                version=1,
+                title="The Universe's Missing Pieces",
+                target_duration_seconds=50,
+                voiceover_full_text="Look around. Everything you see is five percent.",
+                scenes_json=[
+                    {
+                        "scene_number": 1,
+                        "narration": "Look around. Everything you see is five percent of the "
+                        "universe, and the rest has never been seen.",
+                        "visual_description": "A starry sky with a small silhouette.",
+                        "claim_ids": ["c1"],
+                    },
+                    {
+                        "scene_number": 2,
+                        "narration": "The rest is dark.",
+                        "visual_description": "A galaxy with an invisible halo.",
+                        "claim_ids": ["c1"],
+                    },
+                ],
+                status="APPROVED",
+                claim_ids_json=["c1"],
+                unverified_claim_ids_json=[],
+                created_at=utc_now(),
+            )
+        )
+    board = generate_storyboard_from_script(engine, script_id, "MOTION_GRAPHIC", "9:16", "c")
+    scenes = sorted(board["scenes"], key=lambda s: s["scene_index"])
+    assert scenes[0]["voiceover_segment"].startswith("Look around.")
+    assert scenes[0]["visual_prompt"] == "A starry sky with a small silhouette."
+    assert scenes[0]["duration_seconds"] == 7.2 and scenes[1]["duration_seconds"] == 3.0
+
+
+def test_a_providers_refusal_fails_the_render_not_the_day(engine, settings, studio, monkeypatch):
+    """Runway answered HTTP 400 on the seventh clean day; the media stage raised, the day
+    failed and the studio entered safe mode. A refusal is that render's failure: the
+    storyboard stays approved for tomorrow and the report says who refused."""
+    from app.factual.models import ScriptDraft
+    from app.media import assembler, factory
+    from app.media.services import generate_storyboard_from_script
+    from app.providers.media_http import MediaProviderError
+    from app.runbook import stages
+
+    script_id = str(uuid4())
+    with Session(engine) as session, session.begin():
+        session.add(
+            ScriptDraft(
+                id=script_id,
+                topic_id=a_topic(engine),
+                version=1,
+                title="A film",
+                target_duration_seconds=50,
+                voiceover_full_text="Words that carry a claim.",
+                scenes_json=[
+                    {
+                        "scene_number": 1,
+                        "narration": "Words that carry a claim, spoken.",
+                        "visual_description": "A picture.",
+                        "claim_ids": ["c1"],
+                    }
+                ],
+                status="APPROVED",
+                claim_ids_json=["c1"],
+                unverified_claim_ids_json=[],
+                created_at=utc_now(),
+            )
+        )
+    generate_storyboard_from_script(engine, script_id, "MOTION_GRAPHIC", "9:16", "c")
+
+    def refuse(*args, **kwargs):
+        raise MediaProviderError("api.dev.runwayml.com refused the request (HTTP 400)")
+
+    monkeypatch.setattr(assembler, "assemble_video_job", refuse)
+    monkeypatch.setattr(factory, "image_provider", lambda engine_, vault: object())
+    monkeypatch.setattr(factory, "tts_provider", lambda engine_, vault: object())
+    monkeypatch.setattr(
+        factory,
+        "render_plan",
+        lambda engine_, vault, board: {"image": None, "tts_for_scene": lambda *a: None, "plan": {}},
+    )
+    outcome = stages._media(engine, settings, None, None)
+    assert outcome["status"] == "COMPLETED"
+    assert "1 randări refuzate de furnizor: api.dev.runwayml.com refused" in outcome["reason"]
+    with Session(engine) as session:
+        from app.media.models import Storyboard
+
+        assert session.scalar(select(Storyboard.status)) == "APPROVED"
+
+
+def test_rebuilding_a_storyboard_supersedes_the_unrendered_one(engine, studio):
+    from app.factual.models import ScriptDraft
+    from app.media.models import Storyboard
+    from app.media.services import generate_storyboard_from_script
+
+    script_id = str(uuid4())
+    with Session(engine) as session, session.begin():
+        session.add(
+            ScriptDraft(
+                id=script_id,
+                topic_id=a_topic(engine),
+                version=1,
+                title="A film",
+                target_duration_seconds=50,
+                voiceover_full_text="Words.",
+                scenes_json=[
+                    {"scene_number": 1, "narration": "Words that carry.", "claim_ids": ["c1"]}
+                ],
+                status="APPROVED",
+                claim_ids_json=["c1"],
+                unverified_claim_ids_json=[],
+                created_at=utc_now(),
+            )
+        )
+    first = generate_storyboard_from_script(engine, script_id, "MOTION_GRAPHIC", "9:16", "c")
+    second = generate_storyboard_from_script(engine, script_id, "MOTION_GRAPHIC", "9:16", "c")
+    with Session(engine) as session:
+        status = {b.id: b.status for b in session.scalars(select(Storyboard))}
+    assert status == {first["id"]: "REJECTED", second["id"]: "APPROVED"}

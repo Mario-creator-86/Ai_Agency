@@ -14,6 +14,7 @@ from app.media.models import (
     CharacterBible,
     Storyboard,
     StoryboardScene,
+    VideoRenderJob,
 )
 from app.media.schemas import (
     CharacterBibleView,
@@ -673,6 +674,22 @@ def generate_storyboard_from_script(
                 list(script.unverified_claim_ids_json),
             )
 
+        # One live storyboard per script: an earlier one nobody has rendered is superseded
+        # by this rebuild (a placeholder board from a key mismatch, a board the Owner wants
+        # redone), so the render stage never picks the stale one over the new.
+        rendered_boards = set(
+            session.scalars(
+                select(VideoRenderJob.storyboard_id).where(VideoRenderJob.status == "COMPLETED")
+            )
+        )
+        for earlier in session.scalars(
+            select(Storyboard).where(
+                Storyboard.script_draft_id == script_draft_id, Storyboard.status == "APPROVED"
+            )
+        ):
+            if earlier.id not in rendered_boards:
+                earlier.status = "REJECTED"
+
         scenes_data = script.scenes_json or []
         if not scenes_data:
             # Fallback single scene from voiceover text if scenes_json empty
@@ -723,9 +740,24 @@ def generate_storyboard_from_script(
         # Create individual StoryboardScenes
         for idx, s in enumerate(scenes_data, start=1):
             scene_id = str(uuid4())
-            dur = float(s.get("duration_seconds", 5.0))
-            vo = str(s.get("voiceover_segment", s.get("voiceover", "")))
-            vp = str(s.get("visual_prompt", s.get("visual_cue", f"Scene {idx}")))
+            # The script writer's scenes say "narration" and "visual_description"; the demo
+            # fixture said "voiceover_segment" and "visual_prompt". Reading only the latter
+            # built a storyboard of eight silent scenes called "Scene 1"… "Scene 8" from a
+            # real script, and the voice artist passed it: nothing to pronounce.
+            vo = str(
+                s.get("voiceover_segment") or s.get("voiceover") or s.get("narration") or ""
+            ).strip()
+            vp = str(
+                s.get("visual_prompt")
+                or s.get("visual_cue")
+                or s.get("visual_description")
+                or f"Scene {idx}"
+            ).strip()
+            # Without a stated duration a scene lasts as long as its words take to say
+            # (about 2.5 a second), within what a short's scene can hold.
+            dur = float(s.get("duration_seconds") or 0) or min(
+                9.0, max(3.0, round(len(vo.split()) / 2.5, 1))
+            )
             st = str(s.get("shot_type", "MEDIUM"))
             tr = str(s.get("transition_in", "CUT"))
             claims = list(s.get("claim_ids", script.claim_ids_json))
