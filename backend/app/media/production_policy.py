@@ -227,28 +227,6 @@ GENERATIVE_TASKS: dict[str, tuple[str, ...]] = {
 }
 
 
-def serves_from_prompt(metadata: Any, purpose: str | None) -> bool:
-    """Whether the contract lets this model serve the purpose from words alone.
-
-    gen4_image_turbo is listed under text_to_image and requires reference images: the
-    cheapest still model in the catalogue, chosen by price, answered HTTP 400 to every
-    scene of a day. A model whose contract is not known is not excluded here — that is
-    research's job — but one the contract says needs an input the storyboard does not
-    have is never the studio's choice for that purpose.
-    """
-    wanted = GENERATIVE_TASKS.get(purpose or "")
-    meta = metadata if isinstance(metadata, dict) else {}
-    tasks = meta.get("tasks")
-    if not wanted or not isinstance(tasks, list):
-        return True
-    needs = meta.get("needs_references")
-    needs = needs if isinstance(needs, dict) else {}
-    served = [task for task in tasks if task in wanted]
-    if not served:
-        return True  # not a generative task at all; the task filter decides elsewhere
-    return any(not needs.get(task) for task in served)
-
-
 def rank_candidates(
     session: Session,
     integration_id: str,
@@ -289,8 +267,6 @@ def rank_candidates(
             kind == "MODEL"
             and production_resource(session, integration_id, kind, row.remote_id, purpose) is None
         ):
-            continue
-        if kind == "MODEL" and not serves_from_prompt(row.api_metadata, purpose):
             continue
         caps = row.capabilities if isinstance(row.capabilities, dict) else {}
         pricing = row.pricing if isinstance(row.pricing, dict) else {}

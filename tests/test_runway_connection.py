@@ -12,6 +12,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from app.integrations.discovery import production_resource
 from app.integrations.models import Integration, ProviderResource
 from app.integrations.vault import CredentialVault
 from app.media.factory import video_provider_for
@@ -296,7 +297,8 @@ def test_a_model_that_needs_reference_images_is_neither_chosen_nor_called(engine
     cheapest still model in the account, chosen by price, answered HTTP 400 to every scene
     of a day. The contract says so per model, so the choice skips it and the adapter refuses
     before spending a call."""
-    from app.media.production_policy import rank_candidates, serves_from_prompt
+    from app.integrations.discovery import usable_purposes
+    from app.media.production_policy import rank_candidates
     from app.providers.runway import RunwayImageAdapter
     from app.services import append_event, utc_now
 
@@ -355,16 +357,22 @@ def test_a_model_that_needs_reference_images_is_neither_chosen_nor_called(engine
         ranked = [
             c["remote_id"] for c in rank_candidates(session, integration_id, "MODEL", None, "image")
         ]
-    # The cheaper one is the editing model; it is not a candidate for a still from a prompt.
+    # The cheaper one is the editing model; it is not a candidate for a still from a prompt,
+    # and the API's own evidence says it serves no purpose the studio has.
     assert ranked == ["draws_from_words"]
-    assert serves_from_prompt({"tasks": ["text_to_image"]}, "image") is True  # contract unknown
-    assert serves_from_prompt({}, "image") is True
-    assert (
-        serves_from_prompt(
-            {"tasks": ["text_to_image"], "needs_references": {"text_to_image": True}}, "video"
+    with Session(engine) as session:
+        by_id = {
+            row.remote_id: row
+            for row in session.scalars(
+                select(ProviderResource).where(ProviderResource.integration_id == integration_id)
+            )
+        }
+        assert usable_purposes("runway", by_id["editing_only"]) == []
+        assert usable_purposes("runway", by_id["draws_from_words"]) == ["image"]
+        # The stored default becomes unusable, so nothing renders through it by accident.
+        assert (
+            production_resource(session, integration_id, "MODEL", "editing_only", "image") is None
         )
-        is True
-    )
 
     adapter = RunwayImageAdapter(
         api_key="k",

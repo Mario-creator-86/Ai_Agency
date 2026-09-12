@@ -167,10 +167,21 @@ def usable_purposes(kind: str, resource: ProviderResource) -> list[str]:
             tasks = caps.get("tasks")
         if not isinstance(tasks, list):
             return []
+        # A task the contract says needs reference images is an editing task: the model
+        # changes pictures it is given and cannot draw one from words. gen4_image_turbo is
+        # listed under text_to_image and requires them — it was the studio's image default,
+        # being the cheapest still model in the account, and Runway answered HTTP 400 to
+        # every scene of a day. The contract states this per model and task.
+        needs = meta.get("needs_references")
+        needs = needs if isinstance(needs, dict) else {}
+
+        def from_prompt(family: tuple[str, ...]) -> bool:
+            return any(t in family and not needs.get(t) for t in tasks)
+
         purposes = []
-        if any(t in VIDEO_TASKS for t in tasks) and caps.get("can_generate_video") is not False:
+        if from_prompt(VIDEO_TASKS) and caps.get("can_generate_video") is not False:
             purposes.append("video")
-        if any(t in IMAGE_TASKS for t in tasks) and caps.get("can_generate_image") is not False:
+        if from_prompt(IMAGE_TASKS) and caps.get("can_generate_image") is not False:
             purposes.append("image")
         return purposes
     return list(DISCOVERED_KINDS.get(kind, {}).get("purposes", ["voice", "image", "video"]))

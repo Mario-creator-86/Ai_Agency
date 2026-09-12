@@ -63,10 +63,12 @@ the studio's identity and returns pages that exist (Wikipedia's does, tested).
   `gen4_image_turbo` is listed under `text_to_image` and *requires* one to three reference
   images — it edits pictures it is given — and it was the studio's image default because it
   is the cheapest still model in the account. The contract parser now records
-  `needs_references` per model and task, `rank_candidates` never offers such a model for a
-  purpose the storyboard feeds with words alone (`serves_from_prompt`), and the adapter
-  refuses before spending a call (`code="reference_images_required"`). Nothing is
-  hardcoded: the fact comes from Runway's own published contract.
+  `needs_references` per model and task, and `usable_purposes` — the one place that says
+  what the API's own evidence lets a model do — no longer counts an editing task as the
+  ability to serve that purpose. So the model is not offered in Settings, is not a candidate
+  for automatic selection, and a stored default naming it is unusable rather than tried; the
+  adapter also refuses before spending a call (`code="reference_images_required"`). Nothing
+  is hardcoded: the fact comes from Runway's own published contract.
 - Tests: `tests/test_search_step.py` (13), three more in `tests/test_script_writing.py`,
   one in `tests/test_runway_connection.py`.
 
