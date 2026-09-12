@@ -1,5 +1,36 @@
 # Changelog
 
+## Time to fix it — 2026-09-12
+
+The run finished without crashing for the first time since the room opened, and the story was
+refused at the wall anyway: five drafts, everything passing except one check, and then the
+budget ran out. The Owner's answer was the right one — *it should have been given the time to
+clarify and correct the problem.*
+
+**The check was wrong.** `ending_answers_the_hook` compares the content words of the hook with
+those of the payoff onward. The hook: *"This telescope was supposed to work 14 months. It
+guarded Earth for over a decade instead."* The ending: *"It spent eleven years watching for
+things that burn in our sky — and ended as one of them."* That ending answers that hook
+exactly, and shares no word with it. Four refusals for writing it well. Whether an ending
+answers its opening is a question about meaning, and nothing that counts words can decide it:
+it is now an **advisory** check — still measured, still recorded, passed to the Director as a
+flag to look at, and no longer able to refuse a script by itself.
+
+**And the budget was counting the wrong thing.** It counted every rewrite of a topic, ever —
+including eleven rounds caused by the studio's own faults in earlier runs. That story began
+this run at exchange twelve of sixteen and hit the wall five drafts later while it was still
+getting better. A budget is for a conversation going in circles, not for one doing its work:
+it counts **rounds that changed nothing**, and a draft better than any before it reopens the
+room. Progress is measured the only way the studio can measure it alone — how many refusing
+checks are left.
+
+**The room is twenty exchanges**, the Owner's number, and the twentieth is a decision rather
+than another request. Which exchange she is in and how many went nowhere are now two separate
+numbers; they had been the same one by mistake.
+
+`uv run pytest -q` — **726 passed, 1 skipped**. `ruff`, `mypy`, `scripts/check_docs.py` clean.
+
+
 ## The write that could not wait — 2026-09-12
 
 Two watched runs died on the same statement: `UPDATE agent SET runtime_state`, "database is

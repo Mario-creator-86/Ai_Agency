@@ -54,6 +54,19 @@ MARKS = ("0", "3", "5", "10", "15", "20", "25", "end")
 #: verified claim behind it is a research problem: the film waits for evidence, not for prose.
 FATAL_CHECKS = ("every_scene_is_attributed",)
 
+#: Checks that are measured and reported but do not refuse a script on their own.
+#:
+#: `ending_answers_the_hook` compares the content words of the hook with those of the payoff
+#: onward — and a good ending answers its hook in different words. Found live: a hook of "it
+#: was supposed to work 14 months; it guarded Earth for over a decade" closed with "it spent
+#: eleven years watching for things that burn in our sky, and ended as one of them". That
+#: ending answers that hook exactly. It shares no word with it, so the check refused the script
+#: four times running and the story was spent on the wall. Whether an ending answers its
+#: opening is a question about meaning, and nothing that counts words can decide it. It stays
+#: measured, it reaches the Director as a flag to look at, and it no longer refuses by itself —
+#: the reader decides.
+ADVISORY_CHECKS = ("ending_answers_the_hook",)
+
 #: How many times the studio asks for a rewrite before the story is refused.
 #:
 #: It was two, on the reasoning that a third attempt on the same evidence produces a third
@@ -61,9 +74,14 @@ FATAL_CHECKS = ("every_scene_is_attributed",)
 #: here — the Owner settled it: "we have plenty of tokens; the day does not close after two
 #: attempts. We can have ten or twenty exchanges until we have a film. The day closes when the
 #: short is published." Rewriting text is the cheapest thing the studio does; a render is not.
-#: So the writer's room stays open, and the number is high enough to be a real conversation
-#: and finite enough that a story the evidence cannot support is eventually let go of.
-MAX_REVISIONS = 15
+#: So the writer's room stays open. The room is twenty exchanges (`MAX_SCRIPT_EXCHANGES`) and
+#: the twentieth is the decision, which is why this number is nineteen: on the reading after
+#: the last stalled round the Director must answer PASS or REJECT rather than ask again.
+MAX_REVISIONS = 19
+
+#: How many readings one story gets before the room closes — the Owner's number. The twentieth
+#: is the decision, not another request.
+MAX_EXCHANGES = 20
 
 
 class StoryReviewError(ValueError):
@@ -117,6 +135,35 @@ _INSTRUCTIONS = (
     '"at_15": 0, "at_20": 0, "at_25": 0, "at_end": 0, "collapse_at": "3-9", "why": "..."}, '
     '"notes": ["..."]}.\n'
 )
+
+
+def blocking_count(review: StoryReview) -> int:
+    """How many refusing checks a past reading found. Advisory flags do not count."""
+    notes = review.notes_json or {}
+    failures = list(notes.get("failed") or [])
+    flagged = set(notes.get("flagged") or [])
+    return len([name for name in failures if name not in flagged and name not in ADVISORY_CHECKS])
+
+
+def stalled_rounds(history: list[StoryReview]) -> int:
+    """Rewrites since the story last got better than it had ever been.
+
+    Progress is measured the only way the studio can measure it without asking anyone: the
+    number of checks that refuse. A draft that breaks fewer of them than any draft before it
+    is progress, and the room reopens. Rounds after that, with nothing improving, are what the
+    budget is counting — a conversation going in circles, not a conversation.
+    """
+    best: int | None = None
+    stalled = 0
+    for review in history:
+        count = blocking_count(review)
+        if best is None or count < best:
+            best = count
+            stalled = 0
+            continue
+        if review.verdict == "REVISE":
+            stalled += 1
+    return stalled
 
 
 def _script_facts(session: Session, script: ScriptDraft) -> dict[str, Any]:
@@ -181,28 +228,33 @@ def review_story(
         earlier = session.scalar(
             select(StoryReview).where(StoryReview.script_id == script_id).limit(1)
         )
-        # How many times this STORY has been sent back — not this row. Every rewrite is a
-        # new `ScriptDraft` with a new id, so counting per row meant the budget never ran out:
-        # a topic could collect draft after draft, each sent back for the first time. The
-        # budget belongs to the story, which is what the evidence supports or does not.
-        revisions = len(
-            list(
-                session.scalars(
-                    select(StoryReview)
-                    .join(ScriptDraft, ScriptDraft.id == StoryReview.script_id)
-                    .where(
-                        ScriptDraft.topic_id == script.topic_id,
-                        StoryReview.verdict == "REVISE",
-                    )
-                )
-                if script.topic_id
-                else session.scalars(
-                    select(StoryReview).where(
-                        StoryReview.script_id == script_id, StoryReview.verdict == "REVISE"
-                    )
-                )
+        # How many times this STORY has been sent back without getting anywhere.
+        #
+        # It counted rows first, and every rewrite writes a new row, so the budget never ran
+        # out. Then it counted every rewrite of the topic — and spent the budget on drafts
+        # that were getting better every time, including on rounds the studio's own faults
+        # had caused. A story was refused at the wall while it was still improving, which is
+        # the opposite of what a budget is for. The budget is for going nowhere: a draft that
+        # is better than anything seen so far reopens the room, and the count starts again.
+        history = list(
+            session.scalars(
+                select(StoryReview)
+                .join(ScriptDraft, ScriptDraft.id == StoryReview.script_id)
+                .where(ScriptDraft.topic_id == script.topic_id)
+                .order_by(StoryReview.created_at)
+            )
+            if script.topic_id
+            else session.scalars(
+                select(StoryReview)
+                .where(StoryReview.script_id == script_id)
+                .order_by(StoryReview.created_at)
             )
         )
+        revisions = stalled_rounds(history)
+        # Two different numbers, and they were the same one by mistake: which reading this is
+        # (what she is told, so she can see the conversation) and how many readings changed
+        # nothing (what the budget counts).
+        exchange = len(history) + 1
         reviewer = agent_for_role(session, REVIEWER_ROLE)
         reviewer_id = reviewer.id if reviewer else None
         # What she said the last time she read this story, so this reading continues the
@@ -217,16 +269,23 @@ def review_story(
             ).first()
         earlier_notes = list((previous.notes_json or {}).get("notes") or []) if previous else []
 
-    broken = failed(checks)
+    every_failure = failed(checks)
+    # What the arithmetic may refuse on, and what it may only point at.
+    broken = [name for name in every_failure if name not in ADVISORY_CHECKS]
+    # The wall: nothing has improved for the length of the budget, or the room is out of
+    # readings. Either way there will be no rewrite after this one, so this reading has to be
+    # a decision rather than another request.
+    at_the_wall = revisions >= MAX_REVISIONS or exchange >= MAX_EXCHANGES
+    flagged = [name for name in every_failure if name in ADVISORY_CHECKS]
     notes = revision_notes(checks)
     verdict = "PASS" if not broken else "REVISE"
     if any(name in FATAL_CHECKS for name in broken):
         verdict = "REJECT"
-    elif broken and revisions >= MAX_REVISIONS:
+    elif broken and at_the_wall:
         verdict = "REJECT"
         notes.append(
-            f"Scenariul a fost trimis înapoi de {revisions} ori; povestea nu se susține pe "
-            "dovezile existente."
+            f"Ultimele {revisions} rescrieri nu au îmbunătățit nimic măsurabil; povestea nu se "
+            "susține pe dovezile existente."
         )
 
     scores: dict[str, Any] = {}
@@ -241,8 +300,10 @@ def review_story(
                 facts,
                 correlation,
                 broken,
-                exchange=revisions + 1,
-                last_exchange=MAX_REVISIONS + 1,
+                flagged=flagged,
+                exchange=exchange,
+                last_exchange=MAX_EXCHANGES,
+                must_decide=at_the_wall,
                 earlier_notes=earlier_notes,
             )
         except StoryReviewError as exc:
@@ -266,10 +327,10 @@ def review_story(
                 # it as one rather than ending the day having quietly made nothing. Her
                 # authority is untouched: what is refused here is still refused — it is only
                 # named.
-                if verdict == "REVISE" and revisions >= MAX_REVISIONS:
+                if verdict == "REVISE" and at_the_wall:
                     verdict = "REJECT"
                     notes.append(
-                        f"La ultimul schimb ({revisions + 1}) Directorul a cerut din nou "
+                        f"La ultimul schimb ({exchange}) Directorul a cerut din nou "
                         "modificări, deci povestea nu se publică: un REVISE fără o rescriere "
                         "care să urmeze este un refuz."
                     )
@@ -284,7 +345,7 @@ def review_story(
             (revisions + 1) if earlier is not None else 1,
             {
                 "verdict": verdict,
-                "failed": broken[:6],
+                "failed": every_failure[:6],
                 "estimated_seconds": facts["estimated_seconds"],
             },
             correlation,
@@ -297,7 +358,11 @@ def review_story(
                 checks_json=checks,
                 retention_json=retention,
                 scores_json=scores,
-                notes_json={"notes": notes[:12], "failed": broken},
+                notes_json={
+                    "notes": notes[:12],
+                    "failed": every_failure,
+                    "flagged": flagged,
+                },
                 estimated_seconds=float(facts["estimated_seconds"]),
                 reviewer_agent_id=reviewer_id,
                 run_id=run_id,
@@ -345,8 +410,10 @@ def _ask_director(
     correlation: str,
     broken: list[str],
     *,
+    flagged: list[str] | None = None,
     exchange: int = 1,
     last_exchange: int = 1,
+    must_decide: bool = False,
     earlier_notes: list[str] | None = None,
 ) -> tuple[StoryVerdict | None, str | None]:
     """The Director's own reading of the script. Her answer is an opinion, recorded as one.
@@ -370,7 +437,7 @@ def _ask_director(
             "trade it for a new one of the same size. The question is whether the film is good "
             "enough to publish, not whether it is perfect.\n"
         )
-    if exchange >= last_exchange:
+    if must_decide:
         prompt += (
             "This is the LAST exchange. Answer PASS or REJECT, not REVISE: if you would "
             "publish it, say PASS; if the story cannot carry a short, say REJECT. A REVISE "
@@ -382,6 +449,14 @@ def _ask_director(
             "The studio's own checks already found: "
             + "; ".join(broken[:6])
             + ". Say what to change, and do not return PASS.\n"
+        )
+    if flagged:
+        prompt += (
+            "The studio's checks also flagged, without refusing: "
+            + "; ".join(flagged[:4])
+            + ". These count words as a proxy for a question only a reader can answer — an "
+            "ending may answer its hook perfectly in entirely different words. Judge it "
+            "yourself and say so; the flag is not a verdict.\n"
         )
     prompt += wrap_in_inert_boundary(payload, "script-under-review")
     result = run_agent_task(

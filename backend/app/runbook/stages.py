@@ -74,6 +74,7 @@ from app.factual.services import (
     select_topic,
 )
 from app.factual.story_review import (
+    MAX_EXCHANGES,
     StoryReviewError,
     latest_review,
     review_story,
@@ -121,11 +122,9 @@ SKIPPED = "SKIPPED"
 #: How many items one stage will process in a single run. A day's run should finish; a backlog of
 #: two hundred sources is not a reason to hold the whole day open, and what is left is picked up
 #: by tomorrow's run.
-#: How many drafts of one story a single run will work through. The Owner's instruction:
-#: "we can have ten or twenty exchanges until we have a film. The day closes when the short is
-#: published." The story review has its own budget (`MAX_REVISIONS`) and refuses first when a
-#: story cannot be supported; this is the wall that keeps one topic from owning the whole day.
-MAX_SCRIPT_EXCHANGES = 16
+#: How many drafts of one story a single run will work through — the same number the review
+#: counts to, so the room and the reading agree about when the conversation is over.
+MAX_SCRIPT_EXCHANGES = MAX_EXCHANGES
 
 BATCH = 5
 #: Claims verified in one day. Verification is one short call per claim; extraction from

@@ -1190,7 +1190,7 @@ def test_the_revision_budget_counts_the_story_not_the_row(engine, studio):
     third = a_script(engine, topic_id, scenes=long_scenes, status="VERIFIED_PASS")
     verdict = review_story(engine, None, third, str(uuid4()), target_seconds=20)
     assert verdict["verdict"] == "REJECT"
-    assert any("trimis înapoi" in note for note in verdict["notes"])
+    assert any("nu au îmbunătățit nimic" in note for note in verdict["notes"])
 
 
 def test_the_director_approves_what_she_passed(engine, studio):
@@ -1512,8 +1512,9 @@ def test_at_the_last_exchange_she_must_decide(engine, studio):
     from app.factual.story_review import MAX_REVISIONS, review_story
 
     topic_id = a_topic(engine)
-    # Spend the budget: MAX_REVISIONS rewrites already sent back.
-    for _ in range(MAX_REVISIONS):
+    # Spend the budget: enough rewrites sent back with nothing improving between them. The
+    # first reading sets the mark; the ones after it are the rounds that went nowhere.
+    for _ in range(MAX_REVISIONS + 1):
         a_sent_back_review(engine, a_script(engine, topic_id, status="VERIFIED_PASS"))
 
     asked: list[str] = []
@@ -1555,3 +1556,81 @@ def test_a_draft_nobody_read_still_owes_work(engine, studio):
         assert script_work(session, [topic_id]) == [(topic_id, [])]
         live, stalled = topics_in_production(session)
     assert live == [topic_id] and stalled == []
+
+
+def test_an_ending_that_answers_its_hook_in_other_words_is_not_refused():
+    """Found live on 2026-09-12, four refusals running. The hook: "it was supposed to work 14
+    months; it guarded Earth for over a decade." The ending: "it spent eleven years watching
+    for things that burn in our sky — and ended as one of them." That ending answers that hook
+    exactly, and shares no word with it. Counting words cannot decide a question about
+    meaning, so the check reports and the reader decides."""
+    from app.factual.editorial import failed
+    from app.factual.story_review import ADVISORY_CHECKS
+
+    scenes = [
+        {
+            "purpose": "HOOK",
+            "narration": (
+                "This telescope was supposed to work 14 months. It guarded Earth for over "
+                "a decade instead."
+            ),
+            "claim_ids": ["c1"],
+        },
+        {
+            "purpose": "SETUP",
+            "narration": "NASA gave it a second life: hunt the asteroids that come near us.",
+            "claim_ids": ["c1"],
+        },
+        {
+            "purpose": "PAYOFF",
+            "narration": "It gave us our best look at the rocks that could hit us.",
+            "claim_ids": ["c2"],
+        },
+        {
+            "purpose": "ENDING",
+            "narration": (
+                "It spent eleven years watching for things that burn in our sky — and ended "
+                "as one of them."
+            ),
+            "claim_ids": ["c2"],
+        },
+    ]
+    story = {
+        "hook": scenes[0]["narration"],
+        "core_message": "The telescope that hunted asteroids burned up in the end.",
+        "ending": scenes[3]["narration"],
+        "cta": "Which telescope should watch the sky for us next?",
+        "cta_kind": "COMMENT",
+    }
+    checks = story_checks(
+        title="The telescope that died twice", scenes=scenes, story=story, target_seconds=20
+    )
+    # The check still measures, and still says it found nothing shared — that is honest.
+    assert not checks["ending_answers_the_hook"]["passed"]
+    # But it is not one of the checks that refuse on their own.
+    assert "ending_answers_the_hook" in ADVISORY_CHECKS
+    assert [name for name in failed(checks) if name not in ADVISORY_CHECKS] == []
+
+
+def test_a_story_that_keeps_improving_keeps_the_room(engine, studio):
+    """The Owner's rule: it must be given the time to clarify and correct.
+
+    The budget counted every rewrite of a topic, including rounds the studio's own faults had
+    caused, so a story that was getting better every draft hit the wall anyway. It counts
+    rounds that went nowhere: a draft better than any before it reopens the room.
+    """
+    from app.factual.story_review import stalled_rounds
+
+    class Review:
+        def __init__(self, failed, verdict="REVISE"):
+            self.notes_json = {"failed": failed, "flagged": []}
+            self.verdict = verdict
+
+    improving = [Review(["a", "b", "c"]), Review(["a", "b"]), Review(["a"])]
+    assert stalled_rounds(improving) == 0  # every draft better than the last
+
+    going_nowhere = improving + [Review(["a"]), Review(["a"]), Review(["a"])]
+    assert stalled_rounds(going_nowhere) == 3  # three rounds with nothing to show
+
+    # And one real improvement after a stall reopens it.
+    assert stalled_rounds(going_nowhere + [Review([])]) == 0
