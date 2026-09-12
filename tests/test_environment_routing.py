@@ -434,7 +434,7 @@ def test_16_the_review_promotes_what_delivers_and_demotes_what_does_not(engine, 
 def test_17_a_price_that_moves_keeps_the_old_one_and_a_big_move_reaches_the_owner(engine):
     """A price is never overwritten in silence. What it was is kept with the date and how
     the new one was established, and a move past the Owner's threshold is a letter."""
-    from app.integrations.lifecycle import price_changes
+    from app.integrations.lifecycle import price_changes, stamp_price
     from app.media.production_policy import record_measured_price
 
     connection = _connection(engine)
@@ -467,6 +467,25 @@ def test_17_a_price_that_moves_keeps_the_old_one_and_a_big_move_reaches_the_owne
     assert len(letters) == 1
     assert letters[0].body_json.get("owner_attention") is True
     assert "0.4300" in letters[0].body_text and "0.0250" in letters[0].body_text
+
+    # And what the account was charged is not demoted by a page. This happened on the live
+    # studio: a steward read "0.08 USD a second" for the model four renders had measured at
+    # 0.43, and the reading replaced the measurement — a test would then have passed a
+    # ceiling of 0.12 and been billed 3.6 times that.
+    with Session(engine) as session, session.begin():
+        row = session.scalar(select(ProviderResource).where(ProviderResource.remote_id == "m"))
+        disputed = stamp_price(
+            row,
+            {"per_second_usd": 0.08, "unit": "per second of video"},
+            verification="DOCUMENTED",
+            source="https://docs.example.test/pricing",
+        )
+    assert any(move.get("documented_only") for move in disputed)
+    with Session(engine) as session:
+        row = session.scalar(select(ProviderResource).where(ProviderResource.remote_id == "m"))
+        assert row.pricing["per_second_usd"] == 0.43, "the billed price is what the studio pays"
+        assert row.pricing["documented_per_second_usd"] == 0.08, "the page is kept beside it"
+        assert row.price_verification == "BILLED"
 
 
 def test_18_a_vendors_quote_can_mark_a_stored_price_stale_and_a_new_model_waits_outside(engine):

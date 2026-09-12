@@ -122,6 +122,14 @@ Trei feluri de preț, distincte: **DOCUMENTED** (o pagină citită), **ESTIMATED
 dry-run), **BILLED** (ce s-a facturat). Contabilitatea crede ultimul; istoricul contabil nu se
 rescrie niciodată.
 
+**Ce a facturat contul are prioritate peste ce scrie pe o pagină.** Pe studioul live,
+stewardul a citit „0,08 USD pe secundă" pentru modelul pe care patru randări îl măsuraseră la
+**0,43** — și citirea a înlocuit măsurătoarea. Cu 0,08 stocat, un test ar fi trecut plafonul
+de 0,12 USD/s și ar fi fost facturat de 3,6 ori mai mult. De acum un preț documentat nu mai
+suprascrie unul facturat: cifra facturată rămâne prețul cu care studioul își face bugetul,
+cifra din documentație e păstrată lângă ea (`documented_per_second_usd`), iar dezacordul ajunge
+în scrisoare.
+
 Orice scriere de preț trece prin `stamp_price`, care păstrează `previous_pricing_json`,
 incrementează `pricing_version` și notează `price_verified_at` și `price_verification`. O
 mișcare peste `STUDIO_PRICE_CHANGE_ALERT_PERCENT` (implicit 10%) devine o **scrisoare de la
@@ -193,8 +201,28 @@ afară).
 
 `scripts/check_secrets.py` nu a putut rula: `detect_secrets` nu e instalat în acest mediu.
 
+## CE A RĂSPUNS CATALOGUL REAL
+
+Rulat pe o **copie** a bazei live (niciodată pe `data/studio.db`), cu 61 de modele video
+disponibile în cont și migrarea 0031 aplicată curat (70 de modele existente rămân în
+PRODUCTION, verificare de chei străine curată, studioul pornește în TEST):
+
+| Mediu / nivel | Model ales | Preț pentru 6,4 s | Motivul |
+| --- | --- | --- | --- |
+| TEST / STANDARD | `seedance2_mini` | 0,128 USD | cel mai ieftin compatibil; clasarea nu e consultată |
+| PRODUCȚIE / STANDARD | `seedance2` | 0,32 USD | atinge 0,80 cerut; `seedance2_5` ar fi +0,10 calitate pentru **1,6x** costul, ce scena nu cere |
+| PRODUCȚIE / HERO | `seedance2_5` | 0,512 USD | nimic nu atinge 0,93, cel mai bun disponibil e la 0,90 — și o spune |
+
+Asta este exact răspunsul la întrebarea Owner-ului: pe o scenă obișnuită studioul **nu** mai
+cumpără modelul scump, iar când o face, scrie de ce și cu ce multiplu.
+
 ## LIMITE CARE RĂMÂN
 
+0. **Prețurile din catalog sunt cele din documentația vendorului, nu măsurate.** Toate cele
+   14 prețuri de pe conexiunea live au sursa `docs.dev.runwayml.com`, scrise azi la 12:47.
+   Măsurătoarea de 0,43 USD/s de pe contul Owner-ului nu mai e în catalog. Regula nouă
+   împiedică suprascrierea de acum înainte, dar **cifrele stocate azi sunt cele documentate**;
+   prima randare de producție le va corecta cu ce facturează vendorul.
 1. **Calitatea nu e încă judecată per model.** `accepted` înseamnă acum „cadrul a ajuns și a
    intrat în film" — deci măsoară fiabilitatea, nu frumusețea. Verdictul editorial al
    Directoarei (care se uită la cadre) nu se întoarce încă pe modelul care le-a filmat. Până

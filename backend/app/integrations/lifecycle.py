@@ -140,18 +140,51 @@ def stamp_price(
 
     The row keeps what the price was before, so nothing is lost by being corrected, and the
     caller decides whether the size of the move is worth the Owner's attention.
+
+    **What the account was charged outranks what a page says.** A steward read
+    "0.08 USD a second" on the vendor's documentation for the model four renders had
+    measured at 0.43, and the reading replaced the measurement — which would have let a test
+    through a ceiling of 0.12 and been billed 3.6 times that. So a documented price never
+    overwrites a billed one: the billed figure stays the price the studio budgets with, the
+    documented figure is kept beside it as `documented_<unit>`, and the disagreement is
+    returned to the caller to put in a letter.
     """
     before = dict(row.pricing) if isinstance(row.pricing, dict) else {}
-    moves = price_changes(before, pricing)
-    row.pricing = dict(pricing or {})
+    wanted = dict(pricing or {})
+    kind = verification if verification in VERIFICATION else "DOCUMENTED"
+    billed = str(row.price_verification or "") == "BILLED"
+    disputed: list[dict] = []
+    if billed and kind == "DOCUMENTED":
+        for key in PRICE_KEYS:
+            charged, documented = before.get(key), wanted.get(key)
+            if not isinstance(charged, int | float) or not isinstance(documented, int | float):
+                continue
+            wanted[key] = charged
+            wanted[f"documented_{key}"] = documented
+            if abs(float(documented) - float(charged)) > 1e-9:
+                disputed.append(
+                    {
+                        "key": key,
+                        "was": float(charged),
+                        "now": float(documented),
+                        "percent": round(
+                            (float(documented) - float(charged)) / float(charged) * 100.0, 2
+                        ),
+                        "documented_only": True,
+                    }
+                )
+    moves = price_changes(before, wanted)
+    row.pricing = wanted
     if moves:
         row.previous_pricing_json = before
     row.pricing_version = int(row.pricing_version or 1) + 1
     row.price_verified_at = utc_now()
-    row.price_verification = verification if verification in VERIFICATION else "DOCUMENTED"
+    # A page cannot demote a measurement: the provenance stays BILLED until the account is
+    # charged something else, or the vendor quotes something else.
+    row.price_verification = "BILLED" if billed and kind == "DOCUMENTED" else kind
     row.metadata_source = source[:2000]
     row.metadata_updated_at = utc_now()
-    return moves
+    return moves + disputed
 
 
 def price_is_stale(
