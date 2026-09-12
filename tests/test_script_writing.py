@@ -270,3 +270,44 @@ def test_an_answer_that_is_not_a_script_stores_nothing(
         run(engine, topic_with_claims["topic_id"], answer, monkeypatch)
 
     assert drafts(engine) == []
+
+
+def test_a_draft_with_uncited_scenes_is_rewritten_once_with_those_scenes_named(
+    engine, topic_with_claims, monkeypatch
+):
+    """The fourth clean day: five scenes on dark matter cited their claims, five on the LHC
+    upgrade cited nothing, and the whole script was refused. The writer is asked once more,
+    told which scenes had no fact behind them; the second draft is the one stored."""
+    from app.factual import agent_pipeline
+
+    first = topic_with_claims["claim_ids"][0]
+    support(engine, first, "launched in 1990")
+    prompts: list[str] = []
+    answers = [
+        script_answer(
+            [
+                {"narration": "Hubble reached orbit in 1990.", "claim_ids": [first]},
+                {"narration": "The next telescope will change everything.", "claim_ids": []},
+            ]
+        ),
+        script_answer([{"narration": "Hubble reached orbit in 1990.", "claim_ids": [first]}]),
+    ]
+
+    def fake_run(_engine, _registry, agent_id, task_type, prompt, version, *args, **kwargs):
+        prompts.append(f"{version}::{prompt}")
+        return {
+            "id": str(uuid4()),
+            "status": "SUCCEEDED",
+            "output_text": answers[len(prompts) - 1],
+            "error_detail": None,
+        }
+
+    monkeypatch.setattr(agent_pipeline, "run_agent_task", fake_run)
+    monkeypatch.setattr(agent_pipeline, "_announce", lambda *a, **k: None)
+    result = agent_write_script(engine, object(), topic_with_claims["topic_id"], str(uuid4()))
+    script = result["script"]
+
+    assert len(prompts) == 2 and prompts[1].startswith("v1+retry::")
+    assert "YOUR FIRST DRAFT WAS REFUSED" in prompts[1]
+    assert "The next telescope will change everything." in prompts[1]
+    assert len(script["scenes_json"]) == 1 and script["claim_ids_json"] == [first]

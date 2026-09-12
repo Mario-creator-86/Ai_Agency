@@ -570,6 +570,46 @@ def agent_write_script(
         detail = result.get("error_detail") or "fără text vizibil"
         raise ScriptRejected(f"Scenaristul nu a produs un rezultat ({result['status']}: {detail})")
 
+    uncited = _uncited_scenes(result["output_text"])
+    if uncited:
+        # The writer told the topic's ending from his own knowledge — the LHC upgrade, in a
+        # film whose verified claims were all about dark matter — and half the scenes cited
+        # nothing. Once, with those scenes named, he is asked to write the film the claims
+        # allow; the first draft stays on record as the run it was.
+        prompt += (
+            "\nYOUR FIRST DRAFT WAS REFUSED. These scenes cite no verified claim: "
+            + "; ".join(f"«{line}»" for line in uncited[:6])
+            + ". Every scene must cite at least one identifier from the list above. A scene "
+            "the list cannot support is not written — cut it or rewrite it around a listed "
+            "claim, and let the title promise only what the claims deliver. Rewrite the whole "
+            "script accordingly.\n"
+        )
+        result = run_agent_task(
+            engine,
+            registry,
+            writer_id,
+            "write_script",
+            prompt,
+            "v1+retry",
+            correlation_id,
+            summary=f"Rescriu «{topic_title}»: {len(uncited)} scene nu citau nicio afirmație.",
+            max_tokens=7200,
+            temperature=0.3,
+            emit_message=False,
+        )
+        if result["status"] != "SUCCEEDED" or not (result.get("output_text") or "").strip():
+            detail = result.get("error_detail") or "fără text vizibil"
+            raise ScriptRejected(
+                f"Scenaristul nu a produs un rezultat la a doua încercare ({result['status']}: "
+                f"{detail})"
+            )
+        still = _uncited_scenes(result["output_text"])
+        if still:
+            raise ScriptRejected(
+                f"Scenariul a fost respins: {len(still)} scene nu citează nicio afirmație "
+                f"verificată nici după rescriere («{still[0]}»…). Nimic nu a fost salvat."
+            )
+
     draft = _parse_script(result["output_text"])
 
     cited: list[str] = []
@@ -615,6 +655,37 @@ def agent_write_script(
         correlation_id,
     )
     return {"agent_id": writer_id, "run_id": result["id"], "script": stored}
+
+
+def _script_object(raw: str) -> Any:
+    """The JSON object in the writer's answer, fences and prose around it tolerated."""
+    text = raw.strip()
+    fenced = re.search(r"```(?:json)?\s*(.+?)\s*```", text, re.DOTALL)
+    if fenced:
+        text = fenced.group(1)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        start, end = text.find("{"), text.rfind("}")
+        if start == -1 or end <= start:
+            return None
+        try:
+            return json.loads(text[start : end + 1])
+        except json.JSONDecodeError:
+            return None
+
+
+def _uncited_scenes(raw: str) -> list[str]:
+    """The narrations of the scenes that cite no claim — what the writer is told to fix."""
+    data = _script_object(raw)
+    scenes = data.get("scenes") if isinstance(data, dict) else None
+    if not isinstance(scenes, list):
+        return []
+    return [
+        " ".join(str(scene.get("narration", "")).split())[:80]
+        for scene in scenes
+        if isinstance(scene, dict) and not scene.get("claim_ids")
+    ]
 
 
 def _parse_script(raw: str) -> _Script:

@@ -36,7 +36,13 @@ the studio's identity and returns pages that exist (Wikipedia's does, tested).
   (a doubled decimal is repaired), and `_research_and_verification` counts a source whose
   answer cannot be read ("N surse fără afirmații citibile") and reads the next one.
 - The same page named with and without a trailing slash is read once.
-- Tests: `tests/test_search_step.py` (10).
+- **The fourth clean day produced a script — and refused it**: five scenes on dark matter
+  cited their verified claims, five on the LHC upgrade cited nothing (no LHC claim had been
+  verified: five claims a day out of thirty extracted). Now the day verifies up to
+  `VERIFY_BATCH = 24` claims, CRITICAL first, and a draft with uncited scenes is sent back
+  to the writer once with those scenes named ("write the film the claims allow"); the second
+  draft is the one stored, and only a second failure rejects the script.
+- Tests: `tests/test_search_step.py` (10), one more in `tests/test_script_writing.py`.
 
 ## A review that fed itself, and a studio that can start over — 2026-09-12
 

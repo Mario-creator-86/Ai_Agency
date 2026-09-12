@@ -108,6 +108,9 @@ SKIPPED = "SKIPPED"
 #: two hundred sources is not a reason to hold the whole day open, and what is left is picked up
 #: by tomorrow's run.
 BATCH = 5
+#: Claims verified in one day. Verification is one short call per claim; extraction from
+#: three pages produces thirty, and a film needs the ones about its own subject checked.
+VERIFY_BATCH = 24
 
 
 def _outcome(status: str, reason: str, **artefacts: Any) -> dict[str, Any]:
@@ -323,13 +326,18 @@ def _research_and_verification(
             unreadable += 1
 
     with Session(engine) as session:
+        # Three pages yield thirty claims; five verified a day left the writer a film whose
+        # ending had no fact behind it. The Fact Checker reads a claim in seconds, so the
+        # day verifies up to VERIFY_BATCH, the ones the film depends on first.
+        rank = {"CRITICAL": 0, "SUPPORTING": 1, "FLAVOR": 2}
+        pending = session.scalars(
+            select(FactualClaim)
+            .where(FactualClaim.status == "UNVERIFIED", FactualClaim.source_id.is_not(None))
+            .order_by(FactualClaim.created_at.asc())
+        ).all()
         unverified = [
             claim.id
-            for claim in session.scalars(
-                select(FactualClaim)
-                .where(FactualClaim.status == "UNVERIFIED", FactualClaim.source_id.is_not(None))
-                .limit(BATCH)
-            )
+            for claim in sorted(pending, key=lambda c: rank.get(c.importance, 1))[:VERIFY_BATCH]
         ]
 
     verified, refused = 0, 0
