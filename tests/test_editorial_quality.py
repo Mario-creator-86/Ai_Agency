@@ -1463,3 +1463,79 @@ def test_the_writers_room_stays_open_until_the_story_passes(engine, studio):
         assert session.scalars(
             select(Storyboard).where(Storyboard.script_draft_id == approved[0].id)
         ).first()
+
+
+def test_the_director_sees_the_conversation_she_is_in(engine, studio):
+    """Found live on 2026-09-12: nine drafts of one story, every computed check passing from
+    the second on, and nine REVISEs — because she was asked "what is wrong with this" nine
+    times in a vacuum, and there is always something. A reviewer who cannot see the
+    conversation cannot finish it."""
+    from app.factual.story_review import review_story
+
+    topic_id = a_topic(engine)
+    first = a_script(engine, topic_id, status="VERIFIED_PASS")
+    seen: list[str] = []
+
+    def answer(prompt):
+        seen.append(prompt)
+        return json.dumps(
+            {
+                "verdict": "REVISE",
+                "hook_strength": 7,
+                "clarity": 7,
+                "payoff": 6,
+                "cta_fit": 5,
+                "retention": {"at_3": 70, "at_end": 40},
+                "notes": ["Strânge scena 5.", "CTA-ul e generic."],
+            }
+        )
+
+    registry, _ = registry_with(studio, answer)
+    review_story(engine, registry, first, str(uuid4()), target_seconds=20)
+    assert "This is exchange 1 of at most" in seen[0]
+    assert "What you asked for last time" not in seen[0]
+
+    # Second reading of the same story: she is told which exchange this is and what she
+    # already asked for, so a note the writer has acted on is settled instead of reopened.
+    second = a_script(engine, topic_id, status="VERIFIED_PASS")
+    review_story(engine, registry, second, str(uuid4()), target_seconds=20)
+    assert "This is exchange 2 of at most" in seen[1]
+    assert "What you asked for last time" in seen[1]
+    assert "Strânge scena 5." in seen[1]
+    assert "good enough to publish, not whether it is perfect" in seen[1]
+
+
+def test_at_the_last_exchange_she_must_decide(engine, studio):
+    """A REVISE at the wall is a refusal without the word: there will be no rewrite to answer
+    it, and the day would end having quietly made nothing. Her authority is untouched — what
+    she refuses stays refused. It is only named."""
+    from app.factual.story_review import MAX_REVISIONS, review_story
+
+    topic_id = a_topic(engine)
+    # Spend the budget: MAX_REVISIONS rewrites already sent back.
+    for _ in range(MAX_REVISIONS):
+        a_sent_back_review(engine, a_script(engine, topic_id, status="VERIFIED_PASS"))
+
+    asked: list[str] = []
+
+    def answer(prompt):
+        asked.append(prompt)
+        return json.dumps(
+            {
+                "verdict": "REVISE",
+                "hook_strength": 7,
+                "clarity": 7,
+                "payoff": 7,
+                "cta_fit": 6,
+                "retention": {"at_3": 70, "at_end": 45},
+                "notes": ["Încă o tăietură în scena 3."],
+            }
+        )
+
+    registry, _ = registry_with(studio, answer)
+    last = a_script(engine, topic_id, status="VERIFIED_PASS")
+    verdict = review_story(engine, registry, last, str(uuid4()), target_seconds=20)
+
+    assert "This is the LAST exchange" in asked[-1]
+    assert verdict["verdict"] == "REJECT"
+    assert any("un refuz" in note for note in verdict["notes"])

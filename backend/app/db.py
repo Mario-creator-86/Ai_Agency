@@ -28,11 +28,23 @@ def create_db_engine(database_url: str) -> Engine:
         cursor = connection.cursor()  # type: ignore[attr-defined]
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA busy_timeout=10000")
+        # Long enough for a writer to finish while another waits. It was ten seconds, and a
+        # four-minute script stage died on "database is locked" while updating one agent's
+        # runtime state: the stage writes dozens of small transactions as it works, the outbox
+        # dispatcher writes once a second beside it, and a WAL checkpoint takes the write lock
+        # for as long as it needs. Thirty seconds costs nothing when nothing is contended.
+        cursor.execute("PRAGMA busy_timeout=30000")
         cursor.close()
 
     @event.listens_for(engine, "begin")
     def explicit_begin(connection: object) -> None:
+        # Deferred, deliberately. BEGIN IMMEDIATE would take the write lock up front and make
+        # a waiting writer wait instead of failing — but the studio opens a writing session
+        # inside an open reading session in a dozen places, and under IMMEDIATE the inner
+        # write waits on the outer read's own lock until `busy_timeout` expires and then
+        # fails. Measured: 32.8 seconds, then the same "database is locked" it was meant to
+        # cure. Deferred keeps those nested sessions working; contention is handled by the
+        # timeout below.
         connection.exec_driver_sql("BEGIN")  # type: ignore[attr-defined]
 
     return engine

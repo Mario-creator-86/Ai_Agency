@@ -205,6 +205,17 @@ def review_story(
         )
         reviewer = agent_for_role(session, REVIEWER_ROLE)
         reviewer_id = reviewer.id if reviewer else None
+        # What she said the last time she read this story, so this reading continues the
+        # conversation instead of starting a new one.
+        previous = None
+        if script.topic_id:
+            previous = session.scalars(
+                select(StoryReview)
+                .join(ScriptDraft, ScriptDraft.id == StoryReview.script_id)
+                .where(ScriptDraft.topic_id == script.topic_id)
+                .order_by(StoryReview.created_at.desc())
+            ).first()
+        earlier_notes = list((previous.notes_json or {}).get("notes") or []) if previous else []
 
     broken = failed(checks)
     notes = revision_notes(checks)
@@ -224,7 +235,15 @@ def review_story(
     if reviewer_id is not None and registry is not None:
         try:
             opinion, run_id = _ask_director(
-                engine, registry, reviewer_id, facts, correlation, broken
+                engine,
+                registry,
+                reviewer_id,
+                facts,
+                correlation,
+                broken,
+                exchange=revisions + 1,
+                last_exchange=MAX_REVISIONS + 1,
+                earlier_notes=earlier_notes,
             )
         except StoryReviewError as exc:
             logger.info("story_review_without_model", extra={"reason": str(exc)[:160]})
@@ -242,6 +261,18 @@ def review_story(
             # through one they did. Taste can be stricter than a rule, never looser.
             if opinion.verdict != "PASS" and verdict == "PASS":
                 verdict = opinion.verdict
+                # At the last exchange her answer has to be a decision. Asking for another
+                # rewrite when there will be no rewrite is a refusal, and the studio records
+                # it as one rather than ending the day having quietly made nothing. Her
+                # authority is untouched: what is refused here is still refused — it is only
+                # named.
+                if verdict == "REVISE" and revisions >= MAX_REVISIONS:
+                    verdict = "REJECT"
+                    notes.append(
+                        f"La ultimul schimb ({revisions + 1}) Directorul a cerut din nou "
+                        "modificări, deci povestea nu se publică: un REVISE fără o rescriere "
+                        "care să urmeze este un refuz."
+                    )
 
     review_id = str(uuid4())
     with Session(engine) as session, session.begin():
@@ -313,10 +344,39 @@ def _ask_director(
     facts: dict[str, Any],
     correlation: str,
     broken: list[str],
+    *,
+    exchange: int = 1,
+    last_exchange: int = 1,
+    earlier_notes: list[str] | None = None,
 ) -> tuple[StoryVerdict | None, str | None]:
-    """The Director's own reading of the script. Her answer is an opinion, recorded as one."""
+    """The Director's own reading of the script. Her answer is an opinion, recorded as one.
+
+    She used to be asked in a vacuum: here is a script, what is wrong with it. Asked that
+    nine times about nine drafts of one story, she answered nine times — every draft passed
+    every computed check from the second one on, and she still found something, because there
+    is always something. A reviewer who cannot see the conversation cannot finish it. So she is
+    told which exchange this is, what she asked for last time, and that the last exchange is a
+    decision: a REVISE there is a refusal that will not say its name.
+    """
     payload = json.dumps(facts, ensure_ascii=False, default=str)[:14000]
     prompt = _INSTRUCTIONS
+    prompt += f"\nThis is exchange {exchange} of at most {last_exchange} on this story.\n"
+    if earlier_notes:
+        prompt += (
+            "What you asked for last time:\n"
+            + "\n".join(f"- {note}" for note in earlier_notes[:8])
+            + "\nFor each one, say whether this draft addressed it. A note you have already "
+            "given and the writer has acted on is settled — do not raise it again, and do not "
+            "trade it for a new one of the same size. The question is whether the film is good "
+            "enough to publish, not whether it is perfect.\n"
+        )
+    if exchange >= last_exchange:
+        prompt += (
+            "This is the LAST exchange. Answer PASS or REJECT, not REVISE: if you would "
+            "publish it, say PASS; if the story cannot carry a short, say REJECT. A REVISE "
+            "here is a refusal without the word, and the studio would end the day with "
+            "nothing made.\n"
+        )
     if broken:
         prompt += (
             "The studio's own checks already found: "

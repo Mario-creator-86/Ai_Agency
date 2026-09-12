@@ -1,5 +1,38 @@
 # Changelog
 
+## A reviewer who cannot see the conversation cannot finish it — 2026-09-12
+
+The open writers' room ran for the first time: ten exchanges on one story inside a single run,
+and the story tightened as it went — 42.9s, 39.1, 31.4, 29.5, 25.3, 37.6, 36.8, 38.3, 31.0.
+From the second exchange on, every computed check passed. The Director said REVISE nine times
+anyway, and then the run died on `database is locked` and the studio went into safe mode.
+
+**She was asked in a vacuum.** Each reading got the script and nothing else: no sense of which
+exchange this was, no memory of what she had asked for, no moment where she had to decide. Ask
+a good critic "what is wrong with this" nine times and you get nine answers, because there is
+always something. She now sees the exchange number and the budget, the notes she gave last
+time — with the instruction that a note the writer has acted on is settled, and that the
+question is whether the film is good enough to publish, not whether it is perfect — and at the
+last exchange she is told to answer PASS or REJECT. If she asks for another rewrite when there
+will be no rewrite, the studio records that as REJECT and says why: a REVISE with nothing
+following it is a refusal that will not say its name. Her authority is untouched; what she
+refuses stays refused, and is only named.
+
+**And the lock.** `busy_timeout` was ten seconds. A stage that spends four minutes talking to
+models writes dozens of small transactions while the outbox dispatcher writes beside it once a
+second and a WAL checkpoint takes the write lock for as long as it needs; ten seconds ran out
+while updating one agent's runtime state. It is thirty.
+
+`BEGIN IMMEDIATE` was tried first and reverted: it takes the write lock up front, which turns
+contention into waiting rather than failing — but the studio opens a writing session inside an
+open reading session in a dozen places, and under IMMEDIATE the inner write waits on the outer
+read's own lock. Measured on a scratch database: **32.8 seconds, then the same "database is
+locked" it was meant to cure.** The comment in `db.py` now says so, with the measurement, so
+the next person to have the idea does not have to spend the afternoon on it.
+
+`uv run pytest -q` — **722 passed, 1 skipped**. `ruff`, `mypy`, `scripts/check_docs.py` clean.
+
+
 ## The writers' room stays open — 2026-09-12
 
 Four watched cycles ended the same way: the studio wrote two drafts, the second was one note
