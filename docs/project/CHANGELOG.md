@@ -22,6 +22,14 @@ choice for every scene — the assembler simply never asked for it.
   An adapter now carries the connection it was built from, so the Accountant can find the
   price at all; a unit with no recorded price is reported unpriced, never counted as free.
   At the account's prices a forty-five second short costs about $0.45–$1.15 in motion.
+- **The first frame is sent at the size the film is made at**: a generated still came back
+  as a twelve-megabyte PNG, which base64 turned into a seventeen-megabyte request and Runway
+  answered 413 for every scene. The still is re-encoded to a 1080-wide JPEG (about half a
+  megabyte) before it travels, and the shot is generated from it.
+- Measured on the Owner's account, and worth knowing before the next render: one four-second
+  shot on `seedance2_mini` — the cheapest video model there — cost 64 Runway credits, about
+  sixteen a second, where the catalogue's recorded price implies far less. A forty-five
+  second short of generated motion is therefore around seven hundred credits.
 - Tests: `tests/test_motion.py` (4).
 
 ## The Director could not see, and nothing said so — 2026-09-12

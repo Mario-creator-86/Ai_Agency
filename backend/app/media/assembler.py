@@ -176,8 +176,46 @@ def _concatenate_audio(ffmpeg_exe: str, segments: list[Path], work_dir: Path) ->
     return output
 
 
+#: The first frame travels to the vendor inside the request, so it is sent at the size the
+#: film is made at rather than the size the still came back at. A generated still can be
+#: twelve megabytes; base64 makes that seventeen, and Runway answers 413.
+FIRST_FRAME_WIDTH = 1080
+FIRST_FRAME_QUALITY = "4"
+
+
+def _first_frame(ffmpeg_exe: str, still: Path, seconds: float) -> bytes:
+    """The scene's still, re-encoded to a first frame a request can carry."""
+    target = still.with_name(f"first_{still.stem}.jpg")
+    result = subprocess.run(
+        [
+            ffmpeg_exe,
+            "-v",
+            "error",
+            "-y",
+            "-i",
+            str(still),
+            "-vf",
+            f"scale={FIRST_FRAME_WIDTH}:-2",
+            "-q:v",
+            FIRST_FRAME_QUALITY,
+            str(target),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    if result.returncode != 0 or not target.is_file() or target.stat().st_size == 0:
+        raise MediaProviderError("the scene's still could not be prepared as a first frame")
+    return target.read_bytes()
+
+
 def _generate_motion(
-    adapter: VideoProvider, scene: dict[str, Any], still: Path, seconds: float
+    adapter: VideoProvider,
+    scene: dict[str, Any],
+    still: Path,
+    seconds: float,
+    ffmpeg_exe: str,
 ) -> tuple[bytes, dict[str, Any]]:
     """Ask the scene's model to move its approved still, and wait for the clip.
 
@@ -188,7 +226,7 @@ def _generate_motion(
     job_id = asyncio.run(
         adapter.create_generation(
             prompt,
-            image_ref=still.read_bytes(),
+            image_ref=_first_frame(ffmpeg_exe, still, seconds),
             duration_seconds=seconds,
             aspect_ratio="9:16",
         )
@@ -493,7 +531,7 @@ def assemble_video_job(
                 "asked_seconds": round(wanted, 3),
             }
             try:
-                clip_bytes, raw = _generate_motion(adapter, scene, still, wanted)
+                clip_bytes, raw = _generate_motion(adapter, scene, still, wanted, ffmpeg_exe)
                 clip = work_dir / f"motion_{scene['scene_index']:02d}.mp4"
                 clip.write_bytes(clip_bytes)
                 motion_clips[position] = clip

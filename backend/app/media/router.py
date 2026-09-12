@@ -270,6 +270,13 @@ def create_media_router() -> APIRouter:
                 image_adapter=getattr(request.app.state, "image_adapter", None) or planned["image"],
                 tts_adapter=injected_tts or tts_provider(engine, vault),
                 tts_adapter_for_scene=None if injected_tts else planned["tts_for_scene"],
+                # The Owner's own render button makes the same film the day does: a shot per
+                # scene from the scene's motion model, not a slideshow.
+                video_adapter_for_scene=(
+                    None
+                    if getattr(request.app.state, "image_adapter", None)
+                    else planned["video_for_scene"]
+                ),
                 production_plan=planned["plan"],
             )
             # Automatically trigger QC
