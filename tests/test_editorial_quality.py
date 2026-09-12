@@ -979,28 +979,31 @@ def test_a_prompt_with_nothing_to_inherit_still_says_something():
 
 
 def test_the_budget_states_the_window_the_check_enforces():
-    from app.factual.editorial import DURATION_TOLERANCE, WORDS_PER_SECOND, narration_budget
+    """The brief's numbers and the check's numbers must be the same numbers.
+
+    They were not, twice over. The brief priced the narration in words alone while the check
+    measures the words plus the breath between scenes, so it named a ceiling five words looser
+    than the one applied — and the writer, obeying the brief, was refused for it.
+    """
+    from app.factual.editorial import narration_budget
 
     budget = narration_budget(30)
-    assert budget["total_words"] == int(30 * WORDS_PER_SECOND)  # 78
-    # The ceiling the brief names is the ceiling the check applies, to the word.
-    assert budget["max_words"] == int(30 * (1 + DURATION_TOLERANCE) * WORDS_PER_SECOND)
 
-    # A narration written to the stated total passes; one over the stated ceiling does not.
-    at_target = " ".join(["word"] * budget["total_words"])
-    over = " ".join(["word"] * (budget["max_words"] + 6))
-    assert story_checks(
-        title="t",
-        scenes=[{"narration": at_target, "purpose": "HOOK"}],
-        story={},
-        target_seconds=30,
-    )["duration_is_realistic"]["passed"]
-    assert not story_checks(
-        title="t",
-        scenes=[{"narration": over, "purpose": "HOOK"}],
-        story={},
-        target_seconds=30,
-    )["duration_is_realistic"]["passed"]
+    def measured(words: int, scenes: int):
+        each = " ".join(["word"] * (words // scenes))
+        return story_checks(
+            title="t",
+            scenes=[{"narration": each, "purpose": "HOOK"} for _ in range(scenes)],
+            story={},
+            target_seconds=30,
+        )["duration_is_realistic"]["passed"]
+
+    # Written to the stated target, with the stated number of scenes: accepted.
+    assert measured(budget["total_words"], budget["scenes"])
+    # Written to the stated ceiling: still accepted, because that is what the brief promised.
+    assert measured(budget["max_words"] - budget["scenes"], budget["scenes"])
+    # Far past it: refused. The ceiling is a real ceiling, only a generous one.
+    assert not measured(budget["max_words"] * 2, budget["scenes"])
 
 
 def test_the_budget_asks_for_scenes_it_can_pay_for():
@@ -1051,20 +1054,44 @@ def test_the_writers_brief_carries_the_budgets_own_numbers():
 
 
 def test_the_refusal_tells_the_writer_where_the_line_is():
-    from app.factual.editorial import narration_budget
-
-    budget = narration_budget(30)
     checks = story_checks(
         title="t",
-        scenes=[{"narration": " ".join(["word"] * 150), "purpose": "HOOK"}],
+        scenes=[{"narration": " ".join(["word"] * 300), "purpose": "HOOK"}],
         story={},
         target_seconds=30,
     )
     reason = checks["duration_is_realistic"]["reason"]
-    # "Too long" is not a brief. The number to aim at and the number that refuses are both in
-    # the sentence the writer receives on the rewrite.
-    assert str(budget["max_words"]) in reason
-    assert str(budget["total_words"]) in reason
+    # "Too long" is not a brief. The length measured, the target, and the band that would have
+    # been accepted are all in the sentence the writer receives on the rewrite.
+    assert "115.4s" in reason
+    assert "ținta de 30s" in reason
+    assert "15-45s" in reason
+
+
+def test_a_few_words_over_is_not_a_refusal():
+    """The Owner's rule: a film a little over its target is a film. The 41-second draft that
+    was sent back twice against a 39-second ceiling is the case this exists for."""
+    scenes = [
+        {"narration": " ".join(["word"] * n), "purpose": "HOOK"} for n in (15, 25, 24, 23, 16)
+    ]
+    assert story_checks(title="t", scenes=scenes, story={}, target_seconds=30)[
+        "duration_is_realistic"
+    ]["passed"]
+
+    # And the failure the check was written for is still a failure: sixty seconds of narration
+    # inside a thirty-second film ends the film before its words.
+    flood = [{"narration": " ".join(["word"] * 40), "purpose": "HOOK"} for _ in range(5)]
+    assert not story_checks(title="t", scenes=flood, story={}, target_seconds=30)[
+        "duration_is_realistic"
+    ]["passed"]
+
+
+def test_a_short_may_never_outgrow_the_format(engine):
+    """However long the target, the outer wall is the format itself."""
+    from app.factual.editorial import MAX_SHORT_SECONDS, narration_budget
+
+    assert narration_budget(45)["max_seconds"] == MAX_SHORT_SECONDS
+    assert narration_budget(300)["max_seconds"] == MAX_SHORT_SECONDS
 
 
 # --------------------------------------------------------------------------------------------

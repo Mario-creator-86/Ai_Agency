@@ -1,5 +1,27 @@
 # Changelog
 
+## The target is a target, not a knife — 2026-09-12
+
+The corrected brief went out and the writer still lost a story to the duration check: 103
+words, five scenes, 41.0 seconds against a 39-second ceiling. Two faults behind one refusal.
+
+**The brief and the check were still not reading the same number.** `expected_seconds` charges
+`SCENE_BEAT_SECONDS` for every scene change — the breath between shots — while the budget
+priced the narration in words alone. So the brief promised a ceiling about five words looser
+than the one applied, and the writer, obeying it, was refused for the difference. The budget
+now settles the scene count first and prices the words against the seconds that are left.
+
+**And the check was too strict to be right.** The Owner settled it: *"it is fine if it goes
+over by a few words, not all videos are the same."* The tolerance was 0.3; it is 0.5, with the
+format's own limit (`MAX_SHORT_SECONDS`, 60s) as the outer wall a tolerance may not reach over.
+A 30-second target now accepts 15–45 seconds. The 41-second draft passes. Two hundred words in
+a thirty-second film — the failure the check was written for, a film that ends before its
+words — still does not. The brief says the same thing in the same voice: aim here, a few words
+over is fine, past this it is no longer a short.
+
+`uv run pytest -q` — **715 passed, 1 skipped**. `ruff`, `mypy`, `scripts/check_docs.py` clean.
+
+
 ## The Director approves her own scripts, and the brief can be satisfied — 2026-09-12
 
 A watched cycle produced a new film for the first time: the Director chose *How the James Webb

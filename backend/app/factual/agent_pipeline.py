@@ -487,13 +487,15 @@ Scrie {scenes} scene. Fiecare scenă:
 - spune în "visual" ce se VEDE, nu ce se aude: arată informația (nori care se strâng, apa
   care urcă, reacția unui om), nu repeta în imagine ce spune deja naratorul.
 
-LUNGIMEA — fă socoteala înainte de a scrie, și numără la final:
-- naratorul spune {wps} cuvinte pe secundă, deci {duration} secunde = {words} de cuvinte de
-  narațiune pentru TOATE scenele la un loc;
-- {scenes} scene × {per_scene_low}-{per_scene_high} cuvinte de narațiune fiecare. Nu mai mult;
-- peste {max_words} de cuvinte în total, filmul e respins și rescris. Nu e o sugestie: e
-  măsurat pe textul rostit, nu pe numerele pe care le scrii tu în "duration_seconds".
-O scenă de 25 de cuvinte pare scurtă și nu este: sunt aproape zece secunde de vorbit.
+LUNGIMEA — ținta, nu o cămașă de forță:
+- naratorul spune {wps} cuvinte pe secundă, deci {duration} secunde ≈ {words} de cuvinte de
+  narațiune pentru TOATE scenele la un loc — asta e ținta la care scrii;
+- {scenes} scene, cam {per_scene_low}-{per_scene_high} cuvinte fiecare. Câteva cuvinte peste nu
+  strică nimic: nu toate filmele au aceeași lungime;
+- ce nu merge e un film care nu mai e un short: peste {max_words} de cuvinte în total
+  ({max_seconds:.0f} secunde) povestea se rescrie mai scurtă.
+Se măsoară pe textul rostit plus respirația dintre scene, nu pe numerele pe care le scrii tu
+în "duration_seconds". O scenă de 25 de cuvinte pare scurtă și nu este: sunt zece secunde.
 
 Răspunde EXCLUSIV cu un obiect JSON valid, fără text în plus:
 {{"title": "...", "core_message": "o propoziție: ideea filmului", "takeaway": "ce rămâne
@@ -567,6 +569,7 @@ def _write_instructions(target_seconds: int) -> str:
         scenes=budget["scenes"],
         per_scene_low=budget["words_per_scene_low"],
         per_scene_high=budget["words_per_scene_high"],
+        max_seconds=budget["max_seconds"],
         beats=beat_table(target_seconds),
     )
 

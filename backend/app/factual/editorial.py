@@ -131,7 +131,17 @@ SCENE_BEAT_SECONDS = 0.35
 #: How far a narration may sit from its target before the story review sends it back. The
 #: brief the writer receives and the check that judges him read this same number, because a
 #: writer told "78 words" and refused at 102 was never told where the line was.
-DURATION_TOLERANCE = 0.3
+#:
+#: Wide on purpose. It was 0.3, and a 41-second story was refused twice against a 39-second
+#: ceiling — over a handful of words, on a film that was otherwise sound. The Owner settled it:
+#: "it is fine if it goes over by a few words, not all videos are the same." The target is what
+#: the writer aims at; this check exists for the failure it was written for — sixty seconds of
+#: narration inside a thirty-second film — not to shave sentences.
+DURATION_TOLERANCE = 0.5
+
+#: The longest a short may be, whatever its target. Past this the format itself is gone, which
+#: is a refusal no tolerance should reach over.
+MAX_SHORT_SECONDS = 60.0
 
 #: What one beat of narration weighs. A scene under this is not a beat of its own; a scene far
 #: over it is two beats wearing one number, and the film runs long while every scene looks
@@ -167,15 +177,28 @@ def narration_budget(target_seconds: float) -> dict[str, Any]:
     number of scenes the budget affords, and what one scene may weigh.
     """
     target = max(float(target_seconds), 0.0)
-    total = target * WORDS_PER_SECOND
-    ceiling = target * (1.0 + DURATION_TOLERANCE) * WORDS_PER_SECOND
-    floor = target * (1.0 - DURATION_TOLERANCE) * WORDS_PER_SECOND
+
+    # A film is its words plus its breaths: `expected_seconds` charges SCENE_BEAT_SECONDS for
+    # every scene change, so the seconds left for words are fewer than the film is long. The
+    # brief used to state a ceiling computed from words alone, which was five words looser
+    # than the ceiling the check applied — and the writer, obeying the brief, was refused for
+    # it. The scene count decides how much breath is spent, so it is settled first from the
+    # beat-free estimate and the words are then priced against what remains.
+    def words_in(seconds: float, scene_count: int) -> float:
+        return max(0.0, (seconds - scene_count * SCENE_BEAT_SECONDS) * WORDS_PER_SECOND)
+
+    outer = min(target * (1.0 + DURATION_TOLERANCE), MAX_SHORT_SECONDS) if target else 0.0
+    spoken = target * WORDS_PER_SECOND
     # Three scenes is the fewest that can hold a hook, a middle and a payoff; beyond the cap
     # the film is a list again. Between those, the length decides.
-    scenes = max(3, min(MAX_STORY_SCENES, int(round(total / WORDS_PER_SCENE)))) if total else 0
+    scenes = max(3, min(MAX_STORY_SCENES, int(round(spoken / WORDS_PER_SCENE)))) if target else 0
+    total = words_in(target, scenes)
+    ceiling = words_in(outer, scenes)
+    floor = words_in(target * (1.0 - DURATION_TOLERANCE), scenes)
     per_scene = total / scenes if scenes else 0.0
     return {
         "target_seconds": round(target, 1),
+        "max_seconds": round(outer, 1),
         "total_words": int(round(total)),
         "max_words": int(ceiling),
         "min_words": int(round(floor)) + 1,
@@ -389,12 +412,19 @@ def story_checks(
             bool(content_words(title) & content_words(joined)),
             "Titlul promite ce livrează scenariul.",
         ),
+        # Not a word count — a length. A film a little over its target is a film; one that
+        # no longer fits the format, or has nothing in it, is not.
         "duration_is_realistic": _check(
-            target_seconds <= 0 or abs(seconds - target_seconds) <= target_seconds * tolerance,
-            f"Narațiunea durează {seconds:.1f}s la {WORDS_PER_SECOND} cuvinte/secundă, "
-            f"față de ținta de {target_seconds:.0f}s. Limita este "
-            f"{int(target_seconds * (1 + tolerance) * WORDS_PER_SECOND)} de cuvinte în total, "
-            f"iar ținta {int(target_seconds * WORDS_PER_SECOND)}.",
+            target_seconds <= 0
+            or (
+                target_seconds * (1 - tolerance)
+                <= seconds
+                <= min(target_seconds * (1 + tolerance), MAX_SHORT_SECONDS)
+            ),
+            f"Narațiunea durează {seconds:.1f}s la {WORDS_PER_SECOND} cuvinte/secundă plus "
+            f"respirația dintre scene, față de ținta de {target_seconds:.0f}s. Intervalul "
+            f"acceptat este {target_seconds * (1 - tolerance):.0f}-"
+            f"{min(target_seconds * (1 + tolerance), MAX_SHORT_SECONDS):.0f}s.",
         ),
     }
     return checks
