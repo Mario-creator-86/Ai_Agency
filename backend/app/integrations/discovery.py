@@ -11,13 +11,19 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Engine, or_, select, update
 from sqlalchemy.orm import Session
 
+from app.config import Settings
+from app.integrations.lifecycle import (
+    classify_discovered,
+    deny_patterns,
+    stamp_price,
+)
 from app.integrations.models import (
     Integration,
     MediaProductionConfig,
@@ -331,6 +337,7 @@ def refresh_catalog(
     interval_seconds: int,
     retry_seconds: int,
     force: bool = False,
+    settings: Settings | None = None,
 ) -> dict:
     now = datetime.now(UTC)
     lease = str(uuid4())
@@ -419,6 +426,10 @@ def refresh_catalog(
             datetime.now(UTC) + timedelta(seconds=retry_seconds if error else interval_seconds)
         ).isoformat()
         if error is None:
+            # What the Owner refuses, and whether new models are taken in at all.
+            deny = deny_patterns(settings) if settings is not None else ()
+            discover = bool(getattr(settings, "auto_discover_models", True))
+            admitted: list[dict] = []
             existing = {
                 (r.resource_type, r.remote_id): r
                 for r in session.scalars(
@@ -434,6 +445,7 @@ def refresh_catalog(
                 for item in items:
                     remote_id = item[id_field]
                     resource = existing.get((resource_type, remote_id))
+                    fresh = resource is None
                     if resource is None:
                         resource = ProviderResource(
                             id=str(uuid4()),
@@ -446,6 +458,23 @@ def refresh_catalog(
                     resource.name = str(item.get("name") or remote_id)[:300]
                     resource.api_metadata = _metadata(item, resource_type, kind)
                     resource.api_available, resource.last_seen_at = True, utc_now()
+                    # A model the vendor exposed today has filmed nothing. It is taken into
+                    # the catalogue so the Owner can see it, and parked outside production
+                    # until its own results say otherwise — never trusted for its brand or
+                    # its name. A model already known keeps the standing it earned.
+                    if fresh and resource_type == "MODEL":
+                        status, note = classify_discovered(
+                            remote_id, resource.api_metadata, patterns=deny
+                        )
+                        if not discover:
+                            status, note = (
+                                "QUARANTINE",
+                                "Descoperirea automată este oprită; modelul aşteaptă "
+                                "decizia Ownerului.",
+                            )
+                        resource.production_status = status
+                        resource.lifecycle_note = note
+                        admitted.append({"model_id": remote_id, "status": status})
             state.last_success_at = utc_now()
         event = append_event(
             session,
@@ -458,6 +487,7 @@ def refresh_catalog(
                 "discovery_status": state.status,
                 "models": len(models) if not error else None,
                 "voices": len(voices) if not error else None,
+                "new_models": admitted if not error else None,
             },
             str(uuid4()),
         )
@@ -467,6 +497,11 @@ def refresh_catalog(
             if has_voices
             else f"{len(models)} modele încărcate."
         )
+        if not error and admitted:
+            loaded += (
+                f" {len(admitted)} model(e) nou(i) aşteaptă în afara producției până se "
+                "vede ce livrează."
+            )
         return {
             "status": row.status,
             "discovery_status": state.status,
@@ -475,7 +510,12 @@ def refresh_catalog(
 
 
 def refresh_due_catalogs(
-    engine: Engine, vault: CredentialVault, *, interval_seconds: int, retry_seconds: int
+    engine: Engine,
+    vault: CredentialVault,
+    *,
+    interval_seconds: int,
+    retry_seconds: int,
+    settings: Settings | None = None,
 ) -> None:
     with Session(engine) as session:
         identifiers = session.scalars(
@@ -489,6 +529,7 @@ def refresh_due_catalogs(
                 identifier,
                 interval_seconds=interval_seconds,
                 retry_seconds=retry_seconds,
+                settings=settings,
             )
         except Exception as exc:
             logger.warning(
@@ -608,6 +649,9 @@ class ResourceMetadataCommand(BaseModel):
     capabilities: dict | None = None
     availability_override: bool | None = None
     source: str = Field(min_length=1, max_length=2000)
+    #: How this price was established: a vendor page read, a dry run the vendor answered, or
+    #: what a real generation was charged. Accounting believes the last of those.
+    verification: Literal["DOCUMENTED", "ESTIMATED", "BILLED"] = "DOCUMENTED"
 
 
 def update_resource_metadata(
@@ -620,15 +664,26 @@ def update_resource_metadata(
             raise ValueError("Resursă inexistentă")
         if row.metadata_version != command.expected_version:
             raise ValueError("Metadatele s-au schimbat; reîncarcă")
-        for field in ("pricing", "capabilities", "availability_override"):
+        moves: list[dict] = []
+        for field in ("capabilities", "availability_override"):
             if field in command.model_fields_set:
                 setattr(
                     row,
                     field,
-                    getattr(command, field)
+                    command.availability_override
                     if field == "availability_override"
-                    else getattr(command, field) or {},
+                    else command.capabilities or {},
                 )
+        if "pricing" in command.model_fields_set:
+            # A price is never overwritten in silence: what it was is kept, with the date
+            # and how the new one was established, and a move past the Owner's threshold
+            # becomes a letter rather than a line in a log nobody reads.
+            moves = stamp_price(
+                row,
+                command.pricing or {},
+                verification=command.verification,
+                source=command.source,
+            )
         row.metadata_version += 1
         row.metadata_source, row.metadata_updated_at = command.source, utc_now()
         append_event(
@@ -637,8 +692,14 @@ def update_resource_metadata(
             "provider_resource",
             identifier,
             row.metadata_version,
-            {"source": command.source},
+            {
+                "source": command.source,
+                "price_moves": moves or None,
+                "pricing_version": row.pricing_version,
+            },
             str(uuid4()),
         )
         integration = session.get(Integration, row.integration_id)
-        return resource_view(row, integration.kind if integration else "")
+        view = resource_view(row, integration.kind if integration else "")
+        view["price_moves"] = moves
+        return view

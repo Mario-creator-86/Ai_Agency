@@ -36,6 +36,8 @@ from app.workflows.worker import (
     DAILY_RUN,
     MODEL_RESEARCH,
     MODEL_RESEARCH_JOB_NAME,
+    MODEL_REVIEW,
+    MODEL_REVIEW_JOB_NAME,
     TRENDS_JOB_NAME,
     TRENDS_REFRESH,
     NonRetryable,
@@ -266,16 +268,21 @@ def test_the_application_seeds_the_daily_job_only_when_the_worker_is_on(settings
         pass
     with Session(engine) as session:
         jobs = {job.name: job for job in session.scalars(select(ScheduledJob))}
-    # Four standing jobs: the day (dormant until the Owner starts it), the Director's
+    # Five standing jobs: the day (dormant until the Owner starts it), the Director's
     # weekly performance review (active standing policy, first fire an hour after birth),
-    # the daily reading of what people search for, and the stewards' weekly reading of
-    # their vendors' pages — the last two active from birth, behind the autonomy stop.
+    # the daily reading of what people search for, the stewards' weekly reading of their
+    # vendors' pages, and the daily re-judging of every model's standing on what it has
+    # delivered — all but the day active from birth, behind the autonomy stop.
     assert set(jobs) == {
         DAILY_JOB_NAME,
         WEEKLY_JOB_NAME,
         TRENDS_JOB_NAME,
         MODEL_RESEARCH_JOB_NAME,
+        MODEL_REVIEW_JOB_NAME,
     }
+    assert jobs[MODEL_REVIEW_JOB_NAME].workflow_type == MODEL_REVIEW
+    assert jobs[MODEL_REVIEW_JOB_NAME].is_active
+    assert jobs[MODEL_REVIEW_JOB_NAME].interval_seconds == 86400
     assert jobs[TRENDS_JOB_NAME].workflow_type == TRENDS_REFRESH
     assert jobs[TRENDS_JOB_NAME].is_active and jobs[TRENDS_JOB_NAME].interval_seconds == 86400
     assert jobs[MODEL_RESEARCH_JOB_NAME].workflow_type == MODEL_RESEARCH

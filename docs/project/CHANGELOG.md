@@ -1,5 +1,61 @@
 # Changelog
 
+## Two environments, and a model that has to earn its place — 2026-09-12
+
+The Owner found in one search what the studio's own steward had not: models at 0.05-0.12 USD
+a second where the studio was paying 0.43. *"Seedance face video sa fie de 3 ori mai scump,
+merita? Este agent, are un rol! Asta trebuie sa faca!"* And before that, the cost of not
+knowing which kind of work was happening: an experiment bought the same eight shots a film
+does, 21.08 USD in an afternoon.
+
+Both are the same missing distinction. The studio now knows **which environment it is in**,
+and a model now has **a standing it has to earn**.
+
+- **The environment is the studio's own state** (migration 0031, `owner_policy.environment`,
+  `POST /owner/environment`): TEST or PRODUCTION, changed by the Owner through the same
+  versioned, idempotent command that stops autonomy, never by a query parameter a page could
+  set. The top bar says which it is, always, and the button beside the autonomy switch
+  changes it.
+- **One router, two policies** (`choose_model` in `production_policy.py`). Business logic
+  states a requirement — the task, the quality the scene needs, its length, what it may
+  cost — and never a model name. In **TEST** the answer is the cheapest compatible model and
+  the quality ranking is not consulted; its fallback is the next cheapest, never the best;
+  and a shot above `STUDIO_TEST_MAX_COST_PER_GENERATION_USD` or
+  `STUDIO_TEST_MAX_COST_PER_SECOND_USD` is refused rather than quietly bought. In
+  **PRODUCTION** the answer is the least expensive model that reliably reaches the quality
+  the scene requires, and the decision says what it did not buy and at what multiple — the
+  Owner's marginal question, answered in writing.
+- **The scene's part in the film sets the tier**, not the model's price: HOOK and ENDING are
+  asked for more than the middle (`scene_role`, `SCENE_ROLE_TIERS`, `scene_tier`), because
+  the first shot decides whether anyone watches and the last whether anyone comments.
+- **A model has a life** (`app/integrations/lifecycle.py`): DISCOVERED → QUARANTINE →
+  BENCHMARKING → CANDIDATE → PRODUCTION → PREFERRED, and DEPRECATED. A model the vendor
+  exposed today is taken into the catalogue and kept **out of production** until its own
+  results say otherwise; a model whose contract could not be read waits in quarantine rather
+  than being tried on a film; a model the Owner's deny list names
+  (`STUDIO_MODEL_DENY_LIST`) is retired on sight and chosen in neither environment.
+- **The studio learns from its own results** (`model_outcome`): every generation is recorded
+  with its environment and kind, its scene category, what it cost and whether it was
+  accepted first time. A cheap functional test is recorded and **never** allowed to teach the
+  studio about a model's picture; a test of a model that is not yet admitted **is** that
+  model's benchmark, which is how a new model earns its way in. The daily review
+  (`MODEL_REVIEW`, a standing job) promotes and demotes on that evidence and generates
+  nothing, so it costs nothing.
+- **A price keeps its date.** CONFIGURED, ESTIMATED and BILLED are distinguished
+  (`pricing_version`, `price_verified_at`, `price_verification`, `previous_pricing_json`): a
+  price is never overwritten in silence, what it was is kept, and a move past
+  `STUDIO_PRICE_CHANGE_ALERT_PERCENT` is a letter from the Accountant to the Owner.
+- **The vendor is asked before it is paid.** Where Runway's own published contract declares a
+  task accepts a dry run, the render asks what this exact shot will cost before buying it; a
+  quote that disagrees with the stored price by more than
+  `STUDIO_PRICE_STALE_TOLERANCE_PERCENT` marks the stored price stale and replaces it, and a
+  quote above a ceiling means the shot is not bought at all. A flag the vendor does not
+  declare is never sent, because a question about a price must not become a purchase.
+- **The page can say why**: under each rendered film, which model filmed each scene, in which
+  environment, for how much, and the router's reason.
+- Tests: `tests/test_environment_routing.py` (the eighteen the Owner asked for) and the
+  render's own outcome records in `tests/test_motion.py`. 625 pass.
+
 ## Twenty-one dollars, and the guards that were missing — 2026-09-12
 
 The Owner's credits fell to 1 878 and he asked who spent them. The answer, from Runway's own

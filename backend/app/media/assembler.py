@@ -20,10 +20,12 @@ from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import Engine, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.config import ROOT
 from app.media.models import MediaAsset, Storyboard, StoryboardScene, VideoRenderJob
+from app.media.production_policy import record_quoted_price
 from app.media.toolchain import find_ffmpeg
 from app.providers.deterministic_media import (
     DeterministicTTSAdapter,
@@ -256,6 +258,142 @@ def _generate_motion(
         time.sleep(MOTION_POLL_SECONDS)
 
 
+def _quote_motion(
+    adapter: VideoProvider,
+    scene: dict[str, Any],
+    still: Path | None,
+    seconds: float,
+    ffmpeg_exe: str,
+) -> float | None:
+    """What the vendor says this shot would cost, in credits, before anything is bought.
+
+    Asked only of an adapter that offers to answer, and only when the vendor's own contract
+    declares the task accepts a dry run — sending a flag an API does not declare risks
+    buying the shot by accident. The question carries the same body the purchase would, so
+    the answer is about this shot: a price per second written down somewhere is a guess
+    about a length, a format and a task at once. A vendor that will not answer leaves the
+    studio with the price it measured, which is what it had before.
+    """
+    ask = getattr(adapter, "estimate_generation", None)
+    if ask is None:
+        return None
+    prompt = " ".join(str(scene.get("visual_prompt") or "").split())[:900]
+    try:
+        return asyncio.run(
+            ask(
+                prompt,
+                image_ref=_first_frame(ffmpeg_exe, still, seconds) if still is not None else None,
+                duration_seconds=seconds,
+                aspect_ratio="9:16",
+            )
+        )
+    except (MediaProviderError, MediaProviderNotConfigured, ValueError, OSError) as exc:
+        logger.info("motion_quote_unavailable", extra={"reason": str(exc)[:160]})
+        return None
+
+
+def _record_outcomes(
+    engine: Engine,
+    production: dict[str, Any],
+    render_job_id: str,
+    *,
+    environment: str,
+    run_kind: str | None,
+    credit_price: float | None,
+) -> None:
+    """Record what each shot did, so the studio learns from its own results.
+
+    A model's worth is not a number on a vendor page: it is what it delivered, for what it
+    cost, in the kind of scene the studio asked for. An ordinary functional test is recorded
+    too — and marked as one — so a deliberately cheap shot never teaches the studio that a
+    model's picture is poor.
+    """
+    from app.integrations.lifecycle import ADMITTED  # noqa: PLC0415
+    from app.integrations.models import ModelOutcome, ProviderResource  # noqa: PLC0415
+
+    standing: dict[tuple[str, str], str] = {}
+    with Session(engine) as session:
+        for resource in session.scalars(
+            select(ProviderResource).where(ProviderResource.resource_type == "MODEL")
+        ):
+            standing[(str(resource.integration_id), str(resource.remote_id))] = str(
+                resource.production_status or ""
+            )
+    rows: list[ModelOutcome] = []
+    for entry in production.get("scenes", []):
+        motion = entry.get("motion") if isinstance(entry.get("motion"), dict) else None
+        if not motion or not motion.get("model") or not motion.get("integration_id"):
+            continue
+        credits = motion.get("estimated_credits")
+        seconds = float(motion.get("asked_seconds") or 0)
+        landed = bool(motion.get("bytes"))
+        # A test that tries a model the studio has not admitted yet is that model's
+        # benchmark — otherwise a new model could never earn its way in, because it is not
+        # allowed to film production until it has results. A test on a model already in
+        # production is only a functional check, and must never teach the studio anything
+        # about that model's picture.
+        where = standing.get((str(motion["integration_id"]), str(motion["model"])), "")
+        kind = run_kind or (
+            "PRODUCTION"
+            if environment == "PRODUCTION"
+            else ("TEST_FUNCTIONAL" if where in ADMITTED else "TEST_BENCHMARK")
+        )
+        rows.append(
+            ModelOutcome(
+                id=str(uuid4()),
+                integration_id=str(motion["integration_id"]),
+                remote_id=str(motion["model"]),
+                purpose="video",
+                run_kind=kind,
+                environment=environment,
+                scene_category=str(motion.get("scene_category") or "GENERAL"),
+                quality_tier=str(motion.get("tier") or "") or None,
+                seconds_requested=seconds,
+                seconds_accepted=seconds if landed else 0.0,
+                credits=float(credits) if isinstance(credits, int | float) else None,
+                usd=(
+                    round(float(credits) * credit_price, 6)
+                    if isinstance(credits, int | float) and credit_price
+                    else None
+                ),
+                first_pass=landed,
+                accepted=landed,
+                failure_kind=None if landed else "TECHNICAL",
+                render_job_id=render_job_id,
+                created_at=utc_now(),
+            )
+        )
+    if not rows:
+        return
+    # A film that has already been paid for is not lost because a record could not be
+    # written: the outcome is what the studio learns from, not what it delivers.
+    try:
+        with Session(engine) as session, session.begin():
+            for row in rows:
+                session.add(row)
+    except SQLAlchemyError as exc:
+        logger.warning("model_outcomes_not_recorded", extra={"reason": str(exc)[:200]})
+        production.setdefault("motion_notes", []).append(f"outcomes not recorded: {str(exc)[:120]}")
+
+
+def scene_tier(scene: dict[str, Any], total_scenes: int) -> str:
+    """What quality this scene has to reach, from its part in the film.
+
+    The opening shot decides whether anyone watches and the last one decides whether anyone
+    comments, so they are asked for more than the middle. A scene that carries its own tier
+    (from the channel, the episode or the Owner) keeps it.
+    """
+    from app.media.production_policy import SCENE_ROLE_TIERS, scene_role  # noqa: PLC0415
+
+    stated = scene.get("quality_tier")
+    if isinstance(stated, str) and stated:
+        return stated
+    role = str(scene.get("scene_role") or "") or scene_role(
+        int(scene.get("scene_index") or 1), total_scenes
+    )
+    return SCENE_ROLE_TIERS.get(role, "STANDARD")
+
+
 def _credit_price(engine: Engine) -> float | None:
     """What a credit costs, from the connection the Owner recorded it on."""
     from app.integrations.models import Integration  # noqa: PLC0415
@@ -407,7 +545,12 @@ def assemble_video_job(
     tts_adapter: TTSProvider | None = None,
     tts_adapter_for_scene: Callable[[dict[str, Any]], TTSProvider | None] | None = None,
     video_adapter_for_scene: Callable[[dict[str, Any]], VideoProvider | None] | None = None,
+    motion_chooser: Callable[..., tuple[VideoProvider | None, dict[str, Any]]] | None = None,
+    environment: str = "PRODUCTION",
+    run_kind: str | None = None,
     motion_budget_usd: float | None = None,
+    motion_max_usd_per_second: float | None = None,
+    price_tolerance_percent: float = 5.0,
     motion_scene_limit: int | None = None,
     motion_from_prompt: bool = False,
     production_plan: dict[str, Any] | None = None,
@@ -419,6 +562,13 @@ def assemble_video_job(
     the asset is recorded under the placeholder provider name — which QC blocks from
     publication. The recorded name always says which generator actually made the frames, so a
     render can never be mistaken for publishable content it is not.
+
+    ``motion_chooser`` is asked for the model of each scene, given what the scene requires
+    — its tier, its length and what it may cost — and answers with an adapter and the reason
+    it chose that model over the alternatives. ``environment`` says which policy answered
+    (TEST takes the cheapest that can do the job, PRODUCTION the least expensive that
+    reaches the quality) and, with ``run_kind``, decides whether what happens here may teach
+    the studio about a model's picture: an ordinary functional test never does.
 
     ``motion_from_prompt`` films each shot from the scene's words instead of its approved
     still — what a test render does, on the cheapest model that accepts a prompt, so looking
@@ -606,10 +756,11 @@ def assemble_video_job(
     motion_clips: list[Path | None] = [None] * len(scenes_data)
     motion_seconds = 0.0
     motion_credits = 0.0
+    failed_models: list[str] = []
     credit_price = _credit_price(engine)
     remaining_usd = motion_budget_usd
     shots_made = 0
-    if image_adapter is not None and video_adapter_for_scene is not None and ffmpeg_exe:
+    if image_adapter is not None and (video_adapter_for_scene or motion_chooser) and ffmpeg_exe:
         for position, (scene, still) in enumerate(zip(scenes_data, frame_files, strict=False)):
             if motion_scene_limit is not None and position >= max(0, motion_scene_limit):
                 production.setdefault("motion_notes", []).append(
@@ -626,8 +777,20 @@ def assemble_video_job(
                     f"leaves {remaining_usd:.2f} USD and a shot costs about {likely:.2f})"
                 )
                 continue
-            adapter = video_adapter_for_scene(scene)
+            span_for_choice = float(scene["duration_seconds"]) + TRANSITION_SECONDS
+            tier = str(scene.get("quality_tier") or scene_tier(scene, len(scenes_data)))
+            decision: dict[str, Any] = {}
+            if motion_chooser is not None:
+                adapter, decision = motion_chooser(
+                    scene, tier, span_for_choice, remaining_usd, tuple(failed_models)
+                )
+            else:
+                adapter = video_adapter_for_scene(scene) if video_adapter_for_scene else None
             if adapter is None:
+                if decision:
+                    production.setdefault("motion_notes", []).append(
+                        f"scene {scene['scene_index']}: {decision.get('reason', 'no model')}"
+                    )
                 continue
             wanted = float(scene["duration_seconds"]) + TRANSITION_SECONDS
             record: dict[str, Any] = {
@@ -635,7 +798,76 @@ def assemble_video_job(
                 "model": getattr(adapter, "model", None),
                 "integration_id": getattr(adapter, "integration_id", None),
                 "asked_seconds": round(wanted, 3),
+                "tier": tier,
+                "scene_category": str(
+                    scene.get("scene_category") or scene.get("visual_type") or "GENERAL"
+                ),
+                "decision": decision or None,
             }
+            # Ask the vendor what this shot costs before buying it. The quote decides,
+            # not a price written down elsewhere: a steward's reading of one page once
+            # outlived four renders that measured seventeen times more. A quote past a
+            # ceiling means the shot is not bought at all.
+            quoted = _quote_motion(
+                adapter,
+                scene,
+                None if motion_from_prompt else still,
+                wanted,
+                ffmpeg_exe,
+            )
+            if quoted is not None:
+                record["quoted_credits"] = quoted
+            refusal = None
+            if quoted is not None and credit_price:
+                quoted_usd = float(quoted) * credit_price
+                record["quoted_usd"] = round(quoted_usd, 4)
+                model_name = getattr(adapter, "model", None)
+                integration = getattr(adapter, "integration_id", None)
+                if model_name and integration and wanted > 0:
+                    stale = record_quoted_price(
+                        engine,
+                        str(integration),
+                        str(model_name),
+                        quoted_usd / wanted,
+                        "per_second_usd",
+                        tolerance_percent=price_tolerance_percent,
+                    )
+                    if stale is not None:
+                        record["price_was_stale"] = stale
+                        production.setdefault("motion_notes", []).append(
+                            f"scene {scene['scene_index']}: the stored price was stale "
+                            f"({stale['stored']:.4f} -> {stale['observed']:.4f} USD/s as "
+                            "the vendor quotes it)"
+                        )
+                if motion_budget_usd is not None and quoted_usd > float(motion_budget_usd):
+                    refusal = (
+                        f"the vendor quotes {quoted_usd:.2f} USD, above the "
+                        f"{float(motion_budget_usd):.2f} USD this render may spend on a shot"
+                    )
+                elif (
+                    motion_max_usd_per_second is not None
+                    and wanted > 0
+                    and quoted_usd / wanted > float(motion_max_usd_per_second)
+                ):
+                    refusal = (
+                        f"the vendor quotes {quoted_usd / wanted:.2f} USD a second, above "
+                        f"the {float(motion_max_usd_per_second):.2f} USD ceiling"
+                    )
+                elif remaining_usd is not None and quoted_usd > remaining_usd:
+                    refusal = (
+                        f"the vendor quotes {quoted_usd:.2f} USD and only "
+                        f"{remaining_usd:.2f} USD is left of this render's motion budget"
+                    )
+            if refusal is not None:
+                record["refused"] = refusal
+                production.setdefault("motion_notes", []).append(
+                    f"scene {scene['scene_index']}: not generated ({refusal})"
+                )
+                for entry in production["scenes"]:
+                    if entry.get("scene_index") == scene["scene_index"]:
+                        entry["motion"] = record
+                        break
+                continue
             try:
                 clip_bytes, raw = _generate_motion(
                     adapter,
@@ -670,6 +902,9 @@ def assemble_video_job(
                     shots_made += 1
                     if remaining_usd is not None and credit_price:
                         remaining_usd -= float(credits) * credit_price
+                model_name = getattr(adapter, "model", None)
+                if model_name:
+                    failed_models.append(str(model_name))
                 logger.info(
                     "motion_not_generated",
                     extra={"scene_index": scene["scene_index"], "reason": str(exc)[:160]},
@@ -678,6 +913,14 @@ def assemble_video_job(
                 if entry.get("scene_index") == scene["scene_index"]:
                     entry["motion"] = record
                     break
+    _record_outcomes(
+        engine,
+        production,
+        render_job_id,
+        environment=environment,
+        run_kind=run_kind,
+        credit_price=credit_price,
+    )
     production["motion"] = {
         "clips": sum(1 for clip in motion_clips if clip is not None),
         "scenes": len(scenes_data),
@@ -694,8 +937,11 @@ def assemble_video_job(
         )
         or None,
         "budget_usd": motion_budget_usd,
+        "max_usd_per_second": motion_max_usd_per_second,
         "scene_limit": motion_scene_limit,
         "from_prompt": motion_from_prompt,
+        "environment": environment,
+        "run_kind": run_kind or ("TEST_FUNCTIONAL" if environment == "TEST" else "PRODUCTION"),
         "transition_seconds": TRANSITION_SECONDS,
     }
 

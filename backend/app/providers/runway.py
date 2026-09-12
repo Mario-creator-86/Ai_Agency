@@ -153,9 +153,20 @@ def parse_model_contract(spec: Any) -> dict[str, dict[str, Any]]:
             # contract states per model, and the choice of a model has to read.
             required = branch.get("required")
             needs_references = isinstance(required, list) and "referenceImages" in required
+            # Whether this task can be asked what it would cost without being asked to do
+            # it. Only the vendor's own contract may say so: sending a flag the API does
+            # not declare risks submitting a real, billed task by accident.
+            dry_run = any(str(name).lower() == "dryrun" for name in properties)
             for model in models:
                 entry = contract.setdefault(
-                    model, {"tasks": [], "ratios": {}, "durations": {}, "needs_references": {}}
+                    model,
+                    {
+                        "tasks": [],
+                        "ratios": {},
+                        "durations": {},
+                        "needs_references": {},
+                        "dry_run": {},
+                    },
                 )
                 if task not in entry["tasks"]:
                     entry["tasks"].append(task)
@@ -164,6 +175,7 @@ def parse_model_contract(spec: Any) -> dict[str, dict[str, Any]]:
                 if durations and task not in entry["durations"]:
                     entry["durations"][task] = durations
                 entry.setdefault("needs_references", {})[task] = needs_references
+                entry.setdefault("dry_run", {})[task] = dry_run
     for entry in contract.values():
         entry["tasks"].sort()
     return contract
@@ -282,6 +294,54 @@ class _RunwayClient:
         if not isinstance(task_id, str) or not task_id:
             raise MediaProviderError("Runway did not return a task id")
         return task_id
+
+    async def _quote(self, task: str, body: dict[str, Any]) -> float | None:
+        """What the vendor says this task would cost, without generating anything.
+
+        Only asked when the vendor's published contract declares that the task accepts a
+        dry run. The answer is in credits — the only number the vendor states about money —
+        and a vendor that answers with a task id anyway has it cancelled at once, because a
+        question about a price must never become a purchase.
+        """
+        declared = self.model_metadata.get("dry_run")
+        if not isinstance(declared, dict) or not declared.get(task):
+            return None
+        try:
+            data, _, _ = await asyncio.to_thread(
+                request,
+                HOST,
+                "POST",
+                f"/v1/{task}",
+                self._headers(),
+                json.dumps({**body, "dryRun": True}).encode("utf-8"),
+                timeout=60,
+            )
+        except MediaProviderError:
+            # A refused question costs nothing and teaches nothing; the studio keeps the
+            # price it measured.
+            return None
+        if not isinstance(data, dict):
+            return None
+        started = data.get("id")
+        if isinstance(started, str) and started:
+            await self._cancel(started)
+        cost = data.get("estimatedCost")
+        return float(cost) if isinstance(cost, int | float) else None
+
+    async def _cancel(self, job_id: str) -> None:
+        """Cancel a task. Used when a dry run created one anyway; failure is logged, not raised."""
+        try:
+            await asyncio.to_thread(
+                request,
+                HOST,
+                "DELETE",
+                f"/v1/tasks/{quote(job_id, safe='')}",
+                self._headers(),
+                timeout=30,
+                expect_json=False,
+            )
+        except MediaProviderError:
+            return
 
     async def _task(self, job_id: str) -> dict[str, Any]:
         data, _, _ = await asyncio.to_thread(
@@ -490,6 +550,42 @@ class RunwayVideoAdapter(_RunwayClient, VideoProvider):
         if isinstance(extra, dict) and isinstance(extra.get("seed"), int):
             body["seed"] = extra["seed"]
         return await self._submit(task, body)
+
+    async def estimate_generation(
+        self,
+        prompt: str,
+        *,
+        image_ref: bytes | None = None,
+        duration_seconds: float = 4.0,
+        aspect_ratio: str = "9:16",
+    ) -> float | None:
+        """The credits this exact shot would cost, asked of the vendor, or None if it will not say.
+
+        The same body the real request would send, so the answer is about this shot and not
+        about a model in general: a price per second written down somewhere is a guess about
+        a length, a resolution and a task all at once.
+        """
+        text = " ".join(str(prompt).split())[:1000]
+        if not self.model:
+            return None
+        task = "image_to_video" if image_ref else "text_to_video"
+        tasks = self.model_metadata.get("tasks")
+        if isinstance(tasks, list) and task not in tasks:
+            return None
+        durations = self.model_metadata.get("durations", {})
+        task_durations = durations.get(task) if isinstance(durations, dict) else None
+        try:
+            body: dict[str, Any] = {
+                "model": self.model,
+                "promptText": text,
+                "ratio": self._ratio_for(task, aspect_ratio),
+                "duration": pick_duration(task_durations, duration_seconds),
+            }
+        except MediaProviderError:
+            return None
+        if image_ref:
+            body["promptImage"] = _image_data_uri(image_ref)
+        return await self._quote(task, body)
 
     async def get_generation_status(self, job_id: str) -> VideoGenerationResult:
         data = await self._task(job_id)

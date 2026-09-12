@@ -23,6 +23,12 @@ class OwnerPolicy(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     version: Mapped[int] = mapped_column(Integer)
     autonomy_stopped: Mapped[bool] = mapped_column(Boolean)
+    #: TEST or PRODUCTION (migration 0031). The studio's own state, not a request's claim:
+    #: a page cannot ask for production routing, and an experiment cannot buy a film.
+    #: Declared server-side only, so an insert omits it: a studio bootstrapped against an
+    #: older schema (the upgrade path a migration test walks) must not fail on a column that
+    #: revision did not have, and a new studio gets TEST from the database.
+    environment: Mapped[str] = mapped_column(String(20), nullable=False, server_default="TEST")
     updated_at: Mapped[str] = mapped_column(String(40))
 
 

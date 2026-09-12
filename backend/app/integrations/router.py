@@ -136,6 +136,7 @@ def create_settings_router() -> APIRouter:
                     interval_seconds=request.app.state.settings.provider_catalog_refresh_seconds,
                     retry_seconds=request.app.state.settings.provider_catalog_retry_seconds,
                     force=True,
+                    settings=request.app.state.settings,
                 )
                 with Session(request.app.state.engine) as session:
                     saved = session.get(Integration, str(identifier))
@@ -221,6 +222,7 @@ def create_settings_router() -> APIRouter:
                 interval_seconds=request.app.state.settings.provider_catalog_refresh_seconds,
                 retry_seconds=request.app.state.settings.provider_catalog_retry_seconds,
                 force=True,
+                settings=request.app.state.settings,
             )
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from None

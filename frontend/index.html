@@ -22,7 +22,7 @@
     <header class="topbar">
       <a href="/" class="brand" title="AMN-AI — Autonomous Machine Nexus · Artificial Intelligence"><img src="/amn-ai-mark.png" alt="" width="38" height="38" class="brand-logo" /><span><strong>AMN-AI</strong><br /><span class="brand-sub">Autonomous Machine Nexus</span></span></a>
       <span class="topbar-crumb"><span id="studio-name">AMN-AI</span> <span class="separator">/</span> Owner workspace</span>
-      <span class="topbar-right"><span id="connection" class="connection" role="status">Neconectat</span><button id="logout" class="quiet topbar-logout" hidden>Închide sesiunea</button></span>
+      <span class="topbar-right"><span id="environment-banner" class="env-banner" role="status" hidden>—</span><span id="connection" class="connection" role="status">Neconectat</span><button id="logout" class="quiet topbar-logout" hidden>Închide sesiunea</button></span>
     </header>
     <main>
       <section id="login" class="login panel">
@@ -55,6 +55,7 @@
               <div class="camera-toolbar">
                 <div class="toolbar-group toolbar-scene">
                 <button id="stop-toggle" class="cam-btn cam-switch" disabled title="Autonomia studioului: pornită sau oprită. Oprirea este persistentă și nu pornește agenți sau publicări."><span class="switch-label">AUTONOMIE</span><span class="switch-track"><span class="switch-knob"></span></span><span id="switch-state" class="switch-state">—</span></button>
+                <button id="environment-toggle" class="cam-btn cam-switch" disabled title="Mediul studioului. TEST: se generează minimul, pe cel mai ieftin model compatibil. PRODUCȚIE: cel mai ieftin model care atinge calitatea cerută de scenă."><span class="switch-label">MEDIU</span><span id="environment-state" class="switch-state">—</span></button>
                 <button id="zoom-in" class="quiet cam-btn" title="Apropie">+</button>
                 <button id="zoom-out" class="quiet cam-btn" title="Depărtează">−</button>
                 <button id="zoom-fit" class="quiet cam-btn" title="Încadrează">Fit</button>

@@ -18,6 +18,7 @@ from app.media.models import VideoRenderJob
 from app.media.toolchain import find_ffmpeg
 from app.providers.media_base import ImageResult, VideoGenerationResult
 from app.providers.media_http import MediaProviderError
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from test_media_providers import png_bytes
 
@@ -457,8 +458,31 @@ def test_a_ceiling_stops_the_motion_pass_and_a_test_renders_the_minimum(engine, 
             )
         )
 
+    # The model this connection offers, as a catalog refresh would have written it: newly
+    # seen, so it is waiting outside production and a test of it is its benchmark.
+    from app.integrations.models import ModelOutcome, ProviderResource
+
+    with Session(engine) as session, session.begin():
+        session.add(
+            ProviderResource(
+                id=str(uuid4()),
+                integration_id=integration_id,
+                resource_type="MODEL",
+                remote_id="test-motion",
+                name="test-motion",
+                api_metadata={"tasks": ["image_to_video"]},
+                api_available=True,
+                last_seen_at=utc_now(),
+                pricing={"per_second_usd": 0.43, "unit": "per second of video"},
+                capabilities={"quality_score": 0.8},
+                metadata_version=1,
+                production_status="QUARANTINE",
+            )
+        )
+
     storyboard_two, _ = _seeded_storyboard(engine, tmp_path / "two")
     capped = Costly(a_clip(tmp_path))
+    capped.integration_id = integration_id
     render_two = assemble_video_job(
         engine,
         storyboard_two,
@@ -467,6 +491,7 @@ def test_a_ceiling_stops_the_motion_pass_and_a_test_renders_the_minimum(engine, 
         image_adapter=StubImages(),
         video_adapter_for_scene=lambda scene: capped,
         motion_budget_usd=3.0,  # one shot at 2.60, then the line is crossed
+        environment="TEST",
     )
     with Session(engine) as session:
         production_two = session.get(VideoRenderJob, render_two["job_id"]).production_json
@@ -474,3 +499,18 @@ def test_a_ceiling_stops_the_motion_pass_and_a_test_renders_the_minimum(engine, 
     assert production_two["motion"]["estimated_usd"] == 2.6
     assert any("motion budget" in note for note in production_two.get("motion_notes", []))
     assert production_two["motion"]["clips"] == 1
+
+    # And what the shot did is recorded against the model, in the kind of run it was. A
+    # model the studio has not admitted yet is being benchmarked by this very test —
+    # otherwise a new model could never earn its way into production, because it is not
+    # allowed to film production until it has results.
+    with Session(engine) as session:
+        outcomes = session.scalars(select(ModelOutcome)).all()
+        assert len(outcomes) == 1
+        outcome = outcomes[0]
+        assert outcome.remote_id == "test-motion"
+        assert outcome.environment == "TEST"
+        assert outcome.run_kind == "TEST_BENCHMARK"
+        assert outcome.accepted and outcome.first_pass
+        assert outcome.credits == 260.0
+        assert outcome.usd == 2.6

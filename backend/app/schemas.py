@@ -12,9 +12,26 @@ class PolicyCommand(BaseModel):
     stopped: bool = Field(strict=True)
 
 
+class EnvironmentCommand(BaseModel):
+    """The Owner moves the studio between testing and publishing.
+
+    The same shape as the autonomy stop, for the same reason: what the studio is allowed to
+    spend changes with it, so it is a versioned command recorded in the ledger, never a
+    setting a page can flip or an agent can assume.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    schema_version: Literal[1] = 1
+    command_id: UUID
+    expected_version: int = Field(ge=1)
+    environment: Literal["TEST", "PRODUCTION"]
+
+
 class PolicyView(BaseModel):
     version: int
     autonomy_stopped: bool
+    #: Which environment the studio is in. The page shows it; the backend decides it.
+    environment: Literal["TEST", "PRODUCTION"] = "TEST"
     autonomy_mode: Literal["MANUAL"] = "MANUAL"
     public_publish_enabled: Literal[False] = False
     external_payments_enabled: Literal[False] = False

@@ -18,7 +18,7 @@ from app.economy.services import EconomyError
 from app.factual.models import FactualClaim, ScriptDraft, TopicIdea
 from app.factual.services import FactualGateError
 from app.media.assembler import RenderEngineUnavailable, assemble_video_job
-from app.media.factory import describe, render_plan, test_motion_provider, tts_provider
+from app.media.factory import describe, motion_for_scene, render_plan, tts_provider
 from app.media.models import MediaAsset, Storyboard, VideoRenderJob
 from app.media.production_policy import (
     IdentityChangeCommand,
@@ -55,7 +55,7 @@ from app.media.services import (
 )
 from app.providers.media_http import MediaProviderError
 from app.security import require_owner
-from app.services import append_event, utc_now
+from app.services import append_event, studio_environment, utc_now
 
 
 def create_media_router() -> APIRouter:
@@ -252,7 +252,7 @@ def create_media_router() -> APIRouter:
         request: Request,
         storyboard_id: Annotated[str, FPath(min_length=36, max_length=36)],
         motion_scenes: Annotated[int | None, Query(ge=0, le=24)] = None,
-        mode: Annotated[str, Query(pattern="^(production|test)$")] = "production",
+        model: Annotated[str | None, Query(max_length=200)] = None,
     ) -> dict:
         correlation_id = str(uuid4())
         engine = request.app.state.engine
@@ -265,9 +265,10 @@ def create_media_router() -> APIRouter:
             # episode/scene overrides and locked character voices. A test-injected adapter on
             # app.state still wins, as before.
             planned = render_plan(engine, vault, storyboard_id)
-            # A test films on the cheapest prompt-to-video model, for as few scenes as it
-            # takes to see how the film reads: one experiment must never cost a film again.
-            test_motion = test_motion_provider(engine, vault) if mode == "test" else None
+            # Which environment this render belongs to is the studio's own state: a page
+            # cannot ask for production routing by adding a parameter, and an agent cannot
+            # decide it. `model` is the Director's explicit override, recorded as such.
+            environment = studio_environment(engine)
             injected_tts = getattr(request.app.state, "tts_adapter", None)
             result = assemble_video_job(
                 engine,
@@ -280,28 +281,67 @@ def create_media_router() -> APIRouter:
                 # The Owner's own render button makes the same film the day does: a shot per
                 # scene from the scene's motion model, not a slideshow.
                 video_adapter_for_scene=(
+                    None if getattr(request.app.state, "image_adapter", None) else None
+                ),
+                motion_chooser=(
                     None
                     if getattr(request.app.state, "image_adapter", None)
                     else (
-                        (lambda scene: test_motion)
-                        if mode == "test" and test_motion is not None
-                        else planned["video_for_scene"]
+                        lambda scene, tier, seconds, budget, exclude: motion_for_scene(
+                            engine,
+                            vault,
+                            scene,
+                            environment=environment,
+                            tier=tier,
+                            seconds=seconds,
+                            budget_usd=budget,
+                            forced_model=model,
+                            exclude=exclude,
+                            max_usd_per_second=(
+                                request.app.state.settings.test_max_cost_per_second_usd
+                                if environment == "TEST"
+                                else None
+                            ),
+                        )
                     )
                 ),
-                motion_from_prompt=mode == "test",
+                environment=environment,
+                motion_from_prompt=environment == "TEST",
                 # `motion_scenes=1` is how a test render costs one shot instead of eight.
-                motion_budget_usd=request.app.state.settings.motion_budget_usd,
+                motion_budget_usd=(
+                    request.app.state.settings.test_max_cost_per_generation_usd
+                    if environment == "TEST"
+                    else request.app.state.settings.motion_budget_usd
+                ),
+                # In TEST the ceiling is checked twice: once when the model is chosen, on the
+                # price the studio has recorded, and once against what the vendor quotes for
+                # this exact shot. The second is the one that can refuse a purchase.
+                motion_max_usd_per_second=(
+                    request.app.state.settings.test_max_cost_per_second_usd
+                    if environment == "TEST"
+                    else None
+                ),
+                price_tolerance_percent=(request.app.state.settings.price_stale_tolerance_percent),
                 motion_scene_limit=(
                     motion_scenes
                     if motion_scenes is not None
-                    else (2 if mode == "test" else request.app.state.settings.motion_scenes_max)
+                    else (
+                        request.app.state.settings.test_motion_scenes
+                        if environment == "TEST"
+                        else request.app.state.settings.motion_scenes_max
+                    )
                 ),
                 production_plan=planned["plan"],
             )
             # What the render bought goes into the books here too. The day's stage recorded
             # it and the Owner's own button did not, so four renders left the books empty.
             try:
-                result["costs"] = record_render_costs(engine, result["job_id"], correlation_id)
+                result["costs"] = record_render_costs(
+                    engine,
+                    result["job_id"],
+                    correlation_id,
+                    alert_percent=request.app.state.settings.price_change_alert_percent,
+                )
             except (EconomyError, KeyError, ValueError) as exc:
                 result["costs"] = {"error": str(exc)[:200]}
 

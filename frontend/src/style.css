@@ -833,3 +833,65 @@ main { font-size: 13px; }
 .identity-block li::before { content: ''; position: absolute; left: -14px; top: .72em; width: 6px; height: 6px; border-radius: 50%; background: var(--line-strong); }
 .ledger-chip { font-size: 11px; padding: 4px 9px; }
 .ledger-filters { gap: 5px; }
+
+/* Which environment the studio is in. A test render buys the cheapest shot that proves the
+   pipeline works; a production render buys the quality the scene needs. Confusing the two
+   cost the Owner twenty-one dollars in an afternoon, so the page says which it is, in the
+   top bar, always — and the button that changes it is beside the autonomy switch. */
+.env-banner {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+.env-banner.is-test {
+  background: #4a2c12;
+  border-color: #f5a623;
+  color: #ffd08a;
+}
+.env-banner.is-production {
+  background: #14301f;
+  border-color: #2f7d52;
+  color: #9fe3ba;
+}
+.cam-switch#environment-toggle {
+  gap: 0.4rem;
+}
+.cam-switch#environment-toggle.is-test #environment-state {
+  color: #ffd08a;
+}
+.cam-switch#environment-toggle.is-production #environment-state {
+  color: #9fe3ba;
+}
+
+/* The router's reasoning, under the film it produced. Folded away by default: the Owner
+   opens it when he wants to know why a shot cost what it cost. */
+.motion-explain {
+  margin: 0.5rem 0;
+  font-size: 0.78rem;
+}
+.motion-explain summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.motion-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.4rem 0;
+  flex-wrap: wrap;
+}
+.motion-scenes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+.motion-reason {
+  opacity: 0.75;
+  line-height: 1.35;
+}

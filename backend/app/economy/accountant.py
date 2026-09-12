@@ -82,7 +82,11 @@ def daily_figures(engine: Engine, now: datetime | None = None) -> dict[str, Any]
 
 
 def record_render_costs(
-    engine: Engine, render_job_id: str, correlation_id: str | None = None
+    engine: Engine,
+    render_job_id: str,
+    correlation_id: str | None = None,
+    *,
+    alert_percent: float | None = None,
 ) -> dict:
     """Record the estimated cost of one render's narration, per scene, where a price is known.
 
@@ -186,11 +190,22 @@ def record_render_costs(
                 )
     # What the vendor charged for this render becomes the model's price. A guess that said
     # 0.025 USD a second survived four renders that measured 0.43; measurement ends that.
+    alerts: list[dict[str, Any]] = []
     for model_id, (usd, seconds) in measured.items():
         if seconds > 0 and usd > 0 and motion_connection:
-            record_measured_price(
+            moves = record_measured_price(
                 engine, motion_connection, model_id, usd / seconds, "per second of video"
             )
+            for move in moves:
+                percent = move.get("percent")
+                if (
+                    alert_percent is not None
+                    and isinstance(percent, int | float)
+                    and abs(float(percent)) >= float(alert_percent)
+                ):
+                    alerts.append({**move, "model_id": model_id})
+    if alerts:
+        _price_alert(engine, alerts, correlation)
 
     recorded = 0
     for item in priced:
@@ -208,7 +223,52 @@ def record_render_costs(
         except EconomyError:
             # Already recorded for this scene: the day was re-run, and one scene costs once.
             continue
-    return {"render_job_id": render_job_id, "recorded": recorded, "unpriced_scenes": unpriced}
+    return {
+        "render_job_id": render_job_id,
+        "recorded": recorded,
+        "unpriced_scenes": unpriced,
+        "price_alerts": alerts,
+    }
+
+
+def _price_alert(engine: Engine, alerts: list[dict[str, Any]], correlation: str) -> None:
+    """Tell the Owner that a model's price moved, in the Accountant's own words.
+
+    A vendor can change a price without telling anyone, and a studio that notices only at
+    the end of the month has already paid the difference. The threshold is the Owner's
+    (`STUDIO_PRICE_CHANGE_ALERT_PERCENT`); below it, the change is recorded and not sent.
+    """
+    lines = []
+    for alert in alerts:
+        was, now = alert.get("was"), alert.get("now")
+        percent = alert.get("percent")
+        if isinstance(now, int | float) and isinstance(was, int | float):
+            moved = float(percent) if isinstance(percent, int | float) else 0.0
+            lines.append(
+                f"{alert['model_id']}: {was:.4f} USD -> {now:.4f} USD pe unitate "
+                f"({moved:+.1f}%), măsurat din ce a facturat vendorul."
+            )
+        else:
+            lines.append(f"{alert['model_id']}: nu mai are preț pentru unitatea măsurată.")
+    with Session(engine) as session, session.begin():
+        accountant = agent_for_role(session, "Accountant")
+        if accountant is None:
+            return
+        post_message(
+            session,
+            intent="ESCALATE",
+            subject="Preț schimbat la un model de generare"[:200],
+            body={"kind": "price_change", "alerts": alerts},
+            body_text=(
+                "Prețul măsurat s-a schimbat față de ce aveam înregistrat:\n"
+                + "\n".join(lines)
+                + "\nPrețul vechi este păstrat pe model, cu data măsurării."
+            ),
+            from_agent_id=accountant.id,
+            to_agent_id=None,
+            to_owner=True,
+            correlation_id=correlation,
+        )
 
 
 # ----------------------------------------------------------------------------- the report

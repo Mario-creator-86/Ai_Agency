@@ -28,6 +28,7 @@ workflow.
 from __future__ import annotations
 
 import logging
+from dataclasses import asdict, dataclass
 from typing import Any
 from uuid import uuid4
 
@@ -40,6 +41,7 @@ from app.integrations.discovery import (
     production_resource,
     resource_available,
 )
+from app.integrations.lifecycle import ADMITTED, LIFECYCLE
 from app.integrations.models import (
     Integration,
     MediaProductionConfig,
@@ -393,15 +395,17 @@ def rank_candidates(
 
 def record_measured_price(
     engine: Engine, integration_id: str, model_id: str, usd_per_unit: float, unit: str
-) -> None:
+) -> list[dict]:
     """Write what the vendor actually charged over whatever a steward had guessed.
 
     The studio learns a model's price by using it: Runway states the credits every task
     costs, and the Owner recorded what a credit costs. A measured price carries its source,
     so the next choice is made on what happened rather than on what a page seemed to say.
     """
+    from app.integrations.lifecycle import stamp_price  # noqa: PLC0415
+
     if usd_per_unit <= 0:
-        return
+        return []
     with Session(engine) as session, session.begin():
         row = session.scalar(
             select(ProviderResource).where(
@@ -411,21 +415,78 @@ def record_measured_price(
             )
         )
         if row is None:
-            return
+            return []
         pricing = dict(row.pricing) if isinstance(row.pricing, dict) else {}
         key = "per_second_usd" if unit.startswith("per second") else "per_image_usd"
         was = pricing.get(key)
         if isinstance(was, int | float) and abs(float(was) - usd_per_unit) < 1e-6:
-            return
+            return []
         pricing.update({key: round(usd_per_unit, 6), "unit": unit, "source": "measured"})
-        row.pricing = pricing
-        row.metadata_source = "measured from the studio's own renders"
-        row.metadata_updated_at = utc_now()
+        # What the account was charged is the dearest evidence there is about a price, and it
+        # is written with its provenance: what the price was before, when this was measured,
+        # and that it was measured rather than read on a page.
+        moves = stamp_price(
+            row,
+            pricing,
+            verification="BILLED",
+            source="measured from the studio's own renders",
+        )
         row.metadata_version = int(row.metadata_version or 1) + 1
         logger.info(
             "measured_price_recorded",
             extra={"model": model_id, key: round(usd_per_unit, 6), "was": was},
         )
+        return moves
+
+
+def record_quoted_price(
+    engine: Engine,
+    integration_id: str,
+    model_id: str,
+    usd_per_unit: float,
+    unit_key: str,
+    *,
+    tolerance_percent: float,
+) -> dict | None:
+    """Compare a vendor's quote with the stored price, and correct the price if it drifted.
+
+    A dry run is the vendor speaking about today's price. Within the tolerance the stored
+    price stands — a quote is for one shot, at one length, and small differences are
+    rounding. Past it the stored price is stale, and what the vendor just said replaces it,
+    marked as estimated rather than billed.
+    """
+    from app.integrations.lifecycle import price_is_stale, stamp_price  # noqa: PLC0415
+
+    if usd_per_unit <= 0:
+        return None
+    with Session(engine) as session, session.begin():
+        row = session.scalar(
+            select(ProviderResource).where(
+                ProviderResource.integration_id == integration_id,
+                ProviderResource.resource_type == "MODEL",
+                ProviderResource.remote_id == model_id,
+            )
+        )
+        if row is None:
+            return None
+        stale = price_is_stale(
+            row, usd_per_unit, unit_key=unit_key, tolerance_percent=tolerance_percent
+        )
+        if stale is None:
+            return None
+        pricing = dict(row.pricing) if isinstance(row.pricing, dict) else {}
+        pricing.update(
+            {unit_key: round(usd_per_unit, 6), "unit": unit_key, "source": "vendor dry run"}
+        )
+        stamp_price(
+            row,
+            pricing,
+            verification="ESTIMATED",
+            source="quoted by the vendor before generating",
+        )
+        row.metadata_version = int(row.metadata_version or 1) + 1
+        logger.info("quoted_price_recorded", extra={"model": model_id, **stale})
+        return stale
 
 
 def credit_usd(session: Session, integration_id: str) -> float | None:
@@ -530,6 +591,422 @@ def estimate_cost_usd(
             total += float(price) * float(quantity) / per
             priced = True
     return round(total, 6) if priced else None
+
+
+# ----------------------------------------------------------------- what a scene requires
+
+#: What a scene needs, as a quality score in the same 0..1 scale the catalogue records. The
+#: tier is a property of the scene, never of a model: STANDARD is not "the cheap model", it
+#: is "the quality an ordinary published scene must reach". The router then finds the least
+#: expensive model that reaches it.
+QUALITY_TIERS: dict[str, float] = {
+    "STANDARD": 0.80,
+    "PREMIUM": 0.88,
+    "HERO": 0.93,
+}
+
+#: Which scenes of a short carry the most weight. A hook that fails loses the viewer in the
+#: first second and an ending that fails loses the comment, so those two are worth more than
+#: the middle. Reused from the scene's own position when nothing else says otherwise.
+SCENE_ROLE_TIERS: dict[str, str] = {
+    "HOOK": "HERO",
+    "ENDING": "PREMIUM",
+    "KEY": "PREMIUM",
+    "NORMAL": "STANDARD",
+    "TRANSITION": "STANDARD",
+    "BACKGROUND": "STANDARD",
+}
+
+
+def scene_role(scene_index: int, total_scenes: int) -> str:
+    """The part this scene plays in the film, from its position when nothing else says.
+
+    The first shot is the hook and the last is the payoff; a studio that treats them like
+    the middle spends the same money on the scenes that decide whether anyone watches.
+    """
+    if scene_index <= 1:
+        return "HOOK"
+    if total_scenes and scene_index >= total_scenes:
+        return "ENDING"
+    return "NORMAL"
+
+
+def required_quality(tier: str) -> float:
+    return QUALITY_TIERS.get(str(tier).upper(), QUALITY_TIERS["STANDARD"])
+
+
+# ----------------------------------------------------------------- what a model has done
+
+#: Lifecycle states a model must be in before it may film something that will be published.
+#: The stations themselves belong to `app.integrations.lifecycle`, which moves models between
+#: them; the router only reads which ones are admitted.
+PRODUCTION_READY = ADMITTED
+#: And the ones that mean "not yet" or "no longer".
+NOT_FOR_PRODUCTION = tuple(station for station in LIFECYCLE if station not in ADMITTED)
+
+
+def model_record(
+    session: Session, integration_id: str, purpose: str, remote_id: str
+) -> dict[str, Any]:
+    """What the studio knows about one model for one purpose, from its own generations.
+
+    Only benchmarks and real production scenes teach quality; a cheap functional test only
+    says whether the pipeline worked. That distinction is the whole reason the environment
+    is recorded with every generation.
+    """
+    from app.integrations.models import ModelOutcome  # noqa: PLC0415
+
+    rows = list(
+        session.scalars(
+            select(ModelOutcome).where(
+                ModelOutcome.integration_id == integration_id,
+                ModelOutcome.remote_id == remote_id,
+                ModelOutcome.purpose == purpose,
+            )
+        )
+    )
+    judging = [r for r in rows if r.run_kind in ("PRODUCTION", "TEST_BENCHMARK")]
+    accepted = [r for r in judging if r.accepted]
+    usd = sum(float(r.usd or 0) for r in judging)
+    seconds = sum(float(r.seconds_accepted or 0) for r in accepted)
+    technical = [r for r in rows if r.failure_kind == "TECHNICAL"]
+    return {
+        "generations": len(rows),
+        "judged": len(judging),
+        "acceptance": (len(accepted) / len(judging)) if judging else None,
+        "first_pass": (
+            sum(1 for r in judging if r.first_pass and r.accepted) / len(judging)
+            if judging
+            else None
+        ),
+        "cost_per_accepted_second": (usd / seconds) if seconds > 0 else None,
+        "technical_failures": len(technical),
+    }
+
+
+def _observed_quality(record: dict[str, Any], annotated: float) -> float:
+    """What the studio believes about a model's picture: its own results, then research.
+
+    Acceptance is the studio's own judgement of a finished shot, so where there is enough of
+    it, it carries. Below three judged generations it cannot outweigh a steward's reading —
+    one lucky shot is not evidence.
+    """
+    acceptance = record.get("acceptance")
+    judged = int(record.get("judged") or 0)
+    if acceptance is None or judged < 3:
+        return annotated
+    weight = min(1.0, judged / 10.0)
+    return round(annotated * (1 - weight) + float(acceptance) * weight, 4)
+
+
+# ----------------------------------------------------------------- the choice itself
+
+
+@dataclass(frozen=True)
+class SceneRequirement:
+    """What the router is asked for: a capability, a quality, a length and a purse.
+
+    Business logic states requirements, never a model name — the point of the whole
+    arrangement. `generate_video(scene_requirements, minimum_quality, budget_limit)`, not
+    `generate_with_seedance()`.
+    """
+
+    purpose: str = "video"
+    tasks: tuple[str, ...] = ()
+    tier: str = "STANDARD"
+    scene_category: str = "GENERAL"
+    seconds: float = 0.0
+    budget_usd: float | None = None
+    #: What one second may cost in this environment. A TEST render is checking that the
+    #: pipeline works, so a shot above the ceiling is refused rather than quietly bought.
+    max_usd_per_second: float | None = None
+    frame: str = STUDIO_FRAME
+
+
+def _unit_price(session: Session, integration_id: str, row: Any, seconds: float) -> float | None:
+    """What this model would cost for the length asked, from whatever unit it is priced in."""
+    price = estimate_cost_usd(
+        session,
+        integration_id,
+        str(row.remote_id),
+        seconds=seconds or 1.0,
+    )
+    if price is not None:
+        return price
+    return estimate_cost_usd(session, integration_id, str(row.remote_id), images=1)
+
+
+def choose_model(
+    session: Session,
+    integration_id: str,
+    requirement: SceneRequirement,
+    *,
+    environment: str,
+    exclude: tuple[str, ...] = (),
+    forced: str | None = None,
+) -> dict[str, Any]:
+    """Which model films this scene, in this environment, and why.
+
+    TEST takes the cheapest model that can technically do the job and ignores the quality
+    ranking entirely: a test answers "does this work", and a mediocre picture is a pass. Its
+    fallback is the next cheapest, never the best. PRODUCTION takes the least expensive model
+    whose expected quality reaches what the scene requires, and says what it did not buy and
+    why — the marginal question the Owner asked: is the dearer model worth the multiple?
+
+    `forced` is the Director's explicit override, which is honoured in both environments and
+    recorded as such. `exclude` is what has already failed for this scene.
+    """
+    from app.integrations.discovery import resource_available, usable_purposes  # noqa: PLC0415
+    from app.integrations.models import Integration  # noqa: PLC0415
+
+    integration = session.get(Integration, integration_id)
+    kind = integration.kind if integration else ""
+    wanted_tasks = tuple(requirement.tasks) or GENERATIVE_TASKS.get(requirement.purpose, ())
+    candidates: list[dict[str, Any]] = []
+    for row in session.scalars(
+        select(ProviderResource).where(
+            ProviderResource.integration_id == integration_id,
+            ProviderResource.resource_type == "MODEL",
+        )
+    ):
+        remote_id = str(row.remote_id)
+        if remote_id in exclude or not resource_available(row):
+            continue
+        # A retired model is retired everywhere: demoted for what it delivered, or named by
+        # the Owner's deny list. Only the Director naming it by hand can bring it back.
+        if str(row.production_status or "") == "DEPRECATED" and remote_id != forced:
+            continue
+        if requirement.purpose not in usable_purposes(kind, row):
+            continue
+        metadata = row.api_metadata if isinstance(row.api_metadata, dict) else {}
+        listed = metadata.get("tasks")
+        tasks: tuple[str, ...] = tuple(str(t) for t in listed) if isinstance(listed, list) else ()
+        if wanted_tasks and tasks and not any(task in wanted_tasks for task in tasks):
+            continue
+        raw_needs = metadata.get("needs_references")
+        needs: dict[str, Any] = raw_needs if isinstance(raw_needs, dict) else {}
+        asked = wanted_tasks or tasks
+        known = [task for task in asked if task in needs]
+        if known and all(needs.get(task) for task in known):
+            continue  # it only edits footage it is given; the studio has words and a still
+        caps = row.capabilities if isinstance(row.capabilities, dict) else {}
+        record = model_record(session, integration_id, requirement.purpose, remote_id)
+        annotated = _number(caps.get("quality_score"), 0.5)
+        price = _unit_price(session, integration_id, row, requirement.seconds)
+        effective = record.get("cost_per_accepted_second")
+        candidates.append(
+            {
+                "remote_id": remote_id,
+                "status": str(row.production_status or "PRODUCTION"),
+                "quality": _observed_quality(record, annotated),
+                "annotated_quality": annotated,
+                "price_usd": price,
+                "price_per_second_usd": (
+                    (price / requirement.seconds)
+                    if price is not None and requirement.seconds
+                    else None
+                ),
+                "effective_cost_per_second": effective,
+                "delivers_studio_frame": delivers_studio_frame(
+                    metadata, requirement.purpose, requirement.frame
+                ),
+                "record": record,
+                "priced": price is not None,
+            }
+        )
+
+    if forced:
+        chosen = next((c for c in candidates if c["remote_id"] == forced), None)
+        if chosen is not None:
+            return _decision(
+                chosen,
+                candidates,
+                environment,
+                requirement,
+                reason=f"Director's explicit choice: {forced}.",
+                forced=True,
+            )
+
+    if not candidates:
+        return {
+            "model_id": None,
+            "environment": environment,
+            "requirement": asdict(requirement),
+            "reason": "No model on this connection can do what the scene needs.",
+            "candidates": [],
+        }
+
+    if environment == "TEST":
+        # Compatibility, then availability, then cost — and nothing else. An unpriced model
+        # goes last: an unpriced test is how an afternoon cost twenty-one dollars.
+        order = sorted(
+            candidates,
+            key=lambda c: (
+                not c["priced"],
+                c["price_usd"] if c["price_usd"] is not None else float("inf"),
+                c["remote_id"],
+            ),
+        )
+        within = [c for c in order if _within_test_ceilings(c, requirement)]
+        if not within:
+            dearest = order[0]
+            return {
+                "model_id": None,
+                "environment": environment,
+                "scene_category": requirement.scene_category,
+                "required_quality": 0.0,
+                "reason": (
+                    "Refused in TEST: the cheapest compatible model "
+                    f"({dearest['remote_id']}) would cost {_money(dearest['price_usd'])} for "
+                    f"{requirement.seconds:.1f}s, above the test ceiling. Raise the ceiling "
+                    "or name the model explicitly."
+                ),
+                "considered": len(order),
+                "blocked_by_ceiling": True,
+            }
+        return _decision(
+            within[0],
+            within,
+            environment,
+            requirement,
+            reason=("Cheapest compatible model in TEST; the production ranking is not consulted."),
+        )
+
+    # PRODUCTION. Only models the studio has admitted to production may film a published
+    # scene, and the frame comes first: upscaled footage in a 1080x1920 film is not premium.
+    admitted = [c for c in candidates if c["status"] in PRODUCTION_READY]
+    if not admitted:
+        waiting = ", ".join(sorted(c["remote_id"] for c in candidates)[:4])
+        return {
+            "model_id": None,
+            "environment": environment,
+            "scene_category": requirement.scene_category,
+            "required_quality": required_quality(requirement.tier),
+            "reason": (
+                "No model on this connection has been admitted to production for this "
+                f"scene. Waiting outside production: {waiting}. A new model is benchmarked "
+                "in TEST before it films anything that will be published."
+            ),
+            "considered": len(candidates),
+            "blocked_by_lifecycle": True,
+        }
+    ready = [c for c in admitted if c["delivers_studio_frame"]] or admitted
+    needed = required_quality(requirement.tier)
+    affordable = [
+        c
+        for c in ready
+        if requirement.budget_usd is None
+        or c["price_usd"] is None
+        or c["price_usd"] <= requirement.budget_usd
+    ]
+    pool = affordable or ready
+    meeting = [c for c in pool if c["quality"] >= needed]
+
+    def cost_key(c: dict[str, Any]) -> float:
+        for value in (
+            c.get("effective_cost_per_second"),
+            c.get("price_per_second_usd"),
+            c.get("price_usd"),
+        ):
+            if isinstance(value, int | float):
+                return float(value)
+        return float("inf")
+
+    if meeting:
+        chosen = min(meeting, key=lambda c: (cost_key(c), -c["quality"], c["remote_id"]))
+        dearer = [
+            c for c in pool if c["quality"] > chosen["quality"] and cost_key(c) > cost_key(chosen)
+        ]
+        reason = (
+            f"{requirement.tier} needs {needed:.2f}; this model is expected at "
+            f"{chosen['quality']:.2f} and is the least expensive that reaches it."
+        )
+        if dearer:
+            best = max(dearer, key=lambda c: c["quality"])
+            gain = best["quality"] - chosen["quality"]
+            multiple = (cost_key(best) / cost_key(chosen)) if cost_key(chosen) else float("inf")
+            reason += (
+                f" {best['remote_id']} is expected at {best['quality']:.2f}"
+                f" (+{gain:.2f}) for {multiple:.1f}x the cost, which the scene does not need."
+            )
+        return _decision(chosen, pool, environment, requirement, reason=reason)
+
+    # Nothing reaches the requirement: take the best available and say so, rather than
+    # pretending a tier was met.
+    chosen = max(pool, key=lambda c: (c["quality"], -cost_key(c)))
+    return _decision(
+        chosen,
+        pool,
+        environment,
+        requirement,
+        reason=(
+            f"No model reaches {needed:.2f} for {requirement.tier}; the best available is "
+            f"{chosen['remote_id']} at an expected {chosen['quality']:.2f}."
+        ),
+        met=False,
+    )
+
+
+def _money(value: object) -> str:
+    return f"{float(value):.2f} USD" if isinstance(value, int | float) else "an unknown amount"
+
+
+def _within_test_ceilings(candidate: dict[str, Any], requirement: SceneRequirement) -> bool:
+    """Whether a TEST generation may buy this model for this shot.
+
+    Two ceilings, both from the settings: what one generation may cost and what one second
+    may cost. An unpriced model passes — it is already ordered last — but a model whose
+    price is known and above the ceiling is refused, which is the point of the ceiling.
+    """
+    price = candidate.get("price_usd")
+    if requirement.budget_usd is not None and isinstance(price, int | float):
+        if float(price) > float(requirement.budget_usd):
+            return False
+    if (
+        requirement.max_usd_per_second is not None
+        and isinstance(price, int | float)
+        and requirement.seconds > 0
+    ):
+        if float(price) / requirement.seconds > float(requirement.max_usd_per_second):
+            return False
+    return True
+
+
+def _decision(
+    chosen: dict[str, Any],
+    candidates: list[dict[str, Any]],
+    environment: str,
+    requirement: SceneRequirement,
+    *,
+    reason: str,
+    forced: bool = False,
+    met: bool = True,
+) -> dict[str, Any]:
+    """The choice, with what it was chosen over — what the page shows and the job records."""
+    alternatives = [
+        {
+            "model_id": c["remote_id"],
+            "quality": c["quality"],
+            "price_usd": c["price_usd"],
+            "status": c["status"],
+        }
+        for c in candidates
+        if c["remote_id"] != chosen["remote_id"]
+    ][:4]
+    return {
+        "model_id": chosen["remote_id"],
+        "environment": environment,
+        "requirement": asdict(requirement),
+        "expected_quality": chosen["quality"],
+        "required_quality": required_quality(requirement.tier),
+        "requirement_met": met,
+        "estimated_usd": chosen["price_usd"],
+        "status": chosen["status"],
+        "forced": forced,
+        "reason": reason,
+        "alternatives": alternatives,
+        "candidates": len(candidates),
+    }
 
 
 # ----------------------------------------------------------------------------- resolution
@@ -761,6 +1238,32 @@ def _validate(session: Session, purpose: str, merged: dict[str, Any]) -> tuple[b
         ):
             return False, "Voice is not a discovered, available voice of this connection"
     return True, None
+
+
+#: Levels of the hierarchy where naming a model is a deliberate act: a channel, a series,
+#: an episode, a scene, or a character's locked look. The Organization default is not one of
+#: them — it is the connection's default model, and choosing between models is the studio's
+#: job, which is exactly what the Owner asked the agent to start doing.
+DELIBERATE_LEVELS = ("channel", "series", "episode", "scene", "character")
+
+
+def named_model(plan: dict[str, Any], scene_index: object) -> str | None:
+    """The video model a level of the hierarchy named for this scene, if any.
+
+    A model a person chose for this channel, series, episode or scene is honoured over the
+    policy's own ranking, and recorded as an override so the report says who decided.
+    """
+    if not isinstance(scene_index, int):
+        return None
+    for entry in plan.get("scenes", []):
+        if entry.get("scene_index") != scene_index:
+            continue
+        video = entry.get("video") if isinstance(entry.get("video"), dict) else {}
+        if str(video.get("source") or "") in DELIBERATE_LEVELS:
+            model_id = video.get("model_id")
+            return str(model_id) if model_id else None
+        return None
+    return None
 
 
 def resolve_storyboard_plan(session: Session, storyboard: Storyboard) -> dict[str, Any]:

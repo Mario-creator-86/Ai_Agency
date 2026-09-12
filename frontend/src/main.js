@@ -21,11 +21,13 @@ const login = element('login');
 const workspace = element('workspace');
 const input = /** @type {HTMLInputElement} */ (element('owner-token'));
 const stopButton = /** @type {HTMLButtonElement} */ (element('stop-toggle'));
+const environmentButton = /** @type {HTMLButtonElement} */ (element('environment-toggle'));
 const inspector = /** @type {HTMLDialogElement} */ (element('agent-inspector'));
 
 let ownerToken = '';
 let state = null;
 let pendingCommand = null;
+let pendingEnvironment = null;
 let epoch = 0;
 let busy = false;
 let connected = false;
@@ -1658,6 +1660,50 @@ async function makeStoryboard(button) {
   }
 }
 
+// Why each scene was filmed the way it was. The router states what the scene required and
+// what it chose; this only reads it back. A studio that cannot say why it spent three
+// dollars on a shot cannot be asked whether the shot was worth it.
+function motionExplanation(motion, scenes, notes) {
+  if (!motion && (!scenes || scenes.length === 0)) return '';
+  const test = motion && motion.environment === 'TEST';
+  const head = motion
+    ? `<div class="motion-head"><span class="${test ? 'env-banner is-test' : 'env-banner is-production'}">${
+        test ? 'TEST' : 'PRODUCȚIE'
+      }</span> <span>${motion.clips || 0} din ${motion.scenes || 0} scene filmate · ${
+        motion.estimated_usd != null ? `${Number(motion.estimated_usd).toFixed(2)} USD` : 'cost nemăsurat'
+      }${motion.from_prompt ? ' · din text, fără cadru plătit' : ''}</span></div>`
+    : '';
+  const rows = (scenes || [])
+    .map((scene) => {
+      const decision = scene.decision || {};
+      const price =
+        scene.quoted_usd != null
+          ? `${Number(scene.quoted_usd).toFixed(2)} USD (cotat de vendor)`
+          : decision.price_usd != null
+            ? `${Number(decision.price_usd).toFixed(2)} USD (preț înregistrat)`
+            : 'preț necunoscut';
+      const outcome = scene.refused
+        ? `<span class="text-error">nefilmată: ${escapeHtml(String(scene.refused))}</span>`
+        : `${scene.bytes ? 'filmată' : 'fără clip'}`;
+      return `
+        <li>
+          <strong>Scena #${scene.scene_index}</strong> · ${escapeHtml(String(scene.tier || '—'))} ·
+          ${escapeHtml(String(scene.model || decision.model_id || '—'))} · ${escapeHtml(price)} · ${outcome}
+          ${decision.reason ? `<div class="motion-reason">${escapeHtml(String(decision.reason))}</div>` : ''}
+        </li>`;
+    })
+    .join('');
+  const noteList = (notes || [])
+    .map((note) => `<li class="motion-reason">${escapeHtml(String(note))}</li>`)
+    .join('');
+  return `
+    <details class="motion-explain">
+      <summary>De ce aceste modele</summary>
+      ${head}
+      <ul class="motion-scenes">${rows}${noteList}</ul>
+    </details>`;
+}
+
 async function loadMediaStoryboards() {
   const listEl = element('storyboards-list');
   try {
@@ -1677,9 +1723,15 @@ async function loadMediaStoryboards() {
       storyboards.map(async (sb) => {
         let scenes = [];
         let qcReport = null;
+        let motion = null;
+        let motionScenes = [];
+        let motionNotes = [];
         try {
           const detail = await api(`/media/storyboards/${sb.id}`);
           scenes = detail.scenes || [];
+          motion = detail.motion || null;
+          motionScenes = detail.motion_scenes || [];
+          motionNotes = detail.motion_notes || [];
         } catch (_) {}
 
         if (sb.status === 'RENDERED') {
@@ -1760,6 +1812,7 @@ async function loadMediaStoryboards() {
               }</div>
               <div>${qcBadge}</div>
               ${qcScoresHtml}
+              ${motionExplanation(motion, motionScenes, motionNotes)}
               <div><strong>Amprentă SHA-256 a fișierului:</strong></div>
               <div class="provenance-badge">${escapeHtml(tech.provenance_sha256 || 'indisponibilă')}</div>
             </div>
@@ -2210,6 +2263,7 @@ function render(data) {
   element('snapshot-time').textContent =
     `Actualizat ${new Date(data.captured_at).toLocaleTimeString('ro-RO', { timeZone: data.studio.timezone })}`;
   renderSwitch(data.policy.autonomy_stopped);
+  renderEnvironment(data.policy.environment);
   ledger.timezone = data.studio.timezone;
   const agentNames = Object.fromEntries(officeState.agents.map((a) => [a.id || a.agent_id, a.display_name]));
   ledger.setNames(agentNames);
@@ -2247,6 +2301,27 @@ function render(data) {
  * The autonomy switch in the office frame: one control, ON or OFF, in the scene's chrome.
  * OFF is the persistent stop the Owner sets; ON means the studio may work on its own.
  */
+// The studio's environment is its own state, read from the policy the server owns: the
+// page displays it and asks for a change, it never decides it. A test that looks like a
+// production run is how an experiment buys eight generated shots.
+function renderEnvironment(environment) {
+  const value = environment === 'PRODUCTION' ? 'PRODUCTION' : 'TEST';
+  const test = value === 'TEST';
+  const banner = element('environment-banner');
+  banner.hidden = false;
+  banner.textContent = test ? 'MEDIU DE TEST' : 'PRODUCȚIE';
+  banner.classList.toggle('is-test', test);
+  banner.classList.toggle('is-production', !test);
+  banner.title = test
+    ? 'Se randează minimul, pe cel mai ieftin model compatibil, cu plafoane de cost per generare și per secundă.'
+    : 'Se randează cu cel mai ieftin model care atinge calitatea cerută de fiecare scenă.';
+  environmentButton.disabled = false;
+  environmentButton.classList.toggle('is-test', test);
+  environmentButton.classList.toggle('is-production', !test);
+  element('environment-state').textContent = pendingEnvironment ? '…' : test ? 'TEST' : 'PROD';
+  environmentButton.setAttribute('aria-pressed', String(!test));
+}
+
 function renderSwitch(stopped) {
   const on = !stopped;
   stopButton.classList.toggle('is-on', on);
@@ -2339,6 +2414,38 @@ element('logout').addEventListener('click', () => {
   element('studio-name').textContent = 'AMN-AI';
   element('connection').textContent = 'Neconectat';
   element('logout').hidden = true;
+});
+
+environmentButton.addEventListener('click', async () => {
+  if (busy || !connected || !state) return;
+  busy = true;
+  environmentButton.disabled = true;
+  notify('');
+  const generation = epoch;
+  const next = state.policy.environment === 'TEST' ? 'PRODUCTION' : 'TEST';
+  pendingEnvironment ||= {
+    schema_version: 1,
+    command_id: crypto.randomUUID(),
+    expected_version: state.policy.version,
+    environment: next,
+  };
+  try {
+    await api('/owner/environment', {
+      method: 'POST',
+      body: JSON.stringify(pendingEnvironment),
+    });
+    if (generation !== epoch) return;
+    pendingEnvironment = null;
+  } catch (error) {
+    if (generation !== epoch) return;
+    if (error.status === 409 || error.status === 422) pendingEnvironment = null;
+    notify(error.message);
+  } finally {
+    if (generation === epoch) {
+      busy = false;
+      await refresh();
+    }
+  }
 });
 
 stopButton.addEventListener('click', async () => {

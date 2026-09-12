@@ -280,6 +280,10 @@ def test_contract_parser_reads_tasks_ratios_and_durations_per_model():
         "ratios": {"text_to_video": ["16:9", "9:16"]},
         "durations": {"text_to_video": [4, 8]},
         "needs_references": {"text_to_video": False},
+        # Whether this task may be asked what it would cost without being asked to do it.
+        # Only the vendor's contract may say so: a dry-run flag the API does not declare
+        # could submit a real, billed task.
+        "dry_run": {"text_to_video": False},
     }
     assert contract["m2"]["durations"] == {"text_to_video": {"min": 2, "max": 10}}
     # What the model must be given besides words is part of its contract: m2 and m3 require

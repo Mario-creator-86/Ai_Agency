@@ -403,7 +403,14 @@ def test_a_render_is_costed_per_scene_at_the_stored_price_and_only_once(
             )
         )
     first = record_render_costs(engine, job_id)
-    assert first == {"render_job_id": job_id, "recorded": 2, "unpriced_scenes": 1}
+    assert first == {
+        "render_job_id": job_id,
+        "recorded": 2,
+        "unpriced_scenes": 1,
+        # No price moved here, so the Owner is not written to: an alert is a change of
+        # price past the Owner's threshold, not a report of every render.
+        "price_alerts": [],
+    }
     assert record_render_costs(engine, job_id)["recorded"] == 0, "a re-run charges nothing"
     with Session(engine) as session:
         rows = session.scalars(select(ProviderCostRecord)).all()

@@ -57,6 +57,13 @@ TRENDS_JOB_NAME = "trends_daily"
 MODEL_RESEARCH = "MODEL_RESEARCH"
 MODEL_RESEARCH_JOB_NAME = "model_research_weekly"
 
+#: The standing of every model, re-judged on what it has delivered. Daily and light: it
+#: reads `model_outcome` and moves models between stations, and generates nothing, so it
+#: costs nothing. The weekly research above is the full review — it reads the vendors' pages
+#: as well — and both are behind the autonomy stop like every other scheduled work.
+MODEL_REVIEW = "MODEL_REVIEW"
+MODEL_REVIEW_JOB_NAME = "model_review_daily"
+
 #: A daily run can take minutes — agents, a render, quality control. The lease has to outlast it,
 #: or the queue would hand the same run to the next pass while this one is still rendering.
 TASK_LEASE_SECONDS = 3600
@@ -131,6 +138,11 @@ def build_task_handlers(
 
         return refresh_trends(engine, settings, correlation_id=task["id"])
 
+    def model_review(task: dict[str, Any]) -> dict[str, Any]:
+        from app.integrations.lifecycle import review_models  # noqa: PLC0415
+
+        return review_models(engine, settings, full=False, correlation_id=task["id"])
+
     def model_research(task: dict[str, Any]) -> dict[str, Any]:
         if registry is None:
             raise NonRetryable("Cercetarea de modele are nevoie de registrul de furnizori.")
@@ -143,6 +155,7 @@ def build_task_handlers(
         WEEKLY_REVIEW: weekly_review,
         TRENDS_REFRESH: trends_refresh,
         MODEL_RESEARCH: model_research,
+        MODEL_REVIEW: model_review,
     }
 
 

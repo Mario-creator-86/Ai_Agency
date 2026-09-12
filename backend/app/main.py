@@ -38,9 +38,16 @@ from app.publishing.router import create_publishing_router
 from app.runbook.router import create_runbook_router
 from app.runbook.stages import build_stage_runners
 from app.runbook.weekly import WEEKLY_JOB_NAME
-from app.schemas import PolicyCommand, PolicyResult
+from app.schemas import EnvironmentCommand, PolicyCommand, PolicyResult
 from app.security import require_owner
-from app.services import CommandConflict, change_stop, read_events, snapshot, utc_now
+from app.services import (
+    CommandConflict,
+    change_environment,
+    change_stop,
+    read_events,
+    snapshot,
+    utc_now,
+)
 from app.story.router import create_story_router
 from app.workflows.publisher import ConnectionManager, publish_pending_outbox
 from app.workflows.router import (
@@ -55,6 +62,8 @@ from app.workflows.worker import (
     DAILY_RUN,
     MODEL_RESEARCH,
     MODEL_RESEARCH_JOB_NAME,
+    MODEL_REVIEW,
+    MODEL_REVIEW_JOB_NAME,
     TRENDS_JOB_NAME,
     TRENDS_REFRESH,
     build_task_handlers,
@@ -99,7 +108,7 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
         # Migrations/bootstrap are explicit startup commands, never hidden destructive schema edits.
         with engine.connect() as connection:
             revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
-            if revision != "0030_search_template":
+            if revision != "0031_environment_and_model_lifecycle":
                 raise RuntimeError("Run scripts/bootstrap.py with this application version")
             if connection.scalar(text("SELECT COUNT(*) FROM owner_policy")) != 1:
                 raise RuntimeError("Run scripts/bootstrap.py to initialize the studio")
@@ -136,6 +145,7 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
                             app.state.credential_vault,
                             interval_seconds=settings.provider_catalog_refresh_seconds,
                             retry_seconds=settings.provider_catalog_retry_seconds,
+                            settings=settings,
                         )
                     except Exception as exc:
                         logger.warning(
@@ -201,6 +211,19 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
                 interval_seconds=7 * 86400,
                 missed_policy="CATCH_UP",
                 first_run_at=_utc_now_plus(7200),
+                active=True,
+            )
+            # And every day, the standing of every model, re-judged on what it delivered.
+            # The light review reads the studio's own results and generates nothing, so a
+            # model that has started failing stops being chosen within a day instead of a
+            # week — and a model that has proved itself stops waiting outside production.
+            ensure_scheduled_job(
+                engine,
+                name=MODEL_REVIEW_JOB_NAME,
+                workflow_type=MODEL_REVIEW,
+                interval_seconds=86400,
+                missed_policy="SKIP",
+                first_run_at=_utc_now_plus(900),
                 active=True,
             )
             handlers = build_task_handlers(
@@ -341,6 +364,18 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
         after: Annotated[int, Query(ge=0)] = 0, limit: Annotated[int, Query(ge=1, le=300)] = 50
     ) -> dict:
         return read_events(engine, after, limit)
+
+    @router.post("/owner/environment", response_model=PolicyResult)
+    def set_environment(command: EnvironmentCommand) -> PolicyResult | JSONResponse:
+        """Move the studio between TEST and PRODUCTION.
+
+        The environment decides what a generation may cost, so it lives in the studio's own
+        policy and changes only here — never from a query parameter a page could set.
+        """
+        try:
+            return change_environment(engine, command)
+        except CommandConflict as exc:
+            return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     @router.post("/owner/autonomy-stop", response_model=PolicyResult)
     def set_autonomy_stop(command: PolicyCommand) -> PolicyResult | JSONResponse:

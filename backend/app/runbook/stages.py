@@ -95,7 +95,7 @@ from app.research.agent import (
     gather_sources,
     propose_topics,
 )
-from app.services import utc_now
+from app.services import studio_environment, utc_now
 from app.story.models import DailyStudioLog, StoryEpisode
 from app.story.services import StoryError, write_episode
 
@@ -657,7 +657,8 @@ def _media(
     on an opinion about delivery.
     """
     from app.media.assembler import RenderEngineUnavailable, assemble_video_job
-    from app.media.factory import image_provider, render_plan, tts_provider
+    from app.media.factory import image_provider, motion_for_scene, render_plan, tts_provider
+    from app.media.production_policy import named_model
     from app.providers.media_http import MediaProviderError
 
     with Session(engine) as session:
@@ -684,6 +685,8 @@ def _media(
     if not budget["allowed"]:
         return _outcome(SKIPPED, budget["reason"], budget=budget["period"])
 
+    # Which environment the day renders in is the studio's own state, not a parameter.
+    environment = studio_environment(engine)
     images = image_provider(engine, vault)
     voice = tts_provider(engine, vault)
     produced = []
@@ -713,16 +716,49 @@ def _media(
                 image_adapter=planned.get("image") or images,
                 tts_adapter=voice,
                 tts_adapter_for_scene=planned["tts_for_scene"],
-                # The hierarchy's motion choice per scene: with it the film moves, without
-                # it the stills push slowly. Either way the shots dissolve.
-                video_adapter_for_scene=planned["video_for_scene"],
+                # The model of each scene is chosen against what the scene requires, in
+                # the environment the studio is in: a test buys the cheapest that can do the
+                # job, production the least expensive that reaches the quality. A model a
+                # level of the hierarchy named by hand is honoured as an override.
+                motion_chooser=(
+                    lambda scene, tier, seconds, budget, exclude, plan=planned["plan"]: (
+                        motion_for_scene(
+                            engine,
+                            vault,
+                            scene,
+                            environment=environment,
+                            tier=tier,
+                            seconds=seconds,
+                            budget_usd=budget,
+                            forced_model=named_model(plan, scene.get("scene_index")),
+                            exclude=exclude,
+                            max_usd_per_second=(
+                                settings.test_max_cost_per_second_usd
+                                if environment == "TEST"
+                                else None
+                            ),
+                        )
+                    )
+                ),
+                environment=environment,
+                motion_from_prompt=environment == "TEST",
                 # What this film may spend on motion, and how many scenes may be generated.
                 # The ceiling is the smaller of the studio's per-film limit and what the
                 # day's budget still allows, so one film cannot spend the week.
-                motion_budget_usd=min(
-                    settings.motion_budget_usd, _budget_left_usd(engine, settings)
+                motion_budget_usd=(
+                    settings.test_max_cost_per_generation_usd
+                    if environment == "TEST"
+                    else min(settings.motion_budget_usd, _budget_left_usd(engine, settings))
                 ),
-                motion_scene_limit=settings.motion_scenes_max,
+                motion_max_usd_per_second=(
+                    settings.test_max_cost_per_second_usd if environment == "TEST" else None
+                ),
+                price_tolerance_percent=settings.price_stale_tolerance_percent,
+                motion_scene_limit=(
+                    settings.test_motion_scenes
+                    if environment == "TEST"
+                    else settings.motion_scenes_max
+                ),
                 production_plan=planned["plan"],
             )
         except RenderEngineUnavailable as exc:
@@ -738,9 +774,12 @@ def _media(
         # Into the books at once, at the stored price, so the day's close and the next
         # budget check see what was just spent.
         try:
-            costs_recorded += record_render_costs(engine, result["job_id"], str(uuid4()))[
-                "recorded"
-            ]
+            costs_recorded += record_render_costs(
+                engine,
+                result["job_id"],
+                str(uuid4()),
+                alert_percent=settings.price_change_alert_percent,
+            )["recorded"]
         except (EconomyError, KeyError):
             logger.info("render_cost_not_recorded", extra={"storyboard_id": storyboard_id})
 

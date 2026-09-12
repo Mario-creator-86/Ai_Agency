@@ -825,7 +825,24 @@ def get_storyboard(engine: Engine, storyboard_id: str) -> dict | None:
         ).all()
         view = StoryboardView.model_validate(sb)
         view.scenes = [StoryboardSceneView.model_validate(s) for s in scenes]
-        return view.model_dump()
+        data = view.model_dump()
+        # What the last render of this storyboard decided about motion: which model filmed
+        # each scene, in which environment, what it cost, and what the router did not buy.
+        # A decision the Owner cannot read is a decision he has to take on trust.
+        job = session.scalars(
+            select(VideoRenderJob)
+            .where(VideoRenderJob.storyboard_id == storyboard_id)
+            .order_by(VideoRenderJob.started_at.desc())
+        ).first()
+        production = job.production_json if job and isinstance(job.production_json, dict) else {}
+        data["motion"] = production.get("motion")
+        data["motion_notes"] = production.get("motion_notes") or []
+        data["motion_scenes"] = [
+            {"scene_index": entry.get("scene_index"), **(entry.get("motion") or {})}
+            for entry in production.get("scenes") or []
+            if isinstance(entry, dict) and isinstance(entry.get("motion"), dict)
+        ]
+        return data
 
 
 def list_storyboards(engine: Engine) -> list[dict]:

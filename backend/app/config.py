@@ -99,6 +99,48 @@ class Settings(BaseSettings):
     #: instead of eight. The Owner's instruction: "la teste redam doar minimul".
     motion_scenes_max: int | None = None
 
+    #: How many scenes a TEST render may generate. A test answers "does this work", and two
+    #: shots answer it; the Owner's instruction after an afternoon cost twenty-one dollars
+    #: was that a test renders the minimum.
+    test_motion_scenes: int = 2
+
+    #: What a single TEST generation may cost, and what a TEST second may cost. A request
+    #: above either is refused rather than quietly bought: in TEST the studio is checking
+    #: that the pipeline works, not what a shot looks like.
+    test_max_cost_per_generation_usd: float = 0.60
+    test_max_cost_per_second_usd: float = 0.12
+
+    # ---------------------------------------------------------------- models come and go
+    #: Whether a model the vendor has newly exposed is taken into the studio's catalogue at
+    #: all. On, because a catalogue the studio refuses to read is a catalogue frozen in the
+    #: month someone wrote it down; a new model still starts outside production.
+    auto_discover_models: bool = True
+
+    #: Whether the studio may spend money of its own accord to learn what a new model's
+    #: picture is like. Off by default: benchmarking is generation, and generation is money.
+    auto_benchmark_new_models: bool = False
+
+    #: What the studio may spend on benchmarking in one review, in dollars.
+    max_benchmark_budget_usd: float = 1.50
+
+    #: Whether the periodic review may move a model up when its own results justify it, and
+    #: down when it keeps failing or costs a multiple of an admitted model for the same job.
+    auto_promote_cheaper_better_models: bool = True
+    auto_demote_expensive_models: bool = True
+
+    #: How many judged generations a model needs before its results may move it. Below this
+    #: a good run is luck, not evidence.
+    min_test_samples_for_promotion: int = Field(default=3, ge=1, le=100)
+
+    #: A price that moves by at least this much is a letter to the Owner, and a vendor quote
+    #: that disagrees with the stored price by more than the tolerance makes it stale.
+    price_change_alert_percent: float = Field(default=10.0, ge=0.1, le=1000.0)
+    price_stale_tolerance_percent: float = Field(default=5.0, ge=0.1, le=1000.0)
+
+    #: Model names the Owner refuses, as comma-separated shell patterns (`*` matches). The
+    #: one thing about models that belongs in configuration: a judgement, not a fact.
+    model_deny_list: str = ""
+
     # The background worker is what makes the studio run without the browser: it fires due
     # scheduled jobs and executes the tasks they enqueue. Off in tests, where a loop that starts
     # the day on its own would make every other test's timing a coincidence.

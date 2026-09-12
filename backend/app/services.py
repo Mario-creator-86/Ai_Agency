@@ -9,7 +9,13 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.models import CommandRecord, DomainEvent, OwnerPolicy, Room, Studio
-from app.schemas import EventView, PolicyCommand, PolicyResult, PolicyView
+from app.schemas import (
+    EnvironmentCommand,
+    EventView,
+    PolicyCommand,
+    PolicyResult,
+    PolicyView,
+)
 
 
 class CommandConflict(Exception):
@@ -57,7 +63,12 @@ def bootstrap_studio(engine: Engine, settings: Settings) -> None:
         ).scalar_one_or_none()
         if not created:
             return
-        session.add(OwnerPolicy(id=1, version=1, autonomy_stopped=True, updated_at=utc_now()))
+        # Written column by column, like the studio row above: a bootstrap that runs against
+        # an older schema (the upgrade path a migration test walks) must not depend on
+        # columns that revision never had. Later columns take their database defaults.
+        session.execute(
+            insert(OwnerPolicy).values(id=1, version=1, autonomy_stopped=True, updated_at=utc_now())
+        )
         correlation = str(uuid4())
         append_event(
             session,
@@ -129,7 +140,96 @@ def remember_command(
 
 
 def policy_view(policy: OwnerPolicy) -> PolicyView:
-    return PolicyView(version=policy.version, autonomy_stopped=policy.autonomy_stopped)
+    return PolicyView(
+        version=policy.version,
+        autonomy_stopped=policy.autonomy_stopped,
+        # A row written before the column existed reads as None; TEST is the safe reading.
+        environment=policy.environment or "TEST",  # type: ignore[arg-type]
+    )
+
+
+def studio_environment(engine: Engine) -> str:
+    """Which environment the studio is in, read from its own state.
+
+    Every selection that spends money asks this, and nothing else may answer it: not a query
+    parameter, not a header, not an agent's belief about what it is doing. A studio whose
+    policy row is missing is treated as TEST — the cheap answer, never the expensive one.
+    """
+    with Session(engine) as session:
+        policy = session.get(OwnerPolicy, 1)
+        return str(policy.environment or "TEST") if policy else "TEST"
+
+
+def change_environment(engine: Engine, command: EnvironmentCommand) -> PolicyResult:
+    """Move the studio between TEST and PRODUCTION, the way autonomy is stopped.
+
+    Idempotent by command id, refusing a stale version, and recorded as an event, because
+    the difference between the two environments is what a shot is allowed to cost.
+    """
+    payload_hash = hashlib.sha256(
+        json.dumps(command.model_dump(mode="json"), sort_keys=True).encode()
+    ).hexdigest()
+    command_id = str(command.command_id)
+    with Session(engine) as session, session.begin():
+        session.execute(update(OwnerPolicy).where(OwnerPolicy.id == 1).values(id=1))
+        previous = session.get(CommandRecord, command_id)
+        if previous:
+            if previous.payload_hash != payload_hash:
+                raise CommandConflict("Command ID already used with different input")
+            return PolicyResult.model_validate(previous.response)
+        policy = session.get(OwnerPolicy, 1)
+        if policy is None:
+            raise RuntimeError("Studio has not been initialized")
+        if command.expected_version != policy.version:
+            raise CommandConflict("Policy changed; refresh the snapshot and retry")
+        event_id = None
+        changed = policy.environment != command.environment
+        if changed:
+            policy.environment = command.environment
+            policy.version += 1
+            policy.updated_at = utc_now()
+            event = append_event(
+                session,
+                "owner.environment_changed",
+                "owner_policy",
+                "1",
+                policy.version,
+                {"environment": command.environment},
+                command_id,
+            )
+            event_id = event.event_id
+            from app.agents.memory import remember  # noqa: PLC0415
+
+            remember(
+                session,
+                memory_class="OWNER_POLICY",
+                content=(
+                    "The studio is in TEST: every generation takes the cheapest model that "
+                    "can do the job, and nothing is bought to look better."
+                    if command.environment == "TEST"
+                    else "The studio is in PRODUCTION: a scene gets the least expensive "
+                    "model that reliably reaches the quality it needs."
+                ),
+                source_type="owner",
+                source_id=event_id,
+                event_id=event_id,
+            )
+        result = PolicyResult(
+            command_id=command_id,
+            status="COMMITTED" if changed else "NO_CHANGE",
+            policy=policy_view(policy),
+            event_id=event_id,
+        )
+        session.add(
+            CommandRecord(
+                idempotency_key=command_id,
+                command_type="SetEnvironment",
+                payload_hash=payload_hash,
+                response=result.model_dump(),
+                created_at=utc_now(),
+            )
+        )
+        return result
 
 
 def change_stop(engine: Engine, command: PolicyCommand) -> PolicyResult:

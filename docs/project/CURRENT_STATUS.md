@@ -13,6 +13,18 @@ database resource discovery/refresh, separate production choices, UI and regress
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
 
+## Two environments, decided by the studio (2026-09-12)
+
+The studio knows whether it is testing or publishing (`owner_policy.environment`, migration
+0031), and that decides which policy chooses each scene's model: in TEST the cheapest
+compatible model under a cost ceiling per generation and per second, in PRODUCTION the least
+expensive model that reaches the quality the scene's part in the film requires. The
+environment is server-side state changed only by the Owner's versioned command; the page
+displays it and asks for a change. A model now carries a standing it has to earn
+(DISCOVERED → … → PREFERRED) and cannot film anything that will be published until its own
+recorded results admit it. Prices carry their provenance — documented, quoted, billed — with
+what they were before, and a change past the Owner's threshold reaches him as a letter.
+
 ## The clean studio's first film, approved and unpublished (2026-09-12)
 
 From an empty history: six topics proposed in English on authorised sites, pages found

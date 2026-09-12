@@ -244,27 +244,67 @@ def video_provider_for(
     return None
 
 
-def test_motion_provider(engine: Engine, vault: CredentialVault) -> VideoProvider | None:
-    """The adapter a test render films with: the cheapest prompt-to-video model available.
+def motion_for_scene(
+    engine: Engine,
+    vault: CredentialVault,
+    scene: dict,
+    *,
+    environment: str,
+    tier: str = "STANDARD",
+    seconds: float = 0.0,
+    budget_usd: float | None = None,
+    forced_model: str | None = None,
+    exclude: tuple[str, ...] = (),
+    max_usd_per_second: float | None = None,
+) -> tuple[VideoProvider | None, dict]:
+    """The model that films this scene, chosen by requirement, with the reason it was chosen.
 
-    Production uses the best model the account has, from the still the Director approved.
-    A test only has to show how a film reads, so it films from the words directly on the
-    cheapest model that can — the difference measured on the Owner's account is about
-    2.60 USD a shot against a few cents.
+    The studio states what the scene needs — the task, the quality its tier demands, its
+    length, what it may cost — and the router answers with a model. Which policy answers
+    depends on the environment, and the environment is the studio's own state: a test takes
+    the cheapest model that can do the job, production the least expensive that reaches the
+    quality. The decision travels with the adapter so the page and the render job can both
+    say why.
     """
-    from app.media.production_policy import cheapest_prompt_to_video  # noqa: PLC0415
+    from app.media.production_policy import (  # noqa: PLC0415
+        PROMPT_TO_VIDEO,
+        SceneRequirement,
+        choose_model,
+    )
 
     with Session(engine) as session:
         row = _selected(session, "video")
         if row is None:
-            return None
-        model_id = cheapest_prompt_to_video(session, row.id)
+            return None, {"model_id": None, "reason": "No connection is selected for video."}
+        # A test films from the words (nothing is bought to make a first frame); production
+        # moves the still the Director approved.
+        tasks = (PROMPT_TO_VIDEO,) if environment == "TEST" else ("image_to_video",)
+        requirement = SceneRequirement(
+            purpose="video",
+            tasks=tasks,
+            tier=tier,
+            scene_category=str(scene.get("scene_category") or "GENERAL"),
+            seconds=seconds,
+            budget_usd=budget_usd,
+            max_usd_per_second=max_usd_per_second,
+        )
+        decision = choose_model(
+            session,
+            row.id,
+            requirement,
+            environment=environment,
+            exclude=exclude,
+            forced=forced_model,
+        )
         integration_id = row.id
-    if not model_id:
-        return None
-    return video_provider_for(
-        engine, vault, {"valid": True, "integration_id": integration_id, "model_id": model_id}
+    if not decision.get("model_id"):
+        return None, decision
+    adapter = video_provider_for(
+        engine,
+        vault,
+        {"valid": True, "integration_id": integration_id, "model_id": decision["model_id"]},
     )
+    return adapter, decision
 
 
 def render_plan(engine: Engine, vault: CredentialVault, storyboard_id: str) -> dict:
