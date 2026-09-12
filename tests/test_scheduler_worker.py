@@ -34,6 +34,8 @@ from app.workflows.services import (
 from app.workflows.worker import (
     DAILY_JOB_NAME,
     DAILY_RUN,
+    DIRECTOR_LOOP,
+    DIRECTOR_LOOP_JOB_NAME,
     MODEL_RESEARCH,
     MODEL_RESEARCH_JOB_NAME,
     MODEL_REVIEW,
@@ -268,18 +270,22 @@ def test_the_application_seeds_the_daily_job_only_when_the_worker_is_on(settings
         pass
     with Session(engine) as session:
         jobs = {job.name: job for job in session.scalars(select(ScheduledJob))}
-    # Five standing jobs: the day (dormant until the Owner starts it), the Director's
-    # weekly performance review (active standing policy, first fire an hour after birth),
-    # the daily reading of what people search for, the stewards' weekly reading of their
-    # vendors' pages, and the daily re-judging of every model's standing on what it has
-    # delivered — all but the day active from birth, behind the autonomy stop.
+    # Six standing jobs: the day (dormant until the Owner starts it), the Director's weekly
+    # performance review, the daily reading of what people search for, the stewards' weekly
+    # reading of their vendors' pages, the daily re-judging of every model's standing, and
+    # the Director's own pass over the company four times a day — all but the day active
+    # from birth, behind the autonomy stop.
     assert set(jobs) == {
         DAILY_JOB_NAME,
         WEEKLY_JOB_NAME,
         TRENDS_JOB_NAME,
         MODEL_RESEARCH_JOB_NAME,
         MODEL_REVIEW_JOB_NAME,
+        DIRECTOR_LOOP_JOB_NAME,
     }
+    assert jobs[DIRECTOR_LOOP_JOB_NAME].workflow_type == DIRECTOR_LOOP
+    assert jobs[DIRECTOR_LOOP_JOB_NAME].is_active
+    assert jobs[DIRECTOR_LOOP_JOB_NAME].interval_seconds == 21600
     assert jobs[MODEL_REVIEW_JOB_NAME].workflow_type == MODEL_REVIEW
     assert jobs[MODEL_REVIEW_JOB_NAME].is_active
     assert jobs[MODEL_REVIEW_JOB_NAME].interval_seconds == 86400

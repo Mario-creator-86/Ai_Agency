@@ -1,5 +1,47 @@
 # Changelog
 
+## The Director runs a company, not a video — 2026-09-12
+
+Every part of this studio was measured and no part was managed. The Director chose the day's
+topic, read her inbox and watched the finished film; nobody asked where the company stood,
+what was preventing growth, which department was holding up the ones after it, whether an
+agent had been idle for a week, or whether last month's strategic bet had worked. A snapshot
+said "10 000 views" and nothing said whether that was good.
+
+Nothing here is a second management system. The Director is the same agent with the same role
+and the same model, given a new task; assignments go through the existing mailbox, the loop
+runs as a standard job on the existing scheduler, idle agents and dead letters come from
+`measure_workforce`, weight changes stay `DirectorRecommendation` with its own database
+constraints, and the panel is the panel that was already there (migration 0033).
+
+- **The company has a readable state.** Environment, data maturity, each channel with the last
+  seven days against the seven before them, the pipeline stage by stage with what is in flight
+  and where the bottleneck is, agents with their failure rates, the ordered backlog with a
+  reason per place, open decisions, anomalies, and what limits growth per channel. All of it
+  from stored rows: a channel with nothing measured reports nothing, not zero.
+- **Performance is normalised.** Views per hour beside the totals, subscriber conversion,
+  engagement, cost and production minutes on the same row, cost per thousand views. A verdict
+  needs a baseline of at least three measured films, twenty-four hours of age and a rate;
+  without them the answer is INSUFFICIENT_DATA, which is a real answer.
+- **A diagnosis names a department.** Click-through separates "nobody chose it" from "they
+  chose it and left", and conversion separates "they watched and did not subscribe" from
+  both. Four causes, four assignments. One film never condemns a category, and nothing in the
+  studio can permanently ban a topic.
+- **The loop's output is action.** At most three assignments per pass, each a letter with the
+  observation, the evidence, the interpretation, the confidence, the decision and the review
+  condition. A matter already under an open decision is not raised again. A matter assigned
+  three times goes to the Owner instead of round a fourth time. STOP and SCALE are the
+  Owner's, always.
+- **A decision is a row with a review date.** The database refuses a decision nobody will
+  check. When the films it was waiting for have been published, it comes back as a matter and
+  is closed with what actually happened — so strategy itself can be learned from.
+- **Idle agents get real work, and only when nothing is in flight.** With films waiting to be
+  finished, finishing them is the work; inventing a task then is the definition of busywork.
+- Tests: `tests/test_director_command.py`, the thirty the Owner asked for. Verified against a
+  copy of the live database: it found the studio's real bottleneck — six films through quality
+  control and none published — and reordered the backlog by evidence in hand. 674 pass.
+- The full report is in `DIRECTOR_COMMAND.md`.
+
 ## The idea has to argue for itself — 2026-09-12
 
 The Owner's principle, in the order it has to be enforced: a good idea, then a good story,

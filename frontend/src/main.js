@@ -3653,11 +3653,126 @@ async function loadRunbookSchedule() {
 
 element('open-runbook-btn').addEventListener('click', () => {
   runbookModal.showModal();
+  loadCompanyState();
   loadPreflight();
   loadSafeMode();
   loadRuns();
   loadRunbookSchedule();
 });
+
+// Where the company stands, and what the Director decided about it. A channel with nothing
+// measured says so: a zero here would read as a measurement, and the studio has published
+// nothing yet. Numbers come with their change, because a total on its own decides nothing.
+async function loadCompanyState() {
+  const box = element('company-state');
+  const list = element('company-decisions');
+  try {
+    const [state, decisions] = await Promise.all([
+      api('/runbook/company-state'),
+      api('/runbook/decisions'),
+    ]);
+    const pipe = state.pipeline || {};
+    const stages = pipe.stages || {};
+    const maturity = {
+      COLD_START: 'start la rece — nimic măsurat încă',
+      EARLY_DATA: 'primele date',
+      MATURE: 'date suficiente',
+    }[state.maturity] || state.maturity;
+    const channels = (state.channels || [])
+      .map((channel) => {
+        const change =
+          typeof channel.views_change_percentage === 'number'
+            ? `${channel.views_change_percentage > 0 ? '+' : ''}${channel.views_change_percentage}% față de săptămâna anterioară`
+            : 'fără comparație încă';
+        const views =
+          typeof channel.views_last_7_days === 'number'
+            ? `${channel.views_last_7_days} vizualizări în 7 zile`
+            : 'nimic măsurat în 7 zile';
+        return `<div class="runbook-check ${channel.measured ? 'rb-ok' : ''}">
+          <strong>${escapeHtml(channel.channel_name)}</strong>
+          <div>${channel.published} publicate · ${channel.measured} măsurate</div>
+          <div>${escapeHtml(views)} · ${escapeHtml(change)}</div>
+          <div class="motion-reason">${escapeHtml(channel.baseline?.note || '')}</div>
+        </div>`;
+      })
+      .join('');
+    const growth = (state.growth || [])
+      .map(
+        (item) =>
+          `<div class="motion-reason"><strong>${escapeHtml(item.constraint)}</strong> (${escapeHtml(item.confidence)}): ${escapeHtml(item.reason)}</div>`,
+      )
+      .join('');
+    const anomalyList = (state.anomalies || [])
+      .map((item) => `<div class="motion-reason">${escapeHtml(item.kind)}: ${escapeHtml(item.detail)}</div>`)
+      .join('');
+    box.innerHTML = `
+      <div class="runbook-check ${state.autonomy_stopped ? 'rb-fail' : 'rb-ok'}">
+        <strong>${state.autonomy_stopped ? 'Autonomia este oprită' : 'Autonomia este pornită'}</strong>
+        <div>Mediu: ${escapeHtml(state.environment)} · ${escapeHtml(maturity)}</div>
+      </div>
+      ${channels}
+      <div class="runbook-check">
+        <strong>Conductă</strong>
+        <div>${stages.topics_proposed || 0} teme propuse · ${stages.topics_selected || 0} selectate ·
+          ${stages.scripts_approved || 0} scenarii aprobate · ${stages.storyboards_approved || 0} storyboard-uri ·
+          ${stages.renders_completed || 0} randate · ${stages.published || 0} publicate</div>
+        <div>${pipe.in_flight || 0} în lucru neterminat${
+          pipe.bottleneck
+            ? ` · <span class="text-error">gâtuire la ${escapeHtml(pipe.bottleneck.stage)}: ${pipe.bottleneck.waiting} în așteptare</span>`
+            : ''
+        }</div>
+      </div>
+      <div class="runbook-check">
+        <strong>Agenți</strong>
+        <div>${state.agents?.active || 0} activi · ${(state.agents?.idle || []).length} fără rulări ·
+          ${state.agents?.queue_backlog || 0} în coadă · ${state.agents?.dead_letter_tasks || 0} sarcini moarte</div>
+      </div>
+      ${growth ? `<div class="runbook-check"><strong>Ce limitează creșterea</strong>${growth}</div>` : ''}
+      ${anomalyList ? `<div class="runbook-check"><strong>Anomalii</strong>${anomalyList}</div>` : ''}`;
+
+    const rows = (decisions.decisions || []).slice(0, 8);
+    list.innerHTML = rows.length
+      ? rows
+          .map(
+            (row) => `
+        <div class="topic-card">
+          <div class="topic-card-header">
+            <strong class="topic-card-title">${escapeHtml(row.decision)} — ${escapeHtml(row.matter_key)}</strong>
+            <span class="topic-card-novelty">${escapeHtml(row.state)}</span>
+          </div>
+          <div class="motion-reason">${escapeHtml(row.observation)}</div>
+          <div class="motion-reason">Interpretare (${escapeHtml(row.confidence)}): ${escapeHtml(row.interpretation)}</div>
+          <div><strong>De făcut:</strong> ${escapeHtml(row.action)}${row.owner_role ? ` — ${escapeHtml(row.owner_role)}` : ''}</div>
+          ${row.review_after_videos ? `<div class="motion-reason">Revizuire după ${row.review_after_videos} filme.</div>` : ''}
+          ${row.outcome ? `<div class="motion-reason">Rezultat: ${escapeHtml(row.outcome)}</div>` : ''}
+        </div>`,
+          )
+          .join('')
+      : '<div class="topics-loading">Nicio decizie strategică încă.</div>';
+  } catch (err) {
+    box.innerHTML = `<div class="text-error">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+const directCompanyBtn = /** @type {HTMLButtonElement} */ (element('direct-company-btn'));
+if (directCompanyBtn) {
+  directCompanyBtn.addEventListener('click', async () => {
+    directCompanyBtn.disabled = true;
+    runbookStatus('Directoarea citește starea companiei…', false);
+    try {
+      const result = await api('/runbook/direct', { method: 'POST' });
+      runbookStatus(
+        `${result.reason}${result.note ? ` — ${result.note}` : ''}`,
+        result.status === 'SKIPPED',
+      );
+      await loadCompanyState();
+    } catch (err) {
+      runbookStatus(err.message, true);
+    } finally {
+      directCompanyBtn.disabled = false;
+    }
+  });
+}
 element('close-runbook-btn').addEventListener('click', () => runbookModal.close());
 element('refresh-preflight-btn').addEventListener('click', () => loadPreflight());
 

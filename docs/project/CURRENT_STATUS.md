@@ -13,6 +13,21 @@ database resource discovery/refresh, separate production choices, UI and regress
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
 
+## The company is managed, not only measured (2026-09-12)
+
+The Director now answers where the company stands, what is preventing growth and who acts next
+(migration 0033). Performance is normalised per film — views per hour, subscriber conversion,
+cost and production time on the same row — and judged against the channel's own rolling median,
+never an absolute number: a verdict needs three measured films, a day of age and a rate, or the
+answer is INSUFFICIENT_DATA. A diagnosis separates reach from retention from conversion and
+names the department that can fix it. Her pass runs every six hours on the existing scheduler,
+assigns at most three things through the existing mailbox with a review condition on each,
+never raises a matter already in hand, and sends STOP and SCALE to the Owner. Each decision is
+a row the database refuses to accept without a review condition, and it comes back when the
+films it was waiting for have been published. Verified on a copy of the live database: it found
+the real bottleneck, six films through quality control and none published. The report is
+`DIRECTOR_COMMAND.md`.
+
 ## The content decides, before the generation (2026-09-12)
 
 A film now has to be worth making before it can be made. A topic carries an argument — the

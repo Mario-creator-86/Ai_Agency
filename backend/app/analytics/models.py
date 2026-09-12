@@ -161,6 +161,69 @@ class DirectorRecommendation(Base):
     channel: Mapped[ChannelRecord] = relationship("ChannelRecord")
 
 
+class DirectorDecision(Base):
+    """One strategic decision, in a shape that can be reviewed later (migration 0033).
+
+    The studio could record that a video did badly and that a weight moved. It could not
+    record *why the Director decided what she decided*: what she saw, what evidence she had,
+    how sure she was, who she asked to act, and when she would look at it again. Without that,
+    strategy itself could not be learned from — only individual films could.
+
+    A row stays OPEN until its review condition is met, then it is REVIEWED with what actually
+    happened. `matter_key` is the matter decided, so the same thing is not decided twice in one
+    day, and the database refuses a decision with no review condition at all.
+    """
+
+    __tablename__ = "director_decision"
+    __table_args__ = (
+        CheckConstraint(
+            "decision IN ('SCALE','CONTINUE','ITERATE','EXPERIMENT','HOLD','COOLDOWN',"
+            "'REDUCE','STOP','NEEDS_MORE_DATA')",
+            name="ck_decision_kind",
+        ),
+        CheckConstraint("confidence IN ('LOW','MEDIUM','HIGH')", name="ck_decision_confidence"),
+        CheckConstraint("state IN ('OPEN','REVIEWED','SUPERSEDED')", name="ck_decision_state"),
+        CheckConstraint(
+            "review_after_videos IS NOT NULL OR review_after_at IS NOT NULL "
+            "OR decision = 'NEEDS_MORE_DATA'",
+            name="ck_decision_is_reviewable",
+        ),
+        Index("ix_director_decision_state", "state", "created_at"),
+        Index("ix_director_decision_matter", "matter_key", "state"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    scope: Mapped[str] = mapped_column(String(20), nullable=False)
+    channel_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("channel_record.id"), nullable=True
+    )
+    observation: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    interpretation: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[str] = mapped_column(String(10), nullable=False)
+    decision: Mapped[str] = mapped_column(String(20), nullable=False)
+    action: Mapped[str] = mapped_column(Text, nullable=False)
+    owner_role: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    review_after_videos: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    review_after_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    state: Mapped[str] = mapped_column(String(20), nullable=False, default="OPEN")
+    outcome: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    published_at_decision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    matter_key: Mapped[str] = mapped_column(String(120), nullable=False)
+    message_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("agent_message.id"), nullable=True
+    )
+    agent_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("agent.id"), nullable=True)
+    run_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("agent_run.id"), nullable=True
+    )
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    event_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("domain_event.event_id"), nullable=True
+    )
+
+
 class TrendSnapshot(Base):
     """One trending query for the studio's country, as read from Google's public feed.
 

@@ -64,6 +64,12 @@ MODEL_RESEARCH_JOB_NAME = "model_research_weekly"
 MODEL_REVIEW = "MODEL_REVIEW"
 MODEL_REVIEW_JOB_NAME = "model_review_daily"
 
+#: The Director's management of the company, on the studio's own clock. Not a report: one
+#: pass reads the state, takes the matters the measurements raise, and hands work to the
+#: department that can act on it. Behind the autonomy stop like every other scheduled thing.
+DIRECTOR_LOOP = "DIRECTOR_LOOP"
+DIRECTOR_LOOP_JOB_NAME = "director_loop"
+
 #: A daily run can take minutes — agents, a render, quality control. The lease has to outlast it,
 #: or the queue would hand the same run to the next pass while this one is still rendering.
 TASK_LEASE_SECONDS = 3600
@@ -138,6 +144,20 @@ def build_task_handlers(
 
         return refresh_trends(engine, settings, correlation_id=task["id"])
 
+    def director_loop(task: dict[str, Any]) -> dict[str, Any]:
+        from app.agents.command import direct_company  # noqa: PLC0415
+
+        result = direct_company(engine, registry, settings, correlation_id=task["id"])
+        # The state is large and the queue keeps every result: what the task returns is what
+        # the Director did, not the whole company as data.
+        return {
+            "status": result["status"],
+            "reason": result["reason"],
+            "assignments": result.get("assignments", []),
+            "escalated": result.get("escalated", []),
+            "maturity": result.get("maturity"),
+        }
+
     def model_review(task: dict[str, Any]) -> dict[str, Any]:
         from app.integrations.lifecycle import review_models  # noqa: PLC0415
 
@@ -156,6 +176,7 @@ def build_task_handlers(
         TRENDS_REFRESH: trends_refresh,
         MODEL_RESEARCH: model_research,
         MODEL_REVIEW: model_review,
+        DIRECTOR_LOOP: director_loop,
     }
 
 

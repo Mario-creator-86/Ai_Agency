@@ -14,6 +14,12 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.analytics.performance import (
+    anomalies,
+    channel_health,
+    growth_diagnosis,
+    video_performance,
+)
 from app.analytics.schemas import (
     AnalyticsSnapshotView,
     ChannelAnalyticsSummaryView,
@@ -94,6 +100,26 @@ def create_analytics_router() -> APIRouter:
         channel_id: Annotated[str, Path(min_length=36, max_length=36)],
     ) -> dict:
         return get_channel_summary(request.app.state.engine, channel_id)
+
+    @router.get("/performance")
+    def read_performance(request: Request, channel_id: str | None = None) -> dict:
+        """Every published film with its numbers normalised: rates, not lifetime totals."""
+        return {"videos": video_performance(request.app.state.engine, channel_id)}
+
+    @router.get("/channel-health/{channel_id}")
+    def read_channel_health(request: Request, channel_id: str) -> dict:
+        """One channel with the context a number needs: what changed, and how fast."""
+        return channel_health(request.app.state.engine, channel_id)
+
+    @router.get("/growth/{channel_id}")
+    def read_growth(request: Request, channel_id: str) -> dict:
+        """What is preventing faster growth on this channel, and who should act."""
+        return growth_diagnosis(request.app.state.engine, channel_id)
+
+    @router.get("/anomalies")
+    def read_anomalies(request: Request) -> dict:
+        """Unusual changes worth investigating, each with the numbers that make it unusual."""
+        return {"anomalies": anomalies(request.app.state.engine)}
 
     @router.get("/story-performance")
     def read_story_performance(request: Request, channel_id: str | None = None) -> dict:

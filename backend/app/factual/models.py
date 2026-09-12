@@ -40,6 +40,10 @@ class TopicIdea(Base):
     #: The editorial rules this idea failed, if any. An idea the studio refused is kept with
     #: its reasons, because what was turned down is also what the studio learns from.
     rejection_reasons_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    #: Where this candidate stands in the company backlog, and why (migration 0033). Higher
+    #: first. The Director reorders; the reason is what the Owner reads.
+    priority: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    priority_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     proposed_by_agent_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("agent.id", name="fk_topic_idea_proposed_by"), nullable=True
     )

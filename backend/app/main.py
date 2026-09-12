@@ -60,6 +60,8 @@ from app.workflows.services import ensure_scheduled_job
 from app.workflows.worker import (
     DAILY_JOB_NAME,
     DAILY_RUN,
+    DIRECTOR_LOOP,
+    DIRECTOR_LOOP_JOB_NAME,
     MODEL_RESEARCH,
     MODEL_RESEARCH_JOB_NAME,
     MODEL_REVIEW,
@@ -108,7 +110,7 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
         # Migrations/bootstrap are explicit startup commands, never hidden destructive schema edits.
         with engine.connect() as connection:
             revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
-            if revision != "0032_editorial_intelligence":
+            if revision != "0033_director_decisions":
                 raise RuntimeError("Run scripts/bootstrap.py with this application version")
             if connection.scalar(text("SELECT COUNT(*) FROM owner_policy")) != 1:
                 raise RuntimeError("Run scripts/bootstrap.py to initialize the studio")
@@ -224,6 +226,18 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
                 interval_seconds=86400,
                 missed_policy="SKIP",
                 first_run_at=_utc_now_plus(900),
+                active=True,
+            )
+            # And the Director's own pass over the company, four times a day: blockers found
+            # in the morning are not work for tomorrow. It assigns at most three things and
+            # skips a matter already under an open decision, so it cannot become noise.
+            ensure_scheduled_job(
+                engine,
+                name=DIRECTOR_LOOP_JOB_NAME,
+                workflow_type=DIRECTOR_LOOP,
+                interval_seconds=21600,
+                missed_policy="SKIP",
+                first_run_at=_utc_now_plus(1800),
                 active=True,
             )
             handlers = build_task_handlers(
