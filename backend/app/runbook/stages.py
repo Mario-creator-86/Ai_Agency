@@ -68,7 +68,12 @@ from app.factual.agent_pipeline import (
 )
 from app.factual.models import FactualClaim, ScriptDraft, SourceSnapshot, TopicIdea
 from app.factual.services import TopicNotProducible, select_topic
-from app.factual.story_review import review_story, story_gate
+from app.factual.story_review import (
+    StoryReviewError,
+    latest_review,
+    review_story,
+    story_gate,
+)
 from app.integrations.services import selected_youtube
 from app.media.models import (
     EditorialReview,
@@ -602,6 +607,25 @@ def _script_and_storyboard(
             )
             if script.id not in storyboarded
         ][:BATCH]
+        # A script the Owner approved before the story review existed, or approved by hand
+        # in the interface, has no review — and the render stage would hold it forever
+        # rather than buying shots for a story nobody judged. So it is read here, where
+        # reading costs nothing, instead of stalling the day.
+        unreviewed = [
+            script_id for script_id in approved if latest_review(session, script_id) is None
+        ]
+    for script_id in unreviewed:
+        try:
+            reviews.append(
+                {
+                    "verdict": review_story(
+                        engine, registry, script_id, target_seconds=target_seconds
+                    )["verdict"],
+                    "backlog": True,
+                }
+            )
+        except StoryReviewError as exc:
+            logger.info("story_review_failed", extra={"reason": str(exc)[:160]})
 
     boards = 0
     prompted = 0
