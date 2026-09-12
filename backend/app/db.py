@@ -1,11 +1,40 @@
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import Engine, create_engine, event
+from sqlalchemy import Engine, create_engine, event, text
 from sqlalchemy.engine import make_url
 
 from app.config import ROOT
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+
+def lock_for_write(session: "Session") -> None:
+    """Take SQLite's write lock now, before this transaction reads anything.
+
+    SQLite's deferred BEGIN takes a read snapshot at the first SELECT. A transaction that
+    reads and then writes asks to upgrade that snapshot, and if anything committed in between
+    SQLite refuses **immediately** — "database is locked" with the lock already free and
+    `busy_timeout` irrelevant, because no amount of waiting makes an old snapshot writable.
+    Measured: the write fails in 0.00s after the other connection has committed and closed.
+    Two watched runs died that way, both updating one agent's runtime state while the outbox
+    dispatcher committed beside them once a second.
+
+    `BEGIN IMMEDIATE` for every transaction would fix it and cannot be used: the studio opens a
+    writing session inside an open reading session in many places (the economy suite is full of
+    them), and there the inner write waits on the outer read's own lock until it times out —
+    measured at 32.8 seconds, then the same error. So the lock is taken here, per transaction,
+    by the transactions that know they are going to write: a no-op UPDATE of the policy row.
+    From then on the transaction is a writer, later writes cannot be refused, and anyone else
+    waits their turn (which `busy_timeout` covers) instead of failing outright.
+
+    Call it as the FIRST statement of a write transaction, and keep that transaction short —
+    it holds the studio's write lock until it commits.
+    """
+    session.execute(text("UPDATE owner_policy SET version = version WHERE id = 1"))
 
 
 def create_db_engine(database_url: str) -> Engine:

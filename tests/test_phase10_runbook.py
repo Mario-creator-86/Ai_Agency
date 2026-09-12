@@ -482,3 +482,48 @@ def test_clearing_safe_mode_when_none_is_active_is_refused(client, headers, stud
     )
 
     assert response.status_code == 409
+
+
+def test_a_write_that_takes_the_lock_first_survives_a_commit_beside_it(tmp_path):
+    """The failure that killed two watched runs, and the line that prevents it.
+
+    SQLite's deferred BEGIN takes a read snapshot at the first SELECT. A transaction that reads
+    and then writes asks to upgrade it, and if anything committed in between SQLite refuses at
+    once — with the lock already free, so `busy_timeout` has nothing to wait for. `lock_for_write`
+    makes the transaction a writer before it reads, and then it cannot be refused.
+    """
+    import sqlite3
+
+    from app.db import create_db_engine, lock_for_write
+    from sqlalchemy import text
+    from sqlalchemy.orm import Session
+
+    engine = create_db_engine(f"sqlite+pysqlite:///{tmp_path / 'lock.db'}")
+    with engine.begin() as setup:
+        setup.execute(text("CREATE TABLE owner_policy (id INTEGER PRIMARY KEY, version INT)"))
+        setup.execute(text("INSERT INTO owner_policy (id, version) VALUES (1, 1)"))
+        setup.execute(text("CREATE TABLE note (id INTEGER PRIMARY KEY, n INT)"))
+        setup.execute(text("INSERT INTO note (id, n) VALUES (1, 0)"))
+
+    def commit_beside(table: str) -> None:
+        other = sqlite3.connect(str(tmp_path / "lock.db"), isolation_level=None, timeout=30)
+        other.execute("PRAGMA busy_timeout=30000")
+        other.execute(f"UPDATE {table} SET n = n + 1 WHERE id = 1")
+        other.close()
+
+    # Without it: read, someone else commits, write — refused, and no waiting can help.
+    with pytest.raises(Exception) as refused:
+        with Session(engine) as session, session.begin():
+            session.execute(text("SELECT n FROM note WHERE id = 1")).all()
+            commit_beside("note")
+            session.execute(text("UPDATE note SET n = 99 WHERE id = 1"))
+    assert "database is locked" in str(refused.value).lower()
+
+    # With it: the transaction is a writer from the start, so the other connection waits its
+    # turn and this one commits.
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        session.execute(text("SELECT n FROM note WHERE id = 1")).all()
+        session.execute(text("UPDATE note SET n = 42 WHERE id = 1"))
+    with engine.connect() as check:
+        assert check.execute(text("SELECT n FROM note WHERE id = 1")).scalar() == 42

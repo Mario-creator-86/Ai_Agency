@@ -1,5 +1,36 @@
 # Changelog
 
+## The write that could not wait — 2026-09-12
+
+Two watched runs died on the same statement: `UPDATE agent SET runtime_state`, "database is
+locked", once in the script stage and once in `post_run`. Raising `busy_timeout` from ten
+seconds to thirty did not help, which was the clue.
+
+Measured on a scratch database: connection A opens a deferred transaction and reads; B writes
+and commits and closes; A then writes and is refused **in 0.00 seconds**, with the lock free
+and nobody to wait for. SQLite's deferred `BEGIN` takes a read snapshot at the first SELECT,
+and no amount of waiting makes an old snapshot writable. `busy_timeout` was never going to
+matter.
+
+`BEGIN IMMEDIATE` everywhere was the obvious cure and is wrong here. The studio opens a
+writing session inside an open reading session in many places — the economy suite is full of
+them — and there the inner write waits on the outer read's own lock: **32.8 seconds, then the
+same error**. Under that setting twenty-three tests failed, most of them the books.
+
+So the lock is taken per transaction, by the transactions that know they will write:
+`lock_for_write(session)` as the first statement, a no-op UPDATE of the policy row. From then
+on the transaction is a writer, its later writes cannot be refused, and any other writer waits
+its turn — which `busy_timeout` does cover. It is called in both of `run_agent_task`'s write
+blocks, which is where the studio failed twice; both close before the model is called, so the
+lock is held for milliseconds.
+
+The measurements are in the code, so the next person to reach for `BEGIN IMMEDIATE` does not
+have to spend the afternoon finding out.
+
+`uv run pytest -q` — **723 passed, 1 skipped**, including one that reproduces the refusal and
+shows the line that prevents it. `ruff`, `mypy`, `scripts/check_docs.py` clean.
+
+
 ## A reviewer who cannot see the conversation cannot finish it — 2026-09-12
 
 The open writers' room ran for the first time: ten exchanges on one story inside a single run,

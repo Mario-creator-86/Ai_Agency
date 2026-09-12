@@ -29,6 +29,7 @@ from app.agents.models import (
     RoleCapability,
 )
 from app.agents.schemas import AgentRunView, AgentView, ModelView, ProviderView, RoleView
+from app.db import lock_for_write
 from app.models import OwnerPolicy
 from app.providers.registry import ProviderRegistry
 from app.services import append_event, utc_now
@@ -488,6 +489,9 @@ def run_agent_task(
     context: dict = {}
 
     with Session(engine) as session, session.begin():
+        # This transaction reads the agent and its identity and then writes the run: it is
+        # a writer from the start, so it says so before it reads anything.
+        lock_for_write(session)
         agent = session.get(Agent, agent_id)
         if agent is None:
             raise ValueError(f"Agent {agent_id} not found")
@@ -659,6 +663,7 @@ def run_agent_task(
     finished_at = utc_now()
 
     with Session(engine) as session, session.begin():
+        lock_for_write(session)
         agent = session.get(Agent, agent_id)
         if agent:
             agent.runtime_state = "IDLE"
