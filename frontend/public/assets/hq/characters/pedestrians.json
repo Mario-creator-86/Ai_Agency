@@ -1,0 +1,337 @@
+{
+ "frame": {
+  "w": 48,
+  "h": 60,
+  "pivot": [
+   24,
+   54
+  ],
+  "scale": 2
+ },
+ "characters": {
+  "ped00": {
+   "sheet": "ped00.png",
+   "columns": 8,
+   "role": null,
+   "canonical_name": null,
+   "seat_facing": "back",
+   "animations": {
+    "stand_idle": [
+     0,
+     1
+    ],
+    "stand_react": [
+     2,
+     3
+    ],
+    "walk_right": [
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11
+    ]
+   }
+  },
+  "ped01": {
+   "sheet": "ped01.png",
+   "columns": 8,
+   "role": null,
+   "canonical_name": null,
+   "seat_facing": "back",
+   "animations": {
+    "stand_idle": [
+     0,
+     1
+    ],
+    "stand_react": [
+     2,
+     3
+    ],
+    "walk_right": [
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11
+    ]
+   }
+  },
+  "ped02": {
+   "sheet": "ped02.png",
+   "columns": 8,
+   "role": null,
+   "canonical_name": null,
+   "seat_facing": "back",
+   "animations": {
+    "stand_idle": [
+     0,
+     1
+    ],
+    "stand_react": [
+     2,
+     3
+    ],
+    "walk_right": [
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11
+    ]
+   }
+  },
+  "ped03": {
+   "sheet": "ped03.png",
+   "columns": 8,
+   "role": null,
+   "canonical_name": null,
+   "seat_facing": "back",
+   "animations": {
+    "stand_idle": [
+     0,
+     1
+    ],
+    "stand_react": [
+     2,
+     3
+    ],
+    "walk_right": [
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11
+    ]
+   }
+  },
+  "ped04": {
+   "sheet": "ped04.png",
+   "columns": 8,
+   "role": null,
+   "canonical_name": null,
+   "seat_facing": "back",
+   "animations": {
+    "stand_idle": [
+     0,
+     1
+    ],
+    "stand_react": [
+     2,
+     3
+    ],
+    "walk_right": [
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11
+    ]
+   }
+  },
+  "ped05": {
+   "sheet": "ped05.png",
+   "columns": 8,
+   "role": null,
+   "canonical_name": null,
+   "seat_facing": "back",
+   "animations": {
+    "stand_idle": [
+     0,
+     1
+    ],
+    "stand_react": [
+     2,
+     3
+    ],
+    "walk_right": [
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11
+    ]
+   }
+  },
+  "ped06": {
+   "sheet": "ped06.png",
+   "columns": 8,
+   "role": null,
+   "canonical_name": null,
+   "seat_facing": "back",
+   "animations": {
+    "stand_idle": [
+     0,
+     1
+    ],
+    "stand_react": [
+     2,
+     3
+    ],
+    "walk_right": [
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11
+    ]
+   }
+  },
+  "ped07": {
+   "sheet": "ped07.png",
+   "columns": 8,
+   "role": null,
+   "canonical_name": null,
+   "seat_facing": "back",
+   "animations": {
+    "stand_idle": [
+     0,
+     1
+    ],
+    "stand_react": [
+     2,
+     3
+    ],
+    "walk_right": [
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11
+    ]
+   }
+  },
+  "ped08": {
+   "sheet": "ped08.png",
+   "columns": 8,
+   "role": null,
+   "canonical_name": null,
+   "seat_facing": "back",
+   "animations": {
+    "stand_idle": [
+     0,
+     1
+    ],
+    "stand_react": [
+     2,
+     3
+    ],
+    "walk_right": [
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11
+    ]
+   }
+  },
+  "ped09": {
+   "sheet": "ped09.png",
+   "columns": 8,
+   "role": null,
+   "canonical_name": null,
+   "seat_facing": "back",
+   "animations": {
+    "stand_idle": [
+     0,
+     1
+    ],
+    "stand_react": [
+     2,
+     3
+    ],
+    "walk_right": [
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11
+    ]
+   }
+  },
+  "ped10": {
+   "sheet": "ped10.png",
+   "columns": 8,
+   "role": null,
+   "canonical_name": null,
+   "seat_facing": "back",
+   "animations": {
+    "stand_idle": [
+     0,
+     1
+    ],
+    "stand_react": [
+     2,
+     3
+    ],
+    "walk_right": [
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11
+    ]
+   }
+  },
+  "ped11": {
+   "sheet": "ped11.png",
+   "columns": 8,
+   "role": null,
+   "canonical_name": null,
+   "seat_facing": "back",
+   "animations": {
+    "stand_idle": [
+     0,
+     1
+    ],
+    "stand_react": [
+     2,
+     3
+    ],
+    "walk_right": [
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11
+    ]
+   }
+  }
+ }
+}

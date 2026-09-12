@@ -1,0 +1,695 @@
+{
+ "scale": 2,
+ "vehicles": {
+  "sedan": {
+   "sheet": "sedan.png",
+   "cell": {
+    "w": 149,
+    "h": 60
+   },
+   "columns": [
+    "0",
+    "1",
+    "2",
+    "lights"
+   ],
+   "directions": {
+    "right": {
+     "w": 149,
+     "h": 60,
+     "pivot": [
+      74.7,
+      48.3
+     ],
+     "row": 0
+    },
+    "left": {
+     "w": 149,
+     "h": 60,
+     "pivot": [
+      74.7,
+      48.9
+     ],
+     "row": 1
+    }
+   },
+   "length_m": 4.6,
+   "siren": false,
+   "two_wheeler": false
+  },
+  "coupe": {
+   "sheet": "coupe.png",
+   "cell": {
+    "w": 143,
+    "h": 56
+   },
+   "columns": [
+    "0",
+    "1",
+    "2",
+    "lights"
+   ],
+   "directions": {
+    "right": {
+     "w": 143,
+     "h": 56,
+     "pivot": [
+      71.9,
+      44.3
+     ],
+     "row": 0
+    },
+    "left": {
+     "w": 143,
+     "h": 56,
+     "pivot": [
+      71.9,
+      44.8
+     ],
+     "row": 1
+    }
+   },
+   "length_m": 4.4,
+   "siren": false,
+   "two_wheeler": false
+  },
+  "hatchback": {
+   "sheet": "hatchback.png",
+   "cell": {
+    "w": 131,
+    "h": 61
+   },
+   "columns": [
+    "0",
+    "1",
+    "2",
+    "lights"
+   ],
+   "directions": {
+    "right": {
+     "w": 131,
+     "h": 61,
+     "pivot": [
+      65.6,
+      49.9
+     ],
+     "row": 0
+    },
+    "left": {
+     "w": 131,
+     "h": 61,
+     "pivot": [
+      65.6,
+      50.5
+     ],
+     "row": 1
+    }
+   },
+   "length_m": 3.95,
+   "siren": false,
+   "two_wheeler": false
+  },
+  "suv": {
+   "sheet": "suv.png",
+   "cell": {
+    "w": 154,
+    "h": 73
+   },
+   "columns": [
+    "0",
+    "1",
+    "2",
+    "lights"
+   ],
+   "directions": {
+    "right": {
+     "w": 154,
+     "h": 73,
+     "pivot": [
+      77.2,
+      60.6
+     ],
+     "row": 0
+    },
+    "left": {
+     "w": 154,
+     "h": 73,
+     "pivot": [
+      77.2,
+      61.1
+     ],
+     "row": 1
+    }
+   },
+   "length_m": 4.75,
+   "siren": false,
+   "two_wheeler": false
+  },
+  "taxi": {
+   "sheet": "taxi.png",
+   "cell": {
+    "w": 149,
+    "h": 67
+   },
+   "columns": [
+    "0",
+    "1",
+    "2",
+    "lights"
+   ],
+   "directions": {
+    "right": {
+     "w": 149,
+     "h": 66,
+     "pivot": [
+      74.7,
+      54.4
+     ],
+     "row": 0
+    },
+    "left": {
+     "w": 149,
+     "h": 67,
+     "pivot": [
+      74.7,
+      55.0
+     ],
+     "row": 1
+    }
+   },
+   "length_m": 4.6,
+   "siren": false,
+   "two_wheeler": false
+  },
+  "ev": {
+   "sheet": "ev.png",
+   "cell": {
+    "w": 152,
+    "h": 60
+   },
+   "columns": [
+    "0",
+    "1",
+    "2",
+    "lights"
+   ],
+   "directions": {
+    "right": {
+     "w": 152,
+     "h": 59,
+     "pivot": [
+      76.3,
+      47.5
+     ],
+     "row": 0
+    },
+    "left": {
+     "w": 152,
+     "h": 60,
+     "pivot": [
+      76.3,
+      48.0
+     ],
+     "row": 1
+    }
+   },
+   "length_m": 4.7,
+   "siren": false,
+   "two_wheeler": false
+  },
+  "police": {
+   "sheet": "police.png",
+   "cell": {
+    "w": 152,
+    "h": 63
+   },
+   "columns": [
+    "0",
+    "1",
+    "2",
+    "lights",
+    "siren0",
+    "siren1"
+   ],
+   "directions": {
+    "right": {
+     "w": 152,
+     "h": 63,
+     "pivot": [
+      76.1,
+      51.0
+     ],
+     "row": 0
+    },
+    "left": {
+     "w": 152,
+     "h": 63,
+     "pivot": [
+      76.1,
+      51.5
+     ],
+     "row": 1
+    }
+   },
+   "length_m": 4.7,
+   "siren": true,
+   "two_wheeler": false
+  },
+  "van": {
+   "sheet": "van.png",
+   "cell": {
+    "w": 167,
+    "h": 92
+   },
+   "columns": [
+    "0",
+    "1",
+    "2",
+    "lights"
+   ],
+   "directions": {
+    "right": {
+     "w": 167,
+     "h": 92,
+     "pivot": [
+      83.2,
+      79.0
+     ],
+     "row": 0
+    },
+    "left": {
+     "w": 167,
+     "h": 92,
+     "pivot": [
+      83.2,
+      79.0
+     ],
+     "row": 1
+    }
+   },
+   "length_m": 5.2,
+   "siren": false,
+   "two_wheeler": false
+  },
+  "delivery": {
+   "sheet": "delivery.png",
+   "cell": {
+    "w": 167,
+    "h": 92
+   },
+   "columns": [
+    "0",
+    "1",
+    "2",
+    "lights"
+   ],
+   "directions": {
+    "right": {
+     "w": 167,
+     "h": 92,
+     "pivot": [
+      83.2,
+      79.0
+     ],
+     "row": 0
+    },
+    "left": {
+     "w": 167,
+     "h": 92,
+     "pivot": [
+      83.2,
+      79.0
+     ],
+     "row": 1
+    }
+   },
+   "length_m": 5.2,
+   "siren": false,
+   "two_wheeler": false
+  },
+  "ambulance": {
+   "sheet": "ambulance.png",
+   "cell": {
+    "w": 167,
+    "h": 92
+   },
+   "columns": [
+    "0",
+    "1",
+    "2",
+    "lights",
+    "siren0",
+    "siren1"
+   ],
+   "directions": {
+    "right": {
+     "w": 167,
+     "h": 92,
+     "pivot": [
+      83.2,
+      79.0
+     ],
+     "row": 0
+    },
+    "left": {
+     "w": 167,
+     "h": 92,
+     "pivot": [
+      83.2,
+      79.0
+     ],
+     "row": 1
+    }
+   },
+   "length_m": 5.2,
+   "siren": true,
+   "two_wheeler": false
+  },
+  "bus": {
+   "sheet": "bus.png",
+   "cell": {
+    "w": 351,
+    "h": 124
+   },
+   "columns": [
+    "0",
+    "1",
+    "2",
+    "lights"
+   ],
+   "directions": {
+    "right": {
+     "w": 351,
+     "h": 124,
+     "pivot": [
+      175.2,
+      107.6
+     ],
+     "row": 0
+    },
+    "left": {
+     "w": 351,
+     "h": 124,
+     "pivot": [
+      175.4,
+      107.6
+     ],
+     "row": 1
+    }
+   },
+   "length_m": 12.0,
+   "siren": false,
+   "two_wheeler": false
+  },
+  "bus_amn": {
+   "sheet": "bus_amn.png",
+   "cell": {
+    "w": 351,
+    "h": 124
+   },
+   "columns": [
+    "0",
+    "1",
+    "2",
+    "lights"
+   ],
+   "directions": {
+    "right": {
+     "w": 351,
+     "h": 124,
+     "pivot": [
+      175.2,
+      107.6
+     ],
+     "row": 0
+    },
+    "left": {
+     "w": 351,
+     "h": 124,
+     "pivot": [
+      175.4,
+      107.6
+     ],
+     "row": 1
+    }
+   },
+   "length_m": 12.0,
+   "siren": false,
+   "two_wheeler": false
+  },
+  "bus_curiosity": {
+   "sheet": "bus_curiosity.png",
+   "cell": {
+    "w": 351,
+    "h": 124
+   },
+   "columns": [
+    "0",
+    "1",
+    "2",
+    "lights"
+   ],
+   "directions": {
+    "right": {
+     "w": 351,
+     "h": 124,
+     "pivot": [
+      175.2,
+      107.6
+     ],
+     "row": 0
+    },
+    "left": {
+     "w": 351,
+     "h": 124,
+     "pivot": [
+      175.4,
+      107.6
+     ],
+     "row": 1
+    }
+   },
+   "length_m": 12.0,
+   "siren": false,
+   "two_wheeler": false
+  },
+  "bus_nexus": {
+   "sheet": "bus_nexus.png",
+   "cell": {
+    "w": 351,
+    "h": 124
+   },
+   "columns": [
+    "0",
+    "1",
+    "2",
+    "lights"
+   ],
+   "directions": {
+    "right": {
+     "w": 351,
+     "h": 124,
+     "pivot": [
+      175.2,
+      107.6
+     ],
+     "row": 0
+    },
+    "left": {
+     "w": 351,
+     "h": 124,
+     "pivot": [
+      175.4,
+      107.6
+     ],
+     "row": 1
+    }
+   },
+   "length_m": 12.0,
+   "siren": false,
+   "two_wheeler": false
+  },
+  "truck": {
+   "sheet": "truck.png",
+   "cell": {
+    "w": 273,
+    "h": 121
+   },
+   "columns": [
+    "0",
+    "1",
+    "2",
+    "lights"
+   ],
+   "directions": {
+    "right": {
+     "w": 273,
+     "h": 121,
+     "pivot": [
+      136.3,
+      105.7
+     ],
+     "row": 0
+    },
+    "left": {
+     "w": 273,
+     "h": 121,
+     "pivot": [
+      136.3,
+      105.7
+     ],
+     "row": 1
+    }
+   },
+   "length_m": 9.0,
+   "siren": false,
+   "two_wheeler": false
+  },
+  "firetruck": {
+   "sheet": "firetruck.png",
+   "cell": {
+    "w": 286,
+    "h": 128
+   },
+   "columns": [
+    "0",
+    "1",
+    "2",
+    "lights",
+    "siren0",
+    "siren1"
+   ],
+   "directions": {
+    "right": {
+     "w": 286,
+     "h": 128,
+     "pivot": [
+      143.0,
+      111.5
+     ],
+     "row": 0
+    },
+    "left": {
+     "w": 286,
+     "h": 128,
+     "pivot": [
+      143.0,
+      111.5
+     ],
+     "row": 1
+    }
+   },
+   "length_m": 9.5,
+   "siren": true,
+   "two_wheeler": false
+  },
+  "motorcycle": {
+   "sheet": "motorcycle.png",
+   "cell": {
+    "w": 66,
+    "h": 64
+   },
+   "columns": [
+    "0",
+    "1",
+    "2",
+    "lights"
+   ],
+   "directions": {
+    "right": {
+     "w": 66,
+     "h": 64,
+     "pivot": [
+      32.6,
+      57.7
+     ],
+     "row": 0
+    },
+    "left": {
+     "w": 66,
+     "h": 64,
+     "pivot": [
+      32.6,
+      57.7
+     ],
+     "row": 1
+    }
+   },
+   "length_m": 2.1,
+   "siren": false,
+   "two_wheeler": true
+  },
+  "scooter": {
+   "sheet": "scooter.png",
+   "cell": {
+    "w": 52,
+    "h": 60
+   },
+   "columns": [
+    "0",
+    "1",
+    "2",
+    "lights"
+   ],
+   "directions": {
+    "right": {
+     "w": 52,
+     "h": 60,
+     "pivot": [
+      25.9,
+      54.5
+     ],
+     "row": 0
+    },
+    "left": {
+     "w": 52,
+     "h": 60,
+     "pivot": [
+      25.9,
+      54.5
+     ],
+     "row": 1
+    }
+   },
+   "length_m": 1.6,
+   "siren": false,
+   "two_wheeler": true
+  },
+  "bicycle": {
+   "sheet": "bicycle.png",
+   "cell": {
+    "w": 56,
+    "h": 64
+   },
+   "columns": [
+    "0",
+    "1",
+    "2",
+    "lights"
+   ],
+   "directions": {
+    "right": {
+     "w": 56,
+     "h": 64,
+     "pivot": [
+      27.9,
+      57.8
+     ],
+     "row": 0
+    },
+    "left": {
+     "w": 56,
+     "h": 64,
+     "pivot": [
+      27.9,
+      57.8
+     ],
+     "row": 1
+    }
+   },
+   "length_m": 1.75,
+   "siren": false,
+   "two_wheeler": true
+  }
+ }
+}

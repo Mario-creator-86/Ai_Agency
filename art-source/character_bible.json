@@ -1,0 +1,106 @@
+[
+  {
+    "canonical_name": "Sarah Executive",
+    "role": "Director",
+    "palette": {
+      "suit": "#1e3a8a",
+      "tie": "#38bdf8",
+      "hair": "#451a03",
+      "desk": "#854d0e"
+    },
+    "face_hair_desc": "Brunette professional bob with warm highlights; expressive determined brown eyes",
+    "outfit_desc": "Crisp navy two-piece executive blazer, white collared shirt, and sky-blue tie",
+    "forbidden_deviations": "Do not depict Sarah in casual athletic wear or disheveled hair."
+  },
+  {
+    "canonical_name": "Dr. Aris Researcher",
+    "role": "LeadResearcher",
+    "palette": {
+      "coat": "#f8fafc",
+      "shirt": "#0d9488",
+      "hair": "#334155",
+      "glasses": "#e2e8f0"
+    },
+    "face_hair_desc": "Dark hair with silver temples; thin circular silver spectacles with white lens glare",
+    "outfit_desc": "Immaculate white laboratory scientist coat over teal button-down shirt.",
+    "forbidden_deviations": "Do not omit circular glasses; do not portray as unconfident or guessing"
+  },
+  {
+    "canonical_name": "Elena Fact-Checker",
+    "role": "FactChecker",
+    "palette": {
+      "vest": "#4d7c0f",
+      "bun": "#78350f",
+      "glasses": "#94a3b8",
+      "ledger": "#b45309"
+    },
+    "face_hair_desc": "Auburn hair pulled tightly into a neat high bun; reading glasses perched on nose",
+    "outfit_desc": "Olive utility vest over cream blouse with verification check badge.",
+    "forbidden_deviations": "Never approve unverified claims; do not remove hair bun in studio scenes"
+  },
+  {
+    "canonical_name": "Marcus Scriptwriter",
+    "role": "ScriptWriter",
+    "palette": {
+      "hoodie": "#7c3aed",
+      "hair": "#1e293b",
+      "jeans": "#334155",
+      "yarn": "#ef4444"
+    },
+    "face_hair_desc": "Tousled wavy dark hair; creative focused gaze, slight 5 o clock shadow.",
+    "outfit_desc": "Comfortable royal purple fleece hoodie over grey crew tee.",
+    "forbidden_deviations": "Do not depict wearing formal suits; maintain creative storyteller persona"
+  },
+  {
+    "canonical_name": "Lyra Voice Artist",
+    "role": "VoiceArtist",
+    "palette": {
+      "headphones": "#f43f5e",
+      "sweater": "#ec4899",
+      "hair": "#0f172a",
+      "foam": "#1e1b4b"
+    },
+    "face_hair_desc": "Sleek jet-black hair with neon pink streak; expressive warm facial features",
+    "outfit_desc": "Fuchsia sound-booth sweater, large over-ear studio monitoring headphones.",
+    "forbidden_deviations": "Do not depict without studio headphones around neck or on ears."
+  },
+  {
+    "canonical_name": "Kael Video Editor",
+    "role": "VideoEditor",
+    "palette": {
+      "headset": "#06b6d4",
+      "shirt": "#ea580c",
+      "hair": "#d97706",
+      "pc": "#0284c7"
+    },
+    "face_hair_desc": "Sandy blonde spiky hair; focused concentration, single-ear comms headset",
+    "outfit_desc": "Amber work shirt with rolled-up sleeves, dark cargo pants.",
+    "forbidden_deviations": "Never depict editing on a tiny laptop; always triple-screen workstation"
+  },
+  {
+    "canonical_name": "Vera Distribution Hub",
+    "role": "Publisher",
+    "palette": {
+      "console": "#22c55e",
+      "suit": "#065f46",
+      "hair": "#1c1917",
+      "radar": "#4ade80"
+    },
+    "face_hair_desc": "Short styled black hair; sharp alert eyes, mission-control headset.",
+    "outfit_desc": "Forest green technical flight suit with studio telemetry insignia.",
+    "forbidden_deviations": "Do not omit telemetry headset; operations console must always be active"
+  },
+  {
+    "canonical_name": "Nadia Accountant",
+    "role": "Accountant",
+    "palette": {
+      "blouse": "#7c3aed",
+      "cardigan": "#2e1065",
+      "hair": "#3f2a1d",
+      "ledger": "#14532d"
+    },
+    "face_hair_desc": "Chestnut hair in a low bun, round tortoiseshell glasses; attentive hazel eyes",
+    "outfit_desc": "Plum blouse under a dark violet cardigan, small brass pen on a chain",
+    "forbidden_deviations": "Do not depict Nadia without her glasses or with a laptop in place of the ledger."
+  }
+]

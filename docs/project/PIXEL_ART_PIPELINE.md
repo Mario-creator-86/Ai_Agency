@@ -1,5 +1,8 @@
 # Pixel-art asset pipeline (Blender → sprites → renderer) — 2026-09-11
 
+> **Superseded on 2026-09-13** by `HQ_LIVING_OFFICE.md`: the office is now the Blender-rendered
+> AMN-AI headquarters; the modules and assets described here were removed from the frontend.
+
 Owner-requested quality pass on the 2D cutaway office: a Blender → sprite pipeline was built
 and the RESEARCH floor (Level 3) was re-made with it as the quality bar, then compared live
 against the hand-drawn floors.

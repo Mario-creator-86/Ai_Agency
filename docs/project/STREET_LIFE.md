@@ -1,5 +1,8 @@
 # Ambient street and local clock — 2026-09-10
 
+> **Superseded on 2026-09-13** by `HQ_LIVING_OFFICE.md`: the office is now the Blender-rendered
+> AMN-AI headquarters; the modules and assets described here were removed from the frontend.
+
 Owner-requested extension of the pixel office exterior. This is decorative fiction, explicitly separate from real agent messages and workflow events.
 
 ## Implementation

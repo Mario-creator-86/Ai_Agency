@@ -9,7 +9,7 @@ test('what an employee said is shown with its name and text, as speech', () => {
     { event_type: 'agent.message_sent', aggregate_id: 'a-1', payload: { text: 'Am citit patru pagini.' } },
     names,
   );
-  assert.deepEqual(item, { who: 'Dr. Aris (Researcher)', label: 'a spus', text: 'Am citit patru pagini.', kind: 'speech' });
+  assert.deepEqual(item, { who: 'Dr. Aris (Researcher)', label: 'said', text: 'Am citit patru pagini.', kind: 'speech' });
 });
 
 test('a typed message shows its intent and subject, and the sender by name', () => {
@@ -18,17 +18,17 @@ test('a typed message shows its intent and subject, and the sender by name', () 
     names,
   );
   assert.equal(item.who, 'Vera (Publisher)');
-  assert.equal(item.label, 'scrie · escaladare');
+  assert.equal(item.label, 'writes · escalation');
   assert.equal(item.text, 'Publication HOLD');
   assert.equal(item.to, 'Director');
   assert.equal(item.thread, 'm-1');
 });
 
 test('work, production, money and owner events get plain labels and the right kind', () => {
-  assert.equal(describeEvent({ event_type: 'agent.state_changed', aggregate_id: 'a-2', payload: { runtime_state: 'THINKING', task_type: 'director_review' } }, names).label, 'lucrează');
+  assert.equal(describeEvent({ event_type: 'agent.state_changed', aggregate_id: 'a-2', payload: { runtime_state: 'THINKING', task_type: 'director_review' } }, names).label, 'working');
   const stage = describeEvent({ event_type: 'workflow.created', payload: { current_stage: 'SCRIPTING' } });
   assert.equal(stage.kind, 'production');
-  assert.equal(stage.text, 'etapa: Scenariu');
+  assert.equal(stage.text, 'stage: Script');
   const cost = describeEvent({ event_type: 'economy.provider_cost_recorded', payload: { provider: 'elevenlabs', status: 'ESTIMATED', vr: '0.45' } });
   assert.equal(cost.kind, 'money');
   assert.equal(cost.text, 'elevenlabs · 0.45 VR$');
@@ -38,10 +38,10 @@ test('work, production, money and owner events get plain labels and the right ki
 test('production work without a model reads as work, and says what is being made', () => {
   const working = describeEvent({ event_type: 'agent.state_changed', aggregate_id: 'a-3', payload: { runtime_state: 'WORKING', task_type: 'synthesize_voice', detail: 'vocea scenei 3' } }, { 'a-3': 'Lyra (Voice Artist)' });
   assert.equal(working.who, 'Lyra (Voice Artist)');
-  assert.equal(working.label, 'lucrează');
+  assert.equal(working.label, 'working');
   assert.equal(working.text, 'vocea scenei 3');
   const done = describeEvent({ event_type: 'agent.state_changed', aggregate_id: 'a-3', payload: { runtime_state: 'IDLE', task_type: 'synthesize_voice' } }, { 'a-3': 'Lyra (Voice Artist)' });
-  assert.equal(done.label, 'a terminat');
+  assert.equal(done.label, 'finished');
 });
 
 test('an unknown event still reads as words, with its first payload fields', () => {
@@ -66,8 +66,8 @@ test('production status reads the newest stage and the last daily run', () => {
   ];
   const status = productionStatus(events);
   assert.equal(status.stage, 'QUALITY_CONTROL');
-  assert.equal(status.text, 'Producția: Control calitate · ultima rulare zilnică parțială');
-  assert.equal(productionStatus([]).text, 'Nicio producție în curs.');
+  assert.equal(status.text, 'Production: Quality control · last daily run partial');
+  assert.equal(productionStatus([]).text, 'No production in progress.');
 });
 
 test('a stage of the daily run is named in words, with its place in the day', () => {
@@ -75,16 +75,16 @@ test('a stage of the daily run is named in words, with its place in the day', ()
     event_type: 'runbook.stage_started',
     payload: { stage: 'script_and_storyboard', index: 6, total: 12 },
   });
-  assert.equal(started.label, 'etapă pornită');
-  assert.equal(started.text, 'scenariu și storyboard (6/12)');
+  assert.equal(started.label, 'stage started');
+  assert.equal(started.text, 'script and storyboard (6/12)');
   assert.equal(started.kind, 'production');
 
   const finished = describeEvent({
     event_type: 'runbook.stage_finished',
     payload: { stage: 'publish', status: 'SKIPPED', reason: 'Niciun canal legat.' },
   });
-  assert.equal(finished.label, 'etapă sărită');
-  assert.equal(finished.text, 'publicare — Niciun canal legat.');
+  assert.equal(finished.label, 'stage skipped');
+  assert.equal(finished.text, 'publishing — Niciun canal legat.');
 });
 
 test('the head line says which stage the day is in while it is in it', () => {
@@ -94,7 +94,7 @@ test('the head line says which stage the day is in while it is in it', () => {
     { event_type: 'runbook.daily_run_finished', payload: { status: 'PARTIAL' } },
   ]);
   assert.equal(running.running, 'media');
-  assert.equal(running.text, 'Acum: producția media · ultima rulare zilnică parțială');
+  assert.equal(running.text, 'Now: media production · last daily run partial');
 
   // A stage that has finished is not where the day is; only the run's own outcome remains.
   const between = productionStatus([
@@ -103,7 +103,7 @@ test('the head line says which stage the day is in while it is in it', () => {
     { event_type: 'runbook.daily_run_finished', payload: { status: 'COMPLETED' } },
   ]);
   assert.equal(between.running, null);
-  assert.equal(between.text, 'Ultima rulare zilnică finalizată');
+  assert.equal(between.text, 'Last daily run completed');
 });
 
 test('a letter names both ends, says what kind it is, and carries its thread', () => {
@@ -125,7 +125,7 @@ test('a letter names both ends, says what kind it is, and carries its thread', (
   );
   assert.equal(item.who, 'Sarah (Director)');
   assert.equal(item.to, 'Elena (Fact Checker)');
-  assert.equal(item.label, 'scrie · întrebare');
+  assert.equal(item.label, 'writes · question');
   assert.equal(item.text, 'Sursa cifrei de 40% — Elena, pe ce stă 40%?');
   assert.equal(item.thread, 't-1');
   const reply = describeEvent({
@@ -133,7 +133,7 @@ test('a letter names both ends, says what kind it is, and carries its thread', (
     aggregate_id: 'm-10',
     payload: { intent: 'STATUS', subject: 'Re: Sursa', in_reply_to: 'm-9', thread_id: 't-1' },
   });
-  assert.equal(reply.label, 'răspunde · raport');
+  assert.equal(reply.label, 'replies · report');
   assert.equal(reply.who, 'Owner');
 });
 
@@ -146,5 +146,5 @@ test('a letter to the Owner files under the Owner chip and says so', () => {
   assert.equal(item.kind, 'owner');
   assert.equal(item.to, 'Owner');
   assert.equal(item.forOwner, true);
-  assert.equal(item.label, 'scrie · escaladare · CĂTRE TINE');
+  assert.equal(item.label, 'writes · escalation · TO YOU');
 });

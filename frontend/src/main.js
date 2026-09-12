@@ -87,7 +87,7 @@ function updateTypingIndicator() {
   const current = currentSelectedAgent && (currentSelectedAgent.id || currentSelectedAgent.agent_id);
   const active = Boolean(current && inspector.open && thinkingAgents.has(current));
   indicator.hidden = !active;
-  if (active) indicator.textContent = `${currentSelectedAgent.display_name || 'Agentul'} lucrează acum… răspunsul apare aici.`;
+  if (active) indicator.textContent = `${currentSelectedAgent.display_name || 'The agent'} is working… the answer appears here.`;
 }
 
 function scheduleHistoryRefresh(agentId) {
@@ -143,7 +143,7 @@ async function api(path, options = {}) {
       cache: 'no-store',
     });
   } catch {
-    throw new Error('Conexiune indisponibilă. Datele afișate nu mai sunt actualizate.');
+    throw new Error('Connection unavailable. The data shown is no longer up to date.');
   }
   if (!response.ok) {
     // Prefer what the server said. Every refusal this backend writes is a sentence meant for
@@ -153,10 +153,10 @@ async function api(path, options = {}) {
     // response that carries no explanation of its own.
     let message =
       response.status === 401
-        ? 'Cheia Owner nu este validă.'
+        ? 'The Owner key is not valid.'
         : response.status === 409
-          ? 'Starea s-a schimbat. Datele au fost reîncărcate; repetă comanda.'
-          : 'Conexiunea nu a putut fi verificată. Încearcă din nou.';
+          ? 'The state changed. The data was reloaded; repeat the command.'
+          : 'The connection could not be verified. Try again.';
     const body = await response.json().catch(() => ({}));
     if (typeof body.detail === 'string' && body.detail.trim()) {
       message = body.detail;
@@ -180,6 +180,10 @@ const settingsUI = initSettings(api, { onChange: async () => {
 function initOffice() {
   if (!officeEngine) {
     officeEngine = new OfficeEngine(officeCanvas, {
+      // The page may only call its own origin; the backend reads the live weather for the scene.
+      fetchWeather: () => api('/office/weather'),
+      infoElement: element('scene-info'),
+      fpsElement: element('office-fps'),
       onSelectAgent: (agent) => {
         currentSelectedAgent = agent;
         if (agent) {
@@ -390,7 +394,7 @@ function connectWebSocket() {
           officeState.handleDomainEvent(eventData);
           updateOfficeCanvas();
           ledger.add(eventData);
-          element('ledger-count').textContent = `${ledger.events.size} înregistrări`;
+          element('ledger-count').textContent = `${ledger.events.size} entries`;
         }
       } catch (e) {
         console.error('Malformed WS message', e);
@@ -428,7 +432,7 @@ async function showInspector(agent) {
     renderInspector(currentSelectedAgent);
   } catch(error) {
     if(request!==inspectorRequest||session!==epoch||!inspector.open) return;
-    renderInspector({...agent,model_error:error instanceof Error?error.message:'Datele modelului nu pot fi încărcate.',model_is_available:false});
+    renderInspector({...agent,model_error:error instanceof Error?error.message:'The model details could not be loaded.',model_is_available:false});
   }
   try {
     const identity = await api(`/agents/${encodeURIComponent(id)}/identity`);
@@ -437,49 +441,49 @@ async function showInspector(agent) {
     await loadAgentHistory(id);
   } catch(error) {
     if(request!==inspectorRequest||session!==epoch||!inspector.open) return;
-    element('inspector-mission').textContent = error instanceof Error ? error.message : 'Identitatea nu a putut fi încărcată.';
+    element('inspector-mission').textContent = error instanceof Error ? error.message : 'The identity could not be loaded.';
   }
 }
 
 const TIMELINE_LABEL = {
-  run: 'Sarcină',
-  owner_chat: 'Întrebare',
+  run: 'Task',
+  owner_chat: 'Question',
   message: 'Mesaj',
   memory: 'Memorie',
-  AGENT_OPINION: 'Decizie',
+  AGENT_OPINION: 'Decision',
   HISTORICAL_EVENT: 'Eveniment',
   TEMP_CONTEXT: 'Context',
-  OWNER_POLICY: 'Politică',
-  VERIFIED_FACT: 'Fapt verificat',
+  OWNER_POLICY: 'Policy',
+  VERIFIED_FACT: 'Verified fact',
   STRATEGY: 'Strategie',
 };
 
 /** Task types as the Owner would name them. Unknown types read as their own words. */
 const TASK_LABEL = {
   propose_topics: 'idei de subiect',
-  gather_sources: 'căutare de surse',
-  extract_claims: 'extragere de afirmații',
-  verify_claim: 'verificare factuală',
+  gather_sources: 'finding sources',
+  extract_claims: 'extracting claims',
+  verify_claim: 'fact check',
   choose_topic: 'alegerea subiectului',
-  write_script: 'scenariu',
-  write_episode: 'episodul serialului',
-  review_narration: 'revizuirea narațiunii',
-  review_failed_render: 'diagnoza randării',
-  prepare_publication: 'pregătirea publicării',
+  write_script: 'script',
+  write_episode: 'the serial episode',
+  review_narration: 'narration review',
+  review_failed_render: 'render diagnosis',
+  prepare_publication: 'publication preparation',
   director_review: 'revizuirea Directorului',
-  reconcile_day: 'închiderea zilei',
-  direct_task: 'sarcină directă',
-  TEST_CONNECTIVITY: 'test de conexiune',
+  reconcile_day: 'closing the day',
+  direct_task: 'direct task',
+  TEST_CONNECTIVITY: 'connection test',
 };
 
 /** What a run without an answer means, in words. */
 const RUN_STATUS = {
-  EMPTY_OUTPUT: 'Modelul nu a returnat niciun text de folosit.',
+  EMPTY_OUTPUT: 'The model returned no usable text.',
   // Runs recorded before an empty answer counted as a failure.
-  SUCCEEDED: 'Fără text în răspuns.',
-  BLOCKED_POLICY: 'Blocat de politică.',
-  BLOCKED_PROVIDER: 'Blocat: furnizorul sau modelul nu este disponibil.',
-  FAILED: 'A eșuat.',
+  SUCCEEDED: 'No text in the answer.',
+  BLOCKED_POLICY: 'Blocked by policy.',
+  BLOCKED_PROVIDER: 'Blocked: the provider or the model is unavailable.',
+  FAILED: 'Failed.',
 };
 
 function taskLabel(type) {
@@ -518,13 +522,13 @@ function timelineItem(item) {
     const line = isChat || summarised ? item.asked || '' : '';
     const full = item.prompt || item.asked || '';
     const prompt = !isChat && full
-      ? `<details class="chat-prompt"><summary>Cererea completă</summary><pre>${escapeHtml(full)}</pre></details>`
+      ? `<details class="chat-prompt"><summary>The full request</summary><pre>${escapeHtml(full)}</pre></details>`
       : '';
     return `<div class="chat-item chat-run${isChat ? ' is-chat' : ''}"><div class="chat-meta"><span class="policy-tag policy-flexible">${escapeHtml(label)}</span> <small>${escapeHtml(timelineTime(item.at))}${meta ? ` · ${escapeHtml(meta)}` : ''}</small></div>${line ? `<div class="chat-asked">${escapeHtml(line)}</div>` : ''}${answer}${prompt}</div>`;
   }
   if (item.kind === 'message') {
     const direction = item.from_name ? `de la ${item.from_name}` : '';
-    const to = item.to_name ? `către ${item.to_name}` : '';
+    const to = item.to_name ? `to ${item.to_name}` : '';
     return `<div class="chat-item chat-message"><div class="chat-meta"><span class="policy-tag policy-locked">${escapeHtml(item.intent)}</span> <small>${escapeHtml(timelineTime(item.at))} ${escapeHtml([direction, to].filter(Boolean).join(' '))} · ${escapeHtml(item.status)}</small></div><div>${escapeHtml(item.subject)}</div>${item.resolution ? `<div class="helper">${escapeHtml(item.resolution)}</div>` : ''}</div>`;
   }
   return `<div class="chat-item chat-memory"><div class="chat-meta"><span class="policy-tag">${escapeHtml(TIMELINE_LABEL[item.memory_class] || item.memory_class)}</span> <small>${escapeHtml(timelineTime(item.at))}</small></div><div>${escapeHtml(item.content)}</div></div>`;
@@ -537,10 +541,10 @@ async function loadAgentHistory(agentId) {
     const items = (data.timeline || []).slice().reverse();
     box.innerHTML = items.length
       ? items.map(timelineItem).join('')
-      : '<div class="helper">Nimic încă: nicio sarcină, niciun mesaj, nicio decizie înregistrată.</div>';
+      : '<div class="helper">Nothing yet: no task, message or decision recorded.</div>';
     box.scrollTop = box.scrollHeight;
   } catch (error) {
-    box.innerHTML = `<div class="text-error">${escapeHtml(error instanceof Error ? error.message : 'Istoricul nu a putut fi încărcat.')}</div>`;
+    box.innerHTML = `<div class="text-error">${escapeHtml(error instanceof Error ? error.message : 'The history could not be loaded.')}</div>`;
   }
 }
 
@@ -548,22 +552,22 @@ async function loadAgentHistory(agentId) {
 function renderIdentity(identity) {
   const contract = identity.contract || {};
   const work = contract.work_contract_json || {};
-  const who = identity.character ? `${identity.display_name} este ${identity.character.canonical_name}.` : identity.display_name;
-  element('inspector-mission').textContent = `${who} Misiune: ${contract.mission || 'nedefinită'}. Raportează către ${work.reports_to || '—'}.`;
-  const sections = [['watch_for', 'Este atent la'], ['investigate', 'Investighează'], ['correct', 'Corectează'], ['let_pass', 'Lasă să treacă'], ['never_let_pass', 'Nu lasă niciodată'], ['escalate_when', 'Escaladează când'], ['deliverables', 'Livrabile']];
+  const who = identity.character ? `${identity.display_name} is ${identity.character.canonical_name}.` : identity.display_name;
+  element('inspector-mission').textContent = `${who} Mission: ${contract.mission || 'not defined'}. Reports to ${work.reports_to || '—'}.`;
+  const sections = [['watch_for', 'Watches for'], ['investigate', 'Investigates'], ['correct', 'Corrects'], ['let_pass', 'Lets pass'], ['never_let_pass', 'Never lets pass'], ['escalate_when', 'Escalates when'], ['deliverables', 'Livrabile']];
   element('inspector-contract').innerHTML = sections
     .filter(([key]) => Array.isArray(work[key]) && work[key].length)
     .map(([key, label]) => `<div class="identity-block"><span class="stat-label">${escapeHtml(label)}</span><ul>${work[key].map((item) => `<li>${escapeHtml(String(item))}</li>`).join('')}</ul></div>`)
-    .join('') || '<p class="helper">Rolul nu are încă un contract de lucru. Rulează bootstrap-ul pentru a-l însămânța.</p>';
+    .join('') || '<p class="helper">The role has no work contract yet. Run the bootstrap to seed it.</p>';
   element('inspector-system-prompt').textContent = identity.system_prompt || '';
   const memory = identity.memory || [];
   element('inspector-memory').innerHTML = memory.length
     ? memory.map((m) => `<li><span class="policy-tag policy-flexible">${escapeHtml(m.memory_class)}</span> ${escapeHtml(m.content)}</li>`).join('')
-    : '<li class="helper">Nu își amintește nimic încă: nicio verificare, decizie sau publicare înregistrată.</li>';
+    : '<li class="helper">Remembers nothing yet: no check, decision or publication recorded.</li>';
   const messages = (identity.messages || []).filter((m) => m.status !== 'RESOLVED').slice(0, 8);
   element('inspector-messages').innerHTML = messages.length
-    ? messages.map((m) => `<li class="inspector-mail" data-thread="${escapeHtml(m.thread_id || m.id)}" title="Deschide firul"><span class="policy-tag policy-locked">${escapeHtml(m.intent)}</span> ${escapeHtml(m.subject)}${m.from_name ? ` <small>· de la ${escapeHtml(m.from_name)}</small>` : ''} <small class="ledger-open">fir ↗</small></li>`).join('')
-    : '<li class="helper">Niciun mesaj deschis.</li>';
+    ? messages.map((m) => `<li class="inspector-mail" data-thread="${escapeHtml(m.thread_id || m.id)}" title="Open the thread"><span class="policy-tag policy-locked">${escapeHtml(m.intent)}</span> ${escapeHtml(m.subject)}${m.from_name ? ` <small>· de la ${escapeHtml(m.from_name)}</small>` : ''} <small class="ledger-open">fir ↗</small></li>`).join('')
+    : '<li class="helper">No open message.</li>';
 }
 
 function renderInspector(agent) {
@@ -578,30 +582,30 @@ function renderInspector(agent) {
     element('agent-run-form').querySelector('button[type="submit"]')
   );
   if(agent.model_loading) {
-    modelEl.textContent='Se verifică modelul alocat…';
-    modelEl.className='stat-value';modelEl.title='Se citesc datele actuale ale agentului.';
+    modelEl.textContent='Checking the assigned model…';
+    modelEl.className='stat-value';modelEl.title='Reading the current agent data.';
   } else if(agent.model_error) {
-    modelEl.textContent='Alocarea nu a putut fi verificată';
+    modelEl.textContent='The assignment could not be checked';
     modelEl.className='stat-value text-error';modelEl.title=agent.model_error;
   } else if (!agent.model_name) {
-    modelEl.textContent = 'Niciun model alocat';
+    modelEl.textContent = 'No model assigned';
     modelEl.className = 'stat-value text-error';
-    modelEl.title = 'Alocă un model acestui agent din Settings › Agenți.';
+    modelEl.title = 'Assign a model to this agent in Settings › Agents.';
   } else if (agent.model_is_available) {
     modelEl.textContent = agent.model_name;
     modelEl.className = 'stat-value text-success';
-    modelEl.title = `Furnizor: ${agent.provider_name || 'necunoscut'}`;
+    modelEl.title = `Provider: ${agent.provider_name || 'unknown'}`;
   } else {
-    modelEl.textContent = `${agent.model_name} · neverificat`;
+    modelEl.textContent = `${agent.model_name} · not verified`;
     modelEl.className = 'stat-value text-warn';
     modelEl.title =
-      `Modelul este alocat, dar furnizorul ${agent.provider_name || ''} nu a fost verificat. ` +
-      'Verifică-l în Settings înainte de a rula o sarcină.';
+      `The model is assigned, but the provider ${agent.provider_name || ''} has not been verified. ` +
+      'Verify it in Settings before running a task.';
   }
   runBtn.disabled = !agent.model_is_available;
   runBtn.title = agent.model_is_available
     ? ''
-    : 'Rularea are nevoie de un model verificat. Alocă și verifică unul în Settings.';
+    : 'Running needs a verified model. Assign and verify one in Settings.';
 
   element('agent-run-output').hidden = true;
   element('agent-run-output').textContent = '';
@@ -621,8 +625,8 @@ function applyInspectorExpanded() {
   const btn = element('inspector-expand');
   btn.textContent = inspectorExpanded ? '⤡' : '⛶';
   btn.title = inspectorExpanded
-    ? 'Restrânge fereastra la dimensiunea obișnuită'
-    : 'Extinde: tot chatul și tot istoricul, parcurgabile de sus în jos';
+    ? 'Shrink the window back to its usual size'
+    : 'Expand: the whole chat and history, top to bottom';
 }
 element('inspector-expand').addEventListener('click', () => {
   inspectorExpanded = !inspectorExpanded;
@@ -650,7 +654,7 @@ element('agent-live-btn').addEventListener('click', () => {
     timezone: state ? state.studio.timezone : undefined,
   });
   if (!opened) {
-    notify('Browserul a blocat fereastra live. Permite ferestrele pop-up pentru această pagină și apasă din nou.');
+    notify('The browser blocked the live window. Allow pop-ups for this page and press again.');
   }
 });
 
@@ -698,7 +702,7 @@ element('agent-run-form').addEventListener('submit', async (e) => {
   // A chat turn takes seconds; the question asked is already saved the moment the employee
   // starts on it, and its answer joins it in the history when it lands.
   typing.hidden = false;
-  typing.textContent = `Întrebarea a fost trimisă. ${currentSelectedAgent.display_name || 'Agentul'} scrie…`;
+  typing.textContent = `Question sent. ${currentSelectedAgent.display_name || 'The agent'} is writing…`;
 
   try {
     await api(`/agents/${agentId}/chat`, {
@@ -711,7 +715,7 @@ element('agent-run-form').addEventListener('submit', async (e) => {
     await loadAgentHistory(agentId);
   } catch (err) {
     outputDiv.hidden = false;
-    outputDiv.textContent = `Eroare: ${err instanceof Error ? err.message : err}`;
+    outputDiv.textContent = `Error: ${err instanceof Error ? err.message : err}`;
   } finally {
     submit.disabled = false;
     typing.hidden = true;
@@ -778,14 +782,14 @@ async function loadTrends() {
   try {
     const data = await api('/analytics/trends');
     if (!data.enabled) {
-      list.innerHTML = '<li class="helper">Tendințele sunt oprite în configurație (STUDIO_TRENDS_ENABLED).</li>';
+      list.innerHTML = '<li class="helper">Trends are turned off in the configuration (STUDIO_TRENDS_ENABLED).</li>';
       return;
     }
     list.innerHTML = data.items.length
       ? data.items.map((t) => `<li title="${escapeHtml((t.news || []).join(' · '))}"><span>${escapeHtml(t.title)}</span><small>${t.approx_traffic ? `~${Number(t.approx_traffic).toLocaleString('ro-RO')}` : '—'}</small></li>`).join('')
-      : `<li class="helper">Nimic citit încă pentru ${escapeHtml(data.geo)}. Apasă «Citește tendințele».</li>`;
+      : `<li class="helper">Nothing read yet for ${escapeHtml(data.geo)}. Press «Read trends».</li>`;
   } catch (error) {
-    list.innerHTML = `<li class="text-error">${escapeHtml(error instanceof Error ? error.message : 'Tendințele nu au putut fi citite.')}</li>`;
+    list.innerHTML = `<li class="text-error">${escapeHtml(error instanceof Error ? error.message : 'Trends could not be read.')}</li>`;
   }
 }
 element('open-research-btn').addEventListener('click', () => { loadTrends(); });
@@ -795,11 +799,11 @@ element('trends-refresh').addEventListener('click', async (event) => {
   try {
     const result = await api('/analytics/trends/refresh', { method: 'POST' });
     notify(result.status === 'COMPLETED'
-      ? `Tendințe citite (${result.geo}): ${result.count} noi din ${result.seen}.`
-      : `Tendințele nu au putut fi citite: ${result.reason || result.status}`);
+      ? `Trends read (${result.geo}): ${result.count} new of ${result.seen}.`
+      : `Trends could not be read: ${result.reason || result.status}`);
     await loadTrends();
   } catch (error) {
-    notify(error instanceof Error ? error.message : 'Tendințele nu au putut fi citite.');
+    notify(error instanceof Error ? error.message : 'Trends could not be read.');
   } finally {
     button.disabled = false;
   }
@@ -811,7 +815,7 @@ async function loadTopics() {
     const data = await api('/factual/topics');
     const topics = data.topics || [];
     if (topics.length === 0) {
-      listEl.innerHTML = '<div class="topics-loading">Niciun subiect propus încă.</div>';
+      listEl.innerHTML = '<div class="topics-loading">No topic proposed yet.</div>';
       return;
     }
     listEl.innerHTML = topics
@@ -834,7 +838,7 @@ async function loadTopics() {
       })
       .join('');
   } catch (err) {
-    listEl.innerHTML = `<div class="text-error">Eroare la încărcare: ${escapeHtml(err.message)}</div>`;
+    listEl.innerHTML = `<div class="text-error">Loading failed: ${escapeHtml(err.message)}</div>`;
   }
 }
 
@@ -848,11 +852,11 @@ async function loadTopics() {
  * ------------------------------------------------------------------------- */
 
 const CLAIM_STATUS_LABEL = {
-  UNVERIFIED: 'Neverificată',
-  SUPPORTED: 'Susținută de sursă',
-  REFUTED: 'Contrazisă de sursă',
-  UNCERTAIN: 'Sursa nu spune',
-  DISPUTED: 'Disputată',
+  UNVERIFIED: 'Unverified',
+  SUPPORTED: 'Supported by the source',
+  REFUTED: 'Refuted by the source',
+  UNCERTAIN: 'The source does not say',
+  DISPUTED: 'Disputed',
 };
 
 /** Short, readable provenance: enough of the digest to compare, not a wall of hex. */
@@ -862,11 +866,11 @@ function shortHash(hash) {
 
 function claimCountsSummary(counts) {
   const entries = Object.entries(counts || {});
-  if (!entries.length) return 'Nicio afirmație extrasă încă';
+  if (!entries.length) return 'No claim extracted yet';
   return entries.map(([status, n]) => `${n} ${CLAIM_STATUS_LABEL[status] || status}`).join(' · ');
 }
 
-const HOST_TEST_LABEL = { PASSED: 'citibil', FAILED: 'nu poate fi citit' };
+const HOST_TEST_LABEL = { PASSED: 'readable', FAILED: 'cannot be read' };
 
 /**
  * The authorised sites, each with the result of its last connectivity test. A site is a
@@ -877,13 +881,13 @@ function renderAllowedHosts(rows) {
   const box = element('allowed-hosts');
   const allowEl = element('sources-allowlist');
   if (!rows.length) {
-    allowEl.textContent = 'Niciun site autorizat. Adaugă unul mai jos și testează-l; până atunci preluarea surselor este oprită.';
+    allowEl.textContent = 'No authorised site. Add one below and test it; until then source intake is off.';
     allowEl.className = 'helper-note helper-warn';
     box.innerHTML = '';
     return;
   }
   const passed = rows.filter((r) => r.last_test_status === 'PASSED').length;
-  allowEl.textContent = `${rows.length} site-uri autorizate, ${passed} testate cu succes. Doar Owner-ul poate schimba lista; agenții nu au nicio unealtă pentru asta.`;
+  allowEl.textContent = `${rows.length} authorised sites, ${passed} tested successfully. Only the Owner can change the list; the agents have no tool for it.`;
   allowEl.className = passed ? 'helper-note' : 'helper-note helper-warn';
   box.innerHTML = rows
     .map((r) => {
@@ -892,22 +896,22 @@ function renderAllowedHosts(rows) {
         : '<span class="host-test host-test-untested">netestat</span>';
       const origin = r.source === 'env' ? '<span class="host-origin">.env</span>' : '';
       const remove = r.source === 'owner'
-        ? `<button class="quiet btn-host-remove" data-host="${escapeHtml(r.host)}">Șterge</button>`
+        ? `<button class="quiet btn-host-remove" data-host="${escapeHtml(r.host)}">Remove</button>`
         : '';
       // The site's own search address: with one, the studio finds pages that exist instead
       // of the Researcher guessing addresses that 404. Only a row the Owner added holds it.
       const search = r.source === 'owner'
         ? `<div class="host-search">
-            <input class="host-search-template" data-host="${escapeHtml(r.host)}" value="${escapeHtml(r.search_template || '')}" placeholder="adresa de căutare a site-ului, cu {query} unde intră cuvintele (OpenSearch JSON)" title="De exemplu, pentru o enciclopedie MediaWiki: https://${escapeHtml(r.host)}/w/api.php?action=opensearch&search={query}&limit=5&namespace=0&format=json">
-            <button class="quiet btn-host-search-save" data-host="${escapeHtml(r.host)}">Salvează căutarea</button>
-            ${r.search_template ? `<button class="quiet btn-host-search-try" data-host="${escapeHtml(r.host)}">Probează</button>` : ''}
+            <input class="host-search-template" data-host="${escapeHtml(r.host)}" value="${escapeHtml(r.search_template || '')}" placeholder="the site's search address, with {query} where the words go (OpenSearch JSON)" title="For example, for a MediaWiki encyclopedia: https://${escapeHtml(r.host)}/w/api.php?action=opensearch&search={query}&limit=5&namespace=0&format=json">
+            <button class="quiet btn-host-search-save" data-host="${escapeHtml(r.host)}">Save search</button>
+            ${r.search_template ? `<button class="quiet btn-host-search-try" data-host="${escapeHtml(r.host)}">Try it</button>` : ''}
           </div>`
         : '';
       return `
         <div class="allowed-host-row" data-host="${escapeHtml(r.host)}">
-          <code class="allowed-host-name">${escapeHtml(r.host)}</code> ${origin} ${status}${r.search_template ? ' <span class="host-search-badge" title="are adresă de căutare">caută</span>' : ''}
+          <code class="allowed-host-name">${escapeHtml(r.host)}</code> ${origin} ${status}${r.search_template ? ' <span class="host-search-badge" title="has a search address">search</span>' : ''}
           <span class="allowed-host-actions">
-            <button class="quiet btn-host-test" data-host="${escapeHtml(r.host)}">Testează</button>
+            <button class="quiet btn-host-test" data-host="${escapeHtml(r.host)}">Test</button>
             ${remove}
           </span>
           ${r.last_test_status === 'FAILED' && r.last_test_detail ? `<div class="host-test-detail text-error">${escapeHtml(r.last_test_detail)}</div>` : ''}
@@ -924,7 +928,7 @@ function renderAllowedHosts(rows) {
           method: 'PUT',
           body: JSON.stringify({ template: input && input.value.trim() ? input.value.trim() : null }),
         });
-        showSourceStatus(input && input.value.trim() ? `Adresa de căutare pentru ${host} a fost salvată.` : `Adresa de căutare pentru ${host} a fost ștearsă.`, false);
+        showSourceStatus(input && input.value.trim() ? `Search address for ${host} saved.` : `Search address for ${host} removed.`, false);
         await loadSources();
       } catch (err) {
         showSourceStatus(err.message, true);
@@ -944,8 +948,8 @@ function renderAllowedHosts(rows) {
         const found = Array.isArray(result.found) ? result.found : [];
         showSourceStatus(
           found.length
-            ? `${host} a găsit ${found.length} pagini pentru «history of science»: ${found.map((f) => f.title).join('; ')}`
-            : `${host} nu a răspuns cu pagini pentru «history of science»; verifică adresa de căutare.`,
+            ? `${host} found ${found.length} pages for «history of science»: ${found.map((f) => f.title).join('; ')}`
+            : `${host} returned no pages for «history of science»; check the search address.`,
           !found.length,
         );
       } catch (err) {
@@ -980,13 +984,13 @@ function showSourceStatus(text, isError) {
 async function testAllowedHost(host, btn) {
   if (!host) return;
   const button = /** @type {HTMLButtonElement | null} */ (btn);
-  if (button) { button.disabled = true; button.textContent = 'Se testează…'; }
+  if (button) { button.disabled = true; button.textContent = 'Testing…'; }
   try {
     const result = await api(`/factual/sources/allowed-hosts/${encodeURIComponent(host)}/test`, { method: 'POST' });
     showSourceStatus(
       result.status === 'PASSED'
-        ? `${host}: poate fi citit. ${result.detail}`
-        : `${host}: nu poate fi folosit ca sursă. ${result.detail}`,
+        ? `${host}: readable. ${result.detail}`
+        : `${host}: cannot be used as a source. ${result.detail}`,
       result.status !== 'PASSED',
     );
   } catch (err) {
@@ -1019,7 +1023,7 @@ async function loadSources() {
 
     const sources = data.sources || [];
     if (!sources.length) {
-      listEl.innerHTML = '<div class="topics-loading">Nicio sursă preluată încă.</div>';
+      listEl.innerHTML = '<div class="topics-loading">No source taken in yet.</div>';
       return;
     }
     listEl.innerHTML = sources
@@ -1033,13 +1037,13 @@ async function loadSources() {
           <p class="topic-card-subject source-url">${escapeHtml(src.url)}</p>
           <div class="topic-card-meta">
             <span>${src.characters} caractere</span>
-            · <span>amprentă ${escapeHtml(shortHash(src.content_hash))}</span>
+            · <span>fingerprint ${escapeHtml(shortHash(src.content_hash))}</span>
             · <span>${escapeHtml(new Date(src.fetched_at).toLocaleString('ro-RO'))}</span>
           </div>
           <div class="topic-card-meta">${escapeHtml(claimCountsSummary(src.claim_counts))}</div>
           <div class="source-actions">
-            <button class="secondary btn-extract-claims" data-source-id="${escapeHtml(src.id)}">Extrage afirmații cu agentul</button>
-            <button class="quiet btn-show-claims" data-source-id="${escapeHtml(src.id)}">Vezi afirmațiile</button>
+            <button class="secondary btn-extract-claims" data-source-id="${escapeHtml(src.id)}">Extract claims with the agent</button>
+            <button class="quiet btn-show-claims" data-source-id="${escapeHtml(src.id)}">Show claims</button>
           </div>
           <div class="claims-list" id="claims-${escapeHtml(src.id)}" hidden></div>
         </div>`,
@@ -1053,20 +1057,20 @@ async function loadSources() {
       btn.addEventListener('click', () => loadClaims(btn.getAttribute('data-source-id')));
     });
   } catch (err) {
-    listEl.innerHTML = `<div class="text-error">Eroare la încărcare: ${escapeHtml(err.message)}</div>`;
+    listEl.innerHTML = `<div class="text-error">Loading failed: ${escapeHtml(err.message)}</div>`;
   }
 }
 
 async function loadClaims(sourceId) {
   const box = element(`claims-${sourceId}`);
   box.hidden = false;
-  box.innerHTML = '<div class="topics-loading">Se încarcă afirmațiile…</div>';
+  box.innerHTML = '<div class="topics-loading">Loading claims…</div>';
   try {
     const data = await api(`/factual/claims?source_id=${encodeURIComponent(sourceId)}`);
     const claims = data.claims || [];
     if (!claims.length) {
       box.innerHTML =
-        '<div class="topics-loading">Nicio afirmație extrasă din această sursă.</div>';
+        '<div class="topics-loading">No claim extracted from this source.</div>';
       return;
     }
     box.innerHTML = claims.map((c) => renderClaim(c, sourceId)).join('');
@@ -1106,26 +1110,26 @@ function renderClaim(claim, sourceId) {
     ? `<div class="claim-notes">${escapeHtml(claim.verifier_notes)}</div>`
     : '';
   const by = claim.verified_by_agent_id
-    ? ' · verificat de un agent'
+    ? ' · verified by an agent'
     : claim.verified_at
-      ? ' · verificat de Owner'
+      ? ' · verified by the Owner'
       : '';
 
   const actions = unverified
-    ? `<button class="quiet btn-agent-verify" data-claim-id="${escapeHtml(claim.id)}">Verifică cu un al doilea agent</button>
+    ? `<button class="quiet btn-agent-verify" data-claim-id="${escapeHtml(claim.id)}">Verify with a second agent</button>
        <button class="quiet btn-owner-verdict" data-claim-id="${escapeHtml(claim.id)}">Verdict propriu…</button>`
     : '';
 
   const form = unverified
     ? `<form class="owner-verdict-form" id="verdict-${escapeHtml(claim.id)}" data-claim-id="${escapeHtml(claim.id)}" hidden>
          <select name="status" aria-label="Verdict">
-           <option value="SUPPORTED">Susținută de sursă</option>
-           <option value="REFUTED">Contrazisă de sursă</option>
-           <option value="UNCERTAIN">Sursa nu spune</option>
+           <option value="SUPPORTED">Supported by the source</option>
+           <option value="REFUTED">Refuted by the source</option>
+           <option value="UNCERTAIN">The source does not say</option>
          </select>
-         <input name="evidence" placeholder="Fragment din sursă (opțional)" maxlength="4000" />
+         <input name="evidence" placeholder="Excerpt from the source (optional)" maxlength="4000" />
          <input name="notes" placeholder="De ce? (obligatoriu)" minlength="3" maxlength="2000" required />
-         <button type="submit" class="secondary">Înregistrează verdictul</button>
+         <button type="submit" class="secondary">Record verdict</button>
        </form>`
     : '';
 
@@ -1145,7 +1149,7 @@ function renderClaim(claim, sourceId) {
 
 /** Ask the research agent to read the source. Claims land UNVERIFIED, by design. */
 async function extractClaims(sourceId, button) {
-  claimStatusBox('Agentul citește sursa… poate dura până la un minut.', false);
+  claimStatusBox('The agent is reading the source… this can take up to a minute.', false);
   button.disabled = true;
   try {
     const result = await api(`/factual/sources/${sourceId}/extract-with-agent`, {
@@ -1154,7 +1158,7 @@ async function extractClaims(sourceId, button) {
     });
     const n = (result.claims || []).length;
     claimStatusBox(
-      `${n} afirmații extrase, toate NEVERIFICATE — un al doilea agent trebuie să le confirme din sursă înainte de scenarizare.`,
+      `${n} claims extracted, all UNVERIFIED — a second agent must confirm them from the source before scripting.`,
       false,
     );
     // The source cards are re-rendered first: reopening the claims before that would fill a
@@ -1162,7 +1166,7 @@ async function extractClaims(sourceId, button) {
     await loadSources();
     await loadClaims(sourceId);
   } catch (err) {
-    claimStatusBox(`Extragerea nu a reușit: ${err.message}`, true);
+    claimStatusBox(`Extraction failed: ${err.message}`, true);
   } finally {
     button.disabled = false;
   }
@@ -1179,8 +1183,8 @@ function claimStatusBox(message, isError) {
 async function agentVerify(button, sourceId) {
   const claimId = button.getAttribute('data-claim-id');
   button.disabled = true;
-  button.textContent = 'Se verifică…';
-  claimStatusBox('Un al doilea agent citește sursa…', false);
+  button.textContent = 'Checking…';
+  claimStatusBox('A second agent is reading the source…', false);
   try {
     const result = await api(`/factual/claims/${claimId}/verify-with-agent`, {
       method: 'POST',
@@ -1196,7 +1200,7 @@ async function agentVerify(button, sourceId) {
     // A rejected verdict is the system working, not a malfunction: the claim stays unverified.
     claimStatusBox(err.message, true);
     button.disabled = false;
-    button.textContent = 'Verifică cu un al doilea agent';
+    button.textContent = 'Verify with a second agent';
   }
 }
 
@@ -1218,7 +1222,7 @@ async function submitOwnerVerdict(event, form, sourceId) {
         evidence_text: String(data.get('evidence') || '').trim() || null,
       }),
     });
-    claimStatusBox('Verdictul tău a fost înregistrat.', false);
+    claimStatusBox('Your verdict was recorded.', false);
     await loadSources();
     await loadClaims(sourceId);
   } catch (err) {
@@ -1239,7 +1243,7 @@ if (sourceRetrieveForm) {
 
     statusDiv.hidden = false;
     statusDiv.className = 'dialog-status-msg';
-    statusDiv.textContent = 'Se preia sursa…';
+    statusDiv.textContent = 'Fetching the source…';
     submit.disabled = true;
     try {
       const result = await api('/factual/sources/retrieve', {
@@ -1250,7 +1254,7 @@ if (sourceRetrieveForm) {
         }),
       });
       const receipt = result.receipt || {};
-      statusDiv.textContent = `Preluat: „${result.source.title}" — amprenta conținutului ${shortHash(receipt.content_sha256)}. Nimic nu este considerat adevărat până la verificare.`;
+      statusDiv.textContent = `Taken in: "${result.source.title}" — content fingerprint ${shortHash(receipt.content_sha256)}. Nothing counts as true until it is verified.`;
       urlInput.value = '';
       await loadSources();
     } catch (err) {
@@ -1271,10 +1275,10 @@ if (sourceRetrieveForm) {
  * ------------------------------------------------------------------------- */
 
 const SCRIPT_STATUS_LABEL = {
-  DRAFT: 'Ciornă',
-  VERIFIED_PASS: 'Trecut de poarta factuală',
-  APPROVED: 'Aprobat',
-  BLOCKED_UNVERIFIED_CLAIMS: 'Blocat — afirmații neverificate',
+  DRAFT: 'Draft',
+  VERIFIED_PASS: 'Passed the factual gate',
+  APPROVED: 'Approved',
+  BLOCKED_UNVERIFIED_CLAIMS: 'Blocked — unverified claims',
 };
 
 function scriptStatusBox(message, isError) {
@@ -1297,16 +1301,16 @@ async function loadScripts() {
     picker.replaceChildren();
     const topics = topicsData.topics || [];
     if (!topics.length) {
-      picker.append(new Option('Propune întâi un subiect', ''));
+      picker.append(new Option('Propose a topic first', ''));
     } else {
-      picker.append(new Option('Alege subiectul…', ''));
+      picker.append(new Option('Choose a topic…', ''));
       for (const topic of topics) picker.append(new Option(topic.title, topic.id));
       if (previous) picker.value = previous;
     }
 
     const scripts = scriptsData.scripts || [];
     if (!scripts.length) {
-      listEl.innerHTML = '<div class="topics-loading">Niciun scenariu încă.</div>';
+      listEl.innerHTML = '<div class="topics-loading">No script yet.</div>';
       return;
     }
     listEl.innerHTML = scripts.map(renderScript).join('');
@@ -1326,7 +1330,7 @@ function renderScript(script) {
       (scene) => `
         <div class="scene-row">
           <div class="scene-narration">${escapeHtml(scene.narration || '')}</div>
-          <div class="scene-meta">Scena ${scene.scene_number || '?'} · ${(scene.claim_ids || []).length} afirmații citate${scene.visual_description ? ` · ${escapeHtml(scene.visual_description)}` : ''}</div>
+          <div class="scene-meta">Scene ${scene.scene_number || '?'} · ${(scene.claim_ids || []).length} cited claims${scene.visual_description ? ` · ${escapeHtml(scene.visual_description)}` : ''}</div>
         </div>`,
     )
     .join('');
@@ -1339,25 +1343,25 @@ function renderScript(script) {
       </div>
       <div class="topic-card-meta">
         <span>${script.target_duration_seconds}s</span>
-        · <span>${(script.claim_ids_json || []).length} afirmații</span>
+        · <span>${(script.claim_ids_json || []).length} claims</span>
         · <span>${(script.scenes_json || []).length} scene</span>
       </div>
-      ${blocked ? `<p class="helper-warn helper-note">Blocat: ${(script.unverified_claim_ids_json || []).length} afirmații citate nu sunt susținute de o sursă.</p>` : ''}
+      ${blocked ? `<p class="helper-warn helper-note">Blocked: ${(script.unverified_claim_ids_json || []).length} cited claims are not supported by a source.</p>` : ''}
       <div class="script-scenes">${scenes}</div>
-      ${status === 'VERIFIED_PASS' ? `<div class="source-actions"><button class="secondary btn-approve-script" data-script-id="${escapeHtml(script.id)}">Aprobă scenariul</button></div>` : ''}
+      ${status === 'VERIFIED_PASS' ? `<div class="source-actions"><button class="secondary btn-approve-script" data-script-id="${escapeHtml(script.id)}">Approve script</button></div>` : ''}
     </div>`;
 }
 
 async function approveScript(button) {
   const scriptId = button.getAttribute('data-script-id');
   button.disabled = true;
-  scriptStatusBox('Se re-verifică poarta factuală…', false);
+  scriptStatusBox('Re-checking the factual gate…', false);
   try {
     await api(`/factual/scripts/${scriptId}/approve`, {
       method: 'POST',
       body: JSON.stringify({ command_id: crypto.randomUUID() }),
     });
-    scriptStatusBox('Scenariu aprobat. Apare acum în Producție media, gata de storyboard.', false);
+    scriptStatusBox('Script approved. It now appears in Media Production, ready for a storyboard.', false);
     await loadScripts();
     await loadAwaitingStoryboard();
   } catch (err) {
@@ -1375,11 +1379,11 @@ if (scriptWriteForm) {
       scriptWriteForm.querySelector('button[type="submit"]')
     );
     if (!picker.value) {
-      scriptStatusBox('Alege un subiect.', true);
+      scriptStatusBox('Choose a topic.', true);
       return;
     }
     submit.disabled = true;
-    scriptStatusBox('Scenaristul scrie din afirmațiile verificate…', false);
+    scriptStatusBox('The script writer is writing from the verified claims…', false);
     try {
       const result = await api('/factual/scripts/write-with-agent', {
         method: 'POST',
@@ -1390,7 +1394,7 @@ if (scriptWriteForm) {
       });
       const script = result.script;
       scriptStatusBox(
-        `„${script.title}" — ${(script.scenes_json || []).length} scene, ${(script.claim_ids_json || []).length} afirmații citate.`,
+        `"${script.title}" — ${(script.scenes_json || []).length} scenes, ${(script.claim_ids_json || []).length} cited claims.`,
         false,
       );
       await loadScripts();
@@ -1412,7 +1416,7 @@ if (topicProposeForm) {
     const statusDiv = element('topic-propose-status');
 
     statusDiv.hidden = false;
-    statusDiv.textContent = 'Trimitere subiect spre analiză...';
+    statusDiv.textContent = 'Sending the topic for analysis...';
 
     try {
       const payload = {
@@ -1426,7 +1430,7 @@ if (topicProposeForm) {
         method: 'POST',
         body: JSON.stringify(payload),
       });
-      statusDiv.textContent = 'Subiect înregistrat cu succes!';
+      statusDiv.textContent = 'Topic recorded.';
       statusDiv.className = 'dialog-status-msg';
       titleInput.value = '';
       subjectInput.value = '';
@@ -1437,7 +1441,7 @@ if (topicProposeForm) {
       await loadTopics();
       await refresh();
     } catch (err) {
-      statusDiv.textContent = `Eroare: ${err.message}`;
+      statusDiv.textContent = `Error: ${err.message}`;
       statusDiv.className = 'dialog-status-msg text-error';
     }
   });
@@ -1535,9 +1539,9 @@ function characterCard(c) {
       ${greeting ? `<div class="char-row"><span class="char-label">Expresie</span><em>„${escapeHtml(greeting)}”</em></div>` : ''}
       ${charRow('Comportament', behavior.work_rituals)}
       ${charRow('Nu devia', c.forbidden_deviations)}
-      ${voiceLine ? `<div class="char-voice">Voce: ${escapeHtml(voiceLine)}</div>` : ''}
+      ${voiceLine ? `<div class="char-voice">Voice: ${escapeHtml(voiceLine)}</div>` : ''}
       ${identityLine(c)}
-      ${slots.length ? `<div class="char-voice">Referințe vizuale: ${present.length}/${slots.length}${present.length ? '' : ' · niciuna produsă încă'}</div>` : ''}
+      ${slots.length ? `<div class="char-voice">Visual references: ${present.length}/${slots.length}${present.length ? '' : ' · none produced yet'}</div>` : ''}
     </div>
   `;
 }
@@ -1548,10 +1552,10 @@ function identityLine(c) {
   const locks = c.identity_locks_json || {};
   const lockedFields = Object.keys(locks).filter((k) => locks[k]);
   const parts = [];
-  if (binding.voice_id) parts.push(`Voce legată: ${escapeHtml(binding.voice_id)}${binding.model_id ? ` · model ${escapeHtml(binding.model_id)}` : ''}`);
-  if (lockedFields.length) parts.push(`Blocat: ${escapeHtml(lockedFields.join(', '))}`);
-  if (c.consistency_status) parts.push(`Consistență: ${escapeHtml(c.consistency_status)}`);
-  if ((c.approved_fallbacks_json || []).length) parts.push(`${c.approved_fallbacks_json.length} modele aprobate`);
+  if (binding.voice_id) parts.push(`Bound voice: ${escapeHtml(binding.voice_id)}${binding.model_id ? ` · model ${escapeHtml(binding.model_id)}` : ''}`);
+  if (lockedFields.length) parts.push(`Locked: ${escapeHtml(lockedFields.join(', '))}`);
+  if (c.consistency_status) parts.push(`Consistency: ${escapeHtml(c.consistency_status)}`);
+  if ((c.approved_fallbacks_json || []).length) parts.push(`${c.approved_fallbacks_json.length} approved models`);
   return parts.length ? `<div class="char-voice">${parts.join(' · ')}</div>` : '';
 }
 
@@ -1562,12 +1566,12 @@ async function loadCharacterBibles() {
     const chars = data.characters || [];
     if (chars.length === 0) {
       listEl.innerHTML =
-        '<div class="topics-loading">Niciun caracter înregistrat în Character Bible.</div>';
+        '<div class="topics-loading">No character recorded in the Character Bible.</div>';
       return;
     }
     listEl.innerHTML = chars.map(characterCard).join('');
   } catch (err) {
-    listEl.innerHTML = `<div class="text-error">Eroare la încărcarea caracterelor: ${escapeHtml(err.message)}</div>`;
+    listEl.innerHTML = `<div class="text-error">Loading characters failed: ${escapeHtml(err.message)}</div>`;
   }
 }
 
@@ -1583,8 +1587,8 @@ async function loadMediaProviderNote() {
   try {
     const info = await api('/media/providers');
     if (info.renders_are_publishable) {
-      const voice = info.voice_provider ? ` · voce: ${info.voice_provider}` : ' · voce: substitut';
-      note.textContent = `Imagini: ${info.image_provider}${voice}. Randările pot fi publicate.`;
+      const voice = info.voice_provider ? ` · voice: ${info.voice_provider}` : ' · voice: substitute';
+      note.textContent = `Images: ${info.image_provider}${voice}. Renders can be published.`;
       note.className = 'helper-note';
     } else {
       note.textContent = info.note;
@@ -1625,12 +1629,12 @@ async function loadAwaitingStoryboard() {
           <div class="topic-card-meta">
             <span>${script.target_duration_seconds}s</span>
             · <span>${script.scene_count} scene</span>
-            · <span>${script.claim_count} afirmații verificate</span>
+            · <span>${script.claim_count} verified claims</span>
           </div>
           ${storyReviewBlock(reviews[index])}
           <div class="source-actions">
-            <button class="quiet btn-story-review" data-script-id="${escapeHtml(script.id)}">Citește povestea</button>
-            <button class="secondary btn-make-storyboard" data-script-id="${escapeHtml(script.id)}">Creează storyboard</button>
+            <button class="quiet btn-story-review" data-script-id="${escapeHtml(script.id)}">Read the story</button>
+            <button class="secondary btn-make-storyboard" data-script-id="${escapeHtml(script.id)}">Create storyboard</button>
           </div>
         </div>`,
       )
@@ -1652,8 +1656,8 @@ async function loadAwaitingStoryboard() {
 // A verdict of NONE is not a complaint: it means nobody has read this story yet.
 function storyReviewBlock(review) {
   if (!review || review.verdict === 'NONE') {
-    return `<div class="story-review is-none">Povestea nu a fost citită încă. Nimic nu intră
-      în producție înainte de asta.</div>`;
+    return `<div class="story-review is-none">The story has not been read yet. Nothing goes
+      into production before that.</div>`;
   }
   const failed = (review.failed || []).slice(0, 4);
   const marks = ['at_0', 'at_3', 'at_5', 'at_10', 'at_15', 'at_20', 'at_25', 'at_end'];
@@ -1667,10 +1671,10 @@ function storyReviewBlock(review) {
     <div class="story-review ${state}">
       <div class="story-review-head">
         <strong>${escapeHtml(review.verdict)}</strong>
-        <span>${Number(review.estimated_seconds || 0).toFixed(1)}s de narațiune</span>
+        <span>${Number(review.estimated_seconds || 0).toFixed(1)}s of narration</span>
       </div>
       ${failed.length ? `<div class="story-review-failed">Nu trece: ${failed.map(escapeHtml).join(', ')}</div>` : ''}
-      ${curve ? `<div class="story-review-curve">Reținere estimată — ${escapeHtml(curve)}</div>` : ''}
+      ${curve ? `<div class="story-review-curve">Estimated retention — ${escapeHtml(curve)}</div>` : ''}
       ${retention.collapse_at ? `<div class="story-review-curve">Se pierde la ${escapeHtml(String(retention.collapse_at))}s: ${escapeHtml(String(retention.why || ''))}</div>` : ''}
       ${(review.notes || []).slice(0, 3).map((note) => `<div class="motion-reason">${escapeHtml(String(note))}</div>`).join('')}
     </div>`;
@@ -1681,7 +1685,7 @@ async function runStoryReview(button) {
   button.disabled = true;
   mediaStatusMsg.hidden = false;
   mediaStatusMsg.className = 'dialog-status-msg';
-  mediaStatusMsg.textContent = 'Directoarea citește povestea înainte de producție…';
+  mediaStatusMsg.textContent = 'The Director is reading the story before production…';
   try {
     const review = await api(`/factual/scripts/${scriptId}/story-review`, { method: 'POST' });
     mediaStatusMsg.textContent = `Verdict: ${review.verdict}. ${(review.notes || [])[0] || ''}`;
@@ -1699,7 +1703,7 @@ async function makeStoryboard(button) {
   button.disabled = true;
   mediaStatusMsg.hidden = false;
   mediaStatusMsg.className = 'dialog-status-msg';
-  mediaStatusMsg.textContent = 'Se construiește storyboard-ul din scenariul aprobat…';
+  mediaStatusMsg.textContent = 'Building the storyboard from the approved script…';
   try {
     const storyboard = await api(`/media/storyboards/from-script/${scriptId}`, {
       method: 'POST',
@@ -1730,15 +1734,15 @@ function productionPackageBlock(pack) {
     value ? `<div><strong>${label}:</strong> ${escapeHtml(String(value))}</div>` : '';
   return `
     <details class="motion-explain">
-      <summary>De ce acest film</summary>
+      <summary>Why this film</summary>
       ${line('Faptul', why.core_fact)}
-      ${line('De ce contează', why.why_it_matters)}
+      ${line('Why it matters', why.why_it_matters)}
       ${line('Mesajul', pack.core_message)}
       ${line('Hook', pack.hook)}
-      ${line('Răsplata', why.payoff)}
-      ${line('Îndemn', `${(pack.cta || {}).text || ''} (${(pack.cta || {}).kind || '—'})`)}
-      ${line('Recenzia poveștii', (pack.approval || {}).story_review)}
-      ${line('Durată așteptată', `${Number(pack.expected_duration_seconds || 0).toFixed(1)}s`)}
+      ${line('Payoff', why.payoff)}
+      ${line('Call to action', `${(pack.cta || {}).text || ''} (${(pack.cta || {}).kind || '—'})`)}
+      ${line('Story review', (pack.approval || {}).story_review)}
+      ${line('Expected duration', `${Number(pack.expected_duration_seconds || 0).toFixed(1)}s`)}
       ${line('Privirea filmului', [bible.style, bible.palette, bible.lighting].filter(Boolean).join(' · '))}
       ${
         shots.length
@@ -1749,7 +1753,7 @@ function productionPackageBlock(pack) {
       }
       ${
         (pack.trusted_sources || []).length
-          ? `<div><strong>Surse:</strong> ${(pack.trusted_sources || [])
+          ? `<div><strong>Sources:</strong> ${(pack.trusted_sources || [])
               .slice(0, 4)
               .map((source) => escapeHtml(String(source.publisher || source.url)))
               .join(', ')}</div>`
@@ -1766,10 +1770,10 @@ function motionExplanation(motion, scenes, notes) {
   const test = motion && motion.environment === 'TEST';
   const head = motion
     ? `<div class="motion-head"><span class="${test ? 'env-banner is-test' : 'env-banner is-production'}">${
-        test ? 'TEST' : 'PRODUCȚIE'
+        test ? 'TEST' : 'PRODUCTION'
       }</span> <span>${motion.clips || 0} din ${motion.scenes || 0} scene filmate · ${
-        motion.estimated_usd != null ? `${Number(motion.estimated_usd).toFixed(2)} USD` : 'cost nemăsurat'
-      }${motion.from_prompt ? ' · din text, fără cadru plătit' : ''}</span></div>`
+        motion.estimated_usd != null ? `${Number(motion.estimated_usd).toFixed(2)} USD` : 'cost not measured'
+      }${motion.from_prompt ? ' · from text, no paid frame' : ''}</span></div>`
     : '';
   const rows = (scenes || [])
     .map((scene) => {
@@ -1778,11 +1782,11 @@ function motionExplanation(motion, scenes, notes) {
         scene.quoted_usd != null
           ? `${Number(scene.quoted_usd).toFixed(2)} USD (cotat de vendor)`
           : decision.price_usd != null
-            ? `${Number(decision.price_usd).toFixed(2)} USD (preț înregistrat)`
-            : 'preț necunoscut';
+            ? `${Number(decision.price_usd).toFixed(2)} USD (recorded price)`
+            : 'unknown price';
       const outcome = scene.refused
-        ? `<span class="text-error">nefilmată: ${escapeHtml(String(scene.refused))}</span>`
-        : `${scene.bytes ? 'filmată' : 'fără clip'}`;
+        ? `<span class="text-error">not filmed: ${escapeHtml(String(scene.refused))}</span>`
+        : `${scene.bytes ? 'filmed' : 'no clip'}`;
       return `
         <li>
           <strong>Scena #${scene.scene_index}</strong> · ${escapeHtml(String(scene.tier || '—'))} ·
@@ -1796,7 +1800,7 @@ function motionExplanation(motion, scenes, notes) {
     .join('');
   return `
     <details class="motion-explain">
-      <summary>De ce aceste modele</summary>
+      <summary>Why these models</summary>
       ${head}
       <ul class="motion-scenes">${rows}${noteList}</ul>
     </details>`;
@@ -1810,8 +1814,8 @@ async function loadMediaStoryboards() {
     if (storyboards.length === 0) {
       listEl.innerHTML = `
         <div class="topics-loading">
-          Niciun storyboard disponibil în pipeline.
-          <br>Apasă pe "Creează Storyboard Demonstrativ" pentru a genera automat un scenariu 9:16 verificat.
+          No storyboard in the pipeline yet.
+          <br>Press "Create demo fixture" to generate a verified 9:16 script automatically.
         </div>
       `;
       return;
@@ -1897,26 +1901,26 @@ async function loadMediaStoryboards() {
             <div class="video-container-9-16">
               ${
                 assetId
-                  ? `<button class="video-play" data-asset="${escapeHtml(assetId)}" title="Redă filmul">▶ Redă</button>`
+                  ? `<button class="video-play" data-asset="${escapeHtml(assetId)}" title="Play the film">▶ Play</button>`
                   : '<div class="tag">9:16 Video</div>'
               }
             </div>
             <div class="video-details">
               ${
                 assetId
-                  ? `<div class="video-actions"><a class="quiet" href="#" data-download="${escapeHtml(assetId)}">Descarcă fișierul</a></div>`
+                  ? `<div class="video-actions"><a class="quiet" href="#" data-download="${escapeHtml(assetId)}">Download the file</a></div>`
                   : ''
               }
-              <div><strong>Format măsurat:</strong> ${
+              <div><strong>Measured format:</strong> ${
                 tech.measured_width
                   ? `${tech.measured_width}x${tech.measured_height} · ${tech.measured_duration_seconds}s · ${escapeHtml(String(tech.video_codec || '—'))}`
-                  : 'nemăsurat'
+                  : 'not measured'
               }</div>
               <div>${qcBadge}</div>
               ${qcScoresHtml}
               ${motionExplanation(motion, motionScenes, motionNotes)}
-              <div><strong>Amprentă SHA-256 a fișierului:</strong></div>
-              <div class="provenance-badge">${escapeHtml(tech.provenance_sha256 || 'indisponibilă')}</div>
+              <div><strong>File SHA-256 fingerprint:</strong></div>
+              <div class="provenance-badge">${escapeHtml(tech.provenance_sha256 || 'unavailable')}</div>
             </div>
           </div>
         `;
@@ -1935,7 +1939,7 @@ async function loadMediaStoryboards() {
             </div>
             <div class="storyboard-actions">
               <button class="btn-render-video" data-id="${sb.id}">Randare 9:16</button>
-              <button class="btn-qc-video" data-id="${sb.id}">Verifică QC</button>
+              <button class="btn-qc-video" data-id="${sb.id}">Check QC</button>
             </div>
           </div>
 
@@ -1958,13 +1962,13 @@ async function loadMediaStoryboards() {
     // could not authenticate. The same bytes are what the download link saves.
     const playFilm = async (assetId, container, trigger) => {
       const button = /** @type {HTMLButtonElement | null} */ (trigger);
-      if (button) { button.disabled = true; button.textContent = 'Se încarcă…'; }
+      if (button) { button.disabled = true; button.textContent = 'Loading…'; }
       try {
         const response = await fetch(`/api/v1/media/assets/${assetId}/stream`, {
           headers: { Authorization: `Bearer ${ownerToken}` },
           cache: 'no-store',
         });
-        if (!response.ok) throw new Error(`Fișierul nu a putut fi citit (${response.status}).`);
+        if (!response.ok) throw new Error(`The file could not be read (${response.status}).`);
         const url = URL.createObjectURL(await response.blob());
         const video = document.createElement('video');
         video.src = url;
@@ -1976,8 +1980,8 @@ async function loadMediaStoryboards() {
         container.append(video);
         return url;
       } catch (err) {
-        if (button) { button.disabled = false; button.textContent = '▶ Redă'; }
-        alert(`Nu am putut reda filmul: ${err.message}`);
+        if (button) { button.disabled = false; button.textContent = '▶ Play'; }
+        alert(`Could not play the film: ${err.message}`);
         return null;
       }
     };
@@ -2000,7 +2004,7 @@ async function loadMediaStoryboards() {
             headers: { Authorization: `Bearer ${ownerToken}` },
             cache: 'no-store',
           });
-          if (!response.ok) throw new Error(`Fișierul nu a putut fi citit (${response.status}).`);
+          if (!response.ok) throw new Error(`The file could not be read (${response.status}).`);
           const url = URL.createObjectURL(await response.blob());
           const save = document.createElement('a');
           save.href = url;
@@ -2008,7 +2012,7 @@ async function loadMediaStoryboards() {
           save.click();
           setTimeout(() => URL.revokeObjectURL(url), 30000);
         } catch (err) {
-          alert(`Nu am putut descărca filmul: ${err.message}`);
+          alert(`Could not download the film: ${err.message}`);
         }
       });
     });
@@ -2017,7 +2021,7 @@ async function loadMediaStoryboards() {
       btn.addEventListener('click', async () => {
         const id = btn.getAttribute('data-id');
         if (!id) return;
-        btn.textContent = 'Randare în curs...';
+        btn.textContent = 'Rendering...';
         // @ts-ignore
         btn.disabled = true;
         try {
@@ -2025,7 +2029,7 @@ async function loadMediaStoryboards() {
           await loadMediaStoryboards();
           await refresh();
         } catch (err) {
-          alert(`Eroare la randare: ${err.message}`);
+          alert(`Render failed: ${err.message}`);
           btn.textContent = 'Randare 9:16';
           // @ts-ignore
           btn.disabled = false;
@@ -2045,15 +2049,15 @@ async function loadMediaStoryboards() {
           await loadMediaStoryboards();
           await refresh();
         } catch (err) {
-          alert(`Eroare la QC: ${err.message}`);
-          btn.textContent = 'Verifică QC';
+          alert(`QC failed: ${err.message}`);
+          btn.textContent = 'Check QC';
           // @ts-ignore
           btn.disabled = false;
         }
       });
     });
   } catch (err) {
-    listEl.innerHTML = `<div class="text-error">Eroare la încărcarea producției media: ${escapeHtml(err.message)}</div>`;
+    listEl.innerHTML = `<div class="text-error">Loading media production failed: ${escapeHtml(err.message)}</div>`;
   }
 }
 
@@ -2062,13 +2066,13 @@ if (generateDemoStoryboardBtn) {
     mediaStatusMsg.hidden = false;
     mediaStatusMsg.className = 'dialog-status-msg';
     mediaStatusMsg.textContent =
-      'Creare fixture demo (topic, scenariu și afirmație NEVERIFICATĂ)...';
+      'Creating demo fixture (topic, script and UNVERIFIED claim)...';
     try {
       const fixture = await api('/media/storyboards/demo-fixture', {
         method: 'POST',
       });
       mediaStatusMsg.textContent =
-        fixture.next_step || 'Fixture creat. Verifică afirmațiile în panoul Cercetare.';
+        fixture.next_step || 'Fixture created. Verify the claims in the Research panel.';
       setTimeout(() => {
         mediaStatusMsg.hidden = true;
       }, 8000);
@@ -2076,7 +2080,7 @@ if (generateDemoStoryboardBtn) {
       await refresh();
     } catch (err) {
       mediaStatusMsg.className = 'dialog-status-msg text-error';
-      mediaStatusMsg.textContent = `Eroare: ${err.message}`;
+      mediaStatusMsg.textContent = `Error: ${err.message}`;
     }
   });
 }
@@ -2099,9 +2103,9 @@ const CHANNEL_STATUS_LABEL = {
 };
 
 const CHANNEL_STATUS_HINT = {
-  NOT_CONFIGURED: 'Slot de canal. Nu are ID real de canal YouTube și nu poate publica.',
-  AUTH_REQUIRED: 'ID de canal setat, dar fără credențiale verificate. Nu poate publica.',
-  AUTHENTICATED: 'ID de canal și credențiale prezente.',
+  NOT_CONFIGURED: 'Channel slot. It has no real YouTube channel ID and cannot publish.',
+  AUTH_REQUIRED: 'Channel ID set, but no verified credentials. It cannot publish.',
+  AUTHENTICATED: 'Channel ID and credentials present.',
 };
 
 if (openPublishingBtn) {
@@ -2132,11 +2136,11 @@ if (budgetForm) {
           limit_usd: /** @type {HTMLInputElement} */ (element('budget-limit')).value.trim(),
         }),
       });
-      status.textContent = result.active === false ? 'Bugetul a fost retras.' : `Buget ${result.period === 'DAILY' ? 'zilnic' : 'lunar'} de ${result.limit_usd} USD stabilit.`;
+      status.textContent = result.active === false ? 'The budget was retired.' : `${result.period === 'DAILY' ? 'Daily' : 'Monthly'} budget of ${result.limit_usd} USD set.`;
       await loadBudget();
     } catch (error) {
       status.className = 'dialog-status-msg text-error';
-      status.textContent = error instanceof Error ? error.message : 'Bugetul nu a putut fi salvat.';
+      status.textContent = error instanceof Error ? error.message : 'The budget could not be saved.';
     }
   });
 }
@@ -2146,14 +2150,14 @@ if (closeBooksBtn) {
     const status = element('budget-status');
     status.hidden = false;
     status.className = 'dialog-status-msg';
-    status.textContent = 'Contabilul închide ziua…';
+    status.textContent = 'The Accountant is closing the day…';
     try {
       const result = await api('/economy/books/close', { method: 'POST' });
       status.textContent = `${result.headline}. ${result.report ? result.report.summary : result.blocked || ''}`;
       await loadBudget();
     } catch (error) {
       status.className = 'dialog-status-msg text-error';
-      status.textContent = error instanceof Error ? error.message : 'Închiderea a eșuat.';
+      status.textContent = error instanceof Error ? error.message : 'Closing failed.';
     }
   });
 }
@@ -2164,8 +2168,8 @@ if (refreshPublishingBtn) {
 
 /** Labels for the stored production policy; the value itself lives on the channel row. */
 const PRODUCTION_POLICY_LABEL = {
-  FLEXIBLE: 'FLEXIBILĂ · tehnologia se alege per video',
-  CONSISTENCY_LOCKED: 'CONSISTENȚĂ BLOCATĂ · identitatea personajelor nu se schimbă',
+  FLEXIBLE: 'FLEXIBLE · technology chosen per video',
+  CONSISTENCY_LOCKED: 'CONSISTENCY LOCKED · character identity never changes',
 };
 
 async function loadPublishingHub() {
@@ -2187,17 +2191,17 @@ async function loadPublishingHub() {
       } else if (chData.publisher_configured) {
         publisherBanner.className = 'dialog-status-msg';
         publisherBanner.textContent =
-          'Credențiale YouTube prezente. Publicarea folosește API-ul oficial.';
+          'YouTube credentials present. Publishing uses the official API.';
       } else {
         publisherBanner.className = 'dialog-status-msg text-error';
         publisherBanner.textContent =
-          'Nicio credențială YouTube configurată: publicarea este dezactivată. Setează STUDIO_YOUTUBE_CLIENT_ID, STUDIO_YOUTUBE_CLIENT_SECRET și STUDIO_YOUTUBE_REFRESH_TOKEN în .env. Studioul nu simulează publicări.';
+          'No YouTube credentials configured: publishing is off. Set STUDIO_YOUTUBE_CLIENT_ID, STUDIO_YOUTUBE_CLIENT_SECRET and STUDIO_YOUTUBE_REFRESH_TOKEN in .env. The studio never simulates publishing.';
       }
       publisherBanner.hidden = false;
     }
     if (channels.length === 0) {
       channelsEl.innerHTML =
-        '<div class="topics-loading">Niciun canal de distribuție configurat.</div>';
+        '<div class="topics-loading">No distribution channel configured.</div>';
     } else {
       channelsEl.innerHTML = channels
         .map(
@@ -2205,19 +2209,19 @@ async function loadPublishingHub() {
         <div class="channel-item">
           <div class="channel-info">
             <h4>${escapeHtml(c.channel_name)}</h4>
-            <div class="channel-meta">Tip: <strong>${escapeHtml(c.channel_type)}</strong> · ID la distanță: <code>${escapeHtml(c.remote_channel_id || 'nesetat')}</code></div>
-            <div class="channel-meta">${escapeHtml(CHANNEL_STATUS_HINT[c.status] || 'Stare necunoscută.')}</div>
-            <div class="channel-meta">Politică de producție: <span class="policy-tag ${c.production_policy === 'CONSISTENCY_LOCKED' ? 'policy-locked' : 'policy-flexible'}">${escapeHtml(PRODUCTION_POLICY_LABEL[c.production_policy] || 'nesetată')}</span>${c.allow_production_override === false ? ' · suprascrieri per episod dezactivate' : ''}</div>
+            <div class="channel-meta">Type: <strong>${escapeHtml(c.channel_type)}</strong> · Remote ID: <code>${escapeHtml(c.remote_channel_id || 'not set')}</code></div>
+            <div class="channel-meta">${escapeHtml(CHANNEL_STATUS_HINT[c.status] || 'Unknown state.')}</div>
+            <div class="channel-meta">Production policy: <span class="policy-tag ${c.production_policy === 'CONSISTENCY_LOCKED' ? 'policy-locked' : 'policy-flexible'}">${escapeHtml(PRODUCTION_POLICY_LABEL[c.production_policy] || 'not set')}</span>${c.allow_production_override === false ? ' · per-episode overrides off' : ''}</div>
           </div>
           <div class="channel-meta channel-bind">
             <label>Cont YouTube
-              <select data-bind-select="${escapeHtml(c.id)}" aria-label="Cont YouTube pentru ${escapeHtml(c.channel_name)}">
+              <select data-bind-select="${escapeHtml(c.id)}" aria-label="YouTube account for ${escapeHtml(c.channel_name)}">
                 <option value="">Nelegat</option>
                 ${accounts.map((a) => `<option value="${escapeHtml(a.id)}" ${a.id === c.youtube_connection_id ? 'selected' : ''}>${escapeHtml(a.name)}${a.channel_title ? ` · ${escapeHtml(a.channel_title)}` : ''}</option>`).join('')}
               </select>
             </label>
-            <button class="secondary" data-bind-channel="${escapeHtml(c.id)}" data-event="${escapeHtml(c.event_id || '')}">Leagă</button>
-            <span class="helper">${c.publisher_ready ? `Publică pe ${escapeHtml(c.youtube_channel_title || c.youtube_connection_name || '')}` : 'Fără legătură, acest slot nu publică și nu are analytics.'}</span>
+            <button class="secondary" data-bind-channel="${escapeHtml(c.id)}" data-event="${escapeHtml(c.event_id || '')}">Bind</button>
+            <span class="helper">${c.publisher_ready ? `Publishes to ${escapeHtml(c.youtube_channel_title || c.youtube_connection_name || '')}` : 'Not bound: this slot does not publish and has no analytics.'}</span>
           </div>
         </div>
         <span class="channel-status-tag ${c.status === 'AUTHENTICATED' ? 'channel-status-ok' : 'channel-status-warn'}">${escapeHtml(CHANNEL_STATUS_LABEL[c.status] || c.status)}</span>
@@ -2243,7 +2247,7 @@ async function loadPublishingHub() {
           } catch (err) {
             publishingStatusMsg.hidden = false;
             publishingStatusMsg.className = 'dialog-status-msg text-error';
-            publishingStatusMsg.textContent = err instanceof Error ? err.message : 'Legarea a eșuat.';
+            publishingStatusMsg.textContent = err instanceof Error ? err.message : 'Binding failed.';
           }
         });
       });
@@ -2252,7 +2256,7 @@ async function loadPublishingHub() {
     const publications = pubData.publications || [];
     if (publications.length === 0) {
       pubListEl.innerHTML =
-        '<div class="topics-loading">Nicio publicație înregistrată încă. Folosește butonul de mai sus pentru a publica un video aprobat.</div>';
+        '<div class="topics-loading">No publication recorded yet. Use the button above to publish an approved video.</div>';
     } else {
       pubListEl.innerHTML = publications
         .map((p) => {
@@ -2271,7 +2275,7 @@ async function loadPublishingHub() {
             !isSimulated && isRealYoutubeUrl
               ? `<a href="${escapeHtml(p.remote_url)}" target="_blank" rel="noopener" class="pub-remote-link">Vezi pe YouTube</a>`
               : isSimulated
-                ? '<span class="pub-sim-note">Simulare locală — niciun video pe YouTube</span>'
+                ? '<span class="pub-sim-note">Local simulation — no video on YouTube</span>'
                 : '';
           const privacyBadge =
             p.privacy_status === 'private'
@@ -2285,7 +2289,7 @@ async function loadPublishingHub() {
               <div class="pub-item-meta">
                 <span>Stare: <strong class="pub-status-badge ${isSimulated ? 'pub-status-simulated' : badgeClass}">${escapeHtml(isSimulated ? 'SIMULAT (nepublicat)' : p.status)}</strong></span>
                 ${privacyBadge}
-                <span>ID la distanță: <code>${escapeHtml(p.remote_video_id || '—')}</code></span>
+                <span>Remote ID: <code>${escapeHtml(p.remote_video_id || '—')}</code></span>
                 <span>Data: ${new Date(p.created_at).toLocaleString('ro-RO')}</span>
               </div>
             </div>
@@ -2299,9 +2303,9 @@ async function loadPublishingHub() {
     }
   } catch (err) {
     if (channelsEl)
-      channelsEl.innerHTML = `<div class="text-error">Eroare canale: ${escapeHtml(err.message)}</div>`;
+      channelsEl.innerHTML = `<div class="text-error">Channels failed to load: ${escapeHtml(err.message)}</div>`;
     if (pubListEl)
-      pubListEl.innerHTML = `<div class="text-error">Eroare publicații: ${escapeHtml(err.message)}</div>`;
+      pubListEl.innerHTML = `<div class="text-error">Publications failed to load: ${escapeHtml(err.message)}</div>`;
   }
 }
 
@@ -2310,7 +2314,7 @@ if (triggerQuickPublishBtn) {
     publishingStatusMsg.hidden = false;
     publishingStatusMsg.className = 'dialog-status-msg';
     publishingStatusMsg.textContent =
-      'Verificare pipeline media și identificare cel mai recent video aprobat QC...';
+      'Checking the media pipeline and finding the latest QC-approved video...';
     try {
       // Find a storyboard with an assembled and QC passed video via /media/qc/{sb.id}
       const sbData = await api('/media/storyboards');
@@ -2330,42 +2334,44 @@ if (triggerQuickPublishBtn) {
       if (!targetAssetId) {
         publishingStatusMsg.className = 'dialog-status-msg text-error';
         publishingStatusMsg.textContent =
-          'Nu a fost găsit niciun video cu raport QC PASSED. Generează mai întâi un storyboard și randare 9:16 din panoul Producție Media!';
+          'No video with a QC PASSED report was found. Create a storyboard and a 9:16 render in Media Production first.';
         return;
       }
 
-      publishingStatusMsg.textContent = `Validare Content Gate și încărcare privată pentru MediaAsset ${targetAssetId}...`;
+      publishingStatusMsg.textContent = `Content Gate check and private upload for MediaAsset ${targetAssetId}...`;
       const pubRes = await api(`/publishing/publish-asset/${targetAssetId}`, {
         method: 'POST',
       });
 
       if (pubRes.status === 'PUBLISHED') {
         publishingStatusMsg.className = 'dialog-status-msg';
-        publishingStatusMsg.textContent = `Video încărcat privat pe YouTube. ID la distanță: ${pubRes.remote_video_id}`;
+        publishingStatusMsg.textContent = `Video uploaded privately to YouTube. Remote ID: ${pubRes.remote_video_id}`;
       } else if (pubRes.status === 'PUBLISHED_SIMULATED') {
         publishingStatusMsg.className = 'dialog-status-msg text-error';
         publishingStatusMsg.textContent =
-          'Încărcare SIMULATĂ: nu există niciun video pe YouTube. Configurează credențialele reale.';
+          'SIMULATED upload: there is no video on YouTube. Configure real credentials.';
       } else {
         publishingStatusMsg.className = 'dialog-status-msg text-error';
-        publishingStatusMsg.textContent = `Publicare neterminată. Stare: ${pubRes.status}. ${pubRes.error_detail || ''}`;
+        publishingStatusMsg.textContent = `Publication not finished. State: ${pubRes.status}. ${pubRes.error_detail || ''}`;
       }
       await loadPublishingHub();
       await refresh();
     } catch (err) {
       publishingStatusMsg.className = 'dialog-status-msg text-error';
-      publishingStatusMsg.textContent = `Eroare publicare: ${err.message}`;
+      publishingStatusMsg.textContent = `Publishing error: ${err.message}`;
     }
   });
 }
 
 function render(data) {
   element('studio-name').textContent = data.studio.name;
-  element('connection').textContent = 'Conectat · Owner';
-  element('office-status').textContent = 'Live Renderer 60fps';
-  element('room-caption').textContent = `${data.office.rooms.length} cameră · Studioul 2D Activ`;
+  element('connection').textContent = 'Connected · Owner';
+  const staff = officeState.agents.length;
+  element('room-caption').textContent = staff
+    ? `${staff} ${staff === 1 ? 'employee' : 'employees'} at their desks · AMN-AI headquarters, live`
+    : 'AMN-AI headquarters, live';
   element('snapshot-time').textContent =
-    `Actualizat ${new Date(data.captured_at).toLocaleTimeString('ro-RO', { timeZone: data.studio.timezone })}`;
+    `Updated ${new Date(data.captured_at).toLocaleTimeString('en-GB', { timeZone: data.studio.timezone })}`;
   renderSwitch(data.policy.autonomy_stopped);
   renderEnvironment(data.policy.environment);
   ledger.timezone = data.studio.timezone;
@@ -2375,19 +2381,19 @@ function render(data) {
   mailThread.timezone = data.studio.timezone;
   liveWindows.setNames(agentNames);
   ledger.add(data.events || []);
-  element('ledger-count').textContent = `${ledger.events.size} înregistrări`;
+  element('ledger-count').textContent = `${ledger.events.size} entries`;
 
   const labels = {
-    agents: 'Agenți',
-    providers: 'Furnizori AI',
+    agents: 'Agents',
+    providers: 'AI providers',
     workflows: 'Automatizare',
-    research: 'Cercetare factuală',
-    media: 'Producție media',
-    publishing: 'Publicare',
+    research: 'Fact research',
+    media: 'Media production',
+    publishing: 'Publishing',
     story: 'Office Serial',
     treasury: 'Trezorerie VR$',
     procurement: 'VendorShop',
-    financing: 'Finanțare',
+    financing: 'Financing',
   };
   const modules = element('modules');
   modules.replaceChildren();
@@ -2413,12 +2419,12 @@ function renderEnvironment(environment) {
   const test = value === 'TEST';
   const banner = element('environment-banner');
   banner.hidden = false;
-  banner.textContent = test ? 'MEDIU DE TEST' : 'PRODUCȚIE';
+  banner.textContent = test ? 'TEST ENVIRONMENT' : 'PRODUCTION';
   banner.classList.toggle('is-test', test);
   banner.classList.toggle('is-production', !test);
   banner.title = test
-    ? 'Se randează minimul, pe cel mai ieftin model compatibil, cu plafoane de cost per generare și per secundă.'
-    : 'Se randează cu cel mai ieftin model care atinge calitatea cerută de fiecare scenă.';
+    ? 'The minimum is rendered, on the cheapest compatible model, with cost caps per generation and per second.'
+    : 'Rendering uses the cheapest model that reaches the quality each scene needs.';
   environmentButton.disabled = false;
   environmentButton.classList.toggle('is-test', test);
   environmentButton.classList.toggle('is-production', !test);
@@ -2433,10 +2439,10 @@ function renderSwitch(stopped) {
   element('switch-state').textContent = pendingCommand ? '…' : on ? 'ON' : 'OFF';
   stopButton.setAttribute('aria-pressed', String(on));
   stopButton.title = pendingCommand
-    ? 'Ultima comandă nu a fost confirmată; apasă pentru a o reverifica.'
+    ? 'The last command was not confirmed; press to check it again.'
     : on
-      ? 'Autonomia este pornită. Apasă pentru oprire persistentă.'
-      : 'Autonomia este oprită. Apasă pentru a o porni; modul rămâne Manual.';
+      ? 'Autonomy is on. Press for a persistent stop.'
+      : 'Autonomy is off. Press to turn it on; the mode stays Manual.';
 }
 
 async function refresh() {
@@ -2452,7 +2458,7 @@ async function refresh() {
     // Everything recorded since the ledger last looked, not only the twenty in the snapshot.
     try {
       await ledger.sync(api, state.cursor);
-      element('ledger-count').textContent = `${ledger.events.size} înregistrări`;
+      element('ledger-count').textContent = `${ledger.events.size} entries`;
     } catch (error) {
       console.warn('ledger sync failed', error);
     }
@@ -2460,8 +2466,8 @@ async function refresh() {
   } catch (error) {
     if (generation !== epoch) return false;
     connected = false;
-    element('connection').textContent = 'Deconectat';
-    element('office-status').textContent = 'Date neactualizate';
+    element('connection').textContent = 'Disconnected';
+    element('office-fps').textContent = 'Data not refreshed';
     stopButton.disabled = true;
     notify(error.message);
     return false;
@@ -2611,7 +2617,7 @@ const openWorkforceBtn = element('open-workforce-btn');
 
 const PROPOSAL_TYPE_LABEL = {
   SUSPEND_AGENT: 'Suspendare',
-  TERMINATE_AGENT: 'Încetare',
+  TERMINATE_AGENT: 'Termination',
   HIRE_ROLE: 'Angajare',
   REASSIGN_AGENT: 'Realocare',
 };
@@ -2625,8 +2631,8 @@ function workforceStatus(message, isError) {
 
 /** A failure rate over no runs is unknown, not zero — and the panel has to say so. */
 function rateLabel(agent) {
-  if (agent.runs === 0) return 'nicio rulare în fereastră';
-  return `${agent.runs} rulări · ${Math.round(agent.failure_rate * 100)}% eșecuri`;
+  if (agent.runs === 0) return 'no run in the window';
+  return `${agent.runs} runs · ${Math.round(agent.failure_rate * 100)}% failures`;
 }
 
 async function loadWorkforce() {
@@ -2635,13 +2641,13 @@ async function loadWorkforce() {
   try {
     const data = await api('/workforce/measurements');
     summaryEl.innerHTML = `
-      <div class="wf-stat"><span class="wf-stat-value">${data.active_agents}</span><span class="wf-stat-label">agenți activi</span></div>
-      <div class="wf-stat"><span class="wf-stat-value">${data.queue_backlog}</span><span class="wf-stat-label">sarcini în coadă</span></div>
-      <div class="wf-stat"><span class="wf-stat-value">${data.dead_letter_tasks}</span><span class="wf-stat-label">sarcini abandonate</span></div>
-      <div class="wf-stat"><span class="wf-stat-value">${data.idle_agents.length}</span><span class="wf-stat-label">fără nicio rulare</span></div>`;
+      <div class="wf-stat"><span class="wf-stat-value">${data.active_agents}</span><span class="wf-stat-label">active agents</span></div>
+      <div class="wf-stat"><span class="wf-stat-value">${data.queue_backlog}</span><span class="wf-stat-label">queued tasks</span></div>
+      <div class="wf-stat"><span class="wf-stat-value">${data.dead_letter_tasks}</span><span class="wf-stat-label">abandoned tasks</span></div>
+      <div class="wf-stat"><span class="wf-stat-value">${data.idle_agents.length}</span><span class="wf-stat-label">without any run</span></div>`;
     summaryEl.insertAdjacentHTML(
       'beforeend',
-      `<p class="helper-note wf-window">Măsurat pe ultimele ${data.window_days} de zile, din rulările înregistrate.</p>`,
+      `<p class="helper-note wf-window">Measured over the last ${data.window_days} days, from recorded runs.</p>`,
     );
 
     agentsEl.innerHTML = (data.agents || [])
@@ -2670,7 +2676,7 @@ async function loadProposals() {
     const proposals = data.proposals || [];
     if (!proposals.length) {
       listEl.innerHTML =
-        '<div class="topics-loading">Nicio propunere. Măsurătorile nu susțin o schimbare de personal acum.</div>';
+        '<div class="topics-loading">No proposal. The measurements do not support a staffing change now.</div>';
       return;
     }
     listEl.innerHTML = proposals.map(renderProposal).join('');
@@ -2705,8 +2711,8 @@ function renderProposal(proposal) {
       ${
         open
           ? `<div class="source-actions">
-               <input class="wf-notes" placeholder="Motiv (obligatoriu la respingere)" maxlength="2000" />
-               <button class="secondary btn-decide" data-id="${escapeHtml(proposal.id)}" data-approve="true">Aprobă</button>
+               <input class="wf-notes" placeholder="Reason (required to reject)" maxlength="2000" />
+               <button class="secondary btn-decide" data-id="${escapeHtml(proposal.id)}" data-approve="true">Approve</button>
                <button class="quiet btn-decide" data-id="${escapeHtml(proposal.id)}" data-approve="false">Respinge</button>
              </div>`
           : ''
@@ -2721,7 +2727,7 @@ async function decideProposal(button) {
   const notes = /** @type {HTMLInputElement | null} */ (card?.querySelector('.wf-notes'));
   const reason = notes ? notes.value.trim() : '';
   if (!approve && !reason) {
-    workforceStatus('Scrie de ce respingi propunerea; motivul rămâne în istoric.', true);
+    workforceStatus('Write why you reject the proposal; the reason stays in the history.', true);
     return;
   }
   card?.querySelectorAll('button').forEach((b) => {
@@ -2738,8 +2744,8 @@ async function decideProposal(button) {
     });
     workforceStatus(
       approve
-        ? `Aprobat și aplicat: ${PROPOSAL_TYPE_LABEL[result.proposal_type] || result.proposal_type}.`
-        : 'Propunere respinsă; motivul a fost înregistrat.',
+        ? `Approved and applied: ${PROPOSAL_TYPE_LABEL[result.proposal_type] || result.proposal_type}.`
+        : 'Proposal rejected; the reason was recorded.',
       false,
     );
     await loadWorkforce();
@@ -2765,7 +2771,7 @@ element('refresh-workforce-btn').addEventListener('click', () => {
   loadProposals();
 });
 element('generate-proposals-btn').addEventListener('click', async () => {
-  workforceStatus('Se recitesc măsurătorile…', false);
+  workforceStatus('Re-reading the measurements…', false);
   try {
     const result = await api('/workforce/proposals/generate', {
       method: 'POST',
@@ -2808,9 +2814,9 @@ const openTreasuryBtn = element('open-treasury-btn');
 const MONEY_CLASS_LABEL = {
   VR_CASH: 'Numerar VR$ (cheltuibil)',
   VR_RESTRICTED: 'Rezervat',
-  VR_RECEIVABLE: 'De încasat',
+  VR_RECEIVABLE: 'Receivable',
   VR_DEBT: 'Datorie',
-  PENDING_EXTERNAL: 'Încasat, nedecontat',
+  PENDING_EXTERNAL: 'Collected, not settled',
   FORECAST: 'Estimare',
 };
 
@@ -2818,8 +2824,8 @@ const LEDGER_KIND_LABEL = {
   MINT: 'Emisiune VR$',
   REVERSAL: 'Stornare',
   OWNER_CAPITAL: 'Aport Owner',
-  OWNER_LOAN: 'Împrumut Owner',
-  PROVIDER_COST: 'Cost furnizor',
+  OWNER_LOAN: 'Owner loan',
+  PROVIDER_COST: 'Provider cost',
   ADJUSTMENT: 'Ajustare',
 };
 
@@ -2841,19 +2847,19 @@ function treasuryTile(row, extraClass = '') {
 }
 
 function budgetCard(period) {
-  const label = period.period === 'DAILY' ? 'Zilnic' : 'Lunar';
-  return `<div class="budget-card budget-${escapeHtml(period.state)}"><span class="stat-label">${escapeHtml(label)} · ${escapeHtml(period.state)}</span><strong>${escapeHtml(period.spent_usd)} / ${escapeHtml(period.limit_usd)} USD</strong><span>rămas ${escapeHtml(period.remaining_usd)} USD · ${Math.round(period.ratio * 100)}%</span>${period.unpriced_agent_runs ? `<div class="helper">${period.unpriced_agent_runs} rulări fără preț înregistrat</div>` : ''}</div>`;
+  const label = period.period === 'DAILY' ? 'Daily' : 'Monthly';
+  return `<div class="budget-card budget-${escapeHtml(period.state)}"><span class="stat-label">${escapeHtml(label)} · ${escapeHtml(period.state)}</span><strong>${escapeHtml(period.spent_usd)} / ${escapeHtml(period.limit_usd)} USD</strong><span>remaining ${escapeHtml(period.remaining_usd)} USD · ${Math.round(period.ratio * 100)}%</span>${period.unpriced_agent_runs ? `<div class="helper">${period.unpriced_agent_runs} runs with no recorded price</div>` : ''}</div>`;
 }
 
 async function loadBudget() {
   const cards = element('budget-cards');
   try {
     const data = await api('/economy/budget');
-    const spend = `<div class="budget-card"><span class="stat-label">Cheltuit</span><strong>azi ${escapeHtml(data.today.spent_usd)} USD</strong><span>luna aceasta ${escapeHtml(data.month.spent_usd)} USD · ${data.month.agent_runs} rulări de agenți, ${data.month.unpriced_agent_runs} fără preț</span></div>`;
-    const providers = data.month.by_provider.map((p) => `<div class="budget-card"><span class="stat-label">${escapeHtml(p.provider)}</span><strong>${escapeHtml(((p.estimated_usd_micros + p.billed_usd_micros) / 1e6).toFixed(2))} USD</strong><span>${p.records} înregistrări · facturat ${escapeHtml((p.billed_usd_micros / 1e6).toFixed(2))}</span></div>`).join('');
-    cards.innerHTML = spend + (data.budgets.length ? data.budgets.map(budgetCard).join('') : '<div class="budget-card"><span class="stat-label">Buget</span><strong>nesetat</strong><span>fără limită, nimic nu oprește cheltuiala</span></div>') + providers;
+    const spend = `<div class="budget-card"><span class="stat-label">Spent</span><strong>today ${escapeHtml(data.today.spent_usd)} USD</strong><span>this month ${escapeHtml(data.month.spent_usd)} USD · ${data.month.agent_runs} agent runs, ${data.month.unpriced_agent_runs} unpriced</span></div>`;
+    const providers = data.month.by_provider.map((p) => `<div class="budget-card"><span class="stat-label">${escapeHtml(p.provider)}</span><strong>${escapeHtml(((p.estimated_usd_micros + p.billed_usd_micros) / 1e6).toFixed(2))} USD</strong><span>${p.records} entries · billed ${escapeHtml((p.billed_usd_micros / 1e6).toFixed(2))}</span></div>`).join('');
+    cards.innerHTML = spend + (data.budgets.length ? data.budgets.map(budgetCard).join('') : '<div class="budget-card"><span class="stat-label">Budget</span><strong>not set</strong><span>no limit, nothing stops spending</span></div>') + providers;
   } catch (error) {
-    cards.innerHTML = `<div class="text-error">${escapeHtml(error instanceof Error ? error.message : 'Bugetul nu a putut fi citit.')}</div>`;
+    cards.innerHTML = `<div class="text-error">${escapeHtml(error instanceof Error ? error.message : 'The budget could not be read.')}</div>`;
   }
 }
 
@@ -2881,7 +2887,7 @@ async function loadTreasury() {
       summary.append(
         treasuryTile({
           amount: unbilled.amount,
-          money_class: 'Costuri furnizor neînfacturate',
+          money_class: 'Uninvoiced provider costs',
           label: unbilled.label,
           spendable: false,
         }),
@@ -2893,11 +2899,11 @@ async function loadTreasury() {
     const tb = treasury.trial_balance;
     balance.className = `runbook-verdict ${tb.balanced ? 'rb-ready' : 'rb-blocked'}`;
     const verdict = document.createElement('strong');
-    verdict.textContent = tb.balanced ? 'REGISTRU ECHILIBRAT' : 'REGISTRU DEZECHILIBRAT';
+    verdict.textContent = tb.balanced ? 'LEDGER BALANCED' : 'LEDGER UNBALANCED';
     const detail = document.createElement('span');
     detail.textContent = tb.balanced
-      ? `Debite ${tb.total_debits} = credite ${tb.total_credits}.${treasury.in_deficit ? ' Numerarul VR$ este negativ: trezoreria e în deficit.' : ''}`
-      : `Diferență ${tb.difference}. Nicio cifră de mai sus nu e de încredere până nu se lămurește.`;
+      ? `Debits ${tb.total_debits} = credits ${tb.total_credits}.${treasury.in_deficit ? ' VR$ cash is negative: the treasury is in deficit.' : ''}`
+      : `Difference ${tb.difference}. No figure above can be trusted until it is resolved.`;
     balance.append(verdict, detail);
     summary.append(balance);
 
@@ -2907,7 +2913,7 @@ async function loadTreasury() {
     if (!treasury.accounts.length) {
       const empty = document.createElement('div');
       empty.className = 'topics-loading';
-      empty.textContent = 'Niciun cont nu are sold. Registrul e gol.';
+      empty.textContent = 'No account has a balance. The ledger is empty.';
       accountsBox.append(empty);
     }
     for (const account of treasury.accounts) {
@@ -2935,7 +2941,7 @@ async function loadTreasury() {
     if (!ledger.transactions.length) {
       const empty = document.createElement('div');
       empty.className = 'topics-loading';
-      empty.textContent = 'Nicio înregistrare încă. Nimic nu s-a emis și nimic nu s-a cheltuit.';
+      empty.textContent = 'No entry yet. Nothing issued, nothing spent.';
       ledgerBox.append(empty);
     }
     for (const item of ledger.transactions) {
@@ -2967,7 +2973,7 @@ async function loadTreasury() {
     summary.replaceChildren();
     const failure = document.createElement('div');
     failure.className = 'dialog-status-msg text-error';
-    failure.textContent = `Trezoreria nu a putut fi citită: ${err.message}`;
+    failure.textContent = `The treasury could not be read: ${err.message}`;
     summary.append(failure);
   }
 }
@@ -3022,11 +3028,11 @@ function updateFundingPreview() {
     .trim()
     .toUpperCase();
   if (!AMOUNT_PATTERN.test(amount)) {
-    box.textContent = 'Scrie suma ca să vezi câți VR$ intră în registru.';
+    box.textContent = 'Enter the amount to see how many VR$ enter the ledger.';
     return;
   }
   if (currency === 'USD') {
-    box.textContent = `${amount} USD verificați → ${amount} VR$ în registru (1 USD = 1 VR$).`;
+    box.textContent = `${amount} verified USD → ${amount} VR$ in the ledger (1 USD = 1 VR$).`;
     return;
   }
   if (currency.length !== 3) {
@@ -3035,11 +3041,11 @@ function updateFundingPreview() {
   }
   const rate = /** @type {HTMLInputElement} */ (element('funding-fx-rate')).value.trim();
   if (!AMOUNT_PATTERN.test(rate) || Number(rate) <= 0) {
-    box.textContent = `Scrie cursul ${currency} → USD ca să vezi câți VR$ rezultă.`;
+    box.textContent = `Enter the ${currency} → USD rate to see how many VR$ result.`;
     return;
   }
   const vr = (amountToMicros(amount) * amountToMicros(rate) + MICROS / 2n) / MICROS;
-  box.textContent = `${amount} ${currency} × ${rate} → ${microsToAmount(vr)} VR$ în registru.`;
+  box.textContent = `${amount} ${currency} × ${rate} → ${microsToAmount(vr)} VR$ in the ledger.`;
 }
 
 function fundingStatus(message, isError) {
@@ -3074,7 +3080,7 @@ async function loadFundingHistory() {
     if (!funding.length) {
       const empty = document.createElement('div');
       empty.className = 'topics-loading';
-      empty.textContent = 'Nicio finanțare înregistrată încă.';
+      empty.textContent = 'No funding recorded yet.';
       box.append(empty);
       return;
     }
@@ -3086,7 +3092,7 @@ async function loadFundingHistory() {
       head.className = 'topic-card-header';
       const title = document.createElement('span');
       title.className = 'topic-card-title';
-      title.textContent = isLoan ? 'Împrumut Owner' : 'Aport de capital';
+      title.textContent = isLoan ? 'Owner loan' : 'Capital contribution';
       const value = document.createElement('span');
       value.className = 'topic-card-novelty';
       value.textContent = `${item.vr} VR$`;
@@ -3096,9 +3102,9 @@ async function loadFundingHistory() {
       const parts = [`${item.amount} ${item.currency}`];
       if (isLoan) {
         parts.push(`${(item.annual_rate_bps / 100).toFixed(2)}% pe an`);
-        parts.push(`scadență ${item.maturity_date}`);
+        parts.push(`maturity ${item.maturity_date}`);
       } else {
-        parts.push('fără dobândă, nu se restituie');
+        parts.push('no interest, not repaid');
       }
       meta.textContent = parts.join(' · ');
       card.append(head, meta);
@@ -3114,7 +3120,7 @@ async function loadFundingHistory() {
     box.replaceChildren();
     const failure = document.createElement('div');
     failure.className = 'dialog-status-msg text-error';
-    failure.textContent = `Istoricul finanțărilor nu a putut fi citit: ${err.message}`;
+    failure.textContent = `The funding history could not be read: ${err.message}`;
     box.append(failure);
   }
 }
@@ -3138,11 +3144,11 @@ element('funding-form').addEventListener('submit', async (event) => {
   const isLoan = type === 'OWNER_LOAN';
 
   if (amount.includes(',')) {
-    fundingStatus('Scrie suma cu punct pentru zecimale și fără separator de mii: 5000.50', true);
+    fundingStatus('Write the amount with a dot for decimals and no thousands separator: 5000.50', true);
     return;
   }
   if (!AMOUNT_PATTERN.test(amount)) {
-    fundingStatus('Suma trebuie să fie un număr pozitiv, cu cel mult 6 zecimale.', true);
+    fundingStatus('The amount must be a positive number with at most 6 decimals.', true);
     return;
   }
   if (currency.length !== 3) {
@@ -3164,11 +3170,11 @@ element('funding-form').addEventListener('submit', async (event) => {
     );
     const maturity = /** @type {HTMLInputElement} */ (element('funding-maturity')).value;
     if (rate === null) {
-      fundingStatus('Dobânda se scrie în procente pe an, între 0 și 1000. Ex: 7 sau 7.25', true);
+      fundingStatus('Interest is a yearly percentage between 0 and 1000, e.g. 7 or 7.25', true);
       return;
     }
     if (!maturity) {
-      fundingStatus('Un împrumut are nevoie de o scadență; altfel înregistrează-l ca aport.', true);
+      fundingStatus('A loan needs a maturity date; otherwise record it as a contribution.', true);
       return;
     }
     payload.annual_rate_bps = rate;
@@ -3182,14 +3188,14 @@ element('funding-form').addEventListener('submit', async (event) => {
       const fxRate = /** @type {HTMLInputElement} */ (element('funding-fx-rate')).value.trim();
       const fxSource = /** @type {HTMLInputElement} */ (element('funding-fx-source')).value.trim();
       if (!AMOUNT_PATTERN.test(fxRate) || Number(fxRate) <= 0) {
-        fundingStatus(`Scrie cursul ${currency} către USD, ex. 1.08`, true);
+        fundingStatus(`Enter the ${currency} to USD rate, e.g. 1.08`, true);
         return;
       }
       if (!fxSource) {
-        fundingStatus('Scrie de unde ai luat cursul; studioul nu inventează cursuri.', true);
+        fundingStatus('Write where you took the rate from; the studio never invents rates.', true);
         return;
       }
-      fundingStatus('Se înregistrează cursul…', false);
+      fundingStatus('Recording the rate…', false);
       const snapshot = await api('/economy/fx', {
         method: 'POST',
         body: JSON.stringify({
@@ -3204,14 +3210,14 @@ element('funding-form').addEventListener('submit', async (event) => {
       payload.fx_snapshot_id = snapshot.id;
     }
 
-    fundingStatus('Se înregistrează finanțarea…', false);
+    fundingStatus('Recording the funding…', false);
     const result = await api('/economy/owner-funding', {
       method: 'POST',
       body: JSON.stringify(payload),
     });
     fundingStatus(
-      `Înregistrat: ${result.vr} VR$ ${isLoan ? 'ca datorie' : 'în capitalul propriu'}. ` +
-        'Niciun ban real nu s-a mișcat.',
+      `Recorded: ${result.vr} VR$ ${isLoan ? 'as debt' : 'in equity'}. ` +
+        'No real money moved.',
       false,
     );
     /** @type {HTMLFormElement} */ (element('funding-form')).reset();
@@ -3256,7 +3262,7 @@ async function loadStoryLogs() {
     const logs = data.logs || [];
     if (!logs.length) {
       listEl.innerHTML =
-        '<div class="topics-loading">Nicio zi închisă încă. Închide ziua ca să numeri ce s-a întâmplat.</div>';
+        '<div class="topics-loading">No closed day yet. Close the day to count what happened.</div>';
       return;
     }
     listEl.innerHTML = logs
@@ -3268,14 +3274,14 @@ async function loadStoryLogs() {
             <span class="topic-card-novelty">${log.total_events} evenimente</span>
           </div>
           <div class="topic-card-meta">
-            <span>${(log.roster || []).length} în distribuție</span>
+            <span>${(log.roster || []).length} in the cast</span>
             · <span>${(log.notable_events || []).length} evenimente de povestit</span>
           </div>
           <div class="source-actions">
             ${
               (log.notable_events || []).length
-                ? `<button class="secondary btn-write-episode" data-log-id="${escapeHtml(log.id)}">Scrie episodul</button>`
-                : '<span class="helper-note">Zi liniștită — nu există material pentru un episod.</span>'
+                ? `<button class="secondary btn-write-episode" data-log-id="${escapeHtml(log.id)}">Write the episode</button>`
+                : '<span class="helper-note">A quiet day — no material for an episode.</span>'
             }
           </div>
         </div>`,
@@ -3295,7 +3301,7 @@ async function loadEpisodes() {
     const data = await api('/story/episodes');
     const episodes = data.episodes || [];
     if (!episodes.length) {
-      listEl.innerHTML = '<div class="topics-loading">Niciun episod încă.</div>';
+      listEl.innerHTML = '<div class="topics-loading">No episode yet.</div>';
       return;
     }
     listEl.innerHTML = episodes
@@ -3323,11 +3329,11 @@ async function loadEpisodes() {
           </div>
           ${episode.notes ? `<div class="claim-notes">${escapeHtml(episode.notes)}</div>` : ''}
           <div class="source-actions">
-            <button class="quiet btn-check-grounding" data-id="${escapeHtml(episode.id)}">Verifică ancorarea</button>
+            <button class="quiet btn-check-grounding" data-id="${escapeHtml(episode.id)}">Check grounding</button>
             ${
               episode.status === 'DRAFT'
-                ? `<input class="wf-notes" placeholder="Motiv (obligatoriu la respingere)" maxlength="2000" />
-                   <button class="secondary btn-decide-episode" data-id="${escapeHtml(episode.id)}" data-approve="true">Aprobă</button>
+                ? `<input class="wf-notes" placeholder="Reason (required to reject)" maxlength="2000" />
+                   <button class="secondary btn-decide-episode" data-id="${escapeHtml(episode.id)}" data-approve="true">Approve</button>
                    <button class="quiet btn-decide-episode" data-id="${escapeHtml(episode.id)}" data-approve="false">Respinge</button>`
                 : ''
             }
@@ -3349,7 +3355,7 @@ async function loadEpisodes() {
 async function writeEpisode(button) {
   const logId = button.getAttribute('data-log-id');
   button.disabled = true;
-  storyStatus('Showrunner-ul scrie din evenimentele zilei…', false);
+  storyStatus("The showrunner is writing from the day's events…", false);
   try {
     const result = await api('/story/episodes/write', {
       method: 'POST',
@@ -3376,8 +3382,8 @@ async function checkGrounding(button) {
     const report = await api(`/story/episodes/${id}/grounding`);
     storyStatus(
       report.grounded
-        ? `Ancorat: toate cele ${report.cited_events} evenimente citate există în jurnalul din ${report.business_date}.`
-        : `NEANCORAT: ${report.citations_not_in_the_log.length} citări nu există în jurnalul zilei.`,
+        ? `Grounded: all ${report.cited_events} cited events exist in the journal of ${report.business_date}.`
+        : `NOT GROUNDED: ${report.citations_not_in_the_log.length} citations are not in the day's journal.`,
       !report.grounded,
     );
   } catch (err) {
@@ -3392,7 +3398,7 @@ async function decideEpisode(button) {
   const notes = /** @type {HTMLInputElement | null} */ (card?.querySelector('.wf-notes'));
   const reason = notes ? notes.value.trim() : '';
   if (!approve && !reason) {
-    storyStatus('Scrie de ce respingi episodul; motivul rămâne în istoric.', true);
+    storyStatus('Write why you reject the episode; the reason stays in the history.', true);
     return;
   }
   try {
@@ -3404,7 +3410,7 @@ async function decideEpisode(button) {
         notes: reason,
       }),
     });
-    storyStatus(approve ? 'Episod aprobat.' : 'Episod respins; motivul a fost înregistrat.', false);
+    storyStatus(approve ? 'Episode approved.' : 'Episode rejected; the reason was recorded.', false);
     await loadEpisodes();
   } catch (err) {
     storyStatus(err.message, true);
@@ -3418,7 +3424,7 @@ element('open-story-btn').addEventListener('click', () => {
 });
 element('close-story-btn').addEventListener('click', () => storyModal.close());
 element('close-day-btn').addEventListener('click', async () => {
-  storyStatus('Se numără evenimentele zilei…', false);
+  storyStatus("Counting the day's events…", false);
   try {
     const log = await api('/story/logs/close', {
       method: 'POST',
@@ -3453,16 +3459,16 @@ const runbookModal = /** @type {HTMLDialogElement} */ (element('runbook-modal'))
 
 const RUNBOOK_STAGE_LABELS = {
   preflight: 'Preflight',
-  performance_intake: 'Preluare performanță',
+  performance_intake: 'Performance intake',
   idea_generation: 'Generare idei',
-  research_and_verification: 'Cercetare și verificare',
-  selection: 'Selecție',
-  script_and_storyboard: 'Scenariu și storyboard',
+  research_and_verification: 'Research and verification',
+  selection: 'Selection',
+  script_and_storyboard: 'Script and storyboard',
   media: 'Media',
-  edit_and_qc: 'Montaj și QC',
-  publish: 'Publicare',
-  post_run: 'După rulare',
-  daily_log: 'Jurnalul zilei',
+  edit_and_qc: 'Edit and QC',
+  publish: 'Publishing',
+  post_run: 'After the run',
+  daily_log: "The day's journal",
   serial_queue: 'Coada serialului',
 };
 
@@ -3470,13 +3476,13 @@ const RUNBOOK_STAGE_LABELS = {
 const RUNBOOK_CHECK_LABELS = {
   stop_autonomy: 'STOP autonomie',
   llm_provider: 'Model de limbaj',
-  agents: 'Agenți disponibili',
+  agents: 'Available agents',
   render_engine: 'Motor de randare (FFmpeg)',
-  media_inspection: 'Inspecție media (FFprobe)',
-  research_sources: 'Site-uri autorizate pentru surse',
-  image_provider: 'Furnizor de imagine',
-  voice_provider: 'Furnizor de voce',
-  publishing: 'Publicare',
+  media_inspection: 'Media inspection (FFprobe)',
+  research_sources: 'Authorised source sites',
+  image_provider: 'Image provider',
+  voice_provider: 'Voice provider',
+  publishing: 'Publishing',
 };
 
 function runbookStatus(message, isError) {
@@ -3513,7 +3519,7 @@ async function loadPreflight() {
         <div class="runbook-check ${check.ok ? 'rb-ok' : `rb-fail rb-${escapeHtml(String(check.severity).toLowerCase())}`}">
           <div class="topic-card-header">
             <strong class="topic-card-title">${escapeHtml(checkLabel(check.name))}</strong>
-            <span class="topic-card-novelty">${check.ok ? 'OK' : escapeHtml(check.severity === 'BLOCKING' ? 'BLOCANT' : 'DEGRADEAZĂ')}</span>
+            <span class="topic-card-novelty">${check.ok ? 'OK' : escapeHtml(check.severity === 'BLOCKING' ? 'BLOCKING' : 'DEGRADES')}</span>
           </div>
           <div class="topic-card-meta">${escapeHtml(check.message || '')}${check.detail ? ` · ${escapeHtml(check.detail)}` : ''}</div>
         </div>`,
@@ -3524,8 +3530,8 @@ async function loadPreflight() {
     startBtn.disabled = status === 'BLOCKED';
     startBtn.title =
       status === 'BLOCKED'
-        ? 'Preflight blocant: rezolvă punctele blocante înainte de a porni rularea.'
-        : 'Rulează etapele zilei și consemnează ce a făcut fiecare.';
+        ? 'Blocking preflight: resolve the blocking items before starting the run.'
+        : "Runs the day's stages and records what each one did.";
   } catch (err) {
     summaryEl.innerHTML = `<div class="text-error">${escapeHtml(err.message)}</div>`;
     checksEl.innerHTML = '';
@@ -3559,9 +3565,9 @@ function renderRunCard(run) {
         <span class="topic-card-novelty">${escapeHtml(run.status)}</span>
       </div>
       <div class="topic-card-meta">
-        <span>${run.stages_completed}/${run.stages_total} etape încheiate</span>
+        <span>${run.stages_completed}/${run.stages_total} stages finished</span>
         · <span>preflight ${escapeHtml(run.preflight_status || '—')}</span>
-        ${run.stopped_at_stage ? ` · <span>oprit la «${escapeHtml(stageLabel(run.stopped_at_stage))}»</span>` : ''}
+        ${run.stopped_at_stage ? ` · <span>stopped at «${escapeHtml(stageLabel(run.stopped_at_stage))}»</span>` : ''}
       </div>
       ${run.stop_reason ? `<div class="claim-notes">${escapeHtml(run.stop_reason)}</div>` : ''}
       <div class="runbook-stages">
@@ -3588,14 +3594,14 @@ async function loadRuns() {
     const pending = data.pending
       ? `<div class="topic-card runbook-run rb-running">
           <div class="topic-card-header">
-            <strong class="topic-card-title">Rularea de azi</strong>
-            <span class="topic-card-novelty">ÎN LUCRU</span>
+            <strong class="topic-card-title">Today’s run</strong>
+            <span class="topic-card-novelty">IN PROGRESS</span>
           </div>
-          <div class="topic-card-meta">Pusă la coadă la ${escapeHtml(timelineTime(data.pending.created_at))}</div>
-          <div class="claim-notes">Etapele apar în registrul din stânga pe măsură ce se întâmplă.</div>
+          <div class="topic-card-meta">Queued at ${escapeHtml(timelineTime(data.pending.created_at))}</div>
+          <div class="claim-notes">The stages appear in the ledger on the left as they happen.</div>
         </div>`
       : '';
-    listEl.innerHTML = pending + (runs.length ? runs.map(renderRunCard).join('') : (pending ? '' : '<div class="topics-loading">Nicio rulare încă.</div>'));
+    listEl.innerHTML = pending + (runs.length ? runs.map(renderRunCard).join('') : (pending ? '' : '<div class="topics-loading">No run yet.</div>'));
     return Boolean(data.pending);
   } catch (err) {
     listEl.innerHTML = `<div class="text-error">${escapeHtml(err.message)}</div>`;
@@ -3614,7 +3620,7 @@ async function loadRunbookSchedule() {
     const [jobs, snapshot] = await Promise.all([api('/scheduler/jobs'), api('/snapshot')]);
     const daily = (jobs || []).find((job) => job.workflow_type === 'DAILY_RUN');
     if (!daily) {
-      box.innerHTML = `<p class="runbook-note">Niciun job zilnic programat. Worker-ul de fundal îl creează la pornire când este activ.</p>`;
+      box.innerHTML = `<p class="runbook-note">No daily job scheduled. The background worker creates it at start-up when it is active.</p>`;
       return;
     }
     const stopped = Boolean(snapshot?.policy?.autonomy_stopped);
@@ -3625,11 +3631,11 @@ async function loadRunbookSchedule() {
           <strong class="topic-card-title">${escapeHtml(daily.name)}</strong>
           <span class="topic-card-novelty">${daily.is_active ? 'ACTIV' : 'INACTIV'}</span>
         </div>
-        <div class="topic-card-meta">Următoarea rulare: ${escapeHtml(when(daily.next_run_at))} · ultima: ${escapeHtml(when(daily.last_run_at))} · la ${escapeHtml(String(Math.round(daily.interval_seconds / 3600)))} ore · rulări ratate: ${escapeHtml(daily.missed_policy === 'CATCH_UP' ? 'o singură recuperare, apoi cadența inițială' : 'sărite')}</div>
-        ${stopped ? `<p class="runbook-note">Autonomia este oprită: jobul nu va porni nimic până nu o repornești.</p>` : ''}
-        ${daily.is_active ? '' : `<p class="runbook-note">Programarea este oprită: studioul nu începe nicio zi singur. Pornirea ei este o decizie a ta și rămâne în istoric.</p>`}
+        <div class="topic-card-meta">Next run: ${escapeHtml(when(daily.next_run_at))} · last: ${escapeHtml(when(daily.last_run_at))} · la ${escapeHtml(String(Math.round(daily.interval_seconds / 3600)))} hours · missed runs: ${escapeHtml(daily.missed_policy === 'CATCH_UP' ? 'o singură recuperare, apoi cadența inițială' : 'sărite')}</div>
+        ${stopped ? `<p class="runbook-note">Autonomy is off: the job will start nothing until you turn it back on.</p>` : ''}
+        ${daily.is_active ? '' : `<p class="runbook-note">Scheduling is off: the studio starts no day on its own. Turning it on is your decision and stays in the history.</p>`}
         <div class="settings-actions">
-          <button id="toggle-daily-job-btn" class="${daily.is_active ? 'quiet' : 'secondary'}" data-job-id="${escapeHtml(daily.id)}" data-active="${daily.is_active ? 'true' : 'false'}">${daily.is_active ? 'Oprește programarea' : 'Pornește programarea zilnică'}</button>
+          <button id="toggle-daily-job-btn" class="${daily.is_active ? 'quiet' : 'secondary'}" data-job-id="${escapeHtml(daily.id)}" data-active="${daily.is_active ? 'true' : 'false'}">${daily.is_active ? 'Stop scheduling' : 'Start daily scheduling'}</button>
         </div>
       </div>`;
     element('toggle-daily-job-btn').addEventListener('click', async (event) => {
@@ -3647,7 +3653,7 @@ async function loadRunbookSchedule() {
       }
     });
   } catch (err) {
-    box.innerHTML = `<p class="runbook-note text-error">Programarea nu a putut fi citită: ${escapeHtml(err.message)}</p>`;
+    box.innerHTML = `<p class="runbook-note text-error">The schedule could not be read: ${escapeHtml(err.message)}</p>`;
   }
 }
 
@@ -3674,7 +3680,7 @@ async function loadCompanyState() {
     const pipe = state.pipeline || {};
     const stages = pipe.stages || {};
     const maturity = {
-      COLD_START: 'start la rece — nimic măsurat încă',
+      COLD_START: 'cold start — nothing measured yet',
       EARLY_DATA: 'primele date',
       MATURE: 'date suficiente',
     }[state.maturity] || state.maturity;
@@ -3682,15 +3688,15 @@ async function loadCompanyState() {
       .map((channel) => {
         const change =
           typeof channel.views_change_percentage === 'number'
-            ? `${channel.views_change_percentage > 0 ? '+' : ''}${channel.views_change_percentage}% față de săptămâna anterioară`
-            : 'fără comparație încă';
+            ? `${channel.views_change_percentage > 0 ? '+' : ''}${channel.views_change_percentage}% vs. the previous week`
+            : 'no comparison yet';
         const views =
           typeof channel.views_last_7_days === 'number'
-            ? `${channel.views_last_7_days} vizualizări în 7 zile`
-            : 'nimic măsurat în 7 zile';
+            ? `${channel.views_last_7_days} views in 7 days`
+            : 'nothing measured in 7 days';
         return `<div class="runbook-check ${channel.measured ? 'rb-ok' : ''}">
           <strong>${escapeHtml(channel.channel_name)}</strong>
-          <div>${channel.published} publicate · ${channel.measured} măsurate</div>
+          <div>${channel.published} published · ${channel.measured} measured</div>
           <div>${escapeHtml(views)} · ${escapeHtml(change)}</div>
           <div class="motion-reason">${escapeHtml(channel.baseline?.note || '')}</div>
         </div>`;
@@ -3707,27 +3713,27 @@ async function loadCompanyState() {
       .join('');
     box.innerHTML = `
       <div class="runbook-check ${state.autonomy_stopped ? 'rb-fail' : 'rb-ok'}">
-        <strong>${state.autonomy_stopped ? 'Autonomia este oprită' : 'Autonomia este pornită'}</strong>
+        <strong>${state.autonomy_stopped ? 'Autonomy is off' : 'Autonomy is on'}</strong>
         <div>Mediu: ${escapeHtml(state.environment)} · ${escapeHtml(maturity)}</div>
       </div>
       ${channels}
       <div class="runbook-check">
-        <strong>Conductă</strong>
+        <strong>Pipeline</strong>
         <div>${stages.topics_proposed || 0} teme propuse · ${stages.topics_selected || 0} selectate ·
           ${stages.scripts_approved || 0} scenarii aprobate · ${stages.storyboards_approved || 0} storyboard-uri ·
           ${stages.renders_completed || 0} randate · ${stages.published || 0} publicate</div>
-        <div>${pipe.in_flight || 0} în lucru neterminat${
+        <div>${pipe.in_flight || 0} in progress${
           pipe.bottleneck
-            ? ` · <span class="text-error">gâtuire la ${escapeHtml(pipe.bottleneck.stage)}: ${pipe.bottleneck.waiting} în așteptare</span>`
+            ? ` · <span class="text-error">bottleneck at ${escapeHtml(pipe.bottleneck.stage)}: ${pipe.bottleneck.waiting} waiting</span>`
             : ''
         }</div>
       </div>
       <div class="runbook-check">
-        <strong>Agenți</strong>
-        <div>${state.agents?.active || 0} activi · ${(state.agents?.idle || []).length} fără rulări ·
-          ${state.agents?.queue_backlog || 0} în coadă · ${state.agents?.dead_letter_tasks || 0} sarcini moarte</div>
+        <strong>Agents</strong>
+        <div>${state.agents?.active || 0} active · ${(state.agents?.idle || []).length} without runs ·
+          ${state.agents?.queue_backlog || 0} queued · ${state.agents?.dead_letter_tasks || 0} dead-letter tasks</div>
       </div>
-      ${growth ? `<div class="runbook-check"><strong>Ce limitează creșterea</strong>${growth}</div>` : ''}
+      ${growth ? `<div class="runbook-check"><strong>What limits growth</strong>${growth}</div>` : ''}
       ${anomalyList ? `<div class="runbook-check"><strong>Anomalii</strong>${anomalyList}</div>` : ''}`;
 
     const rows = (decisions.decisions || []).slice(0, 8);
@@ -3742,13 +3748,13 @@ async function loadCompanyState() {
           </div>
           <div class="motion-reason">${escapeHtml(row.observation)}</div>
           <div class="motion-reason">Interpretare (${escapeHtml(row.confidence)}): ${escapeHtml(row.interpretation)}</div>
-          <div><strong>De făcut:</strong> ${escapeHtml(row.action)}${row.owner_role ? ` — ${escapeHtml(row.owner_role)}` : ''}</div>
-          ${row.review_after_videos ? `<div class="motion-reason">Revizuire după ${row.review_after_videos} filme.</div>` : ''}
+          <div><strong>To do:</strong> ${escapeHtml(row.action)}${row.owner_role ? ` — ${escapeHtml(row.owner_role)}` : ''}</div>
+          ${row.review_after_videos ? `<div class="motion-reason">Review after ${row.review_after_videos} films.</div>` : ''}
           ${row.outcome ? `<div class="motion-reason">Rezultat: ${escapeHtml(row.outcome)}</div>` : ''}
         </div>`,
           )
           .join('')
-      : '<div class="topics-loading">Nicio decizie strategică încă.</div>';
+      : '<div class="topics-loading">No strategic decision yet.</div>';
   } catch (err) {
     box.innerHTML = `<div class="text-error">${escapeHtml(err.message)}</div>`;
   }
@@ -3758,7 +3764,7 @@ const directCompanyBtn = /** @type {HTMLButtonElement} */ (element('direct-compa
 if (directCompanyBtn) {
   directCompanyBtn.addEventListener('click', async () => {
     directCompanyBtn.disabled = true;
-    runbookStatus('Directoarea citește starea companiei…', false);
+    runbookStatus("The Director is reading the company's state…", false);
     try {
       const result = await api('/runbook/direct', { method: 'POST' });
       runbookStatus(
@@ -3785,13 +3791,13 @@ element('refresh-preflight-btn').addEventListener('click', () => loadPreflight()
 element('start-run-btn').addEventListener('click', async (event) => {
   const button = /** @type {HTMLButtonElement} */ (event.currentTarget);
   button.disabled = true;
-  runbookStatus('Pornesc rularea de azi…', false);
+  runbookStatus('Starting today’s run…', false);
   try {
     const started = await api('/runbook/runs', {
       method: 'POST',
       body: JSON.stringify({ command_id: crypto.randomUUID() }),
     });
-    runbookStatus(started.message || 'Rularea de azi a fost pornită.', false);
+    runbookStatus(started.message || "Today's run was started.", false);
     watchTheRun();
   } catch (err) {
     // Safe mode, a stopped autonomy and a run already on its way all refuse here; the
@@ -3809,13 +3815,13 @@ element('start-run-btn').addEventListener('click', async (event) => {
 element('start-weekly-review-btn').addEventListener('click', async (event) => {
   const button = /** @type {HTMLButtonElement} */ (event.currentTarget);
   button.disabled = true;
-  runbookStatus('Predau revizia săptămânală Directorului…', false);
+  runbookStatus('Handing the weekly review to the Director…', false);
   try {
     const started = await api('/runbook/weekly-review', {
       method: 'POST',
       body: JSON.stringify({ command_id: crypto.randomUUID() }),
     });
-    runbookStatus(started.message || 'Revizia săptămânală a fost pornită.', false);
+    runbookStatus(started.message || 'The weekly review was started.', false);
     watchTheRun();
   } catch (err) {
     runbookStatus(err.message, true);
@@ -3847,7 +3853,7 @@ element('clear-safe-mode-btn').addEventListener('click', async () => {
   const field = /** @type {HTMLTextAreaElement} */ (element('runbook-safe-notes'));
   const notes = field.value.trim();
   if (!notes) {
-    runbookStatus('Scrie ce ai verificat înainte de a ieși din modul sigur.', true);
+    runbookStatus('Write what you checked before leaving safe mode.', true);
     return;
   }
   try {

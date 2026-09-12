@@ -45,10 +45,10 @@ export function eventMatchesAgent(event, agentId) {
 /** The sentence under the header: what the employee is doing right now. */
 export function nowLine(runtimeState, taskType) {
   if (runtimeState === 'THINKING' || runtimeState === 'WORKING') {
-    return taskType ? `lucrează la sarcina ${String(taskType).replace(/_/g, ' ')}` : 'lucrează';
+    return taskType ? `working on the task ${String(taskType).replace(/_/g, ' ')}` : 'working';
   }
-  if (runtimeState === 'PAUSED') return 'pus pe pauză';
-  return 'fără sarcină acum';
+  if (runtimeState === 'PAUSED') return 'paused';
+  return 'no task right now';
 }
 
 /** The popup's stylesheet, through CSSOM because the CSP forbids an inline <style>. */
@@ -160,7 +160,7 @@ export class LiveWindows {
   /** One window: structure, stylesheet, and the handles live updates need. */
   _build(win, agent, runtimeState) {
     const doc = win.document;
-    doc.title = `${agent.display_name || 'Agent'} · activitate live`;
+    doc.title = `${agent.display_name || 'Agent'} · live activity`;
     const head = doc.createElement('header');
     const title = doc.createElement('h1');
     title.textContent = `${agent.display_name || 'Agent'}${agent.role_name ? ` — ${agent.role_name}` : ''}`;
@@ -172,7 +172,7 @@ export class LiveWindows {
     const now = doc.createElement('p');
     now.className = 'now';
     const nowLabel = doc.createElement('strong');
-    nowLabel.textContent = 'Acum: ';
+    nowLabel.textContent = 'Now: ';
     const nowValue = doc.createElement('span');
     nowValue.textContent = nowLine(runtimeState, null);
     now.append(nowLabel, nowValue);
@@ -181,7 +181,7 @@ export class LiveWindows {
     feed.className = 'live-feed';
 
     const footer = doc.createElement('footer');
-    footer.textContent = 'Flux în timp real din evenimentele studioului. Detaliile fiecărei acțiuni rămân în fereastra inspector.';
+    footer.textContent = 'A live feed from the studio events. The details of every action stay in the inspector window.';
 
     doc.body.append(head, now, feed, footer);
     // The stylesheet must be constructed in the popup's own realm: a constructable sheet
@@ -253,7 +253,7 @@ export class LiveWindows {
     if (entry.feed.children.length === 0 && !entry.feed.querySelector('.live-empty')) {
       const empty = entry.win.document.createElement('li');
       empty.className = 'live-empty';
-      empty.textContent = 'Nimic înregistrat despre acest angajat încă. Când lucrează sau vorbește, apare aici instant.';
+      empty.textContent = 'Nothing recorded about this employee yet. When they work or speak, it appears here at once.';
       entry.feed.append(empty);
     } else if (entry.feed.children.length > 1) {
       const empty = entry.feed.querySelector('.live-empty');

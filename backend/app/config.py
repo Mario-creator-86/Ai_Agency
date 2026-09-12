@@ -89,6 +89,14 @@ class Settings(BaseSettings):
     ai_disclosure_url: str | None = None
     creator_channel_title: str | None = None
 
+    #: The office scene draws the live weather where the studio is. The service that reports
+    #: it is configuration (STUDIO_OFFICE_WEATHER_HOST, an Open-Meteo compatible forecast host);
+    #: unset, the scene says the weather is unavailable and draws none. The coordinates are
+    #: the office's own (Bucharest by default), also used for sunrise and sunset.
+    office_weather_host: str | None = None
+    office_latitude: float = Field(default=44.4268, ge=-90, le=90)
+    office_longitude: float = Field(default=26.1025, ge=-180, le=180)
+
     #: What the studio optimises for when it picks a model itself. The Owner's standing
     #: instruction is premium: the best picture the account can make, cost secondary — "no
     #: sense having a film company that cannot deliver good films". `balanced` weighs the

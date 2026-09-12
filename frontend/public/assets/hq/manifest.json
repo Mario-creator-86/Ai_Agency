@@ -1,0 +1,476 @@
+{
+ "world": {
+  "width": 1600,
+  "height": 840
+ },
+ "camera": {
+  "pixels_per_metre": 28.0,
+  "pitch_degrees": 10.0
+ },
+ "scale": 2.0,
+ "layers": [
+  "city",
+  "street_back",
+  "street_ground",
+  "building_back",
+  "building_front",
+  "building_shell",
+  "street_props",
+  "street_kerb",
+  "street_front"
+ ],
+ "rooms": {
+  "director_suite": {
+   "x": 517,
+   "y": 85,
+   "w": 688,
+   "h": 92,
+   "level": 4,
+   "name": "L4 Executive"
+  },
+  "research_lab": {
+   "x": 517,
+   "y": 195,
+   "w": 688,
+   "h": 87,
+   "level": 3,
+   "name": "L3 Research"
+  },
+  "script_room": {
+   "x": 517,
+   "y": 297,
+   "w": 688,
+   "h": 95,
+   "level": 2,
+   "name": "L2 Content"
+  },
+  "audio_booth": {
+   "x": 517,
+   "y": 410,
+   "w": 345,
+   "h": 90,
+   "level": 1,
+   "name": "L1 Production - Audio"
+  },
+  "video_studio": {
+   "x": 867,
+   "y": 410,
+   "w": 338,
+   "h": 90,
+   "level": 1,
+   "name": "L1 Production - Render"
+  },
+  "server_corner": {
+   "x": 455,
+   "y": 520,
+   "w": 182,
+   "h": 135,
+   "level": 0,
+   "name": "S1 Infra"
+  },
+  "lobby": {
+   "x": 645,
+   "y": 520,
+   "w": 240,
+   "h": 135,
+   "level": 0,
+   "name": "Lobby"
+  },
+  "accounting_office": {
+   "x": 897,
+   "y": 520,
+   "w": 68,
+   "h": 135,
+   "level": 0,
+   "name": "S2 Operations - Treasury"
+  },
+  "publish_desk": {
+   "x": 965,
+   "y": 520,
+   "w": 67,
+   "h": 135,
+   "level": 0,
+   "name": "S2 Operations - Distribution"
+  },
+  "ad_shop": {
+   "x": 1040,
+   "y": 520,
+   "w": 157,
+   "h": 135,
+   "level": 0,
+   "name": "S3 AI Space"
+  }
+ },
+ "seats": {
+  "desk_director": {
+   "x": 811.0,
+   "y": 171.2,
+   "facing": "front",
+   "zone": "director_suite",
+   "level": 4
+  },
+  "desk_research_1": {
+   "x": 672.0,
+   "y": 276.2,
+   "facing": "back",
+   "zone": "research_lab",
+   "level": 3
+  },
+  "desk_research_2": {
+   "x": 926.0,
+   "y": 276.2,
+   "facing": "front",
+   "zone": "research_lab",
+   "level": 3
+  },
+  "desk_script": {
+   "x": 804.0,
+   "y": 386.2,
+   "facing": "back",
+   "zone": "script_room",
+   "level": 2
+  },
+  "desk_audio": {
+   "x": 668.0,
+   "y": 494.2,
+   "facing": "front",
+   "zone": "audio_booth",
+   "level": 1
+  },
+  "desk_video": {
+   "x": 1022.0,
+   "y": 494.2,
+   "facing": "back",
+   "zone": "video_studio",
+   "level": 1
+  },
+  "desk_accounting": {
+   "x": 945.0,
+   "y": 648.7,
+   "facing": "front",
+   "zone": "accounting_office",
+   "level": 0
+  },
+  "desk_publish": {
+   "x": 1001.0,
+   "y": 648.7,
+   "facing": "front",
+   "zone": "publish_desk",
+   "level": 0
+  }
+ },
+ "screens": {
+  "director_monitors": {
+   "rect": [
+    772.0,
+    128.5,
+    78.0,
+    13.8
+   ],
+   "zone": "director_suite",
+   "desk": "desk_director"
+  },
+  "research_monitors": {
+   "rect": [
+    658.0,
+    234.6,
+    54.0,
+    12.7
+   ],
+   "zone": "research_lab",
+   "desk": "desk_research_1"
+  },
+  "factcheck_monitors": {
+   "rect": [
+    893.0,
+    234.6,
+    52.0,
+    12.7
+   ],
+   "zone": "research_lab",
+   "desk": "desk_research_2"
+  },
+  "script_monitors": {
+   "rect": [
+    764.0,
+    337.5,
+    82.0,
+    19.9
+   ],
+   "zone": "script_room",
+   "desk": "desk_script"
+  },
+  "audio_monitors": {
+   "rect": [
+    641.0,
+    452.6,
+    67.0,
+    12.7
+   ],
+   "zone": "audio_booth",
+   "desk": "desk_audio"
+  },
+  "audio_waveform": {
+   "rect": [
+    708.0,
+    446.3,
+    28.0,
+    28.0
+   ],
+   "zone": "audio_booth"
+  },
+  "render_display": {
+   "rect": [
+    879.0,
+    421.4,
+    61.0,
+    60.0
+   ],
+   "zone": "video_studio",
+   "kind": "render_status"
+  },
+  "video_monitors": {
+   "rect": [
+    988.0,
+    453.2,
+    70.0,
+    12.1
+   ],
+   "zone": "video_studio",
+   "desk": "desk_video"
+  },
+  "publish_radar": {
+   "rect": [
+    1005.0,
+    602.4,
+    22.0,
+    20.0
+   ],
+   "zone": "publish_desk",
+   "desk": "desk_publish"
+  },
+  "treasury_monitor": {
+   "rect": [
+    935.0,
+    604.0,
+    16.0,
+    9.9
+   ],
+   "zone": "accounting_office",
+   "desk": "desk_accounting"
+  }
+ },
+ "lamps": [
+  {
+   "x": 900.0,
+   "y": 107.6,
+   "color": "#ffc98a",
+   "kind": "pendant"
+  },
+  {
+   "x": 1076.0,
+   "y": 104.8,
+   "color": "#ffc98a",
+   "kind": "pendant"
+  },
+  {
+   "x": 1116.0,
+   "y": 100.7,
+   "color": "#ffc98a",
+   "kind": "pendant"
+  },
+  {
+   "x": 534.0,
+   "y": 306.3,
+   "color": "#ffd9a8",
+   "kind": "pendant"
+  },
+  {
+   "x": 620.0,
+   "y": 306.3,
+   "color": "#ffd9a8",
+   "kind": "pendant"
+  },
+  {
+   "x": 712.0,
+   "y": 306.3,
+   "color": "#ffd9a8",
+   "kind": "pendant"
+  },
+  {
+   "x": 800.0,
+   "y": 306.3,
+   "color": "#ffd9a8",
+   "kind": "pendant"
+  },
+  {
+   "x": 872.0,
+   "y": 306.3,
+   "color": "#ffd9a8",
+   "kind": "pendant"
+  },
+  {
+   "x": 950.0,
+   "y": 306.3,
+   "color": "#ffd9a8",
+   "kind": "pendant"
+  },
+  {
+   "x": 1030.0,
+   "y": 306.3,
+   "color": "#ffd9a8",
+   "kind": "pendant"
+  },
+  {
+   "x": 1150.0,
+   "y": 306.3,
+   "color": "#ffd9a8",
+   "kind": "pendant"
+  },
+  {
+   "x": 868.0,
+   "y": 545.3,
+   "color": "#ffc98a",
+   "kind": "pendant"
+  }
+ ],
+ "displays": {
+  "server_racks": {
+   "rects": [
+    [
+     466.0,
+     580.3,
+     26.0,
+     65.6
+    ],
+    [
+     500.0,
+     580.3,
+     27.0,
+     65.6
+    ],
+    [
+     556.0,
+     580.3,
+     27.0,
+     65.6
+    ],
+    [
+     591.0,
+     580.3,
+     28.0,
+     65.6
+    ]
+   ],
+   "zone": "server_corner"
+  },
+  "ad_wall": {
+   "rect": [
+    1052.0,
+    548.2,
+    138.0,
+    92.0
+   ],
+   "zone": "ad_shop"
+  }
+ },
+ "lift": {
+  "shaft": {
+   "x": 1215,
+   "w": 62,
+   "top": 38,
+   "bottom": 655
+  },
+  "cab_y": 1.0,
+  "stops": {
+   "4": 172.1,
+   "3": 277.1,
+   "2": 387.1,
+   "1": 495.1,
+   "0": 650.1
+  },
+  "door_x": 1212
+ },
+ "labels": {
+  "sign": {
+   "x": 680,
+   "y": 40,
+   "w": 525,
+   "h": 40
+  }
+ },
+ "street": {
+  "terrace_row": 676.0,
+  "walk": {
+   "far": 689.5,
+   "near": 710.2
+  },
+  "lanes": [
+   {
+    "id": "far",
+    "row": 737.7,
+    "direction": -1
+   },
+   {
+    "id": "near",
+    "row": 773.5,
+    "direction": 1
+   }
+  ],
+  "road": {
+   "top": 721.1,
+   "bottom": 790.0
+  },
+  "crosswalk": {
+   "x": 674,
+   "w": 178
+  },
+  "near_walk_row": 791.7,
+  "pixels_per_metre_x": 28.0,
+  "pixels_per_metre_up": 27.575,
+  "lamps": [
+   {
+    "x": 92.0,
+    "y": 410.0
+   },
+   {
+    "x": 322.0,
+    "y": 505.0
+   },
+   {
+    "x": 1406.0,
+    "y": 485.0
+   }
+  ],
+  "bench": {
+   "x": 882,
+   "w": 70,
+   "row": 680.0
+  },
+  "shelter_clock": {
+   "rect": [
+    1411.0,
+    622.3,
+    66.0,
+    32.6
+   ]
+  },
+  "shelter_ad": {
+   "rect": [
+    1487.0,
+    608.9,
+    50.0,
+    95.0
+   ]
+  },
+  "kerb_row": 714.8,
+  "billboard": {
+   "rect": [
+    98.0,
+    363.0,
+    83.0,
+    38.0
+   ]
+  }
+ }
+}

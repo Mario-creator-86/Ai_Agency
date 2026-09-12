@@ -10,18 +10,18 @@
  */
 
 const INTENT_LABEL = {
-  REQUEST_INFO: 'Întrebare',
-  REQUEST_REVIEW: 'Cerere de revizuire',
-  CHALLENGE: 'Contestare',
-  HANDOFF: 'Predare / indicație',
-  STATUS: 'Raport',
-  ESCALATE: 'Escaladare',
+  REQUEST_INFO: 'Question',
+  REQUEST_REVIEW: 'Review request',
+  CHALLENGE: 'Challenge',
+  HANDOFF: 'Handoff / guidance',
+  STATUS: 'Report',
+  ESCALATE: 'Escalation',
 };
 
 const STATUS_LABEL = {
-  OPEN: 'deschis',
-  ANSWERED: 'răspuns',
-  RESOLVED: 'rezolvat',
+  OPEN: 'open',
+  ANSWERED: 'answered',
+  RESOLVED: 'resolved',
 };
 
 /**
@@ -66,7 +66,7 @@ function letterText(message) {
 export function renderThread(thread, { escape, timezone }) {
   const messages = Array.isArray(thread.messages) ? thread.messages : [];
   if (!messages.length) {
-    return '<div class="helper">Firul este gol: niciun mesaj înregistrat.</div>';
+    return '<div class="helper">The thread is empty: no message recorded.</div>';
   }
   return messages
     .map((m, index) => {
@@ -75,16 +75,16 @@ export function renderThread(thread, { escape, timezone }) {
       const text = letterText(m);
       const footer =
         m.status && m.status !== 'OPEN'
-          ? `<div class="mail-footer">${escape(STATUS_LABEL[m.status] || m.status)}${m.resolved_by ? ` de ${escape(m.resolved_by)}` : ''}${m.resolution && m.resolution !== text ? ` — ${escape(m.resolution)}` : ''}</div>`
+          ? `<div class="mail-footer">${escape(STATUS_LABEL[m.status] || m.status)}${m.resolved_by ? ` by ${escape(m.resolved_by)}` : ''}${m.resolution && m.resolution !== text ? ` — ${escape(m.resolution)}` : ''}</div>`
           : '';
       const forOwner = Boolean(m.for_owner) || to === 'Owner';
       return (
         `<article class="mail-letter${index === 0 ? ' is-first' : ''}${forOwner ? ' is-owner' : ''}" data-message="${escape(m.id)}">` +
-        (forOwner && m.status === 'OPEN' ? '<div class="mail-owner-flag">Către tine — așteaptă răspunsul tău</div>' : '') +
+        (forOwner && m.status === 'OPEN' ? '<div class="mail-owner-flag">To you — awaiting your reply</div>' : '') +
         `<div class="mail-meta"><span class="mail-route"><strong>${escape(from)}</strong> <span class="mail-arrow">→</span> <strong>${escape(to)}</strong></span>` +
         `<time>${escape(when(m.created_at, timezone))}</time></div>` +
         `<div class="mail-subject"><span class="policy-tag policy-locked">${escape(INTENT_LABEL[m.intent] || m.intent)}</span> ${escape(m.subject)}</div>` +
-        (text ? `<div class="mail-body">${escape(text)}</div>` : '<div class="mail-body mail-empty">(fără text; doar subiectul)</div>') +
+        (text ? `<div class="mail-body">${escape(text)}</div>` : '<div class="mail-body mail-empty">(no text; subject only)</div>') +
         footer +
         '</article>'
       );
@@ -119,7 +119,7 @@ export class MailThread {
   /** Open the window on one thread; the letters are fetched fresh every time. */
   async open(threadId) {
     if (!threadId) return;
-    this.body.innerHTML = '<div class="helper">Se încarcă firul…</div>';
+    this.body.innerHTML = '<div class="helper">Loading the thread…</div>';
     this.status.textContent = '';
     this.status.hidden = true;
     if (!this.dialog.open) this.dialog.showModal();
@@ -130,7 +130,7 @@ export class MailThread {
     try {
       this.thread = await this.api(`/agents/messages/threads/${encodeURIComponent(threadId)}`);
       const count = this.thread.messages.length;
-      this.title.textContent = this.thread.subject || 'Fir de corespondență';
+      this.title.textContent = this.thread.subject || 'Correspondence thread';
       this.body.innerHTML = renderThread(this.thread, {
         escape: this.escape,
         timezone: this.timezone,
@@ -138,7 +138,7 @@ export class MailThread {
       this.body.dataset.count = String(count);
       this.body.scrollTop = this.body.scrollHeight;
     } catch (error) {
-      this.body.innerHTML = `<div class="text-error">${this.escape(error instanceof Error ? error.message : 'Firul nu a putut fi citit.')}</div>`;
+      this.body.innerHTML = `<div class="text-error">${this.escape(error instanceof Error ? error.message : 'The thread could not be read.')}</div>`;
     }
   }
 
@@ -148,17 +148,17 @@ export class MailThread {
     if (!text || !this.thread || !this.thread.messages.length) return;
     const last = this.thread.messages[this.thread.messages.length - 1];
     this.status.hidden = false;
-    this.status.textContent = 'Se trimite…';
+    this.status.textContent = 'Sending…';
     try {
       await this.api(`/agents/messages/${encodeURIComponent(last.id)}/reply`, {
         method: 'POST',
         body: JSON.stringify({ text }),
       });
       this.input.value = '';
-      this.status.textContent = 'Trimis. Angajatul răspunde la următoarea trecere a lucrătorului.';
+      this.status.textContent = 'Sent. The employee answers on the next pass of the worker.';
       await this.load(this.thread.thread_id);
     } catch (error) {
-      this.status.textContent = error instanceof Error ? error.message : 'Nu s-a putut trimite.';
+      this.status.textContent = error instanceof Error ? error.message : 'Could not send.';
     }
   }
 }

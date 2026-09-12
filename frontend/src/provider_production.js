@@ -14,57 +14,57 @@ export function renderProviderProduction(host, connection, catalog, { api, run }
   const info = catalog?.kind_info || {};
   const hasVoices = info.has_voices === true;
   const section = node('section', '', 'provider-production');
-  section.append(node('h4', info.title || 'Configurație de producție'));
+  section.append(node('h4', info.title || 'Production configuration'));
   const state = catalog?.discovery;
   if (state?.last_success_at) {
-    section.append(node('p', `Catalog actualizat: ${new Date(state.last_success_at).toLocaleString('ro-RO')}`, 'helper'));
+    section.append(node('p', `Catalogue updated: ${new Date(state.last_success_at).toLocaleString('en-GB')}`, 'helper'));
   }
   if (state?.last_error) section.append(node('p', state.last_error, 'settings-limitation'));
-  if (state?.status === 'SYNCING') section.append(node('p', info.syncing || 'Se încarcă catalogul…', 'helper'));
+  if (state?.status === 'SYNCING') section.append(node('p', info.syncing || 'Loading the catalogue…', 'helper'));
   if (state?.next_refresh_at) {
-    section.append(node('p', `Următoarea actualizare automată: ${new Date(state.next_refresh_at).toLocaleString('ro-RO')}`, 'helper'));
+    section.append(node('p', `Next automatic update: ${new Date(state.next_refresh_at).toLocaleString('en-GB')}`, 'helper'));
   }
-  const refresh = node('button', info.refresh_label || 'Actualizează catalogul', 'secondary');
+  const refresh = node('button', info.refresh_label || 'Update the catalogue', 'secondary');
   refresh.addEventListener('click', () => run(() => api(
     `/settings/integrations/${connection.id}/refresh-resources`, { method: 'POST' },
-  ), 'Catalog actualizat.'));
+  ), 'Catalogue updated.'));
   section.append(refresh);
   if (connection.status !== 'VERIFIED') {
-    section.append(node('p', info.verify_hint || 'Verifică cheia pentru a alege valorile implicite.', 'helper'));
+    section.append(node('p', info.verify_hint || 'Verify the key to choose the defaults.', 'helper'));
     host.append(section);
     return;
   }
   const production = catalog?.production || { model_id: null, voice_id: null, image_model_id: null, allow_production_override: true, version: 0 };
   section.append(node('p', hasVoices
-    ? 'Modelul și vocea de mai jos sunt valorile implicite ale organizației: producția le folosește când niciun canal, serial, episod sau scenă nu alege altceva. Identitatea blocată a unui personaj recurent are întotdeauna prioritate.'
-    : 'Modelul de mai jos este valoarea implicită a organizației, doar o rezervă: producția îl folosește când niciun canal, serial, episod sau scenă nu alege alt model descoperit. Un personaj recurent cu aspect blocat acceptă doar modelele aprobate pentru el.', 'helper'));
+    ? 'The model and voice below are the organisation defaults: production uses them when no channel, series, episode or scene chooses otherwise. A recurring character with a locked identity always takes priority.'
+    : 'The model below is the organisation default, only a fallback: production uses it when no channel, series, episode or scene chooses another discovered model. A recurring character with a locked look accepts only the models approved for it.', 'helper'));
   const fields = node('div', '', 'settings-fields');
   const picker = (label, resources, selected, purpose = null) => {
     const wrap = node('label', label);
     const select = document.createElement('select');
     select.setAttribute('aria-label', label);
-    select.add(new Option('Fără selecție', ''));
+    select.add(new Option('No selection', ''));
     for (const resource of resources) {
       const usable = purpose
         ? (resource.usable_purposes || []).includes(purpose)
         : resource.production_usable === true;
-      const option = new Option(`${resource.name}${resource.name === resource.remote_id ? '' : ` · ${resource.remote_id}`}${usable ? '' : ` · ${info.unusable || 'indisponibil'}`}`, resource.remote_id);
+      const option = new Option(`${resource.name}${resource.name === resource.remote_id ? '' : ` · ${resource.remote_id}`}${usable ? '' : ` · ${info.unusable || 'unavailable'}`}`, resource.remote_id);
       option.disabled = !usable;
       select.add(option);
     }
     select.value = resources.some(resource => resource.remote_id === selected) ? selected : '';
     wrap.append(select);
-    if (!resources.length) wrap.append(node('small', 'API-ul nu a returnat opțiuni. Actualizează catalogul sau verifică permisiunile cheii.', 'helper'));
+    if (!resources.length) wrap.append(node('small', 'The API returned no options. Update the catalogue or check the key permissions.', 'helper'));
     if (selected && !resources.some(resource => resource.remote_id === selected && resource.production_usable)) {
-      wrap.append(node('small', 'Selecția salvată nu mai este disponibilă; alege o altă opțiune.', 'settings-limitation'));
+      wrap.append(node('small', 'The saved selection is no longer available; choose another option.', 'settings-limitation'));
     }
     fields.append(wrap);
     return select;
   };
   const purposes = info.purposes || [];
   const primary = hasVoices ? 'voice' : (purposes[0] || null);
-  const model = picker(info.model_label || 'Model implicit', catalog?.models || [], production.model_id, primary);
-  const voice = hasVoices ? picker(info.voice_label || 'Voce implicită', catalog?.voices || [], production.voice_id) : null;
+  const model = picker(info.model_label || 'Default model', catalog?.models || [], production.model_id, primary);
+  const voice = hasVoices ? picker(info.voice_label || 'Default voice', catalog?.voices || [], production.voice_id) : null;
   const imageModel = purposes.includes('image') && info.image_model_label
     ? picker(info.image_model_label, catalog?.models || [], production.image_model_id, 'image')
     : null;
@@ -72,10 +72,10 @@ export function renderProviderProduction(host, connection, catalog, { api, run }
   const override = document.createElement('input');
   override.type = 'checkbox';
   override.checked = production.allow_production_override !== false;
-  override.setAttribute('aria-label', 'Permite suprascrierea de către producție');
-  overrideWrap.append(override, document.createTextNode(' Permite suprascrierea de către producție (canal, serial, episod, scenă)'));
+  override.setAttribute('aria-label', 'Allow production to override');
+  overrideWrap.append(override, document.createTextNode(' Allow production to override (channel, series, episode, scene)'));
   fields.append(overrideWrap);
-  const save = node('button', 'Salvează valorile implicite', 'secondary');
+  const save = node('button', 'Save defaults', 'secondary');
   save.addEventListener('click', () => run(() => api(
     `/settings/integrations/${connection.id}/production`,
     { method: 'PUT', body: JSON.stringify({ model_id: model.value || null, voice_id: voice?.value || null,

@@ -24,7 +24,7 @@
 const STATUS_LABEL = {
   CONNECTED: 'CONNECTED',
   AUTH_REQUIRED: 'Neconectat',
-  ERROR: 'Eroare',
+  ERROR: 'Error',
 };
 
 function node(tag, text = '', className = '') {
@@ -79,13 +79,13 @@ export function renderYouTubeConnections(host, { api, notify }) {
 
   const draw = async () => {
     section.replaceChildren();
-    section.append(node('h3', 'YouTube · canale conectate'));
+    section.append(node('h3', 'YouTube · connected channels'));
     section.append(
       node(
         'p',
-        'Salvezi datele clientului Google, apoi apeși Conectează YouTube. Identitatea canalului ' +
-          'o citește studioul de la Google după ce dai consimțământul; nu o scrii tu. Tokenul ' +
-          'rămâne criptat pe server și nu apare niciodată aici.',
+        'Save the Google client details, then press Connect YouTube. The studio reads the channel ' +
+          'identity from Google after you consent; you never type it. The token ' +
+          'stays encrypted on the server and never appears here.',
         'helper',
       ),
     );
@@ -94,12 +94,12 @@ export function renderYouTubeConnections(host, { api, notify }) {
     try {
       connections = (await api('/youtube/connections')).connections;
     } catch (err) {
-      section.append(node('p', `Conexiunile nu au putut fi citite: ${err.message}`, 'text-error'));
+      section.append(node('p', `The connections could not be read: ${err.message}`, 'text-error'));
       return;
     }
 
     if (!connections.length && !adding) {
-      section.append(node('p', 'Nicio conexiune YouTube încă.', 'helper'));
+      section.append(node('p', 'No YouTube connection yet.', 'helper'));
     }
 
     for (const connection of connections) {
@@ -109,7 +109,7 @@ export function renderYouTubeConnections(host, { api, notify }) {
     if (adding || editing) {
       section.append(form(editing));
     } else {
-      const add = node('button', 'Adaugă un canal', 'secondary');
+      const add = node('button', 'Add a channel', 'secondary');
       add.addEventListener('click', () => {
         adding = true;
         draw();
@@ -156,26 +156,26 @@ export function renderYouTubeConnections(host, { api, notify }) {
       } else {
         const fallback = node('span', '', 'yt-avatar yt-avatar-fallback');
         fallback.setAttribute('role', 'img');
-        fallback.setAttribute('aria-label', 'Canal fără imagine de profil');
+        fallback.setAttribute('aria-label', 'Channel without a profile picture');
         identity.append(fallback);
       }
       const text = node('div');
-      text.append(node('strong', channel.title || 'Canal fără nume'));
+      text.append(node('strong', channel.title || 'Unnamed channel'));
       text.append(
         node('p', `${channel.id}${channel.custom_url ? ` · ${channel.custom_url}` : ''}`, 'helper'),
       );
       text.append(
         node(
           'p',
-          `${count(channel.subscriber_count)} abonați · ${count(channel.video_count)} videoclipuri · ` +
-            `${count(channel.view_count)} vizualizări`,
+          `${count(channel.subscriber_count)} subscribers · ${count(channel.video_count)} videos · ` +
+            `${count(channel.view_count)} views`,
           'helper',
         ),
       );
       identity.append(text);
       article.append(identity);
     } else {
-      article.append(node('p', 'Niciun canal autorizat încă.', 'helper'));
+      article.append(node('p', 'No authorised channel yet.', 'helper'));
     }
 
     const meta = node('dl', '', 'yt-meta');
@@ -184,10 +184,10 @@ export function renderYouTubeConnections(host, { api, notify }) {
     };
     pair('Client ID', connection.client_id);
     pair('Redirect URI', connection.redirect_uri);
-    pair('Client Secret', connection.has_client_secret ? 'salvat, criptat' : 'lipsește');
-    pair('Refresh token', connection.has_refresh_token ? 'salvat, criptat' : 'lipsește');
+    pair('Client Secret', connection.has_client_secret ? 'saved, encrypted' : 'missing');
+    pair('Refresh token', connection.has_refresh_token ? 'saved, encrypted' : 'missing');
     if (connection.connected_at) pair('Conectat', when(connection.connected_at));
-    if (connection.last_checked_at) pair('Verificat', when(connection.last_checked_at));
+    if (connection.last_checked_at) pair('Verified', when(connection.last_checked_at));
     article.append(meta);
 
     if (connection.last_error) {
@@ -198,7 +198,7 @@ export function renderYouTubeConnections(host, { api, notify }) {
 
     const connect = node(
       'button',
-      connection.connected ? 'Reconectează' : 'Conectează YouTube',
+      connection.connected ? 'Reconnect' : 'Connect YouTube',
       connection.connected ? 'quiet' : 'secondary',
     );
     connect.addEventListener('click', () => {
@@ -216,7 +216,7 @@ export function renderYouTubeConnections(host, { api, notify }) {
           if (tab) tab.location = started.authorization_url;
           else window.location.assign(started.authorization_url);
           notify(
-            'Termină autorizarea în fila Google. Când te întorci, lista se reîmprospătează singură.',
+            'Finish the authorisation in the Google tab. When you come back, the list refreshes itself.',
             false,
           );
         })
@@ -229,28 +229,28 @@ export function renderYouTubeConnections(host, { api, notify }) {
     actions.append(connect);
 
     if (connection.connected) {
-      const verify = node('button', 'Verifică', 'quiet');
+      const verify = node('button', 'Verify', 'quiet');
       verify.addEventListener('click', () =>
         act(
           `/youtube/connections/${connection.id}/verify`,
           { method: 'POST' },
-          (result) => `Canal confirmat: ${result.channel.title}.`,
+          (result) => `Channel confirmed: ${result.channel.title}.`,
         ),
       );
       actions.append(verify);
 
-      const disconnect = node('button', 'Deconectează', 'quiet');
+      const disconnect = node('button', 'Disconnect', 'quiet');
       disconnect.addEventListener('click', () =>
         act(
           `/youtube/connections/${connection.id}/disconnect`,
           { method: 'POST' },
-          () => `${connection.name}: tokenul a fost șters și revocat la Google.`,
+          () => `${connection.name}: the token was deleted and revoked at Google.`,
         ),
       );
       actions.append(disconnect);
     }
 
-    const modify = node('button', 'Editează', 'quiet');
+    const modify = node('button', 'Edit', 'quiet');
     modify.addEventListener('click', () => {
       editing = connection;
       adding = false;
@@ -259,17 +259,17 @@ export function renderYouTubeConnections(host, { api, notify }) {
     actions.append(modify);
 
     // Deletion is armed by a second click: it removes the credentials as well as the token.
-    const remove = node('button', 'Șterge', 'quiet');
+    const remove = node('button', 'Delete', 'quiet');
     remove.addEventListener('click', () => {
       if (remove.dataset.armed !== 'yes') {
         remove.dataset.armed = 'yes';
-        remove.textContent = 'Confirmă ștergerea';
+        remove.textContent = 'Confirm deletion';
         return;
       }
       act(
         `/youtube/connections/${connection.id}`,
         { method: 'DELETE' },
-        () => `${connection.name} a fost ștearsă.`,
+        () => `${connection.name} was deleted.`,
       );
     });
     actions.append(remove);
@@ -280,12 +280,12 @@ export function renderYouTubeConnections(host, { api, notify }) {
 
   function form(existing) {
     const wrapper = node('form', '', 'settings-card yt-form');
-    wrapper.append(node('h4', existing ? `Editează ${existing.name}` : 'Adaugă un canal YouTube'));
+    wrapper.append(node('h4', existing ? `Edit ${existing.name}` : 'Add a YouTube channel'));
     wrapper.append(
       node(
         'p',
-        'Datele vin din Google Cloud Console, ecranul „Credentials”, pentru un OAuth client de ' +
-          'tip Web application. Redirect URI trebuie trecut identic și acolo.',
+        'The details come from Google Cloud Console, the “Credentials” screen, for an OAuth client of ' +
+          'type Web application. The Redirect URI must be entered there exactly as well.',
         'helper',
       ),
     );
@@ -295,9 +295,9 @@ export function renderYouTubeConnections(host, { api, notify }) {
     const target = existing ? existing.id : null;
     const kept = draft && draft.target === target ? draft.values : null;
 
-    const name = field('Nume conexiune', {
+    const name = field('Connection name', {
       value: kept ? kept.name : existing ? existing.name : '',
-      placeholder: 'Cum îi spui tu acestui canal',
+      placeholder: 'What you call this channel',
     });
     const clientId = field('Google OAuth Client ID', {
       value: kept ? kept.clientId : existing ? existing.client_id : '',
@@ -306,8 +306,8 @@ export function renderYouTubeConnections(host, { api, notify }) {
     const clientSecret = field('Google OAuth Client Secret', {
       type: 'password',
       value: kept ? kept.clientSecret : '',
-      placeholder: existing ? 'Lasă gol ca să păstrezi secretul salvat' : '',
-      hint: existing ? 'Secretul salvat nu poate fi citit înapoi; completează doar ca să-l schimbi.' : '',
+      placeholder: existing ? 'Leave empty to keep the saved secret' : '',
+      hint: existing ? 'The saved secret cannot be read back; fill it in only to change it.' : '',
     });
     // Derived from where the application is actually served, so it is never a hardcoded host.
     const redirect = field('Redirect URI', {
@@ -337,9 +337,9 @@ export function renderYouTubeConnections(host, { api, notify }) {
     const actions = node('div', '', 'settings-actions');
     // 'secondary', not 'primary': .primary is the full-width submit of a login-style form and
     // would push Renunță onto its own line here.
-    const save = node('button', existing ? 'Salvează modificările' : 'Salvează datele', 'secondary');
+    const save = node('button', existing ? 'Save changes' : 'Save details', 'secondary');
     save.type = 'submit';
-    const cancel = node('button', 'Renunță', 'quiet');
+    const cancel = node('button', 'Cancel', 'quiet');
     cancel.type = 'button';
     cancel.addEventListener('click', () => {
       adding = false;
@@ -368,7 +368,7 @@ export function renderYouTubeConnections(host, { api, notify }) {
         const saved = await act(
           `/youtube/connections/${existing.id}`,
           { method: 'PATCH', body: JSON.stringify(payload) },
-          (result) => `${result.name} a fost actualizată.`,
+          (result) => `${result.name} was updated.`,
         );
         if (saved) draft = null;
         else editing = existing;
@@ -376,14 +376,14 @@ export function renderYouTubeConnections(host, { api, notify }) {
       }
       payload.client_secret = clientSecret.input.value;
       if (!payload.client_secret) {
-        notify('Client Secret este obligatoriu la prima salvare.', true);
+        notify('Client Secret is required the first time you save.', true);
         return;
       }
       adding = false;
       const saved = await act(
         '/youtube/connections',
         { method: 'POST', body: JSON.stringify(payload) },
-        (result) => `${result.name} a fost salvată. Acum apasă Conectează YouTube.`,
+        (result) => `${result.name} was saved. Now press Connect YouTube.`,
       );
       if (saved) draft = null;
       else adding = true;

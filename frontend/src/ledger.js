@@ -44,66 +44,66 @@ const FAMILY_KIND = {
 
 /** Kinds the filter chips offer, in display order. */
 export const KINDS = [
-  ['all', 'Tot'],
-  ['speech', 'Vorbe'],
-  ['production', 'Producție'],
-  ['work', 'Personal'],
-  ['money', 'Bani'],
+  ['all', 'All'],
+  ['speech', 'Talk'],
+  ['production', 'Production'],
+  ['work', 'Staff'],
+  ['money', 'Money'],
   ['owner', 'Owner'],
 ];
 
 const STAGE_LABEL = {
-  RESEARCH: 'Cercetare',
-  RESEARCHED: 'Cercetat',
-  SCRIPTING: 'Scenariu',
-  SCRIPT_READY: 'Scenariu gata',
+  RESEARCH: 'Research',
+  RESEARCHED: 'Researched',
+  SCRIPTING: 'Script',
+  SCRIPT_READY: 'Script ready',
   STORYBOARD: 'Storyboard',
-  MEDIA_GENERATION: 'Generare media',
-  RENDERING: 'Randare',
-  QUALITY_CONTROL: 'Control calitate',
-  READY_TO_PUBLISH: 'Gata de publicare',
-  PUBLISHING: 'Publicare',
-  PUBLISHED: 'Publicat',
-  ANALYTICS: 'Analiză',
-  LEARNING: 'Învățare',
+  MEDIA_GENERATION: 'Media generation',
+  RENDERING: 'Rendering',
+  QUALITY_CONTROL: 'Quality control',
+  READY_TO_PUBLISH: 'Ready to publish',
+  PUBLISHING: 'Publishing',
+  PUBLISHED: 'Published',
+  ANALYTICS: 'Analytics',
+  LEARNING: 'Learning',
 };
 
 /** The stages of the daily runbook, as the Owner reads them in the panel. */
 const RUN_STAGE_LABEL = {
-  preflight: 'verificarea de dinainte',
-  performance_intake: 'preluarea performanței',
-  idea_generation: 'generarea de idei',
-  research_and_verification: 'cercetare și verificare',
-  selection: 'selecția subiectului',
-  script_and_storyboard: 'scenariu și storyboard',
-  media: 'producția media',
-  edit_and_qc: 'montaj și control calitate',
-  publish: 'publicare',
-  post_run: 'raportare și închiderea zilei',
-  daily_log: 'jurnalul zilei',
-  serial_queue: 'episodul serialului',
+  preflight: 'preflight check',
+  performance_intake: 'performance intake',
+  idea_generation: 'idea generation',
+  research_and_verification: 'research and verification',
+  selection: 'topic selection',
+  script_and_storyboard: 'script and storyboard',
+  media: 'media production',
+  edit_and_qc: 'edit and quality control',
+  publish: 'publishing',
+  post_run: 'reporting and closing the day',
+  daily_log: "the day's journal",
+  serial_queue: 'the serial episode',
 };
 
 /** What each kind of letter is, as the Owner would name it. */
 const MAIL_INTENT = {
-  REQUEST_INFO: 'întrebare',
-  REQUEST_REVIEW: 'cerere de revizuire',
-  CHALLENGE: 'contestare',
-  HANDOFF: 'indicație',
-  STATUS: 'raport',
-  ESCALATE: 'escaladare',
+  REQUEST_INFO: 'question',
+  REQUEST_REVIEW: 'review request',
+  CHALLENGE: 'challenge',
+  HANDOFF: 'guidance',
+  STATUS: 'report',
+  ESCALATE: 'escalation',
 };
 
 const STATUS_LABEL = {
-  COMPLETED: 'finalizată',
-  PARTIAL: 'parțială',
-  FAILED: 'eșuată',
-  BLOCKED: 'blocată',
-  SKIPPED: 'sărită',
-  SUCCEEDED: 'reușită',
-  PASSED: 'trecut',
-  PUBLISHED: 'publicat',
-  PUBLISHED_SIMULATED: 'publicare simulată',
+  COMPLETED: 'completed',
+  PARTIAL: 'partial',
+  FAILED: 'failed',
+  BLOCKED: 'blocked',
+  SKIPPED: 'skipped',
+  SUCCEEDED: 'succeeded',
+  PASSED: 'passed',
+  PUBLISHED: 'published',
+  PUBLISHED_SIMULATED: 'simulated publication',
 };
 
 function stageLabel(stage) {
@@ -142,12 +142,12 @@ export function describeEvent(event, names = {}) {
 
   switch (type) {
     case 'agent.message_sent':
-      label = 'a spus';
+      label = 'said';
       text = payload.text || payload.content || '';
       kind = 'speech';
       break;
     case 'agent.message_posted':
-      label = `${payload.in_reply_to ? 'răspunde' : 'scrie'} · ${MAIL_INTENT[payload.intent] || payload.intent || 'mesaj'}`;
+      label = `${payload.in_reply_to ? 'replies' : 'writes'} · ${MAIL_INTENT[payload.intent] || payload.intent || 'message'}`;
       text = [payload.subject, payload.excerpt].filter(Boolean).join(' — ');
       kind = 'speech';
       // A letter: the ledger names both ends and opens the thread it belongs to. One
@@ -155,7 +155,7 @@ export function describeEvent(event, names = {}) {
       // is drawn in red until it is answered.
       return {
         who: who || payload.from_name || 'Owner',
-        label: payload.for_owner ? `${label} · CĂTRE TINE` : label,
+        label: payload.for_owner ? `${label} · TO YOU` : label,
         text,
         kind: payload.for_owner ? 'owner' : kind,
         to: payload.to_name || 'Director',
@@ -165,59 +165,59 @@ export function describeEvent(event, names = {}) {
         excerpt: payload.excerpt || '',
       };
     case 'agent.message_answered':
-      label = 'a răspuns la un mesaj';
+      label = 'replied to a message';
       text = payload.subject || '';
       kind = 'speech';
       break;
     case 'agent.message_resolved':
-      label = `a închis un mesaj (${payload.resolved_by || ''})`;
+      label = `closed a message (${payload.resolved_by || ''})`;
       text = payload.subject || '';
       kind = 'speech';
       break;
     case 'agent.state_changed':
       // WORKING is production without a model — a voice being recorded, a shot generated. It
       // used to read "a terminat" (finished) while the work was only starting.
-      label = payload.runtime_state === 'THINKING' || payload.runtime_state === 'WORKING' ? 'lucrează' : 'a terminat';
-      text = payload.detail || (payload.task_type ? `sarcina ${payload.task_type}` : '');
+      label = payload.runtime_state === 'THINKING' || payload.runtime_state === 'WORKING' ? 'working' : 'finished';
+      text = payload.detail || (payload.task_type ? `task ${payload.task_type}` : '');
       break;
     case 'agent.run_completed':
-      label = `sarcină ${statusLabel(payload.status)}`;
+      label = `task ${statusLabel(payload.status)}`;
       text = [payload.task_type, payload.model_name].filter(Boolean).join(' · ');
       break;
     case 'agent.paused':
-      label = 'pus pe pauză';
+      label = 'paused';
       break;
     case 'agent.resumed':
-      label = 'reactivat';
+      label = 'resumed';
       break;
     case 'agent.hired':
-      label = 'angajat';
+      label = 'hired';
       text = [payload.display_name, payload.role].filter(Boolean).join(' · ');
       break;
     case 'director.review_completed':
-      label = 'Directorul a revizuit ziua';
-      text = `${payload.reviewed ?? 0} mesaje, ${payload.applied ?? 0} decizii`;
+      label = 'the Director reviewed the day';
+      text = `${payload.reviewed ?? 0} messages, ${payload.applied ?? 0} decisions`;
       break;
     case 'workflow.created':
     case 'workflow.job_scheduled':
     case 'workflow.job_activated':
-      label = type === 'workflow.created' ? 'producție pornită' : 'flux programat';
-      text = payload.current_stage ? `etapa: ${stageLabel(payload.current_stage)}` : '';
+      label = type === 'workflow.created' ? 'production started' : 'workflow scheduled';
+      text = payload.current_stage ? `stage: ${stageLabel(payload.current_stage)}` : '';
       break;
     case 'factual.topic_proposed':
-      label = 'temă propusă';
+      label = 'topic proposed';
       text = payload.title || '';
       break;
     case 'factual.topic_selected':
-      label = 'temă aleasă pentru producție';
+      label = 'topic chosen for production';
       text = payload.title || '';
       break;
     case 'factual.source_ingested':
-      label = 'sursă citită';
+      label = 'source read';
       text = payload.title || payload.url || '';
       break;
     case 'factual.claim_extracted':
-      label = 'afirmație extrasă';
+      label = 'claim extracted';
       text = payload.claim_text || '';
       break;
     case 'factual.claim_verified':
@@ -225,159 +225,159 @@ export function describeEvent(event, names = {}) {
       text = payload.claim_text || payload.evidence_quote || '';
       break;
     case 'factual.script_verified_pass':
-      label = 'scenariu verificat';
+      label = 'script verified';
       text = payload.title || '';
       break;
     case 'factual.script_approved':
-      label = 'scenariu aprobat de Owner';
+      label = 'script approved by the Owner';
       text = payload.title || '';
       break;
     case 'factual.script_blocked_by_gate':
-      label = 'scenariu blocat de gate';
+      label = 'script blocked by the gate';
       text = payload.reason || '';
       break;
     case 'media.storyboard_created':
-      label = 'storyboard creat';
+      label = 'storyboard created';
       text = payload.title || '';
       break;
     case 'media.video_rendered':
-      label = 'video randat';
+      label = 'video rendered';
       text = payload.provider_name || '';
       break;
     case 'media.render_failed':
-      label = 'randare eșuată';
+      label = 'render failed';
       text = payload.reason || '';
       break;
     case 'media.qc_evaluated':
-      label = `control de calitate ${statusLabel(payload.status)}`;
+      label = `quality control ${statusLabel(payload.status)}`;
       text = Array.isArray(payload.failures) ? payload.failures.join('; ') : '';
       break;
     case 'publishing.started':
-      label = 'încărcare pornită';
+      label = 'upload started';
       break;
     case 'publishing.video_published_simulated':
-      label = 'publicare simulată (nimic pe YouTube)';
+      label = 'simulated publication (nothing on YouTube)';
       break;
     case 'publishing.reconciled_published':
-      label = 'publicat, confirmat de YouTube';
+      label = 'published, confirmed by YouTube';
       text = payload.remote_video_id || '';
       break;
     case 'publishing.failed':
-      label = 'publicare eșuată';
+      label = 'publication failed';
       text = payload.reason || payload.error || '';
       break;
     case 'provider.model_discovered':
-      label = 'model găsit la furnizor';
+      label = 'model found at the provider';
       text = payload.model_name || '';
       break;
     case 'provider.registered':
-      label = 'furnizor înregistrat';
+      label = 'provider registered';
       text = [payload.name, payload.provider_type].filter(Boolean).join(' · ');
       break;
     case 'agent.model_assigned':
-      label = 'model atribuit';
+      label = 'model assigned';
       break;
     case 'role.created':
-      label = 'rol creat';
+      label = 'role created';
       text = [payload.name, payload.mission].filter(Boolean).join(' — ');
       break;
     case 'role.contract_seeded':
-      label = 'contract de muncă scris';
+      label = 'work contract written';
       text = payload.name || '';
       break;
     case 'settings.service_selected':
-      label = 'serviciu ales pentru o sarcină';
+      label = 'service chosen for a task';
       break;
     case 'settings.integration_deleted':
-      label = 'integrare ștearsă';
+      label = 'integration deleted';
       text = payload.kind || '';
       break;
     case 'youtube.authorization_started':
-      label = 'autorizare YouTube pornită';
+      label = 'YouTube authorisation started';
       break;
     case 'youtube.connection_created':
-      label = 'conexiune YouTube creată';
+      label = 'YouTube connection created';
       text = payload.name || '';
       break;
     case 'youtube.verified':
-      label = 'canal YouTube verificat';
+      label = 'YouTube channel verified';
       text = payload.channel_title || payload.channel_id || '';
       break;
     case 'channel.created':
-      label = 'canal creat';
+      label = 'channel created';
       text = [payload.channel_name, payload.channel_type].filter(Boolean).join(' · ');
       break;
     case 'publishing.intent_created':
-      label = 'publicare pregătită';
+      label = 'publication prepared';
       text = payload.title || '';
       break;
     case 'publishing.video_published':
-      label = 'video publicat';
+      label = 'video published';
       text = payload.title || payload.remote_url || '';
       break;
     case 'economy.transaction_posted':
-      label = 'înregistrare în registrul contabil';
+      label = 'entry in the books';
       text = [payload.kind, payload.memo, payload.amount_vr ? `${payload.amount_vr} VR$` : '']
         .filter(Boolean)
         .join(' · ');
       break;
     case 'research.host_revoked':
-      label = 'sursă interzisă';
+      label = 'source blocked';
       text = payload.host || '';
       break;
     case 'studio.renamed':
-      label = 'studioul a fost redenumit';
+      label = 'the studio was renamed';
       text = [payload.previous_name, payload.name].filter(Boolean).join(' → ');
       break;
     case 'trends.snapshot_recorded':
-      label = 'tendințe citite';
-      text = `${payload.count ?? 0} noi din ${payload.seen ?? 0} (${payload.geo || ''})${Array.isArray(payload.top) && payload.top.length ? ` · ${payload.top.slice(0, 3).join(', ')}` : ''}`;
+      label = 'trends read';
+      text = `${payload.count ?? 0} new of ${payload.seen ?? 0} (${payload.geo || ''})${Array.isArray(payload.top) && payload.top.length ? ` · ${payload.top.slice(0, 3).join(', ')}` : ''}`;
       break;
     case 'trends.unavailable':
-      label = 'tendințele nu au putut fi citite';
+      label = 'trends could not be read';
       text = payload.reason || '';
       break;
     case 'media.model_research_recorded':
-      label = `cercetare de modele · ${payload.purpose || ''}`;
-      text = `${payload.steward ? `${payload.steward}: ` : ''}${payload.annotated ?? 0} modele judecate din ${payload.pages ?? 0} pagini${payload.recommended ? ` · recomandat ${payload.recommended}` : ''}${payload.changed ? ' · pus ca implicit' : ''}`;
+      label = `model research · ${payload.purpose || ''}`;
+      text = `${payload.steward ? `${payload.steward}: ` : ''}${payload.annotated ?? 0} models judged from ${payload.pages ?? 0} pages${payload.recommended ? ` · recommended ${payload.recommended}` : ''}${payload.changed ? ' · set as default' : ''}`;
       kind = 'production';
       break;
     case 'provider.resource_metadata_updated':
-      label = 'fișă de model actualizată';
+      label = 'model card updated';
       text = payload.source || '';
       break;
     case 'media.production_configured':
-      label = 'valori implicite de producție';
-      text = [payload.model_id ? `model ${payload.model_id}` : '', payload.voice_id ? `voce ${payload.voice_id}` : '', payload.image_model_id ? `imagine ${payload.image_model_id}` : '']
+      label = 'production defaults';
+      text = [payload.model_id ? `model ${payload.model_id}` : '', payload.voice_id ? `voice ${payload.voice_id}` : '', payload.image_model_id ? `image ${payload.image_model_id}` : '']
         .filter(Boolean)
         .join(' · ');
       break;
     case 'media.editorial_reviewed':
-      label = payload.verdict === 'APPROVE' ? 'vizionat și aprobat' : 'vizionat și respins';
+      label = payload.verdict === 'APPROVE' ? 'watched and approved' : 'watched and rejected';
       text = [payload.title, payload.story, Array.isArray(payload.reasons) ? payload.reasons.join('; ') : '']
         .filter(Boolean)
         .join(' — ');
       kind = 'production';
       break;
     case 'studio.history_reset':
-      label = 'istoricul a fost șters';
-      text = `pornim de la zero · ${payload.events || 0} evenimente, ${payload.messages || 0} mesaje, ${payload.runs || 0} rulări șterse`;
+      label = 'history cleared';
+      text = `starting from zero · ${payload.events || 0} events, ${payload.messages || 0} messages, ${payload.runs || 0} runs deleted`;
       kind = 'owner';
       break;
     case 'runbook.daily_run_started':
-      label = 'ziua a început';
-      text = `${payload.stages || ''} etape · preflight ${payload.preflight || ''}`.trim();
+      label = 'the day began';
+      text = `${payload.stages || ''} stages · preflight ${payload.preflight || ''}`.trim();
       break;
     case 'runbook.stage_started':
-      label = 'etapă pornită';
+      label = 'stage started';
       text = `${runStageLabel(payload.stage)}${payload.index ? ` (${payload.index}/${payload.total})` : ''}`;
       break;
     case 'runbook.stage_finished':
-      label = `etapă ${statusLabel(payload.status)}`;
+      label = `stage ${statusLabel(payload.status)}`;
       text = [runStageLabel(payload.stage), payload.reason].filter(Boolean).join(' — ');
       break;
     case 'runbook.daily_run_finished':
-      label = `rulare zilnică ${statusLabel(payload.status)}`;
+      label = `daily run ${statusLabel(payload.status)}`;
       text = payload.preflight ? `preflight ${payload.preflight}` : '';
       break;
     case 'runbook.safe_mode_entered':
@@ -385,78 +385,78 @@ export function describeEvent(event, names = {}) {
       text = payload.reason || '';
       break;
     case 'story.daily_log_closed':
-      label = 'jurnalul zilei închis';
+      label = "the day's journal closed";
       break;
     case 'story.episode_drafted':
-      label = 'episod scris';
+      label = 'episode written';
       text = payload.title || '';
       break;
     case 'economy.provider_cost_recorded':
-      label = `cost ${payload.status === 'BILLED' ? 'facturat' : 'estimat'}`;
+      label = `cost ${payload.status === 'BILLED' ? 'billed' : 'estimated'}`;
       text = [payload.provider, payload.vr ? `${payload.vr} VR$` : ''].filter(Boolean).join(' · ');
       break;
     case 'economy.budget_set':
-      label = 'buget stabilit';
+      label = 'budget set';
       text = `${payload.period || ''} ${payload.limit_usd || ''} USD`.trim();
       break;
     case 'economy.budget_retired':
-      label = 'buget retras';
+      label = 'budget retired';
       text = payload.period || '';
       break;
     case 'economy.vr_minted':
-      label = 'VR$ emise din dovadă';
+      label = 'VR$ issued from evidence';
       text = payload.vr ? `${payload.vr} VR$` : '';
       break;
     case 'economy.owner_funding_recorded':
-      label = 'finanțare de la Owner';
+      label = 'funding from the Owner';
       text = payload.vr ? `${payload.vr} VR$` : '';
       break;
     case 'strategy.version_promoted':
-      label = 'strategie promovată';
+      label = 'strategy promoted';
       text = `v${payload.new_version ?? ''}`;
       break;
     case 'autonomy.stopped':
-      label = 'Owner a oprit autonomia';
+      label = 'the Owner stopped autonomy';
       break;
     case 'autonomy.stop_cleared':
-      label = 'Owner a pornit autonomia';
+      label = 'the Owner started autonomy';
       break;
     case 'research.host_tested':
-      label = `site testat: ${payload.status || ''}`.trim();
+      label = `site tested: ${payload.status || ''}`.trim();
       text = payload.host || '';
       break;
     case 'research.host_authorised':
-      label = 'site autorizat';
+      label = 'site authorised';
       text = payload.host || '';
       break;
     case 'settings.integration_saved':
-      label = 'conexiune salvată';
+      label = 'connection saved';
       text = payload.kind || '';
       break;
     case 'settings.integration_checked':
-      label = `conexiune verificată: ${payload.status || ''}`.trim();
+      label = `connection checked: ${payload.status || ''}`.trim();
       break;
     case 'provider.catalog_refreshed':
-      label = 'catalog actualizat';
-      text = [payload.models != null ? `${payload.models} modele` : '', payload.voices != null ? `${payload.voices} voci` : '']
+      label = 'catalogue updated';
+      text = [payload.models != null ? `${payload.models} models` : '', payload.voices != null ? `${payload.voices} voices` : '']
         .filter(Boolean)
         .join(', ');
       break;
     case 'youtube.connected':
-      label = 'cont YouTube conectat';
+      label = 'YouTube account connected';
       text = payload.channel_title || '';
       break;
     case 'channel.credentials_bound':
-      label = 'slot de canal legat de un cont';
+      label = 'channel slot bound to an account';
       break;
     case 'character.identity_locks_set':
-      label = 'identitate blocată';
+      label = 'identity locked';
       break;
     case 'studio.created':
-      label = 'studioul a fost creat';
+      label = 'the studio was created';
       break;
     case 'office.room_created':
-      label = 'spațiu de lucru creat';
+      label = 'workspace created';
       break;
     default: {
       label = type.split('.').slice(1).join(' ').replace(/_/g, ' ') || type;
@@ -497,10 +497,10 @@ export function productionStatus(events) {
     if (stage && run && running !== null) break;
   }
   const parts = [];
-  if (running) parts.push(`Acum: ${runStageLabel(running)}`);
-  if (stage) parts.push(`producția: ${stageLabel(stage)}`);
-  if (run) parts.push(`ultima rulare zilnică ${statusLabel(run)}`);
-  if (!parts.length) return { stage, run, running: null, text: 'Nicio producție în curs.' };
+  if (running) parts.push(`Now: ${runStageLabel(running)}`);
+  if (stage) parts.push(`production: ${stageLabel(stage)}`);
+  if (run) parts.push(`last daily run ${statusLabel(run)}`);
+  if (!parts.length) return { stage, run, running: null, text: 'No production in progress.' };
   const text = parts.join(' · ');
   return { stage, run, running: running || null, text: text[0].toUpperCase() + text.slice(1) };
 }
@@ -643,7 +643,7 @@ export class Ledger {
         timeZone: this.timezone,
       });
       const mail = item.thread
-        ? `${item.forOwner ? ` ledger-owner-mail${answered.has(event.aggregate_id) ? ' is-answered' : ''}` : ''} ledger-mail" data-thread="${this.escape(item.thread)}" title="Deschide firul de corespondență`
+        ? `${item.forOwner ? ` ledger-owner-mail${answered.has(event.aggregate_id) ? ' is-answered' : ''}` : ''} ledger-mail" data-thread="${this.escape(item.thread)}" title="Open the correspondence thread`
         : '';
       const route = item.thread
         ? `<strong>${this.escape(item.who)}</strong> <span class="ledger-arrow">→</span> <strong>${this.escape(item.to)}</strong> · ${this.escape(item.label)}`
@@ -652,7 +652,7 @@ export class Ledger {
       const body = item.thread
         ? `<div class="ledger-subject">${this.escape(item.subject || item.text)}</div>` +
           (item.excerpt ? `<div class="ledger-text">${this.escape(item.excerpt)}</div>` : '') +
-          `<div class="ledger-open">Deschide firul${letters > 1 ? ` · ${letters} scrisori` : ''} ↗</div>`
+          `<div class="ledger-open">Open the thread${letters > 1 ? ` · ${letters} scrisori` : ''} ↗</div>`
         : item.text ? `<div class="ledger-text">${this.escape(item.text)}</div>` : '';
       rows.push(
         `<li class="ledger-item ledger-${item.kind}${mail}"><time>${this.escape(time)}</time><div>` +
@@ -664,6 +664,6 @@ export class Ledger {
     }
     this.list.innerHTML = rows.length
       ? rows.join('')
-      : '<li class="ledger-empty">Nimic înregistrat încă pentru acest filtru.</li>';
+      : '<li class="ledger-empty">Nothing recorded yet for this filter.</li>';
   }
 }

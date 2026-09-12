@@ -1,5 +1,8 @@
 # Pixel office visual refinement — 2026-09-10
 
+> **Superseded on 2026-09-13** by `HQ_LIVING_OFFICE.md`: the office is now the Blender-rendered
+> AMN-AI headquarters; the modules and assets described here were removed from the frontend.
+
 ## Scope and art direction
 
 Owner-requested visual refinement of the existing cutaway office, preserving its pixel rendering and backend layout. Midnight blue exterior, warm walnut, muted department colors, ceramic planters and restrained brass/limestone edges. Geometry remains snapped to world pixels; smoothing stays disabled. No generated images, external asset dependencies or new purchased inventory objects.

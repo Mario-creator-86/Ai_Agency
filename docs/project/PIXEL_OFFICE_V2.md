@@ -1,5 +1,8 @@
 # Pixel office v2 — premium visual system for the 2D cutaway — 2026-09-10
 
+> **Superseded on 2026-09-13** by `HQ_LIVING_OFFICE.md`: the office is now the Blender-rendered
+> AMN-AI headquarters; the modules and assets described here were removed from the frontend.
+
 ## Scope
 
 Owner-requested visual rebuild of the 2D agency to a commercial "modern pixel art" standard

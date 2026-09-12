@@ -1,5 +1,36 @@
 # Changelog
 
+## The headquarters, rebuilt from the Owner's picture — 2026-09-13
+
+The Owner asked for the office to be redone so it looks like his headquarters picture, with the
+studio called AMN-AI (the picture said "AMH-AI"), made with Blender or Unreal and without his
+image-generation credits. The pixel-art office is gone; what replaces it is described in
+`HQ_LIVING_OFFICE.md`.
+
+- **The building** is a Cycles scene built from the picture's own measurements: sign, four
+  upper floors with their labels, the audio booth and render bay, S1 Infra, the lobby with its
+  stairs, S2 Operations, S3 AI Space and the glass lift tower. Plates come in layers (night and
+  day) so employees sit behind their consoles and pedestrians walk behind the bollards. A
+  per-region comparison with the picture went from a colour distance of 70.6 on the first
+  render to 14.4 on the live page at the same light.
+- **The employees** are eight chibi characters rendered from their Character Bibles, each with
+  typing, thinking, idle, talking, paused, error, standing, reacting and walking frames. What
+  plays is the backend state; the render bay's screen shows the video editor's real state
+  instead of the picture's "RENDER 91%".
+- **The city lives**: right-hand traffic from nineteen rendered vehicles (buses carrying
+  AMN-AI, Nexus Curiosity and Inside The Nexus ads, taxis, vans, trucks, bicycles, scooters,
+  motorcycles, and emergency vehicles with lights and sirens), pedestrians following the daily
+  rhythm, a bus that serves the shelter, traffic that stops for people on the zebra.
+- **Time and weather are real**: the sun's elevation for Bucharest's date and time decides day,
+  dusk and night; the weather comes from a new endpoint, `GET /api/v1/office/weather`, and is not
+  drawn at all when it is unknown.
+- **Random events** are configuration (`world_events.json`): rarity, weight, cooldown,
+  concurrency, weather and time of day, duration, priority and reaction radius — from airliners
+  and crossings to fireworks and a very rare UFO. A seed replays a day exactly.
+- **The interface speaks English**: the office chrome, every dialog, the ledger, settings,
+  YouTube connections and the live window.
+- The office layout now matches the rendered building, and a test keeps them in step.
+
 ## Watching the film: stripes, a discarded shot plan, and a disclosure it never carried — 2026-09-13
 
 The Owner watched *How ATLAS Caught the Higgs Boson in Real Time* and named what was wrong:

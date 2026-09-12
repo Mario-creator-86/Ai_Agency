@@ -1,0 +1,77 @@
+{
+  "_about": "How each employee is built. Colours named here are keys of the Bible palette (art-source/character_bible.json); a '#hex' is used only where the Bible names no colour for that garment (trousers, shoes, skin), taken from the Owner's reference sheets in 'Agents ID and Bible/'.",
+  "employees": {
+    "Director": {
+      "sprite": "sarah",
+      "skin": "#f0c8a4",
+      "hair": {"style": "bob", "color": "hair"},
+      "top": {"kind": "blazer", "color": "suit", "inner": "#f8fafc", "tie": "tie"},
+      "legs": {"color": "suit", "shoes": "#111318"},
+      "accessories": [{"kind": "earrings", "color": "#d4a52c"}],
+      "seat_facing": "front"
+    },
+    "LeadResearcher": {
+      "sprite": "aris",
+      "skin": "#e6b48c",
+      "hair": {"style": "short", "color": "hair", "temples": "#b8bec8"},
+      "top": {"kind": "labcoat", "color": "coat", "inner": "shirt"},
+      "legs": {"color": "#1f2638", "shoes": "#121316"},
+      "accessories": [{"kind": "round_glasses", "color": "glasses"}],
+      "seat_facing": "back"
+    },
+    "FactChecker": {
+      "sprite": "elena",
+      "skin": "#f2cdb0",
+      "hair": {"style": "high_bun", "color": "bun"},
+      "top": {"kind": "vest", "color": "vest", "inner": "#f5f1e8", "rolled": true},
+      "legs": {"color": "#2b2b2b", "shoes": "#e7e2d6"},
+      "accessories": [{"kind": "glasses", "color": "#1b1b1f"}, {"kind": "badge", "color": "#f8fafc"}],
+      "seat_facing": "front"
+    },
+    "ScriptWriter": {
+      "sprite": "marcus",
+      "skin": "#c98c60",
+      "hair": {"style": "tousled", "color": "hair"},
+      "top": {"kind": "hoodie", "color": "hoodie", "inner": "#6b7280"},
+      "legs": {"color": "jeans", "shoes": "#f3f4f6"},
+      "accessories": [{"kind": "stubble", "color": "#3a2a22"}],
+      "seat_facing": "back"
+    },
+    "VoiceArtist": {
+      "sprite": "lyra",
+      "skin": "#f0c6a2",
+      "hair": {"style": "long", "color": "hair", "streak": "#f472b6"},
+      "top": {"kind": "sweater", "color": "sweater"},
+      "legs": {"color": "#15171d", "shoes": "#e5e7eb"},
+      "accessories": [{"kind": "headphones", "color": "headphones"}],
+      "seat_facing": "front"
+    },
+    "VideoEditor": {
+      "sprite": "kael",
+      "skin": "#e2ae84",
+      "hair": {"style": "spiky", "color": "hair"},
+      "top": {"kind": "shirt", "color": "shirt", "inner": "#15171c", "rolled": true},
+      "legs": {"color": "#1f2937", "shoes": "#5a3a22"},
+      "accessories": [{"kind": "headset", "color": "headset"}],
+      "seat_facing": "back"
+    },
+    "Publisher": {
+      "sprite": "vera",
+      "skin": "#e6b793",
+      "hair": {"style": "bob_short", "color": "hair"},
+      "top": {"kind": "flightsuit", "color": "suit", "inner": "suit"},
+      "legs": {"color": "suit", "shoes": "#111216"},
+      "accessories": [{"kind": "headset", "color": "console"}, {"kind": "belt", "color": "#111216"}],
+      "seat_facing": "front"
+    },
+    "Accountant": {
+      "sprite": "nadia",
+      "skin": "#edc39f",
+      "hair": {"style": "low_bun", "color": "hair"},
+      "top": {"kind": "cardigan", "color": "cardigan", "inner": "blouse"},
+      "legs": {"color": "#2b2f36", "shoes": "#111216"},
+      "accessories": [{"kind": "round_glasses", "color": "#7a4a22"}, {"kind": "pen_chain", "color": "#d4af37"}],
+      "seat_facing": "front"
+    }
+  }
+}

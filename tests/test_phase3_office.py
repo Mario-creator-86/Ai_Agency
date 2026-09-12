@@ -128,8 +128,8 @@ def test_office_layout_returns_zones_and_assignments(seeded_studio):
     engine = seeded_studio["engine"]
     layout = get_office_layout_with_assignments(engine)
 
-    assert layout["width"] == 1200
-    assert layout["height"] == 1000
+    assert layout["width"] == 1600
+    assert layout["height"] == 840
     assert len(layout["zones"]) >= 8
 
     zone_types = {z["zone_type"] for z in layout["zones"]}
@@ -145,7 +145,7 @@ def test_office_layout_returns_zones_and_assignments(seeded_studio):
     # The ground floor is a tall, street-facing level; the shop unit has no desks, so the
     # renderer must not place a character in it.
     ground = [z for z in layout["zones"] if z["floor"] == 0]
-    assert all(z["height"] == 200 for z in ground)
+    assert all(z["height"] == 135 for z in ground)
     shop = next(z for z in ground if z["zone_type"] == "SHOP")
     assert shop["desks"] == []
 

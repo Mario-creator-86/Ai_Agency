@@ -137,6 +137,9 @@ export class OfficeState {
       const agent = this.agents.find(a => (a.id || a.agent_id) === event.aggregate_id);
       if (agent) {
         agent.runtime_state = payload.runtime_state || agent.runtime_state;
+        // What the agent is doing, as the backend said it: shown on its screens and label.
+        agent.detail = agent.runtime_state === 'IDLE' ? '' : payload.detail || agent.detail || '';
+        agent.task_type = payload.task_type || (agent.runtime_state === 'IDLE' ? '' : agent.task_type);
       }
     } else if (type === 'agent.message_sent') {
       this.addSpeechBubble(event.aggregate_id, payload.text || payload.content || 'Working on task...');

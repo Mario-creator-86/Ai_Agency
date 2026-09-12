@@ -11,10 +11,10 @@ test('the pages a researcher proposes become a titled list of links with reasons
       ],
     }),
   );
-  assert.ok(html.includes('Îți propun 2 pagini de citit:'));
+  assert.ok(html.includes('I suggest 2 pages to read:'));
   assert.ok(html.includes('href="https://en.wikipedia.org/wiki/Autonomous_robot"'));
   assert.ok(html.includes('Navigația autonomă a roverului Perseverance.'));
-  assert.ok(html.includes('Răspunsul exact al modelului'));
+  assert.ok(html.includes("The model's exact answer"));
 });
 
 test('extracted claims are numbered sentences, not a JSON array', () => {
@@ -26,9 +26,9 @@ test('extracted claims are numbered sentences, not a JSON array', () => {
       ],
     }),
   );
-  assert.ok(html.includes('Am extras 2 afirmații:'));
+  assert.ok(html.includes('I extracted 2 claims:'));
   assert.ok(html.includes('IANA rezervă exemplu.net pentru documentație.'));
-  assert.ok(html.includes('încredere 90%'));
+  assert.ok(html.includes('confidence 90%'));
   assert.ok(!html.includes('"claim_text"'));
 });
 
@@ -36,20 +36,20 @@ test('proposed topics, script scenes and verdicts each get their own sentence', 
   const topics = friendlyAnswer(
     JSON.stringify({ topics: [{ title: 'Robotică autonomă', topic: 'Descoperire', angle: 'Istoric' }] }),
   );
-  assert.ok(topics.includes('Îți propun 1 subiect:'));
+  assert.ok(topics.includes('I suggest 1 topic:'));
   assert.ok(topics.includes('<strong>Robotică autonomă</strong>'));
 
   const script = friendlyAnswer(
     JSON.stringify({ title: 'RoBoți', scenes: [{ narration: 'Mașinile învață singure.', visual: 'hologramă' }] }),
   );
-  assert.ok(script.includes('„RoBoți" — 1 scenă:'));
+  assert.ok(script.includes('"RoBoți" — 1 scene:'));
   assert.ok(script.includes('Mașinile învață singure.'));
 
   const verdict = friendlyAnswer(
     JSON.stringify({ status: 'SUPPORTED', confidence: 1, evidence_quote: 'IANA reserved it.', verifier_notes: 'Citat direct.' }),
   );
-  assert.ok(verdict.includes('Verdict: susținută de sursă · încredere 100%'));
-  assert.ok(verdict.includes('„IANA reserved it."'));
+  assert.ok(verdict.includes('Verdict: supported by the source · confidence 100%'));
+  assert.ok(verdict.includes('"IANA reserved it."'));
 });
 
 test('ordinary answers pass through as text, with no technical block', () => {
@@ -84,8 +84,8 @@ test('a generic object reads as labelled rows, with the raw JSON only collapsed'
 
 test('a structured answer with nothing displayable says so instead of printing braces', () => {
   const html = friendlyAnswer('{}');
-  assert.ok(html.includes('fără conținut afișabil'));
-  assert.ok(html.includes('Răspunsul exact al modelului'));
+  assert.ok(html.includes('no displayable content'));
+  assert.ok(html.includes("The model's exact answer"));
 });
 
 test('a truncated answer still reads as its complete items, with a note and no raw braces', () => {
@@ -95,7 +95,7 @@ test('a truncated answer still reads as its complete items, with a note and no r
   assert.deepEqual(salvageItems(truncated).map((one) => one.claim_text), [
     'IANA rezervă exemplu.net pentru documentație.',
   ]);
-  assert.ok(html.includes('s-a întrerupt la limita de tokeni'));
+  assert.ok(html.includes('cut off at the token limit'));
   assert.ok(html.includes('IANA rezervă exemplu.net'));
   const visible = html.split('<details')[0];
   assert.ok(!visible.includes('{"'));
@@ -107,7 +107,7 @@ test('salvage reads objects inside a truncated wrapper and skips broken ones', (
   assert.equal(items.length, 1);
   assert.equal(items[0].url, 'https://a.b');
   const html = friendlyAnswer(broken);
-  assert.ok(html.includes('Îți propun 1 pagină de citit'));
+  assert.ok(html.includes('I suggest 1 page to read'));
   assert.ok(html.includes('https://a.b'));
 });
 
