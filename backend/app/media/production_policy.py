@@ -218,6 +218,13 @@ def _recorded_price(pricing: Any) -> float | None:
     return None
 
 
+#: How close two quality scores must be to count as the same picture. Within a band, a
+#: premium studio takes the cheaper model: paying three times for the same footage is not
+#: premium, it is waste. Wider than the noise in a steward's judgement, narrower than the
+#: difference between a good model and a mediocre one.
+QUALITY_BAND = 0.1
+
+
 #: What each standing priority means as weights over quality, cost, speed and reliability.
 #: A premium studio buys the best picture its account can make; cost is a reported fact, not
 #: the deciding one. Nothing here is a per-model preference — only what to optimise for.
@@ -351,14 +358,74 @@ def rank_candidates(
                 else True,
             }
         )
-    ranked.sort(
-        key=lambda item: (
-            not item.get("delivers_studio_frame", True),
+    premium = str(criteria.get("priority") or "premium") == "premium" and not weights
+
+    # Premium: the best picture, and among the models that match it the cheaper one. The
+    # band is measured from the best score present, because that is the Owner's question —
+    # "cum sa dam 9 USD cand avem WAN 3" — and the answer is that equal footage at a third
+    # of the price wins. It is not "most expensive first".
+    best_quality = max(
+        (
+            _number(item.get("quality_score"), 0.5)
+            for item in ranked
+            if item.get("delivers_studio_frame", True)
+        ),
+        default=0.0,
+    )
+
+    def order(item: dict[str, Any]) -> tuple[Any, ...]:
+        frame_first = not item.get("delivers_studio_frame", True)
+        if not premium:
+            return (frame_first, -item["score"], item["remote_id"])
+        near_best = best_quality - _number(item.get("quality_score"), 0.5) <= QUALITY_BAND
+        price = item.get("per_1k_characters_usd")
+        return (
+            frame_first,
+            not near_best,
+            float(price) if isinstance(price, int | float) else float("inf"),
             -item["score"],
             item["remote_id"],
         )
-    )
+
+    ranked.sort(key=order)
     return ranked
+
+
+def record_measured_price(
+    engine: Engine, integration_id: str, model_id: str, usd_per_unit: float, unit: str
+) -> None:
+    """Write what the vendor actually charged over whatever a steward had guessed.
+
+    The studio learns a model's price by using it: Runway states the credits every task
+    costs, and the Owner recorded what a credit costs. A measured price carries its source,
+    so the next choice is made on what happened rather than on what a page seemed to say.
+    """
+    if usd_per_unit <= 0:
+        return
+    with Session(engine) as session, session.begin():
+        row = session.scalar(
+            select(ProviderResource).where(
+                ProviderResource.integration_id == integration_id,
+                ProviderResource.resource_type == "MODEL",
+                ProviderResource.remote_id == model_id,
+            )
+        )
+        if row is None:
+            return
+        pricing = dict(row.pricing) if isinstance(row.pricing, dict) else {}
+        key = "per_second_usd" if unit.startswith("per second") else "per_image_usd"
+        was = pricing.get(key)
+        if isinstance(was, int | float) and abs(float(was) - usd_per_unit) < 1e-6:
+            return
+        pricing.update({key: round(usd_per_unit, 6), "unit": unit, "source": "measured"})
+        row.pricing = pricing
+        row.metadata_source = "measured from the studio's own renders"
+        row.metadata_updated_at = utc_now()
+        row.metadata_version = int(row.metadata_version or 1) + 1
+        logger.info(
+            "measured_price_recorded",
+            extra={"model": model_id, key: round(usd_per_unit, 6), "was": was},
+        )
 
 
 def credit_usd(session: Session, integration_id: str) -> float | None:

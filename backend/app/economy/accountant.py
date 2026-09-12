@@ -38,7 +38,7 @@ from app.economy.services import EconomyError, format_micros, record_provider_co
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.integrations.models import Integration
 from app.media.models import VideoRenderJob
-from app.media.production_policy import estimate_cost_usd
+from app.media.production_policy import credit_usd, estimate_cost_usd, record_measured_price
 from app.providers.registry import ProviderRegistry
 
 ACCOUNTANT_ROLE = "Accountant"
@@ -98,6 +98,9 @@ def record_render_costs(
         scenes = production.get("scenes") or []
         priced: list[dict[str, Any]] = []
         unpriced = 0
+        # model -> (dollars charged, seconds bought), so a render teaches what a second costs.
+        measured: dict[str, tuple[float, float]] = {}
+        motion_connection: str | None = None
         for scene in scenes:
             if not isinstance(scene, dict):
                 continue
@@ -136,6 +139,21 @@ def record_render_costs(
                     },
                 ),
             ]
+            if motion.get("model") and motion.get("estimated_credits"):
+                motion_connection = motion.get("integration_id") or motion_connection
+                per_credit = (
+                    credit_usd(session, motion["integration_id"])
+                    if motion.get("integration_id")
+                    else None
+                )
+                if per_credit:
+                    usd = float(motion["estimated_credits"]) * per_credit
+                    seconds = float(motion.get("asked_seconds") or 0)
+                    before = measured.get(str(motion["model"]), (0.0, 0.0))
+                    measured[str(motion["model"])] = (
+                        before[0] + usd,
+                        before[1] + seconds,
+                    )
             for unit, integration_id, model_id, quantity in wanted:
                 if not integration_id or not model_id or not any(quantity.values()):
                     continue
@@ -166,6 +184,14 @@ def record_render_costs(
                         },
                     }
                 )
+    # What the vendor charged for this render becomes the model's price. A guess that said
+    # 0.025 USD a second survived four renders that measured 0.43; measurement ends that.
+    for model_id, (usd, seconds) in measured.items():
+        if seconds > 0 and usd > 0 and motion_connection:
+            record_measured_price(
+                engine, motion_connection, model_id, usd / seconds, "per second of video"
+            )
+
     recorded = 0
     for item in priced:
         try:

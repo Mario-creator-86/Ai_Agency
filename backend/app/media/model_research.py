@@ -67,7 +67,7 @@ TEMPLATE_VERSION = "model-research-v1"
 #: Who judges the technology of each purpose (the roles the Owner made stewards of it).
 STEWARDS = {"video": "VideoEditor", "image": "VideoEditor", "voice": "VoiceArtist"}
 PURPOSES = ("voice", "image", "video")
-MAX_PAGES = 3
+MAX_PAGES = 5
 PAGE_CHARS = 12_000
 INDEX_CHARS = 20_000
 
@@ -109,9 +109,12 @@ _PLAN_INSTRUCTIONS = (
     "You are choosing the {purpose} technology for the studio. Below is the index of the "
     "vendor's documentation. Name up to {max_pages} pages on the vendor's own site "
     "({hosts}) that would tell you what each model does, its limits, and what it costs — "
-    "pricing and model overview pages first. The studio will fetch them; you cannot browse. "
+    "the pricing page first, then per-model pages. Without a page that states prices no "
+    "comparison is possible, and a studio that cannot compare overpays. The studio will "
+    "fetch them; you cannot browse. "
     'Return only JSON: {{"urls": ["https://..."]}}.\n'
 )
+
 
 _JUDGE_INSTRUCTIONS = (
     "You are choosing the {purpose} technology for the studio, from the models the studio's "
@@ -119,24 +122,34 @@ _JUDGE_INSTRUCTIONS = (
     "pages that follow and judge every listed model you can say something about: quality "
     "(0..1), reliability (0..1), speed (1 = fastest), the price as a number with its unit "
     "(per second of video, per image, per 1k characters), and a one-line note. Cite the "
-    "page you read as evidence_url. Then recommend one model for the studio's short "
-    "vertical videos and say why. {priority_line} Judge only from "
-    "the pages and the API data; a model the pages do not describe keeps 0.5 and an empty "
-    'price. Return only JSON: {{"models": [{{"remote_id": "...", "quality_score": 0.0, '
-    '"reliability_score": 0.0, "latency_score": 0.0, "price_usd": null, "price_unit": "", '
-    '"notes": "...", "evidence_url": "https://..."}}], "recommendation": {{"remote_id": "...", '
+    "page you read as evidence_url.\n"
+    "Price every candidate you can. A model left unpriced cannot be compared, and a studio "
+    "that cannot compare pays three times over for the same picture — which is what "
+    "happened here: the model in use was recorded at 0.025 USD a second and actually costs "
+    "0.43, while models of the same quality cost a third of that. Where a page prices a "
+    "resolution or a tier, say which in the note.\n"
+    "Then recommend one model for the studio's short vertical videos. {priority_line}\n"
+    "In the reason, compare it with the cheapest candidate you scored within 0.1 of it, "
+    "name both prices per second, and say plainly whether the dearer one is worth the "
+    "multiple. A recommendation without that comparison is not usable.\n"
+    "Judge only from the pages and the API data; a model the pages do not describe keeps "
+    '0.5 and an empty price. Return only JSON: {{"models": [{{"remote_id": "...", '
+    '"quality_score": 0.0, "reliability_score": 0.0, "latency_score": 0.0, '
+    '"price_usd": null, "price_unit": "", "notes": "...", '
+    '"evidence_url": "https://..."}}], "recommendation": {{"remote_id": "...", '
     '"reason": "..."}}}}.\n'
 )
 
 
 #: What the studio is, in the steward's own terms, so the recommendation serves it. A premium
-#: studio wants the best picture its account can make; the price is a fact to record, not the
-#: deciding one. `STUDIO_PRODUCTION_PRIORITY` sets this.
+#: studio wants the best picture its account can make; the price is a fact to record and to
+#: compare with, not a reason to settle for less. `STUDIO_PRODUCTION_PRIORITY` sets this.
 _PRIORITY_LINES = {
     "premium": (
         "This studio is premium: recommend the best picture the account can make, in the "
-        "studio's own frame of 1080x1920, and treat price as a fact to record rather than "
-        "the deciding one — a cheaper model that looks worse is the wrong answer here."
+        "studio's own frame of 1080x1920. Among models whose quality you score within 0.1 "
+        "of each other, recommend the cheaper one — paying a multiple for the same picture "
+        "is not premium."
     ),
     "balanced": (
         "Weigh quality, reliability, speed and price about equally, in the studio's frame of "
