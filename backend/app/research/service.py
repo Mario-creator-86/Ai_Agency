@@ -330,11 +330,18 @@ def search_pages(
 def find_pages(
     settings: Settings,
     engine: Engine,
-    query: str,
+    queries: str | list[str],
     limit: int = 6,
     retriever: SourceRetriever | None = None,
 ) -> list[dict[str, str]]:
-    """Pages that exist for these words, from every authorised site with a search address."""
+    """Pages that exist for these words, from every authorised site with a search address.
+
+    Several short queries beat one long one: a site's suggestion search matches the start
+    of a title, so "James Webb Space Telescope" finds pages and "How the James Webb Space
+    Telescope Sees the First Galaxies" finds none. Each query is asked on each site until
+    the limit is reached; the same page is never listed twice.
+    """
+    wanted = [queries] if isinstance(queries, str) else list(queries)
     with Session(engine) as session:
         hosts = [
             row.host
@@ -344,14 +351,19 @@ def find_pages(
                 .order_by(ResearchAllowedHost.added_at)
             )
         ]
-    if not hosts:
+    if not hosts or not wanted:
         return []
-    per_host = max(1, limit // len(hosts))
+    per_ask = max(1, limit // len(hosts))
     found: list[dict[str, str]] = []
-    for host in hosts:
-        found.extend(search_pages(settings, engine, host, query, per_host, retriever))
-        if len(found) >= limit:
-            break
+    seen: set[str] = set()
+    for query in wanted:
+        for host in hosts:
+            for page in search_pages(settings, engine, host, query, per_ask, retriever):
+                if page["url"] not in seen:
+                    seen.add(page["url"])
+                    found.append(page)
+            if len(found) >= limit:
+                return found[:limit]
     return found[:limit]
 
 

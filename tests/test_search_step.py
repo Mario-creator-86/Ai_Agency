@@ -22,7 +22,7 @@ from app.media.services import seed_default_character_bibles
 from app.models import OwnerPolicy
 from app.providers.base import GenerateResult, HealthResult
 from app.providers.registry import ProviderRegistry
-from app.research.agent import gather_sources
+from app.research.agent import gather_sources, search_queries
 from app.research.retrieval import RetrievalError, RetrievedSource
 from app.research.service import (
     HostError,
@@ -319,3 +319,68 @@ def test_a_later_evening_pass_that_fails_does_not_undo_the_first(monkeypatch, en
     outcome = stages._post_run(engine, ProviderRegistry(), {})
     assert calls["n"] == 2
     assert "a revizuit 12 mesaje" in outcome["reason"]
+
+
+def test_the_searches_are_the_names_in_the_title_not_the_sentence():
+    """A suggestion search matches the start of a page title: the whole sentence finds
+    nothing, the proper names in it find pages. Longer names first, a long name also as
+    its first two words, never more than six."""
+    title = "How the James Webb Space Telescope Sees the First Galaxies"
+    queries = search_queries(title, "JWST's detection of early-universe galaxies at redshift z>10")
+    assert queries[0] == "James Webb Space Telescope"
+    assert "James Webb" in queries and "First Galaxies" in queries and "JWST" in queries
+    assert title not in queries and "How" not in queries and len(queries) <= 6
+    cern = search_queries("How CERN Measures the Higgs Boson's Lifetime")
+    assert cern[0] == "Higgs Boson Lifetime" and "Higgs Boson" in cern and "CERN" not in cern[0]
+    assert "UNESCO" in search_queries("How UNESCO Tracks Endangered Languages in Real Time")
+    assert search_queries("a tale of nothing in particular") == []
+
+
+def test_pages_are_found_query_by_query_and_never_listed_twice(engine, settings, studio):
+    set_search_template(engine, "en.wikipedia.org", WIKI)
+
+    class ByQuery(StubRetriever):
+        def fetch(self, url, *, accept_json=False):
+            self.asked.append((url, accept_json))
+            if "search=Higgs%20Boson" in url:
+                text = json.dumps(
+                    [
+                        "q",
+                        ["Higgs boson", "Higgs field"],
+                        ["", ""],
+                        [
+                            "https://en.wikipedia.org/wiki/Higgs_boson",
+                            "https://en.wikipedia.org/wiki/Higgs_field",
+                        ],
+                    ]
+                )
+            elif "search=CERN" in url:
+                text = json.dumps(
+                    [
+                        "q",
+                        ["CERN", "Higgs boson"],
+                        ["", ""],
+                        [
+                            "https://en.wikipedia.org/wiki/CERN",
+                            "https://en.wikipedia.org/wiki/Higgs_boson",
+                        ],
+                    ]
+                )
+            else:
+                text = json.dumps(["q", [], [], []])
+            return RetrievedSource(
+                url,
+                url,
+                "search",
+                "en.wikipedia.org",
+                text,
+                utc_now(),
+                "0" * 64,
+                "0" * 64,
+                "application/json",
+            )
+
+    stub = ByQuery({})
+    pages = find_pages(settings, engine, ["Higgs Boson Lifetime", "Higgs Boson", "CERN"], 6, stub)
+    assert [p["url"].rsplit("/", 1)[1] for p in pages] == ["Higgs_boson", "Higgs_field", "CERN"]
+    assert len(stub.asked) == 3

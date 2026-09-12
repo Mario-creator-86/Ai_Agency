@@ -19,6 +19,11 @@ the studio's identity and returns pages that exist (Wikipedia's does, tested).
   kept only on authorised hosts; a failed search is an empty answer.
 - **The Researcher plans from pages that exist**: `gather_sources` lists the pages found in
   his prompt; when every guess of his fails, the found pages are read anyway.
+- **Searches are the names in the title, not the sentence** (`search_queries`): a site's
+  suggestion search matches the start of a page title, so the second clean day — with the
+  whole title as the query — found nothing. Now the proper names and acronyms of the title
+  and subject line ("James Webb Space Telescope", "Higgs Boson", "UNESCO") are asked, longer
+  first, at most six.
 - **The letter carries the evidence**: "Nicio sursă preluată" now lists each address and
   what the site answered, and says the studio fetched with its own identity.
 - **A later evening pass that fails does not undo the first** (`_post_run`): the third

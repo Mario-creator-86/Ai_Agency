@@ -402,6 +402,50 @@ def propose_topics(
 # ----------------------------------------------------------------------------- §4 sources
 
 
+#: Words that open a title without naming anything: not a search on their own.
+_OPENERS = frozenset(
+    {"how", "why", "what", "the", "a", "an", "is", "are", "can", "does", "do", "when", "where"}
+)
+
+
+def search_queries(title: str, topic: str = "") -> list[str]:
+    """Short searches a site's suggestion search can answer, from a title and its subject.
+
+    A suggestion search matches the start of a page title, so the proper names in the
+    title and the subject line — "James Webb Space Telescope", "Higgs Boson", "UNESCO" —
+    are what finds pages; the whole sentence finds nothing. Longer names first; a name of
+    three or more words is also asked as its first two; at most six searches.
+    """
+    queries: list[str] = []
+    for text in (title, topic):
+        words = [w.strip("'\"“”‘’(),.:;!?") for w in str(text).split()]
+        run: list[str] = []
+        runs: list[list[str]] = []
+        for index, word in enumerate(words):
+            bare = re.sub(r"[’']s$", "", word)
+            capital = bool(bare) and (bare[0].isupper() or bare.isupper())
+            opener = index == 0 and bare.lower() in _OPENERS
+            if capital and not opener and bare.lower() not in _OPENERS:
+                run.append(bare)
+            else:
+                if run:
+                    runs.append(run)
+                run = []
+        if run:
+            runs.append(run)
+        for group in runs:
+            queries.append(" ".join(group[:4]))
+            if len(group) >= 3:
+                queries.append(" ".join(group[:2]))
+            if group[0].isupper() and len(group[0]) >= 3:
+                queries.append(group[0])  # an acronym is a name on its own: UNESCO, CERN, LHC
+    ordered: list[str] = []
+    for query in sorted(queries, key=lambda q: -len(q)):
+        if query and query not in ordered and len(query) >= 3:
+            ordered.append(query)
+    return ordered[:6]
+
+
 class SourceCandidate(BaseModel):
     model_config = ConfigDict(extra="ignore")
     url: str = Field(min_length=10, max_length=1000)
@@ -458,7 +502,11 @@ def gather_sources(
     shortlist = planned or hosts
     # Before the Researcher names anything, the studio asks the authorised sites that have a
     # search address: pages found this way exist, and a plan that starts from them is read.
-    found = [p for p in find_pages(settings, engine, title) if p["url"] not in already]
+    found = [
+        p
+        for p in find_pages(settings, engine, search_queries(title, topic.topic))
+        if p["url"] not in already
+    ]
     payload = json.dumps({"title": title, "angle": angle}, ensure_ascii=False)
     prompt = _SOURCE_INSTRUCTIONS.format(
         limit=min(limit, MAX_URLS), hosts=", ".join(shortlist[:12])
