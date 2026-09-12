@@ -13,6 +13,15 @@ database resource discovery/refresh, separate production choices, UI and regress
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
 
+## Starting over, and a Director who decides once (2026-09-12)
+
+`scripts/reset_history.py` deletes the agents' history and the live ledger and keeps the
+configuration (a backup is taken first; the studio must be stopped). The ledger begins at
+the reset line. The Director's escalations now close the escalated message, one open letter
+per matter reaches the Owner, an investigation's answer is not investigated again, and the
+correspondence round runs at most three reviews an hour — the evening of 2026-09-11 ran
+nine in twenty-four minutes.
+
 ## The Director watches before publishing (2026-09-12)
 
 Nothing reaches a channel without the Director's editorial verdict (migration 0029): she

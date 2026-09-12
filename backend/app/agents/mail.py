@@ -20,6 +20,7 @@ employee says the work is done; a question is answered once.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -36,7 +37,7 @@ from app.agents.messages import (
     resolve_message,
     thread_messages,
 )
-from app.agents.models import Agent, AgentMessage
+from app.agents.models import Agent, AgentMessage, AgentRun
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.models import OwnerPolicy
 from app.providers.registry import ProviderRegistry
@@ -57,6 +58,12 @@ ASKING_INTENTS = ("REQUEST_INFO", "REQUEST_REVIEW", "CHALLENGE", "HANDOFF")
 #: A thread with this many letters has had its exchange; what it still needs is a decision,
 #: from the evening review or the Owner, not another automatic round.
 THREAD_ROUNDS = 8
+
+#: How many reviews the Director may run in an hour, counting the evening's. One night she
+#: reviewed nine times in twenty-four minutes — every answer triggered a review and every
+#: review asked more — at twenty thousand tokens a time. Answers that arrive after the third
+#: wait for the next hour or the evening.
+REVIEWS_PER_HOUR = 3
 
 _INSTRUCTIONS = (
     "You have a letter in your inbox, with the whole thread it belongs to, below. Answer it as "
@@ -217,6 +224,18 @@ def answer_mail(
         }
 
 
+def reviews_this_hour(session: Session) -> int:
+    """How many Director reviews started in the last hour, whatever triggered them."""
+    since = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+    return len(
+        session.scalars(
+            select(AgentRun.id).where(
+                AgentRun.task_type == "director_review", AgentRun.started_at >= since
+            )
+        ).all()
+    )
+
+
 def letters_awaiting_answer(session: Session, limit: int = LETTERS_PER_ROUND) -> list[str]:
     """Open letters to an employee whose thread's last word is not the employee's own."""
     waiting: list[str] = []
@@ -271,7 +290,10 @@ def correspondence_round(engine: Engine, registry: ProviderRegistry) -> dict[str
                 m.id in {a["message_id"] for a in answered}
                 for m in open_messages(session, inbox=True, limit=200)
             )
-        if new_in_inbox:
+            rationed = reviews_this_hour(session) >= REVIEWS_PER_HOUR
+        if new_in_inbox and rationed:
+            review = {"deferred": f"{REVIEWS_PER_HOUR} reviews this hour already; later"}
+        elif new_in_inbox:
             try:
                 review = director_review(engine, registry, str(uuid4()))
             except (DirectorError, ValueError) as exc:

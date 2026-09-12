@@ -1,5 +1,37 @@
 # Changelog
 
+## A review that fed itself, and a studio that can start over — 2026-09-12
+
+The Owner's live evening, read from the record: after the day closed, the Director reviewed
+nine times in twenty-four minutes (≈200k completion tokens). Each review escalated the same
+matter to the Owner again — an escalated message stayed OPEN, so the next review found it
+and wrote the same letter (nine copies of "Am nevoie de decizia ta: Nicio sursă preluată…");
+each answer to an investigation was investigated again ("Investigate: Re: Investigate: …");
+and every answer that landed in the inbox triggered another review.
+
+- **Escalated is decided** (`backend/app/agents/director.py`): an ESCALATE_TO_OWNER marks
+  the message ANSWERED — it waits for the Owner in its thread, not in the inbox.
+- **One open letter per matter** (`backend/app/agents/messages.py`): a letter to the Owner
+  whose subject is already waiting OPEN is that letter; nothing is posted twice.
+- **An investigation's answer is read, not re-investigated**: a REQUEST_INVESTIGATION on a
+  message whose subject already carries `Investigate:` becomes an ACKNOWLEDGE.
+- **Reviews are rationed** (`REVIEWS_PER_HOUR = 3` in `backend/app/agents/mail.py`): the
+  correspondence round defers the Director's review once the hour's reviews are spent; the
+  letters are still answered.
+- **Starting over** (`backend/app/maintenance.py`, `scripts/reset_history.py`): deletes what
+  the agents did — topics, sources, claims, scripts, storyboards, renders, QC, publications,
+  letters, runs, memories, day records, the outbox, the media files — and the live ledger,
+  keeping the workforce, providers, credentials, channels and their YouTube bindings, bibles,
+  strategy, authorised sites and the treasury. The immutability triggers are dropped for the
+  one transaction and put back; foreign keys are checked before they are re-enabled. The
+  script backs up `data/studio.db` to `data/backups/` first and refuses while the studio
+  answers on its port. The ledger (`read_events`) starts at the `studio.history_reset` line.
+- Why the Researcher "produced no ideas": on 2026-09-11 22:55 UTC he proposed five topics,
+  all about IANA example domains — the demo fixture's `example.com` page was the only source
+  and claim in his memory — and `www.iana.org` is not an authorised site, so all five were
+  rejected. The reset removes the demo; the rule stands.
+- Tests: `tests/test_reset.py` (3), three more in `tests/test_mail.py`.
+
 ## The Director watches the film before it goes out — 2026-09-12
 
 The Owner asked how a video with no story, in Romanian, resting on one claim, could be

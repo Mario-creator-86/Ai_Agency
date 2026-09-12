@@ -357,6 +357,11 @@ export function describeEvent(event, names = {}) {
         .join(' — ');
       kind = 'production';
       break;
+    case 'studio.history_reset':
+      label = 'istoricul a fost șters';
+      text = `pornim de la zero · ${payload.events || 0} evenimente, ${payload.messages || 0} mesaje, ${payload.runs || 0} rulări șterse`;
+      kind = 'owner';
+      break;
     case 'runbook.daily_run_started':
       label = 'ziua a început';
       text = `${payload.stages || ''} etape · preflight ${payload.preflight || ''}`.trim();

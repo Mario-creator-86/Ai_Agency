@@ -234,6 +234,11 @@ def _apply_decisions(
             dropped += 1
             continue
         who = director.display_name
+        # An answer to her own investigation is not investigated again. "Investigate: Re:
+        # Investigate: …" was a conversation feeding itself; after one round what she owes
+        # is a decision, and the answer is read as read.
+        if decision.action == "REQUEST_INVESTIGATION" and "Investigate:" in message.subject:
+            decision = decision.model_copy(update={"action": "ACKNOWLEDGE"})
         if decision.action == "REQUEST_INVESTIGATION":
             target = roles.get(decision.assign_to_role or "")
             if target is None and message.from_agent_id:
@@ -286,6 +291,16 @@ def _apply_decisions(
                 to_owner=True,
                 run_id=run_id,
                 in_reply_to=message.id,
+                correlation_id=correlation,
+            )
+            # Escalated is decided: the matter now waits for the Owner, in the thread, and
+            # leaves the inbox — otherwise the next review found it and escalated it again.
+            resolve_message(
+                session,
+                message.id,
+                resolution=f"Escalated to the Owner: {decision.note}"[:1000],
+                resolved_by=who,
+                status="ANSWERED",
                 correlation_id=correlation,
             )
             applied.append({"message_id": message.id, "action": decision.action})

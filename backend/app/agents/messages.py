@@ -52,6 +52,26 @@ def post_message(
     title = " ".join(str(subject).split())[:200]
     if not title:
         raise MessageError("A message needs a subject")
+    if to_owner:
+        # One open letter per matter. The same subject already waiting for the Owner's answer
+        # is that letter — one evening she was asked the same question nine times, once per
+        # review, because each review found the matter still open.
+        waiting = next(
+            (
+                row
+                for row in session.scalars(
+                    select(AgentMessage).where(
+                        AgentMessage.status == "OPEN",
+                        AgentMessage.to_agent_id.is_(None),
+                        AgentMessage.subject == title,
+                    )
+                )
+                if is_for_owner(row)
+            ),
+            None,
+        )
+        if waiting is not None:
+            return waiting
     parent = session.get(AgentMessage, in_reply_to) if in_reply_to else None
     if in_reply_to and parent is None:
         raise MessageError("The message being answered does not exist")

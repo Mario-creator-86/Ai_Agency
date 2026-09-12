@@ -772,3 +772,131 @@ def test_an_analysis_without_its_object_is_asked_again_with_native_thinking(engi
             "director-review-v1+think",
         ]
         assert session.get(AgentMessage, hold_id).status == "RESOLVED"
+
+
+# ------------------------------------------------------------------- a review that fed itself
+
+
+def _decide_all(action, **fields):
+    """A Director model that gives every message in the inbox the same decision."""
+    return lambda prompt: json.dumps(
+        {
+            "summary": "Decis.",
+            "decisions": [
+                {"message_id": i, "action": action, **fields}
+                for i in re.findall(r'"id": "([0-9a-f-]{36})"', prompt)
+            ],
+        },
+        ensure_ascii=False,
+    )
+
+
+def test_an_escalated_matter_leaves_the_inbox_and_the_owner_is_asked_once(engine, staffed):
+    """One evening the Owner was asked the same question nine times: the escalated message
+    stayed open, every review found it and wrote again. Escalated is decided — the message
+    is answered, and the same matter raised again by the next run is the same letter."""
+    from app.agents.director import director_review
+
+    vera = staffed["agents"]["Publisher"]
+    subject = "Nicio sursă preluată pentru «Descoperire Robotică Autonomă»"
+    with Session(engine) as session, session.begin():
+        first = post_message(
+            session,
+            intent="ESCALATE",
+            subject=subject,
+            body_text="Nimic nu se descarcă. Vera",
+            from_agent_id=vera.id,
+        ).id
+    registry, _ = registry_with(
+        staffed, _decide_all("ESCALATE_TO_OWNER", note="Autorizează un site pentru subiect.")
+    )
+
+    director_review(engine, registry, str(uuid4()))
+    with Session(engine) as session:
+        assert session.get(AgentMessage, first).status == "ANSWERED"
+        assert open_messages(session, inbox=True) == []
+    assert len(letters_for_owner(engine)) == 1
+
+    with Session(engine) as session, session.begin():
+        second = post_message(
+            session,
+            intent="ESCALATE",
+            subject=subject,
+            body_text="Tot nimic. Vera",
+            from_agent_id=vera.id,
+        ).id
+    director_review(engine, registry, str(uuid4()))
+    with Session(engine) as session:
+        assert session.get(AgentMessage, second).status == "ANSWERED"
+    letters = letters_for_owner(engine)
+    assert len(letters) == 1 and letters[0]["thread_id"] == first
+
+
+def test_an_answer_to_an_investigation_is_read_not_investigated_again(engine, staffed):
+    """'Investigate: Re: Investigate: …' was a conversation feeding itself. The answer to
+    her investigation is read; what she owes after it is a decision, not a question."""
+    from app.agents.director import director_review
+
+    aris = staffed["agents"]["LeadResearcher"]
+    with Session(engine) as session, session.begin():
+        answer = post_message(
+            session,
+            intent="STATUS",
+            subject="Re: Investigate: idea_generation: COMPLETED — 0 teme propuse",
+            body_text="Am propus cinci; toate pe un site neautorizat. Aris",
+            from_agent_id=aris.id,
+        ).id
+    registry, _ = registry_with(
+        staffed,
+        _decide_all("REQUEST_INVESTIGATION", assign_to_role="LeadResearcher", note="Care site?"),
+    )
+
+    director_review(engine, registry, str(uuid4()))
+    with Session(engine) as session:
+        row = session.get(AgentMessage, answer)
+        assert row.status == "RESOLVED" and row.resolution.startswith("ACKNOWLEDGE")
+        assert (
+            session.scalar(
+                select(AgentMessage).where(AgentMessage.subject.like("Investigate: Re:%"))
+            )
+            is None
+        )
+
+
+def test_reviews_are_rationed_by_the_hour(engine, staffed):
+    """Nine reviews in twenty-four minutes cost two hundred thousand tokens. After the hour's
+    ration the answers still get written; the review of them waits."""
+    from app.agents.mail import REVIEWS_PER_HOUR
+    from app.services import utc_now
+
+    sarah, elena = staffed["agents"]["Director"], staffed["agents"]["FactChecker"]
+    with Session(engine) as session, session.begin():
+        for _ in range(REVIEWS_PER_HOUR):
+            session.add(
+                AgentRun(
+                    id=str(uuid4()),
+                    agent_id=sarah.id,
+                    task_type="director_review",
+                    objective="review",
+                    prompt_template_version="director-review-v1",
+                    model_name="m",
+                    provider_name="p",
+                    status="SUCCEEDED",
+                    correlation_id=str(uuid4()),
+                    started_at=utc_now(),
+                    context_json={},
+                )
+            )
+        post_message(
+            session,
+            intent="REQUEST_INFO",
+            subject="Sursa?",
+            body_text="Care e sursa? Sarah",
+            from_agent_id=sarah.id,
+            to_agent_id=elena.id,
+        )
+    registry, model = registry_with(staffed, letter_json("Raportul IEA. Elena", done=True))
+
+    result = correspondence_round(engine, registry)
+    assert len(result["answered"]) == 1 and "deferred" in result["review"]
+    assert [c["system"][:15] for c in model.calls] == ["You are Elena ("]

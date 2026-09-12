@@ -251,7 +251,11 @@ def snapshot(engine: Engine) -> dict:
 
 
 def read_events(engine: Engine, after: int, limit: int) -> dict:
+    from app.maintenance import ledger_floor  # noqa: PLC0415
+
     with Session(engine) as session, session.begin():
+        # A history that was deleted is not read back: the ledger begins at the reset line.
+        after = max(after, ledger_floor(session) - 1)
         events = session.scalars(
             select(DomainEvent)
             .where(DomainEvent.sequence > after)
