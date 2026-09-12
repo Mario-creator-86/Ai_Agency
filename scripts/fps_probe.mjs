@@ -2,7 +2,9 @@
 import { chromium } from '../frontend/node_modules/playwright/index.mjs';
 import fs from 'node:fs';
 const token = /STUDIO_OWNER_TOKEN=(\S+)/.exec(fs.readFileSync('.env', 'utf8'))[1];
-const browser = await chromium.launch({ headless: true, args: ['--enable-gpu-rasterization'] });
+// The GPU flags make headless Chromium draw with the graphics card, as the Owner's browser does;
+// without them it falls back to software rendering and measures the CPU instead.
+const browser = await chromium.launch({ headless: true, args: ['--enable-gpu', '--ignore-gpu-blocklist', '--use-angle=d3d11', '--enable-gpu-rasterization'] });
 const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
 await page.goto('http://127.0.0.1:8000');
 await page.locator('#owner-token').fill(token);
@@ -27,5 +29,10 @@ const result = await page.evaluate(async () => {
   }
   return samples;
 });
-console.log(JSON.stringify(result));
+const renderer = await page.evaluate(() => {
+  const gl = document.createElement('canvas').getContext('webgl');
+  const info = gl && gl.getExtension('WEBGL_debug_renderer_info');
+  return info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : 'no webgl';
+});
+console.log(JSON.stringify({ renderer, samples: result }));
 await browser.close();

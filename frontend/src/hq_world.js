@@ -35,6 +35,21 @@ export const SHELTER_ADS = [
 
 const SHELTER_STOP_X = 1462;
 const HORIZON_ROW = 350;
+/**
+ * Plate layers are grouped by what is drawn between them; each group is composed once at the
+ * scale it is shown at (world px x zoom x device pixels), so a frame is a few 1:1 blits instead
+ * of a dozen large resamplings. A group is rebuilt when the zoom settles on a new scale or the
+ * daylight crossfade moves on.
+ */
+/** @type {Array<[string, string[]]>} */
+const PLATE_GROUPS = [
+  ['back', ['city', 'street_back', 'street_ground']],
+  ['building_back', ['building_back']],
+  ['building_front', ['building_front', 'building_shell']],
+  ['street_props', ['street_props']],
+  ['street_kerb', ['street_kerb']],
+  ['street_front', ['street_front']],
+];
 const SPRITE_SCALE = 1.1;
 /** Seated employees sit up above their consoles, as in the reference, not sunk behind them. */
 const SEATED_LIFT = 6;
@@ -140,39 +155,122 @@ export class HQRenderer {
     this.m = world.assets.manifest;
     /** @type {Array<{agent:any, x0:number, y0:number, x1:number, y1:number}>} */
     this.hits = [];
+    /** @type {Map<string, {canvas: HTMLCanvasElement, x:number, y:number, w:number, h:number}>} */
+    this.caches = new Map();
+    this.cacheKey = '';
+    this._wantedScale = 0;
+    this._scaleSince = 0;
+  }
+
+  /** The union of the rects the group's layers cover, in world px. @param {string[]} layers */
+  groupRect(layers) {
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const name of layers) {
+      for (const variant of /** @type {Array<'night'|'day'>} */ (['night', 'day'])) {
+        const l = this.assets.layer(variant, name);
+        if (!l) continue;
+        x0 = Math.min(x0, l.x);
+        y0 = Math.min(y0, l.y);
+        x1 = Math.max(x1, l.x + l.w);
+        y1 = Math.max(y1, l.y + l.h);
+      }
+    }
+    return Number.isFinite(x0) ? { x: Math.floor(x0), y: Math.floor(y0), w: Math.ceil(x1 - x0), h: Math.ceil(y1 - y0) } : null;
+  }
+
+  /**
+   * Compose the plate groups for this display scale and light, when either has changed.
+   * @param {number} displayScale canvas px per world px
+   * @param {any} time
+   */
+  ensureCaches(displayScale, time) {
+    if (typeof document === 'undefined') return false;
+    const bucket = Math.min(2.5, Math.max(0.2, Math.round(displayScale * 1000) / 1000));
+    const now = performance.now();
+    if (bucket !== this._wantedScale) {
+      this._wantedScale = bucket;
+      this._scaleSince = now;
+    }
+    const settled = now - this._scaleSince > 220 || !this.caches.size;
+    const light = Math.round(time.daylight * 40);
+    const loaded = `${Object.keys(this.assets.layers.night).length}/${Object.keys(this.assets.layers.day).length}`;
+    const key = `${bucket}|${light}|${loaded}`;
+    if (key === this.cacheKey || !settled) return this.caches.size > 0;
+    this.cacheKey = key;
+    for (const [group, layers] of PLATE_GROUPS) {
+      const rect = this.groupRect(layers);
+      if (!rect) continue;
+      let entry = this.caches.get(group);
+      const cw = Math.max(1, Math.round(rect.w * bucket));
+      const ch = Math.max(1, Math.round(rect.h * bucket));
+      if (!entry || entry.canvas.width !== cw || entry.canvas.height !== ch) {
+        const canvas = document.createElement('canvas');
+        canvas.width = cw;
+        canvas.height = ch;
+        entry = { canvas, ...rect };
+        this.caches.set(group, entry);
+      }
+      Object.assign(entry, rect);
+      const c = entry.canvas.getContext('2d');
+      if (!c) continue;
+      c.setTransform(1, 0, 0, 1, 0, 0);
+      c.clearRect(0, 0, cw, ch);
+      c.imageSmoothingEnabled = true;
+      c.imageSmoothingQuality = 'high';
+      c.setTransform(bucket, 0, 0, bucket, -rect.x * bucket, -rect.y * bucket);
+      for (const name of layers) {
+        this.layer(c, name, time);
+        if (name === 'city') this.drawSkySlogan(c, time);
+      }
+    }
+    return true;
+  }
+
+  /** @param {CanvasRenderingContext2D} ctx @param {string} group @param {any} time */
+  plate(ctx, group, time) {
+    const entry = this.useCaches ? this.caches.get(group) : null;
+    if (entry) {
+      ctx.drawImage(entry.canvas, entry.x, entry.y, entry.w, entry.h);
+      return;
+    }
+    const layers = PLATE_GROUPS.find(([g]) => g === group)?.[1] || [];
+    for (const name of layers) {
+      this.layer(ctx, name, time);
+      if (name === 'city') this.drawSkySlogan(ctx, time);
+    }
   }
 
   /**
    * @param {CanvasRenderingContext2D} ctx
-   * @param {{agents:any[], bubbles:any[], tokens:any[], lift:any, trip:any, selectedId:any, hoverId:any, liftStops:any}} state
+   * @param {{agents:any[], bubbles:any[], tokens:any[], lift:any, trip:any, selectedId:any, hoverId:any, liftStops:any, scale?:number}} state
    */
   draw(ctx, state) {
     const w = this.world;
     const time = w.time.state;
     const fx = w.weather.effects;
     w.agentList = state.agents;
+    this.useCaches = this.ensureCaches(state.scale || 1, time);
     w.sky.drawSky(ctx, time, fx);
     w.sky.drawSkyEvents(ctx, w.events, time);
-    this.layer(ctx, 'city', time);
-    this.drawSkySlogan(ctx, time);
+    this.plate(ctx, 'back', time);
     this.drawBillboard(ctx);
-    this.layer(ctx, 'street_back', time);
-    this.layer(ctx, 'street_ground', time);
     this.drawRoadLights(ctx, time, fx);
-    this.layer(ctx, 'building_back', time);
+    this.plate(ctx, 'building_back', time);
     this.drawScreens(ctx, state.agents);
     this.drawLift(ctx, state);
     this.drawAgents(ctx, state);
-    this.layer(ctx, 'building_front', time);
-    this.layer(ctx, 'building_shell', time);
+    this.plate(ctx, 'building_front', time);
     w.sky.drawSkyEvents(ctx, w.events, time, 'near');
     this.drawTokens(ctx, state);
-    this.layer(ctx, 'street_props', time);
+    this.plate(ctx, 'street_props', time);
     this.drawShelter(ctx, time);
     this.drawPedestrians(ctx, fx);
-    this.layer(ctx, 'street_kerb', time);
+    this.plate(ctx, 'street_kerb', time);
     this.drawVehicles(ctx, time, fx);
-    this.layer(ctx, 'street_front', time);
+    this.plate(ctx, 'street_front', time);
     w.sky.drawWeather(ctx, time, fx);
     this.drawNightGrade(ctx, time);
     this.drawBubbles(ctx, state);

@@ -357,7 +357,8 @@ export class OfficeEngine {
     ctx.rect(0, 0, this.worldW, this.worldH);
     ctx.clip();
     ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
+    // Plates arrive pre-composed at this scale; sprites are small, so a cheaper filter suffices.
+    ctx.imageSmoothingQuality = 'medium';
     this.renderer.draw(ctx, {
       agents: this.agents,
       bubbles: this.speechBubbles,
@@ -367,6 +368,7 @@ export class OfficeEngine {
       selectedId: this.selectedAgentId,
       hoverId: this.hoverAgentId,
       liftStops: this.liftStops,
+      scale: zoom,
     });
     ctx.restore();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
