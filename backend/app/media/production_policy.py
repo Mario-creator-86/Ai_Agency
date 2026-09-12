@@ -218,6 +218,38 @@ def _recorded_price(pricing: Any) -> float | None:
     return None
 
 
+#: What each standing priority means as weights over quality, cost, speed and reliability.
+#: A premium studio buys the best picture its account can make; cost is a reported fact, not
+#: the deciding one. Nothing here is a per-model preference — only what to optimise for.
+PRIORITY_WEIGHTS: dict[str, dict[str, float]] = {
+    "premium": {"quality": 0.6, "reliability": 0.25, "speed": 0.1, "cost": 0.05},
+    "balanced": {"quality": 0.25, "reliability": 0.25, "speed": 0.25, "cost": 0.25},
+    "thrifty": {"quality": 0.2, "reliability": 0.2, "speed": 0.1, "cost": 0.5},
+}
+
+#: The frame the studio's films are made in. A model whose published ratios do not include it
+#: cannot deliver a full-height shot: `seedance2_fast` stops at 720×1280, so its picture would
+#: be upscaled into a 1080×1920 film. Read from the contract, per model and task.
+STUDIO_FRAME = "1080:1920"
+
+
+def delivers_studio_frame(metadata: Any, purpose: str | None, frame: str = STUDIO_FRAME) -> bool:
+    """Whether the contract says this model can produce the studio's frame for this purpose.
+
+    A model whose ratios for the purpose's tasks are not known counts as able — that is
+    research's business, not a guess made here. One that lists its ratios and not this one
+    is ranked below every model that can: its picture would be upscaled into a 1080x1920
+    film. `seedance2_fast`, recommended once for this studio, stops at 720x1280.
+    """
+    wanted = GENERATIVE_TASKS.get(purpose or "")
+    meta = metadata if isinstance(metadata, dict) else {}
+    ratios = meta.get("ratios")
+    if not wanted or not isinstance(ratios, dict):
+        return True
+    listed = [r for task in wanted if isinstance(ratios.get(task), list) for r in ratios[task]]
+    return frame in listed if listed else True
+
+
 #: The task the studio actually calls for each purpose. A model may serve a purpose through
 #: some other task — Runway's character performance is a video task, but it needs a driving
 #: performance video, so it cannot be the default a storyboard scene renders through.
@@ -246,10 +278,16 @@ def rank_candidates(
     criteria = criteria or {}
     raw_weights = criteria.get("weights")
     weights: dict[str, Any] = raw_weights if isinstance(raw_weights, dict) else {}
-    w_quality = _number(weights.get("quality"), 0.25)
-    w_cost = _number(weights.get("cost"), 0.25)
-    w_speed = _number(weights.get("speed"), 0.25)
-    w_reliability = _number(weights.get("reliability"), 0.25)
+    # Absent explicit weights, the studio's standing priority decides. The Owner's is
+    # premium — the best picture the account can make — and an even split had the ranking
+    # recommending the cheapest model for a studio whose purpose is good films.
+    default = PRIORITY_WEIGHTS.get(
+        str(criteria.get("priority") or "premium"), PRIORITY_WEIGHTS["premium"]
+    )
+    w_quality = _number(weights.get("quality"), default["quality"])
+    w_cost = _number(weights.get("cost"), default["cost"])
+    w_speed = _number(weights.get("speed"), default["speed"])
+    w_reliability = _number(weights.get("reliability"), default["reliability"])
     language = str(criteria.get("language") or "").lower() or None
     rows = session.scalars(
         select(ProviderResource).where(
@@ -268,6 +306,7 @@ def rank_candidates(
             and production_resource(session, integration_id, kind, row.remote_id, purpose) is None
         ):
             continue
+
         caps = row.capabilities if isinstance(row.capabilities, dict) else {}
         pricing = row.pricing if isinstance(row.pricing, dict) else {}
         quality = _number(caps.get("quality_score"), 0.5)
@@ -303,9 +342,22 @@ def rank_candidates(
                 "per_1k_characters_usd": price,
                 "language_match": language_match,
                 "annotated": bool(caps or pricing),
+                # Whether its own contract says it can fill the studio's frame. A model that
+                # cannot is not excluded — an account may offer nothing better — but it never
+                # outranks one that can: the alternative is upscaled footage in a 1080x1920
+                # film, which is exactly the "rabat" a premium studio does not make.
+                "delivers_studio_frame": delivers_studio_frame(row.api_metadata, purpose)
+                if kind == "MODEL"
+                else True,
             }
         )
-    ranked.sort(key=lambda item: (-item["score"], item["remote_id"]))
+    ranked.sort(
+        key=lambda item: (
+            not item.get("delivers_studio_frame", True),
+            -item["score"],
+            item["remote_id"],
+        )
+    )
     return ranked
 
 

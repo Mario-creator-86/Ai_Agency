@@ -884,3 +884,61 @@ def test_a_locked_look_accepts_only_video_models_approved_for_the_character(
     again = scene_video(plan(client, headers, episode), 2)
     assert not again["valid"] and again["model_id"] == video_b
     assert scene_video(plan(client, headers, episode), 1)["valid"]
+
+
+# --------------------------------------------------------------------- what the studio is for
+
+
+def test_a_premium_studio_ranks_the_best_picture_first_and_the_frame_decides_ties(engine):
+    """The Owner's instruction — "Nu facem rabat de la cheltuieli" — is a weighting, and it
+    had none: an even split over quality, cost, speed and reliability had the ranking (and
+    the steward) recommending the cheapest model twice. A model whose own contract cannot
+    fill 1080x1920 never outranks one that can, whatever it costs."""
+    from app.media.production_policy import (
+        PRIORITY_WEIGHTS,
+        delivers_studio_frame,
+        rank_candidates,
+    )
+    from app.services import utc_now
+
+    integration_id = add_generic_provider(engine, "runway")
+    with Session(engine) as session, session.begin():
+        for remote_id, quality, price, ratios in (
+            ("beautiful_tall", 0.9, 0.03, ["1080:1920", "720:1280"]),
+            ("cheap_tall", 0.6, 0.005, ["1080:1920"]),
+            ("cheap_short", 0.95, 0.004, ["720:1280"]),
+        ):
+            session.add(
+                ProviderResource(
+                    id=str(uuid4()),
+                    integration_id=integration_id,
+                    resource_type="MODEL",
+                    remote_id=remote_id,
+                    name=remote_id,
+                    api_metadata={
+                        "tasks": ["image_to_video", "text_to_video"],
+                        "ratios": {"text_to_video": ratios, "image_to_video": ratios},
+                        "needs_references": {"text_to_video": False, "image_to_video": False},
+                    },
+                    api_available=True,
+                    last_seen_at=utc_now(),
+                    pricing={"per_second_usd": price, "unit": "per second of video"},
+                    capabilities={"quality_score": quality, "reliability_score": 0.8},
+                    metadata_version=1,
+                )
+            )
+
+    with Session(engine) as session:
+        premium = rank_candidates(session, integration_id, "MODEL", None, "video")
+        thrifty = rank_candidates(
+            session, integration_id, "MODEL", {"priority": "thrifty"}, "video"
+        )
+    # Premium is the studio's standing default: the best picture that fills the frame wins.
+    assert premium[0]["remote_id"] == "beautiful_tall"
+    # The cheapest model of all cannot fill the frame, so it is last whatever the priority.
+    assert premium[-1]["remote_id"] == "cheap_short"
+    assert thrifty[-1]["remote_id"] == "cheap_short"
+    # And thrift does change the order among the models that can fill it.
+    assert thrifty[0]["remote_id"] == "cheap_tall"
+    assert PRIORITY_WEIGHTS["premium"]["quality"] > PRIORITY_WEIGHTS["premium"]["cost"]
+    assert delivers_studio_frame({"tasks": ["text_to_video"]}, "video") is True

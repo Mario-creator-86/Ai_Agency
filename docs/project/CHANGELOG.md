@@ -1,5 +1,29 @@
 # Changelog
 
+## A premium studio, and the frame it films in — 2026-09-12
+
+The steward read the vendor's pages, scored eighteen video models and recommended
+`seedance2_fast`: "cost-efficient… acceptable quality for social media formats". The Owner's
+answer was the standing instruction this studio had never been told: *"Nu facem rabat de la
+cheltuieli. Nu are sens sa avem o companie de creare filme care nu poate livra filme bune."*
+And the recommendation was worse than cheap — `seedance2_fast` tops out at 720×1280 for a
+studio that renders 1080×1920.
+
+- **The studio has a standing priority** (`STUDIO_PRODUCTION_PRIORITY`, default `premium`):
+  it becomes the ranking's weights (quality 0.6, reliability 0.25, speed 0.1, cost 0.05) and
+  a line in the steward's instructions — "recommend the best picture the account can make…
+  treat price as a fact to record rather than the deciding one". `balanced` and `thrifty`
+  are the other two; a channel may still override per purpose.
+- **A model that cannot fill the studio's frame never outranks one that can**
+  (`delivers_studio_frame`, `STUDIO_FRAME = 1080:1920`): read from each model's published
+  ratios, so the 720×1280 models sort last instead of being recommended. It is a preference,
+  not an exclusion — an account that offers nothing taller can still film.
+- **The download cap was costing shots**: eight seconds of 1080×1920 came back near forty
+  megabytes and two scenes of the first motion film were lost to a thirty-two megabyte
+  limit. The cap is ninety-six now; it exists so a stray response cannot fill memory, not to
+  judge a film's weight.
+- Tests: one more in `tests/test_production_policy.py`.
+
 ## What a film costs reaches the books — 2026-09-12
 
 The Owner asked what has been spent so far. The honest answer was that nothing had been

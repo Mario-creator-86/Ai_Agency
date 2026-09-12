@@ -83,6 +83,16 @@ def _candidates(session: Session, purpose: str) -> list[Integration]:
     return found
 
 
+def _priority() -> str:
+    """The studio's standing production priority, read where the choice is made."""
+    from app.config import Settings  # noqa: PLC0415
+
+    try:
+        return str(Settings().production_priority)  # type: ignore[call-arg]
+    except Exception:  # noqa: BLE001
+        return "premium"
+
+
 def _top_resource(engine: Engine, integration_id: str, kind: str, purpose: str) -> str | None:
     """The default this purpose should get: the highest-ranked model the pipeline can call.
 
@@ -94,7 +104,9 @@ def _top_resource(engine: Engine, integration_id: str, kind: str, purpose: str) 
     from app.media.production_policy import rank_candidates  # noqa: PLC0415
 
     with Session(engine) as session:
-        ranked = rank_candidates(session, integration_id, kind, None, purpose)
+        # The studio's standing priority, so the default it fills in is the one the Owner's
+        # instruction implies rather than an even split over four criteria.
+        ranked = rank_candidates(session, integration_id, kind, {"priority": _priority()}, purpose)
         if not ranked:
             return None
         wanted = GENERATIVE_TASKS.get(purpose)

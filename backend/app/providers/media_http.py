@@ -39,7 +39,11 @@ class MediaProviderNotConfigured(MediaProviderError):
 
 #: A generated still or a narration segment is large; a short is not. These caps stop a
 #: mistaken endpoint from streaming an unbounded body into memory.
-MAX_MEDIA_BYTES = 32 * 1024 * 1024
+#: A generated shot is the largest thing a vendor hands back: eight seconds of 1080x1920
+#: came to nearly forty megabytes, and two scenes of a premium film were lost to a
+#: thirty-two megabyte cap. The cap exists so a stray response cannot fill memory, not to
+#: judge a film's weight.
+MAX_MEDIA_BYTES = 96 * 1024 * 1024
 MAX_JSON_BYTES = 4 * 1024 * 1024
 
 

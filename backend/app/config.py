@@ -80,6 +80,13 @@ class Settings(BaseSettings):
     # whose metadata is not in this language holds. STUDIO_CONTENT_LANGUAGE=en.
     content_language: str = Field(default="en", min_length=2, max_length=5, pattern="^[a-z-]+$")
 
+    #: What the studio optimises for when it picks a model itself. The Owner's standing
+    #: instruction is premium: the best picture the account can make, cost secondary — "no
+    #: sense having a film company that cannot deliver good films". `balanced` weighs the
+    #: four criteria evenly, `thrifty` puts cost first. The weights below are what each
+    #: means; every channel may still override them per purpose.
+    production_priority: Literal["premium", "balanced", "thrifty"] = "premium"
+
     # The background worker is what makes the studio run without the browser: it fires due
     # scheduled jobs and executes the tasks they enqueue. Off in tests, where a loop that starts
     # the day on its own would make every other test's timing a coincidence.

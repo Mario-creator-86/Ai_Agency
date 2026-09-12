@@ -120,13 +120,39 @@ _JUDGE_INSTRUCTIONS = (
     "(0..1), reliability (0..1), speed (1 = fastest), the price as a number with its unit "
     "(per second of video, per image, per 1k characters), and a one-line note. Cite the "
     "page you read as evidence_url. Then recommend one model for the studio's short "
-    "vertical videos, weighing quality against recorded cost, and say why. Judge only from "
+    "vertical videos and say why. {priority_line} Judge only from "
     "the pages and the API data; a model the pages do not describe keeps 0.5 and an empty "
     'price. Return only JSON: {{"models": [{{"remote_id": "...", "quality_score": 0.0, '
     '"reliability_score": 0.0, "latency_score": 0.0, "price_usd": null, "price_unit": "", '
     '"notes": "...", "evidence_url": "https://..."}}], "recommendation": {{"remote_id": "...", '
     '"reason": "..."}}}}.\n'
 )
+
+
+#: What the studio is, in the steward's own terms, so the recommendation serves it. A premium
+#: studio wants the best picture its account can make; the price is a fact to record, not the
+#: deciding one. `STUDIO_PRODUCTION_PRIORITY` sets this.
+_PRIORITY_LINES = {
+    "premium": (
+        "This studio is premium: recommend the best picture the account can make, in the "
+        "studio's own frame of 1080x1920, and treat price as a fact to record rather than "
+        "the deciding one — a cheaper model that looks worse is the wrong answer here."
+    ),
+    "balanced": (
+        "Weigh quality, reliability, speed and price about equally, in the studio's frame of "
+        "1080x1920."
+    ),
+    "thrifty": (
+        "Prefer the cheapest model that still delivers the studio's frame of 1080x1920 at "
+        "acceptable quality."
+    ),
+}
+
+
+def _priority_line(settings: Settings) -> str:
+    return _PRIORITY_LINES.get(
+        getattr(settings, "production_priority", "premium"), _PRIORITY_LINES["premium"]
+    )
 
 
 def vendor_hosts(kind: str) -> tuple[str, ...]:
@@ -190,7 +216,13 @@ def research_models(
             raise ModelResearchError(f"Niciun {STEWARDS[purpose]} activ care să aleagă.")
         steward_id, steward_name = steward.id, steward.display_name
         kind, integration_id, vendor_name = integration.kind, integration.id, integration.name
-        candidates = rank_candidates(session, integration_id, "MODEL", None, purpose)
+        candidates = rank_candidates(
+            session,
+            integration_id,
+            "MODEL",
+            {"priority": getattr(settings, "production_priority", "premium")},
+            purpose,
+        )
         if not candidates:
             raise ModelResearchError(
                 f"Contul {vendor_name} nu expune niciun model utilizabil pentru {purpose}."
@@ -282,7 +314,7 @@ def research_models(
         for i, (url, text) in enumerate(pages)
     )
     judge_prompt = (
-        _JUDGE_INSTRUCTIONS.format(purpose=purpose)
+        _JUDGE_INSTRUCTIONS.format(purpose=purpose, priority_line=_priority_line(settings))
         + "MODELS ON THE STUDIO'S ACCOUNT:\n"
         + wrap_in_inert_boundary(json.dumps(listing, ensure_ascii=False)[:12_000], "account-models")
         + "\nVENDOR PAGES:\n"
@@ -360,7 +392,13 @@ def research_models(
     # 4. The choice, where the Owner left it to the studio.
     field, _ = DEFAULTS[purpose]
     with Session(engine) as session:
-        ranked = rank_candidates(session, integration_id, "MODEL", None, purpose)
+        ranked = rank_candidates(
+            session,
+            integration_id,
+            "MODEL",
+            {"priority": getattr(settings, "production_priority", "premium")},
+            purpose,
+        )
         recommended = (
             research.recommendation.remote_id
             if research.recommendation and research.recommendation.remote_id in known
