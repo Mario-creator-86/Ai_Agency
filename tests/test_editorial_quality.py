@@ -1539,3 +1539,19 @@ def test_at_the_last_exchange_she_must_decide(engine, studio):
     assert "This is the LAST exchange" in asked[-1]
     assert verdict["verdict"] == "REJECT"
     assert any("un refuz" in note for note in verdict["notes"])
+
+
+def test_a_draft_nobody_read_still_owes_work(engine, studio):
+    """What a crashed run leaves behind: a draft written at the moment the day died, with no
+    reading after it. It used to be invisible to both paths — not owed a rewrite, because no
+    reading asked for one, and not past the page either — so the topic went on counting as in
+    production and nothing new could be chosen past it."""
+    from app.runbook.stages import script_work, topics_in_production
+
+    topic_id = a_topic(engine)
+    a_script(engine, topic_id, status="VERIFIED_PASS")  # written, never reviewed
+
+    with Session(engine) as session:
+        assert script_work(session, [topic_id]) == [(topic_id, [])]
+        live, stalled = topics_in_production(session)
+    assert live == [topic_id] and stalled == []

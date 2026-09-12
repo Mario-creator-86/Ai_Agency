@@ -599,7 +599,15 @@ def script_work(session: Session, selected: list[str]) -> list[tuple[str, list[s
         if latest.id in storyboarded:
             continue  # the film is past the page
         review = latest_review(session, latest.id)
-        if review is None or review.verdict != "REVISE":
+        if review is None:
+            # A draft nobody read is not progress. This is what a crashed run leaves behind —
+            # the studio wrote a draft at the moment the day died and the reading never
+            # happened — and it used to be invisible to both paths: not owed a rewrite,
+            # because no reading asked for one, and not past the page either, so the topic
+            # went on counting as in production and nothing else could be chosen.
+            owed.append((topic_id, []))
+            continue
+        if review.verdict != "REVISE":
             continue  # approved and waiting to be shot, or refused and not ours to retry
         notes = list((review.notes_json or {}).get("notes") or [])
         owed.append((topic_id, notes))
