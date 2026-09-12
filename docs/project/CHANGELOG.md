@@ -1,5 +1,30 @@
 # Changelog
 
+## A revision revises the draft — 2026-09-12
+
+Three watched cycles in a row, on the same topic, showed the writer getting worse instead of
+better. Draft two of *How NASA Keeps a Space Telescope Alive With Frozen Fuel* passed every
+computed check at 39.5 seconds; the Director sent it back on taste alone, with surgical notes —
+cut the second line of scene 2, tighten scene 5 to end on the mirror, fix a generic CTA, and
+resolve a real topic drift she had caught (the thesis promises finite fuel, the script delivers
+the sunshield). Draft three came back at 46.8 seconds with no ending at all.
+
+The cause was in the prompt: the notes travelled on their own, followed by "write the story
+again from the beginning". The writer never saw the draft he was revising. A note about scene 5
+cannot be obeyed by someone who has to reinvent scene 5 first, so every revision re-rolled the
+story and lost whatever had been working — and after two of those the revision budget refused
+the topic, for a fault that was ours.
+
+- `previous_draft` reads the newest draft of the topic back — title, hook, ending, CTA, and
+  every scene with its purpose, narration, visual and claims.
+- The revision prompt now carries it, inside the same inert boundary any other data gets, then
+  the notes, then the instruction that changed: **revise this script, keep what works, change
+  only what the notes name, and do not reinvent the story from zero.**
+- A first draft is handed no previous one, and says so.
+
+`uv run pytest -q` — **717 passed, 1 skipped**. `ruff`, `mypy`, `scripts/check_docs.py` clean.
+
+
 ## The target is a target, not a knife — 2026-09-12
 
 The corrected brief went out and the writer still lost a story to the duration check: 103

@@ -1249,3 +1249,73 @@ def test_a_story_still_being_written_is_in_production(engine, studio):
         live, stalled = topics_in_production(session)
     # A rewrite is owed, and the studio is the one who owes it.
     assert live == [topic_id] and stalled == []
+
+
+def test_a_revision_shows_the_writer_the_draft_he_is_revising(engine, studio):
+    """Found live on 2026-09-12: draft two passed every check at 39.5s and the Director asked
+    for surgical changes — cut one line in scene 2, tighten scene 5 to end on the mirror.
+    Draft three came back at 46.8s with no ending at all, because the rewrite was told to
+    "write the story again from the beginning" and never saw the draft it was revising. Notes
+    about scene 5 cannot be obeyed by a writer who has to reinvent scene 5 first."""
+    import json as _json
+
+    from app.factual.agent_pipeline import agent_write_script, previous_draft
+
+    topic_id = a_topic(engine)
+    a_script(engine, topic_id, status="VERIFIED_PASS")
+
+    with Session(engine) as session:
+        earlier = previous_draft(session, topic_id)
+    assert earlier is not None
+    assert earlier["scenes"][0]["narration"].startswith("There is one web address")
+
+    seen: dict = {}
+
+    def answer(prompt):
+        seen["prompt"] = prompt
+        return _json.dumps(
+            {
+                "title": "The address nobody may buy",
+                "core_message": GOOD_STORY["core_message"],
+                "takeaway": GOOD_STORY["takeaway"],
+                "hook": GOOD_STORY["hook"],
+                "ending": GOOD_STORY["ending"],
+                "cta": GOOD_STORY["cta"],
+                "cta_kind": "COMMENT",
+                "scenes": [
+                    {
+                        "narration": scene["narration"],
+                        "visual": scene["visual_description"],
+                        "purpose": scene["purpose"],
+                        "claim_ids": ["c1"],
+                    }
+                    for scene in GOOD_SCENES
+                ],
+            }
+        )
+
+    registry, _ = registry_with(studio, answer)
+    agent_write_script(
+        engine,
+        registry,
+        topic_id,
+        str(uuid4()),
+        target_duration_seconds=30,
+        notes=["Taie replica a doua din scena 2.", "Strânge scena 5 ca să se încheie pe oglindă."],
+    )
+
+    prompt = seen["prompt"]
+    # The draft is in front of him, the notes name what to change, and he is told to keep the
+    # rest rather than start over.
+    assert "VERSIUNEA ANTERIOARĂ A FOST TRIMISĂ ÎNAPOI" in prompt
+    assert "There is one web address nobody on earth is allowed to buy." in prompt
+    assert "Taie replica a doua din scena 2." in prompt
+    assert "REVIZUIEȘTE scenariul de mai sus" in prompt
+    assert "Nu reinventa povestea de la zero" in prompt
+
+
+def test_a_first_draft_is_not_handed_a_previous_one(engine, studio):
+    from app.factual.agent_pipeline import previous_draft
+
+    with Session(engine) as session:
+        assert previous_draft(session, a_topic(engine)) is None

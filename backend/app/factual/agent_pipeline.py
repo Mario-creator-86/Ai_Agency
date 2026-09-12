@@ -28,7 +28,7 @@ from app.factual.editorial import (
     expected_seconds,
     narration_budget,
 )
-from app.factual.models import FactualClaim, SourceSnapshot, TopicIdea
+from app.factual.models import FactualClaim, ScriptDraft, SourceSnapshot, TopicIdea
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.factual.schemas import ExtractClaimItem
 from app.factual.services import extract_claims, generate_script_draft, verify_claim
@@ -554,6 +554,37 @@ class _Script(BaseModel):
 _SCRIPT = TypeAdapter(_Script)
 
 
+def previous_draft(session: Session, topic_id: str) -> dict[str, Any] | None:
+    """The newest draft of this topic, as the writer needs to see it to revise it."""
+    draft = list(
+        session.scalars(
+            select(ScriptDraft)
+            .where(ScriptDraft.topic_id == topic_id)
+            .order_by(ScriptDraft.created_at)
+        )
+    )
+    if not draft:
+        return None
+    newest = draft[-1]
+    story = dict(newest.story_json or {})
+    return {
+        "title": newest.title,
+        "hook": story.get("hook"),
+        "core_message": story.get("core_message"),
+        "ending": story.get("ending"),
+        "cta": story.get("cta"),
+        "scenes": [
+            {
+                "purpose": scene.get("story_purpose") or scene.get("purpose"),
+                "narration": scene.get("voiceover_segment") or scene.get("narration"),
+                "visual": scene.get("visual_description") or scene.get("visual"),
+                "claim_ids": scene.get("claim_ids") or [],
+            }
+            for scene in (newest.scenes_json or [])
+        ],
+    }
+
+
 def _write_instructions(target_seconds: int) -> str:
     """The writer's brief, with the arithmetic of the length already done for him.
 
@@ -624,13 +655,34 @@ def agent_write_script(
         + f"\n\nSUBIECT: {topic_title}\n"
     )
     if notes:
-        # The story review sent the last draft back. What it said goes to the writer as the
-        # brief for this one: a rewrite that is not told what was wrong produces the same
-        # weakness in different words.
+        # The story review sent the last draft back. The notes used to travel on their own,
+        # with the instruction to write the story again from the beginning — so the writer
+        # never saw the draft he was revising. Notes like "cut scene 2's second line" and
+        # "tighten scene 5 to end on the mirror" cannot be obeyed by a writer who has to
+        # reinvent scenes 2 and 5 first, and a draft that passed every check at 39 seconds
+        # came back at 47 with its ending gone. A revision is a revision: here is the draft,
+        # here is what to change, keep the rest.
+        with Session(engine) as session:
+            earlier = previous_draft(session, topic_id)
+        if earlier is not None:
+            prompt += (
+                "\nVERSIUNEA ANTERIOARĂ A FOST TRIMISĂ ÎNAPOI. Iat-o:\n"
+                + wrap_in_inert_boundary(
+                    json.dumps(earlier, ensure_ascii=False, indent=1), "previous-draft"
+                )
+                + "\n"
+            )
         prompt += (
-            "\nVERSIUNEA ANTERIOARĂ A FOST TRIMISĂ ÎNAPOI. Ce trebuie schimbat:\n"
+            "\nCE TREBUIE SCHIMBAT:\n"
             + "\n".join(f"- {note}" for note in notes[:8])
-            + "\nScrie povestea din nou, de la început, ținând cont de fiecare punct.\n"
+            + (
+                "\nREVIZUIEȘTE scenariul de mai sus. Păstrează ce funcționează — cârligul care "
+                "prinde, scenele bune, formulările care merg — și schimbă numai ce cer notele. "
+                "Nu reinventa povestea de la zero: o versiune nouă pierde exact ce era bun în "
+                "cea veche. Răspunde cu scenariul întreg, revizuit.\n"
+                if earlier is not None
+                else "\nScrie povestea din nou, ținând cont de fiecare punct.\n"
+            )
         )
     result = run_agent_task(
         engine,
