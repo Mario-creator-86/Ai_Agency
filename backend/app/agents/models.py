@@ -7,6 +7,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     CheckConstraint,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -118,6 +119,21 @@ class Agent(Base):
     role_id: Mapped[str] = mapped_column(ForeignKey("role.id"))
     provider_id: Mapped[str] = mapped_column(ForeignKey("provider_record.id"))
     model_id: Mapped[str] = mapped_column(ForeignKey("model_record.id"))
+    #: Optional second and third models this employee may think with (migration 0034), from
+    #: the same registry the primary comes from. Which model sits in which slot is the
+    #: Owner's configuration; no code decides anything by a model's name.
+    #: Both hold a `model_record.id`. Declared without a foreign key because SQLite cannot
+    #: add one to this table by ALTER; the command that sets a slot checks the model exists,
+    #: is available and satisfies what the role requires.
+    secondary_model_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    tertiary_model_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    #: SINGLE | FALLBACK | REVIEW | DEBATE | PARALLEL. SINGLE is how ordinary work is done.
+    multi_llm_strategy: Mapped[str] = mapped_column(String(20), default="SINGLE")
+    #: IMPORTANT_ONLY | LOW_CONFIDENCE | ALWAYS | MANUAL — when the extra models are worth
+    #: their tokens, with the two thresholds that decide it.
+    additional_llm_policy: Mapped[str] = mapped_column(String(20), default="IMPORTANT_ONLY")
+    min_importance: Mapped[str] = mapped_column(String(20), default="STRATEGIC")
+    min_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     lifecycle: Mapped[str] = mapped_column(String(20))
     runtime_state: Mapped[str] = mapped_column(String(25))
     cost_limit_per_task: Mapped[str | None] = mapped_column(String(20), nullable=True)
@@ -154,6 +170,52 @@ class AgentRun(Base):
     #: Context manifest (04_AGENT_SYSTEM §16): identity version, contract and bible versions,
     #: memory record ids the run was given. What the model knew, recorded with what it said.
     context_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+
+class LlmCollaboration(Base):
+    """One multi-model execution, and who played which part (migration 0034).
+
+    Each participating call is an ordinary `AgentRun` with its own model recorded, so history
+    stays true when the Owner changes a slot tomorrow. This row is what joins them: the
+    strategy, why a second model was called at all, what each was asked to be, whether they
+    disagreed, and which answer the agent finally gave. For a Director's decision it is the
+    difference between "the studio decided" and "here is what was considered".
+    """
+
+    __tablename__ = "llm_collaboration"
+    __table_args__ = (
+        CheckConstraint(
+            "strategy IN ('SINGLE','FALLBACK','REVIEW','DEBATE','PARALLEL')",
+            name="ck_collaboration_strategy",
+        ),
+        CheckConstraint(
+            "outcome IN ('COMPLETE','PARTIAL','REVIEW_INCOMPLETE')",
+            name="ck_collaboration_outcome",
+        ),
+        Index("ix_llm_collaboration_agent", "agent_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agent.id"))
+    task_type: Mapped[str] = mapped_column(String(100))
+    strategy: Mapped[str] = mapped_column(String(20))
+    importance: Mapped[str] = mapped_column(String(20), default="ROUTINE")
+    reason: Mapped[str] = mapped_column(Text)
+    primary_run_id: Mapped[str | None] = mapped_column(ForeignKey("agent_run.id"), nullable=True)
+    secondary_run_id: Mapped[str | None] = mapped_column(ForeignKey("agent_run.id"), nullable=True)
+    tertiary_run_id: Mapped[str | None] = mapped_column(ForeignKey("agent_run.id"), nullable=True)
+    final_run_id: Mapped[str | None] = mapped_column(ForeignKey("agent_run.id"), nullable=True)
+    roles_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    disagreed: Mapped[bool] = mapped_column(Boolean, default=False)
+    disagreement_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    outcome: Mapped[str] = mapped_column(String(20), default="COMPLETE")
+    final_model: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    correlation_id: Mapped[str] = mapped_column(String(36))
+    created_at: Mapped[str] = mapped_column(String(40))
+    event_id: Mapped[str | None] = mapped_column(ForeignKey("domain_event.event_id"), nullable=True)
 
 
 class ToolReceipt(Base):

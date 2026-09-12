@@ -229,7 +229,43 @@ def select_service(
         return dict(purpose=purpose, integration_id=identifier, version=current.version)
 
 
-def assign_agent(engine: Engine, agent_id: str, model_id: str, version: int) -> dict:
+def assign_agent(
+    engine: Engine,
+    agent_id: str,
+    model_id: str,
+    version: int,
+    *,
+    secondary_model_id: str | None = None,
+    tertiary_model_id: str | None = None,
+    multi_llm_strategy: str | None = None,
+    additional_llm_policy: str | None = None,
+    min_importance: str | None = None,
+    min_confidence: float | None = None,
+) -> dict:
+    """Save which models an employee thinks with, and what to do with more than one.
+
+    One versioned command, as before: the primary model, and now the optional second and
+    third slots with the strategy that uses them. Every slot is checked the same way the
+    primary always was — the model must exist, be available, and satisfy what the role
+    requires — because a fallback onto a model that cannot do the job is not a fallback.
+
+    A model named in a slot is configuration. Nothing in the studio's logic reads its name,
+    so the Owner can replace any of the three from here tomorrow without a code change.
+    """
+    from app.agents.ensemble import IMPORTANCE, POLICIES, STRATEGIES
+
+    strategy = (multi_llm_strategy or "SINGLE").upper()
+    policy = (additional_llm_policy or "IMPORTANT_ONLY").upper()
+    importance = (min_importance or "STRATEGIC").upper()
+    if strategy not in STRATEGIES:
+        raise ValueError(f"Strategie necunoscută: {strategy}")
+    if policy not in POLICIES:
+        raise ValueError(f"Politică necunoscută: {policy}")
+    if importance not in IMPORTANCE:
+        raise ValueError(f"Prag de importanță necunoscut: {importance}")
+    if min_confidence is not None and not 0.0 <= float(min_confidence) <= 1.0:
+        raise ValueError("Pragul de încredere este între 0 și 1")
+
     with Session(engine) as session, session.begin():
         agent = session.get(Agent, agent_id)
         model = session.get(ModelRecord, model_id)
@@ -246,6 +282,34 @@ def assign_agent(engine: Engine, agent_id: str, model_id: str, version: int) -> 
             _check_required_capabilities(session, agent)
         except PolicyKernelError as exc:
             raise ValueError("Modelul nu are capabilitățile necesare rolului") from exc
+
+        extra: dict[str, str | None] = {}
+        for slot, wanted in (
+            ("secondary_model_id", secondary_model_id),
+            ("tertiary_model_id", tertiary_model_id),
+        ):
+            if not wanted:
+                extra[slot] = None
+                continue
+            row = session.get(ModelRecord, wanted)
+            if row is None or not row.is_available:
+                raise ValueError("Modelul secundar sau terțiar nu este disponibil")
+            try:
+                _check_required_capabilities(session, agent, model_id=row.id)
+            except PolicyKernelError as exc:
+                raise ValueError("Modelul din slot nu are capabilitățile necesare rolului") from exc
+            extra[slot] = row.id
+        if extra["tertiary_model_id"] and not extra["secondary_model_id"]:
+            raise ValueError("Un al treilea model fără al doilea nu are cine să fie criticul")
+        if strategy != "SINGLE" and not extra["secondary_model_id"]:
+            raise ValueError(f"Strategia {strategy} are nevoie de un al doilea model")
+
+        agent.secondary_model_id = extra["secondary_model_id"]
+        agent.tertiary_model_id = extra["tertiary_model_id"]
+        agent.multi_llm_strategy = strategy
+        agent.additional_llm_policy = policy
+        agent.min_importance = importance
+        agent.min_confidence = float(min_confidence) if min_confidence is not None else None
         agent.version += 1
         event = append_event(
             session,
@@ -253,8 +317,25 @@ def assign_agent(engine: Engine, agent_id: str, model_id: str, version: int) -> 
             "agent",
             agent.id,
             agent.version,
-            {"model_id": model.id, "provider_id": model.provider_id},
+            {
+                "model_id": model.id,
+                "provider_id": model.provider_id,
+                "secondary_model_id": agent.secondary_model_id,
+                "tertiary_model_id": agent.tertiary_model_id,
+                "multi_llm_strategy": strategy,
+                "additional_llm_policy": policy,
+            },
             str(uuid4()),
         )
         agent.event_id = event.event_id
-        return dict(agent_id=agent.id, model_id=model.id, version=agent.version)
+        return dict(
+            agent_id=agent.id,
+            model_id=model.id,
+            secondary_model_id=agent.secondary_model_id,
+            tertiary_model_id=agent.tertiary_model_id,
+            multi_llm_strategy=strategy,
+            additional_llm_policy=policy,
+            min_importance=importance,
+            min_confidence=agent.min_confidence,
+            version=agent.version,
+        )

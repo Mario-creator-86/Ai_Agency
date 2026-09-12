@@ -10,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.agents.director import DirectorError, director_review
+from app.agents.ensemble import collaborations
 from app.agents.history import agent_timeline, chat
 from app.agents.identity import ContractCommand, identity_view, set_role_contract
 from app.agents.memory import MemoryError, invalidate, list_memory
@@ -237,6 +238,23 @@ def create_agents_router(registry: ProviderRegistry) -> APIRouter:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except SQLAlchemyError:
             raise HTTPException(status_code=500, detail="Internal error") from None
+
+    @router.get("/{agent_id}/collaborations")
+    def get_collaborations(
+        request: Request,
+        agent_id: Annotated[str, Path(min_length=36, max_length=36)],
+    ) -> dict:
+        """Every execution of this employee that used more than one model.
+
+        What was asked, under which strategy, why a second model was called, which model
+        played which part, whether they disagreed, and whose answer was final. Each
+        participating call is an ordinary run, so the model that actually answered is on the
+        run itself: changing a slot today does not rewrite yesterday.
+        """
+        return {
+            "agent_id": agent_id,
+            "collaborations": collaborations(request.app.state.engine, agent_id),
+        }
 
     @router.get("/{agent_id}/memory")
     def get_agent_memory(

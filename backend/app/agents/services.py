@@ -291,6 +291,28 @@ def sync_provider_models(
         provider.last_health_check = now_str
         session.flush()
 
+    # The studio now knows which models exist, which is the first moment the starting
+    # allocation can mean anything: before a sync every model is unavailable, and a slot
+    # pointing at a model nobody has verified would be worse than an empty slot. Only
+    # employees whose slots nobody has configured are touched — an Owner's own choice from
+    # Settings is never overwritten by a file.
+    from app.agents.ensemble import apply_llm_allocation  # noqa: PLC0415
+
+    try:
+        allocation = apply_llm_allocation(engine)
+        if allocation["applied"] or allocation["skipped"]:
+            logger.info(
+                "llm_allocation_after_sync",
+                extra={
+                    "applied": len(allocation["applied"]),
+                    "skipped": len(allocation["skipped"]),
+                },
+            )
+    except (ValueError, RuntimeError) as exc:
+        # A configuration file that cannot be applied is a thing to report, not a reason to
+        # fail the model sync the Owner asked for.
+        logger.warning("llm_allocation_failed", extra={"reason": str(exc)[:200]})
+
     return list_provider_models(engine, provider_id)
 
 
@@ -308,8 +330,15 @@ class PolicyKernelError(Exception):
         self.status = status
 
 
-def _check_required_capabilities(session: Session, agent: Agent) -> None:
-    """Raise PolicyKernelError if the agent model lacks a required role capability."""
+def _check_required_capabilities(
+    session: Session, agent: Agent, model_id: str | None = None
+) -> None:
+    """Raise PolicyKernelError if the model lacks a capability the role requires.
+
+    `model_id` names the model to check when it is not the agent's assigned one — a second or
+    third model the Owner put in a slot. A role's requirements apply to whichever model is
+    about to do the work, not only to the primary.
+    """
     required_caps = list(
         session.scalars(
             select(Capability.name)
@@ -327,7 +356,7 @@ def _check_required_capabilities(session: Session, agent: Agent) -> None:
         session.scalars(
             select(Capability.name)
             .join(ModelCapability, ModelCapability.capability_id == Capability.id)
-            .where(ModelCapability.model_id == agent.model_id)
+            .where(ModelCapability.model_id == (model_id or agent.model_id))
         ).all()
     )
 
@@ -435,6 +464,7 @@ def run_agent_task(
     emit_message: bool = True,
     summary: str | None = None,
     extra: dict | None = None,
+    model_id: str | None = None,
 ) -> dict:
     """Execute an agent LLM run through the policy kernel. Returns AgentRunView dict.
 
@@ -446,6 +476,11 @@ def run_agent_task(
     ``summary`` is that prompt in one sentence the Owner can read — "Verific afirmația «…»"
     rather than nine hundred words of instructions with the claim buried in the middle. The
     history shows it in place of the prompt; the prompt itself stays one click away.
+
+    ``model_id`` runs this call on a model other than the agent's assigned one — the second or
+    third slot the Owner configured. The agent, its identity, its policy and its record are
+    the same; only which model answers changes, and the run records the model that actually
+    answered, so changing a slot tomorrow cannot rewrite what yesterday was answered by.
     """
     run_id = str(uuid4())
     started_at = utc_now()
@@ -461,10 +496,22 @@ def run_agent_task(
         if summary:
             context = {**context, "task_summary": " ".join(str(summary).split())[:300]}
 
-        provider_rec = session.get(ProviderRecord, agent.provider_id)
-        model_rec = session.get(ModelRecord, agent.model_id)
-        if provider_rec is None or model_rec is None:
-            raise ValueError("Agent provider or model record missing")
+        # Which model answers this call: the agent's own, or the slot the caller named.
+        # A named model must exist, be available, and satisfy what the role requires — a
+        # fallback onto a model that cannot do the job is not a fallback.
+        model_rec = session.get(ModelRecord, model_id or agent.model_id)
+        if model_rec is None:
+            raise ValueError("Agent model record missing")
+        provider_rec = session.get(ProviderRecord, model_rec.provider_id)
+        if provider_rec is None:
+            raise ValueError("Agent provider record missing")
+        if model_id and model_id != agent.model_id:
+            if not model_rec.is_available:
+                raise PolicyKernelError(
+                    "Modelul din slotul cerut nu este disponibil", "BLOCKED_PROVIDER"
+                )
+            _check_required_capabilities(session, agent, model_id=model_id)
+            context = {**context, "model_slot": "secondary_or_tertiary"}
 
         # --- Policy kernel ---
         try:
@@ -496,7 +543,7 @@ def run_agent_task(
             return AgentRunView.model_validate(run).model_dump()
 
         # --- Check adapter present ---
-        adapter = registry.get(agent.provider_id)
+        adapter = registry.get(model_rec.provider_id)
         if adapter is None:
             run = AgentRun(
                 id=run_id,

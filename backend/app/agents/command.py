@@ -855,7 +855,7 @@ def _choose(
     if director_id is None or registry is None:
         return fallback, None, "fără model: am urmat ordinea măsurătorilor"
 
-    from app.agents.services import run_agent_task  # noqa: PLC0415
+    from app.agents.ensemble import run_with_strategy  # noqa: PLC0415
 
     payload = json.dumps(
         {
@@ -904,7 +904,11 @@ def _choose(
         payload, "company-state"
     )
     try:
-        result = run_agent_task(
+        # This is a strategic decision, and it is declared as one. What happens next is the
+        # Director's own configuration: with a second model in her slot and a REVIEW strategy,
+        # her proposal is challenged before she commits; with SINGLE, this is one call, exactly
+        # as it was. Nothing here knows which model either of those is.
+        result = run_with_strategy(
             engine,
             registry,
             director_id,
@@ -912,6 +916,15 @@ def _choose(
             prompt,
             TEMPLATE_VERSION,
             correlation,
+            importance="STRATEGIC",
+            review_objective=(
+                "Challenge this plan before the company acts on it. Is there enough data for "
+                "each conclusion, or is the sample too small? Could the change be noise? Does "
+                "reach, retention or subscriber conversion actually point where the decision "
+                "assumes? Is correlation being read as cause? Is there a cheaper experiment "
+                "first, and what is the cost if the decision is wrong?"
+            ),
+            evidence=payload[:8000],
             summary=f"Conduc compania: {len(matters)} chestiuni pe masă.",
             max_tokens=3000,
             temperature=0.2,
@@ -928,7 +941,20 @@ def _choose(
         return fallback, result["id"], "răspunsul nu respecta schema: am urmat măsurătorile"
     allowed = {m["matter_key"] for m in matters}
     kept = [c for c in direction.choices if c.matter_key in allowed]
-    return (kept or fallback), result["id"], direction.note
+    note = direction.note
+    collaboration = result.get("collaboration") or {}
+    if collaboration.get("strategy") != "SINGLE":
+        note = (
+            f"{note} [{collaboration.get('strategy')}: "
+            f"{collaboration.get('reason')}; {collaboration.get('outcome')}]"
+        ).strip()
+    if collaboration.get("review_incomplete"):
+        # A decision nobody managed to challenge is not a challenged decision. It still
+        # stands — the Director is the authority — but it is recorded at low confidence and
+        # the Owner reads why.
+        kept = [c.model_copy(update={"confidence": "LOW"}) for c in kept]
+        note = (note + " Verificarea strategică nu s-a putut face; încredere redusă.").strip()
+    return (kept or fallback), result["id"], note
 
 
 def _assign(

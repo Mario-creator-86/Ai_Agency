@@ -56,6 +56,14 @@ class AgentView(BaseModel):
     role_id: str
     provider_id: str
     model_id: str
+    #: The optional second and third models and what is done with them. The interface shows
+    #: exactly this; there is no second place where the configuration lives.
+    secondary_model_id: str | None = None
+    tertiary_model_id: str | None = None
+    multi_llm_strategy: str = "SINGLE"
+    additional_llm_policy: str = "IMPORTANT_ONLY"
+    min_importance: str = "STRATEGIC"
+    min_confidence: float | None = None
     lifecycle: str
     runtime_state: str
     max_concurrent_tasks: int

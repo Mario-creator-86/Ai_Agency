@@ -57,5 +57,87 @@
       "Accountant",
       "glm-5.2:cloud"
     ]
+  ],
+  "llm_allocation": [
+    {
+      "role": "Director",
+      "primary": "kimi-k3:cloud",
+      "secondary": "nemotron-3-ultra:cloud",
+      "tertiary": null,
+      "strategy": "REVIEW",
+      "policy": "IMPORTANT_ONLY",
+      "min_importance": "STRATEGIC",
+      "note": "Strategic decisions are challenged before they are taken; routine work is not."
+    },
+    {
+      "role": "LeadResearcher",
+      "primary": "minimax-m3:cloud",
+      "secondary": null,
+      "tertiary": null,
+      "strategy": "SINGLE",
+      "policy": "IMPORTANT_ONLY",
+      "min_importance": "STRATEGIC",
+      "note": ""
+    },
+    {
+      "role": "FactChecker",
+      "primary": "qwen3.5:397b-cloud",
+      "secondary": null,
+      "tertiary": null,
+      "strategy": "SINGLE",
+      "policy": "IMPORTANT_ONLY",
+      "min_importance": "STRATEGIC",
+      "note": "Verification stays strict: an unsupported claim is never approved."
+    },
+    {
+      "role": "ScriptWriter",
+      "primary": "kimi-k3:cloud",
+      "secondary": null,
+      "tertiary": null,
+      "strategy": "SINGLE",
+      "policy": "IMPORTANT_ONLY",
+      "min_importance": "STRATEGIC",
+      "note": ""
+    },
+    {
+      "role": "VoiceArtist",
+      "primary": "mistral-large-3:675b-cloud",
+      "secondary": null,
+      "tertiary": null,
+      "strategy": "SINGLE",
+      "policy": "IMPORTANT_ONLY",
+      "min_importance": "STRATEGIC",
+      "note": ""
+    },
+    {
+      "role": "VideoEditor",
+      "primary": "glm-5.3-flash:cloud",
+      "secondary": null,
+      "tertiary": null,
+      "strategy": "SINGLE",
+      "policy": "IMPORTANT_ONLY",
+      "min_importance": "STRATEGIC",
+      "note": ""
+    },
+    {
+      "role": "Publisher",
+      "primary": "nemotron-3-ultra:cloud",
+      "secondary": null,
+      "tertiary": null,
+      "strategy": "SINGLE",
+      "policy": "IMPORTANT_ONLY",
+      "min_importance": "STRATEGIC",
+      "note": "Fallback once a second model is chosen for it; single until then."
+    },
+    {
+      "role": "Accountant",
+      "primary": "glm-5.3-flash:cloud",
+      "secondary": null,
+      "tertiary": null,
+      "strategy": "SINGLE",
+      "policy": "IMPORTANT_ONLY",
+      "min_importance": "STRATEGIC",
+      "note": "Interprets figures; the totals themselves come from the books, not from a model."
+    }
   ]
 }

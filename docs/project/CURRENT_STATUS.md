@@ -13,6 +13,19 @@ database resource discovery/refresh, separate production choices, UI and regress
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
 
+## An employee may think with more than one model (2026-09-12)
+
+Every agent now has an optional second and third model beside its primary, from the same
+registry, with a strategy that says what to do with them: single, fallback, review, debate or
+parallel (migration 0034). No model is named in the studio's logic — a test scans the backend
+and fails if one is — so any slot can be replaced from Settings without a code change. Extra
+models are spent only where the agent's own policy says the task earns them, and the reason is
+recorded. In review, debate and parallel the answer acted on is always a run on the employee's
+own model: a critic advises and cannot publish, command or decide. A review that could not be
+done is recorded as incomplete rather than filled in, and the Director's decision then carries
+low confidence. The Owner's current allocation lives in `config/workforce_seed.json`: the
+Director with a strategic critic, everyone else single. The report is `MULTI_LLM.md`.
+
 ## The company is managed, not only measured (2026-09-12)
 
 The Director now answers where the company stands, what is preventing growth and who acts next

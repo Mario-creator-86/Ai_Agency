@@ -1,5 +1,47 @@
 # Changelog
 
+## An employee may think with more than one model — 2026-09-12
+
+Every agent ran on exactly one model, and that single slot could not express the thing the
+Owner wanted: a Director who proposes a strategic decision and then has it challenged before
+she commits, a researcher who falls back when a model is unavailable, a hard question answered
+independently by two models and reconciled by the employee.
+
+So three slots and a strategy, and one rule above all of it: **no model is named in the
+studio's logic**. A model in a slot is a configuration value the Owner can replace from
+Settings tomorrow without a line of code changing, and a test scans the whole backend and
+fails if a configured model name appears anywhere outside documentation (migration 0034).
+
+- **Three slots per employee**, from the registry the primary already came from — no second
+  registry, no second connector, no second configuration screen. Each slot is checked the way
+  the primary always was: the model must exist, be available, and satisfy what the role
+  requires, because a fallback onto a model that cannot do the job is not a fallback.
+- **Five strategies.** SINGLE stays the normal way work is done. FALLBACK takes over only when
+  the first answer does not exist, and never invents one. REVIEW has the second model look for
+  what is wrong and the first decide. DEBATE asks a third model only when the two materially
+  disagree. PARALLEL synthesises independent answers.
+- **Extra models are not spent on routine work.** The agent's own policy and the importance
+  the caller declares decide, and the reason is recorded in words: "this was strategic, at or
+  above the threshold" is auditable, "a second model was called" is not.
+- **The advisers advise; the employee decides.** In REVIEW, DEBATE and PARALLEL the answer the
+  caller acts on is always a run on the employee's own model, with the other models' words in
+  its prompt. A critic cannot publish, command a department or change a strategy, because the
+  only thing it produces is text the primary model reads — and it is told so.
+- **A review that could not be done is said so.** No fabricated critique: the collaboration
+  closes as REVIEW_INCOMPLETE, the answer still stands, and the Director's loop drops that
+  decision's confidence to low and writes why.
+- **Traceability.** Each participating call stays an ordinary run with its own model and
+  tokens; `llm_collaboration` joins them with the part each played, the disagreement and the
+  final model. Changing a slot today cannot rewrite what yesterday was answered by.
+- **The Owner's allocation is a file he can edit** (`config/workforce_seed.json`): the
+  Director on her primary with a strategic critic, everyone else single. It is applied once
+  per employee, at the first model sync that learns which models exist, and never over an
+  existing assignment — otherwise the next sync would quietly undo a choice made in Settings.
+  `scripts/apply_llm_allocation.py --force` applies it when the file is a new instruction.
+- Tests: `tests/test_multi_llm.py`, the twenty-two the Owner asked for, with stand-in model
+  names so no test can pass because a name looks familiar. 693 pass.
+- The report is in `MULTI_LLM.md`.
+
 ## The Director runs a company, not a video — 2026-09-12
 
 Every part of this studio was measured and no part was managed. The Director chose the day's

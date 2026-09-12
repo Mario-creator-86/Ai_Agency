@@ -373,21 +373,99 @@ export function initSettings(api, hooks = {}) {
       const card = node('article', '', 'settings-card');
       const role = data.roles.find(role => role.id === agent.role_id);
       card.append(node('h3', agent.display_name), node('p', role?.name || 'Rol neidentificat', 'helper'));
+      const named = id => data.models.find(model => model.id === id)?.model_name;
       const current = data.models.find(model => model.id === agent.model_id);
       card.append(node('p', `Model actual: ${current?.model_name || 'Necunoscut'}`, 'helper'));
-      const select = /** @type {HTMLSelectElement} */ (node('select'));
-      select.setAttribute('aria-label', `Model pentru ${agent.display_name}`);
-      option(select, '', 'Alege un model disponibil…');
-      for (const model of data.models) {
-        if (!model.is_available || !(role?.required_capabilities || []).every(cap => model.capabilities.includes(cap))) continue;
-        const connection = data.integrations.find(item => item.id === model.provider_id);
-        option(select, model.id, `${connection?.name || 'Furnizor existent'} · ${model.model_name}`);
-      }
-      select.value = agent.model_id;
-      const save = node('button', 'Alocă modelul', 'secondary');
+      const extra = [named(agent.secondary_model_id), named(agent.tertiary_model_id)].filter(Boolean);
+      card.append(
+        node(
+          'p',
+          extra.length
+            ? `${agent.multi_llm_strategy} cu ${extra.join(' și ')} · ${agent.additional_llm_policy}`
+            : 'Un singur model (SINGLE)',
+          'helper',
+        ),
+      );
+      // Three slots and a strategy, on the card that already existed. A model is a
+      // configuration value here and nowhere else: the studio's logic never reads its name,
+      // so any of the three can be replaced tomorrow without touching code.
+      const usable = data.models.filter(
+        model =>
+          model.is_available &&
+          (role?.required_capabilities || []).every(cap => model.capabilities.includes(cap)),
+      );
+      const modelSelect = (label, value, withNone) => {
+        const select = /** @type {HTMLSelectElement} */ (node('select'));
+        select.setAttribute('aria-label', `${label} pentru ${agent.display_name}`);
+        option(select, '', withNone ? 'Niciunul' : 'Alege un model disponibil…');
+        for (const model of usable) {
+          const connection = data.integrations.find(item => item.id === model.provider_id);
+          option(select, model.id, `${connection?.name || 'Furnizor existent'} · ${model.model_name}`);
+        }
+        select.value = value || '';
+        return select;
+      };
+      const select = modelSelect('Model principal', agent.model_id, false);
+      const secondary = modelSelect('Model secundar', agent.secondary_model_id, true);
+      const tertiary = modelSelect('Model terțiar', agent.tertiary_model_id, true);
+      const strategy = /** @type {HTMLSelectElement} */ (node('select'));
+      strategy.setAttribute('aria-label', `Strategie pentru ${agent.display_name}`);
+      for (const [value, text] of [
+        ['SINGLE', 'Single — doar modelul principal'],
+        ['FALLBACK', 'Fallback — al doilea preia dacă primul nu răspunde'],
+        ['REVIEW', 'Review — al doilea critică, primul decide'],
+        ['DEBATE', 'Debate — răspund independent, agentul împacă'],
+        ['PARALLEL', 'Parallel — lucrează în paralel, agentul sintetizează'],
+      ]) option(strategy, value, text);
+      strategy.value = agent.multi_llm_strategy || 'SINGLE';
+      const policy = /** @type {HTMLSelectElement} */ (node('select'));
+      policy.setAttribute('aria-label', `Când se folosesc modelele suplimentare pentru ${agent.display_name}`);
+      for (const [value, text] of [
+        ['IMPORTANT_ONLY', 'Doar la sarcini importante'],
+        ['LOW_CONFIDENCE', 'Când încrederea e scăzută'],
+        ['ALWAYS', 'Mereu'],
+        ['MANUAL', 'Doar la cerere explicită'],
+      ]) option(policy, value, text);
+      policy.value = agent.additional_llm_policy || 'IMPORTANT_ONLY';
+      const importance = /** @type {HTMLSelectElement} */ (node('select'));
+      importance.setAttribute('aria-label', `Pragul de importanță pentru ${agent.display_name}`);
+      for (const [value, text] of [
+        ['ROUTINE', 'Prag: orice sarcină'],
+        ['NOTABLE', 'Prag: sarcini notabile'],
+        ['STRATEGIC', 'Prag: doar decizii strategice'],
+      ]) option(importance, value, text);
+      importance.value = agent.min_importance || 'STRATEGIC';
+      card.append(
+        node('p', 'Model principal', 'helper'), select,
+        node('p', 'Model secundar (critic, rezervă sau coleg)', 'helper'), secondary,
+        node('p', 'Model terțiar (arbitru)', 'helper'), tertiary,
+        node('p', 'Cum lucrează împreună', 'helper'), strategy,
+        node('p', 'Când merită modelele suplimentare', 'helper'), policy,
+        importance,
+      );
+      const save = node('button', 'Salvează alocarea', 'secondary');
       save.addEventListener('click', () => {
         if (!select.value) { message('Alege un model disponibil și compatibil cu rolul.', true); return; }
-        run(() => api(`/settings/agents/${agent.id}/model`, { method: 'PUT', body: JSON.stringify({ model_id: select.value, expected_version: agent.version }) }), 'Model alocat agentului.');
+        if (strategy.value !== 'SINGLE' && !secondary.value) {
+          message('Strategia aleasă are nevoie de un al doilea model.', true);
+          return;
+        }
+        if (tertiary.value && !secondary.value) {
+          message('Un al treilea model fără al doilea nu are cine să fie criticul.', true);
+          return;
+        }
+        run(() => api(`/settings/agents/${agent.id}/model`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            model_id: select.value,
+            expected_version: agent.version,
+            secondary_model_id: secondary.value || null,
+            tertiary_model_id: tertiary.value || null,
+            multi_llm_strategy: strategy.value,
+            additional_llm_policy: policy.value,
+            min_importance: importance.value,
+          }),
+        }), 'Alocare salvată.');
       });
       const test = node('button', 'Testează răspunsul', 'secondary');
       test.addEventListener('click', () => {

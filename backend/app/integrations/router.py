@@ -1,4 +1,5 @@
 from time import perf_counter
+from typing import Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -43,9 +44,23 @@ class SelectionCommand(BaseModel):
 
 
 class AssignmentCommand(BaseModel):
+    """Which models an employee thinks with, and what to do when there is more than one.
+
+    `model_id` alone is the command as it always was: one model, nothing else changes. The
+    remaining fields are the optional second and third slots and the strategy that uses them.
+    """
+
     model_config = ConfigDict(extra="forbid")
     model_id: UUID
     expected_version: int = Field(ge=1)
+    secondary_model_id: UUID | None = None
+    tertiary_model_id: UUID | None = None
+    multi_llm_strategy: Literal["SINGLE", "FALLBACK", "REVIEW", "DEBATE", "PARALLEL"] = "SINGLE"
+    additional_llm_policy: Literal["IMPORTANT_ONLY", "LOW_CONFIDENCE", "ALWAYS", "MANUAL"] = (
+        "IMPORTANT_ONLY"
+    )
+    min_importance: Literal["ROUTINE", "NOTABLE", "STRATEGIC"] = "STRATEGIC"
+    min_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
 class ChannelBindingCommand(BaseModel):
@@ -287,6 +302,16 @@ def create_settings_router() -> APIRouter:
                 str(agent_id),
                 str(command.model_id),
                 command.expected_version,
+                secondary_model_id=(
+                    str(command.secondary_model_id) if command.secondary_model_id else None
+                ),
+                tertiary_model_id=(
+                    str(command.tertiary_model_id) if command.tertiary_model_id else None
+                ),
+                multi_llm_strategy=command.multi_llm_strategy,
+                additional_llm_policy=command.additional_llm_policy,
+                min_importance=command.min_importance,
+                min_confidence=command.min_confidence,
             )
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from None
