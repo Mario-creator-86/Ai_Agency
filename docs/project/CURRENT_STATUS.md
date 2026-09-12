@@ -13,6 +13,16 @@ database resource discovery/refresh, separate production choices, UI and regress
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
 
+## The clean studio's first film, approved and unpublished (2026-09-12)
+
+From an empty history: six topics proposed in English on authorised sites, pages found
+through Wikipedia's and CERN's own addresses, 23 claims verified, a script whose every scene
+cites a claim, a storyboard that speaks the writer's words, a 45.6-second 9:16 render with
+Runway stills (`seedream5_lite`, after the studio dropped an editing-only model) and an
+ElevenLabs voice, quality control passed on every check, and an APPROVE from the Director —
+on `kimi-k3`, the first model she has had that can see, citing what the frames show. The
+film is not published: that decision is the Owner's.
+
 ## Pages are found, not guessed (2026-09-12)
 
 An authorised site can carry its own search address (OpenSearch JSON, `{query}` inside);
