@@ -1069,7 +1069,14 @@ def _post_run(
         for _ in range(2):
             if not review.get("left_open") or not review.get("reviewed"):
                 break
-            more = director_review(engine, registry, str(uuid4()), outcomes)
+            # A second or third pass that fails does not undo the first: the messages it
+            # would have read stay open for the next round, and the Owner is not told the
+            # evening's review was refused when most of it was done.
+            try:
+                more = director_review(engine, registry, str(uuid4()), outcomes)
+            except (DirectorError, ValueError) as exc:
+                review = {**review, "later_pass_refused": str(exc)[:200]}
+                break
             review = {
                 **more,
                 "reviewed": review.get("reviewed", 0) + more.get("reviewed", 0),

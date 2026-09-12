@@ -13,7 +13,10 @@ see that before a research stage silently finds nothing there.
 
 from __future__ import annotations
 
+import json
+import logging
 from typing import Any
+from urllib.parse import quote, urlsplit
 from uuid import uuid4
 
 from sqlalchemy import Engine, func, select
@@ -31,6 +34,11 @@ from app.research.retrieval import (
     validate_url,
 )
 from app.services import append_event, utc_now
+
+logger = logging.getLogger("amn.research")
+
+#: Where the words go in a site's search address.
+QUERY_PLACEHOLDER = "{query}"
 
 
 class RetrievalNotConfigured(RuntimeError):
@@ -76,6 +84,7 @@ def allowed_host_rows(settings: Settings, engine: Engine | None) -> list[dict[st
             "last_test_at": None,
             "last_test_status": None,
             "last_test_detail": None,
+            "search_template": None,
         }
         for host in settings.research_allowed_hosts
     ]
@@ -93,10 +102,17 @@ def allowed_host_rows(settings: Settings, engine: Engine | None) -> list[dict[st
                 "last_test_at": row.last_test_at,
                 "last_test_status": row.last_test_status,
                 "last_test_detail": row.last_test_detail,
+                "search_template": row.search_template,
             }
             if row.host in seen:
                 # Configured in both places: the file entry is shown with the test result.
-                seen[row.host].update({k: v for k, v in view.items() if k.startswith("last_test")})
+                seen[row.host].update(
+                    {
+                        k: v
+                        for k, v in view.items()
+                        if k.startswith("last_test") or k == "search_template"
+                    }
+                )
             else:
                 rows.append(view)
     return rows
@@ -216,7 +232,127 @@ def _host_view(row: ResearchAllowedHost) -> dict[str, Any]:
         "last_test_at": row.last_test_at,
         "last_test_status": row.last_test_status,
         "last_test_detail": row.last_test_detail,
+        "search_template": row.search_template,
     }
+
+
+def set_search_template(
+    engine: Engine, host: str, template: str | None, correlation_id: str = ""
+) -> dict[str, Any]:
+    """The Owner records a site's own search address, or clears it.
+
+    The address is https on the same host and carries ``{query}`` where the words go. What it
+    must answer is OpenSearch Suggestions JSON — ``[query, [titles], [descriptions], [urls]]``
+    — the format encyclopaedias and documentation sites serve to any honest client.
+    """
+    clean = host.strip().lower()
+    value = " ".join(str(template or "").split()) or None
+    if value is not None:
+        if QUERY_PLACEHOLDER not in value:
+            raise HostError("Adresa de căutare trebuie să conțină {query} unde intră cuvintele")
+        parts = urlsplit(value.replace(QUERY_PLACEHOLDER, "probe"))
+        if parts.scheme != "https" or (parts.hostname or "").lower() != clean:
+            raise HostError("Adresa de căutare trebuie să fie https, pe același site")
+    with Session(engine) as session, session.begin():
+        row = session.get(ResearchAllowedHost, clean)
+        if row is None:
+            raise HostError("Site-ul nu este în lista Owner-ului; adaugă-l întâi")
+        row.search_template = value
+        append_event(
+            session,
+            "research.search_configured",
+            "research_allowed_host",
+            clean,
+            4,
+            {"host": clean, "configured": value is not None},
+            correlation_id or str(uuid4()),
+        )
+        session.flush()
+        return _host_view(row)
+
+
+def _parse_opensearch(text: str) -> list[dict[str, str]]:
+    data = json.loads(text)
+    if not (
+        isinstance(data, list)
+        and len(data) >= 4
+        and isinstance(data[1], list)
+        and isinstance(data[3], list)
+    ):
+        raise ValueError("Search answer is not OpenSearch JSON")
+    return [
+        {"url": url, "title": " ".join(str(title).split())}
+        for title, url in zip(data[1], data[3], strict=False)
+        if isinstance(url, str)
+    ]
+
+
+def search_pages(
+    settings: Settings,
+    engine: Engine,
+    host: str,
+    query: str,
+    limit: int = 5,
+    retriever: SourceRetriever | None = None,
+) -> list[dict[str, str]]:
+    """Ask one authorised site's search for these words; pages on authorised hosts only.
+
+    A search that fails is an empty answer, logged, never an error: the Researcher still
+    plans, from what he knows, and the letter says what was tried.
+    """
+    clean = host.strip().lower()
+    with Session(engine) as session:
+        row = session.get(ResearchAllowedHost, clean)
+        template = row.search_template if row is not None else None
+    words = " ".join(str(query).split())[:200]
+    if not template or not words:
+        return []
+    policy = _policy(settings, engine)
+    address = template.replace(QUERY_PLACEHOLDER, quote(words, safe=""))
+    try:
+        answer = (retriever or SourceRetriever(policy)).fetch(address, accept_json=True)
+        found = _parse_opensearch(answer.text)
+    except (RetrievalError, RateLimited, ValueError, OSError) as exc:
+        logger.info("search_failed", extra={"host": clean, "reason": str(exc)[:160]})
+        return []
+    pages: list[dict[str, str]] = []
+    for item in found:
+        try:
+            validate_url(item["url"], policy)
+        except RetrievalError:
+            continue
+        pages.append({"url": item["url"], "title": item["title"][:200], "host": clean})
+        if len(pages) >= limit:
+            break
+    return pages
+
+
+def find_pages(
+    settings: Settings,
+    engine: Engine,
+    query: str,
+    limit: int = 6,
+    retriever: SourceRetriever | None = None,
+) -> list[dict[str, str]]:
+    """Pages that exist for these words, from every authorised site with a search address."""
+    with Session(engine) as session:
+        hosts = [
+            row.host
+            for row in session.scalars(
+                select(ResearchAllowedHost)
+                .where(ResearchAllowedHost.search_template.is_not(None))
+                .order_by(ResearchAllowedHost.added_at)
+            )
+        ]
+    if not hosts:
+        return []
+    per_host = max(1, limit // len(hosts))
+    found: list[dict[str, str]] = []
+    for host in hosts:
+        found.extend(search_pages(settings, engine, host, query, per_host, retriever))
+        if len(found) >= limit:
+            break
+    return found[:limit]
 
 
 def _policy(settings: Settings, engine: Engine | None = None) -> RetrievalPolicy:

@@ -892,17 +892,67 @@ function renderAllowedHosts(rows) {
       const remove = r.source === 'owner'
         ? `<button class="quiet btn-host-remove" data-host="${escapeHtml(r.host)}">Șterge</button>`
         : '';
+      // The site's own search address: with one, the studio finds pages that exist instead
+      // of the Researcher guessing addresses that 404. Only a row the Owner added holds it.
+      const search = r.source === 'owner'
+        ? `<div class="host-search">
+            <input class="host-search-template" data-host="${escapeHtml(r.host)}" value="${escapeHtml(r.search_template || '')}" placeholder="adresa de căutare a site-ului, cu {query} unde intră cuvintele (OpenSearch JSON)" title="De exemplu, pentru o enciclopedie MediaWiki: https://${escapeHtml(r.host)}/w/api.php?action=opensearch&search={query}&limit=5&namespace=0&format=json">
+            <button class="quiet btn-host-search-save" data-host="${escapeHtml(r.host)}">Salvează căutarea</button>
+            ${r.search_template ? `<button class="quiet btn-host-search-try" data-host="${escapeHtml(r.host)}">Probează</button>` : ''}
+          </div>`
+        : '';
       return `
         <div class="allowed-host-row" data-host="${escapeHtml(r.host)}">
-          <code class="allowed-host-name">${escapeHtml(r.host)}</code> ${origin} ${status}
+          <code class="allowed-host-name">${escapeHtml(r.host)}</code> ${origin} ${status}${r.search_template ? ' <span class="host-search-badge" title="are adresă de căutare">caută</span>' : ''}
           <span class="allowed-host-actions">
             <button class="quiet btn-host-test" data-host="${escapeHtml(r.host)}">Testează</button>
             ${remove}
           </span>
           ${r.last_test_status === 'FAILED' && r.last_test_detail ? `<div class="host-test-detail text-error">${escapeHtml(r.last_test_detail)}</div>` : ''}
+          ${search}
         </div>`;
     })
     .join('');
+  box.querySelectorAll('.btn-host-search-save').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const host = btn.getAttribute('data-host') || '';
+      const input = /** @type {HTMLInputElement | null} */ (box.querySelector(`.host-search-template[data-host="${CSS.escape(host)}"]`));
+      try {
+        await api(`/factual/sources/allowed-hosts/${encodeURIComponent(host)}/search`, {
+          method: 'PUT',
+          body: JSON.stringify({ template: input && input.value.trim() ? input.value.trim() : null }),
+        });
+        showSourceStatus(input && input.value.trim() ? `Adresa de căutare pentru ${host} a fost salvată.` : `Adresa de căutare pentru ${host} a fost ștearsă.`, false);
+        await loadSources();
+      } catch (err) {
+        showSourceStatus(err.message, true);
+      }
+    });
+  });
+  box.querySelectorAll('.btn-host-search-try').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const host = btn.getAttribute('data-host') || '';
+      const button = /** @type {HTMLButtonElement} */ (btn);
+      button.disabled = true;
+      try {
+        const result = await api(`/factual/sources/allowed-hosts/${encodeURIComponent(host)}/search/test`, {
+          method: 'POST',
+          body: JSON.stringify({ query: 'history of science' }),
+        });
+        const found = Array.isArray(result.found) ? result.found : [];
+        showSourceStatus(
+          found.length
+            ? `${host} a găsit ${found.length} pagini pentru «history of science»: ${found.map((f) => f.title).join('; ')}`
+            : `${host} nu a răspuns cu pagini pentru «history of science»; verifică adresa de căutare.`,
+          !found.length,
+        );
+      } catch (err) {
+        showSourceStatus(err.message, true);
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
   box.querySelectorAll('.btn-host-test').forEach((btn) => {
     btn.addEventListener('click', () => testAllowedHost(btn.getAttribute('data-host'), btn));
   });

@@ -370,6 +370,9 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 .host-test-failed { color: var(--gold-ink); background: var(--warn-bg); border-color: var(--warn-line); }
 .host-test-untested { color: var(--ink-3); }
 .host-test-detail { flex-basis: 100%; font-size: 12px; }
+.host-search { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.host-search-template { flex: 1 1 260px; min-width: 200px; font-size: 12px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface-sunk); }
+.host-search-badge { font-size: 11px; padding: 1px 6px; border-radius: 10px; background: var(--surface-sunk); color: var(--ink-2); border: 1px solid var(--line); }
 .policy-flexible { color: var(--ink-2); background: var(--surface-quiet); }
 .policy-locked { color: var(--gold-ink); background: var(--warn-bg); border-color: var(--warn-line); }
 .settings-toggle { display: flex; align-items: center; gap: 6px; font-size: 12.5px; }

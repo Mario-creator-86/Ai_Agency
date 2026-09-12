@@ -27,6 +27,8 @@ from app.factual.schemas import (
     ProposeTopicCommand,
     RetrievedSourceView,
     ScriptDraftView,
+    SearchQueryCommand,
+    SearchTemplateCommand,
     SourceSnapshotView,
     TopicIdeaView,
     VerifyClaimCommand,
@@ -57,6 +59,8 @@ from app.research.service import (
     list_sources,
     remove_allowed_host,
     retrieve_and_ingest,
+    search_pages,
+    set_search_template,
     test_allowed_host,
 )
 from app.security import require_owner
@@ -174,6 +178,29 @@ def create_factual_router() -> APIRouter:
             )
         except HostError as exc:
             raise HTTPException(404, str(exc)) from None
+
+    @router.put("/sources/allowed-hosts/{host}/search")
+    def put_search_template(host: str, request: Request, cmd: SearchTemplateCommand) -> dict:
+        """The Owner records the site's own search address (OpenSearch JSON, {query} inside)."""
+        try:
+            return set_search_template(request.app.state.engine, host, cmd.template)
+        except HostError as exc:
+            raise HTTPException(422, str(exc)) from None
+
+    @router.post("/sources/allowed-hosts/{host}/search/test")
+    def post_search_test(host: str, request: Request, cmd: SearchQueryCommand) -> dict:
+        """Run the site's search for real and show what it finds; nothing is stored."""
+        return {
+            "host": host.strip().lower(),
+            "query": cmd.query,
+            "found": search_pages(
+                request.app.state.settings,
+                request.app.state.engine,
+                host,
+                cmd.query,
+                retriever=getattr(request.app.state, "source_retriever", None),
+            ),
+        }
 
     @router.post("/sources/retrieve", response_model=RetrievedSourceView)
     def post_retrieve_source(request: Request, cmd: RetrieveSourceCommand) -> dict:

@@ -9,6 +9,9 @@ Implementation 2026-09-09: Phase 0 acceptance verified. See [VERIFICATION.md](VE
 > - **Phase 4** — the verification and gating machinery is real, but there is no search/research
 >   adapter and no independent fact-checker. Sources are pasted by the Owner; a claim's status is
 >   whatever the caller sends. Acceptance ("real research, evidence, independent fact checks") open.
+>   Update 2026-09-12: the Researcher proposes topics and names pages; the studio finds pages
+>   through each authorised site's own search address (OpenSearch, recorded by the Owner) and
+>   reads them; the Fact Checker verifies claims against the fetched text.
 > - **Phase 5** — FFmpeg now produces a real 1080x1920 H.264 file, but there is no image provider
 >   and no TTS provider, so the frames are placeholders and QC blocks them from publication.
 >   Character continuity is unimplemented. Acceptance ("provenance-backed media") open.

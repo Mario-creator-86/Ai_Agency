@@ -13,6 +13,14 @@ database resource discovery/refresh, separate production choices, UI and regress
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
 
+## Pages are found, not guessed (2026-09-12)
+
+An authorised site can carry its own search address (OpenSearch JSON, `{query}` inside);
+the studio asks it before the Researcher plans and reads the pages found when his guesses
+fail. On the clean studio's first day every guessed address returned 404; with Wikipedia's
+search address recorded, the day is expected to read real pages. Sites that serve articles
+only to browsers (UNESCO) stay unreadable under the studio's honest identity.
+
 ## Starting over, and a Director who decides once (2026-09-12)
 
 `scripts/reset_history.py` deletes the agents' history and the live ledger and keeps the

@@ -179,7 +179,8 @@ class SourceRetriever:
         self.policy = policy
         self._cache: OrderedDict[str, tuple[float, RetrievedSource]] = OrderedDict()
 
-    def fetch(self, url: str) -> RetrievedSource:
+    def fetch(self, url: str, *, accept_json: bool = False) -> RetrievedSource:
+        """Read a page — or, with ``accept_json``, a site's search answer — under the policy."""
         requested, _ = validate_url(url, self.policy)
         cached = self._cache.get(requested)
         if cached and time.monotonic() - cached[0] < self.policy.cache_seconds:
@@ -203,7 +204,9 @@ class SourceRetriever:
                         "GET",
                         target,
                         headers={
-                            "Accept": "text/html, text/plain",
+                            "Accept": "application/json"
+                            if accept_json
+                            else "text/html, text/plain",
                             "Accept-Encoding": "identity",
                             "User-Agent": "AutonomousAIStudio-SourceRetriever/1.0",
                         },
@@ -220,8 +223,13 @@ class SourceRetriever:
                     if response.status != 200:
                         raise RetrievalError(f"Source returned HTTP {response.status}")
                     mime = response.headers.get_content_type()
-                    if mime not in ("text/html", "text/plain"):
-                        raise RetrievalError("Source is not supported HTML or plain text")
+                    wanted = ("application/json",) if accept_json else ("text/html", "text/plain")
+                    if mime not in wanted:
+                        raise RetrievalError(
+                            "Search did not answer JSON"
+                            if accept_json
+                            else "Source is not supported HTML or plain text"
+                        )
                     if response.getheader("Content-Encoding", "identity").lower() != "identity":
                         raise RetrievalError("Compressed responses are not supported")
                     body = bytearray()

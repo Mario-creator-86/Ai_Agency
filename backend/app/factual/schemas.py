@@ -189,3 +189,15 @@ class HookOptionView(BaseModel):
     retention_score_estimate: float
     is_selected: bool
     created_at: str
+
+
+class SearchTemplateCommand(BaseModel):
+    """The Owner records (or clears) a site's search address; ``{query}`` marks the words."""
+
+    model_config = ConfigDict(extra="forbid")
+    template: str | None = Field(default=None, max_length=500)
+
+
+class SearchQueryCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    query: str = Field(min_length=2, max_length=200)

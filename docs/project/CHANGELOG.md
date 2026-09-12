@@ -1,5 +1,30 @@
 # Changelog
 
+## The studio finds pages before the Researcher names them — 2026-09-12
+
+The first day of the clean studio, watched live: six real topics in English on authorised
+sites; then nothing read. Dr. Aris named three addresses per topic from memory and every
+one returned 404 — UNESCO serves its article pages only to browsers (the front page answers
+the studio's honest identity; the deep pages do not), and the DeepMind, Anthropic and
+Hugging Face paths did not exist. The Director, seeing a letter with no body, asked for
+"raw fetch logs". A site's own search, in the OpenSearch Suggestions JSON format, answers
+the studio's identity and returns pages that exist (Wikipedia's does, tested).
+
+- **Search address per authorised site** (migration 0030 `research_allowed_host.search_template`,
+  `set_search_template`, `PUT /factual/sources/allowed-hosts/{host}/search`, a field and a
+  "Probează" button in the research dialog): https on the same host, `{query}` where the
+  words go. Nothing is hardcoded: the Owner records it, the studio uses it.
+- **`find_pages` / `search_pages`** (`backend/app/research/service.py`): the retriever asks
+  for JSON (`accept_json`) under the same allowlist, SSRF, size and time rules; results are
+  kept only on authorised hosts; a failed search is an empty answer.
+- **The Researcher plans from pages that exist**: `gather_sources` lists the pages found in
+  his prompt; when every guess of his fails, the found pages are read anyway.
+- **The letter carries the evidence**: "Nicio sursă preluată" now lists each address and
+  what the site answered, and says the studio fetched with its own identity.
+- **A later evening pass that fails does not undo the first** (`_post_run`): the third
+  review of the clean day returned no text and the stage reported the whole review refused.
+- Tests: `tests/test_search_step.py` (6).
+
 ## A review that fed itself, and a studio that can start over — 2026-09-12
 
 The Owner's live evening, read from the record: after the day closed, the Director reviewed

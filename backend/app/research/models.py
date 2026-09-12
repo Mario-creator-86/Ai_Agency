@@ -25,4 +25,7 @@ class ResearchAllowedHost(Base):
     #: PASSED | FAILED — what happened when the studio last fetched the host's front page.
     last_test_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
     last_test_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: The site's own search address (OpenSearch Suggestions JSON) with ``{query}`` where the
+    #: words go — the studio finds pages here instead of guessing them (migration 0030).
+    search_template: Mapped[str | None] = mapped_column(String(500), nullable=True)
     event_id: Mapped[str | None] = mapped_column(ForeignKey("domain_event.event_id"), nullable=True)

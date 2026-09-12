@@ -40,7 +40,12 @@ from app.factual.models import SourceSnapshot, TopicIdea
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.providers.registry import ProviderRegistry
 from app.research.retrieval import RateLimited, RetrievalError
-from app.research.service import HostNotAllowed, allowed_host_rows, retrieve_and_ingest
+from app.research.service import (
+    HostNotAllowed,
+    allowed_host_rows,
+    find_pages,
+    retrieve_and_ingest,
+)
 from app.services import append_event, utc_now
 
 logger = logging.getLogger("studio.research.agent")
@@ -451,10 +456,21 @@ def gather_sources(
         }
 
     shortlist = planned or hosts
+    # Before the Researcher names anything, the studio asks the authorised sites that have a
+    # search address: pages found this way exist, and a plan that starts from them is read.
+    found = [p for p in find_pages(settings, engine, title) if p["url"] not in already]
     payload = json.dumps({"title": title, "angle": angle}, ensure_ascii=False)
     prompt = _SOURCE_INSTRUCTIONS.format(
         limit=min(limit, MAX_URLS), hosts=", ".join(shortlist[:12])
-    ) + wrap_in_inert_boundary(payload, "topic")
+    )
+    if found:
+        prompt += (
+            "Pages the studio has already found on the authorised sites for this topic — "
+            "they exist and can be read, so prefer them and add others only if clearly better:\n"
+            + "\n".join(f"- {p['url']} — {p['title']}" for p in found)
+            + "\n"
+        )
+    prompt += wrap_in_inert_boundary(payload, "topic")
     result = run_agent_task(
         engine,
         registry,
@@ -480,13 +496,10 @@ def gather_sources(
 
     fetched: list[dict[str, Any]] = []
     failed: list[dict[str, str]] = []
-    for candidate in plan.urls[:limit]:
-        if candidate.url in already:
-            continue
+
+    def read(url: str) -> None:
         try:
-            stored = retrieve_and_ingest(
-                engine, settings, candidate.url, str(uuid4()), topic_id=topic_id
-            )
+            stored = retrieve_and_ingest(engine, settings, url, str(uuid4()), topic_id=topic_id)
             fetched.append(
                 {
                     "url": stored["source"]["url"],
@@ -494,12 +507,24 @@ def gather_sources(
                     "characters": len(stored["source"].get("sanitized_content") or ""),
                 }
             )
-            already.add(candidate.url)
         except (HostNotAllowed, RetrievalError, RateLimited, ValueError) as exc:
             # A page the studio could not read is a fact about the page, not a failure of the
             # day: it is recorded and the next candidate is tried.
-            failed.append({"url": candidate.url, "why": str(exc)[:200]})
-            logger.info("source_not_retrieved", extra={"url_host": candidate.url[:80]})
+            failed.append({"url": url, "why": str(exc)[:200]})
+            logger.info("source_not_retrieved", extra={"url_host": url[:80]})
+        already.add(url)
+
+    for candidate in plan.urls[:limit]:
+        if candidate.url not in already:
+            read(candidate.url)
+    # The Researcher's guesses all failed: the pages the studio found are read anyway. A
+    # plan is his choice among pages; it is not a way to lose the ones that exist.
+    if not fetched:
+        for page in found:
+            if len(fetched) >= limit:
+                break
+            if page["url"] not in already:
+                read(page["url"])
 
     with Session(engine) as session, session.begin():
         if fetched:
@@ -513,11 +538,20 @@ def gather_sources(
                 agent_id=researcher_id,
             )
         if failed and not fetched:
+            # The letter carries the evidence — each address and what the site answered —
+            # so the Director decides on it instead of asking for the fetch log.
             post_message(
                 session,
                 intent="ESCALATE",
                 subject=f"Nicio sursă preluată pentru «{title[:80]}»",
                 body={"topic_id": topic_id, "failed": failed},
+                body_text=(
+                    "Am cerut paginile de mai jos, cu identitatea studioului "
+                    "(AutonomousAIStudio-SourceRetriever), și niciuna nu a putut fi citită:\n"
+                    + "\n".join(f"- {f['url']} — {f['why']}" for f in failed)
+                    + "\nUn 404 pe o adresă ghicită înseamnă că pagina nu există sau că site-ul "
+                    "nu o servește unui program; nu am unealtă de căutare. — Dr. Aris"
+                ),
                 from_agent_id=researcher_id,
                 to_agent_id=None,
                 run_id=result["id"],
@@ -529,4 +563,5 @@ def gather_sources(
         "topic_id": topic_id,
         "fetched": fetched,
         "failed": failed,
+        "found": found,
     }

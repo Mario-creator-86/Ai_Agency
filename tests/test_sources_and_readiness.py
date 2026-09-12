@@ -191,6 +191,7 @@ def test_owner_adds_tests_and_removes_authorised_sites(client, headers, engine, 
         "last_test_at": None,
         "last_test_status": None,
         "last_test_detail": None,
+        "search_template": None,
     }
 
     for bad in ("localhost", "www.nasa.gov:443", "127.0.0.1", "NASA.gov", "*.gov"):
