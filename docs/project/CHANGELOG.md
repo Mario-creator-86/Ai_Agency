@@ -1,5 +1,19 @@
 # Changelog
 
+## The skyline recedes, and the slogan says TOGETHER — 2026-09-13
+
+- **The slogan panel reads all four lines.** The classic building in front of it was 8 m deep, so
+  from the camera's 10° its roof and cornices rose over the panel and hid "TOGETHER"; it is now a
+  shallow lit facade, as in the picture.
+- **The skyline recedes into blue**: the far haze is blue instead of pink, tower windows are
+  smaller and more of them are lit, and the brightest windows are warm white instead of bluish.
+- **The bridge** has warm, dim cables and deck lights instead of a glowing white fan.
+- Live page at the picture's light: mean colour distance 9.1 → 8.5; right-hand city 13.3 → 11.2,
+  left sky 30.5 → 26.6, street 4.9 → 3.7. Plates alone 4.8 → 4.7.
+- A trial of lower desks with a wooden top and clutter on the back desks measured worse in every
+  room (L4 3.0 → 4.8, L3 10.1 → 12.5) and read no closer to the picture at the canvas's scale, so
+  it was not kept; only lines of writing on L3's pinboard notes stay, for the next plates.
+
 ## Rooms as bright as the picture's — 2026-09-13
 
 Once dusk stopped borrowing light from the sunlit day plates, every room read a little darker than

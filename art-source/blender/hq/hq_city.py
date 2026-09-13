@@ -278,9 +278,9 @@ def _rect(x0, x1, z0, z1, y):
 def build_city(city, mats):
     t = MB("skyline")
     rng = random.Random(3)
-    dark = windows_material("tower_dark", "#1c2440", lit_ratio=0.27, win_w=0.22, win_h=0.34, strength=7.5)
-    blue = windows_material("tower_blue", "#26304f", lit_ratio=0.3, win_w=0.2, win_h=0.32, strength=7.5)
-    mauve = windows_material("tower_mauve", "#3a3450", lit_ratio=0.28, win_w=0.24, win_h=0.36, strength=7.5)
+    dark = windows_material("tower_dark", "#1c2440", lit_ratio=0.36, win_w=0.18, win_h=0.28, strength=7.5)
+    blue = windows_material("tower_blue", "#26304f", lit_ratio=0.38, win_w=0.17, win_h=0.27, strength=7.5)
+    mauve = windows_material("tower_mauve", "#343652", lit_ratio=0.36, win_w=0.19, win_h=0.29, strength=7.5)
     dense = windows_material("city_dense", "#1f2438", lit_ratio=0.48, win_w=0.16, win_h=0.26, strength=8.0)
     cool = windows_material("tower_cool", "#1e2640", lit_ratio=0.2, win_w=0.22, win_h=0.34, strength=6.5, warm=False)
     beacon = emissive("beacon", "#ff3b3b", 25.0)
@@ -335,12 +335,12 @@ def build_city(city, mats):
     pylon_top = Z(312, by)
     t.box(X(233), X(241), by, by + 0.6, deck_z - 6.0, pylon_top, br)
     t.box(X(186), X(292), by - 0.3, by + 0.9, deck_z - 0.25, deck_z, br)
-    cable = emissive("bridge_cable", "#f6c7a2", 1.4)
+    cable = emissive("bridge_cable", "#e8a86a", 0.9)
     for i in range(1, 9):
         for side in (-1, 1):
             xe = 237 + side * i * 6.0
             beam(t, (X(237), by - 0.05, pylon_top - 0.4 - i * 0.15), (X(xe), by - 0.05, deck_z), 0.012, cable)
-    deck_light = emissive("bridge_light", "#ffd9b0", 22.0)
+    deck_light = emissive("bridge_light", "#ffc98a", 14.0)
     for xp in range(188, 292, 6):
         t.sphere((X(xp), by - 0.35, deck_z + 0.05), 0.09, deck_light, seg=8, rings=5)
     # low block "SAME CITY BRIGHTER MINDS"
@@ -365,15 +365,15 @@ def build_city(city, mats):
     text(city, "//", X(1545), 39.6, Z(266, 39.6), 0.5, teal, name="slogan_dash_top")
     text(city, "//", X(1500), 39.6, Z(338, 39.6), 0.5, teal, name="slogan_dash_bottom")
     classic = windows_material("classic", "#7a5e50", lit_ratio=0.45, win_w=0.9, win_h=1.5, strength=5.0)
-    near.box(X(1490), X(1600), 4.0, 12.0, -1.5, Z(372, 4.0), classic)
+    near.box(X(1490), X(1600), 4.0, 5.2, -1.5, Z(372, 4.0), classic)
     stone = principled("classic_stone", "#6a5446", rough=0.6)
-    near.box(X(1486), X(1600), 3.7, 12.0, Z(372, 3.7), Z(362, 3.7), stone)
-    near.box(X(1492), X(1600), 4.2, 11.0, Z(362, 4.2), Z(352, 4.2), stone)
+    near.box(X(1486), X(1600), 3.7, 5.4, Z(372, 3.7), Z(362, 3.7), stone)
+    near.box(X(1492), X(1600), 4.2, 5.3, Z(362, 4.2), Z(352, 4.2), stone)
     for rr in (430, 500):
         near.box(X(1488), X(1600), 3.8, 4.0, Z(rr + 3, 3.8), Z(rr, 3.8), stone)
     near.build(city, bevel=0.01)
     haze = MB("haze")
-    haze.front_quad(X(-20), X(1620), Z(700, 22.0), Z(250, 22.0), 22.0, haze_material("haze_near", "#3c3052", 0.42, 0.0, 1.0))
-    haze.front_quad(X(-20), X(1620), Z(640, 52.0), Z(300, 52.0), 52.0, haze_material("haze_far", "#c27a70", 0.5, 0.0, 1.6))
+    haze.front_quad(X(-20), X(1620), Z(700, 22.0), Z(250, 22.0), 22.0, haze_material("haze_near", "#2f3658", 0.42, 0.0, 1.0))
+    haze.front_quad(X(-20), X(1620), Z(640, 52.0), Z(300, 52.0), 52.0, haze_material("haze_far", "#6f7aa6", 0.5, 0.0, 1.1))
     haze.build(city)
     t.build(city)

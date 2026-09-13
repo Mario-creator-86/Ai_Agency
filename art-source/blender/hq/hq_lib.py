@@ -268,7 +268,7 @@ def windows_material(name, wall, lit_ratio=0.35, win_w=0.9, win_h=1.3, strength=
     b.inputs["Row Height"].default_value = win_h
     g.link(vec, b.inputs["Vector"])
     cut = 1.0 - lit_ratio
-    stops = [(0.0, "#000000"), (cut, "#4a2e16" if warm else "#1c2c4a"), (cut + lit_ratio * 0.35, "#ffb35c" if warm else "#9cc4ff"), (cut + lit_ratio * 0.8, "#ffe0a8"), (0.999, "#cfe2ff")]
+    stops = [(0.0, "#000000"), (cut, "#4a2e16" if warm else "#1c2c4a"), (cut + lit_ratio * 0.35, "#ffb35c" if warm else "#9cc4ff"), (cut + lit_ratio * 0.8, "#ffe0a8"), (0.999, "#ffe9c4" if warm else "#cfe2ff")]
     lit = g.ramp(b.outputs["Color"], stops, constant=True)
     mask = g.ramp(b.outputs["Fac"], [(0.0, "#ffffff"), (0.5, "#000000")], constant=True)
     emit = g.vmul(lit.outputs["Color"], mask.outputs["Color"])

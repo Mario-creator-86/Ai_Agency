@@ -9,9 +9,9 @@
    "city": {
     "file": "night_city.webp",
     "x": 0.0,
-    "y": 79.5,
+    "y": 78.0,
     "w": 1600.0,
-    "h": 760.5
+    "h": 762.0
    },
    "street_back": {
     "file": "night_street_back.webp",
@@ -65,9 +65,9 @@
    "street_front": {
     "file": "night_street_front.webp",
     "x": 33.0,
-    "y": 776.0,
+    "y": 775.0,
     "w": 1563.0,
-    "h": 56.5
+    "h": 57.5
    }
   },
   "day": {
@@ -130,9 +130,9 @@
    "street_front": {
     "file": "day_street_front.webp",
     "x": 33.0,
-    "y": 776.0,
+    "y": 775.5,
     "w": 1563.0,
-    "h": 56.5
+    "h": 57.0
    }
   }
  }
