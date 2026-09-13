@@ -177,11 +177,59 @@ UnrealEditor-Cmd.exe art-source/unreal/AMNReference/AMNReference.uproject -run=p
 - Everything the editor and the exporter generate is ignored by Git; only scripts, the
   `.uproject` and config are checked in.
 
+## Live in the page: Pixel Streaming 2
+
+The Owner chose to see the Unreal headquarters live in the page. Unreal runs the level as a game
+and streams it over Pixel Streaming 2; the page lays the video over its own renderer.
+
+```text
+powershell -File art-source/unreal/live/start_live_hq.ps1            # wilbur + Unreal, 1920x1008
+STUDIO_OFFICE_STREAM_SIGNALLING_URL=ws://127.0.0.1:8890               # .env, then restart the backend
+```
+
+- **Signalling server.** Epic's `PixelStreamingInfrastructure` release `UE5.8-0.1.0` (the
+  engine's `get_ps_servers` script only knows up to 5.7), built with the Node 22.14.0 it asks for.
+  Its batch scripts break on spaces in paths, so it lives in `E:\AMN_PixelStreaming` (override
+  with `AMN_PS_INFRA`, `AMN_PS_NODE`, `AMN_UE_ROOT`). `art-source/unreal/live/wilbur.config.json`:
+  streamer port 8888, player port 8890, no web page of its own.
+- **Unreal.** `AMNReference.uproject` enables `PixelStreaming2`. `start_live_hq.ps1` runs
+  `/Game/HQ/HQ_Dusk -game -RenderOffScreen -PixelStreamingConnectionURL=ws://127.0.0.1:8888
+  -PixelStreamingEncoderCodec=H264` (the RX 9070 encodes H.264 in hardware). The plate camera is
+  player 0's camera (`auto_activate_for_player`, set by `build_hq_scene.py`, or on the existing
+  level by `live/prepare_live_level.py`), so the stream has the page's framing; 1920×1008 keeps
+  the page's 1600:840 shape. Verified in the page (headless Chrome): the stream went live at
+  1920×1008, ICE connected, H.264 decoded (794 frames in the first seconds), no console errors.
+- **Remote Control.** The project enables `RemoteControl` and `start_live_hq.ps1` passes
+  `-RCWebControlEnable`, so the running level answers Remote Control's HTTP API on
+  127.0.0.1:30010 (`/remote/object/call`, `/remote/object/property`). That is the route by which
+  the backend will place the employees without compiling C++: the installed MSVC 14.44.35207 and
+  14.50.35717 are both on UE 5.8's banned list. Its settings belong in
+  `Config/DefaultRemoteControl.ini` (`config=RemoteControl`); written in `DefaultEngine.ini` they
+  were ignored and the unused WebSocket server opened 0.0.0.0:30020. It now stays off.
+- **Backend.** The page may only talk to its own origin, so the backend relays the signalling
+  WebSocket (`/api/v1/office/stream/signalling?token=…`, the Owner token, compared in constant
+  time) to `STUDIO_OFFICE_STREAM_SIGNALLING_URL`. `GET /api/v1/office/stream` tells the page
+  whether one is configured. Unset or not running, the relay closes (1013) and nothing is shown
+  in the stream's place. The video itself travels over WebRTC.
+- **Page.** `hq_stream_config.js` (whether `scene.json` shows the stream, the relay address) and
+  `hq_stream.js` (`LiveStream`, Epic's `@epicgames-ps/lib-pixelstreamingfrontend-ue5.8`). The
+  video layer lets clicks through to the renderer below, which still knows where everyone sits;
+  it hides while the stream is down and retries every `retry_ms`. `#scene-viewport` carries
+  `data-stream` = `off` | `connecting` | `live`. The layer has the class `fixed-size`: without it
+  the library writes an inline style, which the page's CSP refuses. `LiveStream.send()` carries
+  the studio's state to Unreal (`emitUIInteraction`) for the agents to come. The library
+  subscribes to the streamer by itself: setting `StreamerId` again when the streamer list arrives
+  resubscribed mid-negotiation (`createAnswer … wrong state: stable`) and no frame ever came, so
+  the page only switches when the library picked another streamer.
+- **Not yet.** The Unreal level has no employees, traffic or pedestrians, and nothing in it reads
+  the studio's state yet. Until it does, the stream shows an empty building, so it is only
+  switched on by setting the backend variable.
+
 ## Verification
 
 ```text
 cd frontend && npm test && npm run check && npm run build
-uv run pytest tests/test_office_weather.py tests/test_office_layout_matches_scene.py tests/test_phase3_office.py
+uv run pytest tests/test_office_weather.py tests/test_office_layout_matches_scene.py tests/test_phase3_office.py tests/test_office_stream.py
 node scripts/shot_hq.mjs --out dusk.png --time 2026-09-13T16:40:00Z          # the reference's light
 node scripts/shot_hq.mjs --out rain.png --time 2026-09-13T20:30:00Z --weather rain
 node scripts/shot_hq.mjs --out ufo.png --time 2026-09-13T20:30:00Z --event ufo_flyover --wait 6000
@@ -200,6 +248,8 @@ building and street regions. When it and a live shot disagree, look for what the
 
 - Messages written by the backend (reasons, errors, agent prose, run notes) are still in
   Romanian; the interface's own words are English.
-- The weather endpoint and the new layout need the backend restarted.
+- The weather endpoint, the new layout and the stream relay need the backend restarted.
+- The stream shows the Unreal building without its employees and street life until the level
+  reads the studio's state.
 - The lift carries a courier for a workflow token; the seated employees do not leave their
   desks, because the backend does not say they walk anywhere.

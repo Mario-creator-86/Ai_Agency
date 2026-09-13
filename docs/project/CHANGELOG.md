@@ -1,5 +1,31 @@
 # Changelog
 
+## The Unreal headquarters, live in the page — 2026-09-13
+
+The Owner chose to see the headquarters rendered by Unreal Engine live in the page (Pixel
+Streaming). The pipe is built end to end; the Unreal level does not have the employees and the
+street life yet, so the stream is only switched on by configuration.
+
+- **Unreal streams.** The project enables Pixel Streaming 2. `art-source/unreal/live/start_live_hq.ps1`
+  starts Epic's signalling server (release UE5.8-0.1.0, built with Node 22.14.0, outside the repo
+  because its scripts break on spaces) and runs `/Game/HQ/HQ_Dusk` as a game through the plate
+  camera, H.264 on the RX 9070. Unreal loaded the level and joined the signalling server.
+- **The backend relays.** The page may only talk to its own origin, so
+  `/api/v1/office/stream/signalling` carries the signalling to `STUDIO_OFFICE_STREAM_SIGNALLING_URL`
+  (Owner token, constant-time), and `GET /api/v1/office/stream` says whether a stream is
+  configured. Unset or not running, the relay closes and nothing takes the stream's place.
+- **The page shows it.** The office viewport lays Epic's player over its own renderer, lets clicks
+  through to it, hides the video while the stream is down and retries (`scene.json`
+  `live_stream`). `#scene-viewport[data-stream]` says which one is on screen.
+- **Seen in the page.** Headless Chrome logged in, the viewport went `live`: 1920×1008 H.264,
+  794 frames decoded in the first seconds, no console errors.
+- **Remote Control on this machine only.** The running level answers Remote Control's HTTP API
+  on 127.0.0.1:30010, the route for placing the employees without C++ (both installed MSVC
+  versions are banned by UE 5.8). Its settings are in `Config/DefaultRemoteControl.ini`; the
+  unused WebSocket server, which had opened on 0.0.0.0, stays off.
+- Tests: `tests/test_office_stream.py` (relay both ways, token refused, not configured, not
+  running, address check), `frontend/tests/hq_stream.test.js`.
+
 ## MetaHuman Creator enabled in the Unreal project — 2026-09-13
 
 The employees are to be real MetaHumans, so the AMNReference project now loads the MetaHuman

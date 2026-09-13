@@ -11,6 +11,9 @@
 #office-scene-container { position: relative; height: auto; min-height: 0; display: flex; flex-direction: column; gap: 10px; margin: 0 16px; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; overflow: visible; }
 #office-scene-container .scene-viewport { position: relative; width: 100%; aspect-ratio: 1600 / 840; border: 1px solid #25355c; border-radius: 16px; overflow: hidden; background: #060a14; box-shadow: 0 18px 40px rgba(2, 6, 18, .45); }
 #office-scene-container .office-canvas { position: absolute; inset: 0; width: 100%; height: 100%; background: #060a14; }
+/* The streamed Unreal headquarters lies over the renderer and lets clicks through to it. */
+#office-scene-container .live-stream-layer { position: absolute; inset: 0; z-index: 2; pointer-events: none; background: #060a14; }
+#office-scene-container .live-stream-layer video { position: absolute; inset: 0; width: 100% !important; height: 100% !important; object-fit: cover; }
 .scene-info-pill { position: absolute; top: 14px; left: 14px; z-index: 5; padding: 7px 14px; border-radius: 10px; background: rgba(8, 13, 28, .82); border: 1px solid #2b3a5e; color: #e6ebf5; font: 500 12px/1.2 "Segoe UI", system-ui, sans-serif; letter-spacing: .08em; pointer-events: none; backdrop-filter: blur(6px); white-space: pre; }
 
 #office-scene-container .camera-toolbar {

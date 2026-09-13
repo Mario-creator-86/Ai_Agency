@@ -30,3 +30,5 @@ art-source/unreal/bake/
 art-source/unreal/sky_dusk.png
 art-source/unreal/renders/
 art-source/unreal/AMNReference/Config/DefaultInput.ini
+# Epic's Pixel Streaming signalling server + web player, fetched per engine version
+art-source/unreal/pixelstreaming/

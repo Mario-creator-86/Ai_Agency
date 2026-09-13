@@ -96,6 +96,11 @@ class Settings(BaseSettings):
     office_weather_host: str | None = None
     office_latitude: float = Field(default=44.4268, ge=-90, le=90)
     office_longitude: float = Field(default=26.1025, ge=-180, le=180)
+    #: The headquarters rendered live in Unreal Engine reaches the page over Pixel Streaming. The
+    #: page may only talk to its own origin, so the backend relays the stream's signalling to
+    #: this address (STUDIO_OFFICE_STREAM_SIGNALLING_URL, the player port of Epic's signalling
+    #: server, e.g. ws://127.0.0.1:8890). Unset, the page shows its own renderer.
+    office_stream_signalling_url: str | None = None
 
     #: What the studio optimises for when it picks a model itself. The Owner's standing
     #: instruction is premium: the best picture the account can make, cost secondary — "no

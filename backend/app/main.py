@@ -32,6 +32,7 @@ from app.integrations.vault import CredentialVault
 from app.logging import configure_logging
 from app.media.router import create_media_router
 from app.office.router import create_office_router
+from app.office.stream import register_stream_gateway
 from app.providers.ollama import OllamaProvider
 from app.providers.registry import ProviderRegistry
 from app.publishing.router import create_publishing_router
@@ -408,6 +409,7 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
     app.include_router(create_tasks_router(), prefix="/api/v1", tags=["tasks"])
     app.include_router(create_scheduler_router(), prefix="/api/v1", tags=["scheduler"])
     register_websocket_gateway(app, connection_manager)
+    register_stream_gateway(app)
     # Phase 3: 2D office layout router
     app.include_router(create_office_router(), prefix="/api/v1", tags=["office"])
     # Phase 4: Factual Intelligence & Verification Engine router

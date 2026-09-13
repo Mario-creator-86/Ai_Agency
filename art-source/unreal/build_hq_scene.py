@@ -339,6 +339,8 @@ def camera(ax):
             comp.set_editor_property(prop, val)
         except Exception as err:
             log(f"camera property {prop} skipped: {err}")
+    # The live stream runs the level as a game: player 0 must look through this camera.
+    cam.set_editor_property("auto_activate_for_player", unreal.AutoReceiveInput.PLAYER0)
     log(f"camera at ({loc.x:.0f},{loc.y:.0f},{loc.z:.0f}) rot=({rot.pitch:.1f},{rot.yaw:.1f},{rot.roll:.1f}) ortho={c['width_m'] * ax.unit:.0f}")
     return cam
 

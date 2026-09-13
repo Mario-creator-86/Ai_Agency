@@ -8,6 +8,8 @@
 		{ "Name": "EditorScriptingUtilities", "Enabled": true },
 		{ "Name": "MovieRenderPipeline", "Enabled": true },
 		{ "Name": "MetaHumanCharacter", "Enabled": true },
+		{ "Name": "PixelStreaming2", "Enabled": true },
+		{ "Name": "RemoteControl", "Enabled": true },
 		{ "Name": "AndroidFileServer", "Enabled": false }
 	]
 }

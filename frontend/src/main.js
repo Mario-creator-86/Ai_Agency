@@ -9,6 +9,8 @@ import { Ledger } from './ledger.js';
 import { friendlyAnswer } from './friendly_text.js';
 import { LiveWindows, eventMatchesAgent } from './live_window.js';
 import { MailThread } from './mail_thread.js';
+import { LiveStream } from './hq_stream.js';
+import { liveStreamSettings, relayUrl } from './hq_stream_config.js';
 
 /** @param {string} id @returns {HTMLElement} */
 function element(id) {
@@ -37,6 +39,8 @@ let socket = null;
 const officeCanvas = /** @type {HTMLCanvasElement} */ (element('office-canvas'));
 const officeState = new OfficeState();
 let officeEngine = null;
+/** @type {LiveStream|null} the Unreal headquarters over the renderer, when scene.json turns it on */
+let liveStream = null;
 let currentSelectedAgent = null;
 let inspectorRequest = 0;
 
@@ -92,7 +96,7 @@ function updateTypingIndicator() {
 
 function scheduleHistoryRefresh(agentId) {
   clearTimeout(historyRefreshTimer);
-  historyRefreshTimer = setTimeout(() => {
+  historyRefreshTimer = window.setTimeout(() => {
     const current = currentSelectedAgent && (currentSelectedAgent.id || currentSelectedAgent.agent_id);
     if (inspector.open && current === agentId) loadAgentHistory(agentId);
   }, 600);
@@ -177,6 +181,34 @@ const settingsUI = initSettings(api, { onChange: async () => {
   if(inspector.open && currentSelectedAgent) await showInspector(currentSelectedAgent);
 } });
 
+/**
+ * The Unreal headquarters, streamed over the page's own renderer while it runs. The viewport's
+ * data-stream attribute says which one the Owner is looking at.
+ */
+async function startLiveStream() {
+  if (liveStream) return;
+  const viewport = element('scene-viewport');
+  let scene = null;
+  let relay = null;
+  try {
+    const response = await fetch('/assets/hq/scene.json');
+    scene = response.ok ? await response.json() : null;
+    if (liveStreamSettings(scene).enabled) relay = await api('/office/stream');
+  } catch {
+    relay = null;
+  }
+  const settings = liveStreamSettings(scene);
+  if (!settings.enabled || !relay || relay.available !== true) {
+    viewport.dataset.stream = 'off';
+    return;
+  }
+  const signallingUrl = relayUrl(window.location, String(relay.relay), ownerToken);
+  liveStream = new LiveStream(viewport, { ...settings, signallingUrl }, {
+    onStatus: (status) => { viewport.dataset.stream = status; },
+  });
+  liveStream.start();
+}
+
 function initOffice() {
   if (!officeEngine) {
     officeEngine = new OfficeEngine(officeCanvas, {
@@ -194,6 +226,7 @@ function initOffice() {
       },
     });
     publishSceneHandle();
+    startLiveStream();
 
     // Wire camera zoom buttons
     element('zoom-in').addEventListener('click', () => {
