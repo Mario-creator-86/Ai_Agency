@@ -1,5 +1,18 @@
 # Changelog
 
+## MetaHuman Creator enabled in the Unreal project — 2026-09-13
+
+The employees are to be real MetaHumans, so the AMNReference project now loads the MetaHuman
+Creator plugin (`MetaHumanCharacter`, which brings RigLogic, hair strands, cloth and the MetaHuman
+SDK with it).
+
+- `art-source/unreal/probe_metahuman_cloud.py` checks it headless: the scripting subsystem is there
+  and a MetaHuman character asset is created.
+- Two things still stand between that and a finished face and body. The auto-rig and texture
+  services need an Epic login, and the headless run starts a device-code login the Owner would
+  have to confirm, so rigging runs in the editor he is signed in to. The Creator's optional core
+  data (texture synthesis) is not installed with the engine yet.
+
 ## Every department its own office, in its own colour — 2026-09-13
 
 The Owner pointed at S2 on the live page: the accountant and the publisher sat side by side in one
