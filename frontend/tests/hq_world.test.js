@@ -7,6 +7,7 @@ import { TrafficManager } from '../src/hq_traffic.js';
 import { PedestrianManager } from '../src/hq_pedestrians.js';
 import { animationFor, spriteFor, screenModeFor, AgentVisualStateManager } from '../src/hq_agents.js';
 import { mulberry32, plateDayMix, streetLight } from '../src/hq_world.js';
+import { cloudLayerWeights } from '../src/hq_sky.js';
 import fs from 'node:fs';
 
 const EVENTS = JSON.parse(fs.readFileSync(new URL('../public/assets/hq/world_events.json', import.meta.url), 'utf8'));
@@ -117,6 +118,17 @@ function lanesGaps(traffic) {
   }
   return gaps;
 }
+
+test('the painted cloud layers follow the time of day and always add up to one', () => {
+  const at = (/** @type {{daylight:number, dusk:number}} */ t) => cloudLayerWeights(t);
+  const dusk = at({ daylight: 0.3, dusk: 0.9 });
+  assert.ok(dusk.dusk > dusk.day && dusk.dusk > dusk.night, `dusk ${JSON.stringify(dusk)}`);
+  const noon = at({ daylight: 1, dusk: 0 });
+  assert.equal(noon.day, 1);
+  const midnight = at({ daylight: 0, dusk: 0 });
+  assert.equal(midnight.night, 1);
+  for (const w of [dusk, noon, midnight]) assert.ok(Math.abs(w.dusk + w.day + w.night - 1) < 1e-9);
+});
 
 test('the sunlit day plates stay out of dusk and take over by day', () => {
   assert.equal(plateDayMix(0), 0);

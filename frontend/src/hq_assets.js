@@ -1,7 +1,8 @@
 /**
  * The headquarters art, as built in Blender (art-source/blender/hq) and served from /assets/hq:
  * the anchor manifest, the plate layers (night and day), the employees' and pedestrians' sprite
- * sheets, the vehicle catalogue and the random-event configuration.
+ * sheets, the vehicle catalogue, the painted cloud layers of the sky (art-source/sky) and the
+ * random-event configuration.
  *
  * The daytime plates are loaded only when the sun is up or about to be, so a night visit does not
  * pay for pictures it will not show.
@@ -73,6 +74,7 @@ export class HQAssets {
     for (const [key, entry] of Object.entries(characters?.characters || {})) jobs.push(this.loadSheet(`char:${key}`, `characters/${entry.sheet}`));
     for (const [key, entry] of Object.entries(pedestrians?.characters || {})) jobs.push(this.loadSheet(`ped:${key}`, `characters/${entry.sheet}`));
     for (const [kind, entry] of Object.entries(vehicles?.vehicles || {})) jobs.push(this.loadSheet(`veh:${kind}`, `vehicles/${entry.sheet}`));
+    for (const look of ['dusk', 'day', 'night']) jobs.push(this.loadSheet(`sky:${look}`, `sky/clouds_${look}.webp`));
     await Promise.all(jobs);
     this.ready = true;
     return true;

@@ -1,5 +1,18 @@
 # Changelog
 
+## A sky with clouds, like the picture's — 2026-09-13
+
+The Owner compared the office with his picture and found the sky empty: a plain gradient, with
+clouds drawn only when live weather reported them.
+
+- **Painted cloud banks**, made by `art-source/sky/paint_clouds.py` without any image generator:
+  layered noise shaped into long banks with crisp edges, lit from below at dusk (warm undersides,
+  blue-grey cores, as in the picture), white by day, dim at night. Three WebP layers (330 KB in
+  all) are crossfaded with the time of day (`cloudLayerWeights`).
+- **Live weather still rules the sky**: real cloud cover and fog grey it over, rain, snow and
+  storms are drawn on top. With the server restarted the endpoint answers, and on the day this was
+  made Bucharest reported "Cloudy 16°C", which is why the live sky reads grey.
+
 ## A bridge that fans, a grey tower, notes with writing — 2026-09-13
 
 - **The bridge is cable-stayed like the picture's**: a pylon about twice as tall over the deck,

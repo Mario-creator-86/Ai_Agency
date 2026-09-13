@@ -33,11 +33,28 @@ function cloudCanvas(rng, w, h) {
   return c;
 }
 
+/**
+ * How much of each painted cloud layer to show: dusk when the sun is near the horizon, day when it
+ * is up, night otherwise. The weights always add up to one.
+ * @param {{daylight:number, dusk:number}} time
+ * @returns {{dusk:number, day:number, night:number}}
+ */
+export function cloudLayerWeights(time) {
+  const dusk = Math.max(0, Math.min(1, time.dusk));
+  const light = Math.max(0, Math.min(1, time.daylight));
+  const day = light * (1 - dusk);
+  const night = (1 - light) * (1 - dusk);
+  const sum = dusk + day + night || 1;
+  return { dusk: dusk / sum, day: day / sum, night: night / sum };
+}
+
 export class SkyRenderer {
   /**
-   * @param {{worldWidth:number, worldHeight:number, horizonRow:number, rng:() => number}} options
+   * @param {{worldWidth:number, worldHeight:number, horizonRow:number, rng:() => number, assets?: any}} options
    */
   constructor(options) {
+    /** painted cloud layers come from the assets (sheets sky:dusk, sky:day, sky:night) */
+    this.assets = options.assets || null;
     this.w = options.worldWidth;
     this.h = options.worldHeight;
     this.horizon = options.horizonRow;
@@ -157,7 +174,28 @@ export class SkyRenderer {
       ctx.arc(this.w * 0.72 + 4, 67, 8, 0, Math.PI * 2);
       ctx.fill();
     }
+    this.drawCloudLayers(ctx, time, fx);
     this.drawClouds(ctx, time, fx);
+  }
+
+  /**
+   * The painted cloud banks, as in the Owner's picture: warm undersides at dusk, white by day, dim at
+   * night, crossfaded with the time of day. Live weather still adds cloud on top and greys the sky.
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {{daylight:number, dusk:number}} time
+   * @param {{cloudiness:number, fog:number}} fx
+   */
+  drawCloudLayers(ctx, time, fx) {
+    if (!this.assets) return;
+    const weights = cloudLayerWeights(time);
+    const opacity = Math.min(1, 0.9 + fx.cloudiness * 0.1) * (1 - Math.min(0.6, fx.fog * 0.6));
+    for (const look of /** @type {Array<'dusk'|'day'|'night'>} */ (['night', 'day', 'dusk'])) {
+      const img = this.assets.sheet(`sky:${look}`);
+      if (!img || weights[look] < 0.01) continue;
+      ctx.globalAlpha = weights[look] * opacity;
+      ctx.drawImage(img, 0, 0, this.w, (img.height * this.w) / img.width);
+    }
+    ctx.globalAlpha = 1;
   }
 
   /**

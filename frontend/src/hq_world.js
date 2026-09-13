@@ -162,7 +162,7 @@ export class WorldSimulationManager {
     });
     this.agents = new AgentVisualStateManager(this.rng);
     this.ambient = new AmbientAnimationManager();
-    this.sky = new SkyRenderer({ worldWidth: this.worldW, worldHeight: this.worldH, horizonRow: HORIZON_ROW, rng: this.rng });
+    this.sky = new SkyRenderer({ worldWidth: this.worldW, worldHeight: this.worldH, horizonRow: HORIZON_ROW, rng: this.rng, assets });
     /** @type {any[]} */
     this.agentList = [];
     this.events.on((kind, event) => this.onEvent(kind, event));
