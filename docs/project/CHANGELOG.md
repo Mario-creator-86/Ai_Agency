@@ -1,5 +1,21 @@
 # Changelog
 
+## Every department its own office, in its own colour — 2026-09-13
+
+The Owner pointed at S2 on the live page: the accountant and the publisher sat side by side in one
+room. His rule: separate offices, one per department, each in a different colour. He chose where
+Distribution goes and that Research and Fact Check part as well.
+
+- **L3** is two rooms with a partition: Research (blue, Aris) and Fact Check (terracotta, Elena).
+- **L2** is two rooms: Content (wood, Marcus) and Distribution (teal, Vera, with her desk and the
+  release radar on the wall).
+- **S2** on the ground floor is the Treasury alone (burgundy, Nadia, her desk in the middle, the
+  sign reads "S2 TREASURY").
+- Each room has a lit sign naming its department. The backend layout has the new zones
+  (`factcheck_room`, `publish_desk` on floor 2, a wider `accounting_office`) and the fact-check
+  stage walks to the Fact Check room; the scene's manifest and the layout are checked against each
+  other by `tests/test_office_layout_matches_scene.py`. The server needs a restart to serve them.
+
 ## The headquarters in Unreal Engine 5.8 — 2026-09-13
 
 The Owner asked for Unreal Engine. The headquarters now renders there from the Blender build

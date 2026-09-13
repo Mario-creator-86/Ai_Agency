@@ -345,6 +345,14 @@ def cove(mb, x0px, x1px, level, mat, drop=0.5, back=BACK):
     mb.box(X(x0px), X(x1px), back - 0.12, back - 0.02, z - 0.035, z, mat)
 
 
+def room_sign(coll, glow, label, x0px, level, mat, accent):
+    """A small lit sign at the top of a room's back wall, naming the department that works there."""
+    z = wz(FLOORS[level][1] + 24)
+    key = label.lower().replace(" ", "_")
+    glow.box(X(x0px), X(x0px) + 0.08, BACK - 0.06, BACK - 0.02, z - 0.04, z + 0.5, emissive(f"sign_bar_{key}", accent, 5.0))
+    text(coll, label, X(x0px) + 0.26, BACK - 0.07, z + 0.42, 0.5, mat["label_text"], spacing=1.12, name=f"room_sign_{key}", face="bold")
+
+
 def room_rect(zone_id, x0px, x1px, level, name):
     f = FLOORS[level]
     ANCHORS["rooms"][zone_id] = {"x": x0px, "y": f[1], "w": x1px - x0px, "h": f[0] - f[1], "level": level, "name": name}
@@ -568,14 +576,19 @@ def build_l4(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
 
 def build_l3(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, mat):
     lv = 3
-    room_rect("research_lab", 517, 1205, lv, "L3 Research")
+    room_rect("research_lab", 517, 862, lv, "L3 Research")
+    room_rect("factcheck_room", 868, 1205, lv, "L3 Fact Check")
     wall = principled("wall_l3", "#4b5a88", rough=0.85)
     floor = principled("floor_l3", "#2a2c3c", rough=0.35)
-    room_shell(rooms, 517, 1205, lv, wall, floor)
+    room_shell(rooms, 517, 862, lv, wall, floor)
+    room_shell(rooms, 862, 1205, lv, principled("wall_l3_factcheck", "#8a4f3a", rough=0.85), principled("floor_l3_factcheck", "#3a2a24", rough=0.35))
+    rooms.box(X(862), X(868), -0.2, BACK + 0.2, fz(lv), cz(lv), mat["frame"])
     label_panel(rooms, shell_c, lv, "L3", "RESEARCH", mat)
+    room_sign(shell_c, glow, "RESEARCH", 527, lv, mat, "#60a5fa")
+    room_sign(shell_c, glow, "FACT CHECK", 878, lv, mat, "#fb923c")
     f = fz(lv)
-    downlight_fixtures(glow, (560, 650, 770, 860, 960, 1060, 1150), lv, mat)
-    spot_row(lights, (560, 650, 770, 860, 960, 1060, 1150), lv, "#f0f2ff", 220, cone=58, blend=0.5, tilt=26)
+    downlight_fixtures(glow, (560, 650, 760, 845, 900, 990, 1080, 1160), lv, mat)
+    spot_row(lights, (560, 650, 760, 845, 900, 990, 1080, 1160), lv, "#f0f2ff", 220, cone=58, blend=0.5, tilt=26)
     light(lights, "AREA", (X(860), 0.4, cz(lv) - 0.9), 110.0, "#c8d0ff", radius=9.0, rot=(math.radians(35), 0, 0), name="l3_fill")
     plant(leaves, pots, X(530), 1.6, f, 0.9, mat["leaf"], mat["pot_white"], pot_h=0.32, pot_r=0.15, n=12, seed=31)
     bookshelf(props, X(537), X(587), 1.85, 2.35, f, f + 1.8, mat["wood_dark"], mat["books"], shelves=5, seed=3)
@@ -594,28 +607,29 @@ def build_l3(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
         props.box(X(xp), X(xp + 14), 1.8, 2.3, f, f + 0.95, principled("tower_pc", "#1b1c22", rough=0.4))
         glow.box(X(xp + 4), X(xp + 5), 1.79, 1.8, f + 0.7, f + 0.85, emissive("pc_led_blue", "#60a5fa", 8.0))
     cork = principled("cork", "#8a6a44", rough=0.9)
-    props.box(X(772), X(877), BACK - 0.06, BACK - 0.02, wz(247), wz(207), mat["wood_dark"])
-    props.front_quad(X(775), X(874), wz(245), wz(209), BACK - 0.065, cork)
+    props.box(X(745), X(850), BACK - 0.06, BACK - 0.02, wz(247), wz(207), mat["wood_dark"])
+    props.front_quad(X(748), X(847), wz(245), wz(209), BACK - 0.065, cork)
     rng = random.Random(7)
     paper = emissive("paper", "#efe9dc", 0.6)
     pin_ink = principled("pin_ink", "#3b4a66", rough=0.6)
     for r in range(2):
         for c in range(3):
-            x0 = 782 + c * 31 + rng.uniform(-2, 2)
+            x0 = 755 + c * 31 + rng.uniform(-2, 2)
             z1 = wz(213 + r * 17)
             props.front_quad(X(x0), X(x0 + 22), z1 - M(12), z1, BACK - 0.07, paper)
             # the notes carry lines of writing, as the picture's pinboard does
             for li in range(3):
                 zl = z1 - M(3) - li * M(3)
                 props.box(X(x0 + 3), X(x0 + 3 + rng.uniform(10, 17)), BACK - 0.076, BACK - 0.072, zl - 0.02, zl, pin_ink)
-    top2 = back_desk(props, 770, 975, lv, mat)
+    top_r = back_desk(props, 770, 850, lv, mat)
+    props.box(X(790), X(830), 1.9, 2.25, top_r, top_r + 0.18, mat["white"])
+    top2 = back_desk(props, 880, 975, lv, mat)
     for cx, scr in ((905, "screen_cyan"), (933, "screen_cyan_chart")):
         monitor(props, X(cx), 2.05, top2, M(24), 0.46, mat["mon_frame"], mat[scr])
-    props.box(X(790), X(830), 1.9, 2.25, top2, top2 + 0.18, mat["white"])
-    screen_anchor("factcheck_monitors", X(893), X(945), top2 + 0.12, top2 + 0.58, 2.03, zone="research_lab", desk="desk_research_2")
+    screen_anchor("factcheck_monitors", X(893), X(945), top2 + 0.12, top2 + 0.58, 2.03, zone="factcheck_room", desk="desk_research_2")
     frame_picture(props, X(936), wz(230), BACK - 0.02, M(24), M(30), mat["black"], image_material("poster_l3b", "art_teal", 0.8))
-    workstation(fronts, props, 926, lv, mat, "ui_cyan_chart", "research_lab", "desk_research_2", side=-1)
-    seat("desk_research_2", 926, lv, "front", "research_lab")
+    workstation(fronts, props, 926, lv, mat, "ui_cyan_chart", "factcheck_room", "desk_research_2", side=-1)
+    seat("desk_research_2", 926, lv, "front", "factcheck_room")
     wb = principled("whiteboard", "#e4e2da", rough=0.5)
     props.box(X(970), X(1002), BACK - 0.06, BACK - 0.02, wz(252), wz(208), mat["metal"])
     props.front_quad(X(972), X(1000), wz(250), wz(210), BACK - 0.065, wb)
@@ -640,14 +654,21 @@ def build_l3(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
 
 def build_l2(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, mat):
     lv = 2
-    room_rect("script_room", 517, 1205, lv, "L2 Content")
+    room_rect("script_room", 517, 862, lv, "L2 Content")
+    room_rect("publish_desk", 868, 1205, lv, "L2 Distribution")
     wall = panel_material("wall_l2", "#5e4a2c", "#2e2210", 0.42, rough=0.45)
     floor = principled("floor_l2", "#3a2a1c", rough=0.3)
-    room_shell(rooms, 517, 1205, lv, wall, floor)
+    room_shell(rooms, 517, 862, lv, wall, floor)
+    room_shell(rooms, 862, 1205, lv, panel_material("wall_l2_distribution", "#1f5f5a", "#0e2f2c", 0.42, rough=0.45), principled("floor_l2_distribution", "#1c2a2a", rough=0.3))
+    rooms.box(X(862), X(868), -0.2, BACK + 0.2, fz(lv), cz(lv), mat["frame"])
     label_panel(rooms, shell_c, lv, "L2", "CONTENT", mat)
+    room_sign(shell_c, glow, "CONTENT", 527, lv, mat, "#fbbf24")
+    room_sign(shell_c, glow, "DISTRIBUTION", 878, lv, mat, "#2dd4bf")
     f = fz(lv)
-    cove(glow, 525, 1195, lv, mat["edge_led"], drop=0.42)
-    for xp in (534, 620, 712, 800, 872, 950, 1030, 1150):
+    cove(glow, 525, 855, lv, mat["edge_led"], drop=0.42)
+    cove(glow, 875, 1195, lv, mat["edge_led"], drop=0.42)
+    # clear of the CONTENT and DISTRIBUTION signs at the top of each room
+    for xp in (660, 740, 820, 1040, 1110, 1180):
         pendant(props, lights, xp, lv, 0.62, mat, energy=26, color="#ffd9a8")
     light(lights, "AREA", (X(860), 0.6, cz(lv) - 0.8), 60.0, "#ffc27a", radius=8.0, rot=(math.radians(35), 0, 0), name="l2_fill")
     plant(leaves, pots, X(538), 1.6, f, 0.9, mat["leaf"], mat["pot_white"], pot_h=0.35, pot_r=0.15, n=12, seed=21)
@@ -662,18 +683,24 @@ def build_l2(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
         props.box(X(x0), X(x0 + 70), 1.1, 1.4, f + 0.42, f + 0.46, mat["metal"])
         for xl in (x0 + 2, x0 + 66):
             props.box(X(xl), X(xl) + 0.04, 1.2, 1.3, f, f + 0.42, mat["metal"])
-    top = back_desk(props, 700, 905, lv, mat)
+    top = back_desk(props, 700, 850, lv, mat)
     for cx, tex in ((784, "ui_script"), (826, "ui_blue")):
         monitor(props, X(cx), 2.05, top, M(40), 0.72, mat["mon_frame"], image_material(f"script_{tex}", tex, 1.5))
     screen_anchor("script_monitors", X(764), X(846), top + 0.12, top + 0.84, 2.03, zone="script_room", desk="desk_script")
-    for sx in (756, 854):
+    for sx in (756, 836):
         props.box(X(sx), X(sx + 9), 1.95, 2.25, top, top + 0.42, mat["black"])
         glow.box(X(sx + 3), X(sx + 6), 1.94, 1.95, top + 0.28, top + 0.36, emissive("spk_led", "#93c5fd", 5.0))
     props.box(X(776), X(836), BACK - 0.06, BACK - 0.02, wz(330), wz(301), mat["mon_frame"])
     props.front_quad(X(778), X(834), wz(328), wz(303), BACK - 0.065, image_material("script_tv", "art_night", 0.9))
-    plant(leaves, pots, X(890), 2.05, top, 0.4, mat["leaf"], mat["pot_white"], pot_h=0.16, pot_r=0.08, n=8, seed=22, style="bush")
+    plant(leaves, pots, X(716), 2.05, top, 0.4, mat["leaf"], mat["pot_white"], pot_h=0.16, pot_r=0.08, n=8, seed=22, style="bush")
     workstation(fronts, props, 804, lv, mat, "ui_script", "script_room", "desk_script", side=1)
     seat("desk_script", 804, lv, "front", "script_room")
+    # Distribution: Vera's desk and the release radar on the wall above the sofa
+    workstation(fronts, props, 1000, lv, mat, "ui_radar", "publish_desk", "desk_publish", side=1)
+    seat("desk_publish", 1000, lv, "front", "publish_desk")
+    props.box(X(1100), X(1142), BACK - 0.08, BACK - 0.02, wz(350), wz(318), mat["mon_frame"])
+    props.front_quad(X(1103), X(1139), wz(348), wz(320), BACK - 0.085, image_material("radar", "ui_radar", 1.5))
+    screen_anchor("publish_radar", X(1103), X(1139), wz(348), wz(320), BACK - 0.085, zone="publish_desk", desk="desk_publish")
     frame_picture(props, X(898), wz(336), BACK - 0.02, M(23), M(32), mat["black"], image_material("art_l2b", "art_teal", 0.8))
     plant(leaves, pots, X(928), 1.8, f, 0.85, mat["leaf"], mat["pot_white"], pot_h=0.35, pot_r=0.15, n=11, seed=23)
     wall_window(props, 940, 990, 320, 362, mat)
@@ -771,7 +798,7 @@ def build_ground(shell, rooms, props, leaves, pots, fronts, glow, lights, back, 
     shell.box(X(415), X(1340), -0.3, -0.28, -0.12, -0.08, mat["edge_led"])
     # header bars
     header = principled("header_bar", "#191c27", rough=0.4)
-    for zone, x0, x1, label in (("server_corner", 455, 637, "S1   INFRA"), ("ops", 897, 1032, "S2   OPERATIONS"), ("ai_space", 1040, 1197, "S3   AI SPACE")):
+    for zone, x0, x1, label in (("server_corner", 455, 637, "S1   INFRA"), ("treasury", 897, 1032, "S2   TREASURY"), ("ai_space", 1040, 1197, "S3   AI SPACE")):
         shell.box(X(x0), X(x1), -0.22, 0.1, Z(541), c, header)
         shell.box(X(x0), X(x1), -0.23, -0.22, Z(541), Z(540), mat["frame_hi"])
         text(shell_c, label, X(x0 + 8), -0.24, Z(537, -0.24), 0.52, mat["label_text"], name=f"header_{zone}")
@@ -842,11 +869,10 @@ def build_ground(shell, rooms, props, leaves, pots, fronts, glow, lights, back, 
     pendant(props, lights, 868, 0, 1.2, mat, shade="bulb", energy=30)
     for x0, x1 in ((647, 700), (702, 760), (762, 790), (792, 845), (847, 884)):
         shell.front_quad(X(x0), X(x1), 0.0, Z(532), -0.16, mat["glass"])
-    # ---------------- S2 OPERATIONS (finance and publishing)
-    room_rect("accounting_office", 897, 965, 0, "S2 Operations - Treasury")
-    room_rect("publish_desk", 965, 1032, 0, "S2 Operations - Distribution")
-    rooms.box(X(897), X(1032), BACK_G, BACK_G + 0.2, f, c, principled("ops_wall", "#6e583f", rough=0.6))
-    rooms.box(X(897), X(1032), -0.1, BACK_G, -0.05, 0.0, principled("ops_floor", "#5a4a3a", rough=0.25))
+    # ---------------- S2 TREASURY (Nadia's office; Distribution has its own room on L2)
+    room_rect("accounting_office", 897, 1032, 0, "S2 Treasury")
+    rooms.box(X(897), X(1032), BACK_G, BACK_G + 0.2, f, c, principled("ops_wall", "#5c2a33", rough=0.6))
+    rooms.box(X(897), X(1032), -0.1, BACK_G, -0.05, 0.0, principled("ops_floor", "#3a2226", rough=0.25))
     props.box(X(945), X(1002), BACK_G - 0.4, BACK_G, Z(566, BACK_G - 0.4), Z(563, BACK_G - 0.4), mat["wood"])
     rng = random.Random(21)
     for i in range(5):
@@ -866,17 +892,14 @@ def build_ground(shell, rooms, props, leaves, pots, fronts, glow, lights, back, 
     plant(leaves, pots, X(1016), BACK_G - 0.5, Z(590, BACK_G - 0.5), 0.6, mat["leaf"], mat["pot_white"], pot_h=0.25, pot_r=0.12, n=10, seed=53)
     props.box(X(1004), X(1030), BACK_G - 0.45, BACK_G - 0.4, Z(590, BACK_G - 0.45) - 0.05, Z(590, BACK_G - 0.45), mat["wood"])
     props.box(X(1003), X(1029), BACK_G - 0.08, BACK_G - 0.02, Z(624, BACK_G), Z(600, BACK_G), mat["mon_frame"])
-    props.front_quad(X(1005), X(1027), Z(622, BACK_G), Z(602, BACK_G), BACK_G - 0.085, image_material("radar", "ui_radar", 1.5))
-    screen_anchor("publish_radar", X(1005), X(1027), Z(622, BACK_G), Z(602, BACK_G), BACK_G - 0.085, zone="publish_desk", desk="desk_publish")
+    props.front_quad(X(1005), X(1027), Z(622, BACK_G), Z(602, BACK_G), BACK_G - 0.085, image_material("treasury_chart", "ui_ledger", 1.5))
     props.box(X(930), X(956), 1.9, 2.2, 0.95, 1.0, mat["desk_top"])
     monitor(props, X(943), 2.1, 1.0, M(20), 0.36, mat["mon_frame"], image_material("ledger_screen", "ui_ledger", 1.5))
     screen_anchor("treasury_monitor", X(935), X(951), 1.12, 1.48, 2.098, zone="accounting_office", desk="desk_accounting")
     light(lights, "SPOT", (X(930), 1.5, c - 0.5), 120, "#ffd29a", radius=0.08, cone=70, blend=0.4, rot=(math.radians(20), 0, 0), name="ops_spot_a")
     light(lights, "SPOT", (X(1000), 1.5, c - 0.5), 120, "#ffd29a", radius=0.08, cone=70, blend=0.4, rot=(math.radians(20), 0, 0), name="ops_spot_b")
-    workstation(fronts, props, 945, 0, mat, "ui_ledger", "accounting_office", "desk_accounting", side=-1, seat_y=1.3)
-    seat("desk_accounting", 945, 0, "front", "accounting_office", y=1.3)
-    workstation(fronts, props, 1001, 0, mat, "ui_radar", "publish_desk", "desk_publish", side=1, seat_y=1.3)
-    seat("desk_publish", 1001, 0, "front", "publish_desk", y=1.3)
+    workstation(fronts, props, 965, 0, mat, "ui_ledger", "accounting_office", "desk_accounting", side=-1, seat_y=1.3)
+    seat("desk_accounting", 965, 0, "front", "accounting_office", y=1.3)
     shell.front_quad(X(897), X(1032), 0.0, Z(541), -0.16, mat["glass"])
     # ---------------- S3 AI SPACE (the ad space storefront)
     room_rect("ad_shop", 1040, 1197, 0, "S3 AI Space")

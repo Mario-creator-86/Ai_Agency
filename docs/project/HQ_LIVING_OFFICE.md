@@ -11,11 +11,13 @@ workflow token changes floor, and the weather is the live observation or none at
 
 ## What is on screen
 
-- **The building**: roof and AMN-AI sign, L4 Executive, L3 Research, L2 Content, L1 Production
-  (audio booth and render bay), and the ground floor — S1 Infra, the lobby, S2 Operations
-  (treasury and distribution desks) and S3 AI Space (the ad-space storefront). The lift tower
-  on the right carries the courier between floors.
-- **The employees**: eight chibi characters rendered from their Character Bibles (palette from
+- **The building**: roof and AMN-AI sign, L4 Executive, L3 Research (blue) and Fact Check
+  (terracotta), L2 Content (wood) and Distribution (teal), L1 Production (audio booth and render
+  bay), and the ground floor — S1 Infra, the lobby, S2 Treasury (burgundy) and S3 AI Space (the
+  ad-space storefront). Every department has its own office, its own colour and a lit sign, and
+  every employee their own desk facing the viewer. The lift tower on the right carries the courier
+  between floors.
+- **The employees**: eight adult-proportion people (`build_people.py`) from their Character Bibles (palette from
   the backend record; hair, garments and accessories from the Owner's sheets), each seated
   where the backend layout puts their desk, facing the way the reference shows them.
 - **The city**: skyline with a cable-stayed bridge and the "Bucharest AI District" billboard,

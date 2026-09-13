@@ -31,18 +31,34 @@
   "research_lab": {
    "x": 517,
    "y": 195,
-   "w": 688,
+   "w": 345,
    "h": 87,
    "level": 3,
    "name": "L3 Research"
   },
+  "factcheck_room": {
+   "x": 868,
+   "y": 195,
+   "w": 337,
+   "h": 87,
+   "level": 3,
+   "name": "L3 Fact Check"
+  },
   "script_room": {
    "x": 517,
    "y": 297,
-   "w": 688,
+   "w": 345,
    "h": 95,
    "level": 2,
    "name": "L2 Content"
+  },
+  "publish_desk": {
+   "x": 868,
+   "y": 297,
+   "w": 337,
+   "h": 95,
+   "level": 2,
+   "name": "L2 Distribution"
   },
   "audio_booth": {
    "x": 517,
@@ -79,18 +95,10 @@
   "accounting_office": {
    "x": 897,
    "y": 520,
-   "w": 68,
+   "w": 135,
    "h": 135,
    "level": 0,
-   "name": "S2 Operations - Treasury"
-  },
-  "publish_desk": {
-   "x": 965,
-   "y": 520,
-   "w": 67,
-   "h": 135,
-   "level": 0,
-   "name": "S2 Operations - Distribution"
+   "name": "S2 Treasury"
   },
   "ad_shop": {
    "x": 1040,
@@ -120,7 +128,7 @@
    "x": 926.0,
    "y": 276.2,
    "facing": "front",
-   "zone": "research_lab",
+   "zone": "factcheck_room",
    "level": 3
   },
   "desk_script": {
@@ -128,6 +136,13 @@
    "y": 386.2,
    "facing": "front",
    "zone": "script_room",
+   "level": 2
+  },
+  "desk_publish": {
+   "x": 1000.0,
+   "y": 386.2,
+   "facing": "front",
+   "zone": "publish_desk",
    "level": 2
   },
   "desk_audio": {
@@ -145,17 +160,10 @@
    "level": 1
   },
   "desk_accounting": {
-   "x": 945.0,
+   "x": 965.0,
    "y": 648.7,
    "facing": "front",
    "zone": "accounting_office",
-   "level": 0
-  },
-  "desk_publish": {
-   "x": 1001.0,
-   "y": 648.7,
-   "facing": "front",
-   "zone": "publish_desk",
    "level": 0
   }
  },
@@ -207,7 +215,7 @@
     52.0,
     12.7
    ],
-   "zone": "research_lab",
+   "zone": "factcheck_room",
    "desk": "desk_research_2"
   },
   "desk_research_2_monitor": {
@@ -217,7 +225,7 @@
     11.2,
     10.2
    ],
-   "zone": "research_lab",
+   "zone": "factcheck_room",
    "desk": "desk_research_2"
   },
   "script_monitors": {
@@ -239,6 +247,26 @@
    ],
    "zone": "script_room",
    "desk": "desk_script"
+  },
+  "desk_publish_monitor": {
+   "rect": [
+    1008.4,
+    354.9,
+    11.2,
+    10.2
+   ],
+   "zone": "publish_desk",
+   "desk": "desk_publish"
+  },
+  "publish_radar": {
+   "rect": [
+    1103.0,
+    320.3,
+    36.0,
+    28.0
+   ],
+   "zone": "publish_desk",
+   "desk": "desk_publish"
   },
   "audio_monitors": {
    "rect": [
@@ -299,16 +327,6 @@
    "zone": "video_studio",
    "desk": "desk_video"
   },
-  "publish_radar": {
-   "rect": [
-    1005.0,
-    602.4,
-    22.0,
-    20.0
-   ],
-   "zone": "publish_desk",
-   "desk": "desk_publish"
-  },
   "treasury_monitor": {
    "rect": [
     935.0,
@@ -321,23 +339,13 @@
   },
   "desk_accounting_monitor": {
    "rect": [
-    925.4,
+    945.4,
     617.4,
     11.2,
     10.2
    ],
    "zone": "accounting_office",
    "desk": "desk_accounting"
-  },
-  "desk_publish_monitor": {
-   "rect": [
-    1009.4,
-    617.4,
-    11.2,
-    10.2
-   ],
-   "zone": "publish_desk",
-   "desk": "desk_publish"
   }
  },
  "lamps": [
@@ -360,49 +368,37 @@
    "kind": "pendant"
   },
   {
-   "x": 534.0,
+   "x": 660.0,
    "y": 306.3,
    "color": "#ffd9a8",
    "kind": "pendant"
   },
   {
-   "x": 620.0,
+   "x": 740.0,
    "y": 306.3,
    "color": "#ffd9a8",
    "kind": "pendant"
   },
   {
-   "x": 712.0,
+   "x": 820.0,
    "y": 306.3,
    "color": "#ffd9a8",
    "kind": "pendant"
   },
   {
-   "x": 800.0,
+   "x": 1040.0,
    "y": 306.3,
    "color": "#ffd9a8",
    "kind": "pendant"
   },
   {
-   "x": 872.0,
+   "x": 1110.0,
    "y": 306.3,
    "color": "#ffd9a8",
    "kind": "pendant"
   },
   {
-   "x": 950.0,
-   "y": 306.3,
-   "color": "#ffd9a8",
-   "kind": "pendant"
-  },
-  {
-   "x": 1030.0,
-   "y": 306.3,
-   "color": "#ffd9a8",
-   "kind": "pendant"
-  },
-  {
-   "x": 1150.0,
+   "x": 1180.0,
    "y": 306.3,
    "color": "#ffd9a8",
    "kind": "pendant"

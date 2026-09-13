@@ -49,12 +49,12 @@ DEFAULT_OFFICE_LAYOUT: dict[str, Any] = {
         },
         {
             "id": "research_lab",
-            "name": "Floor 3 — Research & Fact-Check Lab",
+            "name": "Floor 3 — Research",
             "zone_type": "RESEARCH",
             "floor": 3,
             "x": 517,
             "y": 195,
-            "width": 688,
+            "width": 345,
             "height": 87,
             "color": "#0f3460",
             "desks": [
@@ -65,6 +65,20 @@ DEFAULT_OFFICE_LAYOUT: dict[str, Any] = {
                     "y": 276,
                     "role_name": "Researcher",
                 },
+            ],
+        },
+        {
+            # Every department has its own office (the Owner, 2026-09-13).
+            "id": "factcheck_room",
+            "name": "Floor 3 — Fact Check",
+            "zone_type": "FACT_CHECK",
+            "floor": 3,
+            "x": 868,
+            "y": 195,
+            "width": 337,
+            "height": 87,
+            "color": "#5a2e22",
+            "desks": [
                 {
                     "id": "desk_research_2",
                     "name": "Fact Checker",
@@ -76,12 +90,12 @@ DEFAULT_OFFICE_LAYOUT: dict[str, Any] = {
         },
         {
             "id": "script_room",
-            "name": "Floor 2 — Creative Writing & Narrative Studio",
+            "name": "Floor 2 — Content",
             "zone_type": "SCRIPT",
             "floor": 2,
             "x": 517,
             "y": 297,
-            "width": 688,
+            "width": 345,
             "height": 95,
             "color": "#1e3a8a",
             "desks": [
@@ -91,6 +105,27 @@ DEFAULT_OFFICE_LAYOUT: dict[str, Any] = {
                     "x": 804,
                     "y": 386,
                     "role_name": "ScriptWriter",
+                }
+            ],
+        },
+        {
+            # Distribution has its own office beside Content (the Owner, 2026-09-13).
+            "id": "publish_desk",
+            "name": "Floor 2 — Distribution",
+            "zone_type": "PUBLISH",
+            "floor": 2,
+            "x": 868,
+            "y": 297,
+            "width": 337,
+            "height": 95,
+            "color": "#134e4a",
+            "desks": [
+                {
+                    "id": "desk_publish",
+                    "name": "Release Desk",
+                    "x": 1000,
+                    "y": 386,
+                    "role_name": "Publisher",
                 }
             ],
         },
@@ -180,36 +215,16 @@ DEFAULT_OFFICE_LAYOUT: dict[str, Any] = {
             "floor": 0,
             "x": 897,
             "y": 520,
-            "width": 68,
+            "width": 135,
             "height": 135,
-            "color": "#1f1a2e",
+            "color": "#5c2a33",
             "desks": [
                 {
                     "id": "desk_accounting",
                     "name": "Accountant Desk",
-                    "x": 945,
+                    "x": 965,
                     "y": 648,
                     "role_name": "Accountant",
-                }
-            ],
-        },
-        {
-            "id": "publish_desk",
-            "name": "Ground Floor — Publishing & Distribution",
-            "zone_type": "PUBLISH",
-            "floor": 0,
-            "x": 965,
-            "y": 520,
-            "width": 67,
-            "height": 135,
-            "color": "#14532d",
-            "desks": [
-                {
-                    "id": "desk_publish",
-                    "name": "Release Desk",
-                    "x": 1001,
-                    "y": 648,
-                    "role_name": "Publisher",
                 }
             ],
         },

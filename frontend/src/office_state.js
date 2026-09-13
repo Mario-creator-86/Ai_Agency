@@ -20,7 +20,7 @@ const STAGE_ZONES = {
   DISCOVERY: 'director_suite',
   IDEA_SELECTION: 'director_suite',
   RESEARCH: 'research_lab',
-  FACT_CHECK: 'research_lab',
+  FACT_CHECK: 'factcheck_room',
   SCRIPTING: 'script_room',
   HOOK_OPTIMIZATION: 'script_room',
   STORYBOARD: 'script_room',

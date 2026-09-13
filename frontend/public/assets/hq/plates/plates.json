@@ -65,9 +65,9 @@
    "street_front": {
     "file": "night_street_front.webp",
     "x": 33.0,
-    "y": 776.5,
+    "y": 776.0,
     "w": 1563.0,
-    "h": 56.0
+    "h": 56.5
    }
   },
   "day": {
