@@ -1,5 +1,16 @@
 # Changelog
 
+## Rooms as bright as the picture's — 2026-09-13
+
+Once dusk stopped borrowing light from the sunlit day plates, every room read a little darker than
+the picture. Interior lights are now 3.15 times their modelled energy (was 2.8).
+
+- Plates alone at the picture's dusk: mean colour distance 5.4 → 4.8 (L4 1.7, ground floor 2.9,
+  street 4.1, L1 4.4, tower 4.8, L2 5.1, L3 8.8).
+- Live page: mean 10.1 → 9.1; L4 5.7 → 2.7, L2 9.2 → 6.6, ground floor 5.9 → 3.0. The largest
+  gaps left are the sky (the picture has sunset clouds, drawn here only when real weather reports
+  cloud) and the right-hand skyline.
+
 ## Dusk no longer looks half like day — 2026-09-13
 
 The lift tower, the sign and the street measured far brighter live than their own night plates.

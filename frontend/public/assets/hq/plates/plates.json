@@ -30,9 +30,9 @@
    "building_back": {
     "file": "night_building_back.webp",
     "x": 429.5,
-    "y": 18.5,
+    "y": 18.0,
     "w": 880.0,
-    "h": 641.0
+    "h": 641.5
    },
    "building_front": {
     "file": "night_building_front.webp",
@@ -65,9 +65,9 @@
    "street_front": {
     "file": "night_street_front.webp",
     "x": 33.0,
-    "y": 775.0,
+    "y": 776.0,
     "w": 1563.0,
-    "h": 57.5
+    "h": 56.5
    }
   },
   "day": {

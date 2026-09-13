@@ -214,7 +214,7 @@ def main():
     anchors = hq_building.build(colls)
     street = hq_city.build(colls)
     for ob in colls["lights_interior"].objects:
-        ob.data.energy *= 2.8
+        ob.data.energy *= 3.15
     if a.variant == "day":
         daytime(colls)
     print(f"AMN_BUILD seconds={time.time() - t0:.1f} objects={len(bpy.data.objects)}")
