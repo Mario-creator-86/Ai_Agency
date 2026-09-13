@@ -1,5 +1,31 @@
 # Changelog
 
+## Everyone at their own desk, facing the Owner, always at the picture's dusk — 2026-09-13
+
+The Owner compared the office with his picture again: two employees shared one counter in S2,
+some sat with their backs turned behind white blocks, the sky and colours were wrong, and buses
+drove through each other. His answers: every employee has their own desk, sits facing the viewer
+with the monitor to one side, and the office always has the picture's light.
+
+- **One workstation per employee** (`hq_building.workstation`): a light desk top with a warm LED
+  under its front edge, slim legs, a keyboard, a monitor turned in from one side so it never hides
+  the person, a mug, and an office chair behind them. The accountant and the publisher in S2 now
+  have two desks. Every seat faces the viewer (a test checks it, and that no two share a desk).
+- **New people** (`build_people.py`, replacing the chibi `build_characters.py`): adult
+  proportions from metaball bodies, cloth and skin materials, faces, hair, glasses, headsets and
+  earrings from the Character Bible; seated poses facing the viewer for every backend state,
+  standing, reacting and walking; pedestrians from the same builder.
+- **Always the picture's dusk** (`scene.json` → `"light": "reference_dusk"`): the office, the sky
+  and the street are lit as in the picture at any hour; the clock, the street's daily rhythm and
+  the random events keep the real time, and live rain, snow and fog still fall. Live cloud cover no
+  longer greys the painted sky. `"live"` restores the real sun.
+- **Tall vehicles never overlap**: a bus, truck or fire engine enters only when no tall vehicle is
+  in the other lane, so two of them are never drawn one over the other.
+- Honest limit: without the old lit counters the rooms measure darker than the picture (plates
+  alone 4.8 → 7.3), and the Owner judged the figures, cars and buses still far from the picture.
+  The next step moves the rendering to Unreal Engine 5.8 (`art-source/unreal/export_hq_scene.py`,
+  `build_hq_scene.py`, `render_hq_still.py`), with content packs the Owner adds from Fab.
+
 ## A sky with clouds, like the picture's — 2026-09-13
 
 The Owner compared the office with his picture and found the sky empty: a plain gradient, with

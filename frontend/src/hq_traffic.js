@@ -37,6 +37,15 @@ export function isBus(/** @type {string} */ kind) {
   return kind.startsWith('bus');
 }
 
+/**
+ * Buses, trucks and fire engines stand taller than the lane gap: two of them passing in opposite
+ * lanes are drawn one over the other, so the street holds tall vehicles in one lane at a time.
+ * @param {string} kind
+ */
+export function isTall(kind) {
+  return isBus(kind) || kind === 'truck' || kind === 'firetruck';
+}
+
 export class TrafficManager {
   /**
    * @param {{lanes: Array<{id:string,row:number,direction:number}>, catalogue:any, worldWidth:number, rng:() => number,
@@ -91,6 +100,7 @@ export class TrafficManager {
    */
   spawn(kind, lane, options = {}) {
     if (!this.has(kind)) return null;
+    if (isTall(kind) && this.tallElsewhere(lane.id)) return null;
     const length = this.lengthPx(kind);
     const x = lane.direction > 0 ? -length / 2 - 8 : this.worldWidth + length / 2 + 8;
     for (const v of this.vehicles) {
@@ -115,6 +125,11 @@ export class TrafficManager {
     };
     this.vehicles.push(vehicle);
     return vehicle;
+  }
+
+  /** Whether a tall vehicle is on the street in another lane than this one. @param {string} laneId */
+  tallElsewhere(laneId) {
+    return this.vehicles.some((v) => v.lane !== laneId && isTall(v.kind));
   }
 
   /** Pick a kind for the hour, choosing a bus livery when a bus comes up. @param {any} rhythm */
@@ -148,7 +163,10 @@ export class TrafficManager {
       const t = (this.timers.get(lane.id) ?? 0) - dt;
       if (t <= 0) {
         this.timers.set(lane.id, 2.2 + (1 - density) * 7 + this.rng() * 3);
-        if (this.rng() < 0.25 + density * 0.75) this.spawn(this.pickKind(rhythm), lane);
+        if (this.rng() < 0.25 + density * 0.75) {
+          const kind = this.pickKind(rhythm);
+          this.spawn(isTall(kind) && this.tallElsewhere(lane.id) ? 'sedan' : kind, lane);
+        }
       } else {
         this.timers.set(lane.id, t);
       }

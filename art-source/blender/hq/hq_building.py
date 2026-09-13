@@ -158,6 +158,10 @@ def materials():
         "console_slot": principled("console_slot", "#2a2b33", rough=0.4),
         "desk": principled("desk_dark", "#2d2b31", rough=0.45),
         "desk_top": principled("desk_top", "#3a3439", rough=0.35),
+        "desk_white": principled("desk_white", "#e3ded6", rough=0.35),
+        "desk_panel": principled("desk_panel", "#cfc9bf", rough=0.5),
+        "chair": principled("chair_fabric", "#23252c", rough=0.7),
+        "mug": principled("mug", "#c2410c", rough=0.4),
         "wood": principled("wood", "#6a4a2e", rough=0.45),
         "wood_dark": principled("wood_dark", "#3b2a1e", rough=0.5),
         "black": principled("black", "#121318", rough=0.45),
@@ -238,6 +242,31 @@ def vending_front(mb, glow, x0, x1, z0, z1, y, seed):
             mb.box(x, x + w, y - 0.08, y - 0.03, zb + 0.02, zb + 0.02 + rng.uniform(0.12, 0.2), rng.choice(cans))
             x += w + 0.02
     mb.front_quad(x0, x1, z0, z1, y - 0.11, principled("vending_glass", "#9fb6cc", rough=0.05, alpha=0.12))
+
+
+def workstation(fronts, props, cx, level, mat, screen_tex, zone, desk, side=1, seat_y=1.2):
+    """One employee's own desk, seen from the front. The person sits behind it facing the viewer; the
+    monitor is turned in from one side so it never hides them; the chair stands behind them in the
+    rooms layer, so the canvas draws the person between the chair and the desk."""
+    f = fz(level)
+    ox = X(cx)
+    yf, yb = seat_y - 0.95, seat_y - 0.3
+    x0, x1 = ox - 0.72, ox + 0.72
+    top = f + 0.75
+    fronts.box(x0, x1, yf, yb, top - 0.035, top, mat["desk_white"])
+    fronts.box(x0 + 0.02, x1 - 0.02, yf - 0.004, yf, top - 0.05, top - 0.037, mat["console_top"])
+    for xx in (x0 + 0.02, x1 - 0.06):
+        fronts.box(xx, xx + 0.04, yf + 0.05, yb - 0.05, f, top - 0.035, mat["frame"])
+    fronts.box(x0 + 0.06, x1 - 0.06, yf + 0.08, yf + 0.1, f + 0.42, top - 0.05, mat["desk_panel"])
+    fronts.box(ox - 0.2, ox + 0.2, yb - 0.2, yb - 0.05, top, top + 0.02, mat["black"])
+    mx, my = ox + side * 0.5, yf + 0.3
+    monitor(fronts, mx, my, top, 0.6, 0.38, mat["mon_frame"], image_material(f"desk_screen_{desk}", screen_tex, 3.0), rz=math.radians(-side * 50))
+    fronts.cyl(ox - side * 0.42, yf + 0.35, top, top + 0.1, 0.04, mat["mug"], seg=14)
+    screen_anchor(f"{desk}_monitor", mx - 0.2, mx + 0.2, top + 0.13, top + 0.5, my - 0.01, zone=zone, desk=desk)
+    props.box(ox - 0.24, ox + 0.24, seat_y + 0.14, seat_y + 0.22, f + 0.55, f + 1.12, mat["chair"])
+    props.box(ox - 0.23, ox + 0.23, seat_y - 0.28, seat_y + 0.18, f + 0.42, f + 0.5, mat["chair"])
+    props.cyl(ox, seat_y - 0.03, f + 0.05, f + 0.42, 0.025, mat["frame"], seg=10)
+    props.box(ox - 0.3, ox + 0.3, seat_y - 0.08, seat_y + 0.02, f + 0.02, f + 0.05, mat["frame"])
 
 
 def back_desk(mb, x0px, x1px, level, mat, depth=(1.75, 2.3), top=0.78):
@@ -503,7 +532,7 @@ def build_l4(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
         monitor(props, X(cx), 2.05, top, M(24), 0.5, mat["mon_frame"], mat[scr])
     screen_anchor("director_monitors", X(772), X(850), top + 0.12, top + 0.62, 2.03, zone="director_suite", desk="desk_director")
     frame_picture(props, X(811), wz(123), BACK - 0.02, M(38), M(34), mat["black"], image_material("art_director", "art_night", 1.0))
-    console(fronts, 811, 78, lv, mat)
+    workstation(fronts, props, 811, lv, mat, "ui_blue_chart", "director_suite", "desk_director", side=1)
     seat("desk_director", 811, lv, "front", "director_suite")
     props.box(X(858), X(884), 1.8, 2.2, f + 0.55, f + 0.6, mat["wood_dark"])
     props.box(X(870), X(872), 1.95, 2.05, f, f + 0.55, mat["wood_dark"])
@@ -559,8 +588,8 @@ def build_l3(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     for cx, scr in ((670, "screen_blue"), (700, "screen_blue_chart")):
         monitor(props, X(cx), 2.05, top, M(24), 0.46, mat["mon_frame"], mat[scr])
     screen_anchor("research_monitors", X(658), X(712), top + 0.12, top + 0.58, 2.03, zone="research_lab", desk="desk_research_1")
-    console(fronts, 672, 56, lv, mat)
-    seat("desk_research_1", 672, lv, "back", "research_lab")
+    workstation(fronts, props, 672, lv, mat, "ui_blue", "research_lab", "desk_research_1", side=1)
+    seat("desk_research_1", 672, lv, "front", "research_lab")
     for xp in (732, 750):
         props.box(X(xp), X(xp + 14), 1.8, 2.3, f, f + 0.95, principled("tower_pc", "#1b1c22", rough=0.4))
         glow.box(X(xp + 4), X(xp + 5), 1.79, 1.8, f + 0.7, f + 0.85, emissive("pc_led_blue", "#60a5fa", 8.0))
@@ -585,7 +614,7 @@ def build_l3(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     props.box(X(790), X(830), 1.9, 2.25, top2, top2 + 0.18, mat["white"])
     screen_anchor("factcheck_monitors", X(893), X(945), top2 + 0.12, top2 + 0.58, 2.03, zone="research_lab", desk="desk_research_2")
     frame_picture(props, X(936), wz(230), BACK - 0.02, M(24), M(30), mat["black"], image_material("poster_l3b", "art_teal", 0.8))
-    console(fronts, 926, 58, lv, mat)
+    workstation(fronts, props, 926, lv, mat, "ui_cyan_chart", "research_lab", "desk_research_2", side=-1)
     seat("desk_research_2", 926, lv, "front", "research_lab")
     wb = principled("whiteboard", "#e4e2da", rough=0.5)
     props.box(X(970), X(1002), BACK - 0.06, BACK - 0.02, wz(252), wz(208), mat["metal"])
@@ -643,8 +672,8 @@ def build_l2(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     props.box(X(776), X(836), BACK - 0.06, BACK - 0.02, wz(330), wz(301), mat["mon_frame"])
     props.front_quad(X(778), X(834), wz(328), wz(303), BACK - 0.065, image_material("script_tv", "art_night", 0.9))
     plant(leaves, pots, X(890), 2.05, top, 0.4, mat["leaf"], mat["pot_white"], pot_h=0.16, pot_r=0.08, n=8, seed=22, style="bush")
-    console(fronts, 804, 64, lv, mat)
-    seat("desk_script", 804, lv, "back", "script_room")
+    workstation(fronts, props, 804, lv, mat, "ui_script", "script_room", "desk_script", side=1)
+    seat("desk_script", 804, lv, "front", "script_room")
     frame_picture(props, X(898), wz(336), BACK - 0.02, M(23), M(32), mat["black"], image_material("art_l2b", "art_teal", 0.8))
     plant(leaves, pots, X(928), 1.8, f, 0.85, mat["leaf"], mat["pot_white"], pot_h=0.35, pot_r=0.15, n=11, seed=23)
     wall_window(props, 940, 990, 320, 362, mat)
@@ -687,10 +716,10 @@ def build_l1(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     for cx in (655, 694):
         monitor(props, X(cx), 2.05, top, M(26), 0.46, mat["mon_frame"], image_material("daw", "ui_daw", 1.6))
     screen_anchor("audio_monitors", X(641), X(708), top + 0.12, top + 0.58, 2.03, zone="audio_booth", desk="desk_audio")
-    console(fronts, 668, 64, lv, mat)
+    workstation(fronts, props, 668, lv, mat, "ui_daw", "audio_booth", "desk_audio", side=1)
     seat("desk_audio", 668, lv, "front", "audio_booth")
-    # boom microphone on the console, pointing at the seat
-    ct = f + 0.95
+    # boom microphone on the desk, pointing at the seat
+    ct = f + 0.75
     fronts.cyl(X(648), 0.6, ct, ct + 0.35, 0.015, mat["black"])
     fronts.box(X(648), X(662), 0.6, 0.62, ct + 0.34, ct + 0.36, mat["black"])
     fronts.cyl(X(663), 0.62, ct + 0.22, ct + 0.36, 0.05, principled("mic", "#2a2a2e", rough=0.3, metal=0.6), seg=12)
@@ -720,8 +749,8 @@ def build_l1(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     screen_anchor("video_monitors", X(988), X(1058), top + 0.12, top + 0.56, 2.03, zone="video_studio", desk="desk_video")
     props.box(X(1062), X(1072), 1.9, 2.3, top, top + 0.55, principled("pc_glass", "#101218", rough=0.2))
     glow.box(X(1063), X(1071), 1.89, 1.9, top + 0.08, top + 0.48, emissive("rgb", "#38bdf8", 4.0))
-    console(fronts, 1022, 64, lv, mat)
-    seat("desk_video", 1022, lv, "back", "video_studio")
+    workstation(fronts, props, 1022, lv, mat, "ui_timeline", "video_studio", "desk_video", side=-1)
+    seat("desk_video", 1022, lv, "front", "video_studio")
     props.box(X(1072), X(1102), BACK - 0.08, BACK - 0.02, wz(464), wz(436), mat["mon_frame"])
     props.front_quad(X(1074), X(1100), wz(462), wz(438), BACK - 0.085, image_material("timeline", "ui_timeline", 1.4))
     plant(leaves, pots, X(1094), 1.5, f, 0.7, mat["leaf"], mat["pot_white"], pot_h=0.3, pot_r=0.13, n=10, seed=13)
@@ -844,10 +873,9 @@ def build_ground(shell, rooms, props, leaves, pots, fronts, glow, lights, back, 
     screen_anchor("treasury_monitor", X(935), X(951), 1.12, 1.48, 2.098, zone="accounting_office", desk="desk_accounting")
     light(lights, "SPOT", (X(930), 1.5, c - 0.5), 120, "#ffd29a", radius=0.08, cone=70, blend=0.4, rot=(math.radians(20), 0, 0), name="ops_spot_a")
     light(lights, "SPOT", (X(1000), 1.5, c - 0.5), 120, "#ffd29a", radius=0.08, cone=70, blend=0.4, rot=(math.radians(20), 0, 0), name="ops_spot_b")
-    fronts.box(X(925), X(1022), 0.3, 0.95, 0.0, 0.8, mat["console"])
-    fronts.box(X(923), X(1024), 0.28, 0.95, 0.8, 0.86, mat["console_top"])
-    fronts.box(X(940), X(1007), 0.29, 0.3, 0.3, 0.5, mat["console_slot"])
+    workstation(fronts, props, 945, 0, mat, "ui_ledger", "accounting_office", "desk_accounting", side=-1, seat_y=1.3)
     seat("desk_accounting", 945, 0, "front", "accounting_office", y=1.3)
+    workstation(fronts, props, 1001, 0, mat, "ui_radar", "publish_desk", "desk_publish", side=1, seat_y=1.3)
     seat("desk_publish", 1001, 0, "front", "publish_desk", y=1.3)
     shell.front_quad(X(897), X(1032), 0.0, Z(541), -0.16, mat["glass"])
     # ---------------- S3 AI SPACE (the ad space storefront)

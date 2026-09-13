@@ -126,8 +126,8 @@ def setup_world(scene, variant, preview):
         ambient.inputs["Color"].default_value = lin("#3b4c80")
         ambient.inputs["Strength"].default_value = 1.1
     else:
-        ambient.inputs["Color"].default_value = lin("#9db8e0")
-        ambient.inputs["Strength"].default_value = 1.2
+        ambient.inputs["Color"].default_value = lin("#8fb0e0")
+        ambient.inputs["Strength"].default_value = 0.9
     if preview:
         sky = nt.nodes.new("ShaderNodeBackground")
         tc = nt.nodes.new("ShaderNodeTexCoord")
@@ -168,7 +168,7 @@ def setup_sun(colls, variant):
         sun("dusk_glow", "#ff9f86", 1.2, (math.radians(80), 0, math.radians(-35)), angle=10)
         sun("moon", "#9fb2ff", 0.6, (math.radians(35), 0, math.radians(25)), angle=3)
     else:
-        sun("sun", "#fff1d8", 4.0, (math.radians(50), 0, math.radians(-30)), angle=1.5)
+        sun("sun", "#ffe6c4", 3.2, (math.radians(50), 0, math.radians(-30)), angle=1.5)
 
 
 NIGHT_GLOW = ("tower_", "city_", "classic", "lamp_glass", "terrace_led", "edge_led", "bridge_", "beacon", "billboard", "shelter_ad", "tower_strip", "teal_dash", "same_city_text", "slogan")
@@ -179,7 +179,7 @@ def daytime(colls):
     from hq_lib import TEXTURES
 
     for ob in colls["lights_interior"].objects:
-        ob.data.energy *= 0.55
+        ob.data.energy *= 0.85
     for ob in colls["lights_exterior"].objects:
         if ob.data.type != "SUN":
             ob.data.energy = 0.0
@@ -197,8 +197,8 @@ def daytime(colls):
             if mat.name.startswith("window_view") and node.type == "TEX_IMAGE":
                 node.image = day_view
             if mat.name.startswith("haze") and node.type == "EMISSION":
-                node.inputs["Color"].default_value = lin("#c9d8ec")
-                node.inputs["Strength"].default_value = 1.8
+                node.inputs["Color"].default_value = lin("#a9c0e2")
+                node.inputs["Strength"].default_value = 0.7
 
 
 def main():

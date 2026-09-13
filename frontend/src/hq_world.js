@@ -103,10 +103,10 @@ export function plateDayMix(daylight) {
   return Math.max(0, Math.min(1, daylight)) ** 2.2;
 }
 
-const SPRITE_SCALE = 1.1;
-/** Seated employees sit up above their consoles, as in the reference, not sunk behind them. */
-const SEATED_LIFT = 6;
-const PEDESTRIAN_SCALE = 0.86;
+/** People are rendered at true size (build_people.py), sitting on the chairs the plates model. */
+const SPRITE_SCALE = 1;
+const SEATED_LIFT = 0;
+const PEDESTRIAN_SCALE = 1;
 
 export class AmbientAnimationManager {
   constructor() {
@@ -137,7 +137,7 @@ export class WorldSimulationManager {
     this.rng = mulberry32(options.seed ?? Date.now());
     this.worldW = m.world.width;
     this.worldH = m.world.height;
-    this.time = new TimeOfDayManager({ now: options.now });
+    this.time = new TimeOfDayManager({ now: options.now, light: assets.scene?.light });
     this.weather = new WeatherManager(options.fetchWeather);
     this.events = new RandomEventManager(assets.events, this.rng);
     const street = m.street;
@@ -196,7 +196,7 @@ export class WorldSimulationManager {
     this.agents.update(dt);
     this.ambient.update(dt);
     this.sky.update(dt, time, fx);
-    if (time.daylight > 0.001) this.assets.loadVariant('day');
+    if (this.time.state.daylight > 0.001) this.assets.loadVariant('day');
   }
 }
 
@@ -334,7 +334,9 @@ export class HQRenderer {
     const fx = w.weather.effects;
     w.agentList = state.agents;
     this.useCaches = this.ensureCaches(state.scale || 1, time);
-    w.sky.drawSky(ctx, time, fx);
+    // in the picture's light, live cloud cover does not grey the painted sky; rain, snow and fog still fall
+    const skyFx = w.time.light === 'reference_dusk' ? { ...fx, cloudiness: 0 } : fx;
+    w.sky.drawSky(ctx, time, skyFx);
     w.sky.drawSkyEvents(ctx, w.events, time);
     this.plate(ctx, 'back', time);
     this.drawBillboard(ctx);

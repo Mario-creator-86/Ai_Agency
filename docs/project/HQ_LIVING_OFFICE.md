@@ -77,8 +77,9 @@ python art-source/blender/hq/make_textures.py              # screens, window vie
 blender -b --factory-startup --python art-source/blender/hq/build_hq.py -- --out <dir> --scale 2 --samples 128 --variant night
 blender -b --factory-startup --python art-source/blender/hq/build_hq.py -- --out <dir> --scale 2 --samples 128 --variant day
 python art-source/blender/hq/export_plates.py <dir> frontend/public/assets/hq
-blender -b --factory-startup --python art-source/blender/hq/build_characters.py -- --out <frames>
-blender -b --factory-startup --python art-source/blender/hq/build_characters.py -- --out <frames> --pedestrians
+blender -b --factory-startup --python art-source/blender/hq/build_people.py -- --out <frames>
+blender -b --factory-startup --python art-source/blender/hq/build_people.py -- --out <frames> --pedestrians
+python art-source/sky/paint_clouds.py                      # the sky's painted cloud layers
 python art-source/blender/hq/pack_sprites.py <frames> frontend/public/assets/hq/characters --downscale 2
 python art-source/blender/hq/pack_sprites.py <frames> frontend/public/assets/hq/characters --manifest pedestrians.json --downscale 2
 blender -b --factory-startup --python art-source/blender/hq/build_vehicles.py -- --out <renders>

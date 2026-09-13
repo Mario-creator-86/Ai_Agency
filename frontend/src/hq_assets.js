@@ -49,6 +49,8 @@ export class HQAssets {
     this.vehicles = null;
     /** @type {any} */
     this.events = null;
+    /** @type {any} how the office is lit (scene.json) */
+    this.scene = null;
     /** @type {Record<string, Record<string, {img: HTMLImageElement, x:number, y:number, w:number, h:number}>>} */
     this.layers = { night: {}, day: {} };
     /** @type {Map<string, HTMLImageElement>} */
@@ -59,15 +61,16 @@ export class HQAssets {
   }
 
   async load() {
-    const [manifest, plates, characters, pedestrians, vehicles, events] = await Promise.all([
+    const [manifest, plates, characters, pedestrians, vehicles, events, scene] = await Promise.all([
       readJson('manifest.json'),
       readJson('plates/plates.json'),
       readJson('characters/characters.json'),
       readJson('characters/pedestrians.json'),
       readJson('vehicles/vehicles.json'),
       readJson('world_events.json'),
+      readJson('scene.json'),
     ]);
-    Object.assign(this, { manifest, plates, characters, pedestrians, vehicles, events });
+    Object.assign(this, { manifest, plates, characters, pedestrians, vehicles, events, scene });
     if (!manifest || !plates) return false;
     /** @type {Promise<void>[]} */
     const jobs = [this.loadVariant('night')];

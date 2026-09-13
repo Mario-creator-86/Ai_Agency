@@ -36,9 +36,9 @@
    },
    "building_front": {
     "file": "night_building_front.webp",
-    "x": 628.0,
-    "y": 137.0,
-    "w": 434.0,
+    "x": 645.0,
+    "y": 136.0,
+    "w": 400.0,
     "h": 519.5
    },
    "building_shell": {
@@ -65,9 +65,9 @@
    "street_front": {
     "file": "night_street_front.webp",
     "x": 33.0,
-    "y": 776.0,
+    "y": 776.5,
     "w": 1563.0,
-    "h": 56.5
+    "h": 56.0
    }
   },
   "day": {
@@ -101,17 +101,17 @@
    },
    "building_front": {
     "file": "day_building_front.webp",
-    "x": 620.0,
-    "y": 129.5,
-    "w": 450.0,
-    "h": 542.0
+    "x": 645.0,
+    "y": 136.0,
+    "w": 399.5,
+    "h": 519.5
    },
    "building_shell": {
     "file": "day_building_shell.webp",
     "x": 412.5,
     "y": 0.0,
     "w": 943.0,
-    "h": 669.0
+    "h": 669.5
    },
    "street_props": {
     "file": "day_street_props.webp",
@@ -130,9 +130,9 @@
    "street_front": {
     "file": "day_street_front.webp",
     "x": 33.0,
-    "y": 775.5,
+    "y": 776.5,
     "w": 1563.0,
-    "h": 57.0
+    "h": 56.0
    }
   }
  }

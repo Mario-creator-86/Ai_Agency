@@ -22,69 +22,43 @@
      2,
      3
     ],
-    "sit_type_back": [
+    "sit_idle_front": [
      4,
-     5,
+     5
+    ],
+    "sit_think_front": [
      6,
      7
     ],
-    "sit_idle_front": [
+    "sit_talk_front": [
      8,
      9
     ],
-    "sit_idle_back": [
+    "sit_sleep_front": [
      10,
      11
     ],
-    "sit_think_front": [
+    "sit_error_front": [
      12,
      13
     ],
-    "sit_think_back": [
+    "stand_idle": [
      14,
      15
     ],
-    "sit_talk_front": [
+    "stand_react": [
      16,
      17
     ],
-    "sit_talk_back": [
+    "walk_right": [
      18,
-     19
-    ],
-    "sit_sleep_front": [
+     19,
      20,
-     21
-    ],
-    "sit_sleep_back": [
+     21,
      22,
-     23
-    ],
-    "sit_error_front": [
+     23,
      24,
      25
-    ],
-    "sit_error_back": [
-     26,
-     27
-    ],
-    "stand_idle": [
-     28,
-     29
-    ],
-    "stand_react": [
-     30,
-     31
-    ],
-    "walk_right": [
-     32,
-     33,
-     34,
-     35,
-     36,
-     37,
-     38,
-     39
     ]
    }
   },
@@ -93,7 +67,7 @@
    "columns": 8,
    "role": "LeadResearcher",
    "canonical_name": "Dr. Aris Researcher",
-   "seat_facing": "back",
+   "seat_facing": "front",
    "animations": {
     "sit_type_front": [
      0,
@@ -101,69 +75,43 @@
      2,
      3
     ],
-    "sit_type_back": [
+    "sit_idle_front": [
      4,
-     5,
+     5
+    ],
+    "sit_think_front": [
      6,
      7
     ],
-    "sit_idle_front": [
+    "sit_talk_front": [
      8,
      9
     ],
-    "sit_idle_back": [
+    "sit_sleep_front": [
      10,
      11
     ],
-    "sit_think_front": [
+    "sit_error_front": [
      12,
      13
     ],
-    "sit_think_back": [
+    "stand_idle": [
      14,
      15
     ],
-    "sit_talk_front": [
+    "stand_react": [
      16,
      17
     ],
-    "sit_talk_back": [
+    "walk_right": [
      18,
-     19
-    ],
-    "sit_sleep_front": [
+     19,
      20,
-     21
-    ],
-    "sit_sleep_back": [
+     21,
      22,
-     23
-    ],
-    "sit_error_front": [
+     23,
      24,
      25
-    ],
-    "sit_error_back": [
-     26,
-     27
-    ],
-    "stand_idle": [
-     28,
-     29
-    ],
-    "stand_react": [
-     30,
-     31
-    ],
-    "walk_right": [
-     32,
-     33,
-     34,
-     35,
-     36,
-     37,
-     38,
-     39
     ]
    }
   },
@@ -180,69 +128,43 @@
      2,
      3
     ],
-    "sit_type_back": [
+    "sit_idle_front": [
      4,
-     5,
+     5
+    ],
+    "sit_think_front": [
      6,
      7
     ],
-    "sit_idle_front": [
+    "sit_talk_front": [
      8,
      9
     ],
-    "sit_idle_back": [
+    "sit_sleep_front": [
      10,
      11
     ],
-    "sit_think_front": [
+    "sit_error_front": [
      12,
      13
     ],
-    "sit_think_back": [
+    "stand_idle": [
      14,
      15
     ],
-    "sit_talk_front": [
+    "stand_react": [
      16,
      17
     ],
-    "sit_talk_back": [
+    "walk_right": [
      18,
-     19
-    ],
-    "sit_sleep_front": [
+     19,
      20,
-     21
-    ],
-    "sit_sleep_back": [
+     21,
      22,
-     23
-    ],
-    "sit_error_front": [
+     23,
      24,
      25
-    ],
-    "sit_error_back": [
-     26,
-     27
-    ],
-    "stand_idle": [
-     28,
-     29
-    ],
-    "stand_react": [
-     30,
-     31
-    ],
-    "walk_right": [
-     32,
-     33,
-     34,
-     35,
-     36,
-     37,
-     38,
-     39
     ]
    }
   },
@@ -251,7 +173,7 @@
    "columns": 8,
    "role": "ScriptWriter",
    "canonical_name": "Marcus Scriptwriter",
-   "seat_facing": "back",
+   "seat_facing": "front",
    "animations": {
     "sit_type_front": [
      0,
@@ -259,69 +181,43 @@
      2,
      3
     ],
-    "sit_type_back": [
+    "sit_idle_front": [
      4,
-     5,
+     5
+    ],
+    "sit_think_front": [
      6,
      7
     ],
-    "sit_idle_front": [
+    "sit_talk_front": [
      8,
      9
     ],
-    "sit_idle_back": [
+    "sit_sleep_front": [
      10,
      11
     ],
-    "sit_think_front": [
+    "sit_error_front": [
      12,
      13
     ],
-    "sit_think_back": [
+    "stand_idle": [
      14,
      15
     ],
-    "sit_talk_front": [
+    "stand_react": [
      16,
      17
     ],
-    "sit_talk_back": [
+    "walk_right": [
      18,
-     19
-    ],
-    "sit_sleep_front": [
+     19,
      20,
-     21
-    ],
-    "sit_sleep_back": [
+     21,
      22,
-     23
-    ],
-    "sit_error_front": [
+     23,
      24,
      25
-    ],
-    "sit_error_back": [
-     26,
-     27
-    ],
-    "stand_idle": [
-     28,
-     29
-    ],
-    "stand_react": [
-     30,
-     31
-    ],
-    "walk_right": [
-     32,
-     33,
-     34,
-     35,
-     36,
-     37,
-     38,
-     39
     ]
    }
   },
@@ -338,69 +234,43 @@
      2,
      3
     ],
-    "sit_type_back": [
+    "sit_idle_front": [
      4,
-     5,
+     5
+    ],
+    "sit_think_front": [
      6,
      7
     ],
-    "sit_idle_front": [
+    "sit_talk_front": [
      8,
      9
     ],
-    "sit_idle_back": [
+    "sit_sleep_front": [
      10,
      11
     ],
-    "sit_think_front": [
+    "sit_error_front": [
      12,
      13
     ],
-    "sit_think_back": [
+    "stand_idle": [
      14,
      15
     ],
-    "sit_talk_front": [
+    "stand_react": [
      16,
      17
     ],
-    "sit_talk_back": [
+    "walk_right": [
      18,
-     19
-    ],
-    "sit_sleep_front": [
+     19,
      20,
-     21
-    ],
-    "sit_sleep_back": [
+     21,
      22,
-     23
-    ],
-    "sit_error_front": [
+     23,
      24,
      25
-    ],
-    "sit_error_back": [
-     26,
-     27
-    ],
-    "stand_idle": [
-     28,
-     29
-    ],
-    "stand_react": [
-     30,
-     31
-    ],
-    "walk_right": [
-     32,
-     33,
-     34,
-     35,
-     36,
-     37,
-     38,
-     39
     ]
    }
   },
@@ -409,7 +279,7 @@
    "columns": 8,
    "role": "VideoEditor",
    "canonical_name": "Kael Video Editor",
-   "seat_facing": "back",
+   "seat_facing": "front",
    "animations": {
     "sit_type_front": [
      0,
@@ -417,69 +287,43 @@
      2,
      3
     ],
-    "sit_type_back": [
+    "sit_idle_front": [
      4,
-     5,
+     5
+    ],
+    "sit_think_front": [
      6,
      7
     ],
-    "sit_idle_front": [
+    "sit_talk_front": [
      8,
      9
     ],
-    "sit_idle_back": [
+    "sit_sleep_front": [
      10,
      11
     ],
-    "sit_think_front": [
+    "sit_error_front": [
      12,
      13
     ],
-    "sit_think_back": [
+    "stand_idle": [
      14,
      15
     ],
-    "sit_talk_front": [
+    "stand_react": [
      16,
      17
     ],
-    "sit_talk_back": [
+    "walk_right": [
      18,
-     19
-    ],
-    "sit_sleep_front": [
+     19,
      20,
-     21
-    ],
-    "sit_sleep_back": [
+     21,
      22,
-     23
-    ],
-    "sit_error_front": [
+     23,
      24,
      25
-    ],
-    "sit_error_back": [
-     26,
-     27
-    ],
-    "stand_idle": [
-     28,
-     29
-    ],
-    "stand_react": [
-     30,
-     31
-    ],
-    "walk_right": [
-     32,
-     33,
-     34,
-     35,
-     36,
-     37,
-     38,
-     39
     ]
    }
   },
@@ -496,69 +340,43 @@
      2,
      3
     ],
-    "sit_type_back": [
+    "sit_idle_front": [
      4,
-     5,
+     5
+    ],
+    "sit_think_front": [
      6,
      7
     ],
-    "sit_idle_front": [
+    "sit_talk_front": [
      8,
      9
     ],
-    "sit_idle_back": [
+    "sit_sleep_front": [
      10,
      11
     ],
-    "sit_think_front": [
+    "sit_error_front": [
      12,
      13
     ],
-    "sit_think_back": [
+    "stand_idle": [
      14,
      15
     ],
-    "sit_talk_front": [
+    "stand_react": [
      16,
      17
     ],
-    "sit_talk_back": [
+    "walk_right": [
      18,
-     19
-    ],
-    "sit_sleep_front": [
+     19,
      20,
-     21
-    ],
-    "sit_sleep_back": [
+     21,
      22,
-     23
-    ],
-    "sit_error_front": [
+     23,
      24,
      25
-    ],
-    "sit_error_back": [
-     26,
-     27
-    ],
-    "stand_idle": [
-     28,
-     29
-    ],
-    "stand_react": [
-     30,
-     31
-    ],
-    "walk_right": [
-     32,
-     33,
-     34,
-     35,
-     36,
-     37,
-     38,
-     39
     ]
    }
   },
@@ -575,69 +393,43 @@
      2,
      3
     ],
-    "sit_type_back": [
+    "sit_idle_front": [
      4,
-     5,
+     5
+    ],
+    "sit_think_front": [
      6,
      7
     ],
-    "sit_idle_front": [
+    "sit_talk_front": [
      8,
      9
     ],
-    "sit_idle_back": [
+    "sit_sleep_front": [
      10,
      11
     ],
-    "sit_think_front": [
+    "sit_error_front": [
      12,
      13
     ],
-    "sit_think_back": [
+    "stand_idle": [
      14,
      15
     ],
-    "sit_talk_front": [
+    "stand_react": [
      16,
      17
     ],
-    "sit_talk_back": [
+    "walk_right": [
      18,
-     19
-    ],
-    "sit_sleep_front": [
+     19,
      20,
-     21
-    ],
-    "sit_sleep_back": [
+     21,
      22,
-     23
-    ],
-    "sit_error_front": [
+     23,
      24,
      25
-    ],
-    "sit_error_back": [
-     26,
-     27
-    ],
-    "stand_idle": [
-     28,
-     29
-    ],
-    "stand_react": [
-     30,
-     31
-    ],
-    "walk_right": [
-     32,
-     33,
-     34,
-     35,
-     36,
-     37,
-     38,
-     39
     ]
    }
   }

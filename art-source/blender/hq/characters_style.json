@@ -17,7 +17,7 @@
       "top": {"kind": "labcoat", "color": "coat", "inner": "shirt"},
       "legs": {"color": "#1f2638", "shoes": "#121316"},
       "accessories": [{"kind": "round_glasses", "color": "glasses"}],
-      "seat_facing": "back"
+      "seat_facing": "front"
     },
     "FactChecker": {
       "sprite": "elena",
@@ -35,7 +35,7 @@
       "top": {"kind": "hoodie", "color": "hoodie", "inner": "#6b7280"},
       "legs": {"color": "jeans", "shoes": "#f3f4f6"},
       "accessories": [{"kind": "stubble", "color": "#3a2a22"}],
-      "seat_facing": "back"
+      "seat_facing": "front"
     },
     "VoiceArtist": {
       "sprite": "lyra",
@@ -53,7 +53,7 @@
       "top": {"kind": "shirt", "color": "shirt", "inner": "#15171c", "rolled": true},
       "legs": {"color": "#1f2937", "shoes": "#5a3a22"},
       "accessories": [{"kind": "headset", "color": "headset"}],
-      "seat_facing": "back"
+      "seat_facing": "front"
     },
     "Publisher": {
       "sprite": "vera",

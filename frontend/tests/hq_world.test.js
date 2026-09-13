@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { solarElevation, timeOfDay, skyStops } from '../src/hq_time.js';
+import { solarElevation, timeOfDay, skyStops, litTime, TimeOfDayManager } from '../src/hq_time.js';
 import { normalizeWeather, weatherEffects, WeatherManager } from '../src/hq_weather.js';
 import { RandomEventManager, validateEvent, RARITY_RATE } from '../src/hq_events.js';
 import { TrafficManager } from '../src/hq_traffic.js';
@@ -22,6 +22,18 @@ test('the sun over Bucharest: high at a June noon, far below the horizon at a De
   assert.ok(solarElevation(new Date('2026-12-21T22:00:00Z')) < -50);
   const september = solarElevation(new Date('2026-09-13T16:00:00Z'));
   assert.ok(september > -3 && september < 12, `mid-September 19:00 local is near sunset (${september})`);
+});
+
+test("in the picture's light the office is always at dusk, while the clock and the street keep real time", () => {
+  const noon = timeOfDay(new Date('2026-06-21T10:00:00Z'));
+  const lit = litTime(noon, 'reference_dusk');
+  assert.equal(lit.phase, 'dusk');
+  assert.ok(lit.daylight > 0.2 && lit.daylight < 0.45 && lit.dusk > 0.5, JSON.stringify(lit));
+  assert.equal(lit.text, noon.text);
+  assert.equal(litTime(noon, 'live'), noon);
+  const manager = new TimeOfDayManager({ now: () => new Date('2026-06-21T10:00:00Z'), light: 'reference_dusk' });
+  assert.equal(manager.update(1).phase, 'day');
+  assert.equal(manager.state.phase, 'dusk');
 });
 
 test('phases follow the sun, not a fixed hour table', () => {
@@ -145,6 +157,14 @@ test('street sprites take the light of the hour: untouched by day, dim and cool 
   assert.ok(overcast.every((c) => c < 1), `overcast light ${overcast}`);
 });
 
+test('every employee sits at their own desk facing the viewer', () => {
+  const seats = Object.entries(MANIFEST.seats);
+  assert.ok(seats.length >= 8, 'eight seats');
+  for (const [desk, seat] of seats) assert.equal(seat.facing, 'front', `${desk} faces the viewer`);
+  const spots = new Set(seats.map(([, s]) => `${s.level}:${Math.round(s.x)}`));
+  assert.equal(spots.size, seats.length, 'no two employees share a desk');
+});
+
 test('each vehicle frame knows where its visible lamps are, inside the frame', () => {
   for (const [kind, entry] of Object.entries(VEHICLES.vehicles)) {
     for (const [dir, d] of Object.entries(entry.directions)) {
@@ -155,6 +175,20 @@ test('each vehicle frame knows where its visible lamps are, inside the frame', (
       if (kind !== 'bicycle') assert.ok(d.lamps.head.length > 0, `${kind} ${dir} shows no headlight`);
     }
   }
+});
+
+test('buses and trucks never pass each other in opposite lanes, where one would hide the other', () => {
+  const traffic = new TrafficManager({ lanes: MANIFEST.street.lanes, catalogue: VEHICLES, worldWidth: 1600, rng: mulberry32(11), crosswalk: MANIFEST.street.crosswalk, shelterX: 1462 });
+  const tall = (/** @type {string} */ k) => k.startsWith('bus') || k === 'truck' || k === 'firetruck';
+  let seenTall = 0;
+  for (let i = 0; i < 20 * 60 * 20; i += 1) {
+    if (i % 1500 === 0) traffic.spawnForEvent('bus_arrives');
+    traffic.update(1 / 20, dense);
+    const lanes = new Set(traffic.vehicles.filter((v) => tall(v.kind)).map((v) => v.lane));
+    if (lanes.size) seenTall += 1;
+    assert.ok(lanes.size <= 1, `tall vehicles in ${lanes.size} lanes at step ${i}`);
+  }
+  assert.ok(seenTall > 0, 'buses still run');
 });
 
 test('in rush hour no vehicle ever drives through another', () => {
@@ -234,7 +268,7 @@ test('each employee is drawn from their Character Bible sprite', () => {
   for (const key of ['sarah', 'aris', 'elena', 'marcus', 'lyra', 'kael', 'vera', 'nadia']) {
     const entry = CHARACTERS.characters[key];
     assert.ok(entry, key);
-    for (const anim of ['sit_type_front', 'sit_type_back', 'sit_sleep_front', 'walk_right']) assert.ok(entry.animations[anim]?.length, `${key} ${anim}`);
+    for (const anim of ['sit_type_front', 'sit_idle_front', 'sit_sleep_front', 'walk_right']) assert.ok(entry.animations[anim]?.length, `${key} ${anim}`);
   }
 });
 

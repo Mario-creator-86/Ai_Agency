@@ -57,23 +57,54 @@ export function timeOfDay(date, location = BUCHAREST) {
   return { date, text: clock.text, hour: clock.hour, day: clock.day, elevation, daylight, dusk, phase, night: phase === 'night' };
 }
 
+/** The picture's light: the sun a few degrees under the horizon. */
+export const REFERENCE_DUSK_ELEVATION = -2.5;
+
+/**
+ * The moment the scene is lit by. In 'reference_dusk' the office always has the light of the
+ * Owner's headquarters picture, while the clock text stays real; 'live' lights it by the real sun.
+ * @param {ReturnType<typeof timeOfDay>} real
+ * @param {string} mode 'live' | 'reference_dusk'
+ */
+export function litTime(real, mode) {
+  if (mode !== 'reference_dusk') return real;
+  const elevation = REFERENCE_DUSK_ELEVATION;
+  return {
+    ...real,
+    elevation,
+    daylight: smoothstep(-8, 7, elevation),
+    dusk: Math.exp(-(((elevation - 1) / 6.5) ** 2)),
+    phase: 'dusk',
+    night: false,
+    // the afterglow sits on the evening side of the sky, where the picture's sunset is
+    hour: 19,
+  };
+}
+
 export class TimeOfDayManager {
-  /** @param {{now?: () => Date, location?: {lat:number, lon:number}}} [options] */
+  /** @param {{now?: () => Date, location?: {lat:number, lon:number}, light?: string}} [options] */
   constructor(options = {}) {
     this.now = options.now || (() => new Date());
     this.location = options.location || BUCHAREST;
-    this.state = timeOfDay(this.now(), this.location);
+    this.light = options.light === 'reference_dusk' ? 'reference_dusk' : 'live';
+    this.real = timeOfDay(this.now(), this.location);
+    this.state = litTime(this.real, this.light);
     this._elapsed = 0;
   }
 
-  /** @param {number} dt seconds */
+  /**
+   * Advance the clock. Returns the real moment (the street's rhythm and the random events follow
+   * it); `state` is the moment the scene is lit by.
+   * @param {number} dt seconds
+   */
   update(dt) {
     this._elapsed += dt;
     if (this._elapsed >= 1) {
       this._elapsed = 0;
-      this.state = timeOfDay(this.now(), this.location);
+      this.real = timeOfDay(this.now(), this.location);
+      this.state = litTime(this.real, this.light);
     }
-    return this.state;
+    return this.real;
   }
 }
 

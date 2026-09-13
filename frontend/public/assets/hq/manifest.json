@@ -112,7 +112,7 @@
   "desk_research_1": {
    "x": 672.0,
    "y": 276.2,
-   "facing": "back",
+   "facing": "front",
    "zone": "research_lab",
    "level": 3
   },
@@ -126,7 +126,7 @@
   "desk_script": {
    "x": 804.0,
    "y": 386.2,
-   "facing": "back",
+   "facing": "front",
    "zone": "script_room",
    "level": 2
   },
@@ -140,7 +140,7 @@
   "desk_video": {
    "x": 1022.0,
    "y": 494.2,
-   "facing": "back",
+   "facing": "front",
    "zone": "video_studio",
    "level": 1
   },
@@ -170,12 +170,32 @@
    "zone": "director_suite",
    "desk": "desk_director"
   },
+  "desk_director_monitor": {
+   "rect": [
+    819.4,
+    139.9,
+    11.2,
+    10.2
+   ],
+   "zone": "director_suite",
+   "desk": "desk_director"
+  },
   "research_monitors": {
    "rect": [
     658.0,
     234.6,
     54.0,
     12.7
+   ],
+   "zone": "research_lab",
+   "desk": "desk_research_1"
+  },
+  "desk_research_1_monitor": {
+   "rect": [
+    680.4,
+    244.9,
+    11.2,
+    10.2
    ],
    "zone": "research_lab",
    "desk": "desk_research_1"
@@ -190,6 +210,16 @@
    "zone": "research_lab",
    "desk": "desk_research_2"
   },
+  "desk_research_2_monitor": {
+   "rect": [
+    906.4,
+    244.9,
+    11.2,
+    10.2
+   ],
+   "zone": "research_lab",
+   "desk": "desk_research_2"
+  },
   "script_monitors": {
    "rect": [
     764.0,
@@ -200,12 +230,32 @@
    "zone": "script_room",
    "desk": "desk_script"
   },
+  "desk_script_monitor": {
+   "rect": [
+    812.4,
+    354.9,
+    11.2,
+    10.2
+   ],
+   "zone": "script_room",
+   "desk": "desk_script"
+  },
   "audio_monitors": {
    "rect": [
     641.0,
     452.6,
     67.0,
     12.7
+   ],
+   "zone": "audio_booth",
+   "desk": "desk_audio"
+  },
+  "desk_audio_monitor": {
+   "rect": [
+    676.4,
+    462.9,
+    11.2,
+    10.2
    ],
    "zone": "audio_booth",
    "desk": "desk_audio"
@@ -239,6 +289,16 @@
    "zone": "video_studio",
    "desk": "desk_video"
   },
+  "desk_video_monitor": {
+   "rect": [
+    1002.4,
+    462.9,
+    11.2,
+    10.2
+   ],
+   "zone": "video_studio",
+   "desk": "desk_video"
+  },
   "publish_radar": {
    "rect": [
     1005.0,
@@ -258,6 +318,26 @@
    ],
    "zone": "accounting_office",
    "desk": "desk_accounting"
+  },
+  "desk_accounting_monitor": {
+   "rect": [
+    925.4,
+    617.4,
+    11.2,
+    10.2
+   ],
+   "zone": "accounting_office",
+   "desk": "desk_accounting"
+  },
+  "desk_publish_monitor": {
+   "rect": [
+    1009.4,
+    617.4,
+    11.2,
+    10.2
+   ],
+   "zone": "publish_desk",
+   "desk": "desk_publish"
   }
  },
  "lamps": [
