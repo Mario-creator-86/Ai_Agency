@@ -1,5 +1,22 @@
 # Changelog
 
+## Street life in the evening light, a lit tower, lush trees — 2026-09-13
+
+- **Cars, buses and pedestrians take the light of the hour.** They are rendered under neutral
+  light, so at dusk a white bus glowed against the dark street. Their sheets are now multiplied
+  by the outdoor light (untouched by day, dim cool blue at dusk and night, greyer under cloud) and
+  cached until that light changes; lamps, light bars and the courier inside the building are not
+  tinted. Street lamps also leave long warm streaks on the road after dark.
+- **The lift tower** has its narrow side bay lit like the picture's, frames in steel blue and
+  larger stone blocks; its shaft glows less, so it no longer outshines the picture.
+- **Trees** have lighter, more translucent crowns around a dark green core and stronger warm
+  uplights; the bridge's cables are fine lines instead of a glowing tent; L3's spot cones are
+  narrower again, since with bloom they drew discs brighter than the picture.
+- **Measured on the live page at the picture's light**: mean colour distance 11.4 → 10.4; L3
+  17.0 → 10.3, street 13.8 → 10.7, L4 3.4, L1 4.9, ground floor 4.8. On the plates alone the tower
+  is now 4.8, but live it still measures 18.8: something drawn over the plates brightens it, and
+  that is the next thing to find.
+
 ## Floors, street and sky measured against the picture — 2026-09-13
 
 Region by region against the Owner's picture, the building still had heavy dark bands between

@@ -78,6 +78,22 @@ function flareSprite(rgb) {
   return sprite;
 }
 
+/**
+ * What outdoor light multiplies a street sprite by: white by day, a cool dim blue at dusk and at
+ * night, a little greyer under cloud. Sprites are rendered under neutral light; without this a
+ * white bus glows against a dusk street.
+ * @param {{daylight:number}} time
+ * @param {{cloudiness?:number}} fx
+ * @returns {[number, number, number]}
+ */
+export function streetLight(time, fx) {
+  // dusk is closer to night than to day on the street: the picture's cars show only their lamps
+  const d = Math.max(0, Math.min(1, time.daylight)) ** 1.6;
+  const grey = 1 - 0.18 * Math.max(0, Math.min(1, fx.cloudiness || 0));
+  const [r, g, b] = [0.4, 0.44, 0.62].map((n) => Math.round((n + (1 - n) * d) * grey * 100) / 100);
+  return [r, g, b];
+}
+
 const SPRITE_SCALE = 1.1;
 /** Seated employees sit up above their consoles, as in the reference, not sunk behind them. */
 const SEATED_LIFT = 6;
@@ -188,6 +204,34 @@ export class HQRenderer {
     this.cacheKey = '';
     this._wantedScale = 0;
     this._scaleSince = 0;
+    /** @type {Map<string, {tag: string, canvas: HTMLCanvasElement}>} */
+    this.tints = new Map();
+  }
+
+  /**
+   * A street sprite sheet multiplied by the outdoor light, cached until that light changes.
+   * @param {string} key
+   * @param {HTMLImageElement | HTMLCanvasElement} img
+   * @param {[number, number, number]} light
+   */
+  litSheet(key, img, light) {
+    if (typeof document === 'undefined' || light.every((c) => c >= 0.999)) return img;
+    const tag = light.join(',');
+    const hit = this.tints.get(key);
+    if (hit && hit.tag === tag) return hit.canvas;
+    const canvas = hit ? hit.canvas : document.createElement('canvas');
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const c = canvas.getContext('2d');
+    if (!c) return img;
+    c.drawImage(img, 0, 0);
+    c.globalCompositeOperation = 'multiply';
+    c.fillStyle = `rgb(${light.map((v) => Math.round(v * 255)).join(',')})`;
+    c.fillRect(0, 0, canvas.width, canvas.height);
+    c.globalCompositeOperation = 'destination-in';
+    c.drawImage(img, 0, 0);
+    this.tints.set(key, { tag, canvas });
+    return canvas;
   }
 
   /** The union of the rects the group's layers cover, in world px. @param {string[]} layers */
@@ -295,7 +339,7 @@ export class HQRenderer {
     this.drawTokens(ctx, state);
     this.plate(ctx, 'street_props', time);
     this.drawShelter(ctx, time);
-    this.drawPedestrians(ctx, fx);
+    this.drawPedestrians(ctx, fx, time);
     this.plate(ctx, 'street_kerb', time);
     this.drawVehicles(ctx, time, fx);
     this.plate(ctx, 'street_front', time);
@@ -360,6 +404,14 @@ export class HQRenderer {
     const road = this.m.street.road;
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
+    // each street lamp leaves a long warm streak on the road, as the picture's wet street does
+    for (const lamp of this.m.street.lamps || []) {
+      const streak = ctx.createLinearGradient(0, road.top, 0, road.bottom + 20);
+      streak.addColorStop(0, `rgba(255,196,120,${0.24 * dark * wet})`);
+      streak.addColorStop(1, 'rgba(255,196,120,0)');
+      ctx.fillStyle = streak;
+      ctx.fillRect(lamp.x - 5, road.top, 10, road.bottom - road.top + 20);
+    }
     for (const v of this.world.traffic.vehicles) {
       const nose = v.x + (v.dir * v.length) / 2;
       const tail = v.x - (v.dir * v.length) / 2;
@@ -584,12 +636,15 @@ export class HQRenderer {
   /**
    * @param {CanvasRenderingContext2D} ctx
    * @param {string} sheetKey
+   * @param {[number, number, number]} [light] outdoor light for people on the street; the courier
+   *   inside is lit by the building and passes none
    */
-  drawWalker(ctx, sheetKey, x, row, dir, phase, walking) {
+  drawWalker(ctx, sheetKey, x, row, dir, phase, walking, light) {
     const atlas = this.assets.pedestrians;
     const entry = atlas?.characters?.[sheetKey];
     const img = this.assets.sheet(`ped:${sheetKey}`);
     if (!entry || !img) return;
+    const sheet = light ? this.litSheet(`ped:${sheetKey}`, img, light) : img;
     const frames = entry.animations[walking ? 'walk_right' : 'stand_idle'] || [];
     if (!frames.length) return;
     const index = frames[Math.floor(Math.abs(phase)) % frames.length];
@@ -600,21 +655,22 @@ export class HQRenderer {
     ctx.save();
     ctx.translate(x, row);
     if (dir < 0) ctx.scale(-1, 1);
-    ctx.drawImage(img, (index % entry.columns) * sw, Math.floor(index / entry.columns) * sh, sw, sh, -fr.pivot[0] * s, -fr.pivot[1] * s, fr.w * s, fr.h * s);
+    ctx.drawImage(sheet, (index % entry.columns) * sw, Math.floor(index / entry.columns) * sh, sw, sh, -fr.pivot[0] * s, -fr.pivot[1] * s, fr.w * s, fr.h * s);
     ctx.restore();
   }
 
-  /** @param {CanvasRenderingContext2D} ctx @param {any} fx */
-  drawPedestrians(ctx, fx) {
+  /** @param {CanvasRenderingContext2D} ctx @param {any} fx @param {any} time */
+  drawPedestrians(ctx, fx, time) {
     const atlas = this.assets.pedestrians;
     if (!atlas) return;
+    const outdoor = streetLight(time, fx);
     for (const p of this.world.pedestrians.paintOrder()) {
       ctx.fillStyle = 'rgba(0,0,0,0.22)';
       ctx.beginPath();
       ctx.ellipse(p.x, p.row, 7, 2, 0, 0, Math.PI * 2);
       ctx.fill();
       const walking = p.react <= 0 && (p.state === 'walk' || p.state === 'cross');
-      this.drawWalker(ctx, p.sheet, p.x, p.row, p.dir, p.frame, walking);
+      this.drawWalker(ctx, p.sheet, p.x, p.row, p.dir, p.frame, walking, outdoor);
       if (p.umbrella && fx.rain > 0) {
         const hx = p.x + p.dir * 1;
         const hy = p.row - 40;
@@ -639,6 +695,7 @@ export class HQRenderer {
     const scale = cat.scale;
     const lamps = Math.min(1, Math.max(0, (1 - time.daylight) * 1.4 + fx.rain * 0.6 + fx.fog * 0.8));
     const clock = this.world.ambient.clock;
+    const outdoor = streetLight(time, fx);
     for (const v of this.world.traffic.paintOrder()) {
       const entry = cat.vehicles[v.kind];
       const img = this.assets.sheet(`veh:${v.kind}`);
@@ -655,7 +712,7 @@ export class HQRenderer {
       ctx.ellipse(v.x, v.row, v.length * 0.48, 4, 0, 0, Math.PI * 2);
       ctx.fill();
       const col = Math.floor(v.wheel) % 3;
-      ctx.drawImage(img, col * cellW, sy, d.w * scale, d.h * scale, dx, dy, d.w, d.h);
+      ctx.drawImage(this.litSheet(`veh:${v.kind}`, img, outdoor), col * cellW, sy, d.w * scale, d.h * scale, dx, dy, d.w, d.h);
       ctx.save();
       ctx.globalCompositeOperation = 'lighter';
       const lightsCol = entry.columns.indexOf('lights');

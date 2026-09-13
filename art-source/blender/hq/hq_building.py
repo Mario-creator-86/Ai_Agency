@@ -137,9 +137,9 @@ def seat(desk_id, xpx, level, facing, zone, y=1.2):
 
 def materials():
     return {
-        "frame": principled("frame_dark", "#2c3247", rough=0.42, metal=0.35),
+        "frame": principled("frame_dark", "#2f3a56", rough=0.4, metal=0.5),
         "frame_hi": principled("frame_hi", "#566077", rough=0.3, metal=0.6),
-        "stone": brick_material("stone", "#6c6a72", "#605e67", "#2e2d33", brick_w=0.95, row_h=0.48, rough=0.75),
+        "stone": brick_material("stone", "#6c6a72", "#605e67", "#2e2d33", brick_w=1.2, row_h=0.55, rough=0.75),
         "roof": principled("roof", "#1c2338", rough=0.65),
         "slab": principled("slab", "#2f3857", rough=0.55, metal=0.15),
         "sign_glass": principled("sign_glass", "#080b16", rough=0.18, metal=0.2),
@@ -446,7 +446,7 @@ def build_tower(shell, rooms, glow, lights, shell_c, mat):
     for lvl in FLOORS:
         lo = fz(lvl) + 0.1
         hi = (fz(lvl + 1) - 0.1) if lvl < 4 else Z(40)
-        glow.front_quad(X(1219), X(1273), lo, hi, 1.69, gradient_emission("shaft_section", "#5a4028", "#d09a60", 1.0))
+        glow.front_quad(X(1219), X(1273), lo, hi, 1.69, gradient_emission("shaft_section", "#5a4028", "#d09a60", 0.75))
         door_top = lo + min(2.4, (hi - lo) * 0.62)
         for xa, xb in ((1226, 1228), (1264, 1266), (1245, 1247)):
             glow.box(X(xa), X(xb), 1.6, 1.66, lo, door_top, mat["frame_hi"])
@@ -455,7 +455,12 @@ def build_tower(shell, rooms, glow, lights, shell_c, mat):
         glow.box(X(1236), X(1256), 1.2, 1.5, hi - 0.35, hi - 0.3, mat["lamp_bulb"])
         light(lights, "POINT", (X(1246), 1.0, hi - 0.5), 45, "#ffcf92", radius=0.2, name="shaft_light")
     rooms.box(X(1283), X(1307), 1.7, 1.9, -0.3, top, principled("bay_back", "#3a302d", rough=0.5))
-    strip = emissive("shaft_strip", "#ffd49c", 7.0)
+    # the narrow bay beside the shaft is a lit stair landing in the picture, not a black slot
+    for lvl in FLOORS:
+        lo = fz(lvl) + 0.1
+        hi = (fz(lvl + 1) - 0.1) if lvl < 4 else Z(40)
+        glow.front_quad(X(1285), X(1305), lo, hi, 1.69, gradient_emission("bay_section", "#4a3524", "#b8844f", 0.2))
+    strip = emissive("shaft_strip", "#ffd49c", 4.0)
     for xp in (1229, 1246, 1263):
         glow.box(X(xp) - 0.03, X(xp) + 0.03, 1.66, 1.7, -0.2, top - 0.3, strip if xp == 1246 else mat["frame_hi"])
     for lvl, row in ((4, 164), (3, 272), (2, 385), (1, 493), (0, 640)):
@@ -541,8 +546,8 @@ def build_l3(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     label_panel(rooms, shell_c, lv, "L3", "RESEARCH", mat)
     f = fz(lv)
     downlight_fixtures(glow, (560, 650, 770, 860, 960, 1060, 1150), lv, mat)
-    spot_row(lights, (560, 650, 770, 860, 960, 1060, 1150), lv, "#f0f2ff", 260, cone=72, blend=0.65, tilt=26)
-    light(lights, "AREA", (X(860), 0.4, cz(lv) - 0.9), 150.0, "#c8d0ff", radius=9.0, rot=(math.radians(35), 0, 0), name="l3_fill")
+    spot_row(lights, (560, 650, 770, 860, 960, 1060, 1150), lv, "#f0f2ff", 220, cone=58, blend=0.5, tilt=26)
+    light(lights, "AREA", (X(860), 0.4, cz(lv) - 0.9), 110.0, "#c8d0ff", radius=9.0, rot=(math.radians(35), 0, 0), name="l3_fill")
     plant(leaves, pots, X(530), 1.6, f, 0.9, mat["leaf"], mat["pot_white"], pot_h=0.32, pot_r=0.15, n=12, seed=31)
     bookshelf(props, X(537), X(587), 1.85, 2.35, f, f + 1.8, mat["wood_dark"], mat["books"], shelves=5, seed=3)
     wall_window(props, 602, 652, 202, 235, mat)

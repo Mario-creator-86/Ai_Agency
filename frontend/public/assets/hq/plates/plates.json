@@ -15,10 +15,10 @@
    },
    "street_back": {
     "file": "night_street_back.webp",
-    "x": 74.0,
-    "y": 425.5,
-    "w": 1526.0,
-    "h": 249.0
+    "x": 78.0,
+    "y": 428.5,
+    "w": 1522.0,
+    "h": 246.0
    },
    "street_ground": {
     "file": "night_street_ground.webp",
@@ -30,9 +30,9 @@
    "building_back": {
     "file": "night_building_back.webp",
     "x": 429.5,
-    "y": 17.5,
+    "y": 18.5,
     "w": 880.0,
-    "h": 642.0
+    "h": 641.0
    },
    "building_front": {
     "file": "night_building_front.webp",
@@ -80,10 +80,10 @@
    },
    "street_back": {
     "file": "day_street_back.webp",
-    "x": 74.0,
-    "y": 426.0,
-    "w": 1526.0,
-    "h": 248.5
+    "x": 78.0,
+    "y": 428.5,
+    "w": 1522.0,
+    "h": 246.0
    },
    "street_ground": {
     "file": "day_street_ground.webp",
@@ -95,9 +95,9 @@
    "building_back": {
     "file": "day_building_back.webp",
     "x": 429.5,
-    "y": 18.0,
+    "y": 18.5,
     "w": 880.0,
-    "h": 641.5
+    "h": 641.0
    },
    "building_front": {
     "file": "day_building_front.webp",
@@ -123,16 +123,16 @@
    "street_kerb": {
     "file": "day_street_kerb.webp",
     "x": 16.5,
-    "y": 682.5,
+    "y": 683.0,
     "w": 1549.0,
-    "h": 35.5
+    "h": 35.0
    },
    "street_front": {
     "file": "day_street_front.webp",
     "x": 33.0,
-    "y": 776.5,
+    "y": 776.0,
     "w": 1563.0,
-    "h": 56.0
+    "h": 56.5
    }
   }
  }

@@ -74,9 +74,9 @@ def tree(trunks, crowns, xpx, y, top_row, radius, bark, leaf, seed, lean=0.0):
         a = rng.uniform(0, math.tau)
         end = crown_c + Vector((math.cos(a) * radius * 0.55, math.sin(a) * radius * 0.3, rng.uniform(-0.4, 0.3) * radius))
         beam(trunks, (x, y, crown_c.z - radius * 0.6), end, 0.035, bark)
-    for i in range(4):
-        sub = crown_c + Vector((rng.uniform(-0.45, 0.45) * radius, rng.uniform(-0.2, 0.2) * radius, rng.uniform(-0.3, 0.35) * radius))
-        leaf_cards(crowns, sub, (radius * 0.72, radius * 0.45, radius * 0.6), 950, 0.13, leaf, seed * 7 + i, core=principled("crown_core", "#0f1a10", rough=0.9))
+    for i in range(6):
+        sub = crown_c + Vector((rng.uniform(-0.5, 0.5) * radius, rng.uniform(-0.2, 0.2) * radius, rng.uniform(-0.35, 0.4) * radius))
+        leaf_cards(crowns, sub, (radius * 0.62, radius * 0.42, radius * 0.52), 950, 0.11, leaf, seed * 7 + i, core=principled("crown_core", "#1c2e17", rough=0.9))
 
 
 def lamp_post(mb, lights, xpx, y, top_row, mats, side=1, name="street_lamp"):
@@ -131,7 +131,7 @@ def build(colls):
         "planter_rim": principled("planter_rim", "#3d3f4c", rough=0.4),
         "bush": foliage_material("bush", "#23452a", "#78a64a", translucent=0.35),
         "bush_core": principled("bush_core", "#12220f", rough=0.9),
-        "tree": foliage_material("tree_leaf", "#3a6a2e", "#b8d66c", translucent=0.45),
+        "tree": foliage_material("tree_leaf", "#46803a", "#cfe07a", translucent=0.6),
         "bark": principled("bark", "#2c241f", rough=0.8),
         "paint": principled("road_paint", "#70717e", rough=0.55),
         "led": emissive("terrace_led", "#ffd7a0", 6.0),
@@ -144,7 +144,7 @@ def build(colls):
     y_walk = Y(717, WALK_Z)
     y_road = Y(790, ROAD_Z)
     terrace = principled("terrace", "#6e5c52", rough=0.55, coat=0.05)
-    walk = principled("sidewalk", "#55535f", rough=0.82)
+    walk = principled("sidewalk", "#484652", rough=0.82)
     curb = principled("curb", "#3c3a4a", rough=0.8)
     g.box(X(0), X(1600), y_terrace, 12.0, TERRACE_Z - 0.3, TERRACE_Z, terrace)
     g.box(X(0), X(1600), y_terrace - 0.02, y_terrace, TERRACE_Z - 0.05, TERRACE_Z - 0.01, mats["led"])
@@ -212,7 +212,7 @@ def build(colls):
     ):
         tree(trunks, crowns, xpx, ty, top_row, radius, mats["bark"], mats["tree"], seed, lean=lean)
         base = TERRACE_Z if ty > -3.0 else WALK_Z
-        light(lights, "SPOT", (X(xpx), ty - 1.2, base + 0.25), 950, "#ffc27a", radius=0.15, cone=95, blend=0.6, rot=(math.radians(-10), 0, 0), name="tree_uplight")
+        light(lights, "SPOT", (X(xpx), ty - 1.2, base + 0.25), 1500, "#ffc27a", radius=0.15, cone=95, blend=0.6, rot=(math.radians(-10), 0, 0), name="tree_uplight")
     lamp_post(p, lights, 92, y_walk + 0.5, 410, mats, name="lamp_far_left")
     lamp_post(p, lights, 322, y_terrace + 1.2, 505, mats, name="lamp_left")
     lamp_post(p, lights, 1406, y_walk + 0.6, 485, mats, name="lamp_right")
@@ -335,11 +335,11 @@ def build_city(city, mats):
     pylon_top = Z(312, by)
     t.box(X(233), X(241), by, by + 0.6, deck_z - 6.0, pylon_top, br)
     t.box(X(186), X(292), by - 0.3, by + 0.9, deck_z - 0.25, deck_z, br)
-    cable = emissive("bridge_cable", "#f6c7a2", 3.0)
+    cable = emissive("bridge_cable", "#f6c7a2", 1.4)
     for i in range(1, 9):
         for side in (-1, 1):
             xe = 237 + side * i * 6.0
-            beam(t, (X(237), by - 0.05, pylon_top - 0.4 - i * 0.15), (X(xe), by - 0.05, deck_z), 0.02, cable)
+            beam(t, (X(237), by - 0.05, pylon_top - 0.4 - i * 0.15), (X(xe), by - 0.05, deck_z), 0.012, cable)
     deck_light = emissive("bridge_light", "#ffd9b0", 22.0)
     for xp in range(188, 292, 6):
         t.sphere((X(xp), by - 0.35, deck_z + 0.05), 0.09, deck_light, seg=8, rings=5)

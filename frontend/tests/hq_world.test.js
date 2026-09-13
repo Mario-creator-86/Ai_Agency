@@ -6,7 +6,7 @@ import { RandomEventManager, validateEvent, RARITY_RATE } from '../src/hq_events
 import { TrafficManager } from '../src/hq_traffic.js';
 import { PedestrianManager } from '../src/hq_pedestrians.js';
 import { animationFor, spriteFor, screenModeFor, AgentVisualStateManager } from '../src/hq_agents.js';
-import { mulberry32 } from '../src/hq_world.js';
+import { mulberry32, streetLight } from '../src/hq_world.js';
 import fs from 'node:fs';
 
 const EVENTS = JSON.parse(fs.readFileSync(new URL('../public/assets/hq/world_events.json', import.meta.url), 'utf8'));
@@ -117,6 +117,14 @@ function lanesGaps(traffic) {
   }
   return gaps;
 }
+
+test('street sprites take the light of the hour: untouched by day, dim and cool at night', () => {
+  assert.deepEqual(streetLight({ daylight: 1 }, { cloudiness: 0 }), [1, 1, 1]);
+  const night = streetLight({ daylight: 0 }, { cloudiness: 0 });
+  assert.ok(night[2] > night[0] && night.every((c) => c < 0.7), `night light ${night}`);
+  const overcast = streetLight({ daylight: 1 }, { cloudiness: 1 });
+  assert.ok(overcast.every((c) => c < 1), `overcast light ${overcast}`);
+});
 
 test('each vehicle frame knows where its visible lamps are, inside the frame', () => {
   for (const [kind, entry] of Object.entries(VEHICLES.vehicles)) {
