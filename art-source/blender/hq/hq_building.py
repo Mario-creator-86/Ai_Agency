@@ -23,7 +23,6 @@ from hq_lib import (
     frame_picture,
     gradient_emission,
     image_material,
-    led_material,
     lin,
     monitor,
     panel_material,
@@ -142,18 +141,20 @@ def materials():
         "frame_hi": principled("frame_hi", "#566077", rough=0.3, metal=0.6),
         "stone": brick_material("stone", "#6c6a72", "#605e67", "#2e2d33", brick_w=0.95, row_h=0.48, rough=0.75),
         "roof": principled("roof", "#1c2338", rough=0.65),
-        "slab": principled("slab", "#3a3d52", rough=0.55, metal=0.15),
+        "slab": principled("slab", "#2f3857", rough=0.55, metal=0.15),
         "sign_glass": principled("sign_glass", "#080b16", rough=0.18, metal=0.2),
         "gold": emissive("gold_text", "#f4c47f", 5.5),
         "gold_dim": emissive("gold_dim", "#e9b56f", 3.2),
         "edge_led": emissive("edge_led", "#ffd7a0", 1.6),
+        "edge_led_warm": emissive("edge_led_warm", "#ffc070", 3.0),
+        "edge_led_slab": emissive("edge_led_slab", "#ffd7a0", 0.8),
         "label": principled("label_dark", "#2a2938", rough=0.4),
         "label_text": emissive("label_text", "#eef1f8", 3.2),
         "label_text_dim": emissive("label_text_dim", "#c9cfdc", 2.4),
         "glass": principled("glass", "#8fa6c0", rough=0.04, alpha=0.1),
         "glass_dark": principled("glass_dark", "#1b2633", rough=0.08, alpha=0.55),
-        "console": principled("console", "#f1ebe2", rough=0.32, emit="#fff4e6", strength=0.35),
-        "console_top": emissive("console_top", "#fff2dd", 6.0),
+        "console": principled("console", "#f1ebe2", rough=0.32, emit="#fff4e6", strength=0.12),
+        "console_top": emissive("console_top", "#fff2dd", 1.8),
         "console_slot": principled("console_slot", "#2a2b33", rough=0.4),
         "desk": principled("desk_dark", "#2d2b31", rough=0.45),
         "desk_top": principled("desk_top", "#3a3439", rough=0.35),
@@ -202,6 +203,43 @@ def console(mb, cx, width_px, level, mat, y0=0.32, y1=0.9, height=0.95):
     mb.box(x0 + (x1 - x0) * 0.3, x1 - (x1 - x0) * 0.3, y0 - 0.012, y0 - 0.005, f + 0.21, f + 0.28, mat["console_top"])
 
 
+def rack_front(mb, glow, x0, x1, z0, z1, y, seed):
+    """A rack face: dark units with slot lines and a few steady status lamps. The canvas adds the
+    blinking that follows how busy the studio is."""
+    mb.front_quad(x0, x1, z0, z1, y, principled("rack_face", "#0b0e13", rough=0.35, metal=0.3))
+    unit = principled("rack_unit", "#1c222b", rough=0.4, metal=0.4)
+    green = emissive("rack_led_green", "#4ade80", 6.0)
+    amber = emissive("rack_led_amber", "#fbbf24", 5.0)
+    rng = random.Random(seed)
+    z = z0 + 0.06
+    while z < z1 - 0.1:
+        mb.box(x0 + 0.02, x1 - 0.02, y - 0.012, y - 0.002, z, z + 0.012, unit)
+        if rng.random() < 0.7:
+            glow.box(x0 + 0.05, x0 + 0.08, y - 0.014, y - 0.004, z + 0.04, z + 0.07, amber if rng.random() < 0.15 else green)
+        if rng.random() < 0.35:
+            glow.box(x1 - 0.1, x1 - 0.07, y - 0.014, y - 0.004, z + 0.04, z + 0.07, green)
+        z += 0.14
+    glow.box(x0, x1, y - 0.012, y - 0.004, z1 - 0.05, z1 - 0.02, emissive("rack_top_bar", "#34d399", 3.0))
+
+
+def vending_front(mb, glow, x0, x1, z0, z1, y, seed):
+    """A lit vending window standing proud of the machine: shelves of cans before a bright panel."""
+    glow.front_quad(x0, x1, z0, z1, y, emissive("vending_back", "#e8f1ff", 1.6))
+    shelf = principled("vending_shelf", "#9aa3ad", rough=0.3, metal=0.8)
+    cans = [principled(f"can_{c[1:]}", c, rough=0.3, metal=0.5) for c in ("#dc2626", "#2563eb", "#16a34a", "#f59e0b", "#f8fafc", "#7c3aed")]
+    rng = random.Random(seed)
+    rows = 5
+    for r in range(rows):
+        zb = z0 + (z1 - z0) * r / rows
+        mb.box(x0, x1, y - 0.1, y - 0.005, zb, zb + 0.02, shelf)
+        x = x0 + 0.03
+        while x < x1 - 0.08:
+            w = rng.uniform(0.05, 0.07)
+            mb.box(x, x + w, y - 0.08, y - 0.03, zb + 0.02, zb + 0.02 + rng.uniform(0.12, 0.2), rng.choice(cans))
+            x += w + 0.02
+    mb.front_quad(x0, x1, z0, z1, y - 0.11, principled("vending_glass", "#9fb6cc", rough=0.05, alpha=0.12))
+
+
 def back_desk(mb, x0px, x1px, level, mat, depth=(1.75, 2.3), top=0.78):
     f = fz(level)
     x0, x1 = X(x0px), X(x1px)
@@ -229,8 +267,8 @@ def pendant(mb, coll, xpx, level, drop, mat, color="#ffc98a", energy=35.0, shade
     y = 1.6
     mb.box(x - 0.006, x + 0.006, y - 0.006, y + 0.006, zc + 0.15, c, mat["black"])
     if shade == "dome":
-        mb.cyl(x, y, zc, zc + 0.18, 0.2, mat["black"], seg=20, r_top=0.05)
-        mb.cyl(x, y, zc - 0.012, zc + 0.002, 0.18, mat["lamp_shade"], seg=20)
+        mb.cyl(x, y, zc, zc + 0.22, 0.3, mat["black"], seg=20, r_top=0.06)
+        mb.cyl(x, y, zc - 0.012, zc + 0.002, 0.27, mat["lamp_shade"], seg=20)
     else:
         mb.sphere((x, y, zc + 0.05), 0.09, mat["lamp_bulb"], seg=12, rings=8)
     light(coll, "POINT", (x, y, zc - 0.12), energy, color, radius=0.12, name="pendant")
@@ -238,7 +276,7 @@ def pendant(mb, coll, xpx, level, drop, mat, color="#ffc98a", energy=35.0, shade
     ANCHORS["lamps"].append({"x": round(col, 1), "y": round(row, 1), "color": color, "kind": "pendant"})
 
 
-def spot_row(coll, xs, level, color, energy, cone=62, blend=0.35, tilt=22, y=1.7, drop=0.55):
+def spot_row(coll, xs, level, color, energy, cone=78, blend=0.7, tilt=22, y=1.7, drop=0.55):
     for xpx in xs:
         light(
             coll, "SPOT", (X(xpx), y, cz(level) - drop), energy, color, radius=0.05, cone=cone, blend=blend,
@@ -307,8 +345,17 @@ def build(colls):
     shell.box(X(432), X(447), -0.25, BACK + 0.4, -0.35, top_z, mat["frame"])
     shell.box(X(446), X(449), -0.26, -0.25, -0.35, top_z, mat["frame_hi"])
     for lower, upper in ((0, 1), (1, 2), (2, 3), (3, 4)):
-        shell.box(X(432), X(1215), -0.18, BACK_G + 0.3, cz(lower), fz(upper), mat["slab"])
-        shell.box(X(447), X(1205), -0.2, -0.18, fz(upper) - 0.045, fz(upper) - 0.01, mat["edge_led"])
+        top = fz(upper)
+        # The slab's body is drawn with the rooms, below the floor boards. In the shell's own layer
+        # render the rooms are invisible, so a body there showed its whole top face and the canvas
+        # painted it as a dark band over every floor. The shell keeps only the slab's face.
+        rooms.box(X(432), X(1215), -0.14, BACK_G + 0.3, cz(lower), top - 0.06, mat["slab"])
+        for x0, x1 in ((432, 517), (1205, 1215)):
+            rooms.box(X(x0), X(x1), -0.14, BACK_G + 0.3, top - 0.06, top, mat["slab"])
+        shell.box(X(432), X(1215), -0.18, -0.14, cz(lower), top, mat["slab"])
+        shell.box(X(447), X(1205), -0.2, -0.18, top - 0.045, top - 0.01, mat["edge_led_slab"])
+        mid = (cz(lower) + top) / 2
+        shell.box(X(447), X(1205), -0.2, -0.18, mid - 0.015, mid + 0.01, mat["edge_led_warm"])
         shell.box(X(432), X(1215), -0.21, -0.18, cz(lower), cz(lower) + 0.05, mat["frame_hi"])
     # roof mass above L4
     shell.box(X(432), X(1215), -0.18, BACK + 0.4, cz(4), Z(30), mat["roof"])
@@ -391,7 +438,8 @@ def build_tower(shell, rooms, glow, lights, shell_c, mat):
     shell.box(X(1225), X(1300), 0.2, 2.4, Z(38, 0.2), Z(8, 1.0), mat["roof"])
     # floor bands across the tower
     for lower, upper in ((0, 1), (1, 2), (2, 3), (3, 4)):
-        shell.box(X(1205), X(1312), -0.24, 2.2, cz(lower) + 0.15, fz(upper) - 0.1, mat["frame"])
+        # shallow, so the warm shaft shows above each band as in the picture
+        shell.box(X(1205), X(1312), -0.24, 0.25, cz(lower) + 0.15, fz(upper) - 0.1, mat["frame"])
     # shaft interior: warm lit back wall, rails, cables
     shaft_back = principled("shaft_back", "#4a3a2c", rough=0.4, metal=0.3)
     rooms.box(X(1215), X(1277), 1.7, 1.9, -0.3, top, shaft_back)
@@ -437,7 +485,7 @@ def build_l4(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     f = fz(lv)
     cove(glow, 525, 1195, lv, mat["edge_led"])
     downlight_fixtures(glow, (548, 700, 860, 1020, 1160), lv, mat)
-    spot_row(lights, (548, 700, 860, 1020, 1160), lv, "#ffd29a", 135)
+    spot_row(lights, (548, 700, 860, 1020, 1160), lv, "#ffd29a", 175)
     bookshelf(props, X(532), X(587), 1.85, 2.35, f, f + 1.6, mat["wood_dark"], mat["books"], shelves=4, seed=4)
     plant(leaves, pots, X(560), 2.1, f + 1.6, 0.45, mat["leaf"], mat["pot_white"], pot_h=0.14, pot_r=0.1, n=9, seed=41, style="bush")
     plant(leaves, pots, X(606), 1.7, f, 0.9, mat["leaf"], mat["pot_white"], pot_h=0.4, pot_r=0.17, n=12, seed=42)
@@ -493,8 +541,8 @@ def build_l3(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     label_panel(rooms, shell_c, lv, "L3", "RESEARCH", mat)
     f = fz(lv)
     downlight_fixtures(glow, (560, 650, 770, 860, 960, 1060, 1150), lv, mat)
-    spot_row(lights, (560, 650, 770, 860, 960, 1060, 1150), lv, "#f0f2ff", 330, cone=50, blend=0.2, tilt=26)
-    light(lights, "AREA", (X(860), 0.4, cz(lv) - 0.9), 90.0, "#c8d0ff", radius=9.0, rot=(math.radians(35), 0, 0), name="l3_fill")
+    spot_row(lights, (560, 650, 770, 860, 960, 1060, 1150), lv, "#f0f2ff", 260, cone=72, blend=0.65, tilt=26)
+    light(lights, "AREA", (X(860), 0.4, cz(lv) - 0.9), 150.0, "#c8d0ff", radius=9.0, rot=(math.radians(35), 0, 0), name="l3_fill")
     plant(leaves, pots, X(530), 1.6, f, 0.9, mat["leaf"], mat["pot_white"], pot_h=0.32, pot_r=0.15, n=12, seed=31)
     bookshelf(props, X(537), X(587), 1.85, 2.35, f, f + 1.8, mat["wood_dark"], mat["books"], shelves=5, seed=3)
     wall_window(props, 602, 652, 202, 235, mat)
@@ -615,7 +663,7 @@ def build_l1(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     rooms.box(X(862), X(868), -0.2, BACK + 0.2, f, cz(lv), mat["frame"])
     purple = "#b56cff"
     downlight_fixtures(glow, (566, 700, 812), lv, mat)
-    spot_row(lights, (566, 700, 812), lv, purple, 150, cone=64, blend=0.3, tilt=22)
+    spot_row(lights, (566, 700, 812), lv, purple, 150, cone=76, blend=0.65, tilt=22)
     neon = emissive("neon_purple", "#e7a6ff", 14.0)
     glow.box(X(548), X(551), BACK - 0.08, BACK - 0.03, wz(476), wz(425), neon)
     glow.box(X(548), X(556), BACK - 0.08, BACK - 0.03, wz(428), wz(425), neon)
@@ -650,7 +698,7 @@ def build_l1(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
         xs = 822 + i * 5.2
         props.box(X(xs), X(xs + 3.4), BACK - 0.12, BACK - 0.02, wz(496), wz(424), slat)
     # render bay
-    spot_row(lights, (930, 1040, 1150), lv, "#cfd8ff", 90, cone=60, blend=0.3, tilt=22)
+    spot_row(lights, (930, 1040, 1150), lv, "#cfd8ff", 90, cone=74, blend=0.65, tilt=22)
     downlight_fixtures(glow, (930, 1040, 1150), lv, mat)
     props.box(X(876), X(943), BACK - 0.1, BACK - 0.02, wz(484), wz(418), principled("render_frame", "#0d0f15", rough=0.3))
     props.front_quad(X(879), X(940), wz(481), wz(421), BACK - 0.105, principled("render_display", "#060a12", rough=0.12, emit="#0c1a2c", strength=1.0))
@@ -671,7 +719,7 @@ def build_l1(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     props.box(X(1108), X(1124), 1.95, 2.05, f + 1.8, f + 1.95, mat["lamp_shade"])
     light(lights, "POINT", (X(1116), 1.9, f + 1.75), 22, "#ffd49a", radius=0.12, name="render_lamp")
     props.box(X(1135), X(1181), 1.8, 2.35, f, f + 1.7, principled("rack", "#14161c", rough=0.35, metal=0.3))
-    props.front_quad(X(1138), X(1178), f + 0.08, f + 1.62, 1.79, led_material("rack_leds_l1", strength=6.0))
+    rack_front(props, glow, X(1138), X(1178), f + 0.08, f + 1.62, 1.79, seed=1138)
 
 
 def build_ground(shell, rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, mat):
@@ -702,7 +750,7 @@ def build_ground(shell, rooms, props, leaves, pots, fronts, glow, lights, back, 
         glow.box(X(xp), X(xp) + 0.02, BACK_G - 0.03, BACK_G, 0.2, c - 0.6, grid)
     for x0, x1 in ((466, 492), (500, 527), (556, 583), (591, 619)):
         props.box(X(x0), X(x1), 1.2, 2.2, f, 2.62, principled("rack_body", "#101318", rough=0.35, metal=0.35))
-        props.front_quad(X(x0 + 2), X(x1 - 2), 0.12, 2.5, 1.195, led_material("rack_leds", strength=7.0))
+        rack_front(props, glow, X(x0 + 2), X(x1 - 2), 0.12, 2.5, 1.195, seed=x0)
     ANCHORS["displays"]["server_racks"] = {"rects": [px_rect(X(a), X(b), 0.12, 2.5, 1.19) for a, b in ((466, 492), (500, 527), (556, 583), (591, 619))], "zone": "server_corner"}
     for xp in (500, 590):
         glow.box(X(xp - 20), X(xp + 20), 1.0, 1.3, c - 0.62, c - 0.58, emissive("infra_bar", "#a5f3fc", 5.0))
@@ -726,7 +774,7 @@ def build_ground(shell, rooms, props, leaves, pots, fronts, glow, lights, back, 
     light(lights, "SPOT", (X(747), 1.0, c - 0.4), 220, "#ffd7a0", radius=0.1, cone=55, blend=0.5, rot=(math.radians(30), 0, 0), name="feature_spot")
     light(lights, "AREA", (X(690), 1.6, c - 0.3), 260, "#ffcf8a", radius=2.0, name="lobby_fill_l")
     light(lights, "AREA", (X(840), 1.6, c - 0.3), 260, "#ffcf8a", radius=2.0, name="lobby_fill_r")
-    light(lights, "AREA", (X(765), -0.6, 2.6), 170, "#ffc27a", radius=3.0, rot=(math.radians(-25), 0, 0), name="lobby_spill")
+    light(lights, "AREA", (X(765), -0.6, 2.6), 80, "#ffc27a", radius=3.0, rot=(math.radians(-25), 0, 0), name="lobby_spill")
     for xp in (668, 720, 776, 830):
         glow.box(X(xp) - 0.12, X(xp) + 0.12, 1.0, 1.2, Z(533) - 0.05, Z(533), mat["lamp_bulb"])
     plant(leaves, pots, X(668), 2.5, f, 2.1, mat["leaf"], mat["pot_dark"], pot_h=0.55, pot_r=0.25, n=16, seed=51)
@@ -802,7 +850,7 @@ def build_ground(shell, rooms, props, leaves, pots, fronts, glow, lights, back, 
     text(shell_c, "IDEAS\nTOOLS\nPEOPLE\nIMPACT", X(1146), BACK_G - 0.04, Z(582, BACK_G), 0.32, emissive("ai_words", "#d6dee2", 2.4), line=1.1, name="ai_words")
     ANCHORS["displays"]["ad_wall"] = {"rect": px_rect(X(1052), X(1190), Z(640, BACK_G), Z(548, BACK_G), BACK_G - 0.05), "zone": "ad_shop"}
     props.box(X(1056), X(1082), 1.6, 2.4, 0.0, 2.1, principled("vending", "#1c1f26", rough=0.35, metal=0.3))
-    props.front_quad(X(1058), X(1080), 0.6, 1.95, 1.595, led_material("vending_front", on="#fca5a5", accent="#93c5fd", strength=3.0, cell=0.12))
+    vending_front(props, glow, X(1058), X(1080), 0.6, 1.95, 1.595, seed=7)
     sofa(props, X(1102), X(1182), 2.0, 2.75, f, principled("sofa_orange", "#b9632c", rough=0.55))
     plant(leaves, pots, X(1128), 2.9, f + 0.3, 0.6, mat["leaf"], mat["pot_dark"], pot_h=0.3, pot_r=0.15, n=10, seed=54, style="bush")
     props.box(X(1162), X(1192), 1.7, 2.1, 0.0, 0.55, mat["white"])

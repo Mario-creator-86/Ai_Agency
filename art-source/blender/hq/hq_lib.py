@@ -335,16 +335,16 @@ def asphalt_material(name, wet=1.0):
     n.inputs["Scale"].default_value = 0.18
     n.inputs["Detail"].default_value = 6.0
     n.inputs["Roughness"].default_value = 0.6
-    rough = g.ramp(n.outputs["Fac"], [(0.35, (0.3, 0.3, 0.3, 1)), (0.62, (0.72, 0.72, 0.72, 1))])
+    rough = g.ramp(n.outputs["Fac"], [(0.35, (0.5, 0.5, 0.5, 1)), (0.62, (0.85, 0.85, 0.85, 1))])
     if wet <= 0:
         rough.color_ramp.elements[0].color = (0.7, 0.7, 0.7, 1)
         rough.color_ramp.elements[1].color = (0.9, 0.9, 0.9, 1)
     g.link(rough.outputs["Color"], g.bsdf.inputs["Roughness"])
     grain = g.node("ShaderNodeTexNoise")
     grain.inputs["Scale"].default_value = 60.0
-    col = g.ramp(grain.outputs["Fac"], [(0.3, "#101219"), (0.7, "#1d2029")])
+    col = g.ramp(grain.outputs["Fac"], [(0.3, "#11141f"), (0.7, "#202538")])
     g.link(col.outputs["Color"], g.bsdf.inputs["Base Color"])
-    g.bsdf.inputs["Specular IOR Level"].default_value = 0.6
+    g.bsdf.inputs["Specular IOR Level"].default_value = 0.25
     return g.m
 
 

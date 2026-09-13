@@ -87,7 +87,7 @@ def lamp_post(mb, lights, xpx, y, top_row, mats, side=1, name="street_lamp"):
     mb.box(x - 0.2, x + 0.2, y - 0.2, y + 0.2, top - 0.42, top - 0.34, mats["pole"])
     mb.box(x - 0.17, x + 0.17, y - 0.17, y + 0.17, top - 0.34, top + 0.14, mats["lamp_glass"])
     mb.cyl(x, y, top + 0.14, top + 0.34, 0.26, mats["pole"], seg=4, r_top=0.04)
-    light(lights, "POINT", (x, y - 0.3, top - 0.05), 1600, "#ffc27a", radius=0.25, name=name)
+    light(lights, "POINT", (x, y - 0.3, top - 0.05), 1000, "#ffc27a", radius=0.25, name=name)
     col, row = project((x, y, top))
     STREET.setdefault("lamps", []).append({"x": round(col, 1), "y": round(row, 1)})
 
@@ -127,13 +127,13 @@ def build(colls):
     mats = {
         "pole": principled("pole", "#202430", rough=0.4, metal=0.6),
         "lamp_glass": emissive("lamp_glass", "#ffd08a", 28.0),
-        "planter": principled("planter", "#2b2c36", rough=0.6),
+        "planter": principled("planter", "#3a3b48", rough=0.7),
         "planter_rim": principled("planter_rim", "#3d3f4c", rough=0.4),
         "bush": foliage_material("bush", "#23452a", "#78a64a", translucent=0.35),
         "bush_core": principled("bush_core", "#12220f", rough=0.9),
         "tree": foliage_material("tree_leaf", "#3a6a2e", "#b8d66c", translucent=0.45),
         "bark": principled("bark", "#2c241f", rough=0.8),
-        "paint": principled("road_paint", "#f0eee6", rough=0.45, emit="#f0eee6", strength=0.25),
+        "paint": principled("road_paint", "#70717e", rough=0.55),
         "led": emissive("terrace_led", "#ffd7a0", 6.0),
     }
 
@@ -143,9 +143,9 @@ def build(colls):
     y_terrace = Y(676, TERRACE_Z)
     y_walk = Y(717, WALK_Z)
     y_road = Y(790, ROAD_Z)
-    terrace = principled("terrace", "#4a4347", rough=0.55, coat=0.05)
-    walk = principled("sidewalk", "#3e383f", rough=0.62, coat=0.03)
-    curb = principled("curb", "#3c3a4a", rough=0.5)
+    terrace = principled("terrace", "#6e5c52", rough=0.55, coat=0.05)
+    walk = principled("sidewalk", "#55535f", rough=0.82)
+    curb = principled("curb", "#3c3a4a", rough=0.8)
     g.box(X(0), X(1600), y_terrace, 12.0, TERRACE_Z - 0.3, TERRACE_Z, terrace)
     g.box(X(0), X(1600), y_terrace - 0.02, y_terrace, TERRACE_Z - 0.05, TERRACE_Z - 0.01, mats["led"])
     g.box(X(0), X(1600), y_walk, y_terrace, WALK_Z - 0.3, WALK_Z, walk)
@@ -155,7 +155,8 @@ def build(colls):
     g.box(X(0), X(1600), y_walk - 0.25, y_walk, ROAD_Z, WALK_Z, curb)
     g.box(X(0), X(1600), y_road, y_walk - 0.25, ROAD_Z - 0.3, ROAD_Z, asphalt_material("asphalt_wet", wet=1.0))
     g.box(X(0), X(1600), y_road - 0.25, y_road, ROAD_Z, WALK_Z, curb)
-    g.box(X(0), X(1600), -60.0, y_road - 0.25, WALK_Z - 0.3, WALK_Z, walk)
+    # the near pavement is out of the lamps' pools; the picture keeps it a light, cool grey
+    g.box(X(0), X(1600), -60.0, y_road - 0.25, WALK_Z - 0.3, WALK_Z, principled("sidewalk_near", "#6c6a7a", rough=0.82))
     for x0 in range(674, 852, 22):
         g.box(X(x0), X(x0 + 13), y_road + 0.6, y_walk - 0.7, ROAD_Z, ROAD_Z + 0.004, mats["paint"])
     y_mid = (y_road + y_walk) / 2

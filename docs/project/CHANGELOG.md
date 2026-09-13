@@ -1,5 +1,29 @@
 # Changelog
 
+## Floors, street and sky measured against the picture — 2026-09-13
+
+Region by region against the Owner's picture, the building still had heavy dark bands between
+floors, a pale warm road with a glowing zebra, flat skies and racks that read as green noise.
+
+- **The dark band over every floor was a compositing fault**, not the model: each plate layer is
+  rendered with the other layers invisible, and the slab's body sat in the shell layer the canvas
+  draws after the rooms, so its whole top face was painted over the floors. The slab body now
+  lives with the rooms; the shell keeps its navy face with a warm LED line, as in the picture.
+  The lift tower's floor bands are shallow, so the lit shaft shows above them.
+- **The street is dark, cool and matte where it should be**: plain grey road paint instead of
+  self-lit stripes, asphalt that no longer mirrors the lit facade at the camera's grazing angle,
+  matte paving (it had mirrored the S2 and S3 labels), a warm stone terrace, softer street lamps.
+- **The sky is not level at dusk**: the camera looks north, so the sun sets on the left; a warm
+  afterglow hugs that horizon and a lighter blue sits high across from it, as in the picture.
+- **Rooms**: server racks are dark units with slot lines and steady lamps (the canvas still adds
+  the blinking that follows the studio's work), the S3 vending machine has shelves of cans,
+  spot cones on the back walls are wide and soft, pendant lamps are big enough to read, console
+  tops no longer glow white, and L3 and L4 are as bright as the picture's.
+- **Measured on the live page at the picture's light**: mean colour distance 13.0 → 11.4; L4
+  11.5 → 3.5, L2 15.7 → 7.5, L1 11.3 → 5.0, ground floor 6.2 → 4.4, street 19.4 → 13.8.
+  Regressions still open: L3 (13.5 → 17.0) and the lift tower (13.9 → 17.4) now come out
+  brighter than the picture once bloom is added.
+
 ## Cars that read as cars — 2026-09-13
 
 Next to the picture's rounded SUVs and sedans, the street's cars still looked like stacked boxes.

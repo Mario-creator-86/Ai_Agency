@@ -91,6 +91,10 @@ python art-source/blender/hq/pack_vehicles.py <renders> frontend/public/assets/h
 - Plates are rendered layer by layer with the other layers present but invisible to the camera,
   so light, shadow and reflection are the whole scene's; bloom is added in post, then each layer
   is cropped to what it covers and saved as WebP (the eighteen plates weigh 2.6 MB).
+- Because a layer is rendered without the others in view, a surface that only an earlier-drawn
+  layer hides is painted over it on the page. Put geometry in the layer of whatever covers it:
+  the slab's body is modelled with the rooms (the floor covers its top), only its face is shell.
+  The flattened `--preview` cannot show this kind of fault; check it on a live screenshot.
 - Cars are lofted from side profiles (`PROFILES` in `build_vehicles.py`: beltline and roof
   height along the length, a glasshouse leaning in, the plan rounded at the bumpers), with wheel
   arches, door seams, mirrors and lamps that wrap round the corners like the reference's

@@ -125,6 +125,7 @@ export class SkyRenderer {
     }
     ctx.fillStyle = this._gradient;
     ctx.fillRect(0, 0, this.w, this.h);
+    if (time.dusk > 0.05) this.drawAfterglow(ctx, time, fx);
     const night = 1 - time.daylight;
     if (night > 0.05 && fx.cloudiness < 0.9) {
       ctx.fillStyle = '#ffffff';
@@ -136,7 +137,9 @@ export class SkyRenderer {
     }
     if (time.daylight > 0.25 && fx.cloudiness < 0.7) {
       const t = Math.min(1, Math.max(0, (time.hour - 6) / 14));
-      const sx = this.w * (0.08 + 0.84 * t);
+      // The camera looks north: the sun rises on the right and sets on the left, where the
+      // reference's sunset glows.
+      const sx = this.w * (0.92 - 0.84 * t);
       const sy = this.horizon - Math.max(0, time.elevation) * 5.5;
       const glow = ctx.createRadialGradient(sx, sy, 2, sx, sy, 90);
       glow.addColorStop(0, `rgba(255,248,220,${0.9 * (1 - fx.cloudiness)})`);
@@ -155,6 +158,40 @@ export class SkyRenderer {
       ctx.fill();
     }
     this.drawClouds(ctx, time, fx);
+  }
+
+  /**
+   * Around sunrise and sunset the sky is not level: warm low on the side the sun went down (or
+   * is coming up), a lighter blue high on the side across from it.
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {{dusk:number, hour:number}} time
+   * @param {{cloudiness:number, fog:number}} fx
+   */
+  drawAfterglow(ctx, time, fx) {
+    const a = time.dusk * (1 - Math.min(0.85, fx.cloudiness * 0.75 + fx.fog * 0.5));
+    if (a <= 0.02) return;
+    const sunSide = time.hour < 12 ? this.w : 0;
+    // both glows are ellipses, flattened so the warmth stays on the horizon and the blue up high
+    ctx.save();
+    ctx.translate(sunSide, this.horizon);
+    ctx.scale(1, 0.28);
+    const warm = ctx.createRadialGradient(0, 0, 10, 0, 0, this.w * 0.5);
+    warm.addColorStop(0, `rgba(250,160,110,${0.5 * a})`);
+    warm.addColorStop(0.5, `rgba(214,120,110,${0.22 * a})`);
+    warm.addColorStop(1, 'rgba(214,120,110,0)');
+    ctx.fillStyle = warm;
+    ctx.fillRect(-this.w, -this.horizon / 0.28, this.w * 2, (this.h / 0.28) * 2);
+    ctx.restore();
+    const across = time.hour < 12 ? this.w * 0.14 : this.w * 0.86;
+    ctx.save();
+    ctx.translate(across, 20);
+    ctx.scale(1, 0.55);
+    const cool = ctx.createRadialGradient(0, 0, 10, 0, 0, this.w * 0.26);
+    cool.addColorStop(0, `rgba(100,146,220,${0.7 * a})`);
+    cool.addColorStop(1, 'rgba(100,146,220,0)');
+    ctx.fillStyle = cool;
+    ctx.fillRect(-this.w * 0.3, -60, this.w * 0.6, this.w * 0.6);
+    ctx.restore();
   }
 
   /**
