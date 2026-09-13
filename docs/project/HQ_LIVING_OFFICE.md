@@ -109,6 +109,63 @@ python art-source/blender/hq/pack_vehicles.py <renders> frontend/public/assets/h
 - `art-source/reference/compare.py <render> <out>` compares a render or a live screenshot with
   the reference per region (colour distance, brightness, contrast, SSIM).
 
+## Unreal Engine 5.8 (in progress)
+
+The Owner judged the Blender-built people, cars and buses far from his picture and asked for
+Unreal Engine. The headquarters is being moved there; the web canvas and its managers stay.
+
+```text
+blender -b --factory-startup --python art-source/unreal/export_hq_scene.py      # hq_scene.glb + hq_scene.json
+UnrealEditor-Cmd.exe art-source/unreal/AMNReference/AMNReference.uproject -run=pythonscript -script=art-source/unreal/build_hq_scene.py
+UnrealEditor.exe     art-source/unreal/AMNReference/AMNReference.uproject -ExecCmds="py art-source/unreal/render_hq_still.py" -unattended -nosplash
+UnrealEditor-Cmd.exe art-source/unreal/AMNReference/AMNReference.uproject -run=pythonscript -script=art-source/unreal/inventory_content.py
+```
+
+- `export_hq_scene.py` builds the Blender scene without rendering, bakes every mesh's world
+  transform, turns labels into meshes and writes the lights, the plates' camera and axis markers
+  to `hq_scene.json`.
+- `build_hq_scene.py` imports it into `/Game/HQ/Scene`, builds `/Game/HQ/HQ_Dusk`: meshes, the 63
+  scene lights (lumens from Blender watts, `AMN_LM_PER_W`), sky atmosphere, volumetric clouds,
+  height fog, a sun 2.5° under the horizon on the picture's sunset side, a real-time sky light,
+  Lumen, the orthographic plate camera and a fixed exposure (`AMN_EV`). The importer's axes and
+  units are measured from the marker cubes (Blender +y maps to Unreal −y, 100 units per metre).
+- glTF carries only flat colours, so the first import had white walls, white towers and a white
+  road. The exporter now bakes each mesh's procedural materials into its own colour and
+  emission textures (UV map `bake`, size from surface area up to `AMN_BAKE`, emission stored
+  normalised with its strength kept), gives skyline facades tiling textures of 24×24 windows on
+  world-aligned UVs (a single bake blurred every window into a golden blob), leaves transparent
+  materials as they are and drops the haze planes (Unreal's height fog replaces them).
+- An orthographic camera cannot see the sky atmosphere (the first still had a black sky), so
+  `compose_sky_backdrop.py` composes the web page's dusk sky (gradient, afterglow, painted cloud
+  layers) into `sky_dusk.png`, shown on an unlit backdrop 90 m behind the building.
+- The editor started with `-unattended` took its high-resolution screenshot **unlit**: base
+  colours and emission at full strength, no lights, no exposure. That is why the first stills
+  looked flat and overlit, and why exposure on the volume, on the camera and `r.ExposureOffset`,
+  and even lights at a third of their intensity, all rendered the identical image (mean 80.24).
+  `render_hq_still.py` now runs `viewmode lit` and the lighting show flags before the shot; the
+  same level then rendered lit (mean 115.34, spotlight pools, lit lobby and street lamps).
+  `probe_look.py` reads back the stored look, `probe_materials.py` lists the parameters of the
+  imported glTF materials (`EmissiveStrength`, `EmissiveFactor`, textures). `AMN_GLB` picks
+  another export for the level.
+- Balance, measured lit against the picture (environment variables of `build_hq_scene.py`):
+  `AMN_LM_INTERIOR` and `AMN_LM_EXTERIOR` (lumens per Blender watt, separately: the rooms blew
+  out long before the street was bright enough), `AMN_LEVEL_GAIN` (`level:gain,…`, the floor
+  found from the light's height against the ceilings; L3 needed far less than L4), `AMN_SKY_GAIN`
+  (the sky backdrop's brightness; lit, 1.35 matches the picture) and `AMN_EV` (exposure offset,
+  applied by `render_hq_still.py`). `AMN_SKYLIGHT` changes nothing in the still (2 and 4
+  rendered the identical image). Diagnostics: with no interior lights the rooms fell to about
+  30 (picture 51–80) and did not change without exterior lights either, so the rooms are lit by
+  their own lights only; the street depends on the exterior lights (13 without, 50 at 70 lm/W,
+  picture 60). The best balance so far, interior 1.0 lm/W, exterior 70, sky 1.35, EV 0, measured
+  a mean colour distance of 37.7 (the web page measures 8.3).
+- `render_hq_still.py` waits for Lumen and the clouds to settle, then saves
+  `AMNReference/Saved/Screenshots/WindowsEditor/hq_dusk.png` at 3200×1680.
+- `inventory_content.py` lists what the project holds (`content_inventory.json`): after the Owner
+  adds Fab packs (City Sample Vehicles, Vehicle Variety Pack, MetaHuman outfits, office and
+  street props) it tells the scene script which meshes exist and how big they are.
+- Everything the editor and the exporter generate is ignored by Git; only scripts, the
+  `.uproject` and config are checked in.
+
 ## Verification
 
 ```text

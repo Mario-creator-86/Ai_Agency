@@ -24,5 +24,9 @@ art-source/unreal/AMNReference/DerivedDataCache/
 art-source/unreal/AMNReference/Binaries/
 art-source/unreal/AMNReference/Content/
 art-source/unreal/*.glb
+art-source/unreal/hq_scene*.json
+art-source/unreal/content_inventory.json
+art-source/unreal/bake/
+art-source/unreal/sky_dusk.png
 art-source/unreal/renders/
 art-source/unreal/AMNReference/Config/DefaultInput.ini

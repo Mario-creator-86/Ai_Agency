@@ -1,5 +1,30 @@
 # Changelog
 
+## The headquarters in Unreal Engine 5.8 — 2026-09-13
+
+The Owner asked for Unreal Engine. The headquarters now renders there from the Blender build
+(`art-source/unreal/`); the web page still shows the Blender plates, because the Unreal still
+does not yet beat them.
+
+- **The pipeline**: `export_hq_scene.py` (Blender → `hq_scene.glb` + lights, camera and axis
+  markers in `hq_scene.json`), `compose_sky_backdrop.py` (the web page's dusk sky as an image),
+  `build_hq_scene.py` (level `/Game/HQ/HQ_Dusk`: meshes, the 63 scene lights, sky backdrop, sun,
+  fog, orthographic plate camera, Lumen), `render_hq_still.py` (3200×1680 still), and
+  `inventory_content.py`, `probe_look.py`, `probe_materials.py` for diagnosis.
+- **Four faults found and fixed on the way**, each confirmed by measurement before the fix:
+  glTF dropped every procedural material (233 materials arrived untextured: white walls,
+  towers and road), so materials are baked into textures and skyline facades get tiling window
+  textures; an orthographic camera cannot see the sky atmosphere (black sky), so the sky is a
+  backdrop; the editor took its screenshot **unlit** (exposure, lights at a third, even
+  `r.ExposureOffset` rendered the identical image), so `render_hq_still.py` forces the lit view;
+  lit, the interior lights were several times too strong and unequal between floors, so interior
+  and exterior lights and each floor are balanced separately.
+- **Measured against the picture** (mean colour distance per region): first import 36.6, unlit
+  with baked materials 31.5, first lit still 134.9, balanced 28.3 (L2 8, L4 13, L1 17, ground
+  floor 27, L3 42). The web page measures 8.3, so it stays in use. By eye the Unreal still has
+  what the web page lacks — pools of light, a glowing lobby, lit trees and street lamps — and
+  still lacks people, vehicles, a lit wet road and the picture's light on the facade.
+
 ## Everyone at their own desk, facing the Owner, always at the picture's dusk — 2026-09-13
 
 The Owner compared the office with his picture again: two employees shared one counter in S2,
