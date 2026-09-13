@@ -332,17 +332,20 @@ def build_city(city, mats):
     br = principled("bridge", "#3a3f52", rough=0.4, metal=0.5)
     by = 34.0
     deck_z = Z(368, by)
-    pylon_top = Z(312, by)
+    pylon_top = Z(262, by)
     t.box(X(233), X(241), by, by + 0.6, deck_z - 6.0, pylon_top, br)
+    # a warm line up the pylon: against the towers behind it, a dark pylon alone does not read
+    t.box(X(236.5), X(237.5), by - 0.02, by, deck_z, pylon_top, emissive("pylon_edge", "#ffb870", 1.5))
     t.box(X(186), X(292), by - 0.3, by + 0.9, deck_z - 0.25, deck_z, br)
     cable = emissive("bridge_cable", "#e8a86a", 0.9)
-    for i in range(1, 9):
+    # the cables leave the pylon at many heights and fan down to the deck
+    for i in range(1, 11):
         for side in (-1, 1):
-            xe = 237 + side * i * 6.0
-            beam(t, (X(237), by - 0.05, pylon_top - 0.4 - i * 0.15), (X(xe), by - 0.05, deck_z), 0.012, cable)
+            xe = 237 + side * i * 5.2
+            beam(t, (X(237), by - 0.05, pylon_top - 0.3 - (10 - i) * 0.32), (X(xe), by - 0.05, deck_z), 0.012, cable)
     deck_light = emissive("bridge_light", "#ffc98a", 14.0)
     for xp in range(188, 292, 6):
-        t.sphere((X(xp), by - 0.35, deck_z + 0.05), 0.09, deck_light, seg=8, rings=5)
+        t.sphere((X(xp), by - 0.35, deck_z + 0.05), 0.055, deck_light, seg=8, rings=5)
     # low block "SAME CITY BRIGHTER MINDS"
     near = MB("near_blocks")
     same = principled("same_city", "#24242e", rough=0.5)

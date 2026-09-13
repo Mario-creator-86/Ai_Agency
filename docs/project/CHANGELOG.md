@@ -1,5 +1,18 @@
 # Changelog
 
+## A bridge that fans, a grey tower, notes with writing — 2026-09-13
+
+- **The bridge is cable-stayed like the picture's**: a pylon about twice as tall over the deck,
+  cables leaving it along its height with the highest reaching farthest (the first try paired
+  them the other way and drew a lattice), small warm deck lights, and a thin warm line up the
+  pylon so it reads against the towers behind it.
+- **The lift tower's stone column is a cool grey** instead of warm mauve. A sweep of lighter
+  greys, closer to how light the picture's column looks, measured worse each step (tower 9.3,
+  12.0, 14.7), so the darkest stays.
+- **L3's pinboard notes carry lines of writing**; measured, they change no room's score.
+- Live page at the picture's light: mean colour distance 8.5 → 8.3, left sky 26.6 → 24.1; plates
+  alone 4.8 (the grey stone costs the tower 0.5).
+
 ## The skyline recedes, and the slogan says TOGETHER — 2026-09-13
 
 - **The slogan panel reads all four lines.** The classic building in front of it was 8 m deep, so

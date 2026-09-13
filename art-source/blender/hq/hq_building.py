@@ -139,7 +139,7 @@ def materials():
     return {
         "frame": principled("frame_dark", "#2f3a56", rough=0.4, metal=0.5),
         "frame_hi": principled("frame_hi", "#566077", rough=0.3, metal=0.6),
-        "stone": brick_material("stone", "#6c6a72", "#605e67", "#2e2d33", brick_w=1.2, row_h=0.55, rough=0.75),
+        "stone": brick_material("stone", "#6a6f7c", "#5f6470", "#2c2f36", brick_w=1.2, row_h=0.55, rough=0.75),
         "roof": principled("roof", "#1c2338", rough=0.65),
         "slab": principled("slab", "#2f3857", rough=0.55, metal=0.15),
         "sign_glass": principled("sign_glass", "#080b16", rough=0.18, metal=0.2),
@@ -569,11 +569,16 @@ def build_l3(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     props.front_quad(X(775), X(874), wz(245), wz(209), BACK - 0.065, cork)
     rng = random.Random(7)
     paper = emissive("paper", "#efe9dc", 0.6)
+    pin_ink = principled("pin_ink", "#3b4a66", rough=0.6)
     for r in range(2):
         for c in range(3):
             x0 = 782 + c * 31 + rng.uniform(-2, 2)
             z1 = wz(213 + r * 17)
             props.front_quad(X(x0), X(x0 + 22), z1 - M(12), z1, BACK - 0.07, paper)
+            # the notes carry lines of writing, as the picture's pinboard does
+            for li in range(3):
+                zl = z1 - M(3) - li * M(3)
+                props.box(X(x0 + 3), X(x0 + 3 + rng.uniform(10, 17)), BACK - 0.076, BACK - 0.072, zl - 0.02, zl, pin_ink)
     top2 = back_desk(props, 770, 975, lv, mat)
     for cx, scr in ((905, "screen_cyan"), (933, "screen_cyan_chart")):
         monitor(props, X(cx), 2.05, top2, M(24), 0.46, mat["mon_frame"], mat[scr])

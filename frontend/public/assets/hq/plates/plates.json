@@ -65,9 +65,9 @@
    "street_front": {
     "file": "night_street_front.webp",
     "x": 33.0,
-    "y": 775.0,
+    "y": 776.0,
     "w": 1563.0,
-    "h": 57.5
+    "h": 56.5
    }
   },
   "day": {
@@ -123,9 +123,9 @@
    "street_kerb": {
     "file": "day_street_kerb.webp",
     "x": 16.5,
-    "y": 683.0,
+    "y": 682.5,
     "w": 1549.0,
-    "h": 35.0
+    "h": 35.5
    },
    "street_front": {
     "file": "day_street_front.webp",

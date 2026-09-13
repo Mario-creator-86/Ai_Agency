@@ -95,6 +95,10 @@ python art-source/blender/hq/pack_vehicles.py <renders> frontend/public/assets/h
   layer hides is painted over it on the page. Put geometry in the layer of whatever covers it:
   the slab's body is modelled with the rooms (the floor covers its top), only its face is shell.
   The flattened `--preview` cannot show this kind of fault; check it on a live screenshot.
+- The camera looks down 10°, so the top of a box rises about 4.9 world pixels above its front
+  edge for every metre of depth. A deep box in front of something paints its roof over it: an
+  8 m deep building once hid the fourth line of the skyline slogan. Model facades that stand in
+  front of text, windows or rooms as shallow as they can be.
 - Cars are lofted from side profiles (`PROFILES` in `build_vehicles.py`: beltline and roof
   height along the length, a glasshouse leaning in, the plan rounded at the bumpers), with wheel
   arches, door seams, mirrors and lamps that wrap round the corners like the reference's
