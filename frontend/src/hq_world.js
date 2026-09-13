@@ -94,6 +94,15 @@ export function streetLight(time, fx) {
   return [r, g, b];
 }
 
+/**
+ * How much of the day plates to show over the night plates. Daylight starts rising while the sun
+ * is still below the horizon (the sky needs that); sunlit plates must not, or dusk looks half day.
+ * @param {number} daylight 0 night .. 1 full day
+ */
+export function plateDayMix(daylight) {
+  return Math.max(0, Math.min(1, daylight)) ** 2.2;
+}
+
 const SPRITE_SCALE = 1.1;
 /** Seated employees sit up above their consoles, as in the reference, not sunk behind them. */
 const SEATED_LIFT = 6;
@@ -353,7 +362,7 @@ export class HQRenderer {
   layer(ctx, name, time) {
     const night = this.assets.layer('night', name);
     const day = this.assets.layer('day', name);
-    const d = time.daylight;
+    const d = plateDayMix(time.daylight);
     if (night && (d < 0.999 || !day)) ctx.drawImage(night.img, night.x, night.y, night.w, night.h);
     if (day && d > 0.001) {
       ctx.globalAlpha = night ? d : 1;

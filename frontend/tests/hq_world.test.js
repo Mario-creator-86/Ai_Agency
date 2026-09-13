@@ -6,7 +6,7 @@ import { RandomEventManager, validateEvent, RARITY_RATE } from '../src/hq_events
 import { TrafficManager } from '../src/hq_traffic.js';
 import { PedestrianManager } from '../src/hq_pedestrians.js';
 import { animationFor, spriteFor, screenModeFor, AgentVisualStateManager } from '../src/hq_agents.js';
-import { mulberry32, streetLight } from '../src/hq_world.js';
+import { mulberry32, plateDayMix, streetLight } from '../src/hq_world.js';
 import fs from 'node:fs';
 
 const EVENTS = JSON.parse(fs.readFileSync(new URL('../public/assets/hq/world_events.json', import.meta.url), 'utf8'));
@@ -117,6 +117,13 @@ function lanesGaps(traffic) {
   }
   return gaps;
 }
+
+test('the sunlit day plates stay out of dusk and take over by day', () => {
+  assert.equal(plateDayMix(0), 0);
+  assert.equal(plateDayMix(1), 1);
+  assert.ok(plateDayMix(0.3) < 0.1, `dusk mix ${plateDayMix(0.3)}`);
+  assert.ok(plateDayMix(0.8) > 0.5, `evening mix ${plateDayMix(0.8)}`);
+});
 
 test('street sprites take the light of the hour: untouched by day, dim and cool at night', () => {
   assert.deepEqual(streetLight({ daylight: 1 }, { cloudiness: 0 }), [1, 1, 1]);

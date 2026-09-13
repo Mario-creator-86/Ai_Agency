@@ -1,5 +1,18 @@
 # Changelog
 
+## Dusk no longer looks half like day — 2026-09-13
+
+The lift tower, the sign and the street measured far brighter live than their own night plates.
+Composing the plates the way the canvas does found why: the day plates were crossfaded in
+linearly with daylight, and daylight already rises while the sun is below the horizon (the sky
+needs that). At the picture's dusk, with the sun 2.5° down, 30% of a sunlit render was added.
+
+- The day plates now follow daylight to the power 2.2 (`plateDayMix`): about 7% at that dusk,
+  fully there by day. The sky keeps its own curve.
+- Measured on the live page: sign 12.5 → 3.9, tower 18.8 → 9.0, street 10.7 → 5.2, mean colour
+  distance 10.4 → 10.1. The rooms, which the sunlit blend had been lifting, now read slightly
+  darker than the picture; the near-pavement darkening planned for that same excess is dropped.
+
 ## Street life in the evening light, a lit tower, lush trees — 2026-09-13
 
 - **Cars, buses and pedestrians take the light of the hour.** They are rendered under neutral
