@@ -113,7 +113,13 @@ node scripts/shot_hq.mjs --out dusk.png --time 2026-09-13T16:40:00Z          # t
 node scripts/shot_hq.mjs --out rain.png --time 2026-09-13T20:30:00Z --weather rain
 node scripts/shot_hq.mjs --out ufo.png --time 2026-09-13T20:30:00Z --event ufo_flyover --wait 6000
 python art-source/reference/compare.py dusk.png compare.png
+python art-source/reference/plates_compare.py frontend/public/assets/hq/plates plates.png --daylight 0.07
 ```
+
+A live screenshot also measures traffic, people and the crossfade, so two shots of the same plates
+differ. `plates_compare.py` composes the exported plates alone (the day plates blended in at the
+canvas's `plateDayMix` for the shot's daylight; 0.07 at the reference's dusk) and scores only the
+building and street regions. When it and a live shot disagree, look for what the canvas adds.
 
 `--weather` and `--event` act only inside the headless browser used for the screenshot.
 
