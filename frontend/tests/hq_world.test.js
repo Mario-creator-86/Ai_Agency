@@ -118,6 +118,18 @@ function lanesGaps(traffic) {
   return gaps;
 }
 
+test('each vehicle frame knows where its visible lamps are, inside the frame', () => {
+  for (const [kind, entry] of Object.entries(VEHICLES.vehicles)) {
+    for (const [dir, d] of Object.entries(entry.directions)) {
+      assert.ok(d.lamps && Array.isArray(d.lamps.head) && Array.isArray(d.lamps.tail), `${kind} ${dir} has no lamp anchors`);
+      for (const [x, y] of [...d.lamps.head, ...d.lamps.tail]) {
+        assert.ok(x >= 0 && x <= d.w && y >= 0 && y <= d.h, `${kind} ${dir} lamp at ${x},${y} is outside ${d.w}x${d.h}`);
+      }
+      if (kind !== 'bicycle') assert.ok(d.lamps.head.length > 0, `${kind} ${dir} shows no headlight`);
+    }
+  }
+});
+
 test('in rush hour no vehicle ever drives through another', () => {
   const traffic = new TrafficManager({ lanes: MANIFEST.street.lanes, catalogue: VEHICLES, worldWidth: 1600, rng: mulberry32(3), crosswalk: MANIFEST.street.crosswalk, shelterX: 1462 });
   for (let i = 0; i < 20 * 60 * 20; i += 1) {

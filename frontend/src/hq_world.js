@@ -50,6 +50,34 @@ const PLATE_GROUPS = [
   ['street_kerb', ['street_kerb']],
   ['street_front', ['street_front']],
 ];
+/** @type {Map<string, HTMLCanvasElement>} */
+const FLARES = new Map();
+
+/**
+ * A soft round glow for a lamp, drawn once per colour and reused by every vehicle.
+ * @param {string} rgb "r,g,b"
+ */
+function flareSprite(rgb) {
+  let sprite = FLARES.get(rgb);
+  if (!sprite && typeof document !== 'undefined') {
+    sprite = document.createElement('canvas');
+    sprite.width = 64;
+    sprite.height = 64;
+    const c = sprite.getContext('2d');
+    if (c) {
+      const g = c.createRadialGradient(32, 32, 0, 32, 32, 32);
+      g.addColorStop(0, `rgba(${rgb},1)`);
+      g.addColorStop(0.18, `rgba(${rgb},0.55)`);
+      g.addColorStop(0.5, `rgba(${rgb},0.12)`);
+      g.addColorStop(1, `rgba(${rgb},0)`);
+      c.fillStyle = g;
+      c.fillRect(0, 0, 64, 64);
+    }
+    FLARES.set(rgb, sprite);
+  }
+  return sprite;
+}
+
 const SPRITE_SCALE = 1.1;
 /** Seated employees sit up above their consoles, as in the reference, not sunk behind them. */
 const SEATED_LIFT = 6;
@@ -634,6 +662,7 @@ export class HQRenderer {
       if (lamps > 0.02 && lightsCol >= 0) {
         ctx.globalAlpha = lamps;
         ctx.drawImage(img, lightsCol * cellW, sy, d.w * scale, d.h * scale, dx, dy, d.w, d.h);
+        this.drawLampFlares(ctx, d.lamps, dx, dy, lamps);
       }
       if (v.siren) {
         const phase = Math.floor(clock * 5) % 2;
@@ -649,6 +678,33 @@ export class HQRenderer {
         }
       }
       ctx.restore();
+    }
+  }
+
+  /**
+   * Bloom on the lamps the vehicle render found visible: a round glow with a faint horizontal
+   * streak for headlights, a smaller red glow for tail lamps.
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {{head?: number[][], tail?: number[][]} | undefined} anchors frame px
+   * @param {number} dx @param {number} dy @param {number} strength
+   */
+  drawLampFlares(ctx, anchors, dx, dy, strength) {
+    if (!anchors) return;
+    const head = flareSprite('255,244,214');
+    const tail = flareSprite('255,50,40');
+    if (head) {
+      for (const [ax, ay] of anchors.head || []) {
+        ctx.globalAlpha = 0.9 * strength;
+        ctx.drawImage(head, dx + ax - 11, dy + ay - 11, 22, 22);
+        ctx.globalAlpha = 0.35 * strength;
+        ctx.drawImage(head, dx + ax - 28, dy + ay - 3, 56, 6);
+      }
+    }
+    if (tail) {
+      for (const [ax, ay] of anchors.tail || []) {
+        ctx.globalAlpha = 0.8 * strength;
+        ctx.drawImage(tail, dx + ax - 7, dy + ay - 7, 14, 14);
+      }
     }
   }
 

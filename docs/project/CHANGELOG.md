@@ -1,5 +1,18 @@
 # Changelog
 
+## Cars that read as cars — 2026-09-13
+
+Next to the picture's rounded SUVs and sedans, the street's cars still looked like stacked boxes.
+
+- **Bodies are lofted from side profiles**: bonnet, raked windscreen, roof and boot for the
+  sedan, coupe, hatchback, SUV, EV, taxi and police car, with the glasshouse leaning in and the
+  plan rounded at the bumpers; wheel arches, door seams, handles and mirrors on both flanks.
+- **Lamps wrap round the corners**, so a car seen side-on shows its headlights and red tail
+  lamps as the picture's cars do. The render records where each visible lamp sits and the canvas
+  blooms exactly there after dark, with a faint horizontal streak on headlights.
+- **Windows stay dusk-dark**: the key and fill lights no longer mirror as white squares on glass
+  and bonnets; light bars on police cars and ambulances keep their red and blue.
+
 ## The headquarters, rebuilt from the Owner's picture — 2026-09-13
 
 The Owner asked for the office to be redone so it looks like his headquarters picture, with the

@@ -40,7 +40,7 @@ def main():
                 if im.size != (w, h):
                     im = im.resize((w, h), Image.LANCZOS)
                 sheet.paste(im, (col * cw, row * ch))
-            cells[direction] = {"w": f["w"], "h": f["h"], "pivot": f["pivot"], "row": row}
+            cells[direction] = {"w": f["w"], "h": f["h"], "pivot": f["pivot"], "row": row, "lamps": f.get("lamps", {"head": [], "tail": []})}
         sheet.save(os.path.join(a.out, f"{kind}.png"), optimize=True)
         out["vehicles"][kind] = {
             "sheet": f"{kind}.png",

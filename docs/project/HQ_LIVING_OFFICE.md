@@ -91,6 +91,12 @@ python art-source/blender/hq/pack_vehicles.py <renders> frontend/public/assets/h
 - Plates are rendered layer by layer with the other layers present but invisible to the camera,
   so light, shadow and reflection are the whole scene's; bloom is added in post, then each layer
   is cropped to what it covers and saved as WebP (the eighteen plates weigh 2.6 MB).
+- Cars are lofted from side profiles (`PROFILES` in `build_vehicles.py`: beltline and roof
+  height along the length, a glasshouse leaning in, the plan rounded at the bumpers), with wheel
+  arches, door seams, mirrors and lamps that wrap round the corners like the reference's
+  side-on cars. Only the broad rim light shows in reflections, so windows stay dusk-dark. After
+  the lamp pass, each head and tail lamp the render actually shows is recorded per direction in
+  `vehicles.json` (`directions.<dir>.lamps`, frame px), and the canvas blooms exactly those.
 - `art-source/reference/compare.py <render> <out>` compares a render or a live screenshot with
   the reference per region (colour distance, brightness, contrast, SSIM).
 
