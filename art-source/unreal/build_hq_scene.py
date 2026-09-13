@@ -30,13 +30,20 @@ GLB = os.environ.get("AMN_GLB") or os.path.join(HERE, "hq_scene.glb")
 META = json.load(open(os.path.splitext(GLB)[0] + ".json", "r", encoding="utf-8"))
 PKG = "/Game/HQ"
 LEVEL = f"{PKG}/HQ_Dusk"
-LUMENS_PER_WATT = float(os.environ.get("AMN_LM_PER_W", "120"))
-LUMENS_INTERIOR = float(os.environ.get("AMN_LM_INTERIOR", LUMENS_PER_WATT))
-LUMENS_EXTERIOR = float(os.environ.get("AMN_LM_EXTERIOR", LUMENS_PER_WATT))
-SKY_GAIN = float(os.environ.get("AMN_SKY_GAIN", "1"))
+# Defaults are the balance measured closest to the picture (lit, 2026-09-13): interior 1.0 lm/W,
+# exterior 70, sky 1.35, the floors below; the environment overrides each for experiments.
+LUMENS_INTERIOR = float(os.environ.get("AMN_LM_INTERIOR", os.environ.get("AMN_LM_PER_W", "1.0")))
+LUMENS_EXTERIOR = float(os.environ.get("AMN_LM_EXTERIOR", os.environ.get("AMN_LM_PER_W", "70")))
+SKY_GAIN = float(os.environ.get("AMN_SKY_GAIN", "1.35"))
+# multiplies the emission of the skyline's lit windows (lit, the city read brighter than the picture)
+CITY_EMISSIVE = float(os.environ.get("AMN_CITY_EMISSIVE", "0.7"))
+# lumens of a wide cool fill over the road, for what the street lamps do not reach (0 = none).
+# Off by default: at 120000 lm it lifted the street a little but mirrored as a hard white oval on
+# the wet road.
+STREET_FILL = float(os.environ.get("AMN_STREET_FILL", "0"))
 # Per-floor factors for interior lights, "level:gain,..." (0 = ground floor). Lit in Unreal the floors
 # did not respond alike: L3 blew out long before L4 reached the picture's brightness.
-LEVEL_GAIN = {int(k): float(v) for k, v in (pair.split(":") for pair in os.environ.get("AMN_LEVEL_GAIN", "").split(",") if ":" in pair)}
+LEVEL_GAIN = {int(k): float(v) for k, v in (pair.split(":") for pair in os.environ.get("AMN_LEVEL_GAIN", "0:0.55,1:0.7,2:0.7,3:0.3,4:0.8").split(",") if ":" in pair)}
 # Ceiling heights (m) of the ground floor and L1..L4, from hq_building's FLOORS rows at the front plane:
 # z = (655 - row) / 27.575 for ceiling rows 520, 410, 297, 195.
 CEILINGS_M = [(655 - row) / 27.575 for row in (520, 410, 297, 195)]
@@ -247,6 +254,50 @@ def sky_backdrop(ax):
     log(f"sky backdrop {width_m:.0f} x {z_top - z_bottom:.0f} m at {depth_m} m")
 
 
+def scale_city_emission(actors):
+    """Scale EmissiveStrength on the skyline's materials (glTF import instances expose it)."""
+    if abs(CITY_EMISSIVE - 1.0) < 1e-3:
+        return
+    mel = unreal.MaterialEditingLibrary
+    seen = set()
+    changed = 0
+    for label, actor in actors.items():
+        if not any(key in label.lower() for key in ("skyline", "near_blocks")):
+            continue
+        comp = actor.static_mesh_component
+        for i in range(comp.get_num_materials()):
+            mat = comp.get_material(i)
+            if not isinstance(mat, unreal.MaterialInstanceConstant) or mat.get_path_name() in seen:
+                continue
+            seen.add(mat.get_path_name())
+            try:
+                value = mel.get_material_instance_scalar_parameter_value(mat, "EmissiveStrength")
+            except Exception:
+                continue
+            if value > 0:
+                mel.set_material_instance_scalar_parameter_value(mat, "EmissiveStrength", value * CITY_EMISSIVE)
+                mel.update_material_instance(mat)
+                changed += 1
+    log(f"city emission x{CITY_EMISSIVE} on {changed} materials")
+
+
+def street_fill(ax):
+    """A wide, cool, shadowless area light over the road, pointing down."""
+    if STREET_FILL <= 0:
+        return
+    loc = ax.point((0.0, -16.0, 8.0))
+    fill = spawn(unreal.RectLight, loc, unreal.MathLibrary.make_rot_from_x(ax.direction((0.0, 0.0, -1.0))), "StreetFill")
+    comp = fill.rect_light_component
+    comp.set_editor_property("intensity_units", unreal.LightUnits.LUMENS)
+    comp.set_intensity(STREET_FILL)
+    comp.set_light_color(unreal.LinearColor(0.55, 0.62, 0.9, 1.0))
+    comp.set_editor_property("source_width", 60.0 * ax.unit)
+    comp.set_editor_property("source_height", 16.0 * ax.unit)
+    comp.set_attenuation_radius(30.0 * ax.unit)
+    comp.set_cast_shadows(False)
+    log(f"street fill {STREET_FILL:.0f} lm")
+
+
 def dusk_environment(ax):
     """The picture's dusk: a warm low sun from the left, slightly from above so it rims the building
     instead of lighting it from below; ambient light from the captured sky backdrop; light fog."""
@@ -336,6 +387,8 @@ def main():
     ax = AxisMap(actors)
     lights(ax)
     dusk_environment(ax)
+    scale_city_emission(actors)
+    street_fill(ax)
     cam = camera(ax)
     look(cam)
     unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).save_current_level()

@@ -156,8 +156,17 @@ UnrealEditor-Cmd.exe art-source/unreal/AMNReference/AMNReference.uproject -run=p
   rendered the identical image). Diagnostics: with no interior lights the rooms fell to about
   30 (picture 51–80) and did not change without exterior lights either, so the rooms are lit by
   their own lights only; the street depends on the exterior lights (13 without, 50 at 70 lm/W,
-  picture 60). The best balance so far, interior 1.0 lm/W, exterior 70, sky 1.35, EV 0, measured
-  a mean colour distance of 37.7 (the web page measures 8.3).
+  picture 60). The balance measured closest to the picture is now the script's default: interior
+  1.0 lm/W, exterior 70, sky 1.35, EV 0, floors `0:0.55,1:0.7,2:0.7,3:0.3,4:0.8` (mean colour
+  distance 26.9; the web page measures 8.3). `AMN_CITY_EMISSIVE` scales `EmissiveStrength` on
+  the skyline's imported materials (lit, the city read brighter than the picture) and
+  `AMN_STREET_FILL` adds a wide, cool, shadowless area light over the road, in lumens, for what
+  the street lamps do not reach. City emission 0.7 is the default (the city dropped by 7). The
+  street fill is off by default: at 120000 lm it lifted the street by only 4 points and mirrored
+  as a hard white oval on the wet road, a defect the region numbers (25.3) did not show. This is
+  where tuning lights stopped paying. What still separates the still from the picture is not
+  light balance: a dark road with no wet reflections, harsh light pools, the unlit top sign, and
+  no people or vehicles.
 - `render_hq_still.py` waits for Lumen and the clouds to settle, then saves
   `AMNReference/Saved/Screenshots/WindowsEditor/hq_dusk.png` at 3200×1680.
 - `inventory_content.py` lists what the project holds (`content_inventory.json`): after the Owner
