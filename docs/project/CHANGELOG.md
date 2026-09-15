@@ -1,5 +1,38 @@
 # Changelog
 
+## The MetaHuman employees seated in the live headquarters, and driven by the studio — 2026-09-15
+
+- `backend/app/office/unreal.py`: with `STUDIO_OFFICE_UNREAL_REMOTE_URL` (the streamed game's
+  Remote Control, e.g. `http://127.0.0.1:30010`) the backend reads the office layout every
+  `STUDIO_OFFICE_UNREAL_SYNC_SECONDS` (5) and tells Unreal, desk by desk, what it says: an
+  employee is shown only while an agent holds the desk, and held still while that agent is paused
+  or suspended. Only changes are sent; everything is sent again after Unreal fails to answer and
+  every minute. Unset, nothing reaches out. `tests/test_office_unreal_bridge.py`.
+- `art-source/unreal/people/seat_employees.py` retargets ActorCore's seated loops onto the
+  MetaHuman skeleton, seats every built employee at their desk facing the viewer, and records the
+  actor, body and animation object paths in `people/seat_report.json` for the bridge. It is the last
+  step of `live/rebuild_live_hq.ps1`, since a rebuilt level has no employees.
+- `art-source/unreal/people/rig_in_editor.py` rigs and builds the MetaHumans unattended in the full
+  editor and quits. A commandlet could not: the eighth build (Nadia) crashed twice in TextureGraph's
+  groom bake at frame 0, with and without `-AllowCommandletRendering`, while the same build worked
+  from an editor that had already drawn frames. `-ExecutePythonScript` closes the editor as soon as
+  its file returns, so the script is started with `-ExecCmds="py …"` and waits 300 ticks.
+- `Config/DefaultRemoteControl.ini` allows only the bridge's two calls. The streamed game refused
+  `SkeletalMeshComponent` functions until they were listed ("not allowed by remote control
+  settings"). The first entries, `FunctionName="SetPlayRate"`, opened every function of `Actor`
+  and `SkeletalMeshComponent` instead: the field is optional, its value needs parentheses, and
+  without them it stays unset, which means "any function". Written `FunctionName=("SetPlayRate")`,
+  the game refuses the functions not listed and accepts the two that are.
+- Seen live: all eight employees seated in their offices in the streamed page (1920x1008, 511
+  frames, no errors); an employee hidden by hand was shown again by the bridge within its
+  one-minute refresh (44 s). Mean colour distance to the picture 24.2 with a bus crossing the
+  street (23.3 before the employees).
+- The first seating pass recorded each body as `TRASH_SkeletalMeshComponent_8`: creating the
+  retargeted animations reinstanced the blueprints after the actors were spawned, and the game has
+  no such component (its body is `<actor>.Body`). The animations are now made before spawning, and
+  the paths are read back after the level is saved.
+- Backend tests: 776 passed, 1 skipped (a real Ollama is not configured).
+
 ## The Unreal headquarters dressed with the Fab packs, and a moving street — 2026-09-15
 
 The Owner asked for the headquarters to be carried to the end in Unreal. The Blender stand-ins that

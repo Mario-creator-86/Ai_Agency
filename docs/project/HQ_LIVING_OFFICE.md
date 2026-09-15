@@ -205,7 +205,15 @@ STUDIO_OFFICE_STREAM_SIGNALLING_URL=ws://127.0.0.1:8890               # .env, th
   the backend will place the employees without compiling C++: the installed MSVC 14.44.35207 and
   14.50.35717 are both on UE 5.8's banned list. Its settings belong in
   `Config/DefaultRemoteControl.ini` (`config=RemoteControl`); written in `DefaultEngine.ini` they
-  were ignored and the unused WebSocket server opened 0.0.0.0:30020. It now stays off.
+  were ignored and the unused WebSocket server opened 0.0.0.0:30020. It now stays off. Remote
+  Control refuses function calls that are not on its allowlist ("not allowed by remote control
+  settings"); the file allows exactly the bridge's two, `Actor.SetActorHiddenInGame` and
+  `SkeletalMeshComponent.SetPlayRate` (`CustomAllowedRemoteFunctionCalls`), and keeps
+  `bAllowAnyRemoteFunctionCall` off. An entry's `FunctionName` is optional and its value goes in
+  parentheses, `FunctionName=("SetPlayRate")`: written `FunctionName="SetPlayRate"` it failed to
+  import, stayed unset, and the entry allowed every function of the class (the game accepted
+  `SetActorTickInterval`). With the parentheses the game refuses `GetPlayRate`,
+  `SetActorTickInterval` and `SetComponentTickInterval` and accepts the bridge's two calls.
 - **Backend.** The page may only talk to its own origin, so the backend relays the signalling
   WebSocket (`/api/v1/office/stream/signalling?token=…`, the Owner token, compared in constant
   time) to `STUDIO_OFFICE_STREAM_SIGNALLING_URL`. `GET /api/v1/office/stream` tells the page
@@ -255,12 +263,28 @@ STUDIO_OFFICE_STREAM_SIGNALLING_URL=ws://127.0.0.1:8890               # .env, th
 - **The employees (MetaHumans).** The MetaHuman Creator's optional data is installed: 29
   presets (`/MetaHumanCharacter/Optional/Presets`), grooms, clothing, locomotion animations. The
   presets are not rigged ("Character is not rigged"), and rigging and source textures are services
-  of the Owner's Epic account: a headless commandlet is refused and starts a device login.
-  `people/employees.json` names each employee's starting preset (provisional, chosen by the Bible's
-  gender and age) and the Bible's look; `people/rig_employees.py` duplicates, rigs, textures and
-  builds them, and is run inside an editor opened from the Epic Games Launcher.
-- **Not yet.** The level has no employees or pedestrians and nothing in it reads the studio's
-  state yet, so the stream is only switched on by setting the backend variable.
+  of the Owner's Epic account. `people/employees.json` names each employee's starting preset
+  (provisional, chosen by the Bible's gender and age) and the Bible's look;
+  `people/rig_employees.py` duplicates, rigs, textures and builds them (about 350 MB each) and
+  skips the ones already built. The first run needs an editor opened from the Epic Games Launcher
+  (with no Epic session it starts a device login). A commandlet is not enough even once the login
+  is remembered: the build bakes groom textures with TextureGraph, which crashed with an access
+  violation at frame 0, with and without `-AllowCommandletRendering`. `people/rig_in_editor.py`
+  (`UnrealEditor.exe AMNReference.uproject -ExecCmds="py <it>"`) opens the full editor, lets
+  it draw a few hundred frames, runs the rigging and quits. Stop the stream while building: the
+  eighth build ran the editor out of memory beside the streamed game.
+- **Seated, and driven by the studio.** `people/seat_employees.py` (the last step of
+  `rebuild_live_hq.ps1`) retargets ActorCore's `Sit_talk` loops onto the MetaHuman skeleton, seats
+  each built employee at their desk facing the viewer, and writes `people/seat_report.json` (the
+  actor, body and animation object paths per desk). With `STUDIO_OFFICE_UNREAL_REMOTE_URL`
+  (e.g. `http://127.0.0.1:30010`) the backend's bridge (`backend/app/office/unreal.py`) reads the
+  office layout every `STUDIO_OFFICE_UNREAL_SYNC_SECONDS` (5) and sends Remote Control calls for
+  what changed: an employee is shown only while an agent holds the desk (`SetActorHiddenInGame`),
+  and held still while that agent is paused or suspended (`SetPlayRate` 0). Everything is sent
+  again after Unreal fails to answer and every minute, in case it restarted.
+- **Not yet.** There is no typing, thinking or sleeping animation among the installed packs, so
+  a working and an idle employee both play the seated loop; the clothes are the Creator's
+  default garment, not the Bibles' wardrobe; no pedestrians.
 
 ## Verification
 
@@ -285,8 +309,10 @@ building and street regions. When it and a live shot disagree, look for what the
 
 - Messages written by the backend (reasons, errors, agent prose, run notes) are still in
   Romanian; the interface's own words are English.
-- The weather endpoint, the new layout and the stream relay need the backend restarted.
-- The stream shows the Unreal building without its employees and street life until the level
-  reads the studio's state.
+- The weather endpoint, the new layout, the stream relay and the Unreal bridge need the backend
+  restarted.
+- In the stream the employees are shown or hidden and moving or still from the studio's state,
+  but every one of them plays the same seated loop; weather, events and pedestrians are the
+  page's renderer's only.
 - The lift carries a courier for a workflow token; the seated employees do not leave their
   desks, because the backend does not say they walk anywhere.

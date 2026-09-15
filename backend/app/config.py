@@ -101,6 +101,13 @@ class Settings(BaseSettings):
     #: this address (STUDIO_OFFICE_STREAM_SIGNALLING_URL, the player port of Epic's signalling
     #: server, e.g. ws://127.0.0.1:8890). Unset, the page shows its own renderer.
     office_stream_signalling_url: str | None = None
+    #: The same running level answers Unreal's Remote Control HTTP API
+    #: (STUDIO_OFFICE_UNREAL_REMOTE_URL, e.g. http://127.0.0.1:30010). Set, the backend shows and
+    #: animates the seated employees from the studio's state; the seats are the ones
+    #: art-source/unreal/people/seat_employees.py recorded. Unset, the level is left as built.
+    office_unreal_remote_url: str | None = None
+    office_unreal_seat_report: Path = ROOT / "art-source/unreal/people/seat_report.json"
+    office_unreal_sync_seconds: float = Field(default=5.0, ge=1.0, le=300.0)
 
     #: What the studio optimises for when it picks a model itself. The Owner's standing
     #: instruction is premium: the best picture the account can make, cost secondary — "no

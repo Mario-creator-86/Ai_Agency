@@ -6,11 +6,15 @@ by the MetaHuman service (auto-rigging, blocking), given its source textures (bl
 with the default pipeline into <built_path>/<Name>. Employees already built are skipped, so the
 script can be run again after a failure.
 
-The rigging and texture services work only in an editor signed in to the Owner's Epic account, the
-one the Epic Games Launcher opens (a headless commandlet is refused and asks for a device login).
-Run it inside that editor, from the Output Log's Cmd box:
+The rigging and texture services need the Owner's Epic account. The first time, run it inside an
+editor the Epic Games Launcher opens (a commandlet with no Epic session asks for a device login),
+from the Output Log's Cmd box:
 
   py "E:/AI Acency/Autonomous_AI_Studio_Documentation_v5_ECONOMY_TREASURY_VENDORSHOP/art-source/unreal/people/rig_employees.py"
+
+Once that login is remembered, rig_in_editor.py runs it unattended in the full editor. Not in a
+commandlet: the build's groom texture bake (TextureGraph) crashes there before the engine ticks.
+Stop the live stream first; builds are memory-hungry.
 
 AMN_PEOPLE_ONLY=Sarah,Aris limits the run to some employees.
 """

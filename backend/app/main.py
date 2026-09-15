@@ -33,6 +33,7 @@ from app.logging import configure_logging
 from app.media.router import create_media_router
 from app.office.router import create_office_router
 from app.office.stream import register_stream_gateway
+from app.office.unreal import remote_control_target, run_unreal_bridge
 from app.providers.ollama import OllamaProvider
 from app.providers.registry import ProviderRegistry
 from app.publishing.router import create_publishing_router
@@ -163,6 +164,13 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
 
             catalog_refresher = asyncio.create_task(refresh_provider_catalogs())
 
+        # The live Unreal headquarters shows the employees the backend has, doing what it says.
+        unreal_bridge: asyncio.Task[None] | None = None
+        if remote_control_target(settings) is not None:
+            unreal_bridge = asyncio.create_task(
+                run_unreal_bridge(engine, settings, stop_dispatcher)
+            )
+
         # The worker is what runs the studio without the browser: it fires due scheduled jobs
         # and executes the tasks they enqueue. Each pass is synchronous database and agent
         # work, so it runs in a thread and the request loop stays responsive. Nothing fires
@@ -282,6 +290,9 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
             if catalog_refresher is not None:
                 with suppress(asyncio.CancelledError):
                     await catalog_refresher
+            if unreal_bridge is not None:
+                with suppress(asyncio.CancelledError):
+                    await unreal_bridge
             engine.dispose()
 
     app = FastAPI(
