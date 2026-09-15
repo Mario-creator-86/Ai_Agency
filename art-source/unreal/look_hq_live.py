@@ -49,7 +49,9 @@ SPOT_SOFT = env("AMN_LOOK_SPOT_SOFT", "0.1")  # inner cone as a share of the out
 SPOT_WIDEN = env("AMN_LOOK_SPOT_WIDEN", "18")  # degrees added to the outer cone: a wash, not a disc
 POINT = env("AMN_LOOK_POINT", "2.0")         # pendants, desk and floor lamps: the warm pools
 FILL = env("AMN_LOOK_FILL", "1.4")           # the rooms' area fills
-LOBBY = env("AMN_LOOK_LOBBY", "0.75")        # the lobby's fills and spill, on top of FILL (it read 83 against the picture's 68)
+# the lobby's fills and spill, on top of FILL: at 0.75 the ground floor's region still read 81 against
+# the picture's 66 (colour distance 25.7 once the S1 LEDs were lit); at 0.55 25.7 -> 18.8, mean 14.4 -> 13.7
+LOBBY = env("AMN_LOOK_LOBBY", "0.55")
 LAMP = env("AMN_LOOK_LAMP", "0.5")           # street lamps: at full they burnt white pools on the road
 UPLIGHT = env("AMN_LOOK_UPLIGHT", "0.3")     # tree uplights (the leafy crowns read too bright at 0.6)
 # the small warm lights under each office ceiling (hq_building.ceiling_cove): at 1.0 the rooms read too
