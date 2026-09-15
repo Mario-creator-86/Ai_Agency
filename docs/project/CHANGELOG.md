@@ -8,6 +8,9 @@ L2 (Content and Distribution) read brighter than the Owner's picture (84 against
   Compared in the stream: L2's region 19.1 → 17.9 and the mean 11.9 → **11.7**, the closest pass so
   far. Its lower rows now read like the picture's. The band under its ceiling (the warm line and the
   pendants) still reads brighter: 111 against 71.
+- Tried: the rooms' lamps (pendants, desk and floor lamps) at 1.5 instead of 2.0. L2's ceiling band
+  only came down to 105, while L4 turned darker than the picture (1.2 → 4.4) and the mean held at
+  11.7. The band is the ceiling lines' doing, not the lamps', so the lamps stay at 2.0.
 
 ## Darker tree crowns on the left — 2026-09-15
 
