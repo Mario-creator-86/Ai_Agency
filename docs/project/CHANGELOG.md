@@ -1,5 +1,19 @@
 # Changelog
 
+## The Fab packs are in the Unreal project — 2026-09-15
+
+The Owner added his Fab packs to AMNReference (about 40 GB): Vehicle Variety Pack, City Street
+Props, Mega Street Props, Street Props Vol.1 and Vol.2, Soul: City, Megaplants, Palms, the
+photography kit, turnstiles and several interiors.
+
+- `inventory_content.py` now reads each static mesh's size from the asset registry
+  (`ApproxSize`) instead of loading every mesh, which on packs this size would exhaust memory.
+  It listed 7742 assets and no load errors.
+- Still missing for the picture: City Sample Vehicles, Modular Building Set, Automotive Bridge
+  Scene, ArchViz Interior, Streetwear Parametric Outfit 1, the Fab plugin and the MetaHuman
+  Creator data. The packs that arrived hold five cars (hatchback, pickup, sports car, SUV, box
+  truck), no taxi, no bus and no people.
+
 ## The Unreal headquarters, live in the page — 2026-09-13
 
 The Owner chose to see the headquarters rendered by Unreal Engine live in the page (Pixel

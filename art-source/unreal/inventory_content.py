@@ -21,6 +21,17 @@ OUT = os.path.join(HERE, "content_inventory.json")
 LISTED = {"StaticMesh", "SkeletalMesh", "Blueprint", "MaterialInstanceConstant", "World"}
 
 
+def size_from_tag(tag):
+    """'450x180x140' (the registry's ApproxSize, in cm) -> [450.0, 180.0, 140.0], else None."""
+    parts = tag.lower().split("x")
+    if len(parts) != 3:
+        return None
+    try:
+        return [float(p) for p in parts]
+    except ValueError:
+        return None
+
+
 def main():
     registry = unreal.AssetRegistryHelpers.get_asset_registry()
     assets = registry.get_assets_by_path("/Game", recursive=True)
@@ -36,10 +47,11 @@ def main():
             continue
         item = {"path": path, "class": cls}
         if cls == "StaticMesh":
-            mesh = unreal.load_asset(path)
-            if mesh:
-                box = mesh.get_bounding_box()
-                item["size_cm"] = [round(box.max.x - box.min.x, 1), round(box.max.y - box.min.y, 1), round(box.max.z - box.min.z, 1)]
+            # The registry already knows each mesh's size ("ApproxSize", e.g. "450x180x140"):
+            # loading tens of GB of packs mesh by mesh would exhaust the machine's memory.
+            size = size_from_tag(str(data.get_tag_value("ApproxSize") or ""))
+            if size:
+                item["size_cm"] = size
         entry["assets"].append(item)
     with open(OUT, "w", encoding="utf-8") as fh:
         json.dump(folders, fh, indent=1)
