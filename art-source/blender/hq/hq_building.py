@@ -806,7 +806,13 @@ def build_l1(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     spot_row(lights, (930, 1040, 1150), lv, "#cfd8ff", 90, cone=74, blend=0.65, tilt=22)
     downlight_fixtures(glow, (930, 1040, 1150), lv, mat)
     props.box(X(876), X(943), BACK - 0.1, BACK - 0.02, wz(484), wz(418), principled("render_frame", "#0d0f15", rough=0.3))
-    props.front_quad(X(879), X(940), wz(481), wz(421), BACK - 0.105, principled("render_display", "#060a12", rough=0.12, emit="#0c1a2c", strength=1.0))
+    # The render bay's panel: in the picture a lit blue screen, the brightest thing on this floor,
+    # where ours read as a black rectangle (emissive #0c1a2c at 1.0 is all but unlit). It carries its
+    # own name and nothing else - what the bay is doing at the time is the web canvas's to draw from
+    # the studio's state, and a number baked in here would be a made-up one.
+    props.front_quad(X(879), X(940), wz(481), wz(421), BACK - 0.105, principled("render_display", "#08182c", rough=0.12, emit="#123a63", strength=1.3))
+    text(shell_c, "RENDER BAY", X(886), BACK - 0.11, wz(452), 0.34, emissive("render_label", "#bfe2ff", 3.0), name="render_label", face="sign")
+    glow.box(X(886), X(933), BACK - 0.115, BACK - 0.11, wz(440), wz(438), emissive("render_rule", "#38bdf8", 4.0))
     screen_anchor("render_display", X(879), X(940), wz(481), wz(421), BACK - 0.105, zone="video_studio", kind="render_status")
     wall_window(props, 957, 991, 422, 462, mat)
     top = back_desk(props, 972, 1075, lv, mat)
