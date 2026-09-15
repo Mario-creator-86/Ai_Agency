@@ -35,7 +35,10 @@ logger = logging.getLogger(__name__)
 CALL_PATH = "/remote/object/call"
 CALL_TIMEOUT_S = 2.0
 #: Unreal may have restarted without the bridge seeing a failure; send everything again this often.
-REFRESH_S = 60.0
+#: A restarted level plays the seated loops again, so for up to this long the employees turn with the
+#: animation instead of holding the frame that faces the viewer: 20 s keeps that window short, and
+#: the resend is three calls a seat against a local endpoint.
+REFRESH_S = 20.0
 
 Sender = Callable[[dict[str, Any]], None]
 

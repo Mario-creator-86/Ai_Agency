@@ -42,7 +42,10 @@ SOURCES = {
 # played on, the talking loops turn the employees to their monitors, so the backend's bridge holds
 # each one on this frame (the Owner wants every character facing the viewer). Found by sampling the
 # head's direction over the loops and checked in the stream (2026-09-15).
-FRONT_S = {"Male_Sit_talk_Anim_MH": 7.25, "Female_Sit_talk_Anim_MH": 9.0}
+# The men's 7.25 s was read off the head's direction alone; photographed at nine frames of the loop
+# in the stream (0, 2, 4, 7.25, 10, 13, 16, 19, 22 s), it holds them with the head bowed over the
+# desk. At 2 s the head is up and the face towards the viewer.
+FRONT_S = {"Male_Sit_talk_Anim_MH": 2.0, "Female_Sit_talk_Anim_MH": 9.0}
 
 # the seats and projection come from the dressing script, so both always agree
 _spec = importlib.util.spec_from_file_location("dress", os.path.join(os.path.dirname(HERE), "dress_hq_live.py"))
@@ -126,7 +129,9 @@ def main():
         raise RuntimeError(f"could not load {LEVEL}")
     eas = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
     for actor in eas.get_all_level_actors():
-        if TAG in [str(t) for t in actor.get_editor_property("tags")]:
+        # by label as well, so an actor of an earlier pass that failed before its tag was set is
+        # still cleared instead of standing in the level twice
+        if TAG in [str(t) for t in actor.get_editor_property("tags")] or actor.get_actor_label().startswith("employee_"):
             eas.destroy_actor(actor)
     seat_of, ue = seats()
     report = {}
