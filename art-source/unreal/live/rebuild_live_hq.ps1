@@ -53,10 +53,6 @@ function StopStream {
     } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -Confirm:$false }
 }
 
-# The streamed game holds the level's packages open; rebuilding them while it runs fails to replace
-# assets (the sky material could not be deleted and recreated). Stop it first, start it at the end.
-if (-not $NoStream) { StopStream }
-
 if (-not $SkipExport) {
     Step "Blender export for Unreal" {
         $env:AMN_UNREAL_WORKSTATIONS = "1"
@@ -71,6 +67,11 @@ if (-not $SkipExport) {
         Select-String -Path $log -Pattern "AMN_EXPORT" | ForEach-Object { "   " + $_.Line }
     }
 }
+# The streamed game holds the level's packages open; rebuilding them while it runs fails to replace
+# assets (the sky material could not be deleted and recreated). Stop it just before Unreal touches
+# the level (the Blender export does not), and start it at the end: the page shows no live picture
+# in between.
+if (-not $NoStream) { StopStream }
 if (-not $SkipBuild) {
     Step "Level rebuilt from the export" { RunUnrealScript "build_hq_scene.py" }
 }

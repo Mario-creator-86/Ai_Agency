@@ -224,8 +224,10 @@ STUDIO_OFFICE_STREAM_SIGNALLING_URL=ws://127.0.0.1:8890               # .env, th
   in the stream's place. The video itself travels over WebRTC.
 - **Page.** `hq_stream_config.js` (whether `scene.json` shows the stream, the relay address) and
   `hq_stream.js` (`LiveStream`, Epic's `@epicgames-ps/lib-pixelstreamingfrontend-ue5.8`). The
-  video layer lets clicks through to the renderer below, which still knows where everyone sits;
-  it hides while the stream is down and retries every `retry_ms`. `#scene-viewport` carries
+  video layer lets clicks through to the renderer below, which still knows where everyone sits.
+  While the stream is down it never uncovers that renderer (the Owner does not want its older
+  picture): it shows the last frame, frozen, with "Reconnecting…", or before any frame a dark
+  viewport saying the live headquarters is starting, and retries every `retry_ms`. `#scene-viewport` carries
   `data-stream` = `off` | `connecting` | `live`. The layer has the class `fixed-size`: without it
   the library writes an inline style, which the page's CSP refuses. `LiveStream.send()` carries
   the studio's state to Unreal (`emitUIInteraction`) for the agents to come. The library

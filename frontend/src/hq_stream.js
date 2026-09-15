@@ -3,6 +3,10 @@ import { streamLayers } from './hq_stream_config.js';
 
 /** How often a frame of the live video is kept, to be shown frozen if the stream drops. */
 const STILL_COPY_MS = 2000;
+const NOTES = {
+  reconnecting: 'Reconnecting to the live headquarters…',
+  starting: 'Starting the live headquarters…',
+};
 
 /**
  * Shows the Unreal headquarters, streamed live over Pixel Streaming, on top of the page's own
@@ -113,11 +117,14 @@ export class LiveStream {
       this.stillTimer = window.setInterval(() => this._copyFrame(), STILL_COPY_MS);
     }
     const layers = streamLayers(status, this.hasStill);
-    this.layer.hidden = !layers.layer;
-    // the library's video is hidden by a class, not touched: its frozen copy shows instead
-    this.layer.classList.toggle('still', layers.still);
+    // the layer always covers the page's own renderer while a stream is configured
+    this.layer.hidden = false;
+    // the library's video is hidden by a class, not touched: the frozen copy or the note shows
+    this.layer.classList.toggle('paused', status !== 'live');
+    this.layer.classList.toggle('waiting', layers.waiting);
     this.still.hidden = !layers.still;
-    this.badge.hidden = !layers.reconnecting;
+    this.badge.hidden = !layers.note;
+    this.badge.textContent = NOTES[layers.note] || '';
     this.onStatus(status);
   }
 }

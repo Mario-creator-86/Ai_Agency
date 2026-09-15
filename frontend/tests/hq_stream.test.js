@@ -23,14 +23,14 @@ test('a retry faster than a second falls back to the default pause', () => {
   assert.equal(s.streamerId, '');
 });
 
-test('a dropped stream keeps its last frame instead of uncovering the other renderer', () => {
-  const live = { layer: true, still: false, reconnecting: false };
+test('with a stream configured the old renderer is never shown: live video, a frozen frame or a note', () => {
+  const live = { still: false, waiting: false, note: '' };
   assert.deepEqual(streamLayers('live', false), live);
   assert.deepEqual(streamLayers('live', true), live);
   for (const status of ['offline', 'connecting']) {
-    assert.deepEqual(streamLayers(status, true), { layer: true, still: true, reconnecting: true }, status);
-    // before any frame there is nothing to freeze: the page's own renderer shows
-    assert.deepEqual(streamLayers(status, false), { layer: false, still: false, reconnecting: false }, status);
+    assert.deepEqual(streamLayers(status, true), { still: true, waiting: false, note: 'reconnecting' }, status);
+    // before any frame (Unreal starting or being rebuilt) a dark viewport says so
+    assert.deepEqual(streamLayers(status, false), { still: false, waiting: true, note: 'starting' }, status);
   }
 });
 

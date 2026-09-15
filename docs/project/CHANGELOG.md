@@ -40,6 +40,12 @@ its skyline has sparse lit windows in blue haze and a bridge, where the level ha
   page keeps that frame, frozen, with "Reconnecting to the live headquarters…", instead of
   uncovering its own renderer, which draws a different picture of the same building
   (`streamLayers` in `hq_stream_config.js`, a frame kept every two seconds in `hq_stream.js`).
+- The Owner still saw the older picture while the level was being rebuilt ("Încă apare vechiul
+  format!"): with no frame yet the page showed its renderer. With a stream configured the page
+  now never shows it: before the first frame the viewport stays dark and says "Starting the live
+  headquarters…" (the renderer keeps running underneath, so clicks still find the employees).
+  `rebuild_live_hq.ps1` stops the stream only when Unreal is about to touch the level, after the
+  Blender export, so a full pass keeps the picture live about two minutes longer.
 
 ## The MetaHuman employees seated in the live headquarters, and driven by the studio — 2026-09-15
 
