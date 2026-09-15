@@ -25,6 +25,9 @@ but in the live frame they read as dark silhouettes where the picture's are a li
   the pack's own stays untouched) with the colour at 0.6 (`AMN_LOOK_PLANT_FROND`). Compared in the
   stream: the fronds read a lighter green, the mean held (14.0 against 13.9, L4 1.2).
 - They stay thinner than the picture's bushy plants: that is the model's shape, not its colour.
+- Tried: Palms Pack's fuller plants for every room plant (`AMN_BIG_PLANT_CM=999`). In the stream they
+  read as thin dark stems, fainter than the lightened fronds, and the mean slipped (14.0 → 14.1).
+  The fronds stay.
 
 ## A warm line under every office ceiling — 2026-09-15
 

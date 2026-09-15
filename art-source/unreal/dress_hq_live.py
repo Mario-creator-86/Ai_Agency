@@ -385,7 +385,9 @@ PLANTS = (
     ("/Game/Palms_Pack_01/Add_Props/Plants/Meshes/SM_Plant_06_2_G", 120.0),
 )
 BIG_PLANT = "/Game/RestaurantScene/Meshes/SM_PlantPot"
-# 90: the fronds also read leafy on L3 and L4, where Palms' plants stayed dark silhouettes
+# 90: the fronds also read leafy on L3 and L4, where Palms' plants stayed dark silhouettes. Tried
+# again once the rooms were better lit (2026-09-15, 999 = Palms' plants everywhere): thin dark stems,
+# fainter than the fronds the look pass lightens, and the mean slipped (14.0 -> 14.1).
 BIG_PLANT_CM = float(os.environ.get("AMN_BIG_PLANT_CM", "90"))
 PAINTINGS = ("/Game/RestaurantScene/Meshes/SM_WallPainting_1", "/Game/RestaurantScene/Meshes/SM_WallPainting_2")
 FRONT_YAW.setdefault("plant", float(os.environ.get("AMN_YAW_PLANT", "0")))
