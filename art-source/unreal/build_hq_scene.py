@@ -36,7 +36,8 @@ LEVEL = f"{PKG}/HQ_Dusk"
 # exterior 70, sky 1.35, the floors below; the environment overrides each for experiments.
 LUMENS_INTERIOR = float(os.environ.get("AMN_LM_INTERIOR", os.environ.get("AMN_LM_PER_W", "1.0")))
 LUMENS_EXTERIOR = float(os.environ.get("AMN_LM_EXTERIOR", os.environ.get("AMN_LM_PER_W", "70")))
-SKY_GAIN = float(os.environ.get("AMN_SKY_GAIN", "1.35"))
+# 1.1 since the look pass (look_hq_live.py): at 1.35 the sky read brighter than the picture's
+SKY_GAIN = float(os.environ.get("AMN_SKY_GAIN", "1.1"))
 # multiplies the emission of the skyline's lit windows (lit, the city read brighter than the picture)
 CITY_EMISSIVE = float(os.environ.get("AMN_CITY_EMISSIVE", "0.7"))
 # lumens of a wide cool fill over the road, for what the street lamps do not reach (0 = none).

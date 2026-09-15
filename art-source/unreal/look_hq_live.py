@@ -40,22 +40,25 @@ CEILINGS_M = [(655 - row) / 27.575 for row in (520, 410, 297, 195)]
 # the look: factors on that base, per kind of light. Pass 1 (spot 0.45, road 0.12, city 0.45, fog
 # 0.006 from 35 m, EV +0.35, bloom 1.1) made every region brighter than the picture (mean colour
 # distance 24.2 -> 29.6), kept the green cones on L4's wall and turned the road into a mirror of
-# the shopfronts; these defaults are pass 2.
-SPOT = env("AMN_LOOK_SPOT", "0.2")           # interior spot rows: the hard cones on the walls
+# the shopfronts. The defaults below are the balance of the closest full pass (with the pack plants,
+# paintings and wet asphalt: mean colour distance 15.8): spot 0.15, fills 1.4, lamps 0.5, city 0.5,
+# fog 0.008 from 30 m, no exposure offset. Lamps at 0.8 lit the lift tower and the ground floor and
+# left the road as dark.
+SPOT = env("AMN_LOOK_SPOT", "0.15")          # interior spot rows: the hard cones on the walls
 SPOT_SOFT = env("AMN_LOOK_SPOT_SOFT", "0.1")  # inner cone as a share of the outer: a soft edge
 SPOT_WIDEN = env("AMN_LOOK_SPOT_WIDEN", "18")  # degrees added to the outer cone: a wash, not a disc
 POINT = env("AMN_LOOK_POINT", "2.0")         # pendants, desk and floor lamps: the warm pools
-FILL = env("AMN_LOOK_FILL", "1.6")           # the rooms' area fills
+FILL = env("AMN_LOOK_FILL", "1.4")           # the rooms' area fills
 LOBBY = env("AMN_LOOK_LOBBY", "0.75")        # the lobby's fills and spill, on top of FILL (it read 83 against the picture's 68)
-LAMP = env("AMN_LOOK_LAMP", "0.35")          # street lamps: they burnt white pools on the road
+LAMP = env("AMN_LOOK_LAMP", "0.5")           # street lamps: at full they burnt white pools on the road
 UPLIGHT = env("AMN_LOOK_UPLIGHT", "0.6")     # tree uplights
 HEADLIGHT_LM = env("AMN_LOOK_HEADLIGHT_LM", "900")
 TAILLIGHT_LM = env("AMN_LOOK_TAILLIGHT_LM", "160")
-CITY = env("AMN_LOOK_CITY", "0.25")          # skyline window emission, on the imported value
-ROAD_ROUGH = env("AMN_LOOK_ROAD_ROUGH", "0.32")  # wet, not a mirror
+CITY = env("AMN_LOOK_CITY", "0.5")           # skyline window emission, on the imported value
+ROAD_ROUGH = env("AMN_LOOK_ROAD_ROUGH", "0.32")  # wet, not a mirror (only for the imported asphalt)
 ROAD_SPECULAR = env("AMN_LOOK_ROAD_SPECULAR", "0.5")
-FOG_DENSITY = env("AMN_LOOK_FOG", "0.02")
-FOG_START_CM = env("AMN_LOOK_FOG_START", "6000")
+FOG_DENSITY = env("AMN_LOOK_FOG", "0.008")    # 0.02 greyed the street and brightened the sky
+FOG_START_CM = env("AMN_LOOK_FOG_START", "3000")
 EXPOSURE = env("AMN_LOOK_EV", "0")
 BLOOM = env("AMN_LOOK_BLOOM", "0.8")
 

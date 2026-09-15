@@ -23,6 +23,12 @@ Light values alone kept the live level about as far from the Owner's picture as 
   at 0.75 of the rooms' (`AMN_LOOK_LOBBY`). Measured: 15.8; the ground floor 23.6 to 16.9, the
   lobby's two fronds leafy like the picture's. Still short: the smaller plants on L3 and L4 read
   as dark silhouettes, and the street is as dark as before (50.1 against 60.6).
+- Third pass: fronds from 90 cm read leafy on L3 and L4 too, and are kept (`AMN_BIG_PLANT_CM` 90).
+  A more reflective, untinted asphalt and street lamps at 0.8 did not lift the street (25.2) and
+  brightened the lift tower (10.2 to 14.0) and the ground floor, so they were dropped; the street
+  needs another approach than more light. The best balance so far is now each script's default
+  (`look_hq_live.py`, `dress_hq_live.py`, `AMN_SKY_GAIN` 1.1 in `build_hq_scene.py`), so a rebuild
+  without overrides reproduces it.
 
 ## The live headquarters compared region by region with the picture, and the look pass — 2026-09-15
 

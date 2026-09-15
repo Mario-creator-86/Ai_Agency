@@ -323,7 +323,8 @@ PLANTS = (
     ("/Game/Palms_Pack_01/Add_Props/Plants/Meshes/SM_Plant_06_2_G", 120.0),
 )
 BIG_PLANT = "/Game/RestaurantScene/Meshes/SM_PlantPot"
-BIG_PLANT_CM = float(os.environ.get("AMN_BIG_PLANT_CM", "160"))
+# 90: the fronds also read leafy on L3 and L4, where Palms' plants stayed dark silhouettes
+BIG_PLANT_CM = float(os.environ.get("AMN_BIG_PLANT_CM", "90"))
 PAINTINGS = ("/Game/RestaurantScene/Meshes/SM_WallPainting_1", "/Game/RestaurantScene/Meshes/SM_WallPainting_2")
 FRONT_YAW.setdefault("plant", float(os.environ.get("AMN_YAW_PLANT", "0")))
 FRONT_YAW.setdefault("painting", float(os.environ.get("AMN_YAW_PAINTING", "0")))
@@ -360,9 +361,10 @@ ROAD_MI = "/Game/HQ/Materials/MI_HQ_AsphaltWet"
 # The bridge scene's cracked asphalt (world-space triplanar, so no UVs are needed), made wet: the
 # picture's road shines with streaks of light, the pack's is dry (roughness 0.85-1.0).
 ROAD_PARAMS = {
-    "Roughness Min": float(os.environ.get("AMN_ROAD_ROUGH_MIN", "0.18")),
+    # the closest pass (15.8); smoother (0.12-0.35) and untinted, it only lit the building's base
+    "Roughness Min": float(os.environ.get("AMN_ROAD_ROUGH_MIN", "0.25")),
     "Roughness Max": float(os.environ.get("AMN_ROAD_ROUGH_MAX", "0.5")),
-    "Base Color Multiply": float(os.environ.get("AMN_ROAD_DARKEN", "0.6")),
+    "Base Color Multiply": float(os.environ.get("AMN_ROAD_DARKEN", "0.85")),
     "Specular": 0.5,
     "UV Tile U": 2.0,
     "UV Tile V": 2.0,
