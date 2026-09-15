@@ -1,5 +1,18 @@
 # Changelog
 
+## Lighter plants in the rooms — 2026-09-15
+
+The scene already places 21 plants in the rooms, most of them where the Owner's picture has plants,
+but in the live frame they read as dark silhouettes where the picture's are a lit green.
+
+- Plants of 0.9 m and taller are the restaurant scene's potted frond. The pack keeps its leaves'
+  colour at 0.143 (`BaseColorMultiply`), relying on subsurface light in its own brightly lit
+  restaurant.
+- `look_hq_live.py` puts a child instance of that material on the fronds (`MI_HQ_PlantFrond`;
+  the pack's own stays untouched) with the colour at 0.6 (`AMN_LOOK_PLANT_FROND`). Compared in the
+  stream: the fronds read a lighter green, the mean held (14.0 against 13.9, L4 1.2).
+- They stay thinner than the picture's bushy plants: that is the model's shape, not its colour.
+
 ## A warm line under every office ceiling — 2026-09-15
 
 In the Owner's picture a warm LED line runs under each office floor's ceiling, and the tops of the

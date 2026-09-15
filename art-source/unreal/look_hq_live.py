@@ -489,6 +489,48 @@ def small_lights(actors):
     log(f"small lights: own colours at x{LED_GAIN} of the scene's strength on {len(done)} materials")
 
 
+# The rooms' plants of 0.9 m and taller are the restaurant scene's potted frond (dress_hq_live.py
+# BIG_PLANT), and they render as dark silhouettes where the picture's plants are a lit green: the pack
+# keeps the frond's colour at 0.143 (BaseColorMultiply) and relies on subsurface light in its own,
+# brightly lit restaurant. A child instance under /Game/HQ (the pack's own stays untouched) with this
+# colour factor goes on the frond slot of every plant placed from that mesh; 0 leaves the pack's.
+# At 0.6 (15 plants) the fronds read a lighter green by eye and the mean held (14.0 against 13.9);
+# they stay thinner than the picture's bushy plants, which is the model's shape, not its colour.
+PLANT_MESH = "/Game/RestaurantScene/Meshes/SM_PlantPot"
+PLANT_MI = "/Game/HQ/Materials/MI_HQ_PlantFrond"
+PLANT_FROND = env("AMN_LOOK_PLANT_FROND", "0.6")
+
+
+def plant_fronds(actors):
+    if PLANT_FROND <= 0:
+        return
+    mel = unreal.MaterialEditingLibrary
+    mesh = unreal.load_asset(PLANT_MESH)
+    if mesh is None:
+        log(f"plant fronds: {PLANT_MESH} missing")
+        return
+    parent = mesh.static_materials[0].material_interface
+    if unreal.EditorAssetLibrary.does_asset_exist(PLANT_MI):
+        mi = unreal.load_asset(PLANT_MI)
+    else:
+        folder, name = PLANT_MI.rsplit("/", 1)
+        mi = unreal.AssetToolsHelpers.get_asset_tools().create_asset(name, folder, unreal.MaterialInstanceConstant, unreal.MaterialInstanceConstantFactoryNew())
+    mel.set_material_instance_parent(mi, parent)
+    mel.set_material_instance_scalar_parameter_value(mi, "BaseColorMultiply", PLANT_FROND)
+    mel.update_material_instance(mi)
+    unreal.EditorAssetLibrary.save_loaded_asset(mi)
+    placed = 0
+    for actor in actors.values():
+        if not isinstance(actor, unreal.StaticMeshActor):
+            continue
+        comp = actor.static_mesh_component
+        current = comp.get_editor_property("static_mesh")
+        if current is not None and current.get_path_name() == mesh.get_path_name():
+            comp.set_material(0, mi)
+            placed += 1
+    log(f"plant fronds: colour x{PLANT_FROND:g} (the pack's 0.143) on {placed} plants, parent {parent.get_name() if parent else None}")
+
+
 def main():
     les = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
     if not les.load_level(LEVEL):
@@ -502,6 +544,7 @@ def main():
     facade_light(actors)
     window_views(actors)
     small_lights(actors)
+    plant_fronds(actors)
     les.save_current_level()
     unreal.EditorAssetLibrary.save_directory("/Game/HQ")
     log("saved")
