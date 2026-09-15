@@ -30,7 +30,7 @@ $logs = Join-Path $infra "SignallingWebServer\logs"
 New-Item -ItemType Directory -Force $logs | Out-Null
 $wilbur = Start-Process -FilePath (Join-Path $node "node.exe") `
     -ArgumentList "`"$wilburDist`"", "--config_file", "`"$(Join-Path $here 'wilbur.config.json')`"" `
-    -WorkingDirectory (Join-Path $infra "SignallingWebServer") -PassThru -WindowStyle Minimized
+    -WorkingDirectory (Join-Path $infra "SignallingWebServer") -PassThru -WindowStyle Hidden  # a minimized console still took the focus
 Write-Output "wilbur pid $($wilbur.Id): streamer port $($config.streamer_port), player port $($config.player_port)"
 
 $uproject = Join-Path $repo "art-source\unreal\AMNReference\AMNReference.uproject"
