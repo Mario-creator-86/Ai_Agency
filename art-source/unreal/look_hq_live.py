@@ -61,6 +61,14 @@ CITY = env("AMN_LOOK_CITY", "0.5")           # skyline window emission, on the i
 # At 2 the towers read finer by eye, but the frame moved away from the picture (mean 14.7 -> 14.9, the
 # city right of the building 11.9 -> 14.1), so the export's size stays.
 CITY_WINDOW_SCALE = env("AMN_LOOK_CITY_WINDOW_SCALE", "1")
+# The warm LED strips under each floor's ceiling and along the frame (edge_led_slab, edge_led_warm,
+# edge_led): in the picture a bright band that washes the top of each room's wall, live a thin line.
+# A factor on their imported emission strength (recorded once in look_baseline.json); 1 leaves them.
+# At 3 the top floor's strip reads brighter and L4 came closer to the picture (7.8 -> 5.5; the roof
+# sign 9.1 -> 10.2, the mean unchanged at 14.7). L3 and L2 have no ceiling strip in the scene at all:
+# those are for the Blender scene, not this factor.
+STRIP_MATERIALS = ("edge_led_slab", "edge_led_warm", "edge_led")
+STRIP_GAIN = env("AMN_LOOK_STRIP_GAIN", "3")
 ROAD_ROUGH = env("AMN_LOOK_ROAD_ROUGH", "0.32")  # wet, not a mirror (only for the imported asphalt)
 ROAD_SPECULAR = env("AMN_LOOK_ROAD_SPECULAR", "0.5")
 # the wet asphalt instance dress_hq_live.py puts on the road (its roughness texture is remapped to this
@@ -210,6 +218,12 @@ def tune_materials(actors):
                     mel.set_material_instance_scalar_parameter_value(mat, "MetallicFactor", FRAME_METAL)
                     mel.update_material_instance(mat)
                 frames[path] = scalars
+            if base_name in STRIP_MATERIALS and "EmissiveStrength" in scalars:
+                if path not in base:
+                    base[path] = mel.get_material_instance_scalar_parameter_value(mat, "EmissiveStrength")
+                mel.set_material_instance_scalar_parameter_value(mat, "EmissiveStrength", base[path] * STRIP_GAIN)
+                mel.update_material_instance(mat)
+                log(f"strip {path.rsplit('.', 1)[-1]}: emission {base[path]:.2f} x{STRIP_GAIN:g}")
             if label in ("skyline", "near_blocks") and "EmissiveStrength" in scalars:
                 if path not in base:
                     base[path] = mel.get_material_instance_scalar_parameter_value(mat, "EmissiveStrength")

@@ -1,5 +1,17 @@
 # Changelog
 
+## Brighter ceiling strips on the live headquarters — 2026-09-15
+
+In the Owner's picture a warm LED strip under each floor's ceiling washes the top of the walls. In
+the live frame the top floor's strip is a thin line, and the floors below have none.
+
+- `look_hq_live.py` raises the strips' emission (`edge_led_slab`, `edge_led_warm`, `edge_led`) to
+  3 times the imported strength (`AMN_LOOK_STRIP_GAIN`; the imported value is recorded once, so a
+  rerun stays the same). Compared in the stream: L4 came closer to the picture (7.8 → 5.5), the roof
+  sign moved slightly away (9.1 → 10.2), and the mean stays at 14.7.
+- L3 and L2 have no ceiling strip in the scene at all, so a factor cannot give them one. The strips
+  have to be added in the Blender scene.
+
 ## Server LEDs and smaller skyline windows: tried, left off — 2026-09-15
 
 Two more differences from the Owner's picture were tried in the stream and left off, because
