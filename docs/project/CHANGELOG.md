@@ -20,8 +20,9 @@ rear wall.
 - Two regions moved away: L1 (7.5 → 10.3) and the roof sign (10.2 → 14.2). Row by row, all of
   that change sits in the rows where the new lines fall: they burnt at 129 and 103 where the
   picture's lines read 64 and 62. They share their material with the slab lines, which the look
-  pass had raised to 3 times. At 1.5 (`AMN_LOOK_STRIP_GAIN`, the new default) the mean is **14.1**,
-  the closest pass so far: L4 1.6, L1 9.6, the roof sign 12.5.
+  pass had raised to 3 times. At 1.5 the mean is 14.1; at the imported strength
+  (`AMN_LOOK_STRIP_GAIN=1`, the new default) **13.9**, the closest pass so far: L4 1.4, L1 9.2, the
+  roof sign 11.8.
 
 ## Brighter ceiling strips on the live headquarters — 2026-09-15
 
