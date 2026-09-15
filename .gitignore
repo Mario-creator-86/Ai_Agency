@@ -23,6 +23,8 @@ art-source/unreal/AMNReference/Intermediate/
 art-source/unreal/AMNReference/DerivedDataCache/
 art-source/unreal/AMNReference/Binaries/
 art-source/unreal/AMNReference/Content/
+# thumbnails the Epic Launcher leaves next to the project when Fab packs are added
+art-source/unreal/AMNReference/*.png
 art-source/unreal/*.glb
 art-source/unreal/hq_scene*.json
 art-source/unreal/content_inventory.json
