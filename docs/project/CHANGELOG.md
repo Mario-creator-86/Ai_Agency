@@ -1,5 +1,33 @@
 # Changelog
 
+## A lit street and darker crowns on the live headquarters — 2026-09-15
+
+Next to the Owner's picture the live street was nearly black: the road and the near pavement came
+to 15-45 of 255 where the picture's are a lit, cool grey at 55-100, and the green crowns read too
+bright.
+
+- Darker leaves: the green leaf texture is now made at 0.6 of its value and 0.95 of its saturation
+  (`green_leaves.py` defaults). Measured 16.6 against the picture (17.1 before).
+- Why the street was black: nothing lit it. The three street lamps (35,000 lm each) pool on the far
+  pavement, and the sky light only captures a dim dusk atmosphere.
+- `look_hq_live.py` now places a street fill: a wide, shadowless, cool area light 6 m up, pointing
+  straight down over the road (`StreetFill`; `AMN_LOOK_STREET_FILL` lumens, `_Y`, `_DEPTH`). Each
+  setting was compared in the stream (street region, 28.4 without the fill):
+
+  | Fill | Street | Result |
+  | --- | --- | --- |
+  | 4,000 lm over the near pavement | 20.3 | the pale pavement turned lavender |
+  | 6,000 lm over the road | 46.4 | a flat grey street |
+  | 3,000 lm at y −16 m | 18.2 | |
+  | 3,000 lm at y −19 m, 14 m across | 13.5 | the new default |
+
+  With the new default the mean over all regions is 15.6, the closest pass so far (15.9 before).
+- Letting Lumen trace reflections up to roughness 0.6 (`AMN_LOOK_TRACE_ROUGHNESS`; the engine's
+  own limit is 0.4) brought no light streaks to the road and raised the whole ground floor by about
+  4, so it stays at 0.4. The look pass also sets the wet asphalt's roughness range
+  (`AMN_LOOK_ROAD_ROUGH_MIN`/`_MAX`, 0.25–0.5) and can cut the fog off past a distance
+  (`AMN_LOOK_FOG_CUTOFF`), so the skyline can take haze that the sky behind it does not.
+
 ## Green leafy trees on the live street — 2026-09-15
 
 The street's trees were the Blender export's round crowns, which read as foam next to the Owner's

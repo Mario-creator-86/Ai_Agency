@@ -279,6 +279,10 @@ STUDIO_OFFICE_STREAM_SIGNALLING_URL=ws://127.0.0.1:8890               # .env, th
     paintings there. The road wears the bridge scene's cracked asphalt, made wet
     (`/Game/HQ/Materials/MI_HQ_AsphaltWet`). `look_hq_live.py` then tunes the lights, the skyline,
     fog and the grade in place (`AMN_LOOK_*`); `rebuild_live_hq.ps1` runs it after every build.
+    It also places the street fill, `StreetFill`: nothing else lights the road and the near
+    pavement (the lamps pool on the far pavement), so a wide, shadowless, cool area light hangs 6 m
+    above the road pointing down (3,000 lm, 19 m in front of the building, 14 m across; closest of
+    the settings compared in the stream).
   - `traffic_hq_live.py` builds `/Game/HQ/Seq_Traffic`, a looping level sequence that drives the
     vehicles across the frame (near lane towards +x, far lane towards -x, the bus slower), and a
     LevelSequenceActor that plays it on start: the street moves in the streamed game without

@@ -57,10 +57,32 @@ TAILLIGHT_LM = env("AMN_LOOK_TAILLIGHT_LM", "160")
 CITY = env("AMN_LOOK_CITY", "0.5")           # skyline window emission, on the imported value
 ROAD_ROUGH = env("AMN_LOOK_ROAD_ROUGH", "0.32")  # wet, not a mirror (only for the imported asphalt)
 ROAD_SPECULAR = env("AMN_LOOK_ROAD_SPECULAR", "0.5")
+# the wet asphalt instance dress_hq_live.py puts on the road (its roughness texture is remapped to this
+# range), and the roughness up to which Lumen traces real reflections (the engine's own default is
+# 0.4, so most of the road at 0.25-0.5 fell back to a dull reflection without the lights' streaks)
+ROAD_MI = "/Game/HQ/Materials/MI_HQ_AsphaltWet"
+ROAD_ROUGH_MIN = env("AMN_LOOK_ROAD_ROUGH_MIN", "0.25")
+ROAD_ROUGH_MAX = env("AMN_LOOK_ROAD_ROUGH_MAX", "0.5")
+TRACE_ROUGHNESS = env("AMN_LOOK_TRACE_ROUGHNESS", "0.4")
 FOG_DENSITY = env("AMN_LOOK_FOG", "0.008")    # 0.02 greyed the street and brightened the sky
 FOG_START_CM = env("AMN_LOOK_FOG_START", "3000")
+# Distances are from the plate camera, 246 m in front of the building (the street at ~220 m, the
+# building's back at ~262 m, the skyline's towers at 264-315 m, the sky backdrop at ~340 m). Past
+# the cutoff nothing is fogged (0 = no cutoff), so the skyline can take haze the sky backdrop does not.
+FOG_CUTOFF_CM = env("AMN_LOOK_FOG_CUTOFF", "0")
 EXPOSURE = env("AMN_LOOK_EV", "0")
 BLOOM = env("AMN_LOOK_BLOOM", "0.8")
+# The road and the near pavement: no lamp reaches them (the lamps' pools stay on the far pavement)
+# and the dusk sky light alone left them at 15-45 of 255 where the picture's are a lit, cool grey at
+# 55-100 (mean colour of the street's bands, 2026-09-15). Lumens of a wide cool area light straight
+# down over them; 0 turns it off. Compared in the stream (street region colour distance, 28.4 without):
+# 4000 lm over the near pavement (y -24 m, 24 m across) 20.3, the pale pavement overshot lavender;
+# 6000 lm over the road (y -16 m, 16 m) 46.4, a flat grey street; 3000 lm at y -16 m 18.2; 3000 lm
+# at y -19 m, 14 m across 13.5 (mean over all regions 15.6, the closest pass so far).
+STREET_FILL = env("AMN_LOOK_STREET_FILL", "3000")
+STREET_FILL_Y = env("AMN_LOOK_STREET_FILL_Y", "-19")          # Blender metres; the road spans -23 to -9
+STREET_FILL_DEPTH = env("AMN_LOOK_STREET_FILL_DEPTH", "1400")  # cm across the street
+STREET_FILL_COLOR = unreal.LinearColor(0.7, 0.73, 0.88, 1.0)
 
 SPOT_NAMES = ("spot", "ops_spot", "feature_spot")
 POINT_NAMES = ("pendant", "desk_lamp", "floor_lamp", "render_lamp", "ops_shelf_lamp")
@@ -70,6 +92,11 @@ LAMP_NAMES = ("lamp_far_left", "lamp_left", "lamp_right")
 
 def log(msg):
     unreal.log(f"AMN_LOOK {msg}")
+
+
+def ue(x_m, y_m, z_m):
+    """Blender metres -> Unreal centimetres (the importer maps Blender +y to Unreal -y)."""
+    return unreal.Vector(x_m * 100.0, -y_m * 100.0, z_m * 100.0)
 
 
 def level_of(z_m):
@@ -169,12 +196,20 @@ def tune_materials(actors):
     with open(BASELINE, "w", encoding="utf-8") as fh:
         json.dump(base, fh, indent=1)
     log(f"skyline emission x{CITY} on {city} materials; road roughness {ROAD_ROUGH} on {road} parameters")
+    if unreal.EditorAssetLibrary.does_asset_exist(ROAD_MI):
+        wet = unreal.load_asset(ROAD_MI)
+        mel.set_material_instance_scalar_parameter_value(wet, "Roughness Min", ROAD_ROUGH_MIN)
+        mel.set_material_instance_scalar_parameter_value(wet, "Roughness Max", ROAD_ROUGH_MAX)
+        mel.update_material_instance(wet)
+        unreal.EditorAssetLibrary.save_loaded_asset(wet)
+        log(f"wet asphalt roughness {ROAD_ROUGH_MIN}-{ROAD_ROUGH_MAX}")
 
 
 def apply_post(settings):
     values = (
         ("auto_exposure_bias", EXPOSURE),
         ("bloom_intensity", BLOOM),
+        ("lumen_max_roughness_to_trace_reflections", TRACE_ROUGHNESS),
         ("vignette_intensity", 0.3),
         # the picture's grade: a touch more colour, cool shadows, warm highlights
         ("color_saturation", unreal.Vector4(1.08, 1.08, 1.1, 1.0)),
@@ -203,12 +238,40 @@ def tune_post_and_fog(actors):
     if fog is not None:
         fc = fog.component
         fc.set_fog_density(FOG_DENSITY)
-        for prop, value in (("start_distance", FOG_START_CM), ("fog_inscattering_luminance", unreal.LinearColor(0.3, 0.34, 0.55, 1.0))):
+        for prop, value in (("start_distance", FOG_START_CM), ("fog_cutoff_distance", FOG_CUTOFF_CM),
+                            ("fog_inscattering_luminance", unreal.LinearColor(0.3, 0.34, 0.55, 1.0))):
             try:
                 fc.set_editor_property(prop, value)
             except Exception as err:
                 log(f"fog {prop} skipped: {err}")
-    log(f"post-process (exposure {EXPOSURE}, bloom {BLOOM}, grade) and fog ({FOG_DENSITY}, from {FOG_START_CM:.0f} cm)")
+    log(f"post-process (exposure {EXPOSURE}, bloom {BLOOM}, grade) and fog ({FOG_DENSITY}, from {FOG_START_CM:.0f} cm, cutoff {FOG_CUTOFF_CM:.0f} cm)")
+
+
+def street_fill(actors):
+    """A wide area light 6 m up, straight down over the street (the building's front is at Blender
+    y 0, so the light stays off the rooms), cool like the dusk sky, without shadows. Pointing down,
+    the light's width runs across the street and its height along it."""
+    fill = actors.get("StreetFill")
+    if fill is None and STREET_FILL <= 0:
+        return
+    where, down = ue(0.0, STREET_FILL_Y, 6.0), unreal.Rotator(roll=0.0, pitch=-90.0, yaw=0.0)
+    if fill is None:
+        eas = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+        fill = eas.spawn_actor_from_class(unreal.RectLight, where, down)
+        fill.set_actor_label("StreetFill")
+    fill.set_actor_location_and_rotation(where, down, False, False)
+    comp = fill.rect_light_component
+    comp.set_mobility(unreal.ComponentMobility.MOVABLE)
+    comp.set_intensity_units(unreal.LightUnits.LUMENS)
+    comp.set_intensity(max(STREET_FILL, 0.0))
+    comp.set_light_color(STREET_FILL_COLOR)
+    comp.set_editor_property("source_width", STREET_FILL_DEPTH)
+    comp.set_editor_property("source_height", 6000.0)
+    comp.set_attenuation_radius(3000.0)
+    comp.set_cast_shadows(False)
+    lamp = actors.get("lamp_left")
+    check = f"; lamp_left stands at {lamp.get_actor_location()} (scene -17.07, -1.43, 5.59 m)" if lamp else ""
+    log(f"street fill {STREET_FILL:.0f} lm at {fill.get_actor_location()}{check}")
 
 
 def main():
@@ -220,6 +283,7 @@ def main():
     tune_lights(actors)
     tune_materials(actors)
     tune_post_and_fog(actors)
+    street_fill(actors)
     les.save_current_level()
     unreal.EditorAssetLibrary.save_directory("/Game/HQ")
     log("saved")
