@@ -261,6 +261,12 @@ STUDIO_OFFICE_STREAM_SIGNALLING_URL=ws://127.0.0.1:8890               # .env, th
     renamed texture copies (`props_color` x37) and facade materials without their window textures,
     so the skyline rendered flat white; `build_hq_scene.py` now imports each build into its own
     `/Game/HQ/Scene_<timestamp>` and deletes the earlier folders after saving the level.
+  - The rooms' plants and portrait pictures come from packs too: the export (`AMN_UNREAL_PROPS=1`)
+    records where `hq_lib.plant()` and `frame_picture()` would draw them (`hq_scene.json`
+    "props_m") and `dress_hq_live.py` places Palms Pack plants and the restaurant scene's
+    paintings there. The road wears the bridge scene's cracked asphalt, made wet
+    (`/Game/HQ/Materials/MI_HQ_AsphaltWet`). `look_hq_live.py` then tunes the lights, the skyline,
+    fog and the grade in place (`AMN_LOOK_*`); `rebuild_live_hq.ps1` runs it after every build.
   - `traffic_hq_live.py` builds `/Game/HQ/Seq_Traffic`, a looping level sequence that drives the
     vehicles across the frame (near lane towards +x, far lane towards -x, the bus slower), and a
     LevelSequenceActor that plays it on start: the street moves in the streamed game without

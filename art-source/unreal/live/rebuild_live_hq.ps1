@@ -39,7 +39,7 @@ function RunUnrealScript([string]$script) {
     $log = Join-Path $LogDir ("ue_" + [IO.Path]::GetFileNameWithoutExtension($script) + ".log")
     & $ueCmd "$uproject" -run=pythonscript "-script=$((Join-Path $unrealDir $script) -replace '\\', '/')" -unattended -nosplash "-abslog=$log" | Out-Null
     $errors = Select-String -Path $log -Pattern "LogPython: Error" -ErrorAction SilentlyContinue
-    Select-String -Path $log -Pattern "AMN_(UE|DRESS|TRAFFIC|SEAT) " -ErrorAction SilentlyContinue | Select-Object -Last 6 | ForEach-Object { "   " + $_.Line.Substring($_.Line.IndexOf("AMN_")) }
+    Select-String -Path $log -Pattern "AMN_(UE|DRESS|TRAFFIC|SEAT|LOOK) " -ErrorAction SilentlyContinue | Select-Object -Last 6 | ForEach-Object { "   " + $_.Line.Substring($_.Line.IndexOf("AMN_")) }
     if ($errors) {
         $errors | Select-Object -First 8 | ForEach-Object { "   " + $_.Line }
         throw "$script reported Python errors (log: $log)"
@@ -56,6 +56,8 @@ function StopStream {
 if (-not $SkipExport) {
     Step "Blender export for Unreal" {
         $env:AMN_UNREAL_WORKSTATIONS = "1"
+        # plants and portrait pictures are left to pack models (dress_hq_live.py)
+        $env:AMN_UNREAL_PROPS = "1"
         $log = Join-Path $LogDir "blender_export.log"
         # Windows PowerShell 5.1 turns a native program's stderr into error records; under "Stop" the
         # first Blender warning on stderr (a DeprecationWarning) aborted the pass. Judge by exit code.
@@ -80,6 +82,9 @@ Step "Street traffic" { RunUnrealScript "traffic_hq_live.py" }
 # Rebuilding the level removes every actor, the employees too: seat the built MetaHumans again
 # (employees not yet rigged and built are skipped and reported).
 Step "Employees seated" { RunUnrealScript "people/seat_employees.py" }
+# The build recreates every light and the post-process at their defaults: the look pass goes on
+# again each time (its values come from AMN_LOOK_*).
+Step "Look pass" { RunUnrealScript "look_hq_live.py" }
 
 if (-not $NoStream) {
     Step "Stream restarted" {

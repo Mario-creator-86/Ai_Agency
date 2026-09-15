@@ -507,6 +507,12 @@ class MB:
             f.material_index = k
 
     def build(self, coll, bevel=0.0, smooth=False):
+        if UNREAL_PROPS_ON and not self.bm.verts:
+            # nothing was drawn into it (the Unreal export leaves the rooms' plants to pack models):
+            # no empty object for the exporter and the importer to trip on. Only then: the figure
+            # builders (build_people, build_characters) use the returned object straight away.
+            self.bm.free()
+            return None
         me = bpy.data.meshes.new(self.name)
         self.bm.normal_update()
         self.bm.to_mesh(me)
@@ -529,7 +535,18 @@ class MB:
 # ----------------------------------------------------------------------------- furniture kit
 
 
+# The Unreal export (AMN_UNREAL_PROPS=1) leaves the rooms' plants and portrait pictures out of the
+# meshes and records where they stand, so the live level puts real pack models there
+# (art-source/unreal/dress_hq_live.py); the web plates are built as before.
+UNREAL_PROPS_ON = os.environ.get("AMN_UNREAL_PROPS") == "1"
+UNREAL_PROPS = {"plants": [], "pictures": []}
+
+
 def plant(mb_leaf, mb_pot, x, y, z, height, leaf_mat, pot_mat, pot_h=0.45, pot_r=0.2, n=10, seed=0, spread=1.0, style="palm"):
+    if UNREAL_PROPS_ON:
+        UNREAL_PROPS["plants"].append({"x": round(x, 4), "y": round(y, 4), "z": round(z, 4),
+                                       "height": round(pot_h + height, 4), "width": round(pot_r * 2.4, 4), "style": style})
+        return
     rng = random.Random(seed)
     mb_pot.cyl(x, y, z, z + pot_h, pot_r * 0.8, pot_mat, seg=18, r_top=pot_r)
     base = (x, y, z + pot_h * 0.92)
@@ -582,6 +599,11 @@ def monitor(mb, cx, y, z, w, h, frame, screen, stand=True, thickness=0.03, rz=0.
 
 
 def frame_picture(mb, cx, cz, y, w, h, frame, art, depth=0.03, border=0.025):
+    # only the portrait pictures of some size: the pack's paintings are portrait, and a small or
+    # landscape photo (pinned boards, shelves) would be misshapen by one
+    if UNREAL_PROPS_ON and h >= 0.9 * w and h >= 0.7:
+        UNREAL_PROPS["pictures"].append({"x": round(cx, 4), "z": round(cz, 4), "y": round(y, 4), "w": round(w, 4), "h": round(h, 4)})
+        return
     mb.box(cx - w / 2, cx + w / 2, y - depth, y, cz - h / 2, cz + h / 2, frame)
     mb.front_quad(cx - w / 2 + border, cx + w / 2 - border, cz - h / 2 + border, cz + h / 2 - border, y - depth - 0.002, art)
 

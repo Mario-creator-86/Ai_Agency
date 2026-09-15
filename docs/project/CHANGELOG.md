@@ -1,5 +1,24 @@
 # Changelog
 
+## Real paintings and wet asphalt in the live headquarters — 2026-09-15
+
+Light values alone kept the live level about as far from the Owner's picture as before (24.2 to
+24.3), so the stand-ins themselves are being replaced with the packs' models and materials.
+
+- The Unreal export (`AMN_UNREAL_PROPS=1`, set by `rebuild_live_hq.ps1`) no longer draws the rooms'
+  plants and portrait pictures: `hq_lib.plant()` and `frame_picture()` record where they stand
+  (`hq_scene.json` "props_m": 21 plants, 5 paintings). `dress_hq_live.py` places Palms Pack plants and
+  the restaurant scene's framed paintings there. The web plates are built exactly as before.
+- The road wears the bridge scene's cracked asphalt (world-space triplanar, no UVs needed), made
+  wet in `/Game/HQ/Materials/MI_HQ_AsphaltWet` (roughness 0.18-0.5 instead of 0.85-1.0).
+- `rebuild_live_hq.ps1` runs `look_hq_live.py` after seating the employees: a build recreates every
+  light at its defaults, so the look pass is applied again each time.
+- Measured against the picture after one full pass (mean colour distance, lower is closer): 16.5,
+  the closest the live level has been (24.2 before). The lift tower 7.9, L1 10.0, L4 10.8. By eye:
+  the paintings hang facing the camera; the plants are a step back, thin dark sprigs where the
+  Blender plants were full; the lobby is too bright (82.7 against 68.2) and the street too dark
+  (50.8 against 60.6).
+
 ## The live headquarters compared region by region with the picture, and the look pass — 2026-09-15
 
 The Owner asked whether the live Unreal headquarters looks like his picture, and to correct the

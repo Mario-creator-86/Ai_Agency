@@ -449,6 +449,8 @@ def main():
         "markers_m": marks,
         "layers": {name: sorted(o.name for o in colls[name].objects) for name in LAYERS},
         "lights": lights_json(),
+        # plants and portrait pictures the building left out for pack models (AMN_UNREAL_PROPS=1)
+        "props_m": sys.modules["hq_lib"].UNREAL_PROPS,
     }
     with open(os.path.splitext(a.out)[0] + ".json", "w", encoding="utf-8") as fh:
         json.dump(meta, fh, indent=1)

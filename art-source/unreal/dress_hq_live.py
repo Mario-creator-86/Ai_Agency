@@ -5,9 +5,13 @@ build_hq_scene.py) with the Fab packs the Owner added, in place of the Blender s
 - Every employee's workstation (the eight seats of the web scene's manifest): desk, office chair,
   monitor turned in from the side, keyboard, mouse, desk lamp and PC, from Apartment Tech Props and
   25 Office Desktop Items. The Blender workstations ("consoles") are removed.
+- The rooms' plants and portrait pictures: Palms Pack indoor plants (the model nearest in height)
+  and the restaurant scene's framed paintings, where the Blender build recorded its own
+  (hq_scene.json "props_m", written when the export ran with AMN_UNREAL_PROPS=1).
 - The street: lamp posts at the Blender lamps (whose lights stay), the bench, the bus shelter,
-  planters and trees from the street packs and Megaplants; City Sample Vehicles in the two lanes.
-  The Blender street furniture and trees are removed.
+  planters and trees from the street packs and Megaplants; City Sample Vehicles in the two lanes;
+  the bridge scene's cracked asphalt, made wet, on the road. The Blender street furniture and
+  trees are removed.
 
 Positions come from the same projection the Blender build and the web scene use (hq_lib: 28 px per
 metre, camera pitched 10 degrees), converted to Unreal (x, -y, z) centimetres, so pack assets stand
@@ -308,6 +312,87 @@ def car_lights(car, heading):
                                   unreal.AttachmentRule.KEEP_WORLD, False)
 
 
+# ---------------------------------------------------------------- the rooms' plants and pictures
+# Indoor plants of Palms Pack (static meshes; the wind is in their materials, not a skeleton) by
+# native height in cm, and framed paintings of the restaurant scene, 67 x 93 cm, portrait.
+PLANTS = (
+    ("/Game/Palms_Pack_01/Add_Props/Plants/Meshes/SM_Plant_09_3_G", 57.0),
+    ("/Game/Palms_Pack_01/Add_Props/Plants/Meshes/SM_Plant_07_5_G", 75.0),
+    ("/Game/Palms_Pack_01/Add_Props/Plants/Meshes/SM_Plant_07_6_G", 102.0),
+    ("/Game/Palms_Pack_01/Add_Props/Plants/Meshes/SM_Plant_07_2_G", 106.0),
+    ("/Game/Palms_Pack_01/Add_Props/Plants/Meshes/SM_Plant_06_2_G", 120.0),
+)
+PAINTINGS = ("/Game/RestaurantScene/Meshes/SM_WallPainting_1", "/Game/RestaurantScene/Meshes/SM_WallPainting_2")
+FRONT_YAW.setdefault("plant", float(os.environ.get("AMN_YAW_PLANT", "0")))
+FRONT_YAW.setdefault("painting", float(os.environ.get("AMN_YAW_PAINTING", "0")))
+
+
+def props():
+    """Pack plants and paintings where the Blender build recorded its own (hq_scene.json props_m)."""
+    meta = json.load(open(os.path.join(HERE, "hq_scene.json"), "r", encoding="utf-8"))
+    recorded = meta.get("props_m") or {}
+    plants = [(find_asset(p), h) for p, h in PLANTS]
+    plants = [(a, h) for a, h in plants if a is not None]
+    for i, item in enumerate(recorded.get("plants", [])):
+        target = item["height"] * 100.0
+        # the model whose own height is nearest, so none is stretched far from its shape
+        asset = min(plants, key=lambda ah: abs(math.log(target / ah[1])))[0] if plants else None
+        place("plant", asset, ue(item["x"], item["y"], item["z"]), height=target, label=f"plant_{i}")
+    paintings = [a for a in (find_asset(p) for p in PAINTINGS) if a is not None]
+    for i, item in enumerate(recorded.get("pictures", [])):
+        if not paintings:
+            break
+        # hung on the wall: bottom-centre just in front of it, as tall as the picture it replaces
+        place("painting", paintings[i % len(paintings)], ue(item["x"], item["y"] - 0.02, item["z"] - item["h"] / 2.0),
+              height=item["h"] * 100.0, label=f"painting_{i}")
+    log(f"props: {len(recorded.get('plants', []))} plants, {len(recorded.get('pictures', []))} paintings")
+
+
+# ---------------------------------------------------------------- the road
+ROAD_PARENT = "/Game/AutomotiveBridgeScene/Materials/Environment/MI_AsphaltFine"
+ROAD_MI = "/Game/HQ/Materials/MI_HQ_AsphaltWet"
+# The bridge scene's cracked asphalt (world-space triplanar, so no UVs are needed), made wet: the
+# picture's road shines with streaks of light, the pack's is dry (roughness 0.85-1.0).
+ROAD_PARAMS = {
+    "Roughness Min": float(os.environ.get("AMN_ROAD_ROUGH_MIN", "0.18")),
+    "Roughness Max": float(os.environ.get("AMN_ROAD_ROUGH_MAX", "0.5")),
+    "Base Color Multiply": float(os.environ.get("AMN_ROAD_DARKEN", "0.6")),
+    "Specular": 0.5,
+    "UV Tile U": 2.0,
+    "UV Tile V": 2.0,
+}
+
+
+def road_material():
+    """The wet asphalt instance (created once), on the street's asphalt slot."""
+    mel = unreal.MaterialEditingLibrary
+    parent = find_asset(ROAD_PARENT)
+    if parent is None:
+        return
+    if unreal.EditorAssetLibrary.does_asset_exist(ROAD_MI):
+        mi = unreal.load_asset(ROAD_MI)
+    else:
+        folder, name = ROAD_MI.rsplit("/", 1)
+        mi = unreal.AssetToolsHelpers.get_asset_tools().create_asset(name, folder, unreal.MaterialInstanceConstant, unreal.MaterialInstanceConstantFactoryNew())
+    mel.set_material_instance_parent(mi, parent)
+    for key, value in ROAD_PARAMS.items():
+        mel.set_material_instance_scalar_parameter_value(mi, key, value)
+    mel.update_material_instance(mi)
+    unreal.EditorAssetLibrary.save_loaded_asset(mi)
+    eas = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+    slots = 0
+    for actor in eas.get_all_level_actors():
+        if actor.get_actor_label() != "street_ground" or not isinstance(actor, unreal.StaticMeshActor):
+            continue
+        comp = actor.static_mesh_component
+        for i in range(comp.get_num_materials()):
+            mat = comp.get_material(i)
+            if mat is not None and "asphalt" in mat.get_path_name().lower():
+                comp.set_material(i, mi)
+                slots += 1
+    log(f"road: wet cracked asphalt on {slots} slot(s) {ROAD_PARAMS}")
+
+
 def candidate_sizes():
     """Logs the size of every desk, monitor, chair and laptop the packs offer, to pick real ones."""
     registry = unreal.AssetRegistryHelpers.get_asset_registry()
@@ -338,8 +423,11 @@ def main():
     clear(set(replaced))
     if ONLY in ("", "desks"):
         desks()
+    if ONLY in ("", "props"):
+        props()
     if ONLY in ("", "street"):
         street()
+        road_material()
     metahuman_presets()
     les.save_current_level()
     out = os.path.join(HERE, "dress_report.json")
