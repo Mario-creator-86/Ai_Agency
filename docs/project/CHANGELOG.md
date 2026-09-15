@@ -24,6 +24,17 @@ skeletal trees stopped Pixel Streaming's capture on an earlier pass.
   (`Export Mesh Type: Static Mesh`), but only from its editor, so the project now enables that
   (experimental) plugin for that export. `convert_trees_static.py` also gained `AMN_TREE_LOD`,
   `AMN_TREES_OVERWRITE` and Nanite set through `NaniteSettings` (the first copies had Nanite off).
+- The export from that editor, with the leaves baked into the mesh ("Create Nanite Foliage" off,
+  2,028 foliage instances), ran the editor out of memory, and the streamed game went down with it.
+  The editor also warned that the project lacks Shader Model 6 and Nanite Foliage, which Nanite
+  assemblies need. Enabled together in `DefaultEngine.ini`, they made the streamed game crash on
+  its first frames: a D3D12 fatal error, "No command list slot was available. Too many residency
+  sets are open concurrently", during the startup burst of pipeline-state compilation. Both were
+  reverted and the stream came back on Shader Model 5 (live, frames delivered). A separate game
+  process with Shader Model 6, `r.Nanite.Foliage=1` and `D3D12.ResidencyManagement=0` then crashed
+  the GPU ten seconds in ("GPU Crashed or D3D Device Removed"), and the machine stopped responding
+  and had to be restarted. That route is closed on this machine (Radeon RX 9070): Shader Model 6
+  and Nanite Foliage stay off, and Megaplants' Nanite-assembly leaves cannot be used here.
 
 ## Real paintings and wet asphalt in the live headquarters — 2026-09-15
 
