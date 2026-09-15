@@ -1,5 +1,18 @@
 # Changelog
 
+## No glare on the slabs between the floors — 2026-09-15
+
+Above every office floor the slab's face read as a light slate strip, where the Owner's picture has
+a dark edge. Darkening the slab's colour did not change it (see "A dimmer line under the ceilings").
+
+- The strip was the facade light's glare: the area light stands straight in front of those faces.
+  `look_hq_live.py` now sets that light's specular share to 0 (`AMN_LOOK_FACADE_SPECULAR`). It still
+  lights the frame's navy, which is its diffuse light.
+- Compared in the stream: the strips' rows came down by 19–26 (L2 93 → 73 and 87 → 64, L3 89 → 68 and
+  74 → 47, against the picture's 42–77). The mean held at 11.1.
+- The brighter rows just below the slab, the top of L2's room (110 against the picture's 58), did not
+  move: that is the room's own light, the next thing to look at.
+
 ## Every employee faces the viewer — 2026-09-15
 
 The Owner: every character must face the viewer, never side-on or from behind. In the live stream all

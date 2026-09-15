@@ -380,6 +380,14 @@ def facade_light(actors):
     comp.set_attenuation_radius(3000.0)
     comp.set_cast_shadows(False)
     comp.set_editor_property("lighting_channels", unreal.LightingChannels(channel0=False, channel1=True, channel2=False))
+    # The slab faces between the floors read as a light slate strip, and darkening their colour did not
+    # change it: the strip is this light's glare on faces turned straight towards it. Its specular share
+    # (1 leaves the engine's); the frame's navy is its diffuse light, which this leaves. At 0 the strips'
+    # rows came down by 19-26 (L2's 93 -> 73 and 87 -> 64, L3's 89 -> 68 and 74 -> 47, against the
+    # picture's 42-77), mean 11.1 (2026-09-15).
+    facade_specular = env("AMN_LOOK_FACADE_SPECULAR", "0")
+    comp.set_editor_property("specular_scale", facade_specular)
+    log(f"facade light specular x{facade_specular:g}")
     shell = actors.get(FACADE_ACTOR)
     if shell is not None:
         shell.static_mesh_component.set_editor_property("lighting_channels", unreal.LightingChannels(channel0=True, channel1=True, channel2=False))
