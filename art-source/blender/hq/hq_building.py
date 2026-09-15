@@ -861,8 +861,17 @@ def build_ground(shell, rooms, props, leaves, pots, fronts, glow, lights, back, 
         glow.box(X(458), X(634), BACK_G - 0.03, BACK_G, Z(zr, BACK_G), Z(zr, BACK_G) + 0.02, grid)
     for xp in range(470, 630, 30):
         glow.box(X(xp), X(xp) + 0.02, BACK_G - 0.03, BACK_G, 0.2, c - 0.6, grid)
+    # The picture's racks stand as cabinets with their own edges and tops, on a floor you can see;
+    # ours were near black (#101318) against a dark wall and read as flat LED panels. A lighter body
+    # and a pale top rail give each one its shape without lighting the whole room cyan (the infra
+    # fill at 1.8 did that: the ground floor's region 4.2 -> 8.2).
+    rack_body = principled("rack_body", "#1e232d", rough=0.4, metal=0.35)
+    rack_edge = principled("rack_edge", "#555d6b", rough=0.35, metal=0.5)
     for x0, x1 in ((466, 492), (500, 527), (556, 583), (591, 619)):
-        props.box(X(x0), X(x1), 1.2, 2.2, f, 2.62, principled("rack_body", "#101318", rough=0.35, metal=0.35))
+        props.box(X(x0), X(x1), 1.2, 2.2, f, 2.62, rack_body)
+        props.box(X(x0) - 0.02, X(x1) + 0.02, 1.16, 2.24, 2.62, 2.68, rack_edge)
+        props.box(X(x0) - 0.02, X(x0), 1.16, 2.2, f, 2.62, rack_edge)
+        props.box(X(x1), X(x1) + 0.02, 1.16, 2.2, f, 2.62, rack_edge)
         rack_front(props, glow, X(x0 + 2), X(x1 - 2), 0.12, 2.5, 1.195, seed=x0)
     ANCHORS["displays"]["server_racks"] = {"rects": [px_rect(X(a), X(b), 0.12, 2.5, 1.19) for a, b in ((466, 492), (500, 527), (556, 583), (591, 619))], "zone": "server_corner"}
     for xp in (500, 590):

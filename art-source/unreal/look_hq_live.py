@@ -60,6 +60,9 @@ FILL = env("AMN_LOOK_FILL", "1.4")           # the rooms' area fills
 # little darker than the picture, only its upper rows brighter.
 LOBBY = env("AMN_LOOK_LOBBY", "0.3")
 LAMP = env("AMN_LOOK_LAMP", "0.5")           # street lamps: at full they burnt white pools on the road
+# The infra room's own fill. In the picture S1 is a lit room: the racks stand as cabinets with
+# their own edges, on a floor you can see. Ours was a flat dark wall with LED dots on it.
+INFRA = env("AMN_LOOK_INFRA", "1")
 # tree uplights: the leafy crowns read too bright at 0.6, and at 0.3 the city left of the building
 # still came 12.1 against the picture (its light 71 against 63). At 0.15: city left 11.7, the
 # street 7.5 -> 6.8, the ground floor 3.9 -> 3.4, mean 7.1 -> 6.9.
@@ -167,6 +170,8 @@ def factor_for(name):
         return SPOT
     if name.startswith(POINT_NAMES):
         return POINT
+    if name.startswith("infra_"):
+        return FILL * INFRA
     if name.startswith(FILL_NAMES):
         return FILL
     if name.startswith(LAMP_NAMES):
