@@ -13,6 +13,15 @@ eight employees sat in profile.
   valid. `seat_employees.py` now places them at the same yaw on every rebuild.
 - Checked in close-ups of the stream: the employees on L4, L3 and L2 sit facing the viewer behind
   their white desks.
+- The seated talking loops turned them again as they played: sampled over time, the head swings
+  about 60° to either side of the body, towards the monitor, for most of each loop. Kael and Marcus
+  were caught leaning over their monitors. `seat_employees.py` now records each loop's frame where
+  the head looks the way the body faces (`front_s`: 7.25 s male, 9.0 s female) in
+  `seat_report.json`. The Unreal bridge holds every employee shown on that frame, working or paused
+  (`SetPlayRate(0)`, then `SetPosition`). `DefaultRemoteControl.ini` allows `SetPosition`.
+- Seen in the stream after the backend restart: all eight face the viewer, and they hold still
+  across frames. The consequence: the employees no longer animate until a seated loop that stays
+  facing the viewer is available.
 
 ## A dimmer line under the ceilings — 2026-09-15
 

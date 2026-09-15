@@ -6,9 +6,11 @@ address in configuration (``STUDIO_OFFICE_UNREAL_REMOTE_URL``, e.g. ``http://127
 desk, the actor, its body and its seated animation in ``seat_report.json``.
 
 This bridge reads the same office layout the page reads and tells Unreal, desk by desk, what the
-backend says and nothing more: an employee is on screen only while an agent holds that desk, and
-moves only while that agent is not paused or suspended. When Unreal is not running the calls fail,
-nothing is retried in a hurry, and everything is sent again once it answers.
+backend says and nothing more: an employee is on screen only while an agent holds that desk. Every
+employee shown is held still on the seated loop's frame that faces the viewer (``front_s`` in the
+report): played on, the talking loop turns each of them towards their monitor, and the Owner wants
+every character facing the viewer. When Unreal is not running the calls fail, nothing is retried in
+a hurry, and everything is sent again once it answers.
 """
 
 from __future__ import annotations
@@ -47,20 +49,24 @@ def remote_control_target(settings: Any) -> str | None:
     return url
 
 
-def load_seats(path: Path) -> dict[str, dict[str, str]]:
-    """desk id -> the seated employee's object paths; empty when the report cannot be read."""
+def load_seats(path: Path) -> dict[str, dict[str, Any]]:
+    """desk id -> the seated employee's object paths and front-facing frame (``front_s``, seconds,
+    0 when the report has none); empty when the report cannot be read."""
     try:
         report = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
-    seats: dict[str, dict[str, str]] = {}
+    seats: dict[str, dict[str, Any]] = {}
     for seat in report.get("seats", []) if isinstance(report, dict) else []:
         if not isinstance(seat, dict):
             continue
         fields = {key: seat.get(key) for key in ("desk", "actor", "body", "animation")}
-        paths = {key: value for key, value in fields.items() if isinstance(value, str) and value}
+        paths: dict[str, Any] = {key: value for key, value in fields.items() if isinstance(value, str) and value}
         if len(paths) == len(fields):
             desk = paths.pop("desk")
+            front = seat.get("front_s")
+            valid = isinstance(front, (int, float)) and not isinstance(front, bool) and front >= 0
+            paths["front_s"] = float(front) if valid else 0.0
             seats[desk] = paths
     return seats
 
@@ -88,7 +94,7 @@ def desired_states(
     return desired
 
 
-def calls_for(seat: Mapping[str, str], state: Mapping[str, bool]) -> list[dict[str, Any]]:
+def calls_for(seat: Mapping[str, Any], state: Mapping[str, bool]) -> list[dict[str, Any]]:
     """The Remote Control calls that put one seat in its state."""
     calls: list[dict[str, Any]] = [
         {
@@ -99,23 +105,23 @@ def calls_for(seat: Mapping[str, str], state: Mapping[str, bool]) -> list[dict[s
         }
     ]
     if state["visible"]:
-        if not state["moving"]:
-            # A paused agent is held on the seated loop's first frame, the neutral pose facing the
-            # viewer: held wherever the loop happened to be, an employee kept a mid-gesture pose turned
-            # away (the Owner wants every character facing the viewer).
-            calls.append(
-                {
-                    "objectPath": seat["body"],
-                    "functionName": "SetPosition",
-                    "parameters": {"InPos": 0.0, "bFireNotifies": False},
-                    "generateTransaction": False,
-                }
-            )
+        # Working or paused, the employee is held on the seated loop's frame that faces the viewer.
+        # Played on, the installed talking loop turns them towards their monitor for most of its
+        # length (seen in the stream, 2026-09-15), and the Owner wants every character facing the
+        # viewer. The loop is stopped first, so the position holds.
         calls.append(
             {
                 "objectPath": seat["body"],
                 "functionName": "SetPlayRate",
-                "parameters": {"Rate": 1.0 if state["moving"] else 0.0},
+                "parameters": {"Rate": 0.0},
+                "generateTransaction": False,
+            }
+        )
+        calls.append(
+            {
+                "objectPath": seat["body"],
+                "functionName": "SetPosition",
+                "parameters": {"InPos": float(seat.get("front_s", 0.0)), "bFireNotifies": False},
                 "generateTransaction": False,
             }
         )
@@ -149,7 +155,7 @@ class UnrealBridge:
         self._refreshed_at: float | None = None
         self._failing = False
 
-    def sync(self, layout: Mapping[str, Any], seats: Mapping[str, Mapping[str, str]]) -> int:
+    def sync(self, layout: Mapping[str, Any], seats: Mapping[str, Mapping[str, Any]]) -> int:
         """Pushes what changed; returns the number of seats sent (0 when Unreal did not answer)."""
         now = self._clock()
         if self._refreshed_at is None or now - self._refreshed_at >= REFRESH_S:

@@ -1,4 +1,4 @@
-"""The live Unreal headquarters shows the employees the backend has, doing what it says."""
+"""The live Unreal headquarters shows the employees the backend has, facing the viewer."""
 
 import json
 from types import SimpleNamespace
@@ -18,11 +18,13 @@ SEATS = {
         "actor": "/Game/HQ/HQ_Dusk.HQ_Dusk:PersistentLevel.BP_Sarah_C_0",
         "body": "/Game/HQ/HQ_Dusk.HQ_Dusk:PersistentLevel.BP_Sarah_C_0.Body",
         "animation": "/Game/AMN/People/Animations/Female_Sit_talk_Anim_MH.Female_Sit_talk_Anim_MH",
+        "front_s": 9.0,
     },
     "desk_script": {
         "actor": "/Game/HQ/HQ_Dusk.HQ_Dusk:PersistentLevel.BP_Marcus_C_0",
         "body": "/Game/HQ/HQ_Dusk.HQ_Dusk:PersistentLevel.BP_Marcus_C_0.Body",
         "animation": "/Game/AMN/People/Animations/Male_Sit_talk_Anim_MH.Male_Sit_talk_Anim_MH",
+        "front_s": 7.25,
     },
 }
 
@@ -61,15 +63,14 @@ def test_a_desk_without_an_agent_shows_nobody():
         (None, "ACTIVE", True),
     ],
 )
-def test_a_paused_or_suspended_agent_is_held_still(runtime_state, lifecycle, moving):
+def test_a_paused_or_suspended_agent_reads_as_not_moving(runtime_state, lifecycle, moving):
     states = desired_states(layout(agent("desk_script", runtime_state, lifecycle)), SEATS)
     assert states["desk_script"] == {"visible": True, "moving": moving}
 
 
-def test_the_calls_hide_or_show_the_actor_and_set_the_body_moving_or_still():
+def test_a_hidden_seat_only_hides_the_actor():
     seat = SEATS["desk_director"]
-    hidden = calls_for(seat, {"visible": False, "moving": False})
-    assert hidden == [
+    assert calls_for(seat, {"visible": False, "moving": False}) == [
         {
             "objectPath": seat["actor"],
             "functionName": "SetActorHiddenInGame",
@@ -77,40 +78,33 @@ def test_the_calls_hide_or_show_the_actor_and_set_the_body_moving_or_still():
             "generateTransaction": False,
         }
     ]
-    still = calls_for(seat, {"visible": True, "moving": False})
-    assert [c["functionName"] for c in still] == ["SetActorHiddenInGame", "SetPosition", "SetPlayRate"]
-    assert still[0]["parameters"] == {"bNewHidden": False}
-    assert still[1] == {
-        "objectPath": seat["body"],
-        "functionName": "SetPosition",
-        "parameters": {"InPos": 0.0, "bFireNotifies": False},
-        "generateTransaction": False,
-    }
-    assert still[2] == {
-        "objectPath": seat["body"],
-        "functionName": "SetPlayRate",
-        "parameters": {"Rate": 0.0},
-        "generateTransaction": False,
-    }
-    moving = calls_for(seat, {"visible": True, "moving": True})
-    assert [c["functionName"] for c in moving] == ["SetActorHiddenInGame", "SetPlayRate"]
-    assert moving[1]["parameters"] == {"Rate": 1.0}
 
 
-def test_a_paused_employee_is_held_on_the_loops_first_frame_facing_the_viewer():
-    # held wherever the loop happened to be, a paused employee kept a mid-gesture pose turned away
-    # from the viewer; the Owner wants every character facing the viewer
-    still = calls_for(SEATS["desk_script"], {"visible": True, "moving": False})
-    positions = [c for c in still if c["functionName"] == "SetPosition"]
-    assert positions == [
+@pytest.mark.parametrize("moving", [True, False])
+def test_working_or_paused_an_employee_is_held_on_the_frame_facing_the_viewer(moving):
+    # played on, the seated talking loop turns the employee towards the monitor; the Owner wants
+    # every character facing the viewer, so the loop is stopped and set to its front-facing frame
+    seat = SEATS["desk_script"]
+    assert calls_for(seat, {"visible": True, "moving": moving}) == [
         {
-            "objectPath": SEATS["desk_script"]["body"],
-            "functionName": "SetPosition",
-            "parameters": {"InPos": 0.0, "bFireNotifies": False},
+            "objectPath": seat["actor"],
+            "functionName": "SetActorHiddenInGame",
+            "parameters": {"bNewHidden": False},
             "generateTransaction": False,
-        }
+        },
+        {
+            "objectPath": seat["body"],
+            "functionName": "SetPlayRate",
+            "parameters": {"Rate": 0.0},
+            "generateTransaction": False,
+        },
+        {
+            "objectPath": seat["body"],
+            "functionName": "SetPosition",
+            "parameters": {"InPos": 7.25, "bFireNotifies": False},
+            "generateTransaction": False,
+        },
     ]
-    assert still.index(positions[0]) < [c["functionName"] for c in still].index("SetPlayRate")
 
 
 def test_only_what_changed_is_sent_again():
@@ -118,7 +112,7 @@ def test_only_what_changed_is_sent_again():
     clock = Clock()
     bridge = UnrealBridge(sent.append, clock)
     assert bridge.sync(layout(agent("desk_director", "WORKING")), SEATS) == 2
-    assert len(sent) == 3  # director shown and moving; script desk hidden
+    assert len(sent) == 4  # director shown, stopped and set to her front frame; script desk hidden
     sent.clear()
     clock.now += 5
     assert bridge.sync(layout(agent("desk_director", "WORKING")), SEATS) == 0
@@ -127,8 +121,8 @@ def test_only_what_changed_is_sent_again():
     assert bridge.sync(layout(agent("desk_director", "WORKING", "PAUSED")), SEATS) == 1
     assert [c["parameters"] for c in sent] == [
         {"bNewHidden": False},
-        {"InPos": 0.0, "bFireNotifies": False},
         {"Rate": 0.0},
+        {"InPos": 9.0, "bFireNotifies": False},
     ]
 
 
@@ -147,7 +141,7 @@ def test_after_unreal_fails_to_answer_everything_is_sent_again():
     down["now"] = False
     clock.now += 5
     assert bridge.sync(layout(agent("desk_director")), SEATS) == 2
-    assert len(sent) == 3
+    assert len(sent) == 4
 
 
 def test_everything_is_sent_again_after_a_while_in_case_unreal_restarted():
@@ -162,12 +156,14 @@ def test_everything_is_sent_again_after_a_while_in_case_unreal_restarted():
 
 def test_the_seat_report_is_read_and_malformed_seats_are_ignored(tmp_path):
     report = tmp_path / "seat_report.json"
+    without_front = {key: value for key, value in SEATS["desk_script"].items() if key != "front_s"}
     report.write_text(
         json.dumps(
             {
                 "level": "/Game/HQ/HQ_Dusk",
                 "seats": [
                     {"desk": "desk_director", "name": "Sarah", **SEATS["desk_director"]},
+                    {"desk": "desk_script", "name": "Marcus", **without_front},
                     {
                         "desk": "desk_audio",
                         "name": "Lyra",
@@ -175,13 +171,19 @@ def test_the_seat_report_is_read_and_malformed_seats_are_ignored(tmp_path):
                         "body": "x",
                         "animation": "y",
                     },
+                    {"desk": "desk_video", "name": "Kael", **without_front, "front_s": "7"},
                     "not a seat",
                 ],
             }
         ),
         encoding="utf-8",
     )
-    assert load_seats(report) == {"desk_director": SEATS["desk_director"]}
+    seats = load_seats(report)
+    assert seats["desk_director"] == SEATS["desk_director"]
+    # a report from before the front frame was recorded, or a malformed one: the loop's first frame
+    assert seats["desk_script"] == {**without_front, "front_s": 0.0}
+    assert seats["desk_video"]["front_s"] == 0.0
+    assert "desk_audio" not in seats
     assert load_seats(tmp_path / "missing.json") == {}
     (tmp_path / "broken.json").write_text("{", encoding="utf-8")
     assert load_seats(tmp_path / "broken.json") == {}

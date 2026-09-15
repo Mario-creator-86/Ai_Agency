@@ -38,6 +38,11 @@ SOURCES = {
     "man": ("Dummy_Male", "Idle_walk_sit_Male_Motion/Male_Sit_talk_Anim"),
     "woman": ("Dummy_Female", "Idle_walk_sit_Female_Motion/Female_Sit_talk_Anim"),
 }
+# The seated loops' frame (seconds) where the head looks the way the body faces, towards the viewer:
+# played on, the talking loops turn the employees to their monitors, so the backend's bridge holds
+# each one on this frame (the Owner wants every character facing the viewer). Found by sampling the
+# head's direction over the loops and checked in the stream (2026-09-15).
+FRONT_S = {"Male_Sit_talk_Anim_MH": 7.25, "Female_Sit_talk_Anim_MH": 9.0}
 
 # the seats and projection come from the dressing script, so both always agree
 _spec = importlib.util.spec_from_file_location("dress", os.path.join(os.path.dirname(HERE), "dress_hq_live.py"))
@@ -174,7 +179,8 @@ def main():
             report[name] += " (no Body component after saving)"
             continue
         entries.append({"desk": desk, "name": name, "actor": actor.get_path_name(),
-                        "body": f"{actor.get_path_name()}.{bodies_now[0].get_name()}", "animation": anim.get_path_name()})
+                        "body": f"{actor.get_path_name()}.{bodies_now[0].get_name()}", "animation": anim.get_path_name(),
+                        "front_s": FRONT_S.get(anim.get_name(), 0.0)})
     seated = entries
     with open(os.path.join(HERE, "seat_report.json"), "w", encoding="utf-8") as out:
         json.dump({"level": LEVEL, "seats": seated}, out, indent=1)
