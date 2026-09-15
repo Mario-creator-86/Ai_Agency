@@ -69,9 +69,11 @@ CITY_WINDOW_SCALE = env("AMN_LOOK_CITY_WINDOW_SCALE", "1")
 # A factor on their imported emission strength (recorded once in look_baseline.json); 1 leaves them.
 # At 3 the top floor's strip reads brighter and L4 came closer to the picture (7.8 -> 5.5; the roof
 # sign 9.1 -> 10.2, the mean unchanged at 14.7). L3 and L2 have no ceiling strip in the scene at all:
-# those are for the Blender scene, not this factor.
+# those are for the Blender scene, not this factor. Since hq_building.ceiling_cove() hangs a line of
+# the same material under every office ceiling, 3 made those lines burn (129 and 103 against the
+# picture's 64 and 62 in their rows); at 1.5 the mean is 14.1 (14.5 at 3), L4 1.6.
 STRIP_MATERIALS = ("edge_led_slab", "edge_led_warm", "edge_led")
-STRIP_GAIN = env("AMN_LOOK_STRIP_GAIN", "3")
+STRIP_GAIN = env("AMN_LOOK_STRIP_GAIN", "1.5")
 ROAD_ROUGH = env("AMN_LOOK_ROAD_ROUGH", "0.32")  # wet, not a mirror (only for the imported asphalt)
 ROAD_SPECULAR = env("AMN_LOOK_ROAD_SPECULAR", "0.5")
 # the wet asphalt instance dress_hq_live.py puts on the road (its roughness texture is remapped to this
