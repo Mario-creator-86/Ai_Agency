@@ -55,6 +55,12 @@ UPLIGHT = env("AMN_LOOK_UPLIGHT", "0.3")     # tree uplights (the leafy crowns r
 HEADLIGHT_LM = env("AMN_LOOK_HEADLIGHT_LM", "900")
 TAILLIGHT_LM = env("AMN_LOOK_TAILLIGHT_LM", "160")
 CITY = env("AMN_LOOK_CITY", "0.5")           # skyline window emission, on the imported value
+# The skyline's windows are the export's tiling window textures, one window per 0.16-0.28 m cell:
+# about 6 x 9 px in the live frame, where the picture's towers have windows of 2-3 px. The texture
+# scale on the facade materials (glTF OffsetScale): 2 halves each window; 1 leaves the export's size.
+# At 2 the towers read finer by eye, but the frame moved away from the picture (mean 14.7 -> 14.9, the
+# city right of the building 11.9 -> 14.1), so the export's size stays.
+CITY_WINDOW_SCALE = env("AMN_LOOK_CITY_WINDOW_SCALE", "1")
 ROAD_ROUGH = env("AMN_LOOK_ROAD_ROUGH", "0.32")  # wet, not a mirror (only for the imported asphalt)
 ROAD_SPECULAR = env("AMN_LOOK_ROAD_SPECULAR", "0.5")
 # the wet asphalt instance dress_hq_live.py puts on the road (its roughness texture is remapped to this
@@ -208,6 +214,10 @@ def tune_materials(actors):
                 if path not in base:
                     base[path] = mel.get_material_instance_scalar_parameter_value(mat, "EmissiveStrength")
                 mel.set_material_instance_scalar_parameter_value(mat, "EmissiveStrength", base[path] * CITY)
+                if label == "skyline":
+                    scale = unreal.LinearColor(0.0, 0.0, CITY_WINDOW_SCALE, CITY_WINDOW_SCALE)
+                    for slot in ("BaseColorTexture", "EmissiveTexture"):
+                        mel.set_material_instance_vector_parameter_value(mat, f"{slot}_OffsetScale", scale)
                 mel.update_material_instance(mat)
                 city += 1
             if label == "street_ground" and "asphalt" in path.lower() and "RoughnessFactor" in scalars:
@@ -403,10 +413,19 @@ def window_views(actors):
 # of a few millimetres is averaged away: the picture's server racks show rows of green lights, the
 # live ones stood black. Each gets its own colour (the Blender scene's, hq_building.py) on a white
 # texture, at the scene's strength times this gain; 0 leaves the bake.
+# At the scene's strengths (gain 1) the rack tops and the infra room's grid glowed, but the LED dots
+# did not show: each is 3 x 3 cm, under one pixel in the live frame, and anti-aliasing averages it
+# away. The dots take LED_DOT_BOOST times their strength, so bloom makes a visible point of each; the
+# grid and bars (lines, visible already, stronger than the picture's) take half. Tried so, the dots
+# still did not show (most likely lost with the imported mesh's smallest parts) and the grid's lines
+# grew stronger than the picture's: off by default; larger LED lights in the Blender scene are the fix.
+LED_DOT_BOOST = env("AMN_LOOK_LED_DOT_BOOST", "8")
+LED_LINE_SHARE = env("AMN_LOOK_LED_LINE_SHARE", "0.5")
 LEDS = {
-    "rack_led_green": ("#4ade80", 6.0), "rack_led_amber": ("#fbbf24", 5.0), "rack_top_bar": ("#34d399", 3.0),
-    "pc_led_blue": ("#60a5fa", 8.0), "spk_led": ("#93c5fd", 5.0), "infra_bar": ("#a5f3fc", 5.0),
-    "infra_grid": ("#2dd4bf", 0.6),
+    "rack_led_green": ("#4ade80", 6.0 * LED_DOT_BOOST), "rack_led_amber": ("#fbbf24", 5.0 * LED_DOT_BOOST),
+    "pc_led_blue": ("#60a5fa", 8.0 * LED_DOT_BOOST), "spk_led": ("#93c5fd", 5.0 * LED_DOT_BOOST),
+    "rack_top_bar": ("#34d399", 3.0), "infra_bar": ("#a5f3fc", 5.0 * LED_LINE_SHARE),
+    "infra_grid": ("#2dd4bf", 0.6 * LED_LINE_SHARE),
 }
 LED_GAIN = env("AMN_LOOK_LED_GAIN", "0")
 WHITE = "/InterchangeAssets/gltf/Textures/T_White_srgb"

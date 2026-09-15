@@ -1,5 +1,23 @@
 # Changelog
 
+## Server LEDs and smaller skyline windows: tried, left off — 2026-09-15
+
+Two more differences from the Owner's picture were tried in the stream and left off, because
+neither brought the frame closer:
+
+- **Server LEDs.** In the picture the S1 racks show rows of green lights; the live racks stand black.
+  Every small light (rack LEDs, rack bars, the PCs' and speakers' LEDs, the infra room's grid) is
+  baked into one shared emission texture, where it is averaged away. The look pass can give each its
+  own colour again (`AMN_LOOK_LED_GAIN`, off). At the scene's strengths the rack bars and the grid
+  glowed, but the LED dots did not. At 8 times their strength they still did not: each is 3 × 3 cm,
+  under one pixel in the frame, and most likely lost with the imported mesh's smallest parts, while
+  the grid's teal lines grew stronger than the picture's. Showing the LEDs needs larger lights in
+  the Blender scene.
+- **Skyline windows.** The skyline's windows are about 6 × 9 px in the frame, the picture's 2–3 px.
+  Halving them through the facade textures' scale (`AMN_LOOK_CITY_WINDOW_SCALE=2`) looked finer by
+  eye, but measured further from the picture (mean 14.7 → 14.9; the right-hand city 11.9 → 14.1).
+  The export's size stays.
+
 ## A lit frame and city views in the rooms' windows — 2026-09-15
 
 Two things set the live headquarters apart from the Owner's picture at a glance: the building's frame
