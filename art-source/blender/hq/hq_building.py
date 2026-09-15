@@ -8,6 +8,7 @@ lamps, lift stops) projected from the modelled geometry.
 """
 
 import math
+import os
 import random
 
 import bpy
@@ -44,6 +45,9 @@ LEFT = 447
 RIGHT = 1205
 BACK = BACK_WALL
 BACK_G = 3.2
+# The Unreal export's own object for the desk monitors and mugs (AMN_UNREAL_WORKSTATIONS=1); None
+# keeps them with the desks, as the web plates need.
+SCREENS = None
 
 ANCHORS = {
     "rooms": {},
@@ -260,13 +264,19 @@ def workstation(fronts, props, cx, level, mat, screen_tex, zone, desk, side=1, s
     fronts.box(x0 + 0.06, x1 - 0.06, yf + 0.08, yf + 0.1, f + 0.42, top - 0.05, mat["desk_panel"])
     fronts.box(ox - 0.2, ox + 0.2, yb - 0.2, yb - 0.05, top, top + 0.02, mat["black"])
     mx, my = ox + side * 0.5, yf + 0.3
-    monitor(fronts, mx, my, top, 0.6, 0.38, mat["mon_frame"], image_material(f"desk_screen_{desk}", screen_tex, 3.0), rz=math.radians(-side * 50))
-    fronts.cyl(ox - side * 0.42, yf + 0.35, top, top + 0.1, 0.04, mat["mug"], seg=14)
+    # For Unreal the monitor and mug are their own object ("desk_screens"), kept when the desk and
+    # chair are replaced by real furniture.
+    screens = SCREENS if SCREENS is not None else fronts
+    monitor(screens, mx, my, top, 0.6, 0.38, mat["mon_frame"], image_material(f"desk_screen_{desk}", screen_tex, 3.0), rz=math.radians(-side * 50))
+    screens.cyl(ox - side * 0.42, yf + 0.35, top, top + 0.1, 0.04, mat["mug"], seg=14)
     screen_anchor(f"{desk}_monitor", mx - 0.2, mx + 0.2, top + 0.13, top + 0.5, my - 0.01, zone=zone, desk=desk)
-    props.box(ox - 0.24, ox + 0.24, seat_y + 0.14, seat_y + 0.22, f + 0.55, f + 1.12, mat["chair"])
-    props.box(ox - 0.23, ox + 0.23, seat_y - 0.28, seat_y + 0.18, f + 0.42, f + 0.5, mat["chair"])
-    props.cyl(ox, seat_y - 0.03, f + 0.05, f + 0.42, 0.025, mat["frame"], seg=10)
-    props.box(ox - 0.3, ox + 0.3, seat_y - 0.08, seat_y + 0.02, f + 0.02, f + 0.05, mat["frame"])
+    # The Unreal export keeps a whole workstation in one object ("consoles"), so the live scene can
+    # replace it with real furniture; the web plates keep the chair in the rooms layer.
+    chair = fronts if os.environ.get("AMN_UNREAL_WORKSTATIONS") == "1" else props
+    chair.box(ox - 0.24, ox + 0.24, seat_y + 0.14, seat_y + 0.22, f + 0.55, f + 1.12, mat["chair"])
+    chair.box(ox - 0.23, ox + 0.23, seat_y - 0.28, seat_y + 0.18, f + 0.42, f + 0.5, mat["chair"])
+    chair.cyl(ox, seat_y - 0.03, f + 0.05, f + 0.42, 0.025, mat["frame"], seg=10)
+    chair.box(ox - 0.3, ox + 0.3, seat_y - 0.08, seat_y + 0.02, f + 0.02, f + 0.05, mat["frame"])
 
 
 def back_desk(mb, x0px, x1px, level, mat, depth=(1.75, 2.3), top=0.78):
@@ -362,6 +372,8 @@ def room_rect(zone_id, x0px, x1px, level, name):
 
 
 def build(colls):
+    global SCREENS
+    SCREENS = MB("desk_screens") if os.environ.get("AMN_UNREAL_WORKSTATIONS") == "1" else None
     mat = materials()
     back = colls["building_back"]
     front = colls["building_front"]
@@ -441,6 +453,8 @@ def build(colls):
     leaves.build(back, smooth=True)
     pots.build(back, smooth=True)
     fronts.build(front, bevel=0.015)
+    if SCREENS is not None:
+        SCREENS.build(front, bevel=0.015)
     return ANCHORS
 
 

@@ -1,5 +1,36 @@
 # Changelog
 
+## The Unreal headquarters dressed with the Fab packs, and a moving street — 2026-09-15
+
+The Owner asked for the headquarters to be carried to the end in Unreal. The Blender stand-ins that
+the packs can replace are replaced, and the street moves.
+
+- `art-source/unreal/live/rebuild_live_hq.ps1` runs one pass: Blender export for Unreal, the level
+  rebuilt, the packs placed, the traffic sequence built, the stream restarted. It stops the stream
+  before touching the level: rebuilding under the running game failed to replace the sky
+  material, and `build_hq_scene.py` now rebuilds that material's graph when it cannot delete it.
+- The Blender export for Unreal (`AMN_UNREAL_WORKSTATIONS=1`) keeps each workstation's desk and
+  chair in one object and its flat monitor and mug in another (`desk_screens`), so the live scene
+  can put real furniture in place of the first and keep the studio's own screens. The web plates
+  are built exactly as before.
+- `dress_hq_live.py` places desks and chairs (Apartment Tech Props), keyboards, mice and desk lamps
+  at the eight seats, lamp posts, the bench, the bus shelter, planters and Megaplants trees at the
+  street's anchors, and City Sample Vehicles in both lanes, each scaled and grounded by its measured
+  bounds at the positions the web scene uses.
+- `traffic_hq_live.py` drives the vehicles with a looping level sequence that plays on start.
+- MetaHuman: the Creator's 29 presets are installed but not rigged, and rigging needs the Owner's
+  signed-in editor; `people/employees.json` and `people/rig_employees.py` are ready for that session.
+- What the passes found, and fixed. The wind-animated Megaplants trees stopped the stream (the
+  capture was recreated again and again, no frame reached the page); static trees brought it back.
+  Re-importing over the previous import left the skyline's facade materials without their window
+  textures (flat white towers) and piled up renamed texture copies; each build now imports into its
+  own `Scene_<timestamp>` folder and deletes the old ones. The pack's arm lamps read as black crosses
+  at the scene's lamp heights; the posts are now slim lanterns.
+- Seen in the page (headless Chrome, 15:03): the stream is live at 1920x1008 with the lit skyline,
+  the lanterns, the bench and the shelter. Mean colour distance to the picture 24.6 (the page's own
+  renderer measures 11.5): the street is still far too dark, the trees are bare, the shelter's red
+  edges are not the picture's, and there are no people yet.
+
 ## The office furniture, the people's animations and the MetaHuman data — 2026-09-15
 
 The Owner asked Claude to take over the Launcher. Every pack below now loads in Unreal 5.8

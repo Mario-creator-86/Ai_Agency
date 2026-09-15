@@ -3,7 +3,8 @@ Unreal Engine 5.8 editor script: builds the AMN-AI headquarters at the light of 
 picture (dusk), from the Blender export made by art-source/unreal/export_hq_scene.py
 (hq_scene.glb + hq_scene.json).
 
-Creates /Game/HQ/Scene (imported meshes, materials, textures) and the level /Game/HQ/HQ_Dusk:
+Creates /Game/HQ/Scene_<timestamp> (imported meshes, materials, textures; earlier builds' folders
+are deleted once the level is saved) and the level /Game/HQ/HQ_Dusk:
 every mesh at the origin (the exporter bakes world transforms), the scene's lights, a dusk sky
 (atmosphere, volumetric clouds, height fog, a sun just under the horizon on the picture's sunset
 side, a real-time sky light), the plates' orthographic camera and a fixed-exposure look.
@@ -21,6 +22,7 @@ AMN_EV (exposure compensation, default 0).
 import json
 import math
 import os
+import time
 
 import unreal
 
@@ -91,10 +93,17 @@ def spawn(cls, location, rotation=None, label=None):
     return actor
 
 
+# Each build imports into its own folder. Re-importing over the previous import, while the level
+# still referenced it, could not replace the assets in use: textures piled up as renamed copies
+# (props_color x37) and the skyline's facade materials lost their window textures (flat white
+# towers). The folders of earlier builds are deleted once the new level is saved.
+SCENE = f"{PKG}/Scene_{time.strftime('%Y%m%d_%H%M%S')}"
+
+
 def import_glb():
     task = unreal.AssetImportTask()
     task.filename = GLB
-    task.destination_path = f"{PKG}/Scene"
+    task.destination_path = SCENE
     task.automated = True
     task.replace_existing = True
     task.save = True
@@ -222,11 +231,18 @@ def sky_backdrop(ax):
     unreal.AssetToolsHelpers.get_asset_tools().import_asset_tasks([task])
     texture = unreal.load_asset(f"{PKG}/Sky/sky_dusk")
     mat_path = f"{PKG}/Sky/M_SkyBackdrop"
-    if unreal.EditorAssetLibrary.does_asset_exist(mat_path):
-        unreal.EditorAssetLibrary.delete_asset(mat_path)
-    mat = unreal.AssetToolsHelpers.get_asset_tools().create_asset("M_SkyBackdrop", f"{PKG}/Sky", unreal.Material, unreal.MaterialFactoryNew())
-    mat.set_editor_property("shading_model", unreal.MaterialShadingModel.MSM_UNLIT)
     mel = unreal.MaterialEditingLibrary
+    mat = None
+    if unreal.EditorAssetLibrary.does_asset_exist(mat_path) and not unreal.EditorAssetLibrary.delete_asset(mat_path):
+        # still referenced (the reused level, or another process): rebuild the existing material's graph
+        mat = unreal.load_asset(mat_path)
+        mel.delete_all_material_expressions(mat)
+        log("sky material kept and its graph rebuilt (it could not be deleted)")
+    if mat is None:
+        mat = unreal.AssetToolsHelpers.get_asset_tools().create_asset("M_SkyBackdrop", f"{PKG}/Sky", unreal.Material, unreal.MaterialFactoryNew())
+    if mat is None:
+        raise RuntimeError(f"could not create or load {mat_path}")
+    mat.set_editor_property("shading_model", unreal.MaterialShadingModel.MSM_UNLIT)
     sample = mel.create_material_expression(mat, unreal.MaterialExpressionTextureSample, -400, 0)
     sample.set_editor_property("texture", texture)
     # lit, the backdrop reads darker than the web page's sky; AMN_SKY_GAIN brightens it
@@ -396,6 +412,18 @@ def main():
     unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).save_current_level()
     unreal.EditorAssetLibrary.save_directory(PKG)
     log(f"level saved {LEVEL}")
+    remove_old_scenes()
+
+
+def remove_old_scenes():
+    """Deletes the scene folders of earlier builds; the saved level now references only SCENE."""
+    root = unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_content_dir())
+    hq = os.path.join(root, "HQ")
+    for name in sorted(os.listdir(hq)):
+        path = f"{PKG}/{name}"
+        if (name == "Scene" or name.startswith("Scene_")) and path != SCENE and os.path.isdir(os.path.join(hq, name)):
+            ok = unreal.EditorAssetLibrary.delete_directory(path)
+            log(f"old scene folder {path} {'deleted' if ok else 'NOT deleted (still referenced?)'}")
 
 
 main()

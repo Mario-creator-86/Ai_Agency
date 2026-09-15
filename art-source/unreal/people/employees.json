@@ -1,0 +1,23 @@
+{
+  "_about": "Which MetaHuman Creator preset each employee starts from, and what the Character Bible (Agents ID and Bible/CHARACTER_BIBLES.md) says they must look like. The preset is a starting face and body only: hair, skin and wardrobe are then set to the Bible. The preset choices are provisional (picked by the Bible's gender and age before the presets could be seen) and are to be confirmed from the rendered headshots.",
+  "people_path": "/Game/AMN/People",
+  "built_path": "/Game/AMN/People/Built",
+  "employees": [
+    {"role": "Director", "name": "Sarah", "desk": "desk_director", "preset": "Vivian",
+     "bible": "woman, early forties; brunette professional bob with warm highlights; brown eyes; navy two-piece blazer, white collared shirt, sky-blue tie"},
+    {"role": "LeadResearcher", "name": "Aris", "desk": "desk_research_1", "preset": "Walter",
+     "bible": "man, fifties; dark hair with silver temples; thin circular silver glasses; white lab coat over a teal button-down shirt"},
+    {"role": "FactChecker", "name": "Elena", "desk": "desk_research_2", "preset": "Jelena",
+     "bible": "woman, thirties; auburn hair in a tight high bun; reading glasses; olive utility vest over a cream blouse, verification badge"},
+    {"role": "ScriptWriter", "name": "Marcus", "desk": "desk_script", "preset": "Mateo",
+     "bible": "man, early thirties; tousled wavy dark hair; slight five o'clock shadow; royal purple fleece hoodie over a grey tee"},
+    {"role": "VoiceArtist", "name": "Lyra", "desk": "desk_audio", "preset": "Aoi",
+     "bible": "woman, late twenties; sleek jet-black hair with one neon pink streak; fuchsia sweater; large over-ear studio headphones"},
+    {"role": "VideoEditor", "name": "Kael", "desk": "desk_video", "preset": "Mikel",
+     "bible": "man, late twenties; sandy blonde spiky hair; single-ear headset; amber work shirt with rolled sleeves, dark cargo pants"},
+    {"role": "Publisher", "name": "Vera", "desk": "desk_publish", "preset": "Asha",
+     "bible": "woman, thirties; short styled black hair; mission-control headset; forest green technical flight suit"},
+    {"role": "Accountant", "name": "Nadia", "desk": "desk_accounting", "preset": "Grace",
+     "bible": "woman, forties; chestnut hair in a low bun; round tortoiseshell glasses; plum blouse under a dark violet cardigan"}
+  ]
+}

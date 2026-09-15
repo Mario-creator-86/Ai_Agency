@@ -6,7 +6,7 @@ so the scene script knows how to scale emission (lit windows, labels, screens) w
 
 import unreal
 
-ROOT = "/Game/HQ/Scene"
+ROOT = "/Game/HQ"  # the build imports into /Game/HQ/Scene_<timestamp>; search recursively
 
 
 def log(msg):

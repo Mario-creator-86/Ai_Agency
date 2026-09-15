@@ -221,9 +221,43 @@ STUDIO_OFFICE_STREAM_SIGNALLING_URL=ws://127.0.0.1:8890               # .env, th
   subscribes to the streamer by itself: setting `StreamerId` again when the streamer list arrives
   resubscribed mid-negotiation (`createAnswer … wrong state: stable`) and no frame ever came, so
   the page only switches when the library picked another streamer.
-- **Not yet.** The Unreal level has no employees, traffic or pedestrians, and nothing in it reads
-  the studio's state yet. Until it does, the stream shows an empty building, so it is only
-  switched on by setting the backend variable.
+- **Dressed with the Fab packs** (2026-09-15). `live/rebuild_live_hq.ps1` runs one pass: the
+  Blender export for Unreal (`AMN_UNREAL_WORKSTATIONS=1` keeps each workstation's desk and chair in
+  the `consoles` object and its monitor and mug in `desk_screens`; the web plates are unchanged),
+  the level rebuilt, `dress_hq_live.py`, `traffic_hq_live.py`, and the stream restarted. It stops
+  the stream first: the streamed game holds the level's packages, and rebuilding under it failed
+  to replace the sky material.
+  - `dress_hq_live.py` removes the Blender desks, street furniture and trees and places the packs at
+    the scene's own anchors (the eight seats of the manifest; the lamps, bench, shelter, planters and
+    trees of `hq_city.py`), converted with the same projection (28 px per metre, 10 degree camera)
+    to Unreal (x, -y, z) centimetres. Each asset is scaled to its target height and set on the
+    ground by its measured bounds. Desks and chairs come from Apartment Tech Props; its monitor and
+    tower are 1999 hardware, so the scene's own flat monitors with the studio's screens stay.
+    City Sample Vehicles fill the two lanes. `dress_report.json` records every size and placement;
+    `AMN_YAW_<KIND>` turns an asset kind without editing the script.
+  - What the first live passes taught. The wind-animated Megaplants trees (skeletal meshes)
+    stopped the stream: with them the video capture was recreated over and over and no frame
+    reached the page (58 "PixelCaptureMediaCapture will be destroyed" warnings); without them the
+    stream delivered 1920x1008 frames again. The trees are now Soul: City's static ones
+    (`AMN_TREES=megaplants` brings the others back for stills). The pack's arm lamps, scaled to the
+    scene's lamp heights, read as black crosses; the posts are the slim `SM_Lantern_1`.
+    Re-importing the export over the previous import, while the level referenced it, left
+    renamed texture copies (`props_color` x37) and facade materials without their window textures,
+    so the skyline rendered flat white; `build_hq_scene.py` now imports each build into its own
+    `/Game/HQ/Scene_<timestamp>` and deletes the earlier folders after saving the level.
+  - `traffic_hq_live.py` builds `/Game/HQ/Seq_Traffic`, a looping level sequence that drives the
+    vehicles across the frame (near lane towards +x, far lane towards -x, the bus slower), and a
+    LevelSequenceActor that plays it on start: the street moves in the streamed game without
+    Blueprint or C++. `AMN_TRAFFIC_LOOP` and `AMN_TRAFFIC_SPEED` set its timing.
+- **The employees (MetaHumans).** The MetaHuman Creator's optional data is installed: 29
+  presets (`/MetaHumanCharacter/Optional/Presets`), grooms, clothing, locomotion animations. The
+  presets are not rigged ("Character is not rigged"), and rigging and source textures are services
+  of the Owner's Epic account: a headless commandlet is refused and starts a device login.
+  `people/employees.json` names each employee's starting preset (provisional, chosen by the Bible's
+  gender and age) and the Bible's look; `people/rig_employees.py` duplicates, rigs, textures and
+  builds them, and is run inside an editor opened from the Epic Games Launcher.
+- **Not yet.** The level has no employees or pedestrians and nothing in it reads the studio's
+  state yet, so the stream is only switched on by setting the backend variable.
 
 ## Verification
 

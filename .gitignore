@@ -28,6 +28,8 @@ art-source/unreal/AMNReference/*.png
 art-source/unreal/*.glb
 art-source/unreal/hq_scene*.json
 art-source/unreal/content_inventory.json
+art-source/unreal/level_actors.json
+art-source/unreal/dress_report.json
 art-source/unreal/bake/
 art-source/unreal/sky_dusk.png
 art-source/unreal/renders/
