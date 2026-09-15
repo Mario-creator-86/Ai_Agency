@@ -115,6 +115,11 @@ TREES = {
                "/Game/SoulCity/Environment/Meshes/Foliage/SM_tree2"),
     "megaplants": ("/Game/Megaplant_Library/Tree_Black_Alder/Tree_Black_Alder_01/Tree_Black_Alder_01_A",
                    "/Game/Megaplant_Library/Tree_Black_Poplar/Tree_Black_Poplar_01/Tree_Black_Poplar_01_A"),
+    # static Nanite copies of Megaplants trees (convert_trees_static.py): leafy like the picture's,
+    # without the skeleton that stopped the stream's capture. Only the round crowns: the black alder
+    # (5.5 m wide, 10.9 m tall) and the Japanese medlar (3.5 m, 2.7 m); scaled to the street's tree
+    # heights the black poplar (31.8 m tall) became a pole and the goat willow (2.1 m) a wide mound.
+    "megastatic": ("/Game/HQ/Trees/SM_Tree_Black_Alder_01_B", "/Game/HQ/Trees/SM_Tree_Japanese_Medlar_01_B"),
 }[TREE_MODE]
 # headlights and tail lights ride on each vehicle (attached, so the traffic sequence carries them)
 HEADLIGHT_LM = float(os.environ.get("AMN_HEADLIGHT_LM", "4000"))

@@ -1,5 +1,22 @@
 # Changelog
 
+## Static copies of Megaplants trees: the stream holds, the leaves do not show yet — 2026-09-15
+
+The live level's trees are the Blender export's round crowns, which read as foam next to the
+Owner's picture. Megaplants has real trees, but every one is a skeletal mesh (25 of 25), and
+skeletal trees stopped Pixel Streaming's capture on an earlier pass.
+
+- `art-source/unreal/convert_trees_static.py` copies a tree's geometry out of the skeletal mesh
+  with Geometry Script (`CopyMeshFromSkeletalMesh`) into a new Nanite static mesh under
+  `/Game/HQ/Trees` (`CreateNewStaticMeshAssetFromMesh`), keeping its materials. The project now
+  enables the `GeometryScripting` plugin. Four trees converted (black alder, black poplar, goat
+  willow, Japanese medlar); `dress_hq_live.py` has `AMN_TREES=megastatic` for the two with round
+  crowns.
+- Verified in the stream: with the static trees the capture held (no "PixelCaptureMediaCapture
+  will be destroyed" warning, frames delivered). But the trees rendered bare, white branches with
+  no leaves, which reads worse than the foam crowns; the live level went back to its Blender trees
+  (the default) while the cause is traced.
+
 ## Real paintings and wet asphalt in the live headquarters — 2026-09-15
 
 Light values alone kept the live level about as far from the Owner's picture as before (24.2 to
