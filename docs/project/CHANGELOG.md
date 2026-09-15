@@ -1,5 +1,23 @@
 # Changelog
 
+## The office furniture, the people's animations and the MetaHuman data — 2026-09-15
+
+The Owner asked Claude to take over the Launcher. Every pack below now loads in Unreal 5.8
+(`probe_pack_assets.py`).
+
+- **MetaHuman Creator Core Data** is installed into the engine (grooms, clothing, presets, texture
+  synthesis), what the Creator needs to build the employees.
+- **Apartment Tech Props**: desk, desk chair, monitor, keyboard, mouse, PC tower, printer,
+  speakers, headset, phone, desk lamp, cables. The Launcher downloaded it but never copied it into
+  the project; it was copied from the Launcher's download without overwriting anything: the 23
+  shared Deko files that differ from City Street Props' copies were left as they are.
+- **25 Office Desktop Items**: laptop, headphones, lamp, documents, cups, books (with Starter Content).
+- **ActorCore Sample Motions**: male and female dummies with IK rigs and retargeters, idle, walk,
+  stand-to-sit and seated-talk animations.
+- **Fab plugin** is installed in the engine (`Engine/Plugins/Fab`, on by default).
+- ArchViz Interior (Unreal 4.27 only) was not added: the Launcher wanted to overwrite files it
+  could not show, so the copy was cancelled.
+
 ## City Sample Vehicles, the bridge and the shopfronts load — 2026-09-15
 
 The Owner added City Sample Vehicles (13 vehicles, a city bus among them), Modular Building Set and

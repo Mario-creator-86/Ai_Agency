@@ -19,6 +19,9 @@ PROBES = (
     ("/Game/Mega_Street_Props_Pack", ("SM_Bus_stop",)),
     ("/Game/Megaplant_Library", ("SKM_", "Tree_")),
     ("/Game/SoulCity", ("SM_",)),
+    ("/Game/25_Office_Desktop_Items", ("SM_laptop", "SM_headphones")),
+    ("/Game/ActorCore_Sample_Motions", ("",)),
+    ("/Game/Deko_MatrixDemo/Apartment", ("SM_",)),
 )
 
 
