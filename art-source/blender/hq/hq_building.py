@@ -360,7 +360,9 @@ def ceiling_cove(shell, lights, level, mat, xs=(575, 690, 805, 920, 1035, 1150))
     face so it shows from the front, and a row of small warm lights beside it that wash the top of
     the room ("cove_wash"; the live look pass scales them with AMN_LOOK_COVE)."""
     c = cz(level)
-    shell.box(X(517), X(1205), -0.12, -0.02, c - 0.045, c - 0.015, mat["edge_led_warm"])
+    # its own material, dimmer than the slabs' edge_led_warm (3.0) it first shared: in the live frame the
+    # line burnt the band under each ceiling (L2's 111 against the picture's 71)
+    shell.box(X(517), X(1205), -0.12, -0.02, c - 0.045, c - 0.015, emissive("cove_led", "#ffc98a", 1.2))
     for xpx in xs:
         light(lights, "POINT", (X(xpx), 0.25, c - 0.2), 18, "#ffc98a", radius=0.3, name="cove_wash")
 

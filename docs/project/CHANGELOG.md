@@ -1,5 +1,18 @@
 # Changelog
 
+## A dimmer line under the ceilings — 2026-09-15
+
+The warm line under each office ceiling (`hq_building.ceiling_cove`) shared the slab lines' material
+(`edge_led_warm`, strength 3.0), so neither could be dimmed without the other.
+
+- The line now has its own material, `cove_led`, at strength 1.2. Rebuilt with the export
+  (5.3 minutes) and compared in the stream: mean 11.7 → **11.0**, the closest pass so far (ground
+  floor 7.6 → 6.0, lift tower 10.6 → 8.9, roof sign 11.8 → 10.9; the street's 13.0 → 8.9 is partly the
+  traffic).
+- The bright band under L2's ceiling hardly moved (111 → 108, against the picture's 71). It is neither
+  the line nor the rooms' lamps (see "A dimmer L2"). The room signs and the downlights' bulbs in that
+  band are next.
+
 ## A dimmer L2 — 2026-09-15
 
 L2 (Content and Distribution) read brighter than the Owner's picture (84 against 79).
