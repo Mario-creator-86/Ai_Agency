@@ -144,7 +144,9 @@ def materials():
         "frame": principled("frame_dark", "#2f3a56", rough=0.4, metal=0.5),
         "frame_hi": principled("frame_hi", "#566077", rough=0.3, metal=0.6),
         "stone": brick_material("stone", "#6a6f7c", "#5f6470", "#2c2f36", brick_w=1.2, row_h=0.55, rough=0.75),
-        "roof": principled("roof", "#1c2338", rough=0.65),
+        # The roof stands against the sky and takes its light: in the picture that band reads
+        # 28, 39, 65 where ours read 29, 30, 46 - short of the dusk's blue.
+        "roof": principled("roof", "#1c2d4f", rough=0.65),
         "slab": principled("slab", "#2f3857", rough=0.55, metal=0.15),
         "sign_glass": principled("sign_glass", "#080b16", rough=0.18, metal=0.2),
         "gold": emissive("gold_text", "#f4c47f", 5.5),
