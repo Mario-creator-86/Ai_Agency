@@ -33,8 +33,10 @@ The warm line under each office ceiling (`hq_building.ceiling_cove`) shared the 
   floor 7.6 → 6.0, lift tower 10.6 → 8.9, roof sign 11.8 → 10.9; the street's 13.0 → 8.9 is partly the
   traffic).
 - The bright band under L2's ceiling hardly moved (111 → 108, against the picture's 71). It is neither
-  the line nor the rooms' lamps (see "A dimmer L2"). The room signs and the downlights' bulbs in that
-  band are next.
+  the line nor the rooms' lamps (see "A dimmer L2").
+- Tried next: the slab faces between the floors at 0.4 of their colour. The band moved by under 1
+  (108.1 → 107.6), so the slabs are not its cause either. The setting was dropped; the room signs and
+  the downlights' bulbs remain to check.
 
 ## A dimmer L2 — 2026-09-15
 
