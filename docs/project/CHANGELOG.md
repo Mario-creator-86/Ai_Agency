@@ -1,5 +1,50 @@
 # Changelog
 
+## The employees hold a frame that really faces the viewer — 2026-09-15
+
+The men sat with the head bowed over the desk, which from the plate camera reads as the back of a
+head — the thing the Owner asked to be rid of.
+
+- The male hold frame was picked from the head's direction in the animation data alone. Photographed
+  in the stream at nine frames of the loop (0, 2, 4, 7.25, 10, 13, 16, 19, 22 s), 7.25 s is one of
+  the bowed ones; at **2 s** the head is up and the face towards the viewer. `seat_employees.py`
+  holds the men there now (the women stay at 9 s). All eight were checked seat by seat afterwards.
+- The bridge re-sends every seat's state every 20 s instead of every 60 (`backend/app/office/unreal.py`).
+  A restarted level plays the seated loops again, so until the next resend the employees turned with
+  the animation; the window is now a third as long, and a resend is three calls a seat to a local
+  endpoint.
+- The seating pass also clears earlier employees by label, not only by tag, so an actor from a pass
+  that failed half way through cannot stay behind in the level.
+- Tried: a small cool light in front of each seat for the screens' light on the face. Eight of them,
+  even at 8 units over 60 cm and without shadows, lifted every room far above the picture (mean 9.6
+  → 31.6), so the faces keep the room's own light.
+
+## The rooms read like the picture's rooms — 2026-09-15
+
+Side by side at the offices' own scale, the live rooms were emptier, colder and darker than the
+Owner's picture. Four things came out of that comparison, all verified in the stream.
+
+- **The colours of the right-hand rooms.** Fact Check had terracotta walls and Distribution green
+  ones, where the picture shows one blue floor on L3 and one warm floor on L2 from end to end. Both
+  now use their floor's own wall and floor material (`hq_building.py`); each room keeps its sign and
+  its accent colour. The two worst regions came down at once: L3 14.7 → 7.8, L2 16.4 → 7.2, and the
+  mean 10.5 → **9.2**, the closest the frame has been. L2's sofa is brown leather, like the picture's,
+  where it was red.
+- **The pendant lamps.** In the picture every room hangs lit shades; ours were dark cones. The shade
+  was a black cone with a 1.4 cm emissive disc under it, which falls under a pixel at the plate's
+  scale. The disc is now 6 cm deep and as wide as the shade, so it reads as the picture's bright band
+  under a dark shell; `look_hq_live.py` tunes it (and the floor lamps and the lobby's wall bulbs) with
+  `AMN_LOOK_LAMP_GLOW`. Tried first with the whole cone warm: it blew out into a white blob.
+- **The pinned photographs.** `make_textures.py` drew them as blurred pastel blobs, brighter than the
+  cork they hang on, which flattened the wall. They are small night photographs now (a skyline against
+  a lit horizon, `snapshot()`), so each frame on L2's board and L4's shelf reads as a picture. Tried:
+  raising their emission from the look pass instead (1.6, 3, 8) — the export bakes that emission, so
+  the knob changed nothing and was removed.
+- **The bare stretches.** `dress_hq_live.py` now places 34 small pack objects where the build leaves
+  counters and benches empty (laptops, trays, folders, books, speakers, headphones, mugs, table lamps),
+  a leafy frond on the bookshelf tops and in L3's corner, a rack cabinet by L1's door, and two
+  armchairs around the lobby's low table, as the picture's lobby has.
+
 ## No glare on the slabs between the floors — 2026-09-15
 
 Above every office floor the slab's face read as a light slate strip, where the Owner's picture has

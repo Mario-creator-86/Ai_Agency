@@ -306,8 +306,13 @@ def pendant(mb, coll, xpx, level, drop, mat, color="#ffc98a", energy=35.0, shade
     y = 1.6
     mb.box(x - 0.006, x + 0.006, y - 0.006, y + 0.006, zc + 0.15, c, mat["black"])
     if shade == "dome":
-        mb.cyl(x, y, zc, zc + 0.22, 0.3, mat["black"], seg=20, r_top=0.06)
-        mb.cyl(x, y, zc - 0.012, zc + 0.002, 0.27, mat["lamp_shade"], seg=20)
+        # The picture's pendants read as a dark shade over a bright warm band, with the wall washed
+        # behind it. Ours were a black cone with a 1.4 cm emissive disc under it: at the plate's
+        # scale the disc fell under a pixel and only the dark cone showed. The cone keeps its dark
+        # shell; the lit underside is 6 cm deep and as wide as the shade, which reads as the band.
+        # (Tried in the stream first with the whole cone warm: it blew out into a white blob.)
+        mb.cyl(x, y, zc + 0.02, zc + 0.2, 0.34, mat["black"], seg=20, r_top=0.05)
+        mb.cyl(x, y, zc - 0.03, zc + 0.03, 0.33, mat["lamp_shade"], seg=20)
     else:
         mb.sphere((x, y, zc + 0.05), 0.09, mat["lamp_bulb"], seg=12, rings=8)
     light(coll, "POINT", (x, y, zc - 0.12), energy, color, radius=0.12, name="pendant")
@@ -610,7 +615,9 @@ def build_l3(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     wall = principled("wall_l3", "#4b5a88", rough=0.85)
     floor = principled("floor_l3", "#2a2c3c", rough=0.35)
     room_shell(rooms, 517, 862, lv, wall, floor)
-    room_shell(rooms, 862, 1205, lv, principled("wall_l3_factcheck", "#8a4f3a", rough=0.85), principled("floor_l3_factcheck", "#3a2a24", rough=0.35))
+    # Fact Check had its own terracotta walls; in the picture this floor is one blue room from end to
+    # end and the brown half read as a different building. The room keeps its sign and its accent.
+    room_shell(rooms, 862, 1205, lv, wall, floor)
     rooms.box(X(862), X(868), -0.2, BACK + 0.2, fz(lv), cz(lv), mat["frame"])
     label_panel(rooms, shell_c, lv, "L3", "RESEARCH", mat)
     room_sign(shell_c, glow, "RESEARCH", 527, lv, mat, "#60a5fa")
@@ -688,7 +695,9 @@ def build_l2(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     wall = panel_material("wall_l2", "#5e4a2c", "#2e2210", 0.42, rough=0.45)
     floor = principled("floor_l2", "#3a2a1c", rough=0.3)
     room_shell(rooms, 517, 862, lv, wall, floor)
-    room_shell(rooms, 862, 1205, lv, panel_material("wall_l2_distribution", "#1f5f5a", "#0e2f2c", 0.42, rough=0.45), principled("floor_l2_distribution", "#1c2a2a", rough=0.3))
+    # Distribution had green walls; the picture's L2 is warm from end to end, wood shelves and a
+    # leather sofa against the same panelling as Content. The room keeps its sign and its accent.
+    room_shell(rooms, 862, 1205, lv, wall, floor)
     rooms.box(X(862), X(868), -0.2, BACK + 0.2, fz(lv), cz(lv), mat["frame"])
     label_panel(rooms, shell_c, lv, "L2", "CONTENT", mat)
     room_sign(shell_c, glow, "CONTENT", 527, lv, mat, "#fbbf24")
@@ -736,7 +745,8 @@ def build_l2(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     bookshelf(props, X(1015), X(1057), 1.85, 2.35, f, f + 1.75, mat["wood"], mat["books"], shelves=5, seed=12)
     bookshelf(props, X(1057), X(1100), 1.85, 2.35, f, f + 1.75, mat["wood"], mat["books"], shelves=5, seed=13)
     props.box(X(1070), X(1082), 2.0, 2.3, f + 1.75, f + 2.0, principled("vase", "#b8b0a0", rough=0.4))
-    sofa(props, X(1096), X(1137), 1.6, 2.25, f, principled("red_leather", "#7d2f24", rough=0.45), back_h=0.72, arm=0.1)
+    # brown leather, like the picture's sofa under the shelves (it was a red one)
+    sofa(props, X(1096), X(1137), 1.6, 2.25, f, principled("leather", "#6b3b22", rough=0.45), back_h=0.72, arm=0.1)
     props.cyl(X(1148), 2.0, f, f + 0.03, 0.16, mat["black"])
     props.cyl(X(1148), 2.0, f, f + 1.75, 0.018, mat["metal"])
     props.cyl(X(1148), 2.0, f + 1.62, f + 1.98, 0.2, mat["lamp_shade"], seg=18, r_top=0.15)

@@ -460,11 +460,15 @@ def window_views(actors):
 # hid the "I" of the S1 INFRA sign in their glow, at 0.15 the sign reads whole.
 LED_DOT_BOOST = env("AMN_LOOK_LED_DOT_BOOST", "8")
 LED_LINE_SHARE = env("AMN_LOOK_LED_LINE_SHARE", "0.15")
+LAMP_GLOW = env("AMN_LOOK_LAMP_GLOW", "1")
 LEDS = {
     "rack_led_green": ("#4ade80", 6.0 * LED_DOT_BOOST), "rack_led_amber": ("#fbbf24", 5.0 * LED_DOT_BOOST),
     "pc_led_blue": ("#60a5fa", 8.0 * LED_DOT_BOOST), "spk_led": ("#93c5fd", 5.0 * LED_DOT_BOOST),
     "rack_top_bar": ("#34d399", 3.0), "infra_bar": ("#a5f3fc", 5.0 * LED_LINE_SHARE),
     "infra_grid": ("#2dd4bf", 0.6 * LED_LINE_SHARE),
+    # the pendant and floor lamp shades and the lobby's wall bulbs: warm and lit, as in the picture,
+    # where ours hung dark. AMN_LOOK_LAMP_GLOW tunes them without another scene rebuild.
+    "lamp_shade": ("#ffd49a", 4.0 * LAMP_GLOW), "lamp_bulb": ("#fff0d6", 14.0 * LAMP_GLOW),
 }
 LED_GAIN = env("AMN_LOOK_LED_GAIN", "1")
 WHITE = "/InterchangeAssets/gltf/Textures/T_White_srgb"

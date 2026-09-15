@@ -150,6 +150,37 @@ def art(name, seed, palette, w=128, h=160):
     im.filter(ImageFilter.GaussianBlur(3)).save(os.path.join(OUT, f"{name}.png"))
 
 
+def snapshot(name, seed, sky, glow, w=96, h=80):
+    """A pinned photograph: a dark evening skyline with a lit horizon, the way the reference's
+    pinboard reads. `art()`'s blurred pastel blobs came out brighter than the cork they hang on and
+    flattened the wall; a photo is dark with one bright band, so each frame reads as a picture."""
+    rng = random.Random(seed)
+    im = Image.new("RGB", (w, h), hexrgb(sky[0]))
+    d = ImageDraw.Draw(im)
+    horizon = int(h * rng.uniform(0.55, 0.7))
+    for y in range(horizon):
+        d.line([0, y, w, y], fill=mix(hexrgb(sky[0]), hexrgb(sky[1]), (y / horizon) ** 1.6))
+    # the foreground carries the horizon's light down the picture, so the photo reads as a lit
+    # photograph on the board and not as a dark square
+    for y in range(horizon, h):
+        t = (y - horizon) / max(1, h - horizon)
+        d.line([0, y, w, y], fill=mix(mix(hexrgb(sky[1]), hexrgb(sky[2]), 0.45), hexrgb(sky[2]), t))
+    # the skyline against the lit sky, and the windows that catch the last light
+    x = 0
+    while x < w:
+        bw = rng.randint(6, 16)
+        bh = rng.randint(6, 26)
+        d.rectangle([x, horizon - bh, x + bw, horizon], fill=mix(hexrgb(sky[2]), hexrgb(sky[0]), 0.4))
+        for _ in range(rng.randint(0, 3)):
+            wx = x + rng.randint(1, max(1, bw - 3))
+            wy = horizon - bh + rng.randint(1, max(1, bh - 3))
+            d.rectangle([wx, wy, wx + 1, wy + 1], fill=hexrgb(glow))
+        x += bw + rng.randint(1, 3)
+    d.line([0, horizon, w, horizon], fill=hexrgb(glow))
+    im = im.filter(ImageFilter.GaussianBlur(0.6))
+    im.save(os.path.join(OUT, f"{name}.png"))
+
+
 FONT_BOLD = "C:/Windows/Fonts/segoeuib.ttf"
 FONT_SIGN = "C:/Windows/Fonts/bahnschrift.ttf"
 
@@ -206,8 +237,11 @@ def main():
     art("art_warm", 13, ["#3a2418", "#d89a58", "#f2c27a", "#8a4a2a"])
     art("art_night", 14, ["#0c1020", "#3a4a78", "#8aa0d0", "#e0d0b0"])
     art("art_teal", 15, ["#0a1a1c", "#2a6a6a", "#8ad0c0", "#f0e0c0"])
-    for i, pal in enumerate((["#1a2436", "#e0a060", "#f6d6a0"], ["#20283a", "#7fb0e0", "#dfeaf6"], ["#2a1a24", "#c07a8a", "#f0c8d0"], ["#1a261a", "#90c070", "#e0f0c0"])):
-        art(f"photo_{i}", 20 + i, pal, w=96, h=80)
+    for i, (sky, glow) in enumerate(((["#0a1024", "#c07038", "#160f18"], "#ffcf8a"),
+                                     (["#08101e", "#4a7ab0", "#0d1620"], "#cfe4ff"),
+                                     (["#140a18", "#a85070", "#1a1016"], "#ffb0c0"),
+                                     (["#08140f", "#3f8f70", "#0c1712"], "#b9f0d0"))):
+        snapshot(f"photo_{i}", 20 + i, sky, glow)
     print("textures written to", OUT)
 
 

@@ -483,6 +483,95 @@ def metahuman_presets():
     log("presets: " + ", ".join(f"{a.asset_name}:{a.asset_class_path.asset_name}" for a in items[:40]))
 
 
+# ---------------------------------------------------------------- the rooms' clutter
+# Next to the picture, our rooms read emptier: there the counters are covered in gear and papers,
+# books and lamps stand in every gap and a leafy plant fills each corner. The Blender build lays out
+# the big pieces; this pass adds the small pack objects over the stretches it leaves bare. Each
+# position was read off the build (hq_building.py) and the reference crops, and is clear of the
+# workstations, of the seats and of the scene's own props. AMN_DRESS_CLUTTER=0 leaves them out.
+CLUTTER_ON = os.environ.get("AMN_DRESS_CLUTTER", "1") != "0"
+CLUTTER_ASSETS = {
+    "laptop": f"{OFFICE}/SM_laptop",
+    "tray": f"{OFFICE}/SM_document_tray",
+    "folder": f"{OFFICE}/SM_folder",
+    "books": f"{OFFICE}/SM_book_stand",
+    "open_book": f"{OFFICE}/SM_open_book",
+    "pencils": f"{OFFICE}/SM_pencil_holder",
+    "speakers": f"{OFFICE}/SM_music_speakers",
+    "table_lamp": f"{OFFICE}/SM_table_lamp",
+    "headphones": f"{OFFICE}/SM_headphones",
+    "mug": f"{OFFICE}/SM_tea_cup",
+    # the restaurant scene's potted frond, the one plant of the packs that reads leafy at this scale
+    "frond": BIG_PLANT,
+    "armchair": "/Game/MafiaBarnPack/Meshes/Props/Furniture/SM_ClassicArmchair",
+    "cabinet": "/Game/Modern_House_V1/Mesh/SM_Cabinet_2",
+}
+# (level, kind, column px, depth m, height above the floor m, "h" for total height or "l" for the
+#  longest horizontal side, that size in cm)
+CLUTTER = (
+    # L4 Executive: the bookshelf's top, the cabinet by the door and the low table on the right
+    (4, "books", 548, 2.05, 1.60, "h", 24),
+    (4, "frond", 574, 2.05, 1.60, "h", 55),
+    (4, "tray", 948, 2.05, 0.75, "l", 32),
+    (4, "open_book", 1018, 1.95, 0.55, "l", 30),
+    (4, "mug", 1029, 1.90, 0.55, "h", 9),
+    (4, "table_lamp", 1046, 1.95, 0.55, "h", 40),
+    # L3 Research / Fact Check: the bookshelf's top and the bare ends of the three counters
+    (3, "books", 548, 2.05, 1.80, "h", 24),
+    (3, "frond", 572, 2.05, 1.80, "h", 50),
+    (3, "speakers", 778, 2.05, 0.78, "h", 24),
+    (3, "tray", 840, 2.05, 0.78, "l", 30),
+    (3, "frond", 854, 1.70, 0.00, "h", 110),
+    (3, "laptop", 958, 2.00, 0.78, "l", 34),
+    (3, "mug", 970, 1.95, 0.78, "h", 9),
+    (3, "folder", 1002, 2.05, 0.78, "l", 28),
+    # L2 Content: the long bench under the pinboard, bare in the stream where the picture has it full
+    (2, "tray", 566, 1.25, 0.46, "l", 32),
+    (2, "books", 592, 1.25, 0.46, "h", 24),
+    (2, "open_book", 612, 1.25, 0.46, "l", 30),
+    (2, "laptop", 650, 1.25, 0.46, "l", 34),
+    (2, "folder", 676, 1.25, 0.46, "l", 28),
+    (2, "table_lamp", 700, 1.25, 0.46, "h", 40),
+    (2, "laptop", 706, 2.00, 0.78, "l", 34),
+    (2, "tray", 734, 2.05, 0.78, "l", 30),
+    (2, "mug", 748, 1.95, 0.78, "h", 9),
+    # L2 Distribution: the top of the two bookshelves
+    (2, "frond", 1028, 2.10, 1.75, "h", 45),
+    (2, "books", 1046, 2.10, 1.75, "h", 22),
+    # L1 Production: the audio and render counters, and a rack cabinet like the picture's by the door
+    (1, "headphones", 633, 2.05, 0.78, "h", 20),
+    (1, "speakers", 716, 2.05, 0.78, "h", 24),
+    (1, "cabinet", 742, 2.10, 0.00, "h", 175),
+    (1, "tray", 978, 2.05, 0.78, "l", 30),
+    (1, "mug", 987, 1.95, 0.78, "h", 9),
+    # Ground: the lobby's seating group (the picture has two seats and a table around the low table),
+    # a plant in the ad space and one by the treasury's chart
+    (0, "armchair", 700, 2.35, 0.00, "h", 100),
+    (0, "armchair", 754, 2.35, 0.00, "h", 100),
+    (0, "frond", 1092, 2.20, 0.00, "h", 130),
+    (0, "pencils", 1006, 2.05, 0.95, "h", 14),
+)
+# the lobby's second seat turns in towards the first, as the picture's pair face each other
+CLUTTER_YAW = {(0, "armchair", 754): 200.0, (0, "armchair", 700): 160.0}
+
+
+def room_clutter():
+    if not CLUTTER_ON:
+        return
+    assets = {k: find_asset(p) for k, p in CLUTTER_ASSETS.items()}
+    n = 0
+    for level, kind, xpx, y, dz, mode, size in CLUTTER:
+        asset = assets.get(kind)
+        if asset is None:
+            continue
+        target = ue(X(xpx), y, fz(level) + dz)
+        yaw = CLUTTER_YAW.get((level, kind, xpx), 0.0)
+        place(kind, asset, target, yaw_extra=yaw, height=size if mode == "h" else None,
+              max_len=size if mode == "l" else None, label=f"clutter_{level}_{kind}_{xpx}")
+        n += 1
+    log(f"room clutter: {n} objects")
+
+
 def main():
     les = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
     if not les.load_level(LEVEL):
@@ -497,6 +586,7 @@ def main():
         desks()
     if ONLY in ("", "props"):
         props()
+        room_clutter()
     if ONLY in ("", "street"):
         street()
         road_material()
