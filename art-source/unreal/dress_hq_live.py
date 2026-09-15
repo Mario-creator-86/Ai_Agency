@@ -314,14 +314,16 @@ def car_lights(car, heading):
 
 # ---------------------------------------------------------------- the rooms' plants and pictures
 # Indoor plants of Palms Pack (static meshes; the wind is in their materials, not a skeleton) by
-# native height in cm, and framed paintings of the restaurant scene, 67 x 93 cm, portrait.
+# native height in cm, and framed paintings of the restaurant scene, 67 x 93 cm, portrait. Only
+# the full ones: the slender models (SM_Plant_07_*, 16-33 cm wide for 75-106 cm tall) read as thin
+# dark sprigs in the live frame where the picture has leafy plants. Plants taller than BIG_PLANT_CM
+# (the lobby's) are the restaurant scene's large potted frond instead.
 PLANTS = (
     ("/Game/Palms_Pack_01/Add_Props/Plants/Meshes/SM_Plant_09_3_G", 57.0),
-    ("/Game/Palms_Pack_01/Add_Props/Plants/Meshes/SM_Plant_07_5_G", 75.0),
-    ("/Game/Palms_Pack_01/Add_Props/Plants/Meshes/SM_Plant_07_6_G", 102.0),
-    ("/Game/Palms_Pack_01/Add_Props/Plants/Meshes/SM_Plant_07_2_G", 106.0),
     ("/Game/Palms_Pack_01/Add_Props/Plants/Meshes/SM_Plant_06_2_G", 120.0),
 )
+BIG_PLANT = "/Game/RestaurantScene/Meshes/SM_PlantPot"
+BIG_PLANT_CM = float(os.environ.get("AMN_BIG_PLANT_CM", "160"))
 PAINTINGS = ("/Game/RestaurantScene/Meshes/SM_WallPainting_1", "/Game/RestaurantScene/Meshes/SM_WallPainting_2")
 FRONT_YAW.setdefault("plant", float(os.environ.get("AMN_YAW_PLANT", "0")))
 FRONT_YAW.setdefault("painting", float(os.environ.get("AMN_YAW_PAINTING", "0")))
@@ -333,10 +335,14 @@ def props():
     recorded = meta.get("props_m") or {}
     plants = [(find_asset(p), h) for p, h in PLANTS]
     plants = [(a, h) for a, h in plants if a is not None]
+    big = find_asset(BIG_PLANT)
     for i, item in enumerate(recorded.get("plants", [])):
         target = item["height"] * 100.0
-        # the model whose own height is nearest, so none is stretched far from its shape
-        asset = min(plants, key=lambda ah: abs(math.log(target / ah[1])))[0] if plants else None
+        if big is not None and target >= BIG_PLANT_CM:
+            asset = big
+        else:
+            # the model whose own height is nearest, so none is stretched far from its shape
+            asset = min(plants, key=lambda ah: abs(math.log(target / ah[1])))[0] if plants else None
         place("plant", asset, ue(item["x"], item["y"], item["z"]), height=target, label=f"plant_{i}")
     paintings = [a for a in (find_asset(p) for p in PAINTINGS) if a is not None]
     for i, item in enumerate(recorded.get("pictures", [])):

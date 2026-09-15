@@ -18,6 +18,11 @@ Light values alone kept the live level about as far from the Owner's picture as 
   the paintings hang facing the camera; the plants are a step back, thin dark sprigs where the
   Blender plants were full; the lobby is too bright (82.7 against 68.2) and the street too dark
   (50.8 against 60.6).
+- Second pass: only the full Palms plants (the slender `SM_Plant_07_*` dropped), the restaurant
+  scene's large potted frond for plants of 160 cm and more (`AMN_BIG_PLANT_CM`), the lobby's fills
+  at 0.75 of the rooms' (`AMN_LOOK_LOBBY`). Measured: 15.8; the ground floor 23.6 to 16.9, the
+  lobby's two fronds leafy like the picture's. Still short: the smaller plants on L3 and L4 read
+  as dark silhouettes, and the street is as dark as before (50.1 against 60.6).
 
 ## The live headquarters compared region by region with the picture, and the look pass — 2026-09-15
 

@@ -46,6 +46,7 @@ SPOT_SOFT = env("AMN_LOOK_SPOT_SOFT", "0.1")  # inner cone as a share of the out
 SPOT_WIDEN = env("AMN_LOOK_SPOT_WIDEN", "18")  # degrees added to the outer cone: a wash, not a disc
 POINT = env("AMN_LOOK_POINT", "2.0")         # pendants, desk and floor lamps: the warm pools
 FILL = env("AMN_LOOK_FILL", "1.6")           # the rooms' area fills
+LOBBY = env("AMN_LOOK_LOBBY", "0.75")        # the lobby's fills and spill, on top of FILL (it read 83 against the picture's 68)
 LAMP = env("AMN_LOOK_LAMP", "0.35")          # street lamps: they burnt white pools on the road
 UPLIGHT = env("AMN_LOOK_UPLIGHT", "0.6")     # tree uplights
 HEADLIGHT_LM = env("AMN_LOOK_HEADLIGHT_LM", "900")
@@ -82,6 +83,8 @@ def base_lumens(item):
 
 
 def factor_for(name):
+    if name.startswith("lobby_"):
+        return FILL * LOBBY
     if name.startswith(SPOT_NAMES):
         return SPOT
     if name.startswith(POINT_NAMES):
