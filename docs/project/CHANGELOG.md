@@ -15,6 +15,9 @@ a dark edge. Darkening the slab's colour did not change it (see "A dimmer line u
 - Tried: the small warm lights under the ceilings at 0.15 instead of 0.35. The top of L2 moved by
   about 1 (111.9 → 110.6), L4 drifted from the picture (1.5 → 3.4) and the mean went 11.1 → 11.2, so
   they stay at 0.35.
+- Tried: the ceiling spots (the cones on the walls) at 0.08 instead of 0.15. The top of L2 did not move
+  (111.9 → 111.7), while L3 and L4 turned darker than the picture (L3 14.6 → 20.2, L4 1.5 → 7.5) and the
+  mean went 11.1 → 12.1, so they stay at 0.15. L2's bright top is none of the lights tried so far.
 
 ## Every employee faces the viewer — 2026-09-15
 
