@@ -30,6 +30,11 @@ the packs can replace are replaced, and the street moves.
   the lanterns, the bench and the shelter. Mean colour distance to the picture 24.6 (the page's own
   renderer measures 11.5): the street is still far too dark, the trees are bare, the shelter's red
   edges are not the picture's, and there are no people yet.
+- Second pass (15:09): the scene keeps its own leafy trees (Soul: City's rendered bare and pale),
+  the shelter is the model without red neon edges, and every vehicle carries two headlights and two
+  red tail lights, attached so the traffic sequence carries them: a car crossing the frame lights
+  the road ahead of it. Mean colour distance 23.3. Still missing: people, a lit wet road, the roof's
+  brightness.
 
 ## The office furniture, the people's animations and the MetaHuman data — 2026-09-15
 

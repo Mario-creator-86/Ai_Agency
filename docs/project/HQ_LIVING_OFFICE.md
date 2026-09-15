@@ -238,8 +238,11 @@ STUDIO_OFFICE_STREAM_SIGNALLING_URL=ws://127.0.0.1:8890               # .env, th
   - What the first live passes taught. The wind-animated Megaplants trees (skeletal meshes)
     stopped the stream: with them the video capture was recreated over and over and no frame
     reached the page (58 "PixelCaptureMediaCapture will be destroyed" warnings); without them the
-    stream delivered 1920x1008 frames again. The trees are now Soul: City's static ones
-    (`AMN_TREES=megaplants` brings the others back for stills). The pack's arm lamps, scaled to the
+    stream delivered 1920x1008 frames again. Soul: City's static trees rendered bare and pale, so
+    the scene keeps its own leafy trees (`AMN_TREES=static` or `megaplants` places pack trees). Each
+    vehicle carries two headlights (spots along its lane, `AMN_HEADLIGHT_LM`) and two red tail
+    lights (`AMN_TAILLIGHT_LM`), attached to it so the traffic sequence carries them; the shelter is
+    the pack's second model (the first has red neon edges). The pack's arm lamps, scaled to the
     scene's lamp heights, read as black crosses; the posts are the slim `SM_Lantern_1`.
     Re-importing the export over the previous import, while the level referenced it, left
     renamed texture copies (`props_color` x37) and facade materials without their window textures,

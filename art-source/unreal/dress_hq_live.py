@@ -96,18 +96,25 @@ STREET = {
     # a slim classic lantern post, like the picture's (the arm lamps read as black crosses when scaled)
     "street_lamp": "/Game/Mega_Street_Props_Pack/Street_Props_Pack_V1/Mesh/SM_Lantern_1",
     "bench": "/Game/Mega_Street_Props_Pack/Street_Props_Pack_V1/Mesh/SM_Bench",
-    "bus_stop": "/Game/Mega_Street_Props_Pack/Street_Props_Pack_V1/Mesh/SM_Bus_stop",
+    # the first shelter model has red neon edges the picture does not have
+    "bus_stop": "/Game/Mega_Street_Props_Pack/Street_Props_Pack_V1/Mesh/SM_Bus_Stop_2",
     "planter": "/Game/Mega_Street_Props_Pack/Street_Props_Pack_V1/Mesh/SM_Flower_Pot",
 }
-# Static trees by default: the wind-animated Megaplants saturated the GPU (96 %) and the stream
-# delivered no frames. AMN_TREES=megaplants brings them back for stills.
+# The scene keeps its own leafy trees by default ("blender"): Soul: City's static trees rendered
+# bare and pale, and the wind-animated Megaplants stopped the stream's capture. AMN_TREES=static or
+# megaplants places pack trees instead (the latter for stills).
+TREE_MODE = os.environ.get("AMN_TREES", "blender")
 TREES = {
+    "blender": (),
     "static": ("/Game/SoulCity/Environment/Meshes/Foliage/SM_LV_Soul_Tree01_B",
                "/Game/SoulCity/Environment/Meshes/Foliage/SM_Aspen_Tree_01",
                "/Game/SoulCity/Environment/Meshes/Foliage/SM_tree2"),
     "megaplants": ("/Game/Megaplant_Library/Tree_Black_Alder/Tree_Black_Alder_01/Tree_Black_Alder_01_A",
                    "/Game/Megaplant_Library/Tree_Black_Poplar/Tree_Black_Poplar_01/Tree_Black_Poplar_01_A"),
-}[os.environ.get("AMN_TREES", "static")]
+}[TREE_MODE]
+# headlights and tail lights ride on each vehicle (attached, so the traffic sequence carries them)
+HEADLIGHT_LM = float(os.environ.get("AMN_HEADLIGHT_LM", "4000"))
+TAILLIGHT_LM = float(os.environ.get("AMN_TAILLIGHT_LM", "120"))
 CARS = "/Game/CitySampleVehicles"
 
 REPORT = {"sizes": {}, "placed": [], "missing": [], "removed": []}
@@ -260,7 +267,45 @@ def cars():
         sx, sy, _ = local_size(asset)
         # length along the lane: turn the long side onto x, then point it the way it drives
         yaw = (0.0 if sx >= sy else 90.0) + (0.0 if heading > 0 else 180.0)
-        place("car", asset, ue(X(xpx), lane, ROAD_Z), yaw_extra=yaw, label=f"car_{frag}")
+        car = place("car", asset, ue(X(xpx), lane, ROAD_Z), yaw_extra=yaw, label=f"car_{frag}")
+        if car is not None:
+            car_lights(car, heading)
+
+
+def car_lights(car, heading):
+    """Two headlights (spots along the lane, tipped at the road) and two red tail lights, attached."""
+    car.static_mesh_component.set_mobility(unreal.ComponentMobility.MOVABLE)
+    origin, extent = car.get_actor_bounds(False)
+    eas = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+    front_x = origin.x + heading * extent.x * 0.97
+    rear_x = origin.x - heading * extent.x * 0.97
+    lamp_z = origin.z - extent.z * 0.35
+    for side in (-1.0, 1.0):
+        y = origin.y + side * extent.y * 0.62
+        head = eas.spawn_actor_from_class(unreal.SpotLight, unreal.Vector(front_x, y, lamp_z),
+                                          unreal.Rotator(roll=0.0, pitch=-6.0, yaw=0.0 if heading > 0 else 180.0))
+        comp = head.spot_light_component
+        comp.set_mobility(unreal.ComponentMobility.MOVABLE)
+        comp.set_intensity_units(unreal.LightUnits.LUMENS)
+        comp.set_intensity(HEADLIGHT_LM)
+        comp.set_light_color(unreal.LinearColor(1.0, 0.93, 0.8, 1.0))
+        comp.set_outer_cone_angle(32.0)
+        comp.set_inner_cone_angle(12.0)
+        comp.set_attenuation_radius(2600.0)
+        comp.set_cast_shadows(False)
+        tail = eas.spawn_actor_from_class(unreal.PointLight, unreal.Vector(rear_x, y, lamp_z + 8.0))
+        tcomp = tail.point_light_component
+        tcomp.set_mobility(unreal.ComponentMobility.MOVABLE)
+        tcomp.set_intensity_units(unreal.LightUnits.LUMENS)
+        tcomp.set_intensity(TAILLIGHT_LM)
+        tcomp.set_light_color(unreal.LinearColor(1.0, 0.05, 0.03, 1.0))
+        tcomp.set_attenuation_radius(260.0)
+        tcomp.set_cast_shadows(False)
+        for light, kind in ((head, "headlight"), (tail, "taillight")):
+            light.set_actor_label(f"{car.get_actor_label()}_{kind}_{'l' if side < 0 else 'r'}")
+            light.set_editor_property("tags", [unreal.Name(TAG)])
+            light.attach_to_actor(car, "", unreal.AttachmentRule.KEEP_WORLD, unreal.AttachmentRule.KEEP_WORLD,
+                                  unreal.AttachmentRule.KEEP_WORLD, False)
 
 
 def candidate_sizes():
@@ -289,7 +334,7 @@ def main():
     if ONLY in ("", "desks"):
         replaced += ["consoles"]
     if ONLY in ("", "street"):
-        replaced += ["street_props", "tree_trunks", "tree_crowns"]
+        replaced += ["street_props"] + (["tree_trunks", "tree_crowns"] if TREES else [])
     clear(set(replaced))
     if ONLY in ("", "desks"):
         desks()

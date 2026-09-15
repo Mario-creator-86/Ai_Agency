@@ -51,7 +51,10 @@ def main():
         raise RuntimeError(f"could not load {LEVEL}")
     eas = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
     actors = eas.get_all_level_actors()
-    cars = sorted((a for a in actors if a.get_actor_label().startswith("car_")), key=lambda a: a.get_actor_label())
+    # only the vehicles themselves: their head and tail lights (car_*_headlight_l, ...) are attached
+    # to them and ride along
+    cars = sorted((a for a in actors if a.get_actor_label().startswith("car_") and isinstance(a, unreal.StaticMeshActor)),
+                  key=lambda a: a.get_actor_label())
     if not cars:
         log("no car_* actors: run dress_hq_live.py first")
         return
