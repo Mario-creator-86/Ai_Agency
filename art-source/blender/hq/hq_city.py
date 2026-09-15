@@ -280,10 +280,13 @@ def _rect(x0, x1, z0, z1, y):
 def build_city(city, mats):
     t = MB("skyline")
     rng = random.Random(3)
-    dark = windows_material("tower_dark", "#1c2440", lit_ratio=0.36, win_w=0.18, win_h=0.28, strength=7.5)
-    blue = windows_material("tower_blue", "#26304f", lit_ratio=0.38, win_w=0.17, win_h=0.27, strength=7.5)
-    mauve = windows_material("tower_mauve", "#343652", lit_ratio=0.36, win_w=0.19, win_h=0.29, strength=7.5)
-    dense = windows_material("city_dense", "#1f2438", lit_ratio=0.48, win_w=0.16, win_h=0.26, strength=8.0)
+    # The picture's towers keep most of their windows dark: a scattering of lit ones, in bands,
+    # against the dusk. Ours had a third to a half of every grid alight, which read as a wall of
+    # yellow squares and made the skyline look near. The ratios below are halved.
+    dark = windows_material("tower_dark", "#1c2440", lit_ratio=0.18, win_w=0.18, win_h=0.28, strength=7.5)
+    blue = windows_material("tower_blue", "#26304f", lit_ratio=0.19, win_w=0.17, win_h=0.27, strength=7.5)
+    mauve = windows_material("tower_mauve", "#343652", lit_ratio=0.18, win_w=0.19, win_h=0.29, strength=7.5)
+    dense = windows_material("city_dense", "#1f2438", lit_ratio=0.26, win_w=0.16, win_h=0.26, strength=8.0)
     cool = windows_material("tower_cool", "#1e2640", lit_ratio=0.2, win_w=0.22, win_h=0.34, strength=6.5, warm=False)
     beacon = emissive("beacon", "#ff3b3b", 25.0)
     # far city band (lowest, densest lights)
@@ -293,7 +296,7 @@ def build_city(city, mats):
         top = rng.uniform(470, 600)
         tower(t, x0, x0 + w, top, 60.0 + rng.uniform(0, 5), dense, depth=5.0)
     # mid-rise blocks in front of the towers (the dense lit city under the bridge)
-    mid = windows_material("city_mid", "#1d2134", lit_ratio=0.46, win_w=0.28, win_h=0.42, strength=8.0)
+    mid = windows_material("city_mid", "#1d2134", lit_ratio=0.26, win_w=0.28, win_h=0.42, strength=8.0)
     for i in range(22):
         x0 = rng.uniform(-20, 430)
         w = rng.uniform(26, 60)
@@ -360,7 +363,10 @@ def build_city(city, mats):
     near.box(X(95), X(99), 2.0, 2.2, WALK_Z, Z(650, 2.0), mats["pole"])
     near.box(X(92), X(103), 1.9, 2.0, Z(632, 1.9), Z(602, 1.9), principled("sign_panel", "#d6d6d0", rough=0.5))
     # right side
-    right_dark = windows_material("tower_right", "#1c2233", lit_ratio=0.2, win_w=0.28, win_h=0.4, strength=7.0)
+    # The city right of the building reads darker than the picture (its region 59 against 50 in the
+    # stream), and it lost light again when the towers' lit share was halved, so the two facades
+    # only this side uses keep more of theirs.
+    right_dark = windows_material("tower_right", "#1c2233", lit_ratio=0.4, win_w=0.28, win_h=0.4, strength=7.5)
     tower(t, 1350, 1402, 290, 48.0, blue)
     tower(t, 1400, 1456, 150, 45.0, dark, beacon=beacon)
     tower(t, 1458, 1578, 175, 40.0, right_dark, crown=(1478, 1558, 122))
@@ -369,7 +375,7 @@ def build_city(city, mats):
     text(city, "CREATE\nAUTOMATE\nSCALE\nTOGETHER", X(1497), 39.6, Z(284, 39.6), 0.46, emissive("slogan_text", "#d5dbe6", 3.0), spacing=1.1, line=1.2, name="slogan_text", face="sign")
     text(city, "//", X(1545), 39.6, Z(266, 39.6), 0.5, teal, name="slogan_dash_top")
     text(city, "//", X(1500), 39.6, Z(338, 39.6), 0.5, teal, name="slogan_dash_bottom")
-    classic = windows_material("classic", "#7a5e50", lit_ratio=0.45, win_w=0.9, win_h=1.5, strength=5.0)
+    classic = windows_material("classic", "#7a5e50", lit_ratio=0.55, win_w=0.9, win_h=1.5, strength=5.5)
     near.box(X(1490), X(1600), 4.0, 5.2, -1.5, Z(372, 4.0), classic)
     stone = principled("classic_stone", "#6a5446", rough=0.6)
     near.box(X(1486), X(1600), 3.7, 5.4, Z(372, 3.7), Z(362, 3.7), stone)
