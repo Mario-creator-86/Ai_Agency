@@ -1,5 +1,19 @@
 # Changelog
 
+## Every employee faces the viewer — 2026-09-15
+
+The Owner: every character must face the viewer, never side-on or from behind. In the live stream all
+eight employees sat in profile.
+
+- Cause: `seat_employees.py` placed each MetaHuman at yaw 90, so the actor's forward axis (+X) pointed
+  at the camera. But the blueprint leaves the body mesh unrotated, and a MetaHuman mesh faces its own
+  +Y, so at yaw 90 every body looked across the frame.
+- `people/turn_employees.py` turns the seated employees to yaw 0 in place (`AMN_SEAT_YAW`). The actors
+  are rotated, not placed again, so the object paths the backend's Remote Control bridge uses stay
+  valid. `seat_employees.py` now places them at the same yaw on every rebuild.
+- Checked in close-ups of the stream: the employees on L4, L3 and L2 sit facing the viewer behind
+  their white desks.
+
 ## A dimmer line under the ceilings — 2026-09-15
 
 The warm line under each office ceiling (`hq_building.ceiling_cove`) shared the slab lines' material

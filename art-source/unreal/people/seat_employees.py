@@ -143,7 +143,11 @@ def main():
             anim = retargeted_sit(gender(person), body_mesh)
             x_m, seat_y, floor_z = seat_of[person["desk"]]
             # the person sits between the desk (towards the camera) and the chair, facing the camera
-            actor = eas.spawn_actor_from_class(bp_class, ue(x_m, seat_y - 0.15, floor_z), unreal.Rotator(roll=0.0, pitch=0.0, yaw=90.0))
+            # Yaw 0: a MetaHuman body faces its own +Y and the blueprint leaves it unrotated, so at yaw 90
+            # (the actor's +X toward the camera) every employee sat in profile; the Owner wants every
+            # character facing the viewer (2026-09-15). turn_employees.py applies the same in place.
+            yaw = float(os.environ.get("AMN_SEAT_YAW", "0"))
+            actor = eas.spawn_actor_from_class(bp_class, ue(x_m, seat_y - 0.15, floor_z), unreal.Rotator(roll=0.0, pitch=0.0, yaw=yaw))
             actor.set_actor_label(f"employee_{name}")
             actor.set_editor_property("tags", [unreal.Name(TAG)])
             body = None
