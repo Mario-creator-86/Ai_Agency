@@ -76,8 +76,10 @@ neither brought the frame closer:
   own colour again (`AMN_LOOK_LED_GAIN`, off). At the scene's strengths the rack bars and the grid
   glowed, but the LED dots did not. At 8 times their strength they still did not: each is 3 × 3 cm,
   under one pixel in the frame, and most likely lost with the imported mesh's smallest parts, while
-  the grid's teal lines grew stronger than the picture's. Showing the LEDs needs larger lights in
-  the Blender scene.
+  the grid's teal lines grew stronger than the picture's. A third try made the LEDs 9 × 5 cm in the
+  Blender scene (about 3 px) and rebuilt the level: still no green dots, baked or in their own
+  colours. So the cause is neither size nor strength, most likely something in front of them. The
+  larger LEDs were not kept, and the LEDs are left for a closer look at the S1 room's geometry.
 - **Skyline windows.** The skyline's windows are about 6 × 9 px in the frame, the picture's 2–3 px.
   Halving them through the facade textures' scale (`AMN_LOOK_CITY_WINDOW_SCALE=2`) looked finer by
   eye, but measured further from the picture (mean 14.7 → 14.9; the right-hand city 11.9 → 14.1).
