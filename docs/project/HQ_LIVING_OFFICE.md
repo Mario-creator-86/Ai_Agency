@@ -194,7 +194,10 @@ STUDIO_OFFICE_STREAM_SIGNALLING_URL=ws://127.0.0.1:8890               # .env, th
   streamer port 8888, player port 8890, no web page of its own.
 - **Unreal.** `AMNReference.uproject` enables `PixelStreaming2`. `start_live_hq.ps1` runs
   `/Game/HQ/HQ_Dusk -game -RenderOffScreen -PixelStreamingConnectionURL=ws://127.0.0.1:8888
-  -PixelStreamingEncoderCodec=H264` (the RX 9070 encodes H.264 in hardware). The plate camera is
+  -PixelStreamingWebRTCNegotiateCodecs`: Unreal offers H.264, VP8, VP9 and AV1 and each browser
+  takes one it decodes. Forcing H.264 (`-PixelStreamingEncoderCodec=H264`) left a browser built
+  without it (the Owner's Comet) with no video: Unreal logged "Missing codec from recv codec
+  capabilities" and the page gave up after 13 s, again and again. The plate camera is
   player 0's camera (`auto_activate_for_player`, set by `build_hq_scene.py`, or on the existing
   level by `live/prepare_live_level.py`), so the stream has the page's framing; 1920×1008 keeps
   the page's 1600:840 shape. Verified in the page (headless Chrome): the stream went live at

@@ -29,6 +29,21 @@ export function liveStreamSettings(scene) {
 }
 
 /**
+ * What the stream layer shows for a status. Live, the video. Once a frame has been kept, a drop
+ * shows that frame, frozen, with a note that the page is reconnecting, instead of uncovering the
+ * page's own renderer, which draws a different picture of the same headquarters (the Owner saw the
+ * two alternate while the stream restarted). Before the first frame the renderer is all there is.
+ * @param {'connecting'|'live'|'offline'} status
+ * @param {boolean} hasStill whether a frame of the stream has been kept
+ * @returns {{layer: boolean, still: boolean, reconnecting: boolean}}
+ */
+export function streamLayers(status, hasStill) {
+  if (status === 'live') return { layer: true, still: false, reconnecting: false };
+  if (hasStill) return { layer: true, still: true, reconnecting: true };
+  return { layer: false, still: false, reconnecting: false };
+}
+
+/**
  * The backend's relay for the stream's signalling, on the page's own origin.
  * @param {{protocol: string, host: string}} location
  * @param {string} relayPath from GET /office/stream

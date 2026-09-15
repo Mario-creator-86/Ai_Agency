@@ -1,5 +1,19 @@
 # Changelog
 
+## The live headquarters reaches the Owner's browser, and stops flickering — 2026-09-15
+
+- The Owner's page kept switching between the Unreal stream and the page's own renderer. Every
+  connection from his browser (Comet) ended after 13 seconds and was retried 15 seconds later;
+  Unreal logged "Failed to set codec preferences: Missing codec from recv codec capabilities" for
+  each. `start_live_hq.ps1` forced H.264, which that browser cannot decode. It now passes
+  `-PixelStreamingWebRTCNegotiateCodecs`: Unreal offers H.264, VP8, VP9 and AV1 and the browser
+  picks one. Verified: a Chromium build without H.264 received 1920x1008 video (346 frames in
+  three seconds), and the Owner's next connection stayed up until the stream was stopped.
+- When the stream drops after it has shown a frame (a restart of the game, a network hiccup), the
+  page keeps that frame, frozen, with "Reconnecting to the live headquarters…", instead of
+  uncovering its own renderer, which draws a different picture of the same building
+  (`streamLayers` in `hq_stream_config.js`, a frame kept every two seconds in `hq_stream.js`).
+
 ## The MetaHuman employees seated in the live headquarters, and driven by the studio — 2026-09-15
 
 - `backend/app/office/unreal.py`: with `STUDIO_OFFICE_UNREAL_REMOTE_URL` (the streamed game's

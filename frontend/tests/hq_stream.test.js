@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { liveStreamSettings, relayUrl } from '../src/hq_stream_config.js';
+import { liveStreamSettings, relayUrl, streamLayers } from '../src/hq_stream_config.js';
 
 const SCENE = JSON.parse(fs.readFileSync(new URL('../public/assets/hq/scene.json', import.meta.url), 'utf8'));
 
@@ -21,6 +21,17 @@ test('a retry faster than a second falls back to the default pause', () => {
   const s = liveStreamSettings({ live_stream: { enabled: true, retry_ms: 10 } });
   assert.equal(s.retryMs, 15000);
   assert.equal(s.streamerId, '');
+});
+
+test('a dropped stream keeps its last frame instead of uncovering the other renderer', () => {
+  const live = { layer: true, still: false, reconnecting: false };
+  assert.deepEqual(streamLayers('live', false), live);
+  assert.deepEqual(streamLayers('live', true), live);
+  for (const status of ['offline', 'connecting']) {
+    assert.deepEqual(streamLayers(status, true), { layer: true, still: true, reconnecting: true }, status);
+    // before any frame there is nothing to freeze: the page's own renderer shows
+    assert.deepEqual(streamLayers(status, false), { layer: false, still: false, reconnecting: false }, status);
+  }
 });
 
 test("the relay is on the page's own origin, secure when the page is", () => {

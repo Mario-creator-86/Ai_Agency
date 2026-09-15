@@ -1,10 +1,15 @@
 import { Config, Flags, PixelStreaming } from '@epicgames-ps/lib-pixelstreamingfrontend-ue5.8';
+import { streamLayers } from './hq_stream_config.js';
+
+/** How often a frame of the live video is kept, to be shown frozen if the stream drops. */
+const STILL_COPY_MS = 2000;
 
 /**
  * Shows the Unreal headquarters, streamed live over Pixel Streaming, on top of the page's own
  * renderer. The video lets clicks through to the renderer underneath, which still knows where
- * every employee sits; when the stream drops, the video hides and the renderer is seen again, and
- * the stream is retried.
+ * every employee sits. When the stream drops after it has shown a frame, the last frame stays,
+ * frozen, with a note that the page is reconnecting; before any frame the renderer is seen. The
+ * stream is retried.
  */
 export class LiveStream {
   /**
@@ -18,11 +23,21 @@ export class LiveStream {
     this.onStatus = options.onStatus || (() => {});
     this.status = 'offline';
     this.retryTimer = 0;
+    this.stillTimer = 0;
+    this.hasStill = false;
     this.layer = document.createElement('div');
     // "fixed-size": the page's stylesheet sizes the layer; the library would otherwise write an
     // inline style, which the page's Content-Security-Policy refuses.
     this.layer.className = 'live-stream-layer fixed-size';
     this.layer.hidden = true;
+    this.still = document.createElement('canvas');
+    this.still.className = 'live-stream-still';
+    this.still.hidden = true;
+    this.badge = document.createElement('div');
+    this.badge.className = 'live-stream-badge';
+    this.badge.textContent = 'Reconnecting to the live headquarters…';
+    this.badge.hidden = true;
+    this.layer.append(this.still, this.badge);
     viewport.appendChild(this.layer);
 
     const config = new Config({
@@ -77,9 +92,32 @@ export class LiveStream {
     this.retryTimer = window.setTimeout(() => this.stream.reconnect(), this.settings.retryMs);
   }
 
+  /** Keeps the video's current frame in the still canvas (the video belongs to the library). */
+  _copyFrame() {
+    const video = this.layer.querySelector('video');
+    if (!video || !video.videoWidth || video.readyState < 2) return;
+    if (this.still.width !== video.videoWidth || this.still.height !== video.videoHeight) {
+      this.still.width = video.videoWidth;
+      this.still.height = video.videoHeight;
+    }
+    const context = this.still.getContext('2d');
+    if (!context) return;
+    context.drawImage(video, 0, 0);
+    this.hasStill = true;
+  }
+
   _setStatus(status) {
     this.status = status;
-    this.layer.hidden = status !== 'live';
+    window.clearInterval(this.stillTimer);
+    if (status === 'live') {
+      this.stillTimer = window.setInterval(() => this._copyFrame(), STILL_COPY_MS);
+    }
+    const layers = streamLayers(status, this.hasStill);
+    this.layer.hidden = !layers.layer;
+    // the library's video is hidden by a class, not touched: its frozen copy shows instead
+    this.layer.classList.toggle('still', layers.still);
+    this.still.hidden = !layers.still;
+    this.badge.hidden = !layers.reconnecting;
     this.onStatus(status);
   }
 }

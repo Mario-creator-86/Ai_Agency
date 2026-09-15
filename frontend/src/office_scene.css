@@ -14,6 +14,10 @@
 /* The streamed Unreal headquarters lies over the renderer and lets clicks through to it. */
 #office-scene-container .live-stream-layer { position: absolute; inset: 0; z-index: 2; pointer-events: none; background: #060a14; }
 #office-scene-container .live-stream-layer video { position: absolute; inset: 0; width: 100% !important; height: 100% !important; object-fit: cover; }
+/* After a drop the last frame stays, frozen, with a note, instead of uncovering the other renderer. */
+#office-scene-container .live-stream-layer.still video { visibility: hidden; }
+#office-scene-container .live-stream-still { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; }
+#office-scene-container .live-stream-badge { position: absolute; right: 14px; bottom: 14px; z-index: 2; padding: 6px 12px; border-radius: 10px; background: rgba(8, 13, 28, .82); border: 1px solid #2b3a5e; color: #e6ebf5; font: 500 12px/1.2 "Segoe UI", system-ui, sans-serif; letter-spacing: .04em; }
 .scene-info-pill { position: absolute; top: 14px; left: 14px; z-index: 5; padding: 7px 14px; border-radius: 10px; background: rgba(8, 13, 28, .82); border: 1px solid #2b3a5e; color: #e6ebf5; font: 500 12px/1.2 "Segoe UI", system-ui, sans-serif; letter-spacing: .08em; pointer-events: none; backdrop-filter: blur(6px); white-space: pre; }
 
 #office-scene-container .camera-toolbar {

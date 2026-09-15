@@ -37,7 +37,10 @@ $uproject = Join-Path $repo "art-source\unreal\AMNReference\AMNReference.uprojec
 $ueArgs = @(
     "`"$uproject`"", "/Game/HQ/HQ_Dusk", "-game",
     "-PixelStreamingConnectionURL=ws://127.0.0.1:$($config.streamer_port)",
-    "-PixelStreamingEncoderCodec=H264",
+    # Offer every codec (H.264, VP8, VP9, AV1) and let the browser pick one it can decode. Forced to
+    # H.264, a browser built without it (the Owner's Comet) got no video: Unreal logged "Missing codec
+    # from recv codec capabilities", the page gave up after 13 s and retried every 15 s.
+    "-PixelStreamingWebRTCNegotiateCodecs",
     # Remote Control's HTTP API (localhost only): the backend moves the scene's people from studio state.
     "-RCWebControlEnable",
     # A development binary prints engine warnings over the picture; the stream must not show them.
