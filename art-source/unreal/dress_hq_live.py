@@ -245,6 +245,15 @@ def clear(labels):
 
 
 # ---------------------------------------------------------------- the workstations
+# "pack" puts Apartment Tech Props' desk and chair in place of the scene's own workstation (the
+# "consoles" object). "blender" keeps the scene's: a white desk with a light front panel and a lit
+# edge, like the picture's desks, where the pack's desk is dark wood; only the keyboard, mouse and
+# lamp come from the pack, on the same 75 cm top. Compared in the stream (2026-09-15): with the
+# scene's desks every employee sits at a white, lit-fronted desk like the picture's, and the mean held
+# (14.0; L3 14.6 -> 13.9, L2 18.2 -> 18.8).
+CONSOLES = os.environ.get("AMN_DRESS_CONSOLES", "blender")
+
+
 def desks():
     kit = {k: find_asset(p) for k, p in KIT.items()}
     for desk_id, cx, level, side, seat_y in SEATS:
@@ -252,8 +261,9 @@ def desks():
         ox = X(cx)
         yf, yb = seat_y - 0.95, seat_y - 0.3
         top = f + 0.75
-        place("desk", kit["desk"], ue(ox, (yf + yb) / 2, f), height=75.0, label=f"{desk_id}_desk")
-        place("chair", kit["chair"], ue(ox, seat_y + 0.05, f), height=105.0, label=f"{desk_id}_chair")
+        if CONSOLES != "blender":
+            place("desk", kit["desk"], ue(ox, (yf + yb) / 2, f), height=75.0, label=f"{desk_id}_desk")
+            place("chair", kit["chair"], ue(ox, seat_y + 0.05, f), height=105.0, label=f"{desk_id}_chair")
         # The flat monitors with the studio's live screens stay the scene's own ("desk_screens"): the
         # pack's monitor and tower are 1999 hardware, far from the picture's modern desks.
         place("keyboard", kit["keyboard"], ue(ox - side * 0.05, yb - 0.14, top), max_len=44.0, label=f"{desk_id}_keyboard")
@@ -476,7 +486,7 @@ def main():
     if not les.load_level(LEVEL):
         raise RuntimeError(f"could not load {LEVEL}")
     replaced = []
-    if ONLY in ("", "desks"):
+    if ONLY in ("", "desks") and CONSOLES != "blender":
         replaced += ["consoles"]
     if ONLY in ("", "street"):
         replaced += ["street_props"] + (["tree_trunks", "tree_crowns"] if TREES else [])

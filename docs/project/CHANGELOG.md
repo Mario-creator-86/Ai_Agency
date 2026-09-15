@@ -1,5 +1,18 @@
 # Changelog
 
+## White desks for the employees again — 2026-09-15
+
+In the Owner's picture every employee sits at a white desk with a lit front. The Blender scene
+builds exactly that (a white top, a light front panel and a lit edge), but the live dressing
+replaced each workstation with Apartment Tech Props' dark wooden desk and chair.
+
+- `dress_hq_live.py` now keeps the scene's own workstations (`AMN_DRESS_CONSOLES=blender`, the
+  default; `pack` brings the pack's desks back). Only the keyboard, mouse and desk lamp still come
+  from the pack, on the same 75 cm top. The rebuild places 73 pieces instead of 89, and all eight
+  employees are seated as before.
+- Compared in the stream: every employee now sits at a white, lit-fronted desk like the picture's.
+  The mean held at 14.0 (L3 14.6 → 13.9, L2 18.2 → 18.8).
+
 ## Lighter plants in the rooms — 2026-09-15
 
 The scene already places 21 plants in the rooms, most of them where the Owner's picture has plants,

@@ -290,7 +290,9 @@ STUDIO_OFFICE_STREAM_SIGNALLING_URL=ws://127.0.0.1:8890               # .env, th
     which only the `shell` actor receives, held to the floors above the ground floor) and puts the
     rooms' city window images back on their materials (the export's shared bake reduced them to one
     mauve colour). Each office floor has a warm LED line under its ceiling with small warm lights
-    beside it (`hq_building.ceiling_cove`, `cove_wash`; the look pass runs them at 0.35).
+    beside it (`hq_building.ceiling_cove`, `cove_wash`; the look pass runs them at 0.35). The
+    employees' desks are the scene's own white, lit-fronted workstations (`AMN_DRESS_CONSOLES=blender`);
+    only their keyboards, mice and desk lamps come from Apartment Tech Props.
   - `traffic_hq_live.py` builds `/Game/HQ/Seq_Traffic`, a looping level sequence that drives the
     vehicles across the frame (near lane towards +x, far lane towards -x, the bus slower), and a
     LevelSequenceActor that plays it on start: the street moves in the streamed game without
