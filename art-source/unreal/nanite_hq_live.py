@@ -9,7 +9,9 @@ separate boxes) never showed, at any size or strength, while long continuous lig
 "glow_details" mesh (the rack bars, the room's grid) did. Nanite's simplification of small disconnected
 parts was the cause: with Nanite off on that mesh (904 -> 2586 triangles) the racks show rows of green
 and amber dots like the Owner's picture (2026-09-15). rebuild_live_hq.ps1 runs this after every level
-build, since the import makes the meshes Nanite again.
+build, since the import makes the meshes Nanite again. Tried on "props" as well (the rooms' furniture,
+books and desk items): the same 105,688 triangles, no visible change and the same mean (14.4), so only
+the small lights' mesh is changed.
 
 StaticMeshEditorSubsystem.set_nanite_settings is not available in a commandlet, so the mesh's own
 nanite_settings property is set (set_editor_property notifies the change, which rebuilds the mesh) and

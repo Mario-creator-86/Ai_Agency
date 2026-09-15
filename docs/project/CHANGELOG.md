@@ -19,6 +19,8 @@ size and strength tried (see "Server LEDs … tried, left off" below).
 - Seen in the stream: the racks show rows of green and a few amber dots, like the picture's, and
   the sign reads whole. The mean moved from 14.0 to 14.4, almost all of it the ground floor's region,
   which the new lights brighten.
+- Also tried on the rooms' furniture mesh (`props`: books, desk items). It showed no visible
+  change and the same mean, so only the small lights' mesh is changed.
 
 ## White desks for the employees again — 2026-09-15
 
