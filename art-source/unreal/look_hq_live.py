@@ -34,7 +34,9 @@ def env(name, default):
 # the build's own light balance (build_hq_scene.py), so a light's base is energy x lumens per watt
 LUMENS_INTERIOR = env("AMN_LM_INTERIOR", os.environ.get("AMN_LM_PER_W", "1.0"))
 LUMENS_EXTERIOR = env("AMN_LM_EXTERIOR", os.environ.get("AMN_LM_PER_W", "70"))
-LEVEL_GAIN = {int(k): float(v) for k, v in (pair.split(":") for pair in os.environ.get("AMN_LEVEL_GAIN", "0:0.55,1:0.7,2:0.7,3:0.3,4:0.8").split(",") if ":" in pair)}
+# L2 at 0.6 (0.7 before): its region 19.1 -> 17.9, mean 11.9 -> 11.7 (2026-09-15); its lower rows now read
+# like the picture's, only the band under its ceiling (the line and the pendants) stays brighter
+LEVEL_GAIN = {int(k): float(v) for k, v in (pair.split(":") for pair in os.environ.get("AMN_LEVEL_GAIN", "0:0.55,1:0.7,2:0.6,3:0.3,4:0.8").split(",") if ":" in pair)}
 CEILINGS_M = [(655 - row) / 27.575 for row in (520, 410, 297, 195)]
 
 # the look: factors on that base, per kind of light. Pass 1 (spot 0.45, road 0.12, city 0.45, fog

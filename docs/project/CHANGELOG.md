@@ -1,5 +1,14 @@
 # Changelog
 
+## A dimmer L2 — 2026-09-15
+
+L2 (Content and Distribution) read brighter than the Owner's picture (84 against 79).
+
+- `look_hq_live.py` runs L2's interior lights at 0.6 of their base (0.7 before; `AMN_LEVEL_GAIN`).
+  Compared in the stream: L2's region 19.1 → 17.9 and the mean 11.9 → **11.7**, the closest pass so
+  far. Its lower rows now read like the picture's. The band under its ceiling (the warm line and the
+  pendants) still reads brighter: 111 against 71.
+
 ## Darker tree crowns on the left — 2026-09-15
 
 After the lobby, the area left of the building was the frame's most distant region (colour distance
