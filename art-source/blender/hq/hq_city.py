@@ -155,8 +155,10 @@ def build(colls):
     g.box(X(0), X(1600), y_walk - 0.25, y_walk, ROAD_Z, WALK_Z, curb)
     g.box(X(0), X(1600), y_road, y_walk - 0.25, ROAD_Z - 0.3, ROAD_Z, asphalt_material("asphalt_wet", wet=1.0))
     g.box(X(0), X(1600), y_road - 0.25, y_road, ROAD_Z, WALK_Z, curb)
-    # the near pavement is out of the lamps' pools; the picture keeps it a light, cool grey
-    g.box(X(0), X(1600), -60.0, y_road - 0.25, WALK_Z - 0.3, WALK_Z, principled("sidewalk_near", "#6c6a7a", rough=0.82))
+    # The near pavement is out of the lamps' pools. It was a light, cool grey, and the frame's lowest
+    # rows came out at 43, 42, 55 against the picture's 11, 20, 38 — a pale band across the bottom of
+    # the shot where the picture has the dark edge of the street.
+    g.box(X(0), X(1600), -60.0, y_road - 0.25, WALK_Z - 0.3, WALK_Z, principled("sidewalk_near", "#31303c", rough=0.82))
     for x0 in range(674, 852, 22):
         g.box(X(x0), X(x0 + 13), y_road + 0.6, y_walk - 0.7, ROAD_Z, ROAD_Z + 0.004, mats["paint"])
     y_mid = (y_road + y_walk) / 2
