@@ -64,6 +64,13 @@ ROAD_MI = "/Game/HQ/Materials/MI_HQ_AsphaltWet"
 ROAD_ROUGH_MIN = env("AMN_LOOK_ROAD_ROUGH_MIN", "0.25")
 ROAD_ROUGH_MAX = env("AMN_LOOK_ROAD_ROUGH_MAX", "0.5")
 TRACE_ROUGHNESS = env("AMN_LOOK_TRACE_ROUGHNESS", "0.4")
+# The building's frame (the Blender scene's dark blue metal, 0.5-0.6 metallic) renders black in the
+# live frame where the picture's frame is a lit grey: metal shows only what it reflects, and the dusk
+# around it is dark. AMN_LOOK_FRAME_METAL sets those materials' metallic factor (below 0 leaves them).
+# Tried at 0.1 on all 8 frame materials (2026-09-15): no visible change and no region moved, so the
+# frame is black for want of light on it, not for its metal; left off.
+FRAME_MATERIALS = ("frame_dark", "frame_hi", "slab")
+FRAME_METAL = env("AMN_LOOK_FRAME_METAL", "-1")
 FOG_DENSITY = env("AMN_LOOK_FOG", "0.008")    # 0.02 greyed the street and brightened the sky
 FOG_START_CM = env("AMN_LOOK_FOG_START", "3000")
 # Distances are from the plate camera, 246 m in front of the building (the street at ~220 m, the
@@ -169,6 +176,7 @@ def tune_materials(actors):
     mel = unreal.MaterialEditingLibrary
     base = baseline()
     city, road = 0, 0
+    frames = {}
     for label, actor in actors.items():
         if not isinstance(actor, unreal.StaticMeshActor):
             continue
@@ -179,6 +187,14 @@ def tune_materials(actors):
                 continue
             path = mat.get_path_name()
             scalars = [str(n) for n in mel.get_scalar_parameter_names(mat)]
+            # the import numbers each material ("frame_dark_001"); compare the scene's own name, so
+            # "mon_frame_001" or "edge_led_slab_001" stay out
+            base_name = path.rsplit("/", 1)[-1].split(".")[0].lower().rstrip("0123456789").rstrip("_")
+            if FRAME_METAL >= 0 and base_name in FRAME_MATERIALS and path not in frames:
+                if "MetallicFactor" in scalars:
+                    mel.set_material_instance_scalar_parameter_value(mat, "MetallicFactor", FRAME_METAL)
+                    mel.update_material_instance(mat)
+                frames[path] = scalars
             if label in ("skyline", "near_blocks") and "EmissiveStrength" in scalars:
                 if path not in base:
                     base[path] = mel.get_material_instance_scalar_parameter_value(mat, "EmissiveStrength")
@@ -196,6 +212,9 @@ def tune_materials(actors):
     with open(BASELINE, "w", encoding="utf-8") as fh:
         json.dump(base, fh, indent=1)
     log(f"skyline emission x{CITY} on {city} materials; road roughness {ROAD_ROUGH} on {road} parameters")
+    if FRAME_METAL >= 0:
+        with_metal = [p for p, s in frames.items() if "MetallicFactor" in s]
+        log(f"frame metallic {FRAME_METAL} on {len(with_metal)} of {len(frames)} frame materials {sorted(frames)[:6]}")
     if unreal.EditorAssetLibrary.does_asset_exist(ROAD_MI):
         wet = unreal.load_asset(ROAD_MI)
         mel.set_material_instance_scalar_parameter_value(wet, "Roughness Min", ROAD_ROUGH_MIN)

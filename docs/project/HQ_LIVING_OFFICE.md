@@ -282,7 +282,10 @@ STUDIO_OFFICE_STREAM_SIGNALLING_URL=ws://127.0.0.1:8890               # .env, th
     It also places the street fill, `StreetFill`: nothing else lights the road and the near
     pavement (the lamps pool on the far pavement), so a wide, shadowless, cool area light hangs 6 m
     above the road pointing down (3,000 lm, 19 m in front of the building, 14 m across; closest of
-    the settings compared in the stream).
+    the settings compared in the stream). `haze_hq_live.py` then draws the skyline's blue haze:
+    two unlit translucent planes behind the building (12 m and 27 m), fading upwards from the
+    skyline's base (`AMN_HAZE_*`). Height fog cannot do it: its distances count from the plate
+    camera, and the scene's fog is also the veil that keeps the frame, rooms and sky from going black.
   - `traffic_hq_live.py` builds `/Game/HQ/Seq_Traffic`, a looping level sequence that drives the
     vehicles across the frame (near lane towards +x, far lane towards -x, the bus slower), and a
     LevelSequenceActor that plays it on start: the street moves in the streamed game without

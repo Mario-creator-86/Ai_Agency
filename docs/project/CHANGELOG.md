@@ -1,5 +1,27 @@
 # Changelog
 
+## Blue haze over the live skyline — 2026-09-15
+
+In the Owner's picture the city fades into a blue haze towards its base; the live skyline stood as
+black blocks with sharp lit windows.
+
+- Height fog could not do it alone. Its distances count from the plate camera, 246 m in front of
+  the building, and the scene's own fog (0.008 from 30 m) is also a veil that lifts the building's
+  black frame, the rooms and the sky. Fog moved out to the skyline only (0.12 from 260 m, cut off
+  past 330 m) hazed the towers, but the rest went dark: mean colour distance 15.6 → 29.7.
+- `art-source/unreal/haze_hq_live.py` draws the haze instead: two unlit, translucent planes
+  across the frame, 12 m and 27 m behind the building's front, in front of the city's layers.
+  Each fades from full strength at the skyline's base to nothing towards the tower tops (material
+  `M_HQ_SkylineHaze`, `AMN_HAZE_*`). The building, the street and its trees stand in front of the
+  planes and are untouched. `rebuild_live_hq.ps1` runs it after the look pass.
+- Compared in the stream (all regions; left city / right city): no haze 15.6 (22.2 / 20.2); opacity
+  0.35 fading out at row 260, 15.3 (20.9 / 17.4); opacity 0.55 fading out at row 160, **15.0**
+  (24.1 / 12.0), now the default. The towers read blue and hazy on both sides, the left a little
+  lighter than the picture's.
+- The building's frame renders black where the picture's is a lit grey. Its materials are 0.5–0.6
+  metallic, but setting them to 0.1 changed nothing visible: the frame lacks light, not colour.
+  `look_hq_live.py` keeps that setting (`AMN_LOOK_FRAME_METAL`), off.
+
 ## A lit street and darker crowns on the live headquarters — 2026-09-15
 
 Next to the Owner's picture the live street was nearly black: the road and the near pavement came

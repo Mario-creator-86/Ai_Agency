@@ -3,7 +3,9 @@
 #   2. /Game/HQ/HQ_Dusk rebuilt from the export (build_hq_scene.py)
 #   3. the Fab packs placed (dress_hq_live.py) and the street set moving (traffic_hq_live.py)
 #   4. the built MetaHuman employees seated at their desks (people/seat_employees.py)
-#   5. the stream restarted on the new level (start_live_hq.ps1), waiting until Unreal joins
+#   5. the look pass (look_hq_live.py: lights, street fill, grade, fog) and the skyline's haze
+#      (haze_hq_live.py)
+#   6. the stream restarted on the new level (start_live_hq.ps1), waiting until Unreal joins
 #
 #   powershell -File art-source/unreal/live/rebuild_live_hq.ps1 [-SkipExport] [-SkipBuild] [-NoStream]
 #
@@ -85,6 +87,8 @@ Step "Employees seated" { RunUnrealScript "people/seat_employees.py" }
 # The build recreates every light and the post-process at their defaults: the look pass goes on
 # again each time (its values come from AMN_LOOK_*).
 Step "Look pass" { RunUnrealScript "look_hq_live.py" }
+# the skyline's blue haze: translucent planes behind the building (AMN_HAZE_*)
+Step "Skyline haze" { RunUnrealScript "haze_hq_live.py" }
 
 if (-not $NoStream) {
     Step "Stream restarted" {
