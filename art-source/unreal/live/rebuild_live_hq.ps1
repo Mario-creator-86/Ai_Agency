@@ -61,8 +61,13 @@ if (-not $SkipExport) {
     Step "Blender export for Unreal" {
         $env:AMN_UNREAL_WORKSTATIONS = "1"
         $log = Join-Path $LogDir "blender_export.log"
+        # Windows PowerShell 5.1 turns a native program's stderr into error records; under "Stop" the
+        # first Blender warning on stderr (a DeprecationWarning) aborted the pass. Judge by exit code.
+        $ErrorActionPreference = "Continue"
         & $blender -b --factory-startup --python (Join-Path $unrealDir "export_hq_scene.py") *> $log
-        if ($LASTEXITCODE -ne 0) { throw "Blender export failed (log: $log)" }
+        $code = $LASTEXITCODE
+        $ErrorActionPreference = "Stop"
+        if ($code -ne 0) { throw "Blender export failed with exit code $code (log: $log)" }
         Select-String -Path $log -Pattern "AMN_EXPORT" | ForEach-Object { "   " + $_.Line }
     }
 }

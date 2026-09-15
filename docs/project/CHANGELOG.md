@@ -19,6 +19,10 @@ its skyline has sparse lit windows in blue haze and a bridge, where the level ha
   pass 2 27.3, the street's colour right (1.3) but grey and hazy, the ground floor and the sky
   still too bright, the cones still on L4's wall. Tuning light alone does not close the gap: most
   of it is textures, materials and objects.
+- `live/rebuild_live_hq.ps1` no longer stops at the Blender export when run by Windows PowerShell
+  5.1: that shell turns a native program's stderr into error records, and under "Stop" Blender's
+  first DeprecationWarning aborted the pass. The export is judged by its exit code (verified: the
+  export passed, 54 meshes, 45 baked, in 115 s).
 - `export_hq_scene.py` draws the skyline's window textures with fewer lit windows
   (`AMN_WINDOW_LIT_SHARE`, 0.6 of the Blender material's), each at its own brightness
   (`AMN_WINDOW_DIM_MIN`) and divided by a mullion.
