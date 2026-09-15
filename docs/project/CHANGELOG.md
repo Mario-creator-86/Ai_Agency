@@ -1,5 +1,18 @@
 # Changelog
 
+## City Sample Vehicles, the bridge and the shopfronts load — 2026-09-15
+
+The Owner added City Sample Vehicles (13 vehicles, a city bus among them), Modular Building Set and
+Automotive Bridge Scene to AMNReference.
+
+- City Sample Vehicles needs Chaos Vehicles and virtual textures: the project enables
+  `ChaosVehiclesPlugin` and `r.VirtualTextures=True` (the next launch recompiles shaders once).
+- `art-source/unreal/probe_pack_assets.py` loads one asset from each pack, found by name inside the
+  pack: the bus (11.3 m), a car and its blueprint, the bridge arches (39 m) and lamp, shopfront
+  columns, street props, a Megaplants pine (25.7 m) and Soul: City all load in 5.8.
+- Vehicle Variety Pack's meshes load, but its drivable blueprints refer to UE4 classes
+  (`TireConfig`, its animation blueprint) that no longer exist; the scene uses its meshes only.
+
 ## The Fab packs are in the Unreal project — 2026-09-15
 
 The Owner added his Fab packs to AMNReference (about 40 GB): Vehicle Variety Pack, City Street
