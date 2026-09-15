@@ -292,7 +292,9 @@ STUDIO_OFFICE_STREAM_SIGNALLING_URL=ws://127.0.0.1:8890               # .env, th
     mauve colour). Each office floor has a warm LED line under its ceiling with small warm lights
     beside it (`hq_building.ceiling_cove`, `cove_wash`; the look pass runs them at 0.35). The
     employees' desks are the scene's own white, lit-fronted workstations (`AMN_DRESS_CONSOLES=blender`);
-    only their keyboards, mice and desk lamps come from Apartment Tech Props.
+    only their keyboards, mice and desk lamps come from Apartment Tech Props. The small lights' mesh
+    (`glow_details`: the S1 racks' LEDs and other small lamps) is not Nanite (`nanite_hq_live.py`,
+    run after each level build): Nanite dropped the LEDs' small separate boxes.
   - `traffic_hq_live.py` builds `/Game/HQ/Seq_Traffic`, a looping level sequence that drives the
     vehicles across the frame (near lane towards +x, far lane towards -x, the bus slower), and a
     LevelSequenceActor that plays it on start: the street moves in the streamed game without

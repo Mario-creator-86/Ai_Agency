@@ -78,6 +78,9 @@ if (-not $SkipExport) {
 if (-not $NoStream) { StopStream }
 if (-not $SkipBuild) {
     Step "Level rebuilt from the export" { RunUnrealScript "build_hq_scene.py" }
+    # The import makes every merged mesh Nanite, and Nanite drops the small lights' separate boxes
+    # (the S1 racks' LEDs): the small lights' mesh is turned back into a regular mesh (AMN_NANITE_OFF).
+    Step "Nanite off on the small lights" { RunUnrealScript "nanite_hq_live.py" }
 }
 Step "Fab packs placed" { RunUnrealScript "dress_hq_live.py" }
 Step "Street traffic" { RunUnrealScript "traffic_hq_live.py" }

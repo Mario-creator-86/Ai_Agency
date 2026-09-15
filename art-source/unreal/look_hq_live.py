@@ -438,18 +438,20 @@ def window_views(actors):
 # At the scene's strengths (gain 1) the rack tops and the infra room's grid glowed, but the LED dots
 # did not show: each is 3 x 3 cm, under one pixel in the live frame, and anti-aliasing averages it
 # away. The dots take LED_DOT_BOOST times their strength, so bloom makes a visible point of each; the
-# grid and bars (lines, visible already, stronger than the picture's) take half. Tried so, the dots
-# still did not show (most likely lost with the imported mesh's smallest parts) and the grid's lines
-# grew stronger than the picture's: off by default; larger LED lights in the Blender scene are the fix.
+# grid and bars (lines, visible already, stronger than the picture's) take a share. The dots still
+# did not show at any size or strength until the cause was found: Nanite dropped their small separate
+# boxes (nanite_hq_live.py turns it off on the small lights' mesh). Since then the racks show rows of
+# green and amber dots like the picture's; the grid's lines at 0.5 read stronger than the picture's and
+# hid the "I" of the S1 INFRA sign in their glow, at 0.15 the sign reads whole.
 LED_DOT_BOOST = env("AMN_LOOK_LED_DOT_BOOST", "8")
-LED_LINE_SHARE = env("AMN_LOOK_LED_LINE_SHARE", "0.5")
+LED_LINE_SHARE = env("AMN_LOOK_LED_LINE_SHARE", "0.15")
 LEDS = {
     "rack_led_green": ("#4ade80", 6.0 * LED_DOT_BOOST), "rack_led_amber": ("#fbbf24", 5.0 * LED_DOT_BOOST),
     "pc_led_blue": ("#60a5fa", 8.0 * LED_DOT_BOOST), "spk_led": ("#93c5fd", 5.0 * LED_DOT_BOOST),
     "rack_top_bar": ("#34d399", 3.0), "infra_bar": ("#a5f3fc", 5.0 * LED_LINE_SHARE),
     "infra_grid": ("#2dd4bf", 0.6 * LED_LINE_SHARE),
 }
-LED_GAIN = env("AMN_LOOK_LED_GAIN", "0")
+LED_GAIN = env("AMN_LOOK_LED_GAIN", "1")
 WHITE = "/InterchangeAssets/gltf/Textures/T_White_srgb"
 
 

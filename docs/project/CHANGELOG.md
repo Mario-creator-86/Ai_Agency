@@ -1,5 +1,25 @@
 # Changelog
 
+## Green LEDs on the server racks: Nanite was hiding them — 2026-09-15
+
+In the Owner's picture the S1 server racks show rows of green lights. Live they stood black, at every
+size and strength tried (see "Server LEDs … tried, left off" below).
+
+- The cause: the import makes every merged scene mesh a Nanite mesh, and Nanite's simplification
+  dropped the LEDs' small separate boxes, while the long lights of the same mesh (rack bars, the
+  room's grid) survived. A probe showed the small lights' mesh at 904 triangles; with Nanite off it
+  has 2,586.
+- `art-source/unreal/nanite_hq_live.py` turns Nanite off on that mesh (`glow_details`,
+  `AMN_NANITE_OFF`). The editor subsystem that normally does it is not available in a commandlet,
+  so the script sets the mesh's own Nanite setting and saves the asset. `rebuild_live_hq.ps1` runs it
+  right after every level build.
+- The look pass now gives the small lights their own colours by default (`AMN_LOOK_LED_GAIN=1`, the
+  dots at 8 times their strength). The infra room's grid lines take 0.15 of theirs: at 0.5 their
+  glow hid the "I" of the S1 INFRA sign.
+- Seen in the stream: the racks show rows of green and a few amber dots, like the picture's, and
+  the sign reads whole. The mean moved from 14.0 to 14.4, almost all of it the ground floor's region,
+  which the new lights brighten.
+
 ## White desks for the employees again — 2026-09-15
 
 In the Owner's picture every employee sits at a white desk with a lit front. The Blender scene
