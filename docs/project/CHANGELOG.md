@@ -5,10 +5,17 @@
 The ground floor was the frame's most distant region after the city (colour distance 25.7): the
 lobby read brighter than the Owner's picture across the whole floor (81 against 66).
 
-- `look_hq_live.py` runs the lobby's fills and spill at 0.55 of the rooms' fill (0.75 before,
-  `AMN_LOOK_LOBBY`). Compared in the stream: every row of the ground floor came down by 3 to 5, the
-  ground region 25.7 → 18.8, and the mean 14.4 → **13.7**, the closest pass so far. The floor still
-  reads a little brighter than the picture.
+- `look_hq_live.py` runs the lobby's fills and spill lower (`AMN_LOOK_LOBBY`, 0.75 before).
+  Compared in the stream:
+
+  | Lobby | Ground region | Street | Mean |
+  | --- | --- | --- | --- |
+  | 0.75 | 25.7 | 16.2 | 14.4 |
+  | 0.55 | 18.8 | 15.4 | 13.7 |
+  | 0.4 | 12.7 | 11.5 | **12.8** |
+
+  0.4 is the new default and the closest pass so far. The lobby's spill had lit the pavement in
+  front of it too. The upper rows of the ground floor still read a little brighter than the picture.
 
 ## Green LEDs on the server racks: Nanite was hiding them — 2026-09-15
 
