@@ -71,6 +71,15 @@ TRACE_ROUGHNESS = env("AMN_LOOK_TRACE_ROUGHNESS", "0.4")
 # frame is black for want of light on it, not for its metal; left off.
 FRAME_MATERIALS = ("frame_dark", "frame_hi", "slab")
 FRAME_METAL = env("AMN_LOOK_FRAME_METAL", "-1")
+# ...so the frame gets its own light: a wide, cool area light in front of the building facing it, on
+# lighting channel 1, which only the "shell" actor (frame, stone, plinth, glass, roof; the rooms and
+# their props are other actors) also receives. Lumens; 0 turns it off. Compared in the stream (mean
+# colour distance, 15.0 without): 20,000 lm over the whole front 39.6 (a white frame); 3,000 lm 20.5
+# (slate grey); 800 lm 15.4 (the upper floors closer, the ground floor and lift tower too bright);
+# 800 lm held to the floors above the ground floor (below) 14.6, a dark navy frame like the picture's.
+FACADE = env("AMN_LOOK_FACADE", "800")
+FACADE_Y = env("AMN_LOOK_FACADE_Y", "-10")  # Blender metres in front of the building's front (y 0)
+FACADE_ACTOR = "shell"
 FOG_DENSITY = env("AMN_LOOK_FOG", "0.008")    # 0.02 greyed the street and brightened the sky
 FOG_START_CM = env("AMN_LOOK_FOG_START", "3000")
 # Distances are from the plate camera, 246 m in front of the building (the street at ~220 m, the
@@ -293,6 +302,152 @@ def street_fill(actors):
     log(f"street fill {STREET_FILL:.0f} lm at {fill.get_actor_location()}{check}")
 
 
+def facade_light(actors):
+    """A wide area light in front of the building (Blender y FACADE_Y), facing it, cool like the dusk,
+    without shadows, on lighting channel 1 only; the shell actor receives channels 0 and 1, every other
+    actor channel 0 only, so the rooms behind the open front stay as they are. Facing the building
+    (yaw -90), the light's width runs along the building and its height up it."""
+    light = actors.get("FacadeLight")
+    if light is None and FACADE <= 0:
+        return
+    top_m = CEILINGS_M[-1] + 4.0  # the roof's parapet and sign above the top floor
+    # At 800 lm over the whole front the upper floors came closer to the picture (L4 10.2 -> 8.3,
+    # the roof sign 12.7 -> 9.0) but the ground floor (21.3 -> 26.5) and the lift tower (11.1 -> 16.9)
+    # took too much: the light's bottom edge (m), centre and width, and its barn doors, keep it on the
+    # floors above the ground floor.
+    bottom_m = env("AMN_LOOK_FACADE_BOTTOM", "5.2")      # just above the ground floor's ceiling (4.9 m)
+    centre_x = env("AMN_LOOK_FACADE_X", "0.4")           # the main block, without the lift tower
+    width_cm = env("AMN_LOOK_FACADE_WIDTH", "2850")
+    where = ue(centre_x, FACADE_Y, (top_m + bottom_m) / 2.0)
+    facing = unreal.Rotator(roll=0.0, pitch=0.0, yaw=-90.0)
+    if light is None:
+        eas = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+        light = eas.spawn_actor_from_class(unreal.RectLight, where, facing)
+        light.set_actor_label("FacadeLight")
+    light.set_actor_location_and_rotation(where, facing, False, False)
+    comp = light.rect_light_component
+    comp.set_mobility(unreal.ComponentMobility.MOVABLE)
+    comp.set_intensity_units(unreal.LightUnits.LUMENS)
+    comp.set_intensity(max(FACADE, 0.0))
+    comp.set_light_color(unreal.LinearColor(0.72, 0.78, 1.0, 1.0))
+    comp.set_editor_property("source_width", width_cm)
+    comp.set_editor_property("source_height", (top_m - bottom_m) * 100.0)
+    # the doors are planes along the light's edges: at 90 degrees they lie flat (no effect), at 0 they
+    # stand straight out, and their length (cm) sets how far they hold the light to its own outline
+    barn_angle = env("AMN_LOOK_FACADE_BARN_ANGLE", "5")
+    barn_length = env("AMN_LOOK_FACADE_BARN_LENGTH", "1000")
+    comp.set_editor_property("barn_door_angle", barn_angle)
+    comp.set_editor_property("barn_door_length", barn_length)
+    comp.set_attenuation_radius(3000.0)
+    comp.set_cast_shadows(False)
+    comp.set_editor_property("lighting_channels", unreal.LightingChannels(channel0=False, channel1=True, channel2=False))
+    shell = actors.get(FACADE_ACTOR)
+    if shell is not None:
+        shell.static_mesh_component.set_editor_property("lighting_channels", unreal.LightingChannels(channel0=True, channel1=True, channel2=False))
+    log(f"facade light {FACADE:.0f} lm at y {FACADE_Y} m, x {centre_x} m, {width_cm / 100.0:.1f} m wide, from {bottom_m} to {top_m:.1f} m, "
+        f"barn doors {barn_angle:g} deg x {barn_length:g} cm, on channel 1 with {'the shell' if shell else 'NO shell actor'}")
+
+
+# The rooms' windows onto the city (the Blender scene's image materials window_view and
+# window_view_b) rendered as flat mauve panels: the export bakes them into the shared "props" atlas,
+# where each window gets a few texels, the average of its dusk image. Their own images go back on
+# them, on the model's own UVs (every face of the scene's meshes spans 0-1), with this emission
+# strength; 0 leaves the baked atlas. At 1.5 (with the facade light) the windows show dark towers with
+# lit windows against the dusk, and the rooms' regions came closer to the picture (mean 14.6).
+WINDOW_VIEWS = {"window_view": "window_city", "window_view_b": "window_city_b"}
+WINDOW_VIEW_DIR = os.path.join(os.path.dirname(HERE), "blender", "hq", "textures")
+WINDOW_VIEW_STRENGTH = env("AMN_LOOK_WINDOW_VIEW", "1.5")
+
+
+def window_views(actors):
+    if WINDOW_VIEW_STRENGTH <= 0:
+        return
+    mel = unreal.MaterialEditingLibrary
+    textures = {}
+    for image in set(WINDOW_VIEWS.values()):
+        path = f"/Game/HQ/Materials/T_HQ_{image}"
+        if not unreal.EditorAssetLibrary.does_asset_exist(path):
+            task = unreal.AssetImportTask()
+            task.filename = os.path.join(WINDOW_VIEW_DIR, f"{image}.png")
+            task.destination_path = "/Game/HQ/Materials"
+            task.destination_name = f"T_HQ_{image}"
+            task.automated = True
+            task.replace_existing = True
+            task.save = True
+            unreal.AssetToolsHelpers.get_asset_tools().import_asset_tasks([task])
+        textures[image] = unreal.load_asset(path)
+    done = set()
+    for actor in actors.values():
+        if not isinstance(actor, unreal.StaticMeshActor):
+            continue
+        comp = actor.static_mesh_component
+        for i in range(comp.get_num_materials()):
+            mat = comp.get_material(i)
+            if not isinstance(mat, unreal.MaterialInstanceConstant) or mat.get_path_name() in done:
+                continue
+            base_name = mat.get_name().lower().rstrip("0123456789").rstrip("_")
+            tex = textures.get(WINDOW_VIEWS.get(base_name, ""))
+            if tex is None:
+                continue
+            for slot in ("BaseColorTexture", "EmissiveTexture"):
+                mel.set_material_instance_texture_parameter_value(mat, slot, tex)
+                mel.set_material_instance_scalar_parameter_value(mat, f"{slot}_TexCoord", 0.0)
+            mel.set_material_instance_scalar_parameter_value(mat, "EmissiveStrength", WINDOW_VIEW_STRENGTH)
+            mel.update_material_instance(mat)
+            done.add(mat.get_path_name())
+    log(f"room windows: city images at emission {WINDOW_VIEW_STRENGTH} on {len(done)} materials {sorted(p.rsplit('/', 1)[-1] for p in done)}")
+
+
+# The small lights (server LEDs, the rack bars, the PCs' and speakers' LEDs, the infra room's bars
+# and grid) are baked with the rest of "glow_details" into one shared emission texture, where an LED
+# of a few millimetres is averaged away: the picture's server racks show rows of green lights, the
+# live ones stood black. Each gets its own colour (the Blender scene's, hq_building.py) on a white
+# texture, at the scene's strength times this gain; 0 leaves the bake.
+LEDS = {
+    "rack_led_green": ("#4ade80", 6.0), "rack_led_amber": ("#fbbf24", 5.0), "rack_top_bar": ("#34d399", 3.0),
+    "pc_led_blue": ("#60a5fa", 8.0), "spk_led": ("#93c5fd", 5.0), "infra_bar": ("#a5f3fc", 5.0),
+    "infra_grid": ("#2dd4bf", 0.6),
+}
+LED_GAIN = env("AMN_LOOK_LED_GAIN", "0")
+WHITE = "/InterchangeAssets/gltf/Textures/T_White_srgb"
+
+
+def linear(hex_color):
+    def channel(c):
+        c = c / 255.0
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+    h = hex_color.lstrip("#")
+    return [channel(int(h[i:i + 2], 16)) for i in (0, 2, 4)]
+
+
+def small_lights(actors):
+    if LED_GAIN <= 0:
+        return
+    mel = unreal.MaterialEditingLibrary
+    white = unreal.load_asset(WHITE)
+    done = set()
+    for actor in actors.values():
+        if not isinstance(actor, unreal.StaticMeshActor):
+            continue
+        comp = actor.static_mesh_component
+        for i in range(comp.get_num_materials()):
+            mat = comp.get_material(i)
+            if not isinstance(mat, unreal.MaterialInstanceConstant) or mat.get_path_name() in done:
+                continue
+            spec = LEDS.get(mat.get_name().lower().rstrip("0123456789").rstrip("_"))
+            if spec is None:
+                continue
+            r, g, b = linear(spec[0])
+            mel.set_material_instance_texture_parameter_value(mat, "EmissiveTexture", white)
+            mel.set_material_instance_texture_parameter_value(mat, "BaseColorTexture", white)
+            mel.set_material_instance_vector_parameter_value(mat, "EmissiveFactor", unreal.LinearColor(r, g, b, 1.0))
+            mel.set_material_instance_vector_parameter_value(mat, "BaseColorFactor", unreal.LinearColor(r, g, b, 1.0))
+            mel.set_material_instance_scalar_parameter_value(mat, "EmissiveStrength", spec[1] * LED_GAIN)
+            mel.update_material_instance(mat)
+            done.add(mat.get_path_name())
+    log(f"small lights: own colours at x{LED_GAIN} of the scene's strength on {len(done)} materials")
+
+
 def main():
     les = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
     if not les.load_level(LEVEL):
@@ -303,6 +458,9 @@ def main():
     tune_materials(actors)
     tune_post_and_fog(actors)
     street_fill(actors)
+    facade_light(actors)
+    window_views(actors)
+    small_lights(actors)
     les.save_current_level()
     unreal.EditorAssetLibrary.save_directory("/Game/HQ")
     log("saved")

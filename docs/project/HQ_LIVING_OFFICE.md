@@ -286,6 +286,10 @@ STUDIO_OFFICE_STREAM_SIGNALLING_URL=ws://127.0.0.1:8890               # .env, th
     two unlit translucent planes behind the building (12 m and 27 m), fading upwards from the
     skyline's base (`AMN_HAZE_*`). Height fog cannot do it: its distances count from the plate
     camera, and the scene's fog is also the veil that keeps the frame, rooms and sky from going black.
+    The look pass also lights the building's frame (`FacadeLight`, 800 lm, on lighting channel 1,
+    which only the `shell` actor receives, held to the floors above the ground floor) and puts the
+    rooms' city window images back on their materials (the export's shared bake reduced them to one
+    mauve colour).
   - `traffic_hq_live.py` builds `/Game/HQ/Seq_Traffic`, a looping level sequence that drives the
     vehicles across the frame (near lane towards +x, far lane towards -x, the bus slower), and a
     LevelSequenceActor that plays it on start: the street moves in the streamed game without

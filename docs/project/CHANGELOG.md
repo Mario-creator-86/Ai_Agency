@@ -1,5 +1,32 @@
 # Changelog
 
+## A lit frame and city views in the rooms' windows — 2026-09-15
+
+Two things set the live headquarters apart from the Owner's picture at a glance: the building's frame
+was black where the picture's is a lit dark navy, and the rooms' windows onto the city were flat
+mauve panels.
+
+- **The frame.** `look_hq_live.py` places a facade light (`FacadeLight`): a cool area light 10 m in
+  front of the building, facing it, on lighting channel 1. Only the `shell` actor also receives
+  channel 1 (frame, stone, plinth, glass, roof). The rooms and their props are separate actors, so
+  the light behind the open front stays as it was. Compared in the stream (mean colour distance, 15.0
+  without):
+
+  | Facade light | Mean | Seen |
+  | --- | --- | --- |
+  | 20,000 lm over the whole front | 39.6 | a white frame, the roof sign burnt out |
+  | 3,000 lm | 20.5 | a slate-grey frame |
+  | 800 lm | 15.4 | upper floors closer; ground floor and lift tower too bright |
+  | 800 lm held to the floors above the ground floor | **14.6** | a dark navy frame, the new default |
+
+  The light's bottom edge, centre, width and barn doors (5°, 10 m) hold it to the main block above
+  the ground floor (`AMN_LOOK_FACADE_*`).
+- **The rooms' windows.** The export bakes the windows' city images into the shared `props`
+  texture, where each window gets a few texels: the average of its dusk image, mauve. The look pass
+  puts the images themselves (`art-source/blender/hq/textures/window_city.png`, `window_city_b.png`)
+  back on those two materials, on the model's own UVs, at emission 1.5 (`AMN_LOOK_WINDOW_VIEW`).
+  The windows now show dark towers with lit windows against the dusk.
+
 ## Blue haze over the live skyline — 2026-09-15
 
 In the Owner's picture the city fades into a blue haze towards its base; the live skyline stood as
