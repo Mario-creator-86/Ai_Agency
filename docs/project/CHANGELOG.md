@@ -12,6 +12,9 @@ a dark edge. Darkening the slab's colour did not change it (see "A dimmer line u
   74 → 47, against the picture's 42–77). The mean held at 11.1.
 - The brighter rows just below the slab, the top of L2's room (110 against the picture's 58), did not
   move: that is the room's own light, the next thing to look at.
+- Tried: the small warm lights under the ceilings at 0.15 instead of 0.35. The top of L2 moved by
+  about 1 (111.9 → 110.6), L4 drifted from the picture (1.5 → 3.4) and the mean went 11.1 → 11.2, so
+  they stay at 0.35.
 
 ## Every employee faces the viewer — 2026-09-15
 
