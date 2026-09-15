@@ -18,6 +18,11 @@ a dark edge. Darkening the slab's colour did not change it (see "A dimmer line u
 - Tried: the ceiling spots (the cones on the walls) at 0.08 instead of 0.15. The top of L2 did not move
   (111.9 → 111.7), while L3 and L4 turned darker than the picture (L3 14.6 → 20.2, L4 1.5 → 7.5) and the
   mean went 11.1 → 12.1, so they stay at 0.15. L2's bright top is none of the lights tried so far.
+- Tried: L2's area fill alone at 0.3 (it hangs under the ceiling, tilted onto the back wall). It dimmed
+  every row of L2 alike, by 4–7: the top stayed far brighter than the picture (107.5 against 58–80)
+  while the lower rows fell below it. L2's region went 17.5 → 21.8 and the mean 11.1 → 11.4, so the
+  setting was dropped. No single light of L2 makes its top bright; the room is lit evenly from floor to
+  ceiling where the picture's is darker at the top.
 
 ## Every employee faces the viewer — 2026-09-15
 
