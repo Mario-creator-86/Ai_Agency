@@ -355,6 +355,16 @@ def cove(mb, x0px, x1px, level, mat, drop=0.5, back=BACK):
     mb.box(X(x0px), X(x1px), back - 0.12, back - 0.02, z - 0.035, z, mat)
 
 
+def ceiling_cove(shell, lights, level, mat, xs=(575, 690, 805, 920, 1035, 1150)):
+    """The picture's warm LED line under each office floor's ceiling, hung just behind the slab's
+    face so it shows from the front, and a row of small warm lights beside it that wash the top of
+    the room ("cove_wash"; the live look pass scales them with AMN_LOOK_COVE)."""
+    c = cz(level)
+    shell.box(X(517), X(1205), -0.12, -0.02, c - 0.045, c - 0.015, mat["edge_led_warm"])
+    for xpx in xs:
+        light(lights, "POINT", (X(xpx), 0.25, c - 0.2), 18, "#ffc98a", radius=0.3, name="cove_wash")
+
+
 def room_sign(coll, glow, label, x0px, level, mat, accent):
     """A small lit sign at the top of a room's back wall, naming the department that works there."""
     z = wz(FLOORS[level][1] + 24)
@@ -406,9 +416,12 @@ def build(colls):
         mid = (cz(lower) + top) / 2
         shell.box(X(447), X(1205), -0.2, -0.18, mid - 0.015, mid + 0.01, mat["edge_led_warm"])
         shell.box(X(432), X(1215), -0.21, -0.18, cz(lower), cz(lower) + 0.05, mat["frame_hi"])
+        if lower >= 1:  # the office floors; the ground floor has its header bars there
+            ceiling_cove(shell, lights, lower, mat)
     # roof mass above L4
     shell.box(X(432), X(1215), -0.18, BACK + 0.4, cz(4), Z(30), mat["roof"])
     shell.box(X(432), X(1215), -0.2, -0.18, cz(4), cz(4) + 0.05, mat["frame_hi"])
+    ceiling_cove(shell, lights, 4, mat)
     # roof railings and plant room
     rail = principled("rail", "#8c95aa", rough=0.3, metal=0.7)
     shell.box(X(432), X(1215), -0.22, -0.18, Z(31) - 0.05, Z(31), rail)

@@ -1,5 +1,26 @@
 # Changelog
 
+## A warm line under every office ceiling — 2026-09-15
+
+In the Owner's picture a warm LED line runs under each office floor's ceiling, and the tops of the
+rooms glow with it. L3 and L1 had no such line in the scene; L4 and L2 had thin ones, set back at the
+rear wall.
+
+- `hq_building.ceiling_cove()` adds a warm line under each office ceiling (L1–L4), hung just behind
+  the slab's face so it shows from the front, and six small warm lights beside it on each floor
+  (`cove_wash`, 18 W). They reach the live level through the full rebuild with the Blender export
+  (4.8 minutes); the look pass scales the lights with `AMN_LOOK_COVE`.
+- Compared in the stream (mean colour distance, 14.7 before):
+
+  | Cove lights | Mean | Seen |
+  | --- | --- | --- |
+  | 1.0 | 15.7 | the lines show like the picture's, but the rooms read too bright (L2 88 against 79) |
+  | 0.35 | **14.5** | L4 5.5 → 3.5, L3 17.0 → 14.2; the new default |
+
+- Two regions moved away: L1 (7.5 → 10.3) and the roof sign (10.2 → 14.2). The roof sign is the
+  same at both settings, so its cause is the line under the top floor's ceiling, just below the
+  sign, not the lights.
+
 ## Brighter ceiling strips on the live headquarters — 2026-09-15
 
 In the Owner's picture a warm LED strip under each floor's ceiling washes the top of the walls. In
