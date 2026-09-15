@@ -1,5 +1,28 @@
 # Changelog
 
+## The live headquarters compared region by region with the picture, and the look pass — 2026-09-15
+
+The Owner asked whether the live Unreal headquarters looks like his picture, and to correct the
+office, the lights, the textures and the finishes. It does not. Cut region by region against the
+picture at the same scale (a 1920x1008 frame from the stream): the picture's rooms have soft warm
+light (cove strips, glowing pendants), panelled walls, pinned boards, framed pictures, windows onto
+the city and dense plants, where the level had hard coloured spot cones on flat walls, empty
+frames and flat purple windows; the picture's street is wet asphalt with streaks of reflected light,
+stone paving, bollards and people, where the level had a black road with white headlight patches;
+its skyline has sparse lit windows in blue haze and a bridge, where the level had bright blocks.
+
+- `art-source/unreal/look_hq_live.py` tunes the saved level in place (lights by kind, skyline
+  emission, the asphalt's roughness and specular, fog, exposure, bloom and a cool-shadow,
+  warm-highlight grade), with absolute values from `AMN_LOOK_*`, so passes can be compared without
+  re-importing. Measured with `compare.py` (mean colour distance, lower is closer; 24.2 before):
+  pass 1 29.6, every region brighter than the picture and the road a mirror of the shopfronts;
+  pass 2 27.3, the street's colour right (1.3) but grey and hazy, the ground floor and the sky
+  still too bright, the cones still on L4's wall. Tuning light alone does not close the gap: most
+  of it is textures, materials and objects.
+- `export_hq_scene.py` draws the skyline's window textures with fewer lit windows
+  (`AMN_WINDOW_LIT_SHARE`, 0.6 of the Blender material's), each at its own brightness
+  (`AMN_WINDOW_DIM_MIN`) and divided by a mullion.
+
 ## The live headquarters reaches the Owner's browser, and stops flickering — 2026-09-15
 
 - The Owner's page kept switching between the Unreal stream and the page's own renderer. Every

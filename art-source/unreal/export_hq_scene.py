@@ -189,6 +189,14 @@ def byte_image(name, rgb_linear, path):
     return img
 
 
+# Seen live next to the Owner's picture (2026-09-15), the skyline read as bright blocks: nearly half
+# the windows lit, all at full strength, each a flat square. The picture's towers have fewer lit
+# windows, of uneven brightness, divided by mullions. AMN_WINDOW_LIT_SHARE keeps that share of the
+# lit windows the Blender material would light; AMN_WINDOW_DIM_MIN is the dimmest a lit window gets.
+WINDOW_LIT_SHARE = float(os.environ.get("AMN_WINDOW_LIT_SHARE", "0.6"))
+WINDOW_DIM_MIN = float(os.environ.get("AMN_WINDOW_DIM_MIN", "0.35"))
+
+
 def window_material(mat, p, bake_dir, seed):
     """Rebuild a facade material as tiling colour and emission textures of lit and dark windows."""
     rng = np.random.default_rng(seed)
@@ -197,10 +205,16 @@ def window_material(mat, p, bake_dir, seed):
     colours = np.array([e[1] for e in p["lit"]], np.float32)
     idx = np.clip(np.searchsorted(positions, rng.random((n, n)), side="right") - 1, 0, len(positions) - 1)
     cell_lit = colours[idx]
+    # fewer lit windows, each at its own brightness
+    lit = cell_lit.max(axis=-1) > 0.05
+    cell_lit[lit & (rng.random((n, n)) > WINDOW_LIT_SHARE)] = 0.0
+    cell_lit *= rng.uniform(WINDOW_DIM_MIN, 1.0, (n, n)).astype(np.float32)[..., None]
     mx = min(0.45, p["mortar"] / max(p["w"], 1e-4))
     my = min(0.45, p["mortar"] / max(p["h"], 1e-4))
     ys, xs = np.mgrid[0:c, 0:c].astype(np.float32) / c
-    inside = ((xs >= mx / 2) & (xs < 1 - mx / 2) & (ys >= my / 2) & (ys < 1 - my / 2)).astype(np.float32)
+    # a one-texel mullion down the middle of each window
+    mullion = np.abs(xs + 0.5 / c - 0.5) < 1.0 / c
+    inside = ((xs >= mx / 2) & (xs < 1 - mx / 2) & (ys >= my / 2) & (ys < 1 - my / 2) & ~mullion).astype(np.float32)
     mask = np.tile(inside, (n, n))[..., None]
     emit = np.repeat(np.repeat(cell_lit, c, axis=0), c, axis=1) * mask
     base = np.array(p["glass"], np.float32) * mask + np.array(p["wall"], np.float32) * (1 - mask)
