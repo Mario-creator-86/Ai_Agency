@@ -78,15 +78,39 @@ def test_the_calls_hide_or_show_the_actor_and_set_the_body_moving_or_still():
         }
     ]
     still = calls_for(seat, {"visible": True, "moving": False})
-    assert [c["functionName"] for c in still] == ["SetActorHiddenInGame", "SetPlayRate"]
+    assert [c["functionName"] for c in still] == ["SetActorHiddenInGame", "SetPosition", "SetPlayRate"]
     assert still[0]["parameters"] == {"bNewHidden": False}
     assert still[1] == {
+        "objectPath": seat["body"],
+        "functionName": "SetPosition",
+        "parameters": {"InPos": 0.0, "bFireNotifies": False},
+        "generateTransaction": False,
+    }
+    assert still[2] == {
         "objectPath": seat["body"],
         "functionName": "SetPlayRate",
         "parameters": {"Rate": 0.0},
         "generateTransaction": False,
     }
-    assert calls_for(seat, {"visible": True, "moving": True})[1]["parameters"] == {"Rate": 1.0}
+    moving = calls_for(seat, {"visible": True, "moving": True})
+    assert [c["functionName"] for c in moving] == ["SetActorHiddenInGame", "SetPlayRate"]
+    assert moving[1]["parameters"] == {"Rate": 1.0}
+
+
+def test_a_paused_employee_is_held_on_the_loops_first_frame_facing_the_viewer():
+    # held wherever the loop happened to be, a paused employee kept a mid-gesture pose turned away
+    # from the viewer; the Owner wants every character facing the viewer
+    still = calls_for(SEATS["desk_script"], {"visible": True, "moving": False})
+    positions = [c for c in still if c["functionName"] == "SetPosition"]
+    assert positions == [
+        {
+            "objectPath": SEATS["desk_script"]["body"],
+            "functionName": "SetPosition",
+            "parameters": {"InPos": 0.0, "bFireNotifies": False},
+            "generateTransaction": False,
+        }
+    ]
+    assert still.index(positions[0]) < [c["functionName"] for c in still].index("SetPlayRate")
 
 
 def test_only_what_changed_is_sent_again():
@@ -101,7 +125,11 @@ def test_only_what_changed_is_sent_again():
     assert sent == []
     clock.now += 5
     assert bridge.sync(layout(agent("desk_director", "WORKING", "PAUSED")), SEATS) == 1
-    assert [c["parameters"] for c in sent] == [{"bNewHidden": False}, {"Rate": 0.0}]
+    assert [c["parameters"] for c in sent] == [
+        {"bNewHidden": False},
+        {"InPos": 0.0, "bFireNotifies": False},
+        {"Rate": 0.0},
+    ]
 
 
 def test_after_unreal_fails_to_answer_everything_is_sent_again():

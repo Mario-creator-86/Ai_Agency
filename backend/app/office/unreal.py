@@ -99,7 +99,18 @@ def calls_for(seat: Mapping[str, str], state: Mapping[str, bool]) -> list[dict[s
         }
     ]
     if state["visible"]:
-        # the seated loop keeps its place: a paused agent is held still, not restarted
+        if not state["moving"]:
+            # A paused agent is held on the seated loop's first frame, the neutral pose facing the
+            # viewer: held wherever the loop happened to be, an employee kept a mid-gesture pose turned
+            # away (the Owner wants every character facing the viewer).
+            calls.append(
+                {
+                    "objectPath": seat["body"],
+                    "functionName": "SetPosition",
+                    "parameters": {"InPos": 0.0, "bFireNotifies": False},
+                    "generateTransaction": False,
+                }
+            )
         calls.append(
             {
                 "objectPath": seat["body"],
