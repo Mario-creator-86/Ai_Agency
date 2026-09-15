@@ -1,5 +1,25 @@
 # Changelog
 
+## Green leafy trees on the live street — 2026-09-15
+
+The street's trees were the Blender export's round crowns, which read as foam next to the Owner's
+picture, and Megaplants' real trees cannot show their leaves on this machine.
+
+- Soul: City's trees, probed and compared in the stream: the aspen's leaves are a translucent
+  material (poorly lit, without depth, hence bare and pale), two are pines, one is a twisted bare
+  tree, two more read as bare white branches. One, `SM_S_BuildingSetA_Tree_02_OP02`, keeps a full
+  crown (masked, two-sided leaves), and the capture holds with it (no recreate warning).
+- Its leaves were autumn orange. The material's only colour parameter (`LitColor`) did not change
+  them: the leaf texture itself is orange (leaves average RGB 102, 75, 43). `art-source/unreal/leaves/`
+  makes a green copy of it: `export_leaf_texture.py` (Unreal), `green_leaves.py` (turns the leaves'
+  hue from 34 to 105 degrees, alpha untouched; RGB 54, 93, 40) and `import_green_leaves.py`
+  (Unreal, `/Game/HQ/Materials/T_HQ_Leaves_Green`). The generated images are not committed (pack
+  content). `dress_hq_live.py` places the tree (`AMN_TREES=soul`, now the default) with the leaf
+  instance `MI_HQ_TreeLeavesGreen`; the tree uplights now run at 0.3.
+- Seen in the stream: green leafy crowns on both sides of the building. Measured 17.1 against the
+  picture (15.9 with the foam crowns): the crowns read brighter than the picture's (the area left of
+  the building 77 against 63). Darker leaves are next.
+
 ## Static copies of Megaplants trees: the stream holds, the leaves do not show yet — 2026-09-15
 
 The live level's trees are the Blender export's round crowns, which read as foam next to the

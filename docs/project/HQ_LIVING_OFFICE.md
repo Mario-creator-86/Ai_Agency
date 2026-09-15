@@ -265,7 +265,10 @@ STUDIO_OFFICE_STREAM_SIGNALLING_URL=ws://127.0.0.1:8890               # .env, th
     into the mesh ran out of memory; keeping them as Nanite assemblies needs Shader Model 6 and
     `r.Nanite.Foliage`, which crashed the streamed game at start (D3D12 "too many residency sets");
     with residency management off, a separate test crashed the GPU and hung the machine. Both stay
-    off in `DefaultEngine.ini`: Megaplants' assembly leaves are not usable on this machine.
+    off in `DefaultEngine.ini`: Megaplants' assembly leaves are not usable on this machine. The
+    street's trees are Soul: City's leafy `SM_S_BuildingSetA_Tree_02_OP02` (`AMN_TREES=soul`, the
+    default) with a green copy of its autumn leaf texture, made by the three steps in
+    `art-source/unreal/leaves/` (export, hue turn, import).
     Re-importing the export over the previous import, while the level referenced it, left
     renamed texture copies (`props_color` x37) and facade materials without their window textures,
     so the skyline rendered flat white; `build_hq_scene.py` now imports each build into its own

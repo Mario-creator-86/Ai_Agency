@@ -107,7 +107,9 @@ STREET = {
 # The scene keeps its own leafy trees by default ("blender"): Soul: City's static trees rendered
 # bare and pale, and the wind-animated Megaplants stopped the stream's capture. AMN_TREES=static or
 # megaplants places pack trees instead (the latter for stills).
-TREE_MODE = os.environ.get("AMN_TREES", "blender")
+# "soul" since 2026-09-15: Soul: City's leafy tree with the green leaf texture (leaves/), which read as
+# real crowns next to the picture where the Blender crowns read as foam
+TREE_MODE = os.environ.get("AMN_TREES", "soul")
 TREES = {
     "blender": (),
     "static": ("/Game/SoulCity/Environment/Meshes/Foliage/SM_LV_Soul_Tree01_B",
@@ -115,12 +117,51 @@ TREES = {
                "/Game/SoulCity/Environment/Meshes/Foliage/SM_tree2"),
     "megaplants": ("/Game/Megaplant_Library/Tree_Black_Alder/Tree_Black_Alder_01/Tree_Black_Alder_01_A",
                    "/Game/Megaplant_Library/Tree_Black_Poplar/Tree_Black_Poplar_01/Tree_Black_Poplar_01_A"),
+    # Soul: City's leafy tree. The first static set above read bare and pale: the aspen's leaves are a
+    # translucent material (poorly lit and without depth in this scene), SM_LV_Soul_Tree01_B is a pine
+    # and SM_tree2 a twisted bare tree. Of three more compared side by side in the stream, only this
+    # one kept a full crown (masked, two-sided leaves); SM_S_Soul_Tree2 and SM_S_Soul_bush read as
+    # bare white branches.
+    "soul": ("/Game/SoulCity/Environment/Meshes/Foliage/SM_S_BuildingSetA_Tree_02_OP02_S_BuildingSetA_Tree_02_OP02",),
     # static Nanite copies of Megaplants trees (convert_trees_static.py): leafy like the picture's,
     # without the skeleton that stopped the stream's capture. Only the round crowns: the black alder
     # (5.5 m wide, 10.9 m tall) and the Japanese medlar (3.5 m, 2.7 m); scaled to the street's tree
     # heights the black poplar (31.8 m tall) became a pole and the goat willow (2.1 m) a wide mound.
     "megastatic": ("/Game/HQ/Trees/SM_Tree_Black_Alder_01_B", "/Game/HQ/Trees/SM_Tree_Japanese_Medlar_01_B"),
 }[TREE_MODE]
+# The Soul: City tree's leaf material tints its leaf texture with one colour, LitColor, orange by
+# default (1.0, 0.6, 0.4): in the stream the crowns read autumn orange where the picture's trees are
+# green. A material instance under /Game/HQ/Materials sets it (AMN_TREE_LEAF_COLOR="r,g,b").
+LEAF_PARENT = "/Game/SoulCity/Environment/Materials/Foliage/M_LV_Soul_Tree02"
+LEAF_MI = "/Game/HQ/Materials/MI_HQ_TreeLeavesGreen"
+LEAF_TEXTURE = "/Game/HQ/Materials/T_HQ_Leaves_Green"
+LEAF_COLOR = [float(v) for v in os.environ.get("AMN_TREE_LEAF_COLOR", "0.32,0.52,0.22").split(",")]
+
+
+def leaf_material():
+    """The green leaf instance (created once, colour set every run), or None if the parent is missing."""
+    parent = find_asset(LEAF_PARENT)
+    if parent is None:
+        return None
+    mel = unreal.MaterialEditingLibrary
+    if unreal.EditorAssetLibrary.does_asset_exist(LEAF_MI):
+        mi = unreal.load_asset(LEAF_MI)
+    else:
+        folder, name = LEAF_MI.rsplit("/", 1)
+        mi = unreal.AssetToolsHelpers.get_asset_tools().create_asset(name, folder, unreal.MaterialInstanceConstant, unreal.MaterialInstanceConstantFactoryNew())
+    mel.set_material_instance_parent(mi, parent)
+    mel.set_material_instance_vector_parameter_value(mi, "LitColor", unreal.LinearColor(LEAF_COLOR[0], LEAF_COLOR[1], LEAF_COLOR[2], 1.0))
+    # LitColor alone left the crowns orange: the leaf texture itself is autumn-coloured (leaves average
+    # RGB 102, 75, 43). A green copy of it, when imported, replaces the texture.
+    green = unreal.load_asset(LEAF_TEXTURE) if unreal.EditorAssetLibrary.does_asset_exist(LEAF_TEXTURE) else None
+    if green is not None:
+        mel.set_material_instance_texture_parameter_value(mi, "DiffuseandAlpha", green)
+    mel.update_material_instance(mi)
+    unreal.EditorAssetLibrary.save_loaded_asset(mi)
+    log(f"tree leaves: LitColor {LEAF_COLOR}, texture {'green copy' if green else 'the pack original'}")
+    return mi
+
+
 # headlights and tail lights ride on each vehicle (attached, so the traffic sequence carries them)
 HEADLIGHT_LM = float(os.environ.get("AMN_HEADLIGHT_LM", "4000"))
 TAILLIGHT_LM = float(os.environ.get("AMN_TAILLIGHT_LM", "120"))
@@ -249,9 +290,15 @@ def street():
         place("planter", pot, ue(X((x0 + x1) / 2), (y0 + y1) / 2, TERRACE_Z), max_len=min((X(x1) - X(x0)) * 100.0, 180.0), label=f"planter_{i}")
     # AMN_DRESS_TREES=0 leaves the trees out (the wind-animated Megaplants weigh heavily on the stream)
     trees = [find_asset(p) for p in TREES] if os.environ.get("AMN_DRESS_TREES", "1") != "0" else []
+    leaves = leaf_material() if TREE_MODE == "soul" else None
     for i, (xpx, ty, top_row) in enumerate(((225, 3.0, 440), (300, 0.2, 470), (372, -1.4, 470), (150, 4.0, 500), (1378, -1.0, 450), (1466, 1.5, 420), (1580, 3.0, 450)) if trees else ()):
         base = TERRACE_Z if ty > -3.0 else WALK_Z
-        place("tree", trees[i % len(trees)], ue(X(xpx), ty, base), height=(Z(top_row, ty) - base) * 100.0, label=f"tree_{i}")
+        tree = place("tree", trees[i % len(trees)], ue(X(xpx), ty, base), height=(Z(top_row, ty) - base) * 100.0, label=f"tree_{i}")
+        if tree is not None and leaves is not None:
+            comp = tree.static_mesh_component
+            for slot in range(comp.get_num_materials()):
+                if comp.get_material(slot) is not None and comp.get_material(slot).get_name() == LEAF_PARENT.rsplit(".", 1)[-1].rsplit("/", 1)[-1]:
+                    comp.set_material(slot, leaves)
     cars()
     log("street dressed")
 
