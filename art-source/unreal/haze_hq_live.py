@@ -43,7 +43,13 @@ def env_color(name, default):
 # lighter than the picture's.
 OPACITY = env("AMN_HAZE_OPACITY", "0.55")        # at the skyline's base, on the near plane
 FAR_SHARE = env("AMN_HAZE_FAR_SHARE", "0.7")     # the far plane's opacity as a share of the near one's
-COLOR = env_color("AMN_HAZE_COLOR", "0.07,0.09,0.2")  # linear, emissive
+COLOR = env_color("AMN_HAZE_COLOR", "0.07,0.09,0.2")  # linear, emissive: the near plane
+# The far plane's own colour, so the towers behind the city can fade towards a lighter dusk than the
+# streets in front of them. Tried light (0.30, 0.30, 0.42): on both planes it washed the left-hand
+# city bright (its region 18.3 -> 50.1, mean 9.2 -> 12.1); on the far plane alone the right-hand city
+# came to 9.0 (12.7) but the left went to 26.6 and the mean to 10.0, because the left's towers stand
+# behind that plane too. Both planes keep the dark colour; the knob stays for the next attempt.
+COLOR_FAR = env_color("AMN_HAZE_COLOR_FAR", "0.07,0.09,0.2")
 BASE_ROW = env("AMN_HAZE_BASE_ROW", "560")       # frame row (of 840) below which the haze is full
 TOP_ROW = env("AMN_HAZE_TOP_ROW", "160")         # frame row above which there is none
 FALLOFF = env("AMN_HAZE_FALLOFF", "1.5")         # >1 keeps the haze low, near the base
@@ -121,7 +127,7 @@ def haze_material():
     return mat
 
 
-def instance(parent, label, depth_m, opacity):
+def instance(parent, label, depth_m, opacity, color):
     mel = unreal.MaterialEditingLibrary
     path = f"/Game/HQ/Materials/MI_HQ_{label}"
     if unreal.EditorAssetLibrary.does_asset_exist(path):
@@ -130,7 +136,7 @@ def instance(parent, label, depth_m, opacity):
         folder, name = path.rsplit("/", 1)
         mi = unreal.AssetToolsHelpers.get_asset_tools().create_asset(name, folder, unreal.MaterialInstanceConstant, unreal.MaterialInstanceConstantFactoryNew())
     mel.set_material_instance_parent(mi, parent)
-    mel.set_material_instance_vector_parameter_value(mi, "HazeColor", unreal.LinearColor(*COLOR, 1.0))
+    mel.set_material_instance_vector_parameter_value(mi, "HazeColor", unreal.LinearColor(*color, 1.0))
     mel.set_material_instance_scalar_parameter_value(mi, "BottomZ", z_of(BASE_ROW, depth_m) * 100.0)
     mel.set_material_instance_scalar_parameter_value(mi, "TopZ", z_of(TOP_ROW, depth_m) * 100.0)
     mel.set_material_instance_scalar_parameter_value(mi, "Falloff", FALLOFF)
@@ -152,8 +158,9 @@ def main():
     plane_mesh = unreal.load_asset("/Engine/BasicShapes/Plane")  # 100 x 100 cm, facing up
     width_m = META["camera"]["width_m"] + 12.0
     for label, depth_m in PLANES:
-        opacity = OPACITY * (FAR_SHARE if label.endswith("far") else 1.0)
-        mi = instance(parent, label, depth_m, opacity)
+        far = label.endswith("far")
+        opacity = OPACITY * (FAR_SHARE if far else 1.0)
+        mi = instance(parent, label, depth_m, opacity, COLOR_FAR if far else COLOR)
         z0, z1 = z_of(760, depth_m), z_of(80, depth_m)
         # rolled a quarter turn about x, the plane stands upright across the frame; its local y
         # (scale y) becomes the height
@@ -167,7 +174,7 @@ def main():
         actor.set_editor_property("tags", [unreal.Name(TAG)])
         actor.set_actor_hidden_in_game(opacity <= 0.0)
         origin, extent = actor.get_actor_bounds(False)
-        log(f"{label} at depth {depth_m} m: opacity {opacity:.2f}, full below z {z_of(BASE_ROW, depth_m):.1f} m, none above {z_of(TOP_ROW, depth_m):.1f} m; "
+        log(f"{label} at depth {depth_m} m: opacity {opacity:.2f}, colour {COLOR_FAR if far else COLOR}, full below z {z_of(BASE_ROW, depth_m):.1f} m, none above {z_of(TOP_ROW, depth_m):.1f} m; "
             f"bounds centre ({origin.x:.0f}, {origin.y:.0f}, {origin.z:.0f}) extent ({extent.x:.0f}, {extent.y:.0f}, {extent.z:.0f}) cm")
     les.save_current_level()
     log("saved")
