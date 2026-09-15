@@ -3,10 +3,12 @@ of a leaf texture. Every pixel's hue is turned by the angle that brings the leav
 saturation-weighted circular mean over opaque, coloured pixels) to the target; saturation and value
 are scaled by factors; the alpha, the leaf cut-out, is left untouched.
 
-  py -3.11 green_leaves.py <in.png> <out.png> [target_hue_deg=105] [saturation=0.95] [value=0.6]
+  py -3.11 green_leaves.py <in.png> <out.png> [target_hue_deg=105] [saturation=0.95] [value=0.4]
 
 The factors' defaults are the crowns compared in the stream: at value 0.9 the uplit crowns read
-brighter than the picture's (the area left of the building 77 against 63).
+brighter than the picture's (the area left of the building 77 against 63); at 0.6 that area still
+measured 24.3; at 0.4 18.5 (mean over all regions 12.3 -> 11.9). The crowns hardly answer the tree
+uplights (0.3 -> 0.15 moved their rows by under 1): their brightness is the texture's.
 """
 
 import sys
@@ -49,7 +51,7 @@ def main():
     src, out = sys.argv[1], sys.argv[2]
     target = float(sys.argv[3]) if len(sys.argv) > 3 else 105.0
     sat_k = float(sys.argv[4]) if len(sys.argv) > 4 else 0.95
-    val_k = float(sys.argv[5]) if len(sys.argv) > 5 else 0.6
+    val_k = float(sys.argv[5]) if len(sys.argv) > 5 else 0.4
     a = np.asarray(Image.open(src).convert("RGBA"), dtype=np.float32) / 255.0
     rgb, alpha = a[..., :3], a[..., 3]
     hsv = rgb_to_hsv(rgb)

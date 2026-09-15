@@ -1,5 +1,17 @@
 # Changelog
 
+## Darker tree crowns on the left — 2026-09-15
+
+After the lobby, the area left of the building was the frame's most distant region (colour distance
+24.3). Its rows through the tree crowns read 87–97 where the picture's read 40–61.
+
+- The tree uplights are not the cause. At 0.15 instead of 0.3 those rows moved by less than 1 (the
+  mean's change came from the street, which varies with the traffic). The crowns' brightness is
+  their leaf texture's, as the material's colour parameter had also shown.
+- The green leaf texture is now made at 0.4 of its value, down from 0.6 (`green_leaves.py`'s
+  default), and imported again. Compared in the stream: the crown rows came down by 4–7, the left
+  region 24.3 → 18.5, and the mean 12.3 → **11.9**, the closest pass so far. The uplights stay at 0.3.
+
 ## A dimmer lobby — 2026-09-15
 
 The ground floor was the frame's most distant region after the city (colour distance 25.7): the
