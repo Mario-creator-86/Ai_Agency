@@ -51,8 +51,10 @@ POINT = env("AMN_LOOK_POINT", "2.0")         # pendants, desk and floor lamps: t
 FILL = env("AMN_LOOK_FILL", "1.4")           # the rooms' area fills
 # the lobby's fills and spill, on top of FILL: at 0.75 the ground floor's region still read 81 against
 # the picture's 66 (colour distance 25.7 once the S1 LEDs were lit); at 0.55 25.7 -> 18.8, mean 14.4 -> 13.7;
-# at 0.4 18.8 -> 12.7 and the street 15.4 -> 11.5 (the lobby's spill had lit the pavement too), mean 12.8
-LOBBY = env("AMN_LOOK_LOBBY", "0.4")
+# at 0.4 18.8 -> 12.7 and the street 15.4 -> 11.5 (the lobby's spill had lit the pavement too), mean 12.8;
+# at 0.3 the ground region 8.3, mean 12.6. Lower is not worth it: the floor's lower rows already read a
+# little darker than the picture, only its upper rows brighter.
+LOBBY = env("AMN_LOOK_LOBBY", "0.3")
 LAMP = env("AMN_LOOK_LAMP", "0.5")           # street lamps: at full they burnt white pools on the road
 UPLIGHT = env("AMN_LOOK_UPLIGHT", "0.3")     # tree uplights (the leafy crowns read too bright at 0.6)
 # the small warm lights under each office ceiling (hq_building.ceiling_cove): at 1.0 the rooms read too

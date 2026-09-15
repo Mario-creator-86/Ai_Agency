@@ -12,10 +12,13 @@ lobby read brighter than the Owner's picture across the whole floor (81 against 
   | --- | --- | --- | --- |
   | 0.75 | 25.7 | 16.2 | 14.4 |
   | 0.55 | 18.8 | 15.4 | 13.7 |
-  | 0.4 | 12.7 | 11.5 | **12.8** |
+  | 0.4 | 12.7 | 11.5 | 12.8 |
+  | 0.3 | 8.3 | 14.0 | **12.6** |
 
-  0.4 is the new default and the closest pass so far. The lobby's spill had lit the pavement in
-  front of it too. The upper rows of the ground floor still read a little brighter than the picture.
+  0.3 is the new default and the closest pass so far. The lobby's spill had lit the pavement in
+  front of it too. The street region moves by about ±2 with where the traffic is. The ground floor's
+  lower rows now read a little darker than the picture and its upper rows a little brighter, so the
+  lobby goes no lower.
 
 ## Green LEDs on the server racks: Nanite was hiding them — 2026-09-15
 
