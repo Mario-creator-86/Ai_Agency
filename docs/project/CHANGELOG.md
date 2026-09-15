@@ -16,6 +16,14 @@ skeletal trees stopped Pixel Streaming's capture on an earlier pass.
   will be destroyed" warning, frames delivered). But the trees rendered bare, white branches with
   no leaves, which reads worse than the foam crowns; the live level went back to its Blender trees
   (the default) while the cause is traced.
+- Traced: the Megaplants trees are Nanite skeletal meshes grown by the Procedural Vegetation Editor
+  as Nanite assemblies, and their leaves are assembly parts, not triangles of the mesh. A copy of
+  the source model has a bark and a foliage section but no UVs; a copy of the render data
+  (`AMN_TREE_LOD=RENDER_DATA`) has the bark alone. No Geometry Script copy can carry the leaves.
+  The Procedural Vegetation Editor exports a tree as a static mesh with its foliage
+  (`Export Mesh Type: Static Mesh`), but only from its editor, so the project now enables that
+  (experimental) plugin for that export. `convert_trees_static.py` also gained `AMN_TREE_LOD`,
+  `AMN_TREES_OVERWRITE` and Nanite set through `NaniteSettings` (the first copies had Nanite off).
 
 ## Real paintings and wet asphalt in the live headquarters — 2026-09-15
 

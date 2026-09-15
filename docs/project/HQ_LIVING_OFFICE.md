@@ -258,8 +258,10 @@ STUDIO_OFFICE_STREAM_SIGNALLING_URL=ws://127.0.0.1:8890               # .env, th
     the pack's second model (the first has red neon edges). The pack's arm lamps, scaled to the
     scene's lamp heights, read as black crosses; the posts are the slim `SM_Lantern_1`.
     Megaplants' trees are all skeletal; `convert_trees_static.py` makes Nanite static copies with
-    Geometry Script (`AMN_TREES=megastatic` places them). The capture holds with them, but the
-    first copies rendered without leaves, so the Blender trees stay the default for now.
+    Geometry Script (`AMN_TREES=megastatic` places them). The capture holds with them, but they
+    render without leaves: the leaves are Nanite assembly parts, which a mesh copy cannot carry.
+    Leafy static trees come from the Procedural Vegetation Editor's own export (Static Mesh, with
+    foliage), done in its editor; the Blender trees stay the default until then.
     Re-importing the export over the previous import, while the level referenced it, left
     renamed texture copies (`props_color` x37) and facade materials without their window textures,
     so the skyline rendered flat white; `build_hq_scene.py` now imports each build into its own

@@ -11,6 +11,7 @@
 		{ "Name": "PixelStreaming2", "Enabled": true },
 		{ "Name": "RemoteControl", "Enabled": true },
 		{ "Name": "GeometryScripting", "Enabled": true },
+		{ "Name": "ProceduralVegetationEditor", "Enabled": true },
 		{ "Name": "ChaosVehiclesPlugin", "Enabled": true },
 		{ "Name": "AndroidFileServer", "Enabled": false }
 	]

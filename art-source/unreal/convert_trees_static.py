@@ -25,6 +25,12 @@ SOURCE = "/Game/Megaplant_Library"
 OUT = "/Game/HQ/Trees"
 DEFAULT = "Tree_Black_Alder_01_B,Tree_Black_Poplar_01_A,Tree_Goat_Willow_01_D,Tree_Japanese_Medlar_01_B"
 WANTED = [n.strip() for n in os.environ.get("AMN_TREES_CONVERT", DEFAULT).split(",") if n.strip()]
+# Which mesh of the skeletal tree is copied. The first copies (MaxAvailable) came out with bark and
+# foliage sections but no UV channels and rendered bare: the Megaplants trees are Nanite skeletal
+# meshes, and their leaves may only be in the render data. AMN_TREE_LOD=RENDER_DATA|SOURCE_MODEL|
+# HI_RES_SOURCE_MODEL|MAX_AVAILABLE; AMN_TREES_OVERWRITE=1 replaces copies already made.
+LOD_TYPE = os.environ.get("AMN_TREE_LOD", "MAX_AVAILABLE").upper()
+OVERWRITE = os.environ.get("AMN_TREES_OVERWRITE") == "1"
 
 
 def log(msg):
@@ -48,18 +54,27 @@ def outcome_ok(result):
 def convert(name):
     target = f"{OUT}/SM_{name}"
     if unreal.EditorAssetLibrary.does_asset_exist(target):
-        mesh = unreal.load_asset(target)
-        return {"asset": target, "status": "exists", "size_cm": size(mesh)}
+        if not OVERWRITE:
+            mesh = unreal.load_asset(target)
+            return {"asset": target, "status": "exists", "size_cm": size(mesh)}
+        unreal.EditorAssetLibrary.delete_asset(target)
     skel = find_skeletal(name)
     if skel is None:
         return {"status": "skeletal mesh not found"}
     dynamic = unreal.new_object(unreal.DynamicMesh)
+    read_lod = unreal.GeometryScriptMeshReadLOD()
+    read_lod.set_editor_property("lod_type", getattr(unreal.GeometryScriptLODType, LOD_TYPE))
     copied, ok = outcome_ok(unreal.GeometryScript_AssetUtils.copy_mesh_from_skeletal_mesh(
-        skel, dynamic, unreal.GeometryScriptCopyMeshFromAssetOptions(), unreal.GeometryScriptMeshReadLOD()))
+        skel, dynamic, unreal.GeometryScriptCopyMeshFromAssetOptions(), read_lod))
     if not ok:
-        return {"status": "copy from skeletal mesh failed"}
+        return {"status": f"copy from skeletal mesh failed (LOD {LOD_TYPE})"}
     options = unreal.GeometryScriptCreateNewStaticMeshAssetOptions()
     options.set_editor_property("enable_nanite", True)
+    # the first copies came out with Nanite off although enable_nanite was set: the asset takes
+    # its Nanite settings from this struct
+    nanite = options.get_editor_property("nanite_settings")
+    nanite.set_editor_property("enabled", True)
+    options.set_editor_property("nanite_settings", nanite)
     options.set_editor_property("enable_collision", False)
     mesh, ok = outcome_ok(unreal.GeometryScript_NewAssetUtils.create_new_static_mesh_asset_from_mesh(copied, target, options))
     if not ok or mesh is None:
