@@ -58,7 +58,10 @@ FILL = env("AMN_LOOK_FILL", "1.4")           # the rooms' area fills
 # little darker than the picture, only its upper rows brighter.
 LOBBY = env("AMN_LOOK_LOBBY", "0.3")
 LAMP = env("AMN_LOOK_LAMP", "0.5")           # street lamps: at full they burnt white pools on the road
-UPLIGHT = env("AMN_LOOK_UPLIGHT", "0.3")     # tree uplights (the leafy crowns read too bright at 0.6)
+# tree uplights: the leafy crowns read too bright at 0.6, and at 0.3 the city left of the building
+# still came 12.1 against the picture (its light 71 against 63). At 0.15: city left 11.7, the
+# street 7.5 -> 6.8, the ground floor 3.9 -> 3.4, mean 7.1 -> 6.9.
+UPLIGHT = env("AMN_LOOK_UPLIGHT", "0.15")
 # the small warm lights under each office ceiling (hq_building.ceiling_cove): at 1.0 the rooms read too
 # bright (mean 15.7; L2 88 against the picture's 79), at 0.35 the closest pass so far (14.5)
 COVE = env("AMN_LOOK_COVE", "0.35")

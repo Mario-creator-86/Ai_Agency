@@ -301,7 +301,11 @@ def street():
     # AMN_DRESS_TREES=0 leaves the trees out (the wind-animated Megaplants weigh heavily on the stream)
     trees = [find_asset(p) for p in TREES] if os.environ.get("AMN_DRESS_TREES", "1") != "0" else []
     leaves = leaf_material() if TREE_MODE == "soul" else None
-    for i, (xpx, ty, top_row) in enumerate(((225, 3.0, 440), (300, 0.2, 470), (372, -1.4, 470), (150, 4.0, 500), (1378, -1.0, 450), (1466, 1.5, 420), (1580, 3.0, 450)) if trees else ()):
+    # Four tall trees on the left grew into one wall of leaves that hid the city behind them; the
+    # picture has a row of smaller trees with gaps of lit city between their crowns. Seven smaller
+    # ones stand there now (a crown scales with the height, so lower is also narrower).
+    for i, (xpx, ty, top_row) in enumerate(((150, 4.0, 520), (205, 3.0, 505), (258, 1.6, 500), (312, 0.2, 498),
+                                            (366, -1.4, 496), (1378, -1.0, 480), (1466, 1.5, 462), (1580, 3.0, 478)) if trees else ()):
         base = TERRACE_Z if ty > -3.0 else WALK_Z
         tree = place("tree", trees[i % len(trees)], ue(X(xpx), ty, base), height=(Z(top_row, ty) - base) * 100.0, label=f"tree_{i}")
         if tree is not None and leaves is not None:

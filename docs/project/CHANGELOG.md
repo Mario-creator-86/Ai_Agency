@@ -1,5 +1,29 @@
 # Changelog
 
+## The city, the sky and the street around the building — 2026-09-16
+
+With the rooms close to the picture, the frame's own surroundings were the distance left: the mean
+colour distance over all regions went 9.6 to **6.5**, the closest the live stream has been.
+
+- **A dark edge of street.** The near pavement was a light, cool grey, so the frame's lowest rows read
+  43, 42, 55 against the picture's 11, 20, 38. At `#31303c` those rows are 27, 29, 41 and the street
+  region came 13.6 → 7.7.
+- **A skyline of mostly dark towers.** Our facades had a third to a half of every window grid alight,
+  a wall of yellow squares that made the city read as near. The shared facades keep half their lit
+  share; the two the right-hand side alone uses keep more, because that side was already darker than
+  the picture. City left 18.3 → 12.7, city right 15.7 → 13.1.
+- **A cooler dusk.** Over the frame's upper half the sky read about 7 short of green and 12 short of
+  blue. `compose_sky_backdrop.py --tint` (1.0, 1.10, 1.14) closes that: sky left 14.2 → **2.2**, city
+  right 13.1 → 8.8, the roof sign 10.6 → 9.6.
+- **A row of street trees instead of a wall of leaves.** Four tall trees on the left had grown into
+  one mass that hid the city behind them; the picture has smaller trees with lit city between their
+  crowns. Five smaller ones stand there now (a crown scales with its height), and the uplights that
+  wash them are at 0.15 rather than 0.3: city left 12.1 → **6.6**, street 7.5 → 6.7.
+- Tried: the static Megaplants trees in that row — they render as bare white branches, so the leafy
+  Soul: City tree stays.
+- Tried: halving the skyline's windows from the look pass (`AMN_LOOK_CITY_WINDOW_SCALE=2`); the towers
+  read finer but no region moved and the mean went 9.1 → 9.4.
+
 ## The employees hold a frame that really faces the viewer — 2026-09-15
 
 The men sat with the head bowed over the desk, which from the plate camera reads as the back of a

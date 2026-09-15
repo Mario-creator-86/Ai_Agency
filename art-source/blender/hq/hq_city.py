@@ -286,7 +286,7 @@ def build_city(city, mats):
     dark = windows_material("tower_dark", "#1c2440", lit_ratio=0.18, win_w=0.18, win_h=0.28, strength=7.5)
     blue = windows_material("tower_blue", "#26304f", lit_ratio=0.19, win_w=0.17, win_h=0.27, strength=7.5)
     mauve = windows_material("tower_mauve", "#343652", lit_ratio=0.18, win_w=0.19, win_h=0.29, strength=7.5)
-    dense = windows_material("city_dense", "#1f2438", lit_ratio=0.26, win_w=0.16, win_h=0.26, strength=8.0)
+    dense = windows_material("city_dense", "#1f2438", lit_ratio=0.18, win_w=0.16, win_h=0.26, strength=7.0)
     cool = windows_material("tower_cool", "#1e2640", lit_ratio=0.2, win_w=0.22, win_h=0.34, strength=6.5, warm=False)
     beacon = emissive("beacon", "#ff3b3b", 25.0)
     # far city band (lowest, densest lights)
@@ -296,7 +296,7 @@ def build_city(city, mats):
         top = rng.uniform(470, 600)
         tower(t, x0, x0 + w, top, 60.0 + rng.uniform(0, 5), dense, depth=5.0)
     # mid-rise blocks in front of the towers (the dense lit city under the bridge)
-    mid = windows_material("city_mid", "#1d2134", lit_ratio=0.26, win_w=0.28, win_h=0.42, strength=8.0)
+    mid = windows_material("city_mid", "#1d2134", lit_ratio=0.18, win_w=0.28, win_h=0.42, strength=7.0)
     for i in range(22):
         x0 = rng.uniform(-20, 430)
         w = rng.uniform(26, 60)
