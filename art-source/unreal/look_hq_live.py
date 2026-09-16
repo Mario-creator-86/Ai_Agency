@@ -66,6 +66,11 @@ LAMP = env("AMN_LOOK_LAMP", "0.5")           # street lamps: at full they burnt 
 # The infra room's own fill. In the picture S1 is a lit room: the racks stand as cabinets with
 # their own edges, on a floor you can see. Ours was a flat dark wall with LED dots on it.
 INFRA = env("AMN_LOOK_INFRA", "1")
+# The treasury's own lights. Against the picture that shopfront reads 12 short of red and 13 of
+# green over its columns: the picture's operations room is a lit room, ours a dark red one.
+# 3 (1 before): the picture's operations room is lit, and with the slate walls ours read 20 to 40
+# short over its columns.
+OPS = env("AMN_LOOK_OPS", "3")
 # tree uplights: the leafy crowns read too bright at 0.6, and at 0.3 the city left of the building
 # still came 12.1 against the picture (its light 71 against 63). At 0.15: city left 11.7, the
 # street 7.5 -> 6.8, the ground floor 3.9 -> 3.4, mean 7.1 -> 6.9.
@@ -186,6 +191,8 @@ def factor_for(name):
         return POINT
     if name.startswith("infra_"):
         return FILL * INFRA
+    if name.startswith("ops_"):
+        return OPS
     if name.startswith(FILL_NAMES):
         return FILL
     if name.startswith(LAMP_NAMES):

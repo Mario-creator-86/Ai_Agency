@@ -940,8 +940,10 @@ def build_ground(shell, rooms, props, leaves, pots, fronts, glow, lights, back, 
         shell.front_quad(X(x0), X(x1), 0.0, Z(532), -0.16, mat["glass"])
     # ---------------- S2 TREASURY (Nadia's office; Distribution has its own room on L2)
     room_rect("accounting_office", 897, 1032, 0, "S2 Treasury")
-    rooms.box(X(897), X(1032), BACK_G, BACK_G + 0.2, f, c, principled("ops_wall", "#5c2a33", rough=0.6))
-    rooms.box(X(897), X(1032), -0.1, BACK_G, -0.05, 0.0, principled("ops_floor", "#3a2226", rough=0.25))
+    # The picture's S2 is a slate room with warm accents, like S1 and S3 beside it; ours was a red one,
+    # the only shopfront whose colour the picture does not have.
+    rooms.box(X(897), X(1032), BACK_G, BACK_G + 0.2, f, c, principled("ops_wall", "#3c4655", rough=0.6))
+    rooms.box(X(897), X(1032), -0.1, BACK_G, -0.05, 0.0, principled("ops_floor", "#2e3540", rough=0.25))
     props.box(X(945), X(1002), BACK_G - 0.4, BACK_G, Z(566, BACK_G - 0.4), Z(563, BACK_G - 0.4), mat["wood"])
     rng = random.Random(21)
     for i in range(5):
@@ -951,13 +953,26 @@ def build_ground(shell, rooms, props, leaves, pots, fronts, glow, lights, back, 
     cab = principled("cabinet", "#2b2b30", rough=0.4, metal=0.3)
     line = emissive("cabinet_line", "#ffd49a", 2.0)
     props.box(X(902), X(972), BACK_G - 0.6, BACK_G, 0.0, Z(574, BACK_G - 0.6) - 0.0, cab)
-    for r in range(4):
-        zl = 0.3 + r * 0.55
-        glow.box(X(904), X(970), BACK_G - 0.61, BACK_G - 0.6, zl, zl + 0.02, line)
-    for cc in range(3):
-        xl = 904 + cc * 22
-        glow.box(X(xl), X(xl) + 0.02, BACK_G - 0.61, BACK_G - 0.6, 0.1, Z(576, BACK_G - 0.6), line)
+    # a wall of drawers: five rows of four, each with its own front, gap and lit label, where this was
+    # four lines crossed by three
+    drawer = principled("drawer_front", "#39404c", rough=0.45, metal=0.2)
+    label = emissive("drawer_label", "#ffcf8a", 0.7)
+    top_z = Z(574, BACK_G - 0.6)
+    rows, cols = 5, 4
+    height = (top_z - 0.15) / rows
+    width = (X(970) - X(904)) / cols
+    for r in range(rows):
+        z0 = 0.12 + r * height
+        for cc in range(cols):
+            x0 = X(904) + cc * width
+            props.box(x0 + 0.01, x0 + width - 0.01, BACK_G - 0.62, BACK_G - 0.6, z0 + 0.015, z0 + height - 0.03, drawer)
+            # the label strip in the middle of each drawer: small and dim, as the picture's are; at the
+            # cabinet line's own strength they read as a grid of white dashes
+            glow.box(x0 + width * 0.40, x0 + width * 0.60, BACK_G - 0.63, BACK_G - 0.62, z0 + height * 0.46, z0 + height * 0.54, label)
     props.box(X(918), X(924), 1.2, 1.4, 0.0, c - 0.5, mat["black"])
+    # Tried: a long lit counter and a machine beside it, as the picture has. At this scale the
+    # counter's top read as a white slab across the room and hid Nadia at her desk; the shopfront's
+    # region went 5.4 -> 6.4, so the room keeps the desk it had.
     plant(leaves, pots, X(1016), BACK_G - 0.5, Z(590, BACK_G - 0.5), 0.6, mat["leaf"], mat["pot_white"], pot_h=0.25, pot_r=0.12, n=10, seed=53)
     props.box(X(1004), X(1030), BACK_G - 0.45, BACK_G - 0.4, Z(590, BACK_G - 0.45) - 0.05, Z(590, BACK_G - 0.45), mat["wood"])
     props.box(X(1003), X(1029), BACK_G - 0.08, BACK_G - 0.02, Z(624, BACK_G), Z(600, BACK_G), mat["mon_frame"])
