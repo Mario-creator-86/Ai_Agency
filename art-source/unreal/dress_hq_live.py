@@ -269,7 +269,12 @@ def desks():
         top = f + 0.75
         if CONSOLES != "blender":
             place("desk", kit["desk"], ue(ox, (yf + yb) / 2, f), height=75.0, label=f"{desk_id}_desk")
-            place("chair", kit["chair"], ue(ox, seat_y + 0.05, f), height=105.0, label=f"{desk_id}_chair")
+        # The chair comes from the pack whichever desk is in use. 115 cm, not its own 107: the build's
+        # planks (48 x 8 cm back to f + 1.12, 46 x 46 cm seat) stand at the same spot and this pass
+        # cannot remove them - they are inside the shared "props" object - so the chair is spawned a
+        # little large and its bounds enclose them. Back at its own height once hq_building.workstation
+        # gives its chairs their own object for clear() to take away.
+        place("chair", kit["chair"], ue(ox, seat_y + 0.05, f), height=115.0, label=f"{desk_id}_chair")
         # The flat monitors with the studio's live screens stay the scene's own ("desk_screens"): the
         # pack's monitor and tower are 1999 hardware, far from the picture's modern desks.
         place("keyboard", kit["keyboard"], ue(ox - side * 0.05, yb - 0.14, top), max_len=44.0, label=f"{desk_id}_keyboard")
@@ -302,7 +307,10 @@ def street():
     # and pale stone troughs; without them the passer-by sitting there looked unsupported.
     bench = place("bench", find_asset(STREET["bench"]), ue(X(917), by + 0.22, WALK_Z), max_len=250.0, label="lobby_bench")
     if bench is not None:
-        _flat.paint(bench, "BenchWood", (0.14, 0.08, 0.04), roughness=0.55)
+        # 0.34, 0.21, 0.11 (0.14, 0.08, 0.04 before): the picture's bench is lit wood, 98, 77, 65
+        # over its slats with a 90th percentile of 126, where ours read 75, 53, 47 and 68 - dark
+        # enough that the passer-by sitting on it looked unsupported again.
+        _flat.paint(bench, "BenchWood", (0.34, 0.21, 0.11), roughness=0.55)
     sy0 = y_walk + 1.2
     place("bus_stop", find_asset(STREET["bus_stop"]), ue(X(1461), sy0 + 0.9, WALK_Z), max_len=(X(1545) - X(1378)) * 100.0, label="bus_shelter")
     pot = find_asset(STREET["planter"])
@@ -338,11 +346,14 @@ def cars():
     y_road = Y(790, ROAD_Z)
     near, far = y_road + 3.4, y_walk - 3.4
     # (mesh name fragment, column px, lane depth, heading +1 = towards +x)
-    # Eight, not five: each crosses the frame in six to nine seconds of the traffic sequence's
-    # twenty-four, so five left the road empty for stretches where the picture always has traffic.
-    fleet = (("vehicle02", 150, near, 1), ("vehicle05", 330, near, 1), ("vehicle03", 1400, near, 1),
-             ("vehicle12", 800, near, 1), ("vehicle09", 1180, near, 1),
-             ("vehicle10", 1060, far, -1), ("vehicle06", 560, far, -1), ("vehicle13", 240, far, -1))
+    # Five again, not eight. Eight was right while every car made one pass per loop and then parked off
+    # frame: they still averaged only 1.88 on frame and left the road empty for 2.2 % of every loop.
+    # Since traffic_hq_live.py drives them as a conveyor each car is on frame for 79 % of its crossing,
+    # so five put 4.31 on frame on average and never fewer than three - the picture's four. Eight would
+    # now crowd the street with six or seven, and each vehicle carries four dynamic lights the stream
+    # has to pay for.
+    fleet = (("vehicle02", 150, near, 1), ("vehicle12", 800, near, 1), ("vehicle09", 1180, near, 1),
+             ("vehicle10", 1060, far, -1), ("vehicle06", 560, far, -1))
     for frag, xpx, lane, heading in fleet:
         name = next((n for n in meshes if frag in n), None)
         if name is None:
@@ -408,6 +419,11 @@ BIG_PLANT = "/Game/RestaurantScene/Meshes/SM_PlantPot"
 # again once the rooms were better lit (2026-09-15, 999 = Palms' plants everywhere): thin dark stems,
 # fainter than the fronds the look pass lightens, and the mean slipped (14.0 -> 14.1).
 BIG_PLANT_CM = float(os.environ.get("AMN_BIG_PLANT_CM", "90"))
+# The frond is 151 x 161 x 159 cm of its own. Five of the recorded plants are 2.05 to 2.65 m tall, and
+# stretching one frond to those made it 2.0 to 2.5 m wide as well: a leaf blob the width of a desk,
+# where the picture has a slim plant in a pot. Above this it stands shorter rather than wider than the
+# model is built to be. A real 2.5 m indoor plant needs a pack we do not own.
+PLANT_MAX_CM = float(os.environ.get("AMN_PLANT_MAX_CM", "175"))
 PAINTINGS = ("/Game/RestaurantScene/Meshes/SM_WallPainting_1", "/Game/RestaurantScene/Meshes/SM_WallPainting_2")
 FRONT_YAW.setdefault("plant", float(os.environ.get("AMN_YAW_PLANT", "0")))
 FRONT_YAW.setdefault("painting", float(os.environ.get("AMN_YAW_PAINTING", "0")))
@@ -424,10 +440,14 @@ def props():
         target = item["height"] * 100.0
         if big is not None and target >= BIG_PLANT_CM:
             asset = big
+            target = min(target, PLANT_MAX_CM)
         else:
             # the model whose own height is nearest, so none is stretched far from its shape
             asset = min(plants, key=lambda ah: abs(math.log(target / ah[1])))[0] if plants else None
-        place("plant", asset, ue(item["x"], item["y"], item["z"]), height=target, label=f"plant_{i}")
+        # Sixteen of the twenty-one plants are the same frond; all turned the same way they repeat from
+        # floor to floor. A different yaw each time hides that at no cost.
+        place("plant", asset, ue(item["x"], item["y"], item["z"]), yaw_extra=(i * 47) % 360,
+              height=target, label=f"plant_{i}")
     paintings = [a for a in (find_asset(p) for p in PAINTINGS) if a is not None]
     for i, item in enumerate(recorded.get("pictures", [])):
         if not paintings:
@@ -447,7 +467,10 @@ ROAD_PARAMS = {
     # the closest pass (15.8); smoother (0.12-0.35) and untinted, it only lit the building's base
     "Roughness Min": float(os.environ.get("AMN_ROAD_ROUGH_MIN", "0.25")),
     "Roughness Max": float(os.environ.get("AMN_ROAD_ROUGH_MAX", "0.5")),
-    "Base Color Multiply": float(os.environ.get("AMN_ROAD_DARKEN", "0.85")),
+    # 0.95 (0.85 before): with the road this wet most of what it shows is reflection, and its own
+    # tone had been pulled down under that until the far lane read 53 against the picture's 69 and the
+    # near lane 52 against 63, with 14.3 % of the far lane under luma 30 where the picture has 8.4 %.
+    "Base Color Multiply": float(os.environ.get("AMN_ROAD_DARKEN", "0.95")),
     "Specular": 0.5,
     "UV Tile U": 2.0,
     "UV Tile V": 2.0,
@@ -516,7 +539,7 @@ CLUTTER_ASSETS = {
     "books": f"{OFFICE}/SM_book_stand",
     "open_book": f"{OFFICE}/SM_open_book",
     "pencils": f"{OFFICE}/SM_pencil_holder",
-    "speakers": f"{OFFICE}/SM_music_speakers",
+    "speakers": f"{APT}/SM_ComputerSpeakers_A01_N1",
     "table_lamp": f"{OFFICE}/SM_table_lamp",
     "headphones": f"{OFFICE}/SM_headphones",
     "mug": f"{OFFICE}/SM_tea_cup",
@@ -526,6 +549,16 @@ CLUTTER_ASSETS = {
     "cabinet": "/Game/Modern_House_V1/Mesh/SM_Cabinet_2",
     # a small white cabinet for under the counters, where the picture keeps boxes and drawers
     "underbox": "/Game/Modern_House_V1/Mesh/SM_Cabinet_6",
+    # The picture's counters carry a printer and stacks of paper and its floors a filing cabinet in
+    # every gap; we had a mesh for none of those. Sizes are each pack's own (33 x 20 x 15 for the
+    # printer, 49 x 37 x 25 for the papers, 76 x 38 x 42 for the archive box, 42 x 50 x 120 for the
+    # filing cabinet, 49 x 86 x 85 for the cart, 32 x 27 x 16 for the phone), so none is stretched.
+    "printer": f"{APT}/SM_ComputerPrinter_A01_N1",
+    "papers": "/Game/MafiaBarnPack/Meshes/Props/Paper/SM_Documents1",
+    "docubox": "/Game/MafiaBarnPack/Meshes/Props/Boxes/SM_DocuBox",
+    "filing": "/Game/Modern_House_V1/Mesh/SM_Cabinet_10",
+    "cart": "/Game/RestaurantScene/Meshes/SM_UtilityCart",
+    "phone": f"{APT}/SM_Phone_A01_N1",
 }
 # (level, kind, column px, depth m, height above the floor m, "h" for total height or "l" for the
 #  longest horizontal side, that size in cm)
@@ -591,14 +624,98 @@ CLUTTER = (
     (0, "underbox", 930, 2.10, 0.00, "h", 50),
     (0, "frond", 1026, 1.70, 0.00, "h", 95),
     (0, "tray", 938, 2.05, 0.95, "l", 30),
+    # The gaps the rooms still leave bare, each read off the build and clear of what stands there:
+    # L4's window bay (958-1010, the plant at 992); L3's white unit (790-830, its top f + 0.96) and
+    # the 22 px floor gap between the whiteboard desk (880-975) and the bottle counter (997-1102);
+    # L2's stretch between the work table's end (722) and the back desk's left leg (705-712), and the
+    # floor under the Distribution window (940-990), clear of the workstation at 1000; L1's gap
+    # between the two DAW monitors (668, 681), the slat wall (822-853, so y 2.00 keeps the cabinet's
+    # 50 cm depth clear of the slats at 2.28-2.38) and the render bay floor under the standing lamp.
+    (4, "docubox", 972, 2.15, 0.00, "h", 42),
+    (3, "printer", 800, 2.15, 0.96, "l", 34),
+    (3, "papers", 818, 2.15, 0.96, "l", 30),
+    (3, "filing", 986, 2.10, 0.00, "h", 105),
+    (2, "cart", 736, 2.15, 0.00, "h", 85),
+    (2, "filing", 958, 2.10, 0.00, "h", 105),
+    (1, "phone", 675, 2.20, 0.78, "h", 16),
+    (1, "filing", 832, 2.00, 0.00, "h", 105),
+    (1, "docubox", 1118, 2.20, 0.00, "h", 42),
 )
 # the lobby's second seat turns in towards the first, as the picture's pair face each other
-CLUTTER_YAW = {(0, "armchair", 754): 200.0, (0, "armchair", 700): 160.0}
+CLUTTER_YAW = {(0, "armchair", 754): 200.0, (0, "armchair", 700): 160.0,
+               # the cart is 86 cm long and 49 deep: turned, its length runs along the room, not into
+               # the back wall
+               (2, "cart", 736): 90.0}
 
 
 # Pack pieces whose own materials read wrong in these rooms: the tall cabinet is a green rusted
 # locker and the low one a white kitchen unit, where the picture has slate office furniture.
-CLUTTER_PAINT = {"cabinet": (0.10, 0.11, 0.13), "underbox": (0.12, 0.13, 0.15)}
+CLUTTER_PAINT = {"cabinet": (0.10, 0.11, 0.13), "underbox": (0.12, 0.13, 0.15),
+                 # the filing cabinet is a plain white column of the house pack, where the picture has
+                 # slate office furniture, like the other two
+                 "filing": (0.12, 0.13, 0.15)}
+
+
+# ---------------------------------------------------------------- the ceiling pendants
+# Measured off the reference at 8x, one of the picture's pendants is a wide shallow dark dish, 67 cm
+# across and 18 cm deep, with a warm band of light round its rim, on a 25 cm stem. Ours is a 68 cm
+# black cone with a 66 cm lit disc under it (hq_building.pendant): the right width, but no shade wall,
+# no reflector and no stem, so it reads as a flat black saucer over a white blob.
+# The barn pack's enamel pendant is the one shade of the packs with those proportions - 39 x 40 x 70 cm,
+# dark teal-grey outside with a pale radial reflector inside - so the shade is nearly as wide as the
+# whole lamp is tall and a reference-width dish does not drag a metre of rod down with it. Its warm
+# band costs nothing: the build's own POINT light hangs 12 cm under each pendant and stays there.
+# (SM_2_HangingLamp, 41 x 42 x 47, is the same shade on a shorter cord, with its own glass slot for the
+# lit underside, if the 70 cm above turns out to be mostly cord.)
+PENDANT = "/Game/MafiaBarnPack/Meshes/Props/Lighting/SM_HangingLamp"
+# (level, column px, the build's drop in metres, the shade's width in cm, what the build draws there)
+PENDANTS = (
+    (4, 900, 1.10, 66, "dome"),
+    (4, 1076, 1.00, 34, "bulb"),
+    (4, 1116, 0.85, 34, "bulb"),
+    (2, 590, 0.62, 60, "dome"),
+    (2, 660, 0.62, 60, "dome"),
+    (2, 740, 0.62, 60, "dome"),
+    (2, 820, 0.62, 60, "dome"),
+    (2, 1040, 0.62, 60, "dome"),
+    (2, 1110, 0.62, 60, "dome"),
+    (2, 1180, 0.62, 60, "dome"),
+    (0, 868, 1.20, 38, "bulb"),
+)
+# The eight dome ones are off until the Blender build stops drawing its cone. hq_building.pendant()
+# builds into the shared "props" object, so clear() cannot take one cone away, and a 60 cm shade set
+# inside a 68 cm cone only leaves a black collar round it. The three bulb ones go in now: there the
+# build draws a 9 cm sphere, which a 34 cm shade swallows whole.
+# To finish the other eight, give pendant() the early return hq_lib.plant() already has - record the
+# anchor into UNREAL_PROPS, keep the light, skip the cone - and turn this on.
+PENDANTS_DOME = os.environ.get("AMN_DRESS_PENDANTS", "0") != "0"
+PENDANT_Y = 1.6  # hq_building.pendant hangs every one of them at this depth
+FRONT_YAW.setdefault("pendant", float(os.environ.get("AMN_YAW_PENDANT", "0")))
+
+
+def cz(level):
+    """The room's ceiling: the second row of the floor's pair, as hq_building.cz reads it."""
+    return Z(FLOORS[level][1])
+
+
+def pendants():
+    """Pack shades where the build hangs its own, hung by the shade's rim."""
+    lamp = find_asset(PENDANT)
+    if lamp is None:
+        return
+    n = 0
+    for level, xpx, drop, shade_cm, kind in PENDANTS:
+        if kind == "dome" and not PENDANTS_DOME:
+            continue
+        # The build's shade ends 3 cm below its drop and place() sets the bounds' bottom on the target,
+        # which on this mesh is the shade's rim: so the rim lands where the build's disc is and the cord
+        # runs up from it. Sized by the shade's width, not by height - at 60 cm the lamp is 108 cm long,
+        # so on L2 the cord ends 43 cm above the ceiling, inside the 54 cm slab where the floor above
+        # hides it. Every level has the room (0.65 m on L3 and L1, 0.73 on the ground, the roof on L4).
+        place("pendant", lamp, ue(X(xpx), PENDANT_Y, cz(level) - drop - 0.03), max_len=float(shade_cm),
+              label=f"pendant_{level}_{xpx}")
+        n += 1
+    log(f"pendants: {n} of {len(PENDANTS)} ({'all' if PENDANTS_DOME else 'the bulbs only'})")
 
 
 def room_clutter():
@@ -635,6 +752,7 @@ def main():
     if ONLY in ("", "props"):
         props()
         room_clutter()
+        pendants()
     if ONLY in ("", "street"):
         street()
         road_material()

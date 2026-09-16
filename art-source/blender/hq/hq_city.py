@@ -36,6 +36,10 @@ ROAD_Z = -0.85
 
 STREET = {}
 
+# The picture's clock reads 15:18. The web canvas draws the live time over the clock's rect; the
+# Unreal build has no canvas, so its face carries these digits instead of standing dark.
+CLOCK_TIME = "15:18"
+
 
 def row_of(z, y):
     return project((0.0, y, z))[1]
@@ -241,13 +245,26 @@ def build(colls):
     for xp in (1382, 1482):
         p.box(X(xp), X(xp) + 0.1, sy0, sy0 + 0.1, WALK_Z, roof_z - 0.12, shelter_metal)
     p.front_quad(X(1386), X(1482), WALK_Z + 0.1, roof_z - 0.2, sy1 - 0.05, principled("shelter_glass", "#9fb4c8", rough=0.05, alpha=0.12))
+    # The clock and the advertising panel stand in their own object, built into street_kerb rather
+    # than street_props. dress_hq_live.py destroys the object street_props to put the Fab pack's own
+    # shelter, bench and planters in its place, and it had been taking these two with it: the live
+    # frame shows bare pavement at columns 1408-1540 where the picture has a lit 15:18 and a blue
+    # panel. street_kerb, the bollards, is not touched by that pass. Nothing walks in front of this
+    # end of the street, so drawing them in the kerb's layer changes nothing for the web scene.
+    s = MB("street_signs")
     clock_z0, clock_z1 = Z(657, sy0 + 0.3), Z(620, sy0 + 0.3)
-    p.box(X(1408), X(1480), sy0 + 0.3, sy0 + 0.45, clock_z0, clock_z1, principled("clock_box", "#0c1c22", rough=0.3))
+    s.box(X(1408), X(1480), sy0 + 0.3, sy0 + 0.45, clock_z0, clock_z1, principled("clock_box", "#0c1c22", rough=0.3))
     STREET["shelter_clock"] = {"rect": _rect(X(1411), X(1477), clock_z0 + 0.08, clock_z1 - 0.08, sy0 + 0.29)}
+    # The web canvas draws the live time over that rect. Unreal has no canvas, so its face stood dark
+    # there; these digits are built, so the live frame carries a lit readout as the picture does.
+    text(colls["street_kerb"], CLOCK_TIME, X(1444), sy0 + 0.28, clock_z0 + 0.3,
+         (clock_z1 - clock_z0) * 0.55, emissive("clock_digits", "#7df0c4", 5.0), align="CENTER",
+         spacing=1.05, name="clock_digits", face="sign")
     ad_z0, ad_z1 = WALK_Z + 0.15, Z(606, sy0 + 0.1)
-    p.box(X(1484), X(1540), sy0 + 0.1, sy0 + 0.3, ad_z0, ad_z1, shelter_metal)
-    p.front_quad(X(1487), X(1537), ad_z0 + 0.1, ad_z1 - 0.1, sy0 + 0.09, gradient_emission("shelter_ad", "#10325a", "#3a7ac8", 2.2))
+    s.box(X(1484), X(1540), sy0 + 0.1, sy0 + 0.3, ad_z0, ad_z1, shelter_metal)
+    s.front_quad(X(1487), X(1537), ad_z0 + 0.1, ad_z1 - 0.1, sy0 + 0.09, gradient_emission("shelter_ad", "#10325a", "#3a7ac8", 2.2))
     STREET["shelter_ad"] = {"rect": _rect(X(1487), X(1537), ad_z0 + 0.1, ad_z1 - 0.1, sy0 + 0.08)}
+    s.build(colls["street_kerb"], bevel=0.01)
     light(lights, "AREA", (X(1460), sy0 + 0.9, roof_z - 0.3), 60, "#ffe2b0", radius=1.5, name="shelter_light")
     p.build(props_c, bevel=0.01)
     trunks.build(back)

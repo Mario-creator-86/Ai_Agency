@@ -47,7 +47,13 @@ $ueArgs = @(
     # The game otherwise starts at scalability level 3 (High): the quality groups are asked for Epic
     # here, where they apply to the streamed game only, and the tonemapper sharpens a little to hold
     # detail through the stream's own compression.
-    "-ExecCmds=`"DisableAllScreenMessages,sg.ViewDistanceQuality 4,sg.AntiAliasingQuality 4,sg.ShadowQuality 4,sg.GlobalIlluminationQuality 4,sg.ReflectionQuality 4,sg.PostProcessQuality 4,sg.TextureQuality 4,sg.EffectsQuality 4,sg.FoliageQuality 4,sg.ShadingQuality 4,r.Tonemapper.Sharpen 0.4`"",
+    # The encoder's own quality. Everything here runs on one machine over the loopback, so there is
+    # no network to spare: the picture may as well be encoded at the highest quality the codec has.
+    # At the defaults (MinQP 0 but a start bitrate of 1 Mbit and a 20 Mbit ceiling) WebRTC settles
+    # low and the stream softens every edge - the Owner reads that as a lack of clarity.
+    "-PixelStreamingWebRTCStartBitrate=40000000", "-PixelStreamingWebRTCMaxBitrate=100000000",
+    "-PixelStreamingWebRTCMinBitrate=20000000", "-PixelStreamingEncoderMaxQP=18",
+    "-ExecCmds=`"DisableAllScreenMessages,sg.ViewDistanceQuality 4,sg.AntiAliasingQuality 4,sg.ShadowQuality 4,sg.GlobalIlluminationQuality 4,sg.ReflectionQuality 4,sg.PostProcessQuality 4,sg.TextureQuality 4,sg.EffectsQuality 4,sg.FoliageQuality 4,sg.ShadingQuality 4,r.Tonemapper.Sharpen 0.6,r.ScreenPercentage 150,r.MotionBlurQuality 0,PixelStreaming.Encoder.MaxQP 18,PixelStreaming.WebRTC.MaxBitrate 100000000,PixelStreaming.WebRTC.StartBitrate 40000000,PixelStreaming.WebRTC.MinBitrate 20000000`"",
     "-ResX=$ResX", "-ResY=$ResY", "-ForceRes", "-nosplash", "-unattended"
 )
 if (-not $Windowed) { $ueArgs += "-RenderOffScreen" } else { $ueArgs += "-windowed" }

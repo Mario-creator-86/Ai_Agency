@@ -146,7 +146,12 @@ def materials():
         "stone": brick_material("stone", "#6a6f7c", "#5f6470", "#2c2f36", brick_w=1.2, row_h=0.55, rough=0.75),
         # The roof stands against the sky and takes its light: in the picture that band reads
         # 28, 39, 65 where ours read 29, 30, 46 - short of the dusk's blue.
-        "roof": principled("roof", "#1c2d4f", rough=0.65),
+        # Still short once the deck came down to the picture's roofline: over columns 700-870 the
+        # deck's top face reads 16, 19, 32 where the picture reads 15, 29, 57 (rows 28-38) - the
+        # right darkness, half the dusk's blue. The face renders at about 0.57, 0.42, 0.41 of the
+        # base colour, so the picture asks for roughly 26, 69, 139; #1c3c78 goes most of that way
+        # and stops short of a colour that would read as paint rather than as a roof at dusk.
+        "roof": principled("roof", "#1c3c78", rough=0.65),
         "slab": principled("slab", "#2f3857", rough=0.55, metal=0.15),
         "sign_glass": principled("sign_glass", "#080b16", rough=0.18, metal=0.2),
         # the sign band reads 11 to 17 brighter than the picture's over its rows
@@ -188,6 +193,13 @@ def materials():
         "screen_dim": image_material("screen_dim", "ui_blue_chart", 0.7),
         "window": image_material("window_view", "window_city", 1.3),
         "window_b": image_material("window_view_b", "window_city_b", 1.3),
+        # The upper floors' panes are frosted in the picture, not a view: an even blue, palest at
+        # the head (L3 reads 184, 194, 226 at row 206) and deeper at the sill (119, 147, 210 at row
+        # 232), with no skyline behind it. Against window_city L3's glass came out 43, 75, 93 short
+        # and L4's 27, 54, 59. The names keep the window_view prefix so build_hq.daytime() still
+        # finds them when it swaps the day view in.
+        "window_l3": gradient_emission("window_view_l3", "#5878b4", "#93a6c6", 1.45),
+        "window_l4": gradient_emission("window_view_l4", "#3f5f9c", "#7c93bb", 1.3),
         "lamp_shade": emissive("lamp_shade", "#ffd49a", 6.0),
         "lamp_bulb": emissive("lamp_bulb", "#fff0d6", 18.0),
         "books": [
@@ -284,10 +296,13 @@ def workstation(fronts, props, cx, level, mat, screen_tex, zone, desk, side=1, s
     chair.box(ox - 0.3, ox + 0.3, seat_y - 0.08, seat_y + 0.02, f + 0.02, f + 0.05, mat["frame"])
 
 
-def back_desk(mb, x0px, x1px, level, mat, depth=(1.75, 2.3), top=0.78):
+def back_desk(mb, x0px, x1px, level, mat, depth=(1.75, 2.3), top=0.78, top_mat=None):
     f = fz(level)
     x0, x1 = X(x0px), X(x1px)
-    mb.box(x0, x1, depth[0], depth[1], f + top - 0.05, f + top, mat["desk_top"])
+    # Not every counter carries the same slab: under L3's windows the picture's tops are a lit
+    # honey plank (121, 103, 89) where ours read 67, 69, 97. top_mat replaces the top of one
+    # counter without touching the rest of the building.
+    mb.box(x0, x1, depth[0], depth[1], f + top - 0.05, f + top, top_mat or mat["desk_top"])
     mb.box(x0 + 0.05, x0 + 0.12, depth[0] + 0.05, depth[1] - 0.05, f, f + top - 0.05, mat["desk"])
     mb.box(x1 - 0.12, x1 - 0.05, depth[0] + 0.05, depth[1] - 0.05, f, f + top - 0.05, mat["desk"])
     return f + top
@@ -368,14 +383,16 @@ def cove(mb, x0px, x1px, level, mat, drop=0.5, back=BACK):
     mb.box(X(x0px), X(x1px), back - 0.12, back - 0.02, z - 0.035, z, mat)
 
 
-def ceiling_cove(shell, lights, level, mat, xs=(575, 690, 805, 920, 1035, 1150)):
+def ceiling_cove(shell, lights, level, mat, xs=(575, 690, 805, 920, 1035, 1150), line=None):
     """The picture's warm LED line under each office floor's ceiling, hung just behind the slab's
     face so it shows from the front, and a row of small warm lights beside it that wash the top of
-    the room ("cove_wash"; the live look pass scales them with AMN_LOOK_COVE)."""
+    the room ("cove_wash"; the live look pass scales them with AMN_LOOK_COVE).
+
+    `line` gives the line its own material where the storey above is not a lit room."""
     c = cz(level)
     # its own material, dimmer than the slabs' edge_led_warm (3.0) it first shared: in the live frame the
     # line burnt the band under each ceiling (L2's 111 against the picture's 71)
-    shell.box(X(517), X(1205), -0.12, -0.02, c - 0.045, c - 0.015, emissive("cove_led", "#ffc98a", 1.2))
+    shell.box(X(517), X(1205), -0.12, -0.02, c - 0.045, c - 0.015, line or emissive("cove_led", "#ffc98a", 1.2))
     for xpx in xs:
         light(lights, "POINT", (X(xpx), 0.25, c - 0.2), 18, "#ffc98a", radius=0.3, name="cove_wash")
 
@@ -434,23 +451,46 @@ def build(colls):
         if lower >= 1:  # the office floors; the ground floor has its header bars there
             ceiling_cove(shell, lights, lower, mat)
     # roof mass above L4
-    shell.box(X(432), X(1215), -0.18, BACK + 0.4, cz(4), Z(30), mat["roof"])
+    # Z(30) is a height, and the edge that shows against the sky is the deck's far one: at y = 2.8
+    # it computes to row 16.4, and the live frame turns solid at row 17. The picture's roofline is
+    # at row 27 - over columns 700-870 it still reads 35, 52, 88 at row 21 and only goes dark at
+    # row 28 - so ten rows of the picture's sky, right across the building's front, were roof.
+    # At Z(41) the far edge lands on row 27.4 and the deck's own band, rows 27 to 42, is as deep as
+    # the picture's, rows 27 to 39. Everything standing on the deck follows its base below; the
+    # tops the picture fixes (the left plant box at row 18, the plant room at row 16) stay.
+    shell.box(X(432), X(1215), -0.18, BACK + 0.4, cz(4), Z(41), mat["roof"])
     shell.box(X(432), X(1215), -0.2, -0.18, cz(4), cz(4) + 0.05, mat["frame_hi"])
-    ceiling_cove(shell, lights, 4, mat)
+    # Under L4's ceiling the picture has no lit room behind the line: that row is the soffit of
+    # the sign band, a dark eave with a few warm pools under it. Over columns 700-1190 it rises to
+    # 111, 74, 46 at row 87 and falls away over rows 83 to 91. The office cove_led burnt a white
+    # line there instead - 230, 202, 151 at row 86, over four rows - so it takes its own material,
+    # which the live look pass tunes as LEDS["sign_soffit"] without touching L1 to L3, whose lines
+    # already sit on the picture's (L2 peaks at 252, 235, 202 against the picture's 246, 238, 213).
+    ceiling_cove(shell, lights, 4, mat, line=emissive("sign_soffit", "#ffb070", 0.45))
     # roof railings and plant room
     rail = principled("rail", "#8c95aa", rough=0.3, metal=0.7)
-    shell.box(X(432), X(1215), -0.22, -0.18, Z(31) - 0.05, Z(31), rail)
+    # The coping on the front of the parapet. It cannot simply follow the deck: a row under
+    # Z(41) it would read at rows 43-44, under the sign band's top edge, as a light line the
+    # picture has nowhere. Z(38) stands it 0.11 m proud of the deck, which is where a coping
+    # belongs, and lands it on rows 39-40 - the lighter row the picture has just over the sign
+    # (26, 37, 64 at row 38 against the parapet's 15, 29, 57 above it).
+    shell.box(X(432), X(1215), -0.22, -0.18, Z(38) - 0.05, Z(38), rail)
     rail_y = 1.2
     for x0, x1 in ((436, 588), (606, 878)):
-        zr = Z(30, rail_y)
+        # the railing stands on the deck: with its base on row 41 its 1.02 m spans rows 13 to 41,
+        # of which 13 to 27 show against the sky, where the picture's railing shows over rows 11 to 27
+        zr = Z(41, rail_y)
         # three rails and a top bar, as the picture's roof railing has; ours showed two
         shell.box(X(x0), X(x1), rail_y, rail_y + 0.05, zr + 0.95, zr + 1.02, rail)
         shell.box(X(x0), X(x1), rail_y, rail_y + 0.05, zr + 0.66, zr + 0.70, rail)
         shell.box(X(x0), X(x1), rail_y, rail_y + 0.05, zr + 0.38, zr + 0.42, rail)
         for xp in range(x0, x1 + 1, 16):
             shell.box(X(xp), X(xp) + 0.05, rail_y, rail_y + 0.05, zr, zr + 1.02, rail)
-    shell.box(X(436), X(470), 1.4, 2.4, Z(30, 1.4), Z(18, 1.4), mat["roof"])
-    zr = Z(30, 2.0)
+    # the small plant box on the left of the deck: its base follows the deck, its top stays on
+    # row 18, where the picture has it
+    shell.box(X(436), X(470), 1.4, 2.4, Z(41, 1.4), Z(18, 1.4), mat["roof"])
+    # the plant room's base follows the deck too; it is hidden behind the parapet either way
+    zr = Z(41, 2.0)
     # The plant room ran up to row 4, which put a dark wall where the picture has sky over the roof
     # (its rows 15-30 read 19, 22, 35 against 31, 43, 71). It stops at row 16 now.
     plant_top = Z(16, 1.8)
@@ -466,8 +506,15 @@ def build(colls):
     shell.box(X(680), X(1205), sy - 0.01, sy, Z(80, sy), Z(79, sy), mat["frame_hi"])
     ANCHORS["labels"]["sign"] = {"x": 680, "y": 40, "w": 525, "h": 40}
     logo_mark(shell, X(712), sy - 0.02, Z(46, sy), 0.95, mat["gold"])
-    text(shell_c, "AMN-AI", X(758), sy - 0.03, Z(71, sy), 1.12, mat["gold"], spacing=1.12, name="sign_name", face="bold")
-    text(shell_c, "AUTONOMOUS MACHINE NEXUS", X(878), sy - 0.03, Z(66, sy), 0.4, mat["gold_dim"], spacing=1.5, name="sign_sub", face="sign")
+    # The type sat low in the band: the name's letters read over rows 58-71 where the picture's
+    # read over 52-66, and the mark is already where the picture has it (rows 46-72 in both), so
+    # the name alone moves, six rows, which centres it on the mark as the picture's is.
+    text(shell_c, "AMN-AI", X(758), sy - 0.03, Z(65, sy), 1.12, mat["gold"], spacing=1.12, name="sign_name", face="bold")
+    # bahnschrift's "I" is a single stroke 0.03 m wide, under a pixel in the live frame: the sign
+    # read AUTONOMOUS MACH NE NEXUS. The bold face carries the same width at 0.38 (its advances are
+    # a little wider) with strokes that survive.
+    # and the subtitle five rows, from rows 61-66 to the picture's 56-63
+    text(shell_c, "AUTONOMOUS MACHINE NEXUS", X(878), sy - 0.03, Z(61, sy), 0.38, mat["gold_dim"], spacing=1.5, name="sign_sub", face="bold")
 
     # ---------------------------------------------------------------- lift tower
     build_tower(shell, rooms, glow, lights, shell_c, mat)
@@ -493,8 +540,12 @@ def build(colls):
 
 def logo_mark(mb, x, y, z_top, height, m):
     """The AMN-AI 'A' mark: two slanted strokes meeting at the apex, a short bar and pixel blocks."""
-    w = height * 1.05
-    t = height * 0.2
+    # The mark read as a thin outline where the picture's is a solid one: 27 world pixels wide with
+    # 117 of them lit, against the picture's 36 wide with 365 lit, and dimmer with it (a peak of 191
+    # against 229 - a stroke under a pixel wide is averaged away before it can be bright). Wider and
+    # heavier it spans columns 712-747, where the picture's spans 713-748.
+    w = height * 1.30
+    t = height * 0.30
     base = z_top - height
     apex = (x + w / 2, z_top)
     for side in (-1, 1):
@@ -575,18 +626,28 @@ def build_l4(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     lv = 4
     room_rect("director_suite", 517, 1205, lv, "L4 Executive")
     wall = panel_material("wall_l4", "#37543d", "#1d2e22", 0.55, rough=0.6)
-    floor = principled("floor_l4", "#4a3527", rough=0.3)
+    # The picture's floor carries the room's light: L4's lowest rows read 66, 55, 46 there and 125
+    # to 160 in front of the director's desk, against our 48, 34, 34 and 45 to 74. A lighter board
+    # at a lower roughness takes the spots, as L1's production floor did.
+    floor = principled("floor_l4", "#5f4530", rough=0.24)
     room_shell(rooms, 517, 1205, lv, wall, floor)
     label_panel(rooms, shell_c, lv, "L4", "EXECUTIVE", mat)
     f = fz(lv)
-    cove(glow, 525, 1195, lv, mat["edge_led"])
-    downlight_fixtures(glow, (548, 700, 860, 1020, 1160), lv, mat)
-    spot_row(lights, (548, 700, 860, 1020, 1160), lv, "#ffd29a", 175)
+    # The picture lights this ceiling in two stretches, not end to end: 530-760 and 877-1055 read
+    # about 135, 108, 58 and the gaps at 765-870 and 1060-1195 about 40, 33, 20. One strip the
+    # width of the room left our band 75 short on the left and 87 over on the right. The pools sit
+    # on the picture's own peaks (541, 637, 717, 889, 989); the old 860 and 1160 both stood in a
+    # stretch it keeps dark, and 1160 is what washed the chalkboard corner (ours 98, 85, 63 against
+    # its 33, 34, 39). At 145 W the row stops pushing rows 106-134 some 10 over the picture.
+    cove(glow, 528, 762, lv, mat["edge_led"])
+    cove(glow, 874, 1058, lv, mat["edge_led"])
+    downlight_fixtures(glow, (541, 637, 717, 889, 989), lv, mat)
+    spot_row(lights, (541, 637, 717, 889, 989), lv, "#ffd29a", 145)
     bookshelf(props, X(532), X(587), 1.85, 2.35, f, f + 1.6, mat["wood_dark"], mat["books"], shelves=4, seed=4)
     plant(leaves, pots, X(560), 2.1, f + 1.6, 0.45, mat["leaf"], mat["pot_white"], pot_h=0.14, pot_r=0.1, n=9, seed=41, style="bush")
     plant(leaves, pots, X(606), 1.7, f, 1.7, mat["leaf"], mat["pot_white"], pot_h=0.4, pot_r=0.17, n=12, seed=42)
     sofa(props, X(622), X(703), 1.55, 2.3, f, principled("leather", "#6b3b22", rough=0.45))
-    wall_window(props, 622, 668, 107, 150, mat)
+    wall_window(props, 622, 668, 107, 150, mat, view="window_l4")
     frame_picture(props, X(714), wz(127), BACK - 0.02, M(18), M(30), principled("gold_frame", "#b98a3c", rough=0.3, metal=0.8), image_material("art_l4", "art_warm", 1.1))
     plant(leaves, pots, X(757), 1.8, f, 1.9, mat["leaf_dark"], mat["pot_white"], pot_h=0.5, pot_r=0.2, n=14, seed=43)
     top = back_desk(props, 768, 880, lv, mat)
@@ -600,8 +661,11 @@ def build_l4(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     props.box(X(870), X(872), 1.95, 2.05, f, f + 0.55, mat["wood_dark"])
     props.cyl(X(866), 2.0, f + 0.6, f + 0.9, 0.012, mat["metal"])
     props.cyl(X(866), 2.0, f + 0.88, f + 1.05, 0.12, mat["lamp_shade"], seg=16, r_top=0.07)
-    light(lights, "POINT", (X(866), 1.9, f + 0.95), 12, "#ffc98a", radius=0.08, name="desk_lamp")
-    pendant(props, lights, 900, lv, 1.1, mat)
+    # The lamp washed its corner to 155, 141, 88 where the picture keeps it at 85, 85, 60, and the
+    # pendant by the door to 160, 147, 101 against 104, 92, 63. Only the wattage changes: the drop
+    # stays, because hanging these lower was tried and reverted (they read as heavy dark cones).
+    light(lights, "POINT", (X(866), 1.9, f + 0.95), 6, "#ffc98a", radius=0.08, name="desk_lamp")
+    pendant(props, lights, 900, lv, 1.1, mat, energy=18)
     door_z0, door_z1 = f, wz(107)
     props.box(X(890), X(932), BACK - 0.08, BACK - 0.02, door_z0, door_z1, mat["frame"])
     props.front_quad(X(892), X(910), door_z0 + 0.05, door_z1 - 0.06, BACK - 0.085, mat["glass_dark"])
@@ -609,18 +673,25 @@ def build_l4(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     props.box(X(908), X(909), BACK - 0.1, BACK - 0.085, f + 1.0, f + 1.4, mat["metal"])
     props.box(X(914), X(915), BACK - 0.1, BACK - 0.085, f + 1.0, f + 1.4, mat["metal"])
     props.box(X(941), X(961), 1.95, 2.35, f, f + 0.75, mat["black"])
-    wall_window(props, 958, 1010, 107, 150, mat, view="window_b")
+    wall_window(props, 958, 1010, 107, 150, mat, view="window_l4")
     plant(leaves, pots, X(992), 1.75, f, 1.7, mat["leaf"], mat["pot_white"], pot_h=0.35, pot_r=0.15, n=12, seed=44)
     props.box(X(1010), X(1052), 1.7, 2.2, f + 0.5, f + 0.55, mat["wood"])
     for xp in (1014, 1048):
         props.box(X(xp), X(xp) + 0.05, 1.75, 2.15, f, f + 0.5, mat["wood"])
     plant(leaves, pots, X(1038), 1.95, f + 0.55, 0.5, mat["leaf"], mat["pot_dark"], pot_h=0.18, pot_r=0.09, n=8, seed=45, style="bush")
-    props.box(X(1057), X(1128), BACK - 0.25, BACK - 0.02, wz(136), wz(134), mat["wood_dark"])
+    # The picture's plank is lit honey (119, 87, 38) and the frames on it are bright warm-mounted
+    # prints (121, 96, 53); ours read 58 and 46 short, dark rectangles on a dark plank, the same
+    # fault L2's pinned photographs had. These three are landscape, so they stay our own geometry
+    # rather than going to the pack as the portrait pictures do.
+    props.box(X(1057), X(1128), BACK - 0.25, BACK - 0.02, wz(136), wz(134), mat["wood"])
+    shelf_frame = principled("shelf_frame", "#cbbda4", rough=0.45)
     for i, cx in enumerate((1068, 1090, 1112)):
-        frame_picture(props, X(cx), wz(126), BACK - 0.1, M(15), M(13), mat["wood_dark"], image_material(f"art_shelf_{i}", f"photo_{i}", 1.2))
+        frame_picture(props, X(cx), wz(126), BACK - 0.1, M(15), M(13), shelf_frame, image_material(f"art_shelf_{i}", f"photo_{i}", 2.0))
     sofa(props, X(1088), X(1128), 1.7, 2.3, f, principled("armchair", "#b08f64", rough=0.55), back_h=0.75, arm=0.12)
-    pendant(props, lights, 1076, lv, 1.0, mat, shade="bulb", energy=15)
-    pendant(props, lights, 1116, lv, 0.85, mat, shade="bulb", energy=15)
+    # The picture keeps the ceiling above these two dark (40, 33, 20 over columns 1060-1195) where
+    # ours read 127, 116, 73: bare bulbs throwing as much light up as down.
+    pendant(props, lights, 1076, lv, 1.0, mat, shade="bulb", energy=10)
+    pendant(props, lights, 1116, lv, 0.85, mat, shade="bulb", energy=10)
     board = principled("chalkboard", "#232a26", rough=0.8)
     props.box(X(1135), X(1172), BACK - 0.06, BACK - 0.02, wz(157), wz(100), mat["wood_dark"])
     props.front_quad(X(1137), X(1170), wz(155), wz(102), BACK - 0.065, board)
@@ -633,23 +704,43 @@ def build_l3(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     room_rect("research_lab", 517, 862, lv, "L3 Research")
     room_rect("factcheck_room", 868, 1205, lv, "L3 Fact Check")
     wall = principled("wall_l3", "#4b5a88", rough=0.85)
-    floor = principled("floor_l3", "#2a2c3c", rough=0.35)
+    # The room's open floor reads 43, 44, 64 over rows 268-278 against the picture's 75, 71, 77:
+    # its blue board swallowed the light instead of carrying it. The picture's floor there is a
+    # neutral grey with a violet hint. (Its bright front lip sits at rows 279-281 and ours at
+    # 283-284; that is the slab's projection in build(), shared by every floor, not this board.)
+    floor = principled("floor_l3", "#4a4753", rough=0.26)
     room_shell(rooms, 517, 862, lv, wall, floor)
     # Fact Check had its own terracotta walls; in the picture this floor is one blue room from end to
     # end and the brown half read as a different building. The room keeps its sign and its accent.
     room_shell(rooms, 862, 1205, lv, wall, floor)
-    rooms.box(X(862), X(868), -0.2, BACK + 0.2, fz(lv), cz(lv), mat["frame"])
+    # The picture's pinboard crosses this column too (its cork reads 186, 163, 140 at x 861), so
+    # the divider stops just under the board rather than cutting it in two.
+    rooms.box(X(862), X(868), -0.2, BACK + 0.2, fz(lv), wz(250), mat["frame"])
     label_panel(rooms, shell_c, lv, "L3", "RESEARCH", mat)
     room_sign(shell_c, glow, "RESEARCH", 527, lv, mat, "#60a5fa")
-    room_sign(shell_c, glow, "FACT CHECK", 878, lv, mat, "#fb923c")
+    # At 878 the sign sat on the darkest stretch of the picture's wall (876-918 reads 62, 66, 104
+    # there and ours 127, 137, 176). The picture's lit patch on this wall is 908-936.
+    room_sign(shell_c, glow, "FACT CHECK", 908, lv, mat, "#fb923c")
     f = fz(lv)
-    downlight_fixtures(glow, (560, 650, 760, 845, 900, 990, 1080, 1160), lv, mat)
-    spot_row(lights, (560, 650, 760, 845, 900, 990, 1080, 1160), lv, "#f0f2ff", 220, cone=58, blend=0.5, tilt=26)
-    light(lights, "AREA", (X(860), 0.4, cz(lv) - 0.9), 110.0, "#c8d0ff", radius=9.0, rot=(math.radians(35), 0, 0), name="l3_fill")
+    # Eight fixtures and one 9 m area light in the middle of the floor washed this room flat: its
+    # ceiling band reads 99, 103, 159 from x 749 to 861 and then 64, 58, 60 from 941 rightward,
+    # where the picture has five clean pools at 565, 733, 921, 1021 and 1133 (red peaks 126, 193,
+    # 174, 201, 183) over a ceiling of about 58, 55, 80 between them. The same wash is the columns:
+    # +42 blue at 825-888 where it sits, -33 and -35 at 573-636 and 1014-1077 where it never
+    # reached. Two smaller fills now stand over those two dark stretches instead of one over the
+    # bright one, and they lose the blue-white - the picture's pools read warm (201, 182, 188).
+    downlight_fixtures(glow, (565, 733, 921, 1021, 1133), lv, mat)
+    spot_row(lights, (565, 733, 921, 1021, 1133), lv, "#fff0e0", 190, cone=58, blend=0.5, tilt=26)
+    light(lights, "AREA", (X(690), 0.4, cz(lv) - 0.9), 42.0, "#ecdfd2", radius=5.5, rot=(math.radians(35), 0, 0), name="l3_fill")
+    light(lights, "AREA", (X(1035), 0.4, cz(lv) - 0.9), 42.0, "#ecdfd2", radius=5.5, rot=(math.radians(35), 0, 0), name="l3_fill_right")
     plant(leaves, pots, X(530), 1.6, f, 1.55, mat["leaf"], mat["pot_white"], pot_h=0.32, pot_r=0.15, n=12, seed=31)
-    bookshelf(props, X(537), X(587), 1.85, 2.35, f, f + 1.8, mat["wood_dark"], mat["books"], shelves=5, seed=3)
-    wall_window(props, 602, 652, 202, 235, mat)
-    top = back_desk(props, 590, 722, lv, mat)
+    # The picture's bookcase reads 86, 71, 79 against our 67, 64, 73: its wood catches the light.
+    bookshelf(props, X(537), X(587), 1.85, 2.35, f, f + 1.8, mat["wood"], mat["books"], shelves=5, seed=3)
+    wall_window(props, 602, 652, 202, 235, mat, view="window_l3")
+    # Under both of this floor's windows the picture runs a lit honey plank: its right counter's
+    # top rows read 121, 103, 89 and its left 87, 85, 92, against our 67, 69, 97 and 77, 71, 85.
+    counter_top = principled("counter_l3", "#7a5a34", rough=0.4)
+    top = back_desk(props, 590, 722, lv, mat, top_mat=counter_top)
     props.box(X(598), X(618), 1.95, 2.3, top, top + 0.55, principled("crt", "#3a3a40", rough=0.5))
     props.front_quad(X(600), X(616), top + 0.12, top + 0.48, 1.945, image_material("crt_screen", "ui_cyan_chart", 0.9))
     plant(leaves, pots, X(628), 2.05, top, 0.35, mat["leaf"], mat["pot_white"], pot_h=0.15, pot_r=0.07, n=7, seed=32, style="bush")
@@ -663,21 +754,24 @@ def build_l3(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
         props.box(X(xp), X(xp + 14), 1.8, 2.3, f, f + 0.95, principled("tower_pc", "#1b1c22", rough=0.4))
         glow.box(X(xp + 4), X(xp + 5), 1.79, 1.8, f + 0.7, f + 0.85, emissive("pc_led_blue", "#60a5fa", 8.0))
     cork = principled("cork", "#8a6a44", rough=0.9)
-    props.box(X(745), X(850), BACK - 0.06, BACK - 0.02, wz(247), wz(207), mat["wood_dark"])
-    props.front_quad(X(748), X(847), wz(245), wz(209), BACK - 0.065, cork)
+    # The picture's board runs 773 to 875: its frame reads 149, 118, 83 at 774 and the wall behind
+    # it 38, 48, 78 at 771, and by 876 it is gone (51, 48, 62). Ours stood 28 columns left of that,
+    # so 745-773 read 108, 88, 40 over the wall and 850-878 read 62, 30 under the cork.
+    props.box(X(773), X(878), BACK - 0.06, BACK - 0.02, wz(247), wz(207), mat["wood_dark"])
+    props.front_quad(X(776), X(875), wz(245), wz(209), BACK - 0.065, cork)
     rng = random.Random(7)
     paper = emissive("paper", "#efe9dc", 0.6)
     pin_ink = principled("pin_ink", "#3b4a66", rough=0.6)
     for r in range(2):
         for c in range(3):
-            x0 = 755 + c * 31 + rng.uniform(-2, 2)
+            x0 = 783 + c * 31 + rng.uniform(-2, 2)
             z1 = wz(213 + r * 17)
             props.front_quad(X(x0), X(x0 + 22), z1 - M(12), z1, BACK - 0.07, paper)
             # the notes carry lines of writing, as the picture's pinboard does
             for li in range(3):
                 zl = z1 - M(3) - li * M(3)
                 props.box(X(x0 + 3), X(x0 + 3 + rng.uniform(10, 17)), BACK - 0.076, BACK - 0.072, zl - 0.02, zl, pin_ink)
-    top_r = back_desk(props, 770, 850, lv, mat)
+    top_r = back_desk(props, 770, 850, lv, mat, top_mat=counter_top)
     props.box(X(790), X(830), 1.9, 2.25, top_r, top_r + 0.18, mat["white"])
     top2 = back_desk(props, 880, 975, lv, mat)
     for cx, scr in ((905, "screen_cyan"), (933, "screen_cyan_chart")):
@@ -686,23 +780,30 @@ def build_l3(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     frame_picture(props, X(936), wz(230), BACK - 0.02, M(24), M(30), mat["black"], image_material("poster_l3b", "art_teal", 0.8))
     workstation(fronts, props, 926, lv, mat, "ui_cyan_chart", "factcheck_room", "desk_research_2", side=-1)
     seat("desk_research_2", 926, lv, "front", "factcheck_room")
-    wb = principled("whiteboard", "#e4e2da", rough=0.5)
+    # The picture's board is a dim warm grey covered edge to edge in diagram scribble: it reads
+    # 163, 145, 139 against our clean sheet's 222, 220, 220.
+    wb = principled("whiteboard", "#bdb8ac", rough=0.5)
     props.box(X(970), X(1002), BACK - 0.06, BACK - 0.02, wz(252), wz(208), mat["metal"])
     props.front_quad(X(972), X(1000), wz(250), wz(210), BACK - 0.065, wb)
     ink = principled("ink", "#394150", rough=0.6)
-    for i in range(6):
-        z = wz(216 + i * 5.5)
-        props.box(X(975), X(975 + 8 + (i * 7) % 16), BACK - 0.07, BACK - 0.066, z - 0.03, z, ink)
-    top3 = back_desk(props, 997, 1102, lv, mat)
+    # nine lines of working down the whole board, as the picture's has, not six in its top corner
+    for i in range(9):
+        z = wz(214 + i * 4.0)
+        props.box(X(975), X(975 + 10 + (i * 9) % 20), BACK - 0.07, BACK - 0.066, z - 0.03, z, ink)
+    top3 = back_desk(props, 997, 1102, lv, mat, top_mat=counter_top)
     rng = random.Random(9)
-    bottle_mats = [principled("bottle_g", "#9bd49b", rough=0.1, alpha=0.7), principled("bottle_a", "#e0b060", rough=0.1, alpha=0.8), mat["white"]]
+    # The picture stands a row of warm amber and cream jars on this plank, taller than ours and
+    # lit by it; ours were a cooler green, amber and white set and read 14, 10 short.
+    bottle_mats = [principled("bottle_g", "#a8c98a", rough=0.1, alpha=0.7), principled("bottle_a", "#e8bc72", rough=0.1, alpha=0.8), principled("bottle_c", "#e6dcc4", rough=0.15)]
     for i in range(9):
         cx = X(1010 + i * 10 + rng.uniform(-2, 2))
-        h = rng.uniform(0.18, 0.42)
+        h = rng.uniform(0.24, 0.50)
         props.cyl(cx, 2.05, top3, top3 + h, 0.045, rng.choice(bottle_mats), seg=10)
-    wall_window(props, 1050, 1098, 202, 235, mat)
+    wall_window(props, 1050, 1098, 202, 235, mat, view="window_l3")
     plant(leaves, pots, X(1124), 1.7, f, 1.6, mat["leaf"], mat["pot_white"], pot_h=0.35, pot_r=0.16, n=13, seed=33)
-    props.box(X(1158), X(1194), 1.8, 2.35, f, f + 1.55, principled("fridge", "#e8e6df", rough=0.3))
+    # The picture's fridge is a narrow unit half behind its plants and reads 81, 74, 62; ours was a
+    # bright white slab at 124, 114, 103 and carried this whole end 13 over the picture.
+    props.box(X(1158), X(1194), 1.8, 2.35, f, f + 1.55, principled("fridge", "#9a968c", rough=0.3))
     props.box(X(1160), X(1161), 1.79, 1.8, f + 0.8, f + 1.3, mat["metal"])
     plant(leaves, pots, X(1180), 1.3, f, 1.25, mat["leaf_dark"], mat["pot_white"], pot_h=0.3, pot_r=0.14, n=11, seed=34)
     props.box(X(1140), X(1158), 2.0, 2.35, f, f + 0.6, principled("crate", "#a08058", rough=0.7))
@@ -728,6 +829,9 @@ def build_l2(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     # clear of the CONTENT and DISTRIBUTION signs at the top of each room. The left end (columns 517
     # to 600) had no lamp of its own and read 29 short of the picture there.
     for xp in (590, 660, 740, 820, 1040, 1110, 1180):
+        # Hung lower (drop 1.0, to sit a third of the way into the room as the picture's seem to):
+        # at the plate's scale the shade then covers the wall behind it and reads as a heavy dark
+        # cone, and L2's region went 6.7 -> 7.4 (mean 4.4 -> 4.6). They stay under the ceiling.
         pendant(props, lights, xp, lv, 0.62, mat, energy=26, color="#ffd9a8")
     light(lights, "AREA", (X(860), 0.6, cz(lv) - 0.8), 60.0, "#ffc27a", radius=8.0, rot=(math.radians(35), 0, 0), name="l2_fill")
     plant(leaves, pots, X(538), 1.6, f, 1.5, mat["leaf"], mat["pot_white"], pot_h=0.35, pot_r=0.15, n=12, seed=21)
@@ -735,13 +839,41 @@ def build_l2(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     cork = principled("cork_l2", "#8b6a45", rough=0.9)
     props.box(X(597), X(722), BACK - 0.06, BACK - 0.02, wz(362), wz(312), mat["wood_dark"])
     props.front_quad(X(600), X(719), wz(360), wz(314), BACK - 0.065, cork)
-    rng = random.Random(5)
-    for i, (px, pr) in enumerate(((606, 321), (628, 318), (652, 324), (676, 316), (700, 322), (618, 342), (660, 344))):
-        frame_picture(props, X(px + 8), wz(pr + 6), BACK - 0.07, M(17), M(14), mat["white"], image_material(f"cork_photo_{i}", f"photo_{i % 4}", 0.9))
-    for x0 in (560, 640):
-        props.box(X(x0), X(x0 + 70), 1.1, 1.4, f + 0.42, f + 0.46, mat["metal"])
-        for xl in (x0 + 2, x0 + 66):
-            props.box(X(xl), X(xl) + 0.04, 1.2, 1.3, f, f + 0.42, mat["metal"])
+    # The picture's board is covered in big prints in white mounts, bright against the cork. Ours
+    # were seven photographs 17 px wide at emission 0.9, and at the plate's scale they read as small
+    # dark squares with no mount at all. Eight of them now, 18 to 28 px wide, in a mount twice as
+    # wide, and the prints themselves three times brighter.
+    # Half the prints are the dusk snapshots, half the brighter plates (a warm painting, a daylight
+    # city, a teal one): eight of the same dark snapshot read as a grid of dark squares where the
+    # picture's board carries photographs you can make out.
+    for i, (px, pr, pw, ph, art) in enumerate((
+        (618, 325, 22, 17, "photo_0"), (648, 324, 20, 16, "art_warm"),
+        (676, 327, 18, 14, "photo_1"), (702, 324, 16, 13, "window_city_day"),
+        (616, 349, 20, 16, "photo_2"), (646, 350, 18, 14, "art_teal"),
+        (674, 348, 22, 17, "photo_3"), (702, 351, 16, 13, "art_night"),
+    )):
+        frame_picture(props, X(px), wz(pr), BACK - 0.07, M(pw), M(ph), mat["white"],
+                      image_material(f"cork_photo_{i}", art, 1.6), border=0.04)
+    # A long work table under the board, as in the picture, where ours had two thin metal rails at
+    # hip height: the room's lower rows read 15 to 20 short of the picture's over that stretch.
+    table_top = f + 0.74
+    props.box(X(556), X(722), 1.02, 1.58, table_top - 0.06, table_top, mat["desk_top"])
+    props.box(X(556), X(722), 1.04, 1.56, table_top - 0.07, table_top - 0.06, mat["metal"])
+    for xl in (560, 634, 638, 716):
+        props.box(X(xl), X(xl) + 0.06, 1.1, 1.5, f, table_top - 0.06, mat["desk"])
+    props.box(X(560), X(722), 1.1, 1.5, f + 0.2, f + 0.24, mat["desk"])
+    # what stands on it: a printer, two stacks of paper, archive boxes and a mug
+    paper_l2 = emissive("paper_l2", "#efe9dc", 0.45)
+    props.box(X(568), X(604), 1.1, 1.5, table_top, table_top + 0.3, principled("printer", "#c9c6bf", rough=0.5))
+    props.box(X(572), X(600), 1.08, 1.1, table_top + 0.06, table_top + 0.1, paper_l2)
+    for xp, w in ((614, 22), (648, 18)):
+        props.box(X(xp), X(xp + w), 1.15, 1.45, table_top, table_top + 0.07, paper_l2)
+    for xp in (672, 692):
+        props.box(X(xp), X(xp + 16), 1.12, 1.48, table_top, table_top + 0.26, principled("archive_box", "#8a6b45", rough=0.75))
+        props.box(X(xp + 3), X(xp + 13), 1.11, 1.12, table_top + 0.1, table_top + 0.16, paper_l2)
+    props.cyl(X(710), 1.3, table_top, table_top + 0.1, 0.045, mat["white"], seg=12)
+    for xp, w in ((566, 26), (600, 20), (660, 30)):
+        props.box(X(xp), X(xp + w), 1.12, 1.48, f + 0.24, f + 0.5, principled("under_box", "#3a3a42", rough=0.6))
     top = back_desk(props, 700, 850, lv, mat)
     for cx, tex in ((784, "ui_script"), (826, "ui_blue")):
         monitor(props, X(cx), 2.05, top, M(40), 0.72, mat["mon_frame"], image_material(f"script_{tex}", tex, 1.5))

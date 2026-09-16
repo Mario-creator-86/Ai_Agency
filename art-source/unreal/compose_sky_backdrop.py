@@ -71,11 +71,24 @@ def main():
     # Next to the Owner's picture the composed sky comes out warmer: over its upper half the live
     # frame reads about 7 short of green and 12 short of blue (the picture 77, 77, 105 against
     # 79, 69, 93). These gains close that without touching the page's own palette.
-    p.add_argument("--tint", default="1.0,1.10,1.14", help="r,g,b gains applied to the composed sky")
+    # Raised to 1.18, 1.20 with the clouds at half (below): a third of the plate's light was in the
+    # painted layer, and without it the sky falls the other way. Over the frame's left sky (columns
+    # 20-390, rows 85-175) the halved plate would reach 56, 68, 113 where the picture is 62, 75, 117;
+    # these gains put it on 61, 75, 117.
+    p.add_argument("--tint", default="1.0,1.18,1.20", help="r,g,b gains applied to the composed sky")
     # The painted cloud layer is drawn for the page's own sky, at the page's width. Laid across
     # the plate it repeats as a fine mackerel pattern, where the picture has a few large, soft
     # bands. Zooming into the middle of the layer makes its clouds that much larger.
+    # Zoomed further the bands do get larger, but the crop lands on a brighter part of the texture
+    # and the sky low on the right went 10 out to 40 out; 1.7 stays.
     p.add_argument("--cloud-zoom", type=float, default=1.7)
+    # The layer is drawn for the page, where it carries the whole look; over the plate it reads as
+    # a cream mackerel where the picture has soft bands of a deeper blue. Over the frame's left sky
+    # it takes the plate to 92, 88, 112 against the picture's 62, 75, 117 - 30 over in red and 5
+    # short of blue - and its spread there is 24 in red against 6 in blue, where the picture's
+    # varies by about as much in every channel. At half the plate is 74, 82, 118, the bands are
+    # still there, and the picture's own tone comes back through them.
+    p.add_argument("--cloud-strength", type=float, default=0.45, help="opacity of the painted cloud layers")
     a = p.parse_args()
     daylight = smoothstep(-8, 7, ELEVATION)
     dusk = math.exp(-(((ELEVATION - 1) / 6.5) ** 2))
@@ -96,7 +109,13 @@ def main():
     glow = dusk
     warm = radial(W, H, 0, HORIZON, W * 0.5, 0.28, [(0.0, (250, 160, 110), 0.5 * glow), (0.5, (214, 120, 110), 0.22 * glow), (1.0, (214, 120, 110), 0.0)])
     sky = over(sky, warm[..., :3], warm[..., 3])
-    cool = radial(W, H, W * 0.86, 20, W * 0.26, 0.55, [(0.0, (100, 146, 220), 0.7 * glow), (1.0, (100, 146, 220), 0.0)])
+    # The cool patch stood at 0.7 and made a daylight azure of the sky right of the lift tower:
+    # over columns 1365-1595, rows 0-60 the frame reads 45, 86, 155 where the picture reads
+    # 39, 59, 98 - 27 over in green, 57 in blue, and flat with it (a spread of 11 in blue against
+    # the picture's 40). The picture is lighter on the right than over the middle of the roof
+    # (39, 59, 98 against 20, 30, 57), so the patch earns its place, at a seventh of its weight:
+    # at 0.1 that sky lands on 30, 63, 118.
+    cool = radial(W, H, W * 0.86, 20, W * 0.26, 0.55, [(0.0, (100, 146, 220), 0.1 * glow), (1.0, (100, 146, 220), 0.0)])
     sky = over(sky, cool[..., :3], cool[..., 3])
 
     # hq_sky.js cloudLayerWeights
@@ -115,7 +134,7 @@ def main():
         lh = round(layer.height * W / layer.width)
         arr = np.asarray(layer.resize((W, lh), Image.LANCZOS), np.float32)
         region = sky[:lh]
-        sky[:lh] = over(region, arr[..., :3], arr[..., 3] / 255.0 * weight * 0.9)
+        sky[:lh] = over(region, arr[..., :3], arr[..., 3] / 255.0 * weight * a.cloud_strength)
 
     sky = sky * np.array([float(v) for v in a.tint.split(",")], np.float32)
     img = Image.fromarray(np.clip(sky, 0, 255).astype(np.uint8), "RGB")

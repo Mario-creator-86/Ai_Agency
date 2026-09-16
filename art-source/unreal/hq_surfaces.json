@@ -1,0 +1,1514 @@
+{
+ "ai_floor": {
+  "base": "/Game/RestaurantScene/Textures/T_EpoxyFlooring_B",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/RestaurantScene/Textures/T_EpoxyFlooring_N",
+  "note": "AI Space floor.",
+  "projection": "floor",
+  "rough_high": 0.42,
+  "rough_low": 0.02,
+  "rough_mask": [
+   0.0,
+   1.0,
+   0.0
+  ],
+  "roughness": "/Game/RestaurantScene/Textures/T_EpoxyFlooring_ORM",
+  "strength": 0.55,
+  "tile_cm": 200
+ },
+ "ai_wall": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_ConcreteSmooth_A",
+  "flatten": 0.5,
+  "metallic": 0.1,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_ConcreteSmooth_N",
+  "note": "S3 slate shopfront wall, tinted to the teal the AI Space keeps.",
+  "projection": "wall",
+  "rough_high": 0.47,
+  "rough_low": 0.03,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_ConcreteSmooth_R",
+  "strength": 0.55,
+  "tile_cm": 150
+ },
+ "archive_box": {
+  "base": "/Game/Modern_House_V1/Textures/Wood_1/T_Planks021_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Modern_House_V1/Textures/Wood_1/T_Planks021_4K_Normal",
+  "note": "Cardboard archive boxes. We own no cardboard texture; Planks021 at a small tile is a stand-in.",
+  "projection": "wall",
+  "rough_high": 0.97,
+  "rough_low": 0.53,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Modern_House_V1/Textures/Wood_1/T_Planks021_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 40
+ },
+ "armchair": {
+  "base": "/Game/Modern_House_V1/Textures/Leather_1/T_Leather031_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Modern_House_V1/Textures/Leather_1/T_Leather031_4K_Normal",
+  "note": "L4 armchair.",
+  "projection": "wall",
+  "rough_high": 0.77,
+  "rough_low": 0.33,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Modern_House_V1/Textures/Leather_1/T_Leather031_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 40
+ },
+ "asphalt_wet": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_Asphalt_Cracked_A",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_Asphalt_Cracked_N",
+  "note": "The road. Use T_Asphalt_Cracked (8K, AO at T_Asphalt_Cracked_AO) and NOT T_Road_02_*: Road_02 has the lane paint baked into its albedo. Keep the existing wetness; SoulCity's MF_GroundWetness and MF_Wetness material functions are ours and layer straight on top.",
+  "projection": "floor",
+  "rough_high": 0.82,
+  "rough_low": 0.38,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_Asphalt_Cracked_R",
+  "strength": 0.55,
+  "tile_cm": 300
+ },
+ "bark": {
+  "base": "/Game/Megaplant_Library/Tree_Baltic_Pine/Textures/T_Baltic_PineBark_01_C",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Megaplant_Library/Tree_Baltic_Pine/Textures/T_Baltic_PineBark_01_NAH",
+  "note": "Street tree bark. Megaplant packs normal, AO and height into _NAH and ships no roughness map: use a 0.8 constant.",
+  "projection": "wall",
+  "rough_high": 0.8,
+  "rough_low": 0.8,
+  "strength": 0.55,
+  "tile_cm": 40
+ },
+ "bay_back": {
+  "base": "/Game/Modern_House_V1/Textures/Wood_1/T_Planks021_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Modern_House_V1/Textures/Wood_1/T_Planks021_4K_Normal",
+  "note": "Lift bay back panel.",
+  "projection": "wall",
+  "rough_high": 0.72,
+  "rough_low": 0.28,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Modern_House_V1/Textures/Wood_1/T_Planks021_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 100
+ },
+ "bench_wood": {
+  "base": "/Game/Modern_House_V1/Textures/Wood_1/T_Planks021_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Modern_House_V1/Textures/Wood_1/T_Planks021_4K_Normal",
+  "note": "Street bench slats.",
+  "projection": "wall",
+  "rough_high": 0.72,
+  "rough_low": 0.28,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Modern_House_V1/Textures/Wood_1/T_Planks021_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 60
+ },
+ "billboard_frame": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_A",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_N",
+  "note": "Billboard frame.",
+  "projection": "wall",
+  "rough_high": 0.62,
+  "rough_low": 0.18,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_R",
+  "strength": 0.55,
+  "tile_cm": 75
+ },
+ "bollard": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_A",
+  "flatten": 0.5,
+  "metallic": 0.4,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_N",
+  "note": "Kerb bollards.",
+  "projection": "wall",
+  "rough_high": 0.57,
+  "rough_low": 0.13,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_R",
+  "strength": 0.55,
+  "tile_cm": 40
+ },
+ "bridge": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_ConcreteSmooth_A",
+  "flatten": 0.5,
+  "metallic": 0.5,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_ConcreteSmooth_N",
+  "note": "Distant bridge. Large tile, it sits well behind the building.",
+  "projection": "wall",
+  "rough_high": 0.62,
+  "rough_low": 0.18,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_ConcreteSmooth_R",
+  "strength": 0.55,
+  "tile_cm": 200
+ },
+ "cabinet": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_A",
+  "flatten": 0.5,
+  "metallic": 0.3,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_N",
+  "note": "Treasury filing cabinet body.",
+  "projection": "wall",
+  "rough_high": 0.62,
+  "rough_low": 0.18,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_R",
+  "strength": 0.55,
+  "tile_cm": 50
+ },
+ "chair_fabric": {
+  "base": "/Game/Modern_House_V1/Textures/Fabric_3/T_Fabric039_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Modern_House_V1/Textures/Fabric_3/T_Fabric039_4K_Normal",
+  "note": "Chair upholstery. Fabric039 is a plain grey weave; 60 cm puts the weave just below the pixel, which is what kills the plastic look.",
+  "projection": "wall",
+  "rough_high": 0.92,
+  "rough_low": 0.48,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Modern_House_V1/Textures/Fabric_3/T_Fabric039_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 40
+ },
+ "classic_stone": {
+  "base": "/Game/Modern_House_V1/Textures/Stone/T_PavingStones054_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Modern_House_V1/Textures/Stone/T_PavingStones054_4K_Normal",
+  "note": "The classical building along the street.",
+  "projection": "wall",
+  "rough_high": 0.82,
+  "rough_low": 0.38,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Modern_House_V1/Textures/Stone/T_PavingStones054_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 150
+ },
+ "clock_box": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_A",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_N",
+  "note": "Shelter clock housing.",
+  "projection": "wall",
+  "rough_high": 0.52,
+  "rough_low": 0.08,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_R",
+  "strength": 0.55,
+  "tile_cm": 40
+ },
+ "console": {
+  "base": "/Game/Modern_House_V1/Textures/Plastic_2/T_Plastic011_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Modern_House_V1/Textures/Plastic_2/T_Plastic011_4K_Normal",
+  "note": "The lit front console. Keep the emissive from the source; the laminate only supplies a roughness break so the glow is not perfectly even.",
+  "projection": "wall",
+  "rough_high": 0.72,
+  "rough_low": 0.28,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Modern_House_V1/Textures/Plastic_2/T_Plastic011_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 60
+ },
+ "crate": {
+  "base": "/Game/Modern_House_V1/Textures/Wood_1/T_Planks021_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Modern_House_V1/Textures/Wood_1/T_Planks021_4K_Normal",
+  "note": "Archive crates.",
+  "projection": "wall",
+  "rough_high": 0.92,
+  "rough_low": 0.48,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Modern_House_V1/Textures/Wood_1/T_Planks021_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 40
+ },
+ "crown": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_A",
+  "flatten": 0.5,
+  "metallic": 0.3,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_N",
+  "note": "The lift-shaft crown.",
+  "projection": "wall",
+  "rough_high": 0.62,
+  "rough_low": 0.18,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_R",
+  "strength": 0.55,
+  "tile_cm": 100
+ },
+ "curb": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_Curb_A",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_Curb_N",
+  "note": "Kerb. T_Curb is a purpose-made kerb stone with colour/normal/roughness/AO: a literal match for this surface.",
+  "projection": "wall",
+  "rough_high": 1.0,
+  "rough_low": 0.58,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_Curb_R",
+  "strength": 0.55,
+  "tile_cm": 50
+ },
+ "desk_dark": {
+  "base": "/Game/Street_Props_pack_V2/Textures/Wood_2/T_Wood027_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Street_Props_pack_V2/Textures/Wood_2/t_Wood027_4K_Normal",
+  "note": "Dark wood desk body. Wood027 is a smooth dark walnut with a full 4K colour/normal/roughness set; 120 cm puts one grain sweep across a desk.",
+  "projection": "wall",
+  "rough_high": 0.67,
+  "rough_low": 0.23,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Street_Props_pack_V2/Textures/Wood_2/T_Wood027_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 60
+ },
+ "desk_panel": {
+  "base": "/Game/Modern_House_V1/Textures/Plastic_2/T_Plastic011_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Modern_House_V1/Textures/Plastic_2/T_Plastic011_4K_Normal",
+  "note": "Desk modesty panel, same laminate.",
+  "projection": "wall",
+  "rough_high": 0.72,
+  "rough_low": 0.28,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Modern_House_V1/Textures/Plastic_2/T_Plastic011_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 75
+ },
+ "desk_top": {
+  "base": "/Game/Street_Props_pack_V2/Textures/Wood_2/T_Wood027_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Street_Props_pack_V2/Textures/Wood_2/t_Wood027_4K_Normal",
+  "note": "Desk top, same set, slightly lighter tint so the top still reads against the body.",
+  "projection": "floor",
+  "rough_high": 0.57,
+  "rough_low": 0.13,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Street_Props_pack_V2/Textures/Wood_2/T_Wood027_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 60
+ },
+ "desk_white": {
+  "base": "/Game/Modern_House_V1/Textures/Plastic_2/T_Plastic011_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Modern_House_V1/Textures/Plastic_2/T_Plastic011_4K_Normal",
+  "note": "Pale laminate. Plastic011 is a matte plastic sheet, the closest thing we own to office laminate.",
+  "projection": "wall",
+  "rough_high": 0.57,
+  "rough_low": 0.13,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Modern_House_V1/Textures/Plastic_2/T_Plastic011_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 75
+ },
+ "door_panel": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_A",
+  "flatten": 0.5,
+  "metallic": 0.3,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_N",
+  "note": "Studio door.",
+  "projection": "wall",
+  "rough_high": 0.57,
+  "rough_low": 0.13,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_R",
+  "strength": 0.55,
+  "tile_cm": 50
+ },
+ "drawer_front": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_A",
+  "flatten": 0.5,
+  "metallic": 0.2,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_N",
+  "note": "Drawer fronts. A painted-metal roughness break is what makes the 5x4 grid read as separate drawers.",
+  "projection": "wall",
+  "rough_high": 0.67,
+  "rough_low": 0.23,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_R",
+  "strength": 0.55,
+  "tile_cm": 50
+ },
+ "feature_wall": {
+  "base": "/Game/Modern_House_V1/Textures/Plaster_1/T_Plaster002_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Modern_House_V1/Textures/Plaster_1/T_Plaster002_4K_Normal",
+  "note": "The lobby logo wall. Plaster002 is flatter than PaintedPlaster017, which is right for a panel that must not compete with the lit logo.",
+  "projection": "wall",
+  "rough_high": 0.77,
+  "rough_low": 0.33,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Modern_House_V1/Textures/Plaster_1/T_Plaster002_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 125
+ },
+ "floor_l1": {
+  "base": "/Game/RestaurantScene/Textures/T_EpoxyFlooring_B",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/RestaurantScene/Textures/T_EpoxyFlooring_N",
+  "note": "Polished production floor. The source already asks for rough=0.22 and the ORM gives that sheen somewhere to break up.",
+  "projection": "floor",
+  "rough_high": 0.44,
+  "rough_low": 0.02,
+  "rough_mask": [
+   0.0,
+   1.0,
+   0.0
+  ],
+  "roughness": "/Game/RestaurantScene/Textures/T_EpoxyFlooring_ORM",
+  "strength": 0.55,
+  "tile_cm": 200
+ },
+ "floor_l2": {
+  "base": "/Game/Modern_House_V1/Textures/Wood_2/T_WoodFloor008_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Modern_House_V1/Textures/Wood_2/T_WoodFloor008_4K_Normal",
+  "note": "Dark wood boards, same set as L4 with a colder, darker tint. StarterContent T_Wood_Floor_Walnut_D/_N/_M is the 2K fallback if the 4K set costs too much memory.",
+  "projection": "floor",
+  "rough_high": 0.52,
+  "rough_low": 0.08,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Modern_House_V1/Textures/Wood_2/T_WoodFloor008_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 120
+ },
+ "floor_l3": {
+  "base": "/Game/RestaurantScene/Textures/T_EpoxyFlooring_B",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/RestaurantScene/Textures/T_EpoxyFlooring_N",
+  "note": "Polished concrete. EpoxyFlooring is a genuine poured and polished floor; at 400 cm the mottling reads as sheen variation rather than pattern. Roughness is the GREEN channel of T_EpoxyFlooring_ORM.",
+  "projection": "floor",
+  "rough_high": 0.57,
+  "rough_low": 0.13,
+  "rough_mask": [
+   0.0,
+   1.0,
+   0.0
+  ],
+  "roughness": "/Game/RestaurantScene/Textures/T_EpoxyFlooring_ORM",
+  "strength": 0.55,
+  "tile_cm": 200
+ },
+ "floor_l4": {
+  "base": "/Game/Modern_House_V1/Textures/Wood_2/T_WoodFloor008_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Modern_House_V1/Textures/Wood_2/T_WoodFloor008_4K_Normal",
+  "note": "Dark wood boards. WoodFloor008 has about 10 staggered board rows per tile, so 240 cm puts a board at 24 cm. At this camera (~34 screen px per metre) a board edge is about 8 px: visible as a line, not as noise.",
+  "projection": "floor",
+  "rough_high": 0.52,
+  "rough_low": 0.08,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Modern_House_V1/Textures/Wood_2/T_WoodFloor008_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 120
+ },
+ "frame_dark": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_A",
+  "flatten": 0.5,
+  "metallic": 0.5,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_N",
+  "note": "The building's structural frame. T_PaintedMetal is a real dark painted steel with its own roughness map. This is the biggest surface in frame and currently the flattest.",
+  "projection": "wall",
+  "rough_high": 0.62,
+  "rough_low": 0.18,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_R",
+  "strength": 0.55,
+  "tile_cm": 100
+ },
+ "frame_hi": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_A",
+  "flatten": 0.5,
+  "metallic": 0.6,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_N",
+  "note": "Frame highlights and mullions, same set, lighter tint.",
+  "projection": "wall",
+  "rough_high": 0.52,
+  "rough_low": 0.08,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_R",
+  "strength": 0.55,
+  "tile_cm": 100
+ },
+ "fridge": {
+  "base": "/Game/Modern_House_V1/Textures/Plastic_2/T_Plastic011_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Modern_House_V1/Textures/Plastic_2/T_Plastic011_4K_Normal",
+  "note": "Kitchen fridge: a matte white appliance shell.",
+  "projection": "wall",
+  "rough_high": 0.52,
+  "rough_low": 0.08,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Modern_House_V1/Textures/Plastic_2/T_Plastic011_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 50
+ },
+ "header_bar": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_A",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_N",
+  "note": "The dark header band over each shopfront.",
+  "projection": "wall",
+  "rough_high": 0.62,
+  "rough_low": 0.18,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_R",
+  "strength": 0.55,
+  "tile_cm": 100
+ },
+ "infra_floor": {
+  "base": "/Game/RestaurantScene/Textures/T_EpoxyFlooring_B",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/RestaurantScene/Textures/T_EpoxyFlooring_N",
+  "note": "Server-room floor.",
+  "projection": "floor",
+  "rough_high": 0.42,
+  "rough_low": 0.02,
+  "rough_mask": [
+   0.0,
+   1.0,
+   0.0
+  ],
+  "roughness": "/Game/RestaurantScene/Textures/T_EpoxyFlooring_ORM",
+  "strength": 0.55,
+  "tile_cm": 200
+ },
+ "infra_wall": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_ConcreteSmooth_A",
+  "flatten": 0.5,
+  "metallic": 0.2,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_ConcreteSmooth_N",
+  "note": "S1 slate shopfront wall. ConcreteSmooth tinted near-black keeps the reference's flat slate with a faint cast grain.",
+  "projection": "wall",
+  "rough_high": 0.52,
+  "rough_low": 0.08,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_ConcreteSmooth_R",
+  "strength": 0.55,
+  "tile_cm": 150
+ },
+ "label_dark": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_A",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_N",
+  "note": "The floor-label plates on the front. A painted-metal grain stops them reading as decals.",
+  "projection": "wall",
+  "rough_high": 0.62,
+  "rough_low": 0.18,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_R",
+  "strength": 0.55,
+  "tile_cm": 75
+ },
+ "lane_edge": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_Asphalt_Cracked_A",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_Asphalt_Cracked_N",
+  "note": "Lane edge lines: same treatment as road_paint.",
+  "projection": "floor",
+  "rough_high": 0.82,
+  "rough_low": 0.38,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_Asphalt_Cracked_R",
+  "strength": 0.55,
+  "tile_cm": 300
+ },
+ "leather": {
+  "base": "/Game/Modern_House_V1/Textures/Leather_1/T_Leather031_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Modern_House_V1/Textures/Leather_1/T_Leather031_4K_Normal",
+  "note": "Leather sofas on L2 and L4.",
+  "projection": "wall",
+  "rough_high": 0.67,
+  "rough_low": 0.23,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Modern_House_V1/Textures/Leather_1/T_Leather031_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 40
+ },
+ "lobby_chair": {
+  "base": "/Game/Modern_House_V1/Textures/Fabric_3/T_Fabric039_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Modern_House_V1/Textures/Fabric_3/T_Fabric039_4K_Normal",
+  "note": "Lobby chair.",
+  "projection": "wall",
+  "rough_high": 0.92,
+  "rough_low": 0.48,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Modern_House_V1/Textures/Fabric_3/T_Fabric039_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 40
+ },
+ "lobby_floor": {
+  "base": "/Game/Modern_House_V1/Textures/Marble_1/T_Marble024_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Modern_House_V1/Textures/Marble_1/T_Marble024_4K_Normal",
+  "note": "Polished warm stone (the source sets coat=0.4). Marble024 is a low-contrast pale marble that tints to the reference's honey lobby floor without fighting the logo spot.",
+  "projection": "floor",
+  "rough_high": 0.34,
+  "rough_low": 0.02,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Modern_House_V1/Textures/Marble_1/T_Marble024_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 150
+ },
+ "lobby_side": {
+  "base": "/Game/Modern_House_V1/Textures/Wood_1/T_Planks021_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Modern_House_V1/Textures/Wood_1/T_Planks021_4K_Normal",
+  "note": "Lobby side panelling. panel_material spacing is 0.6 m; 420 cm = 7 boards of 60 cm.",
+  "projection": "wall",
+  "rough_high": 0.62,
+  "rough_low": 0.18,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Modern_House_V1/Textures/Wood_1/T_Planks021_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 210
+ },
+ "metal": {
+  "base": "/Game/Street_Props_pack_V2/Textures/Metal_1/T_Metal030_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.85,
+  "normal": "/Game/Street_Props_pack_V2/Textures/Metal_1/T_Metal030_4K_Normal",
+  "note": "Bright metal (rails, stair balusters, vending shelves). Metal030 is a plain brushed steel.",
+  "projection": "wall",
+  "rough_high": 0.5,
+  "rough_low": 0.06,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Street_Props_pack_V2/Textures/Metal_1/T_Metal030_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 50
+ },
+ "onyx": {
+  "base": "/Game/Modern_House_V1/Textures/Marble_1/T_Marble024_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Modern_House_V1/Textures/Marble_1/T_Marble024_4K_Normal",
+  "note": "Stone top / onyx pillar. Marble024 tinted dark gives the veining the emissive is meant to sit behind.",
+  "projection": "wall",
+  "rough_high": 0.67,
+  "rough_low": 0.23,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Modern_House_V1/Textures/Marble_1/T_Marble024_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 75
+ },
+ "ops_floor": {
+  "base": "/Game/RestaurantScene/Textures/T_EpoxyFlooring_B",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/RestaurantScene/Textures/T_EpoxyFlooring_N",
+  "note": "Treasury floor.",
+  "projection": "floor",
+  "rough_high": 0.47,
+  "rough_low": 0.03,
+  "rough_mask": [
+   0.0,
+   1.0,
+   0.0
+  ],
+  "roughness": "/Game/RestaurantScene/Textures/T_EpoxyFlooring_ORM",
+  "strength": 0.55,
+  "tile_cm": 200
+ },
+ "ops_wall": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_ConcreteSmooth_A",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_ConcreteSmooth_N",
+  "note": "S2 slate shopfront wall. Same set as S1 so the three shopfronts read as one material family, as they do in the reference.",
+  "projection": "wall",
+  "rough_high": 0.82,
+  "rough_low": 0.38,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_ConcreteSmooth_R",
+  "strength": 0.55,
+  "tile_cm": 150
+ },
+ "planter": {
+  "base": "/Game/Street_Props_pack_V2/Textures/Concrete_2/T_Concrete016_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Street_Props_pack_V2/Textures/Concrete_2/T_Concrete016_4K_Normal",
+  "note": "Street planter boxes: cast concrete.",
+  "projection": "wall",
+  "rough_high": 0.92,
+  "rough_low": 0.48,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Street_Props_pack_V2/Textures/Concrete_2/T_Concrete016_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 60
+ },
+ "planter_rim": {
+  "base": "/Game/Street_Props_pack_V2/Textures/Concrete_2/T_Concrete016_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Street_Props_pack_V2/Textures/Concrete_2/T_Concrete016_4K_Normal",
+  "note": "Planter rim, same cast.",
+  "projection": "wall",
+  "rough_high": 0.62,
+  "rough_low": 0.18,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Street_Props_pack_V2/Textures/Concrete_2/T_Concrete016_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 60
+ },
+ "plinth": {
+  "base": "/Game/Mega_Street_Props_Pack/Street_Props_Pack_V1/Textures/Concrete/T_Concrete031_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Mega_Street_Props_Pack/Street_Props_Pack_V1/Textures/Concrete/T_Concrete031_4K_Normal",
+  "note": "The plinth under the ground floor.",
+  "projection": "wall",
+  "rough_high": 0.82,
+  "rough_low": 0.38,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Mega_Street_Props_Pack/Street_Props_Pack_V1/Textures/Concrete/T_Concrete031_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 125
+ },
+ "pole": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_A",
+  "flatten": 0.5,
+  "metallic": 0.6,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_N",
+  "note": "Lamp posts.",
+  "projection": "wall",
+  "rough_high": 0.62,
+  "rough_low": 0.18,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_R",
+  "strength": 0.55,
+  "tile_cm": 50
+ },
+ "printer": {
+  "base": "/Game/Modern_House_V1/Textures/Plastic_2/T_Plastic011_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Modern_House_V1/Textures/Plastic_2/T_Plastic011_4K_Normal",
+  "note": "Printer shell.",
+  "projection": "wall",
+  "rough_high": 0.72,
+  "rough_low": 0.28,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Modern_House_V1/Textures/Plastic_2/T_Plastic011_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 50
+ },
+ "rack": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_A",
+  "flatten": 0.5,
+  "metallic": 0.3,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_N",
+  "note": "L1 render-bay rack.",
+  "projection": "wall",
+  "rough_high": 0.57,
+  "rough_low": 0.13,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_R",
+  "strength": 0.55,
+  "tile_cm": 40
+ },
+ "rack_body": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_A",
+  "flatten": 0.5,
+  "metallic": 0.35,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_N",
+  "note": "Server rack cabinets. Painted-metal roughness is what separates a rack face from an LED panel.",
+  "projection": "wall",
+  "rough_high": 0.62,
+  "rough_low": 0.18,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_R",
+  "strength": 0.55,
+  "tile_cm": 40
+ },
+ "rack_edge": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_A",
+  "flatten": 0.5,
+  "metallic": 0.5,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_N",
+  "note": "Rack edge rails and top caps.",
+  "projection": "wall",
+  "rough_high": 0.57,
+  "rough_low": 0.13,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_R",
+  "strength": 0.55,
+  "tile_cm": 40
+ },
+ "rail": {
+  "base": "/Game/Street_Props_pack_V2/Textures/Metal_1/T_Metal030_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.7,
+  "normal": "/Game/Street_Props_pack_V2/Textures/Metal_1/T_Metal030_4K_Normal",
+  "note": "Stair handrail.",
+  "projection": "wall",
+  "rough_high": 0.52,
+  "rough_low": 0.08,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Street_Props_pack_V2/Textures/Metal_1/T_Metal030_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 50
+ },
+ "road_paint": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_Asphalt_Cracked_A",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_Asphalt_Cracked_N",
+  "note": "The crossing and lane paint. Keep the paint colour flat but sample the asphalt normal underneath so the paint sits in the road rather than on it.",
+  "projection": "floor",
+  "rough_high": 0.77,
+  "rough_low": 0.33,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_Asphalt_Cracked_R",
+  "strength": 0.55,
+  "tile_cm": 300
+ },
+ "roof": {
+  "base": "/Game/Mega_Street_Props_Pack/Street_Props_Pack_V1/Textures/Concrete/T_Concrete031_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Mega_Street_Props_Pack/Street_Props_Pack_V1/Textures/Concrete/T_Concrete031_4K_Normal",
+  "note": "Roof deck.",
+  "projection": "wall",
+  "rough_high": 0.87,
+  "rough_low": 0.43,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Mega_Street_Props_Pack/Street_Props_Pack_V1/Textures/Concrete/T_Concrete031_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 200
+ },
+ "same_city": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_ConcreteSmooth_A",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_ConcreteSmooth_N",
+  "note": "Distant city blocks. Low priority: at this distance the tile barely resolves.",
+  "projection": "wall",
+  "rough_high": 0.72,
+  "rough_low": 0.28,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_ConcreteSmooth_R",
+  "strength": 0.55,
+  "tile_cm": 300
+ },
+ "shaft_back": {
+  "base": "/Game/Modern_House_V1/Textures/Wood_1/T_Planks021_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.3,
+  "normal": "/Game/Modern_House_V1/Textures/Wood_1/T_Planks021_4K_Normal",
+  "note": "Lift shaft back panel.",
+  "projection": "wall",
+  "rough_high": 0.62,
+  "rough_low": 0.18,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Modern_House_V1/Textures/Wood_1/T_Planks021_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 100
+ },
+ "shelter_metal": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_A",
+  "flatten": 0.5,
+  "metallic": 0.6,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_N",
+  "note": "Bus shelter frame.",
+  "projection": "wall",
+  "rough_high": 0.57,
+  "rough_low": 0.13,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_R",
+  "strength": 0.55,
+  "tile_cm": 50
+ },
+ "sidewalk": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_Sidewalk_A",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_Sidewalk_N",
+  "note": "Pavement. hq_city already models the slab joints as strips every 42 px (1.5 m), so tile at 150 cm to land one texture per slab; the texture only has to supply the concrete grain.",
+  "projection": "floor",
+  "rough_high": 0.72,
+  "rough_low": 0.28,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_Sidewalk_R",
+  "strength": 0.55,
+  "tile_cm": 75
+ },
+ "sidewalk_joint": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_Sidewalk_A",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_Sidewalk_N",
+  "note": "The joint strips themselves; same set at the same tile so the grain runs through the joint.",
+  "projection": "floor",
+  "rough_high": 0.82,
+  "rough_low": 0.38,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_Sidewalk_R",
+  "strength": 0.55,
+  "tile_cm": 75
+ },
+ "sidewalk_near": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_Sidewalk_A",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_Sidewalk_N",
+  "note": "Near pavement, out of the lamp pools. Same set, darker tint.",
+  "projection": "floor",
+  "rough_high": 0.92,
+  "rough_low": 0.48,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_Sidewalk_R",
+  "strength": 0.55,
+  "tile_cm": 75
+ },
+ "sign_glass": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_A",
+  "flatten": 0.5,
+  "metallic": 0.2,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_N",
+  "note": "The roof sign's dark backing panel.",
+  "projection": "wall",
+  "rough_high": 0.4,
+  "rough_low": 0.02,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_R",
+  "strength": 0.55,
+  "tile_cm": 100
+ },
+ "sign_panel": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_A",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_N",
+  "note": "Street sign panel.",
+  "projection": "wall",
+  "rough_high": 0.72,
+  "rough_low": 0.28,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_R",
+  "strength": 0.55,
+  "tile_cm": 50
+ },
+ "slab": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_ConcreteSmooth_A",
+  "flatten": 0.5,
+  "metallic": 0.15,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_ConcreteSmooth_N",
+  "note": "Floor slabs between levels. ConcreteSmooth at 300 cm gives a cast-concrete grain that catches the cove LEDs.",
+  "projection": "wall",
+  "rough_high": 0.77,
+  "rough_low": 0.33,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_ConcreteSmooth_R",
+  "strength": 0.55,
+  "tile_cm": 150
+ },
+ "slat": {
+  "base": "/Game/Modern_House_V1/Textures/Wood_1/T_Planks021_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Modern_House_V1/Textures/Wood_1/T_Planks021_4K_Normal",
+  "note": "Acoustic slats in the audio room. Board edges at 8.5 cm stand in for slats.",
+  "projection": "wall",
+  "rough_high": 1.0,
+  "rough_low": 0.58,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Modern_House_V1/Textures/Wood_1/T_Planks021_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 40
+ },
+ "slogan_panel": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_A",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_N",
+  "note": "Roof slogan panel.",
+  "projection": "wall",
+  "rough_high": 0.72,
+  "rough_low": 0.28,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_R",
+  "strength": 0.55,
+  "tile_cm": 100
+ },
+ "sofa_orange": {
+  "base": "/Game/Modern_House_V1/Textures/Fabric_3/T_Fabric039_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Modern_House_V1/Textures/Fabric_3/T_Fabric039_4K_Normal",
+  "note": "S3 sofa.",
+  "projection": "wall",
+  "rough_high": 0.77,
+  "rough_low": 0.33,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Modern_House_V1/Textures/Fabric_3/T_Fabric039_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 40
+ },
+ "sofa_purple": {
+  "base": "/Game/Modern_House_V1/Textures/Fabric_3/T_Fabric039_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Modern_House_V1/Textures/Fabric_3/T_Fabric039_4K_Normal",
+  "note": "L1 sofa.",
+  "projection": "wall",
+  "rough_high": 0.82,
+  "rough_low": 0.38,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Modern_House_V1/Textures/Fabric_3/T_Fabric039_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 40
+ },
+ "stair_stringer": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_A",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_N",
+  "note": "Stair stringer.",
+  "projection": "wall",
+  "rough_high": 0.72,
+  "rough_low": 0.28,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_R",
+  "strength": 0.55,
+  "tile_cm": 75
+ },
+ "stair_wood": {
+  "base": "/Game/Modern_House_V1/Textures/Wood_1/T_Planks021_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Modern_House_V1/Textures/Wood_1/T_Planks021_4K_Normal",
+  "note": "Lobby stair treads. Board edges at about 21 cm read as tread joints.",
+  "projection": "floor",
+  "rough_high": 0.67,
+  "rough_low": 0.23,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Modern_House_V1/Textures/Wood_1/T_Planks021_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 75
+ },
+ "stone": {
+  "base": "/Game/Mega_Street_Props_Pack/Street_Props_Pack_V1/Textures/Concrete/T_Concrete031_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Mega_Street_Props_Pack/Street_Props_Pack_V1/Textures/Concrete/T_Concrete031_4K_Normal",
+  "note": "The shell's stone panels (brick_material 1.2 x 0.55 m). Concrete031 is a fine cast concrete; the 120 cm panel joints stay in the mesh shading. PavingStones054 is the alternative if the Owner wants visible stone courses.",
+  "projection": "wall",
+  "rough_high": 0.97,
+  "rough_low": 0.53,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Mega_Street_Props_Pack/Street_Props_Pack_V1/Textures/Concrete/T_Concrete031_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 120
+ },
+ "terrace": {
+  "base": "/Game/Modern_House_V1/Textures/Stone/T_PavingStones054_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Modern_House_V1/Textures/Stone/T_PavingStones054_4K_Normal",
+  "note": "The terrace in front of the shopfronts: warm stone slabs, wet (the source sets coat=0.12). PavingStones054 is irregular cut stone; at 200 cm a stone is about 30 cm.",
+  "projection": "floor",
+  "rough_high": 0.64,
+  "rough_low": 0.2,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Modern_House_V1/Textures/Stone/T_PavingStones054_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 100
+ },
+ "vending": {
+  "base": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_A",
+  "flatten": 0.5,
+  "metallic": 0.3,
+  "normal": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_N",
+  "note": "Vending machine body.",
+  "projection": "wall",
+  "rough_high": 0.57,
+  "rough_low": 0.13,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/AutomotiveBridgeScene/Textures/Environment/T_PaintedMetal_R",
+  "strength": 0.55,
+  "tile_cm": 40
+ },
+ "vending_shelf": {
+  "base": "/Game/Street_Props_pack_V2/Textures/Metal_1/T_Metal030_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.8,
+  "normal": "/Game/Street_Props_pack_V2/Textures/Metal_1/T_Metal030_4K_Normal",
+  "note": "Vending machine shelves.",
+  "projection": "wall",
+  "rough_high": 0.52,
+  "rough_low": 0.08,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Street_Props_pack_V2/Textures/Metal_1/T_Metal030_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 40
+ },
+ "wall_l1_audio": {
+  "base": "/Game/StarterContent/Textures/T_Brick_Clay_New_D",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/StarterContent/Textures/T_Brick_Clay_New_N",
+  "note": "Violet brick. Brick_Clay_New has about 18 courses per tile, so 250 cm gives 14 cm courses, matching brick_material row_h=0.14, and bricks read 36 cm wide against the source's brick_w=0.36. StarterContent ships _M (a mask), not a roughness map: drive roughness from a 0.85 constant multiplied by _M.",
+  "projection": "wall",
+  "rough_high": 0.85,
+  "rough_low": 0.85,
+  "strength": 0.55,
+  "tile_cm": 125
+ },
+ "wall_l1_render": {
+  "base": "/Game/Street_Props_pack_V2/Textures/Plaster/T_PaintedPlaster017_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Street_Props_pack_V2/Textures/Plaster/T_PaintedPlaster017_4K_Normal",
+  "note": "Blue-grey panel wall. panel_material spacing is 1.1 m and those grooves are already in the mesh shading, so the texture only has to supply paint tooth.",
+  "projection": "wall",
+  "rough_high": 0.82,
+  "rough_low": 0.38,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Street_Props_pack_V2/Textures/Plaster/T_PaintedPlaster017_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 150
+ },
+ "wall_l2": {
+  "base": "/Game/Modern_House_V1/Textures/Wood_1/T_Planks021_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Modern_House_V1/Textures/Wood_1/T_Planks021_4K_Normal",
+  "note": "Warm wood panelling. panel_material spacing is 0.42 m; 294 cm = 7 boards of 42 cm. Rotate UVs 90 deg. The biggest single win in the building: L2 is the widest warm wall in frame.",
+  "projection": "wall",
+  "rough_high": 0.67,
+  "rough_low": 0.23,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Modern_House_V1/Textures/Wood_1/T_Planks021_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 147
+ },
+ "wall_l3": {
+  "base": "/Game/Street_Props_pack_V2/Textures/Plaster/T_PaintedPlaster017_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Street_Props_pack_V2/Textures/Plaster/T_PaintedPlaster017_4K_Normal",
+  "note": "Light painted panel. PaintedPlaster017 is a clean near-flat paint with fine orange-peel; at 250 cm the grain lands at 2-4 px and reads as tooth, not noise.",
+  "projection": "wall",
+  "rough_high": 1.0,
+  "rough_low": 0.63,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Street_Props_pack_V2/Textures/Plaster/T_PaintedPlaster017_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 125
+ },
+ "wall_l4": {
+  "base": "/Game/Modern_House_V1/Textures/Wood_1/T_Planks021_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Modern_House_V1/Textures/Wood_1/T_Planks021_4K_Normal",
+  "note": "Panelled executive wall. panel_material spacing is 0.55 m; Planks021 has 7 boards per tile, so 385 cm puts one board on each 55 cm panel. Rotate UVs 90 deg so the boards run vertically. The tint carries the reference's dark green.",
+  "projection": "wall",
+  "rough_high": 0.82,
+  "rough_low": 0.38,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Modern_House_V1/Textures/Wood_1/T_Planks021_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 192
+ },
+ "white": {
+  "base": "/Game/Modern_House_V1/Textures/Plastic_2/T_Plastic011_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Modern_House_V1/Textures/Plastic_2/T_Plastic011_4K_Normal",
+  "note": "Generic white props.",
+  "projection": "wall",
+  "rough_high": 0.62,
+  "rough_low": 0.18,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Modern_House_V1/Textures/Plastic_2/T_Plastic011_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 75
+ },
+ "whiteboard": {
+  "base": "/Game/Modern_House_V1/Textures/Plastic_2/T_Plastic011_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Modern_House_V1/Textures/Plastic_2/T_Plastic011_4K_Normal",
+  "note": "Whiteboard surface. Keep it smooth; the texture is only there for the roughness break.",
+  "projection": "wall",
+  "rough_high": 0.72,
+  "rough_low": 0.28,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Modern_House_V1/Textures/Plastic_2/T_Plastic011_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 100
+ },
+ "wood": {
+  "base": "/Game/StarterContent/Textures/T_Wood_Oak_D",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/StarterContent/Textures/T_Wood_Oak_N",
+  "note": "General warm wood (shelves, ledges, the treasury shelf). Wood_Oak has the strongest visible grain we own but it is 2K and ships no roughness map: drive roughness from the 0.45 constant. Swap to Wood027 if the grain reads too loud.",
+  "projection": "wall",
+  "rough_high": 0.45,
+  "rough_low": 0.45,
+  "strength": 0.55,
+  "tile_cm": 50
+ },
+ "wood_dark": {
+  "base": "/Game/Street_Props_pack_V2/Textures/Wood_2/T_Wood027_4K_Color",
+  "flatten": 0.5,
+  "metallic": 0.0,
+  "normal": "/Game/Street_Props_pack_V2/Textures/Wood_2/t_Wood027_4K_Normal",
+  "note": "Bookshelves and dark furniture.",
+  "projection": "wall",
+  "rough_high": 0.72,
+  "rough_low": 0.28,
+  "rough_mask": [
+   1.0,
+   0.0,
+   0.0
+  ],
+  "roughness": "/Game/Street_Props_pack_V2/Textures/Wood_2/T_Wood027_4K_Roughness",
+  "strength": 0.55,
+  "tile_cm": 45
+ }
+}

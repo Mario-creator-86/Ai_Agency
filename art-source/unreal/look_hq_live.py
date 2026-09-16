@@ -44,7 +44,17 @@ LUMENS_EXTERIOR = env("AMN_LM_EXTERIOR", os.environ.get("AMN_LM_PER_W", "70"))
 # L1 at 0.6 and the ground floor at 0.58 (0.45 and 0.55): once the street lamps stopped washing the
 # building's front (street_channel), both read darker than the picture. L1's region 10.5 -> 6.4,
 # the mean 5.6 -> 5.2.
-LEVEL_GAIN = {int(k): float(v) for k, v in (pair.split(":") for pair in os.environ.get("AMN_LEVEL_GAIN", "0:0.58,1:0.64,2:0.52,3:0.38,4:0.8").split(",") if ":" in pair)}
+# The streamed game renders at half again its own width (r.ScreenPercentage 150, for the detail the
+# Owner asks for) and Lumen then carries less of the rooms' bounce: at the old gains every floor lost
+# about a tenth of its light (L3 79.7 -> 66.0 against the picture, its region 5.1 -> 23.1). These
+# gains put each floor back on the picture's light: L4 64.2/63.7, L3 79.7/79.1, L1 51.2/50.7, the
+# ground floor 68.2/69.1. Raising the area fills with them (AMN_LOOK_FILL 1.9) lit the lobby too
+# brightly (the ground floor 5.7 -> 12.9), so the fills stay at 1.4.
+# L3 then took its own rebuild: a lighter floor, five ceiling pools and two small warm fills in
+# place of one 9 m blue wash. That room carries its own light now, so its gain comes back from
+# 0.66 to 0.40 and it reads the picture's 79.7 exactly (its region 5.1 -> 2.7, its ssim 0.14 ->
+# 0.32). L4, whose cove was cut to the two stretches the picture lights, goes the other way to 1.15.
+LEVEL_GAIN = {int(k): float(v) for k, v in (pair.split(":") for pair in os.environ.get("AMN_LEVEL_GAIN", "0:0.66,1:0.84,2:0.73,3:0.40,4:1.15").split(",") if ":" in pair)}
 CEILINGS_M = [(655 - row) / 27.575 for row in (520, 410, 297, 195)]
 
 # the look: factors on that base, per kind of light. Pass 1 (spot 0.45, road 0.12, city 0.45, fog
@@ -65,11 +75,28 @@ FILL = env("AMN_LOOK_FILL", "1.4")           # the rooms' area fills
 # at 0.3 the ground region 8.3, mean 12.6. Lower is not worth it: the floor's lower rows already read a
 # little darker than the picture, only its upper rows brighter.
 LOBBY = env("AMN_LOOK_LOBBY", "0.3")
-# street lamps: at full they burnt white pools on the road. Once they were taken off the building
+# Street lamps: at full they burnt white pools on the road. Once they were taken off the building
 # (street_channel), their own pools still read 23 to 27 brighter than the picture's over the
 # columns they stand in; at 0.35 the street's region 6.6 -> 5.5 but the pavement in front of the
-# shopfronts went dark (the ground floor 5.6 -> 6.2). 0.42 splits it.
-LAMP = env("AMN_LOOK_LAMP", "0.42")
+# shopfronts went dark (the ground floor 5.6 -> 6.2). 0.42 split it.
+# 0.16 (0.42 before, 2026-09-16). At 0.42 the pools were still burning: over the pavement they read
+# 138.7 and 199.1 against the picture's 48.7 and 66.4, their 99th percentiles clipped at 253 and 251
+# against its 160, and 69.6 % of the band under the right-hand lamp sat over luma 200 where the
+# picture has none of it. That is the whole of the street's contrast gap (42.9 against 31.2). What
+# went dark before was the middle of the pavement, and the picture does not light that with lamps at
+# all - it lights it with the shopfronts behind it, so WALK_WASH below carries it now and the lamps
+# only have to make their own pools. Swept over the six board frames' tone with that wash: the
+# street's contrast 41.8-43.4 -> 30.6-33.4 (the picture's 31.2) and its colour 6.1-7.5 -> 3.8-5.0.
+# 0.32, not the 0.16 the pools alone asked for: at 0.16 the trees and bushes down the left of the
+# frame, which these lamps are the only light for, went 7 short of the picture (the city left
+# 3.9 -> 12.0). With the soft source below, 0.32 no longer clips the pools.
+LAMP = env("AMN_LOOK_LAMP", "0.32")
+# A lamp-sized source and a wide soft one for the three street lamps. At the 6 cm source every point
+# light gets they were points five metres over wet pavement, and their pools had a clipped core with a
+# hard edge; the picture's lamps lay a soft wash. Only the street lamps: indoors a small source is
+# what the pendants and desk lamps want.
+LAMP_RADIUS = env("AMN_LOOK_LAMP_RADIUS", "25")
+LAMP_SOFT = env("AMN_LOOK_LAMP_SOFT", "120")
 # The infra room's own fill. In the picture S1 is a lit room: the racks stand as cabinets with
 # their own edges, on a floor you can see. Ours was a flat dark wall with LED dots on it.
 INFRA = env("AMN_LOOK_INFRA", "1")
@@ -123,9 +150,15 @@ ROAD_MI = "/Game/HQ/Materials/MI_HQ_AsphaltWet"
 # 0.08-0.24 (0.1-0.32): with the pavement wet as well, the picture's streaks appear. Tried
 # 0.03-0.16: the road turned into water, a full mirror of the building, and its region went
 # 6.0 -> 10.3.
-ROAD_ROUGH_MIN = env("AMN_LOOK_ROAD_ROUGH_MIN", "0.08")
-ROAD_ROUGH_MAX = env("AMN_LOOK_ROAD_ROUGH_MAX", "0.24")
-TRACE_ROUGHNESS = env("AMN_LOOK_TRACE_ROUGHNESS", "0.6")
+# 0.14-0.38 traced to 0.5 (0.08-0.24 to 0.6 before, 2026-09-16): at 0.08-0.24 the road had gone past
+# wet and become a mirror, so its tone was only ever what it reflected and there was nothing between
+# the streaks. The far lane read 52.6 against the picture's 69.1 and the near lane 51.7 against 62.8;
+# 14.3 % of the far lane sat under luma 30 where the picture has 8.4 %, and the painted crossing read
+# 61.8 against 80.5 because it was showing its own reflection rather than its paint. One step back
+# towards the pass before this one (0.1-0.32), which is where the streaks first appeared.
+ROAD_ROUGH_MIN = env("AMN_LOOK_ROAD_ROUGH_MIN", "0.14")
+ROAD_ROUGH_MAX = env("AMN_LOOK_ROAD_ROUGH_MAX", "0.38")
+TRACE_ROUGHNESS = env("AMN_LOOK_TRACE_ROUGHNESS", "0.5")
 # The building's frame (the Blender scene's dark blue metal, 0.5-0.6 metallic) renders black in the
 # live frame where the picture's frame is a lit grey: metal shows only what it reflects, and the dusk
 # around it is dark. AMN_LOOK_FRAME_METAL sets those materials' metallic factor (below 0 leaves them).
@@ -166,14 +199,40 @@ BLOOM = env("AMN_LOOK_BLOOM", "0.8")
 # 3300 (3000 before): the wetter road reflects rather than scatters, so the street read darker than
 # the picture once the reflections came in (57.7 against 60.6). At 3600 it overshot to 64.8.
 STREET_FILL = env("AMN_LOOK_STREET_FILL", "3300")
-STREET_FILL_Y = env("AMN_LOOK_STREET_FILL_Y", "-19")          # Blender metres; the road spans -23 to -9
+# -18 (-19 before): 14 m deep centred at -19 the fill covered y -26 to -12 while the road runs -23 to
+# -9, so its near three metres landed on the near pavement instead - rows 786 to 800 read 75.4 against
+# the picture's 62.4. At -18 it covers -25 to -11 and sits on the road it is for.
+STREET_FILL_Y = env("AMN_LOOK_STREET_FILL_Y", "-18")          # Blender metres; the road spans -23 to -9
 STREET_FILL_DEPTH = env("AMN_LOOK_STREET_FILL_DEPTH", "1400")  # cm across the street
 STREET_FILL_COLOR = unreal.LinearColor(0.7, 0.73, 0.88, 1.0)
+
+# The picture's pavement is lit by the shopfronts behind it: a dome, 85 to 96 of 255 over the middle
+# columns, falling to 38 to 60 at both ends of the frame. Ours was the other way round - two burnt
+# pools under the street lamps (124 to 151 over columns 200-450 and 1275-1600, against the picture's
+# 43 to 72) with a trough of 44 to 75 between them, a mean column error of 32.2. With the lamps down
+# to LAMP this warm wash puts the dome back: a rect light five metres over the pavement, pointing
+# down, as wide along the frame as the building's own front so it falls away towards both ends, warm
+# like the shopfronts rather than cool like the dusk, and on the street lamps' own lighting channel so
+# that like them it never washes the building behind. Swept over the live frames' tone, a dome of +18
+# luma with a 15 m sigma took that column error 32.2 -> 19.0, where a flat wash of the same energy
+# left it at 21.7. 1800 lm is the first estimate for this height and area, scaled from the street
+# fill's 3300 over its own rect: if the middle still reads short of 85-96 try 2400, if it overshoots
+# try 1200.
+# 400 lm, not 1800: at 1800 the pavement read 72 against the picture's 61 (the street's region 18.3).
+WALK_WASH = env("AMN_LOOK_WALK_WASH", "400")
+WALK_WASH_Y = env("AMN_LOOK_WALK_WASH_Y", "-5.5")           # Blender metres; the pavement runs -8.78 to -2.34
+WALK_WASH_WIDTH = env("AMN_LOOK_WALK_WASH_WIDTH", "2800")    # cm along the frame: the building's own front
+WALK_WASH_DEPTH = env("AMN_LOOK_WALK_WASH_DEPTH", "700")     # cm across the pavement
+WALK_WASH_COLOR = unreal.LinearColor(1.0, 0.88, 0.74, 1.0)
+WALK_WASH_LABEL = "WalkWash"
 
 SPOT_NAMES = ("spot", "ops_spot", "feature_spot")
 POINT_NAMES = ("pendant", "desk_lamp", "floor_lamp", "render_lamp", "ops_shelf_lamp")
 FILL_NAMES = ("l2_fill", "l3_fill", "infra_fill", "lobby_fill", "lobby_spill", "ai_fill", "ai_logo_glow")
 LAMP_NAMES = ("lamp_far_left", "lamp_left", "lamp_right")
+# what street_channel puts on lighting channel 2: the three lamps and the pavement wash, the lights
+# that must reach the street and nothing of the building standing a metre behind them
+CHANNEL_2_NAMES = LAMP_NAMES + (WALK_WASH_LABEL,)
 
 
 def log(msg):
@@ -245,7 +304,12 @@ def tune_lights(actors):
             comp.set_editor_property("source_radius", 8.0)
             comp.set_editor_property("soft_source_radius", 30.0)
         if isinstance(comp, unreal.PointLightComponent) and not isinstance(comp, unreal.SpotLightComponent):
-            comp.set_editor_property("source_radius", 6.0)
+            # the street lamps get a lamp-sized source and a wide soft one: at 6 cm their pools had a
+            # clipped core (99th percentile 253 and 251 against the picture's 160) and a hard edge
+            street = label.startswith(LAMP_NAMES)
+            comp.set_editor_property("source_radius", LAMP_RADIUS if street else 6.0)
+            if street:
+                comp.set_editor_property("soft_source_radius", LAMP_SOFT)
         counts[f"x{f:g}"] = counts.get(f"x{f:g}", 0) + 1
     log(f"lights tuned {counts}")
 
@@ -398,12 +462,43 @@ STREET_LIT_PREFIXES = ("street_ground", "street_back", "street_front", "street_p
                        "bus_shelter", "street_Passer")
 
 
+def walk_wash(actors):
+    """A warm wash over the pavement, five metres up and pointing straight down, as wide along the
+    frame as the building's own front so it falls away towards both ends the way the picture's
+    pavement does. It stands on the street lamps' lighting channel, so like them it never reaches the
+    building a metre behind it. Pointing down, the light's width runs across the pavement and its
+    height along it."""
+    wash = actors.get(WALK_WASH_LABEL)
+    if wash is None and WALK_WASH <= 0:
+        return
+    where, down = ue(0.0, WALK_WASH_Y, 5.0), unreal.Rotator(roll=0.0, pitch=-90.0, yaw=0.0)
+    if wash is None:
+        eas = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+        wash = eas.spawn_actor_from_class(unreal.RectLight, where, down)
+        wash.set_actor_label(WALK_WASH_LABEL)
+    # street_channel reads this map straight after, and it has to find the wash in it
+    actors[WALK_WASH_LABEL] = wash
+    wash.set_actor_location_and_rotation(where, down, False, False)
+    comp = wash.rect_light_component
+    comp.set_mobility(unreal.ComponentMobility.MOVABLE)
+    comp.set_intensity_units(unreal.LightUnits.LUMENS)
+    comp.set_intensity(max(WALK_WASH, 0.0))
+    comp.set_light_color(WALK_WASH_COLOR)
+    comp.set_editor_property("source_width", WALK_WASH_DEPTH)
+    comp.set_editor_property("source_height", WALK_WASH_WIDTH)
+    comp.set_attenuation_radius(1800.0)
+    comp.set_cast_shadows(False)
+    log(f"pavement wash {WALK_WASH:.0f} lm at {wash.get_actor_location()}, "
+        f"{WALK_WASH_WIDTH / 100.0:.0f} m along the frame by {WALK_WASH_DEPTH / 100.0:.0f} m across")
+
+
 def street_channel(actors):
-    """The street lamps on channel 2, and everything on the street set to receive it as well."""
+    """The street lamps and the pavement wash on channel 2, and everything on the street set to
+    receive it as well."""
     lamps = 0
     for label, actor in actors.items():
         comp = actor.get_editor_property("light_component") if isinstance(actor, unreal.Light) else None
-        if comp is None or not label.startswith(LAMP_NAMES):
+        if comp is None or not label.startswith(CHANNEL_2_NAMES):
             continue
         comp.set_editor_property("lighting_channels", unreal.LightingChannels(channel0=False, channel1=False, channel2=True))
         lamps += 1
@@ -549,6 +644,11 @@ LEDS = {
     "lamp_shade": ("#ffd49a", 4.0 * LAMP_GLOW), "lamp_bulb": ("#fff0d6", 14.0 * LAMP_GLOW),
     # the line under each office ceiling: the picture's is amber, ours burnt white
     "cove_led": ("#ffc07a", 2.2 * LAMP_GLOW),
+    # the same line under L4, where the picture has the sign band's soffit rather than a lit room:
+    # a dim amber eave, 111, 74, 46 at its brightest row, where cove_led at 2.2 gave 230, 202, 151
+    # over four rows. A third of the cove's strength and a warmer colour; worth one pass against
+    # the stream, since an emissive that near the top of the curve does not dim in proportion.
+    "sign_soffit": ("#ffb070", 0.7 * LAMP_GLOW),
 }
 LED_GAIN = env("AMN_LOOK_LED_GAIN", "1")
 WHITE = "/InterchangeAssets/gltf/Textures/T_White_srgb"
@@ -642,6 +742,7 @@ def main():
     tune_materials(actors)
     tune_post_and_fog(actors)
     street_fill(actors)
+    walk_wash(actors)
     street_channel(actors)
     facade_light(actors)
     window_views(actors)

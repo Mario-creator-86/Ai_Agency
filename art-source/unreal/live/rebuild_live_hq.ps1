@@ -4,7 +4,8 @@
 #   3. the Fab packs placed (dress_hq_live.py) and the street set moving (traffic_hq_live.py)
 #   4. the built MetaHuman employees seated at their desks (people/seat_employees.py) and the
 #      passers-by standing on the pavement (people/street_people.py)
-#   5. the look pass (look_hq_live.py: lights, street fill, grade, fog) and the skyline's haze
+#   5. the look pass (look_hq_live.py: lights, street fill, grade, fog), the real surfaces
+#      (surfaces_hq_live.py: tiling detail over the baked atlas) and the skyline's haze
 #      (haze_hq_live.py)
 #   6. the stream restarted on the new level (start_live_hq.ps1), waiting until Unreal joins
 #
@@ -42,7 +43,7 @@ function RunUnrealScript([string]$script) {
     $log = Join-Path $LogDir ("ue_" + [IO.Path]::GetFileNameWithoutExtension($script) + ".log")
     & $ueCmd "$uproject" -run=pythonscript "-script=$((Join-Path $unrealDir $script) -replace '\\', '/')" -unattended -nosplash "-abslog=$log" | Out-Null
     $errors = Select-String -Path $log -Pattern "LogPython: Error" -ErrorAction SilentlyContinue
-    Select-String -Path $log -Pattern "AMN_(UE|DRESS|TRAFFIC|SEAT|STREET|LOOK) " -ErrorAction SilentlyContinue | Select-Object -Last 6 | ForEach-Object { "   " + $_.Line.Substring($_.Line.IndexOf("AMN_")) }
+    Select-String -Path $log -Pattern "AMN_(UE|DRESS|TRAFFIC|SEAT|STREET|LOOK|SURF) " -ErrorAction SilentlyContinue | Select-Object -Last 6 | ForEach-Object { "   " + $_.Line.Substring($_.Line.IndexOf("AMN_")) }
     if ($errors) {
         $errors | Select-Object -First 8 | ForEach-Object { "   " + $_.Line }
         throw "$script reported Python errors (log: $log)"
@@ -93,6 +94,10 @@ Step "Passers-by on the pavement" { RunUnrealScript "people/street_people.py" }
 # The build recreates every light and the post-process at their defaults: the look pass goes on
 # again each time (its values come from AMN_LOOK_*).
 Step "Look pass" { RunUnrealScript "look_hq_live.py" }
+# The export bakes every material into a flat-colour atlas: this pass keeps that atlas and multiplies
+# a tiling detail colour, normal and roughness over it (hq_surfaces.json), so the walls, floors and
+# pavements carry grain instead of reading as painted card.
+Step "Real surfaces" { RunUnrealScript "surfaces_hq_live.py" }
 # the skyline's blue haze: translucent planes behind the building (AMN_HAZE_*)
 Step "Skyline haze" { RunUnrealScript "haze_hq_live.py" }
 

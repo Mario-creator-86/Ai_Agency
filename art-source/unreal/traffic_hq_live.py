@@ -6,8 +6,18 @@ placed in the two lanes (actors labelled car_*) across the frame: the near lane 
 lane towards -x, each at its own speed and moment in the loop, and a LevelSequenceActor that plays
 it on start and loops forever, so the street moves in the streamed game without Blueprint or C++.
 
-Timing is configuration, not code: AMN_TRAFFIC_LOOP (seconds, default 24) and AMN_TRAFFIC_SPEED
-(metres per second, default 11). Vehicles wait off frame between passes.
+No vehicle waits off frame any more. Every car is a conveyor: it crosses the frame a whole number of
+times per loop, so the loop closes on itself, and the fleet's phases are spread evenly over one
+crossing. Counted over a loop, one pass each and then parked at the edge put 1.88 vehicles on frame on
+average, none at all for 2.2 % of the loop and fewer than three for 87.4 % of it - board_0 of
+2026-09-16 caught one of those empty moments, and the picture always has four. Five conveyor cars put
+4.31 on frame, never fewer than three and never none.
+
+Timing is configuration, not code: AMN_TRAFFIC_LOOP (seconds, default 24) and AMN_TRAFFIC_PASSES
+(crossings per loop, taken in turn across the fleet, default "4,3"; the bus takes its own,
+AMN_TRAFFIC_BUS_PASSES). The speed follows from them rather than being set: a crossing is 2 x EDGE
+long, so passes crossings in the loop is passes * 2 * EDGE / LOOP_S - 12 and 9 m/s for the cars, 6 for
+the bus.
 
   UnrealEditor-Cmd.exe AMNReference.uproject -run=pythonscript -script=traffic_hq_live.py
 """
@@ -21,8 +31,12 @@ SEQ_PATH = "/Game/HQ"
 SEQ_NAME = "Seq_Traffic"
 FPS = 30
 LOOP_S = float(os.environ.get("AMN_TRAFFIC_LOOP", "24"))
-SPEED = float(os.environ.get("AMN_TRAFFIC_SPEED", "11")) * 100.0  # cm per second
-# the frame is 57 m wide around x = 0; vehicles start and end this far outside it (cm)
+# Crossings per loop, taken in turn across the fleet, and the bus's own. Whole numbers only: the
+# sequence loops, so a car that had not finished a whole number of crossings would jump on the wrap.
+PASSES = tuple(int(v) for v in os.environ.get("AMN_TRAFFIC_PASSES", "4,3").split(",") if v.strip())
+BUS_PASSES = int(os.environ.get("AMN_TRAFFIC_BUS_PASSES", "2"))
+# the frame is 57 m wide around x = 0; one crossing runs from this far outside it to this far outside
+# it on the other side (cm), so a vehicle is on frame for 5700 / 7200 = 79 % of every crossing
 EDGE = 3600.0
 
 
@@ -43,6 +57,30 @@ def channels(section):
         base, _, suffix = name.rpartition("_")
         out[base if base and suffix.isdigit() else name] = ch
     return out
+
+
+def crossing_keys(total, passes, phase):
+    """(frame, u) for one conveyor car over the loop: u runs 0 at the entry edge to 1 at the exit
+    edge, `passes` whole crossings per loop, `phase` (0 to 1) of a crossing already made at frame 0.
+    Each wrap is keyed twice, one frame apart, so the jump back to the entry edge costs a single frame
+    and happens 7.5 m outside the frame, where nothing can see it. A wrap that lands on the loop's own
+    last frame is kept: without it the car would stand still over its final crossing."""
+    span = total / passes  # frames of one crossing
+    keys = [(0, phase)]
+    j = 1
+    while True:
+        f = span * (j - phase)  # the j-th wrap, in frames
+        if f > total + 0.5:
+            break
+        wrap = int(round(f))
+        if wrap - 1 > keys[-1][0]:
+            keys.append((wrap - 1, 1.0 - 1.0 / span))
+        if keys[-1][0] < wrap <= total:
+            keys.append((wrap, 0.0))
+        j += 1
+    if keys[-1][0] < total:
+        keys.append((total, phase))
+    return keys
 
 
 def main():
@@ -76,9 +114,10 @@ def main():
         rot = car.get_actor_rotation()
         heading = 1.0 if abs(((rot.yaw % 360.0) + 360.0) % 360.0) < 90.0 or ((rot.yaw % 360.0) + 360.0) % 360.0 > 270.0 else -1.0
         is_bus = "vehicle10" in car.get_actor_label()
-        speed = SPEED * (0.7 if is_bus else 1.0 + 0.12 * ((i % 3) - 1))
-        travel = (2.0 * EDGE) / speed
-        start_s = (LOOP_S / len(cars)) * i
+        passes = BUS_PASSES if is_bus else PASSES[i % len(PASSES)]
+        speed = passes * 2.0 * EDGE / LOOP_S
+        # the fleet's phases spread evenly over one crossing, so the gaps between vehicles are even
+        phase = (i / len(cars)) % 1.0
         x0, x1 = -EDGE * heading, EDGE * heading
         binding = seq.add_possessable(car)
         track = binding.add_track(unreal.MovieScene3DTransformTrack)
@@ -93,27 +132,44 @@ def main():
             c = next((c for n, c in ch.items() if n.endswith(name)), None)
             if c is not None:
                 c.set_default(value)
-        # waiting off frame, one pass across, then waiting off frame on the other side until the loop ends
-        t_in = frames(start_s)
-        t_out = min(total, frames(start_s + travel))
-        loc_x.add_key(unreal.FrameNumber(0), x0, interpolation=unreal.MovieSceneKeyInterpolation.CONSTANT)
-        loc_x.add_key(unreal.FrameNumber(t_in), x0, interpolation=unreal.MovieSceneKeyInterpolation.LINEAR)
-        loc_x.add_key(unreal.FrameNumber(t_out), x1, interpolation=unreal.MovieSceneKeyInterpolation.CONSTANT)
-        log(f"{car.get_actor_label()}: heading {heading:+.0f}, {speed / 100.0:.1f} m/s, enters at {start_s:.1f}s, crosses in {travel:.1f}s")
+        # a conveyor: already driving at frame 0, still driving at the last frame of the loop
+        for frame, u in crossing_keys(total, passes, phase):
+            loc_x.add_key(unreal.FrameNumber(frame), x0 + (x1 - x0) * u,
+                          interpolation=unreal.MovieSceneKeyInterpolation.LINEAR)
+        # Where it stands at frame 0 is also where it stands if the sequence never plays: on frame,
+        # spread across it with the rest of the fleet, not parked 36 m outside where the old keys left
+        # every car. So the street reads as a street even if playback fails in the streamed game.
+        at_zero = x0 + (x1 - x0) * phase
+        car.set_actor_location(unreal.Vector(at_zero, loc.y, loc.z), False, False)
+        log(f"{car.get_actor_label()}: heading {heading:+.0f}, {speed / 100.0:.1f} m/s, {passes} crossings a loop, "
+            f"phase {phase:.2f} (x {at_zero / 100.0:+.1f} m at frame 0)")
 
     player = eas.spawn_actor_from_class(unreal.LevelSequenceActor, unreal.Vector(0.0, 0.0, 0.0))
     player.set_actor_label(SEQ_NAME)
     player.set_sequence(seq)
     settings = player.get_editor_property("playback_settings")
-    settings.set_editor_property("auto_play", True)
     loop = settings.get_editor_property("loop_count")
     loop.set_editor_property("value", -1)
     settings.set_editor_property("loop_count", loop)
+    # Auto-play lives on the actor in some engine versions and inside PlaybackSettings in others, and
+    # set_editor_property raises on whichever does not carry it. It used to be set on the struct
+    # alone: on an engine that keeps it on the actor that raise would have taken the two saves at the
+    # end of this function with it, and the whole pass would have been lost without a word in the log.
+    # Both are tried now, whichever takes is logged, and neither can stop the saves.
+    played = []
+    for target, where in ((settings, "PlaybackSettings"), (player, "the actor")):
+        try:
+            target.set_editor_property("auto_play", True)
+            played.append(where)
+        except Exception as err:  # this engine version does not carry it there
+            log(f"auto-play is not on {where}: {err}")
     player.set_editor_property("playback_settings", settings)
+    log(f"auto-play set on {' and '.join(played)}" if played
+        else "no auto-play property took: the sequence will not start by itself")
 
     unreal.EditorAssetLibrary.save_asset(asset_path)
     les.save_current_level()
-    log(f"sequence {asset_path}: {len(cars)} vehicles, loop {LOOP_S:.0f}s, autoplay and looping")
+    log(f"sequence {asset_path}: {len(cars)} vehicles crossing without a pause, loop {LOOP_S:.0f}s, looping")
 
 
 main()
