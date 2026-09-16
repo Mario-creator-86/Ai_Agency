@@ -65,7 +65,11 @@ FILL = env("AMN_LOOK_FILL", "1.4")           # the rooms' area fills
 # at 0.3 the ground region 8.3, mean 12.6. Lower is not worth it: the floor's lower rows already read a
 # little darker than the picture, only its upper rows brighter.
 LOBBY = env("AMN_LOOK_LOBBY", "0.3")
-LAMP = env("AMN_LOOK_LAMP", "0.5")           # street lamps: at full they burnt white pools on the road
+# street lamps: at full they burnt white pools on the road. Once they were taken off the building
+# (street_channel), their own pools still read 23 to 27 brighter than the picture's over the
+# columns they stand in; at 0.35 the street's region 6.6 -> 5.5 but the pavement in front of the
+# shopfronts went dark (the ground floor 5.6 -> 6.2). 0.42 splits it.
+LAMP = env("AMN_LOOK_LAMP", "0.42")
 # The infra room's own fill. In the picture S1 is a lit room: the racks stand as cabinets with
 # their own edges, on a floor you can see. Ours was a flat dark wall with LED dots on it.
 INFRA = env("AMN_LOOK_INFRA", "1")
