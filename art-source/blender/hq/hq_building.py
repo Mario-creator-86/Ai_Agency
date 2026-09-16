@@ -760,7 +760,10 @@ def build_l2(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     props.cyl(X(1148), 2.0, f, f + 1.75, 0.018, mat["metal"])
     props.cyl(X(1148), 2.0, f + 1.62, f + 1.98, 0.2, mat["lamp_shade"], seg=18, r_top=0.15)
     light(lights, "POINT", (X(1148), 1.9, f + 1.72), 26, "#ffc98a", radius=0.15, name="floor_lamp")
-    props.box(X(1170), X(1190), 2.0, 2.3, f, f + 2.2, emissive("onyx", "#f0c890", 1.3))
+    # A backlit onyx column in the picture: dark stone with a warm glow through it. Ours was a flat
+    # cream panel at emission 1.3, the brightest thing on the floor (its columns read 140, 111, 75
+    # against the picture's 101, 72, 45).
+    props.box(X(1170), X(1190), 2.0, 2.3, f, f + 2.2, principled("onyx", "#3a2c1e", rough=0.45, emit="#c89a5a", strength=0.35))
     plant(leaves, pots, X(1186), 1.3, f, 0.6, mat["leaf"], mat["pot_white"], pot_h=0.28, pot_r=0.13, n=10, seed=24)
 
 

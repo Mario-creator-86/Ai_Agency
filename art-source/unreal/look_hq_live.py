@@ -94,7 +94,10 @@ CITY_WINDOW_SCALE = env("AMN_LOOK_CITY_WINDOW_SCALE", "1")
 # picture's 64 and 62 in their rows); at 1.5 the mean is 14.1 (14.5 at 3), at 1 (the imported
 # strength) 13.9, the closest: roof sign 11.8, L4 1.4, L1 9.2.
 STRIP_MATERIALS = ("edge_led_slab", "edge_led_warm", "edge_led")
-STRIP_GAIN = env("AMN_LOOK_STRIP_GAIN", "1")
+# 0.5 (1, the imported strength, before): with the ceiling cove at 0.6 the strips read as a white
+# line along every ceiling where the picture has a warm glow. At half, L2 7.5 -> 6.6, the street
+# 6.5 -> 6.1 and the mean 5.7 -> 5.6.
+STRIP_GAIN = env("AMN_LOOK_STRIP_GAIN", "0.5")
 ROAD_ROUGH = env("AMN_LOOK_ROAD_ROUGH", "0.32")  # wet, not a mirror (only for the imported asphalt)
 ROAD_SPECULAR = env("AMN_LOOK_ROAD_SPECULAR", "0.5")
 # the wet asphalt instance dress_hq_live.py puts on the road (its roughness texture is remapped to this
