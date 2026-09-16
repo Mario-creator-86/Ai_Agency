@@ -52,6 +52,10 @@ CLOTHES = {
 # two diffuse tints, its "C" layer and the second body-shape's tint. All of them are set, since which
 # one shows depends on the garment's masks.
 COLOR_PARAMS = ("diffuse_color_1", "diffuse_color_2", "B_diffuse_color_1", "C_color")
+# The picture's street is drawn in perspective and lies further from the eye than the building's
+# front, so its people stand about a third shorter on screen than a 1.75 m figure does in our
+# orthographic plate. Nine tenths keeps them adult (1.58 m) and takes the edge off the difference.
+SCALE = float(os.environ.get("AMN_STREET_PEOPLE_SCALE", "0.9"))
 
 
 def dress_actor(actor, name):
@@ -188,6 +192,7 @@ def main():
             actor = eas.spawn_actor_from_class(bp_class, ns["ue"](ns["X"](xpx), y_m, ground),
                                                unreal.Rotator(roll=0.0, pitch=0.0, yaw=YAW))
             actor.set_actor_label(f"street_{name}")
+            actor.set_actor_scale3d(unreal.Vector(SCALE, SCALE, SCALE))
             actor.set_editor_property("tags", [unreal.Name(TAG)])
             played = False
             for comp in actor.get_components_by_class(unreal.SkeletalMeshComponent):
@@ -210,6 +215,7 @@ def main():
             actor = eas.spawn_actor_from_class(bp_class, ns["ue"](ns["X"](xpx), y_m, ns["WALK_Z"]),
                                                unreal.Rotator(roll=0.0, pitch=0.0, yaw=YAW))
             actor.set_actor_label(f"street_{name}")
+            actor.set_actor_scale3d(unreal.Vector(SCALE, SCALE, SCALE))
             actor.set_editor_property("tags", [unreal.Name(TAG)])
             for comp in actor.get_components_by_class(unreal.SkeletalMeshComponent):
                 if comp.get_name().lower().startswith("body") and anim is not None:

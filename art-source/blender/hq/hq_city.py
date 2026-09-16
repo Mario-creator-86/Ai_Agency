@@ -116,7 +116,7 @@ def tower(mb, x0px, x1px, top_row, y, facade, crown=None, beacon=None, depth=8.0
         mb.box(X(cx0), X(cx1), y + 1.0, y + depth - 1.0, top, ctop, facade)
         top = ctop
     if beacon:
-        mb.sphere((X((x0px + x1px) / 2), y - 0.1, top + 0.08), 0.1, beacon, seg=8, rings=5)
+        mb.sphere((X((x0px + x1px) / 2), y - 0.1, top + 0.1), 0.2, beacon, seg=8, rings=5)
     return top
 
 
@@ -134,7 +134,7 @@ def build(colls):
         "planter": principled("planter", "#3a3b48", rough=0.7, grain=0.05, grain_cm=14),
         "planter_rim": principled("planter_rim", "#3d3f4c", rough=0.4),
         # the picture's planters hold bright, full bushes; ours read as dark clumps in their boxes
-        "bush": foliage_material("bush", "#2f5f35", "#9ccf61", translucent=0.45),
+        "bush": foliage_material("bush", "#274a2c", "#6f9a48", translucent=0.35),
         "bush_core": principled("bush_core", "#12220f", rough=0.9),
         "tree": foliage_material("tree_leaf", "#46803a", "#cfe07a", translucent=0.6),
         "bark": principled("bark", "#2c241f", rough=0.8),
@@ -318,7 +318,7 @@ def build_city(city, mats):
     dark_l = windows_material("tower_dark_l", "#2c3656", glass="#202940", lit_ratio=0.18, win_w=0.18, win_h=0.28, strength=7.5)
     blue_l = windows_material("tower_blue_l", "#38455e", glass="#242d40", lit_ratio=0.19, win_w=0.17, win_h=0.27, strength=7.5)
     mauve_l = windows_material("tower_mauve_l", "#464a6a", glass="#282a3c", lit_ratio=0.18, win_w=0.19, win_h=0.29, strength=7.5)
-    beacon = emissive("beacon", "#ff3b3b", 25.0)
+    beacon = emissive("beacon", "#ff3b3b", 40.0)
     # far city band (lowest, densest lights)
     for i in range(40):
         x0 = rng.uniform(-40, 1640)

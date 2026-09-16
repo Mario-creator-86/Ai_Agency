@@ -57,6 +57,17 @@ function StopStream {
     } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -Confirm:$false }
 }
 
+# The sky plate first, export or not: compose_sky_backdrop.py writes sky_dusk.png and the level build
+# imports it. Until 2026-09-16 this pass never composed it, so every change to the sky's tint, clouds
+# or glow stayed in the code and the stream kept the plate last composed by hand.
+if (-not $SkipBuild) {
+    Step "Sky plate composed" {
+        $log = Join-Path $LogDir "sky_backdrop.log"
+        & py -3.11 (Join-Path $unrealDir "compose_sky_backdrop.py") *> $log
+        if ($LASTEXITCODE -ne 0) { throw "compose_sky_backdrop.py failed (log: $log)" }
+        Select-String -Path $log -Pattern "AMN_SKY" | ForEach-Object { "   " + $_.Line }
+    }
+}
 if (-not $SkipExport) {
     Step "Blender export for Unreal" {
         $env:AMN_UNREAL_WORKSTATIONS = "1"

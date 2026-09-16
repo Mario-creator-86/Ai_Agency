@@ -66,9 +66,12 @@ CEILINGS_M = [(655 - row) / 27.575 for row in (520, 410, 297, 195)]
 # paintings and wet asphalt: mean colour distance 15.8): spot 0.15, fills 1.4, lamps 0.5, city 0.5,
 # fog 0.008 from 30 m, no exposure offset. Lamps at 0.8 lit the lift tower and the ground floor and
 # left the road as dark.
-SPOT = env("AMN_LOOK_SPOT", "0.15")          # interior spot rows: the hard cones on the walls
-SPOT_SOFT = env("AMN_LOOK_SPOT_SOFT", "0.1")  # inner cone as a share of the outer: a soft edge
-SPOT_WIDEN = env("AMN_LOOK_SPOT_WIDEN", "18")  # degrees added to the outer cone: a wash, not a disc
+# 0.10 with a wider, softer cone (below): at 0.15 the rows of spots drew hard discs on every wall
+# where the picture has a wash that fades down from the cove. Judged by eye first; the numbers
+# followed (L4 4.7 -> 2.4, L1 4.0 -> 4.9 either way, L3 kept its five pools at 3.4).
+SPOT = env("AMN_LOOK_SPOT", "0.10")          # interior spot rows: the hard cones on the walls
+SPOT_SOFT = env("AMN_LOOK_SPOT_SOFT", "0.45")  # inner cone as a share of the outer: a soft edge
+SPOT_WIDEN = env("AMN_LOOK_SPOT_WIDEN", "26")  # degrees added to the outer cone: a wash, not a disc
 POINT = env("AMN_LOOK_POINT", "2.0")         # pendants, desk and floor lamps: the warm pools
 FILL = env("AMN_LOOK_FILL", "1.4")           # the rooms' area fills
 # the lobby's fills and spill, on top of FILL: at 0.75 the ground floor's region still read 81 against
@@ -76,7 +79,10 @@ FILL = env("AMN_LOOK_FILL", "1.4")           # the rooms' area fills
 # at 0.4 18.8 -> 12.7 and the street 15.4 -> 11.5 (the lobby's spill had lit the pavement too), mean 12.8;
 # at 0.3 the ground region 8.3, mean 12.6. Lower is not worth it: the floor's lower rows already read a
 # little darker than the picture, only its upper rows brighter.
-LOBBY = env("AMN_LOOK_LOBBY", "0.3")
+# The picture's lobby is its brightest, warmest room - golden glass, lit plants, a lit wall behind
+# the logo - and at 0.3 ours was the darkest thing on the ground floor. 1.2 burnt it (85.8 against
+# 68.2), 0.6 reads right by eye and over by the mean; 0.5 is the balance.
+LOBBY = env("AMN_LOOK_LOBBY", "0.5")
 # Street lamps: at full they burnt white pools on the road. Once they were taken off the building
 # (street_channel), their own pools still read 23 to 27 brighter than the picture's over the
 # columns they stand in; at 0.35 the street's region 6.6 -> 5.5 but the pavement in front of the
@@ -119,7 +125,7 @@ UPLIGHT = env("AMN_LOOK_UPLIGHT", "0.15")
 # bright (mean 15.7; L2 88 against the picture's 79), at 0.35 the closest pass so far (14.5)
 # 0.6 (0.35 before): once the game ran at Epic the rooms took the wash better, and the picture's
 # ceiling band is a wide warm glow down the wall. L4 3.3 -> 1.9, L3 7.0 -> 5.3, mean 5.9 -> 5.7.
-COVE = env("AMN_LOOK_COVE", "0.6")
+COVE = env("AMN_LOOK_COVE", "1.0")
 HEADLIGHT_LM = env("AMN_LOOK_HEADLIGHT_LM", "900")
 TAILLIGHT_LM = env("AMN_LOOK_TAILLIGHT_LM", "160")
 CITY = env("AMN_LOOK_CITY", "0.5")           # skyline window emission, on the imported value
@@ -142,7 +148,7 @@ STRIP_MATERIALS = ("edge_led_slab", "edge_led_warm", "edge_led")
 # 0.5 (1, the imported strength, before): with the ceiling cove at 0.6 the strips read as a white
 # line along every ceiling where the picture has a warm glow. At half, L2 7.5 -> 6.6, the street
 # 6.5 -> 6.1 and the mean 5.7 -> 5.6.
-STRIP_GAIN = env("AMN_LOOK_STRIP_GAIN", "0.5")
+STRIP_GAIN = env("AMN_LOOK_STRIP_GAIN", "0.8")
 ROAD_ROUGH = env("AMN_LOOK_ROAD_ROUGH", "0.32")  # wet, not a mirror (only for the imported asphalt)
 ROAD_SPECULAR = env("AMN_LOOK_ROAD_SPECULAR", "0.5")
 # the wet asphalt instance dress_hq_live.py puts on the road (its roughness texture is remapped to this
@@ -652,6 +658,8 @@ LEDS = {
     "lamp_shade": ("#ffd49a", 4.0 * LAMP_GLOW), "lamp_bulb": ("#fff0d6", 14.0 * LAMP_GLOW),
     # the line under each office ceiling: the picture's is amber, ours burnt white
     "cove_led": ("#ffc07a", 2.2 * LAMP_GLOW),
+    # L1's neon sign: white-pink tubes that throw purple on the brick around them in the picture
+    "neon_purple": ("#e7a6ff", 9.0),
     # the same line under L4, where the picture has the sign band's soffit rather than a lit room:
     # a dim amber eave, 111, 74, 46 at its brightest row, where cove_led at 2.2 gave 230, 202, 151
     # over four rows. A third of the cove's strength and a warmer colour; worth one pass against

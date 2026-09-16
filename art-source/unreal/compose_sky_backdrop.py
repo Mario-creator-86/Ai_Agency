@@ -13,7 +13,7 @@ import math
 import os
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
@@ -75,20 +75,23 @@ def main():
     # painted layer, and without it the sky falls the other way. Over the frame's left sky (columns
     # 20-390, rows 85-175) the halved plate would reach 56, 68, 113 where the picture is 62, 75, 117;
     # these gains put it on 61, 75, 117.
-    p.add_argument("--tint", default="1.0,1.18,1.20", help="r,g,b gains applied to the composed sky")
+    p.add_argument("--tint", default="1.0,1.12,1.10", help="r,g,b gains applied to the composed sky")
     # The painted cloud layer is drawn for the page's own sky, at the page's width. Laid across
     # the plate it repeats as a fine mackerel pattern, where the picture has a few large, soft
     # bands. Zooming into the middle of the layer makes its clouds that much larger.
     # Zoomed further the bands do get larger, but the crop lands on a brighter part of the texture
     # and the sky low on the right went 10 out to 40 out; 1.7 stays.
-    p.add_argument("--cloud-zoom", type=float, default=1.7)
+    p.add_argument("--cloud-zoom", type=float, default=1.4)
     # The layer is drawn for the page, where it carries the whole look; over the plate it reads as
     # a cream mackerel where the picture has soft bands of a deeper blue. Over the frame's left sky
     # it takes the plate to 92, 88, 112 against the picture's 62, 75, 117 - 30 over in red and 5
     # short of blue - and its spread there is 24 in red against 6 in blue, where the picture's
     # varies by about as much in every channel. At half the plate is 74, 82, 118, the bands are
     # still there, and the picture's own tone comes back through them.
-    p.add_argument("--cloud-strength", type=float, default=0.45, help="opacity of the painted cloud layers")
+    p.add_argument("--cloud-strength", type=float, default=0.22, help="opacity of the painted cloud layers")
+    # The picture's clouds are soft bands; the painted layer is sharp at any zoom, and sharp clouds put
+    # pixel noise on a sky the picture keeps smooth (its region 5.1 -> 12.4 with the band means closer).
+    p.add_argument("--cloud-blur", type=float, default=6.0, help="Gaussian blur of the cloud layer, in plate pixels")
     a = p.parse_args()
     daylight = smoothstep(-8, 7, ELEVATION)
     dusk = math.exp(-(((ELEVATION - 1) / 6.5) ** 2))
@@ -115,7 +118,9 @@ def main():
     # the picture's 40). The picture is lighter on the right than over the middle of the roof
     # (39, 59, 98 against 20, 30, 57), so the patch earns its place, at a seventh of its weight:
     # at 0.1 that sky lands on 30, 63, 118.
-    cool = radial(W, H, W * 0.86, 20, W * 0.26, 0.55, [(0.0, (100, 146, 220), 0.1 * glow), (1.0, (100, 146, 220), 0.0)])
+    # 0.45, from 0.1: at 0.1 the right-hand corner read 30 to 47 short of the picture in blue over its
+    # rows 100-300 (the city right of the building 2.0 -> 10.5); at 0.7 it had been +57 over.
+    cool = radial(W, H, W * 0.86, 20, W * 0.26, 0.55, [(0.0, (100, 146, 220), 0.45 * glow), (1.0, (100, 146, 220), 0.0)])
     sky = over(sky, cool[..., :3], cool[..., 3])
 
     # hq_sky.js cloudLayerWeights
@@ -132,7 +137,10 @@ def main():
             left, top = (layer.width - cw) / 2, (layer.height - ch) / 2
             layer = layer.crop((round(left), round(top), round(left + cw), round(top + ch)))
         lh = round(layer.height * W / layer.width)
-        arr = np.asarray(layer.resize((W, lh), Image.LANCZOS), np.float32)
+        layer = layer.resize((W, lh), Image.LANCZOS)
+        if a.cloud_blur > 0:
+            layer = layer.filter(ImageFilter.GaussianBlur(a.cloud_blur))
+        arr = np.asarray(layer, np.float32)
         region = sky[:lh]
         sky[:lh] = over(region, arr[..., :3], arr[..., 3] / 255.0 * weight * a.cloud_strength)
 

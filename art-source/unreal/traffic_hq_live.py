@@ -91,7 +91,9 @@ def main():
     actors = eas.get_all_level_actors()
     # only the vehicles themselves: their head and tail lights (car_*_headlight_l, ...) are attached
     # to them and ride along
-    cars = sorted((a for a in actors if a.get_actor_label().startswith("car_") and isinstance(a, unreal.StaticMeshActor)),
+    # the bodies only: each vehicle's glass (car_*_glass) is attached to its body and rides with it
+    cars = sorted((a for a in actors if a.get_actor_label().startswith("car_") and not a.get_actor_label().endswith("_glass")
+                   and isinstance(a, unreal.StaticMeshActor)),
                   key=lambda a: a.get_actor_label())
     if not cars:
         log("no car_* actors: run dress_hq_live.py first")
@@ -108,16 +110,25 @@ def main():
     seq.set_playback_start(0)
     seq.set_playback_end(total)
 
-    for i, car in enumerate(cars):
+    # A lane is one speed. Passes taken in turn per vehicle (4, 3, 4, ...) put two speeds in one lane,
+    # and the faster car overtook the slower through its body - seen on the stream. The near lane
+    # (+x) runs at PASSES[0] crossings a loop, the far lane (-x) at the bus's count, bus included, and
+    # each lane's vehicles are phased evenly among themselves, so the gaps stay even and nobody meets.
+    def heading_of(actor):
+        yaw = ((actor.get_actor_rotation().yaw % 360.0) + 360.0) % 360.0
+        return 1.0 if yaw < 90.0 or yaw > 270.0 else -1.0
+    lanes = {1.0: [c for c in cars if heading_of(c) > 0], -1.0: [c for c in cars if heading_of(c) < 0]}
+    for car in cars:
+        i = cars.index(car)
         car.static_mesh_component.set_mobility(unreal.ComponentMobility.MOVABLE)
         loc = car.get_actor_location()
         rot = car.get_actor_rotation()
-        heading = 1.0 if abs(((rot.yaw % 360.0) + 360.0) % 360.0) < 90.0 or ((rot.yaw % 360.0) + 360.0) % 360.0 > 270.0 else -1.0
-        is_bus = "vehicle10" in car.get_actor_label()
-        passes = BUS_PASSES if is_bus else PASSES[i % len(PASSES)]
+        heading = heading_of(car)
+        lane = lanes[heading]
+        passes = PASSES[0] if heading > 0 else BUS_PASSES
         speed = passes * 2.0 * EDGE / LOOP_S
-        # the fleet's phases spread evenly over one crossing, so the gaps between vehicles are even
-        phase = (i / len(cars)) % 1.0
+        # this lane's vehicles spread evenly over one crossing
+        phase = (lane.index(car) / max(1, len(lane))) % 1.0
         x0, x1 = -EDGE * heading, EDGE * heading
         binding = seq.add_possessable(car)
         track = binding.add_track(unreal.MovieScene3DTransformTrack)

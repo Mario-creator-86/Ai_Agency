@@ -132,11 +132,22 @@ def to_srgb(x):
     return np.where(x <= 0.0031308, x * 12.92, 1.055 * np.power(x, 1.0 / 2.4) - 0.055)
 
 
+# By area alone the eight desk screens shared a 256 px atlas - about 60 px a screen, so every
+# interface reached the stream as a pale smear - and the rooms' walls, floors and ceilings shared
+# 4096 px over five floors, which left a 9 cm panel joint two texels wide and gone after filtering
+# (measured on the atlas: 0.9 % of its columns carried an edge). Screens and consoles get a floor,
+# the rooms mesh a higher ceiling; everything else keeps the area rule.
+BAKE_FLOOR = {"desk_screens": 1024, "consoles": 2048}
+BAKE_CEILING = {"rooms": 8192, "props": 8192}
+
+
 def bake_size(ob):
     area = sum(p.area for p in ob.data.polygons)
     wanted = math.sqrt(max(area, 1e-4)) * TEXELS_PER_M
-    size = 256
-    while size < wanted and size < BAKE_MAX:
+    stem = ob.name.split(".")[0]
+    cap = max(BAKE_MAX, BAKE_CEILING.get(stem, 0))
+    size = max(256, BAKE_FLOOR.get(stem, 256))
+    while size < wanted and size < cap:
         size *= 2
     return size
 

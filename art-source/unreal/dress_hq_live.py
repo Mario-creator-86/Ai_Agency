@@ -339,8 +339,11 @@ def street():
 
 def cars():
     registry = unreal.AssetRegistryHelpers.get_asset_registry()
-    meshes = {str(a.asset_name): str(a.package_name) for a in registry.get_assets_by_path(CARS, recursive=True)
-              if str(a.asset_class_path.asset_name) == "StaticMesh" and str(a.asset_name).endswith("_LOD")}
+    every = {str(a.asset_name): str(a.package_name) for a in registry.get_assets_by_path(CARS, recursive=True)
+             if str(a.asset_class_path.asset_name) == "StaticMesh"}
+    meshes = {n: p for n, p in every.items() if n.endswith("_LOD")}
+    # the windows: the pack keeps each vehicle's glass as its own mesh on the same origin as the body
+    glazing = {n: p for n, p in every.items() if "Trans" in n and "Wheel" not in n}
     log(f"city sample static vehicles: {sorted(meshes)}")
     y_walk = Y(717, WALK_Z)
     y_road = Y(790, ROAD_Z)
@@ -352,8 +355,11 @@ def cars():
     # so five put 4.31 on frame on average and never fewer than three - the picture's four. Eight would
     # now crowd the street with six or seven, and each vehicle carries four dynamic lights the stream
     # has to pay for.
-    fleet = (("vehicle02", 150, near, 1), ("vehicle12", 800, near, 1), ("vehicle09", 1180, near, 1),
-             ("vehicle10", 1060, far, -1), ("vehicle06", 560, far, -1))
+    # Only vehicles that ship a complete static body (SM_*_No_Wheel beside the _LOD). vehicle02 and
+    # vehicle06 have none: their _LOD is a distance proxy with the doors left out, and on the stream
+    # they drove past with their sides open even once their glass was attached (2026-09-16).
+    fleet = (("vehicle03", 150, near, 1), ("vehicle12", 800, near, 1), ("vehicle09", 1180, near, 1),
+             ("vehicle10", 1060, far, -1), ("vehicle05", 560, far, -1))
     for frag, xpx, lane, heading in fleet:
         name = next((n for n in meshes if frag in n), None)
         if name is None:
@@ -366,6 +372,26 @@ def cars():
         car = place("car", asset, ue(X(xpx), lane, ROAD_Z), yaw_extra=yaw, label=f"car_{frag}")
         if car is not None:
             car_lights(car, heading)
+            car_glass(car, frag, glazing)
+
+
+def car_glass(car, frag, glazing):
+    """The vehicle's own window mesh, on the body's transform and riding with it. The `_LOD` body has
+    open window frames: without the glass a car shows its far side through them, which on the stream
+    read as a door missing."""
+    name = next((n for n in glazing if frag in n), None)
+    if name is None:
+        log(f"{frag}: no glazing mesh in the pack")
+        return
+    eas = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+    glass = eas.spawn_actor_from_class(unreal.StaticMeshActor, car.get_actor_location(), car.get_actor_rotation())
+    glass.static_mesh_component.set_mobility(unreal.ComponentMobility.MOVABLE)
+    glass.static_mesh_component.set_static_mesh(unreal.load_asset(glazing[name]))
+    glass.set_actor_scale3d(car.get_actor_scale3d())
+    glass.set_actor_label(f"{car.get_actor_label()}_glass")
+    glass.set_editor_property("tags", list(car.get_editor_property("tags")))
+    glass.attach_to_actor(car, "", unreal.AttachmentRule.KEEP_WORLD, unreal.AttachmentRule.KEEP_WORLD,
+                          unreal.AttachmentRule.KEEP_WORLD, False)
 
 
 def car_lights(car, heading):
@@ -415,6 +441,8 @@ PLANTS = (
     ("/Game/Palms_Pack_01/Add_Props/Plants/Meshes/SM_Plant_06_2_G", 120.0),
 )
 BIG_PLANT = "/Game/RestaurantScene/Meshes/SM_PlantPot"
+# the sofa pack's seat block (232 x 100 x 75 cm): a plain modern sofa, scaled to the build's own width
+SOFA = "/Game/Furniture_Sofa_14/Mesh/SM_Block1"
 # 90: the fronds also read leafy on L3 and L4, where Palms' plants stayed dark silhouettes. Tried
 # again once the rooms were better lit (2026-09-15, 999 = Palms' plants everywhere): thin dark stems,
 # fainter than the fronds the look pass lightens, and the mean slipped (14.0 -> 14.1).
@@ -426,6 +454,7 @@ BIG_PLANT_CM = float(os.environ.get("AMN_BIG_PLANT_CM", "90"))
 PLANT_MAX_CM = float(os.environ.get("AMN_PLANT_MAX_CM", "175"))
 PAINTINGS = ("/Game/RestaurantScene/Meshes/SM_WallPainting_1", "/Game/RestaurantScene/Meshes/SM_WallPainting_2")
 FRONT_YAW.setdefault("plant", float(os.environ.get("AMN_YAW_PLANT", "0")))
+FRONT_YAW.setdefault("sofa", float(os.environ.get("AMN_YAW_SOFA", "0")))
 FRONT_YAW.setdefault("painting", float(os.environ.get("AMN_YAW_PAINTING", "0")))
 
 
@@ -455,7 +484,14 @@ def props():
         # hung on the wall: bottom-centre just in front of it, as tall as the picture it replaces
         place("painting", paintings[i % len(paintings)], ue(item["x"], item["y"] - 0.02, item["z"] - item["h"] / 2.0),
               height=item["h"] * 100.0, label=f"painting_{i}")
-    log(f"props: {len(recorded.get('plants', []))} plants, {len(recorded.get('pictures', []))} paintings")
+    # The sofas: the picture's are leather with cushions and highlights, and the build's six boxes read
+    # as six boxes. The sofa pack's block is a plain seat with a low back; sized by the width the build
+    # gave the sofa, it lands where the boxes were and the room's light does the rest.
+    sofa = find_asset(SOFA)
+    for i, item in enumerate(recorded.get("sofas", [])):
+        place("sofa", sofa, ue(item["x"], item["y"], item["z"]), max_len=item["width"] * 100.0, label=f"sofa_{i}")
+    log(f"props: {len(recorded.get('plants', []))} plants, {len(recorded.get('pictures', []))} paintings, "
+        f"{len(recorded.get('sofas', []))} sofas")
 
 
 # ---------------------------------------------------------------- the road
@@ -465,8 +501,8 @@ ROAD_MI = "/Game/HQ/Materials/MI_HQ_AsphaltWet"
 # picture's road shines with streaks of light, the pack's is dry (roughness 0.85-1.0).
 ROAD_PARAMS = {
     # the closest pass (15.8); smoother (0.12-0.35) and untinted, it only lit the building's base
-    "Roughness Min": float(os.environ.get("AMN_ROAD_ROUGH_MIN", "0.25")),
-    "Roughness Max": float(os.environ.get("AMN_ROAD_ROUGH_MAX", "0.5")),
+    "Roughness Min": float(os.environ.get("AMN_ROAD_ROUGH_MIN", "0.14")),
+    "Roughness Max": float(os.environ.get("AMN_ROAD_ROUGH_MAX", "0.42")),
     # 0.95 (0.85 before): with the road this wet most of what it shows is reflection, and its own
     # tone had been pulled down under that until the far lane read 53 against the picture's 69 and the
     # near lane 52 against 63, with 14.3 % of the far lane under luma 30 where the picture has 8.4 %.
@@ -698,10 +734,23 @@ def cz(level):
     return Z(FLOORS[level][1])
 
 
+SHADE_CM = {"dome": 60.0, "bulb": 34.0}
+
+
 def pendants():
-    """Pack shades where the build hangs its own, hung by the shade's rim."""
+    """Pack shades where the build hangs its own, hung by the shade's rim. The build records each
+    pendant it would have drawn (hq_scene.json props_m.pendants) and draws no cone there, so every
+    one takes a shade; the table below is the fallback for an export that recorded none."""
     lamp = find_asset(PENDANT)
     if lamp is None:
+        return
+    meta = json.load(open(os.path.join(HERE, "hq_scene.json"), "r", encoding="utf-8"))
+    recorded = (meta.get("props_m") or {}).get("pendants") or []
+    if recorded:
+        for i, item in enumerate(recorded):
+            place("pendant", lamp, ue(item["x"], item["y"], item["z"] - 0.03), max_len=SHADE_CM.get(item["shade"], 60.0),
+                  label=f"pendant_{i}")
+        log(f"pendants: {len(recorded)} from the build's own anchors")
         return
     n = 0
     for level, xpx, drop, shade_cm, kind in PENDANTS:

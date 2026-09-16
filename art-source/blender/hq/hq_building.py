@@ -16,6 +16,8 @@ from hq_lib import (
     BACK_WALL,
     MB,
     M,
+    UNREAL_PROPS,
+    UNREAL_PROPS_ON,
     X,
     Z,
     bookshelf,
@@ -288,7 +290,11 @@ def workstation(fronts, props, cx, level, mat, screen_tex, zone, desk, side=1, s
     # For Unreal the monitor and mug are their own object ("desk_screens"), kept when the desk and
     # chair are replaced by real furniture.
     screens = SCREENS if SCREENS is not None else fronts
-    monitor(screens, mx, my, top, 0.6, 0.38, mat["mon_frame"], image_material(f"desk_screen_{desk}", screen_tex, 3.0), rz=math.radians(-side * 50))
+    # Turned 12 degrees, not 50: at 50 the plate camera saw the bezel's side - a pale blank slab -
+    # over a screen whose interface bakes perfectly (checked in the emission atlas). The picture's
+    # screens face the viewer with their interfaces readable; a slight turn keeps them from reading
+    # as pasted-on rectangles.
+    monitor(screens, mx, my, top, 0.6, 0.38, mat["mon_frame"], image_material(f"desk_screen_{desk}", screen_tex, 3.0), rz=math.radians(-side * 12))
     screens.cyl(ox - side * 0.42, yf + 0.35, top, top + 0.1, 0.04, mat["mug"], seg=14)
     screen_anchor(f"{desk}_monitor", mx - 0.2, mx + 0.2, top + 0.13, top + 0.5, my - 0.01, zone=zone, desk=desk)
     # The Unreal export keeps a whole workstation in one object ("consoles"), so the live scene can
@@ -328,8 +334,15 @@ def pendant(mb, coll, xpx, level, drop, mat, color="#ffc98a", energy=35.0, shade
     c = cz(level)
     zc = c - drop
     y = 1.6
-    mb.box(x - 0.006, x + 0.006, y - 0.006, y + 0.006, zc + 0.15, c, mat["black"])
-    if shade == "dome":
+    if UNREAL_PROPS_ON:
+        # the shade is a pack lamp in the live scene (dress_hq_live.py); the light below stays ours
+        UNREAL_PROPS["pendants"].append({"x": round(x, 4), "y": round(y, 4), "z": round(zc, 4),
+                                         "ceiling": round(c, 4), "shade": shade})
+    else:
+        mb.box(x - 0.006, x + 0.006, y - 0.006, y + 0.006, zc + 0.15, c, mat["black"])
+    if UNREAL_PROPS_ON:
+        pass
+    elif shade == "dome":
         # The picture's pendants read as a dark shade over a bright warm band, with the wall washed
         # behind it. Ours were a black cone with a 1.4 cm emissive disc under it: at the plate's
         # scale the disc fell under a pixel and only the dark cone showed. The cone keeps its dark
@@ -373,9 +386,22 @@ def label_panel(mb, coll, level, big, small, mat, accent=None):
     text(coll, small, X(459), -0.1, Z(rows[1] + 2, -0.1), 0.5, mat["label_text_dim"], spacing=1.0, name=f"label_small_{level}")
 
 
-def room_shell(mb, x0px, x1px, level, wall, floor_mat, back=BACK):
+def room_shell(mb, x0px, x1px, level, wall, floor_mat, back=BACK, battens=0.0):
     f, c = fz(level), cz(level)
     mb.box(X(x0px), X(x1px), back, back + 0.2, f, c, wall)
+    # The picture's panelling is read by its joints, and they read because they are grooves that
+    # take a shadow under the cove - not a darker stripe of paint. Ours were paint: the seams are in
+    # the baked atlas (checked) and vanish on the stream under lighting and filtering. So the joints
+    # are geometry: a batten proud of the wall every `battens` metres, which the normal bake and
+    # Lumen shade as the picture's are shaded.
+    if battens > 0.0:
+        # in the wall's own colour and proud of it the battens read as faint ridges; the picture's
+        # joints are dark lines, so the strip is dark and stands a little further out to take a shadow
+        joint = principled("panel_joint", "#1c1610", rough=0.8)
+        x = X(x0px) + battens
+        while x < X(x1px) - 0.05:
+            mb.box(x - 0.015, x + 0.015, back - 0.035, back, f, c, joint)
+            x += battens
     mb.box(X(x0px), X(x1px), -0.14, back, f - 0.06, f, floor_mat)
     # Tried: a dark ceiling of each room's own under the floor above, because over L2 that underside
     # is L3's blue-grey and the band read 125, 104, 88 against the picture's 101, 74, 48. It took the
@@ -640,7 +666,7 @@ def build_l4(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     # to 160 in front of the director's desk, against our 48, 34, 34 and 45 to 74. A lighter board
     # at a lower roughness takes the spots, as L1's production floor did.
     floor = principled("floor_l4", "#5f4530", rough=0.24, grain=0.055, grain_cm=24)
-    room_shell(rooms, 517, 1205, lv, wall, floor)
+    room_shell(rooms, 517, 1205, lv, wall, floor, battens=0.55)  # the executive floor's panelling, at its own spacing
     label_panel(rooms, shell_c, lv, "L4", "EXECUTIVE", mat)
     f = fz(lv)
     # The picture lights this ceiling in two stretches, not end to end: 530-760 and 877-1055 read
@@ -828,10 +854,10 @@ def build_l2(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     # band along the bottom of the room where the picture has a dark one (L2 9.0 -> 18.0 with the
     # fills below). This floor stays dark.
     floor = principled("floor_l2", "#3a2a1c", rough=0.3, grain=0.055, grain_cm=24)
-    room_shell(rooms, 517, 862, lv, wall, floor)
+    room_shell(rooms, 517, 862, lv, wall, floor, battens=0.42)
     # Distribution had green walls; the picture's L2 is warm from end to end, wood shelves and a
     # leather sofa against the same panelling as Content. The room keeps its sign and its accent.
-    room_shell(rooms, 862, 1205, lv, wall, floor)
+    room_shell(rooms, 862, 1205, lv, wall, floor, battens=0.42)
     rooms.box(X(862), X(868), -0.2, BACK + 0.2, fz(lv), cz(lv), mat["frame"])
     label_panel(rooms, shell_c, lv, "L2", "CONTENT", mat)
     room_sign(shell_c, glow, "CONTENT", 527, lv, mat, "#fbbf24")
@@ -951,7 +977,7 @@ def build_l1(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     # The picture's production floor is a deep blue-violet; ours read redder and paler (65, 51, 70
     # against 52, 40, 77 over the left half), which is the brick's own colour, not its light.
     # Tried deeper still (#34205f): the region went 9.0 -> 9.6, so it stays at this violet.
-    brick = brick_material("wall_l1_audio", "#3f2b74", "#352363", "#1b1235", brick_w=0.36, row_h=0.14, rough=0.85, bump=0.3)
+    brick = brick_material("wall_l1_audio", "#3f2b74", "#352363", "#1b1235", brick_w=0.36, row_h=0.14, rough=0.85, bump=0.75)
     # The picture's production floor has a polished floor that carries the room's purple; ours read
     # 30 darker than it over the room's lowest rows.
     floor = principled("floor_l1", "#2c2542", rough=0.22, grain=0.05, grain_cm=28)
@@ -1005,8 +1031,9 @@ def build_l1(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     # own name and nothing else - what the bay is doing at the time is the web canvas's to draw from
     # the studio's state, and a number baked in here would be a made-up one.
     props.front_quad(X(879), X(940), wz(481), wz(421), BACK - 0.105, principled("render_display", "#08182c", rough=0.12, emit="#123a63", strength=1.3))
-    text(shell_c, "RENDER BAY", X(886), BACK - 0.11, wz(452), 0.34, emissive("render_label", "#bfe2ff", 3.0), name="render_label", face="sign")
-    glow.box(X(886), X(933), BACK - 0.115, BACK - 0.11, wz(440), wz(438), emissive("render_rule", "#38bdf8", 4.0))
+    text(shell_c, "RENDER", X(886), BACK - 0.11, wz(442), 0.62, emissive("render_label", "#e8f4ff", 3.5), name="render_label", face="bold")
+    glow.box(X(886), X(933), BACK - 0.115, BACK - 0.11, wz(470), wz(460), principled("render_track", "#0c2238", rough=0.3))
+    glow.box(X(887), X(932), BACK - 0.12, BACK - 0.115, wz(469), wz(461), emissive("render_rule", "#38bdf8", 4.0))
     screen_anchor("render_display", X(879), X(940), wz(481), wz(421), BACK - 0.105, zone="video_studio", kind="render_status")
     wall_window(props, 957, 991, 422, 462, mat)
     top = back_desk(props, 972, 1075, lv, mat)

@@ -230,7 +230,7 @@ class Graph:
         return c.outputs[0]
 
 
-def panel_material(name, base, seam, spacing, rough=0.55, seam_width=0.06, vertical=True, gloss=0.0):
+def panel_material(name, base, seam, spacing, rough=0.55, seam_width=0.09, vertical=True, gloss=0.0):
     """Wall panels with regular seams (vertical grooves by default)."""
     if name in MATS:
         return MATS[name]
@@ -248,9 +248,12 @@ def panel_material(name, base, seam, spacing, rough=0.55, seam_width=0.06, verti
     g.bsdf.inputs["Roughness"].default_value = rough
     if gloss:
         g.bsdf.inputs["Coat Weight"].default_value = gloss
+    # The joints are what makes a wall read as panelling in the picture, and at a 6 cm seam with a
+    # bump of 0.35 they reached the frame as nothing: a third of a world pixel of a colour a shade
+    # darker. 9 cm and a deeper bump, so the normal bake carries a groove the cove light can catch.
     bump = g.node("ShaderNodeBump")
-    bump.inputs["Strength"].default_value = 0.35
-    bump.inputs["Distance"].default_value = 0.01
+    bump.inputs["Strength"].default_value = 0.7
+    bump.inputs["Distance"].default_value = 0.02
     g.link(g.math("SUBTRACT", 1.0, edge), bump.inputs["Height"])
     g.link(bump.outputs["Normal"], g.bsdf.inputs["Normal"])
     return g.m
@@ -575,7 +578,7 @@ class MB:
 # meshes and records where they stand, so the live level puts real pack models there
 # (art-source/unreal/dress_hq_live.py); the web plates are built as before.
 UNREAL_PROPS_ON = os.environ.get("AMN_UNREAL_PROPS") == "1"
-UNREAL_PROPS = {"plants": [], "pictures": []}
+UNREAL_PROPS = {"plants": [], "pictures": [], "sofas": [], "pendants": []}
 
 
 def plant(mb_leaf, mb_pot, x, y, z, height, leaf_mat, pot_mat, pot_h=0.45, pot_r=0.2, n=10, seed=0, spread=1.0, style="palm"):
@@ -637,7 +640,10 @@ def monitor(mb, cx, y, z, w, h, frame, screen, stand=True, thickness=0.03, rz=0.
 def frame_picture(mb, cx, cz, y, w, h, frame, art, depth=0.03, border=0.025):
     # only the portrait pictures of some size: the pack's paintings are portrait, and a small or
     # landscape photo (pinned boards, shelves) would be misshapen by one
-    if UNREAL_PROPS_ON and h >= 0.9 * w and h >= 0.7:
+    # The pack's paintings reach the stream as pale blank canvases (their art is a flat material
+    # under this light), where the build's own pictures carry real art. So portraits stay ours unless
+    # AMN_UNREAL_PICTURES=1 asks for the pack's.
+    if UNREAL_PROPS_ON and os.environ.get("AMN_UNREAL_PICTURES") == "1" and h >= 0.9 * w and h >= 0.7:
         UNREAL_PROPS["pictures"].append({"x": round(cx, 4), "z": round(cz, 4), "y": round(y, 4), "w": round(w, 4), "h": round(h, 4)})
         return
     mb.box(cx - w / 2, cx + w / 2, y - depth, y, cz - h / 2, cz + h / 2, frame)
@@ -645,6 +651,12 @@ def frame_picture(mb, cx, cz, y, w, h, frame, art, depth=0.03, border=0.025):
 
 
 def sofa(mb, x0, x1, y0, y1, z, mat, seat_h=0.42, back_h=0.8, arm=0.14):
+    # a pack sofa in the live scene (dress_hq_live.py): the picture's are leather with cushions and
+    # highlights, and six boxes read as six boxes
+    if UNREAL_PROPS_ON:
+        UNREAL_PROPS["sofas"].append({"x": round((x0 + x1) / 2, 4), "y": round((y0 + y1) / 2, 4), "z": round(z, 4),
+                                      "width": round(x1 - x0, 4), "depth": round(y1 - y0, 4), "height": round(back_h, 4)})
+        return
     mb.box(x0, x1, y0, y1, z + 0.08, z + seat_h, mat)
     mb.box(x0, x1, y1 - 0.2, y1, z + seat_h, z + back_h, mat)
     mb.box(x0, x0 + arm, y0, y1, z + 0.08, z + seat_h + 0.2, mat)
