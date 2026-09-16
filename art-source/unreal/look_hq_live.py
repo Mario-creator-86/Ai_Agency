@@ -218,8 +218,10 @@ STREET_FILL_COLOR = unreal.LinearColor(0.7, 0.73, 0.88, 1.0)
 # left it at 21.7. 1800 lm is the first estimate for this height and area, scaled from the street
 # fill's 3300 over its own rect: if the middle still reads short of 85-96 try 2400, if it overshoots
 # try 1200.
-# 400 lm, not 1800: at 1800 the pavement read 72 against the picture's 61 (the street's region 18.3).
-WALK_WASH = env("AMN_LOOK_WALK_WASH", "400")
+# 150 lm, not the 1800 the simulation asked for: at 1800 the pavement read 72 against the picture's
+# 61 (the street's region 18.3), and once the pavement's own grain gave it something to catch the
+# light with, 400 still left it at 67. At 150 the street is 4.8.
+WALK_WASH = env("AMN_LOOK_WALK_WASH", "150")
 WALK_WASH_Y = env("AMN_LOOK_WALK_WASH_Y", "-5.5")           # Blender metres; the pavement runs -8.78 to -2.34
 WALK_WASH_WIDTH = env("AMN_LOOK_WALK_WASH_WIDTH", "2800")    # cm along the frame: the building's own front
 WALK_WASH_DEPTH = env("AMN_LOOK_WALK_WASH_DEPTH", "700")     # cm across the pavement

@@ -88,9 +88,42 @@ def _principled(m):
     return m.node_tree.nodes["Principled BSDF"]
 
 
-def principled(name, color, rough=0.5, metal=0.0, emit=None, strength=0.0, alpha=1.0, coat=0.0):
+def principled(name, color, rough=0.5, metal=0.0, emit=None, strength=0.0, alpha=1.0, coat=0.0,
+               grain=0.0, grain_cm=12.0):
+    """A plain surface. `grain` (0 to about 0.12) gives it a fine noise on the colour and the same
+    noise as relief, with features `grain_cm` across: the picture's floors, slabs and stone all carry
+    one, and a colour with none reads as painted card once the bake flattens it."""
     if name in MATS:
         return MATS[name]
+    if grain > 0.0:
+        g = Graph(name)
+        tc = g.node("ShaderNodeTexCoord")
+        noise = g.node("ShaderNodeTexNoise")
+        noise.inputs["Scale"].default_value = 100.0 / max(1.0, grain_cm)   # object space is in metres
+        noise.inputs["Detail"].default_value = 6.0
+        noise.inputs["Roughness"].default_value = 0.6
+        g.link(tc.outputs["Object"], noise.inputs["Vector"])
+        tone = g.ramp(noise.outputs["Fac"], [(0.2, (1.0 - grain, 1.0 - grain, 1.0 - grain, 1.0)),
+                                             (0.8, (1.0 + grain, 1.0 + grain, 1.0 + grain, 1.0))])
+        base = g.node("ShaderNodeRGB")
+        base.outputs[0].default_value = lin(color)
+        g.link(g.vmul(base.outputs[0], tone.outputs["Color"]), g.bsdf.inputs["Base Color"])
+        bump = g.node("ShaderNodeBump")
+        bump.inputs["Strength"].default_value = min(0.7, grain * 6.0)
+        bump.inputs["Distance"].default_value = 0.004
+        g.link(noise.outputs["Fac"], bump.inputs["Height"])
+        g.link(bump.outputs["Normal"], g.bsdf.inputs["Normal"])
+        b = g.bsdf
+        b.inputs["Roughness"].default_value = rough
+        b.inputs["Metallic"].default_value = metal
+        if coat:
+            b.inputs["Coat Weight"].default_value = coat
+        if emit:
+            b.inputs["Emission Color"].default_value = lin(emit)
+            b.inputs["Emission Strength"].default_value = strength
+        if alpha < 1.0:
+            b.inputs["Alpha"].default_value = alpha
+        return g.m
     m = bpy.data.materials.new(name)
     m.use_nodes = True
     b = _principled(m)

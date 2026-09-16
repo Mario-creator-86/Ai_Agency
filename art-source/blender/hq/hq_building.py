@@ -151,8 +151,8 @@ def materials():
         # right darkness, half the dusk's blue. The face renders at about 0.57, 0.42, 0.41 of the
         # base colour, so the picture asks for roughly 26, 69, 139; #1c3c78 goes most of that way
         # and stops short of a colour that would read as paint rather than as a roof at dusk.
-        "roof": principled("roof", "#1c3c78", rough=0.65),
-        "slab": principled("slab", "#2f3857", rough=0.55, metal=0.15),
+        "roof": principled("roof", "#1c3c78", rough=0.65, grain=0.05, grain_cm=25),
+        "slab": principled("slab", "#2f3857", rough=0.55, metal=0.15, grain=0.02, grain_cm=20),
         "sign_glass": principled("sign_glass", "#080b16", rough=0.18, metal=0.2),
         # the sign band reads 11 to 17 brighter than the picture's over its rows
         "gold": emissive("gold_text", "#f4c47f", 4.2),
@@ -170,14 +170,14 @@ def materials():
         "console": principled("console", "#f1ebe2", rough=0.32, emit="#fff4e6", strength=0.12),
         "console_top": emissive("console_top", "#fff2dd", 1.8),
         "console_slot": principled("console_slot", "#2a2b33", rough=0.4),
-        "desk": principled("desk_dark", "#2d2b31", rough=0.45),
-        "desk_top": principled("desk_top", "#3a3439", rough=0.35),
+        "desk": principled("desk_dark", "#2d2b31", rough=0.45, grain=0.05, grain_cm=9),
+        "desk_top": principled("desk_top", "#3a3439", rough=0.35, grain=0.05, grain_cm=9),
         "desk_white": principled("desk_white", "#e3ded6", rough=0.35),
         "desk_panel": principled("desk_panel", "#cfc9bf", rough=0.5),
         "chair": principled("chair_fabric", "#23252c", rough=0.7),
         "mug": principled("mug", "#c2410c", rough=0.4),
-        "wood": principled("wood", "#6a4a2e", rough=0.45),
-        "wood_dark": principled("wood_dark", "#3b2a1e", rough=0.5),
+        "wood": principled("wood", "#6a4a2e", rough=0.45, grain=0.07, grain_cm=7),
+        "wood_dark": principled("wood_dark", "#3b2a1e", rough=0.5, grain=0.07, grain_cm=7),
         "black": principled("black", "#121318", rough=0.45),
         "metal": principled("metal", "#9aa3ad", rough=0.28, metal=0.85),
         "white": principled("white", "#dedad2", rough=0.4),
@@ -629,7 +629,7 @@ def build_l4(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     # The picture's floor carries the room's light: L4's lowest rows read 66, 55, 46 there and 125
     # to 160 in front of the director's desk, against our 48, 34, 34 and 45 to 74. A lighter board
     # at a lower roughness takes the spots, as L1's production floor did.
-    floor = principled("floor_l4", "#5f4530", rough=0.24)
+    floor = principled("floor_l4", "#5f4530", rough=0.24, grain=0.055, grain_cm=24)
     room_shell(rooms, 517, 1205, lv, wall, floor)
     label_panel(rooms, shell_c, lv, "L4", "EXECUTIVE", mat)
     f = fz(lv)
@@ -708,7 +708,7 @@ def build_l3(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     # its blue board swallowed the light instead of carrying it. The picture's floor there is a
     # neutral grey with a violet hint. (Its bright front lip sits at rows 279-281 and ours at
     # 283-284; that is the slab's projection in build(), shared by every floor, not this board.)
-    floor = principled("floor_l3", "#4a4753", rough=0.26)
+    floor = principled("floor_l3", "#4a4753", rough=0.26, grain=0.05, grain_cm=28)
     room_shell(rooms, 517, 862, lv, wall, floor)
     # Fact Check had its own terracotta walls; in the picture this floor is one blue room from end to
     # end and the brown half read as a different building. The room keeps its sign and its accent.
@@ -814,7 +814,7 @@ def build_l2(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     room_rect("script_room", 517, 862, lv, "L2 Content")
     room_rect("publish_desk", 868, 1205, lv, "L2 Distribution")
     wall = panel_material("wall_l2", "#5e4a2c", "#2e2210", 0.42, rough=0.45)
-    floor = principled("floor_l2", "#3a2a1c", rough=0.3)
+    floor = principled("floor_l2", "#3a2a1c", rough=0.3, grain=0.055, grain_cm=24)
     room_shell(rooms, 517, 862, lv, wall, floor)
     # Distribution had green walls; the picture's L2 is warm from end to end, wood shelves and a
     # leather sofa against the same panelling as Content. The room keeps its sign and its accent.
@@ -922,7 +922,7 @@ def build_l1(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     brick = brick_material("wall_l1_audio", "#3f2b74", "#352363", "#1b1235", brick_w=0.36, row_h=0.14, rough=0.85, bump=0.3)
     # The picture's production floor has a polished floor that carries the room's purple; ours read
     # 30 darker than it over the room's lowest rows.
-    floor = principled("floor_l1", "#2c2542", rough=0.22)
+    floor = principled("floor_l1", "#2c2542", rough=0.22, grain=0.05, grain_cm=28)
     room_shell(rooms, 517, 862, lv, brick, floor)
     room_shell(rooms, 862, 1205, lv, panel_material("wall_l1_render", "#304a5e", "#1c2b38", 1.1, rough=0.6), floor)
     label_panel(rooms, shell_c, lv, "L1", "PRODUCTION", mat, accent="#b26bff")

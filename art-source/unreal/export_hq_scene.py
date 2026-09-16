@@ -267,7 +267,7 @@ def set_bake_target(mats, image):
         nt.nodes.active = node
 
 
-def rebuild(mat, color_img, emit_img, strength):
+def rebuild(mat, color_img, emit_img, strength, normal_img=None):
     """Replace the node graph with a Principled BSDF on the baked images (UV map 'bake')."""
     old = principled_node(mat)
     rough = old.inputs["Roughness"].default_value if old and not old.inputs["Roughness"].is_linked else 0.6
@@ -288,6 +288,15 @@ def rebuild(mat, color_img, emit_img, strength):
         nt.links.new(uv.outputs["UV"], etex.inputs["Vector"])
         nt.links.new(etex.outputs["Color"], bsdf.inputs["Emission Color"])
         bsdf.inputs["Emission Strength"].default_value = strength
+    if normal_img is not None:
+        ntex = nt.nodes.new("ShaderNodeTexImage")
+        ntex.image = normal_img
+        ntex.image.colorspace_settings.name = "Non-Color"
+        nmap = nt.nodes.new("ShaderNodeNormalMap")
+        nmap.uv_map = "bake"
+        nt.links.new(uv.outputs["UV"], ntex.inputs["Vector"])
+        nt.links.new(ntex.outputs["Color"], nmap.inputs["Color"])
+        nt.links.new(nmap.outputs["Normal"], bsdf.inputs["Normal"])
     bsdf.inputs["Roughness"].default_value = rough
     bsdf.inputs["Metallic"].default_value = metal
     nt.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
@@ -347,6 +356,28 @@ def bake_materials(scene, bake_dir):
         color.file_format = "PNG"
         color.save()
 
+        # The relief the procedural materials describe - the panels' grooves, the brick courses, the
+        # grain - lives in Bump nodes, which a colour bake throws away: every wall reached Unreal as
+        # paint on a flat plane. A tangent-space normal bake carries it, and glTF takes it from the
+        # Normal Map node as the material's normal texture. A mesh whose surfaces are genuinely flat
+        # bakes a uniform (0.5, 0.5, 1) map, which is dropped rather than shipped.
+        normal_img = bpy.data.images.new(f"{ob.name}_normal", size, size, alpha=False)
+        normal_img.colorspace_settings.name = "Non-Color"
+        set_bake_target(mats, normal_img)
+        bpy.ops.object.bake(type="NORMAL", use_clear=True, margin=4)
+        npx = np.empty(size * size * 4, dtype=np.float32)
+        normal_img.pixels.foreach_get(npx)
+        npx = npx.reshape(-1, 4)[:, :3]
+        relief = float(np.abs(npx - np.array([0.5, 0.5, 1.0], dtype=np.float32)).max())
+        if relief > 0.02:
+            normal_img.filepath_raw = os.path.join(bake_dir, f"{ob.name}_normal.png")
+            normal_img.file_format = "PNG"
+            normal_img.save()
+        else:
+            bpy.data.images.remove(normal_img)
+            normal_img = None
+        print(f"AMN_NORMAL {ob.name} relief={relief:.3f} {'kept' if normal_img else 'flat, dropped'}")
+
         emit_f = bpy.data.images.new(f"{ob.name}_emit_f", size, size, alpha=False, float_buffer=True)
         set_bake_target(mats, emit_f)
         bpy.ops.object.bake(type="EMIT", use_clear=True, margin=4)
@@ -369,7 +400,7 @@ def bake_materials(scene, bake_dir):
             if node:
                 mat.node_tree.nodes.remove(node)
         for mat in targets:
-            rebuild(mat, color, emit, peak)
+            rebuild(mat, color, emit, peak, normal_img)
         if windows:
             world_uvs(ob, windows)
             for i, p in windows.items():

@@ -41,7 +41,14 @@ def env(name, default):
     return float(os.environ.get(name, default))
 
 
-ON = env("AMN_SURF", "1")
+# Off by default, and here is why. Three passes were measured against the picture: the swap costs
+# about 6 units of mean colour distance whatever is carried over, and it takes detail away instead of
+# adding it (the rooms 2460 -> 2170 units of fine detail). Carrying the atlas, the colour factor and
+# the baked emission across is still not the whole of the glTF material the importer builds, and what
+# is left behind shows as the ground floor reading 80 against the picture's 68 while L3 reads 69
+# against 80. The grain belongs in the Blender materials, where the bake already carries it to
+# Unreal at the atlas's own resolution. AMN_SURF=1 runs the pass for whoever picks this up again.
+ON = env("AMN_SURF", "0")
 DETAIL = env("AMN_SURF_DETAIL", "1")
 
 
@@ -263,9 +270,15 @@ def instance(parent, key, spec, carried):
     return mi
 
 
+GETTERS = {
+    "texture": "get_material_instance_texture_parameter_value",
+    "vector": "get_material_instance_vector_parameter_value",
+    "scalar": "get_material_instance_scalar_parameter_value",
+}
+
+
 def overrides_of(material, kind):
-    """What the glTF import wrote on this instance: {parameter name in lower case: value}, read off
-    the instance's own override list (the library getters are not in every engine build)."""
+    """What the import wrote on this instance: {parameter name in lower case: value}."""
     out = {}
     try:
         for entry in material.get_editor_property(f"{kind}_parameter_values"):
@@ -276,18 +289,38 @@ def overrides_of(material, kind):
     return out
 
 
+def parameter(material, kind, name, overrides):
+    """An instance's value for a parameter: its own override, else what it inherits from its parent.
+    The glTF import leaves most of them on the parent, so the override list alone finds almost
+    nothing (6 slots against 87) and the surface would lose its atlas."""
+    value = overrides.get(name.lower())
+    if value is not None:
+        return value
+    getter = getattr(unreal.MaterialEditingLibrary, GETTERS[kind], None)
+    if getter is None:
+        return None
+    try:
+        return getter(material, name)
+    except Exception:
+        return None
+
+
 def carried_over(material):
     """The atlas, the colour factor and the baked emission, so the new material keeps painting what
-    the glTF one painted."""
+    the glTF one painted. A surface this pass has already treated carries the same three under the
+    master's own names, so a second run is as good as the first."""
     textures = overrides_of(material, "texture")
     vectors = overrides_of(material, "vector")
     scalars = overrides_of(material, "scalar")
+    ours = base_name(material.get_name()).startswith("mi_hq_surf")
+    names = (("BakedColor", "EmissiveTexture", "Tint", "EmissiveFactor", "EmissiveStrength") if ours else
+             ("BaseColorTexture", "EmissiveTexture", "BaseColorFactor", "EmissiveFactor", "EmissiveStrength"))
     return {
-        "baked": textures.get("basecolortexture"),
-        "emissive_texture": textures.get("emissivetexture"),
-        "base_factor": vectors.get("basecolorfactor"),
-        "emissive_factor": vectors.get("emissivefactor"),
-        "emissive_strength": scalars.get("emissivestrength"),
+        "baked": parameter(material, "texture", names[0], textures),
+        "emissive_texture": parameter(material, "texture", names[1], textures),
+        "base_factor": parameter(material, "vector", names[2], vectors),
+        "emissive_factor": parameter(material, "vector", names[3], vectors),
+        "emissive_strength": parameter(material, "scalar", names[4], scalars),
     }
 
 
@@ -318,7 +351,13 @@ def main():
                 continue
             key = base_name(mat.get_name())
             if key.startswith("mi_hq_surf"):
-                continue
+                # already ours, from an earlier pass: its own name says which surface it is, and the
+                # longest match wins so that "floor_l1" is not read as "floor_l"
+                match = next((c for c in sorted(table, key=len, reverse=True)
+                              if key.startswith(f"mi_hq_surf_{c}_")), None)
+                if match is None:
+                    continue
+                key = match
             spec = table.get(key)
             if spec is None:
                 continue
