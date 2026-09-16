@@ -1,5 +1,32 @@
 # Changelog
 
+## People on the pavement, and traffic that does not thin out — 2026-09-16
+
+The Owner's goal for the live headquarters names what the picture has: trees, people, cars,
+background, sky, light and clarity. The street had no people at all and its road was empty for
+stretches.
+
+- **Four passers-by.** `people/street_people.json` and `people/rig_employees.py` (which now takes
+  another config through `AMN_PEOPLE_CONFIG`) build them from MetaHuman Creator presets, the same way
+  the employees are built, into `/Game/AMN/People/Street`. `people/street_people.py` stands three of
+  them on the terrace and sits one on the bench, each facing the viewer, with ActorCore standing and
+  seated loops. They stand rather than walk because the Owner asked that every character face the
+  viewer, and a walk across the frame shows a character in profile.
+- **Clothes.** The MetaHuman plugin ships one garment: white underclothes. Tinting its own material
+  instances left pieces of it white on three of the four, so each passer-by's garment components take
+  a plain lit material (`M_HQ_Cloth`) in their own colour. At the plate's scale a dark top over darker
+  legs reads as street clothes.
+- **Eight vehicles instead of five.** Each crosses the frame in six to nine seconds of the traffic
+  sequence's twenty-four, so five left the road empty where the picture always has traffic.
+- **A road that reflects.** At roughness 0.25–0.5, traced to 0.4, the asphalt read flat. At 0.1–0.32
+  traced to 0.6 the cars' lights and the shopfronts lie on it in streaks, as in the picture. The
+  street's region went 7.0 → 6.0 with the fuller traffic.
+- **Brighter planters and a worn crossing.** The planters' bushes were dark clumps (the picture's are
+  full and lit) and the zebra crossing read as blown-out white; the bushes are lighter and denser and
+  the paint is a worn grey now.
+- `people/mh_retarget.py` holds the ActorCore-to-MetaHuman retarget both people scripts use.
+- Mean colour distance against the picture: 6.3.
+
 ## The city, the sky and the street around the building — 2026-09-16
 
 With the rooms close to the picture, the frame's own surroundings were the distance left: the mean

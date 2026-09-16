@@ -96,9 +96,13 @@ ROAD_SPECULAR = env("AMN_LOOK_ROAD_SPECULAR", "0.5")
 # range), and the roughness up to which Lumen traces real reflections (the engine's own default is
 # 0.4, so most of the road at 0.25-0.5 fell back to a dull reflection without the lights' streaks)
 ROAD_MI = "/Game/HQ/Materials/MI_HQ_AsphaltWet"
-ROAD_ROUGH_MIN = env("AMN_LOOK_ROAD_ROUGH_MIN", "0.25")
-ROAD_ROUGH_MAX = env("AMN_LOOK_ROAD_ROUGH_MAX", "0.5")
-TRACE_ROUGHNESS = env("AMN_LOOK_TRACE_ROUGHNESS", "0.4")
+# 0.25-0.5 over the road and 0.4 traced: the asphalt read flat, where the picture's carries the
+# shopfronts and the cars' lights in long streaks. At 0.1-0.32, with Lumen tracing reflections up
+# to 0.6 roughness, the lights lie on the road as they do in the picture (its region 7.0 -> 7.5,
+# the mean held at 6.4: the road is darker where it has nothing to reflect).
+ROAD_ROUGH_MIN = env("AMN_LOOK_ROAD_ROUGH_MIN", "0.1")
+ROAD_ROUGH_MAX = env("AMN_LOOK_ROAD_ROUGH_MAX", "0.32")
+TRACE_ROUGHNESS = env("AMN_LOOK_TRACE_ROUGHNESS", "0.6")
 # The building's frame (the Blender scene's dark blue metal, 0.5-0.6 metallic) renders black in the
 # live frame where the picture's frame is a lit grey: metal shows only what it reflects, and the dusk
 # around it is dark. AMN_LOOK_FRAME_METAL sets those materials' metallic factor (below 0 leaves them).

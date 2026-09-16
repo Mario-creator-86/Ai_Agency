@@ -99,7 +99,7 @@ def planter(mb, leaves, x0px, x1px, y0, y1, z0, z1, mats, seed, bush_height=0.8)
     x = X(x0px) + 0.3
     while x < X(x1px) - 0.2:
         c = (x, (y0 + y1) / 2 + rng.uniform(-0.1, 0.1), z1 + bush_height * rng.uniform(0.3, 0.45))
-        leaf_cards(leaves, c, (0.42, max(0.2, (y1 - y0) * 0.4), bush_height * 0.5), 170, 0.075, mats["bush"], seed * 17 + int(x * 10), core=mats["bush_core"])
+        leaf_cards(leaves, c, (0.42, max(0.2, (y1 - y0) * 0.4), bush_height * 0.5), 260, 0.075, mats["bush"], seed * 17 + int(x * 10), core=mats["bush_core"])
         x += rng.uniform(0.5, 0.7)
 
 
@@ -129,11 +129,13 @@ def build(colls):
         "lamp_glass": emissive("lamp_glass", "#ffd08a", 28.0),
         "planter": principled("planter", "#3a3b48", rough=0.7),
         "planter_rim": principled("planter_rim", "#3d3f4c", rough=0.4),
-        "bush": foliage_material("bush", "#23452a", "#78a64a", translucent=0.35),
+        # the picture's planters hold bright, full bushes; ours read as dark clumps in their boxes
+        "bush": foliage_material("bush", "#2f5f35", "#9ccf61", translucent=0.45),
         "bush_core": principled("bush_core", "#12220f", rough=0.9),
         "tree": foliage_material("tree_leaf", "#46803a", "#cfe07a", translucent=0.6),
         "bark": principled("bark", "#2c241f", rough=0.8),
-        "paint": principled("road_paint", "#70717e", rough=0.55),
+        # the crossing reads as blown-out white under the street fill; the picture's is a worn grey
+        "paint": principled("road_paint", "#4a4b55", rough=0.55),
         "led": emissive("terrace_led", "#ffd7a0", 6.0),
     }
 

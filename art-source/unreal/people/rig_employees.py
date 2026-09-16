@@ -16,7 +16,8 @@ Once that login is remembered, rig_in_editor.py runs it unattended in the full e
 commandlet: the build's groom texture bake (TextureGraph) crashes there before the engine ticks.
 Stop the live stream first; builds are memory-hungry.
 
-AMN_PEOPLE_ONLY=Sarah,Aris limits the run to some employees.
+AMN_PEOPLE_ONLY=Sarah,Aris limits the run to some employees; AMN_PEOPLE_CONFIG=street_people.json
+builds the street's passers-by instead.
 """
 
 import json
@@ -26,7 +27,10 @@ import traceback
 import unreal
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CONFIG = json.load(open(os.path.join(HERE, "employees.json"), "r", encoding="utf-8"))
+# AMN_PEOPLE_CONFIG names another file of the same shape (street_people.json: the passers-by on
+# the pavement, built the same way into their own folder)
+CONFIG_NAME = os.environ.get("AMN_PEOPLE_CONFIG", "employees.json")
+CONFIG = json.load(open(os.path.join(HERE, CONFIG_NAME), "r", encoding="utf-8"))
 PRESETS = "/MetaHumanCharacter/Optional/Presets"
 ONLY = {n.strip() for n in os.environ.get("AMN_PEOPLE_ONLY", "").split(",") if n.strip()}
 
@@ -76,7 +80,7 @@ def build(sub, character, name):
 def main():
     sub = unreal.get_editor_subsystem(unreal.MetaHumanCharacterEditorSubsystem)
     results = {}
-    for person in CONFIG["employees"]:
+    for person in CONFIG.get("employees") or CONFIG["people"]:
         name = person["name"]
         if ONLY and name not in ONLY:
             continue

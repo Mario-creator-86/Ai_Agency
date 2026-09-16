@@ -326,8 +326,11 @@ def cars():
     y_road = Y(790, ROAD_Z)
     near, far = y_road + 3.4, y_walk - 3.4
     # (mesh name fragment, column px, lane depth, heading +1 = towards +x)
+    # Eight, not five: each crosses the frame in six to nine seconds of the traffic sequence's
+    # twenty-four, so five left the road empty for stretches where the picture always has traffic.
     fleet = (("vehicle02", 150, near, 1), ("vehicle05", 330, near, 1), ("vehicle03", 1400, near, 1),
-             ("vehicle10", 1060, far, -1), ("vehicle06", 560, far, -1))
+             ("vehicle12", 800, near, 1), ("vehicle09", 1180, near, 1),
+             ("vehicle10", 1060, far, -1), ("vehicle06", 560, far, -1), ("vehicle13", 240, far, -1))
     for frag, xpx, lane, heading in fleet:
         name = next((n for n in meshes if frag in n), None)
         if name is None:

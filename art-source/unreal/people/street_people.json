@@ -1,0 +1,27 @@
+{
+ "_about": "The passers-by on the pavement in front of the headquarters. They are scenery, not the studio's staff: no desk, no role, no Character Bible entry. Each starts from a MetaHuman Creator preset and is built the same way the employees are (rig_employees.py with AMN_PEOPLE_CONFIG=street_people.json), into its own folder so the studio's people stay separate.",
+ "people_path": "/Game/AMN/People/Street",
+ "built_path": "/Game/AMN/People/Street/Built",
+ "people": [
+  {
+   "name": "Passer_Ana",
+   "preset": "Zuri",
+   "bible": "woman, thirties; walking along the pavement"
+  },
+  {
+   "name": "Passer_Dan",
+   "preset": "Trey",
+   "bible": "man, thirties; walking along the pavement"
+  },
+  {
+   "name": "Passer_Radu",
+   "preset": "Walter",
+   "bible": "man, fifties; standing by the bench"
+  },
+  {
+   "name": "Passer_Irina",
+   "preset": "Aera",
+   "bible": "woman, twenties; sitting on the bench"
+  }
+ ]
+}

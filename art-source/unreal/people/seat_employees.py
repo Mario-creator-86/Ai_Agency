@@ -31,9 +31,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG = json.load(open(os.path.join(HERE, "employees.json"), "r", encoding="utf-8"))
 LEVEL = "/Game/HQ/HQ_Dusk"
 TAG = "AMN_EMPLOYEE"
-ANIM_OUT = f"{CONFIG['people_path']}/Animations"
-MH_IK_RIG = "/MetaHumanCharacter/Animation/Retargeting/IK_MH_IKRig"
-ACTORCORE = "/Game/ActorCore_Sample_Motions"
+ANIM_OUT = f"{CONFIG['people_path']}/Animations"  # where mh_retarget.py keeps the retargeted loops
 SOURCES = {
     "man": ("Dummy_Male", "Idle_walk_sit_Male_Motion/Male_Sit_talk_Anim"),
     "woman": ("Dummy_Female", "Idle_walk_sit_Female_Motion/Female_Sit_talk_Anim"),
@@ -49,6 +47,8 @@ FRONT_S = {"Male_Sit_talk_Anim_MH": 2.0, "Female_Sit_talk_Anim_MH": 9.0}
 
 # the seats and projection come from the dressing script, so both always agree
 _spec = importlib.util.spec_from_file_location("dress", os.path.join(os.path.dirname(HERE), "dress_hq_live.py"))
+# the retarget itself is shared with street_people.py
+_retarget = importlib.util.spec_from_file_location("mh_retarget", os.path.join(HERE, "mh_retarget.py"))
 
 
 def log(msg):
@@ -79,48 +79,9 @@ def asset_of_class(folder, class_name, name_part=""):
 def retargeted_sit(kind, target_mesh):
     """The seated animation for a dummy kind, retargeted onto the MetaHuman skeleton (cached)."""
     dummy, anim_rel = SOURCES[kind]
-    # the batch retarget names its copy <source>_MH; match the name exactly ("Male_Sit_talk_Anim_MH"
-    # is a substring of "Female_Sit_talk_Anim_MH")
-    out_name = anim_rel.rsplit("/", 1)[1] + "_MH"
-    existing = [a for a in asset_of_class(ANIM_OUT, "AnimSequence") if str(a.asset_name) == out_name]
-    if existing:
-        return unreal.load_asset(str(existing[0].package_name))
-    source_anim = unreal.load_asset(f"{ACTORCORE}/{anim_rel}")
-    source_mesh = unreal.load_asset(f"{ACTORCORE}/{dummy}/{dummy}")
-    source_rig = unreal.load_asset(f"{ACTORCORE}/{dummy}/{dummy}_IKRig")
-    target_rig = unreal.load_asset(MH_IK_RIG)
-    if not all((source_anim, source_mesh, source_rig, target_rig, target_mesh)):
-        raise RuntimeError(f"missing retarget input for {kind}: anim={bool(source_anim)} mesh={bool(source_mesh)} "
-                           f"source_rig={bool(source_rig)} target_rig={bool(target_rig)} target_mesh={bool(target_mesh)}")
-    rtg_name = f"RTG_{dummy}_to_MH"
-    rtg_path = f"{ANIM_OUT}/{rtg_name}"
-    if unreal.EditorAssetLibrary.does_asset_exist(rtg_path):
-        retargeter = unreal.load_asset(rtg_path)
-    else:
-        retargeter = unreal.AssetToolsHelpers.get_asset_tools().create_asset(rtg_name, ANIM_OUT, unreal.IKRetargeter, unreal.IKRetargetFactory())
-    source, target = unreal.RetargetSourceOrTarget.SOURCE, unreal.RetargetSourceOrTarget.TARGET
-    ctrl = unreal.IKRetargeterController.get_controller(retargeter)
-    ctrl.set_ik_rig(source, source_rig)
-    ctrl.set_ik_rig(target, target_rig)
-    ctrl.set_preview_mesh(source, source_mesh)
-    ctrl.set_preview_mesh(target, target_mesh)
-    # 5.8 retargets through a stack of ops: create the default stack and point every op at the rigs
-    # before mapping the chains, or the result is a still pose
-    ctrl.add_default_ops()
-    ctrl.assign_ik_rig_to_all_ops(source, source_rig)
-    ctrl.assign_ik_rig_to_all_ops(target, target_rig)
-    ctrl.auto_map_chains(unreal.AutoMapChainType.FUZZY, True)
-    unreal.EditorAssetLibrary.save_loaded_asset(retargeter)
-    # the batch operation takes registry entries, not loaded objects; arguments in the 5.8 order:
-    # search, replace, prefix, suffix, target path, use source path, include referenced assets, overwrite
-    anim_data = unreal.EditorAssetLibrary.find_asset_data(f"{ACTORCORE}/{anim_rel}")
-    made = unreal.IKRetargetBatchOperation.duplicate_and_retarget(
-        [anim_data], source_mesh, target_mesh, retargeter, "", "", "", "_MH", ANIM_OUT, False, False, True)
-    log(f"retargeted {anim_rel} -> {[str(a.package_name) for a in made] if made else 'nothing'}")
-    if made:
-        return unreal.load_asset(str(made[0].package_name))
-    found = [a for a in asset_of_class(ANIM_OUT, "AnimSequence") if str(a.asset_name) == out_name]
-    return unreal.load_asset(str(found[0].package_name)) if found else None
+    module = importlib.util.module_from_spec(_retarget)
+    _retarget.loader.exec_module(module)
+    return module.retargeted(dummy, anim_rel, target_mesh)
 
 
 def main():
