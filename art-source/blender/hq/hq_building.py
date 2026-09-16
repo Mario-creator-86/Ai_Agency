@@ -149,8 +149,9 @@ def materials():
         "roof": principled("roof", "#1c2d4f", rough=0.65),
         "slab": principled("slab", "#2f3857", rough=0.55, metal=0.15),
         "sign_glass": principled("sign_glass", "#080b16", rough=0.18, metal=0.2),
-        "gold": emissive("gold_text", "#f4c47f", 5.5),
-        "gold_dim": emissive("gold_dim", "#e9b56f", 3.2),
+        # the sign band reads 11 to 17 brighter than the picture's over its rows
+        "gold": emissive("gold_text", "#f4c47f", 4.2),
+        "gold_dim": emissive("gold_dim", "#e9b56f", 2.5),
         "edge_led": emissive("edge_led", "#ffd7a0", 1.6),
         "edge_led_warm": emissive("edge_led_warm", "#ffc070", 3.0),
         "edge_led_slab": emissive("edge_led_slab", "#ffd7a0", 0.8),
@@ -514,7 +515,7 @@ def build_tower(shell, rooms, glow, lights, shell_c, mat):
     shell.box(X(1277), X(1283), -0.25, 2.2, -0.35, top, mat["frame"])
     shell.box(X(1307), X(1313), -0.25, 2.2, -0.35, top, mat["frame"])
     # the tower's crown
-    shell.box(X(1188), X(1353), -0.7, 2.6, Z(38, -0.7), Z(14, -0.7), principled("crown", "#3c404e", rough=0.4, metal=0.3))
+    shell.box(X(1188), X(1353), -0.7, 2.6, Z(38, -0.7), Z(14, -0.7), principled("crown", "#333744", rough=0.4, metal=0.3))
     shell.box(X(1188), X(1353), -0.72, -0.7, Z(38, -0.7) - 0.04, Z(38, -0.7), mat["edge_led"])
     shell.box(X(1225), X(1300), 0.2, 2.4, Z(38, 0.2), Z(8, 1.0), mat["roof"])
     # floor bands across the tower
