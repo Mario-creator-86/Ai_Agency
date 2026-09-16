@@ -355,6 +355,9 @@ def room_shell(mb, x0px, x1px, level, wall, floor_mat, back=BACK):
     f, c = fz(level), cz(level)
     mb.box(X(x0px), X(x1px), back, back + 0.2, f, c, wall)
     mb.box(X(x0px), X(x1px), -0.14, back, f - 0.06, f, floor_mat)
+    # Tried: a dark ceiling of each room's own under the floor above, because over L2 that underside
+    # is L3's blue-grey and the band read 125, 104, 88 against the picture's 101, 74, 48. It took the
+    # bounce out of every room instead: L4 2.4 -> 5.8, L3 4.6 -> 8.9, L2 6.4 -> 8.3, mean 4.5 -> 5.6.
 
 
 def cove(mb, x0px, x1px, level, mat, drop=0.5, back=BACK):
