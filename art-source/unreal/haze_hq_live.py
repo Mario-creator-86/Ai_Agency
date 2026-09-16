@@ -58,6 +58,37 @@ BUILDING_X = (float(os.environ.get("AMN_HAZE_BUILDING_X0", "-13.2")), float(os.e
 BASE_ROW = env("AMN_HAZE_BASE_ROW", "560")       # frame row (of 840) below which the haze is full
 TOP_ROW = env("AMN_HAZE_TOP_ROW", "160")         # frame row above which there is none
 FALLOFF = env("AMN_HAZE_FALLOFF", "1.5")         # >1 keeps the haze low, near the base
+
+
+def side_shape(suffix):
+    """The five numbers above for one side: AMN_HAZE_<NAME>_RIGHT if it is set, the shared
+    AMN_HAZE_<NAME> otherwise, so the defaults are the level exactly as it stood.
+
+    The two planes' combined coverage is ((row - TOP_ROW) / (BASE_ROW - TOP_ROW)) ^ FALLOFF scaled
+    by the two opacities: 18 % at row 300, 43 % at 420, 60 % at 500, 72 % below 560. Left of the
+    building that is upside down. Rows 420-500 are the mid-rise city the picture keeps dark, and
+    their darkest 40 % read 37, 41, 68 against the picture's 25, 29, 46 - the veil, not the blocks;
+    rows 300-420, where the picture's towers are palest, get a third of it, and read 64, 62, 84
+    against 85, 77, 102. Right of the building those same rows already match in the dark (22, 22, 29
+    against 22, 23, 27) and are over-bright in their highlights instead, so one falloff cannot serve
+    both: 2.4 takes 3.2, 3.2, 4.7 off the left's region, which it can spare once its towers are
+    lighter, and 4.3, 4.4, 5.0 off the right's, which is at 2.4 and cannot spare any of it.
+    """
+
+    def value(name, shared):
+        return float(os.environ.get(name + suffix, shared))
+
+    return {
+        "opacity": value("AMN_HAZE_OPACITY", OPACITY),
+        "far_share": value("AMN_HAZE_FAR_SHARE", FAR_SHARE),
+        "base_row": value("AMN_HAZE_BASE_ROW", BASE_ROW),
+        "top_row": value("AMN_HAZE_TOP_ROW", TOP_ROW),
+        "falloff": value("AMN_HAZE_FALLOFF", FALLOFF),
+    }
+
+
+SHAPE, SHAPE_RIGHT = side_shape(""), side_shape("_RIGHT")
+
 # (label, Blender depth in metres): in front of the mid-rise city (14-20 m) and of the towers (30-65 m)
 PLANES = (("SkylineHaze_near", 12.0), ("SkylineHaze_far", 27.0))
 
@@ -132,7 +163,7 @@ def haze_material():
     return mat
 
 
-def instance(parent, label, depth_m, opacity, color):
+def instance(parent, label, depth_m, opacity, color, shape):
     mel = unreal.MaterialEditingLibrary
     path = f"/Game/HQ/Materials/MI_HQ_{label}"
     if unreal.EditorAssetLibrary.does_asset_exist(path):
@@ -142,9 +173,9 @@ def instance(parent, label, depth_m, opacity, color):
         mi = unreal.AssetToolsHelpers.get_asset_tools().create_asset(name, folder, unreal.MaterialInstanceConstant, unreal.MaterialInstanceConstantFactoryNew())
     mel.set_material_instance_parent(mi, parent)
     mel.set_material_instance_vector_parameter_value(mi, "HazeColor", unreal.LinearColor(*color, 1.0))
-    mel.set_material_instance_scalar_parameter_value(mi, "BottomZ", z_of(BASE_ROW, depth_m) * 100.0)
-    mel.set_material_instance_scalar_parameter_value(mi, "TopZ", z_of(TOP_ROW, depth_m) * 100.0)
-    mel.set_material_instance_scalar_parameter_value(mi, "Falloff", FALLOFF)
+    mel.set_material_instance_scalar_parameter_value(mi, "BottomZ", z_of(shape["base_row"], depth_m) * 100.0)
+    mel.set_material_instance_scalar_parameter_value(mi, "TopZ", z_of(shape["top_row"], depth_m) * 100.0)
+    mel.set_material_instance_scalar_parameter_value(mi, "Falloff", shape["falloff"])
     mel.set_material_instance_scalar_parameter_value(mi, "Opacity", opacity)
     mel.update_material_instance(mi)
     unreal.EditorAssetLibrary.save_loaded_asset(mi)
@@ -163,16 +194,16 @@ def main():
     plane_mesh = unreal.load_asset("/Engine/BasicShapes/Plane")  # 100 x 100 cm, facing up
     width_m = META["camera"]["width_m"] + 12.0
     half = width_m / 2.0
-    sides = (("left", -half, BUILDING_X[0], COLOR), ("right", BUILDING_X[1], half, COLOR_RIGHT))
+    sides = (("left", -half, BUILDING_X[0], COLOR, SHAPE), ("right", BUILDING_X[1], half, COLOR_RIGHT, SHAPE_RIGHT))
     for label, depth_m in PLANES:
         far = label.endswith("far")
-        opacity = OPACITY * (FAR_SHARE if far else 1.0)
         z0, z1 = z_of(760, depth_m), z_of(80, depth_m)
-        for side, x0_m, x1_m, colour in sides:
+        for side, x0_m, x1_m, colour, shape_of in sides:
             if x1_m - x0_m <= 0.5:
                 continue
+            opacity = shape_of["opacity"] * (shape_of["far_share"] if far else 1.0)
             name = f"{label}_{side}"
-            mi = instance(parent, name, depth_m, opacity, colour)
+            mi = instance(parent, name, depth_m, opacity, colour, shape_of)
             # rolled a quarter turn about x, the plane stands upright across its side of the frame;
             # its local y (scale y) becomes the height
             actor = eas.spawn_actor_from_class(unreal.StaticMeshActor, ue((x0_m + x1_m) / 2.0, depth_m, (z0 + z1) / 2.0),
@@ -186,7 +217,8 @@ def main():
             actor.set_editor_property("tags", [unreal.Name(TAG)])
             actor.set_actor_hidden_in_game(opacity <= 0.0)
             log(f"{name} at depth {depth_m} m, x {x0_m:.0f} to {x1_m:.0f} m: opacity {opacity:.2f}, colour {colour}, "
-                f"full below z {z_of(BASE_ROW, depth_m):.1f} m, none above {z_of(TOP_ROW, depth_m):.1f} m")
+                f"falloff {shape_of['falloff']:.2f}, full below z {z_of(shape_of['base_row'], depth_m):.1f} m, "
+                f"none above {z_of(shape_of['top_row'], depth_m):.1f} m")
     les.save_current_level()
     log("saved")
 

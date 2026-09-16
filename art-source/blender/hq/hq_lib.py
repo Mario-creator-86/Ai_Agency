@@ -282,7 +282,8 @@ def brick_material(name, c1, c2, mortar, brick_w=0.5, row_h=0.22, scale=1.0, rou
     return g.m
 
 
-def windows_material(name, wall, lit_ratio=0.35, win_w=0.9, win_h=1.3, strength=6.0, warm=True, rough=0.35):
+def windows_material(name, wall, lit_ratio=0.35, win_w=0.9, win_h=1.3, strength=6.0, warm=True, rough=0.35,
+                     glass="#10151f"):
     """A tower facade: a grid of windows, a share of them lit (for the skyline)."""
     if name in MATS:
         return MATS[name]
@@ -307,7 +308,9 @@ def windows_material(name, wall, lit_ratio=0.35, win_w=0.9, win_h=1.3, strength=
     emit = g.vmul(lit.outputs["Color"], mask.outputs["Color"])
     g.link(emit, g.bsdf.inputs["Emission Color"])
     g.bsdf.inputs["Emission Strength"].default_value = strength
-    base = g.ramp(b.outputs["Fac"], [(0.0, "#10151f"), (0.5, wall)], constant=True)
+    # the unlit window and, in the mortar, the wall between the windows: the window is about four
+    # fifths of the facade, so `glass` is what a tower's own tone is made of
+    base = g.ramp(b.outputs["Fac"], [(0.0, glass), (0.5, wall)], constant=True)
     g.link(base.outputs["Color"], g.bsdf.inputs["Base Color"])
     g.bsdf.inputs["Roughness"].default_value = rough
     g.bsdf.inputs["Metallic"].default_value = 0.2

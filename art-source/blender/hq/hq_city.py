@@ -309,7 +309,15 @@ def build_city(city, mats):
     blue = windows_material("tower_blue", "#26304f", lit_ratio=0.19, win_w=0.17, win_h=0.27, strength=7.5)
     mauve = windows_material("tower_mauve", "#343652", lit_ratio=0.18, win_w=0.19, win_h=0.29, strength=7.5)
     dense = windows_material("city_dense", "#1f2438", lit_ratio=0.18, win_w=0.16, win_h=0.26, strength=7.0)
-    cool = windows_material("tower_cool", "#1e2640", lit_ratio=0.2, win_w=0.22, win_h=0.34, strength=6.5, warm=False)
+    # Left of the building only. `cool` stands at columns 200-236 and 388-430 and nowhere else, so
+    # it takes the lighter glass in place; `dark`, `blue` and `mauve` are on both sides and get a
+    # left-hand twin instead. The picture's left-hand towers are pale masses with dark window grids,
+    # ours dark masses with lit dots: rows 300-420 put 73 % of their pixels between luma 30 and 60
+    # where the picture puts 31 %, and 8 % between 60 and 105 where the picture puts 39 %.
+    cool = windows_material("tower_cool", "#303a58", glass="#212a40", lit_ratio=0.2, win_w=0.22, win_h=0.34, strength=6.5, warm=False)
+    dark_l = windows_material("tower_dark_l", "#2c3656", glass="#202940", lit_ratio=0.18, win_w=0.18, win_h=0.28, strength=7.5)
+    blue_l = windows_material("tower_blue_l", "#38455e", glass="#242d40", lit_ratio=0.19, win_w=0.17, win_h=0.27, strength=7.5)
+    mauve_l = windows_material("tower_mauve_l", "#464a6a", glass="#282a3c", lit_ratio=0.18, win_w=0.19, win_h=0.29, strength=7.5)
     beacon = emissive("beacon", "#ff3b3b", 25.0)
     # far city band (lowest, densest lights)
     for i in range(40):
@@ -328,22 +336,22 @@ def build_city(city, mats):
         w = rng.uniform(26, 60)
         tower(t, x0, x0 + w, rng.uniform(380, 500), 14.0 + rng.uniform(0, 6), mid, depth=4.0)
     # left
-    tower(t, 30, 92, 330, 45.0, blue, beacon=beacon)
-    tower(t, 92, 128, 385, 50.0, mauve)
-    tower(t, 127, 200, 175, 40.0, dark, crown=(140, 186, 150), beacon=beacon)
+    tower(t, 30, 92, 330, 45.0, blue_l, beacon=beacon)
+    tower(t, 92, 128, 385, 50.0, mauve_l)
+    tower(t, 127, 200, 175, 40.0, dark_l, crown=(140, 186, 150), beacon=beacon)
     strip = emissive("tower_strip", "#f6f2ff", 9.0)
     for i in range(26):
         rr = 240 + i * 6.2
         xx = 192 + 6 * math.sin(i / 26 * math.pi)
         t.box(X(xx), X(xx + 4), 39.8, 39.9, Z(rr + 3, 39.8), Z(rr, 39.8), strip)
     tower(t, 200, 236, 250, 42.0, cool)
-    tower(t, 236, 300, 385, 55.0, mauve)
-    tower(t, 300, 350, 330, 44.0, blue, beacon=beacon)
-    top = tower(t, 352, 388, 158, 38.0, dark)
+    tower(t, 236, 300, 385, 55.0, mauve_l)
+    tower(t, 300, 350, 330, 44.0, blue_l, beacon=beacon)
+    top = tower(t, 352, 388, 158, 38.0, dark_l)
     t.box(X(369), X(371), 38.5, 38.7, top, top + 2.2, principled("antenna", "#303442", rough=0.5))
     t.sphere((X(370), 38.4, top + 2.25), 0.18, beacon, seg=8, rings=6)
     tower(t, 388, 430, 280, 46.0, cool)
-    top = tower(t, 256, 274, 262, 47.0, dark)
+    top = tower(t, 256, 274, 262, 47.0, dark_l)
     t.cyl(X(265), 47.0, top, top + 3.6, 0.2, principled("spire", "#2a3350", rough=0.4, metal=0.4), seg=8, r_top=0.02)
     crown_glow = emissive("crown_glow", "#ffcf9a", 6.0)
     t.box(X(142), X(184), 39.8, 39.9, Z(152, 39.8), Z(149, 39.8), crown_glow)
@@ -356,23 +364,31 @@ def build_city(city, mats):
     text(city, "BUCHAREST\nAI DISTRICT", X(139.5), 29.5, Z(378, 29.5), 0.52, emissive("billboard_text", "#f5f7ff", 4.0), align="CENTER", spacing=1.05, line=1.05, name="billboard_text")
     STREET["billboard"] = {"rect": _rect(X(98), X(181), Z(401, 29.55), Z(363, 29.55), 29.55)}
     # cable-stayed bridge
-    br = principled("bridge", "#3a3f52", rough=0.4, metal=0.5)
+    # Pale, not dark: in the picture the pylon and the deck stand as a light grey-mauve silhouette
+    # against the sky, and ours stood at #3a3f52 against towers of the same tone.
+    br = principled("bridge", "#4d5570", rough=0.4, metal=0.5)
     by = 34.0
     deck_z = Z(368, by)
-    pylon_top = Z(262, by)
+    pylon_top = Z(318, by)
     t.box(X(233), X(241), by, by + 0.6, deck_z - 6.0, pylon_top, br)
     # a warm line up the pylon: against the towers behind it, a dark pylon alone does not read
     t.box(X(236.5), X(237.5), by - 0.02, by, deck_z, pylon_top, emissive("pylon_edge", "#ffb870", 1.5))
     t.box(X(186), X(292), by - 0.3, by + 0.9, deck_z - 0.25, deck_z, br)
-    cable = emissive("bridge_cable", "#e8a86a", 0.9)
+    cable = emissive("bridge_cable", "#e8a86a", 1.8)
     # the cables leave the pylon at many heights and fan down to the deck
+    # 0.04 m, not 0.012: at a third of a world pixel they were thinner than the frame can hold, and
+    # the fan that is the whole shape of this bridge in the picture never appeared
     for i in range(1, 11):
         for side in (-1, 1):
             xe = 237 + side * i * 5.2
-            beam(t, (X(237), by - 0.05, pylon_top - 0.3 - (10 - i) * 0.32), (X(xe), by - 0.05, deck_z), 0.012, cable)
-    deck_light = emissive("bridge_light", "#ffc98a", 14.0)
+            beam(t, (X(237), by - 0.05, pylon_top - 0.2 - (10 - i) * 0.18), (X(xe), by - 0.05, deck_z), 0.04, cable)
+    deck_light = emissive("bridge_light", "#ffc98a", 15.0)
+    # The picture's deck carries one continuous band of light, not a row of points: its columns
+    # 204-282 read 150-178 red over rows 362-376. The band is the eight rows above the deck; the
+    # spheres stay in front of it, a little larger, for the beading the picture has along it.
+    t.box(X(188), X(290), by - 0.4, by - 0.36, deck_z, Z(365, by), deck_light)
     for xp in range(188, 292, 6):
-        t.sphere((X(xp), by - 0.35, deck_z + 0.05), 0.055, deck_light, seg=8, rings=5)
+        t.sphere((X(xp), by - 0.45, deck_z + 0.05), 0.075, deck_light, seg=8, rings=5)
     # low block "SAME CITY BRIGHTER MINDS"
     near = MB("near_blocks")
     same = principled("same_city", "#24242e", rough=0.5)
@@ -384,6 +400,25 @@ def build_city(city, mats):
     text(city, "SAME\nCITY\nBRIGHTER\nMINDS", X(24), 2.96, Z(572, 2.96), 0.44, emissive("same_city_text", "#dcdfe8", 2.2), spacing=1.1, line=1.2, name="same_city_text", face="sign")
     near.box(X(95), X(99), 2.0, 2.2, WALK_Z, Z(650, 2.0), mats["pole"])
     near.box(X(92), X(103), 1.9, 2.0, Z(632, 1.9), Z(602, 1.9), principled("sign_panel", "#d6d6d0", rough=0.5))
+    # The picture's left-hand base is a warm band the frame has not got. Over rows 596-648, columns
+    # 110-420, 45.5 % of its pixels are warm (red over blue by more than 25) at a mean of 135, 100,
+    # 56, where ours are 21.7 % at 45, 41, 35; column by column the picture reads 62 to 142 red
+    # against our 27 to 88, and over rows 580-640 the whole band is 28.1, 18.9, 8.8 short. What
+    # carries it there is a row of lit shop fronts standing between the tree trunks. It cannot come
+    # from the mid-rise blocks: they stand at 14-20 m, behind both haze planes, so what light they
+    # have arrives washed blue. This row stands at 4.8 m - in front of the haze, behind every tree
+    # (which reach back to 4.0 m) and every planter, and with its own ground line falling on row 641,
+    # under the band - so it keeps its amber and the trunks cross it as they do in the picture.
+    shop_y = 4.8
+    shop_block = windows_material("shopfront_block", "#2c2430", lit_ratio=0.3, win_w=0.34, win_h=0.5, strength=6.0)
+    # two blocks at two depths, not one box: a single top edge would draw a straight line across the
+    # frame wherever the crowns leave a gap
+    near.box(X(158), X(302), shop_y, shop_y + 2.4, TERRACE_Z, Z(588, shop_y), shop_block)
+    near.box(X(302), X(430), shop_y + 0.3, shop_y + 2.7, TERRACE_Z, Z(600, shop_y + 0.3), shop_block)
+    shop = gradient_emission("shopfront", "#a8521c", "#ffcf96", 2.2)
+    # the columns the picture puts its brightest shop fronts on: 140, 200-220, 300 and 340-400
+    for x0, x1 in ((166, 206), (222, 262), (300, 336), (350, 396)):
+        near.front_quad(X(x0), X(x1), Z(638, shop_y - 0.02), Z(600, shop_y - 0.02), shop_y - 0.02, shop)
     # right side
     # The city right of the building reads darker than the picture (its region 59 against 50 in the
     # stream), and it lost light again when the towers' lit share was halved, so the two facades
