@@ -142,6 +142,12 @@ FOG_START_CM = env("AMN_LOOK_FOG_START", "3000")
 # the cutoff nothing is fogged (0 = no cutoff), so the skyline can take haze the sky backdrop does not.
 FOG_CUTOFF_CM = env("AMN_LOOK_FOG_CUTOFF", "0")
 EXPOSURE = env("AMN_LOOK_EV", "0")
+# The frame reads more contrasty than the picture everywhere (its street 45.9 against 31.2, its city
+# 42.7 against 35.3): the picture is a softer, hazier dusk. Tried softer: at 0.94 the contrast gap
+# closed (6.2 -> 4.7) and ssim rose, but lowering contrast lifts the mid-tones, so every region came
+# out brighter than the picture and the mean went 5.1 -> 7.6; at 0.98 with a tenth of a stop less
+# exposure, 5.9. The softness the picture has is in its haze, not in its grade, so this stays.
+CONTRAST = env("AMN_LOOK_CONTRAST", "1.05")
 BLOOM = env("AMN_LOOK_BLOOM", "0.8")
 # The road and the near pavement: no lamp reaches them (the lamps' pools stay on the far pavement)
 # and the dusk sky light alone left them at 15-45 of 255 where the picture's are a lit, cool grey at
@@ -314,7 +320,7 @@ def apply_post(settings):
         ("vignette_intensity", 0.3),
         # the picture's grade: a touch more colour, cool shadows, warm highlights
         ("color_saturation", unreal.Vector4(1.08, 1.08, 1.1, 1.0)),
-        ("color_contrast", unreal.Vector4(1.05, 1.05, 1.05, 1.0)),
+        ("color_contrast", unreal.Vector4(CONTRAST, CONTRAST, CONTRAST, 1.0)),
         ("color_gain_shadows", unreal.Vector4(0.9, 0.96, 1.12, 1.0)),
         ("color_gain_highlights", unreal.Vector4(1.08, 1.0, 0.9, 1.0)),
     )
