@@ -509,6 +509,8 @@ CLUTTER_ASSETS = {
     "frond": BIG_PLANT,
     "armchair": "/Game/MafiaBarnPack/Meshes/Props/Furniture/SM_ClassicArmchair",
     "cabinet": "/Game/Modern_House_V1/Mesh/SM_Cabinet_2",
+    # a small white cabinet for under the counters, where the picture keeps boxes and drawers
+    "underbox": "/Game/Modern_House_V1/Mesh/SM_Cabinet_6",
 }
 # (level, kind, column px, depth m, height above the floor m, "h" for total height or "l" for the
 #  longest horizontal side, that size in cm)
@@ -520,6 +522,8 @@ CLUTTER = (
     (4, "open_book", 1018, 1.95, 0.55, "l", 30),
     (4, "mug", 1029, 1.90, 0.55, "h", 9),
     (4, "table_lamp", 1046, 1.95, 0.55, "h", 40),
+    (4, "headphones", 857, 2.00, 0.60, "h", 20),
+    (4, "underbox", 800, 2.05, 0.00, "h", 50),
     # L3 Research / Fact Check: the bookshelf's top and the bare ends of the three counters
     (3, "books", 548, 2.05, 1.80, "h", 24),
     (3, "frond", 572, 2.05, 1.80, "h", 50),
@@ -529,6 +533,14 @@ CLUTTER = (
     (3, "laptop", 958, 2.00, 0.78, "l", 34),
     (3, "mug", 970, 1.95, 0.78, "h", 9),
     (3, "folder", 1002, 2.05, 0.78, "l", 28),
+    (3, "mug", 623, 2.00, 0.78, "h", 9),
+    (3, "books", 716, 2.05, 0.78, "h", 22),
+    (3, "headphones", 784, 2.05, 0.78, "h", 20),
+    (3, "pencils", 950, 2.05, 0.78, "h", 14),
+    (3, "books", 1172, 2.05, 1.55, "h", 22),
+    (3, "underbox", 648, 2.05, 0.00, "h", 50),
+    (3, "underbox", 806, 2.05, 0.00, "h", 50),
+    (3, "underbox", 1042, 2.05, 0.00, "h", 50),
     # L2 Content: the long bench under the pinboard, bare in the stream where the picture has it full
     (2, "tray", 566, 1.25, 0.46, "l", 32),
     (2, "books", 592, 1.25, 0.46, "h", 24),
@@ -539,6 +551,8 @@ CLUTTER = (
     (2, "laptop", 706, 2.00, 0.78, "l", 34),
     (2, "tray", 734, 2.05, 0.78, "l", 30),
     (2, "mug", 748, 1.95, 0.78, "h", 9),
+    (2, "pencils", 714, 2.05, 0.78, "h", 14),
+    (2, "underbox", 762, 2.05, 0.00, "h", 50),
     # L2 Distribution: the top of the two bookshelves
     (2, "frond", 1028, 2.10, 1.75, "h", 45),
     (2, "books", 1046, 2.10, 1.75, "h", 22),
@@ -548,6 +562,9 @@ CLUTTER = (
     (1, "cabinet", 742, 2.10, 0.00, "h", 175),
     (1, "tray", 978, 2.05, 0.78, "l", 30),
     (1, "mug", 987, 1.95, 0.78, "h", 9),
+    (1, "tray", 1150, 2.05, 1.70, "l", 30),
+    (1, "underbox", 680, 2.05, 0.00, "h", 50),
+    (1, "underbox", 1000, 2.05, 0.00, "h", 50),
     # Ground: the lobby's seating group (the picture has two seats and a table around the low table),
     # a plant in the ad space and one by the treasury's chart
     (0, "armchair", 700, 2.35, 0.00, "h", 100),

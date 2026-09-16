@@ -532,6 +532,9 @@ def build_tower(shell, rooms, glow, lights, shell_c, mat):
     for lvl in FLOORS:
         lo = fz(lvl) + 0.1
         hi = (fz(lvl + 1) - 0.1) if lvl < 4 else Z(40)
+        # Tried brighter (0.45 and 0.9) to cover the pale panels that show in this column: they are
+        # not the landing, and the tower only drifted from the picture (its region 7.4 -> 10.6 and
+        # 15.1). Back to the scene's own 0.2.
         glow.front_quad(X(1285), X(1305), lo, hi, 1.69, gradient_emission("bay_section", "#4a3524", "#b8844f", 0.2))
     strip = emissive("shaft_strip", "#ffd49c", 4.0)
     for xp in (1229, 1246, 1263):
@@ -542,9 +545,13 @@ def build_tower(shell, rooms, glow, lights, shell_c, mat):
     # lobby lift doors
     rooms.box(X(1224), X(1268), 1.55, 1.68, 0.0, 2.3, mat["metal"])
     glow.box(X(1245.5) - 0.01, X(1245.5) + 0.01, 1.54, 1.55, 0.05, 2.25, mat["black"])
-    # glass skin
+    # Glass skin. The building's own glass (#8fa6c0, roughness 0.04) is a mirror: over the lift tower
+    # it threw the dusk sky back at the camera as pale cyan panels, where the picture shows the warm
+    # shaft and its cabins through the glass. The tower's own glass is darker and less polished, so
+    # what is behind it shows.
+    tower_glass = principled("glass_tower", "#5d6c80", rough=0.16, alpha=0.05)
     for x0, x1 in ((1215, 1277), (1283, 1307)):
-        shell.front_quad(X(x0), X(x1), -0.3, top - 0.2, -0.26, mat["glass"])
+        shell.front_quad(X(x0), X(x1), -0.3, top - 0.2, -0.26, tower_glass)
     # lift stops, for the canvas: cab floor row of each level at the shaft
     stops = {}
     for lvl in FLOORS:
