@@ -573,11 +573,11 @@ def build_l4(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     spot_row(lights, (548, 700, 860, 1020, 1160), lv, "#ffd29a", 175)
     bookshelf(props, X(532), X(587), 1.85, 2.35, f, f + 1.6, mat["wood_dark"], mat["books"], shelves=4, seed=4)
     plant(leaves, pots, X(560), 2.1, f + 1.6, 0.45, mat["leaf"], mat["pot_white"], pot_h=0.14, pot_r=0.1, n=9, seed=41, style="bush")
-    plant(leaves, pots, X(606), 1.7, f, 0.9, mat["leaf"], mat["pot_white"], pot_h=0.4, pot_r=0.17, n=12, seed=42)
+    plant(leaves, pots, X(606), 1.7, f, 1.7, mat["leaf"], mat["pot_white"], pot_h=0.4, pot_r=0.17, n=12, seed=42)
     sofa(props, X(622), X(703), 1.55, 2.3, f, principled("leather", "#6b3b22", rough=0.45))
     wall_window(props, 622, 668, 107, 150, mat)
     frame_picture(props, X(714), wz(127), BACK - 0.02, M(18), M(30), principled("gold_frame", "#b98a3c", rough=0.3, metal=0.8), image_material("art_l4", "art_warm", 1.1))
-    plant(leaves, pots, X(757), 1.8, f, 1.35, mat["leaf_dark"], mat["pot_white"], pot_h=0.5, pot_r=0.2, n=14, seed=43)
+    plant(leaves, pots, X(757), 1.8, f, 1.9, mat["leaf_dark"], mat["pot_white"], pot_h=0.5, pot_r=0.2, n=14, seed=43)
     top = back_desk(props, 768, 880, lv, mat)
     for cx, scr in ((784, "screen_blue_chart"), (811, "screen_blue"), (838, "screen_blue_chart")):
         monitor(props, X(cx), 2.05, top, M(24), 0.5, mat["mon_frame"], mat[scr])
@@ -599,7 +599,7 @@ def build_l4(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     props.box(X(914), X(915), BACK - 0.1, BACK - 0.085, f + 1.0, f + 1.4, mat["metal"])
     props.box(X(941), X(961), 1.95, 2.35, f, f + 0.75, mat["black"])
     wall_window(props, 958, 1010, 107, 150, mat, view="window_b")
-    plant(leaves, pots, X(992), 1.75, f, 1.0, mat["leaf"], mat["pot_white"], pot_h=0.35, pot_r=0.15, n=12, seed=44)
+    plant(leaves, pots, X(992), 1.75, f, 1.7, mat["leaf"], mat["pot_white"], pot_h=0.35, pot_r=0.15, n=12, seed=44)
     props.box(X(1010), X(1052), 1.7, 2.2, f + 0.5, f + 0.55, mat["wood"])
     for xp in (1014, 1048):
         props.box(X(xp), X(xp) + 0.05, 1.75, 2.15, f, f + 0.5, mat["wood"])
@@ -614,7 +614,7 @@ def build_l4(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     props.box(X(1135), X(1172), BACK - 0.06, BACK - 0.02, wz(157), wz(100), mat["wood_dark"])
     props.front_quad(X(1137), X(1170), wz(155), wz(102), BACK - 0.065, board)
     text(shell_c, "GOOD\nIDEAS\nRUN\n24/7", X(1140), BACK - 0.07, wz(113), 0.34, emissive("chalk", "#e6e2d4", 2.2), line=1.0, name="chalk_text", face="sign")
-    plant(leaves, pots, X(1186), 1.85, f, 0.8, mat["leaf"], mat["pot_white"], pot_h=0.3, pot_r=0.14, n=11, seed=46)
+    plant(leaves, pots, X(1186), 1.85, f, 1.5, mat["leaf"], mat["pot_white"], pot_h=0.3, pot_r=0.14, n=11, seed=46)
 
 
 def build_l3(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, mat):
@@ -635,7 +635,7 @@ def build_l3(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     downlight_fixtures(glow, (560, 650, 760, 845, 900, 990, 1080, 1160), lv, mat)
     spot_row(lights, (560, 650, 760, 845, 900, 990, 1080, 1160), lv, "#f0f2ff", 220, cone=58, blend=0.5, tilt=26)
     light(lights, "AREA", (X(860), 0.4, cz(lv) - 0.9), 110.0, "#c8d0ff", radius=9.0, rot=(math.radians(35), 0, 0), name="l3_fill")
-    plant(leaves, pots, X(530), 1.6, f, 0.9, mat["leaf"], mat["pot_white"], pot_h=0.32, pot_r=0.15, n=12, seed=31)
+    plant(leaves, pots, X(530), 1.6, f, 1.55, mat["leaf"], mat["pot_white"], pot_h=0.32, pot_r=0.15, n=12, seed=31)
     bookshelf(props, X(537), X(587), 1.85, 2.35, f, f + 1.8, mat["wood_dark"], mat["books"], shelves=5, seed=3)
     wall_window(props, 602, 652, 202, 235, mat)
     top = back_desk(props, 590, 722, lv, mat)
@@ -690,10 +690,10 @@ def build_l3(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
         h = rng.uniform(0.18, 0.42)
         props.cyl(cx, 2.05, top3, top3 + h, 0.045, rng.choice(bottle_mats), seg=10)
     wall_window(props, 1050, 1098, 202, 235, mat)
-    plant(leaves, pots, X(1124), 1.7, f, 0.95, mat["leaf"], mat["pot_white"], pot_h=0.35, pot_r=0.16, n=13, seed=33)
+    plant(leaves, pots, X(1124), 1.7, f, 1.6, mat["leaf"], mat["pot_white"], pot_h=0.35, pot_r=0.16, n=13, seed=33)
     props.box(X(1158), X(1194), 1.8, 2.35, f, f + 1.55, principled("fridge", "#e8e6df", rough=0.3))
     props.box(X(1160), X(1161), 1.79, 1.8, f + 0.8, f + 1.3, mat["metal"])
-    plant(leaves, pots, X(1180), 1.3, f, 0.75, mat["leaf_dark"], mat["pot_white"], pot_h=0.3, pot_r=0.14, n=11, seed=34)
+    plant(leaves, pots, X(1180), 1.3, f, 1.25, mat["leaf_dark"], mat["pot_white"], pot_h=0.3, pot_r=0.14, n=11, seed=34)
     props.box(X(1140), X(1158), 2.0, 2.35, f, f + 0.6, principled("crate", "#a08058", rough=0.7))
 
 
@@ -718,7 +718,7 @@ def build_l2(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     for xp in (660, 740, 820, 1040, 1110, 1180):
         pendant(props, lights, xp, lv, 0.62, mat, energy=26, color="#ffd9a8")
     light(lights, "AREA", (X(860), 0.6, cz(lv) - 0.8), 60.0, "#ffc27a", radius=8.0, rot=(math.radians(35), 0, 0), name="l2_fill")
-    plant(leaves, pots, X(538), 1.6, f, 0.9, mat["leaf"], mat["pot_white"], pot_h=0.35, pot_r=0.15, n=12, seed=21)
+    plant(leaves, pots, X(538), 1.6, f, 1.5, mat["leaf"], mat["pot_white"], pot_h=0.35, pot_r=0.15, n=12, seed=21)
     frame_picture(props, X(563), wz(333), BACK - 0.02, M(22), M(24), mat["white"], image_material("photo_l2a", "art_warm", 0.9))
     cork = principled("cork_l2", "#8b6a45", rough=0.9)
     props.box(X(597), X(722), BACK - 0.06, BACK - 0.02, wz(362), wz(312), mat["wood_dark"])
@@ -749,7 +749,7 @@ def build_l2(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     props.front_quad(X(1103), X(1139), wz(348), wz(320), BACK - 0.085, image_material("radar", "ui_radar", 1.5))
     screen_anchor("publish_radar", X(1103), X(1139), wz(348), wz(320), BACK - 0.085, zone="publish_desk", desk="desk_publish")
     frame_picture(props, X(898), wz(336), BACK - 0.02, M(23), M(32), mat["black"], image_material("art_l2b", "art_teal", 0.8))
-    plant(leaves, pots, X(928), 1.8, f, 0.85, mat["leaf"], mat["pot_white"], pot_h=0.35, pot_r=0.15, n=11, seed=23)
+    plant(leaves, pots, X(928), 1.8, f, 1.45, mat["leaf"], mat["pot_white"], pot_h=0.35, pot_r=0.15, n=11, seed=23)
     wall_window(props, 940, 990, 320, 362, mat)
     bookshelf(props, X(1015), X(1057), 1.85, 2.35, f, f + 1.75, mat["wood"], mat["books"], shelves=5, seed=12)
     bookshelf(props, X(1057), X(1100), 1.85, 2.35, f, f + 1.75, mat["wood"], mat["books"], shelves=5, seed=13)
@@ -785,7 +785,7 @@ def build_l1(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     light(lights, "POINT", (X(590), BACK - 0.6, wz(450)), 30, "#d88cff", radius=0.4, name="neon_glow")
     glow.box(X(529), X(537), 1.2, 1.5, f, f + 0.32, emissive("cube_magenta", "#ff5cc8", 6.0))
     light(lights, "POINT", (X(533), 1.0, f + 0.25), 10, "#ff5cc8", radius=0.2, name="cube_glow")
-    plant(leaves, pots, X(548), 1.65, f, 0.9, mat["leaf"], mat["pot_white"], pot_h=0.35, pot_r=0.15, n=12, seed=11)
+    plant(leaves, pots, X(548), 1.65, f, 1.5, mat["leaf"], mat["pot_white"], pot_h=0.35, pot_r=0.15, n=12, seed=11)
     sofa(props, X(568), X(612), 1.7, 2.3, f, principled("sofa_purple", "#52307a", rough=0.6), back_h=0.72, arm=0.1)
     top = back_desk(props, 628, 722, lv, mat)
     for cx in (655, 694):
@@ -803,7 +803,7 @@ def build_l1(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     props.box(X(706), X(738), BACK - 0.08, BACK - 0.02, wz(476), wz(444), mat["mon_frame"])
     props.front_quad(X(708), X(736), wz(474), wz(446), BACK - 0.085, image_material("waveform", "ui_waveform", 1.6))
     screen_anchor("audio_waveform", X(708), X(736), wz(474), wz(446), BACK - 0.085, zone="audio_booth")
-    plant(leaves, pots, X(752), 1.7, f, 0.8, mat["leaf"], emissive("pot_pink", "#ff79c6", 2.0), pot_h=0.32, pot_r=0.14, n=10, seed=12)
+    plant(leaves, pots, X(752), 1.7, f, 1.35, mat["leaf"], emissive("pot_pink", "#ff79c6", 2.0), pot_h=0.32, pot_r=0.14, n=10, seed=12)
     props.box(X(770), X(812), BACK - 0.1, BACK - 0.02, f, wz(420), mat["black"])
     props.front_quad(X(773), X(809), f + 0.05, wz(424), BACK - 0.105, principled("door_panel", "#1d1b24", rough=0.35, metal=0.3))
     glow.box(X(786), X(796), BACK - 0.11, BACK - 0.105, wz(452), wz(446), emissive("door_sign", "#f5f5f5", 3.0))
@@ -834,7 +834,7 @@ def build_l1(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     seat("desk_video", 1022, lv, "front", "video_studio")
     props.box(X(1072), X(1102), BACK - 0.08, BACK - 0.02, wz(464), wz(436), mat["mon_frame"])
     props.front_quad(X(1074), X(1100), wz(462), wz(438), BACK - 0.085, image_material("timeline", "ui_timeline", 1.4))
-    plant(leaves, pots, X(1094), 1.5, f, 0.7, mat["leaf"], mat["pot_white"], pot_h=0.3, pot_r=0.13, n=10, seed=13)
+    plant(leaves, pots, X(1094), 1.5, f, 1.25, mat["leaf"], mat["pot_white"], pot_h=0.3, pot_r=0.13, n=10, seed=13)
     props.cyl(X(1116), 2.0, f, f + 1.8, 0.018, mat["metal"])
     props.box(X(1108), X(1124), 1.95, 2.05, f + 1.8, f + 1.95, mat["lamp_shade"])
     light(lights, "POINT", (X(1116), 1.9, f + 1.75), 22, "#ffd49a", radius=0.12, name="render_lamp")

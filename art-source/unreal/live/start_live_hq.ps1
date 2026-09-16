@@ -44,7 +44,10 @@ $ueArgs = @(
     # Remote Control's HTTP API (localhost only): the backend moves the scene's people from studio state.
     "-RCWebControlEnable",
     # A development binary prints engine warnings over the picture; the stream must not show them.
-    "-ExecCmds=`"DisableAllScreenMessages`"",
+    # The game otherwise starts at scalability level 3 (High): the quality groups are asked for Epic
+    # here, where they apply to the streamed game only, and the tonemapper sharpens a little to hold
+    # detail through the stream's own compression.
+    "-ExecCmds=`"DisableAllScreenMessages,sg.ViewDistanceQuality 4,sg.AntiAliasingQuality 4,sg.ShadowQuality 4,sg.GlobalIlluminationQuality 4,sg.ReflectionQuality 4,sg.PostProcessQuality 4,sg.TextureQuality 4,sg.EffectsQuality 4,sg.FoliageQuality 4,sg.ShadingQuality 4,r.Tonemapper.Sharpen 0.4`"",
     "-ResX=$ResX", "-ResY=$ResY", "-ForceRes", "-nosplash", "-unattended"
 )
 if (-not $Windowed) { $ueArgs += "-RenderOffScreen" } else { $ueArgs += "-windowed" }

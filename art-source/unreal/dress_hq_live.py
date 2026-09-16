@@ -22,6 +22,7 @@ dress_report.json for tuning; AMN_DRESS_ONLY=desks|street limits the pass.
   UnrealEditor-Cmd.exe AMNReference.uproject -run=pythonscript -script=dress_hq_live.py
 """
 
+import importlib.util
 import json
 import math
 import os
@@ -169,6 +170,11 @@ CARS = "/Game/CitySampleVehicles"
 
 REPORT = {"sizes": {}, "placed": [], "missing": [], "removed": []}
 
+# the plain lit material the street furniture and the passers-by's clothes share
+_flat_spec = importlib.util.spec_from_file_location("flat_material", os.path.join(HERE, "flat_material.py"))
+_flat = importlib.util.module_from_spec(_flat_spec)
+_flat_spec.loader.exec_module(_flat)
+
 
 def log(msg):
     unreal.log(f"AMN_DRESS {msg}")
@@ -292,12 +298,18 @@ def street():
         base = ground_z(y)
         place("street_lamp", lamp, ue(X(xpx), y, base), height=(Z(top_row, y) + 0.34 - base) * 100.0, label=f"{name}_post")
     by = y_terrace - 1.6
-    place("bench", find_asset(STREET["bench"]), ue(X(917), by + 0.22, WALK_Z), max_len=250.0, label="lobby_bench")
+    # The pack's bench and planters are near black in this light, where the picture has a wood bench
+    # and pale stone troughs; without them the passer-by sitting there looked unsupported.
+    bench = place("bench", find_asset(STREET["bench"]), ue(X(917), by + 0.22, WALK_Z), max_len=250.0, label="lobby_bench")
+    if bench is not None:
+        _flat.paint(bench, "BenchWood", (0.14, 0.08, 0.04), roughness=0.55)
     sy0 = y_walk + 1.2
     place("bus_stop", find_asset(STREET["bus_stop"]), ue(X(1461), sy0 + 0.9, WALK_Z), max_len=(X(1545) - X(1378)) * 100.0, label="bus_shelter")
     pot = find_asset(STREET["planter"])
     for i, (x0, x1, y0, y1) in enumerate(((140, 300, 1.0, 2.2), (312, 412, 1.0, 2.2), (1352, 1420, 0.6, 1.6), (1545, 1600, 0.6, 1.6), (612, 660, -1.4, -0.5), (1200, 1240, -1.6, -0.6))):
-        place("planter", pot, ue(X((x0 + x1) / 2), (y0 + y1) / 2, TERRACE_Z), max_len=min((X(x1) - X(x0)) * 100.0, 180.0), label=f"planter_{i}")
+        trough = place("planter", pot, ue(X((x0 + x1) / 2), (y0 + y1) / 2, TERRACE_Z), max_len=min((X(x1) - X(x0)) * 100.0, 180.0), label=f"planter_{i}")
+        if trough is not None:
+            _flat.paint(trough, "PlanterStone", (0.10, 0.10, 0.11), roughness=0.6)
     # AMN_DRESS_TREES=0 leaves the trees out (the wind-animated Megaplants weigh heavily on the stream)
     trees = [find_asset(p) for p in TREES] if os.environ.get("AMN_DRESS_TREES", "1") != "0" else []
     leaves = leaf_material() if TREE_MODE == "soul" else None

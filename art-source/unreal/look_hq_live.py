@@ -38,7 +38,9 @@ LUMENS_EXTERIOR = env("AMN_LM_EXTERIOR", os.environ.get("AMN_LM_PER_W", "70"))
 # like the picture's, only the band under its ceiling (the line and the pendants) stays brighter
 # L1 at 0.5 (0.7 before, 2026-09-16, once the render bay's panel was lit): its region 11.6 -> 8.6
 # (its light 58 against the picture's 51), ssim 0.183 -> 0.196, mean 6.6 -> 6.3
-LEVEL_GAIN = {int(k): float(v) for k, v in (pair.split(":") for pair in os.environ.get("AMN_LEVEL_GAIN", "0:0.55,1:0.5,2:0.6,3:0.3,4:0.8").split(",") if ":" in pair)}
+# L3 at 0.38 (0.3 before): once the streamed game ran at Epic quality the room read darker than the
+# picture (72.8 against 79.7) and its region went 8.0 -> 11.4; at 0.38 it is 6.4 and the mean 6.0.
+LEVEL_GAIN = {int(k): float(v) for k, v in (pair.split(":") for pair in os.environ.get("AMN_LEVEL_GAIN", "0:0.55,1:0.5,2:0.6,3:0.38,4:0.8").split(",") if ":" in pair)}
 CEILINGS_M = [(655 - row) / 27.575 for row in (520, 410, 297, 195)]
 
 # the look: factors on that base, per kind of light. Pass 1 (spot 0.45, road 0.12, city 0.45, fog
@@ -134,7 +136,9 @@ BLOOM = env("AMN_LOOK_BLOOM", "0.8")
 # 4000 lm over the near pavement (y -24 m, 24 m across) 20.3, the pale pavement overshot lavender;
 # 6000 lm over the road (y -16 m, 16 m) 46.4, a flat grey street; 3000 lm at y -16 m 18.2; 3000 lm
 # at y -19 m, 14 m across 13.5 (mean over all regions 15.6, the closest pass so far).
-STREET_FILL = env("AMN_LOOK_STREET_FILL", "3000")
+# 3300 (3000 before): the wetter road reflects rather than scatters, so the street read darker than
+# the picture once the reflections came in (57.7 against 60.6). At 3600 it overshot to 64.8.
+STREET_FILL = env("AMN_LOOK_STREET_FILL", "3300")
 STREET_FILL_Y = env("AMN_LOOK_STREET_FILL_Y", "-19")          # Blender metres; the road spans -23 to -9
 STREET_FILL_DEPTH = env("AMN_LOOK_STREET_FILL_DEPTH", "1400")  # cm across the street
 STREET_FILL_COLOR = unreal.LinearColor(0.7, 0.73, 0.88, 1.0)

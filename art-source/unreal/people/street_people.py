@@ -54,51 +54,13 @@ CLOTHES = {
 COLOR_PARAMS = ("diffuse_color_1", "diffuse_color_2", "B_diffuse_color_1", "C_color")
 
 
-CLOTH_PARENT = "/Game/HQ/Materials/M_HQ_Cloth"
-
-
-def cloth_material():
-    """A plain lit material with a Cloth colour parameter, built once."""
-    mel = unreal.MaterialEditingLibrary
-    if unreal.EditorAssetLibrary.does_asset_exist(CLOTH_PARENT):
-        return unreal.load_asset(CLOTH_PARENT)
-    folder, name = CLOTH_PARENT.rsplit("/", 1)
-    mat = unreal.AssetToolsHelpers.get_asset_tools().create_asset(name, folder, unreal.Material, unreal.MaterialFactoryNew())
-    colour = mel.create_material_expression(mat, unreal.MaterialExpressionVectorParameter, -400, 0)
-    colour.set_editor_property("parameter_name", "Cloth")
-    colour.set_editor_property("default_value", unreal.LinearColor(0.1, 0.1, 0.12, 1.0))
-    mel.connect_material_property(colour, "", unreal.MaterialProperty.MP_BASE_COLOR)
-    rough = mel.create_material_expression(mat, unreal.MaterialExpressionConstant, -400, 200)
-    rough.set_editor_property("r", 0.75)
-    mel.connect_material_property(rough, "", unreal.MaterialProperty.MP_ROUGHNESS)
-    mel.recompile_material(mat)
-    unreal.EditorAssetLibrary.save_loaded_asset(mat)
-    return mat
-
-
-def cloth_instance(parent, name, colour):
-    """The flat cloth material in one passer-by's colour."""
-    mel = unreal.MaterialEditingLibrary
-    path = f"/Game/HQ/Materials/MI_HQ_Cloth_{name}"
-    if unreal.EditorAssetLibrary.does_asset_exist(path):
-        mi = unreal.load_asset(path)
-    else:
-        folder, asset = path.rsplit("/", 1)
-        mi = unreal.AssetToolsHelpers.get_asset_tools().create_asset(asset, folder, unreal.MaterialInstanceConstant, unreal.MaterialInstanceConstantFactoryNew())
-    mel.set_material_instance_parent(mi, parent)
-    mel.set_material_instance_vector_parameter_value(mi, "Cloth", unreal.LinearColor(colour[0], colour[1], colour[2], 1.0))
-    mel.update_material_instance(mi)
-    unreal.EditorAssetLibrary.save_loaded_asset(mi)
-    return mi
-
-
-def dress_actor(actor, name, parent):
-    """Puts the flat cloth material on every garment component of a spawned passer-by. The plugin's
-    one garment is white underclothes; tinting its own material instances left some pieces white."""
+def dress_actor(actor, name):
+    """Puts a plain lit material on every garment component of a spawned passer-by. The plugin's one
+    garment is white underclothes; tinting its own material instances left some pieces white."""
     shirt, _ = CLOTHES.get(name, (None, None))
     if shirt is None:
         return "no colours"
-    mi = cloth_instance(parent, name, shirt)
+    mi = flat.instance(f"Cloth_{name}", shirt, roughness=0.8)
     dressed = []
     for comp in actor.get_components_by_class(unreal.SkeletalMeshComponent):
         label = comp.get_name().lower()
@@ -165,6 +127,9 @@ SITS = (
 
 _dress = importlib.util.spec_from_file_location("dress", os.path.join(os.path.dirname(HERE), "dress_hq_live.py"))
 _retarget = importlib.util.spec_from_file_location("mh_retarget", os.path.join(HERE, "mh_retarget.py"))
+_flat_spec = importlib.util.spec_from_file_location("flat_material", os.path.join(os.path.dirname(HERE), "flat_material.py"))
+flat = importlib.util.module_from_spec(_flat_spec)
+_flat_spec.loader.exec_module(flat)
 
 
 def log(msg):
@@ -210,7 +175,6 @@ def main():
             eas.destroy_actor(actor)
     ns = projection()
     retarget = retarget_module()
-    cloth = cloth_material()
     report = {}
     for name, xpx, y_m, dummy, anim_rel in STANDS:
         bp_class, body_mesh = built(name)
@@ -232,7 +196,7 @@ def main():
                     comp.set_animation(anim)
                     comp.set_editor_property("animation_data", unreal.SingleAnimationPlayData(anim_to_play=anim, saved_looping=True, saved_playing=True))
                     played = True
-            dressed = f"{tint_clothes(name)} / {dress_actor(actor, name, cloth)}"
+            dressed = f"{tint_clothes(name)} / {dress_actor(actor, name)}"
             report[name] = f"standing at column {xpx}, clothes {dressed}" + ("" if played else " (no standing loop)")
         except Exception as err:  # noqa: BLE001 - one passer-by must not stop the others
             report[name] = f"FAILED {type(err).__name__}: {err}"
@@ -255,7 +219,7 @@ def main():
                     # seated loop turns her away
                     comp.set_editor_property("animation_data", unreal.SingleAnimationPlayData(
                         anim_to_play=anim, saved_looping=False, saved_playing=False, saved_position=front_s))
-            report[name] = f"sitting on the bench at column {xpx}, clothes {tint_clothes(name)} / {dress_actor(actor, name, cloth)}"
+            report[name] = f"sitting on the bench at column {xpx}, clothes {tint_clothes(name)} / {dress_actor(actor, name)}"
         except Exception as err:  # noqa: BLE001 - one passer-by must not stop the others
             report[name] = f"FAILED {type(err).__name__}: {err}"
     # the retargeted loops live in the people folder: without saving it the game finds no animation
