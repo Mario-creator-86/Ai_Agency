@@ -72,6 +72,10 @@ def main():
     # frame reads about 7 short of green and 12 short of blue (the picture 77, 77, 105 against
     # 79, 69, 93). These gains close that without touching the page's own palette.
     p.add_argument("--tint", default="1.0,1.10,1.14", help="r,g,b gains applied to the composed sky")
+    # The painted cloud layer is drawn for the page's own sky, at the page's width. Laid across
+    # the plate it repeats as a fine mackerel pattern, where the picture has a few large, soft
+    # bands. Zooming into the middle of the layer makes its clouds that much larger.
+    p.add_argument("--cloud-zoom", type=float, default=1.7)
     a = p.parse_args()
     daylight = smoothstep(-8, 7, ELEVATION)
     dusk = math.exp(-(((ELEVATION - 1) / 6.5) ** 2))
@@ -104,6 +108,10 @@ def main():
         if weight < 0.01 or not os.path.exists(path):
             continue
         layer = Image.open(path).convert("RGBA")
+        if a.cloud_zoom > 1.0:
+            cw, ch = layer.width / a.cloud_zoom, layer.height / a.cloud_zoom
+            left, top = (layer.width - cw) / 2, (layer.height - ch) / 2
+            layer = layer.crop((round(left), round(top), round(left + cw), round(top + ch)))
         lh = round(layer.height * W / layer.width)
         arr = np.asarray(layer.resize((W, lh), Image.LANCZOS), np.float32)
         region = sky[:lh]
@@ -113,7 +121,7 @@ def main():
     img = Image.fromarray(np.clip(sky, 0, 255).astype(np.uint8), "RGB")
     img = img.resize((W * a.scale, H * a.scale), Image.LANCZOS)
     img.save(a.out)
-    print(f"AMN_SKY daylight={daylight:.3f} dusk={dusk:.3f} tint={a.tint} -> {a.out} {img.size}")
+    print(f"AMN_SKY daylight={daylight:.3f} dusk={dusk:.3f} tint={a.tint} cloud_zoom={a.cloud_zoom} -> {a.out} {img.size}")
 
 
 main()
