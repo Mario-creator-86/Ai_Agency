@@ -136,7 +136,8 @@ def build(colls):
         "bark": principled("bark", "#2c241f", rough=0.8),
         # the crossing reads as blown-out white under the street fill; the picture's is a worn grey
         "paint": principled("road_paint", "#4a4b55", rough=0.55),
-        "led": emissive("terrace_led", "#ffd7a0", 6.0),
+        # the pavement in front of the shopfronts reads 20 darker than the picture's
+        "led": emissive("terrace_led", "#ffd7a0", 8.5),
     }
 
     # ------------------------------------------------------------------ ground planes

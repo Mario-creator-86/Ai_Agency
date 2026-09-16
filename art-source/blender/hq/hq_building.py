@@ -902,9 +902,11 @@ def build_ground(shell, rooms, props, leaves, pots, fronts, glow, lights, back, 
     ANCHORS["displays"]["server_racks"] = {"rects": [px_rect(X(a), X(b), 0.12, 2.5, 1.19) for a, b in ((466, 492), (500, 527), (556, 583), (591, 619))], "zone": "server_corner"}
     for xp in (500, 590):
         glow.box(X(xp - 20), X(xp + 20), 1.0, 1.3, c - 0.62, c - 0.58, emissive("infra_bar", "#a5f3fc", 5.0))
-    light(lights, "AREA", (X(546), 1.4, c - 0.7), 90, "#9eeaf0", radius=4.0, rot=(math.radians(20), 0, 0), name="infra_fill")
+    # The infra room read teal against the picture (12 short of red, 9 over on blue across its
+    # columns): its glass was tinted #5fa7b0 and its fill was almost pure cyan.
+    light(lights, "AREA", (X(546), 1.4, c - 0.7), 90, "#bcd9e2", radius=4.0, rot=(math.radians(20), 0, 0), name="infra_fill")
     for x0, x1 in ((455, 546), (546, 637)):
-        shell.front_quad(X(x0), X(x1), 0.0, c, -0.2, principled("infra_glass", "#5fa7b0", rough=0.05, alpha=0.08))
+        shell.front_quad(X(x0), X(x1), 0.0, c, -0.2, principled("infra_glass", "#93a8bd", rough=0.05, alpha=0.08))
     shell.box(X(545), X(547), -0.22, -0.18, 0.0, c, mat["frame"])
     shell.box(X(455), X(637), -0.22, -0.18, Z(562), Z(560), mat["frame"])
     # ---------------- LOBBY
