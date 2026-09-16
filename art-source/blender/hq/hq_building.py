@@ -782,7 +782,9 @@ def build_l1(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     # against 52, 40, 77 over the left half), which is the brick's own colour, not its light.
     # Tried deeper still (#34205f): the region went 9.0 -> 9.6, so it stays at this violet.
     brick = brick_material("wall_l1_audio", "#3f2b74", "#352363", "#1b1235", brick_w=0.36, row_h=0.14, rough=0.85, bump=0.3)
-    floor = principled("floor_l1", "#1f1a2c", rough=0.3)
+    # The picture's production floor has a polished floor that carries the room's purple; ours read
+    # 30 darker than it over the room's lowest rows.
+    floor = principled("floor_l1", "#2c2542", rough=0.22)
     room_shell(rooms, 517, 862, lv, brick, floor)
     room_shell(rooms, 862, 1205, lv, panel_material("wall_l1_render", "#304a5e", "#1c2b38", 1.1, rough=0.6), floor)
     label_panel(rooms, shell_c, lv, "L1", "PRODUCTION", mat, accent="#b26bff")
@@ -824,7 +826,8 @@ def build_l1(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
         xs = 822 + i * 5.2
         props.box(X(xs), X(xs + 3.4), BACK - 0.12, BACK - 0.02, wz(496), wz(424), slat)
     # render bay
-    spot_row(lights, (930, 1040, 1150), lv, "#cfd8ff", 90, cone=74, blend=0.65, tilt=22)
+    # the render bay reads 10 to 22 darker than the picture's over its columns
+    spot_row(lights, (930, 1040, 1150), lv, "#cfd8ff", 130, cone=74, blend=0.65, tilt=22)
     downlight_fixtures(glow, (930, 1040, 1150), lv, mat)
     props.box(X(876), X(943), BACK - 0.1, BACK - 0.02, wz(484), wz(418), principled("render_frame", "#0d0f15", rough=0.3))
     # The render bay's panel: in the picture a lit blue screen, the brightest thing on this floor,
