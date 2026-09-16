@@ -43,7 +43,10 @@ def env_color(name, default):
 # lighter than the picture's.
 OPACITY = env("AMN_HAZE_OPACITY", "0.55")        # at the skyline's base, on the near plane
 FAR_SHARE = env("AMN_HAZE_FAR_SHARE", "0.7")     # the far plane's opacity as a share of the near one's
-COLOR = env_color("AMN_HAZE_COLOR", "0.07,0.09,0.2")  # linear, emissive: the near plane
+# The left city is the warm side of this dusk - the picture has red above green there, where
+# the right has the reverse - and the veil in front of it was wearing the right's colour.
+# 0.07,0.09,0.2 -> 0.11,0.10,0.19 took the left city from 6.2 to 1.7 and left the right at 2.5.
+COLOR = env_color("AMN_HAZE_COLOR", "0.11,0.10,0.19")  # linear, emissive: the near plane
 # The colour of the haze right of the building. The two sides of the picture are not the same dusk:
 # on the left the city stands close and dark behind the trees, on the right it is far and hazy. One
 # colour for the whole width could not have both - light, the left-hand city washed out (its region

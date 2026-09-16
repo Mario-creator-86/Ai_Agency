@@ -814,6 +814,9 @@ def build_l2(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     room_rect("script_room", 517, 862, lv, "L2 Content")
     room_rect("publish_desk", 868, 1205, lv, "L2 Distribution")
     wall = panel_material("wall_l2", "#5e4a2c", "#2e2210", 0.42, rough=0.45)
+    # Lifted to #4e3a28 to carry the room's light as L1's and L3's floors do: here it read as a pale
+    # band along the bottom of the room where the picture has a dark one (L2 9.0 -> 18.0 with the
+    # fills below). This floor stays dark.
     floor = principled("floor_l2", "#3a2a1c", rough=0.3, grain=0.055, grain_cm=24)
     room_shell(rooms, 517, 862, lv, wall, floor)
     # Distribution had green walls; the picture's L2 is warm from end to end, wood shelves and a
@@ -828,11 +831,20 @@ def build_l2(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     cove(glow, 875, 1195, lv, mat["edge_led"], drop=0.42)
     # clear of the CONTENT and DISTRIBUTION signs at the top of each room. The left end (columns 517
     # to 600) had no lamp of its own and read 29 short of the picture there.
-    for xp in (590, 660, 740, 820, 1040, 1110, 1180):
-        # Hung lower (drop 1.0, to sit a third of the way into the room as the picture's seem to):
-        # at the plate's scale the shade then covers the wall behind it and reads as a heavy dark
-        # cone, and L2's region went 6.7 -> 7.4 (mean 4.4 -> 4.6). They stay under the ceiling.
-        pendant(props, lights, xp, lv, 0.62, mat, energy=26, color="#ffd9a8")
+    # Each lamp carries its own strength, because the room is not equally bright in the picture.
+    # Columns 917-1011 - the left half of Distribution - had no lamp at all and read 52 short of the
+    # picture in red; 729-823, under two lamps and over the monitors, read 33 over.
+    # Hung lower (drop 1.0, to sit a third of the way into the room as the picture's seem to): at the
+    # plate's scale the shade then covers the wall behind it and reads as a heavy dark cone, and L2's
+    # region went 6.7 -> 7.4 (mean 4.4 -> 4.6). They stay under the ceiling.
+    # Halved again after the lamps over Distribution went in: nine of them at these strengths put
+    # the band just under the ceiling 40 over the picture (155, 122, 85 against 115, 82, 42).
+    for xp, watts in ((590, 20), (660, 16), (740, 12), (820, 12), (900, 12), (970, 14),
+                      (1040, 12), (1110, 14), (1180, 16)):
+        pendant(props, lights, xp, lv, 0.62, mat, energy=watts, color="#ffd9a8")
+    # Splitting this into two smaller fills lower down (2 x 22 W at 1.7 m under the ceiling, as L3's
+    # rebuild did) left the room flat and pale: L2 9.0 -> 18.0. L3's fills work because that room's
+    # light comes from five ceiling pools; L2's comes from this one.
     light(lights, "AREA", (X(860), 0.6, cz(lv) - 0.8), 60.0, "#ffc27a", radius=8.0, rot=(math.radians(35), 0, 0), name="l2_fill")
     plant(leaves, pots, X(538), 1.6, f, 1.5, mat["leaf"], mat["pot_white"], pot_h=0.35, pot_r=0.15, n=12, seed=21)
     frame_picture(props, X(563), wz(333), BACK - 0.02, M(22), M(24), mat["white"], image_material("photo_l2a", "art_warm", 0.9))
@@ -856,12 +868,21 @@ def build_l2(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
                       image_material(f"cork_photo_{i}", art, 1.6), border=0.04)
     # A long work table under the board, as in the picture, where ours had two thin metal rails at
     # hip height: the room's lower rows read 15 to 20 short of the picture's over that stretch.
+    # the same lit honey top L3's counters have: the picture's counters carry the room's light, ours
+    # read 12 to 18 short of it over the rows below the wall
+    counter_l2 = principled("counter_l2", "#7a5a34", rough=0.4)
     table_top = f + 0.74
-    props.box(X(556), X(722), 1.02, 1.58, table_top - 0.06, table_top, mat["desk_top"])
+    props.box(X(556), X(722), 1.02, 1.58, table_top - 0.06, table_top, counter_l2)
     props.box(X(556), X(722), 1.04, 1.56, table_top - 0.07, table_top - 0.06, mat["metal"])
     for xl in (560, 634, 638, 716):
         props.box(X(xl), X(xl) + 0.06, 1.1, 1.5, f, table_top - 0.06, mat["desk"])
     props.box(X(560), X(722), 1.1, 1.5, f + 0.2, f + 0.24, mat["desk"])
+    # A warm line under the table's own top and under the back desk, as the picture's counters have:
+    # the rows at desk height read 16 short of it while the ceiling band read 40 over, which is light
+    # in the wrong half of the room.
+    under = emissive("counter_led_l2", "#ffc98a", 1.4)
+    glow.box(X(560), X(718), 1.0, 1.02, table_top - 0.09, table_top - 0.07, under)
+    light(lights, "POINT", (X(640), 1.2, table_top + 0.1), 8, "#ffc98a", radius=0.4, name="l2_counter")
     # what stands on it: a printer, two stacks of paper, archive boxes and a mug
     paper_l2 = emissive("paper_l2", "#efe9dc", 0.45)
     props.box(X(568), X(604), 1.1, 1.5, table_top, table_top + 0.3, principled("printer", "#c9c6bf", rough=0.5))
@@ -874,7 +895,8 @@ def build_l2(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     props.cyl(X(710), 1.3, table_top, table_top + 0.1, 0.045, mat["white"], seg=12)
     for xp, w in ((566, 26), (600, 20), (660, 30)):
         props.box(X(xp), X(xp + w), 1.12, 1.48, f + 0.24, f + 0.5, principled("under_box", "#3a3a42", rough=0.6))
-    top = back_desk(props, 700, 850, lv, mat)
+    top = back_desk(props, 700, 850, lv, mat, top_mat=counter_l2)
+    glow.box(X(704), X(846), 1.73, 1.75, top - 0.09, top - 0.07, under)
     for cx, tex in ((784, "ui_script"), (826, "ui_blue")):
         monitor(props, X(cx), 2.05, top, M(40), 0.72, mat["mon_frame"], image_material(f"script_{tex}", tex, 1.5))
     screen_anchor("script_monitors", X(764), X(846), top + 0.12, top + 0.84, 2.03, zone="script_room", desk="desk_script")
@@ -1001,14 +1023,22 @@ def build_ground(shell, rooms, props, leaves, pots, fronts, glow, lights, back, 
     # columns between ground rooms and the ground frame
     for x0, x1 in ((447, 455), (637, 645), (885, 897), (1032, 1040), (1197, 1205)):
         shell.box(X(x0), X(x1), -0.25, BACK_G, -0.3, c, mat["frame"])
+    mullion_led = emissive("mullion_led", "#ffc98a", 0.8)
+    for x0, x1 in ((447, 451), (641, 645), (886, 892), (894, 898), (1028, 1032), (1042, 1046), (1191, 1195), (1198, 1202)):
+        shell.box(X(x0), X(x1), -0.27, -0.25, 0.05, Z(548), mullion_led)
     shell.box(X(432), X(1215), -0.28, 0.4, -0.35, 0.0, principled("plinth", "#4b4448", rough=0.6))
-    shell.box(X(415), X(1340), -0.3, -0.28, -0.12, -0.08, mat["edge_led"])
+    shell.box(X(415), X(1340), -0.3, -0.28, -0.055, -0.015, mat["edge_led"])
+    shell.box(X(447), X(1205), -0.34, -0.315, -0.03, 0.12, emissive("shop_sill", "#ffd9b0", 0.9))
     # header bars
-    header = principled("header_bar", "#191c27", rough=0.4)
+    header = principled("header_bar", "#2f2d2e", rough=0.4)
+    # The picture runs a warm LED line along the head of each shopfront's glazing, just under
+    # the fascia: over the S2 columns its rows 543-547 read 99, 87, 83 where ours read 52, 50, 53.
+    head_led = emissive("shop_head_led", "#ffd7a0", 0.8)
     for zone, x0, x1, label in (("server_corner", 455, 637, "S1   INFRA"), ("treasury", 897, 1032, "S2   TREASURY"), ("ai_space", 1040, 1197, "S3   AI SPACE")):
         shell.box(X(x0), X(x1), -0.22, 0.1, Z(541), c, header)
         shell.box(X(x0), X(x1), -0.23, -0.22, Z(541), Z(540), mat["frame_hi"])
-        text(shell_c, label, X(x0 + 8), -0.24, Z(537, -0.24), 0.52, mat["label_text"], name=f"header_{zone}")
+        shell.box(X(x0 + 4), X(x1 - 4), -0.06, -0.02, Z(546), Z(543), head_led)
+        text(shell_c, label, X(x0 + 8), -0.24, Z(532, -0.24), 0.52, mat["label_text"], name=f"header_{zone}")
     shell.box(X(645), X(885), -0.22, 0.1, Z(532), c, header)
     for xp in (700, 760, 790, 845):
         shell.box(X(xp), X(xp + 2), -0.2, -0.12, 0.0, Z(532), mat["frame"])
@@ -1016,7 +1046,7 @@ def build_ground(shell, rooms, props, leaves, pots, fronts, glow, lights, back, 
     room_rect("server_corner", 455, 637, 0, "S1 Infra")
     rooms.box(X(455), X(637), BACK_G, BACK_G + 0.2, f, c, principled("infra_wall", "#16202a", rough=0.3, metal=0.2))
     rooms.box(X(455), X(637), -0.1, BACK_G, -0.05, 0.0, principled("infra_floor", "#141820", rough=0.2))
-    grid = emissive("infra_grid", "#2dd4bf", 0.6)
+    grid = emissive("infra_grid", "#1d7d79", 0.3)
     for zr in (560, 600):
         glow.box(X(458), X(634), BACK_G - 0.03, BACK_G, Z(zr, BACK_G), Z(zr, BACK_G) + 0.02, grid)
     for xp in range(470, 630, 30):
@@ -1026,7 +1056,7 @@ def build_ground(shell, rooms, props, leaves, pots, fronts, glow, lights, back, 
     # and a pale top rail give each one its shape without lighting the whole room cyan (the infra
     # fill at 1.8 did that: the ground floor's region 4.2 -> 8.2).
     rack_body = principled("rack_body", "#1e232d", rough=0.4, metal=0.35)
-    rack_edge = principled("rack_edge", "#555d6b", rough=0.35, metal=0.5)
+    rack_edge = principled("rack_edge", "#2f353f", rough=0.35, metal=0.5)
     for x0, x1 in ((466, 492), (500, 527), (556, 583), (591, 619)):
         props.box(X(x0), X(x1), 1.2, 2.2, f, 2.62, rack_body)
         props.box(X(x0) - 0.02, X(x1) + 0.02, 1.16, 2.24, 2.62, 2.68, rack_edge)
@@ -1038,16 +1068,16 @@ def build_ground(shell, rooms, props, leaves, pots, fronts, glow, lights, back, 
         glow.box(X(xp - 20), X(xp + 20), 1.0, 1.3, c - 0.62, c - 0.58, emissive("infra_bar", "#a5f3fc", 5.0))
     # The infra room read teal against the picture (12 short of red, 9 over on blue across its
     # columns): its glass was tinted #5fa7b0 and its fill was almost pure cyan.
-    light(lights, "AREA", (X(546), 1.4, c - 0.7), 90, "#bcd9e2", radius=4.0, rot=(math.radians(20), 0, 0), name="infra_fill")
+    light(lights, "AREA", (X(546), 1.4, c - 0.7), 80, "#d6d0c4", radius=4.0, rot=(math.radians(20), 0, 0), name="infra_fill")
     for x0, x1 in ((455, 546), (546, 637)):
         shell.front_quad(X(x0), X(x1), 0.0, c, -0.2, principled("infra_glass", "#93a8bd", rough=0.05, alpha=0.08))
     shell.box(X(545), X(547), -0.22, -0.18, 0.0, c, mat["frame"])
     shell.box(X(455), X(637), -0.22, -0.18, Z(562), Z(560), mat["frame"])
     # ---------------- LOBBY
     room_rect("lobby", 645, 885, 0, "Lobby")
-    lobby_floor = principled("lobby_floor", "#8a6b45", rough=0.12, coat=0.4)
+    lobby_floor = principled("lobby_floor", "#9a7a52", rough=0.12, coat=0.4)
     rooms.box(X(645), X(885), -0.1, BACK_G, -0.05, 0.0, lobby_floor)
-    warm_wall = panel_material("lobby_side", "#6a5030", "#3a2a18", 0.6, rough=0.4)
+    warm_wall = panel_material("lobby_side", "#443a27", "#251e14", 0.6, rough=0.4)
     rooms.box(X(645), X(885), BACK_G, BACK_G + 0.2, f, c, warm_wall)
     feature = principled("feature_wall", "#403b3a", rough=0.55)
     rooms.box(X(713), X(782), BACK_G - 0.35, BACK_G, f, Z(527, BACK_G - 0.35), feature)
@@ -1091,14 +1121,18 @@ def build_ground(shell, rooms, props, leaves, pots, fronts, glow, lights, back, 
     room_rect("accounting_office", 897, 1032, 0, "S2 Treasury")
     # The picture's S2 is a slate room with warm accents, like S1 and S3 beside it; ours was a red one,
     # the only shopfront whose colour the picture does not have.
-    rooms.box(X(897), X(1032), BACK_G, BACK_G + 0.2, f, c, principled("ops_wall", "#3c4655", rough=0.6))
-    rooms.box(X(897), X(1032), -0.1, BACK_G, -0.05, 0.0, principled("ops_floor", "#2e3540", rough=0.25))
+    rooms.box(X(897), X(1032), BACK_G, BACK_G + 0.2, f, c, principled("ops_wall", "#4d5460", rough=0.6))
+    rooms.box(X(897), X(1032), -0.1, BACK_G, -0.05, 0.0, principled("ops_floor", "#3c4450", rough=0.25))
     props.box(X(945), X(1002), BACK_G - 0.4, BACK_G, Z(566, BACK_G - 0.4), Z(563, BACK_G - 0.4), mat["wood"])
     rng = random.Random(21)
     for i in range(5):
         xb = 948 + i * 10
         props.box(X(xb), X(xb + 6), BACK_G - 0.35, BACK_G - 0.1, Z(563, BACK_G - 0.4), Z(563, BACK_G - 0.4) + rng.uniform(0.2, 0.45), rng.choice(mat["books"]))
     light(lights, "POINT", (X(990), BACK_G - 0.5, Z(556, BACK_G - 0.5)), 14, "#ffcf8a", radius=0.1, name="ops_shelf_lamp")
+    for xw in (930, 1000):
+        light(lights, "POINT", (X(xw), BACK_G - 0.45, c - 0.55), 16, "#ffd4a2", radius=0.5, name=f"ops_wash_{xw}")
+    props.cyl(X(907), 1.5, 0.15, 3.25, 0.08, principled("brass_pole", "#b98a44", rough=0.25, metal=0.7, emit="#ffd9a0", strength=0.45), seg=10)
+    props.box(X(903), X(911), 1.42, 1.58, 3.25, 3.4, mat["lamp_shade"])
     cab = principled("cabinet", "#2b2b30", rough=0.4, metal=0.3)
     line = emissive("cabinet_line", "#ffd49a", 2.0)
     props.box(X(902), X(972), BACK_G - 0.6, BACK_G, 0.0, Z(574, BACK_G - 0.6) - 0.0, cab)
@@ -1136,17 +1170,17 @@ def build_ground(shell, rooms, props, leaves, pots, fronts, glow, lights, back, 
     shell.front_quad(X(897), X(1032), 0.0, Z(541), -0.16, mat["glass"])
     # ---------------- S3 AI SPACE (the ad space storefront)
     room_rect("ad_shop", 1040, 1197, 0, "S3 AI Space")
-    rooms.box(X(1040), X(1197), BACK_G, BACK_G + 0.2, f, c, principled("ai_wall", "#1d3a35", rough=0.25, metal=0.1))
+    rooms.box(X(1040), X(1197), BACK_G, BACK_G + 0.2, f, c, principled("ai_wall", "#182d29", rough=0.25, metal=0.1))
     rooms.box(X(1040), X(1197), -0.1, BACK_G, -0.05, 0.0, principled("ai_floor", "#1a2624", rough=0.2))
-    teal_glow = emissive("ai_logo", "#6ee7f0", 7.0)
+    teal_glow = emissive("ai_logo", "#4ad4e4", 3.0)
     logo_mark(glow, X(1092), BACK_G - 0.03, Z(557, BACK_G), 1.25, teal_glow)
-    light(lights, "POINT", (X(1113), BACK_G - 0.6, Z(574, BACK_G)), 40, "#5eead4", radius=0.6, name="ai_logo_glow")
+    light(lights, "POINT", (X(1113), BACK_G - 0.6, Z(574, BACK_G)), 14, "#5eead4", radius=0.6, name="ai_logo_glow")
     text(shell_c, "IDEAS\nTOOLS\nPEOPLE\nIMPACT", X(1146), BACK_G - 0.04, Z(582, BACK_G), 0.32, emissive("ai_words", "#d6dee2", 2.4), line=1.1, name="ai_words")
     ANCHORS["displays"]["ad_wall"] = {"rect": px_rect(X(1052), X(1190), Z(640, BACK_G), Z(548, BACK_G), BACK_G - 0.05), "zone": "ad_shop"}
     props.box(X(1056), X(1082), 1.6, 2.4, 0.0, 2.1, principled("vending", "#1c1f26", rough=0.35, metal=0.3))
     vending_front(props, glow, X(1058), X(1080), 0.6, 1.95, 1.595, seed=7)
-    sofa(props, X(1102), X(1182), 2.0, 2.75, f, principled("sofa_orange", "#b9632c", rough=0.55))
+    sofa(props, X(1102), X(1182), 2.0, 2.75, f, principled("sofa_orange", "#83461f", rough=0.55))
     plant(leaves, pots, X(1128), 2.9, f + 0.3, 0.6, mat["leaf"], mat["pot_dark"], pot_h=0.3, pot_r=0.15, n=10, seed=54, style="bush")
     props.box(X(1162), X(1192), 1.7, 2.1, 0.0, 0.55, mat["white"])
-    light(lights, "AREA", (X(1120), 1.2, c - 0.4), 120, "#ffd9a8", radius=3.0, name="ai_fill")
+    light(lights, "AREA", (X(1120), 1.2, c - 0.4), 96, "#ffd9a8", radius=3.0, name="ai_fill")
     shell.front_quad(X(1040), X(1197), 0.0, Z(541), -0.16, mat["glass"])

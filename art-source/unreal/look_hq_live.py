@@ -54,7 +54,9 @@ LUMENS_EXTERIOR = env("AMN_LM_EXTERIOR", os.environ.get("AMN_LM_PER_W", "70"))
 # place of one 9 m blue wash. That room carries its own light now, so its gain comes back from
 # 0.66 to 0.40 and it reads the picture's 79.7 exactly (its region 5.1 -> 2.7, its ssim 0.14 ->
 # 0.32). L4, whose cove was cut to the two stretches the picture lights, goes the other way to 1.15.
-LEVEL_GAIN = {int(k): float(v) for k, v in (pair.split(":") for pair in os.environ.get("AMN_LEVEL_GAIN", "0:0.66,1:0.84,2:0.73,3:0.40,4:1.15").split(",") if ":" in pair)}
+# The ground floor comes down to 0.58 once its shopfronts got the picture's own lit lines - a
+# line under each header, a strip down every mullion and a lit sill: its region 8.2 -> 5.2.
+LEVEL_GAIN = {int(k): float(v) for k, v in (pair.split(":") for pair in os.environ.get("AMN_LEVEL_GAIN", "0:0.58,1:0.84,2:0.73,3:0.40,4:1.15").split(",") if ":" in pair)}
 CEILINGS_M = [(655 - row) / 27.575 for row in (520, 410, 297, 195)]
 
 # the look: factors on that base, per kind of light. Pass 1 (spot 0.45, road 0.12, city 0.45, fog
@@ -104,6 +106,10 @@ INFRA = env("AMN_LOOK_INFRA", "1")
 # green over its columns: the picture's operations room is a lit room, ours a dark red one.
 # 3 (1 before): the picture's operations room is lit, and with the slate walls ours read 20 to 40
 # short over its columns.
+# What OPS reaches: only names starting "ops_" that no earlier branch claims. factor_for tests
+# SPOT_NAMES ("ops_spot") and POINT_NAMES ("ops_shelf_lamp") first, so from 2026-09-16 that is the
+# ops_wash_* pair washing the treasury's back wall, and nothing else. Do not move the "ops_"
+# branch above SPOT to "fix" this: it would take ops_spot_a and ops_spot_b from 0.15 to 3.
 OPS = env("AMN_LOOK_OPS", "3")
 # tree uplights: the leafy crowns read too bright at 0.6, and at 0.3 the city left of the building
 # still came 12.1 against the picture (its light 71 against 63). At 0.15: city left 11.7, the
