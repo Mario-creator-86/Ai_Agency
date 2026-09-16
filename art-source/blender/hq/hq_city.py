@@ -145,8 +145,10 @@ def build(colls):
     y_terrace = Y(676, TERRACE_Z)
     y_walk = Y(717, WALK_Z)
     y_road = Y(790, ROAD_Z)
-    terrace = principled("terrace", "#6e5c52", rough=0.55, coat=0.05)
-    walk = principled("sidewalk", "#484652", rough=0.82)
+    terrace = principled("terrace", "#6e5c52", rough=0.42, coat=0.12)
+    # The picture's pavement is wet like its road: the shopfronts and the lamps lie on it in long
+    # streaks. At 0.82 ours scattered all of it and read as a flat grey band.
+    walk = principled("sidewalk", "#484652", rough=0.5)
     curb = principled("curb", "#3c3a4a", rough=0.8)
     g.box(X(0), X(1600), y_terrace, 12.0, TERRACE_Z - 0.3, TERRACE_Z, terrace)
     g.box(X(0), X(1600), y_terrace - 0.02, y_terrace, TERRACE_Z - 0.05, TERRACE_Z - 0.01, mats["led"])
@@ -160,7 +162,7 @@ def build(colls):
     # The near pavement is out of the lamps' pools. It was a light, cool grey, and the frame's lowest
     # rows came out at 43, 42, 55 against the picture's 11, 20, 38 — a pale band across the bottom of
     # the shot where the picture has the dark edge of the street.
-    g.box(X(0), X(1600), -60.0, y_road - 0.25, WALK_Z - 0.3, WALK_Z, principled("sidewalk_near", "#31303c", rough=0.82))
+    g.box(X(0), X(1600), -60.0, y_road - 0.25, WALK_Z - 0.3, WALK_Z, principled("sidewalk_near", "#31303c", rough=0.7))
     for x0 in range(674, 852, 22):
         g.box(X(x0), X(x0 + 13), y_road + 0.6, y_walk - 0.7, ROAD_Z, ROAD_Z + 0.004, mats["paint"])
     y_mid = (y_road + y_walk) / 2

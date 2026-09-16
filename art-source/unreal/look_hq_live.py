@@ -44,7 +44,7 @@ LUMENS_EXTERIOR = env("AMN_LM_EXTERIOR", os.environ.get("AMN_LM_PER_W", "70"))
 # L1 at 0.6 and the ground floor at 0.58 (0.45 and 0.55): once the street lamps stopped washing the
 # building's front (street_channel), both read darker than the picture. L1's region 10.5 -> 6.4,
 # the mean 5.6 -> 5.2.
-LEVEL_GAIN = {int(k): float(v) for k, v in (pair.split(":") for pair in os.environ.get("AMN_LEVEL_GAIN", "0:0.58,1:0.6,2:0.52,3:0.38,4:0.8").split(",") if ":" in pair)}
+LEVEL_GAIN = {int(k): float(v) for k, v in (pair.split(":") for pair in os.environ.get("AMN_LEVEL_GAIN", "0:0.58,1:0.64,2:0.52,3:0.38,4:0.8").split(",") if ":" in pair)}
 CEILINGS_M = [(655 - row) / 27.575 for row in (520, 410, 297, 195)]
 
 # the look: factors on that base, per kind of light. Pass 1 (spot 0.45, road 0.12, city 0.45, fog
@@ -116,8 +116,11 @@ ROAD_MI = "/Game/HQ/Materials/MI_HQ_AsphaltWet"
 # shopfronts and the cars' lights in long streaks. At 0.1-0.32, with Lumen tracing reflections up
 # to 0.6 roughness, the lights lie on the road as they do in the picture (its region 7.0 -> 7.5,
 # the mean held at 6.4: the road is darker where it has nothing to reflect).
-ROAD_ROUGH_MIN = env("AMN_LOOK_ROAD_ROUGH_MIN", "0.1")
-ROAD_ROUGH_MAX = env("AMN_LOOK_ROAD_ROUGH_MAX", "0.32")
+# 0.08-0.24 (0.1-0.32): with the pavement wet as well, the picture's streaks appear. Tried
+# 0.03-0.16: the road turned into water, a full mirror of the building, and its region went
+# 6.0 -> 10.3.
+ROAD_ROUGH_MIN = env("AMN_LOOK_ROAD_ROUGH_MIN", "0.08")
+ROAD_ROUGH_MAX = env("AMN_LOOK_ROAD_ROUGH_MAX", "0.24")
 TRACE_ROUGHNESS = env("AMN_LOOK_TRACE_ROUGHNESS", "0.6")
 # The building's frame (the Blender scene's dark blue metal, 0.5-0.6 metallic) renders black in the
 # live frame where the picture's frame is a lit grey: metal shows only what it reflects, and the dusk
