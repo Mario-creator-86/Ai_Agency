@@ -40,8 +40,10 @@ LUMENS_EXTERIOR = env("AMN_LM_EXTERIOR", os.environ.get("AMN_LM_PER_W", "70"))
 # (its light 58 against the picture's 51), ssim 0.183 -> 0.196, mean 6.6 -> 6.3
 # L3 at 0.38 (0.3 before): once the streamed game ran at Epic quality the room read darker than the
 # picture (72.8 against 79.7) and its region went 8.0 -> 11.4; at 0.38 it is 6.4 and the mean 6.0.
-# L1 at 0.45 (0.5): with the warmer ceiling line it read 55.9 against the picture's 51.2.
-LEVEL_GAIN = {int(k): float(v) for k, v in (pair.split(":") for pair in os.environ.get("AMN_LEVEL_GAIN", "0:0.55,1:0.45,2:0.6,3:0.38,4:0.8").split(",") if ":" in pair)}
+# L1 at 0.6 and the ground floor at 0.58 (0.45 and 0.55): once the street lamps stopped washing the
+# building's front (street_channel), both read darker than the picture. L1's region 10.5 -> 6.4,
+# the mean 5.6 -> 5.2.
+LEVEL_GAIN = {int(k): float(v) for k, v in (pair.split(":") for pair in os.environ.get("AMN_LEVEL_GAIN", "0:0.58,1:0.6,2:0.6,3:0.38,4:0.8").split(",") if ":" in pair)}
 CEILINGS_M = [(655 - row) / 27.575 for row in (520, 410, 297, 195)]
 
 # the look: factors on that base, per kind of light. Pass 1 (spot 0.45, road 0.12, city 0.45, fog
@@ -372,6 +374,37 @@ def street_fill(actors):
     log(f"street fill {STREET_FILL:.0f} lm at {fill.get_actor_location()}{check}")
 
 
+# The three street lamps are 1000 W in the scene (70 lm/W, halved by AMN_LOOK_LAMP): enough to light
+# the pavement, and enough to wash the building's own front, which stands a metre behind them. The
+# floor labels showed it plainly - L1's panel read 117, 89, 72 against the picture's 37, 39, 75, and
+# with the lamps off 32, 33, 46. So the lamps light channel 2 only, and the street's own actors (its
+# ground, its props, the vehicles and the passers-by) are the ones that receive that channel.
+STREET_LIT_PREFIXES = ("street_ground", "street_back", "street_front", "street_props", "car_", "tree_",
+                       "planter_", "lamp_far_left", "lamp_left", "lamp_right", "lobby_bench",
+                       "bus_shelter", "street_Passer")
+
+
+def street_channel(actors):
+    """The street lamps on channel 2, and everything on the street set to receive it as well."""
+    lamps = 0
+    for label, actor in actors.items():
+        comp = actor.get_editor_property("light_component") if isinstance(actor, unreal.Light) else None
+        if comp is None or not label.startswith(LAMP_NAMES):
+            continue
+        comp.set_editor_property("lighting_channels", unreal.LightingChannels(channel0=False, channel1=False, channel2=True))
+        lamps += 1
+    lit = 0
+    for label, actor in actors.items():
+        if not label.startswith(STREET_LIT_PREFIXES):
+            continue
+        for comp in actor.get_components_by_class(unreal.PrimitiveComponent):
+            channels = comp.get_editor_property("lighting_channels")
+            comp.set_editor_property("lighting_channels", unreal.LightingChannels(
+                channel0=channels.channel0, channel1=channels.channel1, channel2=True))
+        lit += 1
+    log(f"street lamps on channel 2: {lamps} lamps, {lit} actors receiving")
+
+
 def facade_light(actors):
     """A wide area light in front of the building (Blender y FACADE_Y), facing it, cool like the dusk,
     without shadows, on lighting channel 1 only; the shell actor receives channels 0 and 1, every other
@@ -595,6 +628,7 @@ def main():
     tune_materials(actors)
     tune_post_and_fog(actors)
     street_fill(actors)
+    street_channel(actors)
     facade_light(actors)
     window_views(actors)
     small_lights(actors)

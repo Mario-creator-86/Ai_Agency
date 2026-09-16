@@ -437,18 +437,23 @@ def build(colls):
     rail_y = 1.2
     for x0, x1 in ((436, 588), (606, 878)):
         zr = Z(30, rail_y)
+        # three rails and a top bar, as the picture's roof railing has; ours showed two
         shell.box(X(x0), X(x1), rail_y, rail_y + 0.05, zr + 0.95, zr + 1.02, rail)
-        shell.box(X(x0), X(x1), rail_y, rail_y + 0.05, zr + 0.5, zr + 0.54, rail)
+        shell.box(X(x0), X(x1), rail_y, rail_y + 0.05, zr + 0.66, zr + 0.70, rail)
+        shell.box(X(x0), X(x1), rail_y, rail_y + 0.05, zr + 0.38, zr + 0.42, rail)
         for xp in range(x0, x1 + 1, 16):
             shell.box(X(xp), X(xp) + 0.05, rail_y, rail_y + 0.05, zr, zr + 1.02, rail)
     shell.box(X(436), X(470), 1.4, 2.4, Z(30, 1.4), Z(18, 1.4), mat["roof"])
     zr = Z(30, 2.0)
-    shell.box(X(880), X(1190), 1.8, 3.2, zr, Z(4, 1.8), mat["roof"])
-    shell.box(X(880), X(1190), 1.78, 1.8, Z(4, 1.8) - 0.05, Z(4, 1.8), rail)
+    # The plant room ran up to row 4, which put a dark wall where the picture has sky over the roof
+    # (its rows 15-30 read 19, 22, 35 against 31, 43, 71). It stops at row 16 now.
+    plant_top = Z(16, 1.8)
+    shell.box(X(880), X(1190), 1.8, 3.2, zr, plant_top, mat["roof"])
+    shell.box(X(880), X(1190), 1.78, 1.8, plant_top - 0.05, plant_top, rail)
     shell.box(X(880), X(1190), 1.78, 1.8, zr + 0.3, zr + 0.34, mat["edge_led"])
     for xp in range(884, 1190, 20):
-        shell.box(X(xp), X(xp) + 0.04, 1.75, 1.78, Z(4, 1.8), Z(4, 1.8) + 0.6, rail)
-    shell.box(X(880), X(1190), 1.75, 1.78, Z(4, 1.8) + 0.56, Z(4, 1.8) + 0.62, rail)
+        shell.box(X(xp), X(xp) + 0.04, 1.75, 1.78, plant_top, plant_top + 0.6, rail)
+    shell.box(X(880), X(1190), 1.75, 1.78, plant_top + 0.56, plant_top + 0.62, rail)
     # sign band
     sy = -0.45
     shell.box(X(680), X(1205), sy, 0.2, Z(80, sy), Z(40, sy), mat["sign_glass"])
