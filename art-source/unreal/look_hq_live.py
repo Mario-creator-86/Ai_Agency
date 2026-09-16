@@ -34,8 +34,9 @@ def env(name, default):
 # the build's own light balance (build_hq_scene.py), so a light's base is energy x lumens per watt
 LUMENS_INTERIOR = env("AMN_LM_INTERIOR", os.environ.get("AMN_LM_PER_W", "1.0"))
 LUMENS_EXTERIOR = env("AMN_LM_EXTERIOR", os.environ.get("AMN_LM_PER_W", "70"))
-# L2 at 0.6 (0.7 before): its region 19.1 -> 17.9, mean 11.9 -> 11.7 (2026-09-15); its lower rows now read
-# like the picture's, only the band under its ceiling (the line and the pendants) stays brighter
+# L2 at 0.52 (0.6, and 0.7 before that): with a seventh pendant over its left end - which had no lamp
+# of its own and read 29 short of the picture there - the floor came out brighter than the picture
+# (81.8 against 78.8). At 0.52 its region 8.7 -> 6.5 and the mean 5.3 -> 5.1.
 # L1 at 0.5 (0.7 before, 2026-09-16, once the render bay's panel was lit): its region 11.6 -> 8.6
 # (its light 58 against the picture's 51), ssim 0.183 -> 0.196, mean 6.6 -> 6.3
 # L3 at 0.38 (0.3 before): once the streamed game ran at Epic quality the room read darker than the
@@ -43,7 +44,7 @@ LUMENS_EXTERIOR = env("AMN_LM_EXTERIOR", os.environ.get("AMN_LM_PER_W", "70"))
 # L1 at 0.6 and the ground floor at 0.58 (0.45 and 0.55): once the street lamps stopped washing the
 # building's front (street_channel), both read darker than the picture. L1's region 10.5 -> 6.4,
 # the mean 5.6 -> 5.2.
-LEVEL_GAIN = {int(k): float(v) for k, v in (pair.split(":") for pair in os.environ.get("AMN_LEVEL_GAIN", "0:0.58,1:0.6,2:0.6,3:0.38,4:0.8").split(",") if ":" in pair)}
+LEVEL_GAIN = {int(k): float(v) for k, v in (pair.split(":") for pair in os.environ.get("AMN_LEVEL_GAIN", "0:0.58,1:0.6,2:0.52,3:0.38,4:0.8").split(",") if ":" in pair)}
 CEILINGS_M = [(655 - row) / 27.575 for row in (520, 410, 297, 195)]
 
 # the look: factors on that base, per kind of light. Pass 1 (spot 0.45, road 0.12, city 0.45, fog

@@ -719,8 +719,9 @@ def build_l2(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     f = fz(lv)
     cove(glow, 525, 855, lv, mat["edge_led"], drop=0.42)
     cove(glow, 875, 1195, lv, mat["edge_led"], drop=0.42)
-    # clear of the CONTENT and DISTRIBUTION signs at the top of each room
-    for xp in (660, 740, 820, 1040, 1110, 1180):
+    # clear of the CONTENT and DISTRIBUTION signs at the top of each room. The left end (columns 517
+    # to 600) had no lamp of its own and read 29 short of the picture there.
+    for xp in (590, 660, 740, 820, 1040, 1110, 1180):
         pendant(props, lights, xp, lv, 0.62, mat, energy=26, color="#ffd9a8")
     light(lights, "AREA", (X(860), 0.6, cz(lv) - 0.8), 60.0, "#ffc27a", radius=8.0, rot=(math.radians(35), 0, 0), name="l2_fill")
     plant(leaves, pots, X(538), 1.6, f, 1.5, mat["leaf"], mat["pot_white"], pot_h=0.35, pot_r=0.15, n=12, seed=21)
