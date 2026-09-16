@@ -155,7 +155,9 @@ def materials():
         "edge_led": emissive("edge_led", "#ffd7a0", 1.6),
         "edge_led_warm": emissive("edge_led_warm", "#ffc070", 3.0),
         "edge_led_slab": emissive("edge_led_slab", "#ffd7a0", 0.8),
-        "label": principled("label_dark", "#2a2938", rough=0.4),
+        # The floor labels stand on the building's front, and the picture's read a deep blue
+        # (37, 39, 75 at L1); ours came out 32, 33, 46 once the street lamps stopped lighting them.
+        "label": principled("label_dark", "#262c4c", rough=0.4),
         "label_text": emissive("label_text", "#eef1f8", 3.2),
         "label_text_dim": emissive("label_text_dim", "#c9cfdc", 2.4),
         "glass": principled("glass", "#8fa6c0", rough=0.04, alpha=0.1),
