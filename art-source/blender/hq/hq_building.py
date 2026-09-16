@@ -153,6 +153,10 @@ def materials():
         # and stops short of a colour that would read as paint rather than as a roof at dusk.
         "roof": principled("roof", "#1c3c78", rough=0.65, grain=0.05, grain_cm=25),
         "slab": principled("slab", "#2f3857", rough=0.55, metal=0.15, grain=0.02, grain_cm=20),
+        # What each office floor sees overhead is the underside of the slab above it, and the slab is
+        # the facade's blue-grey: L2's ceiling band read 33 over the picture in blue. A warm plate
+        # under it keeps the bounce (a dark ceiling was tried and cost every room its light).
+        "ceiling": principled("ceiling", "#574839", rough=0.75, grain=0.04, grain_cm=30),
         "sign_glass": principled("sign_glass", "#080b16", rough=0.18, metal=0.2),
         # the sign band reads 11 to 17 brighter than the picture's over its rows
         "gold": emissive("gold_text", "#f4c47f", 4.2),
@@ -394,6 +398,10 @@ def ceiling_cove(shell, lights, level, mat, xs=(575, 690, 805, 920, 1035, 1150),
     # line burnt the band under each ceiling (L2's 111 against the picture's 71)
     shell.box(X(517), X(1205), -0.12, -0.02, c - 0.045, c - 0.015, line or emissive("cove_led", "#ffc98a", 1.2))
     for xpx in xs:
+        # Tried as a wide soft spot pointing down, to stop it lighting the ceiling the picture keeps
+        # dark (L2's ceiling band reads 123-163 against 42-59). Every room lost its bounce with it:
+        # L4 4.7 -> 9.6, L1 3.7 -> 6.2, L3 2.3 -> 3.7, and L2 itself 8.8 -> 10.3. It is the same
+        # lesson as the dark ceilings of 2026-09-15: in this scene the ceiling is a reflector.
         light(lights, "POINT", (X(xpx), 0.25, c - 0.2), 18, "#ffc98a", radius=0.3, name="cove_wash")
 
 
@@ -441,6 +449,8 @@ def build(colls):
         # render the rooms are invisible, so a body there showed its whole top face and the canvas
         # painted it as a dark band over every floor. The shell keeps only the slab's face.
         rooms.box(X(432), X(1215), -0.14, BACK_G + 0.3, cz(lower), top - 0.06, mat["slab"])
+        if lower >= 1:
+            rooms.box(X(447), X(1205), -0.14, BACK + 0.1, cz(lower), cz(lower) + 0.05, mat["ceiling"])
         for x0, x1 in ((432, 517), (1205, 1215)):
             rooms.box(X(x0), X(x1), -0.14, BACK_G + 0.3, top - 0.06, top, mat["slab"])
         shell.box(X(432), X(1215), -0.18, -0.14, cz(lower), top, mat["slab"])
