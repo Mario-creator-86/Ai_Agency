@@ -586,9 +586,19 @@ CLUTTER = (
     (0, "armchair", 754, 2.35, 0.00, "h", 100),
     (0, "frond", 1092, 2.20, 0.00, "h", 130),
     (0, "pencils", 1006, 2.05, 0.95, "h", 14),
+    # the treasury: the picture's operations room stands full of equipment, ours held only the desk
+    (0, "cabinet", 1010, 2.10, 0.00, "h", 170),
+    (0, "underbox", 930, 2.10, 0.00, "h", 50),
+    (0, "frond", 1026, 1.70, 0.00, "h", 95),
+    (0, "tray", 938, 2.05, 0.95, "l", 30),
 )
 # the lobby's second seat turns in towards the first, as the picture's pair face each other
 CLUTTER_YAW = {(0, "armchair", 754): 200.0, (0, "armchair", 700): 160.0}
+
+
+# Pack pieces whose own materials read wrong in these rooms: the tall cabinet is a green rusted
+# locker and the low one a white kitchen unit, where the picture has slate office furniture.
+CLUTTER_PAINT = {"cabinet": (0.10, 0.11, 0.13), "underbox": (0.12, 0.13, 0.15)}
 
 
 def room_clutter():
@@ -602,8 +612,10 @@ def room_clutter():
             continue
         target = ue(X(xpx), y, fz(level) + dz)
         yaw = CLUTTER_YAW.get((level, kind, xpx), 0.0)
-        place(kind, asset, target, yaw_extra=yaw, height=size if mode == "h" else None,
-              max_len=size if mode == "l" else None, label=f"clutter_{level}_{kind}_{xpx}")
+        actor = place(kind, asset, target, yaw_extra=yaw, height=size if mode == "h" else None,
+                      max_len=size if mode == "l" else None, label=f"clutter_{level}_{kind}_{xpx}")
+        if actor is not None and kind in CLUTTER_PAINT:
+            _flat.paint(actor, kind.title(), CLUTTER_PAINT[kind], roughness=0.5)
         n += 1
     log(f"room clutter: {n} objects")
 
