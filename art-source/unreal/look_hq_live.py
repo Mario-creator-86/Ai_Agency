@@ -40,7 +40,8 @@ LUMENS_EXTERIOR = env("AMN_LM_EXTERIOR", os.environ.get("AMN_LM_PER_W", "70"))
 # (its light 58 against the picture's 51), ssim 0.183 -> 0.196, mean 6.6 -> 6.3
 # L3 at 0.38 (0.3 before): once the streamed game ran at Epic quality the room read darker than the
 # picture (72.8 against 79.7) and its region went 8.0 -> 11.4; at 0.38 it is 6.4 and the mean 6.0.
-LEVEL_GAIN = {int(k): float(v) for k, v in (pair.split(":") for pair in os.environ.get("AMN_LEVEL_GAIN", "0:0.55,1:0.5,2:0.6,3:0.38,4:0.8").split(",") if ":" in pair)}
+# L1 at 0.45 (0.5): with the warmer ceiling line it read 55.9 against the picture's 51.2.
+LEVEL_GAIN = {int(k): float(v) for k, v in (pair.split(":") for pair in os.environ.get("AMN_LEVEL_GAIN", "0:0.55,1:0.45,2:0.6,3:0.38,4:0.8").split(",") if ":" in pair)}
 CEILINGS_M = [(655 - row) / 27.575 for row in (520, 410, 297, 195)]
 
 # the look: factors on that base, per kind of light. Pass 1 (spot 0.45, road 0.12, city 0.45, fog
@@ -71,7 +72,9 @@ INFRA = env("AMN_LOOK_INFRA", "1")
 UPLIGHT = env("AMN_LOOK_UPLIGHT", "0.15")
 # the small warm lights under each office ceiling (hq_building.ceiling_cove): at 1.0 the rooms read too
 # bright (mean 15.7; L2 88 against the picture's 79), at 0.35 the closest pass so far (14.5)
-COVE = env("AMN_LOOK_COVE", "0.35")
+# 0.6 (0.35 before): once the game ran at Epic the rooms took the wash better, and the picture's
+# ceiling band is a wide warm glow down the wall. L4 3.3 -> 1.9, L3 7.0 -> 5.3, mean 5.9 -> 5.7.
+COVE = env("AMN_LOOK_COVE", "0.6")
 HEADLIGHT_LM = env("AMN_LOOK_HEADLIGHT_LM", "900")
 TAILLIGHT_LM = env("AMN_LOOK_TAILLIGHT_LM", "160")
 CITY = env("AMN_LOOK_CITY", "0.5")           # skyline window emission, on the imported value
@@ -487,6 +490,8 @@ LEDS = {
     # the pendant and floor lamp shades and the lobby's wall bulbs: warm and lit, as in the picture,
     # where ours hung dark. AMN_LOOK_LAMP_GLOW tunes them without another scene rebuild.
     "lamp_shade": ("#ffd49a", 4.0 * LAMP_GLOW), "lamp_bulb": ("#fff0d6", 14.0 * LAMP_GLOW),
+    # the line under each office ceiling: the picture's is amber, ours burnt white
+    "cove_led": ("#ffc07a", 2.2 * LAMP_GLOW),
 }
 LED_GAIN = env("AMN_LOOK_LED_GAIN", "1")
 WHITE = "/InterchangeAssets/gltf/Textures/T_White_srgb"

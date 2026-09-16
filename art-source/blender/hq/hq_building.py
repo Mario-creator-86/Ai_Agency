@@ -769,7 +769,10 @@ def build_l1(rooms, props, leaves, pots, fronts, glow, lights, back, shell_c, ma
     f = fz(lv)
     room_rect("audio_booth", 517, 862, lv, "L1 Production - Audio")
     room_rect("video_studio", 867, 1205, lv, "L1 Production - Render")
-    brick = brick_material("wall_l1_audio", "#4c2c70", "#40245f", "#221236", brick_w=0.36, row_h=0.14, rough=0.85, bump=0.3)
+    # The picture's production floor is a deep blue-violet; ours read redder and paler (65, 51, 70
+    # against 52, 40, 77 over the left half), which is the brick's own colour, not its light.
+    # Tried deeper still (#34205f): the region went 9.0 -> 9.6, so it stays at this violet.
+    brick = brick_material("wall_l1_audio", "#3f2b74", "#352363", "#1b1235", brick_w=0.36, row_h=0.14, rough=0.85, bump=0.3)
     floor = principled("floor_l1", "#1f1a2c", rough=0.3)
     room_shell(rooms, 517, 862, lv, brick, floor)
     room_shell(rooms, 862, 1205, lv, panel_material("wall_l1_render", "#304a5e", "#1c2b38", 1.1, rough=0.6), floor)
