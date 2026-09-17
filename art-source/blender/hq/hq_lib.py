@@ -708,7 +708,12 @@ def image_material(name, texture, strength=1.4, rough=0.2):
     g.link(tc.outputs["UV"], img.inputs["Vector"])
     g.link(img.outputs["Color"], g.bsdf.inputs["Emission Color"])
     g.bsdf.inputs["Emission Strength"].default_value = strength
-    g.bsdf.inputs["Base Color"].default_value = lin("#05060a")
+    # The image on the base colour too. On emission alone over a near-black base, every picture in
+    # the props object reached the stream as a flat dark panel: that object's emission atlas is
+    # normalised to its brightest member (the LEDs at 5 to 6), so a print at 0.9 came through at a
+    # tenth. A print is a lit surface; the colour bake carries it whole, and the emission stays for
+    # the screens that glow.
+    g.link(img.outputs["Color"], g.bsdf.inputs["Base Color"])
     g.bsdf.inputs["Roughness"].default_value = rough
     return g.m
 

@@ -88,10 +88,12 @@ def main():
     # short of blue - and its spread there is 24 in red against 6 in blue, where the picture's
     # varies by about as much in every channel. At half the plate is 74, 82, 118, the bands are
     # still there, and the picture's own tone comes back through them.
-    p.add_argument("--cloud-strength", type=float, default=0.22, help="opacity of the painted cloud layers")
+    p.add_argument("--cloud-strength", type=float, default=0.32, help="opacity of the painted cloud layers")
     # The picture's clouds are soft bands; the painted layer is sharp at any zoom, and sharp clouds put
     # pixel noise on a sky the picture keeps smooth (its region 5.1 -> 12.4 with the band means closer).
-    p.add_argument("--cloud-blur", type=float, default=6.0, help="Gaussian blur of the cloud layer, in plate pixels")
+    p.add_argument("--cloud-blur", type=float, default=3.0, help="Gaussian blur of the cloud layer, in plate pixels")
+    # the picture's clouds are pink-mauve, lit from the sunset; the painted layer is neutral
+    p.add_argument("--cloud-tint", default="1.16,0.96,0.93", help="r,g,b gains on the cloud layer's colour")
     a = p.parse_args()
     daylight = smoothstep(-8, 7, ELEVATION)
     dusk = math.exp(-(((ELEVATION - 1) / 6.5) ** 2))
@@ -110,7 +112,9 @@ def main():
     sky = np.repeat(column[:, None, :], W, axis=1)
 
     glow = dusk
-    warm = radial(W, H, 0, HORIZON, W * 0.5, 0.28, [(0.0, (250, 160, 110), 0.5 * glow), (0.5, (214, 120, 110), 0.22 * glow), (1.0, (214, 120, 110), 0.0)])
+    # The picture's sunset fills the lower-left sky - 140, 105, 107 over rows 250-300 against our 90,
+    # 78, 94 at the old strength - so the glow is stronger and stands taller (y_scale 0.42, from 0.28).
+    warm = radial(W, H, 0, HORIZON, W * 0.55, 0.42, [(0.0, (250, 165, 115), 0.85 * glow), (0.5, (218, 128, 112), 0.42 * glow), (1.0, (214, 120, 110), 0.0)])
     sky = over(sky, warm[..., :3], warm[..., 3])
     # The cool patch stood at 0.7 and made a daylight azure of the sky right of the lift tower:
     # over columns 1365-1595, rows 0-60 the frame reads 45, 86, 155 where the picture reads
@@ -140,7 +144,8 @@ def main():
         layer = layer.resize((W, lh), Image.LANCZOS)
         if a.cloud_blur > 0:
             layer = layer.filter(ImageFilter.GaussianBlur(a.cloud_blur))
-        arr = np.asarray(layer, np.float32)
+        arr = np.asarray(layer, np.float32).copy()
+        arr[..., :3] *= np.array([float(v) for v in a.cloud_tint.split(",")], np.float32)
         region = sky[:lh]
         sky[:lh] = over(region, arr[..., :3], arr[..., 3] / 255.0 * weight * a.cloud_strength)
 
