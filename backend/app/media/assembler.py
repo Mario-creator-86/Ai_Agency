@@ -12,6 +12,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import math
+import re
 import subprocess
 import time
 from collections.abc import Callable
@@ -27,7 +29,15 @@ from sqlalchemy.orm import Session
 from app.config import ROOT
 from app.media.models import MediaAsset, Storyboard, StoryboardScene, VideoRenderJob
 from app.media.production_policy import record_quoted_price
-from app.media.toolchain import find_ffmpeg
+from app.media.toolchain import (
+    LOUDNESS_TARGET_LUFS,
+    TRUE_PEAK_TARGET_DBTP,
+    find_ffmpeg,
+    has_filter,
+    loudnorm_filter,
+    measure_loudness,
+    parse_loudnorm_json,
+)
 from app.providers.deterministic_media import (
     DeterministicTTSAdapter,
     DeterministicVisualAdapter,
@@ -72,6 +82,22 @@ class RenderEngineUnavailable(RuntimeError):
     """
 
 
+class RenderStopped(RuntimeError):
+    """The Owner set AUTONOMIE OPRITĂ while the film was being made, and the render stopped.
+
+    Between two scenes, never mid-write: the scene already voiced is on disk, the next one is
+    not started, the job is FAILED with this reason and no asset is recorded. The media stage
+    reports it BLOCKED (the Owner's decision), not FAILED (a fault), so no safe mode opens.
+    """
+
+
+#: What the render job says when the Owner's switch ends it between two scenes.
+STOP_REASON = (
+    "Randarea s-a oprit între scene: AUTONOMIE OPRITĂ a fost setată de Owner în timpul "
+    "filmării. Scenele deja făcute rămân pe disc; nimic nu a fost înregistrat ca film."
+)
+
+
 def resolve_ffmpeg_path(custom_path: str | None = None) -> str | None:
     """Return path to ffmpeg executable if available.
 
@@ -112,39 +138,158 @@ def write_placeholder_frame_ppm(
     path.write_bytes(header + bytes(rows))
 
 
+#: What a phone can read: two lines of forty-two characters, the convention broadcast
+#: captioning and the platforms' own caption editors share. A longer line either shrinks the
+#: type below what a phone shows or wraps a third line up into the picture.
+CAPTION_LINE_CHARS = 42
+CAPTION_MAX_LINES = 2
+
+#: How a burnt caption is drawn, as libass style overrides. ffmpeg hands an SRT to libass at
+#: its default script resolution of 384x288, so every size here is in those units and scales
+#: with the frame: on a 1080x1920 film FontSize 7.5 is a 50-pixel line, which is what lets a
+#: forty-two character line fit between the side margins (measured on a frame: bold at 11
+#: wrapped a 42-character line in two). MarginV 58 is a fifth of 288, so the text's baseline
+#: sits at the top of the bottom fifth — the band the platforms cover with their own
+#: controls and caption. BorderStyle 1 is an outline with no box: white type, dark edge.
+CAPTION_STYLE = (
+    "FontName=Arial,FontSize=7.5,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,"
+    "BorderStyle=1,Outline=0.9,Shadow=0,Alignment=2,MarginV=58,MarginL=10,MarginR=10"
+)
+
+#: Where a sentence ends: a terminal mark followed by space. A decimal point or an initial
+#: is followed by a letter, not a space, so "3.5 billion" and "J. Webb" stay whole.
+_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
+
+
 def format_srt_timestamp(seconds: float) -> str:
     """Format float seconds to SubRip timestamp: HH:MM:SS,mmm"""
-    hrs = int(seconds // 3600)
-    mins = int((seconds % 3600) // 60)
-    secs = int(seconds % 60)
-    millis = int(round((seconds - int(seconds)) * 1000))
+    # Rounded once, as whole milliseconds: rounding the fraction on its own could carry
+    # 999.6 ms to 1000 and print a thousand milliseconds against the previous second.
+    total_ms = max(0, int(round(float(seconds) * 1000)))
+    hrs, rest = divmod(total_ms, 3_600_000)
+    mins, rest = divmod(rest, 60_000)
+    secs, millis = divmod(rest, 1000)
     return f"{hrs:02d}:{mins:02d}:{secs:02d},{millis:03d}"
 
 
+def _wrap_words(words: list[str], width: int) -> list[str]:
+    """Greedy word wrapping to lines of at most ``width`` characters, no word lost."""
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        # A word longer than a line is cut into line-sized pieces rather than overflowing:
+        # a caption line over the limit is the one thing quality control refuses outright.
+        pieces = [word[i : i + width] for i in range(0, len(word), width)] or [word]
+        for piece in pieces:
+            if not current:
+                current = piece
+            elif len(current) + 1 + len(piece) <= width:
+                current = f"{current} {piece}"
+            else:
+                lines.append(current)
+                current = piece
+    if current:
+        lines.append(current)
+    return lines
+
+
+def _caption_lines(sentence: str) -> list[str]:
+    """A sentence as caption lines: as few as fit, and those of about equal length.
+
+    Greedy wrapping fills the first line and leaves the last one a word or two long; the
+    lines are re-wrapped at the width that shares the sentence evenly across the number of
+    lines it needs, so a two-line cue reads as two lines and not as a line and a crumb.
+    """
+    words = sentence.split()
+    if not words:
+        return []
+    needed = len(_wrap_words(words, CAPTION_LINE_CHARS))
+    if needed <= 1:
+        return [" ".join(words)]
+    balanced_width = max(1, math.ceil(len(sentence) / needed))
+    for width in range(balanced_width, CAPTION_LINE_CHARS + 1):
+        lines = _wrap_words(words, width)
+        if len(lines) <= needed:
+            return lines
+    return _wrap_words(words, CAPTION_LINE_CHARS)
+
+
+def caption_cues(scenes: list[dict]) -> list[dict[str, Any]]:
+    """Caption cues from the narration: one per sentence, timed to each scene's own audio.
+
+    A scene begins where the scenes before it end (their ``duration_seconds``), and its words
+    last as long as the narration recorded for it (``audio_seconds``, measured from the voice
+    clip; the planned length when nothing was recorded). Inside the scene the sentences share
+    that time by their length, so a long sentence stays up longer. A sentence that will not
+    fit two lines of forty-two becomes as many consecutive cues as it needs. A scene with no
+    words has no cue: a caption is never invented from a visual prompt.
+    """
+    cues: list[dict[str, Any]] = []
+    clock = 0.0
+    for scene in scenes:
+        planned = float(scene.get("duration_seconds") or 0.0)
+        spoken = scene.get("audio_seconds")
+        span = float(spoken) if isinstance(spoken, int | float) and spoken > 0 else planned
+        if planned > 0:
+            # Words never spill into the next scene, whose own words start there.
+            span = min(span, planned)
+        text = " ".join(str(scene.get("voiceover_segment") or "").split())
+        if text and span > 0:
+            chunks: list[list[str]] = []
+            for sentence in _SENTENCE_END.split(text):
+                lines = _caption_lines(sentence)
+                for at in range(0, len(lines), CAPTION_MAX_LINES):
+                    chunks.append(lines[at : at + CAPTION_MAX_LINES])
+            weights = [sum(len(line) for line in chunk) for chunk in chunks]
+            total_weight = float(sum(weights)) or 1.0
+            start = clock
+            elapsed = 0
+            for position, (chunk, weight) in enumerate(zip(chunks, weights, strict=True)):
+                elapsed += weight
+                # The last cue ends exactly where the narration does, whatever rounding the
+                # shares before it accumulated.
+                end = (
+                    clock + span
+                    if position == len(chunks) - 1
+                    else clock + span * (elapsed / total_weight)
+                )
+                cues.append(
+                    {
+                        "scene_index": scene.get("scene_index"),
+                        "start": start,
+                        "end": end,
+                        "lines": chunk,
+                    }
+                )
+                start = end
+        clock += planned
+    return cues
+
+
+def srt_from_cues(cues: list[dict[str, Any]]) -> str:
+    """The cues as a SubRip file: index, timing, lines, blank line."""
+    blocks: list[str] = []
+    for index, cue in enumerate(cues, start=1):
+        blocks.append(
+            f"{index}\n{format_srt_timestamp(cue['start'])} --> "
+            f"{format_srt_timestamp(cue['end'])}\n" + "\n".join(cue["lines"]) + "\n"
+        )
+    return "\n".join(blocks)
+
+
 def generate_subtitles_srt(scenes: list[dict]) -> str:
-    """Generate valid SubRip (SRT) subtitles with synchronized scene timestamps."""
-    srt_lines = []
-    current_time = 0.0
+    """Generate valid SubRip (SRT) subtitles, one cue per sentence, timed to the narration."""
+    return srt_from_cues(caption_cues(scenes))
 
-    for idx, scene in enumerate(scenes, start=1):
-        start_ts = format_srt_timestamp(current_time)
-        dur = float(scene["duration_seconds"])
-        end_time = current_time + dur
-        end_ts = format_srt_timestamp(end_time)
 
-        # Clean voiceover text
-        text = str(scene["voiceover_segment"]).strip()
-        if not text:
-            text = f"[{str(scene['visual_prompt'])[:40]}]"
+def captions_filter(srt_name: str = "captions.srt") -> str:
+    """The ffmpeg filter that burns the SRT into the picture.
 
-        srt_lines.append(str(idx))
-        srt_lines.append(f"{start_ts} --> {end_ts}")
-        srt_lines.append(text)
-        srt_lines.append("")  # blank separator
-
-        current_time = end_time
-
-    return "\n".join(srt_lines)
+    The file is named relative to the encoder's working directory on purpose: the filter's
+    own option parser reads a colon as a separator, so an absolute Windows path would need
+    escaping twice over, and the encode already runs inside the render's folder.
+    """
+    return f"subtitles=filename={srt_name}:force_style='{CAPTION_STYLE}'"
 
 
 def _concatenate_audio(ffmpeg_exe: str, segments: list[Path], work_dir: Path) -> Path:
@@ -418,6 +563,27 @@ def _credit_price(engine: Engine) -> float | None:
     return None
 
 
+def _loudness_readings(measured: dict | None) -> dict[str, float | None]:
+    """The readings a manifest keeps: finite numbers, or None where nothing was measured.
+
+    A silent input measures as -inf, which JSON cannot carry; the manifest says None and the
+    "measured" flag says whether a reading was taken at all.
+    """
+
+    def finite(key: str) -> float | None:
+        value = (measured or {}).get(key)
+        if isinstance(value, int | float) and math.isfinite(float(value)):
+            return round(float(value), 2)
+        return None
+
+    return {
+        "measured": bool(measured),
+        "integrated_lufs": finite("integrated_lufs"),
+        "true_peak_dbtp": finite("true_peak_dbtp"),
+        "loudness_range_lu": finite("loudness_range_lu"),
+    }
+
+
 def _video_stream_seconds(ffmpeg_exe: str, path: Path) -> float | None:
     """How long the picture actually lasts, or None when it cannot be measured."""
     from app.media.qc import probe_media_file  # noqa: PLC0415
@@ -489,12 +655,17 @@ def _dissolve_command(
     scenes_data: list[dict[str, Any]],
     audio_file: Path,
     output_mp4: Path,
+    *,
+    audio_filter: str = "apad",
+    captions: str | None = None,
 ) -> list[str]:
     """One ffmpeg call over the shot files: each dissolves into the next.
 
     Each shot is one transition longer than its narration and each dissolve consumes exactly
     that overlap, so shot N still starts where scene N's words start — the picture never
-    drifts away from the voice.
+    drifts away from the voice. ``audio_filter`` is the whole audio chain (the loudness
+    normalisation and the padding); ``captions`` is the subtitles filter to burn in after the
+    last dissolve, or None to leave the picture clean.
     """
     args = [ffmpeg_exe, "-y"]
     for shot in shots:
@@ -513,10 +684,11 @@ def _dissolve_command(
         )
         current = nxt
     total = sum(float(s["duration_seconds"]) for s in scenes_data)
+    burn = f",{captions}" if captions else ""
     if chain:
-        chain += f"[{current}]trim=duration={total:.3f},setpts=PTS-STARTPTS[vout]"
+        chain += f"[{current}]trim=duration={total:.3f},setpts=PTS-STARTPTS{burn}[vout]"
     else:
-        chain = f"[0:v]trim=duration={total:.3f},setpts=PTS-STARTPTS[vout]"
+        chain = f"[0:v]trim=duration={total:.3f},setpts=PTS-STARTPTS{burn}[vout]"
 
     args += [
         "-filter_complex",
@@ -526,7 +698,7 @@ def _dissolve_command(
         "-map",
         f"{len(shots)}:a",
         "-af",
-        "apad",
+        audio_filter,
         "-t",
         f"{total:.3f}",
         "-c:v",
@@ -565,8 +737,13 @@ def assemble_video_job(
     motion_scene_limit: int | None = None,
     motion_from_prompt: bool = False,
     production_plan: dict[str, Any] | None = None,
+    settings: Any | None = None,
 ) -> dict:
     """Run end-to-end video assembly and provenance recording.
+
+    ``settings`` is the studio's configuration, read for the Owner's delivery choices:
+    ``captions_burn_in`` (default True) burns the captions into the picture; off, the SRT
+    is still written beside the film for the platform to carry as a track.
 
     ``image_adapter`` and ``tts_adapter`` are the providers the Owner selected and verified.
     When either is absent the corresponding deterministic placeholder generator is used, and
@@ -661,13 +838,9 @@ def assemble_video_job(
         )
         session.add(job)
 
-    # 1. Generate Subtitles
-    srt_content = generate_subtitles_srt(scenes_data)
-    srt_file = work_dir / "captions.srt"
-    srt_file.write_text(srt_content, encoding="utf-8")
-
-    # 2. Generate placeholder visual cards (SVG for the UI, raster PPM for the encoder)
-    #    and voiceover segments.
+    # 1. Generate placeholder visual cards (SVG for the UI, raster PPM for the encoder)
+    #    and voiceover segments. The captions come after: a cue is timed to the narration
+    #    actually recorded for its scene, which is not known until the voice has spoken.
     visual_adapter: ImageProvider = image_adapter or DeterministicVisualAdapter()
     placeholder_voice = DeterministicTTSAdapter()
     # The frames are real only when a real generator made them; this single name is what the
@@ -704,7 +877,52 @@ def assemble_video_job(
     generated_frames: list[Path] = []
     voice_segments: list[Path] = []
 
-    for scene in scenes_data:
+    # The encode's command and the editor's id are filled in later; the failure helper is
+    # defined here because the scene loop below can already fail the job (the Owner's stop),
+    # and a closure reads these names when it is called, not where it is written.
+    command_args: list[str] = []
+    editor_id: str | None = None
+
+    def _fail_job(reason: str, log: str) -> None:
+        if editor_id is not None:
+            from app.agents.services import mark_idle  # noqa: PLC0415
+
+            mark_idle(engine, editor_id, "assemble_video")
+        with Session(engine) as session, session.begin():
+            job_rec = session.get(VideoRenderJob, render_job_id)
+            if job_rec:
+                job_rec.status = "FAILED"
+                job_rec.execution_log = log[-8000:]
+                job_rec.command_args_json = command_args
+                job_rec.finished_at = utc_now()
+            append_event(
+                session,
+                "media.render_failed",
+                "video_render_job",
+                render_job_id,
+                1,
+                {"storyboard_id": storyboard_id, "reason": reason},
+                correlation_id,
+            )
+        logger.error("render_failed", extra={"reason": reason, "job_id": render_job_id})
+
+    def _stop_if_asked() -> None:
+        """Read the Owner's switch between two units of work; a set stop ends the render.
+
+        The runbook reads it between stages, so a render of eight scenes used to run to its
+        end after the Owner pressed STOP — eight shots bought for a day he had ended. One
+        short read of the policy row per scene, never mid-write: the scene already made is
+        on disk, the next is not started, and the job says why.
+        """
+        from app.runbook.services import stop_requested  # noqa: PLC0415 - runbook imports media
+
+        if stop_requested(engine):
+            _fail_job(STOP_REASON, STOP_REASON)
+            raise RenderStopped(STOP_REASON)
+
+    for position, scene in enumerate(scenes_data):
+        if position:
+            _stop_if_asked()  # the first scene is the render starting; the stage just asked
         index = scene["scene_index"]
         with _at_work(
             engine if image_adapter is not None else None,
@@ -790,6 +1008,8 @@ def assemble_video_job(
                 "attempts": 1,
             }
         )
+        # The captions are timed from this: the scene's words last as long as its recording.
+        scene["audio_seconds"] = round(tts_res.duration_seconds, 3)
         if all_real:
             segment = work_dir / f"voice_{index:02d}.{tts_res.format}"
             segment.write_bytes(tts_res.audio_bytes)
@@ -819,6 +1039,7 @@ def assemble_video_job(
     shots_made = 0
     if image_adapter is not None and (video_adapter_for_scene or motion_chooser) and ffmpeg_exe:
         for position, (scene, still) in enumerate(zip(scenes_data, frame_files, strict=False)):
+            _stop_if_asked()  # a shot is the money; the switch is read before each one
             if motion_scene_limit is not None and position >= max(0, motion_scene_limit):
                 production.setdefault("motion_notes", []).append(
                     f"scene {scene['scene_index']}: not generated (test limit {motion_scene_limit})"
@@ -984,9 +1205,20 @@ def assemble_video_job(
         run_kind=run_kind,
         credit_price=credit_price,
     )
+    # A scene the model was asked for and did not deliver — refused, failed, or priced past
+    # the ceiling — is a still given a push. Counted here so quality control can read how
+    # much of the film moves: a note nobody read once let a slideshow through as a film.
+    attempted = [
+        entry["motion"] for entry in production["scenes"] if isinstance(entry.get("motion"), dict)
+    ]
+    clips_made = sum(1 for clip in motion_clips if clip is not None)
     production["motion"] = {
-        "clips": sum(1 for clip in motion_clips if clip is not None),
+        "clips": clips_made,
         "scenes": len(scenes_data),
+        "motion_scenes": clips_made,
+        "fallback_scenes": sum(1 for record in attempted if not record.get("bytes")),
+        # Scenes no model was asked for: a test's scene limit, a spent budget, no model.
+        "skipped_scenes": len(scenes_data) - len(attempted),
         "seconds": round(motion_seconds, 3),
         "estimated_credits": round(motion_credits, 2) or None,
         "estimated_usd": round(motion_credits * credit_price, 4) if credit_price else None,
@@ -1022,32 +1254,6 @@ def assemble_video_job(
 
     # 3. Encode the real 9:16 video. No encoder means no video; the job fails honestly.
     output_mp4 = work_dir / "final_short_9_16.mp4"
-    command_args: list[str] = []
-
-    editor_id: str | None = None
-
-    def _fail_job(reason: str, log: str) -> None:
-        if editor_id is not None:
-            from app.agents.services import mark_idle  # noqa: PLC0415
-
-            mark_idle(engine, editor_id, "assemble_video")
-        with Session(engine) as session, session.begin():
-            job_rec = session.get(VideoRenderJob, render_job_id)
-            if job_rec:
-                job_rec.status = "FAILED"
-                job_rec.execution_log = log[-8000:]
-                job_rec.command_args_json = command_args
-                job_rec.finished_at = utc_now()
-            append_event(
-                session,
-                "media.render_failed",
-                "video_render_job",
-                render_job_id,
-                1,
-                {"storyboard_id": storyboard_id, "reason": reason},
-                correlation_id,
-            )
-        logger.error("render_failed", extra={"reason": reason, "job_id": render_job_id})
 
     if not ffmpeg_exe:
         reason = (
@@ -1060,6 +1266,64 @@ def assemble_video_job(
     from app.agents.services import mark_idle, mark_working  # noqa: PLC0415
 
     editor_id = mark_working(engine, "VideoEditor", "assemble_video", "montajul filmului")
+
+    # 2. Captions: one cue per sentence, timed to each scene's recorded narration, written
+    #    beside the film whether or not they are burnt in. The Owner's setting decides the
+    #    burn; an encoder built without libass cannot, and says so in the manifest.
+    cues = caption_cues(scenes_data)
+    srt_file = work_dir / "captions.srt"
+    srt_file.write_text(srt_from_cues(cues), encoding="utf-8")
+    wants_burn = bool(getattr(settings, "captions_burn_in", True))
+    can_burn = has_filter(ffmpeg_exe, "subtitles")
+    burn_in = wants_burn and can_burn and bool(cues)
+    production["captions"] = {
+        "srt": str(srt_file),
+        "cues": len(cues),
+        "burned_in": burn_in,
+        "style": CAPTION_STYLE if burn_in else None,
+        "reason": (
+            None
+            if burn_in
+            else (
+                "captions_burn_in is off"
+                if not wants_burn
+                else (
+                    "no narration to caption" if not cues else "the encoder has no subtitles filter"
+                )
+            )
+        ),
+    }
+    captions = captions_filter(srt_file.name) if burn_in else None
+
+    # Loudness: the joined narration is measured first, then normalised with one linear
+    # gain from that measurement (two passes); when the measurement cannot be had the
+    # filter normalises as it goes (one pass). The film is delivered at the platform's
+    # level either way, and the manifest records both readings.
+    loudness: dict[str, Any]
+    if has_filter(ffmpeg_exe, "loudnorm"):
+        measured = measure_loudness(ffmpeg_exe, audio_file)
+        normaliser = loudnorm_filter(measured)
+        loudness = {
+            "applied": True,
+            "target_lufs": LOUDNESS_TARGET_LUFS,
+            "true_peak_target_dbtp": TRUE_PEAK_TARGET_DBTP,
+            "passes": 2 if "measured_I=" in normaliser else 1,
+            "filter": normaliser,
+            "input": _loudness_readings(measured),
+            "output": None,
+        }
+        # loudnorm works at 192 kHz internally and hands that on; the film is delivered at
+        # the 48 kHz the platforms expect, resampled before the padding.
+        audio_filter = f"{normaliser},aresample=48000,apad"
+    else:
+        loudness = {
+            "applied": False,
+            "reason": "the encoder has no loudnorm filter",
+            "target_lufs": LOUDNESS_TARGET_LUFS,
+            "true_peak_target_dbtp": TRUE_PEAK_TARGET_DBTP,
+        }
+        audio_filter = "apad"
+    production["audio"] = {"loudness": loudness}
 
     # One shot per scene — a generated clip, or the still given a slow push — and the shots
     # dissolve into one another. A film reads as a film; a slideshow reads as a slideshow, and
@@ -1086,7 +1350,15 @@ def assemble_video_job(
                     f"FFmpeg could not build shot {scene['scene_index']}. See render job log."
                 )
             shots.append(target)
-        command_args = _dissolve_command(ffmpeg_exe, shots, scenes_data, audio_file, output_mp4)
+        command_args = _dissolve_command(
+            ffmpeg_exe,
+            shots,
+            scenes_data,
+            audio_file,
+            output_mp4,
+            audio_filter=audio_filter,
+            captions=captions,
+        )
     else:
         concat_list = work_dir / "inputs.txt"
         with open(concat_list, "w", encoding="utf-8") as f:
@@ -1108,11 +1380,11 @@ def assemble_video_job(
             "-i",
             str(audio_file),
             "-vf",
-            "scale=1080:1920,fps=30,format=yuv420p",
+            "scale=1080:1920,fps=30,format=yuv420p" + (f",{captions}" if captions else ""),
             # Narration from the local TTS placeholder is usually shorter than the storyboard
             # timeline; pad it with silence rather than truncating the video to the audio.
             "-af",
-            "apad",
+            audio_filter,
             "-t",
             f"{total_duration:.3f}",
             "-c:v",
@@ -1148,6 +1420,16 @@ def assemble_video_job(
             f"FFmpeg failed to encode the video (exit code {res.returncode}). See render job log."
         )
     mark_idle(engine, editor_id, "assemble_video")
+
+    if loudness.get("applied"):
+        # The normalising pass reports what it delivered; that report is the output reading.
+        # An encode whose log lost the report is measured again from the finished film.
+        report = parse_loudnorm_json(res.stderr)
+        reported = report.get("output") if report else None
+        delivered = (
+            reported if isinstance(reported, dict) else measure_loudness(ffmpeg_exe, output_mp4)
+        )
+        loudness["output"] = _loudness_readings(delivered)
 
     # A film is its picture. The first dissolve render put six seconds of video under
     # forty-six of narration and reported success, because a container's duration is its
@@ -1227,6 +1509,7 @@ def assemble_video_job(
     return {
         "job_id": render_job_id,
         "output_asset_id": output_asset_id,
+        "file_path": str(output_mp4),
         "provenance_hash": provenance_hash,
         "duration_seconds": total_duration,
         "file_size_bytes": file_size,

@@ -144,6 +144,19 @@ class Settings(BaseSettings):
     test_max_cost_per_generation_usd: float = 0.60
     test_max_cost_per_second_usd: float = 0.12
 
+    #: Whether the captions are burnt into the picture (STUDIO_CAPTIONS_BURN_IN). On by
+    #: default: measured on a rendered 1080x1920 frame, the burnt line sits above the bottom
+    #: fifth where the platforms draw their own controls. Off keeps only captions.srt beside
+    #: the film, for the platform to carry as a track.
+    captions_burn_in: bool = True
+
+    #: How many scenes of a PRODUCTION film may be stills pushed slowly because the motion
+    #: model refused, failed or quoted past the ceiling (STUDIO_MAX_FALLBACK_SCENES). Past it
+    #: quality control fails the film: a mostly-still film is a slideshow, not a short. None
+    #: means half the scenes; in TEST the same count is a warning, because two motion scenes
+    #: are policy there.
+    max_fallback_scenes: int | None = Field(default=None, ge=0)
+
     # ---------------------------------------------------------------- models come and go
     #: Whether a model the vendor has newly exposed is taken into the studio's catalogue at
     #: all. On, because a catalogue the studio refuses to read is a catalogue frozen in the

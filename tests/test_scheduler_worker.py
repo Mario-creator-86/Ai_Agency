@@ -821,3 +821,29 @@ def test_activation_is_owner_only_and_reachable(client, headers, engine):
     ok = client.post(f"/api/v1/scheduler/jobs/{job['id']}/active", json=body, headers=headers)
     assert ok.status_code == 200, ok.text
     assert ok.json()["is_active"] is True
+
+
+def test_the_scheduled_job_view_shows_the_fixed_hour_and_its_timezone(client, headers, engine):
+    """The panel could not say "05:00 Europe/Bucharest": the view exposed only the interval,
+    so a job on the wall clock read like one anchored to the moment it was activated."""
+    _autonomy(engine, False)
+    job = ensure_scheduled_job(
+        engine,
+        name="daily_at_five",
+        workflow_type=DAILY_RUN,
+        interval_seconds=86400,
+        run_at_local="05:00",
+        timezone="Europe/Bucharest",
+    )
+    assert job["run_at_local"] == "05:00"
+    assert job["timezone"] == "Europe/Bucharest"
+
+    listed = client.get("/api/v1/scheduler/jobs", headers=headers).json()
+    (row,) = [entry for entry in listed if entry["id"] == job["id"]]
+    assert row["run_at_local"] == "05:00" and row["timezone"] == "Europe/Bucharest"
+
+    # A job anchored to its interval says so: the fields are there, and empty.
+    plain = ensure_scheduled_job(
+        engine, name="every_hour", workflow_type=DAILY_RUN, interval_seconds=3600
+    )
+    assert plain["run_at_local"] is None and plain["timezone"] is None

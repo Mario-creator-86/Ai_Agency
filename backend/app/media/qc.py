@@ -5,13 +5,20 @@ Following docs/architecture/08_VIDEO_PIPELINE.md:
 - Factual QC: every referenced claim must remain SUPPORTED in the database.
 - Character Drift QC: check character continuity against Character Bible.
 - Rights/License QC: all assets must be clear of copyright blocks.
+- Audio QC: the film measures at the platform's loudness, under the true-peak ceiling.
+- Captions QC: the SRT beside the film parses, keeps to two lines of forty-two, and carries
+  the narration.
+- Motion QC: how much of the film moves; a production film that is mostly stills pushed
+  slowly because the motion model refused is a slideshow, and fails.
 """
 
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
 import logging
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -31,10 +38,104 @@ from app.media.models import (
     VideoRenderJob,
 )
 from app.media.schemas import QCReportView
-from app.media.toolchain import find_ffprobe
-from app.services import append_event, utc_now
+from app.media.toolchain import (
+    LOUDNESS_BAND_LUFS,
+    TRUE_PEAK_CEILING_DBTP,
+    find_ffmpeg,
+    find_ffprobe,
+    has_filter,
+    measure_loudness,
+)
+from app.services import append_event, studio_environment, utc_now
 
 logger = logging.getLogger("studio.qc")
+
+#: The caption rules quality control holds a film to, the same numbers the assembler writes
+#: to. Named here again rather than imported so that reading a film never imports the
+#: machinery that makes one.
+CAPTION_LINE_CHARS = 42
+CAPTION_MAX_LINES = 2
+
+#: How closely the captions must follow the narration, word for word, to count as covering
+#: it. The studio's own SRT is the narration verbatim; the margin is for a caption a hand
+#: tidied, not for one that dropped a sentence.
+CAPTION_COVERAGE_RATIO = 0.95
+
+_SRT_TIMING = re.compile(
+    r"^\s*(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})\s*$"
+)
+
+
+def _srt_seconds(hours: str, minutes: str, seconds: str, millis: str) -> float:
+    return int(hours) * 3600 + int(minutes) * 60 + int(seconds) + int(millis) / 1000.0
+
+
+def parse_srt(text: str) -> list[dict[str, Any]]:
+    """Read a SubRip file into cues, or raise ValueError where it is not one.
+
+    Every cue is ``{"index", "start", "end", "lines"}`` in seconds. An empty file is no cues.
+    A block without the arrow, or that ends before it starts, is refused rather than read
+    around: a caption file the platform would reject is not one the studio delivers.
+    """
+    body = (text or "").lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not body:
+        return []
+    cues: list[dict[str, Any]] = []
+    for block in re.split(r"\n\s*\n", body):
+        lines = block.split("\n")
+        if len(lines) < 2:
+            raise ValueError(f"SRT block {len(cues) + 1} has no timing line")
+        try:
+            index = int(lines[0].strip())
+        except ValueError as exc:
+            raise ValueError(f"SRT block {len(cues) + 1} does not start with a number") from exc
+        timing = _SRT_TIMING.match(lines[1])
+        if timing is None:
+            raise ValueError(f"SRT cue {index} has no 'start --> end' timing")
+        start = _srt_seconds(*timing.groups()[:4])
+        end = _srt_seconds(*timing.groups()[4:])
+        if end < start:
+            raise ValueError(f"SRT cue {index} ends before it starts")
+        cues.append(
+            {
+                "index": index,
+                "start": start,
+                "end": end,
+                "lines": [line.rstrip() for line in lines[2:] if line.strip()],
+            }
+        )
+    return cues
+
+
+def caption_problems(cues: list[dict[str, Any]]) -> list[str]:
+    """What keeps these cues from being read on a phone; empty when nothing does."""
+    problems: list[str] = []
+    previous_end: float | None = None
+    for cue in cues:
+        index = cue.get("index")
+        lines = list(cue.get("lines") or [])
+        if not lines:
+            problems.append(f"cue {index} is empty")
+        if len(lines) > CAPTION_MAX_LINES:
+            problems.append(
+                f"cue {index} has {len(lines)} lines, more than {CAPTION_MAX_LINES} lines"
+            )
+        longest = max((len(line) for line in lines), default=0)
+        if longest > CAPTION_LINE_CHARS:
+            problems.append(
+                f"cue {index} has a line of {longest} characters, more than {CAPTION_LINE_CHARS}"
+            )
+        if float(cue["end"]) <= float(cue["start"]):
+            problems.append(f"cue {index} has no duration")
+        if previous_end is not None and float(cue["start"]) < previous_end - 0.001:
+            problems.append(f"cue {index} overlaps the cue before it")
+        previous_end = float(cue["end"])
+    return problems
+
+
+def _words(text: str) -> list[str]:
+    return "".join(c.lower() if c.isalnum() else " " for c in text).split()
+
 
 #: Assets whose visuals came from a local placeholder generator. Placeholder frames are not
 #: broadcastable content, so QC refuses to certify them for publication.
@@ -184,12 +285,25 @@ def still_is_degenerate(ffmpeg: str | None, path: Path) -> str | None:
     return None
 
 
-def evaluate_media_qc(engine: Engine, media_asset_id: str, correlation_id: str) -> dict:
-    """Run comprehensive Quality Control check on a rendered media asset."""
+def evaluate_media_qc(
+    engine: Engine,
+    media_asset_id: str,
+    correlation_id: str,
+    settings: Any | None = None,
+) -> dict:
+    """Run comprehensive Quality Control check on a rendered media asset.
+
+    ``settings`` is the studio's configuration, read for ``max_fallback_scenes``: how many
+    scenes of a production film may be stills pushed slowly because the motion model
+    refused. Unset, half the scenes.
+    """
     qc_id = str(uuid4())
     verified_at = utc_now()
     checks: dict[str, dict] = {}
     failure_reasons: list[str] = []
+    # Read before the report's own transaction opens: the environment is the studio's state,
+    # never a parameter, and it decides whether a mostly-still film is a failure or a note.
+    environment = studio_environment(engine)
 
     with Session(engine) as session, session.begin():
         asset = session.get(MediaAsset, media_asset_id)
@@ -316,15 +430,160 @@ def evaluate_media_qc(engine: Engine, media_asset_id: str, correlation_id: str) 
         render_job = session.scalar(
             select(VideoRenderJob).where(VideoRenderJob.output_asset_id == media_asset_id)
         )
+        manifest: dict[str, Any] = (
+            render_job.production_json
+            if render_job is not None and isinstance(render_job.production_json, dict)
+            else {}
+        )
+        storyboard_scenes: list[StoryboardScene] = []
+        if render_job is not None:
+            sb = session.get(Storyboard, render_job.storyboard_id)
+            if sb is not None:
+                storyboard_scenes = list(
+                    session.scalars(
+                        select(StoryboardScene)
+                        .where(StoryboardScene.storyboard_id == sb.id)
+                        .order_by(StoryboardScene.scene_index)
+                    ).all()
+                )
+
+        # 2c. Audio QC — the film is measured with the same filter that normalised it, so
+        #     the renderer and this gate can never disagree. Behind the same guard as the
+        #     rest of technical QC: no encoder, no measurement, no certificate.
+        ffmpeg = find_ffmpeg()
+        audio: dict[str, Any] = {
+            "passed": False,
+            "integrated_lufs": None,
+            "true_peak_dbtp": None,
+            "band_lufs": list(LOUDNESS_BAND_LUFS),
+            "true_peak_ceiling_dbtp": TRUE_PEAK_CEILING_DBTP,
+            "normalised": (manifest.get("audio") or {}).get("loudness", {}).get("applied"),
+            "error": None,
+        }
+        if not file_exists or not probe.get("ok"):
+            audio["error"] = "no decodable film to measure"
+        elif not ffmpeg or not has_filter(ffmpeg, "loudnorm"):
+            audio["error"] = "ffmpeg with loudnorm is not installed: loudness cannot be verified"
+            failure_reasons.append(audio["error"])
+        elif not probe.get("has_audio"):
+            audio["error"] = "the film has no audio stream"
+            failure_reasons.append("The film has no audio stream")
+        else:
+            reading = measure_loudness(ffmpeg, file_path)
+            if reading is None:
+                audio["error"] = "loudness could not be measured"
+                failure_reasons.append("Loudness could not be measured from the film")
+            else:
+                integrated = float(reading["integrated_lufs"])
+                peak = float(reading["true_peak_dbtp"])
+                low, high = LOUDNESS_BAND_LUFS
+                audio["integrated_lufs"] = round(integrated, 2) if integrated > -1e9 else None
+                audio["true_peak_dbtp"] = round(peak, 2) if peak > -1e9 else None
+                in_band = low <= integrated <= high
+                under_ceiling = peak <= TRUE_PEAK_CEILING_DBTP
+                if not in_band:
+                    failure_reasons.append(
+                        f"Measured loudness {integrated:.1f} LUFS is outside {low:.0f}..{high:.0f}"
+                        " LUFS"
+                    )
+                if not under_ceiling:
+                    failure_reasons.append(
+                        f"Measured true peak {peak:.1f} dBTP is over the "
+                        f"{TRUE_PEAK_CEILING_DBTP:.0f} dBTP ceiling"
+                    )
+                audio["passed"] = in_band and under_ceiling
+        checks["audio_qc"] = audio
+
+        # 2d. Captions QC — the SRT beside the film is read back: it parses, keeps to two
+        #     lines of forty-two, sits inside the film, and says what the narration says.
+        captions_record = (
+            manifest.get("captions") if isinstance(manifest.get("captions"), dict) else {}
+        )
+        srt_path = Path(str(captions_record.get("srt") or (file_path.parent / "captions.srt")))
+        narration = " ".join(str(sc.voiceover_segment or "") for sc in storyboard_scenes)
+        captions: dict[str, Any] = {
+            "passed": False,
+            "srt": str(srt_path),
+            "cues": 0,
+            "burned_in": captions_record.get("burned_in"),
+            "covers_narration": None,
+            "coverage_ratio": None,
+            "problems": [],
+        }
+        if not srt_path.is_file():
+            captions["problems"] = ["no captions file beside the film"]
+            failure_reasons.append("Captions are missing: no SRT beside the film")
+        else:
+            try:
+                cues = parse_srt(srt_path.read_text(encoding="utf-8"))
+            except (ValueError, OSError) as exc:
+                captions["problems"] = [f"captions do not parse: {str(exc)[:120]}"]
+                failure_reasons.append(f"Captions do not parse as SRT: {str(exc)[:120]}")
+            else:
+                problems = caption_problems(cues)
+                captions["cues"] = len(cues)
+                if cues and measured_dur and cues[-1]["end"] > measured_dur + 0.5:
+                    problems.append(
+                        f"the last cue ends at {cues[-1]['end']:.1f}s, after the film "
+                        f"({measured_dur:.1f}s)"
+                    )
+                spoken = _words(narration)
+                captioned = _words(" ".join(" ".join(c["lines"]) for c in cues))
+                if spoken:
+                    ratio = difflib.SequenceMatcher(None, spoken, captioned).ratio()
+                    covers = ratio >= CAPTION_COVERAGE_RATIO
+                else:
+                    ratio, covers = 1.0, not captioned
+                captions["coverage_ratio"] = round(ratio, 3)
+                captions["covers_narration"] = covers
+                if not covers:
+                    problems.append(
+                        f"captions carry {ratio:.0%} of the narration's words, "
+                        f"under {CAPTION_COVERAGE_RATIO:.0%}"
+                    )
+                captions["problems"] = problems
+                captions["passed"] = not problems
+                for problem in problems:
+                    failure_reasons.append(f"Captions: {problem}")
+        checks["captions_qc"] = captions
+
+        # 2e. Motion QC — the manifest counts the scenes that moved and the scenes that fell
+        #     back to a slow push because the model refused. Too many pushes is a slideshow
+        #     sold as a film, and in PRODUCTION the gate says so; in TEST two motion scenes
+        #     are the policy and the rest push by design, so the same count is a warning.
+        motion_record = manifest.get("motion") if isinstance(manifest.get("motion"), dict) else {}
+        total_scenes = int(motion_record.get("scenes") or len(storyboard_scenes) or 0)
+        fallback_scenes = int(motion_record.get("fallback_scenes") or 0)
+        motion_scenes = int(motion_record.get("motion_scenes") or motion_record.get("clips") or 0)
+        ceiling = getattr(settings, "max_fallback_scenes", None)
+        max_fallback = (
+            int(ceiling) if isinstance(ceiling, int) and ceiling >= 0 else total_scenes // 2
+        )
+        too_many = fallback_scenes > max_fallback
+        motion_reason = (
+            f"{fallback_scenes} of {total_scenes} scenes fell back to a slow push because the "
+            f"motion model refused; at most {max_fallback} may (fallback ceiling, {environment})"
+        )
+        motion: dict[str, Any] = {
+            "passed": not (too_many and environment == "PRODUCTION"),
+            "environment": environment,
+            "scenes": total_scenes,
+            "motion_scenes": motion_scenes,
+            "fallback_scenes": fallback_scenes,
+            "max_fallback_scenes": max_fallback,
+            "warning": motion_reason if too_many and environment != "PRODUCTION" else None,
+        }
+        if too_many and environment == "PRODUCTION":
+            failure_reasons.append(motion_reason)
+        checks["motion_qc"] = motion
+
         factual_passed = True
         claims_checked = []
 
         if render_job:
             sb = session.get(Storyboard, render_job.storyboard_id)
             if sb:
-                scenes = session.scalars(
-                    select(StoryboardScene).where(StoryboardScene.storyboard_id == sb.id)
-                ).all()
+                scenes = storyboard_scenes
                 all_claim_ids = set()
                 for sc in scenes:
                     for cid in sc.claim_ids_json or []:
@@ -363,13 +622,9 @@ def evaluate_media_qc(engine: Engine, media_asset_id: str, correlation_id: str) 
         # 3b. Content integrity — a still the generator returned as stripes or an empty field,
         #     measured when it was made and still broken after one more attempt. A technically
         #     perfect file of nothing is not a film.
-        degenerate: list[dict] = []
-        if render_job is not None and isinstance(render_job.production_json, dict):
-            degenerate = [
-                item
-                for item in render_job.production_json.get("degenerate_stills") or []
-                if isinstance(item, dict)
-            ]
+        degenerate: list[dict] = [
+            item for item in manifest.get("degenerate_stills") or [] if isinstance(item, dict)
+        ]
         for item in degenerate:
             failure_reasons.append(f"Scene {item.get('scene_index')}: {item.get('reason')}")
         checks["content_integrity_qc"] = {
@@ -384,6 +639,9 @@ def evaluate_media_qc(engine: Engine, media_asset_id: str, correlation_id: str) 
             and factual_passed
             and not is_placeholder
             and not degenerate
+            and bool(audio["passed"])
+            and bool(captions["passed"])
+            and bool(motion["passed"])
         )
         status = "PASSED" if overall_passed else "FAILED"
         score = 1.0 if overall_passed else round(max(0.0, 1.0 - (len(failure_reasons) * 0.25)), 2)

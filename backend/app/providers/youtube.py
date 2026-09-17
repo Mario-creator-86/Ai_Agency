@@ -8,12 +8,16 @@ Follows Section 25 of Master Prompt & 22_PROVIDER_INTEGRATION_CONTRACTS.md:
 - Never fabricates external state; returns NOT_CONFIGURED if credentials missing.
 - Bounded retries on 429, 5xx and unopened connections (`app.providers.retry`); a chunk is
   re-sent with its Content-Range, so a repeat never makes a second video.
+- A scheduled release is a private upload with ``status.publishAt`` (videos.insert), and a
+  visibility change is ``videos.update`` on the status part, re-declaring the synthetic
+  media flag because an update reverts what it does not mention.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -41,6 +45,25 @@ UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024
 SYNTHETIC_DISCLOSURE = (
     "Disclosure: this video was produced with generative AI by an autonomous studio pipeline."
 )
+
+#: The values YouTube's status.privacyStatus takes. Anything else is refused before a request
+#: is made: the platform would answer 400, and a 400 is a wrong request, not a wrong moment.
+PRIVACY_STATUSES = ("private", "unlisted", "public")
+
+
+def rfc3339(value: datetime | str) -> str:
+    """The form `status.publishAt` takes: UTC, whole seconds, a trailing Z.
+
+    A string is checked, not trusted: an unreadable timestamp is a wrong request and is
+    raised here as `ValueError` rather than sent for YouTube to refuse.
+    """
+    if isinstance(value, str):
+        text = value.strip()
+        parsed = datetime.fromisoformat(text[:-1] + "+00:00" if text.endswith("Z") else text)
+        value = parsed
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _open(req: Request, *, timeout: float) -> Any:
@@ -175,6 +198,31 @@ class YouTubeProvider(PublishingProvider):
                 error_detail=f"File {file_path} does not exist on disk",
             )
 
+        # A scheduled release: YouTube takes a publishAt only on a private upload and makes
+        # the video public at that time. The pair comes from `resolve_publish_visibility`;
+        # the adapter checks the form of the timestamp and refuses to send a bad one.
+        publish_at = (extra or {}).get("publish_at")
+        if publish_at:
+            try:
+                publish_at = rfc3339(publish_at)
+            except (TypeError, ValueError):
+                return UploadResult(
+                    remote_video_id="",
+                    remote_url="",
+                    status="FAILED",
+                    error_detail=f"publish_at is not an RFC 3339 timestamp: {publish_at!r}",
+                )
+            if privacy_status != "private":
+                return UploadResult(
+                    remote_video_id="",
+                    remote_url="",
+                    status="FAILED",
+                    error_detail=(
+                        "A scheduled release must be uploaded private; YouTube refuses a "
+                        f"publishAt on a {privacy_status} upload."
+                    ),
+                )
+
         token = self._get_access_token()
         # Synthetic/altered content disclosure is mandatory for AI-generated uploads.
         # It is declared both in the API status block and in human-readable description text,
@@ -184,6 +232,13 @@ class YouTubeProvider(PublishingProvider):
             disclosed_description = f"{disclosed_description}\n\n{SYNTHETIC_DISCLOSURE}"
         disclosure_tags = list(dict.fromkeys([*tags, "ai generated", "synthetic media"]))
 
+        status: dict[str, Any] = {
+            "privacyStatus": privacy_status,
+            "selfDeclaredMadeForKids": False,
+            "containsSyntheticMedia": True,
+        }
+        if publish_at:
+            status["publishAt"] = publish_at
         metadata = {
             "snippet": {
                 "title": title[:100],
@@ -191,11 +246,7 @@ class YouTubeProvider(PublishingProvider):
                 "tags": disclosure_tags[:50],
                 "categoryId": "28",  # Science & Technology
             },
-            "status": {
-                "privacyStatus": privacy_status,
-                "selfDeclaredMadeForKids": False,
-                "containsSyntheticMedia": True,
-            },
+            "status": status,
         }
 
         # 1. Initiate resumable upload session
@@ -312,6 +363,74 @@ class YouTubeProvider(PublishingProvider):
         except Exception as exc:  # noqa: BLE001
             # An empty `items` list above is YouTube saying no. This is YouTube saying nothing.
             raise RemoteStateUnavailable(f"YouTube could not be queried: {exc}") from None
+
+    async def update_visibility(
+        self, remote_video_id: str, privacy_status: str
+    ) -> RemoteVideoStatus:
+        """Change a video's visibility with videos.update on the status part.
+
+        The status part is replaced whole: a property the request does not mention reverts
+        to its default, so the synthetic-media declaration and the made-for-kids answer are
+        sent again with the new privacy. The answer is the video resource; an answer that does
+        not name the video is YouTube saying nothing, raised as `RemoteStateUnavailable`
+        like every other unanswered question here, and a 404 is YouTube saying the video is
+        not there. Repeatable: sending the same status twice leaves the same status.
+        """
+        if privacy_status not in PRIVACY_STATUSES:
+            raise ValueError(
+                f"privacy_status must be one of {PRIVACY_STATUSES}, not {privacy_status!r}"
+            )
+        if not self.is_configured:
+            raise RemoteStateUnavailable(
+                "No YouTube credentials are configured, so the video's visibility cannot "
+                "be changed."
+            )
+        body = json.dumps(
+            {
+                "id": remote_video_id,
+                "status": {
+                    "privacyStatus": privacy_status,
+                    "selfDeclaredMadeForKids": False,
+                    "containsSyntheticMedia": True,
+                },
+            }
+        ).encode("utf-8")
+        try:
+            token = self._get_access_token()
+            req = Request(
+                f"{YOUTUBE_API_BASE}/videos?{urlencode({'part': 'status'})}",
+                data=body,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json; charset=UTF-8",
+                },
+                method="PUT",
+            )
+            with _open(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except HTTPError as exc:
+            if exc.code == 404:
+                return RemoteVideoStatus(remote_video_id=remote_video_id, exists=False)
+            raise RemoteStateUnavailable(
+                f"YouTube refused the visibility change (HTTP {exc.code})."
+            ) from None
+        except Exception as exc:  # noqa: BLE001
+            raise RemoteStateUnavailable(
+                f"YouTube could not be asked to change the visibility: {exc}"
+            ) from None
+        if not isinstance(data, dict) or data.get("id") != remote_video_id:
+            raise RemoteStateUnavailable(
+                "YouTube answered the visibility change without naming the video; whether "
+                "it changed is unknown."
+            )
+        st = data.get("status", {})
+        return RemoteVideoStatus(
+            remote_video_id=remote_video_id,
+            exists=True,
+            privacy_status=st.get("privacyStatus"),
+            upload_status=st.get("uploadStatus"),
+            rejection_reason=st.get("rejectionReason"),
+        )
 
     async def reconcile_upload(
         self, idempotency_key: str, expected_title: str

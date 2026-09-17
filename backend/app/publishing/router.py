@@ -22,10 +22,14 @@ from app.publishing.schemas import (
     CreatePublicationIntentCommand,
     PublicationView,
     PublishingGateEvaluationView,
+    PublishPolicyCommand,
+    PublishPolicyResult,
 )
 from app.publishing.services import (
     PublishingAssetNotFound,
     PublishingGateError,
+    PublishPolicyError,
+    change_publish_policy,
     configure_channel,
     create_publication_intent,
     evaluate_publishing_gate,
@@ -37,6 +41,7 @@ from app.publishing.services import (
     seed_default_channels,
 )
 from app.security import require_owner
+from app.services import CommandConflict
 from app.youtube.models import YouTubeConnection
 
 PUBLISHER_NOT_CONFIGURED_DETAIL = {
@@ -168,6 +173,28 @@ def create_publishing_router() -> APIRouter:
         except PolicyError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    @router.post("/channels/{channel_id}/publish-policy", response_model=PublishPolicyResult)
+    def set_publish_policy(
+        request: Request,
+        channel_id: Annotated[str, Path(min_length=36, max_length=36)],
+        cmd: PublishPolicyCommand,
+    ) -> dict:
+        """How this channel's autonomous uploads are released: private, unlisted or public.
+
+        Owner-only, versioned by the channel's `policy_version`, idempotent by command id and
+        recorded as `publishing.channel_policy_changed`; the same answers as the environment
+        and the autonomy stop give (409 for a stale version or a reused id, 422 for a policy
+        the studio refuses to set, such as "public" while in TEST).
+        """
+        try:
+            return change_publish_policy(request.app.state.engine, channel_id, cmd)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except CommandConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except PublishPolicyError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     @router.get("/channels/{channel_id}", response_model=ChannelView)
     def get_single_channel(
         request: Request,
@@ -236,6 +263,14 @@ def create_publishing_router() -> APIRouter:
             getattr(settings, "ai_disclosure_url", None),
             getattr(settings, "creator_channel_title", None),
         )
+        # The Owner's own intent is stamped with the channel policy in force, so the audit
+        # reads the same for a hand-made publication as for an autonomous one. The gate then
+        # holds it to that policy: an unlisted intent on a channel whose policy says private
+        # is refused until the Owner sets the policy, which is the one place visibility is
+        # decided. A private upload needs no stamp.
+        channel = get_channel(request.app.state.engine, cmd.channel_id)
+        visible = cmd.privacy_status != "private" or bool(cmd.scheduled_publish_time)
+        policy_version = channel["policy_version"] if channel and visible else None
         try:
             return create_publication_intent(
                 request.app.state.engine,
@@ -248,6 +283,7 @@ def create_publishing_router() -> APIRouter:
                 cmd.idempotency_key,
                 str(cmd.command_id),
                 cmd.scheduled_publish_time,
+                policy_version=policy_version,
             )
         except PublishingAssetNotFound as exc:
             raise HTTPException(

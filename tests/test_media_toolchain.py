@@ -98,3 +98,113 @@ def test_the_studios_own_encoder_is_discoverable_here():
     probe = find_ffprobe()
     assert probe is not None, f"ffmpeg at {ffmpeg} but no ffprobe found"
     assert Path(probe).is_file()
+
+
+# --------------------------------------------------------------------------- loudness
+# The renderer normalises and quality control measures with the same reading of the same
+# filter, so the two can never disagree about how loud a film is. Before this, nothing
+# measured loudness at all (grep loudnorm: none) and a film left at whatever the voice
+# vendor returned was a film the platform turned down or up on its own terms.
+
+LOUDNORM_STDERR = """
+[graph 0 input from stream 0:0 @ 0x1] tb:1/48000 samplefmt:s16 samplerate:48000 chlayout:mono
+[Parsed_loudnorm_0 @ 0x2]
+{
+\t"input_i" : "-23.10",
+\t"input_tp" : "-5.20",
+\t"input_lra" : "6.30",
+\t"input_thresh" : "-33.40",
+\t"output_i" : "-14.02",
+\t"output_tp" : "-1.00",
+\t"output_lra" : "6.10",
+\t"output_thresh" : "-24.10",
+\t"normalization_type" : "linear",
+\t"target_offset" : "0.02"
+}
+size=N/A time=00:00:12.00 bitrate=N/A speed= 105x
+"""
+
+
+def test_the_loudnorm_report_is_read_out_of_the_encoders_chatter():
+    from app.media.toolchain import parse_loudnorm_json
+
+    measured = parse_loudnorm_json(LOUDNORM_STDERR)
+    assert measured is not None
+    assert measured["integrated_lufs"] == -23.1
+    assert measured["true_peak_dbtp"] == -5.2
+    assert measured["loudness_range_lu"] == 6.3
+    assert measured["threshold_lufs"] == -33.4
+    assert measured["target_offset_lu"] == 0.02
+    # Chatter without a report reads as nothing measured, never as a number.
+    assert parse_loudnorm_json("size=N/A time=00:00:12.00") is None
+    # Silence measures as -inf, which is a reading too: the film has no sound to normalise.
+    silent = parse_loudnorm_json(LOUDNORM_STDERR.replace('"-23.10"', '"-inf"'))
+    assert silent is not None and silent["integrated_lufs"] == float("-inf")
+
+
+def test_the_normalising_filter_is_two_pass_when_measured_and_one_pass_otherwise():
+    from app.media.toolchain import (
+        LOUDNESS_RANGE_LU,
+        LOUDNESS_TARGET_LUFS,
+        TRUE_PEAK_TARGET_DBTP,
+        loudnorm_filter,
+        parse_loudnorm_json,
+    )
+
+    assert LOUDNESS_TARGET_LUFS == -14.0
+    one_pass = loudnorm_filter(None)
+    assert one_pass.startswith("loudnorm=")
+    assert f"I={LOUDNESS_TARGET_LUFS:.1f}" in one_pass
+    assert f"TP={TRUE_PEAK_TARGET_DBTP:.1f}" in one_pass
+    assert f"LRA={LOUDNESS_RANGE_LU:.1f}" in one_pass
+    assert "measured_I" not in one_pass
+
+    two_pass = loudnorm_filter(parse_loudnorm_json(LOUDNORM_STDERR))
+    assert "measured_I=-23.10" in two_pass
+    assert "measured_TP=-5.20" in two_pass
+    assert "measured_LRA=6.30" in two_pass
+    assert "measured_thresh=-33.40" in two_pass
+    assert "offset=0.02" in two_pass
+    assert "linear=true" in two_pass
+
+    # A silent measurement cannot steer a second pass: it falls back to the one-pass filter.
+    assert loudnorm_filter(parse_loudnorm_json(LOUDNORM_STDERR.replace('"-23.10"', '"-inf"'))) == (
+        one_pass
+    )
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="no FFmpeg on this machine")
+def test_a_synthetic_tone_is_measured_by_the_encoder(tmp_path):
+    """A live measurement: a tone at a known level reads back at about that level."""
+    import subprocess
+
+    from app.media.toolchain import has_filter, measure_loudness
+
+    ffmpeg = find_ffmpeg()
+    tone = tmp_path / "tone.wav"
+    subprocess.run(
+        [
+            ffmpeg,
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=48000:duration=4",
+            "-af",
+            "volume=0.1",
+            str(tone),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    measured = measure_loudness(ffmpeg, tone)
+    assert measured is not None, "the encoder has loudnorm and the tone is four seconds long"
+    # The generator's sine and the volume filter put the tone around -42 LUFS on this
+    # encoder; the assertion is loose because the point is that a number came back.
+    assert -60.0 < measured["integrated_lufs"] < -20.0
+    assert measured["true_peak_dbtp"] < -20.0
+    assert measure_loudness(ffmpeg, tmp_path / "missing.wav") is None
+    assert has_filter(ffmpeg, "loudnorm") is True
+    assert has_filter(ffmpeg, "no_such_filter_anywhere") is False

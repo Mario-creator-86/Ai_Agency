@@ -53,7 +53,10 @@ from app.agents.reviews import (
     review_failed_render,
     review_narration,
 )
-from app.analytics.services import MetricsUnavailable, ingest_publication_metrics
+from app.analytics.services import (
+    analytics_provider_for_channel,
+    measure_channel_publications,
+)
 from app.analytics.trends import is_fresh, refresh_trends
 from app.config import Settings
 from app.economy.accountant import AccountantError, reconcile_day, record_render_costs
@@ -92,17 +95,20 @@ from app.media.prompt_agent import PromptError, write_shot_prompts
 from app.media.qc import evaluate_media_qc
 from app.media.services import generate_storyboard_from_script
 from app.providers.registry import ProviderRegistry
-from app.providers.youtube_analytics import YouTubeAnalyticsProvider
 from app.publishing.models import ChannelRecord, PublicationRecord
 from app.publishing.services import (
+    ROUTE_SELECTED,
     PublisherNotConfigured,
     PublishingGateError,
     channel_bindings,
+    channel_type_for_storyboard,
     evaluate_publishing_gate,
     film_identity,
     publication_footer,
     publish_media_asset,
     published_films,
+    resolve_publish_visibility,
+    select_channel_for,
 )
 from app.research.agent import (
     NoAuthorisedHosts,
@@ -111,9 +117,9 @@ from app.research.agent import (
     gather_sources,
     propose_topics,
 )
+from app.runbook.services import BLOCKED, OWNER_STOP_REASON
 from app.services import studio_environment, utc_now
-from app.story.models import DailyStudioLog, StoryEpisode
-from app.story.services import StoryError, write_episode
+from app.story.serial_stage import run_serial_stage
 
 logger = logging.getLogger("studio.runbook.stages")
 
@@ -201,54 +207,77 @@ def _idea_generation(
 
 
 def _performance_intake(engine: Engine, vault: Any) -> dict[str, Any]:
-    """Measure the videos the platform is actually serving.
+    """Measure the videos the platform is actually serving, channel by channel.
 
     Only a publication with a remote video id has an audience to measure. A simulated one has
     none, and asking an analytics API about an internal row id would produce numbers about
     nothing.
+
+    Each slot is measured through its own bound account and its own publications. It used
+    to be one adapter, built from the first bound slot, for every publication in the studio:
+    with two channels bound, the serial's retention was asked of the main channel's account
+    and answered with a straight face. A slot without a usable binding is named in the
+    outcome and never measured through another slot's account — attributing one channel's
+    numbers to another is worse than measuring nothing.
     """
-    # The bound slot names the account whose numbers these are. Without a binding the adapter
-    # can still answer when exactly one account is connected; with several it cannot, and
-    # attributing one channel's retention to another is worse than measuring nothing.
-    bound = [b for b in channel_bindings(engine).values() if b.get("publisher_ready")]
-    connection_id = bound[0]["youtube_connection_id"] if bound else None
-    provider = YouTubeAnalyticsProvider.from_verified_settings(engine, vault, connection_id)
-    if provider is None:
+    with Session(engine) as session:
+        slots = [
+            (channel.id, channel.channel_name)
+            for channel in session.scalars(
+                select(ChannelRecord)
+                .where(ChannelRecord.platform == "YOUTUBE")
+                .order_by(ChannelRecord.created_at)
+            )
+        ]
+
+    measured, unavailable = 0, []
+    channels: dict[str, dict[str, Any]] = {}
+    skipped: dict[str, str] = {}
+    for channel_id, channel_name in slots:
+        provider, reason = analytics_provider_for_channel(engine, vault, channel_id)
+        if provider is None:
+            skipped[channel_id] = reason
+            continue
+        result = measure_channel_publications(engine, channel_id, provider, limit=BATCH)
+        channels[channel_id] = {
+            "channel_name": channel_name,
+            "candidates": result["candidates"],
+            "measured": result["measured"],
+            "unavailable": len(result["unavailable"]),
+        }
+        measured += result["measured"]
+        unavailable.extend(result["unavailable"])
+
+    if not channels:
+        detail = " ".join(skipped.values())[:300]
         return _outcome(
             SKIPPED,
             "Niciun cont YouTube legat de un slot de canal pentru analytics. Leagă contul în "
-            "Publicare → Sloturi de canale; fără legătură nu se știe ale cui sunt cifrele.",
+            "Publicare → Sloturi de canale; fără legătură nu se știe ale cui sunt cifrele."
+            + (f" ({detail})" if detail else ""),
+            skipped=skipped,
         )
-
-    with Session(engine) as session:
-        publications = list(
-            session.scalars(
-                select(PublicationRecord)
-                .where(
-                    PublicationRecord.status == "PUBLISHED",
-                    PublicationRecord.remote_video_id.is_not(None),
-                )
-                .limit(BATCH)
-            )
+    if not sum(entry["candidates"] for entry in channels.values()):
+        return _outcome(
+            COMPLETED,
+            "Nicio publicare reală de măsurat.",
+            measured=0,
+            channels=channels,
+            skipped=skipped,
         )
-        identifiers = [publication.id for publication in publications]
-
-    measured, unavailable = 0, []
-    for publication_id in identifiers:
-        try:
-            ingest_publication_metrics(
-                engine, publication_id, provider, correlation_id=str(uuid4())
-            )
-            measured += 1
-        except MetricsUnavailable as exc:
-            unavailable.append(f"{publication_id}: {exc}")
-
-    if not identifiers:
-        return _outcome(COMPLETED, "Nicio publicare reală de măsurat.", measured=0)
-    reason = f"{measured} publicări măsurate."
+    reason = f"{measured} publicări măsurate pe {len(channels)} canale."
     if unavailable:
         reason += f" {len(unavailable)} fără date."
-    return _outcome(COMPLETED, reason, measured=measured, unavailable=unavailable)
+    if skipped:
+        reason += f" {len(skipped)} sloturi nemăsurate (fără cont legat)."
+    return _outcome(
+        COMPLETED,
+        reason,
+        measured=measured,
+        unavailable=unavailable,
+        channels=channels,
+        skipped=skipped,
+    )
 
 
 # ------------------------------------------------------- research and verification --
@@ -850,18 +879,36 @@ def _budget_left_usd(engine: Engine, settings: Settings) -> float:
     return left
 
 
+def is_serial_storyboard(board: Storyboard) -> bool:
+    """Whether a storyboard was produced for the office serial (Channel B).
+
+    Read from the same series-key mapping the publish routing uses, so the film the media
+    stage calls the serial's is the film the publish stage sends to the serial's channel.
+    """
+    return channel_type_for_storyboard(board) == "OFFICE_SERIAL"
+
+
 def _media(
     engine: Engine, settings: Settings, vault: Any, registry: ProviderRegistry | None = None
 ) -> dict[str, Any]:
-    """Render the storyboards that have no finished video yet.
+    """Render the storyboards that have no finished video yet: the factual film, then the serial's.
 
     Before a storyboard is voiced, the Voice Artist reviews its narration (pronunciation,
     pacing). Her review is filed as a report; a FLAG escalates to the Director. It does not
     hold the render: the words rest on verified claims and the day's output is not blocked
     on an opinion about delivery.
+
+    One factual film and one serial episode a day, in that order, through the same story
+    gate, the same budget check and the same camera. The serial stage runs before this one
+    and leaves its storyboard APPROVED with a story review PASS behind it; nothing here knows
+    the serial by anything but its storyboard's series key. The budget is asked before each
+    film, not once for the day: what the factual film spent is in the books by the time the
+    serial is asked about, and a refusal then skips the serial alone and says so. It used to
+    be one storyboard per run, whichever came back first — a serial storyboard would have
+    waited a day behind the factual one, or taken its place.
     """
     from app.economy.credits import credit_balances, record_credit_spend
-    from app.media.assembler import RenderEngineUnavailable, assemble_video_job
+    from app.media.assembler import RenderEngineUnavailable, RenderStopped, assemble_video_job
     from app.media.factory import image_provider, motion_for_scene, render_plan, tts_provider
     from app.media.production_policy import named_model
     from app.providers.media_http import MediaProviderError
@@ -872,16 +919,24 @@ def _media(
                 select(VideoRenderJob.storyboard_id).where(VideoRenderJob.status == "COMPLETED")
             )
         )
-        pending = [
-            board.id
-            for board in session.scalars(select(Storyboard).where(Storyboard.status == "APPROVED"))
+        approved = [
+            board
+            for board in session.scalars(
+                select(Storyboard)
+                .where(Storyboard.status == "APPROVED")
+                .order_by(Storyboard.created_at)
+            )
             if board.id not in rendered
-        ][:1]
+        ]
+        factual = [board.id for board in approved if not is_serial_storyboard(board)][:1]
+        serial = [board.id for board in approved if is_serial_storyboard(board)][:1]
+        pending = factual + serial
         retry = [] if pending else stalled_storyboards(session, engine, vault)[:1]
 
     if not pending and not retry:
         return _outcome(COMPLETED, "Niciun storyboard de randat.", rendered=0)
     pending = pending or retry
+    serial_ids = set(serial)
 
     # Nothing is generated for a film whose story has not been read and passed. This is the
     # gate before the money: every other gate in the studio used to run after it was spent.
@@ -905,23 +960,31 @@ def _media(
         )
     pending = allowed
 
-    # The budget is asked before anything is generated (runbook §7, "reserve budget"). What
-    # the render will cost is estimated from the plan at the stored price of each scene's
-    # model; scenes without a price count as zero here and are reported as unpriced later.
-    budget = may_spend(engine, 0)
-    if not budget["allowed"]:
-        return _outcome(SKIPPED, budget["reason"], budget=budget["period"])
-
     # Which environment the day renders in is the studio's own state, not a parameter.
     environment = studio_environment(engine)
     images = image_provider(engine, vault)
     voice = tts_provider(engine, vault)
-    produced = []
+    produced: list[str] = []
+    serial_assets: list[str] = []
     refused: list[dict[str, str]] = []
+    skipped_for_budget: list[str] = []
+    budget_reason = ""
     narration_reviews = []
     costs_recorded = 0
     credit_lines: list[str] = []
     for storyboard_id in pending:
+        # The budget is asked before anything is generated for this film (runbook §7,
+        # "reserve budget"). What the render will cost is estimated from the plan at the
+        # stored price of each scene's model; scenes without a price count as zero here and
+        # are reported as unpriced later. A refusal before the first film is the stage
+        # skipped, as it always was; after a film has been made, the one refused is named.
+        budget = may_spend(engine, 0)
+        if not budget["allowed"]:
+            if not produced and not refused:
+                return _outcome(SKIPPED, budget["reason"], budget=budget["period"])
+            skipped_for_budget.append(storyboard_id)
+            budget_reason = budget["reason"]
+            continue
         if registry is not None and _has_language_model(registry):
             try:
                 review = review_narration(engine, registry, storyboard_id, str(uuid4()))
@@ -991,9 +1054,21 @@ def _media(
                     else settings.motion_scenes_max
                 ),
                 production_plan=planned["plan"],
+                # The Owner's delivery choices (captions burnt in) travel with the render.
+                settings=settings,
+            )
+        except RenderStopped as exc:
+            # The Owner's switch, read between two scenes: his decision, not a fault. The
+            # runbook records the stage BLOCKED and the day PARTIAL, and opens no safe mode.
+            return _outcome(
+                BLOCKED,
+                f"{OWNER_STOP_REASON} {exc}"[:500],
+                assets=produced,
+                serial_assets=serial_assets,
+                stopped_storyboard=storyboard_id,
             )
         except RenderEngineUnavailable as exc:
-            return _outcome(SKIPPED, f"Randarea nu poate rula: {exc}")
+            return _outcome(SKIPPED, f"Randarea nu poate rula: {exc}", assets=produced)
         except MediaProviderError as exc:
             # A provider's refusal is that render's failure, not the day's: the storyboard
             # stays approved and unrendered, tomorrow's stage tries it again, and the Owner
@@ -1002,6 +1077,8 @@ def _media(
             logger.info("render_refused", extra={"storyboard_id": storyboard_id})
             continue
         produced.append(result["output_asset_id"])
+        if storyboard_id in serial_ids:
+            serial_assets.append(result["output_asset_id"])
         measured = record_credit_spend(
             engine, result["job_id"], balances_before, credit_balances(engine, vault)
         )
@@ -1021,6 +1098,14 @@ def _media(
 
     substitutes = images is None or voice is None
     reason = f"{len(produced)} videoclipuri randate."
+    if serial_assets:
+        reason += " Episodul serialului a fost filmat."
+    if skipped_for_budget:
+        names = [
+            "serialul" if board_id in serial_ids else "filmul factual"
+            for board_id in skipped_for_budget
+        ]
+        reason += f" Nefilmate din lipsă de buget: {', '.join(names)} — {budget_reason}"
     if credit_lines:
         reason += " Credite măsurate la furnizor: " + " | ".join(credit_lines) + "."
     if refused:
@@ -1036,6 +1121,8 @@ def _media(
         COMPLETED,
         reason,
         assets=produced,
+        serial_assets=serial_assets,
+        skipped_for_budget=skipped_for_budget,
         used_substitutes=substitutes,
         narration_reviews=narration_reviews,
         costs_recorded=costs_recorded,
@@ -1045,7 +1132,9 @@ def _media(
 # ---------------------------------------------------------------------- edit and QC --
 
 
-def _edit_and_qc(engine: Engine, registry: ProviderRegistry | None = None) -> dict[str, Any]:
+def _edit_and_qc(
+    engine: Engine, registry: ProviderRegistry | None = None, settings: Settings | None = None
+) -> dict[str, Any]:
     """Measure every rendered file that has not been measured yet.
 
     Quality control is measured, never opined. What follows a failure is the Video Editor's
@@ -1080,7 +1169,9 @@ def _edit_and_qc(engine: Engine, registry: ProviderRegistry | None = None) -> di
     passed, failed = 0, 0
     diagnoses = []
     for asset_id in pending:
-        report = evaluate_media_qc(engine, asset_id, str(uuid4()))
+        # The Owner's ceiling on scenes that fell back to a slow push travels with the
+        # measurement; without it quality control assumes half the scenes.
+        report = evaluate_media_qc(engine, asset_id, str(uuid4()), settings=settings)
         if report["status"] == "PASSED":
             passed += 1
             continue
@@ -1105,88 +1196,35 @@ def _edit_and_qc(engine: Engine, registry: ProviderRegistry | None = None) -> di
 # --------------------------------------------------------------------------- publish --
 
 
-def _publish(
+def _publish_one(
     engine: Engine,
     vault: Any,
-    registry: ProviderRegistry | None = None,
-    language: str = "en",
-    ffmpeg_path: str | None = None,
-    footer: str | None = None,
+    registry: ProviderRegistry | None,
+    language: str,
+    ffmpeg_path: str | None,
+    footer: str | None,
+    asset_id: str,
+    route: dict[str, Any],
+    environment: str,
 ) -> dict[str, Any]:
-    """Publish what the gate allows, to a channel that is actually connected.
+    """One film to the channel its route names, at the visibility that channel's policy allows.
 
-    The Publisher prepares the title, description and tags from the script and says READY
-    or HOLD. A HOLD keeps the candidate out until the Director lifts it; the five gates
-    are checked by code either way. Without a language model the Publisher cannot do her
-    work, and the studio does not publish with a bare title in her place.
+    Returns ``{"published": {...}}`` when the film went out, else ``{"status", "reason",
+    ...artefacts}`` in the stage's own vocabulary: SKIPPED when the studio could not do the
+    work (no account, no model, a gate error), COMPLETED when the work was done and the
+    answer was no (the Director's refusal, the Publisher's HOLD, the gate's reasons).
     """
-    # Which account a video is published to is the binding on the channel slot, never "the
-    # only connection" or "the first row": a studio with two channels would otherwise upload
-    # one channel's video to the other, which no later check could undo.
-    bindings = channel_bindings(engine)
-    with Session(engine) as session:
-        slots = [
-            (channel.id, channel.channel_name, bindings.get(channel.id, {}))
-            for channel in session.scalars(
-                select(ChannelRecord).where(ChannelRecord.platform == "YOUTUBE")
-            )
-        ]
-    ready = [(cid, name, b) for cid, name, b in slots if b.get("publisher_ready")]
-    if not ready:
-        if not slots:
-            return _outcome(SKIPPED, "Niciun canal configurat în studio.")
-        return _outcome(
-            SKIPPED,
-            "Niciun slot de canal nu este legat de un cont YouTube conectat. Leagă-le în "
-            "Publicare → Sloturi de canale; publicarea și analytics folosesc legătura.",
-        )
-    channel_id, channel_name, binding = ready[0]
+    channel_id, channel_name = route["channel_id"], route["channel_name"]
     try:
-        provider = selected_youtube(engine, vault, binding["youtube_connection_id"])
+        provider = selected_youtube(engine, vault, route["youtube_connection_id"])
     except ValueError as exc:
-        return _outcome(SKIPPED, str(exc))
+        return {"status": SKIPPED, "reason": str(exc)}
     if provider is None:
-        return _outcome(SKIPPED, "Contul YouTube legat de acest canal nu mai este conectat.")
-
-    with Session(engine) as session:
-        published_assets = set(session.scalars(select(PublicationRecord.media_asset_id)))
-        # A film the Director rejected stays out of the queue; the next one comes forward.
-        rejected_assets = {
-            review.media_asset_id
-            for review in session.scalars(select(EditorialReview))
-            if review.verdict == "REJECT"
+        return {
+            "status": SKIPPED,
+            "reason": f"Contul YouTube legat de {channel_name} nu mai este conectat.",
         }
-        # The queue holds files, but the channel receives films. One film rendered four times
-        # is four QC-passed assets: publishing them in turn would put the same video on the
-        # channel four times, once per day. So the queue is collapsed to one entry per film —
-        # the newest render of it — and a film this channel already carries is not a candidate
-        # at all. The gate refuses a duplicate as well; this is what lets the stage walk past
-        # it to the next real film instead of stopping on a refusal.
-        carried = published_films(session, channel_id)
-        offered: set[str] = set()
-        candidates: list[tuple[str, str]] = []
-        for report in session.scalars(
-            select(QualityControlReport)
-            .where(QualityControlReport.status == "PASSED")
-            .order_by(QualityControlReport.verified_at.desc())
-        ):
-            if report.media_asset_id in published_assets:
-                continue
-            if report.media_asset_id in rejected_assets:
-                continue
-            script_id, storyboard_id = film_identity(session, report.media_asset_id)
-            keys = [key for key in (script_id, storyboard_id) if key is not None]
-            if any(key in carried for key in keys):
-                continue  # already on this channel, under whatever file name
-            if any(key in offered for key in keys):
-                continue  # an older render of a film already queued above
-            offered.update(keys)
-            candidates.append((report.media_asset_id, report.id))
 
-    if not candidates:
-        return _outcome(COMPLETED, "Niciun material aprobat de QC în așteptarea publicării.")
-
-    asset_id, _ = candidates[0]
     # The Director watches the film before anyone prepares its publication. Nothing goes
     # to a channel that she has not approved, and her refusal is a letter to whoever must
     # change something, not a silent skip.
@@ -1194,9 +1232,10 @@ def _publish(
         editorial = latest_editorial(session, asset_id)
     if editorial is None:
         if registry is None or not _has_language_model(registry):
-            return _outcome(
-                SKIPPED, "Directorul nu poate viziona materialul: niciun model de limbaj."
-            )
+            return {
+                "status": SKIPPED,
+                "reason": "Directorul nu poate viziona materialul: niciun model de limbaj.",
+            }
         try:
             watched = editorial_review(
                 engine,
@@ -1207,58 +1246,81 @@ def _publish(
                 ffmpeg_path=ffmpeg_path,
             )
         except (EditorialError, ValueError) as exc:
-            return _outcome(SKIPPED, f"Directorul nu a putut viziona materialul: {exc}"[:300])
+            return {
+                "status": SKIPPED,
+                "reason": f"Directorul nu a putut viziona materialul: {exc}"[:300],
+            }
         editorial_verdict, editorial_reasons = watched["verdict"], watched["reasons"]
     else:
         editorial_verdict = editorial.verdict
         editorial_reasons = list(editorial.reasons_json or [])
     if editorial_verdict != "APPROVE":
-        return _outcome(
-            COMPLETED,
-            "Directorul a respins materialul înainte de publicare: "
+        return {
+            "status": COMPLETED,
+            "reason": "Directorul a respins materialul înainte de publicare: "
             + "; ".join(str(r) for r in editorial_reasons)[:300],
-            rejected_asset=asset_id,
-            reasons=editorial_reasons,
-        )
-    verdict = evaluate_publishing_gate(engine, asset_id, channel_id)
+            "rejected_asset": asset_id,
+            "reasons": editorial_reasons,
+        }
+
+    # What an autonomous upload to this channel may be is the Owner's policy on the slot,
+    # resolved in one place for the gate, the upload and the record alike. It used to be
+    # the constant "private" here, and a policy the Owner set was read by nobody.
+    with Session(engine) as session:
+        channel = session.get(ChannelRecord, channel_id)
+        resolved = resolve_publish_visibility(channel, environment)
+    verdict = evaluate_publishing_gate(
+        engine,
+        asset_id,
+        channel_id,
+        privacy_status=resolved["privacy_status"],
+        policy_version=resolved["policy_version"],
+        scheduled_publish_time=resolved["publish_at"],
+    )
     if not verdict["eligible"]:
-        return _outcome(
-            COMPLETED,
-            "Poarta de publicare a refuzat: " + "; ".join(verdict["reasons"]),
-            blocked_asset=asset_id,
-            reasons=verdict["reasons"],
-        )
+        return {
+            "status": COMPLETED,
+            "reason": "Poarta de publicare a refuzat: " + "; ".join(verdict["reasons"]),
+            "blocked_asset": asset_id,
+            "reasons": verdict["reasons"],
+        }
 
     with Session(engine) as session:
         hold = publication_hold(session, asset_id)
         metadata = approved_metadata(session, asset_id)
     if hold:
-        return _outcome(
-            COMPLETED,
-            "Publisher-ul ține materialul în așteptare: " + "; ".join(hold["hold_reasons"])[:300],
-            held_asset=asset_id,
-            hold_message_id=hold["message_id"],
-        )
+        return {
+            "status": COMPLETED,
+            "reason": "Publisher-ul ține materialul în așteptare: "
+            + "; ".join(hold["hold_reasons"])[:300],
+            "held_asset": asset_id,
+            "hold_message_id": hold["message_id"],
+        }
     if metadata is None:
         if registry is None or not _has_language_model(registry):
-            return _outcome(
-                SKIPPED,
-                "Publisher-ul nu poate pregăti metadatele: niciun model de limbaj disponibil.",
-            )
+            return {
+                "status": SKIPPED,
+                "reason": (
+                    "Publisher-ul nu poate pregăti metadatele: niciun model de limbaj disponibil."
+                ),
+            }
         try:
             prepared = prepare_publication(
                 engine, registry, asset_id, channel_id, str(uuid4()), language=language
             )
         except (ReviewError, NoReviewer, ValueError) as exc:
-            return _outcome(SKIPPED, f"Publisher-ul nu a pregătit publicarea: {exc}"[:300])
+            return {
+                "status": SKIPPED,
+                "reason": f"Publisher-ul nu a pregătit publicarea: {exc}"[:300],
+            }
         if prepared["verdict"] != "READY":
-            return _outcome(
-                COMPLETED,
-                "Publisher-ul ține materialul în așteptare: "
+            return {
+                "status": COMPLETED,
+                "reason": "Publisher-ul ține materialul în așteptare: "
                 + "; ".join(prepared.get("hold_reasons", []))[:300],
-                held_asset=asset_id,
-                hold_message_id=prepared.get("message_id"),
-            )
+                "held_asset": asset_id,
+                "hold_message_id": prepared.get("message_id"),
+            }
         metadata = {
             "title": prepared["title"],
             "description": prepared["description"],
@@ -1273,13 +1335,15 @@ def _publish(
             title=metadata["title"][:100],
             description=metadata["description"],
             tags=metadata["tags"],
-            privacy_status="private",
+            privacy_status=resolved["privacy_status"],
             correlation_id=str(uuid4()),
             provider=provider,
             footer=footer,
+            policy_version=resolved["policy_version"],
+            scheduled_publish_time=resolved["publish_at"],
         )
     except (PublishingGateError, PublisherNotConfigured) as exc:
-        return _outcome(SKIPPED, str(exc))
+        return {"status": SKIPPED, "reason": str(exc)}
 
     with Session(engine) as session, session.begin():
         publisher = agent_for_role(session, "Publisher")
@@ -1288,58 +1352,192 @@ def _publish(
                 session,
                 memory_class="HISTORICAL_EVENT",
                 content=(
-                    f"Published “{metadata['title'][:100]}” to {channel_name}: "
-                    f"{published['status']}."
+                    f"Published “{metadata['title'][:100]}” to {channel_name} "
+                    f"({resolved['release_privacy']}): {published['status']}."
                 ),
                 source_type="event",
                 source_id=published["id"],
                 agent_id=publisher.id,
             )
-    return _outcome(
-        COMPLETED,
-        f"Publicat pe {channel_name}: {published['status']}.",
-        publication_id=published["id"],
-        publication_status=published["status"],
-        title=metadata["title"],
-    )
+    return {
+        "published": {
+            "publication_id": published["id"],
+            "publication_status": published["status"],
+            "title": metadata["title"],
+            "channel_id": channel_id,
+            "channel_name": channel_name,
+            "channel_type": route["channel_type"],
+            "privacy_status": resolved["privacy_status"],
+            "release_privacy": resolved["release_privacy"],
+            "publish_at": resolved["publish_at"],
+            "policy_version": resolved["policy_version"],
+            "visibility_reason": resolved["reason"],
+        }
+    }
+
+
+def _publish(
+    engine: Engine,
+    vault: Any,
+    registry: ProviderRegistry | None = None,
+    language: str = "en",
+    ffmpeg_path: str | None = None,
+    footer: str | None = None,
+) -> dict[str, Any]:
+    """Publish what the gate allows, each film to the channel its storyboard names.
+
+    The Publisher prepares the title, description and tags from the script and says READY
+    or HOLD. A HOLD keeps the candidate out until the Director lifts it; the five gates
+    are checked by code either way. Without a language model the Publisher cannot do her
+    work, and the studio does not publish with a bare title in her place.
+
+    Which channel a film goes to is its storyboard's to say (`select_channel_for`): the
+    serial's episode to Channel B, a factual short to Channel A. Measured before this: the
+    stage took `ready[0]`, the first bound slot, for whatever film came first, so a studio
+    with the serial's account bound and the main one not would have put a factual film on
+    the serial's channel — the one mistake no later check can undo. A film whose slot is
+    unbound goes nowhere and says which slot to bind; it is never sent to another channel.
+    One film per channel per run; the next one waits for tomorrow.
+    """
+    with Session(engine) as session:
+        slots = (
+            session.scalar(
+                select(func.count())
+                .select_from(ChannelRecord)
+                .where(ChannelRecord.platform == "YOUTUBE")
+            )
+            or 0
+        )
+        if not slots:
+            return _outcome(SKIPPED, "Niciun canal configurat în studio.")
+        # With no slot bound at all the stage cannot publish anything, and says so before it
+        # looks for films: "nothing waiting" would be a false COMPLETED. Which slot a given
+        # film needs is decided per film below; a connected account that no slot names is
+        # never guessed to be a channel's.
+        if not any(b.get("publisher_ready") for b in channel_bindings(engine).values()):
+            return _outcome(
+                SKIPPED,
+                "Niciun slot de canal nu este legat de un cont YouTube conectat. Leagă-le în "
+                "Publicare → Sloturi de canale; publicarea și analytics folosesc legătura.",
+            )
+        published_assets = set(session.scalars(select(PublicationRecord.media_asset_id)))
+        # A film the Director rejected stays out of the queue; the next one comes forward.
+        rejected_assets = {
+            review.media_asset_id
+            for review in session.scalars(select(EditorialReview))
+            if review.verdict == "REJECT"
+        }
+        # The queue holds files, but the channel receives films. One film rendered four times
+        # is four QC-passed assets: publishing them in turn would put the same video on the
+        # channel four times, once per day. So the queue is collapsed to one entry per film —
+        # the newest render of it — and a film its channel already carries is not a candidate
+        # at all (checked below, once the film's channel is known). The gate refuses a
+        # duplicate as well; this is what lets the stage walk past it to the next real film
+        # instead of stopping on a refusal.
+        offered: set[str] = set()
+        candidates: list[tuple[str, list[str]]] = []
+        for report in session.scalars(
+            select(QualityControlReport)
+            .where(QualityControlReport.status == "PASSED")
+            .order_by(QualityControlReport.verified_at.desc())
+        ):
+            if report.media_asset_id in published_assets:
+                continue
+            if report.media_asset_id in rejected_assets:
+                continue
+            script_id, storyboard_id = film_identity(session, report.media_asset_id)
+            keys = [key for key in (script_id, storyboard_id) if key is not None]
+            if any(key in offered for key in keys):
+                continue  # an older render of a film already queued above
+            offered.update(keys)
+            candidates.append((report.media_asset_id, keys))
+
+    if not candidates:
+        return _outcome(COMPLETED, "Niciun material aprobat de QC în așteptarea publicării.")
+
+    environment = studio_environment(engine)
+    published: list[dict[str, Any]] = []
+    not_published: list[dict[str, Any]] = []
+    served: set[str] = set()
+    for asset_id, keys in candidates:
+        route = select_channel_for(engine, asset_id)
+        if route["status"] != ROUTE_SELECTED:
+            not_published.append(
+                {
+                    "asset_id": asset_id,
+                    "status": SKIPPED,
+                    "reason": route["reason"],
+                    "channel_type": route["channel_type"],
+                }
+            )
+            continue
+        channel_id = route["channel_id"]
+        if channel_id in served:
+            continue  # one film per channel per run; this one waits for tomorrow
+        with Session(engine) as session:
+            carried = published_films(session, channel_id)
+        if any(key in carried for key in keys):
+            continue  # already on this channel, under whatever file name
+        outcome = _publish_one(
+            engine, vault, registry, language, ffmpeg_path, footer, asset_id, route, environment
+        )
+        if "published" in outcome:
+            served.add(channel_id)
+            published.append(outcome["published"])
+        else:
+            not_published.append({"asset_id": asset_id, **outcome})
+
+    if published:
+        reason = " ".join(
+            f"Publicat pe {p['channel_name']}: {p['publication_status']} "
+            f"({p['release_privacy']}"
+            + (f", programat {p['publish_at']}" if p["publish_at"] else "")
+            + ")."
+            for p in published
+        )
+        if not_published:
+            reason += f" {len(not_published)} nepublicate: {not_published[0]['reason']}"
+        first = published[0]
+        return _outcome(
+            COMPLETED,
+            reason[:500],
+            published=published,
+            not_published=not_published,
+            publication_id=first["publication_id"],
+            publication_status=first["publication_status"],
+            title=first["title"],
+        )
+    if not not_published:
+        # Every candidate was a film its channel already carries, or a second film for a
+        # channel served today.
+        return _outcome(COMPLETED, "Niciun material aprobat de QC în așteptarea publicării.")
+    # Nothing went out. A content outcome — the Director's refusal, a HOLD, the gate's
+    # reasons — is the day's work done; a stage that could not work at all is SKIPPED, and
+    # the first reason says why (an unbound slot, no model, no account).
+    decided = [entry for entry in not_published if entry["status"] == COMPLETED]
+    chosen = decided[0] if decided else not_published[0]
+    artefacts = {
+        key: value for key, value in chosen.items() if key not in ("status", "reason", "asset_id")
+    }
+    return _outcome(chosen["status"], chosen["reason"], not_published=not_published, **artefacts)
 
 
 # ---------------------------------------------------------------------- serial queue --
 
 
-def _serial_queue(engine: Engine, registry: ProviderRegistry, settings: Settings) -> dict[str, Any]:
-    """Write the Office Serial episode for the day the studio has just closed."""
-    if not _has_language_model(registry):
-        return _outcome(SKIPPED, "Niciun model de limbaj disponibil; agenții nu pot rula.")
+def _serial_queue(
+    engine: Engine, registry: ProviderRegistry, settings: Settings, vault: Any = None
+) -> dict[str, Any]:
+    """The Office Serial's day: project, write, review, approve under policy, storyboard.
 
-    with Session(engine) as session:
-        written = set(session.scalars(select(StoryEpisode.log_id)))
-        log = session.scalars(
-            select(DailyStudioLog).order_by(DailyStudioLog.business_date.desc()).limit(5)
-        ).all()
-        pending = [entry.id for entry in log if entry.id not in written][:1]
-
-    if not pending:
-        # The day's own log is closed after every stage has run, so this stage always writes
-        # about the previous closed day. The studio is one day behind on the serial by design,
-        # not by oversight: an episode about a day cannot be written in the middle of it.
-        return _outcome(COMPLETED, "Nicio zi închisă fără episod.", episodes=0)
-
-    try:
-        episode = write_episode(
-            engine, registry, pending[0], str(uuid4()), language=settings.content_language
-        )
-    except StoryError as exc:
-        # Same reasoning as a rejected script: the episode was refused and nothing was stored,
-        # which is the grounding check working. It must not take the rest of the day with it.
-        logger.info("episode_rejected", extra={"log_id": pending[0], "reason": str(exc)})
-        return _outcome(COMPLETED, f"Episod respins: {exc}"[:300], episodes=0, rejected=str(exc))
-
-    return _outcome(
-        COMPLETED,
-        f"Episod scris pentru {episode.get('business_date', 'ziua închisă')}.",
-        episode_id=episode.get("id"),
-    )
+    The stage used to write an episode and stop, so the serial ended as text. It now runs
+    `app.story.serial_stage.run_serial_stage`, which carries the newest closed day without
+    an episode through to an APPROVED storyboard for Channel B; the media stage, next in
+    the runbook, films it in the same run. The stage reports SKIPPED without a language
+    model, COMPLETED for every content outcome (a quiet day, a refused draft, an episode
+    left for the Owner), and raises only for a provider or network fault.
+    """
+    return run_serial_stage(engine, registry, settings, vault)
 
 
 # ------------------------------------------------------------------------- post_run --
@@ -1509,7 +1707,7 @@ def build_stage_runners(
             ),
         ),
         "media": keep("media", lambda: _media(engine, settings, vault, registry)),
-        "edit_and_qc": keep("edit_and_qc", lambda: _edit_and_qc(engine, registry)),
+        "edit_and_qc": keep("edit_and_qc", lambda: _edit_and_qc(engine, registry, settings)),
         "publish": keep(
             "publish",
             lambda: _publish(
@@ -1524,5 +1722,7 @@ def build_stage_runners(
             ),
         ),
         "post_run": lambda: _post_run(engine, registry, outcomes),
-        "serial_queue": keep("serial_queue", lambda: _serial_queue(engine, registry, settings)),
+        "serial_queue": keep(
+            "serial_queue", lambda: _serial_queue(engine, registry, settings, vault)
+        ),
     }

@@ -339,3 +339,432 @@ def test_quality_control_selects_files_by_what_they_are_not_by_their_label(
     assert outcome["status"] == "COMPLETED"
     # It was measured. Whether it passed is QC's business; that it was looked at is this test's.
     assert outcome["artefacts"]["passed"] + outcome["artefacts"]["failed"] == 1
+
+
+# ------------------------------------------------------- one channel per film, by policy --
+
+
+def _seeded_channels(engine) -> dict[str, dict]:
+    from app.publishing.services import list_channels, seed_default_channels
+
+    seed_default_channels(engine)
+    return {c["channel_type"]: c for c in list_channels(engine)}
+
+
+def _connected(engine, name: str) -> str:
+    from app.youtube.models import YouTubeConnection
+
+    connection_id = str(uuid4())
+    with Session(engine) as session, session.begin():
+        session.add(
+            YouTubeConnection(
+                id=connection_id,
+                name=name,
+                client_id="client-id",
+                redirect_uri="http://localhost/callback",
+                encrypted_secrets="opaque",
+                secret_fields=["client_secret", "refresh_token"],
+                status="CONNECTED",
+                remote_channel_id=f"UC_{connection_id[:8]}",
+                remote_channel_title=name,
+                channel_snapshot={},
+                created_at=utc_now(),
+            )
+        )
+    return connection_id
+
+
+def _bound(engine, channel_id: str, connection_id: str) -> None:
+    from app.publishing.models import ChannelRecord
+
+    with Session(engine) as session, session.begin():
+        session.get(
+            ChannelRecord, channel_id
+        ).credentials_ref = f"youtube_connection:{connection_id}"
+
+
+def _serial_film(engine, tmp_path) -> dict:
+    """A QC-passed film whose storyboard says it was produced for the office serial."""
+    from app.media.models import Storyboard
+    from sqlalchemy import select
+    from test_phase6_publishing import _create_verified_asset_bundle
+
+    bundle = _create_verified_asset_bundle(engine, tmp_path)
+    with Session(engine) as session, session.begin():
+        board = session.scalars(
+            select(Storyboard).where(Storyboard.script_draft_id == bundle["script_id"])
+        ).one()
+        board.series_key = "office_serial"
+    return bundle
+
+
+class _RecordingPublisher:
+    """The simulator, remembering the visibility it was asked for."""
+
+    def __init__(self) -> None:
+        from app.providers.deterministic_pub import DeterministicPublishingAdapter
+
+        self.inner = DeterministicPublishingAdapter()
+        self.uploads: list[dict[str, Any]] = []
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.inner, name)
+
+    async def upload_video(self, file_path: Any, **kwargs: Any) -> Any:
+        self.uploads.append(dict(kwargs))
+        return await self.inner.upload_video(file_path, **kwargs)
+
+
+def _director_and_publisher_agree(monkeypatch) -> None:
+    """The Director has approved the film and the Publisher's metadata is READY: the
+    stage's own concern here is which channel, at which visibility."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        "app.runbook.stages.latest_editorial",
+        lambda session, asset_id: SimpleNamespace(verdict="APPROVE", reasons_json=[]),
+    )
+    monkeypatch.setattr(
+        "app.runbook.stages.approved_metadata",
+        lambda session, asset_id: {
+            "title": "Office serial, episode one",
+            "description": "A day at the studio.",
+            "tags": ["office_serial"],
+        },
+    )
+
+
+def test_publishing_routes_a_serial_film_to_its_own_slot_and_never_to_channel_a(
+    runners, engine, tmp_path, monkeypatch
+):
+    """`ready[0]` used to be the first bound slot whatever film it held. A serial film with
+    only the main channel bound goes nowhere — and says which slot to bind."""
+    from app.publishing.models import PublicationRecord
+    from sqlalchemy import select
+
+    channels = _seeded_channels(engine)
+    _serial_film(engine, tmp_path)
+    _bound(engine, channels["MAIN_FACTUAL"]["id"], _connected(engine, "Main account"))
+    publisher = _RecordingPublisher()
+    monkeypatch.setattr("app.runbook.stages.selected_youtube", lambda *a, **k: publisher)
+    _director_and_publisher_agree(monkeypatch)
+
+    refused = runners["publish"]()
+
+    assert refused["status"] == "SKIPPED", refused
+    assert channels["OFFICE_SERIAL"]["channel_name"] in refused["reason"]
+    assert publisher.uploads == []
+    with Session(engine) as session:
+        assert session.scalars(select(PublicationRecord)).all() == []
+
+    _bound(engine, channels["OFFICE_SERIAL"]["id"], _connected(engine, "Serial account"))
+    published = runners["publish"]()
+
+    assert published["status"] == "COMPLETED", published
+    assert len(publisher.uploads) == 1
+    assert publisher.uploads[0]["privacy_status"] == "private"
+    (record,) = published["artefacts"]["published"]
+    assert record["channel_id"] == channels["OFFICE_SERIAL"]["id"]
+    assert record["policy_version"] == 1
+    with Session(engine) as session:
+        row = session.scalars(select(PublicationRecord)).one()
+        assert row.channel_id == channels["OFFICE_SERIAL"]["id"]
+        assert row.policy_version == 1
+
+
+def test_publishing_visibility_is_the_channel_policy_and_the_stamp_is_its_version(
+    runners, engine, tmp_path, monkeypatch
+):
+    """The constant "private" is gone: the Owner's policy on the routed channel decides, and
+    the publication carries the version of the policy that decided it."""
+    from app.publishing.models import PublicationRecord
+    from app.publishing.schemas import PublishPolicyCommand
+    from app.publishing.services import change_publish_policy
+    from sqlalchemy import select
+
+    channels = _seeded_channels(engine)
+    _serial_film(engine, tmp_path)
+    serial = channels["OFFICE_SERIAL"]["id"]
+    _bound(engine, serial, _connected(engine, "Serial account"))
+    change_publish_policy(
+        engine,
+        serial,
+        PublishPolicyCommand(command_id=uuid4(), expected_version=1, autonomous_privacy="unlisted"),
+    )
+    publisher = _RecordingPublisher()
+    monkeypatch.setattr("app.runbook.stages.selected_youtube", lambda *a, **k: publisher)
+    _director_and_publisher_agree(monkeypatch)
+
+    outcome = runners["publish"]()
+
+    assert outcome["status"] == "COMPLETED", outcome
+    assert publisher.uploads[0]["privacy_status"] == "unlisted"
+    (record,) = outcome["artefacts"]["published"]
+    assert record["release_privacy"] == "unlisted"
+    assert record["policy_version"] == 2
+    assert "nelistat" in record["visibility_reason"]
+    with Session(engine) as session:
+        row = session.scalars(select(PublicationRecord)).one()
+        assert row.privacy_status == "unlisted" and row.policy_version == 2
+
+
+def test_performance_intake_asks_each_channel_through_its_own_account(
+    runners, engine, tmp_path, monkeypatch
+):
+    """Two channels, one bound: the bound one is measured through its own publications, the
+    unbound one is named in the outcome, and nothing is measured through a wrong account."""
+    from app.providers.analytics_base import VideoMetrics
+    from app.publishing.models import PublicationRecord
+    from test_phase6_publishing import _create_verified_asset_bundle
+
+    channels = _seeded_channels(engine)
+    main, serial = channels["MAIN_FACTUAL"]["id"], channels["OFFICE_SERIAL"]["id"]
+    for channel_id, asset_dir, video in ((main, "a", "main-video"), (serial, "b", "serial-video")):
+        asset_id = _create_verified_asset_bundle(engine, tmp_path / asset_dir)["asset_id"]
+        with Session(engine) as session, session.begin():
+            session.add(
+                PublicationRecord(
+                    id=str(uuid4()),
+                    channel_id=channel_id,
+                    media_asset_id=asset_id,
+                    title="t",
+                    description="d",
+                    tags_json=[],
+                    privacy_status="private",
+                    status="PUBLISHED",
+                    remote_video_id=video,
+                    remote_url=f"https://youtube.example/{video}",
+                    idempotency_key=str(uuid4()),
+                    created_at=utc_now(),
+                    published_at=utc_now(),
+                )
+            )
+
+    class Analytics:
+        def __init__(self) -> None:
+            self.asked: list[str] = []
+
+        async def fetch_video_metrics(self, video_id: str, window: str = "LIFETIME"):
+            self.asked.append(video_id)
+            return VideoMetrics(
+                remote_video_id=video_id,
+                views=10,
+                watch_time_seconds=30.0,
+                average_view_percentage=50.0,
+                impressions=100,
+                ctr_percentage=5.0,
+                likes=1,
+                comments=0,
+                shares=0,
+                subscribers_gained=0,
+                subscribers_lost=0,
+                window=window,
+                raw={},
+            )
+
+    provider = Analytics()
+
+    def per_channel(engine_, vault, channel_id):
+        if channel_id == main:
+            return provider, ""
+        return None, "Slotul serialului nu este legat de un cont YouTube."
+
+    monkeypatch.setattr("app.runbook.stages.analytics_provider_for_channel", per_channel)
+
+    outcome = runners["performance_intake"]()
+
+    assert outcome["status"] == "COMPLETED", outcome
+    assert provider.asked == ["main-video"]
+    assert outcome["artefacts"]["measured"] == 1
+    assert outcome["artefacts"]["channels"][main]["measured"] == 1
+    assert "serialului" in outcome["artefacts"]["skipped"][serial]
+
+
+# ------------------------------------------------ the serial is filmed in the same run --
+
+
+def _approved_board(engine, title: str, *, serial: bool = False) -> str:
+    from app.factual.models import ScriptDraft
+    from app.media.models import Storyboard, StoryboardScene
+
+    topic_id = _topic(engine, status="SELECTED")
+    script_id, board_id, now = str(uuid4()), str(uuid4()), utc_now()
+    with Session(engine) as session, session.begin():
+        session.add(
+            ScriptDraft(
+                id=script_id,
+                topic_id=topic_id,
+                version=1,
+                title=title,
+                target_duration_seconds=12,
+                voiceover_full_text="One line. Another line.",
+                scenes_json=[],
+                status="APPROVED",
+                claim_ids_json=[],
+                unverified_claim_ids_json=[],
+                created_at=now,
+            )
+        )
+        session.add(
+            Storyboard(
+                id=board_id,
+                script_draft_id=script_id,
+                title=title,
+                visual_style="MOTION_GRAPHIC",
+                aspect_ratio="9:16",
+                target_duration_seconds=12,
+                status="APPROVED",
+                total_scenes=2,
+                series_key="office_serial" if serial else None,
+                created_at=now,
+            )
+        )
+        for index, line in enumerate(("One line.", "Another line."), start=1):
+            session.add(
+                StoryboardScene(
+                    id=str(uuid4()),
+                    storyboard_id=board_id,
+                    scene_index=index,
+                    visual_prompt=f"scene {index}",
+                    visual_type="MOTION_GRAPHIC",
+                    duration_seconds=6.0,
+                    voiceover_segment=line,
+                    shot_type="MEDIUM",
+                    transition_in="CUT",
+                    character_ids_json=[],
+                    claim_ids_json=[],
+                    created_at=now,
+                )
+            )
+    return board_id
+
+
+def _media_stage_with_a_fake_camera(monkeypatch, rendered: list[str]):
+    """Everything around the render is real; the render itself only records its order."""
+    from app.runbook import stages
+
+    monkeypatch.setattr(stages, "story_gate", lambda session, script_id: (True, ""))
+    monkeypatch.setattr(
+        "app.media.factory.render_plan",
+        lambda engine_, vault, board: {
+            "image": None,
+            "tts_for_scene": lambda *a: None,
+            "video_for_scene": lambda *a: None,
+            "plan": {},
+        },
+    )
+
+    def camera(engine_, storyboard_id, correlation_id, **kwargs):
+        rendered.append(storyboard_id)
+        return {"output_asset_id": f"asset-{storyboard_id[:8]}", "job_id": str(uuid4())}
+
+    monkeypatch.setattr("app.media.assembler.assemble_video_job", camera)
+
+
+def test_media_renders_the_factual_film_first_and_the_serial_second(engine, settings, monkeypatch):
+    from app.runbook import stages
+
+    serial = _approved_board(engine, "Office serial", serial=True)
+    factual = _approved_board(engine, "A factual short")
+    rendered: list[str] = []
+    _media_stage_with_a_fake_camera(monkeypatch, rendered)
+
+    outcome = stages._media(engine, settings, None, None)
+
+    assert outcome["status"] == "COMPLETED", outcome
+    assert rendered == [factual, serial]
+    assert outcome["artefacts"]["serial_assets"] == [f"asset-{serial[:8]}"]
+
+
+def test_a_budget_refusal_after_the_factual_film_skips_the_serial_and_says_so(
+    engine, settings, monkeypatch
+):
+    """The serial goes through the same budget check as the factual film — asked again after
+    the factual film spent, and refused for the serial alone when the day's money is gone."""
+    from app.runbook import stages
+
+    serial = _approved_board(engine, "Office serial", serial=True)
+    factual = _approved_board(engine, "A factual short")
+    rendered: list[str] = []
+    _media_stage_with_a_fake_camera(monkeypatch, rendered)
+    answers = iter(
+        [
+            {"allowed": True, "period": None, "reason": ""},
+            {"allowed": False, "period": "DAILY", "reason": "Bugetul zilnic ar fi depășit."},
+        ]
+    )
+    monkeypatch.setattr(stages, "may_spend", lambda engine_, usd: next(answers))
+
+    outcome = stages._media(engine, settings, None, None)
+
+    assert outcome["status"] == "COMPLETED", outcome
+    assert rendered == [factual]
+    assert outcome["artefacts"]["skipped_for_budget"] == [serial]
+    assert "serial" in outcome["reason"].lower() and "Bugetul" in outcome["reason"]
+
+
+# --------------------------------------------------- the Owner's stop between two scenes --
+
+
+def test_the_render_stops_between_scenes_when_the_owner_stops_autonomy(engine, tmp_path):
+    """A render of eight scenes used to run to its end after the Owner pressed STOP: the
+    switch was read between stages only. The assembler now reads it between scenes and
+    fails the job cleanly — the reason names the stop, nothing is recorded, no safe mode."""
+    from app.media.assembler import RenderStopped, assemble_video_job
+    from app.media.models import MediaAsset, VideoRenderJob
+    from app.models import OwnerPolicy
+    from app.providers.deterministic_media import DeterministicTTSAdapter
+    from app.runbook.services import safe_mode_state
+    from sqlalchemy import select
+
+    with Session(engine) as session, session.begin():
+        session.get(OwnerPolicy, 1).autonomy_stopped = False
+    board_id = _approved_board(engine, "Stopped mid-way")
+
+    class VoiceThenStop(DeterministicTTSAdapter):
+        PROVIDER_NAME = "test_voice"
+        calls = 0
+
+        async def synthesize(self, text: str, **kwargs: Any):
+            type(self).calls += 1
+            result = await super().synthesize(text, **kwargs)
+            with Session(engine) as session, session.begin():
+                session.get(OwnerPolicy, 1).autonomy_stopped = True
+            return result
+
+    with pytest.raises(RenderStopped, match="AUTONOMIE OPRITĂ"):
+        assemble_video_job(
+            engine,
+            board_id,
+            str(uuid4()),
+            storage_root=tmp_path / "media",
+            tts_adapter=VoiceThenStop(),
+        )
+
+    assert VoiceThenStop.calls == 1, "the second scene was never started"
+    with Session(engine) as session:
+        job = session.scalars(select(VideoRenderJob)).one()
+        assert job.status == "FAILED"
+        assert "AUTONOMIE OPRITĂ" in job.execution_log
+        assert session.scalars(select(MediaAsset)).all() == []
+    assert safe_mode_state(engine)["active"] is False
+
+
+def test_the_media_stage_reports_the_stop_as_blocked_not_failed(engine, settings, monkeypatch):
+    from app.media.assembler import RenderStopped
+    from app.runbook import stages
+    from app.runbook.services import OWNER_STOP_REASON
+
+    _approved_board(engine, "A factual short")
+    rendered: list[str] = []
+    _media_stage_with_a_fake_camera(monkeypatch, rendered)
+
+    def stopped(engine_, storyboard_id, correlation_id, **kwargs):
+        raise RenderStopped("Randarea s-a oprit între scene: AUTONOMIE OPRITĂ.")
+
+    monkeypatch.setattr("app.media.assembler.assemble_video_job", stopped)
+
+    outcome = stages._media(engine, settings, None, None)
+
+    assert outcome["status"] == "BLOCKED"
+    assert OWNER_STOP_REASON in outcome["reason"]

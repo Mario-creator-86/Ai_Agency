@@ -948,3 +948,74 @@ def test_a_render_cost_is_read_from_the_credits(engine):
             raise AssertionError("nothing to decrypt in a studio with no connections")
 
     assert credit_balances(engine, NoVault()) == {}
+
+
+# ---------------------------------------------------------------------------
+# Yesterday is closed before the stages, and the serial is filmed in the same run
+# ---------------------------------------------------------------------------
+
+
+def test_the_serial_stage_runs_before_the_media_stage_and_the_log_closes_last():
+    """The serial's storyboard is rendered by the same run's media stage, so the stage that
+    writes it comes first; the day's own log is still the last thing the run does."""
+    assert STAGES.index("serial_queue") < STAGES.index("media")
+    assert STAGES.index("script_and_storyboard") < STAGES.index("serial_queue")
+    assert STAGES[-1] == "daily_log"
+
+
+def test_yesterday_is_closed_in_full_before_any_stage_runs(engine, settings, vault, studio):
+    """Measured live: the day's log was frozen at the run's own hour. The previous business
+    date is closed at the start of the run — after the day is over — so the serial stage
+    reads a full day; today's close at the end of the run is unchanged."""
+    from datetime import UTC, datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    from app.models import DomainEvent
+    from app.story.models import DailyStudioLog
+    from app.story.services import business_date
+
+    make_a_model_available(engine)
+    yesterday_evening = (datetime.now(ZoneInfo(settings.timezone)) - timedelta(days=1)).replace(
+        hour=22, minute=0, second=0, microsecond=0
+    )
+    with Session(engine) as session, session.begin():
+        session.add(
+            DomainEvent(
+                event_id=str(uuid4()),
+                event_type="media.video_rendered",
+                timestamp=yesterday_evening.astimezone(UTC).isoformat(),
+                aggregate_type="media_asset",
+                aggregate_id=str(uuid4()),
+                aggregate_version=1,
+                correlation_id=str(uuid4()),
+                causation_id=None,
+                schema_version=1,
+                visibility="OWNER",
+                payload={"file_size_bytes": 1},
+            )
+        )
+    yesterday = business_date(settings.timezone, yesterday_evening)
+    seen: dict[str, str | None] = {}
+
+    def serial_stage() -> dict:
+        with Session(engine) as session:
+            log = session.scalars(
+                select(DailyStudioLog).where(DailyStudioLog.business_date == yesterday)
+            ).first()
+            seen["status"] = log.status if log else None
+        return {"status": COMPLETED, "reason": "ok"}
+
+    runners = {name: (lambda: {"status": COMPLETED, "reason": "ok"}) for name in STAGES[1:]}
+    runners["serial_queue"] = serial_stage
+
+    result = execute_daily_run(engine, settings, vault, stage_runners=runners)
+
+    assert seen["status"] == "CLOSED", "the serial stage found yesterday closed"
+    previous = result["stages"][0]["artefacts"]["previous_day_log"]
+    assert previous["business_date"] == yesterday
+    assert previous["event_counts"].get("media.video_rendered") == 1
+    today = next(s for s in result["stages"] if s["stage"] == "daily_log")
+    assert today["status"] == COMPLETED
+    with Session(engine) as session:
+        dates = sorted(session.scalars(select(DailyStudioLog.business_date)))
+    assert dates == [yesterday, business_date(settings.timezone)]

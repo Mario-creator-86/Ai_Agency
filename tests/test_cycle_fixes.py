@@ -267,7 +267,8 @@ def test_an_invalidated_verdict_is_measured_again(engine, settings, monkeypatch)
     _, asset_id = _selected_topic_with_render(engine, verdict="INVALIDATED")
     measured: list[str] = []
 
-    def fake_qc(engine_, asset, correlation):
+    def fake_qc(engine_, asset, correlation, **kwargs):
+        # The stage now hands quality control the Owner's settings (the fallback ceiling).
         measured.append(asset)
         return {"id": str(uuid4()), "status": "FAILED"}
 

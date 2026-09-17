@@ -8,13 +8,17 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.media.serial_storyboard import SerialStoryboardError, storyboard_from_episode
 from app.security import require_owner
+from app.story.review import ReviewError, review_episode
 from app.story.services import (
     EpisodeNotGrounded,
     NothingHappened,
     StoryError,
     close_daily_log,
+    close_previous_day,
     decide_episode,
+    get_continuity,
     get_daily_log,
     grounding_report,
     list_daily_logs,
@@ -47,6 +51,12 @@ class EpisodeDecisionCommand(BaseModel):
     notes: str = Field(default="", max_length=2000)
 
 
+class CommandOnly(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    command_id: UUID
+
+
 def create_story_router() -> APIRouter:
     router = APIRouter(prefix="/story", dependencies=[Depends(require_owner)])
 
@@ -68,6 +78,18 @@ def create_story_router() -> APIRouter:
             cmd.business_date,
             str(cmd.command_id),
         )
+
+    @router.post("/logs/close-previous")
+    def post_close_previous(request: Request, cmd: CommandOnly) -> dict:
+        """Close yesterday's log with every event of that day; a closed one is returned as is."""
+        return close_previous_day(
+            request.app.state.engine, request.app.state.settings, str(cmd.command_id)
+        )
+
+    @router.get("/continuity")
+    def get_continuity_state(request: Request) -> dict:
+        """The serial's memory: canon episode number, open threads, recent summaries."""
+        return get_continuity(request.app.state.engine)
 
     @router.get("/logs/{log_id}")
     def get_log(
@@ -115,6 +137,39 @@ def create_story_router() -> APIRouter:
             return grounding_report(request.app.state.engine, episode_id)
         except StoryError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from None
+
+    @router.post("/episodes/{episode_id}/review")
+    def post_review(
+        request: Request,
+        episode_id: Annotated[str, Path(min_length=36, max_length=36)],
+        cmd: CommandOnly,
+    ) -> dict:
+        """The Director reads a drafted episode; approval follows only under channel policy."""
+        try:
+            return review_episode(
+                request.app.state.engine,
+                request.app.state.registry,
+                episode_id,
+                str(cmd.command_id),
+                language=request.app.state.settings.content_language,
+            )
+        except ReviewError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+
+    @router.post("/episodes/{episode_id}/storyboard")
+    def post_storyboard(
+        request: Request,
+        episode_id: Annotated[str, Path(min_length=36, max_length=36)],
+        cmd: CommandOnly,
+    ) -> dict:
+        """Turn an APPROVED episode into the storyboard the film path shoots."""
+        try:
+            board_id = storyboard_from_episode(
+                request.app.state.engine, episode_id, str(cmd.command_id)
+            )
+        except SerialStoryboardError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        return {"episode_id": episode_id, "storyboard_id": board_id}
 
     @router.post("/episodes/{episode_id}/decide")
     def post_decide(

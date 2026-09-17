@@ -97,6 +97,11 @@ class ScheduledJobView(BaseModel):
     last_run_at: str | None
     next_run_at: str
     missed_policy: str
+    #: The wall-clock hour ("HH:MM") and the IANA zone a fixed-hour job fires at; both None
+    #: for a job anchored to its interval. The panel used to see only `interval_seconds`, so a
+    #: job on the clock read like one anchored to the moment the Owner activated it.
+    run_at_local: str | None = None
+    timezone: str | None = None
     created_at: str
 
 

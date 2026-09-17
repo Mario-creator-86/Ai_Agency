@@ -584,3 +584,306 @@ def test_media_api_routes_with_owner_auth(client, headers):
     res = client.get("/api/v1/media/storyboards", headers=headers)
     assert res.status_code == 200
     assert "storyboards" in res.json()
+
+
+# ------------------------------------------------------------- captions and loudness
+# Measured before this work: captions.srt was written beside the render and never muxed or
+# burnt in; nothing normalised loudness; quality control had no audio and no caption check
+# although 08_VIDEO_PIPELINE.md lists both; and a scene whose motion model refused became a
+# slow push recorded only in a note, which no gate read.
+
+
+def _words(text: str) -> list[str]:
+    return [w for w in "".join(c.lower() if c.isalnum() else " " for c in text).split() if w]
+
+
+def test_captions_are_sentence_cues_timed_to_each_scenes_narration():
+    from app.media.assembler import CAPTION_LINE_CHARS, CAPTION_MAX_LINES, caption_cues
+
+    scenes = [
+        {
+            "scene_index": 1,
+            "duration_seconds": 6.0,
+            "audio_seconds": 5.0,
+            "voiceover_segment": "Perseverance found layered rock. It points to a river delta.",
+        },
+        {
+            "scene_index": 2,
+            "duration_seconds": 6.0,
+            "audio_seconds": 4.0,
+            "voiceover_segment": "The evidence is conclusive.",
+        },
+    ]
+    cues = caption_cues(scenes)
+    # One cue per sentence, in order.
+    assert [" ".join(c["lines"]) for c in cues] == [
+        "Perseverance found layered rock.",
+        "It points to a river delta.",
+        "The evidence is conclusive.",
+    ]
+    # Timed from the scene's audio start over the narration actually recorded for it, not the
+    # storyboard's planned length: scene one's words end at 5.0, scene two's start at 6.0.
+    assert cues[0]["start"] == 0.0
+    assert cues[1]["end"] == pytest.approx(5.0, abs=0.01)
+    assert cues[2]["start"] == 6.0 and cues[2]["end"] == pytest.approx(10.0, abs=0.01)
+    # Within a scene, time is shared by the sentences' length, so the longer one lasts longer.
+    assert (cues[0]["end"] - cues[0]["start"]) > (cues[1]["end"] - cues[1]["start"])
+    assert cues[0]["end"] == cues[1]["start"]
+    for cue in cues:
+        assert 1 <= len(cue["lines"]) <= CAPTION_MAX_LINES
+        assert all(len(line) <= CAPTION_LINE_CHARS for line in cue["lines"])
+        assert cue["end"] > cue["start"]
+
+
+def test_a_long_sentence_splits_into_cues_of_two_lines_of_forty_two_characters():
+    from app.media.assembler import (
+        CAPTION_LINE_CHARS,
+        CAPTION_MAX_LINES,
+        caption_cues,
+        generate_subtitles_srt,
+    )
+    from app.media.qc import parse_srt
+
+    sentence = (
+        "The rover drilled through layered sandstone for eleven hours while the orbiter "
+        "photographed the delta from above and the scientists on Earth waited for the first "
+        "spectrometer reading to come home"
+    )
+    scenes = [
+        {
+            "scene_index": 1,
+            "duration_seconds": 12.0,
+            "audio_seconds": 11.5,
+            "voiceover_segment": sentence,
+        }
+    ]
+    cues = caption_cues(scenes)
+    assert len(cues) >= 3, "one sentence of 190 characters cannot fit two lines of 42"
+    for cue in cues:
+        assert len(cue["lines"]) <= CAPTION_MAX_LINES
+        assert all(0 < len(line) <= CAPTION_LINE_CHARS for line in cue["lines"])
+    # Nothing is lost or reordered in the split.
+    assert _words(" ".join(" ".join(c["lines"]) for c in cues)) == _words(sentence)
+    assert cues[0]["start"] == 0.0 and cues[-1]["end"] == pytest.approx(11.5, abs=0.01)
+
+    # The SRT the studio writes is the SRT quality control reads back.
+    parsed = parse_srt(generate_subtitles_srt(scenes))
+    assert [c["lines"] for c in parsed] == [c["lines"] for c in cues]
+    assert parsed[-1]["end"] == pytest.approx(11.5, abs=0.001)
+
+    # A scene with no words has no cue; nothing invents a caption from a visual prompt.
+    assert (
+        caption_cues([{"scene_index": 1, "duration_seconds": 3.0, "voiceover_segment": ""}]) == []
+    )
+
+
+def test_srt_parsing_refuses_what_is_not_srt_and_reads_what_is():
+    from app.media.qc import caption_problems, parse_srt
+
+    text = (
+        "1\n00:00:00,000 --> 00:00:02,500\nA first cue\nwith two lines\n\n"
+        "2\n00:00:02,500 --> 00:00:04,000\nSecond.\n"
+    )
+    cues = parse_srt(text)
+    assert [c["index"] for c in cues] == [1, 2]
+    assert cues[0]["start"] == 0.0 and cues[0]["end"] == 2.5
+    assert cues[0]["lines"] == ["A first cue", "with two lines"]
+    assert caption_problems(cues) == []
+
+    with pytest.raises(ValueError):
+        parse_srt("1\n00:00:00,000 -> 00:00:02,500\nno arrow\n")
+    with pytest.raises(ValueError):
+        parse_srt("1\n00:00:03,000 --> 00:00:02,500\nends before it starts\n")
+    assert parse_srt("") == []
+
+    # Rules a cue must keep to stay readable on a phone: two lines, forty-two characters.
+    too_long = parse_srt("1\n00:00:00,000 --> 00:00:02,000\n" + "x" * 43 + "\n")
+    assert any("42" in p for p in caption_problems(too_long))
+    three = parse_srt("1\n00:00:00,000 --> 00:00:02,000\na\nb\nc\n")
+    assert any("2 lines" in p for p in caption_problems(three))
+    overlap = parse_srt(
+        "1\n00:00:00,000 --> 00:00:03,000\na\n\n2\n00:00:02,000 --> 00:00:04,000\nb\n"
+    )
+    assert any("overlap" in p for p in caption_problems(overlap))
+
+
+@requires_ffmpeg
+def test_the_film_carries_burnt_captions_and_normalised_loudness(engine, tmp_path: Path):
+    from types import SimpleNamespace
+
+    from app.media.qc import probe_media_file
+    from app.media.toolchain import LOUDNESS_BAND_LUFS, TRUE_PEAK_CEILING_DBTP, measure_loudness
+
+    sb_id, _ = _seeded_storyboard(engine, tmp_path)
+    corr_id = str(uuid4())
+    render = assemble_video_job(engine, sb_id, corr_id, storage_root=tmp_path / "media")
+    production = render["production"]
+
+    # Loudness: the mixed narration was normalised to the platform norm, both readings kept.
+    loudness = production["audio"]["loudness"]
+    assert loudness["target_lufs"] == -14.0
+    assert loudness["passes"] in (1, 2)
+    assert "integrated_lufs" in loudness["input"]
+    low, high = LOUDNESS_BAND_LUFS
+    assert low <= loudness["output"]["integrated_lufs"] <= high, loudness
+    assert loudness["output"]["true_peak_dbtp"] <= TRUE_PEAK_CEILING_DBTP
+
+    # And the film itself measures inside the band, after the AAC encode.
+    film = Path(render["file_path"])
+    measured = measure_loudness(find_ffmpeg(), film)
+    assert measured is not None and low <= measured["integrated_lufs"] <= high, measured
+    assert measured["true_peak_dbtp"] <= TRUE_PEAK_CEILING_DBTP
+
+    # Captions: cues from the narration, burnt in, and the SRT kept beside the film.
+    captions = production["captions"]
+    assert captions["burned_in"] is True
+    assert captions["cues"] >= 2
+    srt = film.parent / "captions.srt"
+    assert srt.is_file() and captions["srt"] == str(srt)
+    with Session(engine) as session:
+        job = session.get(VideoRenderJob, render["job_id"])
+        args = " ".join(job.command_args_json)
+    assert "subtitles=filename=captions.srt" in args
+    assert "BorderStyle=1" in args and "PrimaryColour=&H00FFFFFF" in args
+    # A burnt-in film still plays: the video stream is there and 9:16.
+    probe = probe_media_file(film)
+    assert probe["ok"] and (probe["width"], probe["height"]) == (1080, 1920)
+
+    # Quality control reads the same film: audio in band, captions cover the narration.
+    qc = evaluate_media_qc(engine, render["output_asset_id"], corr_id)
+    audio = qc["checks_json"]["audio_qc"]
+    assert audio["passed"] is True, audio
+    assert low <= audio["integrated_lufs"] <= high
+    caps = qc["checks_json"]["captions_qc"]
+    assert caps["passed"] is True, caps
+    assert caps["cues"] == captions["cues"] and caps["covers_narration"] is True
+    assert caps["burned_in"] is True
+    # The placeholder visuals still block publication; nothing here weakens that.
+    assert qc["checks_json"]["content_source_qc"]["passed"] is False
+
+    # The Owner may keep the picture clean: the SRT stays beside the film, nothing is burnt.
+    sb_two, _ = _seeded_storyboard(engine, tmp_path)
+    clean = assemble_video_job(
+        engine,
+        sb_two,
+        str(uuid4()),
+        storage_root=tmp_path / "media",
+        settings=SimpleNamespace(captions_burn_in=False),
+    )
+    assert clean["production"]["captions"]["burned_in"] is False
+    assert (Path(clean["file_path"]).parent / "captions.srt").is_file()
+    with Session(engine) as session:
+        job = session.get(VideoRenderJob, clean["job_id"])
+        assert "subtitles=" not in " ".join(job.command_args_json)
+
+
+def _render_with_motion_record(engine, tmp_path: Path, refused: int, made: int) -> str:
+    """A COMPLETED render whose manifest says how many scenes moved and how many fell back.
+
+    The file is not on disk: quality control's technical checks fail on it, which is fine,
+    because what is asserted here is the motion gate alone.
+    """
+    from app.media.models import MediaAsset, VideoRenderJob
+
+    sb_id, _ = _seeded_storyboard(engine, tmp_path)
+    asset_id, job_id = str(uuid4()), str(uuid4())
+    scenes = []
+    for index in range(1, refused + made + 1):
+        motion = {"provider": "TEST", "model": "m", "integration_id": "c"}
+        if index <= refused:
+            motion["refused"] = "the model refused this shot"
+        else:
+            motion["bytes"] = 1024
+        scenes.append({"scene_index": index, "motion": motion})
+    with Session(engine) as session, session.begin():
+        session.add(
+            MediaAsset(
+                id=asset_id,
+                asset_type="RENDERED_VIDEO",
+                uri_or_path=str(tmp_path / "missing.mp4"),
+                file_size_bytes=1,
+                mime_type="video/mp4",
+                width=1080,
+                height=1920,
+                duration_seconds=12.0,
+                provider_name="TEST_IMAGE_PROVIDER",
+                license_status="PROPRIETARY_STUDIO",
+                provenance_hash="0" * 64,
+                created_at=utc_now(),
+            )
+        )
+        session.add(
+            VideoRenderJob(
+                id=job_id,
+                storyboard_id=sb_id,
+                output_asset_id=asset_id,
+                status="COMPLETED",
+                started_at=utc_now(),
+                production_json={
+                    "scenes": scenes,
+                    "motion": {
+                        "scenes": refused + made,
+                        "clips": made,
+                        "motion_scenes": made,
+                        "fallback_scenes": refused,
+                    },
+                },
+            )
+        )
+    return asset_id
+
+
+def test_too_many_fallback_scenes_fail_a_production_film_and_warn_a_test_one(engine, tmp_path):
+    from types import SimpleNamespace
+
+    # Three of four scenes fell back to a push: more than half. In PRODUCTION that is a
+    # slideshow sold as a film, and the gate says so.
+    asset = _render_with_motion_record(engine, tmp_path, refused=3, made=1)
+    with Session(engine) as session, session.begin():
+        session.get(OwnerPolicy, 1).environment = "PRODUCTION"
+    qc = evaluate_media_qc(engine, asset, str(uuid4()))
+    motion = qc["checks_json"]["motion_qc"]
+    assert motion["passed"] is False
+    assert (motion["motion_scenes"], motion["fallback_scenes"]) == (1, 3)
+    assert motion["max_fallback_scenes"] == 2  # half of four, the default
+    assert motion["environment"] == "PRODUCTION"
+    assert any("fallback" in r.lower() or "push" in r.lower() for r in qc["failure_reasons_json"])
+
+    # The same film in TEST: two motion scenes are policy, the rest push; a warning, no fail.
+    with Session(engine) as session, session.begin():
+        session.get(OwnerPolicy, 1).environment = "TEST"
+    qc = evaluate_media_qc(engine, asset, str(uuid4()))
+    motion = qc["checks_json"]["motion_qc"]
+    assert motion["passed"] is True and motion["warning"]
+    assert not any("fallback" in r.lower() for r in qc["failure_reasons_json"])
+
+    # The Owner's ceiling is read from settings; one refusal over it fails production.
+    with Session(engine) as session, session.begin():
+        session.get(OwnerPolicy, 1).environment = "PRODUCTION"
+    strict = _render_with_motion_record(engine, tmp_path, refused=1, made=3)
+    qc = evaluate_media_qc(
+        engine, strict, str(uuid4()), settings=SimpleNamespace(max_fallback_scenes=0)
+    )
+    assert qc["checks_json"]["motion_qc"]["passed"] is False
+    qc = evaluate_media_qc(engine, strict, str(uuid4()))
+    assert qc["checks_json"]["motion_qc"]["passed"] is True  # one of four is under half
+
+
+@requires_ffmpeg
+def test_the_render_counts_its_own_fallbacks(engine, tmp_path):
+    """The manifest carries the count the gate reads: scenes that moved, scenes that fell back."""
+    from test_motion import StubImages, StubMotion, a_clip
+
+    sb_id, _ = _seeded_storyboard(engine, tmp_path)
+    motion = StubMotion(a_clip(tmp_path), refuse={1})
+    render = assemble_video_job(
+        engine,
+        sb_id,
+        str(uuid4()),
+        storage_root=tmp_path / "media",
+        image_adapter=StubImages(),
+        video_adapter_for_scene=lambda scene: motion,
+    )
+    summary = render["production"]["motion"]
+    assert summary["motion_scenes"] == 1 and summary["fallback_scenes"] == 1
+    assert summary["scenes"] == 2 and summary["clips"] == 1

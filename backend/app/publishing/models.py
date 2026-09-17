@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import JSON, Boolean, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models import Base
@@ -21,6 +21,21 @@ class ChannelRecord(Base):
     credentials_ref: Mapped[str | None] = mapped_column(String(200), nullable=True)
     upload_privacy_default: Mapped[str] = mapped_column(
         String(20), nullable=False, default="private"
+    )
+    #: The publish policy the Owner sets for autonomous uploads (migration 0037). Measured
+    #: before it existed: the daily run hardcoded "private" and `upload_privacy_default`
+    #: above was read by nobody on a publish path. `autonomous_privacy` is what the run asks
+    #: for; "public" is honoured only while `public_publish_enabled` is True and the studio
+    #: is in PRODUCTION (`resolve_publish_visibility`). A delay turns a public release into a
+    #: private upload with a publishAt, which is how YouTube schedules one. The version and
+    #: the event name the Owner command that put this policy in force, so a publication can
+    #: say which policy authorised its visibility. Changed only by `change_publish_policy`.
+    autonomous_privacy: Mapped[str] = mapped_column(String(20), nullable=False, default="private")
+    public_publish_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    publish_delay_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    policy_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    policy_changed_event_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("domain_event.event_id"), nullable=True
     )
     # UNCONFIGURED | CONFIGURED | AUTHENTICATED | ERROR | ACTIVE
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="UNCONFIGURED")
@@ -88,6 +103,11 @@ class PublicationRecord(Base):
     remote_video_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     remote_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     scheduled_publish_time: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    #: The channel policy version that authorised this publication's visibility (migration
+    #: 0036). NULL for a private upload, which needs no authorisation, and for every row
+    #: written before the policy existed. The sixth gate check refuses an unlisted or public
+    #: publication without it, so an audit can say which policy published what.
+    policy_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     published_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
     error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(String(40), nullable=False)

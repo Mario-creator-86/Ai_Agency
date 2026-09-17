@@ -36,7 +36,7 @@ from app.models import OwnerPolicy
 from app.runbook.models import DailyRun, SafeModeRecord
 from app.runbook.preflight import run_preflight
 from app.services import append_event, utc_now
-from app.story.services import business_date, close_daily_log
+from app.story.services import business_date, close_daily_log, close_previous_day
 from app.workflows.services import append_event_with_outbox, enqueue_task, list_queue_tasks
 
 logger = logging.getLogger("studio.runbook")
@@ -48,7 +48,12 @@ DAILY_RUN_TASK = "DAILY_RUN"
 #: days running over each other on the same books.
 PENDING_STATES = ("QUEUED", "RETRYING", "CLAIMED", "RUNNING")
 
-#: The stages of the daily runbook, in order.
+#: The stages of the daily runbook, in order. The serial queue (runbook §12) runs before
+#: the media stage rather than after the day's log: it writes the episode of the *previous*
+#: day, whose log is closed at the start of the run, and leaves a storyboard that the same
+#: run's media stage films, quality control measures and the publish stage routes to
+#: Channel B. Last in the list it was a stage the day never rendered — the serial existed
+#: as text only. The day's own log stays the last thing the run does.
 STAGES = (
     "preflight",
     "performance_intake",
@@ -56,12 +61,12 @@ STAGES = (
     "research_and_verification",
     "selection",
     "script_and_storyboard",
+    "serial_queue",
     "media",
     "edit_and_qc",
     "publish",
     "post_run",
     "daily_log",
-    "serial_queue",
 )
 
 COMPLETED = "COMPLETED"
@@ -430,6 +435,42 @@ def _close_the_day(
     return [stage if stage["stage"] != "daily_log" else closed for stage in stages]
 
 
+def _close_previous_day(
+    engine: Engine,
+    settings: Settings,
+    run_id: str,
+    wait: Callable[[float], None],
+    correlation: str,
+) -> dict[str, Any]:
+    """Close the previous business date in full, retried like a stage; the log or the fault."""
+    outcome, error, attempts = _run_with_retries(
+        engine,
+        settings,
+        run_id,
+        "previous_day_log",
+        lambda: close_previous_day(engine, settings, correlation),
+        wait,
+        correlation,
+    )
+    if error is not None:
+        reason = f"{type(error).__name__}: {error}"[:500]
+        logger.warning(
+            "previous_day_not_closed",
+            extra={"run_id": run_id, "attempts": attempts, "fault_class": classify_fault(error)},
+        )
+        return {"error": reason, "fault_class": classify_fault(error), "attempts": attempts}
+    assert outcome is not None  # one of the two is always set
+    return {
+        "id": outcome["id"],
+        "business_date": outcome["business_date"],
+        "status": outcome["status"],
+        "total_events": outcome["total_events"],
+        "event_counts": outcome["event_counts"],
+        "closed_at": outcome["closed_at"],
+        "attempts": attempts,
+    }
+
+
 def _finished(
     engine: Engine, run_id: str, stage: str, status: str, reason: str, correlation_id: str
 ) -> None:
@@ -611,6 +652,20 @@ def execute_daily_run(
         for name in STAGES[1:]:
             stages.append(_stage(name, BLOCKED, "Preflight blocant; etapa nu a fost încercată."))
     else:
+        # Yesterday is closed first, with every event of its date. Measured live: the day's
+        # log was frozen at the run's own hour (the morning of its date, 92 events, one of
+        # them narratable), because the only close was the one at the end of this run. The
+        # previous business date is over now, which is the one moment a full day can be
+        # counted, and the serial stage below reads that log. A date already closed is
+        # returned as it is — a closed log never changes. Today's close at the end of the
+        # run is kept, so the day the run completes is still frozen at the run's hour; a
+        # full-day log for every date needs that close moved, which is recorded as open.
+        # A fault here is retried like a stage's and then recorded on the preflight line
+        # rather than ending the day: yesterday's record is not today's work, and the
+        # serial stage simply finds no closed day to tell.
+        stages[0]["artefacts"]["previous_day_log"] = _close_previous_day(
+            engine, settings, run_id, wait, correlation
+        )
         for name in STAGES[1:]:
             if owner_stopped:
                 stages.append(_stage(name, BLOCKED, OWNER_STOP_REASON))

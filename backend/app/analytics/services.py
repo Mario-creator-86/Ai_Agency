@@ -28,8 +28,11 @@ from app.analytics.schemas import (
 from app.factual.models import HookOption, ScriptDraft, StoryReview, TopicIdea
 from app.media.models import Storyboard, VideoRenderJob
 from app.providers.analytics_base import AnalyticsProvider
+from app.providers.youtube_analytics import YouTubeAnalyticsProvider
 from app.publishing.models import ChannelRecord, PublicationRecord
+from app.publishing.services import bound_connection_id
 from app.services import append_event, utc_now
+from app.youtube.models import YouTubeConnection
 
 logger = logging.getLogger("studio.analytics")
 
@@ -215,6 +218,92 @@ def ingest_publication_metrics(
         session.add(snapshot)
         session.flush()
         return AnalyticsSnapshotView.model_validate(snapshot).model_dump()
+
+
+def analytics_provider_for_channel(
+    engine: Engine, vault: Any, channel_id: str
+) -> tuple[AnalyticsProvider | None, str]:
+    """The analytics adapter for one channel slot: its own bound account, or nothing.
+
+    Measured before this: performance intake built one adapter from the first bound slot
+    and measured every publication through it, so with two channels bound the serial's
+    retention was asked of the main channel's account. Here the slot's binding is the only
+    source — no "the one connected account" fallback and no environment credentials, both
+    of which can name an account that is not this channel's. Returns ``(provider, "")`` or
+    ``(None, reason)`` in the Owner's language.
+    """
+    with Session(engine) as session:
+        channel = session.get(ChannelRecord, channel_id)
+        if channel is None:
+            return None, f"Canalul {channel_id} nu există."
+        identifier = bound_connection_id(channel)
+        connection = session.get(YouTubeConnection, identifier) if identifier else None
+        if connection is None:
+            return None, (
+                f"Slotul „{channel.channel_name}” nu este legat de un cont YouTube; fără "
+                "legătură nu se știe ale cui sunt cifrele. Leagă-l în Publicare → Sloturi de "
+                "canale."
+            )
+        if connection.status != "CONNECTED":
+            return None, (
+                f"Contul „{connection.name}” legat de slotul „{channel.channel_name}” nu mai "
+                "este conectat; apasă Reconectează în Setări."
+            )
+        secrets = vault.decrypt(connection.encrypted_secrets)
+        provider = YouTubeAnalyticsProvider(
+            client_id=connection.client_id,
+            client_secret=secrets.get("client_secret"),
+            refresh_token=secrets.get("refresh_token"),
+        )
+        # The adapter has no channel identity of its own; the caller records whose numbers
+        # these are, and a reader can check the account against the slot's binding.
+        provider.channel_id = connection.remote_channel_id  # type: ignore[attr-defined]
+        return provider, ""
+
+
+def measure_channel_publications(
+    engine: Engine,
+    channel_id: str,
+    provider: AnalyticsProvider,
+    *,
+    window: str = "LIFETIME",
+    limit: int | None = None,
+) -> dict[str, Any]:
+    """Measure one channel's real publications through the adapter built for that channel.
+
+    Only this channel's PUBLISHED rows with a remote video id are asked about: a simulated
+    publication has no audience, and another channel's video is another account's number.
+    Returns the count measured and, per publication, why one could not be.
+    """
+    with Session(engine) as session:
+        query = (
+            select(PublicationRecord.id)
+            .where(
+                PublicationRecord.channel_id == channel_id,
+                PublicationRecord.status == "PUBLISHED",
+                PublicationRecord.remote_video_id.is_not(None),
+            )
+            .order_by(PublicationRecord.published_at.desc())
+        )
+        if limit is not None:
+            query = query.limit(limit)
+        identifiers = list(session.scalars(query))
+
+    measured, unavailable = 0, []
+    for publication_id in identifiers:
+        try:
+            ingest_publication_metrics(
+                engine, publication_id, provider, window=window, correlation_id=str(uuid4())
+            )
+            measured += 1
+        except MetricsUnavailable as exc:
+            unavailable.append(f"{publication_id}: {exc}")
+    return {
+        "channel_id": channel_id,
+        "candidates": len(identifiers),
+        "measured": measured,
+        "unavailable": unavailable,
+    }
 
 
 def get_channel_summary(engine: Engine, channel_id: str) -> dict:
