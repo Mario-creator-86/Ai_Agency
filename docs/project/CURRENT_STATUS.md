@@ -13,6 +13,245 @@ database resource discovery/refresh, separate production choices, UI and regress
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
 
+## Delivery and the serial (2026-09-17/18)
+
+Phase B/C of running unattended: what the studio delivers, and the serial as a film. Measured
+before the work: `_publish` in `backend/app/runbook/stages.py` took `ready[0]` — the first bound
+slot, whatever film came first — and uploaded at a constant `privacy_status="private"`;
+`ChannelRecord.upload_privacy_default` was read by nobody on a publish path;
+`scheduled_publish_time` was stored on the intent and never sent, and the YouTube adapter had no
+`publishAt` and no `videos.update`; performance intake measured every publication through the
+first bound slot's account; every `domain_event` carried visibility OWNER and the showrunner was
+handed raw `key=value` payload pairs (model ids, message text, prices); continuity between
+episodes was one previous title and a roster size; nothing consumed an APPROVED episode, and
+`serial_queue` ran last, after the day's log, so no run ever filmed one; the day's log was frozen
+at the run's own hour (the live log of 2026-09-16: 92 events, one of them narratable);
+`captions.srt` was written beside the render and never muxed or burnt in; nothing normalised
+loudness; quality control had no audio and no caption category although
+`../architecture/08_VIDEO_PIPELINE.md` lists both; a scene whose motion model refused became a
+slow push recorded in a note nobody read; and a render read the Owner's stop never — eight
+scenes ran to their end after STOP.
+
+**The Owner sets how a channel publishes, and the studio can say which policy published what.**
+`channel_record` carries a versioned publish policy — `autonomous_privacy` (private | unlisted |
+public, default private), `public_publish_enabled` (false), `publish_delay_minutes` (0),
+`policy_version` (1), `policy_changed_event_id` — migration `0037_publish_policy`, changed only
+through `POST /publishing/channels/{id}/publish-policy` (`PublishPolicyCommand`, `command_id`,
+`expected_version` = the channel's `policy_version`), which follows `change_environment`
+exactly: the write lock first, idempotent by command id, a stale version 409, NO_CHANGE without
+a version bump or an event, and on a change `publishing.channel_policy_changed` with the old
+and new values and the environment. "public" is accepted only with `public_publish_enabled=true`
+in the same command and never while the studio is in TEST (since 2026-09-18 the command is
+judged on the state it would leave, so the flag alone cannot re-arm a policy already "public"
+while the studio is in TEST). `resolve_publish_visibility(channel, environment)` decides in one
+place: private unless the policy says otherwise, public only with the flag and PRODUCTION
+(corrected 2026-09-18: unlisted also needs PRODUCTION — an unlisted film is watched by anyone
+with the link, so in TEST an unlisted policy resolves private and takes effect when the Owner
+moves the studio to PRODUCTION), and a public policy with a delay yields a private upload with
+`publish_at` and `release_privacy="public"`, because YouTube schedules a release as a private
+upload carrying `status.publishAt` — which the adapter now sends (and refuses on a non-private
+upload before any request leaves), beside `containsSyntheticMedia` and the disclosure;
+`update_visibility` (videos.update, the synthetic flag re-declared) exists with no production
+caller. **A film goes to its own channel or nowhere.** `select_channel_for` reads the storyboard
+(`channel_id`, else series key `office_serial` → OFFICE_SERIAL, else MAIN_FACTUAL; corrected
+2026-09-18: a `channel_id` whose channel type contradicts the series key is SKIPPED, not
+followed, in either direction); a slot unbound or bound to a connection no longer CONNECTED is
+SKIPPED by name, with no fallback to another channel. The five gates are untouched; a sixth
+(`POLICY_AUTHORISATION_GATE`) runs only for a publication that would be seen and requires the
+channel's current `policy_version` stamped on the publication
+(`publication_record.policy_version`, in the `publishing.video_published` payload with
+`publish_at`) and a requested visibility no more open than the policy resolves to; the Owner's
+own intent endpoint is held to the same rule. Analytics ask per channel:
+`analytics_provider_for_channel` builds the adapter from that slot's bound CONNECTED account
+only, and `measure_channel_publications` measures that channel's PUBLISHED rows and nothing
+else.
+
+**The serial is a Channel B film, from a sanitised full-day log.** `app/story/projection.py`
+classifies every event type by a table that is OWNER_PRIVATE by default; a PUBLIC_SAFE type
+names the payload keys that may be mentioned and a plain phrase for the fact, and every
+description passes `redact` (anything shaped like a key or token, a provider or model
+identifier, a price, a URL, an address or an account number); a letter to or from the Owner is
+projected as the fact that it was written, never its subject. `close_daily_log` stores the
+projection on `daily_studio_log.narrative_projection_json` (migration `0036_serial_continuity`),
+a log closed before the column existed is projected once from its own committed events, and
+`write_episode` grounds beats against the projection only, so a beat citing a private event is
+refused as ungrounded (tested: a fake key, a model id, a price and a URL in the day's raw
+payloads reach neither the projection nor the prompt). `continuity_state` (one versioned row)
+holds the canon episode number, open threads, recurring elements and the last three summaries;
+the showrunner's prompt carries them with a "who they are" line per roster member quoted from
+the Character Bibles; canon advances only on approval, once per episode. **The Director reads
+the episode** (`app/story/review.py`): five computed checks first — grounding, privacy, length
+(at most 8 beats, 45–70 s of dialogue), cast, accessibility — and only then her verdict through
+`run_agent_task` with the episode as inert data; a FAIL rejects it with her notes and a HANDOFF
+letter to the showrunner (one rewrite, then REJECTED); a PASS approves it with
+`reviewed_by="director"` only when the OFFICE_SERIAL channel's `director_may_approve_episodes`
+is set, otherwise the episode stays DRAFT for the Owner with the review on it. **An approved
+episode becomes a storyboard** (`app/media/serial_storyboard.py`, `storyboard_from_episode`):
+one scene per beat, the beat's dialogue as the voiceover, the scene and the characters' bible
+lines as the visual prompt, bible ids in `character_ids_json` so a locked character's voice is
+bound where the Owner has bound one, 9:16, `channel_id` = OFFICE_SERIAL,
+`series_key="office_serial"`, behind a claim-less `ScriptDraft`
+(`story_json.kind="office_serial_episode"`) with a `StoryReview` PASS written from the episode
+review — in exactly the shape `generate_storyboard_from_script` produces (tested field for
+field), so render, narration review, QC and publish run unchanged. `run_serial_stage`
+(`app/story/serial_stage.py`) does the whole of it for the newest CLOSED log without an episode
+and reports every content outcome — a quiet day, a refused draft, a double FAIL, an episode left
+for the Owner — as COMPLETED with the reason; only a provider or network fault is raised, as
+`TransientStageError`. Routes: `POST /story/episodes/{id}/review`,
+`POST /story/episodes/{id}/storyboard`, `GET /story/continuity`,
+`POST /story/logs/close-previous`.
+
+**Every film carries captions and normalised loudness, and a mostly-still film is a gate, not a
+note.** `backend/app/media/toolchain.py` owns one reading of one filter: `loudnorm` at −14 LUFS
+/ −1 dBTP, measured on the joined narration first and applied as one linear gain
+(`linear=true`; the one-pass mode audibly breathes on speech), with `LOUDNESS_RANGE_LU` 11 so
+narration at 5–9 LU stays in linear mode; the manifest records target, filter, input and output
+readings, and a placeholder render on the Owner's FFmpeg 9.0.1 lands at about −14 LUFS in band
+with the true peak well under the ceiling. Captions are timed from the narration actually
+recorded (`audio_seconds`, written per scene after synthesis), one cue per sentence, lines
+wrapped to two of at most 42 characters and balanced, the SRT written after the voice pass and
+always beside the film; with `captions_burn_in` (default true) it is burnt in above the bottom
+fifth of the frame (measured on a rendered 1080×1920 frame: 50-pixel white type with a dark
+edge and no box, baseline 390 px above the bottom). The motion summary counts `motion_scenes`,
+`fallback_scenes` (asked and not delivered) and `skipped_scenes` (policy). Quality control
+gained `audio_qc` (measured from the finished film, in band and under the ceiling),
+`captions_qc` (valid SRT, two lines / 42 characters / no overlap, inside the film, covering the
+narration at a word-sequence ratio of at least 0.95) and `motion_qc` (a PRODUCTION film whose
+fallback scenes exceed `max_fallback_scenes`, default half, fails; in TEST the same count is a
+warning); all three enter the verdict, and a check that cannot be made fails rather than passes.
+
+**The daily run delivers to two channels, films the serial the same day, and stops between
+scenes.** `STAGES` now puts `serial_queue` between `script_and_storyboard` and `media`
+(the runbook document is renumbered to match, §7 the serial queue and §12 the daily log, with
+its indexed hash updated), `_serial_queue` is `run_serial_stage`, and `_media` renders one
+factual storyboard then one serial storyboard (told apart by the storyboard's series key
+through `channel_type_for_storyboard`) through the same story gate and the same camera, asking
+`may_spend` before each film — a refusal before the first film is SKIPPED as before, a refusal
+after it names the film skipped (`artefacts.skipped_for_budget`). `execute_daily_run` closes
+yesterday's log after a non-blocked preflight and before the stage loop (`close_previous_day`,
+retried like a stage, recorded on the preflight line as `artefacts.previous_day_log`); today's
+close at the end of the run is unchanged. `_publish` collapses the QC-PASSED queue to one entry
+per film, routes each through `select_channel_for`, refuses a film whose slot is unbound or
+revoked with the slot's name and never sends it elsewhere, resolves the visibility once and
+passes it to the gate pre-check, `publish_media_asset` (with `policy_version` and
+`scheduled_publish_time`) and the outcome (`artefacts.published[]` with channel, privacy,
+release privacy, publish_at, policy version and the reason); one film per channel per run; a
+studio with no slot bound at all is still SKIPPED with the old wording before films are looked
+for. `_performance_intake` measures per channel and names an unbound slot in
+`artefacts.skipped`. `assemble_video_job` polls `stop_requested` between scenes and before each
+motion shot; a set stop fails the job with `STOP_REASON` ("Randarea s-a oprit între scene:
+AUTONOMIE OPRITĂ …"), records no asset and raises `RenderStopped`, which `_media` reports
+BLOCKED with the Owner's reason (PARTIAL, no safe mode) (corrected 2026-09-18: the render alone
+read the stop, so a stop set during the factual film still started the serial's render; `_media`
+now reads `stop_requested` before each film and reports BLOCKED naming the film it did not
+start). `settings=` reaches the camera
+(captions burn-in) and quality control (the fallback ceiling): `captions_burn_in` (true) and
+`max_fallback_scenes` (none = half the scenes) are settings. `ScheduledJobView` exposes
+`run_at_local` and `timezone`.
+
+**The closure (2026-09-18): the serial film reaches Channel B without an Owner's click.** Two
+measured defects stood between an approved episode and the serial's channel. The Director's
+film review refused every serial film before any model: `gather_facts`
+(`backend/app/agents/editorial.py`) hard-rejected a script with no claims ("scenariul nu se
+sprijină pe nicio afirmație") and her brief said a film about the studio itself is REJECTED —
+both right for a factual film, both wrong for a dramatisation — so `_publish_one` returned her
+refusal before the routing ever saw the film. A serial film is now recognised by the marks the
+serial storyboard already carries (`is_serial_film`: series key `office_serial`, or the
+script's `story_json["kind"] == "office_serial_episode"`); for it the claims-based verdicts are
+not asked, the facts say so plainly (`serial: true`, `series_key`, `episode`), and the brief is
+the episode review's (`instructions_for`): a dramatisation makes no claims about the world and
+needs no sources, and is judged for the situation, the turn, the payoff, whether each character
+sounds like a person, whether the humour is in the situation rather than in explaining the
+studio. Everything not about claims is unchanged for both kinds — no script, under forty words,
+the wrong audience language and a blank frame still mean REJECT without a model — and a factual
+script that rests on nothing is refused in the same words as before (tested, so the exception
+cannot widen). And `director_may_approve_episodes` was read from Channel B's `series_rules_json`
+and written by no command — the production-policy validator keeps that JSON to
+`{series_key: {purpose: selection}}` and would have refused or overwritten the key — so a
+Director's PASS left every episode DRAFT and the serial never became a storyboard on its own.
+The flag is a column of the publish policy now (`channel_record.director_may_approve_episodes`,
+NOT NULL, default false; migration `0038_director_may_approve_episodes`, which `main.py` pins),
+in `policy_snapshot` and `ChannelView`, set only through `PublishPolicyCommand` under the
+command's existing rules (stale `expected_version` refused, idempotent by command id, NO_CHANGE
+without an event, a change bumping `policy_version` and recorded with old and new). A fresh
+channel leaves episodes to the Owner; nothing sets the flag on its own. The mechanical leftovers
+went with it: the media route's render button and standalone QC pass
+`settings=request.app.state.settings` like the daily run, so the Owner's button makes the film
+under the same rules; `continuity_state` is in `HISTORY_TABLES`, so a history reset no longer
+leaves canon summaries pointing at deleted episodes; the five mypy `union-attr` errors in
+`qc.py` are gone; `YouTubeAnalyticsProvider` takes `channel_id` and reads `STUDIO_YOUTUBE_*`
+only from a bare constructor, so an adapter built from a channel's bound account no longer
+inherits an access token from the Owner's machine; and `PolicyView.public_publish_enabled` is a
+real bool — any channel may publish publicly — computed in `policy_view(policy, session)`, so
+the snapshot and the result of the very command that enabled it agree.
+
+Tests, by file set: `tests/test_publish_policy.py` 30 (29 new, plus the Director's leave);
+`tests/test_serial_pipeline.py` 34 (new); `tests/test_media_toolchain.py` 9 (new) and
+`tests/test_phase5_media.py` 18; `tests/test_daily_run_stages.py`, `test_phase10_runbook.py`
+and `test_scheduler_worker.py` 89 with 9 new; the closure added 3 to `tests/test_editorial.py`
+and 1 each to `test_publish_policy.py`, `test_phase5_media.py`, `test_phase7_analytics.py`
+(13), `test_reset.py` (3) and `test_foundation.py` (26), each red first on the measured defect.
+The integrator ran the whole suite at the commit: **945 passed, 1 skipped**; with the closure's
+nine new tests the collection is 954, and the whole suite with both closures present is the
+verifier's to run. ruff and mypy are clean on every changed file and `scripts/check_docs.py`
+passes. Nothing was run against a real model, provider or YouTube: the camera, the publisher,
+the analytics adapter, the showrunner and the Director are faked at the stage or provider
+boundary, as the rules require; no daily run was queued and no render was paid for.
+
+Not finished, honestly: no test drives a serial film through `_publish_one` to Channel B end to
+end — the Director's serial brief is tested at `editorial_review` with a scripted model and the
+routing with the review faked at the stage boundary; the two halves agree by construction on
+the same series-key mark, and the first real day with Channel B bound should be watched, as
+should the first real scheduled upload (`publishAt` and `videos.update` were exercised only
+against a faked transport); whether `glm-5.3` judges an episode well under the new brief is
+unmeasured until a real day; today's log is still closed at the end of the run, so a date whose
+run completes is frozen at the run's hour and `close_previous_day` returns it unchanged the next
+morning — a full-day log for every date needs that end-of-run close moved, which is the
+runbook's decision and is recorded as open; one voice per scene: the assembler synthesises a
+single voiceover per scene, so a beat with two speakers is voiced by the first locked character
+or the narrator, and the seeded bibles carry no voice binding, so until the Owner binds voices
+every scene is the narrator; redaction is pattern-based and over-redacts (years, four-digit
+counts, tokens such as `mp4`), and `DomainEvent.visibility` itself is unchanged, still OWNER
+everywhere; the old `notable_events_json` descriptions still carry raw payload pairs in the
+Owner-only log API; continuity does not track the office layout version, employment intervals
+or a canonical character version; caption coverage is matched against the storyboard text, not
+transcribed from the audio, and the caption font is Arial by name rather than a licensed studio
+face; `upload_privacy_default` and `update_visibility` remain, unread and uncalled;
+`YouTubeAnalyticsProvider.from_verified_settings` still falls back to environment credentials
+when the bound connection is not exactly one CONNECTED row (`analytics_provider_for_channel`
+never calls it); no frontend screen sets the publish policy or the Director's leave — the
+Owner has the API (`POST /api/v1/publishing/channels/{id}/publish-policy` with the channel's
+`policy_version` as `expected_version`) until one does — and the scheduler panel does not yet
+read `run_at_local`; three test files appended in the closure carry LF endings in the working
+copy, which a checkout rewrites to CRLF without changing content; the daily job is still
+dormant, by the Owner's rule, and no daily run has been queued by anyone.
+
+**Phase B/C tried as an adversary, seven defects closed (2026-09-18).** The whole suite ran green
+as delivered — the verifier's run 1, before any of its fixes: 953 passed, 1 skipped; ruff, mypy
+(179 files) and `scripts/check_docs.py` clean — and twenty-one adversarial tests in
+`tests/test_phase_bc_adversary.py` then measured what the rules had not yet been asked: an
+unlisted policy resolved unlisted in TEST (an unlisted film is watched by anyone with the link;
+`resolve_publish_visibility` now holds it to PRODUCTION like public, and the two tests that had
+encoded the old reading moved to PRODUCTION); with the privacy already "public" from a PRODUCTION
+day, `public_publish_enabled=true` in TEST was COMMITTED (the command now refuses on the state it
+would leave); a serial-keyed storyboard pinned to Channel A by id was SELECTED for Channel A while
+the media stage filmed it as the serial (`select_channel_for` refuses a pin that contradicts the
+key, both directions); a currency-first price, a scheme-less link and an AWS-shaped key in a
+*safe* title reached the showrunner prompt (three patterns added to `projection.py`, ordinary
+titles unchanged); a key in the episode's summary passed the Director's privacy check and would
+have entered canon and every later prompt (`episode_checks` now reads the summary, the opened
+threads and the recurring elements); and `_media` read the Owner's stop never — a stop set during
+the factual film started the serial's render (the stage reads it before each film and reports
+BLOCKED). `tests/conftest.py` gained an autouse guard that refuses any socket that is not
+loopback, so the Owner's rule that no test spends at a vendor is proven per run rather than
+promised; every adapter goes through urllib or http.client, which the guard covers. Held without a
+defect: the Owner's leave per channel, one rewrite, a closed log unchanged by late events, the
+blank-frame rule for both kinds of film, loudness and captions QC naming their cause, the fallback
+gate, the per-film budget. After its fixes the verifier ran the changed files (238, 103 and 21
+passed; the new file was 13 red first); the whole suite on the final tree is the committer's run,
+and no figure is claimed for it here. Not run against any model, provider or YouTube; no daily run
+queued.
+
 ## The clock, and a day that asks again (2026-09-17)
 
 Phase A of running unattended: the studio's own clock, and the durability under it. Measured
@@ -111,14 +350,22 @@ exhaustion and no-double-billing cases added to the media, Ollama and integratio
 files (46, 14 and 24 passed) and 34 passed on the existing files that drive the changed
 adapters; `tests/test_watchdog.py` 11 passed (new); ruff, format and mypy clean on every
 changed file; `scripts/check_docs.py` passes. The whole suite was not run by the
-implementers; it is the verifier's.
+implementers; it is the verifier's. Verified as an adversary: the whole suite ran twice,
+863 passed, 0 failed, 1 skipped; the close of the day is retried like any stage and a slot
+is compared as an instant (two defects the verifier found and fixed, with a red-then-green
+test each).
 
-Not finished, honestly: `ScheduledJobView` does not expose `run_at_local` and `timezone`, so
-the scheduler API and the page cannot yet show the fixed hour; the runbook reads the stop
-between stages, but the media scene loop and the other long runners in
-`backend/app/runbook/stages.py` do not yet poll `stop_requested` between units of work, nor
-raise `TransientStageError` where only they can tell a fault is transient, so the new
-behaviour does not reach inside a stage; the watchdog dispatch was tested with an injected
+Not finished, honestly (what Phase B/C closed is marked inline): `ScheduledJobView` does not
+expose `run_at_local` and `timezone`, so the scheduler API and the page cannot yet show the
+fixed hour (closed 2026-09-17: the view carries both; the page does not read them yet); the
+runbook reads the stop between stages, but the media scene loop and the other long runners
+in `backend/app/runbook/stages.py` do not yet poll `stop_requested` between units of work,
+nor raise `TransientStageError` where only they can tell a fault is transient, so the new
+behaviour does not reach inside a stage (closed in part 2026-09-17: the render polls the
+stop between scenes and before each motion shot, and the serial stage raises
+`TransientStageError` for a provider fault; corrected 2026-09-18: the media stage itself reads
+the stop before each film, so a stop set during the factual film leaves the serial unfilmed;
+the other long runners still do neither); the watchdog dispatch was tested with an injected
 stub module — the real module's exports match the handler, but an end-to-end fire with it
 was not run; `tests/test_remote_state_honesty.py::test_the_real_provider_turns_a_failed_request_into_unavailable`
 now takes about four seconds, because its fake's bare `OSError` is correctly retried with
@@ -129,11 +376,12 @@ without a remote id is handed to the Owner rather than resolved, because
 VideoEditor's runtime state is reconciled when a stuck render is failed, and other employees
 left WORKING by a crash are not reset; whether an S4U logon can open the DPAPI-wrapped
 credential key on this machine was not verified, and the Owner should read
-`data/studio-service.log` once after installing with that switch; `MULTI_LLM.md` still names
-0034 as the latest migration in passing; `main.py` now pins `0035_clock_and_fault_class`, so
-`scripts/bootstrap.py` (migrate) must run before the server starts on this version. The
-"Running on its own" section below predates this work where it says every 24 hours and
-CATCH_UP; the daily job is on the wall clock now. `backend/app/office/unreal.py` fails
+`data/studio-service.log` once after installing with that switch; `MULTI_LLM.md` named 0034
+as the latest migration in passing (corrected 2026-09-18); `main.py` pins the head revision
+(`0035_clock_and_fault_class` at this commit, `0038_director_may_approve_episodes` since
+2026-09-18), so `scripts/bootstrap.py` (migrate) must run before the server starts on this
+version. The "Running on its own" section below said every 24 hours and CATCH_UP; it was
+rewritten on 2026-09-18 from the code as it is now. `backend/app/office/unreal.py` fails
 `ruff format --check` and has one mypy error (line 72), pre-existing and untouched.
 
 ## An employee may think with more than one model (2026-09-12)
@@ -484,11 +732,26 @@ documented in `BRAND_AMN_AI.md`. Renaming an existing studio is done with
 ## Running on its own
 
 Since 2026-09-11 the application process carries a background worker that fires due scheduled
-jobs and executes the tasks they enqueue. The daily job (`daily_main`, `DAILY_RUN`, every 24
-hours, CATCH_UP on missed slots) is created at start-up but dormant; the Owner starts it from the
-daily-run panel, and that decision is an event. Nothing fires while the autonomy stop is set, and
-the scheduled run happens at most once per business date. Eight of the twelve runbook stages
-have real work behind them; `idea_generation` and `post_run` report SKIPPED with that reason.
+jobs and executes the tasks they enqueue (`backend/app/workflows/worker.py`); since 2026-09-17
+the daily job is on the wall clock. `daily_main` (`DAILY_RUN`) is seeded at start-up at
+`STUDIO_DAILY_RUN_HOUR_LOCAL` (05:00) in `STUDIO_TIMEZONE` (Europe/Bucharest) —
+`scheduled_job.run_at_local` and `.timezone` on the row, a changed hour followed on every
+start-up — and seeded dormant: the Owner starts it from the daily-run panel, that decision is
+the event `workflow.job_activated`, and waking it schedules the next 05:00, never a fire on the
+spot. When a slot passes, the tick enqueues one task keyed on the job and the slot and moves
+the job to the next local occurrence of its hour (`next_local_occurrence`, computed on the
+local calendar and compared as UTC instants, so the clocks changing neither doubles nor skips
+a day); a slot missed while the studio was off fires once when it is back, never a backlog.
+Nothing fires while the autonomy stop is set. The clock does at most one successful day per
+business date: a date with a COMPLETED or PARTIAL run is not repeated (a second run that day
+is the Owner's button, which counts toward the attempts); a day that could not run — a
+BLOCKED preflight, a stage that failed on a TRANSIENT fault — is re-attempted the same day
+after `STUDIO_DAILY_RETRY_SECONDS` (1800), up to `STUDIO_DAILY_MAX_ATTEMPTS` (3), each attempt
+queued under `daily-retry-<date>-<n>` and held by the queue's `not_before`; a re-attempt that
+outlives its date skips itself, and a HARD fault opens safe mode and is not re-attempted. Of
+the twelve runbook stages, `build_stage_runners` supplies ten (`performance_intake` through
+`post_run`, and `serial_queue`); `preflight` and `daily_log` are built into the run itself,
+and every stage reports COMPLETED or SKIPPED with a count and a reason.
 
 ## Connected accounts
 
@@ -606,7 +869,7 @@ references were changed inside the architecture package. CI/local checks protect
 - Frontend Media Production Modal (`#media-modal`): Storyboard pipeline viewer, 9:16 preview, QC scorecard, provenance hash badge, Character Bible inspector.
 - **Not met for Phase 5 acceptance** (`../architecture/26_MASTER_ACCEPTANCE_CRITERIA.md` §F): there is no image or TTS provider, so no real footage or narration exists; character continuity is unimplemented.
 
-**Phase 6 (PARTIAL — pipeline and gates work, no real upload has ever happened):**
+**Phase 6 (PARTIAL as written on 2026-09-09; corrected 2026-09-18 — the pipeline and gates work, and two private uploads have reached Main Channel A since):**
 - Channel slots (`channel_record`, `channel_brand_asset`): two slots (`MAIN_FACTUAL`, `OFFICE_SERIAL`) are seeded with **no remote channel ID, no credentials and status `NOT_CONFIGURED`**. Status is derived from what is actually present (`NOT_CONFIGURED` -> `AUTH_REQUIRED` -> `AUTHENTICATED`); nothing is ever reported as configured on the strength of a seed.
 - Five-check publishing gate (`evaluate_publishing_gate`). This is a **subset** of the publish column of `../architecture/50_CONTENT_GATE_MATRIX.md`, not an implementation of it — rights on the final package, platform policy, novelty on final metadata, brand strategy, budget, and Channel B continuity/narrative privacy are not implemented:
   1. Global Autonomy Stop check (fails if `autonomy_stopped` is active).
@@ -614,14 +877,14 @@ references were changed inside the architecture package. CI/local checks protect
   3. Quality Control check (fails if QC status is not `PASSED` or score < 0.90).
   4. Factual claim integrity check (fails if any claim referenced in the script is not `SUPPORTED`).
   5. Idempotency & duplicate protection check (fails if asset was already published on that channel).
-- YouTube Data API v3 Adapter (`YouTubeProvider`): OAuth2 refresh-token exchange, chunked resumable upload with `Content-Range` and 308 resume, synthetic-content disclosure (`containsSyntheticMedia` plus a disclosure line in the description), remote status polling, and reconciliation that is actually invoked before any retry. **This adapter has never run against Google**: no credentials have been configured, so the whole path is untested against the real API.
+- YouTube Data API v3 Adapter (`YouTubeProvider`): OAuth2 refresh-token exchange, chunked resumable upload with `Content-Range` and 308 resume, synthetic-content disclosure (`containsSyntheticMedia` plus a disclosure line in the description), remote status polling, and reconciliation that is actually invoked before any retry. **This adapter has never run against Google** — as of 2026-09-09; superseded: channels connect by OAuth since 2026-09-11 and `publication_record` holds two PUBLISHED private uploads of 2026-09-12 with real remote ids (`98JltCPoOKs`, `sDEtt-WQGh8`; see `CHANGELOG.md`, 2026-09-13). `publishAt` and `videos.update`, added 2026-09-17, have run only against a faked transport.
 - Simulated Publishing Adapter (`DeterministicPublishingAdapter`): **tests and CI only**. It is never selected at runtime; without real credentials the API returns 503 `PublisherNotConfigured`. Its results carry `simulated=True`, a `sim:` identifier and no platform URL, and are stored as `PUBLISHED_SIMULATED` with event `publishing.video_published_simulated`.
 - Publication State Machine & Tracking (`publication_record`): Enforces `DRAFT_INTENT` -> `VALIDATED` -> `STARTED` -> `REMOTE_CONFIRMED` -> `PUBLISHED` transitions with recovery from `REMOTE_UNKNOWN` and `FAILED_RETRYABLE`.
 - Unique constraint `uq_channel_idempotency`: Prevents duplicate uploads of the same intent.
 - Alembic migration `0006_phase6_publishing`: 3 new tables (`channel_record`, `channel_brand_asset`, `publication_record`).
 - Publishing API routes (`/api/v1/publishing`): Channel management, gate evaluation, intent creation, publication execution, quick-publish, and publication history retrieval.
 - Frontend Distribution Hub Modal (`#publishing-modal`): shows real channel status with plain-language hints, a banner when no credentials are configured, the gate breakdown including what is not implemented, and publication history where a simulated run is labelled "SIMULAT (nepublicat)" and gets no link. Only a genuine `youtube.com` URL becomes a clickable link.
-- **Not met for Phase 6 acceptance** (`../architecture/26_MASTER_ACCEPTANCE_CRITERIA.md` §G): OAuth has never been exercised, no private upload has been verified, and no real remote ID has ever been persisted.
+- **Not met for Phase 6 acceptance** (`../architecture/26_MASTER_ACCEPTANCE_CRITERIA.md` §G): OAuth has never been exercised, no private upload has been verified, and no real remote ID has ever been persisted — as of 2026-09-09; met since: OAuth exercised 2026-09-11, two private uploads with real remote ids persisted 2026-09-12. The per-channel policy of 2026-09-17 is unproven against Google for a scheduled release.
 
 **Phase 11 (complete for the ledger — verified 2026-09-10, see `PHASE11_ECONOMY.md`):**
 - Immutable double-entry VR$ books: `ledger_account`, `ledger_transaction`, `ledger_entry`, with
@@ -646,25 +909,35 @@ references were changed inside the architecture package. CI/local checks protect
 - **Not met yet**: nothing spends VR$, no interest accrues, no budgets/runway/P&L, no depreciation,
   and no automatic revenue import — those are Phases 12–14.
 
-## Partial / exact limits
+## Partial / exact limits (written 2026-09-09; dated corrections inline)
 
 - The application runs end to end locally: foundation, automation, 2D office, factual gating,
   media assembly and the publishing state machine are all exercisable.
-- **Nothing has ever been published.** Without `STUDIO_YOUTUBE_*` credentials the publishing API
-  returns 503 and refuses; the simulator is reachable only by injecting a provider in tests.
-- **No asset currently passes QC for publication.** Renders use placeholder visuals, which
-  content-source QC fails by design until an image/TTS provider is connected.
+- **Two films have been published, both private** (corrected 2026-09-18; the sentence "nothing
+  has ever been published" stood here from 2026-09-09): Main Channel A, 2026-09-12, remote ids
+  `98JltCPoOKs` and `sDEtt-WQGh8`, recorded PUBLISHED in `publication_record`. Without a bound
+  CONNECTED account the publishing API still refuses (503), and the simulator is reachable
+  only by injecting a provider in tests.
+- **Placeholder renders never pass QC for publication** — content-source QC fails them by
+  design; since the Runway and ElevenLabs connections were verified (2026-09-12) real renders
+  have passed QC and been published.
 - Rendering requires FFmpeg on the host. Without it, `POST /media/render/{id}` returns 503.
 - Local single-owner SQLite deployment only. PostgreSQL and multi-user auth remain pending.
 - Real Ollama end-to-end test is skip-marked; it runs when `STUDIO_OLLAMA_URL` is set.
 
-## Not implemented
+## Not implemented (written 2026-09-09; dated corrections inline)
 
 - Search/research adapter (Phase 4 acceptance) and independent fact-checking agent.
-- Image and TTS providers (Phase 5 acceptance); character-continuity drift detection.
+- Character-continuity drift detection: quality control reports the check `NOT_IMPLEMENTED` and
+  certifies nothing. (The image and TTS providers this line once named are connected since
+  2026-09-12: Runway and ElevenLabs.)
 - The remaining publish-time gates of `../architecture/50_CONTENT_GATE_MATRIX.md` (rights on final package,
   platform policy, novelty on final metadata, brand, budget, Channel B continuity/privacy).
-- Office Serial autonomous scriptwriter and dynamic departments.
+  Since 2026-09-17 a sixth, policy-authorisation gate runs for a publication that would be
+  seen, and Channel B's privacy is enforced when the log is projected, not at publish time.
+- Dynamic departments. (The Office Serial's showrunner, the Director's episode review, the
+  serial storyboard and its routing to Channel B exist since 2026-09-17/18 — see "Delivery
+  and the serial" above — and no real day has filmed an episode yet.)
 - Spending VR$: procurement/VendorShop (Phase 13) and treasury financing with interest accrual
   (Phase 14). The ledger they will post to exists; nothing spends from it yet.
 - Finance dashboard: budgets, cost centres, runway/burn, P&L, balance sheet, cash flow and
@@ -756,7 +1029,10 @@ must therefore start at `0008`.
 - **Publishing is blocked by design** until `STUDIO_YOUTUBE_CLIENT_ID`,
   `STUDIO_YOUTUBE_CLIENT_SECRET` and `STUDIO_YOUTUBE_REFRESH_TOKEN` are configured and a
   channel is moved to `AUTHENTICATED`. The whole YouTube path is still unexercised against
-  Google.
+  Google. (As of 2026-09-09. Superseded: channels connect by OAuth since 2026-09-11, two
+  private uploads reached Main Channel A on 2026-09-12, and since 2026-09-17 a film goes only
+  to the channel its storyboard names, at that channel's Owner-set visibility, private by
+  default.)
 - **Publishable content is blocked** until a real image/TTS provider replaces the placeholder
   adapters; content-source QC fails placeholder visuals on purpose.
 - Rendering requires FFmpeg on the host.
@@ -773,7 +1049,8 @@ Close the acceptance gaps before advancing to Phase 7, in this order:
 2. **Phase 5 acceptance** — a real image provider and a real TTS provider, so renders stop being
    placeholder frames and content-source QC can pass; then character-continuity drift detection.
 3. **Phase 6 acceptance** — configure Google OAuth, verify one private upload end to end against
-   the real API, and record the real remote ID.
+   the real API, and record the real remote ID. (Done: OAuth 2026-09-11, two private uploads
+   with real remote ids 2026-09-12.)
 4. Only then Phase 7 (analytics), starting by adding migration `0008` for the analytics tables
    and wiring the router and `Base.metadata`.
 
@@ -1032,3 +1309,8 @@ now OK; the remaining degradations are exactly the unlinked credentials (image p
 voice provider, YouTube) and the empty research allowlist. Full suite with the real encoder
 on PATH: **311 passed / 1 skipped** (the render tests no longer skip and pass on the real
 FFmpeg path). Future `start.cmd` launches pick FFmpeg up from the registry PATH.
+
+
+## Codex visual continuation — active claim 2026-09-17T19:13:15.254136+00:00
+
+Scope: art-source/unreal/flat_material.py, an isolated material repair/verification script, and visual evidence under output/visual-audit. Investigate skeletal material fallback, validate repair in a copied asset before applying, capture the existing HQ_Dusk baseline and preserve the existing Pixel Streaming/backend integration. No architecture changes. Preserve the pre-existing modification in art-source/blender/hq/build_vehicles.py. Agent: Codex /root.

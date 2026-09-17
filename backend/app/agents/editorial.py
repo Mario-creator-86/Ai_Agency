@@ -15,6 +15,13 @@ without a model, because they are not matters of taste: a claim with no source i
 fact; narration not in the audience's language does not go out; a film under forty words has
 no story. Her verdict is a record (`editorial_review`), an event the ledger shows, and a
 letter to each department that must change something. A REJECT closes the storyboard.
+
+An episode of the office serial is read under a different brief (`is_serial_film`,
+`instructions_for`). Measured on the first serial film: it was refused before any model for
+resting on no claim, and the brief told her a film about the studio is REJECTED — both true
+of a factual film, neither of a dramatisation, which makes no claims about the world and
+needs no sources. The other verdicts that need no model (no script, too few words, the wrong
+language) and the frames rule hold for both kinds.
 """
 
 from __future__ import annotations
@@ -80,22 +87,78 @@ class EditorialVerdict(BaseModel):
     _clip_story = field_validator("story", mode="before")(clipped(400))
 
 
+#: The office serial's series key and script kind, as `storyboard_from_episode` writes them
+#: and the publish routing reads them (`SERIES_CHANNEL_TYPES`). Recognised here by the same
+#: marks, so the film the Director judges as an episode is the film that goes to Channel B.
+SERIAL_SERIES_KEY = "office_serial"
+SERIAL_SCRIPT_KIND = "office_serial_episode"
+
+#: What the Director judges, by the kind of film. The first serial film measured what the
+#: single text could not say: a factual film is judged for what the viewer learns and the
+#: source behind it, and "a film about the studio itself is REJECTED" was written for a
+#: factual channel that must not turn into a diary; an episode of the serial IS the studio's
+#: diary, a dramatisation that makes no claims and needs no sources (the words are the
+#: episode review's, `app.story.review._INSTRUCTIONS`), and is judged for its story and its
+#: people instead. The frames rule and the language rule are the same for both.
+_FACTUAL_JUDGEMENT = (
+    "the script and the claims it rests on with their sources",
+    "does it tell one clear story with a hook and a point; is every sentence something a "
+    "viewer learns, backed by a real source; is it in the audience's language",
+    "A film about the studio itself, a film that only describes its own process, or narration "
+    "nobody would understand is REJECTED.",
+    "what the viewer learns",
+)
+_SERIAL_JUDGEMENT = (
+    "the episode's script (its dialogue, beat by beat)",
+    "is there one clear situation with a turn and a payoff; does each character sound like "
+    "themselves and like a person, not a status report; is the humour in the situation rather "
+    "than in explaining the studio; is it in the audience's language",
+    "This film is an episode of the studio's own serial. A dramatisation is not a factual "
+    "film: it makes no claims about the world and needs no sources, and you do not reject it "
+    "for that or for being about the studio; judge the situation, the turn, the payoff, "
+    "whether each character sounds like a person. Narration nobody would understand is still "
+    "REJECTED.",
+    "what the viewer follows",
+)
+
 _INSTRUCTIONS = (
     "You are the Director, and this is the last look before a film leaves the studio. Below "
-    "is everything the film is, as data: the topic, the script and the claims it rests on "
-    "with their sources, each scene's picture and narration, what quality control measured"
-    "{frames_note}. Judge it as the audience will: does it tell one clear story with a hook "
-    "and a point; is every sentence something a viewer learns, backed by a real source; is it "
-    "in the audience's language; do the pictures show the story rather than decorate it — one "
-    "frame from every scene is attached, and a blank field, stripes, noise or garbled writing "
-    "in any of them means REJECT, however good the rest is; is "
-    "it worth their time. A film about the studio itself, a film that only describes its own "
-    "process, or narration nobody would understand is REJECTED. Return only JSON: "
-    '{{"verdict": "APPROVE" | "REJECT", "story": "one sentence: what the viewer learns", '
+    "is everything the film is, as data: the topic, {script_note}, each scene's picture and "
+    "narration, what quality control measured{frames_note}. Judge it as the audience will: "
+    "{judgement}; do the pictures show the story rather than decorate it — one frame from "
+    "every scene is attached, and a blank field, stripes, noise or garbled writing in any of "
+    "them means REJECT, however good the rest is; is it worth their time. {nature} Return "
+    'only JSON: {{"verdict": "APPROVE" | "REJECT", "story": "one sentence: {story_note}", '
     '"reasons": ["..."], "notes_for": {{"ScriptWriter": "...", "VideoEditor": "...", '
     '"VoiceArtist": "...", "Publisher": "..."}}}} — notes only for departments that must '
     "change something.\n"
 )
+
+
+def instructions_for(serial: bool, frames_note: str) -> str:
+    """The Director's brief for one film: the factual reading, or the serial's."""
+    script_note, judgement, nature, story_note = _SERIAL_JUDGEMENT if serial else _FACTUAL_JUDGEMENT
+    return _INSTRUCTIONS.format(
+        script_note=script_note,
+        judgement=judgement,
+        nature=nature,
+        story_note=story_note,
+        frames_note=frames_note,
+    )
+
+
+def is_serial_film(board: Storyboard | None, script: ScriptDraft | None) -> bool:
+    """Whether a film is an episode of the office serial, by the marks its storyboard carries.
+
+    The storyboard's series key is what the publish routing reads; the script's `story_json`
+    kind is what `storyboard_from_episode` wrote. Either is enough: a serial storyboard built
+    by hand without a series key is still a dramatisation, and a script on a serial key is
+    still one when its story_json was lost.
+    """
+    if board is not None and str(board.series_key or "").strip().lower() == SERIAL_SERIES_KEY:
+        return True
+    story = script.story_json if script is not None and isinstance(script.story_json, dict) else {}
+    return story.get("kind") == SERIAL_SCRIPT_KIND
 
 
 class EditorialError(ValueError):
@@ -126,6 +189,8 @@ def gather_facts(session: Session, media_asset_id: str, language: str) -> dict[s
     )
     claims: list[dict[str, Any]] = []
     hard: list[str] = []
+    serial = is_serial_film(board, script)
+    story = script.story_json if script and isinstance(script.story_json, dict) else {}
     for claim_id in list(script.claim_ids_json or []) if script else []:
         claim = session.get(FactualClaim, claim_id)
         if claim is None:
@@ -143,6 +208,10 @@ def gather_facts(session: Session, media_asset_id: str, language: str) -> dict[s
                 ),
             }
         )
+        # A serial episode carries no claims by construction; one that somehow does is
+        # still not a factual film, and a source is not what its truth rests on.
+        if serial:
+            continue
         if source is None:
             hard.append(f"afirmația «{claim.claim_text[:80]}» nu are nicio sursă")
         elif claim.status != "SUPPORTED":
@@ -155,7 +224,10 @@ def gather_facts(session: Session, media_asset_id: str, language: str) -> dict[s
         hard.append(f"fără poveste: narațiunea are {words} cuvinte, sub {MIN_WORDS}")
     if language.lower() == "en" and voiceover and not looks_like_english(voiceover):
         hard.append(f"narațiunea nu este în {language_name(language)}")
-    if script and not claims:
+    # The one verdict that depends on the kind of film. A factual script that rests on
+    # nothing is refused in the words the first review used; a dramatisation of the day's
+    # committed events makes no claims about the world and is not asked for any.
+    if script and not claims and not serial:
         hard.append("scenariul nu se sprijină pe nicio afirmație")
     qc = session.scalar(
         select(QualityControlReport)
@@ -168,6 +240,18 @@ def gather_facts(session: Session, media_asset_id: str, language: str) -> dict[s
         "storyboard_id": board.id if board else None,
         "topic": {"title": topic.title, "angle": topic.angle} if topic else None,
         "title": script.title if script else (board.title if board else ""),
+        # Said plainly, so the Director and anyone reading the review know which brief
+        # applied: the episode's title and number are the serial's own record of it.
+        "serial": serial,
+        "series_key": SERIAL_SERIES_KEY if serial else None,
+        "episode": (
+            {
+                "title": script.title if script else (board.title if board else ""),
+                "number": story.get("episode_number"),
+            }
+            if serial
+            else None
+        ),
         "voiceover": voiceover,
         "words": words,
         "claims": claims,
@@ -340,7 +424,8 @@ def editorial_review(
         shown = {k: v for k, v in facts.items() if k not in ("path", "hard_rejects")}
         prompt = (
             audience_language_line(language)
-            + _INSTRUCTIONS.format(
+            + instructions_for(
+                bool(facts.get("serial")),
                 frames_note=(
                     f", and {len(frames)} frames from the file itself are attached"
                     if frames
@@ -349,7 +434,7 @@ def editorial_review(
                         "judge it from what is written here and say so if the pictures are "
                         "what you would need to decide"
                     )
-                )
+                ),
             )
             + wrap_in_inert_boundary(json.dumps(shown, ensure_ascii=False)[:14000], "the-film")
         )

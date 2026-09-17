@@ -271,6 +271,7 @@ def policy_snapshot(channel: ChannelRecord) -> dict[str, Any]:
         "autonomous_privacy": channel.autonomous_privacy,
         "public_publish_enabled": bool(channel.public_publish_enabled),
         "publish_delay_minutes": int(channel.publish_delay_minutes or 0),
+        "director_may_approve_episodes": bool(channel.director_may_approve_episodes),
         "policy_version": int(channel.policy_version or 1),
     }
 
@@ -322,6 +323,8 @@ def change_publish_policy(engine: Engine, channel_id: str, command: PublishPolic
             new["public_publish_enabled"] = bool(command.public_publish_enabled)
         if command.publish_delay_minutes is not None:
             new["publish_delay_minutes"] = int(command.publish_delay_minutes)
+        if command.director_may_approve_episodes is not None:
+            new["director_may_approve_episodes"] = bool(command.director_may_approve_episodes)
 
         if command.autonomous_privacy == "public":
             if environment != "PRODUCTION":
@@ -336,12 +339,30 @@ def change_publish_policy(engine: Engine, channel_id: str, command: PublishPolic
                     "aceeași comandă; fără el încărcările rămân private."
                 )
 
+        # The word "public" is not the only way to a public policy. With the privacy already
+        # reading "public" from a PRODUCTION day and the flag switched off, the flag alone
+        # would switch the policy back on: measured in TEST, `public_publish_enabled=true`
+        # on such a channel was COMMITTED. The rule is on the state the command would
+        # leave, not on the field it names; a policy already public is left as it is.
+        def _public(snapshot: dict[str, Any]) -> bool:
+            return snapshot["autonomous_privacy"] == "public" and bool(
+                snapshot["public_publish_enabled"]
+            )
+
+        if _public(new) and not _public(old) and environment != "PRODUCTION":
+            raise PublishPolicyError(
+                f"Studioul este în {environment}: publicarea autonomă nu poate fi setată "
+                "pe „public”. Treci studioul în PRODUCTION din pagina Owner, apoi "
+                "permite publicul pe canal."
+            )
+
         changed = sorted(key for key in old if key != "policy_version" and old[key] != new[key])
         event_id = None
         if changed:
             channel.autonomous_privacy = new["autonomous_privacy"]
             channel.public_publish_enabled = new["public_publish_enabled"]
             channel.publish_delay_minutes = new["publish_delay_minutes"]
+            channel.director_may_approve_episodes = new["director_may_approve_episodes"]
             channel.policy_version = old["policy_version"] + 1
             new["policy_version"] = channel.policy_version
             event = append_event(
@@ -390,6 +411,10 @@ def resolve_publish_visibility(
     daily run calls this instead of the constant "private" it used to hardcode.
 
     - "private" unless the policy says "unlisted" or "public".
+    - "unlisted" only while the environment is PRODUCTION: an unlisted film is watched by
+      anyone with the link, a release and not a draft, so TEST keeps it private. Measured
+      with the policy set in TEST: the run uploaded unlisted while the studio said nothing
+      leaves it visibly.
     - "public" only while `public_publish_enabled` is True AND the environment is
       PRODUCTION; otherwise the upload is private and the reason says which condition failed.
     - A public policy with `publish_delay_minutes > 0` is a scheduled release. YouTube
@@ -424,7 +449,12 @@ def resolve_publish_visibility(
     if privacy == "private":
         return _result("private", "Politica canalului: încărcare privată.")
     if privacy == "unlisted":
-        return _result("unlisted", "Politica canalului: nelistat.")
+        if environment != "PRODUCTION":
+            return _result(
+                "private",
+                f"Studioul este în {environment}: nimic nu pleacă vizibil. Încărcare privată.",
+            )
+        return _result("unlisted", "Politica canalului: nelistat, studioul în PRODUCTION.")
     if not enabled:
         return _result(
             "private",
@@ -469,7 +499,10 @@ def select_channel_for(
     when set, else its series key (the office serial has its own slot), else the main
     factual channel. A slot whose binding is missing or no longer CONNECTED is a refusal,
     SKIPPED with the reason, and never a fallback to another channel: the wrong channel is
-    the one mistake no later check can undo.
+    the one mistake no later check can undo. A `channel_id` that contradicts the series
+    key is the same refusal: the media stage knows a film by its key (`is_serial_storyboard`),
+    so a serial-keyed storyboard pinned to Channel A would have been filmed as the serial and
+    sent to the factual channel — measured, SELECTED for MAIN_FACTUAL before this check.
     """
     from app.youtube.models import YouTubeConnection  # noqa: PLC0415
 
@@ -496,7 +529,16 @@ def select_channel_for(
                 None,
             )
         channel = session.get(ChannelRecord, board.channel_id) if board.channel_id else None
-        channel_type = channel.channel_type if channel else channel_type_for_storyboard(board)
+        keyed = channel_type_for_storyboard(board)
+        if channel is not None and channel.channel_type != keyed:
+            return skipped(
+                f"Storyboard-ul numește slotul „{channel.channel_name}” "
+                f"({channel.channel_type}), dar după cheia de serie este un film pentru "
+                f"{keyed}; o contradicție nu pleacă pe niciun canal.",
+                None,
+                keyed,
+            )
+        channel_type = channel.channel_type if channel else keyed
         if channel is None:
             channel = session.scalars(
                 select(ChannelRecord)

@@ -14,11 +14,14 @@ with no language model configured has been skipped: it could not look. Both repo
 reason, so a run that produced nothing says which of the two happened. Getting this backwards is
 how a runbook comes to imply work it never did.
 
-**Where a person decides, the studio stops.** A script is drafted and left at VERIFIED_PASS for
-the Owner to approve; storyboarding waits for that approval. The run happens at all only because
-the Owner cleared the autonomy stop, which is what authorises the studio to act — but clearing a
-stop is not the same as approving a script, and publication has its own five-point gate that
-re-checks the stop, the file, quality control, factual provenance and duplication.
+**Where a person decides, the studio stops; where the Director decides, she does.** A script she
+has read and passed is approved in the same breath (`_director_approves`, the Owner's word since
+2026-09-12), with the factual gate re-checked at approval; a script that fails her review is sent
+back with her notes for another exchange, not left in an inbox. The run happens at all only
+because the Owner cleared the autonomy stop, which is what authorises the studio to act — but
+clearing a stop is not the same as approving a film, and publication has its own five-point gate
+that re-checks the stop, the file, quality control, factual provenance and duplication, plus a
+sixth for a film that would be seen.
 
 Nothing here fabricates content or a verdict. Every stage either performs the real operation
 against the real services or reports why it could not.
@@ -117,7 +120,7 @@ from app.research.agent import (
     gather_sources,
     propose_topics,
 )
-from app.runbook.services import BLOCKED, OWNER_STOP_REASON
+from app.runbook.services import BLOCKED, OWNER_STOP_REASON, stop_requested
 from app.services import studio_environment, utc_now
 from app.story.serial_stage import run_serial_stage
 
@@ -680,11 +683,13 @@ def _script_and_storyboard(
     language: str = "en",
     target_seconds: int = 30,
 ) -> dict[str, Any]:
-    """Draft the voiceover for the selected topic, and storyboard what the Owner has approved.
+    """Draft the voiceover for the selected topic, and storyboard what has been approved.
 
-    The draft stops at VERIFIED_PASS. Turning a draft into an APPROVED script is the Owner's
-    decision, and storyboarding requires it — so a run leaves the draft waiting rather than
-    approving its own work.
+    The draft stops at VERIFIED_PASS until the Director has read it: a PASS from her story
+    review approves it (`_director_approves`), a rewrite follows her notes for up to
+    `MAX_SCRIPT_EXCHANGES` exchanges, and a REJECT closes the room for that topic. Storyboarding
+    requires an APPROVED script — so a run never approves its own writing, only what the
+    Director has passed, and the Owner may still refuse what she allowed.
     """
     if not _has_language_model(registry):
         return _outcome(SKIPPED, "Niciun model de limbaj disponibil; agenții nu pot rula.")
@@ -973,6 +978,18 @@ def _media(
     costs_recorded = 0
     credit_lines: list[str] = []
     for storyboard_id in pending:
+        # The Owner's switch, read before each film and not once for the stage. The render
+        # polls it between scenes and the runbook between stages, so a stop pressed during
+        # the factual film's last scene used to start the serial's render regardless
+        # (measured: two films, the stop set inside the first, both rendered).
+        if stop_requested(engine):
+            return _outcome(
+                BLOCKED,
+                f"{OWNER_STOP_REASON} Filmul următor nu a fost început."[:500],
+                assets=produced,
+                serial_assets=serial_assets,
+                stopped_storyboard=storyboard_id,
+            )
         # The budget is asked before anything is generated for this film (runbook §7,
         # "reserve budget"). What the render will cost is estimated from the plan at the
         # stored price of each scene's model; scenes without a price count as zero here and

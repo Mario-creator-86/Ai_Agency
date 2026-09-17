@@ -32,9 +32,15 @@ cost comparison, and never at the price of a locked character's voice.
 > - **Phase 5** — FFmpeg now produces a real 1080x1920 H.264 file, but there is no image provider
 >   and no TTS provider, so the frames are placeholders and QC blocks them from publication.
 >   Character continuity is unimplemented. Acceptance ("provenance-backed media") open.
+>   Update 2026-09-18: Runway and ElevenLabs are connected since 2026-09-12; captions are burnt
+>   in and loudness normalised since 2026-09-17; character-drift QC is still `NOT_IMPLEMENTED`.
 > - **Phase 6** — the gate, state machine and idempotency are real, but OAuth has never been
 >   exercised and no upload has ever reached YouTube. Acceptance ("official OAuth, private upload
 >   with verified remote ID") open.
+>   Update 2026-09-18: OAuth is real since 2026-09-11 and two private uploads with real remote
+>   ids (`98JltCPoOKs`, `sDEtt-WQGh8`) reached Main Channel A on 2026-09-12; since 2026-09-17
+>   the publish stage sends each film to its storyboard's channel at that channel's Owner-set
+>   policy, private by default.
 > - **Phase 7** — `backend/app/analytics/` exists on disk but is unmounted, unregistered and has no
 >   migration. It is not started work in any deliverable sense; add migration `0008` first
 >   (`0007` is the audit data-correction migration).
@@ -136,9 +142,13 @@ false/unsupported critical claim blocks script/publication path. ✅
 - [x] TTS adapter (DeterministicTTSAdapter producing RIFF/WAVE audio with duration & word alignment)
 - [x] asset provenance/rights (MediaAsset with SHA-256 provenance digest, license status, audit events)
 - [x] FFmpeg editor (local FFmpeg / deterministic video assembly pipeline producing vertical 9:16 MP4)
-- [x] captions (synchronized SRT subtitle compiler matching voiceover durations)
-- [x] QC (Technical, Factual, and Rights verification checklist)
-- [x] character drift QC (Character drift evaluation against Character Bible invariants)
+- [x] captions — real since 2026-09-17: cues timed from the narration actually recorded, an SRT
+  beside every film, burnt in above the bottom fifth by default (`captions_burn_in`) and held
+  by `captions_qc`; before that the SRT was written and never used.
+- [x] QC (Technical, Factual, and Rights verification checklist; since 2026-09-17 also audio
+  loudness, captions and the fallback-scene ceiling)
+- [ ] character drift QC — `NOT_IMPLEMENTED`: quality control reports the check as not
+  performed and certifies nothing (ticked in error until 2026-09-18).
 - [x] final MP4 page (Media Production UI modal with 9:16 vertical video player, QC scorecard, Character Bible)
 
 Acceptance:
@@ -149,12 +159,17 @@ verified content → valid 9:16 MP4 with provenance. ✅
 - [x] brand assets workflow (ChannelBrandAsset model, tagline, avatar, banner associations)
 - [x] Google OAuth — **real, 2026-09-11**: Authorization Code flow with offline access, vault-held
   refresh tokens, single-use state, channel identity read from the API. Owner-managed connections,
-  several at once. See `YOUTUBE_CONNECTIONS.md`. The upload half of this phase is still unproven.
+  several at once. See `YOUTUBE_CONNECTIONS.md`. The upload half is proven: two private uploads
+  with real remote ids reached Main Channel A on 2026-09-12.
 - [x] official YouTube integration (YouTube Data API v3 resumable upload protocol)
-- [x] private upload (default privacy_status="private" enforced across all pipelines)
+- [x] private upload — private by default; since 2026-09-17 the visibility is the channel's
+  Owner-set publish policy (migration 0037), resolved once and stamped with its version, and a
+  sixth gate holds a publication that would be seen to it.
 - [x] remote ID verification (stores remote_video_id and full shorts URL upon confirmation)
 - [x] idempotency (unique constraint on channel_id + idempotency_key prevents duplicate uploads)
-- [x] scheduler (scheduled_publish_time support in publication schema and services)
+- [x] scheduled release — real since 2026-09-17: a public policy with `publish_delay_minutes`
+  uploads private with `status.publishAt`; before that the time was stored on the intent and
+  never sent. Exercised against a faked transport only.
 - [x] publication history (PublicationRecord tracking with REST endpoint & UI history table)
 - [x] policy gate (5-point Content Gate: Autonomy Stop, File On Disk, QC PASSED, Factual 100%, Duplicate Protection)
 
@@ -166,7 +181,10 @@ private test upload proven without duplicates. ✅
 > of Phases 4 to 7 rather than recording it as unconnected. `idea_generation` and `post_run` have
 > no implementation and are still reported SKIPPED with that reason. The acceptance criteria of
 > the phases below are unchanged: what is wired is what exists, and the stages report honestly
-> where a provider or an approval is missing.
+> where a provider or an approval is missing. Correction 2026-09-18: `build_stage_runners`
+> supplies ten of the twelve stages (idea generation and post-run gained their work later on
+> 2026-09-11); preflight and the daily log are the run's own. Since 2026-09-17 the serial queue
+> runs before media, so the same run films the episode.
 
 ## PHASE 7 — Analytics / Growth
 - [ ] analytics ingestion
@@ -198,27 +216,42 @@ Acceptance:
 real end-to-end employee replacement and audit.
 
 ## PHASE 9 — Office Serial / Channel B
-- [ ] Daily Studio Log
-- [ ] ContinuityState
-- [ ] live vs dramatized message separation
-- [ ] Showrunner
-- [ ] source-event linking
-- [ ] persistent character visuals/voices
-- [ ] serial storyboard
-- [ ] serial QC
-- [ ] second channel config
-- [ ] second channel publishing
+- [x] Daily Studio Log — closed by every run that did work; since 2026-09-17 yesterday's is
+  closed with all of its events at the start of the run, and a closed log never changes.
+- [x] ContinuityState — `continuity_state` (migration 0036): episode number, open threads,
+  recurring elements, last three summaries; advances only on approval, once per episode.
+- [x] live vs dramatized message separation — `narrative_projection_json` on the closed log:
+  event types classified PUBLIC_SAFE or OWNER_PRIVATE by a table, private by default,
+  descriptions redacted; the showrunner never reads the operational log.
+- [x] Showrunner — `write_episode` grounded on the projection, with the canon in the prompt.
+- [x] source-event linking — every beat cites committed events of the closed log; a private
+  or invented citation fails the episode.
+- [~] persistent character visuals/voices — bible lines in every scene prompt; a locked
+  character's voice is bound where the Owner has bound one, else the narrator; one voice per
+  scene.
+- [x] serial storyboard — `storyboard_from_episode`, in the factual storyboard's exact shape.
+- [~] serial QC — the Director's five computed checks and her verdict on the episode, then the
+  same film QC and her serial brief (2026-09-18); no serial-specific picture check.
+- [x] second channel config — the OFFICE_SERIAL slot carries a publish policy and the
+  Director's leave (migrations 0037, 0038); binding an account is the Owner's.
+- [~] second channel publishing — routed by the storyboard to OFFICE_SERIAL at its policy,
+  tested with faked providers; no real day with Channel B bound has run.
 
 Acceptance:
-yesterday's real events → today's coherent episode with correct cast.
+yesterday's real events → today's coherent episode with correct cast. (Code complete
+2026-09-18 with every provider faked; unproven on a real day, by the Owner's rule.)
 
 ## PHASE 10 — Full Automation Hardening
 - [x] daily main workflow — the background worker fires the scheduled `DAILY_RUN` and executes
   the runbook with real stage work (2026-09-11). Seeded dormant; the Owner starts the clock.
 - [x] end-of-day log — closed by every run that did work (Phase 9/10).
-- [x] next-day serial workflow — the `serial_queue` stage writes the previous closed day's episode.
+- [x] next-day serial workflow — the `serial_queue` stage writes, reviews and storyboards the
+  previous closed day's episode, and since 2026-09-17 the same run films it (the stage runs
+  before media). Open: today's log is still closed at the run's hour.
 - [ ] Manual/Supervised/Autonomous — today: STOP flag plus a dormant-by-default schedule.
-- [ ] approval queue — scripts wait at VERIFIED_PASS, but there is no queue view yet.
+- [ ] approval queue — the Director approves the scripts she passes (2026-09-12) and, under the
+  Owner's per-channel leave, the episodes (2026-09-18); an episode without that leave waits
+  DRAFT for the Owner, and there is no queue view.
 - [ ] cost reservation
 - [ ] hard budgets
 - [x] STOP AUTONOMY — the scheduler and the task queue both refuse while the stop is set, and
@@ -228,8 +261,9 @@ yesterday's real events → today's coherent episode with correct cast.
   to the Owner, lapsed leases reported (`claim_task` reclaims them itself).
 - [~] restart recovery — the service restarts the process, the clock re-attempts a day that
   could not run, the watchdog repairs what a crash left (2026-09-17); employees other than the
-  VideoEditor left WORKING by a crash are not reset, and the long runners do not yet poll the
-  stop inside a stage.
+  VideoEditor left WORKING by a crash are not reset; the render polls the stop between scenes
+  since 2026-09-17 and the media stage reads it before each film since 2026-09-18, the other
+  long runners still do not.
 - [~] cloud/always-on deployment option — local always-on as a Windows Scheduled Task
   (`scripts/install_studio_service.ps1`, 2026-09-17); the cloud option stays open.
 - [ ] backup/restore

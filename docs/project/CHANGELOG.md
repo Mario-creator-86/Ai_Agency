@@ -1,5 +1,127 @@
 # Changelog
 
+## Phase B/C tried as an adversary — 2026-09-18
+
+Seven defects measured by an adversarial pass over delivery and the serial, each with a red-first
+test, and one guard that turns the Owner's rule about tests into a measurement.
+
+- **The seven fixes.** `resolve_publish_visibility` holds an unlisted policy to PRODUCTION like
+  public (it resolved unlisted in TEST, and an unlisted film is watched by anyone with the link;
+  the truth-table row and two tests moved to PRODUCTION); `change_publish_policy` refuses a
+  command whose resulting state is public+enabled outside PRODUCTION (the flag alone re-armed a
+  policy already "public" in TEST); `select_channel_for` refuses a pinned `channel_id` that
+  contradicts the storyboard's series key, both directions (a serial-keyed storyboard pinned to
+  Channel A was SELECTED for Channel A while the media stage filmed it as the serial);
+  `projection.py` redacts currency-first prices, scheme-less links and uppercase opaque keys
+  (`_MONEY_FIRST`, `_DOMAIN`, `_OPAQUE_UPPER`; ordinary titles unchanged); the Director's privacy
+  check reads the summary, the opened threads and the recurring elements with the same `leaks()`
+  (a key in the summary would have entered canon and every later prompt); `_media` reads
+  `stop_requested` before each film and reports BLOCKED naming the film it did not start (a stop
+  set during the factual film started the serial's render); and the suite proves the Owner's rule
+  instead of promising it (below).
+- **Tests.** `tests/test_phase_bc_adversary.py` (new, 21 tests; 13 red first — 11 measured defects
+  and 2 assertion shapes); `tests/test_publish_policy.py` and `tests/test_daily_run_stages.py`
+  adapted where they had encoded the old readings (unlisted in TEST moved to PRODUCTION; three
+  `_media` tests switch autonomy on first).
+- **The loopback-only socket guard.** `tests/conftest.py` gained an autouse `no_network` fixture
+  that refuses `socket.connect`/`connect_ex` to any address that is not loopback or a Unix-socket
+  path, naming the address and the rule — the Owner's rule that no test contacts a real provider
+  is now proven per run; every adapter goes through urllib or http.client, which the guard covers.
+- Held without a defect: the Owner's leave per channel, one rewrite, a closed log unchanged by
+  late events, the blank-frame rule for both kinds of film, loudness and captions QC naming their
+  cause, the fallback gate, the per-film budget.
+- **Documents.** `CURRENT_STATUS.md` gains the verifier's subsection and corrects in place, dated,
+  the sentences that said only public needs PRODUCTION, that a pinned `channel_id` is followed as
+  set, and that the render alone reads the stop; `16_DECISION_LOG.md` records the seven decisions
+  and marks the 2026-09-17 entries they supersede in part; `13_ROADMAP_TODO.md`'s stop-polling
+  line follows. No architecture document changed.
+- Suite: the verifier's run 1, before its fixes, was 953 passed / 1 skipped; the changed files ran
+  green after them (238, 103 and 21 passed); the whole suite on the final tree is the committer's
+  run. Nothing against a real model, provider or YouTube; no daily run queued.
+
+## The serial reaches Channel B, and the tracking documents catch up — 2026-09-18
+
+Two measured defects still stood between an approved episode and the serial's channel, and the
+documents said things the code no longer did.
+
+- **The Director's brief has two readings.** `gather_facts` hard-rejected a script with no claims
+  and her brief called a film about the studio REJECTED, so every serial film was refused before
+  the publish routing saw it. A serial film is recognised by its own marks (`is_serial_film`:
+  series key `office_serial`, or `story_json.kind == "office_serial_episode"`); for it the
+  claims-based verdicts are not asked and the brief is the episode review's (`instructions_for`);
+  a factual script with no claims is refused in the same words as before.
+- **The Director's leave to approve episodes is a column of the publish policy.**
+  `channel_record.director_may_approve_episodes` (default false), migration
+  `0038_director_may_approve_episodes` (`main.py` pins it; run `scripts/bootstrap.py`), set only
+  through `PublishPolicyCommand` with the command's versioning, idempotency and event. It was read
+  from `series_rules_json`, which no command could write.
+- The media route's render button and standalone QC pass `settings=request.app.state.settings`,
+  like the daily run; `continuity_state` joins `HISTORY_TABLES`; `qc.py` is mypy clean;
+  `YouTubeAnalyticsProvider(channel_id=…)` reads `STUDIO_YOUTUBE_*` only from a bare constructor;
+  `PolicyView.public_publish_enabled` is a real bool ("any channel may publish publicly").
+- **Documents to the truth.** `../architecture/39_DAILY_AUTONOMOUS_RUNBOOK.md` renumbered to the order `STAGES`
+  runs (§7 the serial queue, §12 the daily log), its indexed hash updated explicitly;
+  `CURRENT_STATUS.md` no longer says "no real upload has ever happened" (two private uploads of
+  2026-09-12, `98JltCPoOKs` and `sDEtt-WQGh8`), "eight of twelve stages" (ten are supplied, two
+  are the run's own) or "every 24 hours, CATCH_UP" (05:00 local, a missed slot once, a failed day
+  re-attempted); `YOUTUBE_CONNECTIONS.md` and the roadmap likewise; the roadmap unticks
+  character-drift QC (`NOT_IMPLEMENTED`) and ticks captions and scheduled release now that they
+  are real; the decision log records the Director's approval of scripts (2026-09-12, unrecorded
+  until now) and Phase A's verifier findings; `stages.py`'s two docstrings no longer say the
+  Owner approves scripts; `PROJECT_STATE.json` counts 39 migrations and 954 collected tests.
+- Tests: 9 new across `test_editorial.py`, `test_publish_policy.py`, `test_phase5_media.py`,
+  `test_phase7_analytics.py`, `test_reset.py`, `test_foundation.py`, each red first. Nothing
+  against a real model, provider or YouTube; no daily run queued.
+
+## Delivery and the serial — 2026-09-17
+
+Phase B/C of running unattended: publishing by the Owner's per-channel policy, the serial
+written, reviewed and filmed in the same run, captions and loudness measured. Measured before:
+`_publish` took the first bound slot at a constant `private`; `scheduled_publish_time` was never
+sent; the showrunner read raw payload pairs; nothing filmed an episode; `captions.srt` was never
+used; nothing normalised loudness; a render ran to its end after STOP.
+
+- **Per-channel publish policy** (migration `0037_publish_policy`): `autonomous_privacy`,
+  `public_publish_enabled`, `publish_delay_minutes`, `policy_version`, `policy_changed_event_id`,
+  changed only by `POST /publishing/channels/{id}/publish-policy` with `command_id` and
+  `expected_version`, recorded in `publishing.channel_policy_changed`; "public" needs the switch in
+  the same command and PRODUCTION. `resolve_publish_visibility` decides once; a delayed public
+  release is a private upload with `publishAt`, which the YouTube adapter now sends;
+  `update_visibility` exists, uncalled.
+- **A film goes to its own channel or nowhere.** `select_channel_for` reads the storyboard
+  (`channel_id`, series key `office_serial`, else MAIN_FACTUAL); an unbound or revoked slot is
+  refused by name. A sixth gate, for a publication that would be seen, requires the channel's
+  current `policy_version` stamped on it (`publication_record.policy_version`) and a visibility no
+  more open than the policy allows. Analytics per channel: `analytics_provider_for_channel`,
+  `measure_channel_publications`.
+- **The serial** (migration `0036_serial_continuity`): `daily_studio_log.narrative_projection_json`
+  — every event type classified by a table, private by default, descriptions redacted; the
+  showrunner grounds beats on the projection only; `continuity_state` (episode number, threads,
+  recurring elements, last summaries) advances only on approval; the Director reviews the episode
+  (five computed checks, then her verdict; one rewrite); `storyboard_from_episode` turns an
+  approved episode into an OFFICE_SERIAL storyboard in the factual storyboard's exact shape;
+  `run_serial_stage` does it for the newest closed log. Routes under `/story/`.
+- **Loudness and captions.** `media/toolchain.py`: `loudnorm` −14 LUFS / −1 dBTP, measured on the
+  narration and applied as one linear gain; captions timed from the recorded narration, two lines
+  of 42, SRT beside every film and burnt in above the bottom fifth (`captions_burn_in`); the
+  manifest counts motion, fallback and skipped scenes. QC gained `audio_qc`, `captions_qc`,
+  `motion_qc` (`max_fallback_scenes`, default half; a warning in TEST).
+- **The run.** `serial_queue` between `script_and_storyboard` and `media`; `_media` films the
+  factual storyboard then the serial's, asking the budget before each; yesterday's log is closed
+  on the preflight line (`close_previous_day`, retried like a stage); `_publish` routes per film
+  with the resolved visibility and the policy stamp; `_performance_intake` measures per channel;
+  `assemble_video_job` polls the stop between scenes and before each motion shot (`RenderStopped`,
+  reported BLOCKED with the Owner's reason); `ScheduledJobView` shows `run_at_local` and `timezone`.
+- Settings: `STUDIO_CAPTIONS_BURN_IN` true, `STUDIO_MAX_FALLBACK_SCENES` unset (half). Run
+  `scripts/bootstrap.py` (migrate) before starting this version.
+- Whole suite at the commit: 945 passed, 1 skipped; ruff, mypy on the changed files and
+  `scripts/check_docs.py` clean. Nothing against a real model, provider or YouTube.
+- Open at the commit, closed 2026-09-18: the Director's film review refused a serial film; the
+  Director's leave had no command; the runbook document's numbering. Still open: today's log is
+  closed at the run's hour (a full-day log for every date needs the end-of-run close moved); one
+  voice per scene; no screen for the publish policy; the first real day with Channel B bound and
+  the first real scheduled upload should be watched.
+
 ## The clock, and a day that asks again — 2026-09-17
 
 Phase A of running unattended: the studio's own clock, and the durability under it. Measured on

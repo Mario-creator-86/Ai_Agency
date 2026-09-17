@@ -105,10 +105,23 @@ _SECRET = re.compile(
 )
 _OPAQUE = re.compile(r"\b(?=[A-Za-z0-9_\-]*\d)(?=[A-Za-z0-9_\-]*[A-Za-z])[A-Za-z0-9_\-]{24,}\b")
 _HEX = re.compile(r"\b[0-9a-fA-F]{24,}\b")
+#: An uppercase key id: an access key of the AWS shape is twenty capitals and digits, which
+#: `_OPAQUE` (twenty-four characters) let through whole.
+_OPAQUE_UPPER = re.compile(r"\b(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{16,}\b")
 _URL = re.compile(r"(?i)\b(?:https?://|www\.)\S+")
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 _MONEY = re.compile(
     r"(?i)(?:[$€£]\s?\d[\d.,]*|\b\d[\d.,]*\s?(?:usd|eur|ron|lei|dollars?|cents?|credits?)\b)"
+)
+#: A price written currency-first ("USD 12.50"), which `_MONEY` reads only amount-first.
+#: Measured in a topic title: it reached the projection whole.
+_MONEY_FIRST = re.compile(r"(?i)\b(?:usd|eur|ron|gbp|lei)\s?\d[\d.,]*")
+#: A link without its scheme: two or more labels ending in a public suffix, with or without
+#: a path. `_URL` asks for "http" or "www.", and "youtu.be/<id>" has neither.
+_DOMAIN = re.compile(
+    r"(?i)\b(?:[a-z0-9-]+\.)+"
+    r"(?:com|net|org|io|ai|be|ro|dev|app|co|tv|me|gg|cloud|xyz|info|eu|uk|us)\b"
+    r"(?:/[^\s)\]]*)?"
 )
 #: Provider names and the model ids they publish. The names are the ones the studio has
 #: integrated or evaluated; the shape ("glm-5.3", "gpt-4o", "qwen3.5:7b",
@@ -122,7 +135,20 @@ _MODEL_SHAPE = re.compile(r"\b[a-z][a-z_]*[-_:]?\d+(?:[.:-][a-z0-9]+)*\b")
 #: A card or account number: four or more digits in a row inside a longer digit run.
 _CARD = re.compile(r"\b\d{4,}\b")
 
-_PATTERNS = (_SECRET, _URL, _EMAIL, _MONEY, _PROVIDER, _MODEL_SHAPE, _OPAQUE, _HEX, _CARD)
+_PATTERNS = (
+    _SECRET,
+    _URL,
+    _EMAIL,
+    _DOMAIN,
+    _MONEY,
+    _MONEY_FIRST,
+    _PROVIDER,
+    _MODEL_SHAPE,
+    _OPAQUE,
+    _OPAQUE_UPPER,
+    _HEX,
+    _CARD,
+)
 
 
 def redact(text: str) -> str:

@@ -343,6 +343,10 @@ def create_media_router() -> APIRouter:
                     )
                 ),
                 production_plan=planned["plan"],
+                # The day's run hands the camera the Owner's settings (captions burnt in,
+                # the fallback ceiling); this button used to hand nothing, so the same
+                # storyboard made two different films depending on who pressed render.
+                settings=request.app.state.settings,
             )
             # What the render bought goes into the books here too. The day's stage recorded
             # it and the Owner's own button did not, so four renders left the books empty.
@@ -361,6 +365,7 @@ def create_media_router() -> APIRouter:
                 request.app.state.engine,
                 result["output_asset_id"],
                 correlation_id,
+                settings=request.app.state.settings,
             )
             result["qc"] = qc_result
             return result
@@ -622,6 +627,10 @@ def create_media_router() -> APIRouter:
                         status_code=404,
                         detail="No rendered asset found for storyboard to run QC on",
                     )
-        return evaluate_media_qc(engine, asset_id, correlation_id)
+        # Same ceiling as the day's quality control: without `settings=` the default of half
+        # the scenes applies and the Owner's max_fallback_scenes is read by nobody here.
+        return evaluate_media_qc(
+            engine, asset_id, correlation_id, settings=request.app.state.settings
+        )
 
     return router

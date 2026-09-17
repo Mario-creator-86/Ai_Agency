@@ -26,12 +26,12 @@ implementation". This is the audit of every stage of
 | 4 | **Research and verification** | Lead Researcher, then Fact Checker | A URL outside the allowlist is refused before any request; a page that does not answer is recorded, not invented. A verdict without a verbatim quote from the stored text is rejected. |
 | 5 | **Selection** | Director | A choice naming a topic that is not on the shortlist. Only topics with at least one SUPPORTED claim are on it. |
 | 6 | Script and storyboard | Script Writer | A sentence that cannot cite a supplied claim; a fabricated citation fails the whole draft. |
-| 7 | Media | code, with the Voice Artist reviewing narration | Rendering with a model the account does not have; a locked character rendered by an unapproved model. |
-| 8 | Edit and QC | code, with the Video Editor diagnosing failures | Measurement from the database row instead of the file; a placeholder frame reaching publication. |
-| 9 | Publish | Publisher prepares metadata, code holds the five gates | Publishing past a failed gate, to an unbound slot, or with a description that adds facts the script does not contain. |
-| 10 | Post-run | Director | Deciding anything about a person or a channel on fewer than three samples. |
-| 11 | Daily log | code | Writing a log for a day the studio did not work. |
-| 12 | Serial queue | Script Writer | An episode about an event the day's log does not record. |
+| 7 | Serial queue (since 2026-09-17 before media, so the same run films the episode) | Showrunner writes, Director reviews | An episode citing an event the day's public-safe projection does not hold; a private word in a title or a line. |
+| 8 | Media | code, with the Voice Artist reviewing narration | Rendering with a model the account does not have; a locked character rendered by an unapproved model. |
+| 9 | Edit and QC | code, with the Video Editor diagnosing failures | Measurement from the database row instead of the file; a placeholder frame reaching publication. |
+| 10 | Publish | Publisher prepares metadata, code holds the five gates (a sixth for a film that would be seen) | Publishing past a failed gate, to an unbound slot, or with a description that adds facts the script does not contain. |
+| 11 | Post-run | Director | Deciding anything about a person or a channel on fewer than three samples. |
+| 12 | Daily log | code | Writing a log for a day the studio did not work. |
 
 ## The two new agent stages
 

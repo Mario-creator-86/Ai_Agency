@@ -250,14 +250,15 @@ def analytics_provider_for_channel(
                 "este conectat; apasă Reconectează în Setări."
             )
         secrets = vault.decrypt(connection.encrypted_secrets)
+        # Built whole from the bound account: the adapter takes explicit credentials as one
+        # set and reads no STUDIO_YOUTUBE_* for them, and it carries the channel it answers
+        # for, so a reader can check the account against the slot's binding.
         provider = YouTubeAnalyticsProvider(
             client_id=connection.client_id,
             client_secret=secrets.get("client_secret"),
             refresh_token=secrets.get("refresh_token"),
+            channel_id=connection.remote_channel_id,
         )
-        # The adapter has no channel identity of its own; the caller records whose numbers
-        # these are, and a reader can check the account against the slot's binding.
-        provider.channel_id = connection.remote_channel_id  # type: ignore[attr-defined]
         return provider, ""
 
 

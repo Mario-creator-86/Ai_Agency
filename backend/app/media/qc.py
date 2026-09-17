@@ -496,8 +496,11 @@ def evaluate_media_qc(
 
         # 2d. Captions QC — the SRT beside the film is read back: it parses, keeps to two
         #     lines of forty-two, sits inside the film, and says what the narration says.
-        captions_record = (
-            manifest.get("captions") if isinstance(manifest.get("captions"), dict) else {}
+        # Read once and narrowed once: `manifest.get(...)` is `Any | None` to the checker,
+        # and the old "if isinstance(manifest.get(...))" left the None in the union.
+        recorded_captions = manifest.get("captions")
+        captions_record: dict[str, Any] = (
+            recorded_captions if isinstance(recorded_captions, dict) else {}
         )
         srt_path = Path(str(captions_record.get("srt") or (file_path.parent / "captions.srt")))
         narration = " ".join(str(sc.voiceover_segment or "") for sc in storyboard_scenes)
@@ -551,7 +554,8 @@ def evaluate_media_qc(
         #     back to a slow push because the model refused. Too many pushes is a slideshow
         #     sold as a film, and in PRODUCTION the gate says so; in TEST two motion scenes
         #     are the policy and the rest push by design, so the same count is a warning.
-        motion_record = manifest.get("motion") if isinstance(manifest.get("motion"), dict) else {}
+        recorded_motion = manifest.get("motion")
+        motion_record: dict[str, Any] = recorded_motion if isinstance(recorded_motion, dict) else {}
         total_scenes = int(motion_record.get("scenes") or len(storyboard_scenes) or 0)
         fallback_scenes = int(motion_record.get("fallback_scenes") or 0)
         motion_scenes = int(motion_record.get("motion_scenes") or motion_record.get("clips") or 0)

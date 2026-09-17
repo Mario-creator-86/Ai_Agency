@@ -189,6 +189,8 @@ negative control is how the check was shown to be worth anything.
 
 ## What this does not do
 
-It connects channels. It does not upload. The publishing pipeline still holds the Phase 6
-correction recorded in `13_ROADMAP_TODO.md`: no upload has reached YouTube, and a connection being
-CONNECTED here is not evidence that one has.
+It connects channels. It does not upload. A connection being CONNECTED here is not evidence
+that an upload has happened; that evidence is `publication_record`, which since 2026-09-12 holds
+two PUBLISHED private uploads to Main Channel A (`98JltCPoOKs`, `sDEtt-WQGh8`) made by the
+publish stage through a bound connection. The Phase 6 correction of 2026-09-09 recorded in
+`13_ROADMAP_TODO.md` ("no upload has reached YouTube") is superseded (corrected 2026-09-18).

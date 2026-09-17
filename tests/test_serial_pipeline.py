@@ -184,13 +184,13 @@ def registry():
 
 
 def allow_director_approval(engine, allowed: bool = True) -> None:
+    """The state the Owner's publish-policy command leaves on Channel B, written directly:
+    these are tests of the stage, not of the command (tests/test_publish_policy.py is)."""
     with Session(engine) as session, session.begin():
         channel = session.scalar(
             select(ChannelRecord).where(ChannelRecord.channel_type == "OFFICE_SERIAL")
         )
-        rules = dict(channel.series_rules_json or {})
-        rules["director_may_approve_episodes"] = allowed
-        channel.series_rules_json = rules
+        channel.director_may_approve_episodes = allowed
 
 
 def a_day(engine, when: datetime | None = None) -> tuple[dict, list[str]]:

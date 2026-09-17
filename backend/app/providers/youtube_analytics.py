@@ -35,11 +35,28 @@ class YouTubeAnalyticsProvider(AnalyticsProvider):
         client_secret: str | None = None,
         refresh_token: str | None = None,
         access_token: str | None = None,
+        channel_id: str | None = None,
     ) -> None:
-        self.client_id = client_id or os.environ.get("STUDIO_YOUTUBE_CLIENT_ID")
-        self.client_secret = client_secret or os.environ.get("STUDIO_YOUTUBE_CLIENT_SECRET")
-        self.refresh_token = refresh_token or os.environ.get("STUDIO_YOUTUBE_REFRESH_TOKEN")
-        self.access_token = access_token or os.environ.get("STUDIO_YOUTUBE_ACCESS_TOKEN")
+        # Explicit credentials are one account's and are taken whole. The constructor used
+        # to fill every argument left None from STUDIO_YOUTUBE_*, so an adapter built from a
+        # channel's bound connection still carried the environment's access token — which
+        # `_refresh_access_token` prefers — and reported another account's numbers as this
+        # channel's. The environment is read only when nothing at all was given: the
+        # pre-Settings path, where the environment is the account.
+        explicit = (client_id, client_secret, refresh_token, access_token)
+        if any(value is not None for value in explicit):
+            self.client_id = client_id
+            self.client_secret = client_secret
+            self.refresh_token = refresh_token
+            self.access_token = access_token
+        else:
+            self.client_id = os.environ.get("STUDIO_YOUTUBE_CLIENT_ID")
+            self.client_secret = os.environ.get("STUDIO_YOUTUBE_CLIENT_SECRET")
+            self.refresh_token = os.environ.get("STUDIO_YOUTUBE_REFRESH_TOKEN")
+            self.access_token = os.environ.get("STUDIO_YOUTUBE_ACCESS_TOKEN")
+        #: Whose numbers these are: the bound connection's remote channel id, so a reader can
+        #: check the account against the slot's binding. None on the environment path.
+        self.channel_id = channel_id
 
     @classmethod
     def from_verified_settings(

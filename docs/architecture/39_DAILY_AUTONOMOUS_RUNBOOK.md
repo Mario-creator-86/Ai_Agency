@@ -63,7 +63,16 @@ Script → hook → storyboard.
 
 Run claim/visual consistency checks.
 
-## 7. Media
+## 7. Next-day serial queue
+
+Prepare Channel B production job from previous-day safe narrative events.
+
+Runs before Media (the order of `STAGES` in the runbook code since 2026-09-17) so that the
+same run writes, reviews, films and routes the episode instead of leaving its storyboard for
+the next day; it still prepares Channel B from the previous day's closed log, which is closed
+at the start of the run, while today's log (§12) stays last.
+
+## 8. Media
 
 Reserve budget.
 
@@ -71,13 +80,13 @@ Generate assets/video/voice.
 
 Use fallback if needed.
 
-## 8. Edit/QC
+## 9. Edit/QC
 
 FFmpeg/render.
 
 Technical + factual + rights + policy QC.
 
-## 9. Publish
+## 10. Publish
 
 Create publication intent.
 
@@ -87,7 +96,7 @@ Publish/schedule if allowed.
 
 Verify remote ID.
 
-## 10. Post-run
+## 11. Post-run
 
 Reconcile cost.
 
@@ -95,16 +104,12 @@ Persist provenance.
 
 Update office/status.
 
-## 11. Daily Studio Log
+## 12. Daily Studio Log
 
 At configured end:
 - close immutable log;
 - sanitize narrative projection;
 - save continuity.
-
-## 12. Next-day serial queue
-
-Prepare Channel B production job from previous-day safe narrative events.
 
 ## Abort behavior
 

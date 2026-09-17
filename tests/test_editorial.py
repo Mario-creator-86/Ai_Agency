@@ -97,20 +97,35 @@ def registry_with(staffed, answer):
     return registry, model
 
 
-def a_film(engine, *, voiceover: str, with_source: bool, title="A rocky world with water"):
-    """A SELECTED topic, its script on one claim, a rendered storyboard and a QC-passed file."""
+def a_film(
+    engine,
+    *,
+    voiceover: str,
+    with_source: bool,
+    title="A rocky world with water",
+    with_claim: bool = True,
+    serial: bool = False,
+):
+    """A SELECTED topic, its script on one claim, a rendered storyboard and a QC-passed file.
+
+    `with_claim=False` is a factual script that rests on nothing. `serial=True` is the film
+    `storyboard_from_episode` produces: a SERIAL topic, a script with no claims whose
+    `story_json` says it is an episode, and a storyboard keyed to the office serial.
+    """
     ids = {k: str(uuid4()) for k in ("topic", "claim", "source", "script", "board", "asset", "job")}
     now = utc_now()
+    if serial:
+        with_claim = with_source = False
     with Session(engine) as session, session.begin():
         session.add(
             TopicIdea(
                 id=ids["topic"],
                 title=title,
-                topic="space",
+                topic="Serialul de birou" if serial else "space",
                 angle="a",
                 target_audience="g",
                 novelty_score=0.9,
-                status="SELECTED",
+                status="SERIAL" if serial else "SELECTED",
                 created_at=now,
             )
         )
@@ -131,28 +146,34 @@ def a_film(engine, *, voiceover: str, with_source: bool, title="A rocky world wi
                 )
             )
             session.flush()
-        session.add(
-            FactualClaim(
-                id=ids["claim"],
-                topic_id=ids["topic"],
-                source_id=ids["source"] if with_source else None,
-                claim_text="Webb measured water vapour on GJ 486 b.",
-                claim_type="SCIENTIFIC_FACT",
-                importance="CRITICAL",
-                status="SUPPORTED",
-                confidence=0.9,
-                created_at=now,
+        if with_claim:
+            session.add(
+                FactualClaim(
+                    id=ids["claim"],
+                    topic_id=ids["topic"],
+                    source_id=ids["source"] if with_source else None,
+                    claim_text="Webb measured water vapour on GJ 486 b.",
+                    claim_type="SCIENTIFIC_FACT",
+                    importance="CRITICAL",
+                    status="SUPPORTED",
+                    confidence=0.9,
+                    created_at=now,
+                )
             )
-        )
-        session.flush()
+            session.flush()
         session.add(
             ScriptDraft(
                 id=ids["script"],
                 topic_id=ids["topic"],
                 title=title,
                 voiceover_full_text=voiceover,
-                claim_ids_json=[ids["claim"]],
+                claim_ids_json=[ids["claim"]] if with_claim else [],
                 status="APPROVED",
+                story_json=(
+                    {"kind": "office_serial_episode", "episode_number": 3, "episode_id": "ep"}
+                    if serial
+                    else None
+                ),
                 created_at=now,
             )
         )
@@ -164,6 +185,7 @@ def a_film(engine, *, voiceover: str, with_source: bool, title="A rocky world wi
                 title=title,
                 status="RENDERED",
                 total_scenes=1,
+                series_key="office_serial" if serial else None,
                 created_at=now,
             )
         )
@@ -342,6 +364,104 @@ def test_gather_facts_reads_the_whole_film(engine, staffed):
     assert facts["quality_control"]["status"] == "PASSED"
     assert facts["words"] >= 40 and facts["audience_language"] == "English"
     assert EditorialVerdict(verdict="APPROVE").story == ""
+
+
+EPISODE = (
+    "Sarah opens the board and asks for the number before anyone says good morning. Aris "
+    "answers with the evidence first and the opinion never, which is his whole style. The "
+    "room laughs, the espresso cup goes down, and the day has officially started in here. "
+    "Nobody mentions that the number is wrong until the credits roll."
+)
+
+
+def test_a_serial_film_is_judged_as_a_dramatisation_not_for_its_missing_claims(engine, staffed):
+    """Measured on the first serial film: `gather_facts` hard-rejected it for resting on no
+    claim, and the instructions told the Director a film about the studio is REJECTED — so an
+    approved episode never reached the publish routing. A dramatisation makes no claims and
+    needs no sources; it is judged for its story, its people and its pictures instead."""
+    ids = a_film(engine, voiceover=EPISODE, with_source=False, title="Ziua numărului", serial=True)
+    with Session(engine) as session:
+        facts = gather_facts(session, ids["asset"], "en")
+    assert facts["hard_rejects"] == []
+    assert facts["serial"] is True
+    assert facts["series_key"] == "office_serial"
+    assert facts["episode"] == {"title": "Ziua numărului", "number": 3}
+    assert facts["claims"] == []
+
+    seen: dict = {}
+
+    def answer(prompt):
+        seen["prompt"] = prompt
+        return json.dumps({"verdict": "APPROVE", "story": "Sarah wants the number.", "reasons": []})
+
+    registry, model = registry_with(staffed, answer)
+    result = editorial_review(engine, registry, ids["asset"], language="en")
+
+    assert result["verdict"] == "APPROVE" and result["model_used"] is True
+    prompt = seen["prompt"]
+    assert "A dramatisation is not a factual film" in prompt
+    assert "needs no sources" in prompt
+    assert "the situation, the turn, the payoff" in prompt
+    assert "sounds like a person" in prompt
+    assert "A film about the studio itself" not in prompt
+    assert "backed by a real source" not in prompt
+    # The frames rule does not bend for a comedy: a blank frame is a blank frame.
+    assert "garbled writing in any of them means REJECT" in prompt
+    assert '"serial": true' in prompt
+    with Session(engine) as session:
+        assert latest_editorial(session, ids["asset"]).verdict == "APPROVE"
+        assert session.get(Storyboard, ids["board"]).status == "RENDERED"
+
+
+def test_a_serial_film_still_needs_words_pictures_and_the_audience_language(engine, staffed):
+    """The exception is for claims only: a serial film in the wrong language, or one too short
+    to be an episode, is refused without a model like any other film."""
+    short = a_film(engine, voiceover="Sarah asks. Aris answers.", with_source=False, serial=True)
+    romanian = a_film(engine, voiceover=ROMANIAN, with_source=False, serial=True)
+    with Session(engine) as session:
+        short_facts = gather_facts(session, short["asset"], "en")
+        romanian_facts = gather_facts(session, romanian["asset"], "en")
+    assert short_facts["serial"] is True
+    assert any("fără poveste" in reason for reason in short_facts["hard_rejects"])
+    assert any("nu este în English" in reason for reason in romanian_facts["hard_rejects"])
+    assert not any("afirmație" in reason for reason in short_facts["hard_rejects"])
+
+    registry, model = registry_with(staffed, lambda p: "{}")
+    result = editorial_review(engine, registry, short["asset"], language="en")
+    assert result["verdict"] == "REJECT" and model.calls == []
+    with Session(engine) as session:
+        assert session.get(Storyboard, short["board"]).status == "REJECTED"
+
+
+def test_a_factual_film_without_claims_is_still_rejected_in_the_same_words(engine, staffed):
+    """The exception cannot widen: a factual script that rests on nothing is refused before
+    any model, with the reason the first review gave, and the Director's instructions for it
+    still say a film about the studio is REJECTED."""
+    ids = a_film(engine, voiceover=ENGLISH, with_source=False, with_claim=False)
+    with Session(engine) as session:
+        facts = gather_facts(session, ids["asset"], "en")
+    assert facts["serial"] is False
+    assert facts["hard_rejects"] == ["scenariul nu se sprijină pe nicio afirmație"]
+
+    registry, model = registry_with(staffed, lambda p: "{}")
+    result = editorial_review(engine, registry, ids["asset"], language="en")
+    assert result["verdict"] == "REJECT" and model.calls == []
+    assert result["reasons"] == ["scenariul nu se sprijină pe nicio afirmație"]
+
+    # And the factual instructions are the ones the Director always had.
+    sourced = a_film(engine, voiceover=ENGLISH, with_source=True)
+    seen: dict = {}
+
+    def answer(prompt):
+        seen["prompt"] = prompt
+        return json.dumps({"verdict": "APPROVE", "story": "Water.", "reasons": []})
+
+    registry, _ = registry_with(staffed, answer)
+    editorial_review(engine, registry, sourced["asset"], language="en")
+    assert "A film about the studio itself" in seen["prompt"]
+    assert "backed by a real source" in seen["prompt"]
+    assert "A dramatisation is not a factual film" not in seen["prompt"]
+    assert '"serial": false' in seen["prompt"]
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not on PATH")

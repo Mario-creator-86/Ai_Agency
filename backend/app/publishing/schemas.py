@@ -25,6 +25,9 @@ class ChannelView(BaseModel):
     autonomous_privacy: str = "private"
     public_publish_enabled: bool = False
     publish_delay_minutes: int = 0
+    # Read on the OFFICE_SERIAL channel only: whether the Director's PASS approves an
+    # episode by itself, or the episode waits for the Owner's decide_episode.
+    director_may_approve_episodes: bool = False
     policy_version: int = 1
     policy_changed_event_id: str | None = None
     status: str
@@ -77,6 +80,10 @@ class PublishPolicyCommand(BaseModel):
     # A delay before a scheduled public release. Thirty days is YouTube's own horizon for a
     # publishAt; a longer one is a wrong number, not a plan.
     publish_delay_minutes: int | None = Field(default=None, ge=0, le=43200)
+    # Whether the Director may approve an episode of the serial without the Owner's click.
+    # Meaningful on the OFFICE_SERIAL channel; the same versioned, recorded write as the
+    # visibility, because it decides what the studio films on its own.
+    director_may_approve_episodes: bool | None = None
 
 
 class PublishPolicyResult(BaseModel):

@@ -24,6 +24,7 @@ from app.publishing.models import ChannelRecord
 from app.publishing.services import seed_default_channels
 from app.research.models import ResearchAllowedHost
 from app.services import read_events, utc_now
+from app.story.models import ContinuityState
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
@@ -76,6 +77,18 @@ def a_studio_with_history(engine, tmp_path):
                 context_json={},
             )
         )
+        # The serial's memory: a canon summary that names an episode the reset deletes.
+        session.add(
+            ContinuityState(
+                id=1,
+                version=2,
+                canon_episode_number=1,
+                threads_json=[{"id": "T1", "text": "Who moved the plant?", "opened_in": 1}],
+                recurring_json=["the plant"],
+                summaries_json=[{"episode_number": 1, "episode_id": str(uuid4())}],
+                updated_at=utc_now(),
+            )
+        )
         session.add(
             TopicIdea(
                 id=str(uuid4()),
@@ -108,9 +121,12 @@ def test_the_history_goes_and_the_configuration_stays(engine, tmp_path):
     assert result["deleted"]["agent_message"] == 2
     assert result["deleted"]["agent_run"] == 1 and result["deleted"]["topic_idea"] == 1
     assert result["deleted"]["memory_record"] == 1 and result["media_folders"] == 1
+    # Canon goes with the episodes it summarises, or the serial would remember a day
+    # whose episode no longer exists.
+    assert result["deleted"]["continuity_state"] == 1
     assert not any(media.iterdir())
     with Session(engine) as session:
-        for model in (AgentMessage, AgentRun, MemoryRecord, TopicIdea):
+        for model in (AgentMessage, AgentRun, MemoryRecord, TopicIdea, ContinuityState):
             assert session.scalar(select(func.count()).select_from(model)) == 0
         assert session.scalar(select(func.count(Agent.id))) == before["agents"] == 8
         assert session.scalar(select(func.count(ChannelRecord.id))) == before["channels"] == 2

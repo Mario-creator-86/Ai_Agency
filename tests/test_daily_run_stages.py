@@ -481,11 +481,14 @@ def test_publishing_visibility_is_the_channel_policy_and_the_stamp_is_its_versio
     from app.publishing.schemas import PublishPolicyCommand
     from app.publishing.services import change_publish_policy
     from sqlalchemy import select
+    from test_publish_policy import _to_production
 
     channels = _seeded_channels(engine)
     _serial_film(engine, tmp_path)
     serial = channels["OFFICE_SERIAL"]["id"]
     _bound(engine, serial, _connected(engine, "Serial account"))
+    # A visible release exists only in PRODUCTION; in TEST the same policy uploads private.
+    _to_production(engine)
     change_publish_policy(
         engine,
         serial,
@@ -639,6 +642,17 @@ def _approved_board(engine, title: str, *, serial: bool = False) -> str:
     return board_id
 
 
+def _autonomy_on(engine) -> None:
+    """The studio as the runbook finds it before the media stage: the Owner's switch off.
+
+    Bootstrap seeds the stop on; the stage now reads the switch before each film, so a test
+    that calls it directly starts from the state the runbook would have reached."""
+    from app.models import OwnerPolicy
+
+    with Session(engine) as session, session.begin():
+        session.get(OwnerPolicy, 1).autonomy_stopped = False
+
+
 def _media_stage_with_a_fake_camera(monkeypatch, rendered: list[str]):
     """Everything around the render is real; the render itself only records its order."""
     from app.runbook import stages
@@ -664,6 +678,7 @@ def _media_stage_with_a_fake_camera(monkeypatch, rendered: list[str]):
 def test_media_renders_the_factual_film_first_and_the_serial_second(engine, settings, monkeypatch):
     from app.runbook import stages
 
+    _autonomy_on(engine)
     serial = _approved_board(engine, "Office serial", serial=True)
     factual = _approved_board(engine, "A factual short")
     rendered: list[str] = []
@@ -683,6 +698,7 @@ def test_a_budget_refusal_after_the_factual_film_skips_the_serial_and_says_so(
     the factual film spent, and refused for the serial alone when the day's money is gone."""
     from app.runbook import stages
 
+    _autonomy_on(engine)
     serial = _approved_board(engine, "Office serial", serial=True)
     factual = _approved_board(engine, "A factual short")
     rendered: list[str] = []
@@ -755,6 +771,10 @@ def test_the_media_stage_reports_the_stop_as_blocked_not_failed(engine, settings
     from app.runbook import stages
     from app.runbook.services import OWNER_STOP_REASON
 
+    # The switch is off when the film starts; the render itself meets the stop between
+    # scenes, which is the path this test holds (the stage's own read before each film is
+    # tests/test_phase_bc_adversary.py's).
+    _autonomy_on(engine)
     _approved_board(engine, "A factual short")
     rendered: list[str] = []
     _media_stage_with_a_fake_camera(monkeypatch, rendered)

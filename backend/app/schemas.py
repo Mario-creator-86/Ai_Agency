@@ -33,7 +33,11 @@ class PolicyView(BaseModel):
     #: Which environment the studio is in. The page shows it; the backend decides it.
     environment: Literal["TEST", "PRODUCTION"] = "TEST"
     autonomy_mode: Literal["MANUAL"] = "MANUAL"
-    public_publish_enabled: Literal[False] = False
+    #: Whether any channel may publish publicly. The switch itself is per channel
+    #: (`ChannelView.public_publish_enabled`, set only by the Owner's publish-policy
+    #: command); the studio view sums them, so a page reading it is not told "never"
+    #: while a channel's own policy says otherwise.
+    public_publish_enabled: bool = False
     external_payments_enabled: Literal[False] = False
     autonomous_firing_enabled: Literal[False] = False
     provider_auto_switch_enabled: Literal[False] = False

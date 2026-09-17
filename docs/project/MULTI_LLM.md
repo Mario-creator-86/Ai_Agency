@@ -149,7 +149,9 @@ familiar, testul ar fi greșit. Verificarea cea mai importantă scanează `backe
 dacă vreun nume de model din configurare apare în cod, în afara documentației.
 
 Migrarea 0034 se aplică curat pe copia bazei live, iar alocarea cerută se rezolvă complet pe
-registrul real.
+registrul real. (0034 nu mai este capul lanțului de migrări: `main.py` fixează revizia curentă —
+`0038_director_may_approve_episodes` la 2026-09-18 — și `scripts/bootstrap.py` trebuie rulat
+înainte de pornire.)
 
 ## LIMITE CARE RĂMÂN
 

@@ -8,7 +8,10 @@ measured every publication through whichever slot was bound first.
 
 Tests here:
 - the policy command is Owner-only, versioned, idempotent and recorded as a ledger event;
-- "public" is refused while the studio is in TEST, and without the per-channel flag;
+- "public" is refused while the studio is in TEST, and without the per-channel flag, and
+  the flag alone cannot bring a policy back to public in TEST;
+- an unlisted or public policy resolves private outside PRODUCTION (an unlisted film is a
+  release anyone with the link can watch);
 - ``resolve_publish_visibility`` truth table, including the private + publishAt pair;
 - the upload metadata carries ``status.publishAt`` and the disclosure stays;
 - ``update_visibility`` calls videos.update on a faked transport;
@@ -155,8 +158,88 @@ def test_seeded_channels_start_private_with_the_flag_off(engine):
         assert channel["autonomous_privacy"] == "private"
         assert channel["public_publish_enabled"] is False
         assert channel["publish_delay_minutes"] == 0
+        assert channel["director_may_approve_episodes"] is False
         assert channel["policy_version"] == 1
         assert channel["policy_changed_event_id"] is None
+
+
+def test_the_director_approves_episodes_only_under_the_owners_command(engine):
+    """Measured before this: `director_may_approve_episodes` was read from Channel B's
+    `series_rules_json`, and nothing wrote it there — the production-policy validator would
+    have refused the key — so every episode the Director passed stayed DRAFT for the Owner.
+    The flag is a column of the publish policy now, set by the same versioned command."""
+    from app.story.review import director_may_approve_episodes
+
+    channels = _channels(engine)
+    serial, factual = channels["OFFICE_SERIAL"], channels["MAIN_FACTUAL"]
+
+    # A fresh channel leaves the episodes to the Owner.
+    with Session(engine) as session:
+        assert director_may_approve_episodes(session) is False
+
+    command = _command(director_may_approve_episodes=True)
+    result = change_publish_policy(engine, serial["id"], command)
+    assert result["status"] == "COMMITTED"
+    assert result["channel"]["director_may_approve_episodes"] is True
+    assert result["channel"]["policy_version"] == 2
+    events = _events(engine, "publishing.channel_policy_changed")
+    assert len(events) == 1
+    payload = events[0].payload
+    assert payload["changed"] == ["director_may_approve_episodes"]
+    assert payload["old"]["director_may_approve_episodes"] is False
+    assert payload["new"]["director_may_approve_episodes"] is True
+    assert payload["old"]["autonomous_privacy"] == payload["new"]["autonomous_privacy"]
+    with Session(engine) as session:
+        assert director_may_approve_episodes(session) is True
+        row = session.get(ChannelRecord, serial["id"])
+        assert row.director_may_approve_episodes is True
+        # The flag lives in its own column; the production rules are untouched.
+        assert row.series_rules_json == {}
+
+    # The same command again is the same answer, and nothing happens a second time.
+    assert change_publish_policy(engine, serial["id"], command) == result
+    assert len(_events(engine, "publishing.channel_policy_changed")) == 1
+
+    # A stale version is refused: the screen must look at the row it is changing.
+    with pytest.raises(CommandConflict):
+        change_publish_policy(engine, serial["id"], _command(director_may_approve_episodes=False))
+
+    # Asking for what is already the case is NO_CHANGE: no version bump, no event.
+    same = change_publish_policy(
+        engine, serial["id"], _command(expected_version=2, director_may_approve_episodes=True)
+    )
+    assert same["status"] == "NO_CHANGE" and same["event_id"] is None
+    assert same["channel"]["policy_version"] == 2
+    assert len(_events(engine, "publishing.channel_policy_changed")) == 1
+
+    # A field left out keeps its value: changing the privacy does not clear the flag.
+    other = change_publish_policy(
+        engine, serial["id"], _command(expected_version=2, autonomous_privacy="unlisted")
+    )
+    assert other["status"] == "COMMITTED"
+    assert other["channel"]["director_may_approve_episodes"] is True
+    assert other["channel"]["policy_version"] == 3
+
+    # The Owner takes the flag back through the same command, recorded like the grant.
+    revoked = change_publish_policy(
+        engine, serial["id"], _command(expected_version=3, director_may_approve_episodes=False)
+    )
+    assert revoked["status"] == "COMMITTED"
+    assert (
+        _events(engine, "publishing.channel_policy_changed")[-1].payload["new"][
+            "director_may_approve_episodes"
+        ]
+        is False
+    )
+    with Session(engine) as session:
+        assert director_may_approve_episodes(session) is False
+
+    # The flag on the factual channel is not the serial's policy: only Channel B is read.
+    change_publish_policy(engine, factual["id"], _command(director_may_approve_episodes=True))
+    with Session(engine) as session:
+        assert director_may_approve_episodes(session) is False
+    flags = {c["channel_type"]: c["director_may_approve_episodes"] for c in list_channels(engine)}
+    assert flags == {"OFFICE_SERIAL": False, "MAIN_FACTUAL": True}
 
 
 def test_the_policy_command_is_versioned_idempotent_and_recorded(client, headers, engine):
@@ -308,7 +391,7 @@ def _policy(
     [
         (_policy(), "TEST", "private", False),
         (_policy(), "PRODUCTION", "private", False),
-        (_policy("unlisted"), "TEST", "unlisted", False),
+        (_policy("unlisted"), "TEST", "private", False),
         (_policy("unlisted"), "PRODUCTION", "unlisted", False),
         (_policy("public", enabled=False), "PRODUCTION", "private", False),
         (_policy("public", enabled=True), "TEST", "private", False),
@@ -474,14 +557,17 @@ def test_routing_follows_the_storyboard_channel_when_it_is_set(engine, tmp_path)
     bundle = _create_verified_asset_bundle(engine, tmp_path)
     _bind(engine, channels["MAIN_FACTUAL"]["id"], _connect(engine, name="Main account"))
 
-    # A storyboard produced for the serial names its channel; the film follows it there,
-    # and an unbound serial slot is a refusal even though the main slot could publish.
+    # A storyboard produced for the serial names its channel and carries the serial's key
+    # (`storyboard_from_episode` writes both); the film follows it there, and an unbound
+    # serial slot is a refusal even though the main slot could publish. A pin that
+    # contradicts the key goes nowhere (tests/test_phase_bc_adversary.py).
     with Session(engine) as session, session.begin():
         board = session.scalars(
             select(Storyboard).where(Storyboard.script_draft_id == bundle["script_id"])
         ).one()
         board_id = board.id
         board.channel_id = channels["OFFICE_SERIAL"]["id"]
+        board.series_key = "office_serial"
     routed = select_channel_for(engine, bundle["asset_id"])
     assert routed["status"] == "SKIPPED" and routed["channel_type"] == "OFFICE_SERIAL"
 
@@ -538,11 +624,13 @@ def test_a_private_upload_keeps_the_five_gates(engine, tmp_path):
 def test_an_unlisted_publication_carries_the_policy_version_that_authorised_it(engine, tmp_path):
     channel = _channels(engine)["MAIN_FACTUAL"]
     bundle = _create_verified_asset_bundle(engine, tmp_path)
+    # An unlisted release, like a public one, exists only in PRODUCTION.
+    _to_production(engine)
     change_publish_policy(engine, channel["id"], _command(autonomous_privacy="unlisted"))
     with Session(engine) as session:
         row = session.get(ChannelRecord, channel["id"])
         assert row.policy_version == 2
-        resolved = resolve_publish_visibility(row, "TEST")
+        resolved = resolve_publish_visibility(row, "PRODUCTION")
     assert resolved == {
         **resolved,
         "privacy_status": "unlisted",

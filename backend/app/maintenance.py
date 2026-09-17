@@ -41,6 +41,8 @@ HISTORY_TABLES: tuple[str, ...] = (
     "source_snapshot",
     "topic_idea",
     "story_episode",
+    # The serial's memory cites episodes by id in its summaries; canon goes with them.
+    "continuity_state",
     "daily_studio_log",
     "content_experiment",
     "analytics_snapshot",

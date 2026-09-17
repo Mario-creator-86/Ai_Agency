@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.models import CommandRecord, DomainEvent, OwnerPolicy, Room, Studio
+from app.publishing.models import ChannelRecord
 from app.schemas import (
     EnvironmentCommand,
     EventView,
@@ -139,12 +140,29 @@ def remember_command(
     )
 
 
-def policy_view(policy: OwnerPolicy) -> PolicyView:
+def policy_view(policy: OwnerPolicy, session: Session | None = None) -> PolicyView:
+    """The studio's policy as the page reads it.
+
+    `public_publish_enabled` is per channel (the Owner's publish-policy command, on
+    `ChannelView`); here it is "any channel may publish publicly", read from the channel
+    rows when the caller's session is given. Every caller in this module has one; a bare
+    call answers False, the safe reading, never a guess.
+    """
+    public = False
+    if session is not None:
+        public = bool(
+            session.scalar(
+                select(func.count())
+                .select_from(ChannelRecord)
+                .where(ChannelRecord.public_publish_enabled.is_(True))
+            )
+        )
     return PolicyView(
         version=policy.version,
         autonomy_stopped=policy.autonomy_stopped,
         # A row written before the column existed reads as None; TEST is the safe reading.
         environment=policy.environment or "TEST",  # type: ignore[arg-type]
+        public_publish_enabled=public,
     )
 
 
@@ -217,7 +235,7 @@ def change_environment(engine: Engine, command: EnvironmentCommand) -> PolicyRes
         result = PolicyResult(
             command_id=command_id,
             status="COMMITTED" if changed else "NO_CHANGE",
-            policy=policy_view(policy),
+            policy=policy_view(policy, session),
             event_id=event_id,
         )
         session.add(
@@ -284,7 +302,7 @@ def change_stop(engine: Engine, command: PolicyCommand) -> PolicyResult:
         result = PolicyResult(
             command_id=command_id,
             status="COMMITTED" if changed else "NO_CHANGE",
-            policy=policy_view(policy),
+            policy=policy_view(policy, session),
             event_id=event_id,
         )
         session.add(
@@ -317,7 +335,7 @@ def snapshot(engine: Engine) -> dict:
             "studio": {"id": studio.id, "name": studio.name, "timezone": studio.timezone},
             "maturity": "DEVELOPMENT",
             "deployment_mode": "LOCAL_STUDIO",
-            "policy": policy_view(policy).model_dump(),
+            "policy": policy_view(policy, session).model_dump(),
             "office": {
                 "rooms": [
                     {

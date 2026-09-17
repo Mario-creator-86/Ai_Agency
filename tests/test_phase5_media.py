@@ -887,3 +887,79 @@ def test_the_render_counts_its_own_fallbacks(engine, tmp_path):
     summary = render["production"]["motion"]
     assert summary["motion_scenes"] == 1 and summary["fallback_scenes"] == 1
     assert summary["scenes"] == 2 and summary["clips"] == 1
+
+
+# ------------------------------------------------------ the Owner's own render button
+# Measured before this work: the daily run handed `settings=` (captions_burn_in, the
+# fallback ceiling) to the assembler and to quality control, and the media route called both
+# without it, so the Owner's render button made a film under different rules than the day.
+
+
+def test_the_owners_render_button_hands_the_settings_to_the_camera_and_to_qc(
+    client, headers, engine, settings, tmp_path: Path, monkeypatch
+):
+    from app.factual.models import StoryReview
+    from app.media.models import Storyboard
+
+    storyboard_id, _ = _seeded_storyboard(engine, tmp_path)
+    with Session(engine) as session, session.begin():
+        board = session.get(Storyboard, storyboard_id)
+        session.add(
+            StoryReview(
+                id=str(uuid4()),
+                script_id=board.script_draft_id,
+                verdict="PASS",
+                checks_json={},
+                retention_json={},
+                scores_json={},
+                notes_json={},
+                estimated_seconds=12.0,
+                created_at=utc_now(),
+            )
+        )
+    received: dict[str, dict] = {}
+    asset_id = str(uuid4())
+
+    def fake_assemble(engine_, storyboard, correlation, **kwargs):
+        received["render"] = kwargs
+        return {"job_id": str(uuid4()), "output_asset_id": asset_id, "provenance_hash": "0"}
+
+    def fake_qc(engine_, asset, correlation, **kwargs):
+        received["qc"] = kwargs
+        return {
+            "id": str(uuid4()),
+            "media_asset_id": asset,
+            "status": "PASSED",
+            "score": 1.0,
+            "checks_json": {},
+            "failure_reasons_json": [],
+            "verified_at": utc_now(),
+        }
+
+    monkeypatch.setattr("app.media.router.assemble_video_job", fake_assemble)
+    monkeypatch.setattr("app.media.router.evaluate_media_qc", fake_qc)
+
+    response = client.post(f"/api/v1/media/render/{storyboard_id}", headers=headers)
+    assert response.status_code == 200, response.text
+    assert received["render"]["settings"] is settings
+    assert received["qc"]["settings"] is settings
+
+    # Quality control asked for on its own reads the same settings.
+    received.clear()
+    with Session(engine) as session, session.begin():
+        session.add(
+            MediaAsset(
+                id=asset_id,
+                asset_type="RENDERED_VIDEO",
+                uri_or_path=str(tmp_path / "final_short_9_16.mp4"),
+                file_size_bytes=1,
+                mime_type="video/mp4",
+                provider_name="STUDIO_INTERNAL",
+                license_status="PROPRIETARY_STUDIO",
+                provenance_hash="0" * 64,
+                created_at=utc_now(),
+            )
+        )
+    response = client.post(f"/api/v1/media/qc/{asset_id}", headers=headers)
+    assert response.status_code == 200, response.text
+    assert received["qc"]["settings"] is settings

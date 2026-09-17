@@ -33,6 +33,15 @@ class ChannelRecord(Base):
     autonomous_privacy: Mapped[str] = mapped_column(String(20), nullable=False, default="private")
     public_publish_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     publish_delay_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: Whether the Director may approve an episode of the serial on her own (migration 0038;
+    #: read by `app.story.review.director_may_approve_episodes` on the OFFICE_SERIAL row).
+    #: Measured before the column: the flag was read from `series_rules_json`, which the
+    #: production-policy validator keeps to {series_key: {purpose: selection}}, so no command
+    #: could write it and every episode the Director passed stayed DRAFT for the Owner. False
+    #: is the safe reading; part of the versioned policy, so a grant bumps `policy_version`.
+    director_may_approve_episodes: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
     policy_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     policy_changed_event_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("domain_event.event_id"), nullable=True

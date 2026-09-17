@@ -327,3 +327,46 @@ def test_error_logs_do_not_contain_token_or_input(client, headers, monkeypatch, 
     assert headers["Authorization"] not in result.text
     logged = capsys.readouterr().err
     assert headers["Authorization"] not in logged
+
+
+def test_the_studio_view_says_public_publishing_is_on_only_when_a_channel_allows_it(engine):
+    """`public_publish_enabled` on the studio view was a constant False while the switch
+    became per channel (an Owner command on the channel); the studio view now reads as
+    "any channel may publish publicly", and each channel's own view carries its policy."""
+    from app.publishing.schemas import PublishPolicyCommand
+    from app.publishing.services import (
+        change_publish_policy,
+        list_channels,
+        seed_default_channels,
+    )
+    from app.schemas import EnvironmentCommand
+    from app.services import change_environment
+
+    seed_default_channels(engine)
+    before = snapshot(engine)["policy"]
+    assert before["public_publish_enabled"] is False
+
+    # "public" is accepted only in PRODUCTION, set through the studio's own command.
+    to_production = change_environment(
+        engine,
+        EnvironmentCommand(
+            command_id=uuid4(), expected_version=before["version"], environment="PRODUCTION"
+        ),
+    )
+    assert to_production.policy.public_publish_enabled is False
+
+    channel = next(c for c in list_channels(engine) if c["channel_type"] == "MAIN_FACTUAL")
+    change_publish_policy(
+        engine,
+        channel["id"],
+        PublishPolicyCommand(
+            command_id=uuid4(),
+            expected_version=channel["policy_version"],
+            autonomous_privacy="public",
+            public_publish_enabled=True,
+        ),
+    )
+    assert snapshot(engine)["policy"]["public_publish_enabled"] is True
+    # A later Owner command answers with the same truth.
+    result = change_stop(engine, stop_command(to_production.policy.version, False))
+    assert result.policy.public_publish_enabled is True

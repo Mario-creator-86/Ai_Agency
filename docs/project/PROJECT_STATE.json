@@ -1,34 +1,36 @@
 {
-  "phase": "10",
-  "completed_milestone": "Phase 2 Automation (last phase completed against its original acceptance criteria)",
-  "active_task": "Phase 10 complete: preflight, staged daily run, derived status, safe mode",
-  "next_task": "Phase 11: public/fan hooks",
+  "phase": "10 (Phase B/C of autonomy: delivery and the serial)",
+  "completed_milestone": "Phase A (the clock, fault classes, provider retries, the watchdog; verified 863/863 twice) and Phase B/C (per-channel publish policy, the serial filmed in-run, captions and loudness measured; closed 2026-09-18 with the Director's serial reading and the Director's leave as a policy column)",
+  "active_task": "Tracking documents brought to the truth (2026-09-18); the whole suite with both closures is the verifier's to run",
+  "next_task": "The first real day with both channels bound, watched by the Owner (the daily job stays dormant until the Owner's recorded activation); move the end-of-run close of today's log so every date has a full-day log; a screen for the publish policy and the Director's leave",
   "last_green_test_commit": null,
-  "verification": "docs/project/AUDIT_2026-09-10_THIRD_PARTY.md",
+  "verification": "docs/project/CURRENT_STATUS.md, sections 'Delivery and the serial (2026-09-17/18)' and 'The clock, and a day that asks again (2026-09-17)'",
   "tests": {
-    "python_passed": 522,
+    "python_passed": 974,
     "python_skipped": 1,
-    "javascript_passed": 79,
-    "failed": 0
+    "python_collected": 975,
+    "javascript_passed": 87,
+    "failed": 0,
+    "note": "974 passed / 1 skipped is the whole-suite run on the final tree of Phase B/C and its closure (2026-09-18, after the verifier's seven fixes and its 21 adversarial tests, with the loopback-only socket guard active); 975 collected with 'uv run pytest --collect-only -q tests'; 87 frontend tests with 'npm test --prefix frontend'"
   },
   "known_blockers": [
-    "No provider is verified on a clean install: the seeded Ollama endpoint is recorded NOT_CONFIGURED until the Owner runs the check, so no model is assignable until then",
-    "Research retrieval is off until the Owner lists hosts in STUDIO_RESEARCH_ALLOWED_HOSTS; there is still no search provider, so sources are supplied by URL rather than discovered",
-    "No media credentials yet: ElevenLabs and OpenAI image adapters are built and wired, but until the Owner verifies and selects one, renders use placeholder frames and QC blocks them from publication",
-    "Independent verification needs two active agents with verified models; with one, the studio refuses to verify rather than letting an agent confirm its own reading",
-    "No YouTube OAuth credentials: publishing is disabled by design until a YouTube connection is saved and verified, so Phase 6 acceptance ('private upload verified') is not met",
-    "Analytics returns HTTP 503 until a YouTube connection is verified, by design: there is no local substitute for what a platform measured, and nothing is estimated in its absence",
-    "Analytics has no UI panel yet; the endpoints are live and the data is empty until a channel is connected",
-    "The daily run has no stage implementations connected yet: every stage after the preflight is recorded SKIPPED with that reason, so a run reports PARTIAL rather than a completed day"
+    "The daily job is seeded dormant and stays so until the Owner's recorded activation (workflow.job_activated); no daily run has been queued by anyone since Phase A, by the Owner's rule that video generation costs money and happens only when everything is proven",
+    "No real day has run with both channels bound: the per-channel publish policy, the serial's routing to OFFICE_SERIAL, publishAt and videos.update were exercised only against faked providers and transports",
+    "director_may_approve_episodes defaults to false on every channel, so until the Owner grants it (POST /api/v1/publishing/channels/{id}/publish-policy) a Director's PASS leaves the episode DRAFT for the Owner and the serial produces no storyboard on its own",
+    "Today's log is still closed at the end of the run, so a date whose run completes is frozen at the run's hour; a full-day log for every date needs that close moved",
+    "Character-drift QC is NOT_IMPLEMENTED: quality control reports the check as not performed",
+    "No frontend screen sets the publish policy or the Director's leave, and the scheduler panel does not yet read run_at_local; the API carries both",
+    "The seeded Character Bibles carry no voice binding and the assembler synthesises one voice per scene, so every serial scene is the narrator until the Owner binds voices"
   ],
   "future_integration_dependencies": [
-    "Configured LLM provider/model",
-    "Search provider",
-    "Media/TTS provider",
-    "YouTube OAuth"
+    "A real day with both YouTube channels bound (the Owner watches the first)",
+    "A licensed caption face instead of Arial by name",
+    "Speech recognition for caption coverage (today matched against the storyboard text)"
   ],
-  "configured_provider_names": [],
-  "migration_version": "0024_spending_budget",
+  "configured_provider_names": [
+    "Ollama Cloud (LLM), ElevenLabs (voice), Runway (picture), YouTube (two OAuth connections) — verified by the Owner on the live studio; not present on a clean install"
+  ],
+  "migration_version": "0038_director_may_approve_episodes",
   "autonomy_mode": "MANUAL",
   "feature_flags": {
     "public_publish_enabled": false,
@@ -36,5 +38,7 @@
     "autonomous_firing_enabled": false,
     "provider_auto_switch_enabled": false,
     "world_generation_enabled": false
-  }
+  },
+  "migration_count": 39,
+  "feature_flags_note": "public_publish_enabled is per channel since migration 0037 (channel_record.public_publish_enabled, seeded false on both slots); the studio-wide flag here is the seeded default"
 }

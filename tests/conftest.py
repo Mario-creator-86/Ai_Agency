@@ -11,6 +11,49 @@ from app.services import bootstrap_studio
 from fastapi.testclient import TestClient
 
 
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch):
+    """No test reaches a real provider: a socket to anything but loopback is refused.
+
+    The Owner's rule (2026-09-17): models, voices, video and uploads cost money and happen
+    only when everything is proven, so every adapter is faked at its transport. This
+    fixture is the proof rather than the promise — a fake wired one call short fails here
+    with the address it tried instead of spending at a vendor. Loopback stays open for a
+    test that serves itself; a Unix socket is a local path by definition.
+    """
+    import socket
+
+    real_connect = socket.socket.connect
+    real_connect_ex = socket.socket.connect_ex
+
+    def _local(address: object) -> bool:
+        if isinstance(address, (str, bytes)):
+            return True  # a Unix socket path
+        host = address[0] if isinstance(address, tuple) and address else None
+        return isinstance(host, str) and (
+            host in ("localhost", "::1") or host.startswith("127.") or host == ""
+        )
+
+    def refused(address: object) -> AssertionError:
+        return AssertionError(
+            f"a test tried to open a network connection to {address!r}; every provider "
+            "must be faked at its transport (the Owner's rule: nothing costs money in a test)"
+        )
+
+    def guarded_connect(self, address):
+        if not _local(address):
+            raise refused(address)
+        return real_connect(self, address)
+
+    def guarded_connect_ex(self, address):
+        if not _local(address):
+            raise refused(address)
+        return real_connect_ex(self, address)
+
+    monkeypatch.setattr(socket.socket, "connect", guarded_connect)
+    monkeypatch.setattr(socket.socket, "connect_ex", guarded_connect_ex)
+
+
 @pytest.fixture
 def settings(tmp_path):
     return Settings(

@@ -370,3 +370,88 @@ def test_the_database_refuses_a_recommendation_without_evidence(engine, channel)
                         created_at=utc_now(),
                     )
                 )
+
+
+# ---------------------------------------------------------------------------
+# The adapter's credentials are one account's, never a mixture
+# ---------------------------------------------------------------------------
+# Measured before this work: the constructor read STUDIO_YOUTUBE_* for every argument left
+# None, so an adapter built from a channel's bound account still took an access token from
+# the environment — another account's numbers attributed to this channel — and it had no
+# channel identity of its own.
+
+
+def test_explicit_analytics_credentials_never_mix_with_the_environment(monkeypatch):
+    from app.providers.youtube_analytics import YouTubeAnalyticsProvider
+
+    monkeypatch.setenv("STUDIO_YOUTUBE_CLIENT_ID", "env-client")
+    monkeypatch.setenv("STUDIO_YOUTUBE_CLIENT_SECRET", "env-secret")  # pragma: allowlist secret
+    monkeypatch.setenv("STUDIO_YOUTUBE_REFRESH_TOKEN", "env-refresh")  # pragma: allowlist secret
+    monkeypatch.setenv("STUDIO_YOUTUBE_ACCESS_TOKEN", "env-access")  # pragma: allowlist secret
+
+    explicit = YouTubeAnalyticsProvider(
+        client_id="own-client",
+        client_secret="own-secret",  # pragma: allowlist secret
+        refresh_token="own-refresh",  # pragma: allowlist secret
+        channel_id="UC_own",
+    )
+    assert explicit.client_id == "own-client"
+    assert explicit.client_secret == "own-secret"  # pragma: allowlist secret
+    assert explicit.refresh_token == "own-refresh"  # pragma: allowlist secret
+    # The environment's token would have been used before the refresh; it is not this
+    # account's, so it is not read at all.
+    assert explicit.access_token is None
+    assert explicit.channel_id == "UC_own"
+    assert explicit.is_configured()
+
+    # One explicit credential is still an explicit set: nothing is completed from the
+    # environment, and the adapter honestly says it is not configured.
+    partial = YouTubeAnalyticsProvider(client_id="own-client")
+    assert partial.client_secret is None and partial.refresh_token is None
+    assert partial.access_token is None and not partial.is_configured()
+
+    # With nothing given the pre-Settings path stands: the environment is the account.
+    from_env = YouTubeAnalyticsProvider()
+    assert from_env.client_id == "env-client" and from_env.access_token == "env-access"
+    assert from_env.channel_id is None
+
+
+def test_the_channels_adapter_carries_its_channel_and_ignores_the_environment(
+    engine, channel, monkeypatch
+):
+    from app.analytics.services import analytics_provider_for_channel
+    from app.youtube.models import YouTubeConnection
+
+    monkeypatch.setenv("STUDIO_YOUTUBE_ACCESS_TOKEN", "env-access")  # pragma: allowlist secret
+    connection_id = str(uuid4())
+    with Session(engine) as session, session.begin():
+        session.add(
+            YouTubeConnection(
+                id=connection_id,
+                name="Main account",
+                client_id="client-id",
+                redirect_uri="http://localhost/callback",
+                encrypted_secrets="opaque",
+                secret_fields=["client_secret", "refresh_token"],
+                status="CONNECTED",
+                remote_channel_id="UC_main",
+                remote_channel_title="Main account",
+                channel_snapshot={},
+                created_at=utc_now(),
+            )
+        )
+        session.get(ChannelRecord, channel).credentials_ref = f"youtube_connection:{connection_id}"
+
+    class Vault:
+        def decrypt(self, value: str) -> dict:
+            return {"client_secret": "s", "refresh_token": "r"}  # pragma: allowlist secret
+
+    provider, reason = analytics_provider_for_channel(engine, Vault(), channel)
+    assert provider is not None and reason == ""
+    assert provider.channel_id == "UC_main"
+    assert provider.access_token is None
+    assert (provider.client_id, provider.client_secret, provider.refresh_token) == (
+        "client-id",
+        "s",
+        "r",
+    )

@@ -8,7 +8,9 @@ already has for films:
 - **The checks are computed first**, without a model, because they are not matters of taste.
   Grounding (every cited id is in the day's record — reusing the rule `write_episode`
   enforces); privacy (no cited id outside the PUBLIC_SAFE projection, and nothing in the
-  text the redaction pass would change); length (at most `MAX_BEATS` beats and 45-70 seconds
+  text, the summary, the opened threads or the recurring elements the redaction pass would
+  change — the summary and the threads are what canon keeps and hands to every later
+  episode's prompt); length (at most `MAX_BEATS` beats and 45-70 seconds
   of dialogue at the studio's own 2.5 words a second); cast (every active roster member
   appears — the serial is about the studio, not about one of its desks); and new-viewer
   accessibility (the first beat names who is in the room and does not begin mid-thought).
@@ -16,10 +18,10 @@ already has for films:
 - **Then the Director's verdict**, through `run_agent_task` with the episode as data. Her
   notes go back to the showrunner for the one rewrite the stage allows.
 
-A PASS approves the episode only under the channel's policy: `director_may_approve_episodes`
-in the OFFICE_SERIAL channel's `series_rules_json`, False unless the Owner's publish-policy
-command set it. Without it the episode stays DRAFT with the review on it, for the Owner's
-`decide_episode`. A FAIL is REJECTED at once; the rewrite is a new draft.
+A PASS approves the episode only under the channel's policy: the OFFICE_SERIAL channel's
+`director_may_approve_episodes` column (migration 0038), False unless the Owner's
+publish-policy command set it. Without it the episode stays DRAFT with the review on it, for
+the Owner's `decide_episode`. A FAIL is REJECTED at once; the rewrite is a new draft.
 """
 
 from __future__ import annotations
@@ -60,8 +62,6 @@ REVIEWER_ROLE = "Director"
 WORDS_PER_SECOND = 2.5
 MIN_SECONDS = 45.0
 MAX_SECONDS = 70.0
-#: The channel policy flag the Owner's publish-policy command sets. Read, never written, here.
-POLICY_FLAG = "director_may_approve_episodes"
 #: Openings that assume the viewer saw yesterday. A first beat that starts with one of these
 #: does not stand alone.
 CONTINUATION_MARKERS = (
@@ -120,16 +120,16 @@ _INSTRUCTIONS = (
 def director_may_approve_episodes(session: Session) -> bool:
     """Whether the Owner's policy lets the Director approve an episode on her own.
 
-    False unless the OFFICE_SERIAL channel's `series_rules_json` says so. The flag is set only
-    by the Owner's publish-policy command; nothing here writes it.
+    False unless the OFFICE_SERIAL channel's publish policy says so. It used to be read from
+    the channel's `series_rules_json`, where no command could write it (the production-policy
+    validator keeps that JSON to series rules); it is a column of the policy now, set only by
+    the Owner's publish-policy command, which versions and records the grant. Nothing here
+    writes it.
     """
     channel = session.scalar(
         select(ChannelRecord).where(ChannelRecord.channel_type == "OFFICE_SERIAL")
     )
-    if channel is None:
-        return False
-    rules = channel.series_rules_json if isinstance(channel.series_rules_json, dict) else {}
-    return rules.get(POLICY_FLAG) is True
+    return bool(channel is not None and channel.director_may_approve_episodes)
 
 
 def _words(text: Any) -> int:
@@ -155,6 +155,14 @@ def episode_checks(session: Session, episode: StoryEpisode) -> dict[str, dict[st
     ]
     if leaks(episode.title):
         leaking.insert(0, 0)
+    # What canon would keep of this episode: measured, a key in the summary passed the
+    # beats' check and would have reached every later showrunner prompt through
+    # `_previously`.
+    continuity = episode.continuity_json or {}
+    carried = [str(continuity.get("summary") or "")]
+    carried += [str(t) for t in (continuity.get("threads_opened") or [])]
+    carried += [str(r) for r in (continuity.get("recurring") or [])]
+    leaking_canon = [text[:80] for text in carried if leaks(text)]
 
     words = sum(_words(beat.get("dialogue")) for beat in beats)
     seconds = round(words / WORDS_PER_SECOND, 1)
@@ -183,14 +191,21 @@ def episode_checks(session: Session, episode: StoryEpisode) -> dict[str, dict[st
             ),
         },
         "privacy": {
-            "passed": not private and not leaking,
+            "passed": not private and not leaking and not leaking_canon,
             "private_citations": private,
             "leaking_beats": leaking,
+            "leaking_canon": leaking_canon,
             "reason": "; ".join(
                 part
                 for part in (
                     f"{len(private)} evenimente citate nu sunt publice" if private else "",
                     f"beat-urile {leaking} conțin ceva ce nu poate fi public" if leaking else "",
+                    (
+                        "rezumatul, firele sau elementele recurente conțin ceva ce nu poate "
+                        "fi public"
+                        if leaking_canon
+                        else ""
+                    ),
                 )
                 if part
             ),
