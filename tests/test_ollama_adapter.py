@@ -8,8 +8,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from email.message import Message
 from unittest.mock import MagicMock, patch
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 
 import pytest
 from app.providers.ollama import OllamaProvider
@@ -209,3 +210,57 @@ def test_real_ollama_health_and_generate():
     result = run(provider.generate(model_name, "Say hello in one word.", max_tokens=5))
     assert isinstance(result.text, str) and len(result.text) > 0
     assert result.prompt_tokens is not None
+
+
+# ---------------------------------------------------------------------------
+# transient failures are retried (2026-09-17)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def instant_retries(monkeypatch):
+    from app.providers import retry
+
+    slept: list[float] = []
+    monkeypatch.setattr(retry, "sleep", slept.append)
+    return slept
+
+
+def _http_error(code: int) -> HTTPError:
+    return HTTPError("http://127.0.0.1:11434/api/generate", code, "reason", Message(), None)
+
+
+def test_a_503_then_200_generates_after_one_retry():
+    provider = OllamaProvider()
+    body = {"response": "The sky is blue.", "eval_count": 5, "done": True}
+    with patch(
+        "app.providers.ollama.urlopen", side_effect=[_http_error(503), _make_response(body)]
+    ) as urlopen:
+        result = run(provider.generate("llama3.2:latest", "Why is the sky blue?"))
+    assert result.text == "The sky is blue."
+    assert urlopen.call_count == 2
+
+
+def test_a_400_is_not_retried():
+    provider = OllamaProvider()
+    with patch("app.providers.ollama.urlopen", side_effect=_http_error(400)) as urlopen:
+        with pytest.raises(HTTPError) as excinfo:
+            run(provider.generate("llama3.2:latest", "test"))
+    assert excinfo.value.code == 400 and urlopen.call_count == 1
+
+
+def test_after_three_refusals_the_original_error_class_is_raised():
+    provider = OllamaProvider()
+    with patch("app.providers.ollama.urlopen", side_effect=URLError("refused")) as urlopen:
+        with pytest.raises(URLError):
+            run(provider.list_models())
+    assert urlopen.call_count == 3
+
+
+def test_a_generation_that_left_and_timed_out_is_not_sent_again():
+    """A cloud model may be answering; a second request would cost the same tokens again."""
+    provider = OllamaProvider()
+    with patch("app.providers.ollama.urlopen", side_effect=TimeoutError("timed out")) as urlopen:
+        with pytest.raises(TimeoutError):
+            run(provider.generate("llama3.2:latest", "test"))
+    assert urlopen.call_count == 1

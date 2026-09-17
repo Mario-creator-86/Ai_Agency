@@ -37,6 +37,10 @@ class DailyRun(Base):
     #: Set when the run stopped early, naming the stage and the reason.
     stopped_at_stage: Mapped[str | None] = mapped_column(String(60), nullable=True)
     stop_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: TRANSIENT | HARD when the run FAILED, else NULL. A transient fault (a timeout, a
+    #: provider's 5xx, "database is locked") did not open safe mode and the day may be
+    #: attempted again; a hard one did, and waits for a person.
+    fault_class: Mapped[str | None] = mapped_column(String(12), nullable=True)
     started_at: Mapped[str] = mapped_column(String(40), nullable=False)
     finished_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
     event_id: Mapped[str | None] = mapped_column(

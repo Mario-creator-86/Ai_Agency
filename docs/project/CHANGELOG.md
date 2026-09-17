@@ -1,5 +1,50 @@
 # Changelog
 
+## The clock, and a day that asks again — 2026-09-17
+
+Phase A of running unattended: the studio's own clock, and the durability under it. Measured on
+a copy of the live database, the daily job had never fired by itself; the one thing that had
+stopped the studio for days was a single "database is locked" at the wrong second, recorded with
+the weight of a bug, which opened safe mode and set the autonomy stop; no adapter retried a 503;
+two renders had been RENDERING since 2026-09-12; and the worker lived only inside `start.cmd`.
+
+- **A fault has a class.** `classify_fault` reads a stage's exception and its chain: TRANSIENT
+  (timeouts, refused or reset connections, DNS, a provider's 408/425/429/5xx, SQLite's and
+  SQLAlchemy's `OperationalError`, `RemoteStateUnavailable`, a runner's own `TransientStageError`)
+  is retried in place three times at 20, 40, 80 s and, still failing, fails the run without safe
+  mode; HARD — everything else — still opens safe mode. `daily_run.fault_class`, migration 0035.
+- **A day is re-attempted.** A BLOCKED preflight or a TRANSIENT failure queues the next attempt
+  half an hour on (`daily-retry-<date>-<n>`, three attempts per business date); a date that did
+  work is never rerun by the clock; the Director's letter about a stopped day waits for the last
+  attempt. `enqueue_task` takes `not_before`.
+- **A fixed local hour.** `scheduled_job.run_at_local` and `.timezone`; `daily_main` at
+  `STUDIO_DAILY_RUN_HOUR_LOCAL` (05:00) in `STUDIO_TIMEZONE`, DST-safe, still seeded dormant.
+- **STOP cancels a day in flight**, between stages: the rest BLOCKED "Oprit de AUTONOMIE
+  OPRITĂ.", the run PARTIAL or BLOCKED, no safe mode, no letter; `stop_requested(engine)` for
+  the loops inside a stage.
+- **The adapters retry.** `providers/retry.py` — `call_with_retries`, bounded exponential
+  backoff with jitter, Retry-After honoured under the cap — wraps every outbound call in
+  ElevenLabs, OpenAI images, Runway, Ollama, `ConfiguredLLM` and YouTube. A billed request that
+  left and got no answer is not sent again; `media_http.request` says which phase failed
+  (`unsent`, `unanswered`); the surfaced error keeps the vendor's class with "(after N attempts)".
+- **The watchdog.** A scheduled `watchdog` job every ten minutes: renders stuck past three hours
+  failed with the reason on the row, REMOTE_UNKNOWN and FAILED_RETRYABLE publications reconciled
+  through the existing functions at most three times and then NEEDS_RECONCILIATION with a note
+  for the Owner, lapsed leases reported. Nothing while STOP AUTONOMY is set.
+- **The studio as a service.** `scripts/install_studio_service.ps1` registers the Windows
+  Scheduled Task "AMN-AI Studio" (at logon and startup, three restarts, no time limit, log in
+  `data/studio-service.log`); `uninstall_studio_service.ps1` removes it; README "Running as a
+  service". Parsed, not run — the Owner runs them.
+- Settings: `STUDIO_DAILY_RUN_HOUR_LOCAL` 05:00, `STUDIO_DAILY_MAX_ATTEMPTS` 3,
+  `STUDIO_DAILY_RETRY_SECONDS` 1800, `STUDIO_STAGE_RETRY_ATTEMPTS` 3,
+  `STUDIO_STAGE_RETRY_BACKOFF_SECONDS` 20, `STUDIO_WATCHDOG_INTERVAL_SECONDS` 600,
+  `STUDIO_PROVIDER_RETRY_ATTEMPTS` 3, `STUDIO_PROVIDER_RETRY_MAX_SECONDS` 30,
+  `STUDIO_RENDER_STUCK_AFTER_SECONDS` 10800, `STUDIO_RECONCILE_MAX_ATTEMPTS` 3. Run
+  `scripts/bootstrap.py` (migrate) before starting this version.
+- Open: `ScheduledJobView` does not show the hour yet; the long runners do not poll the stop
+  inside a stage; a REMOTE_UNKNOWN publication with no remote id goes to the Owner rather than
+  being resolved; the remote-state honesty test now takes four seconds of real retry sleeps.
+
 ## People on the pavement, and traffic that does not thin out — 2026-09-16
 
 The Owner's goal for the live headquarters names what the picture has: trees, people, cars,

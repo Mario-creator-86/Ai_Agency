@@ -6,6 +6,8 @@ Follows Section 25 of Master Prompt & 22_PROVIDER_INTEGRATION_CONTRACTS.md:
 - AI / synthetic content disclosure flag.
 - Authoritative remote status queries and reconciliation before retry.
 - Never fabricates external state; returns NOT_CONFIGURED if credentials missing.
+- Bounded retries on 429, 5xx and unopened connections (`app.providers.retry`); a chunk is
+  re-sent with its Content-Range, so a repeat never makes a second video.
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ import logging
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 from app.providers.publishing_base import (
@@ -25,6 +27,7 @@ from app.providers.publishing_base import (
     RemoteVideoStatus,
     UploadResult,
 )
+from app.providers.retry import call_with_retries
 
 logger = logging.getLogger("studio.publishing.youtube")
 
@@ -38,6 +41,21 @@ UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024
 SYNTHETIC_DISCLOSURE = (
     "Disclosure: this video was produced with generative AI by an autonomous studio pipeline."
 )
+
+
+def _open(req: Request, *, timeout: float) -> Any:
+    """`urlopen` with the studio's retry policy (429, 5xx, a connection that never opened).
+
+    Every request here may be repeated: a token refresh yields the same token, the session
+    initiation creates no video, a chunk carries its Content-Range so Google keeps one copy,
+    and the reads are reads. Google's 308 checkpoint is not an error to the policy and reaches
+    the uploader untouched. `urlopen` is looked up at call time so tests keep replacing it.
+    """
+    return call_with_retries(
+        lambda: urlopen(req, timeout=timeout),
+        repeatable=True,
+        what=f"youtube {req.get_method()} {urlsplit(req.full_url).path}",
+    )
 
 
 def youtube_provider_from_settings(settings: Any) -> YouTubeProvider:
@@ -92,7 +110,7 @@ class YouTubeProvider(PublishingProvider):
         ).encode("utf-8")
         req = Request(GOOGLE_TOKEN_URL, data=data, method="POST")
         try:
-            with urlopen(req, timeout=15) as resp:
+            with _open(req, timeout=15) as resp:
                 res_data = json.loads(resp.read().decode("utf-8"))
                 token = res_data.get("access_token")
                 if not token:
@@ -116,7 +134,7 @@ class YouTubeProvider(PublishingProvider):
             token = self._get_access_token()
             url = f"{YOUTUBE_API_BASE}/channels?part=snippet&mine=true"
             req = Request(url, headers={"Authorization": f"Bearer {token}"}, method="GET")
-            with urlopen(req, timeout=10) as resp:
+            with _open(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 items = data.get("items", [])
                 if items:
@@ -196,7 +214,7 @@ class YouTubeProvider(PublishingProvider):
         )
 
         try:
-            with urlopen(init_req, timeout=30) as resp:
+            with _open(init_req, timeout=30) as resp:
                 upload_uri = resp.headers.get("Location")
                 if not upload_uri:
                     return UploadResult(
@@ -232,7 +250,7 @@ class YouTubeProvider(PublishingProvider):
                         method="PUT",
                     )
                     try:
-                        with urlopen(chunk_req, timeout=300) as resp:
+                        with _open(chunk_req, timeout=300) as resp:
                             body = resp.read().decode("utf-8")
                             res_body = json.loads(body) if body.strip() else {}
                     except HTTPError as http_exc:
@@ -278,7 +296,7 @@ class YouTubeProvider(PublishingProvider):
         url = f"{YOUTUBE_API_BASE}/videos?part=status&id={remote_video_id}"
         req = Request(url, headers={"Authorization": f"Bearer {token}"}, method="GET")
         try:
-            with urlopen(req, timeout=10) as resp:
+            with _open(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 items = data.get("items", [])
                 if not items:
@@ -310,7 +328,7 @@ class YouTubeProvider(PublishingProvider):
         url = f"{YOUTUBE_API_BASE}/search?{params}"
         req = Request(url, headers={"Authorization": f"Bearer {token}"}, method="GET")
         try:
-            with urlopen(req, timeout=15) as resp:
+            with _open(req, timeout=15) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 for item in data.get("items", []):
                     title = item.get("snippet", {}).get("title", "")

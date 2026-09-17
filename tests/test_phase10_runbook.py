@@ -572,6 +572,360 @@ def test_production_work_shows_on_the_employee_doing_it(engine):
         pass
 
 
+# ---------------------------------------------------------------------------
+# Fault classes: a transient error is retried in place; only a hard one opens safe mode
+# ---------------------------------------------------------------------------
+
+
+def _all_ok() -> dict:
+    return {name: (lambda: {"status": COMPLETED, "reason": "ok"}) for name in STAGES[1:]}
+
+
+def test_a_transient_failure_is_retried_in_place_and_the_day_goes_on(
+    engine, settings, vault, studio
+):
+    """Measured on the live copy: one "database is locked" made the run FAILED, which opened
+    safe mode and stopped the studio for days. A transient fault is retried where it happened."""
+    from app.runbook.services import TRANSIENT, TransientStageError
+
+    make_a_model_available(engine)
+    settings.stage_retry_attempts = 3
+    settings.stage_retry_backoff_seconds = 20
+    calls: list[int] = []
+    waits: list[float] = []
+
+    def flaky() -> dict:
+        calls.append(1)
+        if len(calls) < 3:
+            raise TransientStageError("furnizorul a răspuns 503")
+        return {"status": COMPLETED, "reason": "a treia oară a mers"}
+
+    runners = _all_ok()
+    runners["media"] = flaky
+    result = execute_daily_run(engine, settings, vault, stage_runners=runners, sleep=waits.append)
+
+    assert result["status"] == "COMPLETED"
+    assert len(calls) == 3
+    assert waits == [20, 40], "exponential backoff, and no sleep after the attempt that worked"
+    media = next(s for s in result["stages"] if s["stage"] == "media")
+    assert media["status"] == COMPLETED and media["attempts"] == 3
+    assert media["fault_class"] is None
+    assert result["fault_class"] is None
+    assert safe_mode_state(engine)["active"] is False
+    types = [e["event_type"] for e in read_events(engine, after=0, limit=300)["events"]]
+    assert types.count("runbook.stage_retrying") == 2
+    assert TRANSIENT == "TRANSIENT"
+
+
+def test_a_stage_still_failing_after_the_retries_fails_the_run_without_safe_mode(
+    engine, settings, vault, studio
+):
+    from sqlalchemy.exc import OperationalError
+
+    make_a_model_available(engine)
+    settings.stage_retry_attempts = 2
+    calls: list[int] = []
+
+    def locked() -> dict:
+        calls.append(1)
+        raise OperationalError("UPDATE agent SET ...", {}, Exception("database is locked"))
+
+    runners = _all_ok()
+    runners["media"] = locked
+    result = execute_daily_run(
+        engine, settings, vault, stage_runners=runners, sleep=lambda _s: None
+    )
+
+    assert len(calls) == 1 + 2, "the first try and then the configured retries"
+    assert result["status"] == "FAILED"
+    assert result["fault_class"] == "TRANSIENT"
+    assert result["stopped_at_stage"] == "media"
+    media = next(s for s in result["stages"] if s["stage"] == "media")
+    assert media["status"] == FAILED and media["fault_class"] == "TRANSIENT"
+    assert media["attempts"] == 3
+    # Transient: the studio is not put out of action over it, and the day may be re-attempted.
+    assert safe_mode_state(engine)["active"] is False
+    with Session(engine) as session:
+        assert session.get(OwnerPolicy, 1).autonomy_stopped is False
+        assert session.get(DailyRun, result["id"]).fault_class == "TRANSIENT"
+    assert result["retryable"] is True
+
+
+def test_a_hard_failure_is_not_retried_and_still_opens_safe_mode(engine, settings, vault, studio):
+    make_a_model_available(engine)
+    calls: list[int] = []
+
+    def wrong() -> dict:
+        calls.append(1)
+        raise ValueError("scena 3 nu are nicio afirmație")
+
+    runners = _all_ok()
+    runners["media"] = wrong
+    result = execute_daily_run(
+        engine, settings, vault, stage_runners=runners, sleep=lambda _s: None
+    )
+
+    assert len(calls) == 1
+    assert result["status"] == "FAILED" and result["fault_class"] == "HARD"
+    assert result["retryable"] is False
+    assert safe_mode_state(engine)["active"] is True
+    with Session(engine) as session:
+        assert session.get(DailyRun, result["id"]).fault_class == "HARD"
+
+
+def test_a_stage_that_reports_its_own_failure_is_hard_unless_it_says_otherwise(
+    engine, settings, vault, studio
+):
+    make_a_model_available(engine)
+    runners = _all_ok()
+    runners["media"] = lambda: {"status": FAILED, "reason": "x", "fault_class": "TRANSIENT"}
+
+    result = execute_daily_run(engine, settings, vault, stage_runners=runners)
+
+    assert result["status"] == "FAILED" and result["fault_class"] == "TRANSIENT"
+    assert safe_mode_state(engine)["active"] is False
+
+
+def test_a_failure_to_close_the_day_is_classified_like_any_stage(
+    engine, settings, vault, studio, monkeypatch
+):
+    """The close of the day is a stage too. A hard fault there used to escape both classes:
+    the run was FAILED with no class, so neither safe mode nor a re-attempt followed, and
+    the studio carried on to the next day with an unexamined fault behind it."""
+    import app.runbook.services as services
+    from sqlalchemy.exc import OperationalError
+
+    make_a_model_available(engine)
+    settings.stage_retry_attempts = 2
+    calls: list[int] = []
+
+    def wrong(*args, **kwargs):
+        calls.append(1)
+        raise ValueError("jurnalul zilei nu are dată")
+
+    monkeypatch.setattr(services, "close_daily_log", wrong)
+    result = execute_daily_run(
+        engine, settings, vault, stage_runners=_all_ok(), sleep=lambda _s: None
+    )
+    assert len(calls) == 1, "a hard fault is not retried"
+    assert result["status"] == "FAILED" and result["fault_class"] == "HARD"
+    assert result["stopped_at_stage"] == "daily_log"
+    assert result["retryable"] is False
+    log = next(s for s in result["stages"] if s["stage"] == "daily_log")
+    assert log["status"] == FAILED and log["fault_class"] == "HARD"
+    assert safe_mode_state(engine)["active"] is True
+    with Session(engine) as session:
+        assert session.get(DailyRun, result["id"]).fault_class == "HARD"
+
+    # Leaving safe mode does not restart autonomy; the Owner opens the gate again himself.
+    clear_safe_mode(engine, "Am verificat: era testul.")
+    stop_autonomy(engine, False)
+    calls.clear()
+
+    def locked(*args, **kwargs):
+        calls.append(1)
+        raise OperationalError("INSERT daily_studio_log", {}, Exception("database is locked"))
+
+    monkeypatch.setattr(services, "close_daily_log", locked)
+    result = execute_daily_run(
+        engine, settings, vault, stage_runners=_all_ok(), sleep=lambda _s: None
+    )
+    assert len(calls) == 1 + 2, "a lock at the close is retried in place like any stage"
+    assert result["status"] == "FAILED" and result["fault_class"] == "TRANSIENT"
+    log = next(s for s in result["stages"] if s["stage"] == "daily_log")
+    assert log["status"] == FAILED and log["fault_class"] == "TRANSIENT"
+    assert log["attempts"] == 3
+    assert safe_mode_state(engine)["active"] is False
+
+
+def test_the_fault_class_is_read_from_the_shape_of_the_error():
+    """What the providers actually raise, sorted into the two classes the runbook acts on."""
+    import socket
+    from http.client import RemoteDisconnected
+    from urllib.error import HTTPError, URLError
+
+    from app.media.production_policy import PolicyError
+    from app.providers.media_http import MediaProviderError, MediaProviderNotConfigured
+    from app.providers.publishing_base import RemoteStateUnavailable
+    from app.runbook.services import HARD, TRANSIENT, TransientStageError, classify_fault
+    from sqlalchemy.exc import OperationalError
+
+    def chained(inner: BaseException) -> BaseException:
+        try:
+            raise RuntimeError("the stage wrapped it") from inner
+        except RuntimeError as exc:
+            return exc
+
+    transient = [
+        TransientStageError("say so"),
+        TimeoutError("timed out"),
+        ConnectionResetError(),
+        socket.gaierror("name resolution failed"),
+        URLError("connection refused"),
+        HTTPError("https://x", 503, "unavailable", {}, None),  # type: ignore[arg-type]
+        HTTPError("https://x", 429, "slow down", {}, None),  # type: ignore[arg-type]
+        RemoteDisconnected("closed"),
+        MediaProviderError("api.runwayml.com refused the request (HTTP 502)", http_status=502),
+        MediaProviderError("api.elevenlabs.io refused the request (HTTP 429)", http_status=429),
+        ValueError("Provider request failed (HTTP 502)"),  # ConfiguredLLM's own shape
+        OperationalError("UPDATE x", {}, Exception("database is locked")),
+        RemoteStateUnavailable("YouTube could not be asked"),
+        chained(TimeoutError("the socket")),
+        chained(OperationalError("SELECT 1", {}, Exception("database is locked"))),
+    ]
+    hard = [
+        ValueError("scena 3 nu are afirmații"),
+        KeyError("scene"),
+        RuntimeError("disk full"),
+        FileNotFoundError("render.mp4"),
+        PermissionError("output/"),
+        HTTPError("https://x", 401, "no", {}, None),  # type: ignore[arg-type]
+        HTTPError("https://x", 404, "no", {}, None),  # type: ignore[arg-type]
+        MediaProviderError("api.runwayml.com refused the request (HTTP 400)", http_status=400),
+        MediaProviderError("Runway reported success without an output"),
+        MediaProviderNotConfigured("no key"),
+        ValueError("Provider request failed (HTTP 401)"),
+        PolicyError("vocea este blocată de canal"),
+        ZeroDivisionError(),
+    ]
+    for exc in transient:
+        assert classify_fault(exc) == TRANSIENT, repr(exc)
+    for exc in hard:
+        assert classify_fault(exc) == HARD, repr(exc)
+
+
+# ---------------------------------------------------------------------------
+# STOP AUTONOMY cancels a day already running
+# ---------------------------------------------------------------------------
+
+
+def test_the_owner_stop_cancels_the_day_between_stages(
+    engine, settings, vault, studio, monkeypatch
+):
+    """The switch used to be read only at the gate: a day already running went on to the end."""
+    from app.runbook.services import stop_requested
+
+    make_a_model_available(engine)
+    letters: list[str] = []
+    monkeypatch.setattr(
+        "app.agents.director.letter_to_owner", lambda *a, **k: letters.append(a[1]) or "id"
+    )
+    ran: list[str] = []
+
+    def stop_after() -> dict:
+        ran.append("performance_intake")
+        stop_autonomy(engine, True)
+        return {"status": COMPLETED, "reason": "ok"}
+
+    runners = {
+        name: (lambda n=name: ran.append(n) or {"status": COMPLETED, "reason": "ok"})
+        for name in STAGES[1:]
+    }
+    runners["performance_intake"] = stop_after
+    assert stop_requested(engine) is False
+
+    result = execute_daily_run(engine, settings, vault, stage_runners=runners)
+
+    assert ran == ["performance_intake"], "nothing after the stop was attempted"
+    assert stop_requested(engine) is True
+    assert result["status"] == "PARTIAL", "a stage completed, so the day is partial"
+    assert result["stopped_at_stage"] == "idea_generation"
+    stages = {s["stage"]: s for s in result["stages"]}
+    assert stages["performance_intake"]["status"] == COMPLETED
+    for name in STAGES[2:]:
+        if name == "daily_log":
+            # The studio worked, so the day is closed — a partial day is still a day.
+            assert stages[name]["status"] == COMPLETED
+            continue
+        assert stages[name]["status"] == BLOCKED, name
+        assert "AUTONOMIE OPRITĂ" in stages[name]["reason"], name
+    assert safe_mode_state(engine)["active"] is False
+    assert letters == [], "the Owner stopped it; there is nothing to tell him"
+    with Session(engine) as session:
+        assert session.get(DailyRun, result["id"]).status == "PARTIAL"
+
+
+def test_a_day_stopped_before_any_work_is_blocked_not_partial(
+    engine, settings, vault, studio, monkeypatch
+):
+    """The Owner's click lands between the preflight and the first stage: nothing ran."""
+    import app.runbook.services as services
+
+    make_a_model_available(engine)
+    real_preflight = services.run_preflight
+    ran: list[str] = []
+
+    def preflight_then_stop(*args, **kwargs):
+        outcome = real_preflight(*args, **kwargs)
+        stop_autonomy(engine, True)
+        return outcome
+
+    monkeypatch.setattr(services, "run_preflight", preflight_then_stop)
+    runners = {
+        name: (lambda n=name: ran.append(n) or {"status": COMPLETED, "reason": "ok"})
+        for name in STAGES[1:]
+    }
+
+    result = execute_daily_run(engine, settings, vault, stage_runners=runners)
+
+    assert ran == []
+    assert result["status"] == "BLOCKED"
+    assert result["stopped_at_stage"] == "performance_intake"
+    assert all(s["status"] == BLOCKED for s in result["stages"][1:])
+    assert all("AUTONOMIE OPRITĂ" in s["reason"] for s in result["stages"][1:])
+    assert safe_mode_state(engine)["active"] is False
+
+
+# ---------------------------------------------------------------------------
+# The letter waits for the last attempt of the day
+# ---------------------------------------------------------------------------
+
+
+def test_the_letter_about_a_stopped_day_is_sent_only_after_the_last_attempt(
+    engine, settings, vault, studio, monkeypatch
+):
+    letters: list[str] = []
+    monkeypatch.setattr(
+        "app.agents.director.letter_to_owner", lambda *a, **k: letters.append(a[1]) or "id"
+    )
+    # A BLOCKED preflight (no model) is re-attemptable, so the first of three says nothing...
+    first = execute_daily_run(engine, settings, vault, attempt=1, attempts_allowed=3)
+    assert first["status"] == "BLOCKED" and first["retryable"] is True
+    assert letters == []
+    # ...and the last one writes.
+    last = execute_daily_run(engine, settings, vault, attempt=3, attempts_allowed=3)
+    assert last["retryable"] is True
+    assert len(letters) == 1 and "preflight" in letters[0]
+    # The default — one attempt, as the Owner's button runs it — writes at once.
+    execute_daily_run(engine, settings, vault)
+    assert len(letters) == 2
+
+
+def test_a_waiting_retry_does_not_block_the_owners_button(engine, settings, vault, studio):
+    """A re-attempt queued for half an hour on is not "a run in progress" to the Owner."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.workflows.services import enqueue_task
+
+    settings.worker_enabled = True
+    make_a_model_available(engine)
+    enqueue_task(
+        engine,
+        DAILY_RUN_TASK,
+        {"retry_of": "run-1", "attempt": 2, "date": "2026-09-17"},
+        max_attempts=1,
+        idempotency_key="daily-retry-2026-09-17-2",
+        not_before=(datetime.now(UTC) + timedelta(seconds=1800)).isoformat(),
+    )
+    assert pending_daily_run(engine) is not None
+
+    started = start_daily_run(engine, settings, str(uuid4()))
+
+    assert started["status"] == "QUEUED"
+    with pytest.raises(RunbookError, match="deja în lucru"):
+        start_daily_run(engine, settings, str(uuid4()))
+
+
 def test_a_render_cost_is_read_from_the_credits(engine):
     """The Owner's instruction: verify the cost from the credits, before and after."""
     from app.economy.credits import credit_balances, credit_spend

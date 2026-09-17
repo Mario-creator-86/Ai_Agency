@@ -35,9 +35,9 @@ logger = logging.getLogger(__name__)
 CALL_PATH = "/remote/object/call"
 CALL_TIMEOUT_S = 2.0
 #: Unreal may have restarted without the bridge seeing a failure; send everything again this often.
-#: A restarted level plays the seated loops again, so for up to this long the employees turn with the
-#: animation instead of holding the frame that faces the viewer: 20 s keeps that window short, and
-#: the resend is three calls a seat against a local endpoint.
+#: A restarted level plays the seated loops again, so for up to this long the employees turn
+#: with the animation instead of holding the frame that faces the viewer: 20 s keeps that window
+#: short, and the resend is three calls a seat against a local endpoint.
 REFRESH_S = 20.0
 
 Sender = Callable[[dict[str, Any]], None]
@@ -64,12 +64,18 @@ def load_seats(path: Path) -> dict[str, dict[str, Any]]:
         if not isinstance(seat, dict):
             continue
         fields = {key: seat.get(key) for key in ("desk", "actor", "body", "animation")}
-        paths: dict[str, Any] = {key: value for key, value in fields.items() if isinstance(value, str) and value}
+        paths: dict[str, Any] = {
+            key: value for key, value in fields.items() if isinstance(value, str) and value
+        }
         if len(paths) == len(fields):
             desk = paths.pop("desk")
             front = seat.get("front_s")
-            valid = isinstance(front, (int, float)) and not isinstance(front, bool) and front >= 0
-            paths["front_s"] = float(front) if valid else 0.0
+            # a number at or above zero; a bool is an int to Python and a lie here
+            paths["front_s"] = (
+                float(front)
+                if isinstance(front, (int, float)) and not isinstance(front, bool) and front >= 0
+                else 0.0
+            )
             seats[desk] = paths
     return seats
 

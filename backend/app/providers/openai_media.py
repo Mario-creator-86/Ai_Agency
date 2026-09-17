@@ -19,6 +19,7 @@ from app.providers.media_http import (
     MediaProviderNotConfigured,
     png_dimensions,
     request,
+    retrying,
 )
 
 HOST = "api.openai.com"
@@ -47,7 +48,7 @@ class OpenAIImageAdapter(ImageProvider):
     async def health_check(self) -> dict[str, Any]:
         try:
             data, _, _ = await asyncio.to_thread(
-                request, HOST, "GET", f"/v1/models/{self.model}", self._headers()
+                retrying, request, HOST, "GET", f"/v1/models/{self.model}", self._headers()
             )
         except MediaProviderError as exc:
             return {"status": "OFFLINE", "detail": str(exc)}
@@ -81,7 +82,7 @@ class OpenAIImageAdapter(ImageProvider):
         ).encode("utf-8")
 
         data, _, _ = await asyncio.to_thread(
-            request, HOST, "POST", "/v1/images/generations", self._headers(), payload
+            retrying, request, HOST, "POST", "/v1/images/generations", self._headers(), payload
         )
         items = (data or {}).get("data")
         if not isinstance(items, list) or not items:

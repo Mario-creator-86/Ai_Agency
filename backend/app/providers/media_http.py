@@ -13,8 +13,11 @@ import http.client
 import json
 import re
 import struct
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlsplit
+
+from app.providers.retry import call_with_retries, parse_retry_after
 
 
 class MediaProviderError(RuntimeError):
@@ -26,11 +29,26 @@ class MediaProviderError(RuntimeError):
     """
 
     def __init__(
-        self, message: str, *, code: str | None = None, http_status: int | None = None
+        self,
+        message: str,
+        *,
+        code: str | None = None,
+        http_status: int | None = None,
+        retry_after: float | None = None,
+        unsent: bool = False,
+        unanswered: bool = False,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.http_status = http_status
+        #: Seconds the vendor asked the studio to wait (its Retry-After), when it answered.
+        self.retry_after = retry_after
+        #: The request never left this machine (refused connection, DNS, TLS handshake).
+        #: Always safe to send again.
+        self.unsent = unsent
+        #: The request left and no answer came back. The vendor may have served it, so a
+        #: billed request is not sent again on this alone (see `app.providers.retry`).
+        self.unanswered = unanswered
 
 
 class MediaProviderNotConfigured(MediaProviderError):
@@ -64,20 +82,31 @@ def request(
     """
     connection = http.client.HTTPSConnection(host, timeout=timeout)
     try:
-        connection.request(method, path, body, headers)
-        response = connection.getresponse()
-        limit = MAX_JSON_BYTES if expect_json else MAX_MEDIA_BYTES
-        payload = response.read(limit + 1)
+        # Two failure phases, told apart for the retry policy. `request` connects and sends:
+        # a failure here means the vendor never saw the request. From `getresponse` on, it
+        # did, and a billed request that then goes quiet may have been served.
+        try:
+            connection.request(method, path, body, headers)
+        except (OSError, http.client.HTTPException) as exc:
+            raise MediaProviderError(f"{host} could not be reached", unsent=True) from exc
+        try:
+            response = connection.getresponse()
+            limit = MAX_JSON_BYTES if expect_json else MAX_MEDIA_BYTES
+            payload = response.read(limit + 1)
+        except (OSError, http.client.HTTPException) as exc:
+            raise MediaProviderError(f"{host} did not answer", unanswered=True) from exc
         if len(payload) > limit:
             raise MediaProviderError(f"{host} returned more data than the adapter accepts")
         if response.status != 200:
             # The provider's own error text is not echoed: it can carry request details, and
             # the Owner needs the status and the fact that nothing was stored. Only the
-            # vendor's short error identifier travels with the exception.
+            # vendor's short error identifier travels with the exception, and the wait the
+            # vendor asked for, so a rate limit is honoured rather than guessed at.
             raise MediaProviderError(
                 f"{host} refused the request (HTTP {response.status})",
                 code=error_code(payload),
                 http_status=response.status,
+                retry_after=parse_retry_after(response.getheader("Retry-After")),
             )
         content_type = response.headers.get_content_type()
         if not expect_json:
@@ -86,10 +115,35 @@ def request(
             return json.loads(payload), payload, content_type
         except json.JSONDecodeError as exc:
             raise MediaProviderError(f"{host} returned a malformed response") from exc
-    except (OSError, http.client.HTTPException) as exc:
-        raise MediaProviderError(f"{host} could not be reached") from exc
     finally:
         connection.close()
+
+
+def retrying(
+    transport: Callable[..., tuple[Any, bytes, str]],
+    host: str,
+    method: str,
+    path: str,
+    headers: dict[str, str],
+    body: bytes | None = None,
+    *,
+    repeatable: bool | None = None,
+    **kwargs: Any,
+) -> tuple[Any, bytes, str]:
+    """`transport(host, method, path, ...)` with the studio's retry policy around it.
+
+    The transport is passed in rather than named here so each adapter resolves `request`
+    from its own module at call time — which is where the tests replace it with a recorder.
+    `repeatable` defaults to "not a POST": a POST to these vendors is a purchase (a narration,
+    a still, a task), and a purchase that got no answer is not made twice.
+    """
+    if repeatable is None:
+        repeatable = method.upper() != "POST"
+    return call_with_retries(
+        lambda: transport(host, method, path, headers, body, **kwargs),
+        repeatable=repeatable,
+        what=f"{host} {method} {path.split('?', 1)[0]}",
+    )
 
 
 _CODE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")

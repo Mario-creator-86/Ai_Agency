@@ -13,6 +13,129 @@ database resource discovery/refresh, separate production choices, UI and regress
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
 
+## The clock, and a day that asks again (2026-09-17)
+
+Phase A of running unattended: the studio's own clock, and the durability under it. Measured
+on a copy of the live database before the work: the daily job had never fired by itself; the
+one thing that had stopped the studio for days was a single transient error — SQLite's
+"database is locked" at the wrong second — recorded with the weight of a bug, which opened
+safe mode and set the autonomy stop; no provider adapter retried anything, so one 503 from
+the voice vendor or one 429 while Runway was polled was a failed scene or a SKIPPED stage;
+two `video_render_job` rows had been RENDERING since 2026-09-12 with `finished_at` NULL;
+`reconcile_publication` had no caller outside the tests; and the worker lived only inside
+the foreground process `start.cmd` opens.
+
+**A fault has a class.** A stage's exception is read for its shape and its chain
+(`classify_fault`, `backend/app/runbook/services.py`): TRANSIENT is the world being slow — a
+timeout, a connection refused or reset, DNS, a provider's 408/425/429/5xx wherever the
+raising code put the status (`MediaProviderError.http_status`, `HTTPError.code`, the
+"HTTP 502" in `ConfiguredLLM`'s message), SQLite's and SQLAlchemy's `OperationalError`,
+`RemoteStateUnavailable`, and a `TransientStageError` a runner may raise when only it can
+tell. The walk follows the exception chain as a traceback would, so `media_http`'s "could
+not be reached from OSError" is seen for what it is. HARD is everything else — a wrong value,
+a policy refusal, a missing file, a full disk, a bug. A transient fault is retried in place,
+`STUDIO_STAGE_RETRY_ATTEMPTS` (3) times after the first failure with backoff 20, 40, 80 s,
+each retry a `runbook.stage_retrying` event; a stage still failing makes the run FAILED with
+`fault_class` TRANSIENT on the stage, the run and the new `daily_run.fault_class` column
+(migration 0035), and does not open safe mode. A hard fault keeps the old behaviour: FAILED,
+safe mode, the autonomy stop set, a person looks.
+
+**The clock re-attempts a day that could not run.** A clock-fired run is skipped only when
+the date already has a run that did work (COMPLETED or PARTIAL) or `STUDIO_DAILY_MAX_ATTEMPTS`
+(3) is spent; a BLOCKED preflight or a TRANSIENT failure queues attempt n+1 under the
+idempotency key `daily-retry-<date>-<n>`, held `STUDIO_DAILY_RETRY_SECONDS` (1800) by the
+queue's `next_attempt_at` gate (`enqueue_task` gained `not_before`, and the gate is now
+tested). A retry that outlives its date skips itself; a waiting retry no longer refuses the
+Owner's button; the Director's letter about a stopped day is written once, after the day's
+last attempt.
+
+**The day is on the wall clock.** `scheduled_job.run_at_local` ("HH:MM") and
+`scheduled_job.timezone` put a job at the next occurrence of a local hour, DST-safe (tested
+across Bucharest's 23- and 25-hour days). `daily_main` is seeded at
+`STUDIO_DAILY_RUN_HOUR_LOCAL` (05:00) in `STUDIO_TIMEZONE`, follows the setting on every
+start-up and stays dormant: waking it schedules the next 05:00, never a fire on the spot.
+
+**STOP cancels a day in flight.** The switch is read again before every stage; a day already
+running stops where it is, the remaining stages BLOCKED "Oprit de AUTONOMIE OPRITĂ.", the run
+PARTIAL if any stage completed (the log is then closed, a partial day being a day) else
+BLOCKED, no safe mode, no letter. `stop_requested(engine)` is exposed for the loops inside a
+stage to poll between scenes; a runner that raises or returns BLOCKED while the stop is set
+is recorded as the Owner's stop, not a fault.
+
+**The adapters ask again before they fail the day.** `backend/app/providers/retry.py` holds
+one policy, `call_with_retries`, for every outbound call in ElevenLabs, OpenAI images, Runway
+(submit, poll, download, contract, organization), the seeded Ollama adapter, `ConfiguredLLM`
+and YouTube (token refresh, session, chunks, status, search): bounded exponential backoff
+with jitter — 1 s doubling, `STUDIO_PROVIDER_RETRY_ATTEMPTS` (3) attempts, one wait capped at
+`STUDIO_PROVIDER_RETRY_MAX_SECONDS` (30) — on 429, 5xx and a connection that never opened,
+never on another 4xx; a vendor's Retry-After is waited out exactly when it fits under the
+cap. The HTTPS boundary (`media_http.request`) now tells the two failure phases apart
+(`unsent`, `unanswered`) and carries the vendor's status and Retry-After on the exception. A
+billed request — a narration, a still, a Runway task, an LLM generation — that left and got
+no answer is not sent again, because the vendor may have served it; reads are. Runway's
+estimated credits are recorded once, from the answer that succeeded. The error after the last
+attempt is the vendor's own class and fields with "(after N attempts)" on it; the log gets
+attempt numbers, status and class, never the error text. Nothing about what "verified" means
+for a provider changed.
+
+**The watchdog.** `backend/app/workflows/watchdog.py` (`WATCHDOG`, job `watchdog`, seeded
+ACTIVE every `STUDIO_WATCHDOG_INTERVAL_SECONDS` (600), behind the autonomy stop like
+everything scheduled; the module is imported only when a task fires, and a build without it
+dead-letters the fire with the reason) does three things per pass and records each. A render
+RENDERING longer than `STUDIO_RENDER_STUCK_AFTER_SECONDS` (three hours) is failed the way the
+assembler fails one — status, `finished_at`, "Blocat: fără progres de N ore" on the row, a
+`media.render_failed` event — and the VideoEditor left typing by the dead process is marked
+idle. Every publication in REMOTE_UNKNOWN or FAILED_RETRYABLE goes through the reconciliation
+that already existed (`reconcile_publication` for an unknown one with a remote id,
+`execute_publication`'s retry path for a retryable one, which asks the platform by
+idempotency key before it uploads); a platform that does not answer is asked
+`STUDIO_RECONCILE_MAX_ATTEMPTS` (3) times, counted from the watchdog's own
+`publishing.watchdog_reconcile` events, then the row is moved to NEEDS_RECONCILIATION with a
+`publishing.reconcile_exhausted` event and a note for the Owner, and not asked again; an
+unknown publication with no remote id — YouTube's UNKNOWN never carries one — is handed over
+at once. Lapsed task leases are reported and left alone: `claim_task` re-claims an expired
+lease itself, and the test proves it. The pass changes nothing while STOP AUTONOMY is set.
+
+**The studio as a service.** `scripts/install_studio_service.ps1` registers a Windows
+Scheduled Task "AMN-AI Studio" (`start.py --skip-frontend` at logon and at startup, three
+restarts one minute apart, no execution time limit, output in `data/studio-service.log`,
+`-RunWhenLoggedOff` for an S4U logon), idempotently and printing what it registered;
+`scripts/uninstall_studio_service.ps1` removes it. Both are the Owner's to run and were
+parsed here, not run. The README section "Running as a service" says how, that the daily
+job stays dormant until the Owner's recorded activation, that the machine must not sleep at
+the run hour (the power plan is the Owner's), and how to check with `schtasks /Query`.
+
+Tests, by file set: runbook, scheduler/worker and the migration schema match 66 passed;
+`tests/test_provider_retry.py` 28 passed (new), with 503-then-200, 400-not-retried,
+exhaustion and no-double-billing cases added to the media, Ollama and integration-settings
+files (46, 14 and 24 passed) and 34 passed on the existing files that drive the changed
+adapters; `tests/test_watchdog.py` 11 passed (new); ruff, format and mypy clean on every
+changed file; `scripts/check_docs.py` passes. The whole suite was not run by the
+implementers; it is the verifier's.
+
+Not finished, honestly: `ScheduledJobView` does not expose `run_at_local` and `timezone`, so
+the scheduler API and the page cannot yet show the fixed hour; the runbook reads the stop
+between stages, but the media scene loop and the other long runners in
+`backend/app/runbook/stages.py` do not yet poll `stop_requested` between units of work, nor
+raise `TransientStageError` where only they can tell a fault is transient, so the new
+behaviour does not reach inside a stage; the watchdog dispatch was tested with an injected
+stub module — the real module's exports match the handler, but an end-to-end fire with it
+was not run; `tests/test_remote_state_honesty.py::test_the_real_provider_turns_a_failed_request_into_unavailable`
+now takes about four seconds, because its fake's bare `OSError` is correctly retried with
+real 1 s + 2 s sleeps (an autouse fixture in `tests/conftest.py` patching
+`app.providers.retry.sleep` would make it instant again); a REMOTE_UNKNOWN publication
+without a remote id is handed to the Owner rather than resolved, because
+`execute_publication` does not yet admit that state to its reconcile-by-key branch; only the
+VideoEditor's runtime state is reconciled when a stuck render is failed, and other employees
+left WORKING by a crash are not reset; whether an S4U logon can open the DPAPI-wrapped
+credential key on this machine was not verified, and the Owner should read
+`data/studio-service.log` once after installing with that switch; `MULTI_LLM.md` still names
+0034 as the latest migration in passing; `main.py` now pins `0035_clock_and_fault_class`, so
+`scripts/bootstrap.py` (migrate) must run before the server starts on this version. The
+"Running on its own" section below predates this work where it says every 24 hours and
+CATCH_UP; the daily job is on the wall clock now. `backend/app/office/unreal.py` fails
+`ruff format --check` and has one mypy error (line 72), pre-existing and untouched.
+
 ## An employee may think with more than one model (2026-09-12)
 
 Every agent now has an optional second and third model beside its primary, from the same

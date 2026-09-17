@@ -18,12 +18,36 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from app.providers.base import GenerateResult, HealthResult, LLMProvider, ModelInfo
+from app.providers.retry import call_with_retries, parse_retry_after
 
 BASE_URLS = {"openai": "https://api.openai.com/v1", "anthropic": "https://api.anthropic.com/v1"}
 
 #: How long one generation may take. The daily run's worker lease is an hour; an answer that
 #: needs ten minutes is slow, not broken.
 REQUEST_TIMEOUT_SECONDS = 600
+
+
+class ProviderHTTPError(ValueError):
+    """The provider answered with a status other than 200.
+
+    A ValueError as before, so every caller that catches one still does; the status and the
+    vendor's Retry-After ride along so the retry policy can tell "not now" from "never".
+    """
+
+    def __init__(self, http_status: int, retry_after: float | None = None) -> None:
+        super().__init__(f"Provider request failed (HTTP {http_status})")
+        self.http_status = http_status
+        self.retry_after = retry_after
+
+
+class ProviderUnreachable(OSError):
+    """The provider could not be reached (`unsent`) or went quiet after the request left
+    (`unanswered`). An OSError as before; the phase decides whether it is sent again."""
+
+    def __init__(self, message: str, *, unsent: bool = False, unanswered: bool = False) -> None:
+        super().__init__(message)
+        self.unsent = unsent
+        self.unanswered = unanswered
 
 
 class ConfiguredLLM(LLMProvider):
@@ -35,6 +59,19 @@ class ConfiguredLLM(LLMProvider):
         self.key = secrets.get("api_key", "")
 
     def request(self, method: str, path: str, body: dict | None = None) -> dict:
+        """One call to the provider, asked again a bounded number of times on 429, 5xx and a
+        connection that never opened. A generation that left and got no answer is not sent
+        again: the model may still be writing, and the tokens are billed either way. The one
+        POST that is a read — Ollama's /api/show — may be repeated.
+        """
+        repeatable = method.upper() != "POST" or path.endswith("/api/show")
+        return call_with_retries(
+            lambda: self._request_once(method, path, body),
+            repeatable=repeatable,
+            what=f"{self.kind} {method} {path}",
+        )
+
+    def _request_once(self, method: str, path: str, body: dict | None = None) -> dict:
         parsed = urlsplit(self.base_url)
         cls = (
             http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
@@ -48,13 +85,27 @@ class ConfiguredLLM(LLMProvider):
         elif self.key:
             headers["Authorization"] = f"Bearer {self.key}"
         try:
-            connection.request(
-                method, parsed.path + path, json.dumps(body) if body is not None else None, headers
-            )
-            response = connection.getresponse()
-            if response.status != 200:
-                raise ValueError(f"Provider request failed (HTTP {response.status})")
-            data = response.read(4_000_001)
+            # Two failure phases, told apart for the retry policy: before the request left
+            # (nothing happened at the vendor) and after (it may be answering). Neither
+            # message repeats the socket's text, which can carry the host and the path.
+            try:
+                connection.request(
+                    method,
+                    parsed.path + path,
+                    json.dumps(body) if body is not None else None,
+                    headers,
+                )
+            except (OSError, http.client.HTTPException) as exc:
+                raise ProviderUnreachable("Provider could not be reached", unsent=True) from exc
+            try:
+                response = connection.getresponse()
+                if response.status != 200:
+                    raise ProviderHTTPError(
+                        response.status, parse_retry_after(response.getheader("Retry-After"))
+                    )
+                data = response.read(4_000_001)
+            except (OSError, http.client.HTTPException) as exc:
+                raise ProviderUnreachable("Provider did not answer", unanswered=True) from exc
             if len(data) > 4_000_000:
                 raise ValueError("Provider response exceeds limit")
             return json.loads(data)

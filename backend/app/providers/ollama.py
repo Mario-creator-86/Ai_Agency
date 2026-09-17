@@ -4,7 +4,8 @@ Uses the official Ollama REST API:
   GET  /api/tags     -> list models
   POST /api/generate -> text generation (non-streaming)
 
-If Ollama is not running, returns OFFLINE status.
+If Ollama is not running, returns OFFLINE status. A refused connection or a 5xx is asked
+again a bounded number of times (`app.providers.retry`) before it is one.
 Never fabricates a model response, and never presents a model's private reasoning as one:
 generation asks for thinking off, and what comes back in `response` is the whole answer.
 """
@@ -18,6 +19,7 @@ from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 from app.providers.base import GenerateResult, HealthResult, LLMProvider, ModelInfo
+from app.providers.retry import call_with_retries
 
 ADAPTER_VERSION = "1.0.0"
 
@@ -39,13 +41,26 @@ class OllamaProvider(LLMProvider):
             headers["Authorization"] = f"Bearer {self.api_key}"
         return headers
 
+    def _open(self, req: Request, timeout: int, *, repeatable: bool) -> dict:
+        """One request with the studio's retry policy; `urlopen` is looked up here so the
+        tests keep replacing it."""
+
+        def once() -> dict:
+            with urlopen(req, timeout=timeout) as resp:
+                return _json.loads(resp.read())
+
+        return call_with_retries(
+            once,
+            repeatable=repeatable,
+            what=f"ollama {req.get_method()} {req.selector.split('?', 1)[0]}",
+        )
+
     def _get(self, path: str, timeout: int = 10) -> dict:
         url = f"{self.base_url}{path}"
         req = Request(url, method="GET", headers=self._get_headers())
-        with urlopen(req, timeout=timeout) as resp:
-            return _json.loads(resp.read())
+        return self._open(req, timeout, repeatable=True)
 
-    def _post(self, path: str, body: dict, timeout: int = 600) -> dict:
+    def _post(self, path: str, body: dict, timeout: int = 600, *, repeatable: bool) -> dict:
         url = f"{self.base_url}{path}"
         data = _json.dumps(body).encode()
         req = Request(
@@ -54,8 +69,7 @@ class OllamaProvider(LLMProvider):
             method="POST",
             headers=self._get_headers(),
         )
-        with urlopen(req, timeout=timeout) as resp:
-            return _json.loads(resp.read())
+        return self._open(req, timeout, repeatable=repeatable)
 
     async def health_check(self) -> HealthResult:
         t0 = time.perf_counter()
@@ -101,7 +115,8 @@ class OllamaProvider(LLMProvider):
 
     async def show_model(self, model: str) -> dict:
         """Fetch full model metadata from Ollama /api/show."""
-        return self._post("/api/show", {"name": model})
+        # A read that Ollama serves by POST; asking twice costs nothing.
+        return self._post("/api/show", {"name": model}, repeatable=True)
 
     async def generate(
         self,
@@ -134,7 +149,9 @@ class OllamaProvider(LLMProvider):
             body.setdefault("options", {})["temperature"] = temperature
         if extra:
             body.update(extra)
-        data = self._post("/api/generate", body)
+        # Not repeatable: a generation that timed out may still be running, and on a cloud
+        # model the tokens are spent either way. A refusal (429, 5xx) is retried; silence is not.
+        data = self._post("/api/generate", body, repeatable=False)
         text = data.get("response", "")
         prompt_tokens = data.get("prompt_eval_count")
         completion_tokens = data.get("eval_count")

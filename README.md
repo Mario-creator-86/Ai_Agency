@@ -88,6 +88,49 @@ The frontend polls committed snapshots every five seconds while visible. It labe
 state and disables commands while stale. This is a foundation shell, **not the Phase 3 office renderer**.
 Rooms/characters, animation, full WebSocket replay and agent inspectors will be implemented later.
 
+## Running as a service
+
+`start.cmd` runs the studio in a foreground process, and the background worker that fires the
+daily run lives inside it: close the window or reboot the machine and autonomy ends silently.
+For a studio that is meant to run on its own, register it as a Windows Scheduled Task. The two
+scripts below are the Owner's to run, from a PowerShell opened as administrator (a startup
+trigger needs it); the studio and its agents never run them.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install_studio_service.ps1
+powershell -ExecutionPolicy Bypass -File scripts\install_studio_service.ps1 -RunWhenLoggedOff
+powershell -ExecutionPolicy Bypass -File scripts\uninstall_studio_service.ps1
+```
+
+The task is named **AMN-AI Studio**. It runs the same command `start.cmd` runs, with
+`--skip-frontend` (build the bundle once with `start.cmd` before installing), at logon and at
+startup, restarts it up to three times one minute apart when it exits with an error, and has no
+execution time limit. Registering again replaces the task in place. Everything the studio prints
+goes to `data\studio-service.log`. Without `-RunWhenLoggedOff` the task runs in your signed-in
+session and the startup trigger only takes effect once you sign in; with it, the task runs
+whether you are signed in or not (no password is stored).
+
+Two things the task does not do. It does not activate the daily job: the schedule is seeded
+dormant, and starting the studio's clock is your recorded act from the panel
+(`workflow.job_activated`), the same as clearing the autonomy stop. And it does not keep the
+machine awake: a PC that sleeps at the run hour runs nothing, so set the Windows power plan
+(Settings → System → Power, or `powercfg`) so the machine does not sleep while the studio is
+meant to work. That setting is yours to change; the scripts do not touch it.
+
+To check that the task exists and when it last ran:
+
+```powershell
+schtasks /Query /TN "AMN-AI Studio" /V /FO LIST
+Get-ScheduledTaskInfo -TaskName "AMN-AI Studio"      # LastRunTime, LastTaskResult (0 = ran)
+Get-Content data\studio-service.log -Tail 40
+```
+
+`Start-ScheduledTask` / `Stop-ScheduledTask -TaskName "AMN-AI Studio"` start and stop it by hand.
+While the task is running, the watchdog job inside the worker fails renders that have made no
+progress past its threshold, reconciles uncertain publications against the platform a bounded
+number of times before handing them to you, and reports lapsed task leases; it changes nothing
+while STOP AUTONOMY is set.
+
 ## Verify
 
 ```shell

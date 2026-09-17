@@ -81,7 +81,8 @@ real LLM task works (requires Ollama running, set STUDIO_OLLAMA_URL); unsupporte
 - [x] scheduler (ScheduledJob, singleton-safe leader leases, SKIP/CATCH_UP)
 - [x] queue/worker (TaskQueueItem, atomic claim with worker leases)
 - [x] leases/locks (time-bounded leases, heartbeat, expired lease recovery)
-- [x] retry/backoff (exponential backoff calculation, retryable classification)
+- [x] retry/backoff (exponential backoff calculation, retryable classification; since 2026-09-17
+  every provider call and every runbook stage retries a transient fault within a bound)
 - [x] circuit breaker / dead-letter queue (DEAD_LETTER status on max attempts, operator retry)
 - [x] idempotency keys (idempotency_key on task_queue)
 - [x] cancellation (cancellation transition in workflow state machine)
@@ -220,10 +221,17 @@ yesterday's real events → today's coherent episode with correct cast.
 - [ ] approval queue — scripts wait at VERIFIED_PASS, but there is no queue view yet.
 - [ ] cost reservation
 - [ ] hard budgets
-- [x] STOP AUTONOMY — the scheduler and the task queue both refuse while the stop is set.
-- [~] stuck-job watchdog — leases expire and are reclaimed; no separate watchdog process.
-- [ ] restart recovery
-- [ ] cloud/always-on deployment option
+- [x] STOP AUTONOMY — the scheduler and the task queue both refuse while the stop is set, and
+  since 2026-09-17 a day already running stops between stages (PARTIAL or BLOCKED, no safe mode).
+- [x] stuck-job watchdog — the scheduled `watchdog` job (2026-09-17): renders stuck past three
+  hours failed, unknown and retryable publications reconciled within a bound and then handed
+  to the Owner, lapsed leases reported (`claim_task` reclaims them itself).
+- [~] restart recovery — the service restarts the process, the clock re-attempts a day that
+  could not run, the watchdog repairs what a crash left (2026-09-17); employees other than the
+  VideoEditor left WORKING by a crash are not reset, and the long runners do not yet poll the
+  stop inside a stage.
+- [~] cloud/always-on deployment option — local always-on as a Windows Scheduled Task
+  (`scripts/install_studio_service.ps1`, 2026-09-17); the cloud option stays open.
 - [ ] backup/restore
 - [ ] chaos/failure testing
 
@@ -563,3 +571,23 @@ Evidence: `scratch/verify_weekly_review_ui.mjs` 5/5 live; backend 526/1; fronten
 - [x] Visual polish pass on the whole page, from a screenshot of every view: one text scale, actions sized to their words, the scene chrome as one bar in two groups, the ledger breathing, Settings on the dialog pattern, the inspector's contract as lists.
 
 Evidence: `tests/test_mail.py` 18/18; backend 544/1; frontend 86/86; live on a copy of the Owner's data (`scratch` review scripts).
+
+## The clock and durability (Phase A of running unattended) — 2026-09-17
+
+- [x] Fault classes: a stage's TRANSIENT fault is retried in place (3 retries, 20/40/80 s) and fails the run without safe mode; a HARD fault still opens safe mode. `daily_run.fault_class`, migration 0035.
+- [x] Same-day re-attempts: a BLOCKED preflight or a TRANSIENT day is tried again after 30 minutes, three attempts per business date; a date that did work is never rerun by the clock.
+- [x] The daily job on the wall clock: `run_at_local` and `timezone` on the row, DST-safe, `STUDIO_DAILY_RUN_HOUR_LOCAL` 05:00; still seeded dormant, the Owner starts it.
+- [x] STOP AUTONOMY cancels a running day between stages: PARTIAL or BLOCKED, no safe mode, no letter.
+- [x] Provider retries: one bounded, jittered policy (`providers/retry.py`) for every adapter; a billed request that got no answer is not sent again.
+- [x] Watchdog job: stuck renders failed, publications reconciled within `reconcile_max_attempts`, then NEEDS_RECONCILIATION for the Owner.
+- [x] The studio as a Windows Scheduled Task (`scripts/install_studio_service.ps1` / `uninstall_studio_service.ps1`); README "Running as a service".
+- [x] Settings: `STUDIO_DAILY_RUN_HOUR_LOCAL`, `STUDIO_DAILY_MAX_ATTEMPTS`, `STUDIO_DAILY_RETRY_SECONDS`, `STUDIO_STAGE_RETRY_ATTEMPTS`, `STUDIO_STAGE_RETRY_BACKOFF_SECONDS`, `STUDIO_WATCHDOG_INTERVAL_SECONDS`, `STUDIO_PROVIDER_RETRY_ATTEMPTS`, `STUDIO_PROVIDER_RETRY_MAX_SECONDS`, `STUDIO_RENDER_STUCK_AFTER_SECONDS`, `STUDIO_RECONCILE_MAX_ATTEMPTS`.
+- [ ] `ScheduledJobView` exposes `run_at_local` and `timezone`, so the scheduler API and the page can show the hour.
+- [ ] The long runners in `backend/app/runbook/stages.py` poll `stop_requested(engine)` between scenes and raise `TransientStageError` where only they can tell a fault is transient.
+- [ ] `execute_publication` admits REMOTE_UNKNOWN without a remote id to its reconcile-by-key branch, so the watchdog resolves those rows instead of handing them over.
+- [ ] Employees other than the VideoEditor left WORKING by a crash are reset (the "stuck agent runtime" item of `../architecture/18_AUTOMATION_ORCHESTRATION.md`).
+- [ ] An autouse fixture in `tests/conftest.py` patching `app.providers.retry.sleep`, so the remote-state honesty test is instant again.
+- [ ] An end-to-end watchdog fire with the real module through the worker (the dispatch was tested with an injected stub).
+- [ ] The Owner's part: run the migration (`scripts/bootstrap.py`), install the task, confirm once in `data/studio-service.log` that an S4U logon opens the credential key, and start the clock — his recorded act.
+
+Evidence: 66 (runbook, scheduler/worker, schema match), 28 (provider retry), 46 + 24 (media, Ollama, integration settings), 34 (existing adapter tests), 11 (watchdog) passed on the changed files; ruff, format, mypy and `check_docs.py` clean. The whole suite is the verifier's.

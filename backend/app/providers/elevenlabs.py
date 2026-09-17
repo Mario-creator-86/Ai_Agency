@@ -26,6 +26,7 @@ from app.providers.media_http import (
     MediaProviderNotConfigured,
     mp3_duration_seconds,
     request,
+    retrying,
 )
 
 HOST = "api.elevenlabs.io"
@@ -56,7 +57,13 @@ class ElevenLabsTTSAdapter(TTSProvider):
         """Ask the API who this key is. Reachability is reported, never assumed."""
         try:
             data, _, _ = await asyncio.to_thread(
-                request, HOST, "GET", "/v1/user", self._headers("application/json"), timeout=20
+                retrying,
+                request,
+                HOST,
+                "GET",
+                "/v1/user",
+                self._headers("application/json"),
+                timeout=20,
             )
         except MediaProviderError as exc:
             return {
@@ -72,6 +79,7 @@ class ElevenLabsTTSAdapter(TTSProvider):
     async def subscription(self) -> dict[str, Any]:
         """What this key's plan has used and allows, counted the way the vendor bills it."""
         data, _, _ = await asyncio.to_thread(
+            retrying,
             request,
             HOST,
             "GET",
@@ -85,7 +93,13 @@ class ElevenLabsTTSAdapter(TTSProvider):
 
     async def list_models(self) -> list[dict[str, Any]]:
         data, _, _ = await asyncio.to_thread(
-            request, HOST, "GET", "/v1/models", self._headers("application/json"), timeout=20
+            retrying,
+            request,
+            HOST,
+            "GET",
+            "/v1/models",
+            self._headers("application/json"),
+            timeout=20,
         )
         return self._resources(data, "model_id")
 
@@ -108,6 +122,7 @@ class ElevenLabsTTSAdapter(TTSProvider):
             if time.monotonic() >= deadline:
                 raise MediaProviderError("ElevenLabs voice discovery timed out before completion")
             data, _, _ = await asyncio.to_thread(
+                retrying,
                 request,
                 HOST,
                 "GET",
@@ -169,6 +184,7 @@ class ElevenLabsTTSAdapter(TTSProvider):
         ).encode("utf-8")
 
         _, audio, content_type = await asyncio.to_thread(
+            retrying,
             request,
             HOST,
             "POST",

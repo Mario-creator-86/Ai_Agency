@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import Engine, or_, select
 from sqlalchemy.orm import Session
@@ -258,7 +259,14 @@ def enqueue_task(
     max_attempts: int = 3,
     backoff_seconds: int = 5,
     idempotency_key: str | None = None,
+    not_before: str | None = None,
 ) -> dict:
+    """Put a task in the queue. ``not_before`` (ISO, UTC) holds it until then.
+
+    The queue already orders and gates claims on ``next_attempt_at``; a task that should
+    wait — the day's second attempt half an hour after a blocked first — is simply queued
+    with that time, and no claim hands it out early.
+    """
     now = utc_now()
     with Session(engine) as session, session.begin():
         if idempotency_key:
@@ -279,7 +287,7 @@ def enqueue_task(
             attempts=0,
             max_attempts=max_attempts,
             backoff_seconds=backoff_seconds,
-            next_attempt_at=now,
+            next_attempt_at=not_before or now,
             lease_token=None,
             lease_expires_at=None,
             idempotency_key=idempotency_key,
@@ -521,6 +529,34 @@ def next_run_after(
     return candidate
 
 
+def next_local_occurrence(run_at_local: str, timezone: str, now: datetime) -> datetime:
+    """The next moment the wall clock in ``timezone`` reads ``run_at_local`` ("HH:MM").
+
+    Computed on the local calendar and converted afterwards, so the hour survives the
+    clocks changing: the day the studio leaves summer time is twenty-five hours long and
+    05:00 is still 05:00 (`18_AUTOMATION_ORCHESTRATION.md`: "avoid DST creating duplicate
+    or missing close jobs"). A slot exactly on the minute counts as passed — the slot the
+    caller asks for is the *next* one. The answer is a UTC instant, comparable with the
+    ISO strings the scheduler stores.
+    """
+    zone = ZoneInfo(timezone)
+    hour, minute = (int(part) for part in run_at_local.split(":"))
+    local_now = now.astimezone(zone)
+    candidate = datetime.combine(local_now.date(), time(hour, minute), tzinfo=zone)
+    # "Is the slot past?" is asked of the instants, not the wall clock. Two aware datetimes
+    # that share one tzinfo compare as naive wall-clock time, and on the day the clocks go
+    # back the wall clock reads 03:00–03:59 twice: at the second 03:30 a slot of 03:45 (its
+    # first reading, forty-five minutes ago) compared as still ahead, and the job fired on
+    # every tick until the wall clock passed the hour again. An hour inside the repeated
+    # hour fires once, at its first reading; one inside the spring gap fires once, on the
+    # first instant after it.
+    if candidate.astimezone(UTC) <= now.astimezone(UTC):
+        candidate = datetime.combine(
+            local_now.date() + timedelta(days=1), time(hour, minute), tzinfo=zone
+        )
+    return candidate.astimezone(UTC)
+
+
 def ensure_scheduled_job(
     engine: Engine,
     *,
@@ -530,6 +566,8 @@ def ensure_scheduled_job(
     missed_policy: str = "CATCH_UP",
     first_run_at: str | None = None,
     active: bool = True,
+    run_at_local: str | None = None,
+    timezone: str | None = None,
 ) -> dict:
     """The named job, created if it does not exist and left alone if it does.
 
@@ -537,10 +575,22 @@ def ensure_scheduled_job(
     nor appends a second "scheduled" event for a decision already recorded. ``active=False``
     creates the schedule dormant: the studio knows when its day would start, and starting the
     clock is left to the Owner.
+
+    ``run_at_local`` ("HH:MM") with ``timezone`` puts the job on the wall clock instead of an
+    interval anchored to now. The hour is configuration, so it is the one thing an existing
+    job does follow: a changed setting reaches the row and moves its next slot, without
+    touching whether the job is active — following the hour is not starting the clock.
     """
-    with Session(engine) as session:
+    with Session(engine) as session, session.begin():
         existing = session.scalars(select(ScheduledJob).where(ScheduledJob.name == name)).first()
         if existing is not None:
+            if run_at_local is not None and timezone is not None:
+                if (existing.run_at_local, existing.timezone) != (run_at_local, timezone):
+                    existing.run_at_local = run_at_local
+                    existing.timezone = timezone
+                    existing.next_run_at = next_local_occurrence(
+                        run_at_local, timezone, datetime.now(UTC)
+                    ).isoformat()
             return ScheduledJobView.model_validate(existing).model_dump()
     created = create_scheduled_job(
         engine,
@@ -552,11 +602,17 @@ def ensure_scheduled_job(
             missed_policy=missed_policy,  # type: ignore[arg-type]
         ),
     )
-    if first_run_at is not None or not active:
+    if first_run_at is not None or not active or run_at_local is not None:
         with Session(engine) as session, session.begin():
             job = session.get(ScheduledJob, created["id"])
             if job is not None:
-                if first_run_at is not None:
+                if run_at_local is not None and timezone is not None:
+                    job.run_at_local = run_at_local
+                    job.timezone = timezone
+                    job.next_run_at = next_local_occurrence(
+                        run_at_local, timezone, datetime.now(UTC)
+                    ).isoformat()
+                elif first_run_at is not None:
                     job.next_run_at = first_run_at
                 job.is_active = active
                 created = ScheduledJobView.model_validate(job).model_dump()
@@ -578,7 +634,13 @@ def set_job_active(engine: Engine, job_id: str, active: bool, correlation_id: st
         if job.is_active == active:
             return ScheduledJobView.model_validate(job).model_dump()
         job.is_active = active
-        if active and job.next_run_at <= now_dt.isoformat():
+        if active and job.run_at_local and job.timezone:
+            # On the wall clock, waking always means "the next time it is that hour": never
+            # a fire on the spot, and never a slot computed from an hour since changed.
+            job.next_run_at = next_local_occurrence(
+                job.run_at_local, job.timezone, now_dt
+            ).isoformat()
+        elif active and job.next_run_at <= now_dt.isoformat():
             # A job that lay dormant with a past slot would otherwise fire the moment it wakes,
             # before the Owner has closed the panel. Waking sets the clock from now.
             job.next_run_at = (now_dt + timedelta(seconds=job.interval_seconds)).isoformat()
@@ -636,6 +698,17 @@ def scheduler_tick(
             if job.next_run_at <= now_str:
                 due_at = job.next_run_at
                 key = f"scheduled:{job.id}:{due_at}"
+                # A job on the wall clock moves to the next occurrence of its hour; a missed
+                # slot still fires exactly once, like the interval policies below.
+                if job.run_at_local and job.timezone:
+                    following = next_local_occurrence(job.run_at_local, job.timezone, now_dt)
+                else:
+                    following = next_run_after(
+                        datetime.fromisoformat(due_at),
+                        now_dt,
+                        job.interval_seconds,
+                        job.missed_policy,
+                    )
                 already_queued = session.scalars(
                     select(TaskQueueItem).where(TaskQueueItem.idempotency_key == key)
                 ).first()
@@ -643,12 +716,7 @@ def scheduler_tick(
                     # A restart put the slot back, but the slot already fired. Move on; the
                     # queued task is the record and nothing new happened here.
                     job.last_run_at = now_str
-                    job.next_run_at = next_run_after(
-                        datetime.fromisoformat(due_at),
-                        now_dt,
-                        job.interval_seconds,
-                        job.missed_policy,
-                    ).isoformat()
+                    job.next_run_at = following.isoformat()
                     job.leader_token = None
                     job.leader_expires_at = None
                     continue
@@ -713,9 +781,7 @@ def scheduler_tick(
                 session.add(task)
 
                 job.last_run_at = now_str
-                job.next_run_at = next_run_after(
-                    datetime.fromisoformat(due_at), now_dt, job.interval_seconds, job.missed_policy
-                ).isoformat()
+                job.next_run_at = following.isoformat()
                 triggered.append(
                     {
                         "job_id": job.id,

@@ -327,3 +327,108 @@ def test_a_restricted_elevenlabs_key_is_told_which_permissions_it_lacks(
     )
     assert again.json()["status"] == "FAILED"
     assert "invalidă sau a fost revocată" in again.json()["message"]
+
+
+# --- the configured adapter retries a vendor that says "not now" (2026-09-17) --------------
+
+
+class ScriptedConnection:
+    """One scripted `http.client` exchange per connection, in the order the test lists."""
+
+    script: list = []
+    opened: int = 0
+
+    def __init__(self, host, port=None, timeout=None):
+        ScriptedConnection.opened += 1
+        self.sent = None
+
+    def request(self, method, path, body, headers):
+        step = self.script[0]
+        if step.get("connect") is not None:
+            self.script.pop(0)
+            raise step["connect"]
+        self.sent = (method, path)
+
+    def getresponse(self):
+        step = self.script.pop(0)
+        if step.get("read") is not None:
+            raise step["read"]
+        from unittest.mock import MagicMock
+
+        resp = MagicMock()
+        resp.status = step["status"]
+        resp.read = MagicMock(return_value=step.get("body", b"{}"))
+        resp.getheader = lambda name, default=None: step.get("headers", {}).get(name, default)
+        return resp
+
+    def close(self):
+        pass
+
+
+@pytest.fixture
+def llm_script(monkeypatch):
+    import http.client
+
+    from app.providers import retry
+
+    ScriptedConnection.script = []
+    ScriptedConnection.opened = 0
+    monkeypatch.setattr(http.client, "HTTPSConnection", ScriptedConnection)
+    monkeypatch.setattr(retry, "sleep", lambda _: None)
+    return ScriptedConnection.script
+
+
+def _llm() -> ConfiguredLLM:
+    return ConfiguredLLM("openai", {}, {"api_key": "k"})
+
+
+def test_the_configured_adapter_lists_models_after_a_503(llm_script):
+    import asyncio
+
+    llm_script.extend([{"status": 503}, {"status": 200, "body": b'{"data": [{"id": "m1"}]}'}])
+    models = asyncio.run(_llm().list_models())
+    assert [m.model_name for m in models] == ["m1"]
+    assert ScriptedConnection.opened == 2
+
+
+def test_the_configured_adapter_does_not_repeat_a_400(llm_script):
+    llm_script.append({"status": 400})
+    with pytest.raises(ValueError, match="HTTP 400"):
+        _llm().request("GET", "/models")
+    assert ScriptedConnection.opened == 1
+
+
+def test_the_configured_adapter_gives_up_after_the_configured_attempts(llm_script):
+    llm_script.extend([{"status": 502}, {"status": 503}, {"status": 502}])
+    with pytest.raises(ValueError, match="3 attempts") as excinfo:
+        _llm().request("GET", "/models")
+    assert ScriptedConnection.opened == 3
+    assert excinfo.value.http_status == 502
+
+
+def test_the_configured_adapter_waits_the_retry_after_it_is_given(monkeypatch, llm_script):
+    from app.providers import retry
+
+    slept: list[float] = []
+    monkeypatch.setattr(retry, "sleep", slept.append)
+    llm_script.extend(
+        [{"status": 429, "headers": {"Retry-After": "2"}}, {"status": 200, "body": b"{}"}]
+    )
+    assert _llm().request("GET", "/models") == {}
+    assert slept == [2.0]
+
+
+def test_a_generation_that_left_and_got_no_answer_is_not_billed_twice(llm_script):
+    """A cloud model answering slowly is still answering; the tokens are spent either way."""
+    llm_script.append({"read": TimeoutError("timed out")})
+    with pytest.raises(OSError):
+        _llm().request("POST", "/chat/completions", {"model": "m"})
+    assert ScriptedConnection.opened == 1
+
+
+def test_a_generation_whose_request_never_left_is_sent_again(llm_script):
+    llm_script.extend(
+        [{"connect": ConnectionRefusedError("refused")}, {"status": 200, "body": b"{}"}]
+    )
+    assert _llm().request("POST", "/chat/completions", {"model": "m"}) == {}
+    assert ScriptedConnection.opened == 2

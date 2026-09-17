@@ -180,6 +180,52 @@ class Settings(BaseSettings):
     # the day on its own would make every other test's timing a coincidence.
     worker_enabled: bool = True
     worker_interval_seconds: int = Field(default=30, ge=5, le=3600)
+
+    # ------------------------------------------------------------- the day and the clock
+    #: When the day starts, on the studio's own wall clock (HH:MM in `timezone`). The daily
+    #: job used to be anchored to the moment the Owner activated it, so a studio started at
+    #: 16:40 ran its day at 16:40 for ever after; a fixed local hour is what a schedule is.
+    #: The job is still seeded dormant — starting its clock stays the Owner's recorded act.
+    daily_run_hour_local: str = Field(default="05:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+
+    #: A day that could not run — a BLOCKED preflight, a stage that failed on a transient
+    #: fault — is attempted again after this long, up to this many attempts per business
+    #: date. Measured on the live copy: one "database is locked" at the wrong second lost
+    #: the whole day, because the clock refused a date that had any run at all.
+    daily_max_attempts: int = Field(default=3, ge=1, le=10)
+    daily_retry_seconds: int = Field(default=1800, ge=30, le=43200)
+
+    #: A stage whose fault is transient — a timeout, a provider's 429 or 5xx, SQLite's
+    #: "database is locked" — is retried in place this many times after its first failure,
+    #: sleeping `backoff * 2**n` seconds between tries (20, 40, 80). A hard fault (a wrong
+    #: value, a policy refusal, a bug) is not retried at all: no amount of waiting fixes it.
+    stage_retry_attempts: int = Field(default=3, ge=0, le=10)
+    stage_retry_backoff_seconds: int = Field(default=20, ge=0, le=3600)
+
+    #: A vendor's 429 or 5xx, or a connection that never opened, is asked again this many
+    #: times, waiting 1, 2, 4… seconds (jittered) up to the cap; a Retry-After the vendor
+    #: sends replaces the wait when it fits under the cap, and one above it is raised at once
+    #: as the refusal it is — the worker's lease is an hour, and a ten-minute wait inside one
+    #: scene would spend it. A billed request that left this machine and got no answer is
+    #: never sent again, whatever these say. Measured 2026-09-17: one 503 per scene was a
+    #: failed day.
+    provider_retry_attempts: int = Field(default=3, ge=1, le=10)
+    provider_retry_max_seconds: int = Field(default=30, ge=0, le=600)
+
+    #: How often the watchdog looks for work that is stuck — a task past its lease, a run
+    #: that never finished, a provider job never collected. Behind the autonomy stop like
+    #: every other scheduled thing.
+    watchdog_interval_seconds: int = Field(default=600, ge=60, le=86400)
+
+    #: What the watchdog treats as stuck, and how long it keeps asking. A render RENDERING
+    #: longer than this with no end recorded is failed the way the assembler fails one
+    #: (measured on the live copy: two rows RENDERING since 2026-09-12, left by a process
+    #: that died under them). A platform that cannot be asked about a publication is asked
+    #: this many times, then the row is handed to the Owner as NEEDS_RECONCILIATION and not
+    #: asked again — every ten minutes for ever is how a studio spends its quota on a dead
+    #: endpoint.
+    render_stuck_after_seconds: int = Field(default=10800, ge=60, le=86400)
+    reconcile_max_attempts: int = Field(default=3, ge=1, le=20)
     provider_catalog_refresh_enabled: bool = True
     provider_catalog_refresh_seconds: int = Field(default=21600, ge=60, le=604800)
     provider_catalog_retry_seconds: int = Field(default=900, ge=30, le=86400)

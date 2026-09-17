@@ -96,6 +96,13 @@ class ScheduledJob(Base):
     next_run_at: Mapped[str] = mapped_column(String(40))
     # SKIP | CATCH_UP
     missed_policy: Mapped[str] = mapped_column(String(20), default="SKIP")
+    #: A wall-clock hour ("HH:MM") in `timezone`. When set, the job fires at the next
+    #: occurrence of that local time and `interval_seconds` is only its nominal cadence;
+    #: when NULL the job is interval-anchored as before. The timezone travels with the row
+    #: because the activation route and the tick both need it and neither carries settings —
+    #: and `18_AUTOMATION_ORCHESTRATION.md` says a stored schedule stores its timezone.
+    run_at_local: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
     leader_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
     leader_expires_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
     created_at: Mapped[str] = mapped_column(String(40))

@@ -36,6 +36,7 @@ from app.providers.media_http import (
     MediaProviderNotConfigured,
     image_dimensions,
     request,
+    retrying,
 )
 
 HOST = "api.dev.runwayml.com"
@@ -277,6 +278,7 @@ class _RunwayClient:
 
     async def _submit(self, task: str, body: dict[str, Any]) -> str:
         data, _, _ = await asyncio.to_thread(
+            retrying,
             request,
             HOST,
             "POST",
@@ -308,6 +310,7 @@ class _RunwayClient:
             return None
         try:
             data, _, _ = await asyncio.to_thread(
+                retrying,
                 request,
                 HOST,
                 "POST",
@@ -332,6 +335,7 @@ class _RunwayClient:
         """Cancel a task. Used when a dry run created one anyway; failure is logged, not raised."""
         try:
             await asyncio.to_thread(
+                retrying,
                 request,
                 HOST,
                 "DELETE",
@@ -345,7 +349,13 @@ class _RunwayClient:
 
     async def _task(self, job_id: str) -> dict[str, Any]:
         data, _, _ = await asyncio.to_thread(
-            request, HOST, "GET", f"/v1/tasks/{quote(job_id, safe='')}", self._headers(), timeout=30
+            retrying,
+            request,
+            HOST,
+            "GET",
+            f"/v1/tasks/{quote(job_id, safe='')}",
+            self._headers(),
+            timeout=30,
         )
         if not isinstance(data, dict) or not isinstance(data.get("status"), str):
             raise MediaProviderError("Runway did not return the task status")
@@ -357,7 +367,7 @@ class _RunwayClient:
             raise MediaProviderError("Runway returned an output that is not an HTTPS URL")
         path = parts.path + ("?" + parts.query if parts.query else "")
         _, payload, content_type = await asyncio.to_thread(
-            request, parts.hostname, "GET", path, {}, timeout=120, expect_json=False
+            retrying, request, parts.hostname, "GET", path, {}, timeout=120, expect_json=False
         )
         if not payload:
             raise MediaProviderError("Runway's output could not be downloaded")
@@ -377,7 +387,7 @@ class RunwayImageAdapter(_RunwayClient, ImageProvider):
     async def health_check(self) -> dict[str, Any]:
         try:
             data, _, _ = await asyncio.to_thread(
-                request, HOST, "GET", "/v1/organization", self._headers(), timeout=20
+                retrying, request, HOST, "GET", "/v1/organization", self._headers(), timeout=20
             )
         except MediaProviderError as exc:
             return {"status": "OFFLINE", "detail": str(exc), "code": exc.code}
@@ -460,7 +470,7 @@ class RunwayImageAdapter(_RunwayClient, ImageProvider):
 class RunwayVideoAdapter(_RunwayClient, VideoProvider):
     async def organization(self) -> dict[str, Any]:
         data, _, _ = await asyncio.to_thread(
-            request, HOST, "GET", "/v1/organization", self._headers(), timeout=20
+            retrying, request, HOST, "GET", "/v1/organization", self._headers(), timeout=20
         )
         if not isinstance(data, dict) or not isinstance(data.get("tier"), dict):
             raise MediaProviderError("Runway did not describe the organization")
@@ -481,7 +491,13 @@ class RunwayVideoAdapter(_RunwayClient, VideoProvider):
 
     async def model_contract(self) -> dict[str, dict[str, Any]]:
         data, _, _ = await asyncio.to_thread(
-            request, DOCS_HOST, "GET", CONTRACT_PATH, {"Accept": "application/json"}, timeout=30
+            retrying,
+            request,
+            DOCS_HOST,
+            "GET",
+            CONTRACT_PATH,
+            {"Accept": "application/json"},
+            timeout=30,
         )
         return parse_model_contract(data)
 

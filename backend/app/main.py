@@ -48,7 +48,6 @@ from app.services import (
     change_stop,
     read_events,
     snapshot,
-    utc_now,
 )
 from app.story.router import create_story_router
 from app.workflows.publisher import ConnectionManager, publish_pending_outbox
@@ -70,6 +69,8 @@ from app.workflows.worker import (
     MODEL_REVIEW_JOB_NAME,
     TRENDS_JOB_NAME,
     TRENDS_REFRESH,
+    WATCHDOG,
+    WATCHDOG_JOB_NAME,
     build_task_handlers,
     worker_pass,
 )
@@ -112,7 +113,7 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
         # Migrations/bootstrap are explicit startup commands, never hidden destructive schema edits.
         with engine.connect() as connection:
             revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
-            if revision != "0034_agent_multi_llm":
+            if revision != "0035_clock_and_fault_class":
                 raise RuntimeError("Run scripts/bootstrap.py with this application version")
             if connection.scalar(text("SELECT COUNT(*) FROM owner_policy")) != 1:
                 raise RuntimeError("Run scripts/bootstrap.py to initialize the studio")
@@ -177,17 +178,33 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
         # while the Owner's autonomy stop is set — the scheduler and the queue both refuse.
         worker: asyncio.Task[None] | None = None
         if settings.worker_enabled:
+            # The day is on the studio's wall clock — STUDIO_DAILY_RUN_HOUR_LOCAL in
+            # STUDIO_TIMEZONE — not on the moment the process started; the hour follows the
+            # setting on every start-up.
             ensure_scheduled_job(
                 engine,
                 name=DAILY_JOB_NAME,
                 workflow_type=DAILY_RUN,
                 interval_seconds=86400,
                 missed_policy="CATCH_UP",
-                first_run_at=utc_now(),
+                run_at_local=settings.daily_run_hour_local,
+                timezone=settings.timezone,
                 # Dormant until the Owner starts it from the panel: a job that fired within
                 # thirty seconds of the first start-up would begin a real day — agents, tokens,
                 # renders — on a decision nobody took.
                 active=False,
+            )
+            # The watchdog: stuck work found and named every ten minutes. Active from birth
+            # and behind the autonomy stop like every other scheduled thing; it starts nothing
+            # and spends nothing, it only says what is stuck.
+            ensure_scheduled_job(
+                engine,
+                name=WATCHDOG_JOB_NAME,
+                workflow_type=WATCHDOG,
+                interval_seconds=settings.watchdog_interval_seconds,
+                missed_policy="SKIP",
+                first_run_at=_utc_now_plus(settings.watchdog_interval_seconds),
+                active=True,
             )
             # The Director's weekly performance review: standing policy ordered by the Owner,
             # so the job is active from birth. The first pass waits an hour — a studio that

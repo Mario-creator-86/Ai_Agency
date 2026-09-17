@@ -270,11 +270,13 @@ def test_the_application_seeds_the_daily_job_only_when_the_worker_is_on(settings
         pass
     with Session(engine) as session:
         jobs = {job.name: job for job in session.scalars(select(ScheduledJob))}
-    # Six standing jobs: the day (dormant until the Owner starts it), the Director's weekly
+    # Seven standing jobs: the day (dormant until the Owner starts it), the Director's weekly
     # performance review, the daily reading of what people search for, the stewards' weekly
-    # reading of their vendors' pages, the daily re-judging of every model's standing, and
-    # the Director's own pass over the company four times a day — all but the day active
-    # from birth, behind the autonomy stop.
+    # reading of their vendors' pages, the daily re-judging of every model's standing, the
+    # Director's own pass over the company four times a day, and the watchdog every ten
+    # minutes — all but the day active from birth, behind the autonomy stop.
+    from app.workflows.worker import WATCHDOG, WATCHDOG_JOB_NAME
+
     assert set(jobs) == {
         DAILY_JOB_NAME,
         WEEKLY_JOB_NAME,
@@ -282,7 +284,15 @@ def test_the_application_seeds_the_daily_job_only_when_the_worker_is_on(settings
         MODEL_RESEARCH_JOB_NAME,
         MODEL_REVIEW_JOB_NAME,
         DIRECTOR_LOOP_JOB_NAME,
+        WATCHDOG_JOB_NAME,
     }
+    assert jobs[WATCHDOG_JOB_NAME].workflow_type == WATCHDOG
+    assert jobs[WATCHDOG_JOB_NAME].is_active
+    assert jobs[WATCHDOG_JOB_NAME].interval_seconds == settings.watchdog_interval_seconds == 600
+    # The day is on the studio's own wall clock, at the configured hour, not on the moment
+    # the process happened to start.
+    assert jobs[DAILY_JOB_NAME].run_at_local == settings.daily_run_hour_local == "05:00"
+    assert jobs[DAILY_JOB_NAME].timezone == settings.timezone
     assert jobs[DIRECTOR_LOOP_JOB_NAME].workflow_type == DIRECTOR_LOOP
     assert jobs[DIRECTOR_LOOP_JOB_NAME].is_active
     assert jobs[DIRECTOR_LOOP_JOB_NAME].interval_seconds == 21600
@@ -339,6 +349,467 @@ def test_a_dormant_schedule_fires_nothing_and_activation_is_a_recorded_decision(
             .where(DomainEvent.event_type == "workflow.job_activated")
         )
     assert count == 1
+
+
+# --------------------------------------------------------------- a task that waits --
+
+
+def test_a_task_with_not_before_is_not_handed_out_before_its_time(engine, settings, vault):
+    from app.workflows.services import claim_task
+
+    _autonomy(engine, False)
+    later = (datetime.now(UTC) + timedelta(seconds=1800)).isoformat()
+    queued = enqueue_task(engine, "ANY", {}, not_before=later)
+    assert queued["next_attempt_at"] == later
+    assert claim_task(engine, "w") is None
+
+    with Session(engine) as session, session.begin():
+        session.get(TaskQueueItem, queued["id"]).next_attempt_at = utc_iso(-1)
+    claimed = claim_task(engine, "w")
+    assert claimed is not None and claimed["id"] == queued["id"]
+
+
+def utc_iso(seconds_from_now: int) -> str:
+    return (datetime.now(UTC) + timedelta(seconds=seconds_from_now)).isoformat()
+
+
+# ------------------------------------------------------------ the same day, again --
+
+
+def _fake_day(engine, settings, outcomes: list[dict[str, Any]], calls: list[dict[str, Any]]):
+    """A stand-in for execute_daily_run that leaves what a real run leaves: a DailyRun row."""
+    from app.story.services import business_date
+
+    def fake_run(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        outcome = outcomes[min(len(calls), len(outcomes) - 1)]
+        calls.append(dict(kwargs))
+        run_id = str(uuid4())
+        with Session(engine) as session, session.begin():
+            session.add(
+                DailyRun(
+                    id=run_id,
+                    business_date=business_date(settings.timezone),
+                    preflight_status=outcome.get("preflight", "READY"),
+                    preflight_json={},
+                    status=outcome["status"],
+                    stages_json=[],
+                    stages_total=12,
+                    stages_completed=0,
+                    stopped_at_stage=None,
+                    stop_reason=None,
+                    fault_class=outcome.get("fault_class"),
+                    started_at=utc_iso(0),
+                    finished_at=utc_iso(0),
+                    event_id=None,
+                )
+            )
+        return {
+            "id": run_id,
+            "status": outcome["status"],
+            "fault_class": outcome.get("fault_class"),
+            "retryable": outcome.get("retryable", False),
+        }
+
+    return fake_run
+
+
+def _fire_now(engine, task_id: str) -> None:
+    with Session(engine) as session, session.begin():
+        session.get(TaskQueueItem, task_id).next_attempt_at = utc_iso(-1)
+
+
+def test_a_blocked_day_is_re_attempted_later_and_gives_up_after_the_limit(
+    engine, settings, vault, monkeypatch
+):
+    """A BLOCKED preflight at 05:00 used to lose the whole day. Now it is tried again."""
+    from app.story.services import business_date
+
+    _autonomy(engine, False)
+    settings.daily_max_attempts = 3
+    settings.daily_retry_seconds = 1800
+    calls: list[dict[str, Any]] = []
+    fake = _fake_day(
+        engine, settings, [{"status": "BLOCKED", "preflight": "BLOCKED", "retryable": True}], calls
+    )
+    monkeypatch.setattr("app.workflows.worker.execute_daily_run", fake)
+    handlers = build_task_handlers(engine, settings, vault, None)
+    today = business_date(settings.timezone)
+
+    _due_job(engine)
+    first = worker_pass(engine, handlers)
+    assert first["ran"][0]["outcome"]["status"] == "BLOCKED"
+    assert calls[0]["attempt"] == 1 and calls[0]["attempts_allowed"] == 3
+    retry = next(t for t in _tasks(engine) if t.idempotency_key == f"daily-retry-{today}-2")
+    assert retry.task_type == DAILY_RUN and retry.status == "QUEUED"
+    assert retry.payload["attempt"] == 2 and retry.payload["date"] == today
+    assert retry.next_attempt_at > utc_iso(1700), "half an hour on, not at once"
+    assert first["ran"][0]["outcome"]["retry_task_id"] == retry.id
+
+    # Not due yet: the worker finds nothing to do.
+    assert worker_pass(engine, handlers)["ran"] == []
+
+    _fire_now(engine, retry.id)
+    second = worker_pass(engine, handlers)
+    assert second["ran"][0]["outcome"]["status"] == "BLOCKED"
+    assert calls[1]["attempt"] == 2
+    third_task = next(t for t in _tasks(engine) if t.idempotency_key == f"daily-retry-{today}-3")
+    _fire_now(engine, third_task.id)
+    third = worker_pass(engine, handlers)
+    assert calls[2]["attempt"] == 3
+    assert third["ran"][0]["outcome"].get("retry_task_id") is None, "the third is the last"
+    assert not any(t.idempotency_key == f"daily-retry-{today}-4" for t in _tasks(engine))
+
+    # The clock firing again today is told the day has had its attempts.
+    _due_job(engine)
+    fourth = worker_pass(engine, handlers)
+    assert fourth["ran"][0]["outcome"]["status"] == "SKIPPED"
+    assert "încercări" in fourth["ran"][0]["outcome"]["reason"]
+    assert len(calls) == 3
+
+
+def test_a_transient_failure_is_re_attempted_but_a_day_that_did_work_is_not(
+    engine, settings, vault, monkeypatch
+):
+    from app.story.services import business_date
+
+    _autonomy(engine, False)
+    calls: list[dict[str, Any]] = []
+    fake = _fake_day(
+        engine,
+        settings,
+        [
+            {"status": "FAILED", "fault_class": "TRANSIENT", "retryable": True},
+            {"status": "PARTIAL"},
+        ],
+        calls,
+    )
+    monkeypatch.setattr("app.workflows.worker.execute_daily_run", fake)
+    handlers = build_task_handlers(engine, settings, vault, None)
+    today = business_date(settings.timezone)
+
+    _due_job(engine)
+    worker_pass(engine, handlers)
+    retry = next(t for t in _tasks(engine) if t.idempotency_key == f"daily-retry-{today}-2")
+    _fire_now(engine, retry.id)
+    second = worker_pass(engine, handlers)
+    assert second["ran"][0]["outcome"]["status"] == "PARTIAL"
+    assert second["ran"][0]["outcome"].get("retry_task_id") is None
+
+    # The day did work: neither the clock nor a stray retry repeats it.
+    _due_job(engine)
+    third = worker_pass(engine, handlers)
+    assert third["ran"][0]["outcome"]["status"] == "SKIPPED"
+    assert "a rulat deja" in third["ran"][0]["outcome"]["reason"]
+    assert len(calls) == 2
+
+
+def test_a_hard_failure_is_not_re_attempted_by_the_clock(engine, settings, vault, monkeypatch):
+    from app.story.services import business_date
+
+    _autonomy(engine, False)
+    calls: list[dict[str, Any]] = []
+    fake = _fake_day(
+        engine, settings, [{"status": "FAILED", "fault_class": "HARD", "retryable": False}], calls
+    )
+    monkeypatch.setattr("app.workflows.worker.execute_daily_run", fake)
+    handlers = build_task_handlers(engine, settings, vault, None)
+    _due_job(engine)
+    worker_pass(engine, handlers)
+    today = business_date(settings.timezone)
+    assert not any(
+        (t.idempotency_key or "").startswith(f"daily-retry-{today}") for t in _tasks(engine)
+    )
+
+
+def test_a_retry_left_over_from_another_day_is_skipped(engine, settings, vault, monkeypatch):
+    _autonomy(engine, False)
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        "app.workflows.worker.execute_daily_run",
+        _fake_day(engine, settings, [{"status": "PARTIAL"}], calls),
+    )
+    handlers = build_task_handlers(engine, settings, vault, None)
+    enqueue_task(
+        engine, DAILY_RUN, {"retry_of": "old", "attempt": 2, "date": "2020-01-01"}, max_attempts=1
+    )
+    result = work_once(engine, handlers)
+    assert result is not None and result["outcome"]["status"] == "SKIPPED"
+    assert "2020-01-01" in result["outcome"]["reason"]
+    assert calls == []
+
+
+def test_no_re_attempt_is_queued_when_the_stop_lands_during_the_day(
+    engine, settings, vault, monkeypatch
+):
+    """The Owner presses STOP while attempt one is running and it ends re-attemptable (the
+    preflight reads the stop as BLOCKED). Nothing autonomous may start after the switch: no
+    retry is queued, and a retry already waiting is not handed out."""
+    from app.story.services import business_date
+
+    _autonomy(engine, False)
+    calls: list[dict[str, Any]] = []
+    fake = _fake_day(
+        engine, settings, [{"status": "BLOCKED", "preflight": "BLOCKED", "retryable": True}], calls
+    )
+
+    def stop_then_run(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        _autonomy(engine, True)
+        return fake(*args, **kwargs)
+
+    monkeypatch.setattr("app.workflows.worker.execute_daily_run", stop_then_run)
+    handlers = build_task_handlers(engine, settings, vault, None)
+    today = business_date(settings.timezone)
+
+    _due_job(engine)
+    first = worker_pass(engine, handlers)
+    assert first["ran"][0]["outcome"]["status"] == "BLOCKED"
+    assert first["ran"][0]["outcome"].get("retry_task_id") is None
+    assert not any(
+        (t.idempotency_key or "").startswith(f"daily-retry-{today}") for t in _tasks(engine)
+    )
+
+    # A retry that was already waiting when the stop came stays in the queue, untouched.
+    waiting = enqueue_task(
+        engine,
+        DAILY_RUN,
+        {"retry_of": "earlier", "attempt": 2, "date": today},
+        max_attempts=1,
+        idempotency_key=f"daily-retry-{today}-2",
+    )
+    _fire_now(engine, waiting["id"])
+    assert worker_pass(engine, handlers) == {
+        "triggered": [],
+        "ran": [],
+        "mail": {"answered": [], "refused": []},
+    }
+    assert len(calls) == 1
+
+
+# ------------------------------------------------------------------ the fixed hour --
+
+
+def test_the_next_occurrence_of_a_local_hour_is_dst_safe():
+    """Bucharest leaves summer time on 2026-10-25 and enters it on 2026-03-29. Five in the
+    morning stays five in the morning on the wall clock, whatever UTC does."""
+    from zoneinfo import ZoneInfo
+
+    from app.workflows.services import next_local_occurrence
+
+    zone = ZoneInfo("Europe/Bucharest")
+    # Just after 05:00 on the day before the autumn change: next is tomorrow 05:00 EET.
+    now = datetime(2026, 10, 24, 5, 0, 1, tzinfo=zone)
+    nxt = next_local_occurrence("05:00", "Europe/Bucharest", now)
+    assert nxt.astimezone(zone).strftime("%Y-%m-%d %H:%M") == "2026-10-25 05:00"
+    assert nxt - now.replace(second=0, microsecond=0) == timedelta(hours=25)
+    assert nxt.astimezone(UTC).hour == 3
+
+    # Just before 05:00 the same day: today, not tomorrow.
+    now = datetime(2026, 10, 24, 4, 59, tzinfo=zone)
+    assert (
+        next_local_occurrence("05:00", "Europe/Bucharest", now)
+        .astimezone(zone)
+        .strftime("%Y-%m-%d %H:%M")
+        == "2026-10-24 05:00"
+    )
+
+    # The spring change: a 23-hour day, and the hour still reads 05:00 locally.
+    now = datetime(2026, 3, 28, 5, 0, 1, tzinfo=zone)
+    nxt = next_local_occurrence("05:00", "Europe/Bucharest", now)
+    assert nxt.astimezone(zone).strftime("%Y-%m-%d %H:%M") == "2026-03-29 05:00"
+    assert nxt - now.replace(second=0, microsecond=0) == timedelta(hours=23)
+
+    # The answer is a UTC instant, comparable with everything else the scheduler stores.
+    assert nxt.tzinfo is UTC
+    # Exactly on the minute counts as passed: the slot is the *next* one.
+    now = datetime(2026, 9, 17, 5, 0, 0, tzinfo=zone)
+    assert next_local_occurrence("05:00", "Europe/Bucharest", now).astimezone(zone).day == 18
+
+
+def test_an_hour_inside_the_ambiguous_hour_fires_once_when_the_clocks_go_back():
+    """On 2026-10-25 Bucharest reads 03:00–03:59 twice. An hour set inside it must fire once,
+    at the first reading, and not again during the second: two aware datetimes sharing one
+    ZoneInfo compare as wall-clock time, so a naive "is the slot past?" said no at the second
+    03:30 and handed out a slot forty-five minutes in the past — a fire on every tick until the
+    wall clock passed the hour again."""
+    from zoneinfo import ZoneInfo
+
+    from app.workflows.services import next_local_occurrence
+
+    zone = ZoneInfo("Europe/Bucharest")
+    # 02:30 EEST: the first 03:45 (00:45Z) is still ahead.
+    first = next_local_occurrence(
+        "03:45", "Europe/Bucharest", datetime(2026, 10, 25, 0, 30, tzinfo=UTC)
+    )
+    assert first == datetime(2026, 10, 25, 0, 45, tzinfo=UTC)
+    # Exactly at it: passed, the next is tomorrow's 03:45 EET (01:45Z on the 26th).
+    at = next_local_occurrence("03:45", "Europe/Bucharest", first)
+    assert at == datetime(2026, 10, 26, 1, 45, tzinfo=UTC)
+    # 03:30 EET, the second reading of the hour: the slot must not be in the past.
+    second_reading = datetime(2026, 10, 25, 1, 30, tzinfo=UTC)
+    assert second_reading.astimezone(zone).fold == 1, "the probe is the ambiguous reading"
+    nxt = next_local_occurrence("03:45", "Europe/Bucharest", second_reading)
+    assert nxt > second_reading, "a slot in the past is a fire on every tick"
+    assert nxt == datetime(2026, 10, 26, 1, 45, tzinfo=UTC)
+
+    # The spring gap: 03:30 does not exist on 2026-03-29; the slot lands once, on the first
+    # instant after the gap, and tomorrow's 03:30 is a real 03:30 again.
+    gap = next_local_occurrence(
+        "03:30", "Europe/Bucharest", datetime(2026, 3, 29, 0, 0, tzinfo=UTC)
+    )
+    assert (
+        datetime(2026, 3, 29, 0, 59, tzinfo=UTC) < gap <= datetime(2026, 3, 29, 1, 30, tzinfo=UTC)
+    )
+    after = next_local_occurrence("03:30", "Europe/Bucharest", gap)
+    assert after.astimezone(zone).strftime("%Y-%m-%d %H:%M") == "2026-03-30 03:30"
+
+    # The minute the Owner wakes the job decides the day: 04:59 → today at 05:00; 05:01 →
+    # tomorrow. Never a fire on the spot.
+    for local_now, expected_day in (
+        (datetime(2026, 9, 17, 4, 59, tzinfo=zone), 17),
+        (datetime(2026, 9, 17, 5, 1, tzinfo=zone), 18),
+    ):
+        slot = next_local_occurrence("05:00", "Europe/Bucharest", local_now).astimezone(zone)
+        assert (slot.day, slot.hour, slot.minute) == (expected_day, 5, 0)
+        assert slot > local_now
+
+
+def test_a_job_with_a_fixed_hour_moves_to_the_next_occurrence_when_it_fires(engine):
+    from zoneinfo import ZoneInfo
+
+    _autonomy(engine, False)
+    job = ensure_scheduled_job(
+        engine,
+        name="at_five",
+        workflow_type=DAILY_RUN,
+        interval_seconds=86400,
+        run_at_local="05:00",
+        timezone="Europe/Bucharest",
+    )
+    assert job["next_run_at"] > datetime.now(UTC).isoformat()
+    with Session(engine) as session:
+        row = session.get(ScheduledJob, job["id"])
+        assert row.run_at_local == "05:00" and row.timezone == "Europe/Bucharest"
+        first_slot = datetime.fromisoformat(row.next_run_at).astimezone(ZoneInfo(row.timezone))
+    assert (first_slot.hour, first_slot.minute) == (5, 0)
+
+    # Two days late: fires once, and the next slot is the next 05:00 — not "now + a day".
+    with Session(engine) as session, session.begin():
+        session.get(ScheduledJob, job["id"]).next_run_at = (
+            datetime.now(UTC) - timedelta(days=2)
+        ).isoformat()
+    fired = scheduler_tick(engine)
+    assert len(fired) == 1
+    assert scheduler_tick(engine) == []
+    with Session(engine) as session:
+        row = session.get(ScheduledJob, job["id"])
+    nxt = datetime.fromisoformat(row.next_run_at)
+    assert nxt > datetime.now(UTC)
+    local = nxt.astimezone(ZoneInfo("Europe/Bucharest"))
+    assert (local.hour, local.minute) == (5, 0)
+    assert nxt - datetime.now(UTC) <= timedelta(hours=24)
+
+
+def test_waking_a_fixed_hour_job_schedules_the_next_occurrence_not_now(engine):
+    from zoneinfo import ZoneInfo
+
+    from app.workflows.services import set_job_active
+
+    _autonomy(engine, False)
+    job = ensure_scheduled_job(
+        engine,
+        name="dormant_five",
+        workflow_type=DAILY_RUN,
+        interval_seconds=86400,
+        run_at_local="05:00",
+        timezone="Europe/Bucharest",
+        active=False,
+    )
+    # Whatever the dormant row says — a stale past slot, or a future one from another hour.
+    for stale in (
+        "2020-01-01T00:00:00+00:00",
+        (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+    ):
+        with Session(engine) as session, session.begin():
+            row = session.get(ScheduledJob, job["id"])
+            row.is_active = False
+            row.next_run_at = stale
+        woken = set_job_active(engine, job["id"], True, str(uuid4()))
+        assert woken["is_active"] is True
+        nxt = datetime.fromisoformat(woken["next_run_at"])
+        assert nxt > datetime.now(UTC)
+        local = nxt.astimezone(ZoneInfo("Europe/Bucharest"))
+        assert (local.hour, local.minute) == (5, 0)
+        assert scheduler_tick(engine) == [], "activation is not a fire"
+
+
+def test_the_seeded_hour_follows_the_setting(engine):
+    """The hour is configuration: a changed STUDIO_DAILY_RUN_HOUR_LOCAL reaches the row."""
+    from zoneinfo import ZoneInfo
+
+    first = ensure_scheduled_job(
+        engine,
+        name="daily_x",
+        workflow_type=DAILY_RUN,
+        interval_seconds=86400,
+        run_at_local="05:00",
+        timezone="Europe/Bucharest",
+        active=False,
+    )
+    second = ensure_scheduled_job(
+        engine,
+        name="daily_x",
+        workflow_type=DAILY_RUN,
+        interval_seconds=86400,
+        run_at_local="06:30",
+        timezone="Europe/Bucharest",
+        active=False,
+    )
+    assert second["id"] == first["id"]
+    with Session(engine) as session:
+        row = session.get(ScheduledJob, first["id"])
+        assert row.run_at_local == "06:30"
+        assert row.is_active is False, "following the hour is not activating the job"
+        local = datetime.fromisoformat(row.next_run_at).astimezone(ZoneInfo("Europe/Bucharest"))
+    assert (local.hour, local.minute) == (6, 30)
+
+
+def test_the_daily_run_hour_setting_is_a_wall_clock_time(settings):
+    from app.config import Settings
+
+    assert settings.daily_run_hour_local == "05:00"
+    with pytest.raises(ValueError):
+        Settings.model_validate({**settings.model_dump(), "daily_run_hour_local": "25:00"})
+    with pytest.raises(ValueError):
+        Settings.model_validate({**settings.model_dump(), "daily_run_hour_local": "5am"})
+
+
+# -------------------------------------------------------------------- the watchdog --
+
+
+def test_the_watchdog_task_is_dispatched_to_its_module(engine, settings, vault, monkeypatch):
+    import sys
+    import types
+
+    from app.workflows.worker import WATCHDOG, WATCHDOG_JOB_NAME
+
+    assert (WATCHDOG, WATCHDOG_JOB_NAME) == ("WATCHDOG", "watchdog")
+    seen: list[Any] = []
+    module = types.ModuleType("app.workflows.watchdog")
+    module.WATCHDOG = "WATCHDOG"  # type: ignore[attr-defined]
+    module.WATCHDOG_JOB_NAME = "watchdog"  # type: ignore[attr-defined]
+
+    def run_watchdog(eng: Any, cfg: Any, correlation_id: str) -> dict[str, Any]:
+        seen.append((eng, cfg, correlation_id))
+        return {"status": "COMPLETED", "incidents": []}
+
+    module.run_watchdog = run_watchdog  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "app.workflows.watchdog", module)
+
+    handlers = build_task_handlers(engine, settings, vault, None)
+    assert WATCHDOG in handlers
+    outcome = handlers[WATCHDOG]({"id": "task-1", "payload": {}})
+    assert outcome["status"] == "COMPLETED"
+    assert seen == [(engine, settings, "task-1")]
 
 
 def test_activation_is_owner_only_and_reachable(client, headers, engine):

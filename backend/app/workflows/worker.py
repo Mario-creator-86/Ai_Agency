@@ -9,15 +9,20 @@ job into a queued task, and then it claims tasks and runs them through a dispatc
 type with no handler is dead-lettered with that reason rather than retried into the ground.
 
 What the worker will not do. It fires nothing while the Owner's autonomy stop is set — the
-scheduler and the queue both refuse — and it runs the scheduled daily run at most once per
-business date, however many times the job fires or the process restarts: a second run on the same
-day is the Owner's decision to make from the panel, not the clock's.
+scheduler and the queue both refuse — and it does at most one *successful* day per business
+date, however many times the job fires or the process restarts: a day that did work
+(COMPLETED or PARTIAL) is not repeated, and a second one is the Owner's decision to make from
+the panel, not the clock's. A day that could not run — a BLOCKED preflight, a stage that
+failed on a transient fault — is attempted again after `daily_retry_seconds`, up to
+`daily_max_attempts` times; measured on the live copy, the old rule ("any run today means
+skip") lost whole days to one "database is locked".
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import Engine, select
@@ -25,14 +30,25 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.runbook.models import DailyRun
-from app.runbook.services import DAILY_RUN_TASK, SafeModeActive, execute_daily_run
+from app.runbook.services import (
+    DAILY_RUN_TASK,
+    SafeModeActive,
+    execute_daily_run,
+    stop_requested,
+)
 from app.runbook.weekly import (
     WEEKLY_REVIEW_TASK,
     WeeklyReviewError,
     execute_weekly_review,
 )
 from app.story.services import business_date
-from app.workflows.services import claim_task, complete_task, fail_task, scheduler_tick
+from app.workflows.services import (
+    claim_task,
+    complete_task,
+    enqueue_task,
+    fail_task,
+    scheduler_tick,
+)
 
 logger = logging.getLogger("studio.worker")
 
@@ -70,6 +86,16 @@ MODEL_REVIEW_JOB_NAME = "model_review_daily"
 DIRECTOR_LOOP = "DIRECTOR_LOOP"
 DIRECTOR_LOOP_JOB_NAME = "director_loop"
 
+#: The watchdog: every ten minutes, work that is stuck — a task past its lease, a run that
+#: never finished, a provider job never collected — is found and named. The names match
+#: what `app.workflows.watchdog` exports; the module itself is imported only when a task
+#: fires, like the Director's loop, so the worker builds without it.
+WATCHDOG = "WATCHDOG"
+WATCHDOG_JOB_NAME = "watchdog"
+
+#: What a day's daily-run status means for the clock: a day that did work is done.
+DAY_DONE_STATES = ("COMPLETED", "PARTIAL")
+
 #: A daily run can take minutes — agents, a render, quality control. The lease has to outlast it,
 #: or the queue would hand the same run to the next pass while this one is still rendering.
 TASK_LEASE_SECONDS = 3600
@@ -96,22 +122,45 @@ def build_task_handlers(
 
     def daily_run(task: dict[str, Any]) -> dict[str, Any]:
         today = business_date(settings.timezone)
+        payload = task.get("payload") or {}
         # A run the Owner asked for is a decision already taken: it repeats a day that has
         # run, because that is what the button in the panel is for. Only the clock is held
-        # to one run per day.
-        manual = bool((task.get("payload") or {}).get("manual"))
-        with Session(engine) as session:
-            already = session.scalars(
-                select(DailyRun).where(DailyRun.business_date == today).limit(1)
-            ).first()
-        if already is not None and not manual:
-            # Fired again on a day that already ran — a restart, a manual run earlier, a job
-            # interval shorter than a day. The scheduled run does not repeat a day.
+        # to one successful run per day.
+        manual = bool(payload.get("manual"))
+        retry_for = payload.get("date") if payload.get("retry_of") else None
+        if retry_for is not None and retry_for != today:
+            # A re-attempt queued yesterday and only claimed now (the studio was off, or
+            # stopped): that day is over, and today's own clock will fire today's run.
             return {
                 "status": "SKIPPED",
-                "reason": f"Ziua {today} a rulat deja (rularea {already.id}).",
-                "run_id": already.id,
+                "reason": f"Reîncercarea era pentru ziua {retry_for}, care a trecut.",
             }
+        with Session(engine) as session:
+            runs_today = session.scalars(
+                select(DailyRun)
+                .where(DailyRun.business_date == today)
+                .order_by(DailyRun.started_at)
+            ).all()
+            done = next((run for run in runs_today if run.status in DAY_DONE_STATES), None)
+            done_id = done.id if done is not None else None
+        attempt = len(runs_today) + 1
+        if not manual:
+            if done_id is not None:
+                # Fired again on a day that did its work — a restart, a manual run earlier,
+                # a retry that outlived its reason. The scheduled run does not repeat a day.
+                return {
+                    "status": "SKIPPED",
+                    "reason": f"Ziua {today} a rulat deja (rularea {done_id}).",
+                    "run_id": done_id,
+                }
+            if attempt > settings.daily_max_attempts:
+                return {
+                    "status": "SKIPPED",
+                    "reason": (
+                        f"Ziua {today} și-a folosit cele {settings.daily_max_attempts} "
+                        "încercări; o nouă rulare azi este decizia Owner-ului."
+                    ),
+                }
         try:
             result = execute_daily_run(
                 engine,
@@ -119,11 +168,53 @@ def build_task_handlers(
                 vault,
                 correlation_id=task["id"],
                 stage_runners=stage_runners,
+                attempt=attempt,
+                attempts_allowed=settings.daily_max_attempts,
             )
         except SafeModeActive as exc:
             # Safe mode is cleared by a person. Retrying would only add noise until they do.
             raise NonRetryable(str(exc)) from exc
-        return {"status": result["status"], "run_id": result["id"], "date": today}
+        outcome = {
+            "status": result["status"],
+            "run_id": result["id"],
+            "date": today,
+            "attempt": attempt,
+        }
+        if (
+            result.get("retryable")
+            and attempt < settings.daily_max_attempts
+            and not stop_requested(engine)
+        ):
+            # The day could not run and nothing about that is final: try again in a while.
+            # Keyed on the date and the attempt number, so a restart between now and then
+            # queues nothing twice; held with `not_before`, so it waits its half hour in the
+            # queue rather than in a sleeping thread that a restart would lose.
+            following = attempt + 1
+            not_before = (
+                datetime.now(UTC) + timedelta(seconds=settings.daily_retry_seconds)
+            ).isoformat()
+            retry = enqueue_task(
+                engine,
+                DAILY_RUN,
+                {
+                    "retry_of": result["id"],
+                    "attempt": following,
+                    "date": today,
+                    "scheduled_job_id": payload.get("scheduled_job_id"),
+                    "job_name": payload.get("job_name"),
+                },
+                priority=5,
+                max_attempts=1,
+                idempotency_key=f"daily-retry-{today}-{following}",
+                not_before=not_before,
+            )
+            outcome["retry_task_id"] = retry["id"]
+            outcome["retry_at"] = retry["next_attempt_at"]
+            outcome["reason"] = (
+                f"Ziua nu a putut rula (încercarea {attempt} din "
+                f"{settings.daily_max_attempts}); reîncerc la {retry['next_attempt_at'][:16]}."
+            )
+        return outcome
 
     def weekly_review(task: dict[str, Any]) -> dict[str, Any]:
         if registry is None:
@@ -170,6 +261,16 @@ def build_task_handlers(
 
         return research_all(engine, registry, settings, correlation_id=task["id"])
 
+    def watchdog(task: dict[str, Any]) -> dict[str, Any]:
+        try:
+            from app.workflows.watchdog import run_watchdog  # noqa: PLC0415
+        except ImportError as exc:
+            # The job is seeded with the schedule; a build without the module must say so
+            # once per fire rather than retry an import into the ground.
+            raise NonRetryable("Supraveghetorul nu este instalat în această versiune.") from exc
+
+        return run_watchdog(engine, settings, correlation_id=task["id"])
+
     return {
         DAILY_RUN: daily_run,
         WEEKLY_REVIEW: weekly_review,
@@ -177,6 +278,7 @@ def build_task_handlers(
         MODEL_RESEARCH: model_research,
         MODEL_REVIEW: model_review,
         DIRECTOR_LOOP: director_loop,
+        WATCHDOG: watchdog,
     }
 
 

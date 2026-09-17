@@ -18,6 +18,7 @@ import base64
 import json
 import struct
 import zlib
+from unittest.mock import MagicMock
 
 import pytest
 from app.providers.elevenlabs import ElevenLabsTTSAdapter
@@ -282,3 +283,266 @@ def test_vendor_error_identifiers_are_read_from_error_bodies_but_never_free_text
     assert error_code(b'{"detail": "The key sk_live_123 is not valid"}') is None
     assert error_code(b'{"detail": {"status": "Bad Request"}}') is None
     assert error_code(b"<html>") is None
+
+
+# --- transient failures are retried, and never billed twice --------------------------------
+#
+# Before 2026-09-17 no adapter retried anything: one 503 from the voice vendor was a failed
+# scene. The helper in app.providers.retry does the waiting; these tests pin what each adapter
+# asks of it — which calls may be repeated and which must not.
+
+
+@pytest.fixture(autouse=True)
+def instant_retries(monkeypatch):
+    from app.providers import retry
+
+    slept: list[float] = []
+    monkeypatch.setattr(retry, "sleep", slept.append)
+    return slept
+
+
+def refused(host: str, status: int, **kwargs) -> MediaProviderError:
+    return MediaProviderError(
+        f"{host} refused the request (HTTP {status})", http_status=status, **kwargs
+    )
+
+
+def test_a_503_from_the_voice_vendor_is_retried_once_and_the_audio_kept(monkeypatch):
+    from app.providers import elevenlabs
+
+    recorder = Recorder(refused("api.elevenlabs.io", 503), (None, mp3_bytes(120), "audio/mpeg"))
+    monkeypatch.setattr(elevenlabs, "request", recorder)
+    adapter = ElevenLabsTTSAdapter("key", voice_id="v1", model="test-model")
+
+    import asyncio
+
+    result = asyncio.run(adapter.synthesize("Hubble was launched in 1990."))
+
+    assert result.duration_seconds == pytest.approx(3.135, abs=0.002)
+    assert [c["path"] for c in recorder.calls] == ["/v1/text-to-speech/v1"] * 2
+
+
+def test_a_400_from_the_voice_vendor_is_not_retried(monkeypatch):
+    from app.providers import elevenlabs
+
+    recorder = Recorder(refused("api.elevenlabs.io", 400, code="invalid_voice_settings"))
+    monkeypatch.setattr(elevenlabs, "request", recorder)
+    adapter = ElevenLabsTTSAdapter("key", voice_id="v1", model="test-model")
+
+    import asyncio
+
+    with pytest.raises(MediaProviderError) as excinfo:
+        asyncio.run(adapter.synthesize("Some narration."))
+
+    assert len(recorder.calls) == 1
+    assert excinfo.value.code == "invalid_voice_settings" and excinfo.value.http_status == 400
+
+
+def test_after_three_refusals_the_voice_vendor_error_carries_the_count(monkeypatch):
+    from app.providers import elevenlabs
+
+    recorder = Recorder(*[refused("api.elevenlabs.io", 503) for _ in range(3)])
+    monkeypatch.setattr(elevenlabs, "request", recorder)
+    adapter = ElevenLabsTTSAdapter("key", voice_id="v1", model="test-model")
+
+    import asyncio
+
+    with pytest.raises(MediaProviderError) as excinfo:
+        asyncio.run(adapter.synthesize("Some narration."))
+
+    assert len(recorder.calls) == 3
+    assert excinfo.value.http_status == 503 and "3 attempts" in str(excinfo.value)
+
+
+def test_a_narration_request_that_left_and_got_no_answer_is_not_sent_again(monkeypatch):
+    """ElevenLabs bills the characters it synthesised; the silence may be a served request."""
+    from app.providers import elevenlabs
+
+    recorder = Recorder(
+        MediaProviderError("api.elevenlabs.io did not answer", unanswered=True),
+        (None, mp3_bytes(10), "audio/mpeg"),
+    )
+    monkeypatch.setattr(elevenlabs, "request", recorder)
+    adapter = ElevenLabsTTSAdapter("key", voice_id="v1", model="test-model")
+
+    import asyncio
+
+    with pytest.raises(MediaProviderError):
+        asyncio.run(adapter.synthesize("Some narration."))
+
+    assert len(recorder.calls) == 1
+
+
+def test_the_voice_catalogue_is_a_read_and_is_asked_again_after_a_silence(monkeypatch):
+    from app.providers import elevenlabs
+
+    recorder = Recorder(
+        MediaProviderError("api.elevenlabs.io did not answer", unanswered=True),
+        ([{"model_id": "m1"}], b"", "application/json"),
+    )
+    monkeypatch.setattr(elevenlabs, "request", recorder)
+
+    import asyncio
+
+    assert asyncio.run(ElevenLabsTTSAdapter("key").list_models()) == [{"model_id": "m1"}]
+    assert len(recorder.calls) == 2
+
+
+def test_a_concurrency_limit_from_the_voice_vendor_waits_what_it_asks(monkeypatch, instant_retries):
+    """ElevenLabs answers 429 too_many_concurrent_requests; a Retry-After is the vendor's own
+    number and is waited out rather than guessed at."""
+    from app.providers import elevenlabs
+
+    recorder = Recorder(
+        refused("api.elevenlabs.io", 429, code="too_many_concurrent_requests", retry_after=2.0),
+        (None, mp3_bytes(10), "audio/mpeg"),
+    )
+    monkeypatch.setattr(elevenlabs, "request", recorder)
+    adapter = ElevenLabsTTSAdapter("key", voice_id="v1", model="test-model")
+
+    import asyncio
+
+    asyncio.run(adapter.synthesize("Some narration."))
+
+    assert instant_retries == [2.0] and len(recorder.calls) == 2
+
+
+def test_an_image_vendor_503_is_retried_once(monkeypatch):
+    from app.providers import openai_media
+
+    payload = {"data": [{"b64_json": base64.b64encode(png_bytes(64, 64)).decode()}]}
+    recorder = Recorder(refused("api.openai.com", 503), (payload, b"", "application/json"))
+    monkeypatch.setattr(openai_media, "request", recorder)
+
+    import asyncio
+
+    result = asyncio.run(OpenAIImageAdapter("key").generate_image("a telescope"))
+
+    assert (result.width, result.height) == (64, 64)
+    assert [c["path"] for c in recorder.calls] == ["/v1/images/generations"] * 2
+
+
+def test_an_image_vendor_400_is_not_retried(monkeypatch):
+    from app.providers import openai_media
+
+    recorder = Recorder(refused("api.openai.com", 400, code="content_policy_violation"))
+    monkeypatch.setattr(openai_media, "request", recorder)
+
+    import asyncio
+
+    with pytest.raises(MediaProviderError) as excinfo:
+        asyncio.run(OpenAIImageAdapter("key").generate_image("a telescope"))
+
+    assert len(recorder.calls) == 1 and excinfo.value.code == "content_policy_violation"
+
+
+def test_an_image_vendor_that_keeps_refusing_raises_its_own_error_with_the_count(monkeypatch):
+    from app.providers import openai_media
+
+    recorder = Recorder(*[refused("api.openai.com", 502) for _ in range(3)])
+    monkeypatch.setattr(openai_media, "request", recorder)
+
+    import asyncio
+
+    with pytest.raises(MediaProviderError) as excinfo:
+        asyncio.run(OpenAIImageAdapter("key").generate_image("a telescope"))
+
+    assert len(recorder.calls) == 3
+    assert excinfo.value.http_status == 502 and "3 attempts" in str(excinfo.value)
+
+
+def test_an_image_request_that_left_and_got_no_answer_is_not_sent_again(monkeypatch):
+    from app.providers import openai_media
+
+    recorder = Recorder(
+        MediaProviderError("api.openai.com did not answer", unanswered=True),
+        ({"data": []}, b"", "application/json"),
+    )
+    monkeypatch.setattr(openai_media, "request", recorder)
+
+    import asyncio
+
+    with pytest.raises(MediaProviderError):
+        asyncio.run(OpenAIImageAdapter("key").generate_image("a telescope"))
+
+    assert len(recorder.calls) == 1
+
+
+# --- the HTTPS boundary says what kind of failure it saw ----------------------------------
+
+
+class FakeHTTPSConnection:
+    """One scripted exchange over `http.client`, for media_http.request itself."""
+
+    script: list = []
+
+    def __init__(self, host, timeout=None):
+        self.host = host
+        self.timeout = timeout
+
+    def request(self, method, path, body, headers):
+        step = self.script[0]
+        if step.get("connect") is not None:
+            self.script.pop(0)
+            raise step["connect"]
+
+    def getresponse(self):
+        step = self.script.pop(0)
+        if step.get("read") is not None:
+            raise step["read"]
+        resp = MagicMock()
+        resp.status = step["status"]
+        resp.read = MagicMock(return_value=step.get("body", b"{}"))
+        resp.headers.get_content_type = MagicMock(return_value="application/json")
+        resp.getheader = lambda name, default=None: step.get("headers", {}).get(name, default)
+        return resp
+
+    def close(self):
+        pass
+
+
+@pytest.fixture
+def https_script(monkeypatch):
+    from app.providers import media_http
+
+    FakeHTTPSConnection.script = []
+    monkeypatch.setattr(media_http.http.client, "HTTPSConnection", FakeHTTPSConnection)
+    return FakeHTTPSConnection.script
+
+
+def test_the_boundary_reports_the_status_and_the_vendors_retry_after(https_script):
+    from app.providers.media_http import request
+
+    https_script.append(
+        {
+            "status": 429,
+            "body": b'{"detail": {"status": "too_many_concurrent_requests"}}',
+            "headers": {"Retry-After": "3"},
+        }
+    )
+    with pytest.raises(MediaProviderError) as excinfo:
+        request("api.elevenlabs.io", "POST", "/v1/text-to-speech/v", {}, b"{}")
+    error = excinfo.value
+    assert (error.http_status, error.retry_after) == (429, 3.0)
+    assert error.code == "too_many_concurrent_requests"
+    assert not error.unsent and not error.unanswered
+
+
+def test_the_boundary_says_when_the_request_never_left(https_script):
+    from app.providers.media_http import request
+
+    https_script.append({"connect": ConnectionRefusedError("refused")})
+    with pytest.raises(MediaProviderError) as excinfo:
+        request("api.elevenlabs.io", "POST", "/v1/text-to-speech/v", {}, b"{}")
+    assert excinfo.value.unsent and not excinfo.value.unanswered
+    assert excinfo.value.http_status is None
+
+
+def test_the_boundary_says_when_the_request_left_but_nothing_came_back(https_script):
+    from app.providers.media_http import request
+
+    https_script.append({"read": TimeoutError("timed out")})
+    with pytest.raises(MediaProviderError) as excinfo:
+        request("api.elevenlabs.io", "POST", "/v1/text-to-speech/v", {}, b"{}")
+    assert excinfo.value.unanswered and not excinfo.value.unsent
+    assert "did not answer" in str(excinfo.value)
