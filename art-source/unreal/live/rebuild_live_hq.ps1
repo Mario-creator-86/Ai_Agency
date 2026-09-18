@@ -1,15 +1,24 @@
 # One pass of the live headquarters, end to end:
+#   0. the pictures drawn outside Unreal: the sky atlas (compose_sky_backdrop.py --atlas, one cell per
+#      sun elevation) and the shelter clock's digits (clock_hq_live.py --atlas)
 #   1. Blender export for Unreal (workstations and desk screens as their own objects)
 #   2. /Game/HQ/HQ_Dusk rebuilt from the export (build_hq_scene.py)
 #   3. the Fab packs placed (dress_hq_live.py) and the street set moving (traffic_hq_live.py)
 #   4. the built MetaHuman employees seated at their desks (people/seat_employees.py) and the
 #      passers-by standing on the pavement (people/street_people.py)
-#   5. the look pass (look_hq_live.py: lights, street fill, grade, fog), the real surfaces
-#      (surfaces_hq_live.py: tiling detail over the baked atlas) and the skyline's haze
-#      (haze_hq_live.py)
-#   6. the stream restarted on the new level (start_live_hq.ps1), waiting until Unreal joins
+#   5. the look pass (look_hq_live.py: lights, street fill, grade, fog, the room windows' dusk and day
+#      pictures), the real surfaces (surfaces_hq_live.py: tiling detail over the baked atlas) and the
+#      skyline's haze (haze_hq_live.py)
+#   6. the shelter clock's live display over the baked digits (clock_hq_live.py)
+#   7. the environment report (env_report_hq_live.py): label -> object path for everything the
+#      backend drives, read from the level as the passes above saved it. It runs last, and a missing
+#      label stops the pass here, before the stream comes back on a level the bridge cannot drive
+#   8. the stream restarted on the new level (start_live_hq.ps1), waiting until Unreal joins
 #
 #   powershell -File art-source/unreal/live/rebuild_live_hq.ps1 [-SkipExport] [-SkipBuild] [-NoStream]
+#
+# -SkipExport rebuilds from the hq_scene.glb already exported (the real-sky phase changes nothing in
+# Blender, so its rebuild runs with it and the baked atlases stay as they are).
 #
 # Logs go to -LogDir (default: art-source/unreal/renders/logs, ignored by Git). Every step stops the
 # pass on failure. Only processes this pass started (by name and command line) are restarted.
@@ -43,7 +52,7 @@ function RunUnrealScript([string]$script) {
     $log = Join-Path $LogDir ("ue_" + [IO.Path]::GetFileNameWithoutExtension($script) + ".log")
     & $ueCmd "$uproject" -run=pythonscript "-script=$((Join-Path $unrealDir $script) -replace '\\', '/')" -unattended -nosplash "-abslog=$log" | Out-Null
     $errors = Select-String -Path $log -Pattern "LogPython: Error" -ErrorAction SilentlyContinue
-    Select-String -Path $log -Pattern "AMN_(UE|DRESS|TRAFFIC|SEAT|STREET|LOOK|SURF) " -ErrorAction SilentlyContinue | Select-Object -Last 6 | ForEach-Object { "   " + $_.Line.Substring($_.Line.IndexOf("AMN_")) }
+    Select-String -Path $log -Pattern "AMN_(UE|DRESS|TRAFFIC|SEAT|STREET|LOOK|SURF|HAZE|CLOCK|ENV) " -ErrorAction SilentlyContinue | Select-Object -Last 6 | ForEach-Object { "   " + $_.Line.Substring($_.Line.IndexOf("AMN_")) }
     if ($errors) {
         $errors | Select-Object -First 8 | ForEach-Object { "   " + $_.Line }
         throw "$script reported Python errors (log: $log)"
@@ -57,16 +66,26 @@ function StopStream {
     } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -Confirm:$false }
 }
 
-# The sky plate first, export or not: compose_sky_backdrop.py writes sky_dusk.png and the level build
-# imports it. Until 2026-09-16 this pass never composed it, so every change to the sky's tint, clouds
-# or glow stayed in the code and the stream kept the plate last composed by hand.
+# The sky first, export or not: compose_sky_backdrop.py --atlas writes sky_atlas.png (one cell per sun
+# elevation, the -2.5 cell being the dusk plate the stream has shown since 2026-09-16) and its
+# sky_atlas.json, and the level build imports both. Until 2026-09-16 this pass never composed the
+# sky, so every change to its tint, clouds or glow stayed in the code and the stream kept the plate
+# last composed by hand.
 if (-not $SkipBuild) {
-    Step "Sky plate composed" {
+    Step "Sky atlas composed" {
         $log = Join-Path $LogDir "sky_backdrop.log"
-        & py -3.11 (Join-Path $unrealDir "compose_sky_backdrop.py") *> $log
-        if ($LASTEXITCODE -ne 0) { throw "compose_sky_backdrop.py failed (log: $log)" }
-        Select-String -Path $log -Pattern "AMN_SKY" | ForEach-Object { "   " + $_.Line }
+        & py -3.11 (Join-Path $unrealDir "compose_sky_backdrop.py") --atlas *> $log
+        if ($LASTEXITCODE -ne 0) { throw "compose_sky_backdrop.py --atlas failed (log: $log)" }
+        Select-String -Path $log -Pattern "AMN_SKY atlas" | ForEach-Object { "   " + $_.Line }
     }
+}
+# The clock's digits are drawn with numpy, which the editor's own Python does not carry; the clock
+# pass below imports the picture. Cheap, so drawn on every pass, build or not.
+Step "Clock digits drawn" {
+    $log = Join-Path $LogDir "clock_atlas.log"
+    & py -3.11 (Join-Path $unrealDir "clock_hq_live.py") --atlas *> $log
+    if ($LASTEXITCODE -ne 0) { throw "clock_hq_live.py --atlas failed (log: $log)" }
+    Select-String -Path $log -Pattern "AMN_CLOCK" | ForEach-Object { "   " + $_.Line }
 }
 if (-not $SkipExport) {
     Step "Blender export for Unreal" {
@@ -89,6 +108,14 @@ if (-not $SkipExport) {
 # the level (the Blender export does not), and start it at the end: the page shows no live picture
 # in between.
 if (-not $NoStream) { StopStream }
+# The backend drives the scene by the object paths in env_report.json, and every rebuild renames
+# them (the sky backdrop was StaticMeshActor_223 on 2026-09-18). A report left from the level being
+# replaced would aim the sky's, the haze's and the road's parameters at whatever carries those names
+# next, so it goes before Unreal touches the level: until this pass writes a new one the backend
+# sends nothing and says so once (office_unreal_env_report_missing).
+$envReport = Join-Path $unrealDir "env_report.json"
+$passStarted = Get-Date
+if (Test-Path $envReport) { Remove-Item -LiteralPath $envReport -Force }
 if (-not $SkipBuild) {
     Step "Level rebuilt from the export" { RunUnrealScript "build_hq_scene.py" }
     # The import makes every merged mesh Nanite, and Nanite drops the small lights' separate boxes
@@ -111,6 +138,17 @@ Step "Look pass" { RunUnrealScript "look_hq_live.py" }
 Step "Real surfaces" { RunUnrealScript "surfaces_hq_live.py" }
 # the skyline's blue haze: translucent planes behind the building (AMN_HAZE_*)
 Step "Skyline haze" { RunUnrealScript "haze_hq_live.py" }
+# the baked 15:18 hidden and the live display placed over it (it reads --:-- until the backend's first
+# clock sync)
+Step "Shelter clock" { RunUnrealScript "clock_hq_live.py" }
+# Last, after every pass has saved the level: the object paths change with each rebuild, and the
+# backend reads them from here. A missing label throws, so the stream does not come back undrivable.
+Step "Environment report" { RunUnrealScript "env_report_hq_live.py" }
+# A crash of the editor leaves no "LogPython: Error" line to find: the report this pass wrote is the
+# proof that the last step ran to its end, so the stream does not come back without one.
+if (-not (Test-Path $envReport) -or (Get-Item -LiteralPath $envReport).LastWriteTime -lt $passStarted) {
+    throw "env_report.json was not written by this pass: the level may be half built (restore the backup)"
+}
 
 if (-not $NoStream) {
     Step "Stream restarted" {

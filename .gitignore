@@ -40,3 +40,10 @@ art-source/unreal/renders/
 art-source/unreal/AMNReference/Config/DefaultInput.ini
 # Epic's Pixel Streaming signalling server + web player, fetched per engine version
 art-source/unreal/pixelstreaming/
+# Written by the real-sky rebuild (compose_sky_backdrop.py --atlas, clock_hq_live.py, env_report_hq_live.py)
+art-source/unreal/sky_atlas.png
+art-source/unreal/sky_atlas.json
+art-source/unreal/axis_map.json
+art-source/unreal/env_report.json
+art-source/unreal/env_report.failed.json
+art-source/unreal/clock_digits_atlas.png

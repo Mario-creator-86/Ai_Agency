@@ -7,7 +7,17 @@ configured, or when the service cannot be reached, the answer says the weather i
 and the scene draws no weather at all rather than an invented one.
 
 The service is expected to speak the Open-Meteo forecast API (``/v1/forecast`` with a
-``current`` block and WMO weather codes).
+``current`` block and WMO weather codes). Open-Meteo serves every hourly variable in the
+``current`` block too (its own documentation), so the scene's rain, snow, wind and visibility
+come from the same 15-minute observation; the rain of the past three hours comes from the
+``hourly`` block, and only from hours that have already happened.
+
+Never invented: a variable the service does not return is None, never zero. Zero rain is an
+observation; a missing rain value is not one.
+
+Licence note for the Owner (the adversary's review, 2026-09-18): the free api.open-meteo.com tier
+is licensed for non-commercial use. The host is configuration, so a self-hosted Open-Meteo server
+or another compatible host changes nothing here.
 """
 
 from __future__ import annotations
@@ -82,6 +92,7 @@ def parse_observation(data: Any, source: str) -> dict[str, Any]:
         return float(value) if isinstance(value, int | float) else None
 
     is_day = current.get("is_day")
+    observed_at = current.get("time") if isinstance(current.get("time"), str) else None
     return {
         "available": True,
         "condition": condition,
@@ -92,9 +103,44 @@ def parse_observation(data: Any, source: str) -> dict[str, Any]:
         "cloud_cover": number("cloud_cover"),
         "precipitation_mm": number("precipitation"),
         "is_day": bool(is_day) if isinstance(is_day, int) else None,
-        "observed_at": current.get("time") if isinstance(current.get("time"), str) else None,
+        "observed_at": observed_at,
+        "apparent_temperature_c": number("apparent_temperature"),
+        # the 15-minute block's sums, in the service's own units (mm, snowfall in cm)
+        "rain_mm": number("rain"),
+        "showers_mm": number("showers"),
+        "snowfall_cm": number("snowfall"),
+        "snow_depth_m": number("snow_depth"),
+        "wind_from_deg": number("wind_direction_10m"),
+        "wind_gust_kph": number("wind_gusts_10m"),
+        "visibility_m": number("visibility"),
+        "cloud_cover_low": number("cloud_cover_low"),
+        "precip_last_3h_mm": precipitation_last_hours(data.get("hourly"), observed_at, 3),
         "source": source,
     }
+
+
+def precipitation_last_hours(hourly: Any, observed_at: str | None, hours: int) -> float | None:
+    """The precipitation of the last ``hours`` hourly values at or before the observation.
+
+    Each hourly value is the sum of the hour before its time stamp. Hours after the observation
+    are the service's forecast and are never counted as rain that fell. With fewer hours than
+    asked, or a gap among them, the sum is unknown (None): a missing hour is not a dry one.
+    """
+    if not isinstance(hourly, dict) or observed_at is None:
+        return None
+    times, values = hourly.get("time"), hourly.get("precipitation")
+    if not isinstance(times, list) or not isinstance(values, list) or len(times) != len(values):
+        return None
+    # ISO local times of one zone compare as strings, as the service writes them
+    past = [
+        v for t, v in zip(times, values, strict=True) if isinstance(t, str) and t <= observed_at
+    ]
+    if len(past) < hours:
+        return None
+    window = past[-hours:]
+    if not all(isinstance(v, int | float) and not isinstance(v, bool) for v in window):
+        return None
+    return float(sum(window))
 
 
 def fetch_observation(host: str, latitude: float, longitude: float, timezone: str) -> Any:
@@ -110,8 +156,23 @@ def fetch_observation(host: str, latitude: float, longitude: float, timezone: st
                     "wind_speed_10m",
                     "cloud_cover",
                     "precipitation",
+                    "apparent_temperature",
+                    "rain",
+                    "showers",
+                    "snowfall",
+                    "snow_depth",
+                    "wind_direction_10m",
+                    "wind_gusts_10m",
+                    "visibility",
+                    "cloud_cover_low",
                 )
             ),
+            # the hours before now, for the road: wet from rain that really fell. One hour of
+            # forecast comes with it (the service counts the current hour as forecast); it is
+            # dropped by precipitation_last_hours, never read as rain that fell.
+            "hourly": "precipitation",
+            "past_hours": 3,
+            "forecast_hours": 1,
             "wind_speed_unit": "kmh",
             "timezone": timezone,
         }

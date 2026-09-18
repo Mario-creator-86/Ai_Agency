@@ -12,7 +12,10 @@ param(
     # The page frames the scene at 1600:840; the stream keeps that shape so clicks line up.
     [int]$ResX = 1920,
     [int]$ResY = 1008,
-    [switch]$Windowed
+    [switch]$Windowed,
+    # Appended to the game's command line, for a measurement only: the phase gate's frame time is the
+    # engine's CSV profiler (-csvCaptureFrames=N, written under AMNReference/Saved/Profiling/CSV).
+    [string[]]$ExtraArgs = @()
 )
 
 $ErrorActionPreference = "Stop"
@@ -57,5 +60,6 @@ $ueArgs = @(
     "-ResX=$ResX", "-ResY=$ResY", "-ForceRes", "-nosplash", "-unattended"
 )
 if (-not $Windowed) { $ueArgs += "-RenderOffScreen" } else { $ueArgs += "-windowed" }
+$ueArgs += $ExtraArgs
 $ue = Start-Process -FilePath (Join-Path $ueRoot "Engine\Binaries\Win64\UnrealEditor.exe") -ArgumentList $ueArgs -PassThru
 Write-Output "unreal pid $($ue.Id): streaming /Game/HQ/HQ_Dusk at ${ResX}x${ResY}"

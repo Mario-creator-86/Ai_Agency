@@ -5,18 +5,27 @@ picture (dusk), from the Blender export made by art-source/unreal/export_hq_scen
 
 Creates /Game/HQ/Scene_<timestamp> (imported meshes, materials, textures; earlier builds' folders
 are deleted once the level is saved) and the level /Game/HQ/HQ_Dusk:
-every mesh at the origin (the exporter bakes world transforms), the scene's lights, a dusk sky
-(atmosphere, volumetric clouds, height fog, a sun just under the horizon on the picture's sunset
-side, a real-time sky light), the plates' orthographic camera and a fixed-exposure look.
+every mesh at the origin (the exporter bakes world transforms), the scene's lights, the sky as a
+picture on an unlit backdrop (an orthographic camera cannot see a sky atmosphere or volumetric
+clouds: its rays all run 10 degrees below the horizon), light height fog, a movable sun labelled
+"Sun", a sky light, the plates' orthographic camera and a fixed-exposure look.
+
+Everything is built at the Owner's picture (dusk, sun at -2.5 degrees), the look he approved. The
+backend then moves it to the real hour over Remote Control: the sun's rotation, intensity and
+colour, and the sky backdrop's cells (compose_sky_backdrop.py --atlas; PlateA, PlateB, PlateBlend,
+Mirror, Gain). At those parameters' defaults the backdrop shows today's dusk plate.
 
 The importer's axis convention and unit scale are measured from marker cubes the exporter places
-at known positions, never assumed.
+at known positions, never assumed, and written to axis_map.json for the passes after this one
+(clock_hq_live.py, env_report_hq_live.py).
 
   UnrealEditor-Cmd.exe AMNReference.uproject -run=pythonscript -script=build_hq_scene.py
   UnrealEditor.exe     AMNReference.uproject -ExecCmds="py render_hq_still.py" -unattended -nosplash
 
-Tunables come from the environment: AMN_LM_PER_W (lumens per Blender watt, default 120) and
-AMN_EV (exposure compensation, default 0).
+Tunables come from the environment: AMN_LM_PER_W (lumens per Blender watt, default 120),
+AMN_EV (exposure compensation, default 0; the Owner has not approved a moving exposure, D2, so it
+stays fixed), AMN_SKY_ATMOSPHERE (a lighting-only sky atmosphere, off by default: D7) and
+AMN_SUN_SHADOW_DISTANCE_CM / AMN_SUN_SHADOW_CASCADES (the movable sun's cascaded shadows).
 """
 
 import json
@@ -59,7 +68,25 @@ def level_of(z_m):
     return len(CEILINGS_M)
 SKYLIGHT = float(os.environ.get("AMN_SKYLIGHT", "0.6"))
 EXPOSURE = float(os.environ.get("AMN_EV", "0"))
-SUN_ELEVATION = -2.5  # degrees: the picture's light, as in the web scene's reference_dusk
+# The sky atlas compose_sky_backdrop.py --atlas writes (cells stacked top to bottom, the order in
+# its sidecar .json). The rebuild composes it in its sky step.
+SKY_ATLAS_PNG = os.path.join(HERE, "sky_atlas.png")
+SKY_ATLAS_JSON = os.path.join(HERE, "sky_atlas.json")
+AXIS_MAP_JSON = os.path.join(HERE, "axis_map.json")
+# The sun is Movable so the backend can turn it to the real sun (a Stationary light refuses any
+# rotation in a game world). A movable directional light renders cascaded shadow maps every frame
+# (virtual shadow maps are off: r.Shadow.Virtual.Enable defaults to 0 and no ini sets it), so the
+# distance and the cascade count are set here rather than left implicit. 20000 cm and 3 cascades are
+# the engine's own defaults for a movable sun; with no built lighting in the level the Stationary
+# sun should already have been previewing its shadows the movable way, so the look is not expected
+# to move. Neither that nor the cost is measured yet: the rebuild window measures the frame time
+# before and after (p95 <= 25 ms) and compares the frame at the reference dusk.
+SUN_SHADOW_DISTANCE_CM = float(os.environ.get("AMN_SUN_SHADOW_DISTANCE_CM", "20000"))
+SUN_SHADOW_CASCADES = int(os.environ.get("AMN_SUN_SHADOW_CASCADES", "3"))
+# Owner decision D7, not taken: an invisible SkyAtmosphere for lighting only (the sun's colour
+# through the air, and something for the sky light's real-time capture to see). Off until the
+# rehearsal gate at the reference dusk passes with it on (compare.py mean <= 6.4 over five frames).
+SKY_ATMOSPHERE = os.environ.get("AMN_SKY_ATMOSPHERE", "0") == "1"
 
 
 def log(msg):
@@ -177,6 +204,19 @@ class AxisMap:
         n = length(v) or 1.0
         return scale(v, 1.0 / n)
 
+    def write(self, path):
+        """The measurement, for the passes that place things after this one and for the report the
+        backend reads (the sun's azimuth has to be turned into Unreal through these same axes)."""
+        def xyz(v):
+            return [round(v.x, 6), round(v.y, 6), round(v.z, 6)]
+
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump({"origin_unreal": xyz(self.o), "origin_scene_m": list(self.bo), "ex": xyz(self.ex),
+                       "ey": xyz(self.ey), "ez": xyz(self.ez), "units_per_m": round(self.unit, 6),
+                       "note": "Unreal units per Blender metre along the scene's +x, +y, +z, measured "
+                               "from the exporter's marker cubes by build_hq_scene.py"}, fh, indent=1)
+        log(f"axis map written to {path}")
+
 
 def lights(ax):
     count = 0
@@ -217,20 +257,39 @@ def lights(ax):
 
 
 def sky_backdrop(ax):
-    """The picture's dusk sky (compose_sky_backdrop.py) on an unlit backdrop behind the city.
+    """The sky of the hour (compose_sky_backdrop.py --atlas) on an unlit backdrop behind the city.
 
-    An orthographic camera cannot see the sky atmosphere, so the sky is an image. The backdrop
+    An orthographic camera cannot see the sky atmosphere, so the sky is a picture. The backdrop
     stands 90 m behind the building, wide and tall enough to fill the camera's frame at that depth.
+
+    Its material samples two cells of the atlas and blends them: PlateA and PlateB are cell indices
+    (the order of sky_atlas.json's "elevations"), PlateBlend goes from A to B, Mirror flips the
+    picture left to right (the plates paint the evening glow on the left; a morning sky has it on
+    the right), Gain brightens it (AMN_SKY_GAIN). Scalars only: a texture swap through Remote
+    Control is unproven. The defaults are the reference cell (-2.5 degrees), no blend, no mirror, and
+    today's gain, so until the backend sends anything the backdrop is today's dusk plate: the same
+    image before its x2 upscale (the atlas is at the composer's native 1600 x 840 per cell; ten
+    upscaled cells would pass the engine's 16384 limit), without mips as before (a texture whose
+    size is not a power of two gets none), and at the import's default compression, as before.
     """
-    png = os.path.join(HERE, "sky_dusk.png")
+    if not (os.path.exists(SKY_ATLAS_PNG) and os.path.exists(SKY_ATLAS_JSON)):
+        raise RuntimeError(f"{SKY_ATLAS_PNG} missing: run `py -3.11 compose_sky_backdrop.py --atlas` first")
+    atlas = json.load(open(SKY_ATLAS_JSON, "r", encoding="utf-8"))
+    cells = int(atlas["cells"])
+    reference = int(atlas["reference_cell"])
     task = unreal.AssetImportTask()
-    task.filename = png
+    task.filename = SKY_ATLAS_PNG
     task.destination_path = f"{PKG}/Sky"
     task.automated = True
     task.replace_existing = True
     task.save = True
     unreal.AssetToolsHelpers.get_asset_tools().import_asset_tasks([task])
-    texture = unreal.load_asset(f"{PKG}/Sky/sky_dusk")
+    texture = unreal.load_asset(f"{PKG}/Sky/sky_atlas")
+    if texture is None:
+        raise RuntimeError(f"could not import {SKY_ATLAS_PNG}")
+    # stated, not left to the size: a mip of a stacked atlas would blend neighbouring cells
+    texture.set_editor_property("mip_gen_settings", unreal.TextureMipGenSettings.TMGS_NO_MIPMAPS)
+    unreal.EditorAssetLibrary.save_loaded_asset(texture)
     mat_path = f"{PKG}/Sky/M_SkyBackdrop"
     mel = unreal.MaterialEditingLibrary
     mat = None
@@ -244,17 +303,82 @@ def sky_backdrop(ax):
     if mat is None:
         raise RuntimeError(f"could not create or load {mat_path}")
     mat.set_editor_property("shading_model", unreal.MaterialShadingModel.MSM_UNLIT)
-    sample = mel.create_material_expression(mat, unreal.MaterialExpressionTextureSample, -400, 0)
-    sample.set_editor_property("texture", texture)
+
+    def node(cls, x, y):
+        return mel.create_material_expression(mat, cls, x, y)
+
+    def scalar(name, value, x, y):
+        n = node(unreal.MaterialExpressionScalarParameter, x, y)
+        n.set_editor_property("parameter_name", name)
+        n.set_editor_property("default_value", float(value))
+        return n
+
+    def into_clamp(src, clamp):
+        # a Clamp has three inputs; the editing library names its first "" or "Input" depending
+        # on the version, and answers False rather than raising when a name does not fit
+        if not any(mel.connect_material_expressions(src, "", clamp, name) for name in ("", "Input")):
+            raise RuntimeError("could not wire the sky material's clamp")
+
+    # u across the plate, flipped by Mirror (lerp(u, 1 - u, Mirror) is u itself at 0)
+    uv = node(unreal.MaterialExpressionTextureCoordinate, -1600, 0)
+    u = node(unreal.MaterialExpressionComponentMask, -1400, -100)
+    v = node(unreal.MaterialExpressionComponentMask, -1400, 150)
+    for mask, channel in ((u, "r"), (v, "g")):
+        for c in ("r", "g", "b", "a"):
+            mask.set_editor_property(c, c == channel)
+        mel.connect_material_expressions(uv, "", mask, "")
+    flipped = node(unreal.MaterialExpressionOneMinus, -1200, -50)
+    mel.connect_material_expressions(u, "", flipped, "")
+    mirrored = node(unreal.MaterialExpressionLinearInterpolate, -1000, -100)
+    mel.connect_material_expressions(u, "", mirrored, "A")
+    mel.connect_material_expressions(flipped, "", mirrored, "B")
+    mel.connect_material_expressions(scalar("Mirror", 0.0, -1200, -200), "", mirrored, "Alpha")
+    # v inside one cell, held half a texel off its edges so the bilinear filter never reaches into
+    # the cell above or below (the backdrop's top and bottom rows lie 2 m outside the frame anyway)
+    held = node(unreal.MaterialExpressionClamp, -1200, 150)
+    held.set_editor_property("min_default", 0.5 / float(atlas["cell_height"]))
+    held.set_editor_property("max_default", 1.0 - 0.5 / float(atlas["cell_height"]))
+    into_clamp(v, held)
+
+    def cell_sample(param, y):
+        """The atlas at cell `param` (floored and clamped to the cells there are): v = (i + v) / n."""
+        index = node(unreal.MaterialExpressionFloor, -1200, y)
+        mel.connect_material_expressions(scalar(param, reference, -1400, y), "", index, "")
+        inside = node(unreal.MaterialExpressionClamp, -1050, y)
+        inside.set_editor_property("min_default", 0.0)
+        inside.set_editor_property("max_default", float(cells - 1))
+        into_clamp(index, inside)
+        row = node(unreal.MaterialExpressionAdd, -900, y)
+        mel.connect_material_expressions(inside, "", row, "A")
+        mel.connect_material_expressions(held, "", row, "B")
+        atlas_v = node(unreal.MaterialExpressionMultiply, -750, y)
+        atlas_v.set_editor_property("const_b", 1.0 / cells)
+        mel.connect_material_expressions(row, "", atlas_v, "A")
+        at = node(unreal.MaterialExpressionAppendVector, -600, y)
+        mel.connect_material_expressions(mirrored, "", at, "A")
+        mel.connect_material_expressions(atlas_v, "", at, "B")
+        # both samplers are the one SkyAtlas parameter (same name, same texture)
+        sample = node(unreal.MaterialExpressionTextureSampleParameter2D, -400, y)
+        sample.set_editor_property("parameter_name", "SkyAtlas")
+        sample.set_editor_property("texture", texture)
+        mel.connect_material_expressions(at, "", sample, "UVs")
+        return sample
+
+    plate_a = cell_sample("PlateA", 350)
+    plate_b = cell_sample("PlateB", 650)
+    blend = node(unreal.MaterialExpressionLinearInterpolate, -200, 450)
+    mel.connect_material_expressions(plate_a, "RGB", blend, "A")
+    mel.connect_material_expressions(plate_b, "RGB", blend, "B")
+    mel.connect_material_expressions(scalar("PlateBlend", 0.0, -400, 900), "", blend, "Alpha")
     # lit, the backdrop reads darker than the web page's sky; AMN_SKY_GAIN brightens it
-    gain = mel.create_material_expression(mat, unreal.MaterialExpressionConstant, -400, 220)
-    gain.set_editor_property("r", SKY_GAIN)
-    boost = mel.create_material_expression(mat, unreal.MaterialExpressionMultiply, -200, 0)
-    mel.connect_material_expressions(sample, "RGB", boost, "A")
-    mel.connect_material_expressions(gain, "", boost, "B")
+    boost = node(unreal.MaterialExpressionMultiply, 0, 450)
+    mel.connect_material_expressions(blend, "", boost, "A")
+    mel.connect_material_expressions(scalar("Gain", SKY_GAIN, -200, 650), "", boost, "B")
     mel.connect_material_property(boost, "", unreal.MaterialProperty.MP_EMISSIVE_COLOR)
     mel.recompile_material(mat)
     unreal.EditorAssetLibrary.save_loaded_asset(mat)
+    log(f"sky material: {cells} cells ({', '.join(f'{e:g}' for e in atlas['elevations'])} deg), "
+        f"PlateA = PlateB = {reference} ({atlas['reference_elevation']} deg), Gain {SKY_GAIN}")
 
     depth_m = 90.0
     # rows 0..840 at this depth: row = 655 - 27.575 z - 4.862 y
@@ -317,12 +441,28 @@ def street_fill(ax):
 
 def dusk_environment(ax):
     """The picture's dusk: a warm low sun from the left, slightly from above so it rims the building
-    instead of lighting it from below; ambient light from the captured sky backdrop; light fog."""
+    instead of lighting it from below; a sky light; light fog.
+
+    The sun is built where the approved look has it (8 degrees above the horizon, 2.5, warm), which
+    is not where a real sun stands at the picture's -2.5 degrees: the backend turns it to the real
+    one. It is Movable for that, with its cascaded shadows stated (SUN_SHADOW_*). The sky light stays
+    Stationary: its real-time capture works as it is and its intensity and colour are settable, so
+    Movable would only add risk. That capture sees only a sky atmosphere, clouds and IsSky meshes,
+    none of which this level has by default (the backdrop is an ordinary unlit mesh), so it gathers
+    almost nothing; with AMN_SKY_ATMOSPHERE it has the atmosphere to see."""
     travel = ax.direction((0.9, 0.43, -math.sin(math.radians(8.0))))
-    sun = spawn(unreal.DirectionalLight, vec(0, 0, 0), unreal.MathLibrary.make_rot_from_x(travel), "SunDusk")
+    sun = spawn(unreal.DirectionalLight, vec(0, 0, 0), unreal.MathLibrary.make_rot_from_x(travel), "Sun")
     sun_comp = sun.light_component
+    sun_comp.set_mobility(unreal.ComponentMobility.MOVABLE)
     sun_comp.set_intensity(2.5)
     sun_comp.set_light_color(unreal.LinearColor(1.0, 0.62, 0.38, 1.0))
+    for prop, value in (("dynamic_shadow_distance_movable_light", SUN_SHADOW_DISTANCE_CM),
+                        ("dynamic_shadow_cascades", SUN_SHADOW_CASCADES)):
+        try:
+            sun_comp.set_editor_property(prop, value)
+        except Exception as err:
+            raise RuntimeError(f"sun shadow setting {prop} refused: {err}") from err
+    log(f"sun Movable, cascaded shadows to {SUN_SHADOW_DISTANCE_CM:.0f} cm in {SUN_SHADOW_CASCADES} cascades")
     sky_backdrop(ax)
     sky = spawn(unreal.SkyLight, vec(0, 0, 500), label="SkyLight")
     sky_comp = sky.light_component
@@ -339,7 +479,27 @@ def dusk_environment(ax):
         fc.set_editor_property("fog_inscattering_luminance", unreal.LinearColor(0.22, 0.24, 0.4, 1.0))
     except Exception as err:
         log(f"fog settings skipped: {err}")
-    log("dusk environment placed")
+    if SKY_ATMOSPHERE:
+        sky_atmosphere(fog)
+    log(f"dusk environment placed (sky atmosphere {'ON, lighting only' if SKY_ATMOSPHERE else 'off'})")
+
+
+def sky_atmosphere(fog):
+    """AMN_SKY_ATMOSPHERE=1 only: a SkyAtmosphere that lights and is not seen. The sun already has
+    bAtmosphereSunLight, so the atmosphere gives it the colour of its path through the air and its
+    fade below the horizon, and the sky light's real-time capture gets a warm western sky to gather.
+    The visible frame is kept as it is: its aerial perspective starts 1 km out, past the backdrop
+    (about 340 m from the plate camera), and the fog takes none of its ambient light. Whether it
+    stays is the rehearsal gate's call (the reference dusk, compare.py mean <= 6.4 over five frames)."""
+    atmosphere = spawn(unreal.SkyAtmosphere, vec(0, 0, 0), label="SkyAtmosphere")
+    comp = atmosphere.get_component_by_class(unreal.SkyAtmosphereComponent)
+    comp.set_editor_property("aerial_perspective_start_depth", 1.0)  # km
+    try:
+        fog.component.set_editor_property("sky_atmosphere_ambient_contribution_color_scale",
+                                          unreal.LinearColor(0.0, 0.0, 0.0, 1.0))
+    except Exception as err:
+        raise RuntimeError(f"fog would take the atmosphere's ambient light: {err}") from err
+    log("sky atmosphere placed: lighting only, aerial perspective from 1 km")
 
 
 def camera(ax):
@@ -404,6 +564,7 @@ def main():
     new_level()
     actors = place_meshes(paths)
     ax = AxisMap(actors)
+    ax.write(AXIS_MAP_JSON)
     lights(ax)
     dusk_environment(ax)
     scale_city_emission(actors)

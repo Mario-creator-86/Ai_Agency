@@ -14,6 +14,11 @@ road without burning white patches on it; wet asphalt.
 
 Every value is absolute (never a factor on the level's current value), so running the script again
 gives the same level. Each tunable comes from the environment (AMN_LOOK_*).
+
+The values here are the dusk the Owner approved, and they stay the build's values: the backend
+moves the lights, the haze, the road and the room windows from them to the real hour over Remote
+Control, by the labels env_report_hq_live.py records. The room windows get a material of their own
+(M_HQ_WindowView) with a dusk and a day picture and a DayBlend between them, at 0 by default.
 """
 
 import json
@@ -591,45 +596,161 @@ def facade_light(actors):
 WINDOW_VIEWS = {"window_view": "window_city", "window_view_b": "window_city_b"}
 WINDOW_VIEW_DIR = os.path.join(os.path.dirname(HERE), "blender", "hq", "textures")
 WINDOW_VIEW_STRENGTH = env("AMN_LOOK_WINDOW_VIEW", "1.5")
+# The same windows by day: make_textures.py's window_view_day, the image the Blender scene's own
+# daytime variant (build_hq.py daytime()) puts on both window_view slots. There is one day picture
+# for the two dusk ones, as there is in Blender; a day twin of window_city_b would come from
+# make_textures.py, not from here.
+WINDOW_VIEW_DAY = "window_city_day"
+# The glTF instances the import gives those slots can only be re-textured: an instance cannot
+# take a parameter its parent lacks, and the day picture needs one (DayBlend) for the backend to
+# set from the real sun. So the slots get this small project material instead, which paints what
+# the glTF material painted - picture x BaseColorFactor for the colour, picture x EmissiveFactor x
+# EmissiveStrength for the glow, the metallic and roughness factors, two-sided, on UV0 - with the
+# picture a blend of the dusk and the day image. At DayBlend 0 (its default) it is the dusk window
+# of today's frame. DayBlend exists only in this material, so setting it on the props mesh as a
+# whole reaches these slots and nothing else.
+WINDOW_MASTER = "/Game/HQ/Materials/M_HQ_WindowView"
+WINDOW_MI_PREFIX = "MI_HQ_WindowView_"
+
+
+def window_texture(image):
+    path = f"/Game/HQ/Materials/T_HQ_{image}"
+    if not unreal.EditorAssetLibrary.does_asset_exist(path):
+        source = os.path.join(WINDOW_VIEW_DIR, f"{image}.png")
+        if not os.path.exists(source):
+            raise RuntimeError(f"{source} missing: art-source/blender/hq/make_textures.py draws it")
+        task = unreal.AssetImportTask()
+        task.filename = source
+        task.destination_path = "/Game/HQ/Materials"
+        task.destination_name = f"T_HQ_{image}"
+        task.automated = True
+        task.replace_existing = True
+        task.save = True
+        unreal.AssetToolsHelpers.get_asset_tools().import_asset_tasks([task])
+    return unreal.load_asset(path)
+
+
+def window_master(dusk, day):
+    mel = unreal.MaterialEditingLibrary
+    if unreal.EditorAssetLibrary.does_asset_exist(WINDOW_MASTER):
+        mat = unreal.load_asset(WINDOW_MASTER)
+        mel.delete_all_material_expressions(mat)
+    else:
+        folder, name = WINDOW_MASTER.rsplit("/", 1)
+        mat = unreal.AssetToolsHelpers.get_asset_tools().create_asset(name, folder, unreal.Material, unreal.MaterialFactoryNew())
+    mat.set_editor_property("two_sided", True)  # the glTF parent was MI_Default_Opaque_DS
+
+    def node(cls, x, y):
+        return mel.create_material_expression(mat, cls, x, y)
+
+    def scalar(name, value, x, y):
+        n = node(unreal.MaterialExpressionScalarParameter, x, y)
+        n.set_editor_property("parameter_name", name)
+        n.set_editor_property("default_value", value)
+        return n
+
+    def vector(name, value, x, y):
+        n = node(unreal.MaterialExpressionVectorParameter, x, y)
+        n.set_editor_property("parameter_name", name)
+        n.set_editor_property("default_value", value)
+        return n
+
+    def sampler(name, texture, x, y):
+        n = node(unreal.MaterialExpressionTextureSampleParameter2D, x, y)
+        n.set_editor_property("parameter_name", name)
+        n.set_editor_property("texture", texture)
+        return n
+
+    picture = node(unreal.MaterialExpressionLinearInterpolate, -500, 0)
+    mel.connect_material_expressions(sampler("DuskTex", dusk, -800, -150), "RGB", picture, "A")
+    mel.connect_material_expressions(sampler("DayTex", day, -800, 100), "RGB", picture, "B")
+    mel.connect_material_expressions(scalar("DayBlend", 0.0, -800, 300), "", picture, "Alpha")
+    white = unreal.LinearColor(1.0, 1.0, 1.0, 1.0)
+    colour = node(unreal.MaterialExpressionMultiply, -250, -150)
+    mel.connect_material_expressions(picture, "", colour, "A")
+    mel.connect_material_expressions(vector("BaseColorFactor", white, -500, -250), "RGB", colour, "B")
+    mel.connect_material_property(colour, "", unreal.MaterialProperty.MP_BASE_COLOR)
+    glow = node(unreal.MaterialExpressionMultiply, -250, 150)
+    mel.connect_material_expressions(picture, "", glow, "A")
+    mel.connect_material_expressions(vector("EmissiveFactor", white, -500, 250), "RGB", glow, "B")
+    strong = node(unreal.MaterialExpressionMultiply, -80, 150)
+    mel.connect_material_expressions(glow, "", strong, "A")
+    mel.connect_material_expressions(scalar("EmissiveStrength", WINDOW_VIEW_STRENGTH, -250, 350), "", strong, "B")
+    mel.connect_material_property(strong, "", unreal.MaterialProperty.MP_EMISSIVE_COLOR)
+    mel.connect_material_property(scalar("MetallicFactor", 0.0, -250, 450), "", unreal.MaterialProperty.MP_METALLIC)
+    mel.connect_material_property(scalar("RoughnessFactor", 1.0, -250, 550), "", unreal.MaterialProperty.MP_ROUGHNESS)
+    mel.recompile_material(mat)
+    unreal.EditorAssetLibrary.save_loaded_asset(mat)
+    return mat
+
+
+def carried_window_values(mat):
+    """What the slot's material painted with, so the new one paints the same: the glTF factors (the
+    props bake carries no metallic-roughness texture, only the factors), or our own instance's
+    values on a rerun."""
+    mel = unreal.MaterialEditingLibrary
+    out = {}
+    for kind, names, getter in (
+        ("vector", ("BaseColorFactor", "EmissiveFactor"), mel.get_material_instance_vector_parameter_value),
+        ("scalar", ("MetallicFactor", "RoughnessFactor"), mel.get_material_instance_scalar_parameter_value),
+    ):
+        present = [str(n) for n in (mel.get_vector_parameter_names(mat) if kind == "vector" else mel.get_scalar_parameter_names(mat))]
+        for name in names:
+            if name in present:
+                out[name] = getter(mat, name)
+    return out
 
 
 def window_views(actors):
     if WINDOW_VIEW_STRENGTH <= 0:
         return
     mel = unreal.MaterialEditingLibrary
-    textures = {}
-    for image in set(WINDOW_VIEWS.values()):
-        path = f"/Game/HQ/Materials/T_HQ_{image}"
-        if not unreal.EditorAssetLibrary.does_asset_exist(path):
-            task = unreal.AssetImportTask()
-            task.filename = os.path.join(WINDOW_VIEW_DIR, f"{image}.png")
-            task.destination_path = "/Game/HQ/Materials"
-            task.destination_name = f"T_HQ_{image}"
-            task.automated = True
-            task.replace_existing = True
-            task.save = True
-            unreal.AssetToolsHelpers.get_asset_tools().import_asset_tasks([task])
-        textures[image] = unreal.load_asset(path)
-    done = set()
-    for actor in actors.values():
+    day = window_texture(WINDOW_VIEW_DAY)
+    textures = {image: window_texture(image) for image in set(WINDOW_VIEWS.values())}
+    master = window_master(textures["window_city"], day)
+    made, slots = {}, []
+    for label, actor in actors.items():
         if not isinstance(actor, unreal.StaticMeshActor):
             continue
         comp = actor.static_mesh_component
         for i in range(comp.get_num_materials()):
             mat = comp.get_material(i)
-            if not isinstance(mat, unreal.MaterialInstanceConstant) or mat.get_path_name() in done:
+            if not isinstance(mat, unreal.MaterialInstanceConstant):
                 continue
-            base_name = mat.get_name().lower().rstrip("0123456789").rstrip("_")
-            tex = textures.get(WINDOW_VIEWS.get(base_name, ""))
-            if tex is None:
+            name = mat.get_name()
+            if name.startswith(WINDOW_MI_PREFIX):  # ours already, from an earlier run of this pass
+                image = name[len(WINDOW_MI_PREFIX):]
+            else:
+                image = WINDOW_VIEWS.get(name.lower().rstrip("0123456789").rstrip("_"))
+            if image not in textures:
                 continue
-            for slot in ("BaseColorTexture", "EmissiveTexture"):
-                mel.set_material_instance_texture_parameter_value(mat, slot, tex)
-                mel.set_material_instance_scalar_parameter_value(mat, f"{slot}_TexCoord", 0.0)
-            mel.set_material_instance_scalar_parameter_value(mat, "EmissiveStrength", WINDOW_VIEW_STRENGTH)
-            mel.update_material_instance(mat)
-            done.add(mat.get_path_name())
-    log(f"room windows: city images at emission {WINDOW_VIEW_STRENGTH} on {len(done)} materials {sorted(p.rsplit('/', 1)[-1] for p in done)}")
+            mi = made.get(image)
+            if mi is None:
+                path = f"/Game/HQ/Materials/{WINDOW_MI_PREFIX}{image}"
+                carried = carried_window_values(mat)
+                if unreal.EditorAssetLibrary.does_asset_exist(path):
+                    mi = unreal.load_asset(path)
+                else:
+                    folder, mi_name = path.rsplit("/", 1)
+                    mi = unreal.AssetToolsHelpers.get_asset_tools().create_asset(
+                        mi_name, folder, unreal.MaterialInstanceConstant, unreal.MaterialInstanceConstantFactoryNew())
+                mel.set_material_instance_parent(mi, master)
+                mel.set_material_instance_texture_parameter_value(mi, "DuskTex", textures[image])
+                mel.set_material_instance_texture_parameter_value(mi, "DayTex", day)
+                for key, value in carried.items():
+                    if isinstance(value, unreal.LinearColor):
+                        mel.set_material_instance_vector_parameter_value(mi, key, value)
+                    else:
+                        mel.set_material_instance_scalar_parameter_value(mi, key, value)
+                mel.set_material_instance_scalar_parameter_value(mi, "EmissiveStrength", WINDOW_VIEW_STRENGTH)
+                mel.update_material_instance(mi)
+                unreal.EditorAssetLibrary.save_loaded_asset(mi)
+                made[image] = mi
+                log(f"window view {image}: {name} -> {mi.get_name()} carrying {sorted(carried)}")
+            comp.set_material(i, mi)
+            slots.append(f"{label}[{i}]")
+    log(f"room windows: dusk and day images (DayBlend 0 = dusk, the frame as it was) at emission "
+        f"{WINDOW_VIEW_STRENGTH} on {len(slots)} slots {slots}")
 
 
 # The small lights (server LEDs, the rack bars, the PCs' and speakers' LEDs, the infra room's bars

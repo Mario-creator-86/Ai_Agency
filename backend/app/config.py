@@ -1,3 +1,4 @@
+from datetime import datetime
 from ipaddress import ip_address
 from pathlib import Path
 from typing import Literal
@@ -108,6 +109,26 @@ class Settings(BaseSettings):
     office_unreal_remote_url: str | None = None
     office_unreal_seat_report: Path = ROOT / "art-source/unreal/people/seat_report.json"
     office_unreal_sync_seconds: float = Field(default=5.0, ge=1.0, le=300.0)
+    #: The real sky over the headquarters (backend/app/office/world.py, scene_params.py). Owner
+    #: decision D1, taken as proposed on 2026-09-18: the viewer looks north and the facade faces
+    #: south (180), so the evening sun is on the left as in his reference picture, the morning sun
+    #: on the right and the noon sun behind the viewer. This one number holds that decision
+    #: (STUDIO_OFFICE_FACADE_HEADING_DEG, compass degrees the facade faces).
+    office_facade_heading_deg: float = Field(default=180.0, ge=0.0, lt=360.0)
+    #: What the rebuild's last step (art-source/unreal/env_report_hq_live.py) writes: the level's
+    #: object paths by label, its axes and which emissive components scale uniformly. Until it
+    #: exists the environment pass does nothing: an object path is never guessed.
+    office_unreal_env_report: Path = ROOT / "art-source/unreal/env_report.json"
+    #: The environment pass's cadences (critic's corrected phase 1): everything is sent again
+    #: every 20 s (ClockOffsetS with it), a real change of light is eased over 30 s rather than
+    #: cut, and the weather is read every 10 min (Open-Meteo refreshes its current block every 15).
+    office_unreal_env_refresh_seconds: float = Field(default=20.0, ge=5.0, le=600.0)
+    office_unreal_env_ease_seconds: float = Field(default=30.0, ge=0.0, le=600.0)
+    office_weather_refresh_seconds: float = Field(default=600.0, ge=60.0, le=3600.0)
+    #: A rehearsal hour for the scene (STUDIO_OFFICE_WORLD_REHEARSAL_AT, an aware ISO time), for a
+    #: rehearsal on a COPY only: on the Owner's studio (data/studio.db) it is refused and the real
+    #: clock is kept (world.world_clock). The weather of a rehearsal is not read.
+    office_world_rehearsal_at: datetime | None = None
 
     #: What the studio optimises for when it picks a model itself. The Owner's standing
     #: instruction is premium: the best picture the account can make, cost secondary — "no
