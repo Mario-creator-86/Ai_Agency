@@ -22,6 +22,7 @@ from app.integrations.vault import CredentialVault
 from app.media.factory import describe, image_provider, tts_provider
 from app.media.toolchain import find_ffmpeg
 from app.providers.elevenlabs import ElevenLabsTTSAdapter
+from app.providers.media_http import MediaProviderError
 from app.providers.openai_media import OpenAIImageAdapter
 from app.services import append_event, utc_now
 from sqlalchemy.orm import Session
@@ -388,3 +389,178 @@ def test_the_api_exposes_the_queue(client, headers):
 
     assert response.status_code == 200
     assert response.json()["scripts"] == []
+
+
+# ---------------------------------------------------------------------------
+# A second vendor when the first refuses
+# ---------------------------------------------------------------------------
+# The Owner approves an alternative; the studio tries it once and records what the attempt
+# cost. With nothing approved the chain is one vendor long and a refusal ends the same way
+# it always did — the placeholder still, which QC blocks from publication.
+
+
+class RefusingImages:
+    """An image vendor that refuses, or answers, and counts how often it was asked."""
+
+    def __init__(self, name, integration_id, model, *, refusals=0):
+        self.PROVIDER_NAME = name
+        self.integration_id = integration_id
+        self.model = model
+        self.refusals = refusals
+        self.asked = 0
+
+    async def health_check(self):
+        return {"status": "HEALTHY", "detail": ""}
+
+    async def generate_image(
+        self, prompt, *, width=1080, height=1920, style=None, seed=None, extra=None
+    ):
+        from app.providers.media_base import ImageResult
+
+        self.asked += 1
+        if self.asked <= self.refusals:
+            raise MediaProviderError(f"{self.PROVIDER_NAME} refused this prompt")
+        return ImageResult(image_bytes=b"\x89PNG", format="png", width=8, height=8, prompt=prompt)
+
+
+def priced_model(engine, integration_id, model_id, per_image_usd):
+    with Session(engine) as session, session.begin():
+        session.add(
+            ProviderResource(
+                id=str(uuid4()),
+                integration_id=integration_id,
+                resource_type="MODEL",
+                remote_id=model_id,
+                name=model_id,
+                api_available=True,
+                last_seen_at=utc_now(),
+                api_metadata={},
+                pricing={"per_image_usd": per_image_usd},
+            )
+        )
+
+
+def test_the_chain_is_the_resolved_vendor_then_the_owners_approved_one(engine, vault):
+    from app.media.factory import image_adapter_chain
+
+    first = add_integration(
+        engine, vault, "openai_media", "VERIFIED", {"model": "a"}, {"api_key": "k"}
+    )
+    second = add_integration(
+        engine, vault, "openai_media", "VERIFIED", {"model": "b"}, {"api_key": "k"}
+    )
+    resolved = {
+        "valid": True,
+        "integration_id": first,
+        "model_id": "a",
+        "fallbacks": [{"valid": True, "integration_id": second, "model_id": "b"}],
+    }
+
+    chain = image_adapter_chain(engine, vault, resolved, environment="PRODUCTION")
+
+    assert [adapter.integration_id for adapter in chain] == [first, second]
+    assert [adapter.model for adapter in chain] == ["a", "b"]
+
+
+def test_with_no_approved_fallback_the_chain_is_one_vendor(engine, vault):
+    from app.media.factory import image_adapter_chain
+
+    first = add_integration(
+        engine, vault, "openai_media", "VERIFIED", {"model": "a"}, {"api_key": "k"}
+    )
+    resolved = {"valid": True, "integration_id": first, "model_id": "a", "fallbacks": []}
+
+    assert len(image_adapter_chain(engine, vault, resolved, environment="PRODUCTION")) == 1
+
+
+def test_a_test_render_still_buys_the_cheapest_compatible_model(engine, vault):
+    """TEST takes the cheapest model that can do the job — a fallback does not change that."""
+    from app.media.factory import image_adapter_chain
+
+    first = add_integration(
+        engine, vault, "openai_media", "VERIFIED", {"model": "dear"}, {"api_key": "k"}
+    )
+    second = add_integration(
+        engine, vault, "openai_media", "VERIFIED", {"model": "cheap"}, {"api_key": "k"}
+    )
+    priced_model(engine, first, "dear", 0.19)
+    priced_model(engine, second, "cheap", 0.02)
+    resolved = {
+        "valid": True,
+        "integration_id": first,
+        "model_id": "dear",
+        "fallbacks": [{"valid": True, "integration_id": second, "model_id": "cheap"}],
+    }
+
+    in_test = image_adapter_chain(engine, vault, resolved, environment="TEST")
+    in_production = image_adapter_chain(engine, vault, resolved, environment="PRODUCTION")
+
+    assert [a.model for a in in_test] == ["cheap", "dear"]
+    # Production keeps the Owner's order: the resolved vendor first, the alternative after.
+    assert [a.model for a in in_production] == ["dear", "cheap"]
+
+
+def test_the_second_vendor_is_tried_once_when_the_first_refuses_and_both_attempts_are_costed(
+    engine, vault
+):
+    import asyncio
+
+    from app.media.factory import still_from_chain
+
+    first = add_integration(
+        engine, vault, "openai_media", "VERIFIED", {"model": "a"}, {"api_key": "k"}
+    )
+    second = add_integration(
+        engine, vault, "openai_media", "VERIFIED", {"model": "b"}, {"api_key": "k"}
+    )
+    priced_model(engine, first, "a", 0.04)
+    priced_model(engine, second, "b", 0.07)
+    refuses = RefusingImages("FIRST", first, "a", refusals=1)
+    answers = RefusingImages("SECOND", second, "b")
+
+    result, attempts = asyncio.run(
+        still_from_chain(engine, [refuses, answers], "a telescope over a dark field")
+    )
+
+    assert result.width == 8
+    assert (refuses.asked, answers.asked) == (1, 1), "the chain is bounded: one alternative"
+    assert [a["provider"] for a in attempts] == ["FIRST", "SECOND"]
+    assert [a["succeeded"] for a in attempts] == [False, True]
+    # Each attempt says what it was worth at the price the studio has recorded.
+    assert [a["estimated_usd"] for a in attempts] == [0.04, 0.07]
+    assert attempts[0]["error"]
+
+
+def test_when_every_approved_vendor_refuses_the_render_falls_back_to_the_still_as_today(
+    engine, vault
+):
+    import asyncio
+
+    from app.media.factory import still_from_chain
+
+    first = add_integration(
+        engine, vault, "openai_media", "VERIFIED", {"model": "a"}, {"api_key": "k"}
+    )
+    refuses = RefusingImages("ONLY", first, "a", refusals=5)
+
+    with pytest.raises(MediaProviderError) as refusal:
+        asyncio.run(still_from_chain(engine, [refuses], "a telescope"))
+
+    assert refuses.asked == 1
+    # The attempts travel with the error so the books can price what was tried.
+    assert [a["provider"] for a in refusal.value.attempts] == ["ONLY"]
+
+
+def test_an_attempt_on_a_model_with_no_recorded_price_is_none_and_never_zero(engine, vault):
+    import asyncio
+
+    from app.media.factory import still_from_chain
+
+    first = add_integration(
+        engine, vault, "openai_media", "VERIFIED", {"model": "a"}, {"api_key": "k"}
+    )
+    answers = RefusingImages("ONLY", first, "a")
+
+    _result, attempts = asyncio.run(still_from_chain(engine, [answers], "a telescope"))
+
+    assert attempts[0]["estimated_usd"] is None

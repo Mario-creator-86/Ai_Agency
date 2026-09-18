@@ -546,3 +546,104 @@ def test_the_boundary_says_when_the_request_left_but_nothing_came_back(https_scr
         request("api.elevenlabs.io", "POST", "/v1/text-to-speech/v", {}, b"{}")
     assert excinfo.value.unanswered and not excinfo.value.unsent
     assert "did not answer" in str(excinfo.value)
+
+
+# --- a character's reference picture at the adapter boundary ----------------------------
+
+
+class RawRecorder(Recorder):
+    """Like `Recorder`, but keeps the body exactly as the adapter built it.
+
+    A multipart body is not JSON, and reading it as JSON is how a test would fail to notice
+    that the reference bytes never left.
+    """
+
+    def __call__(self, host, method, path, headers, body=None, *, timeout=120, expect_json=True):
+        self.calls.append(
+            {"host": host, "method": method, "path": path, "headers": headers, "body": body}
+        )
+        if not self.responses:
+            raise AssertionError("the adapter made more requests than the test expected")
+        outcome = self.responses.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
+def test_an_adapter_declares_whether_it_can_be_given_a_reference_picture():
+    """The studio asks before it hands one over, rather than hoping the vendor ignores it."""
+    from app.media.factory import accepts_reference_image
+
+    assert OpenAIImageAdapter("key").ACCEPTS_REFERENCE_IMAGE is True
+    assert accepts_reference_image(OpenAIImageAdapter("key")) is True
+
+    class SomeOtherVendor:
+        PROVIDER_NAME = "SOMETHING_ELSE"
+
+    # An adapter that says nothing cannot take one: silence is not a capability.
+    assert accepts_reference_image(SomeOtherVendor()) is False
+
+
+def test_a_reference_picture_is_sent_as_the_image_to_work_from(monkeypatch):
+    """The character's stored reference goes to the edits endpoint as a file part."""
+    import asyncio
+
+    from app.providers import openai_media
+
+    reference = png_bytes(16, 24)
+    payload = {"data": [{"b64_json": base64.b64encode(png_bytes(1024, 1536)).decode()}]}
+    recorder = RawRecorder((payload, b"", "application/json"))
+    monkeypatch.setattr(openai_media, "request", recorder)
+
+    result = asyncio.run(
+        OpenAIImageAdapter("key").generate_image(
+            "Sarah at her desk",
+            width=1080,
+            height=1920,
+            extra={"reference_image": {"bytes": reference, "mime_type": "image/png"}},
+        )
+    )
+
+    assert (result.width, result.height) == (1024, 1536)
+    call = recorder.calls[0]
+    assert call["path"] == "/v1/images/edits"
+    assert call["headers"]["Content-Type"].startswith("multipart/form-data; boundary=")
+    assert reference in call["body"], "the reference bytes never left the adapter"
+    assert b'name="image[]"' in call["body"]
+    assert b"Sarah at her desk" in call["body"]
+    assert result.raw_response["reference_images"] == 1
+
+
+def test_without_a_reference_the_adapter_keeps_asking_for_a_plain_generation(monkeypatch):
+    """Nothing changes for a scene with no character: the same endpoint, the same body."""
+    import asyncio
+
+    from app.providers import openai_media
+
+    payload = {"data": [{"b64_json": base64.b64encode(png_bytes(1024, 1536)).decode()}]}
+    recorder = Recorder((payload, b"", "application/json"))
+    monkeypatch.setattr(openai_media, "request", recorder)
+
+    asyncio.run(OpenAIImageAdapter("key").generate_image("a telescope", extra={"scene_index": 1}))
+
+    assert recorder.calls[0]["path"] == "/v1/images/generations"
+
+
+def test_a_reference_that_is_not_bytes_is_refused_before_the_vendor_is_called(monkeypatch):
+    """A path, a description or an id is not a picture, and would be sent as a form field."""
+    import asyncio
+
+    from app.providers import openai_media
+
+    recorder = RawRecorder()
+    monkeypatch.setattr(openai_media, "request", recorder)
+
+    with pytest.raises(MediaProviderError):
+        asyncio.run(
+            OpenAIImageAdapter("key").generate_image(
+                "Sarah at her desk",
+                extra={"reference_image": {"bytes": "/storage/portrait.png"}},
+            )
+        )
+
+    assert recorder.calls == []

@@ -2,26 +2,37 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import logging
+from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
+from app.config import ROOT
+from app.economy.budget import release_reservation, reserve_spend, settle_reservation
+from app.economy.services import EconomyError, record_provider_cost
 from app.factual.models import ScriptDraft
 from app.factual.services import FactualGateError
+from app.integrations.models import Integration
 from app.media.models import (
     CharacterBible,
+    MediaAsset,
     Storyboard,
     StoryboardScene,
     VideoRenderJob,
 )
+from app.media.production_policy import estimate_cost_usd
 from app.media.schemas import (
     CharacterBibleView,
     StoryboardSceneView,
     StoryboardView,
 )
 from app.models import OwnerPolicy
+from app.providers.media_http import MediaProviderError
 from app.services import append_event, utc_now
 
 logger = logging.getLogger("studio.media")
@@ -855,3 +866,329 @@ def list_storyboards(engine: Engine) -> list[dict]:
             view = StoryboardView.model_validate(sb)
             result.append(view.model_dump())
         return result
+
+
+# ------------------------------------------------------- the characters' reference pictures
+
+
+#: The slots the bible declares, in the order a turnaround is drawn. A slot holds a stored
+#: asset id or null; it never holds a description standing in for an image.
+REFERENCE_SLOTS = ("portrait", "full_body", "front", "side", "back")
+
+#: What each slot is a picture of. The words are the studio's, not a model's: the same five
+#: framings for every character, so two characters' references differ only in the character.
+REFERENCE_FRAMINGS: dict[str, str] = {
+    "portrait": "Head-and-shoulders portrait, neutral expression, looking into the lens.",
+    "full_body": "Full-body standing pose, head to feet inside the frame, arms relaxed.",
+    "front": "Character turnaround sheet, front view, neutral stance, head to feet.",
+    "side": "Character turnaround sheet, exact side profile, neutral stance, head to feet.",
+    "back": "Character turnaround sheet, seen from directly behind, neutral stance.",
+}
+
+#: Where a reference picture is kept: beside the renders, not inside one. A reference outlives
+#: every film it is used in, so it does not live in a storyboard's working directory.
+REFERENCE_STORAGE_ROOT = ROOT / "backend" / "storage" / "character_references"
+
+#: The frame a reference sheet is asked for. The adapter reports what it actually produced,
+#: and that measurement is what the asset records.
+REFERENCE_WIDTH = 1024
+REFERENCE_HEIGHT = 1536
+
+
+class ReferenceSetError(ValueError):
+    """The reference set was not produced. `reason` is a closed vocabulary the page can match:
+    AUTONOMY_STOPPED, NO_CHARACTER, NO_IMAGE_PROVIDER, BUDGET."""
+
+    def __init__(self, message: str, *, reason: str) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+class ReferenceRequired(ValueError):
+    """A character whose look is locked has no reference picture, so the scene cannot be drawn.
+
+    Drawing it anyway would invent a face for a character whose face is fixed, which is the
+    thing the lock exists to prevent. The Owner produces the set; the scene is made after.
+    """
+
+
+def _reference_prompt(row: CharacterBible, slot: str) -> str:
+    """One slot's prompt, composed from the bible and nothing else."""
+    palette = ", ".join(
+        f"{name} {value}" for name, value in sorted((row.palette_json or {}).items())
+    )
+    parts = [
+        f"Character reference sheet of {row.canonical_name}, a single character, "
+        "plain neutral grey background, even studio lighting, no text, no logos, no border.",
+        REFERENCE_FRAMINGS.get(slot, "Character reference sheet, neutral stance."),
+        f"Face and hair: {row.face_hair_desc}.",
+        f"Outfit: {row.outfit_desc}.",
+    ]
+    if row.props_desc:
+        parts.append(f"Props: {row.props_desc}.")
+    if palette:
+        parts.append(f"Palette: {palette}.")
+    if row.forbidden_deviations:
+        parts.append(f"Never: {row.forbidden_deviations}")
+    return " ".join(" ".join(part.split()) for part in parts)
+
+
+def generate_character_reference_set(
+    engine: Engine,
+    vault: Any,
+    character_id: str,
+    correlation_id: str,
+    *,
+    image_adapter: Any | None = None,
+    slots: tuple[str, ...] | None = None,
+    storage_root: Path | None = None,
+) -> dict:
+    """Produce a character's reference pictures through the studio's image provider.
+
+    The Owner's act, never the day's: it spends image credits, so it asks the budget before
+    the first slot (`reserve_spend`, the media stage's pattern), refuses under STOP AUTONOMY,
+    and settles or releases the hold when it is done. A slot whose generation failed keeps
+    what it held — null, in a studio that never had one — and the answer names it; nobody is
+    told a picture exists that was not produced.
+    """
+    with Session(engine) as session:
+        policy = session.get(OwnerPolicy, 1)
+        if policy and policy.autonomy_stopped:
+            raise ReferenceSetError(
+                "Oprirea autonomiei este activă; Owner-ul trebuie să o ridice mai întâi.",
+                reason="AUTONOMY_STOPPED",
+            )
+        row = session.get(CharacterBible, character_id)
+        if row is None:
+            raise ReferenceSetError("Personajul nu există.", reason="NO_CHARACTER")
+        declared = tuple(slots or tuple(row.reference_assets_json or {}) or REFERENCE_SLOTS)
+        prompts = {slot: _reference_prompt(row, slot) for slot in declared}
+        canonical_name = row.canonical_name
+        existing = dict(row.reference_assets_json or {})
+
+    from app.media.factory import image_provider  # noqa: PLC0415 - factory imports this module
+
+    adapter = image_adapter or image_provider(engine, vault)
+    if adapter is None:
+        raise ReferenceSetError(
+            "Niciun furnizor de imagini verificat. Alege și verifică o conexiune în "
+            "Settings → Video și sunet înainte de a produce referințele.",
+            reason="NO_IMAGE_PROVIDER",
+        )
+    integration_id = getattr(adapter, "integration_id", None)
+    model_id = getattr(adapter, "model", None)
+    provider_name = getattr(adapter, "PROVIDER_NAME", "UNKNOWN_IMAGE_PROVIDER")
+
+    # What the whole set would cost, from recorded pricing. A model with no recorded price is
+    # unpriced — None, never zero — and then the hold is of nothing, which an exceeded budget
+    # still refuses, because it cannot value what it was asked for.
+    with Session(engine) as session:
+        per_image = (
+            estimate_cost_usd(session, integration_id, model_id, images=1)
+            if integration_id and model_id
+            else None
+        )
+    estimate = per_image * len(declared) if per_image is not None else None
+    hold = reserve_spend(
+        engine,
+        int(round((estimate or 0.0) * 1_000_000)),
+        f"referințe {canonical_name}",
+        correlation_id,
+        note=(
+            f"{len(declared)} imagini de referință"
+            + ("" if per_image is not None else "; modelul nu are preț stocat")
+        ),
+    )
+    if not hold["allowed"]:
+        raise ReferenceSetError(hold["reason"], reason="BUDGET")
+    reservation_id = hold.get("reservation_id")
+
+    root = Path(storage_root) if storage_root is not None else REFERENCE_STORAGE_ROOT
+    folder = root / character_id
+    folder.mkdir(parents=True, exist_ok=True)
+
+    produced: dict[str, dict] = {}
+    failed: list[dict] = []
+    for slot in declared:
+        try:
+            result = asyncio.run(
+                adapter.generate_image(
+                    prompts[slot],
+                    width=REFERENCE_WIDTH,
+                    height=REFERENCE_HEIGHT,
+                    extra={"character_id": character_id, "reference_slot": slot},
+                )
+            )
+        except (MediaProviderError, ValueError, OSError) as exc:
+            # One refused slot is one missing picture, not a failed set: the slots that did
+            # come back are real references the next render can be drawn from.
+            failed.append({"slot": slot, "reason": str(exc)[:300]})
+            continue
+        suffix = result.format if result.format in ("png", "jpeg", "jpg", "webp") else "bin"
+        path = folder / f"{slot}.{suffix}"
+        try:
+            path.write_bytes(result.image_bytes)
+        except OSError as exc:
+            failed.append({"slot": slot, "reason": str(exc)[:300]})
+            continue
+        produced[slot] = {
+            "asset_id": str(uuid4()),
+            "path": path,
+            "bytes": len(result.image_bytes),
+            "mime_type": f"image/{'jpeg' if suffix == 'jpg' else suffix}",
+            "width": result.width,
+            "height": result.height,
+            "hash": hashlib.sha256(result.image_bytes).hexdigest(),
+        }
+
+    now = utc_now()
+    with Session(engine) as session, session.begin():
+        row = session.get(CharacterBible, character_id)
+        if row is None:  # pragma: no cover - the character was deleted mid-flight
+            raise ReferenceSetError("Personajul nu mai există.", reason="NO_CHARACTER")
+        slots_now = {slot: existing.get(slot) for slot in declared}
+        for slot, made in produced.items():
+            event = append_event(
+                session,
+                "media.character_reference_generated",
+                "media_asset",
+                made["asset_id"],
+                1,
+                {
+                    "character_id": character_id,
+                    "slot": slot,
+                    "provider": provider_name,
+                    "model_id": model_id,
+                    "provenance_hash": made["hash"],
+                },
+                correlation_id,
+            )
+            session.add(
+                MediaAsset(
+                    id=made["asset_id"],
+                    asset_type="IMAGE",
+                    uri_or_path=str(made["path"]),
+                    file_size_bytes=made["bytes"],
+                    mime_type=made["mime_type"],
+                    width=made["width"],
+                    height=made["height"],
+                    duration_seconds=None,
+                    provider_name=provider_name,
+                    remote_job_id=None,
+                    license_status="ORIGINAL_AI_GENERATED",
+                    provenance_hash=made["hash"],
+                    created_at=now,
+                    event_id=event.event_id,
+                )
+            )
+            slots_now[slot] = made["asset_id"]
+        row.reference_assets_json = slots_now
+
+    # The books come after the pictures: a cost row that cannot be written must not lose a
+    # reference that exists on disk.
+    recorded = 0
+    if per_image is not None and integration_id:
+        with Session(engine) as session:
+            connection = session.get(Integration, integration_id)
+            provider_key = connection.kind if connection is not None else provider_name
+        for slot, made in produced.items():
+            try:
+                record_provider_cost(
+                    engine,
+                    provider=provider_key,
+                    external_reference=(
+                        f"character-reference:{character_id}:{slot}:{made['asset_id']}"
+                    ),
+                    status="ESTIMATED",
+                    amount=f"{per_image:.6f}",
+                    attribution={
+                        "character_id": character_id,
+                        "slot": slot,
+                        "unit": "image",
+                        "model_id": model_id,
+                        "images": 1,
+                    },
+                    correlation_id=correlation_id,
+                )
+                recorded += 1
+            except EconomyError:
+                # Already in the books: one slot is charged once.
+                continue
+
+    if reservation_id:
+        if produced:
+            settle_reservation(
+                engine,
+                reservation_id,
+                settled_reference=f"character-reference:{character_id}",
+                correlation_id=correlation_id,
+            )
+        else:
+            release_reservation(
+                engine, reservation_id, "no reference was produced", correlation_id=correlation_id
+            )
+
+    return {
+        "character_id": character_id,
+        "canonical_name": canonical_name,
+        "slots": {
+            slot: (produced[slot]["asset_id"] if slot in produced else slots_now.get(slot))
+            for slot in declared
+        },
+        "failed": failed,
+        "provider": provider_name,
+        "model_id": model_id,
+        "cost": {
+            # A cost the studio cannot compute is None, never zero.
+            "usd": round(per_image * len(produced), 6) if per_image is not None else None,
+            "per_image_usd": per_image,
+            "priced": per_image is not None,
+            "recorded": recorded,
+        },
+        "reservation_id": reservation_id,
+    }
+
+
+def image_reference_for_scene(engine: Engine, character_ids: list[str] | None) -> dict | None:
+    """The reference picture this scene's still must be drawn from, if the cast has one.
+
+    A character whose visual identity is locked *must* be drawn from its reference: without
+    one this raises, because the alternative is inventing a face the lock exists to protect.
+    A character with no lock and no reference simply has none, and the scene is drawn from
+    its prompt as it always was. The first character the writer named decides, so a still is
+    never drawn from two faces at once.
+    """
+    ids = [c for c in (character_ids or []) if isinstance(c, str)]
+    if not ids:
+        return None
+    with Session(engine) as session:
+        rows = {
+            row.id: row
+            for row in session.scalars(select(CharacterBible).where(CharacterBible.id.in_(ids)))
+        }
+        for character_id in ids:
+            row = rows.get(character_id)
+            if row is None:
+                continue
+            locked = bool((row.identity_locks_json or {}).get("visual"))
+            slots = row.reference_assets_json or {}
+            slot = next((s for s in REFERENCE_SLOTS if slots.get(s)), None)
+            asset = session.get(MediaAsset, slots[slot]) if slot else None
+            if asset is None:
+                if locked:
+                    raise ReferenceRequired(
+                        f"{row.canonical_name} are înfățișarea blocată și nicio imagine de "
+                        f"referință stocată ({character_id}); produ setul de referințe "
+                        "înainte de a filma scena."
+                    )
+                continue
+            return {
+                "character_id": character_id,
+                "canonical_name": row.canonical_name,
+                "slot": slot,
+                "asset_id": asset.id,
+                "path": asset.uri_or_path,
+                "mime_type": asset.mime_type,
+                "required": locked,
+            }
+    return None

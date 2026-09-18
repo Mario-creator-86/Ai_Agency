@@ -91,7 +91,16 @@ SELECTION_KEYS = (
     "strategy",
     "criteria",
     "voice_settings",
+    # The Owner's approved second vendors for this purpose: [{"integration_id", "model_id"}].
+    # A render that hits a refusal may try one of these and nothing else; the studio never
+    # invents an alternative, because an alternative is a purchase from another account.
+    "approved_fallbacks",
 )
+
+#: At most one alternative per purpose per scene. Trying vendors until one answers is how a
+#: single shot spends a film's budget, and the second refusal is usually the same refusal:
+#: a prompt the vendors both decline, not an account that is down.
+MAX_FALLBACKS_PER_PURPOSE = 1
 
 
 class PolicyError(ValueError):
@@ -176,7 +185,7 @@ def _level_value(container: dict | None, purpose: str) -> dict[str, Any] | None:
 #: On a consistency-locked channel, episode and scene levels may tune settings but may not
 #: swap technology: providers and models for a series are decided at channel/series level,
 #: which is where an approved change lands.
-TECHNOLOGY_KEYS = ("integration_id", "model_id", "strategy", "criteria")
+TECHNOLOGY_KEYS = ("integration_id", "model_id", "strategy", "criteria", "approved_fallbacks")
 
 
 def _apply(
@@ -1193,6 +1202,11 @@ def resolve_purpose(
             + f": video model '{merged.get('model_id')}' is not approved for them; approve it "
             "through approved-models after a consistency test"
         )
+    # The second vendor, resolved last so it is checked against the model the ranking and the
+    # locks actually settled on. An empty chain is the studio as it was: one vendor, and the
+    # still when it refuses.
+    fallbacks, fallback_notes = approved_alternatives(session, purpose, merged, characters)
+    notes.extend(fallback_notes)
     return {
         "purpose": purpose,
         "policy": policy,
@@ -1207,8 +1221,108 @@ def resolve_purpose(
         "character_id": character_id,
         "valid": valid,
         "ranking": ranking,
+        "approved_fallbacks": _fallback_entries(merged.get("approved_fallbacks")),
+        "fallbacks": fallbacks,
         "notes": notes,
     }
+
+
+def _fallback_entries(value: Any) -> list[dict[str, Any]]:
+    """The approved-fallback list as pairs the resolver can check, ignoring anything else.
+
+    Only a connection and a model make an alternative: a free-text name would resolve to
+    nothing and a render would call it a second vendor.
+    """
+    entries: list[dict[str, Any]] = []
+    for item in value if isinstance(value, list) else []:
+        if not isinstance(item, dict):
+            continue
+        integration_id = item.get("integration_id")
+        if not integration_id:
+            continue
+        model_id = item.get("model_id")
+        entry = {
+            "integration_id": str(integration_id),
+            "model_id": str(model_id) if model_id else None,
+        }
+        if item.get("voice_id"):
+            entry["voice_id"] = str(item["voice_id"])
+        if entry not in entries:
+            entries.append(entry)
+    return entries
+
+
+def approved_alternatives(
+    session: Session,
+    purpose: str,
+    merged: dict[str, Any],
+    characters: list[CharacterBible] | None = None,
+    *,
+    limit: int = MAX_FALLBACKS_PER_PURPOSE,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """The Owner's approved second vendors for this purpose, checked like the first one.
+
+    Where they come from, in order: the approved-fallback list the hierarchy merged for this
+    purpose, and — for a scene whose character has a locked look — that character's own
+    `approved_fallbacks_json`, which is the list an APPROVED identity change writes. Nothing
+    here proposes a vendor: a list nobody wrote is an empty chain, and the render falls back
+    to the still exactly as it did before this existed.
+
+    A locked character narrows the chain rather than widening it: an alternative must be
+    approved for *every* locked character in the scene, because approval is the evidence
+    that the technology keeps that character recognisable.
+    """
+    notes: list[str] = []
+    locked = [c for c in (characters or []) if (c.identity_locks_json or {}).get("visual")]
+    entries = _fallback_entries(merged.get("approved_fallbacks"))
+    if not entries and locked:
+        # A locked character's own approved list is an approved list for this purpose too.
+        entries = _fallback_entries(locked[0].approved_fallbacks_json)
+    for character in locked:
+        approved = {
+            (f.get("integration_id"), f.get("model_id"))
+            for f in (character.approved_fallbacks_json or [])
+            if isinstance(f, dict)
+        }
+        kept = [e for e in entries if (e["integration_id"], e["model_id"]) in approved]
+        if len(kept) != len(entries):
+            notes.append(
+                f"Alternative technology not approved for {character.canonical_name} was "
+                "left out of the fallback chain"
+            )
+        entries = kept
+
+    chain: list[dict[str, Any]] = []
+    for entry in entries:
+        if len(chain) >= max(0, limit):
+            break
+        if (entry["integration_id"], entry["model_id"]) == (
+            merged.get("integration_id"),
+            merged.get("model_id"),
+        ):
+            continue  # the first vendor is not its own alternative
+        valid, why = _validate(session, purpose, entry)
+        if not valid:
+            notes.append(f"Approved fallback is unusable: {why}")
+            continue
+        chain.append(
+            {
+                "purpose": purpose,
+                "integration_id": entry["integration_id"],
+                "model_id": entry["model_id"],
+                "voice_id": entry.get("voice_id") or merged.get("voice_id"),
+                "voice_settings": merged.get("voice_settings"),
+                "strategy": "fixed",
+                "criteria": None,
+                "source_level": "fallback",
+                "lock_applied": bool(locked),
+                "character_id": locked[0].id if locked else None,
+                "valid": True,
+                "ranking": None,
+                "notes": [],
+            }
+        )
+    return chain, notes
 
 
 def _validate(session: Session, purpose: str, merged: dict[str, Any]) -> tuple[bool, str | None]:
@@ -1354,6 +1468,17 @@ def _check_selection_shape(value: Any, where: str) -> None:
             raise PolicyError(f"{where}: '{purpose}' has unknown keys {sorted(unknown)}")
         if "strategy" in selection and selection["strategy"] not in ("fixed", "auto"):
             raise PolicyError(f"{where}: strategy must be 'fixed' or 'auto'")
+        if "approved_fallbacks" in selection:
+            # A second vendor is a connection and a model, not a name: anything else would be
+            # stored as an approval and then resolve to nothing on the day a vendor refused.
+            approved = selection["approved_fallbacks"]
+            if not isinstance(approved, list) or not all(
+                isinstance(entry, dict) and entry.get("integration_id") for entry in approved
+            ):
+                raise PolicyError(
+                    f"{where}: '{purpose}' approved_fallbacks must be a list of "
+                    "{integration_id, model_id} objects"
+                )
 
 
 def set_channel_policy(

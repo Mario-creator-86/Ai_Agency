@@ -1670,3 +1670,365 @@ the Owner's own prices, a bundle that is not rebuilt, and the reconciliation of 
 against a vendor's invoice, which still has a vocabulary and no function.** A tracking document that
 keeps listing closed work teaches the next reader to stop reading it, and the cost of leaving it is
 that the work is done twice.
+
+## 2026-09-18 — A picture the model refuses fails the film in both environments
+
+The picture gate was asked to follow the fallback-scene gate, which is conditional on PRODUCTION.
+**Decision: it follows `content_integrity_qc` and `content_source_qc` instead, and fails
+unconditionally.** The existing gates do not all work one way, and the difference has a reason:
+`motion_qc` is conditional because in TEST two motion scenes are the studio's own policy and the
+rest push by design, so the count it measures is expected there. Nothing in TEST policy
+deliberately produces a blank scene or a stranger in a character's clothes. The degenerate-still
+check already fails unconditionally for exactly this defect measured on the still instead of on the
+film, and the placeholder-footage check blocks unconditionally; the picture check belongs beside
+those two.
+
+## 2026-09-18 — One vision call for the whole film, carrying both questions
+
+The pictures and the characters could have been two calls with two schemas, which would keep a
+NOT_APPLICABLE character check from sharing a run with a measured picture check. **Decision: one
+call — a `scenes` array and a `characters` array in one object, the scene frames followed by at most
+four reference portraits, the prompt saying which are which and in what order — because the frames
+are the expensive part of the payload and sending them twice doubles the image tokens for an answer
+about the same images.** The record still separates the two verdicts: `picture_qc` and
+`character_drift_qc` carry their own status, their own `passed` and their own run id, so a character
+check that could not run never drags the picture check down with it. A film costs one call, two when
+the model must be asked again with its own thinking on, and none when the check stands down.
+
+## 2026-09-18 — Nothing in the vision answer has a default that reads as a pass
+
+**Decision: `is_a_picture`, `shows_the_scene` and `matches` are required fields of the parsed
+object, so a model that omits them fails validation and the whole check stands down rather than
+passing a scene by silence.** A scene the model simply leaves out of its array is recorded
+NOT_APPLICABLE with `no verdict was returned for this scene` and does not count towards the pass.
+The same rule covers the frame cap: the Director's `frames_for` cuts at most eight frames, so a
+ninth scene is recorded `no frame was cut for this scene`, never as looked at and approved. A gate
+that certifies what it did not measure is worse than no gate, because the report then carries the
+studio's signature on it.
+
+## 2026-09-18 — The looking happens before quality control opens its write transaction
+
+**Decision: `evaluate_pictures` is called next to where `studio_environment` is already read, before
+the report's transaction, and it reads the storyboard out into plain values and closes its own
+session before the call.** A vision call is an agent run; `run_agent_task` reads the day's token
+ceiling outside a transaction by design and writes its own rows, so doing it inside the report's
+transaction would put two writers on one SQLite connection. For the same reason no detached ORM row
+and no held connection survives into the wait.
+
+## 2026-09-18 — The employee who looks is found by department, and only the primary model counts
+
+**Decision: `app.agents.vision.vision_agent` asks in the order Video Editor, Director, Quality
+Assurance, and reads only the primary model slot.** The department that made the pictures answers
+for them, and the Director's own model (glm-5.3) declares completion, thinking and tools and no
+vision at all — a gate that asked her first would never run. A second or third model slot is the
+Owner's configuration for other work and a run here would not use it, so counting it would let the
+gate claim a capability the run cannot reach. `model_can_see` and `frames_for` were not moved: they
+are the Director's, and `vision.py` imports them so callers have one door.
+
+## 2026-09-18 — A Character Bible slot holds a stored asset id or nothing
+
+**Decision: the slots are read exactly as the model documents them — a value that is not a string is
+ignored, a portrait whose row or file is missing is simply not attached, and a description is never
+accepted as standing in for an image.** A character with a description is compared against the
+description; one with a portrait and no description against the portrait; one with neither is
+recorded NOT_APPLICABLE for that scene with the reason and is never sent to the model, because there
+is nothing to compare the frame with. The writing half follows the same rule:
+`generate_character_reference_set` writes a `MediaAsset` per produced slot — bytes on disk, size and
+dimensions measured from what the adapter returned, SHA-256 provenance, `license_status =
+ORIGINAL_AI_GENERATED`, `provider_name` from the adapter — and only then writes that asset id into
+`reference_assets_json`. A slot whose generation failed keeps its previous value and appears in
+`failed` with the reason.
+
+## 2026-09-18 — Producing a reference set is an Owner command, not a stage of the day
+
+**Decision: it lives behind `POST /media/characters/{id}/reference-set` on the Owner-only media
+router, reads STOP AUTONOMY before the first request (`AUTONOMY_STOPPED`, HTTP 409), and
+`tests/test_character_references.py::test_the_days_run_never_produces_a_reference_set` asserts that
+`runbook/stages.py`, `runbook/services.py` and `workflows/services.py` do not name the function.** It
+costs one image credit per slot, and a studio that regenerated references on its own would spend a
+budget on pictures nobody asked for. The route also refuses when no verified image provider is
+selected, rather than drawing five placeholder cards and calling them references.
+
+## 2026-09-18 — The money for a reference set is asked for once, before the first slot
+
+**Decision: `reserve_spend` holds the estimate for the whole set behind the studio's write lock,
+exactly as the media stage holds a film's cost; the hold is settled when at least one picture was
+produced and released when none was.** The estimate is `estimate_cost_usd(..., images=1)` times the
+number of slots; a model with no recorded price estimates to None, the hold is of nothing, and the
+answer reports `cost.usd = None` and `priced = False`. An exceeded budget still refuses a request it
+cannot value — that is the existing `reserve_spend` behaviour, and the reason the refusal is asked
+for rather than computed at the route.
+
+## 2026-09-18 — A locked look with no readable reference is a refusal, not a warning
+
+**Decision: `image_reference_for_scene` returns None for a character with no lock and no reference —
+the scene is drawn from its prompt as it always was — but raises `ReferenceRequired` when a character
+whose `identity_locks_json['visual']` is set has no reference asset, or one whose file cannot be
+read.** Drawing that scene anyway would invent a face for a character whose face is fixed, which is
+the thing the lock exists to prevent. The first character the writer named decides the reference, so
+a still is never drawn from two faces at once.
+
+## 2026-09-18 — The studio asks an adapter whether it can take a reference
+
+**Decision: `factory.accepts_reference_image` reads a class attribute and treats silence as no;
+`still_from_chain` drops `extra['reference_image']` for an adapter that cannot take it and records
+`reference_image: False` on that attempt.** A render must never report a continuity it did not have.
+The OpenAI adapter implements the documented multipart `/v1/images/edits` path and sets
+`ACCEPTS_REFERENCE_IMAGE = True`, which is a statement about the code; `REFERENCE_IMAGE_VERIFIED =
+False` is the statement about the account and stays False until an Owner-approved run has actually
+drawn a scene that way, because no test may buy one. A reference given as a path, an id or a
+description is refused before the vendor is called rather than posted as a form field.
+
+## 2026-09-18 — A second vendor is the Owner's, never the studio's
+
+**Decision: `approved_alternatives` reads the `approved_fallbacks` list a level of the hierarchy
+holds for a purpose — a new `SELECTION_KEYS` entry validated as a list of `{integration_id,
+model_id}` objects, and also a `TECHNOLOGY_KEYS` entry so a consistency-locked channel does not let
+an episode swap it in — and where a scene has a visually locked character the chain is narrowed to
+entries in that character's `approved_fallbacks_json`, the list an APPROVED `CharacterIdentityChange`
+writes.** Approval is the evidence that the technology keeps the character recognisable, and the
+studio cannot produce that evidence about itself. Every alternative goes through the same `_validate`
+as the first vendor, so an approval naming an unverified connection is dropped with a note rather
+than tried.
+
+## 2026-09-18 — The fallback chain is one alternative long
+
+**Decision: `MAX_FALLBACKS_PER_PURPOSE = 1`, and when every approved vendor refuses,
+`still_from_chain` re-raises the last `MediaProviderError` with the attempts attached as
+`exc.attempts`.** A render that kept trying vendors would spend a film's budget on one shot, and the
+second refusal is usually the same refusal — a prompt both vendors decline, not an account that is
+down. Re-raising means the caller does exactly what it did before a chain existed, and a failed
+render can still be priced for what was tried.
+
+## 2026-09-18 — In TEST the chain is ordered cheapest-first; in PRODUCTION the Owner's order stands
+
+**Decision: in TEST the alternatives are ordered by the price the studio has recorded, cheapest
+first, with unpriced models keeping their place behind the priced ones; in PRODUCTION the resolved
+vendor comes first and the alternative after.** The Owner's rule is that a test takes the cheapest
+model that can do the job, and an approved alternative does not create an exception to it. A model
+nobody priced can never be proven cheapest, so it is never promoted ahead of one that can.
+
+## 2026-09-18 — The autonomy mode is recorded as AUTONOMOUS_CEO, because that is what the code does
+
+**Decision: migration `0043_autonomy_mode` writes AUTONOMOUS_CEO on existing and new rows, and says
+in its docstring that it records the mode rather than granting it.** The code is unambiguous:
+`runbook/services.py` walks twelve stages in one call with no Owner approval between them,
+`stages.py::_director_approves` approves a script in the same breath the Director reads it, the media
+stage reserves budget and pays a vendor, `_publish_one` writes to YouTube — and nothing in the tree
+executes a T4 action autonomously. That is 51's sentence for Autonomous CEO word for word. Choosing
+MANUAL would have been the more cautious-looking answer and the false one: it would have described a
+studio that does not exist and refused every stage of the run the Owner has been watching work. 51's
+own example seals it — AUTONOMOUS CEO with `public_publish_enabled=false` is a studio that can create
+final content automatically but not publish publicly, which is exactly this studio, TEST by default
+with no channel set public. `change_autonomy_mode` remains the only thing that can promote.
+
+## 2026-09-18 — A promotion is refused on what the database can read; the rest is said, not simulated
+
+51 requires four things before a higher mode: acceptance criteria, a burn-in, no unresolved P0, and
+the Owner's action. **Decision: the two that are readable here are enforced — an open
+`safe_mode_record` is an unresolved P0 and `autonomy_stopped` is the Owner saying the studio should
+not act, and a promotion is refused on either, in Romanian, with no event written and the version
+untouched — and the two that are not are named in the refusal instead of being approximated.**
+Acceptance criteria and burn-in are judgements about evidence outside the database; nothing here
+measures them, so the refusal names them to the Owner and the docstring says plainly that the command
+does not verify them. This is the rule the quality gates follow: a check that could not run says so
+and never reports a pass. Lowering the mode is allowed unconditionally — 51 calls it immediate and
+safe, and a safety state that blocked the safer choice would be the wrong shape of safety.
+
+## 2026-09-18 — The risk-tier table is transcribed from 31 and 32, and it fails closed
+
+**Decision: every entry in `ACTION_RISK_TIERS` is one of 31's own examples, named as the code names
+the operation, with 32's tool risk classes deciding where the boundary between T2 and T3 falls; an
+action the table does not know and the caller does not classify is refused `BLOCKED_UNCLASSIFIED`,
+and a caller's own tier is only ever taken upward.** T0 is read-only, T1 reversible internal, T2
+material internal plus EXTERNAL_READ and the paid generation that stays inside the Owner's budget
+(31 reserves T3 for "paid generation beyond threshold"), T3 external, financial and public, T4 the
+Owner's alone. The order inside `may_act` is 31's authority hierarchy read top down — stop, then T4,
+then safe mode, then the mode — so no mode can ever be the thing that lets a lower layer past a
+higher one, and an agent cannot downgrade the risk of its own action.
+
+## 2026-09-18 — SUPERVISED writes an Approval rather than refusing, so the row had to exist
+
+There was no Approval object anywhere in the tree, although 31 specifies its fields. **Decision:
+`owner_approval_request` carries them (action, requester, risk tier, evidence, proposed diff, cost,
+reversibility, expiry, approver, result); `cost_usd` is nullable on purpose, because a cost the
+studio cannot compute is None and never zero; a request is reused while it stands rather than
+duplicated; and an expired request is marked EXPIRED and a new one raised, because 31 says an expired
+approval cannot be reused and saying so in the row is part of the record.** Answering a request is
+deliberately not implemented in this phase: a half-built approval route that nothing calls would be
+worse than an honest gap, and the gap is named in CURRENT_STATUS.
+
+## 2026-09-18 — The Policy Kernel asks the mode gate for the run itself, at T1, and calls it `agent.run`
+
+**Decision: `_assert_policy_allows_run` asks `may_act(session, "agent.run", "T1")`, immediately after
+the stop check and before the lifecycle check.** An LLM call is a reversible internal write — 31's
+"create draft" — which every mode allows, so the question changes no behaviour today; it is added
+anyway, because a mode that nothing consults is a label, and this is what will refuse a run if the
+Owner ever takes the studio below MANUAL's floor or if safe mode opens under a run in flight. It is
+`agent.run` and not `script.draft`, which was the first wiring: from a prompt the kernel cannot tell
+what the answer will be used for, and calling every run a script draft would have described the
+Accountant's letter and an analytics read as drafting. The tier of what an agent then *does* with the
+answer — a page fetched, a shot bought, a film uploaded — is asked by the stage that does it.
+
+## 2026-09-18 — A mode refusal is SKIPPED, not BLOCKED
+
+The runbook's vocabulary is exact: COMPLETED means the stage ran to its end, SKIPPED means it could
+not run, and BLOCKED is what the Owner's STOP does — `execute_daily_run` stops the day at the first
+BLOCKED stage and marks the rest blocked behind it. **Decision: the mode gate returns SKIPPED with
+the Owner's Romanian reason, and the tier, the mode and the approval id in the artefacts.** A MANUAL
+studio is not a stopped studio: it may not buy a shot or upload a film, but it may still draft,
+storyboard, write the serial's episode and measure what it already has. Recording the refusal as
+BLOCKED would have ended the day at the research stage and thrown away the internal work the mode
+explicitly permits. The day then comes out PARTIAL, which is what it was.
+
+## 2026-09-18 — The upload is T3 at every visibility, and the tier is not read off the channel policy
+
+The tempting version tiers the publish stage by what the film will be: private upload T2, public T3.
+**Decision: the tier is fixed at T3 and the channel policy decides afterwards who may see what was
+uploaded.** It is wrong twice otherwise. A private upload is still a write to the platform under the
+studio's account, which is 32's EXTERNAL_WRITE, and the visibility is a setting the same day's policy
+command could change — so the day's riskiest act would have had its risk decided by the thing most
+likely to move. It also breaks the mode's shape: SUPERVISED is 51's "configurable T2/T3 actions
+create Approval; publishing usually requires approval initially", and a T2 private upload would
+publish without ever asking.
+
+## 2026-09-18 — The stop is deliberately not re-read in the mode gate
+
+`may_act` answers BLOCKED_STOP first, and `mode_refusal` treats that answer as "not my refusal" and
+returns None. **Decision: the stop stays where it already is — read by the runbook before every
+stage, by the media stage before every film, by the render between scenes, by the publishing gate's
+five points and by the Policy Kernel — and the wrapper does not become a sixth reader.** A sixth
+would add nothing except a new single place where somebody could later think the stop lives, and it
+would have changed what a dozen existing tests measure about *other* refusals: a stage called
+directly with the stop on would have reported the stop instead of the missing model it was written to
+expose. What this gate asks is the question none of the five ask — whether the mode the Owner set
+lets the studio attempt the thing at all. The reason is written in the code beside the return.
+
+## 2026-09-18 — Two layers, on purpose: the stage and the act
+
+**Decision: `STAGE_ACTIONS` maps each stage to one action and one tier, tested against
+`ACTION_RISK_TIERS` so the two tables cannot drift, and the stages that spend or publish ask again
+per film.** The table is what makes "the day's stages mapped to tiers" readable — one line per
+stage. The act-level calls are where the answer is specific: `_media` asks again per film with that
+film's estimate as the cost on the Owner's question, and with `media.paid_generation_over_threshold`
+when the estimate passes his line, so the approval he reads names a figure; `_publish_one` asks again
+per film after the Director has approved it and the five-point gate has passed it, so he is asked
+about a film that is otherwise ready to go rather than about a hypothetical. `request_approval`
+reuses a standing request for the same action, so the two layers cannot bury him under duplicates —
+the SUPERVISED end-to-end day writes exactly one row.
+
+## 2026-09-18 — The paid-generation threshold is a setting, because a tier boundary with no number cannot be moved
+
+31 says "paid generation beyond threshold" and names no figure. **Decision: the figure is the
+Owner's — `paid_generation_approval_threshold_usd`, default five dollars — read by
+`runbook/stages.py::_media` against the film's own `estimate_film_cost_micros`.** Five, because a
+six-second shot on `seedance2_5` costs about 2.60 USD on his account and two shots is where one
+film's spend stops looking like routine. It changes nothing in AUTONOMOUS_CEO, where both tiers are
+allowed: it is the line that decides which question SUPERVISED asks, not a second budget. The
+per-film ceiling he already has (`motion_budget_usd`) stays what it is — what a film may spend, not
+who decides that it may.
+
+## 2026-09-18 — The preflight's third severity is structural, not polite
+
+**Decision: `INFORMATIONAL` exists as a severity and the preflight's verdict is computed over the
+other two only, so an informational line cannot reach `blocking_failures` or `degrading_failures`
+even if it reported `ok=False`.** The mode had to appear where the Owner reads the studio before a
+run, and it must never fail one: MANUAL is his answer, and a preflight that called it DEGRADED would
+be asking him to repair his own decision. A check that is simply always `ok=True` would hold only as
+long as nobody edited it. One existing assertion (`test_every_check_says_what_it_found`, which
+enumerated the two severities) was widened by one word; nothing else in the tree reads severity.
+
+## 2026-09-18 — `ReferenceRequired` is caught beside the vendor's refusal and settled in the same order
+
+It is a `ValueError`, not a `MediaProviderError`, so the assembler's existing handler would have let
+it escape with the job left RENDERING — a render nobody could price afterwards. **Decision: it fails
+the job like any unfinished render, which is what lets `record_failed_render_cost` read what was
+already bought, and is re-raised as itself; the media stage costs the attempt first and releases the
+hold second, the same order and for the same reason as a vendor's refusal.** The estimate stops
+counting exactly when the real cost of the attempt starts. It is not a fault and opens no safe mode:
+tomorrow's run tries the film again, and producing the character's reference set is the Owner's act.
+
+## 2026-09-18 — The assembler and the Accountant were edited by the integrator, and are named here
+
+`backend/app/media/assembler.py` and `backend/app/economy/accountant.py` were outside the file list
+of the implementer who built the chain, and nothing works without them: passing `image_chain` into an
+assembler that does not accept it is a keyword error, and recording per-attempt costs that
+`_priced_scene_costs` never reads leaves a scene the alternative drew charged to the first vendor's
+model. **Decision: the integrator made exactly the two changes the report specified — the two new
+keyword parameters and the per-scene attempt records in the assembler, and `scene["image"]` before
+the film-level `production["image"]` in the Accountant — and they are called out in the change list
+rather than folded in silently.** Both files were untouched in the working tree, so no other
+session's work was overwritten.
+
+## 2026-09-18 — Migration numbering: 0041 and 0042 were reserved and not used; 0043 is the head
+
+Three implementers were given 0041, 0042 and 0043 in order. **Decision: the first two took no
+migration and said so — the picture and character verdicts live in the existing
+`quality_control_report.checks_json`, and the reference set and the approved-fallback lists live in
+columns and JSON that already existed — so `0043_autonomy_mode` chains onto `0040_research_sources`,
+its docstring records that 0041 and 0042 are free, and `backend/app/main.py` pins 0043 as the head.**
+A migration written only to hold a number would be a schema change nobody needed, and a gap in the
+numbering that the head pin and the docstring both explain costs a reader one sentence.
+
+## 2026-09-18 — `50_CONTENT_GATE_MATRIX` names the two gates that now exist, and its hash is re-indexed
+
+The matrix listed "Visual factual QC" and a continuity row as gates of the pipeline, and the code had
+neither: `character_drift_qc` reported NOT_IMPLEMENTED on every film ever made and nothing anywhere
+looked at a frame. **Decision: this is a deliberate specification change under ADR-FOUNDATION-003 —
+the gate table gains the two rows the code now runs (`picture_qc` and `character_drift_qc`, at
+render and before publish), the gate-behavior section states what each status certifies and that
+NOT_APPLICABLE and NOT_IMPLEMENTED carry a reason and a `passed` of None, and a new section states
+what the picture gate measures and the four ways it stands down — and the document's `sha256` in
+`DOCUMENTATION_INDEX.json` is updated in the same change (`f7da10d8…` → `a436dab0…`), with this
+entry as the recorded reason.**
+Nothing was removed: every row and rule the matrix carried is still there, and each addition is dated
+in place so a reader can see what the matrix claimed before.
+
+## 2026-09-18 — `51_AUTONOMY_MODE_SEMANTICS` says which of its sentences are code and which are not
+
+51 described three modes, a transition rule and a department scoping, and the studio had a constant.
+**Decision: this is a deliberate specification change under ADR-FOUNDATION-003 — each mode section
+gains a dated line naming the column, the command and the tier the code actually allows; the
+transition section states that two of its four requirements are enforced and two are named in the
+refusal because nothing in this database can measure them; the department section is marked as not
+implemented rather than left reading as current behaviour; and the STOP and SAFE_MODE sections name
+where they are enforced — and the document's `sha256` in `DOCUMENTATION_INDEX.json` is updated
+(`17cb4169…` → `33f42c6c…`) with this entry as the reason.** A specification that is silent about which of its sentences are built is
+the way a reader comes to trust none of them.
+
+## 2026-09-18 — `24_VISUAL_CONTINUITY_ASSET_SYSTEM` says who produces a reference set and what it costs
+
+24 listed portrait, full-body and front/side/back references as properties of a Character Bible and
+said nothing about where they come from, while every slot was null in every studio that ever ran.
+**Decision: this is a deliberate specification change under ADR-FOUNDATION-003 — the Character Bible
+section states that a slot holds a stored asset id or nothing and never a description standing in for
+an image; a new dated section states that reference sets are produced by an Owner-triggered route
+that spends image credits, refuses under STOP AUTONOMY, holds the money for the whole set before the
+first slot, and is named by no stage of the day; the provider-capability and degraded-mode sections
+name the reference-image capability the code queries and the one approved alternative per purpose;
+and the QC-checks section points at the gate that now measures face, hair, outfit and wrong-employee
+drift and at what it cannot see — and the document's `sha256` in `DOCUMENTATION_INDEX.json` is
+updated (`8a5d4396…` → `73d5c9cd…`) with this entry as the reason.**
+
+## 2026-09-18 — `08_VIDEO_PIPELINE` was examined and deliberately left unchanged
+
+The second vendor was the one change of this phase that could have made the video pipeline document
+untrue. **Decision: it does not, and 08 is not edited.** 08 already says that autonomy must not
+depend on one generative video vendor, that IMAGE_PROVIDER has a "reference/edit if supported"
+method, that a provider that cannot preserve a character means "change provider" or fail continuity
+QC, and that repeated generation failure should simplify, switch provider, fall back or block —
+which is the chain the code now implements, bounded at one alternative and ending on the placeholder
+still QC blocks. Editing a document to restate what it already says would spend an index hash on
+nothing and teach the next reader that the hashes move for cosmetic reasons.
+
+## 2026-09-18 — The roadmap, the changelog and PROJECT_STATE are ticked against this phase
+
+`13_ROADMAP_TODO.md` carried `character drift QC` as flatly unimplemented and
+`Manual/Supervised/Autonomous` as "STOP flag plus a dormant-by-default schedule", and
+`PROJECT_STATE.json` carried `autonomy_mode: "MANUAL"`, migration 0040 and 1067 tests. **Decision:
+the closed boxes are ticked with the date and the evidence, the two that are only half closed are
+marked `[~]` with what is missing named in the same line — a picture gate that stands down in the
+live studio because no employee's model declares vision, an approval that is written and cannot be
+answered — and `PROJECT_STATE.json` moves to `0043_autonomy_mode`, 42 migrations, AUTONOMOUS_CEO and
+1148/1.** A tracking document that keeps listing closed work teaches the next reader to stop reading
+it; one that ticks a box the studio cannot actually exercise teaches him worse.

@@ -725,6 +725,8 @@ def assemble_video_job(
     storage_root: Path | None = None,
     ffmpeg_path: str | None = None,
     image_adapter: ImageProvider | None = None,
+    image_chain: list[ImageProvider] | None = None,
+    reference_for_scene: Callable[[dict[str, Any]], dict[str, Any] | None] | None = None,
     tts_adapter: TTSProvider | None = None,
     tts_adapter_for_scene: Callable[[dict[str, Any]], TTSProvider | None] | None = None,
     video_adapter_for_scene: Callable[[dict[str, Any]], VideoProvider | None] | None = None,
@@ -772,6 +774,20 @@ def assemble_video_job(
     still becomes a slow push, and either way the shots dissolve into one another instead of
     cutting. What made each shot is recorded per scene, so a film can always be read back.
 
+    ``image_chain`` is the vendors a still may be drawn by, in order: the resolved one and at
+    most one alternative the Owner approved for this purpose. Each attempt is recorded with
+    its connection, its model and what it is worth at the stored price, on the scene and on
+    the job, so the books charge the vendor that actually drew the picture and a refused
+    attempt is not free by omission. Without it the single ``image_adapter`` is the chain,
+    which is what every studio does until the Owner approves an alternative.
+
+    ``reference_for_scene`` answers with the reference picture of the character the scene's
+    cast names, or None. It is passed only to an adapter that declares it can take one, and
+    the attempt records whether the still was drawn from the sheet or from the words. It may
+    raise ``app.media.services.ReferenceRequired`` for a character whose look the Owner
+    locked and whose reference cannot be read: the job is failed and the refusal re-raised
+    rather than the scene being drawn with an invented face.
+
     ``tts_adapter_for_scene`` resolves a voice per scene (a recurring character's locked
     voice, or a scene override); when it returns None for a scene, ``tts_adapter`` is used,
     and when that is None too the placeholder narrator is. ``production_plan`` is the
@@ -781,6 +797,11 @@ def assemble_video_job(
     Raises RenderEngineUnavailable when ffmpeg is missing or the encode fails. No MediaAsset
     is recorded in that case, so no downstream gate can pass on a non-existent render.
     """
+    # Imported here, not at the top: `app.media.services` reaches back into this module for a
+    # render, and the two would import each other at load time.
+    from app.media.factory import still_from_chain  # noqa: PLC0415
+    from app.media.services import ReferenceRequired  # noqa: PLC0415
+
     render_job_id = str(uuid4())
     production: dict[str, Any] = {
         "plan": production_plan or {},
@@ -819,6 +840,9 @@ def assemble_video_job(
                 "voiceover_segment": s.voiceover_segment,
                 "shot_type": s.shot_type,
                 "transition_in": s.transition_in,
+                # Who is in the shot, which is what decides whose reference picture the
+                # still is drawn from. The scenes carried everything but their cast.
+                "character_ids": list(s.character_ids_json or []),
             }
             for s in scenes
         ]
@@ -842,6 +866,12 @@ def assemble_video_job(
     #    and voiceover segments. The captions come after: a cue is timed to the narration
     #    actually recorded for its scene, which is not known until the voice has spoken.
     visual_adapter: ImageProvider = image_adapter or DeterministicVisualAdapter()
+    # The vendors a still may be drawn by, in order. One long unless the Owner approved an
+    # alternative for this purpose, which is every studio until he does — and the placeholder
+    # generator when there is no image provider at all, exactly as before.
+    drawn_by: list[ImageProvider] = [a for a in (image_chain or []) if a is not None] or [
+        visual_adapter
+    ]
     placeholder_voice = DeterministicTTSAdapter()
     # The frames are real only when a real generator made them; this single name is what the
     # asset, the event and the QC report are all written from.
@@ -937,18 +967,30 @@ def assemble_video_job(
             if position:
                 _stop_if_asked()  # the first scene is the render starting; the stage just asked
             index = scene["scene_index"]
+            # The face this scene must keep, read before anything is drawn. A refusal here
+            # is the studio declining to invent a locked character's look; it is caught
+            # below, fails the job and is re-raised, never swallowed as a vendor error.
+            reference = reference_for_scene(scene) if reference_for_scene else None
+            asked: dict[str, Any] = {"title": storyboard_title, "scene_index": index}
+            if reference:
+                asked["reference_image"] = {
+                    "bytes": reference["bytes"],
+                    "mime_type": reference["mime_type"],
+                }
             with _at_work(
                 engine if image_adapter is not None else None,
                 "VideoEditor",
                 "generate_image",
                 f"imaginea scenei {index}",
             ):
-                img_res = asyncio.run(
-                    visual_adapter.generate_image(
+                img_res, image_attempts = asyncio.run(
+                    still_from_chain(
+                        engine,
+                        drawn_by,
                         scene["visual_prompt"],
                         width=1080,
                         height=1920,
-                        extra={"title": storyboard_title, "scene_index": index},
+                        extra=asked,
                     )
                 )
             suffix = img_res.format if img_res.format in ("png", "jpeg", "webp") else "svg"
@@ -972,16 +1014,20 @@ def assemble_video_job(
                         "generate_image",
                         f"imaginea scenei {index} (reluare)",
                     ):
-                        again = asyncio.run(
-                            visual_adapter.generate_image(
+                        again, retry_attempts = asyncio.run(
+                            still_from_chain(
+                                engine,
+                                drawn_by,
                                 strip_on_screen_text(scene["visual_prompt"])
                                 + " A real, detailed scene: no text, no letters, no stripes, "
                                 "no repeating pattern.",
                                 width=1080,
                                 height=1920,
-                                extra={"title": storyboard_title, "scene_index": index},
+                                extra=asked,
                             )
                         )
+                    # The second attempt is bought like the first, so the books see both.
+                    image_attempts = image_attempts + retry_attempts
                     still.write_bytes(again.image_bytes)
                     broken = still_is_degenerate(measuring, still)
                     if broken:
@@ -1019,7 +1065,14 @@ def assemble_video_job(
                     "audio_seconds": round(tts_res.duration_seconds, 3),
                     "synthesis_ms": round((time.monotonic() - voice_started) * 1000, 1),
                     "attempts": 1,
+                    # Which vendor actually drew this scene's still. The books used to price
+                    # every still at the film-level record, so a scene the approved
+                    # alternative drew was charged to the first vendor's model.
+                    "image": image_attempts[-1] if image_attempts else None,
                 }
+            )
+            production.setdefault("image_attempts", []).append(
+                {"scene_index": index, "attempts": image_attempts}
             )
             # The captions are timed from this: the scene's words last as long as its recording.
             scene["audio_seconds"] = round(tts_res.duration_seconds, 3)
@@ -1036,6 +1089,13 @@ def assemble_video_job(
             elif len(tts_res.audio_bytes) > 44:
                 master_audio_bytes.extend(tts_res.audio_bytes[44:])
 
+    except ReferenceRequired as exc:
+        # Not the vendor refusing, but the studio: a character whose look the Owner locked has
+        # no reference picture the render can read, and drawing the scene anyway would invent
+        # the face the lock exists to fix. The job is failed like any other unfinished render
+        # — so what was already bought can be priced — and the refusal goes up as itself.
+        _fail_job(f"The scene needs a reference picture: {exc}", str(exc))
+        raise
     except MediaProviderError as exc:
         _fail_job(f"The vendor refused the render: {exc}", str(exc))
         raise

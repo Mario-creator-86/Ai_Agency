@@ -41,10 +41,12 @@ from app.publishing.router import create_publishing_router
 from app.runbook.router import create_runbook_router
 from app.runbook.stages import build_stage_runners
 from app.runbook.weekly import WEEKLY_JOB_NAME
-from app.schemas import EnvironmentCommand, PolicyCommand, PolicyResult
+from app.schemas import AutonomyModeCommand, EnvironmentCommand, PolicyCommand, PolicyResult
 from app.security import require_owner
 from app.services import (
+    AutonomyRefused,
     CommandConflict,
+    change_autonomy_mode,
     change_environment,
     change_stop,
     read_events,
@@ -123,7 +125,11 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
         # Migrations/bootstrap are explicit startup commands, never hidden destructive schema edits.
         with engine.connect() as connection:
             revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
-            if revision != "0040_research_sources":
+            # The head of the chain. Phase D/G reserved 0041 (the picture check) and 0042
+            # (the reference set and the second vendor) and neither needed a schema change —
+            # the verdicts live in `quality_control_report.checks_json`, the references in
+            # columns that already existed — so 0043 chains onto 0040 and is the head.
+            if revision != "0043_autonomy_mode":
                 raise RuntimeError("Run scripts/bootstrap.py with this application version")
             if connection.scalar(text("SELECT COUNT(*) FROM owner_policy")) != 1:
                 raise RuntimeError("Run scripts/bootstrap.py to initialize the studio")
@@ -428,6 +434,21 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
         try:
             return change_environment(engine, command)
         except CommandConflict as exc:
+            return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+    @router.post("/owner/autonomy-mode", response_model=PolicyResult)
+    def set_autonomy_mode(command: AutonomyModeCommand) -> PolicyResult | JSONResponse:
+        """Move the studio between MANUAL, SUPERVISED and AUTONOMOUS_CEO.
+
+        The mode decides which risk tiers an agent may act in at all, so it lives in the
+        studio's own policy and changes only here. A promotion the studio's state forbids
+        (the stop is on, an incident is open) answers 409 with the Owner's reason.
+        """
+        try:
+            return change_autonomy_mode(engine, command)
+        except CommandConflict as exc:
+            return JSONResponse(status_code=409, content={"detail": str(exc)})
+        except AutonomyRefused as exc:
             return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     @router.post("/owner/autonomy-stop", response_model=PolicyResult)

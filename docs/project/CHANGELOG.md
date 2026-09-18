@@ -1,5 +1,91 @@
 # Changelog
 
+## Quality and governance — 2026-09-18
+
+Phases D and G of running unattended, built in three parts and wired into the day: what the studio
+certifies about a film before the Director sees it, the reference pictures that make a character
+recognisable, and who decides the studio may act at all.
+
+- **Quality control looks at the pictures.** `backend/app/media/picture_qc.py` (new) cuts every
+  scene's middle frame from the finished film and asks, in one call for the whole film, an employee
+  whose provider declares its model can see: is this a picture at all, and does it show what the
+  scene's visual prompt and narration asked for — carrying in the same call the storyboard's cast
+  with the Character Bible's canonical face, hair, outfit, props, role symbols, palette and, where a
+  slot holds one, the stored portrait. A refusal fails the film in every environment, beside the
+  degenerate-still and placeholder-footage checks. `character_drift_qc` no longer says
+  NOT_IMPLEMENTED for a studio that has characters. `backend/app/agents/vision.py` (new) finds the
+  employee, asking Video Editor, Director, Quality Assurance in that order and reading only the
+  primary model. With no registry, no vision-capable model, no frame cut, the day's token ceiling
+  reached or a model that never reached the JSON, the check is NOT_APPLICABLE with the reason,
+  `passed` is None, no failure is added and the film's verdict is unchanged.
+- **Reference pictures for the characters.** `POST /media/characters/{id}/reference-set` fills the
+  five bible slots with real files — one prompt per slot from the bible alone, each a `MediaAsset`
+  with its own SHA-256 and its bytes under `backend/storage/character_references/{character}/` — and
+  a slot the vendor refused keeps what it held and is named in the answer. It is the Owner's act:
+  it refuses under STOP AUTONOMY before the first request, holds the money for the whole set through
+  `reserve_spend`, reports `usd: None` rather than zero when the model has no price, and no stage of
+  the day names it (a test asserts that). `image_reference_for_scene` hands the render the reference
+  the scene's cast has; a character whose look is locked and has no readable reference raises
+  `ReferenceRequired` and refuses the film rather than inventing a face.
+- **A second vendor when the first refuses.** `approved_alternatives` reads the Owner's
+  `approved_fallbacks` from the production hierarchy, narrowed for a visually locked character to the
+  technology an APPROVED identity change named; `image_adapter_chain` and `still_from_chain` try at
+  most one alternative per purpose per scene (`MAX_FALLBACKS_PER_PURPOSE`), record the connection,
+  the model, whether a reference was sent and what the attempt was worth at the recorded price, and
+  re-raise the last refusal with the attempts attached. In TEST the chain is ordered cheapest-first.
+  The OpenAI image adapter posts a reference to the documented multipart `/v1/images/edits` endpoint
+  (`ACCEPTS_REFERENCE_IMAGE` True, `REFERENCE_IMAGE_VERIFIED` False until an Owner-approved run has
+  drawn one).
+- **The autonomy mode is a column, a command and a gate.** Migration `0043_autonomy_mode`
+  (`owner_policy.autonomy_mode`, `owner_approval_request`) records AUTONOMOUS_CEO, which is the
+  honest reading of what the code has been doing. `change_autonomy_mode` (`POST
+  /api/v1/owner/autonomy-mode`) is versioned, idempotent and refuses a promotion under STOP or in
+  safe mode, naming 51's acceptance criteria and burn-in as the two things it cannot check.
+  `ACTION_RISK_TIERS` transcribes 31's tiers and 32's tool classes; `may_act` reads 31's authority
+  hierarchy top down — stop, T4, safe mode, mode — refuses an unclassified action
+  `BLOCKED_UNCLASSIFIED`, and under SUPERVISED writes an `owner_approval_request` for a T3 external
+  write instead of performing it.
+- **The day reads all three.** `runbook/stages.py` gains `STAGE_ACTIONS` (every stage to one action
+  and one tier of 31) and `mode_refusal`, asked before each stage, again per film before the money is
+  held (T3 above `paid_generation_approval_threshold_usd`, new in `config.py`, five dollars) and
+  again per film before the upload, which is T3 at every visibility; a stage above the mode is
+  SKIPPED with the Owner's reason and the day comes out PARTIAL. Quality control now passes the
+  registry and `settings.ffmpeg_path` to `evaluate_media_qc`; the media stage passes the plan's
+  `image_chain` and `reference_for_scene` into `assembler.assemble_video_job`, which draws each still
+  through the chain and records the attempts; `economy/accountant.py` prices a still by the vendor
+  that drew *that scene*. `runbook/preflight.py` gains an `INFORMATIONAL` severity and an
+  `autonomy_mode` line, with the verdict computed over the other two severities so it can never fail
+  a run.
+- **A whole day under each mode.** `tests/test_autonomous_day_end_to_end.py` gains three tests:
+  MANUAL fetches no page, buys no shot, uploads nothing and asks nothing; SUPERVISED films the day
+  and writes exactly one `owner_approval_request` for the upload; AUTONOMOUS_CEO publishes private
+  under the channel's policy with no request raised. Every vendor faked, the socket guard active.
+- **Documents.** `CURRENT_STATUS.md` gains the section above and three items in «Ce are Owner-ul de
+  făcut» (produce the character reference sets, choose the autonomy mode, approve the fallback
+  vendors), and its migration item is corrected from 0040 to 0043. `16_DECISION_LOG.md` records
+  thirty-two decisions of this phase. `13_ROADMAP_TODO.md` ticks the modes and the picture gate,
+  marks two items `[~]` with what is missing named in the line, and adds the phase's own list.
+  `PROJECT_STATE.json` moves to `0043_autonomy_mode`, 42 migrations, `autonomy_mode:
+  AUTONOMOUS_CEO` and 1148/1. Three architecture documents are deliberately changed with their
+  `sha256` re-recorded in `DOCUMENTATION_INDEX.json` and a decision-log entry each:
+  `../architecture/50_CONTENT_GATE_MATRIX.md` (the picture and character gates and what each status
+  certifies), `../architecture/51_AUTONOMY_MODE_SEMANTICS.md` (which of its sentences are code) and
+  `../architecture/24_VISUAL_CONTINUITY_ASSET_SYSTEM.md` (who produces a reference set and what it costs).
+  `../architecture/08_VIDEO_PIPELINE.md` was examined and left unchanged: the bounded chain is what it already
+  prescribes.
+- Suite on the integrated tree: **1148 passed, 1 skipped** (the opt-in real-Ollama test); `ruff
+  check`, `ruff format --check` over 384 files, `mypy` over 143 source files and
+  `scripts/check_docs.py` clean. Nothing ran against a real model, provider or platform; nothing was
+  rendered outside FFmpeg on this machine; no daily run was queued and no credit was spent.
+- Open, and named in `CURRENT_STATUS.md`: no vision model has ever answered the picture check and
+  `seed_initial_workforce` seeds none, so the live studio will report NOT_APPLICABLE until the
+  provider catalogue records one; no real render has gone through the second vendor and
+  `REFERENCE_IMAGE_VERIFIED` stays False; the Owner cannot answer an approval, so SUPERVISED records
+  the question and never hears the answer; `media/router.py` still measures and renders without the
+  new gates, so his manual render and manual QC behave as they did yesterday; the factual storyboard
+  records no cast, so the character check has nothing to compare there; 51's department-scoped
+  autonomy is not implemented; and there is no frontend for any of it.
+
 ## Money and sources, closed — 2026-09-18
 
 The four ends Phase E/F left open in files its implementers did not own.

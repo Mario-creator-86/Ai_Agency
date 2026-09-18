@@ -33,7 +33,12 @@ cost comparison, and never at the price of a locked character's voice.
 >   and no TTS provider, so the frames are placeholders and QC blocks them from publication.
 >   Character continuity is unimplemented. Acceptance ("provenance-backed media") open.
 >   Update 2026-09-18: Runway and ElevenLabs are connected since 2026-09-12; captions are burnt
->   in and loudness normalised since 2026-09-17; character-drift QC is still `NOT_IMPLEMENTED`.
+>   in and loudness normalised since 2026-09-17. ~~character-drift QC is still
+>   `NOT_IMPLEMENTED`~~ — corrected later the same day: a picture gate and a character gate now
+>   measure every scene's middle frame against the scene's prompt and the Character Bible, and the
+>   bible's five reference slots can hold real files produced by an Owner-triggered route. Both
+>   report NOT_APPLICABLE with a reason until an employee's model declares vision, which no seeded
+>   workforce does, so on the live studio the checks stand down visibly rather than certify.
 > - **Phase 6** — the gate, state machine and idempotency are real, but OAuth has never been
 >   exercised and no upload has ever reached YouTube. Acceptance ("official OAuth, private upload
 >   with verified remote ID") open.
@@ -147,8 +152,30 @@ false/unsupported critical claim blocks script/publication path. ✅
   by `captions_qc`; before that the SRT was written and never used.
 - [x] QC (Technical, Factual, and Rights verification checklist; since 2026-09-17 also audio
   loudness, captions and the fallback-scene ceiling)
-- [ ] character drift QC — `NOT_IMPLEMENTED`: quality control reports the check as not
-  performed and certifies nothing (ticked in error until 2026-09-18).
+- [~] character drift QC — since 2026-09-18 `character_drift_qc` measures: the storyboard's cast
+  for each scene, the Character Bible's canonical face, hair, outfit, props, role symbols and
+  palette and, where a slot holds one, the stored portrait, all carried in the same vision call as
+  the picture check; a person in the wrong outfit is named with their scene and the film fails.
+  Still partial, and honestly so: it reports NOT_APPLICABLE where no employee's model declares
+  vision — which is every live studio today, because `seed_initial_workforce` seeds none — and
+  NOT_IMPLEMENTED only where the bible holds no characters at all; the factual storyboard writes
+  `character_ids_json=[]`, so on a factual film the record says no scene lists a character rather
+  than passing. (It was `NOT_IMPLEMENTED` and certified nothing until 2026-09-18, and ticked in
+  error before that.)
+- [~] picture QC — new 2026-09-18 (`backend/app/media/picture_qc.py`): every scene's middle frame is
+  cut from the finished film and one call asks whether it is a picture at all — a blank field,
+  stripes, noise, garbled writing is not — and whether it shows what the scene's visual prompt and
+  narration asked for. A refusal fails the film in every environment. Partial for the same reason:
+  no vision model has ever answered the prompt (every test fakes the provider at its transport, by
+  the Owner's rule), the check stands down NOT_APPLICABLE with its reason wherever it could not
+  look, and the Director's `frames_for` cuts at most eight frames, so a ninth scene onwards is
+  recorded as never looked at rather than as passed.
+- [~] character reference sets — new 2026-09-18: `POST /media/characters/{id}/reference-set` fills
+  the five bible slots (portrait, full body, front, side, back) with real `MediaAsset` files, one
+  prompt per slot from the bible alone, the money for the whole set held before the first slot. It
+  is the Owner's act — it spends image credits, refuses under STOP AUTONOMY and is named by no stage
+  of the day. Open: no frontend button, no page showing which slots are filled, and the first filled
+  slot is used for every scene rather than chosen by shot type.
 - [x] final MP4 page (Media Production UI modal with 9:16 vertical video player, QC scorecard, Character Bible)
 
 Acceptance:
@@ -228,10 +255,18 @@ real end-to-end employee replacement and audit.
   or invented citation fails the episode.
 - [~] persistent character visuals/voices — bible lines in every scene prompt; a locked
   character's voice is bound where the Owner has bound one, else the narrator; one voice per
-  scene.
+  scene. Since 2026-09-18 a locked *look* can also be carried as a picture: the bible's five
+  reference slots hold real files once the Owner has produced them, `image_reference_for_scene`
+  hands the render the reference the scene's cast has, and a character whose look is locked and
+  whose reference cannot be read refuses the film rather than having a face invented for him. The
+  reference reaches only an adapter that declares it can take one — the OpenAI image adapter today,
+  not Runway.
 - [x] serial storyboard — `storyboard_from_episode`, in the factual storyboard's exact shape.
 - [~] serial QC — the Director's five computed checks and her verdict on the episode, then the
-  same film QC and her serial brief (2026-09-18); no serial-specific picture check.
+  same film QC and her serial brief (2026-09-18). Since 2026-09-18 that film QC includes the picture
+  and character checks, and the serial is the one path that fills `character_ids_json`, so the drift
+  check has a cast to compare; there is still no serial-specific picture check of its own, and
+  nothing runs at all until an employee's model declares vision.
 - [x] second channel config — the OFFICE_SERIAL slot carries a publish policy and the
   Director's leave (migrations 0037, 0038); binding an account is the Owner's.
 - [~] second channel publishing — routed by the storyboard to OFFICE_SERIAL at its policy,
@@ -248,10 +283,26 @@ yesterday's real events → today's coherent episode with correct cast. (Code co
 - [x] next-day serial workflow — the `serial_queue` stage writes, reviews and storyboards the
   previous closed day's episode, and since 2026-09-17 the same run films it (the stage runs
   before media). Open: today's log is still closed at the run's hour.
-- [ ] Manual/Supervised/Autonomous — today: STOP flag plus a dormant-by-default schedule.
-- [ ] approval queue — the Director approves the scripts she passes (2026-09-12) and, under the
+- [x] Manual/Supervised/Autonomous — real since 2026-09-18: `owner_policy.autonomy_mode`
+  (migration 0043, recorded AUTONOMOUS_CEO because that is what the code does), moved only by
+  `change_autonomy_mode` (`POST /api/v1/owner/autonomy-mode`, versioned, idempotent, refusing a
+  promotion under STOP or in safe mode and naming 51's acceptance criteria and burn-in as what it
+  cannot check), and enforced by `may_act` over a tier table transcribed from 31 and 32 — read top
+  down: stop, T4, safe mode, mode. `STAGE_ACTIONS` maps every stage of the day to one action and one
+  tier and `mode_refusal` asks before each stage, again per film before the money is held and again
+  per film before the upload; a stage above the mode is SKIPPED with the Owner's reason, and the
+  preflight shows him the mode as an INFORMATIONAL line that can never fail a run. A whole day is
+  tested under each of the three modes. Not implemented: 51's department-scoped autonomy — the
+  column is one global mode.
+- [~] approval queue — the Director approves the scripts she passes (2026-09-12) and, under the
   Owner's per-channel leave, the episodes (2026-09-18); an episode without that leave waits
-  DRAFT for the Owner, and there is no queue view.
+  DRAFT for the Owner, and there is no queue view. Since 2026-09-18 the rows exist:
+  `owner_approval_request` carries 31's Approval object (action, requester, tier, evidence, proposed
+  diff, nullable cost, reversibility, expiry, approver, result), a SUPERVISED day writes one for the
+  upload instead of uploading, and a standing request is reused rather than duplicated. Still open,
+  and the reason this stays `[~]`: **nothing answers one.** There is no route to approve or refuse,
+  nothing consumes an APPROVED row, no stage re-attempts after one appears, and
+  `owner_approval_request` is not yet in `maintenance.HISTORY_TABLES`.
 - [x] cost reservation — since 2026-09-18 the media stage prices the plan (`estimate_film_cost_micros`) and *holds* the sum behind the write lock (`reserve_spend`, migration 0039), settles it against the real cost rows and releases it on every path where the film was not made; the watchdog frees a hold older than six hours.
 - [x] hard budgets — a refusal now stops the film and the Accountant writes to the Owner the same day, and a business date has a token ceiling (`STUDIO_AGENT_DAILY_TOKEN_BUDGET`, 0 = none) enforced as the Policy Kernel's first gate (BLOCKED_BUDGET). Budgets are still set only by the Owner, and none is set on the live studio yet.
 - [x] STOP AUTONOMY — the scheduler and the task queue both refuse while the stop is set, and
@@ -705,3 +756,94 @@ format, mypy and `check_docs.py` clean. Nothing ran against a real model, provid
 After the closure and its verification (2026-09-18): the whole suite 1067 passed / 1 skipped, ruff,
 format, mypy and `check_docs.py` clean, no socket left the machine and nothing was rendered,
 uploaded or paid for.
+
+
+## Quality and governance (Phases D/G of running unattended) — 2026-09-18
+
+- [x] A picture gate: every scene's middle frame cut from the finished film and asked, in one call
+  for the whole film, whether it is a picture at all and whether it shows what the scene's visual
+  prompt and narration asked for (`backend/app/media/picture_qc.py`). A refusal fails the film in
+  every environment, beside the degenerate-still and placeholder-footage checks.
+- [x] A character gate that measures: the storyboard's cast per scene against the Character Bible's
+  canonical face, hair, outfit, props, role symbols and palette, and against the stored portrait
+  where a slot holds one, in the same call. `character_drift_qc` stops saying NOT_IMPLEMENTED for a
+  studio that has characters.
+- [x] Every stand-down is recorded as one: no registry, no employee's model declaring vision, no
+  frame cut, the day's token ceiling reached, a model that never reached the JSON, a scene with no
+  verdict, a scene past the eight-frame cap — NOT_APPLICABLE with the reason, `passed` None, no
+  failure added, the film's verdict exactly what the other gates left it.
+- [x] The employee who looks is found by department (`app.agents.vision.vision_agent`: Video Editor,
+  Director, Quality Assurance), primary model only.
+- [x] Reference sets for the Character Bible: `POST /media/characters/{id}/reference-set` fills the
+  five slots with real `MediaAsset` files under `backend/storage/character_references/{character}/`,
+  refuses under STOP AUTONOMY, holds the money for the whole set through `reserve_spend`, reports
+  `usd: None` rather than zero when the model has no price, and is named by no stage of the day.
+- [x] The reference reaches the render: `image_reference_for_scene` and `reference_payload`, passed
+  only to an adapter that declares it can take one; a locked look with no readable reference raises
+  `ReferenceRequired` and refuses the film rather than inventing a face.
+- [x] A second vendor the Owner approved: `approved_fallbacks` on a level of the production
+  hierarchy, narrowed for a visually locked character to the technology an APPROVED identity change
+  named, bounded at one alternative per purpose per scene (`MAX_FALLBACKS_PER_PURPOSE`), each attempt
+  recording the connection, the model, whether a reference was sent and what it was worth. Ordered
+  cheapest-first in TEST.
+- [x] The autonomy mode as a fact: `owner_policy.autonomy_mode` (migration 0043, recorded
+  AUTONOMOUS_CEO because that is what the code does), `change_autonomy_mode` as the only thing that
+  moves it, a promotion refused under STOP or in safe mode with 51's unmeasurable requirements named
+  rather than approximated, and lowering always allowed.
+- [x] A risk-tier table transcribed from 31 and 32 (`ACTION_RISK_TIERS`) and one gate (`may_act`)
+  reading 31's authority hierarchy top down — stop, T4, safe mode, mode — with an unclassified action
+  refused `BLOCKED_UNCLASSIFIED` and a caller's own tier taken only upward.
+- [x] The day mapped to tiers: `STAGE_ACTIONS` for every stage, `mode_refusal` before each stage,
+  again per film before the money is held (T3 above `paid_generation_approval_threshold_usd`, five
+  dollars) and again per film before the upload, which is T3 at every visibility. A stage above the
+  mode is SKIPPED with the Owner's reason and the day comes out PARTIAL.
+- [x] The preflight names the mode without ever failing a run: a third severity, `INFORMATIONAL`,
+  with the verdict computed over the other two.
+- [x] The day wired to all three: the registry and `ffmpeg_path` into `evaluate_media_qc`, the
+  plan's `image_chain` and `reference_for_scene` into the render, and the Accountant pricing a still
+  by the vendor that drew *that scene*.
+- [x] A whole scheduled day tested under each mode, every vendor faked: MANUAL fetches no page, buys
+  no shot, uploads nothing and asks nothing; SUPERVISED films the day and writes one approval request
+  for the upload; AUTONOMOUS_CEO publishes private under the channel's policy with none raised.
+- [ ] A real vision model answering the picture check. No model has, here or anywhere — every test
+  fakes the provider at its transport by the Owner's rule, and `seed_initial_workforce` seeds no
+  vision-capable model, so the live studio reports NOT_APPLICABLE until the provider catalogue sync
+  records one on an employee.
+- [ ] A real render drawn through the second vendor, and through the OpenAI `/v1/images/edits`
+  reference path. `REFERENCE_IMAGE_VERIFIED` stays False until an Owner-approved run has drawn a
+  scene that way; a 400 there would mean the multipart body is wrong.
+- [ ] Answering an approval: `GET /api/v1/owner/approvals` and a versioned idempotent POST that sets
+  `approver`/`result` and appends `governance.approval_decided`, plus a decision about where an
+  APPROVED T3 is re-attempted. `owner_approval_request` also belongs in
+  `maintenance.HISTORY_TABLES`, before `command_record`.
+- [ ] `backend/app/media/router.py`: the two `evaluate_media_qc` call sites take no registry and
+  `start_render` passes no chain and no reference, so the Owner's manual render and manual QC behave
+  as they did yesterday while the daily run does not.
+- [ ] `RunwayImageAdapter` cannot be handed a reference (`referenceImages` on text_to_image); today
+  the chain drops it and the attempt honestly records `reference_image: False`.
+- [ ] The factual storyboard records no cast (`character_ids_json=[]`), so the character gate has
+  nothing to compare on a factual film; only `serial_storyboard.py` fills it.
+- [ ] The Director is not told what quality control saw: `gather_facts` filters the QC report to
+  keys starting with "measured", so the per-scene verdicts do not reach her prompt.
+- [ ] Department-scoped autonomy (51's V4 section): the column is one global mode, and a
+  per-department override needs the Owner's department list first.
+- [ ] Frontend: no button produces a reference set, no page shows which slots are filled, and
+  nothing in `frontend/src` reads `autonomy_mode` or renders the preflight's third severity.
+- [ ] The research stage's mode refusal is coarse: under MANUAL the whole fetch is skipped including
+  `retest_stale_hosts`, so a MANUAL studio's host record goes stale.
+- [ ] A stage the mode skips is recorded but nobody writes the Owner a letter about it.
+- [ ] The Owner's part: produce the character reference sets, choose the autonomy mode, approve the
+  fallback vendors (and set `paid_generation_approval_threshold_usd` if five dollars is the wrong
+  line). Nothing above spends money on its own.
+
+Evidence: 11 (`tests/test_picture_qc.py`, new), 20 + 7 (one test appended each to
+`tests/test_phase5_media.py` and `tests/test_cycle_fixes.py`) and 77 across the other callers of
+`evaluate_media_qc`; 19 (`tests/test_character_references.py`, new), 21, 36 and 18 across the media
+selection, provider and production-policy files, with 166 across the neighbouring suites; 21
+(`tests/test_autonomy_modes.py`, new) and 26 (`tests/test_foundation.py`), with 45, 6 and 6 across
+the agent, publish-policy, reset, schema and route-authorisation files; and the wiring's 29, 45 and 5
+(`tests/test_daily_run_stages.py`, `tests/test_phase10_runbook.py`,
+`tests/test_autonomous_day_end_to_end.py`). The whole suite on the integrated tree: **1148 passed, 1
+skipped**; ruff, `ruff format --check` (384 files), mypy (143 source files) and `check_docs.py`
+clean. Nothing ran against a real model, provider or platform; no run was queued and no credit was
+spent.

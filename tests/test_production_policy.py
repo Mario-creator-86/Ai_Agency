@@ -942,3 +942,197 @@ def test_a_premium_studio_ranks_the_best_picture_first_and_the_frame_decides_tie
     assert thrifty[0]["remote_id"] == "cheap_tall"
     assert PRIORITY_WEIGHTS["premium"]["quality"] > PRIORITY_WEIGHTS["premium"]["cost"]
     assert delivers_studio_frame({"tasks": ["text_to_video"]}, "video") is True
+
+
+# --------------------------------------------------------------------------- TEST 6
+# A second vendor when the first refuses. The alternative is the Owner's, never invented:
+# it comes from an approved-fallbacks list a level of the hierarchy holds, and a character
+# whose look is locked narrows it further to the technology approved for that character.
+
+
+def discovered_model(engine, integration_id, model_id, purpose="video"):
+    """A model the refresh saw on that account, so an approval has something to point at."""
+    with Session(engine) as session, session.begin():
+        session.add(
+            ProviderResource(
+                id=str(uuid4()),
+                integration_id=integration_id,
+                resource_type="MODEL",
+                remote_id=model_id,
+                name=model_id,
+                api_available=True,
+                last_seen_at=utc_now(),
+                api_metadata={"tasks": [f"text_to_{purpose}"]},
+            )
+        )
+
+
+def purpose_policy(client, headers, channel_id, purpose, selection):
+    return client.put(
+        f"/api/v1/publishing/channels/{channel_id}/production-policy",
+        headers=headers,
+        json={"production_defaults_json": {purpose: selection}},
+    )
+
+
+def image_policy(client, headers, channel_id, selection):
+    return purpose_policy(client, headers, channel_id, "image", selection)
+
+
+def test_a_channel_may_carry_the_owners_approved_second_vendor_for_a_purpose(
+    client, headers, engine, tmp_path, studio
+):
+    first = add_generic_provider(engine, "openai_media")
+    second = add_generic_provider(engine, "openai_media")
+    channel = studio["channels"]["MAIN_FACTUAL"]["id"]
+    assert (
+        image_policy(
+            client,
+            headers,
+            channel,
+            {
+                "integration_id": first,
+                "model_id": "first-image-model",
+                "approved_fallbacks": [
+                    {"integration_id": second, "model_id": "second-image-model"}
+                ],
+            },
+        ).status_code
+        == 200
+    )
+    board = make_storyboard(engine, tmp_path)
+    set_production(client, headers, board, channel_id=channel)
+
+    image = plan(client, headers, board)["purposes"]["image"]
+
+    assert image["integration_id"] == first and image["valid"]
+    assert [(f["integration_id"], f["model_id"]) for f in image["fallbacks"]] == [
+        (second, "second-image-model")
+    ]
+    assert image["fallbacks"][0]["source_level"] == "fallback"
+    assert image["fallbacks"][0]["valid"] is True
+
+
+def test_with_no_approved_fallback_a_purpose_has_no_second_vendor(
+    client, headers, engine, tmp_path, studio
+):
+    first = add_generic_provider(engine, "openai_media")
+    channel = studio["channels"]["MAIN_FACTUAL"]["id"]
+    image_policy(client, headers, channel, {"integration_id": first, "model_id": "only-model"})
+    board = make_storyboard(engine, tmp_path)
+    set_production(client, headers, board, channel_id=channel)
+
+    assert plan(client, headers, board)["purposes"]["image"]["fallbacks"] == []
+
+
+def test_the_chain_is_bounded_to_one_alternative_per_purpose(
+    client, headers, engine, tmp_path, studio
+):
+    """A film that kept trying vendors would spend its whole budget on one shot."""
+    first = add_generic_provider(engine, "openai_media")
+    others = [add_generic_provider(engine, "openai_media") for _ in range(3)]
+    channel = studio["channels"]["MAIN_FACTUAL"]["id"]
+    image_policy(
+        client,
+        headers,
+        channel,
+        {
+            "integration_id": first,
+            "model_id": "first-image-model",
+            "approved_fallbacks": [
+                {"integration_id": other, "model_id": f"model-{index}"}
+                for index, other in enumerate(others)
+            ],
+        },
+    )
+    board = make_storyboard(engine, tmp_path)
+    set_production(client, headers, board, channel_id=channel)
+
+    assert len(plan(client, headers, board)["purposes"]["image"]["fallbacks"]) == 1
+
+
+def test_an_approved_alternative_on_an_unverified_connection_is_not_offered(
+    client, headers, engine, tmp_path, studio
+):
+    first = add_generic_provider(engine, "openai_media")
+    unverified = add_generic_provider(engine, "openai_media", status="SAVED")
+    channel = studio["channels"]["MAIN_FACTUAL"]["id"]
+    image_policy(
+        client,
+        headers,
+        channel,
+        {
+            "integration_id": first,
+            "model_id": "first-image-model",
+            "approved_fallbacks": [{"integration_id": unverified, "model_id": "m"}],
+        },
+    )
+    board = make_storyboard(engine, tmp_path)
+    set_production(client, headers, board, channel_id=channel)
+
+    image = plan(client, headers, board)["purposes"]["image"]
+    assert image["fallbacks"] == []
+    assert any("not verified" in note for note in image["notes"])
+
+
+def test_a_locked_look_narrows_the_chain_to_what_that_character_approves(
+    client, headers, engine, tmp_path, studio
+):
+    """The Owner's second vendor for the channel is not automatically the second vendor for
+    a character whose face is fixed: approval is per character, and it is the evidence."""
+    first = add_generic_provider(engine, "openai_media")
+    second = add_generic_provider(engine, "openai_media")
+    channel = studio["channels"]["OFFICE_SERIAL"]["id"]
+    purpose_policy(
+        client,
+        headers,
+        channel,
+        "video",
+        {
+            "integration_id": first,
+            "model_id": "first-video-model",
+            "approved_fallbacks": [{"integration_id": second, "model_id": "second-video-model"}],
+        },
+    )
+    discovered_model(engine, second, "second-video-model")
+    sarah = character_named(client, headers, "Sarah")
+    client.put(
+        f"/api/v1/media/character-bible/{sarah['id']}/identity-locks",
+        headers=headers,
+        json={"visual": True},
+    )
+    board = make_storyboard(engine, tmp_path)
+    set_production(client, headers, board, channel_id=channel)
+    cast(engine, board, 1, [sarah["id"]])
+
+    # Nothing is approved for Sarah yet, so the channel's alternative is not hers.
+    video = next(
+        s["video"] for s in plan(client, headers, board)["scenes"] if s["scene_index"] == 1
+    )
+    assert video["fallbacks"] == []
+
+    # The Owner approves that exact technology for her, after a consistency test.
+    approved = client.post(
+        f"/api/v1/media/character-bible/{sarah['id']}/approved-models",
+        headers=headers,
+        json={"integration_id": second, "model_id": "second-video-model", "decided_by": "Owner"},
+    )
+    assert approved.status_code == 200, approved.text
+
+    video = next(
+        s["video"] for s in plan(client, headers, board)["scenes"] if s["scene_index"] == 1
+    )
+    assert [(f["integration_id"], f["model_id"]) for f in video["fallbacks"]] == [
+        (second, "second-video-model")
+    ]
+
+
+def test_a_level_may_not_invent_a_fallback_shape(client, headers, engine, studio):
+    channel = studio["channels"]["MAIN_FACTUAL"]["id"]
+    refused = image_policy(
+        client,
+        headers,
+        channel,
+        {"integration_id": "x", "approved_fallbacks": "the other one"},
+    )
+    assert refused.status_code == 422

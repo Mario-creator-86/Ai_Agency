@@ -679,3 +679,112 @@ def test_the_films_money_is_held_before_it_is_spent_and_settled_when_it_is(
         (h.purpose, h.status) for h in holds
     ]
     assert any(hold.status == "SETTLED" for hold in holds), "a film was made and nothing settled"
+
+
+# ------------------------------------------------------- the same day, under each mode --
+
+
+def _set_mode(engine, mode: str) -> None:
+    """The Owner's autonomy mode, as his command writes it into the policy row."""
+    with Session(engine) as session, session.begin():
+        session.get(OwnerPolicy, 1).autonomy_mode = mode
+
+
+def _run_a_day(engine, settings, studio):
+    """The scheduler's tick, the queue, the worker and the twelve stages — the real day."""
+    from app.integrations.vault import CredentialVault
+
+    vault = CredentialVault(Path(str(engine.url.database)).with_suffix(".credentials.key"))
+    runners = build_stage_runners(engine, settings, vault, studio["registry"])
+    handlers = build_task_handlers(engine, settings, vault, runners, studio["registry"])
+    _due_daily_job(engine)
+    assert len(scheduler_tick(engine)) == 1
+    worker_pass(engine, handlers, registry=studio["registry"])
+    with Session(engine) as session:
+        run = session.scalars(select(DailyRun)).one()
+        return {stage["stage"]: stage for stage in run.stages_json}
+
+
+def _publications(engine):
+    with Session(engine) as session:
+        return list(session.scalars(select(PublicationRecord)))
+
+
+def _approval_requests(engine):
+    from app.models import ApprovalRequest
+
+    with Session(engine) as session:
+        return list(session.scalars(select(ApprovalRequest)))
+
+
+@requires_ffmpeg
+def test_a_manual_day_prepares_and_stops_there(engine, settings, studio):
+    """MANUAL is 51's "agents may draft/analyze, the Owner approves the stage transitions".
+    The clock still starts the day and the day still runs — it simply does not fetch a page,
+    buy a shot or upload a film, and every one of those stages says which decision is
+    missing. Nothing is asked of the Owner either: MANUAL is his answer already."""
+    _set_mode(engine, "MANUAL")
+
+    by_name = _run_a_day(engine, settings, studio)
+
+    assert by_name["preflight"]["artefacts"]["autonomy_mode"] == "MANUAL"
+    for stage in ("research_and_verification", "media", "publish"):
+        assert by_name[stage]["status"] == "SKIPPED", (stage, by_name[stage]["reason"])
+        assert "MANUAL" in by_name[stage]["reason"], by_name[stage]["reason"]
+    # The internal work of the day still happened: the serial's episode is drafting, which is
+    # T1 and reversible, and nothing about it leaves the studio.
+    assert by_name["serial_queue"]["status"] == "COMPLETED", by_name["serial_queue"]["reason"]
+    assert studio["publisher"].uploads == []
+    assert _publications(engine) == []
+    assert _approval_requests(engine) == [], "MANUAL refuses; it does not queue a question"
+    with Session(engine) as session:
+        from app.economy.models import SpendReservation
+
+        assert session.scalars(select(SpendReservation)).all() == [], (
+            "a day that may not buy a shot must not hold the money for one"
+        )
+
+
+@requires_ffmpeg
+def test_a_supervised_day_films_the_work_and_asks_before_it_uploads(engine, settings, studio):
+    """SUPERVISED runs the routine internal stages by itself — research, script, the film and
+    its measurement — and turns the one external write into the Approval object of 31: a row
+    with the action, the tier and the requester on it, standing until the Owner answers. The
+    film is made and nothing is uploaded, which is the whole point of the mode."""
+    _set_mode(engine, "SUPERVISED")
+
+    by_name = _run_a_day(engine, settings, studio)
+
+    assert by_name["preflight"]["artefacts"]["autonomy_mode"] == "SUPERVISED"
+    assert by_name["media"]["status"] == "COMPLETED", by_name["media"]["reason"]
+    assert by_name["media"]["artefacts"]["assets"], by_name["media"]["reason"]
+    assert by_name["publish"]["status"] == "SKIPPED", by_name["publish"]["reason"]
+    assert "SUPERVISED" in by_name["publish"]["reason"]
+    (request,) = _approval_requests(engine)
+    assert (request.action, request.risk_tier, request.result) == (
+        "publishing.public_publish",
+        "T3",
+        "PENDING",
+    )
+    assert by_name["publish"]["artefacts"]["approval_id"] == request.id
+    assert studio["publisher"].uploads == []
+    assert _publications(engine) == []
+
+
+@requires_ffmpeg
+def test_an_autonomous_ceo_day_publishes_under_the_channels_own_policy(engine, settings, studio):
+    """AUTONOMOUS_CEO is what the studio has been doing: the Director executes T0-T3 within
+    policy. The film goes out at the visibility the channel's policy allows — private here,
+    because the studio is in TEST — and the record says the upload went to the simulator."""
+    _set_mode(engine, "AUTONOMOUS_CEO")
+
+    by_name = _run_a_day(engine, settings, studio)
+
+    assert by_name["preflight"]["artefacts"]["autonomy_mode"] == "AUTONOMOUS_CEO"
+    assert by_name["publish"]["status"] == "COMPLETED", by_name["publish"]["reason"]
+    published = _publications(engine)
+    assert published, by_name["publish"]["reason"]
+    assert {record.status for record in published} == {"PUBLISHED_SIMULATED"}
+    assert {record.privacy_status for record in published} == {"private"}
+    # Nothing was asked of the Owner: in this mode a T3 within policy is the Director's.
+    assert _approval_requests(engine) == []

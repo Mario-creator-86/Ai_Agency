@@ -150,6 +150,13 @@ def _priced_scene_costs(
         # the narration, the still, and the seconds of film the still was moved for.
         raw_motion = scene.get("motion")
         motion: dict[str, Any] = raw_motion if isinstance(raw_motion, dict) else {}
+        # Which vendor drew *this* scene's still. The film-level record names the first
+        # vendor of the chain; a scene the Owner's approved alternative drew was charged to
+        # a model that never made it, or priced at nothing when the two vendors differ.
+        raw_scene_image = scene.get("image")
+        scene_image: dict[str, Any] = (
+            raw_scene_image if isinstance(raw_scene_image, dict) else image
+        )
         wanted: list[tuple[str, Any, Any, dict[str, float]]] = [
             (
                 "voice",
@@ -159,8 +166,8 @@ def _priced_scene_costs(
             ),
             (
                 "image",
-                image.get("integration_id"),
-                image.get("model"),
+                scene_image.get("integration_id"),
+                scene_image.get("model"),
                 {"images": 0.0 if scene.get("still") is False else 1.0},
             ),
             (

@@ -187,6 +187,18 @@ class Settings(BaseSettings):
     #: and a day of retries hours, so nothing honest is still holding at that age.
     reservation_ttl_seconds: int = Field(default=21600, ge=60, le=86400)
 
+    #: Where a paid render stops being routine spending and becomes the Owner's decision.
+    #: `31_GOVERNANCE_APPROVAL_POLICY` puts "paid generation beyond threshold" at T3 and
+    #: everything inside the budget at T2, and this is that threshold in dollars: the media
+    #: stage asks `app.services.may_act` about `media.paid_generation` for a film estimated
+    #: at or under it and about `media.paid_generation_over_threshold` above it, so a
+    #: SUPERVISED studio films the ordinary day by itself and asks before the dear film.
+    #: Five dollars because a six-second shot on `seedance2_5` costs about 2.60 USD on the
+    #: Owner's account: two shots is where one film's spend stops looking like routine.
+    #: In AUTONOMOUS_CEO both tiers are allowed, so this line changes nothing until the
+    #: Owner lowers the mode — it is the figure his question is asked with, not a budget.
+    paid_generation_approval_threshold_usd: float = Field(default=5.0, ge=0.0)
+
     #: The ceiling on what every employee together may spend in tokens in one business date.
     #: 0 means none, which is how the studio has run until now: measured on the live copy,
     #: 391 runs on Ollama Cloud went through the Director's loop and the mail rounds under no

@@ -623,7 +623,14 @@ def execute_daily_run(
             "preflight",
             COMPLETED if preflight["status"] != "BLOCKED" else BLOCKED,
             preflight["summary"],
-            {"status": preflight["status"], "failures": preflight["blocking_failures"]},
+            {
+                "status": preflight["status"],
+                "failures": preflight["blocking_failures"],
+                # Which stages this day was even allowed to attempt. Read back a week later,
+                # a day of skipped stages says whether the studio lacked something or the
+                # Owner had it on a shorter leash.
+                "autonomy_mode": preflight["autonomy_mode"],
+            },
         )
     ]
 
@@ -639,6 +646,7 @@ def execute_daily_run(
         {
             "date": date_iso,
             "preflight": preflight["status"],
+            "autonomy_mode": preflight["autonomy_mode"],
             "stages": len(STAGES),
             "attempt": attempt,
             "attempts_allowed": attempts_allowed,

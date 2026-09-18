@@ -3,7 +3,9 @@
 Following docs/architecture/08_VIDEO_PIPELINE.md:
 - Technical QC: valid 9:16 aspect ratio, duration within bounds, file size > 0.
 - Factual QC: every referenced claim must remain SUPPORTED in the database.
-- Character Drift QC: check character continuity against Character Bible.
+- Picture QC: a model that can see reads one frame per scene and says whether it is a
+  picture at all and whether it shows what the scene asked for (app.media.picture_qc).
+- Character Drift QC: the same look, against the Character Bible's canonical description.
 - Rights/License QC: all assets must be clear of copyright blocks.
 - Audio QC: the film measures at the platform's loudness, under the true-peak ceiling.
 - Captions QC: the SRT beside the film parses, keeps to two lines of forty-two, and carries
@@ -30,13 +32,13 @@ from sqlalchemy.orm import Session
 from app.agents.memory import agent_for_role, remember
 from app.factual.models import FactualClaim
 from app.media.models import (
-    CharacterBible,
     MediaAsset,
     QualityControlReport,
     Storyboard,
     StoryboardScene,
     VideoRenderJob,
 )
+from app.media.picture_qc import evaluate_pictures
 from app.media.schemas import QCReportView
 from app.media.toolchain import (
     LOUDNESS_BAND_LUFS,
@@ -290,12 +292,21 @@ def evaluate_media_qc(
     media_asset_id: str,
     correlation_id: str,
     settings: Any | None = None,
+    *,
+    registry: Any | None = None,
+    ffmpeg_path: str | None = None,
 ) -> dict:
     """Run comprehensive Quality Control check on a rendered media asset.
 
     ``settings`` is the studio's configuration, read for ``max_fallback_scenes``: how many
     scenes of a production film may be stills pushed slowly because the motion model
     refused. Unset, half the scenes.
+
+    ``registry`` and ``ffmpeg_path`` are what it takes to look at the pictures rather than
+    only at the file: a provider that holds a model the provider says can see, and the
+    encoder that cuts one frame per scene. Without either, the picture and character checks
+    report NOT_APPLICABLE with the reason and the film's verdict is unchanged — never a
+    pass by absence.
     """
     qc_id = str(uuid4())
     verified_at = utc_now()
@@ -304,6 +315,12 @@ def evaluate_media_qc(
     # Read before the report's own transaction opens: the environment is the studio's state,
     # never a parameter, and it decides whether a mostly-still film is a failure or a note.
     environment = studio_environment(engine)
+    # And so is the look at the pictures: it is a model run, which writes its own rows and
+    # reads the day's token ceiling outside a transaction (`run_agent_task`). Two writers on
+    # one SQLite connection are a lock, not a gate.
+    pictures = evaluate_pictures(
+        engine, registry, media_asset_id, correlation_id, ffmpeg_path=ffmpeg_path
+    )
 
     with Session(engine) as session, session.begin():
         asset = session.get(MediaAsset, media_asset_id)
@@ -612,16 +629,15 @@ def evaluate_media_qc(
             "claims": claims_checked,
         }
 
-        # 4. Character Drift QC — NOT IMPLEMENTED. There is no visual comparison against the
-        #    Character Bible yet, so this is reported as NOT_APPLICABLE with a reason rather
-        #    than as a passing check (50_CONTENT_GATE_MATRIX.md gate behaviour).
-        chars_checked = session.scalars(select(CharacterBible)).all()
-        checks["character_drift_qc"] = {
-            "status": "NOT_IMPLEMENTED",
-            "passed": None,
-            "characters_configured": len(chars_checked),
-            "detail": ("No visual continuity comparison exists yet; this check certifies nothing."),
-        }
+        # 4. Picture QC and Character Drift QC — measured above, before this transaction.
+        #    A film whose third scene is a blank field fails here, in every environment, for
+        #    the same reason the degenerate-still check fails one: nothing in TEST policy
+        #    deliberately produces a picture of nothing. Where the look could not happen the
+        #    check says so with `passed` None and adds no failure, so the verdict is what it
+        #    would have been (50_CONTENT_GATE_MATRIX.md gate behaviour).
+        checks["picture_qc"] = pictures["picture_qc"]
+        checks["character_drift_qc"] = pictures["character_drift_qc"]
+        failure_reasons.extend(pictures["failures"])
 
         # 3b. Content integrity — a still the generator returned as stripes or an empty field,
         #     measured when it was made and still broken after one more attempt. A technically
@@ -646,6 +662,10 @@ def evaluate_media_qc(
             and bool(audio["passed"])
             and bool(captions["passed"])
             and bool(motion["passed"])
+            # Only a measured refusal counts against the film; a check that stood down
+            # (None) leaves the verdict exactly where the other gates left it.
+            and pictures["picture_qc"]["passed"] is not False
+            and pictures["character_drift_qc"]["passed"] is not False
         )
         status = "PASSED" if overall_passed else "FAILED"
         score = 1.0 if overall_passed else round(max(0.0, 1.0 - (len(failure_reasons) * 0.25)), 2)

@@ -120,7 +120,37 @@ def test_every_check_says_what_it_found(engine, settings, vault, studio):
 
     for check in result["checks"]:
         assert check["message"], f"{check['name']} reported nothing"
-        assert check["severity"] in ("BLOCKING", "DEGRADING")
+        # INFORMATIONAL is the third: a line that tells the Owner something about the run
+        # (the autonomy mode) and can never fail it. An informational check with no message
+        # would be a line saying nothing, so the assertion above covers it too.
+        assert check["severity"] in ("BLOCKING", "DEGRADING", "INFORMATIONAL")
+
+
+def test_the_preflight_says_which_autonomy_mode_the_day_will_run_under_and_refuses_nothing(
+    engine, settings, vault, studio
+):
+    """A MANUAL day films nothing and publishes nothing, and the Owner should read that
+    before the run rather than infer it from a summary of skipped stages. The mode is his
+    decision, though, not a missing capability: the line is informational, and the verdict is
+    the same in all three modes for the same studio."""
+    from app.runbook.preflight import INFORMATIONAL
+
+    make_a_model_available(engine)
+    verdicts = set()
+    for mode in ("MANUAL", "SUPERVISED", "AUTONOMOUS_CEO"):
+        with Session(engine) as session, session.begin():
+            session.get(OwnerPolicy, 1).autonomy_mode = mode
+
+        result = run_preflight(engine, settings, vault)
+
+        assert result["autonomy_mode"] == mode
+        (line,) = [c for c in result["checks"] if c["name"] == "autonomy_mode"]
+        assert line["ok"] is True and line["severity"] == INFORMATIONAL
+        assert line["detail"] == mode and mode in line["message"]
+        assert "autonomy_mode" not in result["blocking_failures"]
+        assert "autonomy_mode" not in result["degrading_failures"]
+        verdicts.add(result["status"])
+    assert verdicts == {"DEGRADED"}, verdicts
 
 
 def test_the_preflight_asks_whether_the_studio_can_find_pages_not_whether_a_row_exists(

@@ -896,3 +896,301 @@ def test_the_media_stage_reports_the_stop_as_blocked_not_failed(engine, settings
 
     assert outcome["status"] == "BLOCKED"
     assert OWNER_STOP_REASON in outcome["reason"]
+
+
+# ------------------------------------- the pictures, the second vendor, the Owner's mode --
+
+
+def _rendered_video(engine, path) -> str:
+    """A file the quality-control stage will pick up, recorded as the renderer records one."""
+    from hashlib import sha256
+
+    from app.media.models import MediaAsset
+
+    path.write_bytes(b"\x00" * 4096)
+    asset_id = str(uuid4())
+    with Session(engine) as session, session.begin():
+        session.add(
+            MediaAsset(
+                id=asset_id,
+                asset_type="RENDERED_VIDEO",
+                uri_or_path=str(path),
+                file_size_bytes=path.stat().st_size,
+                mime_type="video/mp4",
+                width=1080,
+                height=1920,
+                duration_seconds=12.0,
+                provider_name="test",
+                license_status="OWNED_INTERNAL",
+                provenance_hash=sha256(path.read_bytes()).hexdigest(),
+                created_at=utc_now(),
+            )
+        )
+    return asset_id
+
+
+def _vault(engine):
+    from pathlib import Path
+
+    from app.integrations.vault import CredentialVault
+
+    return CredentialVault(Path(str(engine.url.database)).with_suffix(".credentials.key"))
+
+
+def test_quality_control_is_given_what_it_takes_to_look_at_the_pictures(
+    engine, settings, tmp_path, monkeypatch
+):
+    """The picture and character checks are a model run over frames cut from the film, so the
+    stage has to hand quality control the registry it already holds and the encoder's path.
+    Without them `evaluate_media_qc` can only measure the container, and the two checks
+    report NOT_APPLICABLE forever while the stage sits on everything they needed."""
+    from app.runbook import stages
+
+    captured: dict[str, Any] = {}
+
+    def fake_qc(engine_, asset_id, correlation, settings=None, **kwargs):
+        captured.update(kwargs)
+        return {"id": str(uuid4()), "status": "PASSED"}
+
+    monkeypatch.setattr(stages, "evaluate_media_qc", fake_qc)
+    _rendered_video(engine, tmp_path / "render.mp4")
+    registry = ProviderRegistry()
+
+    outcome = build_stage_runners(engine, settings, _vault(engine), registry)["edit_and_qc"]()
+
+    assert outcome["status"] == "COMPLETED", outcome
+    assert captured["registry"] is registry
+    assert captured["ffmpeg_path"] == settings.ffmpeg_path
+
+
+def test_a_picture_check_that_could_not_look_leaves_the_films_verdict_exactly_as_it_was(
+    engine, settings, tmp_path
+):
+    """A studio with no vision-capable model must measure the same film the same way it did
+    before the check existed: NOT_APPLICABLE with a reason, `passed` None, no failure added.
+    Two identical files, one measured through the stage and one measured the way the rest of
+    the studio measures, come to the same verdict for the same reasons."""
+    from app.media.models import QualityControlReport
+    from app.media.qc import evaluate_media_qc
+    from sqlalchemy import select
+
+    through_the_stage = _rendered_video(engine, tmp_path / "one.mp4")
+    on_its_own = _rendered_video(engine, tmp_path / "two.mp4")
+
+    build_stage_runners(engine, settings, _vault(engine), ProviderRegistry())["edit_and_qc"]()
+    alone = evaluate_media_qc(engine, on_its_own, str(uuid4()), settings=settings)
+
+    with Session(engine) as session:
+        report = session.scalars(
+            select(QualityControlReport).where(
+                QualityControlReport.media_asset_id == through_the_stage
+            )
+        ).one()
+        checks = dict(report.checks_json)
+        status, reasons = report.status, list(report.failure_reasons_json or [])
+    assert checks["picture_qc"]["status"] == "NOT_APPLICABLE", checks["picture_qc"]
+    assert checks["picture_qc"]["passed"] is None
+    assert checks["character_drift_qc"]["passed"] is None
+    # The check certified nothing, so it changed nothing: the same verdict for the same
+    # number of reasons, and not one of them about a picture. (The reasons themselves carry
+    # the encoder's message about each file, which names the file, so they are counted
+    # rather than compared word for word.)
+    assert status == alone["status"]
+    assert len(reasons) == len(alone["failure_reasons_json"])
+    assert not [line for line in reasons if "imagin" in line.lower() or "scen" in line.lower()]
+
+
+def test_the_render_is_offered_the_second_vendor_and_the_scenes_reference(
+    engine, settings, monkeypatch
+):
+    """The plan resolves the Owner's approved alternative and the character's reference
+    picture; a render that is never handed either draws every scene with the first vendor
+    and invents the face of a character whose look is locked."""
+    from app.runbook import stages
+
+    _autonomy_on(engine)
+    board = _approved_board(engine, "A factual short")
+    chain = [object(), object()]
+
+    def reference_for_scene(scene: dict) -> None:
+        return None
+
+    monkeypatch.setattr(stages, "story_gate", lambda session, script_id: (True, ""))
+    monkeypatch.setattr(
+        "app.media.factory.render_plan",
+        lambda engine_, vault, board_id: {
+            "image": chain[0],
+            "image_chain": chain,
+            "reference_for_scene": reference_for_scene,
+            "tts_for_scene": lambda *a: None,
+            "video_for_scene": lambda *a: None,
+            "plan": {},
+        },
+    )
+    captured: dict[str, Any] = {}
+
+    def camera(engine_, storyboard_id, correlation_id, **kwargs):
+        captured.update(kwargs)
+        return {"output_asset_id": f"asset-{storyboard_id[:8]}", "job_id": str(uuid4())}
+
+    monkeypatch.setattr("app.media.assembler.assemble_video_job", camera)
+
+    outcome = stages._media(engine, settings, None, None)
+
+    assert outcome["status"] == "COMPLETED", outcome
+    assert outcome["artefacts"]["assets"] == [f"asset-{board[:8]}"]
+    assert captured["image_chain"] is chain
+    assert captured["reference_for_scene"] is reference_for_scene
+
+
+def test_a_locked_character_without_a_reference_refuses_the_film_and_lets_the_hold_go(
+    engine, settings, monkeypatch
+):
+    """A refusal to invent a locked character's face is not a vendor error and not a fault:
+    the film is not made, the money pledged to it goes back the same second, and the stage
+    names the character rather than drawing somebody else."""
+    from app.media.services import ReferenceRequired
+    from app.runbook import stages
+
+    _autonomy_on(engine)
+    _approved_board(engine, "A factual short")
+    _media_stage_with_a_fake_camera(monkeypatch, [])
+
+    def refuses(*args: Any, **kwargs: Any) -> None:
+        raise ReferenceRequired("Sarah are înfățișarea blocată și nu are imagine de referință.")
+
+    monkeypatch.setattr("app.media.assembler.assemble_video_job", refuses)
+
+    outcome = stages._media(engine, settings, None, None)
+
+    assert outcome["status"] == "COMPLETED", outcome
+    assert "Sarah" in outcome["reason"]
+    (hold,) = _reservations(engine)
+    assert hold.status == "RELEASED"
+
+
+# ------------------------------------------------- the day's stages, by the Owner's mode --
+
+
+def _mode(engine, mode: str) -> None:
+    """The Owner's mode, written as his command writes it (the command itself is tested in
+    tests/test_autonomy_modes.py; this is the state the stages then read)."""
+    from app.models import OwnerPolicy
+
+    with Session(engine) as session, session.begin():
+        session.get(OwnerPolicy, 1).autonomy_mode = mode
+
+
+def _approvals(engine) -> list[Any]:
+    from app.models import ApprovalRequest
+    from sqlalchemy import select
+
+    with Session(engine) as session:
+        return list(session.scalars(select(ApprovalRequest)))
+
+
+def test_every_stage_of_the_day_carries_a_risk_tier_and_the_two_tables_agree():
+    """A stage with no tier is a stage no mode can reason about, and a tier that disagrees
+    with the governance table is two answers to one question."""
+    from app.runbook.services import STAGES
+    from app.runbook.stages import STAGE_ACTIONS
+    from app.services import ACTION_RISK_TIERS
+
+    # Preflight reads the studio's own state and the daily log is the run's own record;
+    # neither is an action an agent takes, and neither has a runner.
+    assert set(STAGE_ACTIONS) == set(STAGES) - {"preflight", "daily_log"}
+    for stage, (action, tier) in STAGE_ACTIONS.items():
+        assert tier in ("T0", "T1", "T2", "T3"), stage
+        known = ACTION_RISK_TIERS.get(action)
+        assert known in (None, tier), (stage, action, known, tier)
+
+
+def test_a_manual_studio_films_nothing_and_publishes_nothing_on_its_own(
+    engine, settings, tmp_path, monkeypatch
+):
+    """MANUAL is 51's "agents may draft/analyze": a paid render (T2) and an upload (T3) are
+    both above what the mode allows, so both stages report that they could not run and say
+    whose decision it is."""
+    from app.publishing.models import PublicationRecord
+    from sqlalchemy import select
+
+    _autonomy_on(engine)
+    _mode(engine, "MANUAL")
+    _seeded_channels(engine)
+    _serial_film(engine, tmp_path)
+    _approved_board(engine, "A factual short")
+    _media_stage_with_a_fake_camera(monkeypatch, [])
+    runners = build_stage_runners(engine, settings, _vault(engine), ProviderRegistry())
+
+    media = runners["media"]()
+    publish = runners["publish"]()
+
+    assert media["status"] == "SKIPPED", media
+    assert "MANUAL" in media["reason"]
+    assert publish["status"] == "SKIPPED", publish
+    assert "MANUAL" in publish["reason"]
+    assert _reservations(engine) == [], "a film the mode forbids must not hold money"
+    with Session(engine) as session:
+        assert session.scalars(select(PublicationRecord)).all() == []
+
+
+def test_a_supervised_studio_asks_the_owner_instead_of_publishing(
+    engine, settings, tmp_path, monkeypatch
+):
+    """SUPERVISED runs the routine internal stages and turns the external write into the
+    Approval object of 31 — one row, with the tier and the requester on it, not a silent
+    skip and not an upload."""
+    from app.publishing.models import PublicationRecord
+    from sqlalchemy import select
+
+    _autonomy_on(engine)
+    _mode(engine, "SUPERVISED")
+    channels = _seeded_channels(engine)
+    _serial_film(engine, tmp_path)
+    _bound(engine, channels["OFFICE_SERIAL"]["id"], _connected(engine, "Serial account"))
+    publisher = _RecordingPublisher()
+    monkeypatch.setattr("app.runbook.stages.selected_youtube", lambda *a, **k: publisher)
+    _director_and_publisher_agree(monkeypatch)
+    runners = build_stage_runners(engine, settings, _vault(engine), ProviderRegistry())
+
+    outcome = runners["publish"]()
+
+    assert outcome["status"] == "SKIPPED", outcome
+    assert "SUPERVISED" in outcome["reason"]
+    assert publisher.uploads == []
+    (request,) = _approvals(engine)
+    assert (request.action, request.risk_tier, request.result) == (
+        "publishing.public_publish",
+        "T3",
+        "PENDING",
+    )
+    with Session(engine) as session:
+        assert session.scalars(select(PublicationRecord)).all() == []
+
+
+def test_a_film_dearer_than_the_owners_threshold_is_his_decision_even_in_supervised(
+    engine, settings, monkeypatch
+):
+    """A paid render inside the Owner's budget is T2 and SUPERVISED performs it; 31 reserves
+    T3 for "paid generation beyond threshold", so the film whose estimate passes his line is
+    asked about rather than bought — and nothing is held for it."""
+    from app.runbook import stages
+
+    _autonomy_on(engine)
+    _mode(engine, "SUPERVISED")
+    settings.paid_generation_approval_threshold_usd = 0.0
+    _approved_board(engine, "A factual short")
+    rendered: list[str] = []
+    _media_stage_with_a_fake_camera(monkeypatch, rendered)
+
+    outcome = stages._media(engine, settings, None, None)
+
+    assert outcome["status"] == "SKIPPED", outcome
+    assert rendered == []
+    assert _reservations(engine) == []
+    (request,) = _approvals(engine)
+    assert request.action == "media.paid_generation_over_threshold"
+    assert request.risk_tier == "T3"
+    # The estimate is what the Owner is being asked about; None would be a question with no
+    # figure in it, and zero would be a lie about a film that costs money.
+    assert request.cost_usd is not None and request.cost_usd > 0

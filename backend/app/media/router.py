@@ -47,6 +47,9 @@ from app.media.schemas import (
     StoryboardView,
 )
 from app.media.services import (
+    REFERENCE_STORAGE_ROOT,
+    ReferenceSetError,
+    generate_character_reference_set,
     generate_storyboard_from_script,
     get_character_bible,
     get_storyboard,
@@ -486,6 +489,33 @@ def create_media_router() -> APIRouter:
             )
         except PolicyError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @router.post("/characters/{character_id}/reference-set", status_code=201)
+    def post_character_reference_set(
+        request: Request,
+        character_id: Annotated[str, FPath(min_length=36, max_length=36)],
+    ) -> dict:
+        """Produce this character's reference pictures. The Owner's act, never the day's.
+
+        It spends image credits, so nothing in the runbook calls it: the Owner asks, the
+        budget is asked before the first slot, and STOP AUTONOMY refuses it like any other
+        autonomous work. A slot the vendor refused stays null and is named in the answer.
+        """
+        try:
+            return generate_character_reference_set(
+                request.app.state.engine,
+                request.app.state.credential_vault,
+                character_id,
+                str(uuid4()),
+                # A test injects its adapter here, exactly as the render route lets it.
+                image_adapter=getattr(request.app.state, "image_adapter", None),
+                storage_root=REFERENCE_STORAGE_ROOT,
+            )
+        except ReferenceSetError as exc:
+            raise HTTPException(
+                status_code=404 if exc.reason == "NO_CHARACTER" else 409,
+                detail={"error": exc.reason, "message": str(exc)},
+            ) from exc
 
     @router.post("/character-bible/{character_id}/identity-changes", status_code=201)
     def post_identity_change(

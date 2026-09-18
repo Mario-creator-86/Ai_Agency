@@ -1,4 +1,15 @@
-from sqlalchemy import JSON, Boolean, CheckConstraint, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    CheckConstraint,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    text,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -29,7 +40,53 @@ class OwnerPolicy(Base):
     #: older schema (the upgrade path a migration test walks) must not fail on a column that
     #: revision did not have, and a new studio gets TEST from the database.
     environment: Mapped[str] = mapped_column(String(20), nullable=False, server_default="TEST")
+    #: MANUAL | SUPERVISED | AUTONOMOUS_CEO (migration 0043), the mode of
+    #: `51_AUTONOMY_MODE_SEMANTICS`. It was a constant on the policy view — `Literal["MANUAL"]`
+    #: — while the daily run walked twelve stages with no Owner approval between them, paid a
+    #: vendor for shots and wrote to YouTube within the channel policy. The column carries the
+    #: honest reading, AUTONOMOUS_CEO, and moves only through the Owner's versioned command.
+    #: Server-side default for the same reason as `environment`: a bootstrap against an older
+    #: schema must not name a column that revision never had.
+    autonomy_mode: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="AUTONOMOUS_CEO"
+    )
     updated_at: Mapped[str] = mapped_column(String(40))
+
+
+class ApprovalRequest(Base):
+    """What a SUPERVISED studio asks the Owner before it writes where the public can see.
+
+    The Approval object of `31_GOVERNANCE_APPROVAL_POLICY`: action, requester, risk tier,
+    evidence, proposed diff, cost, reversibility, expiry, approver, result. The cost is
+    nullable on purpose — a cost the studio cannot compute is None, never zero — and an
+    expired request cannot be reused, so a request that has aged out is answered by a new
+    one rather than by yesterday's silence.
+    """
+
+    __tablename__ = "owner_approval_request"
+    __table_args__ = (
+        CheckConstraint("risk_tier IN ('T0','T1','T2','T3','T4')", name="ck_approval_tier"),
+        CheckConstraint(
+            "result IN ('PENDING','APPROVED','REFUSED','EXPIRED')", name="ck_approval_result"
+        ),
+        # The question asked most often: what is still waiting for the Owner, for this action.
+        Index("ix_approval_open", "result", "action"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    action: Mapped[str] = mapped_column(String(100))
+    risk_tier: Mapped[str] = mapped_column(String(4))
+    requester: Mapped[str] = mapped_column(String(100))
+    evidence: Mapped[str | None] = mapped_column(Text, nullable=True)
+    proposed_diff: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    #: USD, or None when nothing in the studio can price this action yet.
+    cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    reversible: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("0"))
+    expires_at: Mapped[str] = mapped_column(String(40))
+    approver: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    result: Mapped[str] = mapped_column(String(20), server_default="PENDING")
+    created_at: Mapped[str] = mapped_column(String(40))
+    event_id: Mapped[str | None] = mapped_column(ForeignKey("domain_event.event_id"), nullable=True)
 
 
 class DomainEvent(Base):

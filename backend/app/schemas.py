@@ -3,6 +3,15 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+#: The three modes of `51_AUTONOMY_MODE_SEMANTICS`, in the order of increasing autonomy.
+#: MANUAL: agents draft, the Owner approves the stage transitions. SUPERVISED: routine
+#: internal stages run themselves and an external write asks for an Approval.
+#: AUTONOMOUS_CEO: the Director executes T0-T3 within policy, T4 stays the Owner's.
+AutonomyMode = Literal["MANUAL", "SUPERVISED", "AUTONOMOUS_CEO"]
+
+#: Rank, so "is this a promotion?" is a comparison rather than a list of special cases.
+AUTONOMY_RANK: dict[str, int] = {"MANUAL": 0, "SUPERVISED": 1, "AUTONOMOUS_CEO": 2}
+
 
 class PolicyCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -27,12 +36,30 @@ class EnvironmentCommand(BaseModel):
     environment: Literal["TEST", "PRODUCTION"]
 
 
+class AutonomyModeCommand(BaseModel):
+    """The Owner moves the studio between autonomy modes.
+
+    The same shape as the environment and the stop, for the same reason: the mode decides
+    which risk tiers an agent may act in at all, so it is a versioned command recorded in the
+    ledger, never a setting a page can flip or an agent can assume about itself.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    schema_version: Literal[1] = 1
+    command_id: UUID
+    expected_version: int = Field(ge=1)
+    autonomy_mode: AutonomyMode
+
+
 class PolicyView(BaseModel):
     version: int
     autonomy_stopped: bool
     #: Which environment the studio is in. The page shows it; the backend decides it.
     environment: Literal["TEST", "PRODUCTION"] = "TEST"
-    autonomy_mode: Literal["MANUAL"] = "MANUAL"
+    #: The mode the studio is really in, read from `owner_policy.autonomy_mode`. It was the
+    #: constant "MANUAL" while the studio ran its whole day unattended; the page now reads
+    #: what the backend decided, and only the Owner's command moves it.
+    autonomy_mode: AutonomyMode = "AUTONOMOUS_CEO"
     #: Whether any channel may publish publicly. The switch itself is per channel
     #: (`ChannelView.public_publish_enabled`, set only by the Owner's publish-policy
     #: command); the studio view sums them, so a page reading it is not told "never"

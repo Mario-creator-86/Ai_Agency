@@ -23,6 +23,16 @@ clearing a stop is not the same as approving a film, and publication has its own
 that re-checks the stop, the file, quality control, factual provenance and duplication, plus a
 sixth for a film that would be seen.
 
+**Every stage now says what it is, in risk terms, before it runs.** `STAGE_ACTIONS` maps each
+stage to one action and one tier of `../architecture/31_GOVERNANCE_APPROVAL_POLICY.md`, and
+`mode_refusal` asks the Policy Kernel's `may_act` whether the autonomy mode the Owner set lets
+the studio attempt it. A stage above the mode is SKIPPED with his reason — not BLOCKED, which
+would end the day: a mode is his decision, not an incident, and the stages the mode does allow
+still do their work. Under SUPERVISED an external write becomes the approval request he
+answers instead of an upload. The stop is not read here and is not weakened by that: the
+runbook reads it before every stage, the media stage before every film, the render between
+scenes, the publishing gate and the Policy Kernel each in their own place.
+
 Nothing here fabricates content or a verdict. Every stage either performs the real operation
 against the real services or reports why it could not.
 """
@@ -133,7 +143,7 @@ from app.research.agent import (
 )
 from app.research.service import research_budget, retest_stale_hosts
 from app.runbook.services import BLOCKED, OWNER_STOP_REASON, stop_requested
-from app.services import studio_environment, utc_now
+from app.services import may_act, studio_environment, utc_now
 from app.story.serial_stage import run_serial_stage
 
 logger = logging.getLogger("studio.runbook.stages")
@@ -156,6 +166,81 @@ VERIFY_BATCH = 24
 
 def _outcome(status: str, reason: str, **artefacts: Any) -> dict[str, Any]:
     return {"status": status, "reason": reason, "artefacts": artefacts}
+
+
+# ------------------------------------------------------ what each stage is, in risk terms --
+
+#: Every stage of the day as one action with one risk tier, so the Owner's autonomy mode can
+#: reason about the day instead of about twelve unnamed functions. The tiers are
+#: `31_GOVERNANCE_APPROVAL_POLICY`'s, and where the action is one the governance table already
+#: names (`app.services.ACTION_RISK_TIERS`) the tier here is the same one — a test holds the
+#: two tables to that, because two answers to "how risky is this" is worse than none.
+#:
+#: performance_intake — T0. 31's own T0 example is "read analytics": the stage reads the
+#:   platform's numbers for films already published and writes nothing outside the studio.
+#: idea_generation — T1, "create draft": a pool of topics nobody has acted on.
+#: research_and_verification — T2. The studio fetches pages from the authorised sites, which
+#:   is 32's EXTERNAL_READ: it leaves the studio, it is what a bot wall or a rate limit sees,
+#:   and it is the first stage of the day that is not purely internal.
+#: selection — T1, "change task priority": choosing which candidate goes into production
+#:   re-orders the studio's own work and is undone by selecting another.
+#: script_and_storyboard, serial_queue — T1, "create draft". Both write text and a shot list;
+#:   nothing is bought and nothing leaves.
+#: media — T2, paid generation inside the Owner's budget. Per film the stage asks again, and
+#:   a film estimated above `settings.paid_generation_approval_threshold_usd` is asked as T3
+#:   ("paid generation beyond threshold").
+#: edit_and_qc — T1. Quality control measures a file the studio already has and writes its own
+#:   report; the vision call it now makes is an agent run, which the Policy Kernel gates.
+#: publish — T3. An upload is 32's EXTERNAL_WRITE whatever visibility it carries: private on
+#:   the platform is still on the platform, under the studio's account, and only the channel's
+#:   policy decides who may see it. Tiering it by visibility would have made the day's riskiest
+#:   act depend on a setting the same day could change.
+#: post_run — T1: the Director reads the day's reports and writes to the Owner, inside.
+#:
+#: preflight and daily_log have no runner and no entry: one reads the studio's own state and
+#: refuses nothing by itself, the other is the run's own record of what already happened.
+STAGE_ACTIONS: dict[str, tuple[str, str]] = {
+    "performance_intake": ("analytics.read", "T0"),
+    "idea_generation": ("idea.create", "T1"),
+    "research_and_verification": ("research.fetch_page", "T2"),
+    "selection": ("task.reprioritise", "T1"),
+    "script_and_storyboard": ("script.draft", "T1"),
+    "serial_queue": ("storyboard.draft", "T1"),
+    "media": ("media.paid_generation", "T2"),
+    "edit_and_qc": ("media.quality_control", "T1"),
+    "publish": ("publishing.public_publish", "T3"),
+    "post_run": ("runbook.day_report", "T1"),
+}
+
+
+def mode_refusal(
+    engine: Engine,
+    action: str,
+    tier: str | None = None,
+    *,
+    requester: str = "director",
+    evidence: str | None = None,
+    cost_usd: float | None = None,
+) -> dict[str, Any] | None:
+    """The Owner's autonomy mode, asked before an action — None when it does not refuse.
+
+    `may_act` is the one door (`31`'s authority hierarchy, read top down), and under
+    SUPERVISED a T3 action writes the Approval the Owner answers instead of being refused,
+    so the call happens inside a transaction of its own.
+
+    A STOP refusal is returned as no refusal *here* deliberately: the stop is read by the
+    runbook before every stage, by the media stage before every film, by the render between
+    scenes, by the publishing gate and by the Policy Kernel, and it must not come to be read
+    only in this wrapper. What this asks is the question none of those ask — whether the mode
+    the Owner set lets the studio attempt this at all.
+    """
+    with Session(engine) as session, session.begin():
+        verdict = may_act(
+            session, action, tier, requester=requester, evidence=evidence, cost_usd=cost_usd
+        )
+    if verdict["allowed"] or verdict["status"] == "BLOCKED_STOP":
+        return None
+    return verdict
 
 
 def _has_language_model(registry: ProviderRegistry) -> bool:
@@ -374,8 +459,14 @@ def _research_and_verification(
     # Each test also looks again for the site's own search address, which is what keeps the
     # Researcher from guessing addresses that 404. A retest that fails is the retest's loss,
     # never the day's (Phase A's rule): the hosts it did reach are recorded before it stops.
+    # Reading a page is what leaves the studio here (32's EXTERNAL_READ), so the mode is
+    # asked before the first request and not after the pages are in the record. A studio the
+    # Owner has put in MANUAL still extracts and verifies what it already holds — that is
+    # internal work, and the stage below does it — but it fetches nothing new.
+    may_fetch = mode_refusal(engine, "research.fetch_page", requester="lead_researcher")
+
     retested: list[dict[str, Any]] = []
-    if settings is not None:
+    if settings is not None and may_fetch is None:
         try:
             retested = retest_stale_hosts(engine, settings, correlation_id=str(uuid4()))
         except Exception as exc:  # noqa: BLE001 - a site that cannot be reached is not a fault
@@ -383,7 +474,9 @@ def _research_and_verification(
 
     # The studio reads for itself before it reads what it was given: a candidate topic with no
     # source can never be verified, and waiting for the Owner to paste a link is not research.
-    gathered = _gather_for_candidates(engine, registry, settings) if settings else []
+    gathered = (
+        _gather_for_candidates(engine, registry, settings) if settings and may_fetch is None else []
+    )
     pages = sum(len(item["fetched"]) for item in gathered)
 
     with Session(engine) as session:
@@ -441,6 +534,10 @@ def _research_and_verification(
     if retested:
         passed = len([r for r in retested if r["status"] == "PASSED"])
         retest_line = f" {len(retested)} site-uri retestate ({passed} citibile)."
+    if may_fetch is not None:
+        # Said in the stage's own line, because a day that verified what it held and fetched
+        # nothing new looks the same from the outside as a day that found nothing to read.
+        retest_line += f" Nicio pagină nouă: {may_fetch['reason']}"
     if not pending_sources and not unverified and not pages:
         return _outcome(
             COMPLETED,
@@ -1009,6 +1106,7 @@ def _media(
     from app.media.assembler import RenderEngineUnavailable, RenderStopped, assemble_video_job
     from app.media.factory import image_provider, motion_for_scene, render_plan, tts_provider
     from app.media.production_policy import named_model
+    from app.media.services import ReferenceRequired
     from app.providers.media_http import MediaProviderError
 
     with Session(engine) as session:
@@ -1067,6 +1165,8 @@ def _media(
     # A refusal carries the storyboard, the vendor's words and what the attempt cost.
     refused: list[dict[str, Any]] = []
     skipped_for_budget: list[str] = []
+    # Films the Owner's mode will not let the studio buy on its own, with his reason.
+    awaiting_owner: list[dict[str, Any]] = []
     budget_reason = ""
     narration_reviews = []
     costs_recorded = 0
@@ -1107,6 +1207,23 @@ def _media(
         plan_cost = estimate_film_cost_micros(
             engine, storyboard_id, environment=environment, settings=settings
         )
+        # What the Owner's mode allows is asked before the money is held, not after: a hold
+        # taken for a film the studio may not buy would sit against the day's budget until
+        # the watchdog swept it. 31 puts a paid generation inside the budget at T2 and one
+        # "beyond threshold" at T3, so the film's own estimate decides which question is
+        # asked — and under SUPERVISED the T3 question writes the Approval the Owner answers.
+        estimated_usd = float(plan_cost["usd"])
+        dear = estimated_usd > settings.paid_generation_approval_threshold_usd
+        refusal = mode_refusal(
+            engine,
+            "media.paid_generation_over_threshold" if dear else "media.paid_generation",
+            requester="video_editor",
+            evidence=f"storyboard {storyboard_id}, estimat {plan_cost['usd']} USD",
+            cost_usd=estimated_usd,
+        )
+        if refusal is not None:
+            awaiting_owner.append({"storyboard_id": storyboard_id, **refusal})
+            continue
         hold = reserve_spend(
             engine,
             plan_cost["usd_micros"],
@@ -1149,6 +1266,16 @@ def _media(
                 # The plan resolves the hierarchy's image choice (Runway included); the
                 # Organization-level adapter is the fallback for a plan that names none.
                 image_adapter=planned.get("image") or images,
+                # And the vendors it may fall back to: the Owner's approved alternative for
+                # this purpose, at most one, already ordered for the environment. A studio
+                # whose Owner approved none has a chain of one and behaves exactly as before.
+                image_chain=planned.get("image_chain"),
+                # The reference picture of the character the scene's cast names, so a face
+                # the Owner locked is drawn from its own sheet rather than invented again per
+                # scene. A character with a locked look and no readable reference refuses the
+                # film below; a character with neither lock nor reference has none, and the
+                # scene is drawn from the words as it always was.
+                reference_for_scene=planned.get("reference_for_scene"),
                 tts_adapter=voice,
                 tts_adapter_for_scene=planned["tts_for_scene"],
                 # The model of each scene is chosen against what the scene requires, in
@@ -1224,6 +1351,24 @@ def _media(
         except RenderEngineUnavailable as exc:
             _release(engine, reservation_id, f"randarea nu poate rula: {exc}", correlation)
             return _outcome(SKIPPED, f"Randarea nu poate rula: {exc}", assets=produced)
+        except ReferenceRequired as exc:
+            # Not a vendor's refusal and not a fault: the studio refusing to invent the face
+            # of a character whose look the Owner locked. The film is not made, so what was
+            # bought before the refusal is costed and the hold goes back the same second —
+            # the same order as a vendor refusal, for the same reason. Tomorrow's run tries
+            # the film again; producing the character's reference set is the Owner's act.
+            failed_cost = _record_failed_attempt(engine, storyboard_id, correlation)
+            _release(engine, reservation_id, f"referință lipsă: {exc}"[:120], correlation)
+            refused.append(
+                {
+                    "storyboard_id": storyboard_id,
+                    "error": str(exc)[:200],
+                    "costs_recorded": failed_cost,
+                }
+            )
+            costs_recorded += failed_cost
+            logger.info("render_reference_missing", extra={"storyboard_id": storyboard_id})
+            continue
         except MediaProviderError as exc:
             # A provider's refusal is that render's failure, not the day's: the storyboard
             # stays approved and unrendered, tomorrow's stage tries it again, and the Owner
@@ -1276,8 +1421,20 @@ def _media(
                 correlation_id=correlation,
             )
 
+    if awaiting_owner and not produced and not refused:
+        # Nothing was filmed and the mode is why: the stage could not run, which is SKIPPED
+        # in the runbook's own vocabulary, with the Owner's reason and the request he answers.
+        return _outcome(
+            SKIPPED,
+            awaiting_owner[0]["reason"][:500],
+            awaiting_owner=awaiting_owner,
+            approval_id=awaiting_owner[0]["approval_id"],
+        )
+
     substitutes = images is None or voice is None
     reason = f"{len(produced)} videoclipuri randate."
+    if awaiting_owner:
+        reason += f" {len(awaiting_owner)} nefilmate: {awaiting_owner[0]['reason']}"
     if serial_assets:
         reason += " Episodul serialului a fost filmat."
     if skipped_for_budget:
@@ -1303,6 +1460,7 @@ def _media(
         assets=produced,
         serial_assets=serial_assets,
         skipped_for_budget=skipped_for_budget,
+        awaiting_owner=awaiting_owner,
         used_substitutes=substitutes,
         narration_reviews=narration_reviews,
         costs_recorded=costs_recorded,
@@ -1350,8 +1508,21 @@ def _edit_and_qc(
     diagnoses = []
     for asset_id in pending:
         # The Owner's ceiling on scenes that fell back to a slow push travels with the
-        # measurement; without it quality control assumes half the scenes.
-        report = evaluate_media_qc(engine, asset_id, str(uuid4()), settings=settings)
+        # measurement; without it quality control assumes half the scenes. So do the two
+        # things it takes to look at the pictures rather than only at the container: the
+        # registry, so an employee whose model declares vision can be asked whether each
+        # scene is a picture at all and shows what it was asked for, and the encoder, which
+        # cuts the frame it looks at. Without either the picture and character checks report
+        # NOT_APPLICABLE with the reason and the film's verdict is exactly what the other
+        # gates left it — the stage held both all along and passed neither.
+        report = evaluate_media_qc(
+            engine,
+            asset_id,
+            str(uuid4()),
+            settings=settings,
+            registry=registry,
+            ffmpeg_path=settings.ffmpeg_path if settings is not None else None,
+        )
         if report["status"] == "PASSED":
             passed += 1
             continue
@@ -1505,6 +1676,26 @@ def _publish_one(
             "title": prepared["title"],
             "description": prepared["description"],
             "tags": prepared["tags"],
+        }
+
+    # The last question before the film leaves the studio, and the one no other gate asks:
+    # whether the mode the Owner set lets the studio upload at all. An upload is an external
+    # write whatever visibility it carries (T3), so MANUAL refuses it, SUPERVISED records the
+    # Approval the Owner answers and AUTONOMOUS_CEO performs it — within the channel policy,
+    # which decides who may then see it. Asked here, after the Director and the gate, so the
+    # Owner is asked about a film that is otherwise ready to go.
+    refusal = mode_refusal(
+        engine,
+        "publishing.public_publish",
+        requester="publisher",
+        evidence=f"{metadata['title'][:80]} → {channel_name} ({resolved['release_privacy']})",
+    )
+    if refusal is not None:
+        return {
+            "status": SKIPPED,
+            "reason": refusal["reason"][:500],
+            "awaiting_owner": asset_id,
+            "approval_id": refusal["approval_id"],
         }
 
     try:
@@ -1859,6 +2050,25 @@ def build_stage_runners(
 
     def keep(name: str, runner: Callable[[], dict[str, Any]]) -> Callable[[], dict[str, Any]]:
         def run() -> dict[str, Any]:
+            # What the stage is, in the risk terms the Owner's mode understands (see
+            # STAGE_ACTIONS). A stage above what the mode allows could not run, which is
+            # SKIPPED and not BLOCKED: BLOCKED ends the day, and a mode is not an incident —
+            # the stages below it that the mode does allow still do their work. Under
+            # SUPERVISED the refusal has already written the Owner's approval request, and
+            # its id travels in the artefacts so the run says what he is being asked.
+            action, tier = STAGE_ACTIONS[name]
+            refusal = mode_refusal(engine, action, tier)
+            if refusal is not None:
+                outcome = _outcome(
+                    SKIPPED,
+                    refusal["reason"][:500],
+                    autonomy_mode=refusal["mode"],
+                    risk_tier=refusal["tier"],
+                    governance_status=refusal["status"],
+                    approval_id=refusal["approval_id"],
+                )
+                outcomes[name] = outcome
+                return outcome
             outcome = runner()
             outcomes[name] = outcome
             return outcome
@@ -1901,7 +2111,10 @@ def build_stage_runners(
                 ),
             ),
         ),
-        "post_run": lambda: _post_run(engine, registry, outcomes),
+        # Kept like the others so the Owner's mode is asked about it too; its own outcome
+        # lands in the day's record after it has read the others', which is harmless and
+        # keeps every stage of the day under one rule.
+        "post_run": keep("post_run", lambda: _post_run(engine, registry, outcomes)),
         "serial_queue": keep(
             "serial_queue", lambda: _serial_queue(engine, registry, settings, vault)
         ),

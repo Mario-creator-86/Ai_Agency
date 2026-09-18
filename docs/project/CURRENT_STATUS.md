@@ -13,6 +13,171 @@ database resource discovery/refresh, separate production choices, UI and regress
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
 
+## Quality and governance (Phase D/G, 2026-09-18)
+
+Phases D and G of running unattended: what the studio certifies about a film before the Director
+sees it, and who decides that the studio may act at all. Measured on the tree before the work:
+`character_drift_qc` reported `NOT_IMPLEMENTED` on every film ever made, and no gate anywhere ever
+looked at a frame, so a film of eight blank fields, stripes or garbled writing passed technical QC,
+the factual gate and the five publishing points and reached a channel as a finished short;
+`CharacterBible.reference_assets_json` declared five slots — portrait, full body, front, side, back
+— and every one of them was null in every studio that has ever run, so each generated picture of a
+character was a fresh invention and a picture check would have had nothing to compare against; a
+scene whose vendor refused it fell straight to the placeholder still that QC blocks from
+publication, because a policy level could name one vendor and no other; and
+`PolicyView.autonomy_mode` was `Literal["MANUAL"] = "MANUAL"`, a constant no command could move,
+while the daily run walked twelve stages with no Owner approval between them, the Director approved
+her own scripts, the media stage paid a vendor for shots and the publish stage wrote to YouTube.
+`51_AUTONOMY_MODE_SEMANTICS` described three modes and the code had none of them.
+
+**Quality control looks at the pictures before the Director does.** Every scene's middle frame is
+cut from the finished film and sent, in one call for the whole film, to an employee whose provider
+declares its model can see: is this a picture at all — a blank field, stripes, noise, garbled
+writing is not — and does it show what the scene's visual prompt and narration asked for. The same
+call carries the characters the storyboard put in each scene, with the Character Bible's canonical
+face, hair, outfit, props, role symbols and palette, and, where a bible slot holds a stored asset
+id, the portrait itself; a person in the wrong outfit is named with their scene, and
+`character_drift_qc` no longer says NOT_IMPLEMENTED for a studio that has characters. A refusal
+fails the film in every environment, as the degenerate-still check already does, because nothing in
+TEST policy deliberately produces a picture of nothing. The check certifies only what it measured:
+with no provider registry handed in, no employee's model declaring vision, no frame cut (no
+encoder, no file), the day's token ceiling reached, or a model that narrated and never reached the
+JSON, it is NOT_APPLICABLE with the reason, `passed` is None, no failure is added, and the film's
+verdict is exactly what the other gates left it — and where the bible holds no characters at all the
+character check stays NOT_IMPLEMENTED as it was. One film costs one vision call, two when the model
+must be asked again with its own thinking on, and none at all when the check stands down; the call
+is an ordinary agent run, so the day's token ceiling covers it.
+
+**Reference pictures for the characters, and a second vendor when the first refuses.**
+`POST /media/characters/{id}/reference-set` fills the five slots with real files: one prompt per
+slot composed from the bible alone, each still stored as a `MediaAsset` with its own SHA-256 and
+its bytes on disk under `backend/storage/character_references/{character}/`, and the asset ids
+written back into the slots. A slot the vendor refused keeps what it held and is named in the
+answer, so nobody is told a picture exists that was not produced. It spends image credits, so it is
+the Owner's act and nothing else: it refuses under STOP AUTONOMY before the first request, asks the
+budget once for the whole set through `reserve_spend` and settles or releases that hold, records an
+ESTIMATED cost per produced slot, and reports `usd: None` rather than zero when the model has no
+recorded price. Nothing in the runbook names it, and a test asserts that against
+`runbook/stages.py`, `runbook/services.py` and `workflows/services.py`. From the slots to the film:
+`image_reference_for_scene` hands the render the reference the scene's cast has, a character whose
+look is locked and has no readable reference is refused rather than invented, and the reference is
+passed only to an adapter that declares it can take one — the OpenAI adapter now posts it to the
+documented `/v1/images/edits` endpoint as a multipart file part (`ACCEPTS_REFERENCE_IMAGE` is True,
+`REFERENCE_IMAGE_VERIFIED` stays False until an Owner-approved run has actually drawn a scene that
+way, because no test may buy one). And the production hierarchy resolves a second vendor: a level
+may hold the Owner's `approved_fallbacks` for a purpose, a locked character narrows that list to the
+technology approved for that character, the chain is bounded to one alternative per purpose per
+scene (`MAX_FALLBACKS_PER_PURPOSE`), each attempt carries the connection, the model and what it is
+worth at the recorded price, and a policy with no approved fallback behaves exactly as before — one
+vendor, then the placeholder still that QC blocks from publication. In TEST the chain is ordered
+cheapest-first, so a test still buys the cheapest compatible model; in PRODUCTION the Owner's order
+stands.
+
+**The autonomy mode became a fact the studio stores.** Migration `0043_autonomy_mode` adds
+`owner_policy.autonomy_mode` (MANUAL | SUPERVISED | AUTONOMOUS_CEO) and takes the honest reading,
+**AUTONOMOUS_CEO** — the Director executes T0–T3 within policy, T4 is executed autonomously nowhere,
+and the hard gates are unchanged — because that is what the code has been doing, not a promotion the
+migration grants. It moves only through `change_autonomy_mode`, a versioned idempotent Owner command
+shaped exactly like `change_environment`, which refuses a *promotion* while autonomy is stopped or an
+incident is open, and names in its Romanian refusal the two things of 51 it cannot measure
+(acceptance criteria, burn-in) rather than pretending to have checked them; lowering the mode is
+always allowed, as 51 requires. Beside it, a risk-tier table mapped entry by entry from 31's action
+risk tiers and 32's tool risk classes, and one function `may_act(session, action, tier)` the Policy
+Kernel asks before an agent acts: STOP AUTONOMY refuses every tier in every mode, SAFE_MODE leaves
+monitoring and internal repair and takes the rest, T4 is refused in all three modes, MANUAL allows
+T0–T1, SUPERVISED allows T0–T2 and writes an `owner_approval_request` for a T3 external write (31's
+Approval object, with a nullable cost because a cost the studio cannot compute is None), and
+AUTONOMOUS_CEO allows T0–T3. An action the table does not know and the caller does not classify is
+refused `BLOCKED_UNCLASSIFIED`, never guessed. A test asks the five-point publishing gate for a
+public film in each of the three modes and it refuses in all three: a mode decides what the studio
+may attempt, never what a gate concludes.
+
+**The day reads the new gates and the Owner's mode.** All three parts existed beside the daily run
+without being in it; all three are wired. The quality-control stage hands `evaluate_media_qc` the
+registry it already held and `settings.ffmpeg_path`, so a studio with a vision-capable model has its
+frames looked at — and a studio without one measures the same film to the same verdict for the same
+reasons, which is held by a test that runs the stage and the plain call over two identical files and
+compares them. The media stage passes the plan's `image_chain` and `reference_for_scene` into the
+render; the assembler draws each still through `still_from_chain`, records what each attempt cost on
+the scene and on the job, and the Accountant prices a still by the vendor that drew *that scene*
+instead of by the film-level record — a scene the approved alternative drew used to be charged to the
+first vendor's model. A character whose look the Owner locked and whose reference cannot be read
+refuses the film: the job is failed cleanly, what was already bought is costed and the hold goes back
+the same second, exactly as a vendor's refusal does. And the day now says what each of its stages is:
+`STAGE_ACTIONS` maps every stage to one action and one risk tier of `31_GOVERNANCE_APPROVAL_POLICY`
+— performance intake T0, the drafting stages T1, research and the paid render T2, the upload T3
+whatever visibility it carries — and `mode_refusal` asks `may_act` before the stage runs, again per
+film before the money is held (T3 above `paid_generation_approval_threshold_usd`, five dollars by
+default) and again per film before the upload. A stage above the mode is SKIPPED with the Owner's
+reason, never BLOCKED, because a mode is his decision and not an incident, and the stages it does
+allow still do their work. The preflight shows him which mode the day will run under and refuses
+nothing for it: the line is INFORMATIONAL and the verdict is computed over the other two severities,
+so it cannot fail a run structurally and not merely by happening to pass. A whole scheduled day is
+now run under each mode with every vendor faked — MANUAL fetches no page, buys no shot, uploads
+nothing and asks nothing, because MANUAL is already his answer; SUPERVISED films the day and writes
+one `owner_approval_request` for `publishing.public_publish` instead of uploading; AUTONOMOUS_CEO
+publishes under the channel's policy as PUBLISHED_SIMULATED, private, with no request raised.
+
+Tests, by file set: 11 in `tests/test_picture_qc.py` (new), 20 in `tests/test_phase5_media.py` and 7
+in `tests/test_cycle_fixes.py` (one appended each), with 77 across the five other callers of
+`evaluate_media_qc`; 19 in `tests/test_character_references.py` (new), 21 in
+`tests/test_media_selection.py`, 36 in `tests/test_media_providers.py` and 18 in
+`tests/test_production_policy.py`, with 166 across the neighbouring media, runbook, economy, routing
+and documentation suites; 21 in `tests/test_autonomy_modes.py` (new) and 26 in
+`tests/test_foundation.py`, with 45, 6 and 6 across the agent, publish-policy, reset, schema and
+route-authorisation files; and the wiring's own 29 (`tests/test_daily_run_stages.py`, eight
+appended), 45 (`tests/test_phase10_runbook.py`, one appended) and 5
+(`tests/test_autonomous_day_end_to_end.py`, three whole-day tests appended, one per mode). **The
+whole suite on the integrated tree: 1148 passed, 1 skipped** (the opt-in real-Ollama test), with
+`ruff check`, `ruff format --check` over 384 files, `mypy` over 143 source files and
+`scripts/check_docs.py` clean; the adversarial pass that followed added four tests and re-ran
+the suite at **1152 passed, 1 skipped** (2026-09-18, 9m48s), finding no defect to fix. The migration chain is 0040 → 0043 and `main.py` pins it: 0041 and
+0042 were reserved by two of the implementers and neither needed a schema change. No provider was
+called, nothing was rendered outside FFmpeg on this machine, no run was queued and no credit was
+spent.
+
+Not finished, honestly: **no vision model has ever answered the picture check, here or anywhere.**
+Every test fakes the provider at its transport, by the Owner's rule of 2026-09-17 and because
+`tests/conftest.py` refuses every non-loopback socket, so what is proven is the gate's behaviour —
+one call per film, the frames and the bible in the prompt, a named scene on a refusal, and
+NOT_APPLICABLE wherever the look could not happen. Whether a model that declares vision returns this
+schema reliably on real frames needs a real render and a real model call, and the work stopped rather
+than spend. `seed_initial_workforce` seeds no vision-capable model — the Director's glm-5.3 declares
+completion, thinking and tools and no vision — so until the provider catalogue sync records one on an
+employee the check will report NOT_APPLICABLE in the live studio, correctly and visibly in every
+report. **No real render has been drawn through the second vendor either**, and a studio whose Owner
+has approved no alternative has a chain of one, which is every studio today, so the path that matters
+— first vendor refuses, approved alternative draws, the books charge the second model — is proven
+only against fakes; the OpenAI `/v1/images/edits` multipart path is written to the documented contract
+and `REFERENCE_IMAGE_VERIFIED` stays False until an Owner-approved run has actually drawn a scene that
+way, because a 400 there would mean the body is wrong. `RunwayImageAdapter` still cannot be handed a
+reference (`backend/app/providers/runway.py` was nobody's in this phase), so a Runway-drawn still is
+honestly reported as drawn from the words. **The Owner cannot answer an approval**: a SUPERVISED day
+writes exactly one `owner_approval_request` for the upload and stops there honestly, there is no
+route to approve or refuse it, nothing consumes an APPROVED row and no stage re-attempts after one
+appears; `owner_approval_request` is also not yet in `maintenance.HISTORY_TABLES`, so a reset does
+not clear it. 51's acceptance criteria and burn-in are not checked and cannot be from this database,
+so the promotion refusal names them to the Owner instead; 51's department-scoped autonomy is not
+implemented — the column is one global mode — and the `Literal["False"]` switches on `PolicyView`
+(`external_payments_enabled`, `autonomous_firing_enabled`, `provider_auto_switch_enabled`,
+`world_generation_enabled`) are still constants beside tiers that now reason about the same acts.
+`backend/app/media/router.py` is still measuring films without the picture check and rendering
+without the chain or the reference, so the Owner's manual render and his manual QC behave as they did
+yesterday while the daily run does not. The character check reads the storyboard's
+`character_ids_json`, which only `serial_storyboard.py` fills — a factual film records
+`character_ids_json=[]`, so the record says `no scene in this film lists a character` rather than
+passing — and the Director's `gather_facts` still filters the QC report to keys starting with
+"measured", so the per-scene verdicts do not reach her prompt. The Director's `frames_for` cuts at
+most eight frames, so a ninth scene onwards is recorded `no frame was cut for this scene`, never
+looked at and never passed. The reference set uses the first filled slot for every scene rather than
+choosing by shot type, and there is no frontend: no button produces a reference set, no page shows
+which slots are filled, and nothing in `frontend/src` reads `autonomy_mode` yet. The research stage's
+mode refusal is coarse — under MANUAL the whole fetch is skipped including `retest_stale_hosts`, so a
+MANUAL studio's host record goes stale — and a stage the mode skips is recorded in the run and the
+day's summary but nobody writes the Owner a letter about it. `approval_expires_after_hours` stays the
+module constant `APPROVAL_EXPIRES_AFTER_HOURS = 24` in `services.py` rather than a key in
+`config.py`, because a key nothing reads is a lie about what is configurable.
+
 ## Money and sources (2026-09-17/18)
 
 Phases E and F of running unattended: what a film costs before it is made, and where the day's
@@ -222,9 +387,12 @@ they encode two real films.
 
 Numai Owner-ul poate face lucrurile de mai jos; studioul nu le face singur și nu le cere de două ori.
 
-- **Migrarea bazei de date live**: `scripts/bootstrap.py` aduce baza la `0040_research_sources`
-  (0039 economia, apoi 0040 cercetarea). `main.py` cere această revizie la pornire, deci migrarea
-  se face înainte de prima pornire pe versiunea aceasta. Niciun test nu atinge baza live.
+- **Migrarea bazei de date live**: `scripts/bootstrap.py` aduce baza la `0043_autonomy_mode`
+  (0039 economia, 0040 cercetarea, apoi 0043 modul de autonomie; 0041 și 0042 au fost rezervate în
+  faza D/G și nu au fost folosite, pentru că nimic din ele nu avea nevoie de o coloană nouă).
+  Corectat 2026-09-18: până atunci rândul de aici cerea `0040_research_sources`. `main.py` cere
+  această revizie la pornire, deci migrarea se face înainte de prima pornire pe versiunea aceasta.
+  Niciun test nu atinge baza live.
 - **Bugetele** (`PUT /economy/budget`, biroul Contabilitate): zilnic, săptămânal, lunar. Nimeni
   altcineva nu le poate pune — Contabilul doar escaladează, nu aprobă. Fără un buget, rezervarea
   ține banii, dar nu are de ce să refuze.
@@ -248,6 +416,28 @@ Numai Owner-ul poate face lucrurile de mai jos; studioul nu le face singur și n
 - **Plafonul de jetoane pe zi** (`STUDIO_AGENT_DAILY_TOKEN_BUDGET`), dacă vrea unul: 0 înseamnă
   fără plafon, așa cum a mers studioul până acum. Peste el, rularea este oprită BLOCKED_BUDGET și
   Contabilul îi scrie o dată în ziua aceea.
+- **Seturile de referință ale personajelor** (`POST /media/characters/{id}/reference-set`, adăugat
+  2026-09-18): cele cinci sloturi — portret, corp întreg, față, profil, spate — sunt goale în orice
+  studio care a rulat vreodată, așa că fiecare imagine a unui personaj este până acum o invenție
+  nouă, iar verificarea imaginilor nu are cu ce compara. Ruta consumă credite de imagine, deci este
+  actul lui și al nimănui altcuiva: niciun pas al zilei nu o cheamă, iar un test ține asta. Un
+  personaj cu înfățișarea blocată și fără referință citibilă refuză filmul, în loc să i se inventeze
+  o față. Nu există încă buton în interfață; ruta răspunde cu sloturile umplute, cele refuzate și
+  costul (`usd: None` dacă modelul nu are preț).
+- **Modul de autonomie** (`POST /api/v1/owner/autonomy-mode`, migrarea 0043): MANUAL, SUPERVISED sau
+  AUTONOMOUS_CEO. Coloana a fost scrisă pe AUTONOMOUS_CEO pentru că asta face codul de luni de zile,
+  nu ca o promovare — comanda este singura care ridică modul și refuză ridicarea cât timp autonomia
+  este oprită sau un incident este deschis. MANUAL înseamnă o zi care scrie, dar nu cumpără cadre și
+  nu urcă nimic; SUPERVISED filmează ziua și îi lasă o cerere de aprobare în loc de urcare — dar
+  deocamdată **nu are cum să răspundă la ea**: ruta de aprobare nu există încă, deci SUPERVISED este
+  un mod care pune întrebarea și nu aude răspunsul. Pragul peste care o randare plătită devine
+  decizia lui este `paid_generation_approval_threshold_usd` (5 USD implicit).
+- **Furnizorii de rezervă aprobați** (`approved_fallbacks`, pe nivelul de politică al canalului, al
+  seriei sau al storyboard-ului; pentru un personaj blocat, lista din `approved_fallbacks_json`
+  scrisă de o schimbare de identitate APROBATĂ): fără ei, lanțul are un singur vendor și o scenă
+  refuzată cade pe cartonul de rezervă pe care QC îl oprește de la publicare. Aprobarea este dovada
+  că tehnologia păstrează personajul recognoscibil, deci nu o poate da studioul; lanțul rămâne oricum
+  de cel mult o alternativă pe scop și pe scenă.
 - **Reconstruirea interfeței** (`npm run build --prefix frontend`): ecranele schimbate pe
   2026-09-18 — starea site-urilor în *Cercetare → Surse*, banii ținuți în biroul
   Contabilitate — sunt în sursă, nu în pachetul servit. Construirea este actul lui de

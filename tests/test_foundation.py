@@ -79,6 +79,9 @@ def test_snapshot_is_real_and_no_secrets(client, headers, settings):
     data = response.json()
     assert data["cursor"] == 2
     assert data["policy"]["autonomy_stopped"] is True
+    # The Owner's page reads the real mode, not a literal. Its own suite is
+    # tests/test_autonomy_modes.py; here it only has to reach the page.
+    assert data["policy"]["autonomy_mode"] == "AUTONOMOUS_CEO"
     assert data["modules"]["agents"] == "IMPLEMENTED"
     assert data["modules"]["media"] == "PARTIAL"
     assert data["modules"]["treasury"] == "PARTIAL"
@@ -95,7 +98,9 @@ def test_stop_endpoint_auth_validation_and_idempotency(client, headers):
     result = client.post("/api/v1/owner/autonomy-stop", json=command, headers=headers)
     assert result.status_code == 200
     assert result.json()["status"] == "COMMITTED"
-    assert result.json()["policy"]["autonomy_mode"] == "MANUAL"
+    # The view used to answer the constant "MANUAL" whatever the studio was doing. It now
+    # answers the column (migration 0043), whose honest default is the mode the code runs in.
+    assert result.json()["policy"]["autonomy_mode"] == "AUTONOMOUS_CEO"
     assert result.json()["policy"]["external_payments_enabled"] is False
     retry = client.post("/api/v1/owner/autonomy-stop", json=command, headers=headers)
     assert retry.json() == result.json()

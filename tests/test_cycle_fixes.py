@@ -277,3 +277,40 @@ def test_an_invalidated_verdict_is_measured_again(engine, settings, monkeypatch)
     outcome = runners["edit_and_qc"]()
     assert measured == [asset_id]
     assert outcome["artefacts"]["failed"] == 1
+
+
+def test_quality_control_cannot_certify_pictures_a_model_only_narrated(engine, monkeypatch):
+    """The Director's own failure, guarded one gate earlier.
+
+    She wrote seven thousand tokens of analysis and never reached the JSON. Quality control
+    now asks a model that can see whether each scene is a picture of what the scene asked
+    for, and the same model can narrate here too. Asked twice, as every structured answer
+    is, and still no object: the check says NOT_APPLICABLE with the reason and the run's
+    status, `passed` is None, and it adds no failure and no pass to the film's verdict.
+    """
+    from app.media.qc import evaluate_media_qc
+    from test_picture_qc import FRAMES, a_film, give_vision, registry_with, staff
+
+    staffed = staff(engine)
+    ids = a_film(engine)
+    give_vision(engine, staffed["agents"]["VideoEditor"].id)
+    monkeypatch.setattr(
+        "app.media.picture_qc.frames_for",
+        lambda path, ffmpeg, duration, scene_seconds=None: list(FRAMES),
+    )
+    narrated = (
+        "Let me work through the attached frames one at a time. Frame one is a dark field "
+        "with a golden shape in it, which I read as the mirror the scene asked for. Frame "
+        "two appears to be a spectrum. Frame three is harder to describe."
+    )
+    registry, model = registry_with(staffed, lambda prompt: narrated)
+
+    report = evaluate_media_qc(engine, ids["asset"], str(uuid4()), registry=registry)
+
+    picture = report["checks_json"]["picture_qc"]
+    assert picture["status"] == "NOT_APPLICABLE" and picture["passed"] is None
+    assert picture["frames"] == 3 and "no usable verdict" in picture["detail"]
+    assert picture["run_id"]
+    assert not any("Scene" in reason for reason in report["failure_reasons_json"])
+    # Twice at most, thinking off and then natively: never a third, never a call per scene.
+    assert len(model.calls) == 2

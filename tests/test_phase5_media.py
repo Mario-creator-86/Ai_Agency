@@ -1058,3 +1058,27 @@ def test_a_render_refused_at_the_third_scene_keeps_the_two_it_made_and_the_books
     ]
     # The same reading again charges nothing: a re-run of the books is not a second bill.
     assert record_failed_render_cost(engine, job_id)["recorded"] == 0
+
+
+def test_the_picture_check_stands_down_when_there_is_nothing_to_look_at(engine, tmp_path):
+    """Quality control has its own eye on the pictures now, and it certifies only what it
+    saw. With no film on disk there is no frame to cut, and with an empty registry there is
+    no model to cut it for: both report NOT_APPLICABLE with the reason, `passed` is None,
+    and the report's verdict and failure reasons are exactly what they were before the check
+    existed. Nothing here may start passing by absence."""
+    from app.providers.registry import ProviderRegistry
+
+    asset = _render_with_motion_record(engine, tmp_path, refused=1, made=3)
+    without = evaluate_media_qc(engine, asset, str(uuid4()))
+    with_empty_registry = evaluate_media_qc(
+        engine, asset, str(uuid4()), registry=ProviderRegistry()
+    )
+
+    for report in (without, with_empty_registry):
+        picture = report["checks_json"]["picture_qc"]
+        assert picture["status"] == "NOT_APPLICABLE" and picture["passed"] is None
+        assert picture["detail"] and picture["model_used"] is False
+        drift = report["checks_json"]["character_drift_qc"]
+        assert drift["passed"] is None and drift["status"] in ("NOT_IMPLEMENTED", "NOT_APPLICABLE")
+    assert without["status"] == with_empty_registry["status"]
+    assert without["failure_reasons_json"] == with_empty_registry["failure_reasons_json"]

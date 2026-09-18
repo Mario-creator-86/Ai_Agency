@@ -1,27 +1,34 @@
 {
-  "phase": "10 (Phases E/F of autonomy: money and sources)",
-  "completed_milestone": "Phase A (the clock, fault classes, provider retries, the watchdog), Phase B/C (per-channel publish policy, the serial filmed in-run, captions and loudness measured; closed 2026-09-18) and Phases E/F (2026-09-18: a film's cost estimated and held before it is made, prices the Owner's alone, a failed render costed, a token ceiling with the Accountant's letter; the studio's own page discovery, a search engine filtered to the allowlist, the research health report in the preflight; the day wired to both and one whole day tested end to end)",
-  "active_task": "Phases E/F closed and verified as an adversary (2026-09-18): the price lookups wired into the four construction sites, seed_documented_prices called from bootstrap, the research health report and the forced retest behind the Owner's door, the two screens shown the held money and the reason codes, and the shots bought before the Owner's STOP charged to the day",
-  "next_task": "The Owner's own acts, which no agent may perform: run scripts/bootstrap.py against the live database (migrations 0039 then 0040, and the DOCUMENTED ElevenLabs price), type his per-million prices through PUT /economy/prices (Ollama Cloud above all, which is deliberately never seeded), set the budgets, and run npm run build --prefix frontend so the two changed screens reach the served bundle. Then the first real day with both channels bound, watched by him (the daily job stays dormant until his recorded activation). Still unwritten in code: the Accountant's reconciliation of ESTIMATED rows against a vendor's invoice",
+  "phase": "10 (Phases D/G of autonomy: quality and governance)",
+  "completed_milestone": "Phase A (the clock, fault classes, provider retries, the watchdog), Phase B/C (per-channel publish policy, the serial filmed in-run, captions and loudness measured), Phases E/F (a film's cost estimated and held before it is made, prices the Owner's alone, a failed render costed, a token ceiling with the Accountant's letter; the studio's own page discovery, a search engine filtered to the allowlist, the research health report in the preflight) and Phases D/G (2026-09-18: a picture gate and a character gate that certify only what they measured; the Character Bible's five reference slots filled by an Owner-triggered route; one approved alternative vendor per purpose per scene; the autonomy mode as a column, a versioned command and a tier gate the day asks before every stage, every paid film and every upload)",
+  "active_task": "Phases D/G integrated and verified on the whole tree (2026-09-18): the quality-control stage hands the picture check the registry and the encoder path, the media stage passes the plan's image chain and the scene's character reference into the render, the Accountant prices a still by the vendor that drew that scene, and STAGE_ACTIONS plus mode_refusal put the Owner's autonomy mode in front of every stage, every paid film and every upload; a whole scheduled day is tested under each of the three modes with every vendor faked",
+  "next_task": "The Owner's own acts, which no agent may perform: run scripts/bootstrap.py against the live database (0039, 0040, then 0043; main.py pins 0043_autonomy_mode), produce the character reference sets (POST /media/characters/{id}/reference-set), choose the autonomy mode (POST /api/v1/owner/autonomy-mode), approve any fallback vendors, and the earlier list that is still his: his per-million prices, the budgets, the per-channel publish policy and npm run build --prefix frontend. Still unwritten in code: a route that answers an owner_approval_request and somewhere an APPROVED T3 is re-attempted; the registry and the image chain at the two media/router.py call sites; the Accountant's reconciliation of ESTIMATED rows against a vendor's invoice",
   "last_green_test_commit": null,
-  "verification": "docs/project/CURRENT_STATUS.md, sections 'Money and sources (2026-09-17/18)', 'Delivery and the serial (2026-09-17/18)' and 'The clock, and a day that asks again (2026-09-17)'",
+  "verification": "docs/project/CURRENT_STATUS.md, sections 'Quality and governance (Phase D/G, 2026-09-18)', 'Money and sources (2026-09-17/18)', 'Delivery and the serial (2026-09-17/18)' and 'The clock, and a day that asks again (2026-09-17)'",
   "tests": {
-    "python_passed": 1067,
+    "python_passed": 1152,
     "python_skipped": 1,
-    "python_collected": 1068,
+    "python_collected": 1153,
     "javascript_passed": 87,
     "failed": 0,
-    "note": "1067 passed / 1 skipped is the whole-suite run after the Phase E/F closure and its adversarial verification (2026-09-18), with the loopback-only socket guard active; the skip is the opt-in real Ollama test. The 87 frontend tests are the interface implementer's measurement of this closure (node --test over frontend/tests, plus tsc); the verifier ran no npm command and frontend/dist is not rebuilt"
+    "note": "1152 passed / 1 skipped is the whole-suite run by the Phase D/G adversarial verifier (2026-09-18, 9m48s), with the loopback-only socket guard active; it is the integrator's 1148 plus the four tests that pass closed — a picture refusal measured in PRODUCTION as well as in TEST, a vision employee whose provider has no registered adapter standing the check down instead of raising, the factual gate reaching the same verdict in all three modes, and an unrecognised mode value granting MANUAL's floor rather than its name; the skip is the opt-in real Ollama test. ruff check, ruff format --check over 384 files, mypy over 143 source files and scripts/check_docs.py all clean. The 87 frontend tests are unchanged from the Phase E/F closure: no npm command was run in this phase and frontend/dist is not rebuilt"
   },
   "known_blockers": [
+    "No vision model has ever answered the picture check, here or anywhere: every test fakes the provider at its transport by the Owner's rule of 2026-09-17, and seed_initial_workforce seeds no vision-capable model (the Director's glm-5.3 declares completion, thinking and tools and no vision), so picture_qc and character_drift_qc will report NOT_APPLICABLE with their reason on the live studio until the provider catalogue sync records a vision-capable model on an employee",
+    "The Character Bible's five reference slots are empty on every studio that has ever run: POST /media/characters/{id}/reference-set fills them with real files but spends image credits, so it is the Owner's act and no stage of the day calls it; until he runs it, a character whose look is locked and has no readable reference refuses its film rather than having a face invented",
+    "No real render has gone through the second vendor or through the OpenAI /v1/images/edits reference path: a studio whose Owner has approved no alternative has a chain of one, which is every studio today, and OpenAIImageAdapter.REFERENCE_IMAGE_VERIFIED stays False until an Owner-approved run has actually drawn a scene that way",
+    "The Owner cannot answer an approval: a SUPERVISED day writes one owner_approval_request for the upload and stops there honestly, there is no route to approve or refuse it, nothing consumes an APPROVED row, no stage re-attempts after one appears, and the table is not yet in maintenance.HISTORY_TABLES",
+    "backend/app/media/router.py still measures films without the picture check (no registry at either evaluate_media_qc call site) and renders without the image chain or the character reference, so the Owner's manual render and his manual QC behave as they did before Phase D/G while the daily run does not",
+    "The factual storyboard writes character_ids_json=[] (only serial_storyboard.py fills it), so on a factual film the character gate records that no scene lists a character rather than passing; and the Director is not told what quality control saw, because gather_facts filters the QC report to keys starting with 'measured'",
+    "51's department-scoped autonomy is not implemented: owner_policy.autonomy_mode is one global mode, and a per-department override needs the Owner's department list first. 51's acceptance criteria and burn-in are not checked either and cannot be from this database, so change_autonomy_mode names them in its refusal instead",
+    "No frontend for any of Phase D/G: no button produces a reference set, no page shows which slots are filled, nothing in frontend/src reads autonomy_mode, and a page that groups preflight checks by severity does not yet know the third one (INFORMATIONAL) exists or that it must never render as a failure",
     "The daily job is seeded dormant and stays so until the Owner's recorded activation (workflow.job_activated); no daily run has been queued by anyone since Phase A, by the Owner's rule that video generation costs money and happens only when everything is proven",
     "No real day has run with both channels bound: the per-channel publish policy, the serial's routing to OFFICE_SERIAL, publishAt and videos.update were exercised only against faked providers and transports",
     "director_may_approve_episodes defaults to false on every channel, so until the Owner grants it (POST /api/v1/publishing/channels/{id}/publish-policy) a Director's PASS leaves the episode DRAFT for the Owner and the serial produces no storyboard on its own",
     "Today's log is still closed at the end of the run, so a date whose run completes is frozen at the run's hour; a full-day log for every date needs that close moved",
-    "Character-drift QC is NOT_IMPLEMENTED: quality control reports the check as not performed",
     "No frontend screen sets the publish policy or the Director's leave, and the scheduler panel does not yet read run_at_local; the API carries both",
     "The seeded Character Bibles carry no voice binding and the assembler synthesises one voice per scene, so every serial scene is the narrator until the Owner binds voices",
-    "The live database is still at 0038: migrations 0039 (pricing and reservations) and 0040 (research sources) chain in that order and main.py pins 0040, so scripts/bootstrap.py must be run by the Owner before the server starts on this version",
+    "The live database is still at 0038: migrations 0039 (pricing and reservations), 0040 (research sources) and 0043 (autonomy mode and the approval request) chain in that order — 0041 and 0042 were reserved in Phase D/G and neither was needed — and main.py pins 0043_autonomy_mode, so scripts/bootstrap.py must be run by the Owner before the server starts on this version",
     "No budget and no price are set on the live studio: budgets are the Owner's alone (PUT /economy/budget) and a price enters the books only through PUT /economy/prices, so until he types them a reservation holds a plan priced from settings and the public ElevenLabs figure, and nothing refuses a day that has no budget",
     "The Owner has typed no price, so every agent_run still records cost_vr NULL and the Accountant reports unpriced_agent_runs: the lookups are wired into all four construction sites and bootstrap seeds the one DOCUMENTED ElevenLabs figure, which makes a cost computable, not known. Ollama Cloud is deliberately never seeded",
     "A vendor's invoice is never reconciled against the studio's estimates: the provenance vocabulary (QUOTED, BILLED) exists and no function matches a bill to the ESTIMATED rows of one render, so a render both estimated and later billed would be counted twice by the period's budget",
@@ -36,8 +43,8 @@
   "configured_provider_names": [
     "Ollama Cloud (LLM), ElevenLabs (voice), Runway (picture), YouTube (two OAuth connections) — verified by the Owner on the live studio; not present on a clean install"
   ],
-  "migration_version": "0040_research_sources",
-  "autonomy_mode": "MANUAL",
+  "migration_version": "0043_autonomy_mode",
+  "autonomy_mode": "AUTONOMOUS_CEO",
   "feature_flags": {
     "public_publish_enabled": false,
     "external_payments_enabled": false,
@@ -45,6 +52,6 @@
     "provider_auto_switch_enabled": false,
     "world_generation_enabled": false
   },
-  "migration_count": 41,
-  "feature_flags_note": "public_publish_enabled is per channel since migration 0037 (channel_record.public_publish_enabled, seeded false on both slots); the studio-wide flag here is the seeded default"
+  "migration_count": 42,
+  "feature_flags_note": "public_publish_enabled is per channel since migration 0037 (channel_record.public_publish_enabled, seeded false on both slots); the studio-wide flag here is the seeded default. Since migration 0043 autonomy_mode above is a real column moved only by change_autonomy_mode, recorded AUTONOMOUS_CEO because that is what the code does; the four Literal[\"False\"] switches below are still constants on PolicyView, and three of the acts they name now also carry a T3 tier that may_act reasons about independently"
 }

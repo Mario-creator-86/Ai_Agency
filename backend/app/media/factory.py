@@ -13,6 +13,7 @@ assemble a video to look at, but it may never present one as publishable content
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TypeVar
 
 from sqlalchemy import Engine
@@ -28,8 +29,8 @@ from app.integrations.models import (
 )
 from app.integrations.vault import CredentialVault
 from app.providers.elevenlabs import ElevenLabsTTSAdapter
-from app.providers.media_base import ImageProvider, TTSProvider, VideoProvider
-from app.providers.media_http import MediaProviderNotConfigured
+from app.providers.media_base import ImageProvider, ImageResult, TTSProvider, VideoProvider
+from app.providers.media_http import MediaProviderError, MediaProviderNotConfigured
 from app.providers.openai_media import OpenAIImageAdapter
 from app.providers.runway import RunwayImageAdapter, RunwayVideoAdapter
 
@@ -355,14 +356,29 @@ def render_plan(engine: Engine, vault: CredentialVault, storyboard_id: str) -> d
         index = scene.get("scene_index")
         return video_adapters.get(index) if isinstance(index, int) else None
 
+    resolved_image = plan["purposes"].get("image") or {}
+    # The vendors this film's stills may be drawn by, in order. One long in a studio whose
+    # Owner approved no alternative, which is every studio until he does.
+    from app.services import studio_environment  # noqa: PLC0415
+
+    chain = image_adapter_chain(
+        engine, vault, resolved_image, environment=studio_environment(engine)
+    )
+    #: asset id -> the bytes of that reference, read once per render.
+    loaded: dict[str, bytes] = {}
+
+    def reference_for_scene(scene: dict) -> dict | None:
+        return reference_payload(engine, scene.get("character_ids"), cache=loaded)
+
     return {
         "plan": plan,
         "tts_for_scene": tts_for_scene,
         "video_for_scene": video_for_scene,
         # The hierarchy's image choice, when it resolves to a usable adapter; else the
         # Organization's selection, exactly as before policies existed.
-        "image": image_provider_for(engine, vault, plan["purposes"].get("image") or {})
-        or image_provider(engine, vault),
+        "image": (chain[0] if chain else None) or image_provider(engine, vault),
+        "image_chain": chain,
+        "reference_for_scene": reference_for_scene,
     }
 
 
@@ -457,3 +473,156 @@ def media_readiness(engine: Engine, vault: CredentialVault) -> dict[str, dict]:
                 ),
             }
     return result
+
+
+# ------------------------------------------------- a second vendor, and a character's face
+
+
+def accepts_reference_image(adapter: object) -> bool:
+    """Whether this adapter can be handed a character's reference picture.
+
+    Asked before one is passed, rather than passed in hope: an adapter that ignores it would
+    let the studio report that a scene was drawn from the character's sheet when it was drawn
+    from the words alone. Silence is not a capability, so an adapter that says nothing is no.
+    """
+    return bool(getattr(adapter, "ACCEPTS_REFERENCE_IMAGE", False))
+
+
+def reference_payload(
+    engine: Engine, character_ids: list[str] | None, *, cache: dict[str, bytes] | None = None
+) -> dict | None:
+    """This scene's reference picture with its bytes, ready for an adapter that takes one.
+
+    Raises `ReferenceRequired` when a character whose look is locked has no reference the
+    studio can read: the scene is not drawn at all rather than drawn from an invented face.
+    A character with no lock and no reference simply has none, and the still is drawn from
+    the prompt as it was before any of this existed.
+    """
+    from app.media.services import ReferenceRequired, image_reference_for_scene  # noqa: PLC0415
+
+    reference = image_reference_for_scene(engine, character_ids)
+    if reference is None:
+        return None
+    held = cache if cache is not None else {}
+    asset_id = reference["asset_id"]
+    if asset_id not in held:
+        try:
+            held[asset_id] = Path(reference["path"]).read_bytes()
+        except OSError as exc:
+            if reference["required"]:
+                raise ReferenceRequired(
+                    f"{reference['canonical_name']} are înfățișarea blocată, iar imaginea de "
+                    "referință nu poate fi citită de pe disc; produ setul de referințe din nou."
+                ) from exc
+            return None
+    return {**reference, "bytes": held[asset_id]}
+
+
+def image_adapter_chain(
+    engine: Engine,
+    vault: CredentialVault,
+    resolved: dict,
+    *,
+    environment: str | None = None,
+) -> list[ImageProvider]:
+    """The image vendors this purpose may be drawn by, in the order they are to be tried.
+
+    The resolved selection first, then at most one alternative the Owner approved (see
+    `production_policy.approved_alternatives`). In TEST the order is by the price the studio
+    has recorded, cheapest first, because a test buys the cheapest model that can do the job
+    and an approved alternative does not change that rule; an unpriced model cannot be proven
+    cheapest, so it keeps its place behind the priced ones.
+    """
+    from app.media.production_policy import estimate_cost_usd  # noqa: PLC0415
+
+    selections = [resolved, *(resolved.get("fallbacks") or [])]
+    built: list[tuple[dict, ImageProvider]] = []
+    for selection in selections:
+        adapter = image_provider_for(engine, vault, selection)
+        if adapter is not None:
+            built.append((selection, adapter))
+    if (environment or "TEST") != "TEST" or len(built) < 2:
+        return [adapter for _selection, adapter in built]
+    with Session(engine) as session:
+        prices = [
+            estimate_cost_usd(
+                session, str(selection.get("integration_id")), selection.get("model_id"), images=1
+            )
+            for selection, _adapter in built
+        ]
+    order = sorted(
+        range(len(built)),
+        # (unpriced last, price, original order): a stable sort that never puts a model
+        # nobody priced in front of one the studio can prove is cheap.
+        key=lambda i: (prices[i] is None, prices[i] if prices[i] is not None else 0.0, i),
+    )
+    return [built[i][1] for i in order]
+
+
+async def still_from_chain(
+    engine: Engine,
+    adapters: list[ImageProvider],
+    prompt: str,
+    *,
+    width: int = 1080,
+    height: int = 1920,
+    style: str | None = None,
+    extra: dict | None = None,
+) -> tuple[ImageResult, list[dict]]:
+    """Draw one still, trying the next approved vendor when the first refuses.
+
+    Returns the picture and what each attempt was: which connection and model drew it, whether
+    it answered, and what it is worth at the price the studio has recorded — None when no price
+    covers it, never zero. When every approved vendor refuses, the last refusal is raised with
+    the attempts attached, so the caller does exactly what it did before a chain existed: the
+    placeholder still, which QC blocks from publication.
+
+    A reference picture in `extra` is only passed to an adapter that says it can take one; for
+    the others it is dropped and the attempt records that the still was drawn from words.
+    """
+    from app.media.production_policy import estimate_cost_usd  # noqa: PLC0415
+
+    attempts: list[dict] = []
+    last: MediaProviderError | None = None
+    reference = (extra or {}).get("reference_image")
+    for adapter in adapters:
+        integration_id = getattr(adapter, "integration_id", None)
+        model_id = getattr(adapter, "model", None)
+        with Session(engine) as session:
+            estimate = (
+                estimate_cost_usd(session, integration_id, model_id, images=1)
+                if integration_id and model_id
+                else None
+            )
+        carries_reference = bool(reference) and accepts_reference_image(adapter)
+        asked = dict(extra or {})
+        if reference and not carries_reference:
+            asked.pop("reference_image", None)
+        record = {
+            "provider": getattr(adapter, "PROVIDER_NAME", "UNKNOWN_IMAGE_PROVIDER"),
+            "integration_id": integration_id,
+            "model": model_id,
+            "images": 1,
+            "reference_image": carries_reference,
+            "estimated_usd": estimate,
+            "succeeded": False,
+            "error": None,
+        }
+        try:
+            result = await adapter.generate_image(
+                prompt, width=width, height=height, style=style, extra=asked or None
+            )
+        except MediaProviderError as exc:
+            record["error"] = str(exc)[:300]
+            attempts.append(record)
+            last = exc
+            continue
+        record["succeeded"] = True
+        attempts.append(record)
+        return result, attempts
+    if last is None:  # pragma: no cover - a chain is never empty in the render path
+        last = MediaProviderError("No image vendor is available for this scene")
+    # The attempts travel with the refusal: a scene the books cannot see is a scene nobody
+    # priced, and two lost stills used to leave the day's spending at zero.
+    last.attempts = attempts  # type: ignore[attr-defined]
+    raise last

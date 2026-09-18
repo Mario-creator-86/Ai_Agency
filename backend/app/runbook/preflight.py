@@ -34,6 +34,28 @@ from app.youtube.models import YouTubeConnection
 #: A check that stops the day entirely. Everything else degrades it.
 BLOCKING = "BLOCKING"
 DEGRADING = "DEGRADING"
+#: A line that tells the Owner something about the run he is about to get and can never fail
+#: it. The autonomy mode is the one such line: MANUAL is not a fault to be repaired, it is his
+#: decision, and a preflight that called it DEGRADED would be asking him to fix his own answer.
+#: The verdict below is computed over the other two severities only, so this holds structurally
+#: and not by the check happening to pass.
+INFORMATIONAL = "INFORMATIONAL"
+
+#: What each mode means for the day about to run, in the Owner's language.
+MODE_MEANS = {
+    "MANUAL": (
+        "Modul de autonomie este MANUAL: etapele care doar pregătesc merg singure, iar "
+        "randarea plătită și publicarea rămân deciziile tale."
+    ),
+    "SUPERVISED": (
+        "Modul de autonomie este SUPERVISED: etapele interne de rutină merg singure, iar "
+        "publicarea îți cere mai întâi aprobarea."
+    ),
+    "AUTONOMOUS_CEO": (
+        "Modul de autonomie este AUTONOMOUS_CEO: ziua merge singură în limitele politicii; "
+        "porțile dure rămân la fel de închise."
+    ),
+}
 
 
 def _check(
@@ -62,6 +84,22 @@ def run_preflight(engine: Engine, settings: Settings, vault: Any) -> dict[str, A
                 BLOCKING,
                 "Autonomia este pornită.",
                 "STOP autonomie este activ; nu se pornește nicio rulare.",
+            )
+        )
+
+        # Which stages the day may run at all is the Owner's mode, and the preflight is where
+        # he reads the studio before it starts: a MANUAL day that films nothing should say so
+        # here rather than be discovered in a run summary of skipped stages. It refuses
+        # nothing by itself — the mode is his answer, not a missing capability.
+        autonomy_mode = str((policy.autonomy_mode if policy else None) or "MANUAL")
+        checks.append(
+            _check(
+                "autonomy_mode",
+                True,
+                INFORMATIONAL,
+                MODE_MEANS.get(autonomy_mode, f"Modul de autonomie este {autonomy_mode}."),
+                "",
+                detail=autonomy_mode,
             )
         )
 
@@ -230,12 +268,15 @@ def run_preflight(engine: Engine, settings: Settings, vault: Any) -> dict[str, A
         )
     )
 
-    failed = [check for check in checks if not check["ok"]]
+    # An informational line can never change the verdict, whatever it reports: the mode is
+    # the Owner's decision about the studio, not a capability the studio is missing.
+    failed = [check for check in checks if not check["ok"] and check["severity"] != INFORMATIONAL]
     blocking = [check for check in failed if check["severity"] == BLOCKING]
     status = "BLOCKED" if blocking else ("DEGRADED" if failed else "READY")
 
     return {
         "status": status,
+        "autonomy_mode": autonomy_mode,
         "checked_at": utc_now(),
         "checks": checks,
         "blocking_failures": [check["name"] for check in blocking],

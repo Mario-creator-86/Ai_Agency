@@ -150,7 +150,7 @@
       "original_path": "24_VISUAL_CONTINUITY_ASSET_SYSTEM.md",
       "path": "docs/architecture/24_VISUAL_CONTINUITY_ASSET_SYSTEM.md",
       "original_sha256": "2405eb6efe0f8b9d12d07501cb2394bd45690219062afba5ae0eaea6584f02a9",
-      "sha256": "8a5d4396c6a513464023bbb6d8ce212d5f7bbe5b868f77ec4a710ad85f12693a"
+      "sha256": "73d5c9cd5816350c2db8b0354d96c1ee1d1abf40cd22efa93f9d0de0bc0cb487"
     },
     {
       "original_path": "25_DEPLOYMENT_BACKUP_OPERATIONS.md",
@@ -306,13 +306,13 @@
       "original_path": "50_CONTENT_GATE_MATRIX.md",
       "path": "docs/architecture/50_CONTENT_GATE_MATRIX.md",
       "original_sha256": "9c0a40fb66ccf2f5bf8c5b20ada655be5ae9c72e00afe7d5ebd651b34af06233",
-      "sha256": "f7da10d822db0bb091467380ca94a61b0fe3cb4423a44839fb903fa4396223d8"
+      "sha256": "a436dab0d204947cc324787b382e13439ffffb2e131547b8daee5cac6d4c2a0e"
     },
     {
       "original_path": "51_AUTONOMY_MODE_SEMANTICS.md",
       "path": "docs/architecture/51_AUTONOMY_MODE_SEMANTICS.md",
       "original_sha256": "c18937e2da4d958f50dba801b5c3862c1b78131fce1c9e06f45c2beb6db82948",
-      "sha256": "17cb41699d4b6a0e926af034a8a4d6282a4fa4b588edb988264b71b570041a29"
+      "sha256": "33f42c6c80cfd5e7bf97887c670213a25ad80e61b2101e2ec9cf4acb5cf40f28"
     },
     {
       "original_path": "52_OBSERVABILITY_METRICS_CATALOG.md",

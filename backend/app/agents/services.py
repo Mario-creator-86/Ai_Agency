@@ -43,7 +43,7 @@ from app.db import lock_for_write
 from app.economy.accountant import may_run_agent
 from app.models import OwnerPolicy
 from app.providers.registry import ProviderRegistry
-from app.services import append_event, utc_now
+from app.services import append_event, may_act, utc_now
 from app.workflows.services import append_event_with_outbox
 
 logger = logging.getLogger("studio.agents")
@@ -517,6 +517,17 @@ def _assert_policy_allows_run(session: Session, agent: Agent, registry: Provider
             "Global autonomy stop is active; Owner must clear it first.",
             "BLOCKED_POLICY",
         )
+
+    # 1b. Autonomy mode. A run is an employee thinking: a reversible internal write (T1,
+    # 31's "create draft"), which every mode allows. Asking anyway is what makes the mode
+    # real rather than a label, and it is what refuses the run should the Owner ever take
+    # the studio below MANUAL's floor or should safe mode open under a run in flight. The
+    # tier of what the agent's answer is then *used* for — a page fetched, a shot bought, a
+    # film uploaded — is asked separately by the stage that does it (`STAGE_ACTIONS` in
+    # app.runbook.stages), because the kernel cannot know from a prompt what will follow it.
+    verdict = may_act(session, "agent.run", "T1", requester=agent.id)
+    if not verdict["allowed"]:
+        raise PolicyKernelError(verdict["reason"], verdict["status"])
 
     # 2. Lifecycle
     if agent.lifecycle != "ACTIVE":
