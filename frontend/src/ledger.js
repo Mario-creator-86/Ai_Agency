@@ -52,6 +52,21 @@ export const KINDS = [
   ['owner', 'Owner'],
 ];
 
+/**
+ * Jobs the scheduler runs on its own clock that make nothing: they read, check and tidy.
+ * A restart creates several in one second, and calling them "production started" told the
+ * Owner films were being made when none was (measured 2026-09-18). A job not named here -
+ * the daily run above all - still reads as production.
+ */
+const ROUTINE_JOB = {
+  WATCHDOG: 'watchdog',
+  MODEL_REVIEW: 'model review',
+  MODEL_RESEARCH: 'model research',
+  DIRECTOR_LOOP: "the Director's loop",
+  TRENDS_REFRESH: 'trends',
+  WEEKLY_REVIEW: 'weekly review',
+};
+
 const STAGE_LABEL = {
   RESEARCH: 'Research',
   RESEARCHED: 'Researched',
@@ -201,6 +216,12 @@ export function describeEvent(event, names = {}) {
     case 'workflow.created':
     case 'workflow.job_scheduled':
     case 'workflow.job_activated':
+      if (type === 'workflow.created' && !payload.current_stage && ROUTINE_JOB[payload.workflow_type]) {
+        label = 'routine job started';
+        text = ROUTINE_JOB[payload.workflow_type];
+        kind = 'system';
+        break;
+      }
       label = type === 'workflow.created' ? 'production started' : 'workflow scheduled';
       text = payload.current_stage ? `stage: ${stageLabel(payload.current_stage)}` : '';
       break;

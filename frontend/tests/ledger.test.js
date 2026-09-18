@@ -148,3 +148,22 @@ test('a letter to the Owner files under the Owner chip and says so', () => {
   assert.equal(item.forOwner, true);
   assert.equal(item.label, 'writes · escalation · TO YOU');
 });
+
+test('a routine job that starts is not called production', () => {
+  // Measured on the Owner's studio on 2026-09-18: a restart created the model review, the
+  // Director's loop and the watchdog in one second, and the ledger said "production started"
+  // three times while nothing was being made - he read it as films starting on their own.
+  const watchdog = describeEvent({ event_type: 'workflow.created', payload: { job_name: 'watchdog', workflow_type: 'WATCHDOG' } });
+  assert.equal(watchdog.label, 'routine job started');
+  assert.equal(watchdog.text, 'watchdog');
+  assert.equal(watchdog.kind, 'system');
+  const review = describeEvent({ event_type: 'workflow.created', payload: { job_name: 'model_review_daily', workflow_type: 'MODEL_REVIEW' } });
+  assert.equal(review.label, 'routine job started');
+  assert.equal(review.text, 'model review');
+  const loop = describeEvent({ event_type: 'workflow.created', payload: { job_name: 'director_loop', workflow_type: 'DIRECTOR_LOOP' } });
+  assert.equal(loop.text, "the Director's loop");
+  // The day itself, and a workflow that carries a stage, are still production.
+  const day = describeEvent({ event_type: 'workflow.created', payload: { job_name: 'daily_main', workflow_type: 'DAILY_RUN' } });
+  assert.equal(day.label, 'production started');
+  assert.equal(day.kind, 'production');
+});
