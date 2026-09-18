@@ -15,17 +15,23 @@ and would still only tell you about the moment it ran.
 from __future__ import annotations
 
 import shutil
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from app.agents.models import Agent, ModelRecord
+from app.agents.models import Agent, ModelRecord, ProviderRecord
+from app.agents.vision import vision_agent
 from app.config import Settings
+from app.economy.budget import budget_status
+from app.economy.prices import price_for
 from app.media.factory import describe as describe_media
 from app.media.factory import media_readiness
+from app.media.models import CharacterBible, MediaAsset
 from app.media.toolchain import find_ffprobe
 from app.models import OwnerPolicy
+from app.publishing.models import ChannelRecord
 from app.publishing.services import channel_bindings
 from app.research.service import research_health
 from app.services import utc_now
@@ -58,6 +64,12 @@ MODE_MEANS = {
 }
 
 
+#: The two units an agent run is costed in (`app.economy.prices.llm_cost_vr`). Both sides must
+#: be priced or the cost is None, so half a price is no price here either: a run priced on one
+#: side only would be read by the budget as cheaper than it was.
+TOKEN_UNITS = ("per_1m_input_tokens", "per_1m_output_tokens")
+
+
 def _check(
     name: str, ok: bool, severity: str, present: str, absent: str, detail: str = ""
 ) -> dict[str, Any]:
@@ -68,6 +80,223 @@ def _check(
         "message": present if ok else absent,
         "detail": detail,
     }
+
+
+# --------------------------------------------------------------- what the Owner alone supplies
+#
+# The five checks below are about the film the day produces rather than about whether it may
+# start, and each one names something only the Owner can give the studio. None of them is
+# BLOCKING, and two of the five are informational: a budget he has not set while the studio is
+# in TEST, and a serial channel he has not created, are decisions of his. A preflight that
+# refused the day over them would be asking him to repair his own answer.
+#
+# Each reads the database and nothing else — no vendor is asked, no key is used, no job is
+# queued — so the preflight stays as cheap and as safe on the hundredth run as on the first.
+
+
+def _budget_check(engine: Engine) -> dict[str, Any]:
+    """Whether any budget is active at all.
+
+    With none, `reserve_spend` still takes the write lock and still holds the film's money —
+    it simply has no limit to refuse it against, so a day of retries can spend whatever the
+    vendor will sell. The figure is his and nobody else's: the Accountant escalates, it does
+    not approve.
+    """
+    budgets = budget_status(engine)["budgets"]
+    named = ", ".join(f"{b['period']} {b['limit_usd']} USD ({b['state']})" for b in budgets)
+    return _check(
+        "spending_budget",
+        bool(budgets),
+        DEGRADING,
+        f"{len(budgets)} bugete active: {named}.",
+        "Niciun buget activ: rezervarea ține banii filmului, dar nu are de ce să îl refuze. "
+        "Pune-l cu PUT /economy/budget (biroul Contabilitate); nimeni altcineva nu îl poate pune.",
+        detail=named,
+    )
+
+
+def _price_check(session: Session) -> dict[str, Any]:
+    """Whether the models the day's employees think with have a price on both token sides.
+
+    Measured on the live copy: 391 `agent_run` rows carried `cost_vr` NULL, because no price
+    existed for the models they ran on, so the books saw a fraction of the day. The check
+    names the provider kinds that are unpriced and never invents a figure for them — a price
+    is the Owner's, and a guessed one in the books is worse than the gap the Accountant reports.
+    """
+    running = session.execute(
+        select(ProviderRecord.provider_type, ModelRecord.model_name)
+        .select_from(Agent)
+        .join(ModelRecord, ModelRecord.id == Agent.model_id)
+        .join(ProviderRecord, ProviderRecord.id == ModelRecord.provider_id)
+        .where(
+            Agent.lifecycle == "ACTIVE",
+            Agent.provider_id.is_not(None),
+            Agent.model_id.is_not(None),
+        )
+    ).all()
+    # The price table is keyed by the connection's kind, which is what the adapter passes to
+    # `price_lookup`; `ProviderRecord.provider_type` holds it (upper case for the seeded
+    # endpoint, lower case for one the Owner saved in Settings).
+    wanted = {(str(kind or "").lower(), str(model)) for kind, model in running if kind and model}
+    unpriced = {
+        (kind, model)
+        for kind, model in wanted
+        if any(price_for(session, kind, model, unit) is None for unit in TOKEN_UNITS)
+    }
+    kinds = sorted({kind for kind, _ in unpriced})
+    models = ", ".join(f"{kind}:{model}" for kind, model in sorted(unpriced))
+    if not wanted:
+        # Nothing runs, so nothing is unpriced. The `agents` check above is where a studio
+        # with no runnable employee is reported; saying it twice would read as two faults.
+        return _check(
+            "model_prices",
+            True,
+            DEGRADING,
+            "Niciun angajat cu model alocat, deci nu este nimic de prețuit.",
+            "",
+        )
+    return _check(
+        "model_prices",
+        not unpriced,
+        DEGRADING,
+        f"{len(wanted)} modele pe care rulează angajații au preț pe jetoane.",
+        f"Modele fără preț pe jetoane la: {', '.join(kinds)}. Până când îl tastezi "
+        "(PUT /economy/prices, pe model sau «*» pentru tot felul), fiecare rulare a unui "
+        "angajat se înregistrează fără cost, iar cărțile văd o fracțiune din zi. Studioul nu "
+        "inventează un preț.",
+        detail=models or f"{len(wanted)} modele, toate prețuite",
+    )
+
+
+def _vision_check(session: Session) -> dict[str, Any]:
+    """Whether any active employee's model the provider says can see.
+
+    Without one, `picture_qc` and `character_drift_qc` are NOT_APPLICABLE on every film and
+    certify nothing — which is honest, and which also means a film of eight blank fields
+    passes every automatic check and reaches the Director as a finished short. The Owner has
+    no other single place that tells him this, so the line says the consequence, not the fact.
+    """
+    seer = vision_agent(session)
+    return _check(
+        "vision_capability",
+        seer is not None,
+        DEGRADING,
+        f"{seer[1]} poate privi imaginile." if seer else "",
+        "Niciun angajat activ nu are un model care declară vedere: verificarea imaginilor și "
+        "cea a personajelor stau deoparte la fiecare film, deci un film de câmpuri goale ar "
+        "trece toate verificările automate. Alocă un model cu vedere unui angajat "
+        "(Angajați → Model).",
+        detail=f"{seer[0]} {seer[1]}" if seer else "",
+    )
+
+
+def _readable_reference(session: Session, character: CharacterBible) -> bool:
+    """Whether one of the bible's slots holds a picture the studio could actually draw from.
+
+    A slot holds a stored asset id or null, never a description standing in for an image. The
+    row must exist — that is what `image_reference_for_scene` refuses a locked character's film
+    over — and its file must still be on disk, because `picture_qc` reads the bytes: a row
+    pointing at a file that was moved looks filled here and has nothing to compare against
+    there. One `stat` on a local path is not a probe; nothing is opened over the network.
+    """
+    slots = (
+        character.reference_assets_json if isinstance(character.reference_assets_json, dict) else {}
+    )
+    for value in slots.values():
+        if not isinstance(value, str) or not value.strip():
+            continue
+        asset = session.get(MediaAsset, value.strip())
+        if asset is None:
+            continue
+        try:
+            if Path(asset.uri_or_path).is_file():
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _character_reference_check(session: Session) -> dict[str, Any]:
+    """Whether the characters that matter have a reference picture.
+
+    A character whose look is locked and has no readable reference *refuses* its film rather
+    than inventing a face — a blocked day, and one the Owner can prevent the evening before,
+    so that case degrades the run and names him. A character with no lock simply has none: its
+    still is drawn from the prompt as it always was, so that case is a line he reads.
+    """
+    characters = list(
+        session.scalars(select(CharacterBible).order_by(CharacterBible.canonical_name))
+    )
+    missing = [c for c in characters if not _readable_reference(session, c)]
+    locked = [c for c in missing if bool((c.identity_locks_json or {}).get("visual"))]
+    unlocked = [c for c in missing if c not in locked]
+    names = ", ".join(c.canonical_name for c in locked) or ", ".join(
+        c.canonical_name for c in unlocked
+    )
+    return _check(
+        "character_references",
+        not missing,
+        DEGRADING if locked else INFORMATIONAL,
+        f"{len(characters)} personaje cu imagine de referință citibilă."
+        if characters
+        else "Niciun personaj în Character Bible; nu se cere nicio referință.",
+        (
+            f"Personaje cu înfățișarea blocată și fără imagine de referință citibilă: {names}. "
+            "Filmul lor se refuză înainte de prima scenă, în loc să li se inventeze o față. "
+            "Produ setul cu POST /media/characters/{id}/reference-set (consumă credite de "
+            "imagine, deci este actul tău)."
+            if locked
+            else f"{len(unlocked)} personaje fără imagine de referință: {names}. Fiecare imagine "
+            "a lor este o invenție nouă, iar verificarea personajelor nu are cu ce compara. "
+            "POST /media/characters/{id}/reference-set le produce."
+        ),
+        detail=names,
+    )
+
+
+def _serial_channel_check(session: Session, bindings: dict[str, dict]) -> dict[str, Any]:
+    """Whether the serial has a channel to reach, and whether the Director may approve episodes.
+
+    Both halves are his. A studio with no OFFICE_SERIAL row makes no serial, and a Director
+    without the leave leaves every episode DRAFT waiting for his hand — which is his right,
+    and is not autonomy. So the line says which of the two is missing and names the command,
+    and it never fails the day.
+    """
+    channel = session.scalar(
+        select(ChannelRecord).where(ChannelRecord.channel_type == "OFFICE_SERIAL")
+    )
+    if channel is None:
+        return _check(
+            "serial_channel",
+            False,
+            INFORMATIONAL,
+            "",
+            "Niciun canal OFFICE_SERIAL: serialul nu are unde ajunge. Creează slotul în "
+            "Publicare → Canale.",
+        )
+    bound = bool(bindings.get(channel.id, {}).get("publisher_ready"))
+    may_approve = bool(channel.director_may_approve_episodes)
+    policy_route = f"POST /publishing/channels/{channel.id}/publish-policy"
+    if not bound:
+        absent = (
+            f"Canalul serialului ({channel.channel_name}) nu este legat de un cont YouTube "
+            "conectat: episoadele se produc, dar nu au unde urca. Leagă-l în Publicare → "
+            "Sloturi de canale."
+        )
+    else:
+        absent = (
+            "Canalul serialului este legat, dar Directoarea nu are dreptul să aprobe episoade: "
+            f"fiecare episod rămâne DRAFT și te așteaptă pe tine. Dreptul se dă cu "
+            f"{policy_route} (director_may_approve_episodes)."
+        )
+    return _check(
+        "serial_channel",
+        bound and may_approve,
+        INFORMATIONAL,
+        "Serialul are canal legat, iar Directoarea poate aproba episoade.",
+        absent,
+        detail=f"{channel.channel_name}: legat={bound}, aprobă Directoarea={may_approve}",
+    )
 
 
 def run_preflight(engine: Engine, settings: Settings, vault: Any) -> dict[str, Any]:
@@ -267,6 +496,15 @@ def run_preflight(engine: Engine, settings: Settings, vault: Any) -> dict[str, A
             detail=publishing_detail,
         )
     )
+
+    # What the Owner has not supplied yet. Read last, in one more session, because none of it
+    # decides whether the day may start — it decides whether the day is worth having.
+    checks.append(_budget_check(engine))
+    with Session(engine) as session:
+        checks.append(_price_check(session))
+        checks.append(_vision_check(session))
+        checks.append(_character_reference_check(session))
+        checks.append(_serial_channel_check(session, bindings))
 
     # An informational line can never change the verdict, whatever it reports: the mode is
     # the Owner's decision about the studio, not a capability the studio is missing.

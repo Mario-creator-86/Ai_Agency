@@ -631,3 +631,66 @@ def test_bootstrap_seeds_the_documented_price_beside_the_chart_of_accounts(engin
     price(engine, "elevenlabs", "*", "per_1k_characters", "0.11")
     assert seed_documented_prices(engine)["seeded"] == 0
     assert [(row["usd"], row["provenance"]) for row in list_prices(engine)] == [("0.11", "OWNER")]
+
+
+def test_a_price_makes_an_estimate_and_only_the_invoice_makes_it_the_truth(engine):
+    """The last figure in this file that was never checked against a vendor.
+
+    A price the Owner typed produces an ESTIMATED row the moment the studio spends, which is
+    the whole point of the table above — but it stays the studio's own arithmetic until the
+    vendor's invoice arrives. Measured before the reconciliation existed: `spend_since`
+    counted the estimate and the bill, so a day priced at 3.00 and billed at 3.30 read 6.30.
+    """
+    from uuid import uuid4 as _uuid4
+
+    from app.economy.budget import spend_since
+    from app.economy.services import (
+        ReconciliationCommand,
+        reconcile_provider_invoice,
+        record_provider_cost,
+        seed_chart_of_accounts,
+    )
+
+    seed_chart_of_accounts(engine)
+    set_price(
+        engine,
+        PriceCommand(
+            command_id=_uuid4(),
+            provider_kind="elevenlabs",
+            resource="*",
+            unit="per_1k_characters",
+            usd="1.50",
+            provenance="OWNER",
+        ),
+    )
+    estimated = record_provider_cost(
+        engine,
+        provider="elevenlabs",
+        external_reference="render:p:scene:1:voice",
+        status="ESTIMATED",
+        amount="3.00",
+        attribution={"render_job_id": "p", "price_provenance": "OWNER"},
+    )
+    with Session(engine) as session:
+        before = spend_since(session, "2000-01-01T00:00:00+00:00")
+    assert before["spent_usd"] == "3", "the Owner's price, believed until it is checked"
+
+    invoice = reconcile_provider_invoice(
+        engine,
+        ReconciliationCommand(
+            command_id=_uuid4(),
+            provider="elevenlabs",
+            external_reference="EL-2026-09",
+            amount="3.30",
+            scope="CORRELATION",
+            correlation="p",
+        ),
+    )
+    assert invoice["matched"] == 1 and invoice["difference_vr"] == "0.3"
+    with Session(engine) as session:
+        after = spend_since(session, "2000-01-01T00:00:00+00:00")
+        row = session.get(ProviderCostRecord, estimated["id"])
+    assert after["spent_usd"] == "3.3", "what the vendor charged, and not it plus the guess"
+    assert row.status == "ESTIMATED" and row.reconciled_at, (
+        "the estimate is kept whole — it is the record of what the studio believed"
+    )

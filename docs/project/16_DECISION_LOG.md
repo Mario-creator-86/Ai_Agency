@@ -2275,3 +2275,215 @@ four files and its regression set, 102 frontend tests with 14 new, and `check_do
 `tests/test_documentation.py` for this part. `javascript_passed` moves 87 → 102 because that figure *is*
 a whole-suite measurement of its suite; `python_passed` does not move, because inventing a number for a
 run nobody made is the one thing these documents exist to prevent.
+
+## ADR-PREFLIGHT-003 — The preflight reports what only the Owner can supply
+**Status:** Implemented, 2026-09-18
+
+Problem: the preflight answered "can the day start" and nothing answered "is the day worth having".
+Five things decide whether the first real day produces a quality film, every one of them was measured
+as absent on the live copy, and the Owner had no single place that told him: no active budget, no
+price for the models the employees run on, no employee whose model declares vision, five reference
+slots null in every studio that has ever run, and a serial channel with no leave for the Director.
+Choice: five more checks in `app.runbook.preflight`, each reading the database only —
+`app.economy.budget.budget_status`, `app.economy.prices.price_for` on both token units,
+`app.agents.vision.vision_agent`, `CharacterBible.reference_assets_json` against `MediaAsset`, and the
+OFFICE_SERIAL `ChannelRecord` with `channel_bindings`. Rejected: probing a vendor to confirm a price
+or a model's vision (a preflight that made outbound calls would be slow, would fail for reasons
+unrelated to the studio, and under the Owner's rule of 2026-09-17 would cost money to answer a
+question the record already answers), and reading a vendor's published price to fill a gap in the
+price table (a guessed price in the books is worse than the gap the Accountant reports). No schema
+change: every fact these checks need is already a column.
+
+## ADR-PREFLIGHT-004 — A check never blocks the day for something the Owner chose
+**Status:** Implemented, 2026-09-18
+
+Problem: a budget the Owner has not set while the studio is in TEST, and a serial channel he has not
+created, are answers of his, not capabilities the studio is missing. A preflight that refused the day
+over either would be asking him to repair his own decision, which is the same mistake `autonomy_mode`
+avoided by being INFORMATIONAL. Choice: none of the five is BLOCKING; `serial_channel` is
+INFORMATIONAL always, and `character_references` is DEGRADING only where a character whose look is
+*locked* has no readable reference — that case really does refuse a film
+(`image_reference_for_scene` raises rather than invent a face), so it is a blocked day the Owner can
+prevent in advance; an unlocked character with no picture is a line he reads. The verdict is computed
+over BLOCKING and DEGRADING only, so this holds structurally rather than by the checks happening to
+pass, and a test asserts that a studio with nothing configured still reports exactly `stop_autonomy`
+and `llm_provider` as blocking.
+
+## ADR-GOVERNANCE-006 — How long an approval stands is the Owner's setting
+**Status:** Implemented, 2026-09-18
+
+Problem: `APPROVAL_EXPIRES_AFTER_HOURS = 24` was a module constant in `backend/app/services.py`. One
+number decides three things — how long an unanswered question stands, how long a refusal keeps the
+studio from asking again, and how long a yes can be spent — and the Owner could not reach any of them
+without a source edit. Choice: `approval_expires_after_hours` on `Settings` (default 24, `ge=1`,
+`le=168`, `STUDIO_APPROVAL_EXPIRES_AFTER_HOURS`), with the bounds stated as what they protect: below
+an hour a question could expire before he reads it, above a week a yes could be spent long after the
+film it was asked about. `services.py` reads it through `approval_expires_after_hours()`, a local
+import of `Settings` with `getattr` and a documented fallback of 24 — the shortcut `providers.retry`
+and `integrations.autoconfig` already take, because this module is called from inside a session and
+has no handle on the application, and a studio whose settings cannot be built must still be able to
+ask the Owner a question rather than raise while asking it. Behaviour unchanged;
+`tests/test_approvals.py` (18) and `tests/test_autonomy_modes.py` pass untouched.
+
+## 2026-09-18 — PREFERRED was honoured nowhere, so it was implemented in the hiring path and not by making it REQUIRED
+
+`RoleCapability.requirement_level` accepted any string, but the only readings in the whole codebase
+were `== "REQUIRED"` in `_check_required_capabilities` (`backend/app/agents/services.py`) and,
+indirectly, in `assign_agent`. The "PREFERRED" in `backend/app/integrations/lifecycle.py` is the last
+step of a model's life (DISCOVERED → … → PREFERRED), not a requirement level, so there was no
+precedent for a preference in assignment at all. **Decision: implement it where the role is owned —
+`seed_role_preferences` writes the PREFERRED row on the Video Editor's role, idempotently at every
+start-up so that it also reaches a studio whose roles were created earlier, and
+`prefer_capable_models` acts on it.** Making the capability REQUIRED was rejected: it would have
+blocked the role in a studio with no seeing model, which is exactly what the brief forbids. The move
+writes `agent.model_preferred`, never `agent.model_assigned`: the second event is the proof of the
+Owner's choice and `apply_llm_allocation` reads it as "already configured", so writing it here would
+make the next start-up read the studio's own move as his and stop applying his allocation file. A
+candidate must be available and declare everything the role *requires*, not only what it prefers,
+otherwise the move would trade a working employee for one the Policy Kernel blocks. `list_roles`
+still returns REQUIRED capabilities only — the field is called `required_capabilities`, and listing a
+preference there would tell the Owner the Video Editor needs a seeing model to work at all, which is
+false.
+
+## 2026-09-18 — `vision` is a row in the table, not a claim about any model
+
+The seed now creates `Capability(name="vision")`, because a role can only prefer a capability the
+studio has by name. **Decision: attach it to no proposed model.** `SEEDED_MODEL_CAPABILITIES` names
+the four text capabilities explicitly, replacing the loop that wrote "every capability" onto every
+proposed model. Nothing in the seed contacts a provider, so a seeded guess that a model can see would
+make the picture gate certify a look nobody took; `sync_provider_models` attaches `vision` where the
+vendor itself declares it, which is the only evidence that exists.
+
+## 2026-09-18 — A factual scene's cast is read from the scene itself, in two readings, in the order of the evidence
+
+**Decision: the scriptwriter's `characters` list first (the shape the serial's script already uses),
+then the names in the requested picture (`visual_prompt`/`visual_description`, read through one
+`_scene_visual` so the cast and the scene cannot disagree about what the picture says). The narration
+is not read at all:** in a factual film it is the narrator's voice, and a name spoken over a
+photograph of a mirror does not put that person in frame. Matching is on the full canonical name or
+the first name — the rule `app.story.services.bibles_for_roster` already uses to match a cast member,
+without the title that rule keeps by mistake ("Aris", not "Dr.") — capitalised as in the bible, and
+never on a first name followed by another capitalised word, so that the observer "Vera Rubin" stays a
+telescope. The cost of that last rule is a Title Case scene whose character is missed; the cost of
+dropping it would have been an invented cast, and a gate comparing a film against a cast nobody put
+in it certifies nothing.
+
+## 2026-09-18 — "No cast, by design" is written in the storyboard's creation event, not in a new column
+
+The ledger is where the studio already keeps facts of this kind (`agent.model_assigned` is exactly
+such a fact), and what is needed here is a record, not a lock. **Decision: `media.storyboard_created`
+carries `scenes_with_cast` and `cast_note`, read back by
+`app.media.services.storyboard_cast_note(session, storyboard_id)` and returned by `get_storyboard` as
+`cast_note`.** So migration 0046 was not taken and the revision chain keeps one head, the one the
+economy moved with 0045. A storyboard written before this revision, or one whose scenes do list
+characters, answers None: "nobody said" and "somebody is in it" are both not this.
+
+## 2026-09-18 — The letter about what is waiting is one a day, not one a question, and does not exist when nothing waits
+
+The pattern followed is `_letter_once_a_day` exactly: idempotent on the studio's business date,
+decided behind the write lock, so two stages of the same day cannot write two letters. **Decision:
+one letter per day naming every standing question, and nothing at all when nothing is standing.** A
+letter per approval request would have buried the single decision he has to make under duplicates —
+the mistake `request_approval` already avoids by keeping one request per (action, subject). The
+silence is meaningful: a day with no letter means nothing is being asked of him. The questions are
+ordered as the day raised them (by `created_at`), so the first line is the oldest and the deadline in
+the last line is its deadline. The cost of a question is read from the request itself
+(`approval_view.cost_label`, «necunoscut» where `cost_usd` is None) and never recomputed, so the
+governance page and the mailbox cannot say two different things about the same question; the
+model-written evidence enters the text cut at 120 characters, because it is what the panel shows
+beside the same question and a long title may not become the whole letter. `reconcile_day` calls it
+as its first act rather than its last: a close that fails because a model never produced the report
+must not swallow the only letter saying he has decisions standing.
+
+## 2026-09-18 — Reconciliation marks the estimate, it does not subtract it
+
+The obvious variant — subtracting the estimated sum from the period — would have required
+`spend_since` to know about invoices and would have left the books with a figure that can no longer
+be reconstructed from the rows. **Decision: the estimate is kept whole, because it is the document of
+what the studio believed a film would cost, and is stamped `reconciled_at`; `spend_since` skips it.**
+The BILLED row the invoice writes carries the hour of the last spend it pays for, so it falls in the
+same period as the estimates it replaced. The exact consequence: after a reconciliation a period
+counts the billed sum once, plus any row in the period the invoice did not cover, and
+`treasury_snapshot.unbilled_provider_costs` falls the same way, because an estimate that has been
+paid is no longer an obligation coming. **An invoice over an already reconciled period is refused
+without `expected_version`, unlike a price:** `set_price` accepts a command with no version and
+replaces what stands, which here would let an inattentive command reverse a ledger posting. The
+correction, when it comes with the right version, posts the mirror of the previous transaction
+(`reverses_transaction_id`, as `reverse_transaction` does), stamps `reconciled_at` on the invoice it
+replaces so it stops being counted, and re-adopts the estimates the first one covered. The ledger
+stays append-only and the balance stays closed.
+
+## 2026-09-18 — What could not be matched is reported, never dropped and never kept quiet
+
+`unmatched_json` sits on the reconciliation row and not only in the HTTP answer, because a spend the
+invoice does not explain is the finding, not a detail of one request. Three kinds: a row already
+reconciled by another invoice (it cannot be paid twice), a row already billed directly (it is not an
+estimate to replace), and the case where the invoice covers no estimate in the books at all — the sum
+is still recorded, with the reason, because the vendor billed whether or not the studio can explain
+it. The difference between what the vendor billed and what the studio estimated is reported as a
+figure (`difference_vr`) rather than melted into the total: that distance is the price of an
+assumption.
+
+## 2026-09-18 — The migration head moved to 0045 in `main.py`, and 0046 stayed free
+
+`backend/app/main.py` is not the economy's file, but every test that starts the application fails at
+start-up if the database revision is not the pinned one, so one line and the comment that says why
+were changed there. The brief reserved 0045 for the economy and 0046 for the media part; the media
+part needed no column and took neither. **Decision recorded here so the next phase does not have to
+rediscover it: the chain is 0039 → 0040 → 0043 → 0044 → 0045, `main.py` pins `0045_reconciliation`,
+and 0046 is free.** If a future part needs a cast column on `storyboard`, that is the number to take.
+
+## 2026-09-18 — `39_DAILY_AUTONOMOUS_RUNBOOK` is edited and re-hashed
+
+The runbook's preflight section listed the checks the day makes, and five were added on 2026-09-18
+that it did not name — including two that report a state no severity in the document had, because
+they never fail the day. Its post-run section said "reconcile cost" and nothing about the letter the
+day now sends the Owner before it closes. **Decision: 39 gains two dated paragraphs — the five new
+checks with their severities and the rule that none of them blocks, and the waiting-approvals letter
+as the first act of the close — as a deliberate specification change under ADR-FOUNDATION-003, with
+its `sha256` re-recorded in `DOCUMENTATION_INDEX.json` (`1de4ef7a…` → `226397b6…`) and this entry
+as the reason.**
+
+## 2026-09-18 — `15_SECURITY_COSTS_OBSERVABILITY` was read against the new books and deliberately left unedited
+
+The question asked was whether that document still describes the books truthfully now that a
+reconciliation exists. It does: its *Cost controls* section already requires recording "estimate
+before action; reserved amount; actual/reconciled amount", and its financial metrics already list
+"reconciliation backlog" — sentences that were aspirational when written and are now met by
+`reserve_spend`, `record_render_costs` and `provider_reconciliation`. Nothing in it is false, and its
+hard boundary (no ordinary agent's tool may hold outbound payment authority) is untouched by a route
+that is Owner-only through `require_owner`. **Decision: report it as incomplete rather than edit it,
+and spend no index hash.** What it does not say, and what a later editor of that document should add
+if it is opened for another reason: that reconciliation is the Owner's act alone because only he sees
+the invoice; that the estimate is kept and marked rather than replaced, so a period counts the
+estimate until the invoice arrives and the invoice afterwards, never both; and that an employee's
+token cost is computed in `agent_run` and never passes through `provider_cost_record`, so it is the
+one spend no invoice can yet reconcile. Editing a document to restate what it already says spends an
+index hash on nothing.
+
+## 2026-09-18 — «Ce are Owner-ul de făcut» becomes an ordered checklist, and keeps every line it had
+
+The section had grown by accretion: eleven bullets in the order the phases that needed them landed,
+inside the Money-and-sources section, which is not the order a person does them in on the morning of
+the first real day. **Decision: rewrite it as a numbered checklist — migrate, build, read the
+preflight, budgets, prices, token ceiling, sites and search engine, channels and their policy, a
+model that can see, the character reference sets, the fallback vendors, the autonomy mode, and only
+then the clock — move it under the readiness section, and leave a dated pointer where it stood.**
+Every existing bullet's content is kept and each line now carries three things: what to do, with what
+command or screen, and what happens if he skips it. Activating the daily job and installing the
+scheduled task are last on purpose: the Owner's rule of 2026-09-17 is that video generation costs
+money and happens only after everything is proven, and steps 1 to 12 are what "everything" means.
+Reconciling a vendor's invoice is step 14 because it cannot be done before there is a real spend to
+reconcile.
+
+## 2026-09-18 — The readiness phase's figures are attributed, and the suite figure is left for the verifier
+
+No whole-suite run was made by any of the four parts of this phase, and the brief for the documents
+forbids running one. **Decision: every figure recorded for this phase is written with the part that
+measured it beside it — 11 + 46 and its neighbours for the preflight part, 359 across five owned and
+nineteen neighbouring files for the workforce and storyboard part, 11 + 17 + 34 + 18 and its
+neighbours for the economy part, `check_docs.py` and `tests/test_documentation.py` for this one — and
+`PROJECT_STATE.json` keeps 1194 passed / 1 skipped as what it is: the Phase D/G closure's adversarial
+verifier's measurement of 2026-09-18, now older than the tree.** The whole-suite figure for this
+phase lands when the verifier takes it, after these documents. Inventing a number for a run nobody
+made is the one thing these documents exist to prevent.

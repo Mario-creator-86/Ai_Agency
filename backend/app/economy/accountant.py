@@ -21,10 +21,13 @@ live ElevenLabs models carry no catalogue price — at the Owner's own price for
 not the studio brought it home. Usage with no stored price is reported as unpriced, never as
 free.
 
-Two letters leave this desk on their own. A day whose film the budget refused was silent —
+Three letters leave this desk on their own. A day whose film the budget refused was silent —
 the stage was SKIPPED and nobody wrote to the Owner; `budget_refusal_letter` writes once a
 day. And the Director's loop and the mail rounds spent tokens under no ceiling;
 `may_run_agent` is the ceiling, and its refusal is a letter, once a day, not a run per run.
+And a SUPERVISED day left one approval request per film in a page nobody was told to open;
+`waiting_approvals_letter` names what is standing, what each question would cost, and when the
+oldest runs out — once a day, and never when nothing waits.
 """
 
 from __future__ import annotations
@@ -52,6 +55,7 @@ from app.integrations.models import Integration
 from app.media.models import VideoRenderJob
 from app.media.production_policy import credit_usd, estimate_cost_usd, record_measured_price
 from app.providers.registry import ProviderRegistry
+from app.services import pending_approvals
 
 ACCOUNTANT_ROLE = "Accountant"
 TEMPLATE_VERSION = "accountant-v1"
@@ -478,6 +482,97 @@ def budget_refusal_letter(
     )
 
 
+def _local_moment(iso: str, timezone: str) -> str:
+    """An ISO instant as the Owner reads a clock, or unchanged when it cannot be parsed.
+
+    A row written by an older revision, or by hand, is shown as it stands rather than being
+    guessed at: a letter about deadlines must not invent one.
+    """
+    try:
+        moment = datetime.fromisoformat(iso)
+    except ValueError:
+        return iso
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    return moment.astimezone(ZoneInfo(timezone)).strftime("%d.%m.%Y %H:%M")
+
+
+def waiting_approvals_letter(
+    engine: Engine, correlation_id: str | None = None, *, now: datetime | None = None
+) -> dict[str, Any]:
+    """Tell the Owner, once a day, that questions are standing and what they are about.
+
+    Measured before this: a SUPERVISED day wrote one `owner_approval_request` per film and the
+    run record carried its id, but nothing left the studio — the questions were visible only to
+    whoever happened to open the governance panel that day, and an unanswered one simply
+    expired after twenty-four hours and the film was never made. The budget refusal already had
+    its letter (`budget_refusal_letter`); a day that filmed and then waited had none.
+
+    One letter a day however many questions stand, by the same idempotency as the other two —
+    the business date in the letter's body, decided behind the write lock. Nothing is written
+    when nothing waits: a silent inbox must keep meaning "nothing to decide".
+
+    Each question is named by what it is about in his own language (`APPROVAL_ACTION_LABELS`),
+    with what it would cost — «necunoscut» where the studio cannot compute it, never zero — and
+    when the oldest of them runs out. The questions are ordered as the day raised them, so the
+    first line is the oldest and the deadline in the last line is its deadline.
+    """
+    waiting = sorted(pending_approvals(engine), key=lambda request: request.created_at)
+    if not waiting:
+        return {"written": False, "message_id": None, "questions": 0}
+    with Session(engine) as session:
+        timezone = studio_timezone(session)
+    questions = [
+        {
+            "id": request.id,
+            "action": request.action,
+            "action_label": request.action_label,
+            "subject": request.subject,
+            "risk_tier": request.risk_tier,
+            "requester": request.requester,
+            "cost_usd": request.cost_usd,
+            "cost_label": request.cost_label,
+            "expires_at": request.expires_at,
+            "created_at": request.created_at,
+        }
+        for request in waiting
+    ]
+    lines = []
+    for index, (request, question) in enumerate(zip(waiting, questions, strict=True), start=1):
+        # The evidence is the one part of a question written by a model (a film's title, a
+        # storyboard's estimate). It is what the governance panel already shows him beside the
+        # same question, clipped here so one long title cannot become the whole letter.
+        about = f" — {request.evidence[:120]}" if request.evidence else ""
+        lines.append(
+            f"{index}. {question['action_label']}{about}; cost {question['cost_label']}; "
+            f"expiră {_local_moment(request.expires_at, timezone)}."
+        )
+    oldest_expires_at = waiting[0].expires_at
+    count = len(questions)
+    headline = "O întrebare așteaptă" if count == 1 else f"{count} întrebări așteaptă"
+    return _letter_once_a_day(
+        engine,
+        "owner_waiting",
+        subject=f"{headline} răspunsul tău",
+        body={
+            "questions": questions,
+            "count": count,
+            "oldest_expires_at": oldest_expires_at,
+            "owner_attention": True,
+        },
+        body_text=(
+            f"Către Owner. {headline} răspunsul tău; studioul nu merge mai departe pe ele "
+            "fără el.\n"
+            + "\n".join(lines)
+            + f"\nCea mai veche expiră la {_local_moment(oldest_expires_at, timezone)}; "
+            "după expirare studioul nu mai poate acționa pe ea și întreabă din nou de la "
+            "capăt. Răspunsul se dă în panoul de guvernanță, la Aprobări."
+        ),
+        correlation=correlation_id or str(uuid4()),
+        now=now,
+    ) | {"questions": count}
+
+
 def agent_tokens_since(session: Session, since_iso: str) -> int:
     """Every token the studio's employees spent since a moment, whatever the run's outcome:
     an empty answer and a failed parse were billed like a good one."""
@@ -577,6 +672,10 @@ def reconcile_day(
 ) -> dict[str, Any]:
     """The Accountant's daily close: figures from the books, judgement from the Accountant."""
     correlation = correlation_id or str(uuid4())
+    # Before the model is asked anything, because a close that fails on a model must not also
+    # swallow the one letter that says the Owner has questions standing. Once a day, and
+    # nothing when nothing waits.
+    waiting_approvals_letter(engine, correlation, now=now)
     figures = daily_figures(engine, now or datetime.now(UTC))
     exceeded = [b for b in figures["budgets"] if b["state"] == "EXCEEDED"]
     warnings = [b for b in figures["budgets"] if b["state"] == "WARNING"]

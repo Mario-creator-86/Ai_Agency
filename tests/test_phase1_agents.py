@@ -552,3 +552,146 @@ def test_a_run_that_produced_no_text_is_not_recorded_as_a_success(seeded):
     assert result["status"] == "EMPTY_OUTPUT"
     assert "niciun text" in (result["error_detail"] or "").lower()
     assert _message_events(seeded["engine"]) == []
+
+
+# ---------------------------------------------------------------------------
+# What a role prefers of a model: the studio can see, or says it cannot
+# ---------------------------------------------------------------------------
+
+
+def _admit_seeing_model(engine, model_name: str) -> str:
+    """A model the provider says can see and can write, admitted into the registry.
+
+    Exactly what `sync_provider_models` records when a vendor declares it: the model is
+    available, and the capability rows are the vendor's own declaration. No provider is
+    contacted — the Owner's rule: nothing in a test costs money.
+    """
+    with Session(engine) as session, session.begin():
+        provider = session.scalars(select(ProviderRecord)).first()
+        model = ModelRecord(
+            id=str(uuid4()),
+            provider_id=provider.id,
+            model_name=model_name,
+            discovery_method="DECLARED_BY_PROVIDER",
+            context_length=None,
+            last_verified=utc_now(),
+            is_available=True,
+            notes="",
+        )
+        session.add(model)
+        session.flush()
+        for cap_name in ("text_generation", "vision"):
+            capability = session.scalar(select(Capability).where(Capability.name == cap_name))
+            session.add(
+                ModelCapability(
+                    model_id=model.id,
+                    capability_id=capability.id,
+                    confidence="DECLARED_BY_PROVIDER",
+                )
+            )
+        return model.id
+
+
+def _agent_on_role(session, role_name: str):
+    return session.scalar(
+        select(Agent)
+        .join(Role, Agent.role_id == Role.id)
+        .where(Role.name == role_name, Agent.lifecycle == "ACTIVE")
+    )
+
+
+def test_a_studio_that_has_admitted_a_seeing_model_ends_up_with_a_seeing_employee(engine):
+    """The picture gate can actually run in a seeded studio, once a seeing model exists.
+
+    Measured before this: `seed_initial_workforce` hired every employee on a text model, so
+    `vision_agent` returned None on every film and the picture and character checks reported
+    NOT_APPLICABLE for ever — a film of blank fields passed every automatic check. The
+    preference is recorded on the role, not on a model name, and acted on at the next start.
+    """
+    from app.agents.services import seed_initial_workforce
+    from app.agents.vision import vision_agent
+
+    seed_initial_workforce(engine)
+    with Session(engine) as session:
+        assert vision_agent(session, "VideoEditor", "Director") is None, (
+            "the seeded models declare no vision; nobody could have looked"
+        )
+
+    model_id = _admit_seeing_model(engine, "qwen3-vl:cloud")
+    seed_initial_workforce(engine)  # the studio's next start
+
+    with Session(engine) as session:
+        found = vision_agent(session, "VideoEditor", "Director")
+        assert found is not None
+        agent = session.get(Agent, found[0])
+        assert session.get(Role, agent.role_id).name == "VideoEditor"
+        assert agent.model_id == model_id
+        # And the move did not cost her the job: what the role requires is still satisfied.
+        from app.agents.services import _check_required_capabilities
+
+        _check_required_capabilities(session, agent)
+
+
+def test_the_preference_never_overrules_the_owners_own_assignment(engine):
+    """A model the Owner chose himself stays chosen, even when a seeing one is admitted.
+
+    `agent.model_assigned` is the record of his choice — the same guard the starting
+    allocation reads. Without it, every start would quietly undo what he saved from Settings.
+    """
+    from app.agents.services import prefer_capable_models, seed_initial_workforce
+    from app.services import append_event
+
+    seed_initial_workforce(engine)
+    with Session(engine) as session, session.begin():
+        editor = _agent_on_role(session, "VideoEditor")
+        chosen = editor.model_id
+        append_event(
+            session,
+            "agent.model_assigned",
+            "agent",
+            editor.id,
+            editor.version,
+            {"model_id": chosen},
+            str(uuid4()),
+        )
+    _admit_seeing_model(engine, "qwen3-vl:cloud")
+
+    result = prefer_capable_models(engine)
+
+    assert result["moved"] == []
+    assert any("Owner" in entry["why"] for entry in result["skipped"])
+    with Session(engine) as session:
+        assert _agent_on_role(session, "VideoEditor").model_id == chosen
+
+
+def test_a_studio_with_no_seeing_model_still_hires_and_still_runs(engine):
+    """Preferred is not required: nothing here blocks a studio whose Owner admitted no eyes.
+
+    The whole workforce is hired, the Video Editor works on the model the seed gave her, and
+    `vision_agent` says plainly that nobody can look — which is what the picture check turns
+    into NOT_APPLICABLE with a reason, never into a pass.
+    """
+    from app.agents.services import run_agent_task, seed_initial_workforce
+    from app.agents.vision import vision_agent
+
+    seed_initial_workforce(engine)
+    with Session(engine) as session, session.begin():
+        session.get(OwnerPolicy, 1).autonomy_stopped = False
+        for model in session.scalars(select(ModelRecord)):
+            model.is_available = True
+
+    with Session(engine) as session:
+        editor = _agent_on_role(session, "VideoEditor")
+        assert editor is not None and editor.lifecycle == "ACTIVE"
+        assert vision_agent(session) is None
+        editor_id, provider_id = editor.id, editor.provider_id
+
+    registry = ProviderRegistry()
+    registry.register(provider_id, _StubAdapter("Taie scena a treia."))
+    result = run_agent_task(
+        engine, registry, editor_id, "edit_scenes", "Cut scene three", "v1", str(uuid4())
+    )
+
+    assert result["status"] == "SUCCEEDED", result.get("error_detail")
+    roles = {row["name"]: row for row in list_roles(engine)}
+    assert "vision" not in roles["VideoEditor"]["required_capabilities"]

@@ -90,9 +90,14 @@ def registry_with(staffed, answer):
 def give_vision(engine, *agent_ids):
     """What a provider declares about a model, as the model sync records it."""
     with Session(engine) as session, session.begin():
-        capability = Capability(id=str(uuid4()), name="vision", description="sees pictures")
-        session.add(capability)
-        session.flush()
+        # The seed now writes this row itself, because a role can only prefer a capability
+        # the studio has a name for; the declaration below is still per model, as a provider
+        # makes it.
+        capability = session.scalar(select(Capability).where(Capability.name == "vision"))
+        if capability is None:
+            capability = Capability(id=str(uuid4()), name="vision", description="sees pictures")
+            session.add(capability)
+            session.flush()
         for agent_id in agent_ids:
             agent = session.get(Agent, agent_id)
             session.add(
@@ -633,3 +638,158 @@ def test_the_owners_own_quality_control_looks_at_the_pictures(
     assert any("Scene 3" in reason for reason in report["failure_reasons_json"])
     # One look at the whole film, here as in the day's stage.
     assert len(model.calls) == 1
+
+
+# ------------------------------------------ the film the studio actually makes, end to end
+
+
+def a_factual_film(engine, plan: list[dict], title="Factual"):
+    """A film built the way the studio builds one: the real storyboard path, then a render.
+
+    `plan` is the script writer's own scenes. Nothing here writes `character_ids_json`: that
+    is what `generate_storyboard_from_script` decides, and what this file exists to measure.
+    """
+    from app.media.services import generate_storyboard_from_script
+
+    ids = {k: str(uuid4()) for k in ("topic", "script", "asset", "job")}
+    now = utc_now()
+    with Session(engine) as session, session.begin():
+        session.get(OwnerPolicy, 1).autonomy_stopped = False
+        session.add(
+            TopicIdea(
+                id=ids["topic"],
+                title=title,
+                topic="space",
+                angle="a",
+                target_audience="g",
+                novelty_score=0.9,
+                status="SELECTED",
+                created_at=now,
+            )
+        )
+        session.flush()
+        session.add(
+            ScriptDraft(
+                id=ids["script"],
+                topic_id=ids["topic"],
+                title=title,
+                voiceover_full_text=" ".join(str(s.get("narration") or "") for s in plan),
+                scenes_json=plan,
+                claim_ids_json=[],
+                unverified_claim_ids_json=[],
+                status="APPROVED",
+                created_at=now,
+            )
+        )
+    board = generate_storyboard_from_script(
+        engine, ids["script"], "GENERATED_IMAGE", "9:16", str(uuid4())
+    )
+    ids["board"] = board["id"]
+    with Session(engine) as session, session.begin():
+        session.add(
+            MediaAsset(
+                id=ids["asset"],
+                asset_type="RENDERED_VIDEO",
+                uri_or_path=f"storage/{ids['asset']}.mp4",
+                file_size_bytes=10,
+                mime_type="video/mp4",
+                width=1080,
+                height=1920,
+                duration_seconds=12.0,
+                provider_name="RUNWAY_IMAGES",
+                license_status="PROPRIETARY_STUDIO",
+                provenance_hash="0" * 64,
+                created_at=now,
+            )
+        )
+        session.flush()
+        session.add(
+            VideoRenderJob(
+                id=ids["job"],
+                storyboard_id=ids["board"],
+                status="COMPLETED",
+                output_asset_id=ids["asset"],
+                started_at=now,
+            )
+        )
+    return ids
+
+
+def test_the_character_check_measures_a_factual_film_that_named_its_cast(
+    engine, staffed, seen_frames
+):
+    """The gate can now run on the studio's main product, not only on the serial.
+
+    Measured before this: every factual scene was written with an empty cast, so this check
+    answered "no scene in this film lists a character" on every film the studio has ever
+    made. The storyboard path now records the character its own picture names, and the check
+    compares that scene against the bible.
+    """
+    a_character(engine, name="Sarah Executive")
+    ids = a_factual_film(
+        engine,
+        [
+            {
+                "scene_index": 1,
+                "visual_description": "Sarah at the studio window, reading the day's figures",
+                "narration": "The day starts with the numbers.",
+            },
+            {
+                "scene_index": 2,
+                "visual_description": "A spectrum with a water line marked",
+                "narration": "A line of water.",
+            },
+        ],
+    )
+    give_vision(engine, staffed["agents"]["VideoEditor"].id)
+    registry, model = registry_with(
+        staffed, lambda _: all_good(scenes=2, characters=[(1, "Sarah Executive")])
+    )
+
+    result = evaluate_pictures(engine, registry, ids["asset"], str(uuid4()))
+
+    drift = result["character_drift_qc"]
+    assert drift["status"] == "MEASURED" and drift["passed"] is True
+    assert drift["characters_measured"] == 1
+    assert [row["scene"] for row in drift["characters"]] == [1]
+    assert len(model.calls) == 1, "one look per film"
+
+
+def test_a_factual_film_of_landscapes_has_no_cast_and_the_storyboard_says_why(
+    engine, staffed, seen_frames
+):
+    """An empty cast is a decision the storyboard recorded, not a gap nobody filled.
+
+    The check itself still certifies nothing here — it measured no character, and it says so
+    with `passed` None, which is the rule. What is new is that the reason is readable: the
+    storyboard's own record says the film shows nobody by design.
+    """
+    from app.media.services import NO_CAST_BY_DESIGN, storyboard_cast_note
+
+    a_character(engine, name="Sarah Executive")
+    ids = a_factual_film(
+        engine,
+        [
+            {
+                "scene_index": 1,
+                "visual_description": "The telescope's golden mirror against the dark",
+                "narration": "A mirror.",
+            },
+            {
+                "scene_index": 2,
+                "visual_description": "The planet turning against its star",
+                "narration": "A world that keeps it.",
+            },
+        ],
+        title="Landscapes",
+    )
+    give_vision(engine, staffed["agents"]["VideoEditor"].id)
+    registry, _ = registry_with(staffed, lambda _: all_good(scenes=2))
+
+    result = evaluate_pictures(engine, registry, ids["asset"], str(uuid4()))
+
+    drift = result["character_drift_qc"]
+    assert drift["status"] == "NOT_APPLICABLE" and drift["passed"] is None
+    assert drift["characters_measured"] == 0
+    with Session(engine) as session:
+        assert storyboard_cast_note(session, ids["board"]) == NO_CAST_BY_DESIGN

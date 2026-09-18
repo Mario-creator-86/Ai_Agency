@@ -203,9 +203,19 @@ def test_the_preflight_asks_whether_the_studio_can_find_pages_not_whether_a_row_
 
 
 def test_preflight_changes_nothing(engine, settings, vault, studio):
-    """It is read before deciding whether to act; a check with a side effect would be a trap."""
+    """It is read before deciding whether to act; a check with a side effect would be a trap.
+
+    It reads the books, the price table, the Character Bible and the serial's channel now, and
+    every one of those modules has a command that writes. The preflight calls none of them, so
+    nothing is added to the ledger either — a preflight that recorded an event would put a
+    decision in the record that nobody took.
+    """
+    from app.economy.models import ProviderPrice, SpendingBudget
+    from app.models import DomainEvent
+
     with Session(engine) as session:
         before = session.get(OwnerPolicy, 1).version
+        events = len(session.scalars(select(DomainEvent)).all())
 
     run_preflight(engine, settings, vault)
     run_preflight(engine, settings, vault)
@@ -213,6 +223,40 @@ def test_preflight_changes_nothing(engine, settings, vault, studio):
     with Session(engine) as session:
         assert session.get(OwnerPolicy, 1).version == before
         assert session.scalars(select(DailyRun)).all() == []
+        assert len(session.scalars(select(DomainEvent)).all()) == events
+        assert session.scalars(select(SpendingBudget)).all() == []
+        assert session.scalars(select(ProviderPrice)).all() == []
+
+
+def test_what_the_owner_has_not_supplied_never_turns_a_day_that_could_run_into_one_that_cannot(
+    engine, settings, vault, studio
+):
+    """A fresh studio has no budget, no price, no seeing model, no reference picture and no
+    serial channel bound. All five are reported, and all five leave the verdict where it was:
+    a preflight check never blocks the day for something the Owner deliberately chose, and the
+    day still runs its stages."""
+    make_a_model_available(engine)
+
+    result = run_preflight(engine, settings, vault)
+
+    readiness = {
+        "spending_budget",
+        "model_prices",
+        "vision_capability",
+        "character_references",
+        "serial_channel",
+    }
+    assert readiness <= {c["name"] for c in result["checks"]}
+    assert result["blocking_failures"] == []
+    assert result["status"] == "DEGRADED"
+    # Two of the five are the Owner's own answers rather than missing capabilities, so they
+    # do not even degrade: an INFORMATIONAL line is excluded from the verdict structurally.
+    informational = {
+        c["name"] for c in result["checks"] if c["severity"] == "INFORMATIONAL" and not c["ok"]
+    }
+    assert informational & readiness
+    assert not (informational & set(result["degrading_failures"]))
+    assert execute_daily_run(engine, settings, vault)["status"] != "BLOCKED"
 
 
 # ---------------------------------------------------------------------------

@@ -22,13 +22,16 @@ from app.economy.budget import BudgetCommand, budget_status, set_budget
 from app.economy.prices import PriceCommand, list_prices, set_price
 from app.economy.services import (
     EconomyError,
+    ReconciliationCommand,
     bill_provider_cost,
     list_accounts,
     list_evidence,
     list_owner_funding,
     list_provider_costs,
+    list_reconciliations,
     list_transactions,
     mint_from_evidence,
+    reconcile_provider_invoice,
     record_fx_snapshot,
     record_owner_funding,
     record_provider_cost,
@@ -225,6 +228,31 @@ def create_economy_router() -> APIRouter:
                 request.app.state.engine, cost_id, correlation_id=str(uuid4())
             )
         )
+
+    @router.get("/reconciliations")
+    def get_reconciliations(
+        request: Request,
+        provider: Annotated[str | None, Query(max_length=60)] = None,
+        limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    ) -> dict:
+        """Every vendor invoice the Owner has reconciled, with what it could not match."""
+        return {
+            "reconciliations": list_reconciliations(
+                request.app.state.engine, provider=provider, limit=limit
+            )
+        }
+
+    @router.put("/reconciliations")
+    def put_reconciliation(command: ReconciliationCommand, request: Request) -> dict:
+        """Record what a vendor actually billed, and retire the estimates it covers.
+
+        The only way a bill replaces an estimate: the Owner's hand, because only he sees the
+        invoice. Shaped like `PUT /economy/prices` — a command id (a retry returns the original
+        answer, the same id with another figure is a 409) and the version he believes he is
+        correcting. What the invoice could not match comes back in the answer and stays on the
+        row; nothing is dropped and nothing is quietly kept counting.
+        """
+        return _guard(lambda: reconcile_provider_invoice(request.app.state.engine, command))
 
     @router.post("/fx")
     def post_fx(request: Request, cmd: FXCommand) -> dict:

@@ -33,6 +33,29 @@ way to find pages at all, or when fewer than ten verified claims remain. The cou
 the check's detail as well as in the message a passing check shows, because the run they are
 needed for is the one where the check failed.
 
+Five further checks answer whether the day is worth having, not whether it can start
+(since 2026-09-18). They name the things only the Owner can supply, and like the research
+check each reads the record and opens no connection: `spending_budget`, whether any budget
+is active at all, since with none the reservation still holds a film's money and has no
+limit to refuse it against; `model_prices`, whether the models the day's employees think
+with carry a price on both token units, since a cost priced on one side only is None and
+every run of that employee is recorded without one; `vision_capability`, whether any active
+employee's model the provider says can see, since without one the picture and character
+checks stand down on every film and a film of blank fields passes every automatic check;
+`character_references`, which characters hold no readable reference picture — a stored asset
+id whose row exists and whose file is still on disk; and `serial_channel`, whether the
+serial's slot is bound to a connected account and whether the Director has the Owner's leave
+to approve episodes.
+
+None of the five is BLOCKING, and two of them cannot degrade the day at all. A preflight
+check must not refuse the day for something the Owner deliberately chose: a budget he has
+not set while the studio is in TEST and a serial channel he has not created are answers of
+his, so `serial_channel` is INFORMATIONAL always and `character_references` is DEGRADING
+only where a character whose look is *locked* has no readable reference — that case really
+does refuse a film, and it is a blocked day he can prevent the evening before. The verdict
+is computed over BLOCKING and DEGRADING only, so this holds structurally and not by the
+checks happening to pass.
+
 ## 2. Previous performance intake
 
 Analytics snapshot ingestion if available.
@@ -147,6 +170,15 @@ Reconcile cost.
 Persist provenance.
 
 Update office/status.
+
+The close writes the Owner one letter about the approval requests still standing, as its
+first act and before any question is put to a model (`waiting_approvals_letter`, since
+2026-09-18): one letter per business date, decided behind the write lock like the budget
+refusal letter of §8, naming each question by what it is, with its cost — unknown where the
+studio cannot compute one, never zero — and the hour the oldest expires. Nothing is written
+when nothing is waiting, so a silent mailbox still means there is nothing to decide. A
+vendor's invoice is reconciled against the estimates of §8 by the Owner and by nobody else,
+because only he sees it; that act is not part of the day and is never performed by a stage.
 
 ## 12. Daily Studio Log
 

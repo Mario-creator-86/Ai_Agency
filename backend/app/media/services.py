@@ -647,6 +647,101 @@ def get_character_bible(engine: Engine, character_id: str) -> dict | None:
         return CharacterBibleView.model_validate(c).model_dump() if c else None
 
 
+#: A word that is a title, not a name. The first word of "Dr. Aris Researcher" identifies
+#: nobody; the second one does.
+_NAME_TITLES = frozenset({"dr", "mr", "mrs", "ms", "prof", "sir", "dl", "dna"})
+
+#: Said once on a storyboard whose every scene shows nobody, so a check that finds no cast
+#: can tell "this film has no characters by design" from "nobody listed them". A factual film
+#: is usually exactly this: material on screen and a narrator who has no face.
+NO_CAST_BY_DESIGN = (
+    "no scene in this film shows a studio character: the cast is empty by design, not by "
+    "omission — the narrator has no face and the scenes show material, not people"
+)
+
+
+def _character_keys(canonical_name: str) -> tuple[str, tuple[str, ...]] | tuple[()]:
+    """A canonical name as a scene may write it: the whole name, and the given name alone.
+
+    The bible holds "Sarah Executive" and "Dr. Aris Researcher"; a script writes "Sarah" and
+    "Aris". Both count, and nothing shorter: "Executive" on its own names a job, not a person.
+    This is the first-name rule `app.story.services.bibles_for_roster` already matches a
+    roster member by, without the title that rule keeps by accident.
+
+    Returned as (given name, full forms), because the two are matched under different rules.
+    """
+    words = [word.strip(" ,.()'\"’") for word in str(canonical_name).split()]
+    words = [word for word in words if word]
+    if not words:
+        return ()
+    full = tuple({str(canonical_name).strip(), " ".join(words)})
+    given = next((word for word in words if word.lower() not in _NAME_TITLES), "")
+    return given, full
+
+
+def _characters_named_in(
+    text: str, keys_by_id: dict[str, tuple[str, tuple[str, ...]]]
+) -> list[str]:
+    """The studio characters this text actually names, in the order it names them.
+
+    Matched as written, capital and all: a name is a proper noun, and a lower-case word that
+    happens to spell one is not a person on screen.
+
+    A given name on its own is not counted when another capitalised word follows it, because
+    that word is usually a surname the bible does not hold: a factual film says "the Vera
+    Rubin Observatory" and means a telescope, not the studio's Publisher. The whole canonical
+    name is always counted. The cost of the rule is a scene in Title Case whose character is
+    missed; the cost of dropping it is a cast this function invented, which would make the
+    character check certify a comparison nobody asked for.
+    """
+    import re  # noqa: PLC0415 - only the storyboard's cast reads a scene's prose
+
+    found: list[tuple[int, str]] = []
+    for character_id, (given, full) in keys_by_id.items():
+        patterns = [rf"(?<![\w-]){re.escape(name)}(?![\w-])" for name in full]
+        if given:
+            patterns.append(rf"(?<![\w-]){re.escape(given)}(?![\w-])(?!\s+[A-Z])")
+        hits = [match.start() for p in patterns if (match := re.search(p, text))]
+        if hits:
+            found.append((min(hits), character_id))
+    return [character_id for _, character_id in sorted(found)]
+
+
+def _scene_visual(scene: dict, index: int) -> str:
+    """What this scene asks to be shown, whichever word the writer used for it.
+
+    The script writer's scenes say "visual_description"; the demo fixture said
+    "visual_prompt". Read in one place because the cast is decided from the same text the
+    scene is built with — two readings could disagree about what the picture says.
+    """
+    return str(
+        scene.get("visual_prompt")
+        or scene.get("visual_cue")
+        or scene.get("visual_description")
+        or f"Scene {index}"
+    ).strip()
+
+
+def _scene_cast(
+    scene: dict, visual_prompt: str, keys_by_id: dict[str, tuple[str, tuple[str, ...]]]
+) -> list[str]:
+    """Who is on screen in one factual scene, decided from what the scene itself says.
+
+    Two readings, in order of evidence: the writer's own cast list for the scene (the shape
+    the serial's script already uses), then the names in the picture the scene asks for. The
+    narration is deliberately not read — in a factual film it is the narrator's voice, and a
+    name spoken over a photograph of a telescope does not put that person in the shot.
+    """
+    stated = " ".join(
+        str(name) for name in (scene.get("characters") or []) if isinstance(name, str)
+    )
+    cast = _characters_named_in(stated, keys_by_id)
+    for character_id in _characters_named_in(visual_prompt, keys_by_id):
+        if character_id not in cast:
+            cast.append(character_id)
+    return cast
+
+
 def generate_storyboard_from_script(
     engine: Engine,
     script_draft_id: str,
@@ -657,6 +752,14 @@ def generate_storyboard_from_script(
     """Generate a 9:16 vertical storyboard from an APPROVED script draft.
 
     Strict Content Gate: rejects unapproved scripts or scripts with unverified claims!
+
+    Every scene also records its cast. Measured 2026-09-18: this function wrote
+    `character_ids_json=[]` on every scene of every factual film — the studio's main product —
+    so `character_drift_qc` had nothing to compare and reported "no scene in this film lists a
+    character" for ever, while only the serial's storyboard ever filled it. A scene that names
+    a studio character now records that character; a scene of landscapes records nobody, and
+    the creation event says once that the empty cast is the film's design rather than an
+    omission. Nothing is invented to give a gate something to measure.
     """
     storyboard_id = str(uuid4())
     now = utc_now()
@@ -717,6 +820,20 @@ def generate_storyboard_from_script(
                 }
             ]
 
+        # Who is in this film, decided once, before anything is written. The bible is read
+        # here and nowhere else in this function: a studio with no characters at all has no
+        # cast to find, and the character check already says so in its own words.
+        keys_by_id = {
+            character.id: keys
+            for character in session.scalars(select(CharacterBible))
+            if (keys := _character_keys(character.canonical_name))
+        }
+        casts = [
+            _scene_cast(scene, _scene_visual(scene, index), keys_by_id)
+            for index, scene in enumerate(scenes_data, start=1)
+        ]
+        scenes_with_cast = sum(1 for cast in casts if cast)
+
         event = append_event(
             session,
             "media.storyboard_created",
@@ -729,6 +846,11 @@ def generate_storyboard_from_script(
                 "visual_style": visual_style,
                 "aspect_ratio": aspect_ratio,
                 "scene_count": len(scenes_data),
+                # The storyboard's own record of its cast: how many scenes show somebody,
+                # and — when none does — that this is the film's design. A check that finds
+                # no character reads this instead of guessing why there is none.
+                "scenes_with_cast": scenes_with_cast,
+                "cast_note": None if scenes_with_cast else NO_CAST_BY_DESIGN,
             },
             correlation_id,
         )
@@ -758,12 +880,7 @@ def generate_storyboard_from_script(
             vo = str(
                 s.get("voiceover_segment") or s.get("voiceover") or s.get("narration") or ""
             ).strip()
-            vp = str(
-                s.get("visual_prompt")
-                or s.get("visual_cue")
-                or s.get("visual_description")
-                or f"Scene {idx}"
-            ).strip()
+            vp = _scene_visual(s, idx)
             # Without a stated duration a scene lasts as long as its words take to say
             # (about 2.5 a second), within what a short's scene can hold.
             dur = float(s.get("duration_seconds") or 0) or min(
@@ -783,7 +900,7 @@ def generate_storyboard_from_script(
                 voiceover_segment=vo,
                 shot_type=st,
                 transition_in=tr,
-                character_ids_json=[],
+                character_ids_json=casts[idx - 1],
                 claim_ids_json=claims,
                 created_at=now,
             )
@@ -824,6 +941,29 @@ def list_scripts_awaiting_storyboard(engine: Engine) -> list[dict]:
         ]
 
 
+def storyboard_cast_note(session: Session, storyboard_id: str) -> str | None:
+    """Why this film has no cast, when its maker decided it has none; otherwise None.
+
+    The storyboard's own record is its creation event: `media.storyboard_created` carries
+    what the builder decided about the cast, the way `agent.model_assigned` carries who chose
+    an employee's model. A board written before this was recorded, or one whose scenes do
+    list characters, answers None — "nobody said" and "somebody is in it" are both not this.
+    """
+    from app.models import DomainEvent  # noqa: PLC0415 - read projection only
+
+    payload = session.scalar(
+        select(DomainEvent.payload)
+        .where(
+            DomainEvent.event_type == "media.storyboard_created",
+            DomainEvent.aggregate_id == storyboard_id,
+        )
+        .order_by(DomainEvent.sequence)
+        .limit(1)
+    )
+    note = (payload or {}).get("cast_note") if isinstance(payload, dict) else None
+    return str(note) if note else None
+
+
 def get_storyboard(engine: Engine, storyboard_id: str) -> dict | None:
     with Session(engine) as session:
         sb = session.get(Storyboard, storyboard_id)
@@ -837,6 +977,9 @@ def get_storyboard(engine: Engine, storyboard_id: str) -> dict | None:
         view = StoryboardView.model_validate(sb)
         view.scenes = [StoryboardSceneView.model_validate(s) for s in scenes]
         data = view.model_dump()
+        # Why this film lists nobody, when its maker decided it shows nobody. Carried beside
+        # the view rather than in it, because it is a fact from the ledger, not a column.
+        data["cast_note"] = storyboard_cast_note(session, storyboard_id)
         # What the last render of this storyboard decided about motion: which model filmed
         # each scene, in which environment, what it cost, and what the router did not buy.
         # A decision the Owner cannot read is a decision he has to take on trust.

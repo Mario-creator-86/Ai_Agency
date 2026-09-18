@@ -500,6 +500,119 @@ def test_a_day_without_a_film_is_never_silent_and_is_said_once(engine, staffed):
         assert "nu a fost filmat" in (letter.body_text or "").lower()
 
 
+def test_the_owner_is_told_once_a_day_what_waits_for_his_answer(engine, staffed):
+    """Measured before this: a SUPERVISED day wrote one `owner_approval_request` per film and
+    nothing else — the questions existed only for whoever opened the page that day."""
+    from datetime import timedelta
+
+    from app.economy.accountant import waiting_approvals_letter
+    from app.services import request_approval
+
+    nadia = staffed["agents"]["Accountant"]
+    soon = (datetime.now(UTC) + timedelta(hours=3)).isoformat()
+    later = (datetime.now(UTC) + timedelta(hours=20)).isoformat()
+    with Session(engine) as session, session.begin():
+        first = request_approval(
+            session,
+            "publishing.public_publish",
+            "T3",
+            "publisher",
+            subject="asset-1",
+            evidence="Cum se naște o stea → AMN Shorts (public)",
+            cost_usd=4.2,
+        )
+        second = request_approval(
+            session,
+            "media.paid_generation_over_threshold",
+            "T3",
+            "director",
+            subject="storyboard-2",
+            evidence="storyboard 2, model fără preț",
+            cost_usd=None,
+        )
+        first.expires_at, second.expires_at = soon, later
+        asked = [first.id, second.id]
+
+    written = waiting_approvals_letter(engine, str(uuid4()))
+    assert written["written"] is True and written["questions"] == 2
+    again = waiting_approvals_letter(engine, str(uuid4()))
+    assert again["written"] is False and again["message_id"] == written["message_id"], (
+        "one letter a day, whatever the number of questions"
+    )
+
+    with Session(engine) as session:
+        letters = [
+            m
+            for m in session.scalars(select(AgentMessage))
+            if m.body_json.get("kind") == "owner_waiting"
+        ]
+        assert len(letters) == 1
+        letter = letters[0]
+        assert letter.from_agent_id == nadia.id and letter.body_json["to"] == "Owner"
+        assert letter.intent == "ESCALATE" and letter.body_json["owner_attention"] is True
+        assert [q["id"] for q in letter.body_json["questions"]] == asked, "oldest first"
+        assert letter.body_json["oldest_expires_at"] == soon
+        text = letter.body_text or ""
+        assert "2 întrebări" in text
+        # Each question by what it is about, in his language, and what it would cost.
+        assert "Publicarea unui film pe canalul lui" in text
+        assert "Un randat plătit peste pragul stabilit" in text
+        assert "4.2 USD" in text
+        assert "necunoscut" in text, "a cost the studio cannot compute is never shown as zero"
+
+
+def test_nothing_waits_and_the_accountant_writes_nothing(engine, staffed):
+    from app.economy.accountant import waiting_approvals_letter
+    from app.services import request_approval
+
+    quiet = waiting_approvals_letter(engine, str(uuid4()))
+    assert quiet == {"written": False, "message_id": None, "questions": 0}
+
+    # A question he has already answered, and one the clock has passed, wait for nobody.
+    with Session(engine) as session, session.begin():
+        answered = request_approval(
+            session, "publishing.public_publish", "T3", "publisher", subject="asset-9"
+        )
+        answered.result = "APPROVED"
+        stale = request_approval(
+            session, "research.fetch_page", "T2", "researcher", subject="host-9"
+        )
+        stale.expires_at = "2020-01-01T00:00:00+00:00"
+    assert waiting_approvals_letter(engine, str(uuid4()))["questions"] == 0
+    with Session(engine) as session:
+        assert session.scalars(select(AgentMessage)).all() == []
+
+
+def test_the_close_of_the_day_carries_the_letter_about_what_waits(engine, staffed):
+    from app.economy.accountant import reconcile_day
+    from app.services import request_approval
+
+    with Session(engine) as session, session.begin():
+        request_approval(
+            session,
+            "publishing.public_publish",
+            "T3",
+            "publisher",
+            subject="asset-3",
+            cost_usd=None,
+        )
+    registry, _ = registry_with(
+        staffed,
+        lambda prompt: json.dumps(
+            {"summary": "Zi fără cheltuieli.", "recommendations": [], "holds": []},
+            ensure_ascii=False,
+        ),
+    )
+    reconcile_day(engine, registry, str(uuid4()))
+    with Session(engine) as session:
+        waiting = [
+            m
+            for m in session.scalars(select(AgentMessage))
+            if m.body_json.get("kind") == "owner_waiting"
+        ]
+    assert len(waiting) == 1 and waiting[0].body_json["questions"][0]["cost_label"] == "necunoscut"
+
+
 def test_the_token_ceiling_blocks_a_run_and_the_accountant_writes_once_a_day(engine, staffed):
     from types import SimpleNamespace
 

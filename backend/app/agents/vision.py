@@ -12,6 +12,14 @@ asked the Director would never run; the Video Editor, whose department owns the 
 may be on a model that sees. The rule is the same as everywhere else: a capability is what
 the provider declared for that model, never what its name suggests, and when nobody
 declares it the caller is told so rather than handed a pass.
+
+Measured 2026-09-18: nobody in a seeded studio could see either, because every employee was
+hired on a text model, so this function returned None on every film ever made and the picture
+and character checks reported NOT_APPLICABLE for ever. That is fixed where the studio decides
+what a job needs, not here: `app.agents.services.ROLE_PREFERENCES` records that the Video
+Editor's role *prefers* vision, and `prefer_capable_models` puts her on a seeing model once
+the Owner has admitted one. Preferred, never required — a studio with no seeing model still
+hires, still cuts film, and is told here, honestly, that nobody looked.
 """
 
 from __future__ import annotations

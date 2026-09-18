@@ -26,11 +26,13 @@ trip.
 
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
+from app.db import lock_for_write
 from app.economy.models import (
     MICROS,
     FXSnapshot,
@@ -39,6 +41,7 @@ from app.economy.models import (
     LedgerTransaction,
     OwnerFundingEvent,
     ProviderCostRecord,
+    ProviderReconciliation,
     RevenueEvidence,
 )
 from app.services import (
@@ -897,7 +900,10 @@ def treasury_snapshot(engine: Engine) -> dict:
         unbilled = int(
             session.scalar(
                 select(func.sum(ProviderCostRecord.usd_micros)).where(
-                    ProviderCostRecord.status == "ESTIMATED"
+                    ProviderCostRecord.status == "ESTIMATED",
+                    # An estimate a vendor's invoice has replaced is not an obligation still
+                    # coming; the BILLED row beside it is already in the balances above.
+                    ProviderCostRecord.reconciled_at.is_(None),
                 )
             )
             or 0
@@ -1067,11 +1073,19 @@ def _cost_view(cost: ProviderCostRecord) -> dict:
         "status": cost.status,
         "label": (
             "BILLED"
+            if cost.status == "BILLED" and cost.reconciled_at is None
+            else "FACTURAT (înlocuit de o corecție)"
             if cost.status == "BILLED"
+            else "ESTIMAT (înlocuit de factura furnizorului)"
+            if cost.reconciled_at is not None
             else "ESTIMAT (randare eșuată)"
             if cost.failed
             else "ESTIMAT"
         ),
+        # When a vendor's invoice replaced this row, and which one. A reconciled row is kept
+        # whole and stops counting: the invoice beside it is the money now.
+        "reconciled_at": cost.reconciled_at,
+        "reconciled_by_id": cost.reconciled_by_id,
         "failed": bool(cost.failed),
         "original_amount": format_micros(cost.amount_micros),
         "currency": cost.currency,
@@ -1110,3 +1124,454 @@ def _fx_view(snapshot: FXSnapshot) -> dict:
         "observed_at": snapshot.observed_at,
         "recorded_at": snapshot.recorded_at,
     }
+
+
+# --------------------------------------------------------------------------- reconciliation --
+
+#: What one invoice can cover: everything a vendor charged between two moments, or one named
+#: thing the studio attributed its spend to.
+RECONCILIATION_SCOPES = ("PERIOD", "CORRELATION")
+
+#: The attribution field a CORRELATION invoice reads when the Owner does not name another one.
+#: Every cost row the studio writes for itself carries the render job the spend belongs to
+#: (`app.economy.accountant._priced_scene_costs`), so that is the default and not a guess.
+DEFAULT_CORRELATION_KEY = "render_job_id"
+
+
+class ReconciliationCommand(BaseModel):
+    """One vendor invoice, as the Owner types it. The shape of `PriceCommand`, deliberately:
+    a command id so a retry is not a second invoice, and the version he believes he corrects."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    command_id: UUID
+    provider: str = Field(min_length=1, max_length=60)
+    #: The vendor's own invoice or credit-note number. One invoice is charged once.
+    external_reference: str = Field(min_length=1, max_length=120)
+    #: What the invoice says, as a decimal string, so an exact figure never becomes a float.
+    amount: str = Field(pattern=r"^\d{1,12}(\.\d{1,6})?$", max_length=20)
+    currency: str = Field(default="USD", pattern=r"^[A-Za-z]{3}$")
+    fx_snapshot_id: str | None = Field(default=None, max_length=36)
+    scope: str = Field(default="PERIOD", pattern="^(" + "|".join(RECONCILIATION_SCOPES) + ")$")
+    #: Inclusive, and exclusive — the same half-open window `spend_since` reads.
+    period_start: str | None = Field(default=None, max_length=40)
+    period_end: str | None = Field(default=None, max_length=40)
+    correlation: str | None = Field(default=None, max_length=200)
+    correlation_key: str | None = Field(default=None, max_length=60)
+    #: The version he believes he is correcting. A stale one is refused, like a price's; so is
+    #: a missing one when a version already stands, because replacing an invoice moves money.
+    expected_version: int | None = Field(default=None, ge=1)
+    note: str | None = Field(default=None, max_length=2000)
+
+
+def _unmatched_view(cost: ProviderCostRecord, reason: str) -> dict:
+    return {
+        "cost_id": cost.id,
+        "external_reference": cost.external_reference,
+        "status": cost.status,
+        "vr": format_micros(cost.usd_micros),
+        "recorded_at": cost.recorded_at,
+        "reason": reason,
+    }
+
+
+def _reconciliation_view(
+    row: ProviderReconciliation,
+    *,
+    counted_at: str | None = None,
+    replaces: str | None = None,
+    reversal_transaction_id: str | None = None,
+) -> dict:
+    return {
+        "id": row.id,
+        "provider": row.provider,
+        "external_reference": row.external_reference,
+        "scope": row.scope,
+        "period_start": row.period_start,
+        "period_end": row.period_end,
+        "correlation": row.correlation,
+        "correlation_key": row.correlation_key,
+        "original_amount": format_micros(row.amount_micros),
+        "currency": row.currency,
+        "billed_vr": format_micros(row.usd_micros),
+        "billed_usd_micros": row.usd_micros,
+        "cost_id": row.cost_id,
+        # The hour the billed row carries, and therefore the period that counts it.
+        "counted_at": counted_at,
+        "matched": row.matched_count,
+        "matched_vr": format_micros(row.matched_usd_micros),
+        # What the vendor charged over (or under) what the studio had estimated. Reported as a
+        # figure rather than folded into the total, because that gap is the price of a guess.
+        "difference_vr": format_micros(row.usd_micros - row.matched_usd_micros),
+        "unmatched": row.unmatched_json or [],
+        "version": row.version,
+        "active": bool(row.active),
+        "set_by": row.set_by,
+        "note": row.note,
+        "recorded_at": row.recorded_at,
+        "replaced_at": row.replaced_at,
+        "replaces": replaces,
+        "reversal_transaction_id": reversal_transaction_id,
+    }
+
+
+def reconcile_provider_invoice(
+    engine: Engine,
+    command: ReconciliationCommand,
+    *,
+    set_by: str = "owner",
+    correlation_id: str | None = None,
+) -> dict:
+    """Record what a vendor actually billed, and stop the estimates it covers from counting.
+
+    Only the Owner sees the invoice, so this is his command and no agent can reach it. It does
+    three things in one transaction, because any two of them without the third would leave the
+    books saying something untrue:
+
+    1. the BILLED cost row is written and posted — the money leaves VR Cash exactly here;
+    2. every ESTIMATED row the invoice covers is stamped ``reconciled_at``, so `spend_since`
+       counts the bill instead of counting the estimate *and* the bill (measured before this:
+       4.20 estimated and 4.55 billed charged the period 8.75);
+    3. every row the invoice touched and could not replace is kept on the reconciliation with
+       the reason — an invoice that explains less than the books hold is a finding, not a
+       detail to drop.
+
+    The bill is stamped at the moment of the last spend it pays for rather than at the moment
+    the Owner typed it, so the period that counted the estimates is the period that counts the
+    bill. An invoice matching nothing is stamped now and says it matched nothing: the vendor
+    charged whether or not the studio can explain it.
+
+    Idempotent by command id: the same command again returns the original answer, the same id
+    with another figure is a conflict. A correction carries ``expected_version`` and reverses
+    the previous invoice's posting instead of editing it.
+    """
+    correlation = correlation_id or str(uuid4())
+    provider = command.provider.strip()
+    reference = command.external_reference.strip()
+    if not provider or not reference:
+        raise EconomyError("Name the vendor and the invoice number.")
+    scope = command.scope.upper()
+    period_start = (command.period_start or "").strip() or None
+    period_end = (command.period_end or "").strip() or None
+    correlation_value = (command.correlation or "").strip() or None
+    correlation_key: str | None = (command.correlation_key or "").strip() or DEFAULT_CORRELATION_KEY
+    if scope == "PERIOD":
+        if not period_start or not period_end or period_start >= period_end:
+            raise EconomyError(
+                "O factură pe perioadă are nevoie de începutul și de sfârșitul perioadei, "
+                "în această ordine."
+            )
+        correlation_value = None
+        correlation_key = None
+    else:
+        if not correlation_value:
+            raise EconomyError(
+                "O factură pe o corelație are nevoie de lucrul pe care îl acoperă "
+                "(randarea, în cheia de atribuire)."
+            )
+        period_start = None
+        period_end = None
+    amount_micros = to_micros(command.amount)
+    if amount_micros <= 0:
+        raise EconomyError("O factură este o sumă pozitivă; o notă de credit se dă ca o corecție.")
+
+    fingerprint = command_hash(
+        {
+            "provider": provider,
+            "external_reference": reference,
+            "amount": command.amount,
+            "currency": command.currency.upper(),
+            "fx_snapshot_id": command.fx_snapshot_id,
+            "scope": scope,
+            "period_start": period_start,
+            "period_end": period_end,
+            "correlation": correlation_value,
+            "correlation_key": correlation_key,
+            "expected_version": command.expected_version,
+            "note": (command.note or "").strip(),
+        }
+    )
+    with Session(engine) as session, session.begin():
+        # A reader that will write: the lock first, so two of the Owner's tabs cannot both
+        # make version 2 of the same period and post the money twice.
+        lock_for_write(session)
+        already = recall_command(session, str(command.command_id), fingerprint)
+        if already is not None:
+            return already
+
+        duplicate = session.scalar(
+            select(ProviderCostRecord).where(
+                ProviderCostRecord.provider == provider,
+                ProviderCostRecord.external_reference == reference,
+            )
+        )
+        if duplicate is not None:
+            raise EconomyError(
+                f"{provider} {reference} este deja în cărți (stare {duplicate.status}). "
+                "O factură se înregistrează o singură dată."
+            )
+
+        scope_filter = (
+            (
+                ProviderReconciliation.period_start == period_start,
+                ProviderReconciliation.period_end == period_end,
+            )
+            if scope == "PERIOD"
+            else (
+                ProviderReconciliation.correlation == correlation_value,
+                ProviderReconciliation.correlation_key == correlation_key,
+            )
+        )
+        previous = session.scalar(
+            select(ProviderReconciliation).where(
+                ProviderReconciliation.provider == provider,
+                ProviderReconciliation.scope == scope,
+                ProviderReconciliation.active.is_(True),
+                *scope_filter,
+            )
+        )
+        if previous is None and command.expected_version is not None:
+            raise EconomyError(
+                f"Nu există nicio reconciliere de înlocuit aici, deci nici versiunea "
+                f"{command.expected_version}; trimite comanda fără `expected_version`."
+            )
+        if previous is not None and command.expected_version != previous.version:
+            # Unlike a price, a missing version is refused rather than treated as "replace
+            # whatever stands": an invoice he did not mean to correct would reverse a posting.
+            raise EconomyError(
+                f"Reconcilierea are versiunea {previous.version}, nu "
+                f"{command.expected_version if command.expected_version is not None else 'niciuna'}"
+                "; recitește-o înainte să o corectezi."
+            )
+
+        query = select(ProviderCostRecord).where(ProviderCostRecord.provider == provider)
+        if scope == "PERIOD":
+            query = query.where(
+                ProviderCostRecord.recorded_at >= period_start,
+                ProviderCostRecord.recorded_at < period_end,
+            )
+        candidates = list(session.scalars(query.order_by(ProviderCostRecord.recorded_at)))
+        if scope == "CORRELATION":
+            candidates = [
+                row
+                for row in candidates
+                if isinstance(row.attribution_json, dict)
+                and row.attribution_json.get(correlation_key) == correlation_value
+            ]
+
+        identifier = str(uuid4())
+        matched: list[ProviderCostRecord] = []
+        unmatched: list[dict] = []
+        for row in candidates:
+            if previous is not None and row.id == previous.cost_id:
+                continue  # the invoice this one corrects; reversed below, not "unmatched"
+            if previous is not None and row.reconciled_by_id == previous.id:
+                if row.status != "ESTIMATED":
+                    # A bill an earlier version of this chain wrote, which that chain has
+                    # already reversed and stamped. It is not an estimate to re-adopt and not
+                    # a finding to report: measured on a third version, re-adopting it told
+                    # the Owner his invoice had covered 10.50 of estimates the books never
+                    # held, and a difference of -6.50 about nothing that happened.
+                    continue
+                matched.append(row)  # re-adopted: the correction covers what the first covered
+            elif row.reconciled_at is not None:
+                unmatched.append(
+                    _unmatched_view(
+                        row,
+                        f"Deja reconciliat de o altă factură ({row.reconciled_by_id}); "
+                        "nu poate fi plătit de două ori.",
+                    )
+                )
+            elif row.status != "ESTIMATED":
+                unmatched.append(
+                    _unmatched_view(
+                        row, "Deja facturat direct, nu este o estimare pe care s-o înlocuiască."
+                    )
+                )
+            else:
+                matched.append(row)
+        if not matched and not unmatched:
+            unmatched.append(
+                {
+                    "cost_id": None,
+                    "external_reference": None,
+                    "status": None,
+                    "vr": None,
+                    "recorded_at": None,
+                    "reason": (
+                        "Nicio estimare din cărți nu este acoperită de factura aceasta; "
+                        "suma este înregistrată așa cum a facturat furnizorul."
+                    ),
+                }
+            )
+
+        matched_micros = sum(row.usd_micros for row in matched)
+        now = utc_now()
+        # The bill carries the hour of the last spend it pays for, so the day (or the month)
+        # that counted the estimates is the one that counts the bill.
+        counted_at = max((row.recorded_at for row in matched), default=now)
+        usd_micros, used_fx = _convert_to_usd(
+            session, amount_micros, command.currency, command.fx_snapshot_id
+        )
+
+        cost = ProviderCostRecord(
+            id=str(uuid4()),
+            provider=provider,
+            external_reference=reference,
+            status="BILLED",
+            amount_micros=amount_micros,
+            currency=command.currency.upper(),
+            usd_micros=usd_micros,
+            fx_snapshot_id=used_fx,
+            attribution_json={
+                "reconciliation_id": identifier,
+                "scope": scope,
+                "period_start": period_start,
+                "period_end": period_end,
+                "correlation": correlation_value,
+                "replaces": [row.external_reference for row in matched],
+            },
+            recorded_at=counted_at,
+            billed_at=now,
+            failed=False,
+        )
+        session.add(cost)
+        transaction = post_transaction(
+            session,
+            kind="PROVIDER_COST",
+            memo=f"{provider} {reference}",
+            lines=[("5000", usd_micros, 0), ("1000", 0, usd_micros)],
+            correlation_id=correlation,
+        )
+        cost.transaction_id = transaction.id
+        cost_event = append_event(
+            session,
+            "economy.provider_cost_recorded",
+            "provider_cost",
+            cost.id,
+            1,
+            {
+                "provider": provider,
+                "reference": reference,
+                "status": "BILLED",
+                "vr": format_micros(usd_micros),
+                "posted": True,
+            },
+            correlation,
+        )
+        cost.event_id = cost_event.event_id
+
+        reversal_id: str | None = None
+        if previous is not None:
+            previous.active = False
+            previous.replaced_at = now
+            previous_cost = (
+                session.get(ProviderCostRecord, previous.cost_id) if previous.cost_id else None
+            )
+            if previous_cost is not None:
+                if previous_cost.transaction_id is not None:
+                    entries = session.scalars(
+                        select(LedgerEntry).where(
+                            LedgerEntry.transaction_id == previous_cost.transaction_id
+                        )
+                    ).all()
+                    reversal = post_transaction(
+                        session,
+                        kind="REVERSAL",
+                        memo=(
+                            f"Reversal of PROVIDER_COST: {previous.external_reference} "
+                            f"replaced by {reference}"
+                        ),
+                        lines=[(e.account_code, e.credit_micros, e.debit_micros) for e in entries],
+                        correlation_id=correlation,
+                        reverses_transaction_id=previous_cost.transaction_id,
+                    )
+                    reversal_id = reversal.id
+                # The superseded bill is kept whole and stops counting, exactly like an
+                # estimate this invoice replaced: the corrected figure is the money now.
+                previous_cost.reconciled_at = now
+                previous_cost.reconciled_by_id = identifier
+
+        for row in matched:
+            row.reconciled_at = now
+            row.reconciled_by_id = identifier
+
+        reconciliation = ProviderReconciliation(
+            id=identifier,
+            provider=provider,
+            external_reference=reference,
+            scope=scope,
+            period_start=period_start,
+            period_end=period_end,
+            correlation=correlation_value,
+            correlation_key=correlation_key,
+            amount_micros=amount_micros,
+            currency=command.currency.upper(),
+            usd_micros=usd_micros,
+            fx_snapshot_id=used_fx,
+            cost_id=cost.id,
+            matched_count=len(matched),
+            matched_usd_micros=matched_micros,
+            unmatched_json=unmatched,
+            version=(previous.version + 1) if previous is not None else 1,
+            active=True,
+            set_by=set_by[:100],
+            note=(command.note or "").strip()[:2000] or None,
+            recorded_at=now,
+            replaced_at=None,
+        )
+        session.add(reconciliation)
+        session.flush()
+        event = append_event(
+            session,
+            "economy.reconciliation_recorded",
+            "provider_reconciliation",
+            reconciliation.id,
+            reconciliation.version,
+            {
+                "provider": provider,
+                "reference": reference,
+                "scope": scope,
+                "billed_vr": format_micros(usd_micros),
+                "matched": len(matched),
+                "matched_vr": format_micros(matched_micros),
+                "difference_vr": format_micros(usd_micros - matched_micros),
+                "unmatched": len(unmatched),
+                "counted_at": counted_at,
+                "replaces": previous.id if previous is not None else None,
+                "reversal_transaction_id": reversal_id,
+                "set_by": set_by,
+            },
+            correlation,
+        )
+        reconciliation.event_id = event.event_id
+        view = _reconciliation_view(
+            reconciliation,
+            counted_at=counted_at,
+            replaces=previous.id if previous is not None else None,
+            reversal_transaction_id=reversal_id,
+        )
+        remember_command(
+            session, str(command.command_id), "ReconcileProviderInvoice", fingerprint, view
+        )
+        return view
+
+
+def list_reconciliations(
+    engine: Engine, *, provider: str | None = None, limit: int = 100
+) -> list[dict]:
+    """Every invoice the Owner has reconciled, newest first, with what it could not match."""
+    with Session(engine) as session:
+        query = (
+            select(ProviderReconciliation)
+            .order_by(ProviderReconciliation.recorded_at.desc())
+            .limit(limit)
+        )
+        if provider:
+            query = query.where(ProviderReconciliation.provider == provider.strip())
+        rows = session.scalars(query).all()
+        views = []
+        for row in rows:
+            bill = session.get(ProviderCostRecord, row.cost_id) if row.cost_id else None
+            views.append(_reconciliation_view(row, counted_at=bill.recorded_at if bill else None))
+        return views

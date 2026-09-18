@@ -574,3 +574,115 @@ def test_runway_is_a_vendor_the_chain_may_hand_a_reference_to(engine, vault, mon
     # What the code does, not what the account has answered: no live run has ever posted this
     # field, so nothing here may be read as a verified integration.
     assert adapter.REFERENCE_IMAGE_VERIFIED is False
+
+
+# ------------------------------------------------- and in the film the studio actually makes
+
+
+def a_named_character(engine, canonical_name: str) -> str:
+    """One of the seeded studio characters, by the name a scene would actually write."""
+    seed_default_character_bibles(engine)
+    with Session(engine) as session:
+        return session.scalar(
+            select(CharacterBible.id).where(CharacterBible.canonical_name == canonical_name)
+        )
+
+
+def a_factual_board(engine, plan: list[dict], title: str = "Reference") -> dict:
+    """A factual storyboard built the way the studio builds one, from an APPROVED script."""
+    from app.factual.models import ScriptDraft, TopicIdea
+    from app.media.services import generate_storyboard_from_script
+
+    topic_id, script_id, now = str(uuid4()), str(uuid4()), utc_now()
+    with Session(engine) as session, session.begin():
+        session.get(OwnerPolicy, 1).autonomy_stopped = False
+        session.add(
+            TopicIdea(
+                id=topic_id,
+                title=title,
+                topic="space",
+                angle="a",
+                target_audience="g",
+                novelty_score=0.9,
+                status="SELECTED",
+                created_at=now,
+            )
+        )
+        session.flush()
+        session.add(
+            ScriptDraft(
+                id=script_id,
+                topic_id=topic_id,
+                title=title,
+                voiceover_full_text=" ".join(str(s.get("narration") or "") for s in plan),
+                scenes_json=plan,
+                claim_ids_json=[],
+                unverified_claim_ids_json=[],
+                status="APPROVED",
+                created_at=now,
+            )
+        )
+    return generate_storyboard_from_script(
+        engine, script_id, "GENERATED_IMAGE", "9:16", str(uuid4())
+    )
+
+
+def test_a_reference_set_finally_reaches_a_factual_film(engine):
+    """The slots the Owner pays to fill were unreachable on the studio's main product.
+
+    `image_reference_for_scene` reads a scene's cast, and until now every factual scene was
+    written with an empty one — so a portrait the Owner had produced could only ever be used
+    by the serial. A factual scene whose picture names the character now carries it, and the
+    scene that shows a spectrum still carries nothing.
+    """
+    character_id = a_named_character(engine, "Sarah Executive")
+    asset_id = reference_the_character(engine, character_id)
+
+    board = a_factual_board(
+        engine,
+        [
+            {
+                "scene_index": 1,
+                "visual_description": "Sarah at the studio window, mid-sentence",
+                "narration": "The day starts with the numbers.",
+            },
+            {
+                "scene_index": 2,
+                "visual_description": "A spectrum with a water line marked",
+                "narration": "A line of water.",
+            },
+        ],
+    )
+
+    first, second = board["scenes"][0], board["scenes"][1]
+    assert first["character_ids_json"] == [character_id]
+    reference = image_reference_for_scene(engine, first["character_ids_json"])
+    assert reference is not None and reference["asset_id"] == asset_id
+    assert second["character_ids_json"] == []
+    assert image_reference_for_scene(engine, second["character_ids_json"]) is None
+
+
+def test_a_locked_character_named_in_a_factual_scene_refuses_a_face_it_has_not_got(engine):
+    """The lock rule now also holds on factual films, which is the point of recording a cast.
+
+    A character whose look is locked and whose slots are empty refuses the scene rather than
+    letting a face be invented. This was unreachable from a factual film while every factual
+    scene listed nobody; a studio that locks a look must produce the reference set first.
+    """
+    character_id = a_named_character(engine, "Sarah Executive")
+    lock_the_look(engine, character_id)
+
+    board = a_factual_board(
+        engine,
+        [
+            {
+                "scene_index": 1,
+                "visual_description": "Sarah at the studio window, mid-sentence",
+                "narration": "The day starts with the numbers.",
+            }
+        ],
+        title="Locked",
+    )
+
+    with pytest.raises(ReferenceRequired, match="referință"):
+        image_reference_for_scene(engine, board["scenes"][0]["character_ids_json"])

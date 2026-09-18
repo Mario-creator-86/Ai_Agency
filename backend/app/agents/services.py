@@ -41,7 +41,7 @@ from app.agents.models import (
 from app.agents.schemas import AgentRunView, AgentView, ModelView, ProviderView, RoleView
 from app.db import lock_for_write
 from app.economy.accountant import may_run_agent
-from app.models import OwnerPolicy
+from app.models import DomainEvent, OwnerPolicy
 from app.providers.registry import ProviderRegistry
 from app.services import append_event, may_act, utc_now
 from app.workflows.services import append_event_with_outbox
@@ -141,10 +141,16 @@ def list_roles(engine: Engine) -> list[dict]:
         roles = session.scalars(select(Role).order_by(Role.name)).all()
         result = []
         for role in roles:
+            # REQUIRED only: the field is called `required_capabilities` and a role may now
+            # also *prefer* one (ROLE_PREFERENCES), which blocks nothing. Listing a preference
+            # here would tell the Owner his Video Editor needs a seeing model to work at all.
             caps = session.scalars(
                 select(Capability.name)
                 .join(RoleCapability, RoleCapability.capability_id == Capability.id)
-                .where(RoleCapability.role_id == role.id)
+                .where(
+                    RoleCapability.role_id == role.id,
+                    RoleCapability.requirement_level == REQUIRED,
+                )
             ).all()
             view = RoleView.model_validate(role)
             view.required_capabilities = list(caps)
@@ -432,6 +438,10 @@ def _check_required_capabilities(
     `model_id` names the model to check when it is not the agent's assigned one — a second or
     third model the Owner put in a slot. A role's requirements apply to whichever model is
     about to do the work, not only to the primary.
+
+    Only REQUIRED is a gate, and that is deliberate: a role may also PREFER a capability
+    (`ROLE_PREFERENCES`), which `prefer_capable_models` acts on when a model that has it is
+    admitted and which must never stop an employee from working when none is.
     """
     required_caps = list(
         session.scalars(
@@ -863,6 +873,38 @@ def run_agent_task(
         return AgentRunView.model_validate(run).model_dump()
 
 
+#: The provider's own word for "this model can look at a picture" — the same string
+#: `app.agents.editorial.VISION` holds. It is not imported from there: that module reaches
+#: into the film code, and the workforce seed must not depend on it to hire anybody.
+VISION = "vision"
+
+#: The two levels a role's capability row can carry. REQUIRED is a gate: `run_agent_task`
+#: refuses a run whose model lacks it. PREFERRED is not a gate and never becomes one — it
+#: only decides, where the studio has a choice, which model an employee is hired or kept on.
+REQUIRED = "REQUIRED"
+PREFERRED = "PREFERRED"
+
+#: What a role would rather its employee's model could do. The Video Editor's department
+#: owns the pictures and is the first department `picture_qc` asks to look at them, so she is
+#: the one the studio would rather put on a model that sees. Measured 2026-09-18: the seed
+#: gave her glm-5.3, which declares completion, thinking and tools and no vision, so
+#: `vision_agent` found nobody and the picture and character checks reported NOT_APPLICABLE
+#: on every film a live studio has ever made. Preferred, never required: a studio whose Owner
+#: has admitted no seeing model must keep cutting film.
+ROLE_PREFERENCES: dict[str, tuple[str, ...]] = {"VideoEditor": (VISION,)}
+
+#: What a seeded model is recorded as being able to do. Vision is deliberately absent:
+#: nothing in the seed contacts a provider, and a seeded guess that a model can see would
+#: hand the picture check a look nobody took. `sync_provider_models` attaches vision when the
+#: vendor itself declares it.
+SEEDED_MODEL_CAPABILITIES = (
+    "text_generation",
+    "structured_output",
+    "fact_checking",
+    "creative_writing",
+)
+
+
 _ROLE_DEFINITIONS = [
     (
         "Director",
@@ -1022,12 +1064,194 @@ def seed_missing_workforce(engine: Engine) -> list[str]:
     return hired
 
 
+def seed_role_preferences(engine: Engine) -> list[str]:
+    """Record what a role would rather its employee's model could do. Returns the roles written.
+
+    `ROLE_PREFERENCES` is the studio's own judgement about a job, so it belongs beside the
+    role and not beside a model name: the Video Editor answers for the pictures, therefore her
+    role prefers a model that can see. The row is written at PREFERRED, which no gate reads —
+    `_check_required_capabilities` enforces REQUIRED alone — so a studio whose Owner has
+    admitted no seeing model hires exactly as it did and keeps cutting film.
+
+    Idempotent, and written on every seed: a studio whose roles were created before this
+    preference existed gets it on its next start, like the role contracts below.
+    """
+    written: list[str] = []
+    with Session(engine) as session, session.begin():
+        for role_name, capabilities in ROLE_PREFERENCES.items():
+            role = session.scalars(select(Role).where(Role.name == role_name)).first()
+            if role is None:
+                continue
+            for cap_name in capabilities:
+                capability = session.scalars(
+                    select(Capability).where(Capability.name == cap_name)
+                ).first()
+                if capability is None:
+                    capability = Capability(
+                        id=str(uuid4()),
+                        name=cap_name,
+                        description=f"Preferred by a role; declared per model ({cap_name}).",
+                    )
+                    session.add(capability)
+                    session.flush()
+                held = session.scalars(
+                    select(RoleCapability).where(
+                        RoleCapability.role_id == role.id,
+                        RoleCapability.capability_id == capability.id,
+                    )
+                ).first()
+                if held is None:
+                    session.add(
+                        RoleCapability(
+                            role_id=role.id,
+                            capability_id=capability.id,
+                            requirement_level=PREFERRED,
+                        )
+                    )
+                    written.append(f"{role_name}:{cap_name}")
+    return written
+
+
+def prefer_capable_models(engine: Engine) -> dict[str, list[dict[str, str]]]:
+    """Put an employee on a model that has what her role prefers, when one is admitted.
+
+    Measured 2026-09-18: PREFERRED was a word no code anywhere read — assignment checked
+    REQUIRED and nothing else — so the studio's preference for a seeing Video Editor would
+    have changed nothing. This is where it means something.
+
+    Three rules keep it from being an assignment nobody asked for:
+
+    - **The Owner's own choice stands.** An employee whose models were ever saved through the
+      assignment command (`agent.model_assigned`) is left alone, the same guard
+      `apply_llm_allocation` uses, or the next start would quietly undo what he chose.
+    - **A candidate must do the whole job.** It must be available, declare every capability
+      the role *requires*, and declare what the role prefers; otherwise the move would trade
+      a working employee for a blocked one.
+    - **No model, no move.** A studio with nothing that sees keeps the employee it has. This
+      function never blocks, never hires and never terminates.
+
+    Returns what moved and what did not, with the reason, for the caller's log.
+    """
+    moved: list[dict[str, str]] = []
+    skipped: list[dict[str, str]] = []
+    with Session(engine) as session, session.begin():
+        for role_name, capabilities in ROLE_PREFERENCES.items():
+            role = session.scalars(select(Role).where(Role.name == role_name)).first()
+            if role is None:
+                continue
+            agent = session.scalars(
+                select(Agent).where(Agent.role_id == role.id, Agent.lifecycle == "ACTIVE")
+            ).first()
+            if agent is None:
+                skipped.append({"role": role_name, "why": "niciun angajat activ pe rol"})
+                continue
+            preferred = set(
+                session.scalars(
+                    select(Capability.name)
+                    .join(RoleCapability, RoleCapability.capability_id == Capability.id)
+                    .where(
+                        RoleCapability.role_id == role.id,
+                        RoleCapability.requirement_level == PREFERRED,
+                    )
+                ).all()
+            ) & set(capabilities)
+            if not preferred:
+                continue
+            required = set(
+                session.scalars(
+                    select(Capability.name)
+                    .join(RoleCapability, RoleCapability.capability_id == Capability.id)
+                    .where(
+                        RoleCapability.role_id == role.id,
+                        RoleCapability.requirement_level == REQUIRED,
+                    )
+                ).all()
+            )
+            if preferred <= _model_capabilities(session, agent.model_id):
+                continue  # her model already has it; nothing to prefer
+            assigned = session.scalar(
+                select(DomainEvent.event_id)
+                .where(
+                    DomainEvent.event_type == "agent.model_assigned",
+                    DomainEvent.aggregate_id == agent.id,
+                )
+                .limit(1)
+            )
+            if assigned is not None:
+                skipped.append({"role": role_name, "why": "modelele au fost alese de Owner"})
+                continue
+            if agent.runtime_state not in ("IDLE", "BLOCKED", "ERROR"):
+                skipped.append({"role": role_name, "why": "angajatul lucrează acum"})
+                continue
+            candidate = next(
+                (
+                    model
+                    for model in session.scalars(
+                        select(ModelRecord)
+                        .where(ModelRecord.is_available.is_(True))
+                        .order_by(ModelRecord.model_name)
+                    )
+                    if (preferred | required) <= _model_capabilities(session, model.id)
+                ),
+                None,
+            )
+            if candidate is None:
+                skipped.append(
+                    {
+                        "role": role_name,
+                        "why": "niciun model admis nu declară " + ", ".join(sorted(preferred)),
+                    }
+                )
+                continue
+            agent.provider_id, agent.model_id = candidate.provider_id, candidate.id
+            agent.version += 1
+            # Not `agent.model_assigned`: that event is the record of the Owner's own choice,
+            # and writing it here would make the next start read this move as his and stop
+            # applying his allocation file.
+            event = append_event(
+                session,
+                "agent.model_preferred",
+                "agent",
+                agent.id,
+                agent.version,
+                {
+                    "role": role_name,
+                    "model_name": candidate.model_name,
+                    "capabilities": sorted(preferred),
+                },
+                str(uuid4()),
+            )
+            agent.event_id = event.event_id
+            session.flush()
+            moved.append({"role": role_name, "model": candidate.model_name})
+    if moved or skipped:
+        logger.info(
+            "role_capability_preference", extra={"moved": len(moved), "skipped": len(skipped)}
+        )
+    return {"moved": moved, "skipped": skipped}
+
+
+def _model_capabilities(session: Session, model_id: str | None) -> set[str]:
+    """What the studio has recorded that this model can do, by name."""
+    if not model_id:
+        return set()
+    return set(
+        session.scalars(
+            select(Capability.name)
+            .join(ModelCapability, ModelCapability.capability_id == Capability.id)
+            .where(ModelCapability.model_id == model_id)
+        ).all()
+    )
+
+
 def seed_initial_workforce(engine: Engine) -> None:
     """Seed baseline roles, the Ollama endpoint, its expected models, and the agents.
 
     Role work contracts (config/role_contracts.json) are seeded afterwards, on every call,
     because they also have to reach a studio whose roles were created before contracts
-    existed; that seed fills only what the Owner has not written.
+    existed; that seed fills only what the Owner has not written. The same is true of what a
+    role prefers of a model, and of acting on that preference: both run on every call, so a
+    studio that existed before either gets them on its next start.
 
     Seeding writes intent, never observation. The provider is recorded NOT_CONFIGURED with no
     health-check timestamp and its models unavailable with no verification timestamp, because
@@ -1037,6 +1261,8 @@ def seed_initial_workforce(engine: Engine) -> None:
     _seed_initial_workforce(engine)
     seed_missing_workforce(engine)
     seed_role_contracts(engine)
+    seed_role_preferences(engine)
+    prefer_capable_models(engine)
 
 
 def _seed_initial_workforce(engine: Engine) -> None:
@@ -1054,6 +1280,9 @@ def _seed_initial_workforce(engine: Engine) -> None:
             ("structured_output", "Strict JSON schema parsing and generation"),
             ("fact_checking", "Claim verification and source analysis"),
             ("creative_writing", "Scripts, storyboards, and hooks"),
+            # A row, not a claim about any model: a role can only prefer a capability the
+            # studio has a name for, and nothing below attaches this one to a seeded model.
+            (VISION, "Looking at a picture and saying what is in it"),
         ]
         for name, desc in caps_data:
             existing_cap = session.scalars(
@@ -1128,11 +1357,14 @@ def _seed_initial_workforce(engine: Engine) -> None:
                 )
                 session.add(model)
                 session.flush()
-                for c_id in cap_map.values():
+                # Only what a text model is proposed for. Vision is left out on purpose: see
+                # SEEDED_MODEL_CAPABILITIES — a seeded guess that a model can see would make
+                # the picture check certify a look nobody took.
+                for cap_name in SEEDED_MODEL_CAPABILITIES:
                     session.add(
                         ModelCapability(
                             model_id=model.id,
-                            capability_id=c_id,
+                            capability_id=cap_map[cap_name],
                             confidence="SEEDED_UNVERIFIED",
                         )
                     )

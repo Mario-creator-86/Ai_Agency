@@ -1,5 +1,92 @@
 # Changelog
 
+## Readiness for the first day — 2026-09-18
+
+What the studio still needs from the Owner before it is left alone on Monday morning, said by the
+preflight instead of by a document; somebody who can be hired to look at the pictures, and a factual
+film that records who is in it; and books that tell him what is waiting and learn what things really
+cost.
+
+- **Five preflight checks for the things only the Owner can supply.** `backend/app/runbook/preflight.py`
+  gains `spending_budget` (no budget is active at all, so the reservation holds a film's money against
+  no limit), `model_prices` (the models the day's employees think with, priced on both token units or
+  not at all — the reason 391 `agent_run` rows carry `cost_vr` NULL), `vision_capability` (nobody's
+  model declares vision, so the picture and character gates stand down on every film),
+  `character_references` (which characters hold no readable reference: an asset id whose row exists and
+  whose file is still on disk) and `serial_channel` (the serial's slot bound, and the Director's leave
+  to approve episodes). Each reads the database only — no vendor is asked, no key is used, no job is
+  queued. None of the five is BLOCKING, `serial_channel` is INFORMATIONAL always and
+  `character_references` degrades only for a character whose look is *locked*, because a check must not
+  refuse the day for something the Owner chose; a test holds that a studio with nothing configured
+  still reports exactly `stop_autonomy` and `llm_provider` as blocking.
+- **`APPROVAL_EXPIRES_AFTER_HOURS` is a setting.** `Settings.approval_expires_after_hours`
+  (`STUDIO_APPROVAL_EXPIRES_AFTER_HOURS`, default 24, bounded one hour to one week) replaces the module
+  constant in `backend/app/services.py`, read through a local import with a documented fallback of 24;
+  the three things it decides — how long an unanswered question stands, how long a refusal stops the
+  studio asking again, how long a yes can be spent — are named where it is declared. Behaviour
+  unchanged.
+- **A role may prefer a capability, and the Video Editor prefers vision.** `ROLE_PREFERENCES` and
+  `seed_role_preferences` write the PREFERRED row; `prefer_capable_models` moves that employee onto a
+  model that sees at the next start-up if the Owner has admitted one, writing `agent.model_preferred`
+  and never `agent.model_assigned`, and never touching an employee whose models he saved himself.
+  PREFERRED is not a gate and never becomes one. `Capability(name="vision")` is seeded as a row and
+  attached to no proposed model: `SEEDED_MODEL_CAPABILITIES` now names the four text capabilities
+  explicitly, because nothing in the seed contacts a vendor and a guess that a model can see would make
+  the picture gate certify a look nobody took.
+- **A factual scene records its cast.** `generate_storyboard_from_script` reads the scriptwriter's
+  character list first, then the names in the requested picture (through one `_scene_visual`), never
+  the narration, and never a first name followed by another capitalised word. A film that shows nobody
+  records an empty cast and says once, in `media.storyboard_created` (`scenes_with_cast`, `cast_note`),
+  that the absence is deliberate — readable through `app.media.services.storyboard_cast_note` and
+  returned by `get_storyboard` as `cast_note`. Consequence: the reference sets reach the factual film,
+  and a locked character with no reference now refuses a factual scene too.
+- **The Accountant writes about what is waiting.** `waiting_approvals_letter` (new in
+  `backend/app/economy/accountant.py`): one letter per business date, decided behind the write lock,
+  naming each standing question by what it is (`APPROVAL_ACTION_LABELS`) with the request's own
+  `cost_label` — «necunoscut» where nothing could compute one, never zero — and the hour the oldest
+  expires; nothing is written when nothing is waiting. `reconcile_day` calls it as its first act,
+  before any question is put to a model.
+- **Migration `0045_reconciliation`: an estimate is replaced by what the vendor actually billed.**
+  `provider_reconciliation` plus `reconciled_at` and `reconciled_by_id` on `provider_cost_record`, both
+  NULL, so every existing row keeps its reading. `PUT /api/v1/economy/reconciliations` is Owner-only,
+  idempotent by command id and versioned with a **required** `expected_version`, because replacing an
+  invoice moves money; `GET /api/v1/economy/reconciliations` lists them. An invoice covers a period or
+  one named thing (today a render, by `render_job_id`), writes the BILLED row carrying the hour of the
+  last spend it pays for, stamps `reconciled_at` on the estimates it covers — which `spend_since` then
+  skips — and keeps every row it could not replace on the row as data with the reason. A correction is
+  a new version that reverses the previous posting and re-adopts its estimates; nothing is edited and
+  nothing is deleted. The head pin in `backend/app/main.py` moves to `0045_reconciliation`; the chain
+  is 0039 → 0040 → 0043 → 0044 → 0045 and **0046 is free**, because the media part needed no column.
+- Measured, each figure by the part that took it and **no whole-suite run made by any of them**:
+  `tests/test_readiness.py` 11 (new) and `tests/test_phase10_runbook.py` 46, with 18, 144, 70 and 5
+  across the approval, daily-run, autonomy and whole-day suites; 18 + 28 + 16 + 22 + 10 across the
+  workforce and storyboard part's five files with 359 in all over nineteen neighbours;
+  `tests/test_reconciliation.py` 11 (new) with 17, 34, 18, 3, 188 and 5 across the economy and
+  application-start suites; `scripts/check_docs.py` and `tests/test_documentation.py` for the
+  documents. The 1194 passed / 1 skipped in `PROJECT_STATE.json` remains the Phase D/G closure
+  verifier's measurement of 2026-09-18 and is older than the tree. No provider was called, nothing was
+  rendered, no run was queued and no credit was spent.
+- **Documents.** `CURRENT_STATUS.md` gains *Readiness for the first day (2026-09-18)* and corrects in
+  place the two sentences this phase made untrue. **«Ce are Owner-ul de făcut» is rewritten as a
+  numbered checklist for the morning of the first real day** — migrate, build, read the preflight,
+  budgets, prices, token ceiling, sites and search engine, channels and their policy, a model that can
+  see, the character reference sets, the fallback vendors, the autonomy mode, then the clock, and the
+  invoice reconciliation after the first real spend — keeping every line it had, each now saying what
+  to do, with what command or screen, and what happens if he skips it; it moves under the readiness
+  section and leaves a dated pointer where it stood.
+  `../architecture/39_DAILY_AUTONOMOUS_RUNBOOK.md` names the five new checks and the waiting-approvals
+  letter, with its `sha256` re-recorded in `DOCUMENTATION_INDEX.json` and a decision-log entry as the
+  reason. `../architecture/15_SECURITY_COSTS_OBSERVABILITY.md` was read against the new books and
+  deliberately left unedited: nothing in it is false, and what it does not yet say is recorded in the
+  decision log instead of spending an index hash.
+- Still open and named: nothing here has met a real vendor, a real model or a real invoice; `model_prices`
+  covers the LLM token sides only; the Video Editor's preference reaches a running studio only at the
+  next seed and is invisible in the interface; `picture_qc` does not yet read the storyboard's cast
+  note; an employee's token cost never passes through `provider_cost_record`, so no invoice can
+  reconcile it; the waiting-approvals letter leaves only at the day's close; and nothing renders the
+  preflight's INFORMATIONAL severity, the five new checks have no labels, neither reconciliation screen
+  exists and `frontend/dist` is still not rebuilt.
+
 ## Quality and governance, closed — 2026-09-18
 
 The three things the Phase D/G section left open, closed the same day: the Owner can answer an

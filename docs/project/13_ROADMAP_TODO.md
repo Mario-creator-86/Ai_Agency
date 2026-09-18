@@ -862,15 +862,18 @@ uploaded or paid for.
   database: every measurement is against the test engine with the loopback-only socket guard in force,
   and migration 0044 has been walked from an empty database by every test in the run and never against
   `data/studio.db`.
-- [ ] The Owner is not told that something is waiting: a SUPERVISED day records one question per film
-  and the run record carries the approval id, but no letter and no notification is written, so the list
-  is seen only by someone who opens the panel.
+- [x] The Owner is not told that something is waiting — closed in part 2026-09-18 in the readiness
+  phase below: `waiting_approvals_letter` writes him one letter per business date naming every standing
+  question with its own cost label and the hour the oldest expires, and nothing when nothing waits.
+  Still open there: it leaves only at the day's close, and no notification is written.
 - [ ] An approval cannot be withdrawn: once he says yes it stands until it is spent or expires, because
   the honest way to stop a film going out is the stop, which refuses before his answer is read at all.
-- [ ] `APPROVAL_EXPIRES_AFTER_HOURS = 24` is still a module constant in `backend/app/services.py` and
-  now decides three things — how long an unanswered question stands, how long a refusal stops the studio
-  asking again, and how long a yes can still be spent — which is more weight than a constant should
-  carry silently. Lifting it to `config.py` means naming all three to the Owner.
+- [x] `APPROVAL_EXPIRES_AFTER_HOURS = 24` — closed 2026-09-18 in the readiness phase below: it is
+  `Settings.approval_expires_after_hours` (`STUDIO_APPROVAL_EXPIRES_AFTER_HOURS`, default 24, bounded
+  one hour to one week), read by `backend/app/services.py` through a local import with a documented
+  fallback of 24, and all three things it decides — how long an unanswered question stands, how long a
+  refusal stops the studio asking again, how long a yes can still be spent — are named to the Owner
+  where the setting is declared. Behaviour unchanged.
 - [ ] A film the Owner refused in the *media* stage still lands in `awaiting_owner` and reports SKIPPED
   rather than the publish stage's COMPLETED distinction between a question and a decision; the subject
   is on that stage's request, so his answer is already per film there.
@@ -912,3 +915,99 @@ of them the new `frontend/tests/governance.test.js`, with `npm run check --prefi
 `scripts/check_docs.py` with `tests/test_documentation.py` for the documents. The migration chain is
 0039 → 0040 → 0043 → 0044 and `main.py` pins `0044_approval_answered`. No provider was called, nothing
 was rendered, no run was queued and no credit was spent.
+
+## Readiness for the first day — 2026-09-18
+
+- [x] Five preflight checks for what only the Owner can supply, each reading the database and nothing
+  else: `spending_budget` (no budget active at all), `model_prices` (the models the day's employees
+  think with, priced on both token units), `vision_capability` (`vision_agent` finds nobody),
+  `character_references` (a slot holding an asset id whose row exists and whose file is still on disk)
+  and `serial_channel` (the serial's slot bound, and the Director's leave to approve episodes).
+- [x] None of the five blocks the day: `serial_channel` INFORMATIONAL always,
+  `character_references` DEGRADING only for a character whose look is *locked*, and the verdict
+  computed over BLOCKING and DEGRADING only, so a studio with nothing configured still reports exactly
+  `stop_autonomy` and `llm_provider` as blocking — held by a test, not by the checks happening to pass.
+- [x] `APPROVAL_EXPIRES_AFTER_HOURS = 24` lifted out of `backend/app/services.py` — closed 2026-09-18:
+  `Settings.approval_expires_after_hours` (`STUDIO_APPROVAL_EXPIRES_AFTER_HOURS`, default 24, bounded
+  one hour to one week), read through a local import with a documented fallback of 24, with all three
+  meanings named where the setting is declared. Behaviour unchanged.
+- [x] A role may prefer a capability: `ROLE_PREFERENCES` + `seed_role_preferences` write the PREFERRED
+  row on the Video Editor's role, `prefer_capable_models` acts on it writing `agent.model_preferred`
+  and never `agent.model_assigned`, and an employee whose models the Owner saved is not touched.
+  PREFERRED is not a gate and never becomes one.
+- [x] `Capability(name="vision")` seeded as a row and attached to no proposed model;
+  `SEEDED_MODEL_CAPABILITIES` enumerates the four text capabilities in place of the loop that wrote
+  every capability onto every model. `sync_provider_models` attaches vision where the vendor declares
+  it.
+- [x] A factual scene records its cast (the scriptwriter's list, then the requested picture's names,
+  never the narration, never a first name followed by another capitalised word), and a film that shows
+  nobody says so once in `media.storyboard_created` (`scenes_with_cast`, `cast_note`), read back by
+  `storyboard_cast_note` and returned by `get_storyboard`.
+- [x] `waiting_approvals_letter`: one letter per business date about the questions still standing, with
+  the request's own `cost_label` and the hour the oldest expires, nothing written when nothing waits,
+  called by `reconcile_day` as its first act.
+- [x] Migration `0045_reconciliation` and `PUT`/`GET /economy/reconciliations`: an invoice over a period
+  or one named thing writes the BILLED row at the hour of the last spend it pays for, stamps
+  `reconciled_at` on the estimates it covers (which `spend_since` then skips), keeps every unmatched row
+  on the row with its reason, and a correction reverses the previous posting and re-adopts its
+  estimates. `expected_version` is required, not optional. Head pinned `0045_reconciliation`; 0046 free.
+- [ ] `model_prices` covers the LLM token sides only — the primary model of each ACTIVE agent, on
+  `per_1m_input_tokens` and `per_1m_output_tokens`. The voice price (`per_1k_characters`) and the motion
+  and image prices (`per_second`, `per_generation`) are not checked: naming the voice kind honestly
+  means reading the media selection through the vault rather than the price table, and pricing a motion
+  model means knowing which model a plan will pick.
+- [ ] The secondary and tertiary model slots are not priced by the check, because `vision_agent` counts
+  only the primary model and the two checks must agree about which model an employee runs on.
+- [ ] `prefer_capable_models` runs only from `seed_initial_workforce`, so a seeing model admitted after
+  bootstrap reaches the Video Editor at the next seed. The second call belongs at the end of
+  `sync_provider_models`, immediately *after* `apply_llm_allocation` — order matters, the allocation
+  rewrites the slots and the preference must follow it.
+- [ ] The preference is invisible in the interface: `list_roles` returns REQUIRED capabilities only, and
+  `RoleView` would need a `preferred_capabilities` field filled from the PREFERRED rows.
+- [ ] `backend/app/media/picture_qc.py` does not read the storyboard's cast note: where a factual film
+  genuinely shows nobody, the detail still says "no scene in this film lists a character" rather than
+  "this film has no characters by design". One call to `storyboard_cast_note` with the session open and
+  `board.id` carries it the rest of the way; the status stays NOT_APPLICABLE with `passed` None either
+  way.
+- [ ] An employee's run is not reconcilable: `spend_since` sums `agent_run.cost_vr` separately and those
+  figures never pass through `provider_cost_record`, so an Ollama Cloud invoice cannot yet replace the
+  token cost the studio computed for itself.
+- [ ] An invoice matches on a correlation exactly and knows one default key, `render_job_id`; a hosting
+  charge or a monthly subscription must be reconciled by period or with a key the Owner names. No
+  matching by reference prefix was invented.
+- [ ] The waiting-approvals letter leaves only at the day's close. The hooks where the question is born
+  — `backend/app/runbook/stages.py`, after the media stage where `awaiting_owner` is built and after the
+  publish stage — are not wired, so the Owner learns in the evening rather than at the hour the film was
+  stopped. The function is idempotent per day and safe to call from anywhere; it returns
+  `{"written": False, "message_id": None, "questions": 0}` when there is nothing to say.
+- [ ] The frontend has not moved: `frontend/src/main.js` prints every failing check as "DEGRADES" in red
+  and two of the new checks can now fail while INFORMATIONAL, so it needs a third badge and a third
+  class; `RUNBOOK_CHECK_LABELS` has no entry for the five new checks (nor for `autonomy_mode`); the
+  Accountancy office needs the reconciliation list and its form, and the cost list must show
+  `reconciled_at` and the two new labels, or a row that no longer counts looks like one that does; and
+  `frontend/dist` is still not rebuilt.
+- [ ] Nothing here has met a real vendor, a real model or a real invoice. Every test fakes every
+  provider at its transport and `tests/conftest.py` refuses every non-loopback socket, so whether a
+  model that declares `vision` answers the picture gate's schema on real frames, and whether a real
+  invoice reconciles cleanly, are both the Owner's first measurement.
+- [ ] The Owner's part, in order: the fourteen numbered steps of «Ce are Owner-ul de făcut» in
+  `CURRENT_STATUS.md` — migrate, build, read the preflight, budgets, prices, token ceiling, sites and
+  search engine, channels and their policy, a model that can see, the character reference sets, the
+  fallback vendors, the autonomy mode, then the clock, and the invoice reconciliation after the first
+  real spend. Nothing above spends money on its own.
+
+Evidence, each figure named for the part that measured it and **no whole-suite run made by any of
+them**: `tests/test_readiness.py` **11** (new) and `tests/test_phase10_runbook.py` **46**, with
+`tests/test_approvals.py` **18**, **144** across the daily-run, director, pipeline, research, reset,
+scheduler, sources and media-toolchain files, **70** across approvals, autonomy modes, books and the
+closure adversary, and **5** whole-day tests; **18**, **28**, **16**, **22** and **10** in
+`tests/test_phase1_agents.py`, `tests/test_phase5_media.py`, `tests/test_picture_qc.py`,
+`tests/test_character_references.py` and `tests/test_editorial.py`, with **83**, **51**, **87** and
+**138** across nineteen neighbouring files — 359 in all; `tests/test_reconciliation.py` **11** (new),
+`tests/test_books_and_history.py` **17**, `tests/test_phase11_economy.py` **34**,
+`tests/test_pricing_truth.py` **18**, `tests/test_schema_and_audit_trail.py` **3**, **188** across the
+ten files the migration-head move in `main.py` can reach and **5** whole-day tests; and
+`scripts/check_docs.py` with `tests/test_documentation.py` for the documents. `ruff`,
+`ruff format --check` and `mypy backend` clean on every changed file. The chain is 0039 → 0040 → 0043
+→ 0044 → 0045 with `main.py` pinning `0045_reconciliation`, and 0046 is free. No provider was called,
+nothing was rendered, no run was queued and no credit was spent.

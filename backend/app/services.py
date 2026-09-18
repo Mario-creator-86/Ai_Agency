@@ -401,12 +401,36 @@ MODE_ALLOWS: dict[str, str] = {"MANUAL": "T1", "SUPERVISED": "T2", "AUTONOMOUS_C
 #: reversible internal writes continue; money and anything leaving the studio do not.
 SAFE_MODE_ALLOWS = "T1"
 
-#: How long an unanswered approval request stands before it must be asked again. 31: an
-#: expired approval cannot be reused. A day, so the Owner's morning is the natural answer;
-#: the integrator may lift it into config.py when the Owner wants another number. The same
-#: clock decides how long an *answer* stands: a refusal stops the studio asking again for a
-#: day, and a yes cannot be spent tomorrow on what he was asked about today.
-APPROVAL_EXPIRES_AFTER_HOURS = 24
+#: What the studio falls back to when it cannot build its settings at all — a copy with no
+#: usable `.env`, which is what the test suite is. The day this module has always used.
+DEFAULT_APPROVAL_EXPIRES_AFTER_HOURS = 24
+
+
+def approval_expires_after_hours() -> int:
+    """How long one approval request stands, from `Settings.approval_expires_after_hours`.
+
+    31: an expired approval cannot be reused. The same clock decides three things — how long
+    an unanswered question stands, how long a refusal keeps the studio from asking again, and
+    how long a yes can be spent — which is why the number is the Owner's configuration rather
+    than the module constant it used to be here.
+
+    Read with a local import and getattr, the shortcut `providers.retry` and
+    `integrations.autoconfig` already take: this module is called from inside a session and has
+    no handle on the application, and a studio whose settings cannot be built gets the number
+    it always had rather than an exception raised while asking the Owner a question.
+    """
+    from app.config import Settings  # noqa: PLC0415
+
+    try:
+        settings = Settings()  # type: ignore[call-arg]
+    except Exception:  # noqa: BLE001
+        settings = None
+    hours = getattr(settings, "approval_expires_after_hours", DEFAULT_APPROVAL_EXPIRES_AFTER_HOURS)
+    try:
+        return max(1, int(hours))
+    except (TypeError, ValueError):
+        return DEFAULT_APPROVAL_EXPIRES_AFTER_HOURS
+
 
 #: What each action is called in the Owner's own language, for the list he decides from. An
 #: action with no entry is shown by its code name rather than by an invented translation.
@@ -698,7 +722,7 @@ def request_approval(
     if existing is not None:
         return existing
     identifier = str(uuid4())
-    expires = datetime.now(UTC) + timedelta(hours=APPROVAL_EXPIRES_AFTER_HOURS)
+    expires = datetime.now(UTC) + timedelta(hours=approval_expires_after_hours())
     event = append_event(
         session,
         "governance.approval_requested",

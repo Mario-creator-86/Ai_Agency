@@ -141,8 +141,10 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
             # (the reference set and the second vendor) and neither needed a schema change —
             # the verdicts live in `quality_control_report.checks_json`, the references in
             # columns that already existed — so 0043 chains onto 0040, and 0044 (the subject
-            # an approval is about, and the Owner's answer on the row) onto 0043.
-            if revision != "0044_approval_answered":
+            # an approval is about, and the Owner's answer on the row) onto 0043. 0045 adds
+            # the vendor invoice that replaces the studio's estimates, so a budget stops
+            # counting an estimate and its bill together.
+            if revision != "0045_reconciliation":
                 raise RuntimeError("Run scripts/bootstrap.py with this application version")
             if connection.scalar(text("SELECT COUNT(*) FROM owner_policy")) != 1:
                 raise RuntimeError("Run scripts/bootstrap.py to initialize the studio")

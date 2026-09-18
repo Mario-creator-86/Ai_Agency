@@ -199,6 +199,15 @@ class Settings(BaseSettings):
     #: Owner lowers the mode — it is the figure his question is asked with, not a budget.
     paid_generation_approval_threshold_usd: float = Field(default=5.0, ge=0.0)
 
+    #: How long one approval request stands, in hours. One number, three consequences, which
+    #: is why it belongs here rather than in `app.services` where it was a module constant:
+    #: an unanswered question stands this long before it must be asked again; a refusal keeps
+    #: the studio from asking about the same thing again for the same span; and a yes cannot
+    #: be spent after it — he was asked about today's film, not tomorrow's. A day, so the
+    #: Owner's morning is the natural answer; the bounds are an hour (below which a question
+    #: could expire before he reads it) and a week.
+    approval_expires_after_hours: int = Field(default=24, ge=1, le=168)
+
     #: The ceiling on what every employee together may spend in tokens in one business date.
     #: 0 means none, which is how the studio has run until now: measured on the live copy,
     #: 391 runs on Ollama Cloud went through the Director's loop and the mail rounds under no

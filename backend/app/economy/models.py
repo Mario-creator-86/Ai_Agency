@@ -256,6 +256,17 @@ class ProviderCostRecord(Base):
     #: home (a MediaProviderError midway). Counted by budgets like any estimate: the money is
     #: as gone as if the film had been finished.
     failed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    #: When a vendor's invoice replaced this row. Measured before the column existed: an
+    #: estimate and the bill that paid for it were both summed by `spend_since`, so a render
+    #: estimated at 4.20 and billed at 4.55 charged the day 8.75. A reconciled row is kept
+    #: whole — it is the record of what the studio believed a film would cost — and stops
+    #: counting, because the invoice beside it is now the money. Set on the superseded bill
+    #: of a corrected reconciliation for the same reason.
+    reconciled_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    #: Which `provider_reconciliation` replaced it. A plain id rather than a foreign key:
+    #: the reconciliation already points at the bill it wrote, and a second key back would
+    #: make the two tables depend on each other in both directions for no query's sake.
+    reconciled_by_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
 
 
 class LedgerTransaction(Base):
@@ -431,6 +442,71 @@ class SpendReservation(Base):
     #: What replaced or released it: the render job's id, or the watchdog's reason.
     settled_reference: Mapped[str | None] = mapped_column(String(120), nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    event_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("domain_event.event_id"), nullable=True
+    )
+
+
+class ProviderReconciliation(Base):
+    """What a vendor actually billed, matched against the estimates the studio had made.
+
+    Every cost the studio writes for itself is ESTIMATED, at the Owner's prices or a public
+    catalogue's. Only the Owner ever sees the invoice, so only he can say what was really
+    charged — which is why this table is written by a versioned, idempotent Owner command and
+    by nothing else. Recording an invoice does three things at once: it writes the BILLED
+    `provider_cost_record` that posts against VR Cash, it stamps `reconciled_at` on the
+    estimates that invoice covers so no budget counts an estimate and its bill together, and
+    it keeps, as data, every row it could *not* match and why.
+
+    ``(provider, external_reference)`` is unique, so the same invoice number cannot be
+    reconciled twice. One active row per ``(provider, scope, period or correlation)``: a
+    correction is a new version that reverses the previous invoice's posting in the ledger
+    and re-adopts its estimates, never an edit.
+    """
+
+    __tablename__ = "provider_reconciliation"
+    __table_args__ = (
+        UniqueConstraint("provider", "external_reference", name="uq_reconciliation_reference"),
+        CheckConstraint("scope IN ('PERIOD','CORRELATION')", name="ck_reconciliation_scope"),
+        CheckConstraint("usd_micros > 0", name="ck_reconciliation_positive"),
+        Index("ix_reconciliation_active", "provider", "scope", "active"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    provider: Mapped[str] = mapped_column(String(60), nullable=False)
+    #: The vendor's own invoice or credit-note number. The idempotency key in the books.
+    external_reference: Mapped[str] = mapped_column(String(120), nullable=False)
+    #: PERIOD covers everything that provider charged between two moments; CORRELATION covers
+    #: one named thing — today a render job, which is what every cost row is attributed to.
+    scope: Mapped[str] = mapped_column(String(12), nullable=False)
+    #: Inclusive, and exclusive: the same half-open window `spend_since` reads.
+    period_start: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    period_end: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    #: The value looked for, and the attribution field that carries it.
+    correlation: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    correlation_key: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    amount_micros: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    usd_micros: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    fx_snapshot_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("fx_snapshot.id"), nullable=True
+    )
+    #: The BILLED cost row this invoice wrote — the only row of the three that money moved on.
+    cost_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("provider_cost_record.id"), nullable=True
+    )
+    matched_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    matched_usd_micros: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    #: Rows this invoice touched and could not replace, each with the reason, as the Owner
+    #: reads them. Kept on the row because an unmatched cost is the finding, not a detail of
+    #: one HTTP answer: a bill nobody can explain is what a studio needs to be told twice.
+    unmatched_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    set_by: Mapped[str] = mapped_column(String(100), nullable=False, default="owner")
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recorded_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    replaced_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
     event_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("domain_event.event_id"), nullable=True
     )

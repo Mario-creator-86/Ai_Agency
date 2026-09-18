@@ -22,7 +22,7 @@ import pytest
 from app.factual.models import FactualClaim, ScriptDraft, TopicIdea
 from app.factual.services import FactualGateError
 from app.media.assembler import RenderEngineUnavailable, assemble_video_job
-from app.media.models import MediaAsset, VideoRenderJob
+from app.media.models import CharacterBible, MediaAsset, VideoRenderJob
 from app.media.qc import evaluate_media_qc
 from app.media.services import (
     generate_storyboard_from_script,
@@ -1252,3 +1252,210 @@ def test_the_owners_render_refuses_to_invent_the_face_of_a_locked_character(
     detail = response.json()["detail"]
     assert detail["error"] == "ReferenceRequired"
     assert "Sarah" in detail["detail"]
+
+
+# ---------------------------------------------------------------------------
+# The factual film records who is in it
+# ---------------------------------------------------------------------------
+
+
+def _factual_script(engine, scenes: list[dict], title: str = "Cast") -> str:
+    """An APPROVED script with no unverified claim, ready to be storyboarded."""
+    script_id, now = str(uuid4()), utc_now()
+    with Session(engine) as session, session.begin():
+        session.get(OwnerPolicy, 1).autonomy_stopped = False
+        topic = TopicIdea(
+            id=str(uuid4()),
+            title=title,
+            topic="test",
+            angle="test",
+            target_audience="general",
+            novelty_score=0.8,
+            status="SELECTED",
+            created_at=now,
+        )
+        session.add(topic)
+        session.flush()
+        session.add(
+            ScriptDraft(
+                id=script_id,
+                topic_id=topic.id,
+                version=1,
+                title=title,
+                target_duration_seconds=30,
+                voiceover_full_text=" ".join(str(s.get("narration") or "") for s in scenes),
+                scenes_json=scenes,
+                status="APPROVED",
+                claim_ids_json=[],
+                unverified_claim_ids_json=[],
+                created_at=now,
+            )
+        )
+    return script_id
+
+
+def test_a_factual_scene_that_names_a_character_records_that_character(engine):
+    """The studio's main product listed nobody, so the character check measured nothing.
+
+    Measured before this: `generate_storyboard_from_script` wrote `character_ids_json=[]` on
+    every scene of every factual film, and `character_drift_qc` answered "no scene in this
+    film lists a character" on every one of them. A scene whose picture names Sarah now
+    records Sarah — and only her: the scene that shows the telescope shows nobody.
+    """
+    from app.media.services import storyboard_cast_note
+
+    seed_default_character_bibles(engine)
+    script_id = _factual_script(
+        engine,
+        [
+            {
+                "scene_index": 1,
+                "visual_description": "Sarah at the studio window, reading the day's figures",
+                "narration": "The day starts with the numbers.",
+            },
+            {
+                "scene_index": 2,
+                "visual_description": "The telescope's golden mirror against the dark",
+                "narration": "Sarah explains what the mirror does.",
+            },
+        ],
+    )
+
+    board = generate_storyboard_from_script(
+        engine, script_id, "MOTION_GRAPHIC", "9:16", str(uuid4())
+    )
+
+    with Session(engine) as session:
+        sarah = session.scalar(
+            select(CharacterBible).where(CharacterBible.canonical_name == "Sarah Executive")
+        )
+        assert board["scenes"][0]["character_ids_json"] == [sarah.id]
+        # Narration is the narrator's voice: a name spoken over a picture of a mirror does
+        # not put that person in the shot.
+        assert board["scenes"][1]["character_ids_json"] == []
+        # The film has a cast, so there is no "by design" to explain.
+        assert storyboard_cast_note(session, board["id"]) is None
+    assert board["cast_note"] is None
+
+
+def test_a_factual_film_of_landscapes_records_no_cast_and_says_it_is_by_design(engine):
+    """An empty cast is recorded as a decision, not left as an omission.
+
+    A check that finds no character can now tell "this film has no characters by design" from
+    "nobody listed them": the storyboard's own creation event carries the note. Nothing is
+    invented to give the character check something to measure.
+    """
+    from app.media.services import NO_CAST_BY_DESIGN, storyboard_cast_note
+
+    seed_default_character_bibles(engine)
+    script_id = _factual_script(
+        engine,
+        [
+            {
+                "scene_index": 1,
+                "visual_description": "A spectrum with a water line marked",
+                "narration": "A line of water.",
+            },
+            {
+                "scene_index": 2,
+                "visual_description": "The planet turning against its star",
+                "narration": "A world that keeps it.",
+            },
+        ],
+        title="Landscapes",
+    )
+
+    board = generate_storyboard_from_script(
+        engine, script_id, "MOTION_GRAPHIC", "9:16", str(uuid4())
+    )
+
+    assert [scene["character_ids_json"] for scene in board["scenes"]] == [[], []]
+    assert board["cast_note"] == NO_CAST_BY_DESIGN
+    with Session(engine) as session:
+        assert storyboard_cast_note(session, board["id"]) == NO_CAST_BY_DESIGN
+
+
+def test_a_writers_own_cast_list_is_read_before_the_picture(engine):
+    """The writer's cast for a scene is the strongest evidence of who is in it.
+
+    The serial's script already carries `characters` per scene; a factual script that does
+    the same is read the same way, by the first name the bible holds — "Aris", not
+    "Dr. Aris Researcher", and not the title in front of it.
+    """
+    seed_default_character_bibles(engine)
+    script_id = _factual_script(
+        engine,
+        [
+            {
+                "scene_index": 1,
+                "visual_description": "Two chairs and a whiteboard of half-finished sums",
+                "narration": "The research desk.",
+                "characters": ["Aris"],
+            }
+        ],
+        title="Writer's cast",
+    )
+
+    board = generate_storyboard_from_script(
+        engine, script_id, "MOTION_GRAPHIC", "9:16", str(uuid4())
+    )
+
+    with Session(engine) as session:
+        aris = session.scalar(
+            select(CharacterBible).where(CharacterBible.canonical_name == "Dr. Aris Researcher")
+        )
+    assert board["scenes"][0]["character_ids_json"] == [aris.id]
+
+
+def test_a_studio_with_no_character_bible_still_builds_a_storyboard(engine):
+    """No bible, no cast, and no invention: the scenes are written exactly as before."""
+    from app.media.services import NO_CAST_BY_DESIGN
+
+    script_id = _factual_script(
+        engine,
+        [
+            {
+                "scene_index": 1,
+                "visual_description": "Sarah at the studio window",
+                "narration": "Nobody in this studio has a bible yet.",
+            }
+        ],
+        title="No bible",
+    )
+
+    board = generate_storyboard_from_script(
+        engine, script_id, "MOTION_GRAPHIC", "9:16", str(uuid4())
+    )
+
+    assert board["scenes"][0]["character_ids_json"] == []
+    assert board["cast_note"] == NO_CAST_BY_DESIGN
+
+
+def test_a_surname_the_bible_does_not_hold_is_not_the_studios_character(engine):
+    """A telescope is not an employee: no cast is invented to give a gate something to do.
+
+    "Vera Distribution Hub" is in the bible and "the Vera Rubin Observatory" is in half the
+    astronomy scripts ever written. A given name followed by another capitalised word is
+    somebody else's surname, so it is not counted; the whole canonical name always is.
+    """
+    from app.media.services import NO_CAST_BY_DESIGN
+
+    seed_default_character_bibles(engine)
+    script_id = _factual_script(
+        engine,
+        [
+            {
+                "scene_index": 1,
+                "visual_description": "The Vera Rubin Observatory under a clear night sky",
+                "narration": "A telescope that photographs the whole sky.",
+            }
+        ],
+        title="Observatory",
+    )
+
+    board = generate_storyboard_from_script(
+        engine, script_id, "MOTION_GRAPHIC", "9:16", str(uuid4())
+    )
+
+    assert board["scenes"][0]["character_ids_json"] == []
+    assert board["cast_note"] == NO_CAST_BY_DESIGN

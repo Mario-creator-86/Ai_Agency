@@ -646,3 +646,49 @@ def test_a_failed_render_cost_is_labelled_as_such_in_the_owners_list(books, clie
     # Still an estimate: never posted, nothing in the ledger.
     assert treasury_snapshot(books)["spendable"]["amount"] == "0"
     assert trial_balance(books)["balanced"] is True
+
+
+def test_the_owners_invoice_retires_the_estimate_it_pays_for(books, client, headers):
+    """What the books said before reconciliation existed: an estimate and the bill that paid
+    for it stood side by side, so the studio owed 2.40 and had also spent 2.55."""
+    record_provider_cost(
+        books,
+        provider="runway",
+        external_reference="render:x:scene:1:motion",
+        status="ESTIMATED",
+        amount="2.40",
+    )
+    before = treasury_snapshot(books)
+    assert before["unbilled_provider_costs"]["amount"] == "2.4"
+    assert before["spendable"]["amount"] == "0", "an estimate never posts"
+
+    window = client.get("/api/v1/economy/provider-costs", headers=headers).json()["costs"][0]
+    answer = client.put(
+        "/api/v1/economy/reconciliations",
+        headers=headers,
+        json={
+            "command_id": str(uuid4()),
+            "provider": "runway",
+            "external_reference": "RUNWAY-2026-09",
+            "amount": "2.55",
+            "scope": "PERIOD",
+            "period_start": "2000-01-01T00:00:00+00:00",
+            "period_end": "2100-01-01T00:00:00+00:00",
+            "note": "Factura lunii, plătită cu cardul.",
+        },
+    )
+    assert answer.status_code == 200
+    assert answer.json()["matched"] == 1 and answer.json()["difference_vr"] == "0.15"
+
+    after = treasury_snapshot(books)
+    assert after["unbilled_provider_costs"]["amount"] == "0", "the estimate has been paid for"
+    assert after["spendable"]["amount"] == "-2.55", "the invoice is the money, once"
+    assert trial_balance(books)["balanced"] is True
+
+    costs = {
+        c["external_reference"]: c
+        for c in client.get("/api/v1/economy/provider-costs", headers=headers).json()["costs"]
+    }
+    assert costs[window["external_reference"]]["reconciled_at"]
+    assert "înlocuit de factura" in costs[window["external_reference"]]["label"]
+    assert costs["RUNWAY-2026-09"]["posted"] is True

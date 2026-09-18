@@ -495,9 +495,13 @@ def _give_vision(engine, agent_id):
 
     with Session(engine) as session, session.begin():
         agent = session.get(Agent, agent_id)
-        capability = Capability(id=str(uuid4()), name="vision", description="sees pictures")
-        session.add(capability)
-        session.flush()
+        # The workforce seed writes the `vision` row itself now (a role prefers it); only the
+        # per-model declaration below is this helper's own.
+        capability = session.scalar(select(Capability).where(Capability.name == "vision"))
+        if capability is None:
+            capability = Capability(id=str(uuid4()), name="vision", description="sees pictures")
+            session.add(capability)
+            session.flush()
         session.add(
             ModelCapability(
                 model_id=agent.model_id,

@@ -189,7 +189,15 @@ def spend_since(session: Session, since_iso: str) -> dict[str, Any]:
             func.sum(ProviderCostRecord.usd_micros),
             func.count(),
         )
-        .where(ProviderCostRecord.recorded_at >= since_iso)
+        # A row a vendor's invoice has replaced is skipped, never subtracted: the BILLED row
+        # the reconciliation wrote carries the hour of the last spend it pays for, so the
+        # period counts the estimate until the invoice arrives and the invoice afterwards.
+        # Measured before `reconciled_at` existed: 4.20 estimated and 4.55 billed for the same
+        # render charged the period 8.75.
+        .where(
+            ProviderCostRecord.recorded_at >= since_iso,
+            ProviderCostRecord.reconciled_at.is_(None),
+        )
         .group_by(ProviderCostRecord.provider, ProviderCostRecord.status)
     ).all()
     by_provider: dict[str, dict[str, Any]] = {}
@@ -206,7 +214,9 @@ def spend_since(session: Session, since_iso: str) -> dict[str, Any]:
     failed = int(
         session.scalar(
             select(func.coalesce(func.sum(ProviderCostRecord.usd_micros), 0)).where(
-                ProviderCostRecord.recorded_at >= since_iso, ProviderCostRecord.failed.is_(True)
+                ProviderCostRecord.recorded_at >= since_iso,
+                ProviderCostRecord.failed.is_(True),
+                ProviderCostRecord.reconciled_at.is_(None),
             )
         )
         or 0
