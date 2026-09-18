@@ -219,26 +219,45 @@ def mode_refusal(
     tier: str | None = None,
     *,
     requester: str = "director",
+    subject: str = "",
     evidence: str | None = None,
     cost_usd: float | None = None,
+    context: dict[str, Any] | None = None,
+    ask_owner: bool = True,
 ) -> dict[str, Any] | None:
     """The Owner's autonomy mode, asked before an action — None when it does not refuse.
 
     `may_act` is the one door (`31`'s authority hierarchy, read top down), and under
-    SUPERVISED a T3 action writes the Approval the Owner answers instead of being refused,
-    so the call happens inside a transaction of its own.
+    SUPERVISED a T3 action writes the Approval the Owner answers — or spends the answer he
+    has already given about this exact `subject` — instead of being refused, so the call
+    happens inside a transaction of its own.
 
     A STOP refusal is returned as no refusal *here* deliberately: the stop is read by the
     runbook before every stage, by the media stage before every film, by the render between
     scenes, by the publishing gate and by the Policy Kernel, and it must not come to be read
     only in this wrapper. What this asks is the question none of those ask — whether the mode
     the Owner set lets the studio attempt this at all.
+
+    `ask_owner=False` asks the mode without putting anything in front of the Owner: a
+    SUPERVISED T3 answers "he would have to be asked", nothing is written, and that is
+    reported here as no refusal, because the caller that can name the film is the one that
+    should do the asking. A mode that refuses outright still refuses.
     """
     with Session(engine) as session, session.begin():
         verdict = may_act(
-            session, action, tier, requester=requester, evidence=evidence, cost_usd=cost_usd
+            session,
+            action,
+            tier,
+            requester=requester,
+            subject=subject,
+            evidence=evidence,
+            cost_usd=cost_usd,
+            context=context,
+            ask_owner=ask_owner,
         )
     if verdict["allowed"] or verdict["status"] == "BLOCKED_STOP":
+        return None
+    if verdict["status"] == "NEEDS_APPROVAL" and not ask_owner:
         return None
     return verdict
 
@@ -1214,10 +1233,15 @@ def _media(
         # asked — and under SUPERVISED the T3 question writes the Approval the Owner answers.
         estimated_usd = float(plan_cost["usd"])
         dear = estimated_usd > settings.paid_generation_approval_threshold_usd
+        # The request is about *this* storyboard. Keyed by the action alone, the second and
+        # dearer film of a SUPERVISED day reused the first film's row, so the Owner would
+        # have been shown one question carrying the first film's price and his one answer
+        # would have bought both.
         refusal = mode_refusal(
             engine,
             "media.paid_generation_over_threshold" if dear else "media.paid_generation",
             requester="video_editor",
+            subject=storyboard_id,
             evidence=f"storyboard {storyboard_id}, estimat {plan_cost['usd']} USD",
             cost_usd=estimated_usd,
         )
@@ -1680,17 +1704,45 @@ def _publish_one(
 
     # The last question before the film leaves the studio, and the one no other gate asks:
     # whether the mode the Owner set lets the studio upload at all. An upload is an external
-    # write whatever visibility it carries (T3), so MANUAL refuses it, SUPERVISED records the
-    # Approval the Owner answers and AUTONOMOUS_CEO performs it — within the channel policy,
-    # which decides who may then see it. Asked here, after the Director and the gate, so the
-    # Owner is asked about a film that is otherwise ready to go.
+    # write whatever visibility it carries (T3), so MANUAL refuses it, SUPERVISED asks the
+    # Owner — or spends the answer he already gave about *this film* — and AUTONOMOUS_CEO
+    # performs it within the channel policy, which decides who may then see it. Asked here,
+    # after the Director and the gate, so the Owner is asked about a film that is otherwise
+    # ready to go.
+    #
+    # The request is about this media asset, and the state he is shown it in is the channel
+    # and the policy version that will decide who sees the film. What each thing means for
+    # an answer he has already given: a STOP or a SAFE_MODE is read by `may_act` before his
+    # answer is even looked for, so the yes stays unspent and is still his when the stop is
+    # lifted or the incident closes — neither of them retracts it, and neither of them lets
+    # a film past on it. A channel policy that moved after he answered does retract it: he
+    # said yes to this film going out at that visibility under that version, so the answer
+    # is left where it is and a fresh request naming the new policy is raised instead.
     refusal = mode_refusal(
         engine,
         "publishing.public_publish",
         requester="publisher",
+        subject=asset_id,
         evidence=f"{metadata['title'][:80]} → {channel_name} ({resolved['release_privacy']})",
+        context={
+            "channel_id": channel_id,
+            "policy_version": resolved["policy_version"],
+            "privacy_status": resolved["privacy_status"],
+        },
     )
     if refusal is not None:
+        if refusal["status"] == "REFUSED_BY_OWNER":
+            # The stage's own vocabulary, kept exactly: the Owner's no is the work done and
+            # the answer being no — the same shape as the Director's refusal and the
+            # Publisher's HOLD — so it is COMPLETED, not SKIPPED. The film keeps its
+            # QC-PASSED report and stays unpublished, and nothing asks him again until his
+            # decision expires.
+            return {
+                "status": COMPLETED,
+                "reason": refusal["reason"][:500],
+                "refused_by_owner": asset_id,
+                "approval_id": refusal["approval_id"],
+            }
         return {
             "status": SKIPPED,
             "reason": refusal["reason"][:500],
@@ -2053,11 +2105,18 @@ def build_stage_runners(
             # What the stage is, in the risk terms the Owner's mode understands (see
             # STAGE_ACTIONS). A stage above what the mode allows could not run, which is
             # SKIPPED and not BLOCKED: BLOCKED ends the day, and a mode is not an incident —
-            # the stages below it that the mode does allow still do their work. Under
-            # SUPERVISED the refusal has already written the Owner's approval request, and
-            # its id travels in the artefacts so the run says what he is being asked.
+            # the stages below it that the mode does allow still do their work.
+            #
+            # The asking is left to the stages that know what they are asking about.
+            # Measured before this: the wrapper raised the SUPERVISED approval itself, with
+            # no film on it, and the stage never ran — so one answer would have covered
+            # every film the day had, and a request was raised even on a day with nothing to
+            # publish. `ask_owner=False` asks the mode the same question and writes nothing;
+            # a stage the mode refuses outright is still refused here, and the stage that the
+            # mode would merely ask about goes on to ask per film, with that film's name, its
+            # price and its channel policy on the request.
             action, tier = STAGE_ACTIONS[name]
-            refusal = mode_refusal(engine, action, tier)
+            refusal = mode_refusal(engine, action, tier, ask_owner=False)
             if refusal is not None:
                 outcome = _outcome(
                     SKIPPED,

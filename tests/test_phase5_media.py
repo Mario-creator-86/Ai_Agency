@@ -1082,3 +1082,173 @@ def test_the_picture_check_stands_down_when_there_is_nothing_to_look_at(engine, 
         assert drift["passed"] is None and drift["status"] in ("NOT_IMPLEMENTED", "NOT_APPLICABLE")
     assert without["status"] == with_empty_registry["status"]
     assert without["failure_reasons_json"] == with_empty_registry["failure_reasons_json"]
+
+
+# ------------------------------------------------ the Owner's own render sees what the day sees
+# Measured before this work: the media stage passed the plan's `image_chain` and
+# `reference_for_scene` to the camera and the registry and the encoder to quality control,
+# and this route passed none of the four. So the Owner's button drew every scene with one
+# vendor and no character's reference, and his quality control reported the picture and
+# character checks NOT_APPLICABLE while the day measured them on the same film.
+
+
+def _approved_storyboard(engine, tmp_path: Path) -> str:
+    """A storyboard whose story has been read and passed, ready for the render route."""
+    from app.factual.models import StoryReview
+    from app.media.models import Storyboard
+
+    storyboard_id, _ = _seeded_storyboard(engine, tmp_path)
+    with Session(engine) as session, session.begin():
+        board = session.get(Storyboard, storyboard_id)
+        session.add(
+            StoryReview(
+                id=str(uuid4()),
+                script_id=board.script_draft_id,
+                verdict="PASS",
+                checks_json={},
+                retention_json={},
+                scores_json={},
+                notes_json={},
+                estimated_seconds=12.0,
+                created_at=utc_now(),
+            )
+        )
+    return storyboard_id
+
+
+def _planner(chain, reference_for_scene):
+    """`render_plan`, faked at the route's import boundary: the plan is what the route reads."""
+
+    def fake_render_plan(engine_, vault, board_id):
+        return {
+            "plan": {"purposes": {}, "scenes": []},
+            "tts_for_scene": lambda scene: None,
+            "video_for_scene": lambda scene: None,
+            "image": None,
+            "image_chain": chain,
+            "reference_for_scene": reference_for_scene,
+        }
+
+    return fake_render_plan
+
+
+def _recording_assembler(received: dict, asset_id: str):
+    def fake_assemble(engine_, storyboard, correlation, **kwargs):
+        received["render"] = kwargs
+        return {"job_id": str(uuid4()), "output_asset_id": asset_id, "provenance_hash": "0"}
+
+    return fake_assemble
+
+
+def _recording_qc(received: dict):
+    def fake_qc(engine_, asset, correlation, **kwargs):
+        received["qc"] = kwargs
+        return {
+            "id": str(uuid4()),
+            "media_asset_id": asset,
+            "status": "PASSED",
+            "score": 1.0,
+            "checks_json": {},
+            "failure_reasons_json": [],
+            "verified_at": utc_now(),
+        }
+
+    return fake_qc
+
+
+def test_the_owners_render_draws_through_the_chain_and_his_qc_looks_at_the_pictures(
+    client, headers, engine, settings, tmp_path: Path, monkeypatch
+):
+    """The four arguments the day passes and this route did not, at both of its call sites."""
+    storyboard_id = _approved_storyboard(engine, tmp_path)
+    received: dict[str, dict] = {}
+    asset_id = str(uuid4())
+    chain: list = [object()]
+
+    def reference_for_scene(scene):
+        return None
+
+    monkeypatch.setattr("app.media.router.render_plan", _planner(chain, reference_for_scene))
+    monkeypatch.setattr(
+        "app.media.router.assemble_video_job", _recording_assembler(received, asset_id)
+    )
+    monkeypatch.setattr("app.media.router.evaluate_media_qc", _recording_qc(received))
+
+    response = client.post(f"/api/v1/media/render/{storyboard_id}", headers=headers)
+
+    assert response.status_code == 200, response.text
+    assert received["render"]["image_chain"] is chain
+    assert received["render"]["reference_for_scene"] is reference_for_scene
+    assert received["qc"]["registry"] is client.app.app.state.registry
+    assert received["qc"]["ffmpeg_path"] == settings.ffmpeg_path
+
+    # And quality control asked for on its own: the same two, so the Owner's own reading of
+    # a film measures what the day's reading of the same film measured.
+    received.clear()
+    with Session(engine) as session, session.begin():
+        session.add(
+            MediaAsset(
+                id=asset_id,
+                asset_type="RENDERED_VIDEO",
+                uri_or_path=str(tmp_path / "final_short_9_16.mp4"),
+                file_size_bytes=1,
+                mime_type="video/mp4",
+                provider_name="STUDIO_INTERNAL",
+                license_status="PROPRIETARY_STUDIO",
+                provenance_hash="0" * 64,
+                created_at=utc_now(),
+            )
+        )
+    response = client.post(f"/api/v1/media/qc/{asset_id}", headers=headers)
+
+    assert response.status_code == 200, response.text
+    assert received["qc"]["registry"] is client.app.app.state.registry
+    assert received["qc"]["ffmpeg_path"] == settings.ffmpeg_path
+
+
+def test_an_injected_image_adapter_is_still_the_only_vendor_the_render_uses(
+    client, headers, engine, tmp_path: Path, monkeypatch
+):
+    """A test-injected adapter on app.state means *this* vendor draws the film. Handing the
+    plan's chain as well would put the studio's own vendors in front of it, so the chain is
+    passed only when nothing was injected — the same rule the route already applies to the
+    injected voice."""
+    storyboard_id = _approved_storyboard(engine, tmp_path)
+    received: dict[str, dict] = {}
+    injected = DeterministicVisualAdapter()
+    client.app.app.state.image_adapter = injected
+    monkeypatch.setattr("app.media.router.render_plan", _planner([object()], lambda scene: None))
+    monkeypatch.setattr(
+        "app.media.router.assemble_video_job", _recording_assembler(received, str(uuid4()))
+    )
+    monkeypatch.setattr("app.media.router.evaluate_media_qc", _recording_qc(received))
+
+    response = client.post(f"/api/v1/media/render/{storyboard_id}", headers=headers)
+
+    assert response.status_code == 200, response.text
+    assert received["render"]["image_adapter"] is injected
+    assert received["render"]["image_chain"] is None
+
+
+def test_the_owners_render_refuses_to_invent_the_face_of_a_locked_character(
+    client, headers, engine, tmp_path: Path, monkeypatch
+):
+    """`ReferenceRequired` is a ValueError, and this route answered every ValueError with 404
+    — "storyboard not found" for a storyboard that exists. It is the studio declining to
+    draw a locked look it has no sheet for, so it is 422 and it names the character."""
+    from app.media.services import ReferenceRequired
+
+    storyboard_id = _approved_storyboard(engine, tmp_path)
+    monkeypatch.setattr("app.media.router.render_plan", _planner(None, lambda scene: None))
+
+    def refusing_assemble(engine_, storyboard, correlation, **kwargs):
+        raise ReferenceRequired("Sarah are înfățișarea blocată și nicio imagine de referință")
+
+    monkeypatch.setattr("app.media.router.assemble_video_job", refusing_assemble)
+
+    response = client.post(f"/api/v1/media/render/{storyboard_id}", headers=headers)
+
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert detail["error"] == "ReferenceRequired"
+    assert "Sarah" in detail["detail"]

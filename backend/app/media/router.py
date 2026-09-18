@@ -48,6 +48,7 @@ from app.media.schemas import (
 )
 from app.media.services import (
     REFERENCE_STORAGE_ROOT,
+    ReferenceRequired,
     ReferenceSetError,
     generate_character_reference_set,
     generate_storyboard_from_script,
@@ -284,12 +285,26 @@ def create_media_router() -> APIRouter:
             # decide it. `model` is the Director's explicit override, recorded as such.
             environment = studio_environment(engine)
             injected_tts = getattr(request.app.state, "tts_adapter", None)
+            injected_image = getattr(request.app.state, "image_adapter", None)
             result = assemble_video_job(
                 engine,
                 storyboard_id,
                 correlation_id,
                 ffmpeg_path=getattr(request.app.state.settings, "ffmpeg_path", None),
-                image_adapter=getattr(request.app.state, "image_adapter", None) or planned["image"],
+                image_adapter=injected_image or planned["image"],
+                # The vendors this film's stills may be drawn by, in order — the same chain
+                # the day's media stage passes: the resolved vendor and, where the Owner
+                # approved one for this purpose, a single alternative that draws the scene
+                # the first refused before the render falls back to a placeholder still. An
+                # adapter injected on app.state is the render's only vendor, as it has always
+                # been, so the chain is passed only when nothing was injected.
+                image_chain=None if injected_image else planned.get("image_chain"),
+                # And the reference picture of the character the scene's cast names, so the
+                # Owner's own button keeps a locked face instead of inventing it per scene.
+                # This one is passed whatever adapter draws: which face a scene must keep is
+                # a fact about the film's characters and not about the vendor, and a locked
+                # character with no readable sheet refuses the render below.
+                reference_for_scene=planned.get("reference_for_scene"),
                 tts_adapter=injected_tts or tts_provider(engine, vault),
                 tts_adapter_for_scene=None if injected_tts else planned["tts_for_scene"],
                 # The Owner's own render button makes the same film the day does: a shot per
@@ -369,6 +384,13 @@ def create_media_router() -> APIRouter:
                 result["output_asset_id"],
                 correlation_id,
                 settings=request.app.state.settings,
+                # The two things it takes to look at the pictures and not only at the file:
+                # a provider holding a model that declares it can see, and the encoder that
+                # cuts the frame it looks at. The day's quality control passed both and this
+                # one passed neither, so the same film measured here reported the picture and
+                # character checks NOT_APPLICABLE and there measured them.
+                registry=getattr(request.app.state, "registry", None),
+                ffmpeg_path=getattr(request.app.state.settings, "ffmpeg_path", None),
             )
             result["qc"] = qc_result
             return result
@@ -376,6 +398,24 @@ def create_media_router() -> APIRouter:
             raise HTTPException(
                 status_code=503,
                 detail={"error": "RenderEngineUnavailable", "message": str(exc)},
+            ) from exc
+        except ReferenceRequired as exc:
+            # Not the vendor refusing but the studio: a character whose look the Owner locked
+            # has no reference picture the render can read, and drawing the scene anyway would
+            # invent the face the lock exists to fix. It is a `ValueError`, so without this it
+            # was answered below as 404 — "storyboard not found" about a storyboard that
+            # exists. The Owner produces the character's reference set, then renders.
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "ReferenceRequired",
+                    "message": (
+                        "Un personaj cu înfățișarea blocată nu are imagine de referință, "
+                        "deci scena nu poate fi desenată. Produ setul de referințe al "
+                        "personajului și reia randarea."
+                    ),
+                    "detail": str(exc),
+                },
             ) from exc
         except MediaProviderError as exc:
             # The vendor did not deliver. Nothing partial is presented as a render.
@@ -658,9 +698,17 @@ def create_media_router() -> APIRouter:
                         detail="No rendered asset found for storyboard to run QC on",
                     )
         # Same ceiling as the day's quality control: without `settings=` the default of half
-        # the scenes applies and the Owner's max_fallback_scenes is read by nobody here.
+        # the scenes applies and the Owner's max_fallback_scenes is read by nobody here. And
+        # the same eye on the pictures, for the same reason: a film the Owner measures himself
+        # is measured by what the day would have measured, or the two readings of one film
+        # disagree about which gates ever ran.
         return evaluate_media_qc(
-            engine, asset_id, correlation_id, settings=request.app.state.settings
+            engine,
+            asset_id,
+            correlation_id,
+            settings=request.app.state.settings,
+            registry=getattr(request.app.state, "registry", None),
+            ffmpeg_path=getattr(request.app.state.settings, "ffmpeg_path", None),
         )
 
     return router

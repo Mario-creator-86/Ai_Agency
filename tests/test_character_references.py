@@ -526,3 +526,51 @@ def test_an_adapter_that_takes_a_reference_is_given_it(engine, vault):
 
     assert attempts[0]["reference_image"] is True
     assert adapter.extras[0]["reference_image"] is reference
+
+
+def test_runway_is_a_vendor_the_chain_may_hand_a_reference_to(engine, vault, monkeypatch):
+    """`RunwayImageAdapter` used to answer False to `accepts_reference_image`, so the chain
+    dropped the character's sheet and a Runway-drawn still was honestly recorded as drawn from
+    the words. The adapter sends `referenceImages` now, so the chain passes the picture and
+    the attempt records the continuity the render actually had."""
+    import asyncio
+    import json as _json
+
+    from app.media.factory import accepts_reference_image, still_from_chain
+    from app.providers import runway
+    from app.providers.runway import RunwayImageAdapter
+
+    submitted: list[dict] = []
+
+    def transport(host, method, path, headers, body=None, **kwargs):
+        submitted.append({"host": host, "path": path, "body": body})
+        if path == "/v1/text_to_image":
+            return {"id": "task-1"}, b"", "application/json"
+        if path.startswith("/v1/tasks/"):
+            return (
+                {"status": "SUCCEEDED", "output": ["https://files.test/still.png"]},
+                b"",
+                "application/json",
+            )
+        return None, png_bytes(64, 96), "image/png"
+
+    monkeypatch.setattr(runway, "request", transport)
+    adapter = RunwayImageAdapter(
+        "key",
+        "gen4_image",
+        {"tasks": ["text_to_image"], "ratios": {"text_to_image": ["1080:1920"]}},
+    )
+    assert accepts_reference_image(adapter) is True
+
+    reference = {"bytes": png_bytes(64, 96), "mime_type": "image/png"}
+    _result, attempts = asyncio.run(
+        still_from_chain(
+            engine, [adapter], "Sarah at her desk", extra={"reference_image": reference}
+        )
+    )
+
+    assert attempts[0]["reference_image"] is True
+    assert len(_json.loads(submitted[0]["body"])["referenceImages"]) == 1
+    # What the code does, not what the account has answered: no live run has ever posted this
+    # field, so nothing here may be read as a verified integration.
+    assert adapter.REFERENCE_IMAGE_VERIFIED is False

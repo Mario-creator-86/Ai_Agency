@@ -12,6 +12,9 @@ from app.models import ApprovalRequest, CommandRecord, DomainEvent, OwnerPolicy,
 from app.publishing.models import ChannelRecord
 from app.schemas import (
     AUTONOMY_RANK,
+    ApprovalDecisionCommand,
+    ApprovalDecisionResult,
+    ApprovalView,
     AutonomyModeCommand,
     EnvironmentCommand,
     EventView,
@@ -27,6 +30,14 @@ class CommandConflict(Exception):
 
 class AutonomyRefused(Exception):
     """The Owner asked for a mode the studio's own state does not allow it to take."""
+
+
+class ApprovalClosed(Exception):
+    """The Owner answered a request that is no longer open: already decided, or expired."""
+
+
+class ApprovalMissing(ApprovalClosed):
+    """The Owner answered a request the studio has no record of ever making."""
 
 
 def utc_now() -> str:
@@ -392,8 +403,27 @@ SAFE_MODE_ALLOWS = "T1"
 
 #: How long an unanswered approval request stands before it must be asked again. 31: an
 #: expired approval cannot be reused. A day, so the Owner's morning is the natural answer;
-#: the integrator may lift it into config.py when the Owner wants another number.
+#: the integrator may lift it into config.py when the Owner wants another number. The same
+#: clock decides how long an *answer* stands: a refusal stops the studio asking again for a
+#: day, and a yes cannot be spent tomorrow on what he was asked about today.
 APPROVAL_EXPIRES_AFTER_HOURS = 24
+
+#: What each action is called in the Owner's own language, for the list he decides from. An
+#: action with no entry is shown by its code name rather than by an invented translation.
+APPROVAL_ACTION_LABELS: dict[str, str] = {
+    "publishing.public_publish": "Publicarea unui film pe canalul lui",
+    "media.paid_generation": "Un randat plătit, în limita bugetului",
+    "media.paid_generation_over_threshold": "Un randat plătit peste pragul stabilit",
+    "media.character_reference_set": "Producerea setului de referință al unui personaj",
+    "research.fetch_page": "Citirea unei pagini din afara studioului",
+    "agent.fire": "Concedierea unui angajat",
+    "provider.activate": "Activarea unui furnizor nou",
+    "story.public_world_change": "O schimbare publică în lumea serialului",
+}
+
+#: A cost the studio cannot compute is None, never zero — and the page must be able to say
+#: so without inventing "0 USD" for a question nobody can price.
+COST_UNKNOWN = "necunoscut"
 
 
 def _safe_mode_is_open(session: Session) -> bool:
@@ -408,19 +438,238 @@ def _safe_mode_is_open(session: Session) -> bool:
     )
 
 
-def _open_approval(session: Session, action: str) -> ApprovalRequest | None:
-    """The request already standing for this action, if it has not expired."""
+def _context_matches(stored: dict | None, context: dict | None) -> bool:
+    """Whether the Owner was answering about the state the caller is acting in now.
+
+    The proposed diff *is* the context he was shown — for an upload, the channel and the
+    policy version that decides who will see the film. If any of it has moved since he
+    answered, his yes was given about something else, so it is not spent here and a fresh
+    request naming the new state is raised instead. A caller that names no context asks
+    nothing of the past, which is the reading for an action with no state around it.
+    """
+    if not context:
+        return True
+    if not isinstance(stored, dict):
+        return False
+    return all(stored.get(key) == value for key, value in context.items())
+
+
+def _open_approval(
+    session: Session, action: str, subject: str, proposed_diff: dict | None
+) -> ApprovalRequest | None:
+    """The request already standing for this action *about this thing*, if it is still live.
+
+    Measured before the subject was part of the key: the second, dearer film of a SUPERVISED
+    day reused the first film's row, so the Owner's inbox held one question carrying the
+    first film's evidence and the first film's price for both.
+
+    "Still live" is the expiry and the state the question named. A question stands for a day
+    and the channel policy can move inside that day: measured before this, the standing row
+    was handed back unchanged, so the Owner read a question naming the old policy version and
+    the old visibility, and his answer to it was then discarded by `_answered_approval`
+    because the yes had been given about something else. Two wrongs that cancel into a safe
+    outcome are still a decision he made for nothing, so a question whose state has moved is
+    closed and asked again in the present tense.
+    """
     now = utc_now()
     for request in session.scalars(
         select(ApprovalRequest).where(
-            ApprovalRequest.action == action, ApprovalRequest.result == "PENDING"
+            ApprovalRequest.action == action,
+            ApprovalRequest.subject == subject,
+            ApprovalRequest.result == "PENDING",
         )
     ):
-        if request.expires_at > now:
+        if request.expires_at > now and request.proposed_diff == proposed_diff:
             return request
-        # 31: an expired approval cannot be reused. Saying so is part of the record.
+        # 31: an expired approval cannot be reused. Saying so is part of the record, and a
+        # question about a state the studio has left is as dead as one the clock has passed.
         request.result = "EXPIRED"
     return None
+
+
+def _answered_approval(
+    session: Session, action: str, subject: str, context: dict | None
+) -> ApprovalRequest | None:
+    """The Owner's standing answer about this exact thing, or None if he has not given one.
+
+    "Standing" is three conditions and each of them is a rule of 31 read literally: the
+    request has not expired (an expired approval cannot be reused), the yes has not already
+    been spent (`consumed_at`), and what he was shown is still what the studio is about to
+    do. The newest answer wins, because a second question about the same film only exists
+    when the first one aged out.
+    """
+    now = utc_now()
+    standing = [
+        request
+        for request in session.scalars(
+            select(ApprovalRequest).where(
+                ApprovalRequest.action == action,
+                ApprovalRequest.subject == subject,
+                ApprovalRequest.result.in_(("APPROVED", "REFUSED")),
+            )
+        )
+        if request.expires_at > now
+        and request.consumed_at is None
+        and _context_matches(request.proposed_diff, context)
+    ]
+    standing.sort(key=lambda request: request.decided_at or request.created_at, reverse=True)
+    return standing[0] if standing else None
+
+
+def _spend_approval(session: Session, request: ApprovalRequest) -> None:
+    """Mark the Owner's yes as spent, here, before the act it authorises is attempted.
+
+    One approval authorises one act. The column is the lock rather than the ledger, because
+    a gate that had to walk the event history for every film would make the day's riskiest
+    decision depend on a scan; the event is written beside it so the day's record says the
+    studio acted on his answer and when. Spending it before the act rather than after is
+    deliberate: an upload that then fails does not get a second free attempt on yesterday's
+    answer — tomorrow's run asks again.
+    """
+    request.consumed_at = utc_now()
+    append_event(
+        session,
+        "governance.approval_consumed",
+        "owner_approval_request",
+        request.id,
+        3,
+        {
+            "action": request.action,
+            "subject": request.subject,
+            "risk_tier": request.risk_tier,
+            "cost_usd": request.cost_usd,
+        },
+        request.id,
+    )
+
+
+def _owner_refusal_reason(request: ApprovalRequest) -> str:
+    """What the stage tells the Owner back when he has already said no."""
+    label = APPROVAL_ACTION_LABELS.get(request.action, request.action)
+    words = f" Motivul lui: {request.note}" if request.note else ""
+    return (
+        f"Proprietarul a refuzat «{label}».{words} Studioul nu cere din nou până când "
+        "decizia lui expiră."
+    )
+
+
+def approval_view(request: ApprovalRequest) -> ApprovalView:
+    """One request as the Owner reads it, with the word for a cost nobody could compute."""
+    return ApprovalView(
+        id=request.id,
+        action=request.action,
+        action_label=APPROVAL_ACTION_LABELS.get(request.action, request.action),
+        subject=request.subject or "",
+        risk_tier=request.risk_tier,
+        requester=request.requester,
+        evidence=request.evidence,
+        proposed_diff=request.proposed_diff,
+        cost_usd=request.cost_usd,
+        cost_label=COST_UNKNOWN if request.cost_usd is None else f"{request.cost_usd} USD",
+        reversible=bool(request.reversible),
+        expires_at=request.expires_at,
+        created_at=request.created_at,
+        result=request.result,
+        approver=request.approver,
+        note=request.note,
+        decided_at=request.decided_at,
+    )
+
+
+def pending_approvals(engine: Engine) -> list[ApprovalView]:
+    """What is waiting for the Owner right now, newest first.
+
+    Only PENDING and only unexpired: a request the studio has stopped waiting on is not a
+    decision he still has to make, and answering one would authorise something nobody is
+    asking for any more. Reading the list writes nothing — an expired row is marked EXPIRED
+    by the next thing that asks about that action, not by the page that shows it.
+    """
+    now = utc_now()
+    with Session(engine) as session:
+        return [
+            approval_view(request)
+            for request in session.scalars(
+                select(ApprovalRequest)
+                .where(ApprovalRequest.result == "PENDING", ApprovalRequest.expires_at > now)
+                .order_by(ApprovalRequest.created_at.desc())
+            )
+        ]
+
+
+def decide_approval(engine: Engine, command: ApprovalDecisionCommand) -> ApprovalDecisionResult:
+    """The Owner answers one request: APPROVED or REFUSED, with a word of his own.
+
+    Versioned and idempotent by command id, behind the same write lock as the rest of his
+    commands, and recorded as one `governance.approval_decided` event carrying the old
+    result and the new. A request that was already answered or has expired is refused
+    rather than re-answered: 31 says an expired approval cannot be reused, and a request
+    answered twice would be two authorities for one act.
+
+    Nothing is written into the agents' memory here, unlike the mode and the environment: an
+    answer is about one film, not a standing rule of the studio, and a letter to every agent
+    for every upload would be the noise that makes the standing rules unreadable.
+    """
+    payload_hash = hashlib.sha256(
+        json.dumps(command.model_dump(mode="json"), sort_keys=True).encode()
+    ).hexdigest()
+    command_id = str(command.command_id)
+    with Session(engine) as session, session.begin():
+        # The same serialisation point the other Owner commands take: one answer at a time,
+        # across processes.
+        session.execute(update(OwnerPolicy).where(OwnerPolicy.id == 1).values(id=1))
+        previous = recall_command(session, command_id, payload_hash)
+        if previous is not None:
+            return ApprovalDecisionResult.model_validate(previous)
+        request = session.get(ApprovalRequest, command.approval_id)
+        if request is None:
+            raise ApprovalMissing(
+                f"Nu există nicio cerere de aprobare cu identificatorul «{command.approval_id}»."
+            )
+        if request.result != "PENDING":
+            raise ApprovalClosed(
+                f"Cererea a primit deja răspunsul {request.result}; o cerere nu se răspunde "
+                "de două ori."
+            )
+        if request.expires_at <= utc_now():
+            # Left PENDING rather than rewritten on the way out: the row is filtered out of
+            # everything that reads it by its own expiry, and a failed command must not be
+            # the thing that changes state.
+            raise ApprovalClosed(
+                f"Cererea a expirat la {request.expires_at}; o cerere expirată nu mai poate "
+                "fi aprobată. Studioul o va pune din nou când are din nou nevoie de ea."
+            )
+
+        previous_result = request.result
+        request.result = command.decision
+        request.approver = "owner"
+        request.note = command.note
+        request.decided_at = utc_now()
+        event = append_event(
+            session,
+            "governance.approval_decided",
+            "owner_approval_request",
+            request.id,
+            2,
+            {
+                "action": request.action,
+                "subject": request.subject,
+                "risk_tier": request.risk_tier,
+                "previous_result": previous_result,
+                "result": command.decision,
+                "approver": "owner",
+                "note": command.note,
+                "cost_usd": request.cost_usd,
+            },
+            command_id,
+        )
+        result = ApprovalDecisionResult(
+            command_id=command_id,
+            status="COMMITTED",
+            approval=approval_view(request),
+            event_id=event.event_id,
+        )
+        remember_command(session, command_id, "DecideApproval", payload_hash, result.model_dump())
+        return result
 
 
 def request_approval(
@@ -429,6 +678,7 @@ def request_approval(
     tier: str,
     requester: str,
     *,
+    subject: str = "",
     evidence: str | None = None,
     proposed_diff: dict | None = None,
     cost_usd: float | None = None,
@@ -436,11 +686,15 @@ def request_approval(
 ) -> ApprovalRequest:
     """Put an action in front of the Owner and return the request standing for it.
 
-    Asking twice for the same action returns the same request: a queue of duplicates would
-    bury the one decision the Owner has to make. `cost_usd` stays None when nothing in the
-    studio can price the action — a cost that could not be computed is not zero.
+    Asking twice about the same thing returns the same request: a queue of duplicates would
+    bury the one decision the Owner has to make. Asking about a *different* thing raises a
+    different request, which is what `subject` is for — the film, the storyboard. `cost_usd`
+    stays None when nothing in the studio can price the action; a cost that could not be
+    computed is not zero. A question whose `proposed_diff` no longer describes what the
+    studio is about to do is closed rather than shown again: he must never be asked about a
+    state the studio has already left.
     """
-    existing = _open_approval(session, action)
+    existing = _open_approval(session, action, subject, proposed_diff)
     if existing is not None:
         return existing
     identifier = str(uuid4())
@@ -451,12 +705,19 @@ def request_approval(
         "owner_approval_request",
         identifier,
         1,
-        {"action": action, "risk_tier": tier, "requester": requester, "cost_usd": cost_usd},
+        {
+            "action": action,
+            "subject": subject,
+            "risk_tier": tier,
+            "requester": requester,
+            "cost_usd": cost_usd,
+        },
         identifier,
     )
     request = ApprovalRequest(
         id=identifier,
         action=action,
+        subject=subject,
         risk_tier=tier,
         requester=requester,
         evidence=evidence,
@@ -466,6 +727,9 @@ def request_approval(
         expires_at=expires.isoformat(),
         approver=None,
         result="PENDING",
+        note=None,
+        decided_at=None,
+        consumed_at=None,
         created_at=utc_now(),
         event_id=event.event_id,
     )
@@ -480,8 +744,11 @@ def may_act(
     tier: str | None = None,
     *,
     requester: str = "director",
+    subject: str = "",
     evidence: str | None = None,
     cost_usd: float | None = None,
+    context: dict | None = None,
+    ask_owner: bool = True,
 ) -> dict:
     """What the Policy Kernel asks before an agent acts on the studio's behalf.
 
@@ -499,6 +766,13 @@ def may_act(
     action, and a caller's tier is only ever taken upward — no lower layer grants itself
     authority above a higher one. An action the table does not know and the caller does not
     classify is refused: a permission that could not be reasoned about is not granted.
+
+    `subject` names the thing the action is about — this film, this storyboard — and
+    `context` the state the Owner is being shown it in. Together they decide which of his
+    answers, if any, is about what is happening now. An answer only ever does what this
+    gate would otherwise have made him wait for: it turns SUPERVISED's "ask him" into
+    "allowed, once". It never reaches a refusal above it — the stop, safe mode, T4 and a
+    mode that was not asking are all read first, and all of them leave his yes unspent.
     """
     known = ACTION_RISK_TIERS.get(action)
     if known and tier:
@@ -550,12 +824,34 @@ def may_act(
         return verdict("ALLOWED", "")
 
     if mode == "SUPERVISED" and tier == "T3":
+        if not ask_owner:
+            # A caller asking on behalf of something it cannot name — the daily run's stage
+            # wrapper, before it knows which film — gets the answer and leaves the Owner
+            # alone: nothing is written, nothing of his is spent, and the caller that can
+            # name the film asks it properly.
+            return verdict(
+                "NEEDS_APPROVAL",
+                f"Modul de autonomie este SUPERVISED: acțiunea «{action}» ({tier}) cere "
+                "aprobarea Proprietarului.",
+            )
+        # His answer is read only here, and only under the mode that asks. A yes given while
+        # the studio was SUPERVISED is not a way past MANUAL, which he chose afterwards
+        # precisely to be asked about everything; the mode branch above has already refused
+        # that case without ever looking for an answer to spend.
+        answered = _answered_approval(session, action, subject, context)
+        if answered is not None and answered.result == "REFUSED":
+            return verdict("REFUSED_BY_OWNER", _owner_refusal_reason(answered), answered.id)
+        if answered is not None:
+            _spend_approval(session, answered)
+            return verdict("ALLOWED", "", answered.id)
         request = request_approval(
             session,
             action,
             tier,
             requester,
+            subject=subject,
             evidence=evidence,
+            proposed_diff=context,
             cost_usd=cost_usd,
         )
         return verdict(

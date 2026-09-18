@@ -61,6 +61,12 @@ class ApprovalRequest(Base):
     nullable on purpose — a cost the studio cannot compute is None, never zero — and an
     expired request cannot be reused, so a request that has aged out is answered by a new
     one rather than by yesterday's silence.
+
+    A request is keyed by its action **and** its subject — the specific thing it is about.
+    Measured before that key existed: a SUPERVISED day asked about the cheap film first, and
+    the second, dearer film reused the first film's row, so one "yes" would have covered a
+    four-dollar film and a forty-dollar one. The subject is what makes the Owner's answer
+    about the thing he was shown.
     """
 
     __tablename__ = "owner_approval_request"
@@ -71,10 +77,15 @@ class ApprovalRequest(Base):
         ),
         # The question asked most often: what is still waiting for the Owner, for this action.
         Index("ix_approval_open", "result", "action"),
+        # And the question every gated act asks: what did he answer about *this* film.
+        Index("ix_approval_subject", "action", "subject", "result"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     action: Mapped[str] = mapped_column(String(100))
+    #: The film, the storyboard, the channel — whatever identifies what is being asked
+    #: about. Empty when the action is about the studio itself and not about a thing.
+    subject: Mapped[str] = mapped_column(String(100), server_default="")
     risk_tier: Mapped[str] = mapped_column(String(4))
     requester: Mapped[str] = mapped_column(String(100))
     evidence: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -85,6 +96,14 @@ class ApprovalRequest(Base):
     expires_at: Mapped[str] = mapped_column(String(40))
     approver: Mapped[str | None] = mapped_column(String(100), nullable=True)
     result: Mapped[str] = mapped_column(String(20), server_default="PENDING")
+    #: The Owner's own words when he answered, carried into what the stage then reports.
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    decided_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    #: When the studio spent this answer. An approval authorises one act: the column is what
+    #: the gate reads, because a query that had to walk the ledger for every film would make
+    #: the day's riskiest decision depend on event history. The ledger carries the fact too
+    #: (`governance.approval_consumed`), which is the record, not the lock.
+    consumed_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
     created_at: Mapped[str] = mapped_column(String(40))
     event_id: Mapped[str | None] = mapped_column(ForeignKey("domain_event.event_id"), nullable=True)
 

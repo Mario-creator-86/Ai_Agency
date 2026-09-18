@@ -750,7 +750,12 @@ def test_a_supervised_day_films_the_work_and_asks_before_it_uploads(engine, sett
     """SUPERVISED runs the routine internal stages by itself — research, script, the film and
     its measurement — and turns the one external write into the Approval object of 31: a row
     with the action, the tier and the requester on it, standing until the Owner answers. The
-    film is made and nothing is uploaded, which is the whole point of the mode."""
+    film is made and nothing is uploaded, which is the whole point of the mode.
+
+    One request per film, not one for the stage. The day makes two — the factual short and
+    the serial's episode — and each is asked about by name: keyed by the action alone, the
+    second film reused the first film's row, so the Owner would have answered once about a
+    question carrying the other film's evidence."""
     _set_mode(engine, "SUPERVISED")
 
     by_name = _run_a_day(engine, settings, studio)
@@ -760,13 +765,15 @@ def test_a_supervised_day_films_the_work_and_asks_before_it_uploads(engine, sett
     assert by_name["media"]["artefacts"]["assets"], by_name["media"]["reason"]
     assert by_name["publish"]["status"] == "SKIPPED", by_name["publish"]["reason"]
     assert "SUPERVISED" in by_name["publish"]["reason"]
-    (request,) = _approval_requests(engine)
-    assert (request.action, request.risk_tier, request.result) == (
-        "publishing.public_publish",
-        "T3",
-        "PENDING",
-    )
-    assert by_name["publish"]["artefacts"]["approval_id"] == request.id
+    requests = _approval_requests(engine)
+    assert len(requests) == 2, [(r.action, r.subject) for r in requests]
+    assert {(r.action, r.risk_tier, r.result) for r in requests} == {
+        ("publishing.public_publish", "T3", "PENDING")
+    }
+    # Each film is its own question, and each question names the film it is about.
+    assert len({request.subject for request in requests}) == 2
+    assert all(request.subject for request in requests)
+    assert by_name["publish"]["artefacts"]["approval_id"] in {r.id for r in requests}
     assert studio["publisher"].uploads == []
     assert _publications(engine) == []
 

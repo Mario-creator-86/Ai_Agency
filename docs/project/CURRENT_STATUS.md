@@ -115,8 +115,10 @@ nothing for it: the line is INFORMATIONAL and the verdict is computed over the o
 so it cannot fail a run structurally and not merely by happening to pass. A whole scheduled day is
 now run under each mode with every vendor faked — MANUAL fetches no page, buys no shot, uploads
 nothing and asks nothing, because MANUAL is already his answer; SUPERVISED films the day and writes
-one `owner_approval_request` for `publishing.public_publish` instead of uploading; AUTONOMOUS_CEO
-publishes under the channel's policy as PUBLISHED_SIMULATED, private, with no request raised.
+one `owner_approval_request` for `publishing.public_publish` instead of uploading — corrected
+2026-09-18 at the closure below: **one request per film**, two on this day, because a request keyed by
+its action alone let the day's second film reuse the first film's row; AUTONOMOUS_CEO publishes under
+the channel's policy as PUBLISHED_SIMULATED, private, with no request raised.
 
 Tests, by file set: 11 in `tests/test_picture_qc.py` (new), 20 in `tests/test_phase5_media.py` and 7
 in `tests/test_cycle_fixes.py` (one appended each), with 77 across the five other callers of
@@ -131,9 +133,11 @@ appended), 45 (`tests/test_phase10_runbook.py`, one appended) and 5
 whole suite on the integrated tree: 1148 passed, 1 skipped** (the opt-in real-Ollama test), with
 `ruff check`, `ruff format --check` over 384 files, `mypy` over 143 source files and
 `scripts/check_docs.py` clean; the adversarial pass that followed added four tests and re-ran
-the suite at **1152 passed, 1 skipped** (2026-09-18, 9m48s), finding no defect to fix. The migration chain is 0040 → 0043 and `main.py` pins it: 0041 and
-0042 were reserved by two of the implementers and neither needed a schema change. No provider was
-called, nothing was rendered outside FFmpeg on this machine, no run was queued and no credit was
+the suite at **1152 passed, 1 skipped** (2026-09-18, 9m48s), finding no defect to fix. The migration
+chain is 0040 → 0043 and `main.py` pins it: 0041 and 0042 were reserved by two of the implementers and
+neither needed a schema change. Corrected 2026-09-18 at the closure: the chain is 0040 → 0043 →
+**0044_approval_answered** and `main.py` pins 0044; 0041 and 0042 stay reserved and unused. No
+provider was called, nothing was rendered outside FFmpeg on this machine, no run was queued and no credit was
 spent.
 
 Not finished, honestly: **no vision model has ever answered the picture check, here or anywhere.**
@@ -152,18 +156,25 @@ only against fakes; the OpenAI `/v1/images/edits` multipart path is written to t
 and `REFERENCE_IMAGE_VERIFIED` stays False until an Owner-approved run has actually drawn a scene that
 way, because a 400 there would mean the body is wrong. `RunwayImageAdapter` still cannot be handed a
 reference (`backend/app/providers/runway.py` was nobody's in this phase), so a Runway-drawn still is
-honestly reported as drawn from the words. **The Owner cannot answer an approval**: a SUPERVISED day
-writes exactly one `owner_approval_request` for the upload and stops there honestly, there is no
-route to approve or refuse it, nothing consumes an APPROVED row and no stage re-attempts after one
-appears; `owner_approval_request` is also not yet in `maintenance.HISTORY_TABLES`, so a reset does
-not clear it. 51's acceptance criteria and burn-in are not checked and cannot be from this database,
+honestly reported as drawn from the words — **corrected 2026-09-18 at the closure: it can**, through
+the `referenceImages` field the `text_to_image` task publishes, and `ACCEPTS_REFERENCE_IMAGE` is now
+True for it while `REFERENCE_IMAGE_VERIFIED` stays False. **The Owner cannot answer an approval**,
+which was true when this was written and is **corrected 2026-09-18 at the closure**: a SUPERVISED day
+wrote exactly one `owner_approval_request` for the upload and stopped there honestly, there was no
+route to approve or refuse it, nothing consumed an APPROVED row, no stage re-attempted after one
+appeared, and `owner_approval_request` was not in `maintenance.HISTORY_TABLES`, so a reset did not
+clear it. All five are closed below, and the day now asks one question per film rather than one for
+the day. 51's acceptance criteria and burn-in are not checked and cannot be from this database,
 so the promotion refusal names them to the Owner instead; 51's department-scoped autonomy is not
 implemented — the column is one global mode — and the `Literal["False"]` switches on `PolicyView`
 (`external_payments_enabled`, `autonomous_firing_enabled`, `provider_auto_switch_enabled`,
 `world_generation_enabled`) are still constants beside tiers that now reason about the same acts.
 `backend/app/media/router.py` is still measuring films without the picture check and rendering
 without the chain or the reference, so the Owner's manual render and his manual QC behave as they did
-yesterday while the daily run does not. The character check reads the storyboard's
+yesterday while the daily run does not — **corrected 2026-09-18 at the closure: both of its
+`evaluate_media_qc` call sites now take the registry and `settings.ffmpeg_path` and `start_render`
+passes the plan's chain and the scene's reference**, so the Owner's own reading of a film is the
+reading the day would have given it. The character check reads the storyboard's
 `character_ids_json`, which only `serial_storyboard.py` fills — a factual film records
 `character_ids_json=[]`, so the record says `no scene in this film lists a character` rather than
 passing — and the Director's `gather_facts` still filters the QC report to keys starting with
@@ -171,12 +182,165 @@ passing — and the Director's `gather_facts` still filters the QC report to key
 most eight frames, so a ninth scene onwards is recorded `no frame was cut for this scene`, never
 looked at and never passed. The reference set uses the first filled slot for every scene rather than
 choosing by shot type, and there is no frontend: no button produces a reference set, no page shows
-which slots are filled, and nothing in `frontend/src` reads `autonomy_mode` yet. The research stage's
-mode refusal is coarse — under MANUAL the whole fetch is skipped including `retest_stale_hosts`, so a
+which slots are filled, and nothing in `frontend/src` reads `autonomy_mode` yet — **corrected
+2026-09-18 at the closure: the governance panel, the approvals list and the reference-set chips are
+written in `frontend/src`**, and are invisible to the Owner until he runs
+`npm run build --prefix frontend`, because `frontend/dist` was deliberately not rebuilt. The
+research stage's mode refusal is coarse — under MANUAL the whole fetch is skipped including `retest_stale_hosts`, so a
 MANUAL studio's host record goes stale — and a stage the mode skips is recorded in the run and the
 day's summary but nobody writes the Owner a letter about it. `approval_expires_after_hours` stays the
 module constant `APPROVAL_EXPIRES_AFTER_HOURS = 24` in `services.py` rather than a key in
-`config.py`, because a key nothing reads is a lie about what is configurable.
+`config.py`, because a key nothing reads is a lie about what is configurable — and since the closure
+below it decides three things rather than one: how long an unanswered question stands, how long a
+refusal stops the studio asking again, and how long a yes can still be spent.
+
+### Closed the same day — 2026-09-18: the Owner answers, his own buttons see what the day sees, and there is a page
+
+Three things the section above left open, in its own words: a SUPERVISED studio that "records the
+question and never hears the answer", an Owner whose manual render and manual QC "behave as they did
+yesterday while the daily run does not", and "no frontend for any of it". All three are closed, and
+the first of them had to begin with the defect the adversarial pass named rather than with the route.
+
+**The Owner answers, and the day acts on the answer.** A request was deduped by its `action` alone,
+so the second, dearer film of a SUPERVISED day reused the first film's row, and an answering route on
+top of that would have let a yes to a four-dollar film authorise a forty-dollar one. Migration
+`0044_approval_answered` puts the thing the question is about on the row — `subject`: the media asset
+for an upload, the storyboard for a paid render — and the key is now the action **and** the subject,
+with `note`, `decided_at` and `consumed_at` beside it and an index on (action, subject, result). The
+same defect existed one level up, where nothing had looked: the daily run's stage wrapper raised the
+approval itself, before it knew which film, so the stage never ran, one answer would have covered
+every film of the day, and a day with nothing to publish still put a question in his inbox. The
+wrapper now asks the mode without asking the Owner (`ask_owner=False`): a mode that refuses outright
+still refuses there, and a mode that would merely ask hands the asking to the stage, which asks per
+film with that film's name, its price and its channel policy on the request.
+`GET /api/v1/owner/approvals` is what is waiting — the action in Romanian, the tier, who asked, the
+evidence, the expiry and the cost, with «necunoscut» where nothing in the studio could compute one and
+never a zero. `POST /api/v1/owner/approvals/decision` is the answer: versioned, idempotent by command
+id, behind the same write lock as his other commands, one `governance.approval_decided` event carrying
+the old result and the new, 409 on a request already answered or expired and 404 on one the studio
+never made. The answer is spent in exactly one place — inside `may_act`, in the SUPERVISED T3 branch,
+after the stop, T4 and safe mode have had their say — so an approval only ever does what the gate
+would otherwise have made him wait for, and never turns a refusal into a pass. It is spent once:
+`consumed_at` is the lock and `governance.approval_consumed` the record, and an upload that then fails
+asks again tomorrow rather than riding on yesterday's yes. A stop or an incident after he answers
+leaves the yes unspent and still his, because neither of them is him changing his mind; a channel
+policy version that moved after he answered does retract it, because he said yes to that film going
+out at that visibility under that version, so the stale yes is left on the record and a fresh request
+naming the new policy is raised instead. Lowering the mode to MANUAL refuses and never looks for his
+answer at all, because MANUAL is him asking to be asked about everything. A refusal is COMPLETED, not
+SKIPPED — the day's work done and the answer being no, the same shape as the Director's refusal — and
+the film keeps its QC-PASSED report, stays unpublished and is not asked about again until his decision
+expires; a question still standing is SKIPPED with the approval id in the artefacts, as it was.
+`owner_approval_request` joins `HISTORY_TABLES` before `command_record`, so a reset clears it: the
+questions are the agents', not his configuration, and a yes about a film that no longer exists is an
+authority nothing should still be able to spend.
+
+**The Owner's own render sees what the day sees, and Runway can draw from a reference.**
+`backend/app/media/router.py` called `evaluate_media_qc` with the settings alone at both of its call
+sites and `assemble_video_job` with neither `image_chain` nor `reference_for_scene`, so the same film
+reported `picture_qc` and `character_drift_qc` NOT_APPLICABLE when he pressed Quality Control and
+MEASURED when the stage ran it, and his render drew every scene with the one resolved vendor and no
+character's reference sheet. The route now passes what the media stage passes: the plan's
+`image_chain`, suppressed only when a test has injected an adapter on `app.state`, which is and stays
+that render's only vendor; the plan's `reference_for_scene` whatever adapter draws, because which face
+a scene must keep is a fact about the film's characters and not about the vendor; and, at both
+quality-control call sites, `registry=app.state.registry` and `settings.ffmpeg_path` — the provider
+that may hold a model declaring vision, and the encoder that cuts the frame it looks at. His Quality
+Control button may therefore now make one vision call and cut frames inside the request, which is the
+same single call per film the stage makes; with no seeing model, no registry or no encoder it is still
+NOT_APPLICABLE with the reason and the verdict is exactly what the other gates left it. Nothing there
+passes by absence. `ReferenceRequired` is a `ValueError`, so the render route answered it 404
+"storyboard not found" about a storyboard sitting in front of him; it is now 422 naming the character,
+caught before the vendor handler, so a refusal of the studio's own is never presented as a provider
+fault. And `RunwayImageAdapter` now carries the contract the OpenAI adapter has: `referenceImages` on
+the documented `text_to_image` task, an array of one object whose single required member is a `uri`,
+built as an inline data URI by the same helper that has always validated an image-to-video first
+frame — so a reference given as a path, an id, or bytes that are not a PNG, JPEG or WebP is refused
+before the task is submitted, and `reference_images` is counted 0 or 1 in the attempt's raw response,
+so a render's record says whether a character's face came from their sheet or from the words. No `tag`
+is sent with it, because a tag means something to Runway only when the prompt names it as `@tag` and
+inventing one would change the words the Director approved. `ACCEPTS_REFERENCE_IMAGE` is True because
+the code builds the documented field; `REFERENCE_IMAGE_VERIFIED` stays False because no account has
+ever answered one, and a test asserts that second flag so nobody can flip it on mock evidence. The
+contract refusal for a model that *requires* reference images now fires only when none was given: the
+reason was always the missing picture, not the model.
+
+**The panel shows the mode, the approvals and the reference sets.** `policy.autonomy_mode` has been a
+real column since 0043 and nothing in `frontend/src` touched it, so a studio running whole days as
+AUTONOMOUS_CEO looked, to its Owner, exactly like one that asks before every step. The governance
+panel now sits in the column that already shows the studio's state, under the module list: the mode
+with the sentence `MODE_MEMORY` gives every agent when it moves, and the other two modes offered as
+buttons that send `POST /api/v1/owner/autonomy-mode` with the `expected_version` the snapshot carried.
+A promotion while the stop is on is refused by the page itself, in the stop's own words, because the
+snapshot already says so; a promotion refused for SAFE_MODE is refused by the server and the panel
+prints the server's Romanian sentence rather than a guess, since no safe-mode state is in the snapshot
+to read — so a blocked button stays pressable, because pressing it answers *why* and a disabled one
+cannot. Lowering the mode is never blocked there, as 51 requires, and an unconfirmed mode command is
+resent only when it was for the mode now being asked for, so a slow network is one decision and a
+change of mind is a different one. Beneath it, what a SUPERVISED studio wrote instead of acting:
+`GET /api/v1/owner/approvals` read at most twice a minute, immediately after any decision and whenever
+he presses refresh, each row showing the action in his language, what it is about, its risk tier with
+31's definition in the tooltip, who asked, «necunoscut» for a cost nothing could compute and how long
+the request still stands; «Aprobă» and «Refuză» send the decision command with a fresh command id, a
+409 means it was answered or expired while the page was open and a 404 that it never existed, and a
+backend without the route is recorded as not having it and stops being polled after one sentence,
+because a panel that repeats a 404 every five seconds teaches its Owner to ignore the panel. Every
+card repeats, in Romanian, that an approval lets a permitted action happen and never turns a hard
+gate's refusal into a pass. On the Character Bible card the reference set is no longer the ratio
+"3/5": every declared slot is a chip, filled or empty, and the button that produces them says in
+Romanian that it spends image credits and produces nothing until it is pressed a second time — his
+deliberate act, which is why nothing in the day calls that route. The judgements behind all three live
+in `frontend/src/governance.js` so that they could be tested; the screens themselves are not tested,
+because `main.js` touches the document at import and cannot be loaded by `node --test`, and no DOM
+harness was invented to pretend otherwise.
+
+**What the closure measured, and whose measurement each figure is.** No whole-suite run has been made
+since these three parts landed, so the **1152 passed, 1 skipped** above remains the last whole-tree
+measurement and is now older than the tree; the figures below are each named for the part that took
+them. The governance part: `tests/test_approvals.py` **18 passed** (new); the four files it owns
+together **75**; the three whole-day tests **5**; the runbook, publishing, publish-policy and
+audit-trail suites **91**; foundation, cycle fixes, route authorisation and documentation **42** — 231
+in all, with `ruff check`, `ruff format --check`, `mypy` over 187 source files and `check_docs.py`
+clean. The media part: **98** across `tests/test_phase5_media.py` (23), `tests/test_media_providers.py`
+(41), `tests/test_picture_qc.py` (14) and `tests/test_character_references.py` (20), ten of them new,
+plus **88** across the Runway-connection, readiness, editorial-quality and media-selection suites as a
+regression check. The frontend part: `npm test --prefix frontend` **102 passed**, fourteen of them the
+new `frontend/tests/governance.test.js`, with `npm run check --prefix frontend` (tsc over `src/*.js`,
+`checkJs` on) clean. This documentation part: `scripts/check_docs.py` and
+`tests/test_documentation.py`. The migration chain is now 0039 → 0040 → 0043 → 0044 and `main.py` pins
+`0044_approval_answered`, which is additive — four columns and one index on `owner_approval_request` —
+and rewrites no data. No provider was called, nothing was rendered, no run was queued and no credit
+was spent by any of the four.
+
+**Still not finished after the closure.** No approval has ever been answered by a real Owner through
+the real route against a real database: everything here is measured against the test engine with every
+provider faked, and the migration has been walked from an empty database by every test in the run and
+never against `data/studio.db`, which nobody opened. The Owner is not told that something is waiting —
+a SUPERVISED day records one question per film and the run record carries the approval id, but no
+letter and no notification is written, so the list is seen only by someone who opens the panel, and
+whether an approval deserves the letter the Accountant writes for a refused budget is his call and not
+an agent's. An approval cannot be withdrawn: once he says yes the yes stands until it is spent or
+expires, because the honest way to stop a film going out is the stop, which refuses before his answer
+is read at all. A film the Owner refused in the *media* stage still lands in `awaiting_owner` and
+reports SKIPPED rather than getting the publish stage's COMPLETED distinction between a question and a
+decision; the subject is on that stage's request, so his answer is per film there too, but the stage's
+vocabulary was left alone. Neither adapter's reference path has ever been accepted by a vendor:
+OpenAI's multipart body and Runway's `referenceImages` are both built from the published contracts and
+asserted against faked transports, and an HTTP 400 on the first real render is the thing to watch,
+because that is how the last unread contract detail announced itself. The size of an inline reference
+is not checked: Runway publishes a limit on how large a data URI may be, the number could not be read
+without fetching the vendor's documentation, and no guard invents a threshold, so a sheet too large
+will come back as a vendor refusal rather than as a silent truncation. Whether a Runway model accepts
+an *optional* reference is not a per-model fact the adapter can read — `parse_model_contract` records
+only whether the contract *requires* them and `integrations/discovery.py` filters stored `api_metadata`
+to a fixed field list — so `referenceImages` is treated as a property of the `text_to_image` task,
+which is what Runway publishes today for both of its still models. His manual quality control can now
+spend tokens, metered only by the day's ceiling and cached nowhere, because caching a measurement is
+how a gate starts certifying what it did not measure this time. And the panel is invisible until he
+runs `npm run build --prefix frontend`: no request in it was ever answered against a running backend,
+the screens themselves have no test, the refusal card sends no `note` although the command accepts one
+and the stage reports it back to him, and the character card still mixes the English labels it already
+had with the Romanian the panel added.
 
 ## Money and sources (2026-09-17/18)
 
@@ -387,10 +551,12 @@ they encode two real films.
 
 Numai Owner-ul poate face lucrurile de mai jos; studioul nu le face singur și nu le cere de două ori.
 
-- **Migrarea bazei de date live**: `scripts/bootstrap.py` aduce baza la `0043_autonomy_mode`
-  (0039 economia, 0040 cercetarea, apoi 0043 modul de autonomie; 0041 și 0042 au fost rezervate în
-  faza D/G și nu au fost folosite, pentru că nimic din ele nu avea nevoie de o coloană nouă).
-  Corectat 2026-09-18: până atunci rândul de aici cerea `0040_research_sources`. `main.py` cere
+- **Migrarea bazei de date live**: `scripts/bootstrap.py` aduce baza la `0044_approval_answered`
+  (0039 economia, 0040 cercetarea, 0043 modul de autonomie, apoi 0044 răspunsul lui la o cerere de
+  aprobare; 0041 și 0042 au fost rezervate în faza D/G și nu au fost folosite, pentru că nimic din
+  ele nu avea nevoie de o coloană nouă). Corectat 2026-09-18: până atunci rândul de aici cerea
+  `0040_research_sources`, apoi `0043_autonomy_mode`; 0044 adaugă patru coloane și un index pe
+  `owner_approval_request` și nu rescrie niciun rând. `main.py` cere
   această revizie la pornire, deci migrarea se face înainte de prima pornire pe versiunea aceasta.
   Niciun test nu atinge baza live.
 - **Bugetele** (`PUT /economy/budget`, biroul Contabilitate): zilnic, săptămânal, lunar. Nimeni
@@ -422,16 +588,24 @@ Numai Owner-ul poate face lucrurile de mai jos; studioul nu le face singur și n
   nouă, iar verificarea imaginilor nu are cu ce compara. Ruta consumă credite de imagine, deci este
   actul lui și al nimănui altcuiva: niciun pas al zilei nu o cheamă, iar un test ține asta. Un
   personaj cu înfățișarea blocată și fără referință citibilă refuză filmul, în loc să i se inventeze
-  o față. Nu există încă buton în interfață; ruta răspunde cu sloturile umplute, cele refuzate și
-  costul (`usd: None` dacă modelul nu are preț).
+  o față. Corectat 2026-09-18: butonul există acum în sursă, pe fișa personajului — fiecare slot
+  este o pastilă, plină sau goală, iar butonul spune că se consumă credite de imagine și nu produce
+  nimic până la a doua apăsare — dar nu se vede până când Owner-ul nu reconstruiește interfața. Ruta
+  răspunde cu sloturile umplute, cele refuzate și costul (`usd: None` dacă modelul nu are preț).
 - **Modul de autonomie** (`POST /api/v1/owner/autonomy-mode`, migrarea 0043): MANUAL, SUPERVISED sau
   AUTONOMOUS_CEO. Coloana a fost scrisă pe AUTONOMOUS_CEO pentru că asta face codul de luni de zile,
   nu ca o promovare — comanda este singura care ridică modul și refuză ridicarea cât timp autonomia
   este oprită sau un incident este deschis. MANUAL înseamnă o zi care scrie, dar nu cumpără cadre și
-  nu urcă nimic; SUPERVISED filmează ziua și îi lasă o cerere de aprobare în loc de urcare — dar
-  deocamdată **nu are cum să răspundă la ea**: ruta de aprobare nu există încă, deci SUPERVISED este
-  un mod care pune întrebarea și nu aude răspunsul. Pragul peste care o randare plătită devine
-  decizia lui este `paid_generation_approval_threshold_usd` (5 USD implicit).
+  nu urcă nimic; SUPERVISED filmează ziua și îi lasă câte o cerere de aprobare pentru **fiecare
+  film** în loc de urcare. Corectat 2026-09-18: până la închiderea fazei nu avea cum să răspundă la
+  ea, iar cererea era ținută pe acțiune, nu pe film. Acum răspunde: `GET /api/v1/owner/approvals`
+  arată ce așteaptă (acțiunea în limba lui, despre ce este, treapta de risc, cine întreabă, costul —
+  «necunoscut» când studioul nu îl poate calcula, niciodată zero — și cât mai stă în picioare), iar
+  `POST /api/v1/owner/approvals/decision` este răspunsul, o singură dată pentru un singur act. Un
+  «da» nu trece niciodată peste o poartă care refuză; oprirea și SAFE_MODE refuză înaintea lui și îi
+  lasă «da»-ul necheltuit; o politică de canal schimbată după ce a răspuns îl retrage, pentru că a
+  spus «da» filmului acela la vizibilitatea aceea. Pragul peste care o randare plătită devine decizia
+  lui este `paid_generation_approval_threshold_usd` (5 USD implicit).
 - **Furnizorii de rezervă aprobați** (`approved_fallbacks`, pe nivelul de politică al canalului, al
   seriei sau al storyboard-ului; pentru un personaj blocat, lista din `approved_fallbacks_json`
   scrisă de o schimbare de identitate APROBATĂ): fără ei, lanțul are un singur vendor și o scenă
@@ -439,8 +613,9 @@ Numai Owner-ul poate face lucrurile de mai jos; studioul nu le face singur și n
   că tehnologia păstrează personajul recognoscibil, deci nu o poate da studioul; lanțul rămâne oricum
   de cel mult o alternativă pe scop și pe scenă.
 - **Reconstruirea interfeței** (`npm run build --prefix frontend`): ecranele schimbate pe
-  2026-09-18 — starea site-urilor în *Cercetare → Surse*, banii ținuți în biroul
-  Contabilitate — sunt în sursă, nu în pachetul servit. Construirea este actul lui de
+  2026-09-18 — starea site-urilor în *Cercetare → Surse*, banii ținuți în biroul Contabilitate și,
+  de la închiderea fazei D/G, panoul de guvernanță (modul de autonomie, lista de aprobări, pastilele
+  seturilor de referință) — sunt în sursă, nu în pachetul servit. Construirea este actul lui de
   lansare; niciun agent nu a construit și nu a pornit serverul.
 
 ## Delivery and the serial (2026-09-17/18)

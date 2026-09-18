@@ -1194,3 +1194,101 @@ def test_a_film_dearer_than_the_owners_threshold_is_his_decision_even_in_supervi
     # The estimate is what the Owner is being asked about; None would be a question with no
     # figure in it, and zero would be a lie about a film that costs money.
     assert request.cost_usd is not None and request.cost_usd > 0
+
+
+# ------------------------------------------------ the Owner answers, and the day acts on it --
+
+
+def _answer(engine, approval_id: str, decision: str, note: str | None = None) -> None:
+    """The Owner's command, as his route calls it (the command itself is held by
+    tests/test_approvals.py; here it is the answer the stage then reads)."""
+    from app.schemas import ApprovalDecisionCommand
+    from app.services import decide_approval
+
+    decide_approval(
+        engine,
+        ApprovalDecisionCommand(
+            command_id=uuid4(), approval_id=approval_id, decision=decision, note=note
+        ),
+    )
+
+
+def _a_supervised_studio_with_one_film_ready(engine, settings, tmp_path, monkeypatch):
+    """A SUPERVISED studio with a QC-passed serial episode and its slot bound: the exact
+    state in which the publish stage asks the Owner instead of uploading."""
+    _autonomy_on(engine)
+    _mode(engine, "SUPERVISED")
+    channels = _seeded_channels(engine)
+    bundle = _serial_film(engine, tmp_path)
+    _bound(engine, channels["OFFICE_SERIAL"]["id"], _connected(engine, "Serial account"))
+    publisher = _RecordingPublisher()
+    monkeypatch.setattr("app.runbook.stages.selected_youtube", lambda *a, **k: publisher)
+    _director_and_publisher_agree(monkeypatch)
+    runners = build_stage_runners(engine, settings, _vault(engine), ProviderRegistry())
+    return runners, publisher, bundle
+
+
+def test_the_owners_approval_lets_the_film_out_and_the_yes_is_spent_on_it(
+    engine, settings, tmp_path, monkeypatch
+):
+    """The half of SUPERVISED that did not exist: the stage asked, and nothing ever came
+    back. The next run finds the answer, uploads the film it was about, and marks the yes
+    spent so no second film and no second day can ride on it."""
+    from app.models import ApprovalRequest
+
+    runners, publisher, _ = _a_supervised_studio_with_one_film_ready(
+        engine, settings, tmp_path, monkeypatch
+    )
+
+    asked = runners["publish"]()
+    (request,) = _approvals(engine)
+    assert asked["status"] == "SKIPPED" and publisher.uploads == []
+    assert asked["artefacts"]["approval_id"] == request.id
+
+    _answer(engine, request.id, "APPROVED")
+    published = runners["publish"]()
+
+    assert published["status"] == "COMPLETED", published
+    assert len(publisher.uploads) == 1
+    with Session(engine) as session:
+        spent = session.get(ApprovalRequest, request.id)
+        assert spent.consumed_at is not None
+        assert spent.subject == request.subject != ""
+    # And no new question was raised for a film that has now gone out.
+    assert [row.id for row in _approvals(engine)] == [request.id]
+
+
+def test_a_film_the_owner_refused_stays_qc_passed_and_unpublished_and_is_not_asked_again(
+    engine, settings, tmp_path, monkeypatch
+):
+    """A refusal is the day's work done and the answer being no — the same shape as the
+    Director's refusal — so the stage is COMPLETED, says in Romanian that the Owner refused,
+    and leaves the film exactly where it was."""
+    from app.media.models import QualityControlReport
+    from app.publishing.models import PublicationRecord
+    from sqlalchemy import select
+
+    runners, publisher, _ = _a_supervised_studio_with_one_film_ready(
+        engine, settings, tmp_path, monkeypatch
+    )
+
+    runners["publish"]()
+    (request,) = _approvals(engine)
+    _answer(engine, request.id, "REFUSED", note="Nu episodul acesta pe canal.")
+    refused = runners["publish"]()
+    again = runners["publish"]()
+
+    assert refused["status"] == "COMPLETED", refused
+    assert "refuzat" in refused["reason"].lower()
+    assert "Nu episodul acesta pe canal." in refused["reason"]
+    assert publisher.uploads == []
+    with Session(engine) as session:
+        assert session.scalars(select(PublicationRecord)).all() == []
+        # The film keeps the verdict quality control gave it: the Owner said no to sending
+        # it out, not that there is anything wrong with it.
+        assert {report.status for report in session.scalars(select(QualityControlReport))} == {
+            "PASSED"
+        }
+    # Nothing asks him again the same day: one row, still his refusal.
+    assert [(row.id, row.result) for row in _approvals(engine)] == [(request.id, "REFUSED")]
+    assert again["status"] == "COMPLETED"

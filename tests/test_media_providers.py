@@ -647,3 +647,153 @@ def test_a_reference_that_is_not_bytes_is_refused_before_the_vendor_is_called(mo
         )
 
     assert recorder.calls == []
+
+
+# --- the same picture, handed to Runway -------------------------------------------------
+# Measured before this work: `RunwayImageAdapter` had no way to be given a reference, so
+# `accepts_reference_image` read False for it, the chain dropped the character's sheet and a
+# Runway-drawn still of a character with a locked look was honestly recorded as drawn from
+# the words. Runway's text_to_image task publishes `referenceImages`; this is that field.
+
+RUNWAY_CONTRACT = {
+    "tasks": ["text_to_image"],
+    "ratios": {"text_to_image": ["1080:1920"]},
+    "needs_references": {"text_to_image": False},
+}
+
+
+class RunwayTransport:
+    """Runway's HTTPS boundary, faked: submit a task, poll it once, download the still.
+
+    No request leaves the machine and no credit is spent; what is asserted is the body the
+    adapter built, which is the only thing a test may know about a vendor it never called.
+    """
+
+    def __init__(self, still: bytes) -> None:
+        self.still = still
+        self.calls: list[dict] = []
+
+    def __call__(self, host, method, path, headers, body=None, *, timeout=120, expect_json=True):
+        self.calls.append({"host": host, "method": method, "path": path, "body": body})
+        if path == "/v1/text_to_image":
+            return {"id": "task-1"}, b"", "application/json"
+        if path.startswith("/v1/tasks/"):
+            return (
+                {"status": "SUCCEEDED", "output": ["https://files.test/still.png"]},
+                b"",
+                "application/json",
+            )
+        if host == "files.test":
+            return None, self.still, "image/png"
+        raise AssertionError(f"the adapter asked for {host}{path}, which the test did not expect")
+
+
+def _runway(monkeypatch, still: bytes, contract: dict | None = None):
+    from app.providers import runway
+    from app.providers.runway import RunwayImageAdapter
+
+    transport = RunwayTransport(still)
+    monkeypatch.setattr(runway, "request", transport)
+    adapter = RunwayImageAdapter("key", "gen4_image", dict(contract or RUNWAY_CONTRACT))
+    return adapter, transport
+
+
+def test_a_runway_still_is_drawn_from_the_characters_reference_picture(monkeypatch):
+    """The reference reaches the task body as `referenceImages`, in the documented shape."""
+    import asyncio
+
+    from app.media.factory import accepts_reference_image
+
+    reference = png_bytes(16, 24)
+    adapter, transport = _runway(monkeypatch, png_bytes(1080, 1920))
+    assert accepts_reference_image(adapter) is True
+
+    result = asyncio.run(
+        adapter.generate_image(
+            "Sarah at her desk",
+            width=1080,
+            height=1920,
+            extra={"reference_image": {"bytes": reference, "mime_type": "image/png"}},
+        )
+    )
+
+    submitted = json.loads(transport.calls[0]["body"])
+    assert transport.calls[0]["path"] == "/v1/text_to_image"
+    # An array of objects whose one required member is a URI. The studio holds the bytes and
+    # not a URL the vendor could fetch, so it is the data-URI form.
+    assert submitted["referenceImages"] == [
+        {"uri": "data:image/png;base64," + base64.b64encode(reference).decode("ascii")}
+    ]
+    assert submitted["promptText"] == "Sarah at her desk"
+    assert result.raw_response["reference_images"] == 1
+    assert (result.width, result.height) == (1080, 1920)
+
+
+def test_a_runway_reference_that_is_not_a_picture_is_refused_before_any_call(monkeypatch):
+    """A path, an id or a description is not a picture; nor are bytes that are not an image.
+    Either would be a 400 for every scene of a film, after the task was submitted."""
+    import asyncio
+
+    for reference in (
+        {"bytes": "/storage/character_references/sarah/portrait.png"},
+        {"bytes": b"this is not a picture"},
+        "portrait.png",
+    ):
+        adapter, transport = _runway(monkeypatch, png_bytes(8, 8))
+        with pytest.raises(MediaProviderError):
+            asyncio.run(
+                adapter.generate_image("Sarah at her desk", extra={"reference_image": reference})
+            )
+        assert transport.calls == [], f"{reference!r} reached the vendor"
+
+
+def test_a_runway_model_that_takes_no_reference_still_draws_from_words(monkeypatch):
+    """A scene with nobody in it is the film the studio has always made: the same task, the
+    same body, and no field that was not there before."""
+    import asyncio
+
+    adapter, transport = _runway(monkeypatch, png_bytes(1080, 1920))
+
+    result = asyncio.run(adapter.generate_image("a telescope", extra={"scene_index": 1}))
+
+    submitted = json.loads(transport.calls[0]["body"])
+    assert "referenceImages" not in submitted
+    assert result.raw_response["reference_images"] == 0
+
+
+def test_a_runway_model_that_requires_a_reference_is_refused_only_without_one(monkeypatch):
+    """gen4_image_turbo edits pictures it is given; it answered HTTP 400 to every scene of a
+    day drawn from words alone, and the contract says so before the call. Now that the studio
+    can hand it the character's sheet, the refusal is about the missing picture and not about
+    the model: with one, the same model draws."""
+    import asyncio
+
+    contract = {**RUNWAY_CONTRACT, "needs_references": {"text_to_image": True}}
+    reference = png_bytes(16, 24)
+
+    adapter, transport = _runway(monkeypatch, png_bytes(1080, 1920), contract)
+    with pytest.raises(MediaProviderError) as excinfo:
+        asyncio.run(adapter.generate_image("Sarah at her desk"))
+    assert excinfo.value.code == "reference_images_required"
+    assert transport.calls == []
+
+    adapter, transport = _runway(monkeypatch, png_bytes(1080, 1920), contract)
+    result = asyncio.run(
+        adapter.generate_image(
+            "Sarah at her desk",
+            extra={"reference_image": {"bytes": reference, "mime_type": "image/png"}},
+        )
+    )
+    assert result.raw_response["reference_images"] == 1
+
+
+def test_no_runway_reference_path_is_marked_verified():
+    """The code sends the field; the account has never answered it. `REFERENCE_IMAGE_VERIFIED`
+    is the statement about the vendor, and it stays False until an Owner-approved live run
+    has actually drawn a scene this way."""
+    from app.providers.runway import RunwayImageAdapter
+
+    adapter = RunwayImageAdapter("key", "gen4_image", dict(RUNWAY_CONTRACT))
+    assert adapter.ACCEPTS_REFERENCE_IMAGE is True
+    assert adapter.REFERENCE_IMAGE_VERIFIED is False
+    assert OpenAIImageAdapter("key").REFERENCE_IMAGE_VERIFIED is False

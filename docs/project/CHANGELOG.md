@@ -1,5 +1,69 @@
 # Changelog
 
+## Quality and governance, closed — 2026-09-18
+
+The three things the Phase D/G section left open, closed the same day: the Owner can answer an
+approval, his own render and quality control read a film the way the day reads it, and there is a page
+for the mode, the approvals and the reference sets.
+
+- **An approval is about one film, and he can answer it.** Migration `0044_approval_answered` adds
+  `subject`, `note`, `decided_at` and `consumed_at` to `owner_approval_request` with an index on
+  (`action`, `subject`, `result`); the head pin in `backend/app/main.py` moves to
+  `0044_approval_answered` and the chain is 0039 → 0040 → 0043 → 0044. A standing request is keyed by
+  the action **and** the thing it is about, which closes the defect the adversarial pass named: the
+  day's second, dearer film used to reuse the first film's row.
+- **`GET /api/v1/owner/approvals`** lists what waits — the action in Romanian (`APPROVAL_ACTION_LABELS`),
+  the tier, the requester, the evidence, the proposed diff, the expiry and the cost, with `cost_label`
+  «necunoscut» where nothing could compute one. **`POST /api/v1/owner/approvals/decision`**
+  (`ApprovalDecisionCommand`) is the answer: Owner-only, versioned, idempotent by command id, behind the
+  same write lock as his other commands, one `governance.approval_decided` event with the previous
+  result and the new, 409 on a request already answered or expired, 404 on one that never existed.
+- **The answer is spent inside `may_act`**, in the SUPERVISED T3 branch, after the stop, T4 and safe
+  mode — so it converts "he must be asked" into "allowed, once" and never a refusal into a pass. Spent
+  once, before the act: `consumed_at` plus a `governance.approval_consumed` event. A stop, an incident
+  or a lowered mode leaves the yes unspent and still his; a channel policy version that moved after he
+  answered retracts it and a fresh request naming the new policy is raised.
+- **The stage wrapper asks the mode without asking the Owner** (`ask_owner=False` on `may_act` and
+  `mode_refusal`), so the question is raised by the caller that can name the film. A refused film comes
+  back COMPLETED with `refused_by_owner`; a film still waiting comes back SKIPPED with `awaiting_owner`;
+  both carry the approval id. `owner_approval_request` joins `maintenance.HISTORY_TABLES` before
+  `command_record`.
+- **The Owner's own buttons read a film the way the day reads it.** Both `evaluate_media_qc` call sites
+  in `backend/app/media/router.py` now pass `registry` and `settings.ffmpeg_path`, and `start_render`
+  passes the plan's `image_chain` (suppressed only for an injected adapter) and `reference_for_scene`
+  (always). `ReferenceRequired` is answered 422 naming the character instead of 404 "storyboard not
+  found".
+- **Runway can be handed a reference.** `RunwayImageAdapter` sends `referenceImages` on the documented
+  `text_to_image` task as an inline data URI, refusing a path, an id or bytes that are not PNG/JPEG/WebP
+  before the task is submitted, and counting `reference_images` in the attempt's raw response.
+  `ACCEPTS_REFERENCE_IMAGE` True, `REFERENCE_IMAGE_VERIFIED` False until an Owner-approved live run. The
+  contract refusal for a model that *requires* references now fires only when none was given.
+- **A governance panel.** `frontend/src/governance.js` (new) and `frontend/tests/governance.test.js`
+  (new, 14 tests): the autonomy mode with `MODE_MEMORY`'s sentence and the other two modes as versioned
+  commands, a promotion refused by the page only where the snapshot can see it is impossible, the
+  approvals list polled at most every thirty seconds and silenced after a 404, «Aprobă»/«Refuză», and
+  the Character Bible's reference slots drawn as chips behind a two-press button that states its cost.
+  `frontend/dist` was deliberately not rebuilt.
+- Measured, each figure by the part that took it: 231 Python tests across the governance part's files
+  and their neighbours (`tests/test_approvals.py` 18, new), 186 across the media part's four files and
+  its regression set, `npm test --prefix frontend` 102 with `npm run check` clean, and
+  `scripts/check_docs.py` plus `tests/test_documentation.py` for the documents. **No whole-suite run has
+  been made since**, so the 1152/1 recorded on 2026-09-18 remains the last whole-tree measurement and is
+  now older than the tree. No provider was called, nothing was rendered, no run was queued and no credit
+  was spent.
+- **Documents.** `CURRENT_STATUS.md` gains the closure block and corrects, in place and dated, every
+  sentence the closure made untrue — above all that a SUPERVISED studio "records the question and never
+  hears the answer" and that the Owner's own render does not see what the day sees.
+  `../architecture/31_GOVERNANCE_APPROVAL_POLICY.md` gains *Answering an approval, and spending it* and
+  `../architecture/51_AUTONOMY_MODE_SEMANTICS.md` has its Supervised **Not built:** paragraph corrected;
+  both hashes are re-recorded in `DOCUMENTATION_INDEX.json` with a decision-log entry as the reason.
+  `../architecture/50_CONTENT_GATE_MATRIX.md` was read and left unchanged.
+- Still open and named: no approval has ever been answered by a real Owner against a real database; the
+  Owner is not told that something is waiting; an approval cannot be withdrawn;
+  `APPROVAL_EXPIRES_AFTER_HOURS = 24` now decides three things as a module constant; neither adapter's
+  reference path has ever been accepted by a vendor and the size of an inline reference is not checked;
+  the panel is invisible until `npm run build --prefix frontend`.
+
 ## Quality and governance — 2026-09-18
 
 Phases D and G of running unattended, built in three parts and wired into the day: what the studio

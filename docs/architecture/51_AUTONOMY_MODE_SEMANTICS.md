@@ -38,13 +38,24 @@ nothing and raises no approval request, because MANUAL is already the Owner's an
 In code since 2026-09-18: `MODE_ALLOWS["SUPERVISED"] = "T2"`, and a T3 action writes the Approval of
 31 — `owner_approval_request` (action, requester, risk tier, evidence, proposed diff, nullable cost,
 reversibility, expiry, approver, result) — instead of being performed. The cost is nullable because
-a cost the studio cannot compute is None and never zero. A standing request for the same action is
-reused rather than duplicated, and an expired one is marked EXPIRED and a new one raised, because 31
-says an expired approval cannot be reused. **Not built:** nothing answers a request. There is no
-route to approve or refuse, nothing consumes an APPROVED row and no stage re-attempts after one
-appears, so a SUPERVISED studio records its question honestly and stops there. A whole scheduled day
-under SUPERVISED is tested: it films the day and writes exactly one request, for
-`publishing.public_publish`, instead of uploading.
+a cost the studio cannot compute is None and never zero. A standing request for the same action *and
+the same subject* is reused rather than duplicated, and an expired one is marked EXPIRED and a new one
+raised, because 31 says an expired approval cannot be reused.
+
+Corrected 2026-09-18, at the close of the phase: this section said **Not built:** nothing answers a
+request — no route to approve or refuse, nothing consuming an APPROVED row, no stage re-attempting
+after one appears — and it said a whole SUPERVISED day writes *exactly one* request for
+`publishing.public_publish`. All four are now built and the count was a defect, not a design: a
+request keyed by its action alone let the day's second film reuse the first film's row. Migration
+`0044_approval_answered` adds the subject the question is about, `GET /api/v1/owner/approvals` lists
+what waits, `POST /api/v1/owner/approvals/decision` answers it once, and the answer is spent inside
+`may_act` in this very branch — after the stop, T4 and safe mode, so it converts "he must be asked"
+into "allowed, once" and never a refusal into a pass. 31's new section *Answering an approval, and
+spending it* specifies the whole of it, including what a STOP, a SAFE_MODE, a lowered mode and a moved
+policy version each do to an answer he has already given. The stage wrapper asks the mode with
+`ask_owner=False` so that nothing is written before the studio knows which film it is asking about,
+and the whole-day test now measures **one request per film** — two on that day, the factual short and
+the serial's episode — each with its own subject, and reads back the one the publish stage recorded.
 
 ## Autonomous CEO
 

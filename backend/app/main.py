@@ -41,14 +41,26 @@ from app.publishing.router import create_publishing_router
 from app.runbook.router import create_runbook_router
 from app.runbook.stages import build_stage_runners
 from app.runbook.weekly import WEEKLY_JOB_NAME
-from app.schemas import AutonomyModeCommand, EnvironmentCommand, PolicyCommand, PolicyResult
+from app.schemas import (
+    ApprovalDecisionCommand,
+    ApprovalDecisionResult,
+    ApprovalView,
+    AutonomyModeCommand,
+    EnvironmentCommand,
+    PolicyCommand,
+    PolicyResult,
+)
 from app.security import require_owner
 from app.services import (
+    ApprovalClosed,
+    ApprovalMissing,
     AutonomyRefused,
     CommandConflict,
     change_autonomy_mode,
     change_environment,
     change_stop,
+    decide_approval,
+    pending_approvals,
     read_events,
     snapshot,
 )
@@ -128,8 +140,9 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
             # The head of the chain. Phase D/G reserved 0041 (the picture check) and 0042
             # (the reference set and the second vendor) and neither needed a schema change —
             # the verdicts live in `quality_control_report.checks_json`, the references in
-            # columns that already existed — so 0043 chains onto 0040 and is the head.
-            if revision != "0043_autonomy_mode":
+            # columns that already existed — so 0043 chains onto 0040, and 0044 (the subject
+            # an approval is about, and the Owner's answer on the row) onto 0043.
+            if revision != "0044_approval_answered":
                 raise RuntimeError("Run scripts/bootstrap.py with this application version")
             if connection.scalar(text("SELECT COUNT(*) FROM owner_policy")) != 1:
                 raise RuntimeError("Run scripts/bootstrap.py to initialize the studio")
@@ -449,6 +462,37 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
         except CommandConflict as exc:
             return JSONResponse(status_code=409, content={"detail": str(exc)})
         except AutonomyRefused as exc:
+            return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+    @router.get("/owner/approvals", response_model=list[ApprovalView])
+    def list_owner_approvals() -> list[ApprovalView]:
+        """What a SUPERVISED studio is waiting to be told, newest first.
+
+        Everything the Owner needs to decide is on the row: what the action is in his own
+        language, the risk tier, who asked, the evidence, and the cost — the word
+        "necunoscut" when nothing in the studio could compute one, never a zero. Only
+        PENDING and only unexpired: a request the studio has stopped waiting on is not a
+        decision he still has to make.
+        """
+        return pending_approvals(engine)
+
+    @router.post("/owner/approvals/decision", response_model=ApprovalDecisionResult)
+    def decide_owner_approval(
+        command: ApprovalDecisionCommand,
+    ) -> ApprovalDecisionResult | JSONResponse:
+        """The Owner answers one request: APPROVED or REFUSED, with a word of his own.
+
+        Versioned and idempotent by command id like the rest of his commands. A request
+        that was already answered or has expired answers 409 with his reason — 31 says an
+        expired approval cannot be reused, and a request answered twice would be two
+        authorities for one act. A request the studio never made is 404, because that is
+        what it is: a stale page, not a governance conflict.
+        """
+        try:
+            return decide_approval(engine, command)
+        except ApprovalMissing as exc:
+            return JSONResponse(status_code=404, content={"detail": str(exc)})
+        except (ApprovalClosed, CommandConflict) as exc:
             return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     @router.post("/owner/autonomy-stop", response_model=PolicyResult)

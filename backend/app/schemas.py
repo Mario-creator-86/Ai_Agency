@@ -92,3 +92,63 @@ class PolicyResult(BaseModel):
     status: Literal["COMMITTED", "NO_CHANGE"]
     policy: PolicyView
     event_id: str | None
+
+
+class ApprovalDecisionCommand(BaseModel):
+    """The Owner answers one approval request: APPROVED or REFUSED, with a word of his own.
+
+    The same shape as the mode, the environment and the stop — versioned, idempotent by
+    command id — with one difference: there is no `expected_version`. The request row
+    carries no version because its whole life is one transition, PENDING to answered, and
+    the command refuses an already-answered or expired request outright (409). A version
+    would guard against a stale read of a field nothing else can move; the closed state
+    guards against the only thing that can actually go wrong, which is answering twice.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    schema_version: Literal[1] = 1
+    command_id: UUID
+    approval_id: str = Field(min_length=1, max_length=36)
+    decision: Literal["APPROVED", "REFUSED"]
+    #: The Owner's own words, carried into the refusal the stage reports back to him.
+    note: str | None = Field(default=None, max_length=500)
+
+
+class ApprovalView(BaseModel):
+    """One request as the Owner reads it before deciding.
+
+    `cost_label` exists beside `cost_usd` because a cost the studio could not compute is
+    None and never zero: the page must be able to show "necunoscut" without inventing a
+    figure, and a reader that sees only the number would show "0 USD" for a question about
+    an upload nobody can price.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    action: str
+    #: What the action is, in the Owner's language.
+    action_label: str
+    #: The specific thing the request is about: this film, this storyboard.
+    subject: str
+    risk_tier: str
+    requester: str
+    evidence: str | None
+    proposed_diff: dict | None
+    cost_usd: float | None
+    cost_label: str
+    reversible: bool
+    expires_at: str
+    created_at: str
+    result: str
+    approver: str | None
+    note: str | None
+    decided_at: str | None
+
+
+class ApprovalDecisionResult(BaseModel):
+    command_id: str
+    #: Always COMMITTED: a request that was already answered is refused, never re-answered,
+    #: so there is no "nothing changed" outcome to report.
+    status: Literal["COMMITTED"]
+    approval: ApprovalView
+    event_id: str | None

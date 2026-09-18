@@ -19,11 +19,11 @@ from app.factual.models import TopicIdea
 from app.maintenance import RESET_EVENT, ledger_floor, reset_history
 from app.media.models import CharacterBible
 from app.media.services import seed_default_character_bibles
-from app.models import DomainEvent, OwnerPolicy
+from app.models import ApprovalRequest, DomainEvent, OwnerPolicy
 from app.publishing.models import ChannelRecord
 from app.publishing.services import seed_default_channels
 from app.research.models import ResearchAllowedHost
-from app.services import read_events, utc_now
+from app.services import read_events, request_approval, utc_now
 from app.story.models import ContinuityState
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
@@ -89,6 +89,16 @@ def a_studio_with_history(engine, tmp_path):
                 updated_at=utc_now(),
             )
         )
+        # What the agents asked the Owner while the studio was SUPERVISED. It is their
+        # request, not his configuration, so it goes with the films it was about.
+        request_approval(
+            session,
+            "publishing.public_publish",
+            "T3",
+            "publisher",
+            subject="a-film-that-will-not-exist",
+            evidence="Un film → Canal A (private)",
+        )
         session.add(
             TopicIdea(
                 id=str(uuid4()),
@@ -121,12 +131,22 @@ def test_the_history_goes_and_the_configuration_stays(engine, tmp_path):
     assert result["deleted"]["agent_message"] == 2
     assert result["deleted"]["agent_run"] == 1 and result["deleted"]["topic_idea"] == 1
     assert result["deleted"]["memory_record"] == 1 and result["media_folders"] == 1
+    # A yes about a film that no longer exists is an authority nothing should be able to
+    # spend, so the questions go with the history they were about.
+    assert result["deleted"]["owner_approval_request"] == 1
     # Canon goes with the episodes it summarises, or the serial would remember a day
     # whose episode no longer exists.
     assert result["deleted"]["continuity_state"] == 1
     assert not any(media.iterdir())
     with Session(engine) as session:
-        for model in (AgentMessage, AgentRun, MemoryRecord, TopicIdea, ContinuityState):
+        for model in (
+            AgentMessage,
+            AgentRun,
+            MemoryRecord,
+            TopicIdea,
+            ContinuityState,
+            ApprovalRequest,
+        ):
             assert session.scalar(select(func.count()).select_from(model)) == 0
         assert session.scalar(select(func.count(Agent.id))) == before["agents"] == 8
         assert session.scalar(select(func.count(ChannelRecord.id))) == before["channels"] == 2

@@ -3,6 +3,7 @@
 Uses the documented REST API at https://docs.dev.runwayml.com/ (API version 2024-11-06):
 
   GET  /v1/organization     -> credit balance, and per-model tier limits and usage for this key
+  POST /v1/text_to_image    -> a still from a prompt, and from the pictures it is given
   POST /v1/text_to_video    -> a generation task from a prompt
   POST /v1/image_to_video   -> a generation task from a first frame and a prompt
   GET  /v1/tasks/{id}       -> task status and, once finished, the output URLs
@@ -220,7 +221,7 @@ def pick_duration(durations: Any, seconds: float) -> int:
     return wanted
 
 
-def _image_data_uri(image: bytes) -> str:
+def _image_data_uri(image: bytes, what: str = "first frame") -> str:
     if image[:8] == b"\x89PNG\r\n\x1a\n":
         mime = "image/png"
     elif image[:3] == b"\xff\xd8\xff":
@@ -228,8 +229,26 @@ def _image_data_uri(image: bytes) -> str:
     elif image[:4] == b"RIFF" and image[8:12] == b"WEBP":
         mime = "image/webp"
     else:
-        raise MediaProviderError("The first frame must be a PNG, JPEG or WebP image")
+        raise MediaProviderError(f"The {what} must be a PNG, JPEG or WebP image")
     return f"data:{mime};base64," + base64.b64encode(image).decode("ascii")
+
+
+def _reference_image(extra: dict[str, Any] | None) -> bytes | None:
+    """The reference picture the caller handed over, as bytes.
+
+    A path, an asset id or a description is refused here rather than submitted: Runway would
+    answer 400 for the whole task, and the studio would have told the Owner it was drawing
+    the character from their sheet while it was drawing them from the words.
+    """
+    reference = (extra or {}).get("reference_image")
+    if not reference:
+        return None
+    if not isinstance(reference, dict):
+        raise MediaProviderError("The reference image must be given as bytes, not as a name")
+    payload = reference.get("bytes")
+    if not isinstance(payload, bytes | bytearray) or not payload:
+        raise MediaProviderError("The reference image must be given as bytes, not as a name")
+    return bytes(payload)
 
 
 class _RunwayClient:
@@ -384,6 +403,14 @@ class RunwayImageAdapter(_RunwayClient, ImageProvider):
 
     PROVIDER_NAME = "RUNWAY_IMAGES"
 
+    #: The text_to_image task publishes `referenceImages`, so the studio may hand this adapter
+    #: a character's reference sheet instead of describing the face again every scene. It is a
+    #: statement about the code, not about the account: `REFERENCE_IMAGE_VERIFIED` stays False
+    #: until an Owner-approved run has actually drawn a scene this way, because no test may
+    #: spend a credit to find out. Runway has never answered a request with this field in it.
+    ACCEPTS_REFERENCE_IMAGE = True
+    REFERENCE_IMAGE_VERIFIED = False
+
     async def health_check(self) -> dict[str, Any]:
         try:
             data, _, _ = await asyncio.to_thread(
@@ -407,11 +434,17 @@ class RunwayImageAdapter(_RunwayClient, ImageProvider):
     ) -> ImageResult:
         task = "text_to_image"
         self._require_task(task)
+        # Refused before the task is submitted, as a bad first frame is: a reference given as
+        # a path or a description would be sent as a string where the API wants a URI.
+        reference = _reference_image(extra)
         needs = self.model_metadata.get("needs_references", {})
-        if isinstance(needs, dict) and needs.get(task):
+        if reference is None and isinstance(needs, dict) and needs.get(task):
             # Known from the contract before any call: gen4_image_turbo edits pictures it is
             # given and cannot draw one from words alone. Runway answered HTTP 400 to every
-            # scene of a day before this was read.
+            # scene of a day before this was read. The refusal is about the missing picture,
+            # not about the model — with a character's sheet the same model draws — but the
+            # catalog still keeps such a model out of the "image" purpose, so nothing in the
+            # studio chooses one for a storyboard whose scenes may have nobody in them.
             raise MediaProviderError(
                 f"{self.model} needs reference images and cannot generate a still from a "
                 "prompt alone; choose a text-to-image model in Settings",
@@ -427,6 +460,13 @@ class RunwayImageAdapter(_RunwayClient, ImageProvider):
         }
         if isinstance(seed, int):
             body["seed"] = seed
+        if reference is not None:
+            # `referenceImages` is an array of objects whose one required member is a URI —
+            # an HTTPS address the vendor fetches, or the picture inline. The studio holds the
+            # bytes of the sheet it produced and not a URL anybody else can read, so it is the
+            # data-URI form. No tag is sent: a tag means something only when the prompt names
+            # it as `@tag`, and inventing one would change the words the Director approved.
+            body["referenceImages"] = [{"uri": _image_data_uri(reference, "reference image")}]
         job_id = await self._submit(task, body)
         deadline = time.monotonic() + IMAGE_DEADLINE_SECONDS
         while True:
@@ -462,6 +502,9 @@ class RunwayImageAdapter(_RunwayClient, ImageProvider):
                 "task_id": job_id,
                 "ratio": body["ratio"],
                 "content_type": content_type,
+                # How many references this still was actually drawn from, so a render's record
+                # says whether the character's face came from their sheet or from the words.
+                "reference_images": 0 if reference is None else 1,
                 "bytes": len(image),
             },
         )

@@ -930,3 +930,33 @@ main { font-size: 13px; }
   opacity: 0.85;
   line-height: 1.35;
 }
+
+/* ---------------------------------------------------------------------------
+ * Governance panel: the autonomy mode and the requests waiting for the Owner.
+ * Sits under the module list, in the column that already says what the studio's
+ * state is, and borrows that column's paper, lines and chips.
+ * ------------------------------------------------------------------------- */
+.governance-panel { padding: 18px 20px; display: flex; flex-direction: column; gap: 10px; }
+.governance-panel .ledger-now { margin: 0; font-size: 12px; line-height: 1.5; color: var(--ink-2); }
+.mode-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+.mode-btn { font-size: 11px; padding: 6px 10px; border-radius: 5px; }
+.mode-btn.is-current { background: var(--forest); color: var(--ink-on-dark); border-color: var(--forest); cursor: default; opacity: 1; }
+.approvals-heading { margin-top: 6px; }
+.approvals-list { display: flex; flex-direction: column; gap: 8px; }
+.approval-card { background: var(--surface-sunk); border: 1px solid var(--line); border-radius: var(--radius); padding: 11px; display: flex; flex-direction: column; gap: 6px; }
+.approval-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.approval-action { font-size: 12.5px; font-weight: 600; color: var(--ink); word-break: break-word; }
+.approval-tier { background: var(--warn-bg); color: var(--warn-ink); }
+.approval-meta { font-size: 11.5px; color: var(--ink-3); }
+.approval-evidence { margin: 0; font-size: 11.5px; line-height: 1.5; color: var(--ink-2); }
+.approval-footnote { margin: 0; font-size: 10.5px; line-height: 1.4; color: var(--ink-3); font-style: italic; }
+
+/* The reference slots of a Character Bible card: what exists, what is missing, and the
+ * two presses it takes to spend image credits on the rest. */
+.char-references { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--line); padding-top: 8px; }
+.ref-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.ref-chip { font-size: 10px; letter-spacing: .03em; padding: 3px 7px; border-radius: 999px; border: 1px solid var(--line-strong); }
+.ref-chip.is-filled { background: var(--ok-bg); border-color: var(--ok-line); color: var(--ok-ink); }
+.ref-chip.is-empty { background: var(--surface-quiet); color: var(--ink-3); border-style: dashed; }
+.ref-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.ref-status { margin: 0; font-size: 11px; line-height: 1.45; }

@@ -2032,3 +2032,246 @@ live studio because no employee's model declares vision, an approval that is wri
 answered — and `PROJECT_STATE.json` moves to `0043_autonomy_mode`, 42 migrations, AUTONOMOUS_CEO and
 1148/1.** A tracking document that keeps listing closed work teaches the next reader to stop reading
 it; one that ticks a box the studio cannot actually exercise teaches him worse.
+
+## 2026-09-18 — A request is keyed by the action and the subject, and the subject is an identifier the studio already has
+
+The adversarial pass left one defect standing because nothing could yet exploit it: `request_approval`
+deduped a standing request by its `action` alone, so under SUPERVISED the second, dearer film of a day
+reused the first film's row, carrying the first film's evidence and the first film's price. An
+answering route on top of that would have let a yes to a four-dollar film authorise a forty-dollar one.
+The candidates for a key were the evidence string, the channel and the film. **Decision: the key is the
+action plus `subject`, a new column on `owner_approval_request` (migration `0044_approval_answered`)
+holding the identifier of the thing the question is about — the media asset for an upload, the
+storyboard for a paid render.** The evidence is prose for the Owner to read; it changes when the
+Publisher rewrites the title and is truncated to fit, and a key that moves when the wording moves is
+not a key. The channel is too coarse in the other direction: two films reach one channel across two
+days and one answer would cover both. The film is what he is actually being asked about and what the
+act itself writes, and the channel derives from it, so keying by the film keys by the channel for free.
+A re-render produces a new asset id and therefore a new question, which is the conservative reading and
+the right one: he approved the film he was shown. An action with no subject keeps the old behaviour
+under an empty string, because an action about the studio itself has one answer by nature.
+
+## 2026-09-18 — The daily run's stage wrapper asks the mode and does not ask the Owner
+
+The same defect existed one level above `request_approval`, where nothing had looked.
+`build_stage_runners` asked `may_act` for the publish stage before the stage ran, with no film on the
+request: under SUPERVISED that answer skipped the stage outright, so `_publish_one`'s own per-film gate
+was unreachable code, one answer would have authorised every film of the day, and a studio with nothing
+in the publish queue still put a question in the Owner's inbox. **Decision: `may_act` and `mode_refusal`
+gain `ask_owner=False`, and the wrapper uses it — the mode is asked without anything being written and
+without any answer of his being spent, and the caller that can name the film does the asking.** A mode
+that refuses outright — MANUAL on a T3, safe mode, T4 — still refuses at the wrapper, so nothing above
+the mode moved. The proof changed with the fix: the end-to-end SUPERVISED day used to record one
+request for the whole day and now records two, one for the factual short and one for the serial's
+episode, each with its own subject.
+
+## 2026-09-18 — The Owner's answer is spent inside `may_act`, not beside it
+
+The publish stage could have looked for an APPROVED row itself and then skipped the gate. **Decision:
+the answer is read in exactly one place, the SUPERVISED T3 branch of `may_act`, after the unclassified
+refusal, the stop, T4 and safe mode have each had their say.** Reading it beside the gate would have
+put his yes *above* the authority hierarchy of 31 instead of inside it, and the first thing anyone
+would then have had to re-derive is what a stop means for a film that was already approved. Inside, the
+whole of 31's order comes for nothing: an approval can only ever convert the one verdict it is about —
+"he would have to be asked" becomes "allowed, once" — it can never reach a refusal above it, and every
+one of those refusals leaves the yes unspent, which is the behaviour a stop should have. It pauses the
+studio; it does not retract what he decided.
+
+## 2026-09-18 — A column is the lock, the ledger is the record, and the yes is spent before the act
+
+**Decision: `consumed_at` on the row is what the gate reads, `governance.approval_consumed` is written
+beside it, and the spending happens before the act it authorises rather than after.** A gate that had to
+walk the event history for every film would make the day's riskiest decision depend on a scan, and the
+index (`action`, `subject`, `result`) is exactly the query the publish stage makes once per film; the
+event is written anyway, because the column alone would leave "the film went out on the Owner's yes" as
+a nullable timestamp nobody reads. Spending it first is the conservative direction: an upload that then
+fails costs him one more question tomorrow, where the alternative costs him an upload he only agreed to
+once.
+
+## 2026-09-18 — What a stop, an incident, a lowered mode and a moved policy version each do to an answer he has already given
+
+**Decision, written into the code and now into 31: a STOP AUTONOMY and a SAFE_MODE refuse before his
+answer is looked for at all, so the yes is still there, unspent, when he lifts the stop or the incident
+closes — neither of them is him changing his mind. A channel policy version that moved after he
+answered does retract it, because he said yes to this film going out at that visibility under that
+version: the proposed diff he was shown is compared at the moment of spending, the stale yes is left on
+the record unspent, and a fresh request naming the new policy is raised. Lowering the mode to MANUAL
+refuses too, and never looks for the answer: MANUAL is him asking to be asked about everything, and an
+answer given under a more permissive mode must not be the way past the mode he chose to replace it.**
+This is 31's "gate immutability" read for approvals — an approval applies to an exact version, never to
+an idea — and it is now specified there rather than living only in the order of four branches.
+
+## 2026-09-18 — A refusal is COMPLETED, an unanswered question is SKIPPED
+
+The publish stage's vocabulary was already exact: SKIPPED means the studio could not do the work,
+COMPLETED means the work was done and the answer was no, which is how the Director's refusal and the
+Publisher's HOLD are already recorded. **Decision: the Owner's refusal is an answer, so the stage
+reports COMPLETED with `refused_by_owner` and the approval id, and the status is deliberately spelled
+`REFUSED_BY_OWNER` and not `BLOCKED_OWNER_REFUSED` — the studio was permitted to ask and got an answer,
+which is not a block.** A question still standing stays SKIPPED with `awaiting_owner` and the approval
+id, as it was. The film keeps the verdict quality control gave it, because he said no to sending it out
+and not that anything is wrong with the film, and nothing asks again until his decision expires — the
+same 24-hour clock that decides how long an unanswered request stands.
+
+## 2026-09-18 — The decision command carries no `expected_version`
+
+The Owner's other commands guard `owner_policy.version`, because that row is edited by several commands
+and a page can read it minutes before it writes. **Decision: `ApprovalDecisionCommand` carries a command
+id and no expected version, because the row it answers has no version to be stale about.** An approval
+request's whole life is one transition, PENDING to answered, made by one command; the only thing that
+can go wrong is answering twice, and that is refused directly with 409 and the result the row already
+carries. A version column would have been a guard against a race that does not exist, and a schema
+change to express it. An expired request is refused the same way and is deliberately left PENDING on the
+way out — it is filtered out of everything that reads it by its own expiry, and a command that fails
+must not be the thing that changes state. A request the studio never made is 404, because that is what
+it is: a stale page, not a governance conflict.
+
+## 2026-09-18 — Nothing is written into the agents' memory when the Owner answers
+
+The mode, the environment and the stop each write an `OWNER_POLICY` memory every agent reads, because
+each is a standing rule about how the studio works. **Decision: an approval writes none, and
+`decide_approval`'s comment says why the pattern is broken here on purpose.** An approval is about one
+film. A letter to every agent for every upload would be the noise that makes the standing rules
+unreadable, so the answer lives in the row, in the ledger and in the stage's own report.
+
+## 2026-09-18 — The Owner's two buttons are measured by the day's rules, not by their own
+
+A film read twice — once by the stage and once by the Owner — disagreed about which gates had run at
+all: the stage handed quality control the registry and the encoder, the route handed neither, and
+`picture_qc` and `character_drift_qc` came back NOT_APPLICABLE with a reason that was true of the caller
+and not of the film. **Decision: both `evaluate_media_qc` call sites in `backend/app/media/router.py`
+pass `registry` and `ffmpeg_path`, read from where the app already holds them, so the Owner's reading of
+a film is the reading the day would have given it.** This does mean his Quality Control button may now
+make one vision call and cut frames with FFmpeg inside the request, where before it only probed the
+container — it is his act, on his provider, and it is the same single call per film the stage makes.
+With no vision-capable model, no registry or no encoder it is still NOT_APPLICABLE with the reason and
+the verdict is exactly what the other gates left it: nothing there passes by absence.
+
+## 2026-09-18 — An injected adapter stays the only vendor; the character's reference travels regardless
+
+`app.state.image_adapter` is how a test says "this vendor draws this film". **Decision: `start_render`
+passes the plan's `image_chain` only when nothing was injected, and passes `reference_for_scene`
+unconditionally.** Handing the assembler the studio's resolved vendors in front of an injected adapter
+would break what injection means, and the route already applied that rule to the injected voice. The
+reference is not a statement about a vendor: it resolves which character's stored sheet a scene must be
+drawn from and refuses a film whose locked character has none. Suppressing it for an injected adapter
+would let exactly the render that is easiest to run invent a face the Owner locked.
+
+## 2026-09-18 — A missing reference is a refusal with its own answer, not a lost storyboard
+
+`app.media.services.ReferenceRequired` subclasses `ValueError`, and `start_render` answered every
+`ValueError` with 404 and the exception's text, so the studio declining to invent a locked character's
+look was reported to the Owner as "storyboard not found" about a storyboard sitting in front of him.
+**Decision: it is caught before the `MediaProviderError` handler and answered 422 with
+`error: ReferenceRequired`, a Romanian message telling him to produce the character's reference set
+first, and the refusal's own text naming the character.** It is deliberately not a 502: the vendor did
+nothing wrong.
+
+## 2026-09-18 — Runway is given the picture in the field its own contract publishes
+
+`RunwayImageAdapter` could not be handed a reference at all, so `accepts_reference_image` read False for
+it, the chain dropped the sheet, and a Runway-drawn still of a locked character was honestly recorded as
+drawn from the words. **Decision: the adapter sends `referenceImages` on the documented `text_to_image`
+task as an array of one object whose single required member is a `uri`, built as an inline data URI by
+the same helper that has always validated an image-to-video first frame — so a reference given as a
+path, an id, or bytes that are not a PNG, JPEG or WebP is refused before the task is submitted — and the
+result's raw response counts `reference_images` 0 or 1.** The studio holds the bytes of the sheet it
+produced and not an address anybody else can fetch, which is why it is the inline form. No `tag` is sent
+with the reference: a tag means something to Runway only when the prompt names it as `@tag`, and
+inventing one would change the words the Director approved. The per-attempt count is what makes a
+render's record able to say whether a character's face came from their sheet or from the words.
+
+## 2026-09-18 — The contract refusal for a model that requires references was about the missing picture all along
+
+The adapter refused any model whose published contract lists `referenceImages` as required —
+gen4_image_turbo, which answered HTTP 400 to every scene of a day drawn from words alone. **Decision:
+that refusal now fires only when no reference was given**, because with a character's sheet in hand the
+stated reason, that the model cannot generate a still from a prompt alone, is no longer true. The
+catalog still keeps such a model out of the `image` purpose, so nothing in the studio chooses one for a
+storyboard whose scenes may have nobody in them; the path exists for a model the Owner names by hand and
+it has never been run.
+
+## 2026-09-18 — What the code builds and what the account has answered are two statements, and both are recorded
+
+**Decision: `ACCEPTS_REFERENCE_IMAGE` is True on the Runway image adapter because the code builds the
+documented field, `REFERENCE_IMAGE_VERIFIED` stays False as it does on the OpenAI adapter until an
+Owner-approved live run has actually drawn a scene this way, and a test asserts the second flag is
+False so nobody can flip it on mock evidence.** No test may spend a credit to find out. Neither
+adapter's reference path has ever been accepted by a vendor, and an HTTP 400 on the first real render is
+the thing to watch: that is how the last unread contract detail announced itself.
+
+## 2026-09-18 — The autonomy mode is shown where the studio's state is shown, and the page refuses only what it can see
+
+The autonomy switch, the environment banner and the module list are the three things that say what the
+studio is; the mode is the fourth. **Decision: the governance panel lives in the ledger column under
+`modules-panel`, inside `#workspace` so it is invisible until the Owner has a key, and it refuses a
+promotion it can already see is impossible while never refusing one it cannot see.**
+`promotionBlockedReason` reads only the stop, which is in the snapshot, and says so in his language
+before spending a request; SAFE_MODE is not in the snapshot, so the page does not infer it, does not
+grey the button out on a guess, and prints the server's own 409 sentence when it arrives. A blocked
+mode button therefore stays pressable, because pressing it answers *why* and a disabled button cannot.
+An unconfirmed mode command is resent only when its `autonomy_mode` is the one now being asked for and
+replaced otherwise, because with three modes a slow network is one decision and a change of mind is a
+different one — the two-state switches of the stop and the environment could keep a single pending
+command and this cannot.
+
+## 2026-09-18 — The approvals list is read on a slower clock, a missing route is said once, and every card repeats what an approval is not
+
+An approval stands for a day. **Decision: the panel reads `GET /api/v1/owner/approvals` at most every
+thirty seconds, immediately after any decision and whenever the Owner presses refresh; a backend that
+answers 404 is recorded as not having the route and stops being asked, with one sentence saying the
+requests exist in the database while the route that shows them does not.** Fetching a list nobody
+answered sixty times an hour, or repeating a 404 every five seconds, teaches its Owner to ignore the
+panel. **And every request card carries, in Romanian, the sentence that an approval lets a permitted
+action happen and never turns a hard gate's refusal into a pass** — 31 says a hard gate's result cannot
+be overridden, and the most likely misreading of a green «Aprobă» button is that it makes something
+pass.
+
+## 2026-09-18 — A cost nothing could compute stays «necunoscut» on the page, and a reference set takes two presses
+
+**Decision: `approvalCostText` returns «necunoscut» for anything that is not a finite number and
+`0.00 USD` only for an actual zero, the panel prefers the server's own `cost_label` when the row carries
+one, and the same function labels the reference set's price.** A page that formatted `cost_usd` itself
+would show "0 USD" for a question nobody can price, which is the one number the books are written never
+to invent. **And the reference-set button states its cost on the first press and generates nothing until
+the second**: the slots are drawn as chips rather than summed into a ratio, because "3/5" does not tell
+him which slot is missing — and a missing reference is exactly the reason a locked character's scene is
+refused.
+
+## 2026-09-18 — The panel's judgements were put in a module so that they could be tested
+
+`main.js` touches the document at import, so `node --test` cannot load it. **Decision: rather than
+invent a DOM harness, the decisions that matter — what a mode means, whether a promotion is possible,
+how a request's cost and expiry read, which slots a character has, what shape each command takes — moved
+to `frontend/src/governance.js` and are tested there (14 tests, 102 in the frontend suite, `tsc`
+clean).** What remains untested is the wiring: which element the text lands in, and that a click reaches
+the right function. That is recorded as untested rather than covered by a harness that would have proved
+something else.
+
+## 2026-09-18 — `31_GOVERNANCE_APPROVAL_POLICY` is edited and re-hashed; 51 is corrected; 50 is left alone
+
+31 specified the Approval object and stopped there: it said an expired approval cannot be reused and
+said nothing about how one is answered, how it is consumed, that one approval authorises exactly one
+action, or what a STOP, a SAFE_MODE or a policy-version change does to one already given. The code now
+answers all four. **Decision: 31 gains one dated section, *Answering an approval, and spending it*, as a
+deliberate specification change under ADR-FOUNDATION-003, with its `sha256` re-recorded in
+`DOCUMENTATION_INDEX.json` (`c788e9bc…` → `b4aedc31…`) and this entry as the reason.**
+`51_AUTONOMY_MODE_SEMANTICS` carried two sentences this closure makes untrue — a **Not built:**
+paragraph saying nothing answers a request, and "writes exactly one request" for a whole SUPERVISED day
+— so its Supervised section is corrected in place, dated, with its `sha256` re-recorded as well
+(`33f42c6c…` → `f5f96f18…`). **`50_CONTENT_GATE_MATRIX` was read and deliberately left unedited, its
+hash unchanged:** the picture and character gates it describes are unchanged by this closure, and the
+Owner's route now running them is a fact about a caller, not about a gate. Editing a document to restate
+what it already says spends an index hash on nothing.
+
+## 2026-09-18 — The closure's recorded figures are attributed rather than invented
+
+No whole-suite run has been made since the three closure parts landed, and the brief for this part
+forbids running one. **Decision: the last whole-tree figure (1152 passed, 1 skipped) is left standing in
+CURRENT_STATUS and PROJECT_STATE as what it is — the adversarial verifier's measurement, now older than
+the tree — and every figure this closure adds is written with the part that measured it beside it:** 231
+Python tests across the files the governance part owns and their neighbours, 186 across the media part's
+four files and its regression set, 102 frontend tests with 14 new, and `check_docs.py` plus
+`tests/test_documentation.py` for this part. `javascript_passed` moves 87 → 102 because that figure *is*
+a whole-suite measurement of its suite; `python_passed` does not move, because inventing a number for a
+run nobody made is the one thing these documents exist to prevent.

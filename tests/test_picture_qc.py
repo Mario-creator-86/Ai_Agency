@@ -588,3 +588,48 @@ def test_a_provider_the_registry_cannot_reach_stands_the_check_down(engine, staf
     with Session(engine) as session:
         run = session.scalars(select(AgentRun).where(AgentRun.task_type == PICTURE_TASK)).one()
         assert run.status == "BLOCKED_PROVIDER"
+
+
+# ------------------------------------------------- and when the Owner measures a film himself
+# Measured before this work: `backend/app/media/router.py` called `evaluate_media_qc` with the
+# settings alone at both of its call sites, so the same film reported the picture and character
+# checks NOT_APPLICABLE when the Owner pressed the button and MEASURED when the day ran. The
+# route now hands over the registry the app already holds and the configured encoder.
+
+
+def test_the_owners_own_quality_control_looks_at_the_pictures(
+    client, headers, engine, staffed, seen_frames
+):
+    """Through the route, on a film whose third scene is not a picture: the check is measured,
+    the film fails and the reason names the scene — the day's reading of the same film."""
+    ids = a_film(engine)
+    give_vision(engine, staffed["agents"]["VideoEditor"].id)
+    registry, model = registry_with(
+        staffed,
+        lambda p: json.dumps(
+            {
+                "scenes": [
+                    {"scene": 1, "is_a_picture": True, "shows_the_scene": True, "reason": ""},
+                    {"scene": 2, "is_a_picture": True, "shows_the_scene": True, "reason": ""},
+                    {
+                        "scene": 3,
+                        "is_a_picture": False,
+                        "shows_the_scene": False,
+                        "reason": "an empty grey field",
+                    },
+                ]
+            }
+        ),
+    )
+    client.app.app.state.registry = registry
+
+    response = client.post(f"/api/v1/media/qc/{ids['asset']}", headers=headers)
+
+    assert response.status_code == 200, response.text
+    report = response.json()
+    picture = report["checks_json"]["picture_qc"]
+    assert picture["status"] == "MEASURED" and picture["passed"] is False
+    assert report["status"] == "FAILED"
+    assert any("Scene 3" in reason for reason in report["failure_reasons_json"])
+    # One look at the whole film, here as in the day's stage.
+    assert len(model.calls) == 1

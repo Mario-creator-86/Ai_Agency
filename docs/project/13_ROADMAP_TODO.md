@@ -174,8 +174,10 @@ false/unsupported critical claim blocks script/publication path. ✅
   the five bible slots (portrait, full body, front, side, back) with real `MediaAsset` files, one
   prompt per slot from the bible alone, the money for the whole set held before the first slot. It
   is the Owner's act — it spends image credits, refuses under STOP AUTONOMY and is named by no stage
-  of the day. Open: no frontend button, no page showing which slots are filled, and the first filled
-  slot is used for every scene rather than chosen by shot type.
+  of the day. Corrected 2026-09-18 at the closure: the button and the per-slot chips exist in
+  `frontend/src` behind a second press that states the cost, and are invisible until
+  `npm run build --prefix frontend`. Open: the first filled slot is still used for every scene rather
+  than chosen by shot type.
 - [x] final MP4 page (Media Production UI modal with 9:16 vertical video player, QC scorecard, Character Bible)
 
 Acceptance:
@@ -299,10 +301,16 @@ yesterday's real events → today's coherent episode with correct cast. (Code co
   DRAFT for the Owner, and there is no queue view. Since 2026-09-18 the rows exist:
   `owner_approval_request` carries 31's Approval object (action, requester, tier, evidence, proposed
   diff, nullable cost, reversibility, expiry, approver, result), a SUPERVISED day writes one for the
-  upload instead of uploading, and a standing request is reused rather than duplicated. Still open,
-  and the reason this stays `[~]`: **nothing answers one.** There is no route to approve or refuse,
-  nothing consumes an APPROVED row, no stage re-attempts after one appears, and
-  `owner_approval_request` is not yet in `maintenance.HISTORY_TABLES`.
+  upload instead of uploading, and a standing request is reused rather than duplicated. Corrected and
+  closed 2026-09-18: **he answers one now.** A request is keyed by the action *and* the film
+  (`subject`, migration 0044), so a day with two films leaves two questions rather than one covering
+  both; `GET /api/v1/owner/approvals` lists what waits,
+  `POST /api/v1/owner/approvals/decision` answers it once, the yes is spent inside `may_act` and
+  consumed before the act, a refused film comes back COMPLETED and a waiting one SKIPPED, and
+  `owner_approval_request` is in `maintenance.HISTORY_TABLES`. Still open, and the reason this stays
+  `[~]`: nobody writes him a letter when something waits, the queue view is in `frontend/src` and not
+  in the served bundle until he runs `npm run build --prefix frontend`, and a yes cannot be
+  withdrawn once given — the stop is the honest way to hold a film back.
 - [x] cost reservation — since 2026-09-18 the media stage prices the plan (`estimate_film_cost_micros`) and *holds* the sum behind the write lock (`reserve_spend`, migration 0039), settles it against the real cost rows and releases it on every path where the film was not made; the watchdog frees a hold older than six hours.
 - [x] hard budgets — a refusal now stops the film and the Accountant writes to the Owner the same day, and a business date has a token ceiling (`STUDIO_AGENT_DAILY_TOKEN_BUDGET`, 0 = none) enforced as the Policy Kernel's first gate (BLOCKED_BUDGET). Budgets are still set only by the Owner, and none is set on the live studio yet.
 - [x] STOP AUTONOMY — the scheduler and the task queue both refuse while the stop is set, and
@@ -812,29 +820,74 @@ uploaded or paid for.
 - [ ] A real render drawn through the second vendor, and through the OpenAI `/v1/images/edits`
   reference path. `REFERENCE_IMAGE_VERIFIED` stays False until an Owner-approved run has drawn a
   scene that way; a 400 there would mean the multipart body is wrong.
-- [ ] Answering an approval: `GET /api/v1/owner/approvals` and a versioned idempotent POST that sets
-  `approver`/`result` and appends `governance.approval_decided`, plus a decision about where an
-  APPROVED T3 is re-attempted. `owner_approval_request` also belongs in
-  `maintenance.HISTORY_TABLES`, before `command_record`.
-- [ ] `backend/app/media/router.py`: the two `evaluate_media_qc` call sites take no registry and
-  `start_render` passes no chain and no reference, so the Owner's manual render and manual QC behave
-  as they did yesterday while the daily run does not.
-- [ ] `RunwayImageAdapter` cannot be handed a reference (`referenceImages` on text_to_image); today
-  the chain drops it and the attempt honestly records `reference_image: False`.
+- [x] Answering an approval — closed 2026-09-18: migration `0044_approval_answered` puts the film on
+  the row (`subject`, plus `note`, `decided_at`, `consumed_at` and an index on action/subject/result),
+  so one approval authorises exactly one act on exactly one thing; `GET /api/v1/owner/approvals` lists
+  what waits with the cost «necunoscut» where nothing could compute one;
+  `POST /api/v1/owner/approvals/decision` is versioned, idempotent by command id, 409 on an answered or
+  expired request and 404 on one that never existed; the answer is read inside `may_act`'s SUPERVISED
+  T3 branch, after the stop, T4 and safe mode, and consumed (`consumed_at` plus
+  `governance.approval_consumed`) *before* the act it authorises. The stage wrapper asks the mode with
+  `ask_owner=False` so the caller that can name the film raises the question, and
+  `owner_approval_request` is in `maintenance.HISTORY_TABLES` before `command_record`.
+- [x] `backend/app/media/router.py` — closed 2026-09-18: both `evaluate_media_qc` call sites pass
+  `registry` and `settings.ffmpeg_path`, `start_render` passes the plan's `image_chain` (suppressed only
+  for an injected adapter) and `reference_for_scene` (always), and `ReferenceRequired` is answered 422
+  naming the character instead of 404 "storyboard not found".
+- [x] `RunwayImageAdapter` can be handed a reference — closed 2026-09-18: `referenceImages` on the
+  documented `text_to_image` task as an inline data URI, a path, an id or non-PNG/JPEG/WebP bytes
+  refused before the task is submitted, `reference_images` counted 0 or 1 in the attempt's raw
+  response, `ACCEPTS_REFERENCE_IMAGE` True and `REFERENCE_IMAGE_VERIFIED` False. The contract refusal
+  for a model that *requires* references now fires only when none was given.
 - [ ] The factual storyboard records no cast (`character_ids_json=[]`), so the character gate has
   nothing to compare on a factual film; only `serial_storyboard.py` fills it.
 - [ ] The Director is not told what quality control saw: `gather_facts` filters the QC report to
   keys starting with "measured", so the per-scene verdicts do not reach her prompt.
 - [ ] Department-scoped autonomy (51's V4 section): the column is one global mode, and a
   per-department override needs the Owner's department list first.
-- [ ] Frontend: no button produces a reference set, no page shows which slots are filled, and
-  nothing in `frontend/src` reads `autonomy_mode` or renders the preflight's third severity.
+- [~] Frontend — written 2026-09-18 and not built: `frontend/src/governance.js` (new) holds the
+  panel's judgements with 14 tests of its own, and `main.js`/`index.html`/`style.css` render the
+  autonomy mode with its two other modes as versioned commands, the approvals list (polled at most
+  every thirty seconds, silenced after a 404, «Aprobă»/«Refuză», the cost «necunoscut» where nothing
+  could compute one) and the Character Bible's reference slots as chips behind a two-press button.
+  Open: `frontend/dist` was not rebuilt, so the Owner sees none of it until
+  `npm run build --prefix frontend`; the screens themselves have no test, because `main.js` touches the
+  document at import; the refusal card sends no `note`, although the command accepts one and the stage
+  reports it back to him; the character card still mixes its older English labels with the new
+  Romanian; and nothing yet renders the preflight's third severity, `INFORMATIONAL`.
 - [ ] The research stage's mode refusal is coarse: under MANUAL the whole fetch is skipped including
   `retest_stale_hosts`, so a MANUAL studio's host record goes stale.
 - [ ] A stage the mode skips is recorded but nobody writes the Owner a letter about it.
-- [ ] The Owner's part: produce the character reference sets, choose the autonomy mode, approve the
-  fallback vendors (and set `paid_generation_approval_threshold_usd` if five dollars is the wrong
-  line). Nothing above spends money on its own.
+- [ ] No approval has ever been answered by a real Owner through the real route against a real
+  database: every measurement is against the test engine with the loopback-only socket guard in force,
+  and migration 0044 has been walked from an empty database by every test in the run and never against
+  `data/studio.db`.
+- [ ] The Owner is not told that something is waiting: a SUPERVISED day records one question per film
+  and the run record carries the approval id, but no letter and no notification is written, so the list
+  is seen only by someone who opens the panel.
+- [ ] An approval cannot be withdrawn: once he says yes it stands until it is spent or expires, because
+  the honest way to stop a film going out is the stop, which refuses before his answer is read at all.
+- [ ] `APPROVAL_EXPIRES_AFTER_HOURS = 24` is still a module constant in `backend/app/services.py` and
+  now decides three things — how long an unanswered question stands, how long a refusal stops the studio
+  asking again, and how long a yes can still be spent — which is more weight than a constant should
+  carry silently. Lifting it to `config.py` means naming all three to the Owner.
+- [ ] A film the Owner refused in the *media* stage still lands in `awaiting_owner` and reports SKIPPED
+  rather than the publish stage's COMPLETED distinction between a question and a decision; the subject
+  is on that stage's request, so his answer is already per film there.
+- [ ] The size of an inline reference is not checked: Runway publishes a limit on how large a data URI
+  may be, the number was not read (it needs the vendor's documentation), and no guard invents a
+  threshold — a sheet too large comes back as a vendor refusal on the first live run.
+- [ ] Whether a Runway model accepts an *optional* reference is not a per-model fact the adapter can
+  read: `parse_model_contract` records only `needs_references` and `integrations/discovery.py` filters
+  stored `api_metadata` to a fixed field list, so `referenceImages` is treated as a property of the
+  `text_to_image` task.
+- [ ] The Owner's manual quality control can now spend tokens, metered only by the day's ceiling and
+  cached nowhere, because caching a measurement is how a gate starts certifying what it did not measure
+  this time.
+- [ ] The Owner's part: produce the character reference sets, choose the autonomy mode, answer the
+  approvals a SUPERVISED day leaves him, approve the fallback vendors (and set
+  `paid_generation_approval_threshold_usd` if five dollars is the wrong line), and run
+  `npm run build --prefix frontend` so the panel exists for him. Nothing above spends money on its own.
 
 Evidence: 11 (`tests/test_picture_qc.py`, new), 20 + 7 (one test appended each to
 `tests/test_phase5_media.py` and `tests/test_cycle_fixes.py`) and 77 across the other callers of
@@ -847,3 +900,15 @@ the agent, publish-policy, reset, schema and route-authorisation files; and the 
 skipped**; ruff, `ruff format --check` (384 files), mypy (143 source files) and `check_docs.py`
 clean. Nothing ran against a real model, provider or platform; no run was queued and no credit was
 spent.
+
+Evidence added by the closure of 2026-09-18, each figure named for the part that measured it and no
+whole-suite run made since: `tests/test_approvals.py` **18** (new) and 231 Python tests in all across
+the governance part's four files and every neighbouring suite its change can reach, with ruff, ruff
+format, mypy (187 source files) and `check_docs.py` clean; **98** across `tests/test_phase5_media.py`
+(23), `tests/test_media_providers.py` (41), `tests/test_picture_qc.py` (14) and
+`tests/test_character_references.py` (20), ten of them new, plus **88** across the Runway-connection,
+readiness, editorial-quality and media-selection suites; `npm test --prefix frontend` **102**, fourteen
+of them the new `frontend/tests/governance.test.js`, with `npm run check --prefix frontend` clean; and
+`scripts/check_docs.py` with `tests/test_documentation.py` for the documents. The migration chain is
+0039 → 0040 → 0043 → 0044 and `main.py` pins `0044_approval_answered`. No provider was called, nothing
+was rendered, no run was queued and no credit was spent.

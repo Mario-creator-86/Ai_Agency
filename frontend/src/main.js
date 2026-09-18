@@ -11,6 +11,21 @@ import { LiveWindows, eventMatchesAgent } from './live_window.js';
 import { MailThread } from './mail_thread.js';
 import { LiveStream } from './hq_stream.js';
 import { liveStreamSettings, relayUrl } from './hq_stream_config.js';
+import {
+  APPROVALS_PATH,
+  APPROVAL_DECISION_PATH,
+  REFERENCE_CREDIT_WARNING,
+  approvalCostText,
+  approvalDecisionCommand,
+  approvalExpiryText,
+  autonomyModeCommand,
+  autonomyModeLabel,
+  autonomyModeMeaning,
+  promotionBlockedReason,
+  readApprovals,
+  referenceSetSummary,
+  riskTierMeaning,
+} from './governance.js';
 
 /** @param {string} id @returns {HTMLElement} */
 function element(id) {
@@ -1643,9 +1658,6 @@ function characterCard(c) {
   const speech = c.speech_style_json || {};
   const expressions = c.expressions_json || {};
   const behavior = c.behavior_json || {};
-  const references = c.reference_assets_json || {};
-  const slots = Object.keys(references);
-  const present = slots.filter((slot) => references[slot]);
   const voiceLine = [voice.voice_id, voice.style, voice.speed ? `x${voice.speed}` : '']
     .filter(Boolean)
     .join(' · ');
@@ -1664,9 +1676,91 @@ function characterCard(c) {
       ${charRow('Nu devia', c.forbidden_deviations)}
       ${voiceLine ? `<div class="char-voice">Voice: ${escapeHtml(voiceLine)}</div>` : ''}
       ${identityLine(c)}
-      ${slots.length ? `<div class="char-voice">Visual references: ${present.length}/${slots.length}${present.length ? '' : ' · none produced yet'}</div>` : ''}
+      ${referenceBlock(c)}
     </div>
   `;
+}
+
+/**
+ * Which reference pictures this character has, and the one button that produces them.
+ *
+ * The set is what a locked face is drawn from, so an empty slot is shown empty rather than
+ * summed away in a ratio: "3/5" does not tell the Owner that the profile is the one missing.
+ * Producing them spends image credits at the configured image provider, so the button says so
+ * and produces nothing until it is pressed a second time — the Owner's deliberate act, which
+ * is also why nothing in the daily run calls this route.
+ *
+ * @param {any} c a Character Bible record
+ */
+function referenceBlock(c) {
+  const summary = referenceSetSummary(c);
+  const chips = summary.slots
+    .map(
+      (slot) =>
+        `<span class="ref-chip ${slot.filled ? 'is-filled' : 'is-empty'}" title="${slot.filled ? 'Produsă' : 'Lipsește'}">${escapeHtml(slot.label)}</span>`,
+    )
+    .join('');
+  return `
+    <div class="char-references" data-character="${escapeHtml(c.id || '')}">
+      <div class="char-row"><span class="char-label">Referințe vizuale</span>${summary.filled}/${summary.total}${summary.complete ? ' · set complet' : summary.filled ? '' : ' · niciuna produsă'}</div>
+      <div class="ref-chips">${chips}</div>
+      <div class="ref-actions">
+        <button class="quiet btn-references" type="button" data-id="${escapeHtml(c.id || '')}">Produ setul de referință</button>
+      </div>
+      <p class="ref-status" hidden></p>
+    </div>`;
+}
+
+/**
+ * The two presses.
+ *
+ * The first one only says what the second one will spend; nothing is generated in between and
+ * nothing is generated if the Owner walks away. A set already complete is produced again only
+ * if he asks for it, so the warning names that too.
+ *
+ * @param {HTMLElement} block the `.char-references` of one card
+ * @param {string} characterId
+ */
+function armReferenceSet(block, characterId) {
+  const status = /** @type {HTMLElement} */ (block.querySelector('.ref-status'));
+  const actions = /** @type {HTMLElement} */ (block.querySelector('.ref-actions'));
+  status.hidden = false;
+  status.className = 'ref-status helper-note helper-warn';
+  status.textContent = REFERENCE_CREDIT_WARNING;
+  actions.innerHTML =
+    `<button class="secondary btn-references-confirm" type="button" data-id="${escapeHtml(characterId)}">Confirmă</button>` +
+    '<button class="quiet btn-references-cancel" type="button">Renunță</button>';
+}
+
+/** @param {HTMLElement} block @param {string} characterId */
+async function produceReferenceSet(block, characterId) {
+  const status = /** @type {HTMLElement} */ (block.querySelector('.ref-status'));
+  const actions = /** @type {HTMLElement} */ (block.querySelector('.ref-actions'));
+  actions.querySelectorAll('button').forEach((node) => {
+    /** @type {HTMLButtonElement} */ (node).disabled = true;
+  });
+  status.className = 'ref-status helper-note';
+  status.textContent = 'Se produc referințele la furnizorul de imagini…';
+  try {
+    const result = await api(`/media/characters/${encodeURIComponent(characterId)}/reference-set`, {
+      method: 'POST',
+    });
+    const produced = Object.keys(result.slots || {}).filter((slot) => result.slots[slot]);
+    const failed = Array.isArray(result.failed) ? result.failed : [];
+    const cost = result.cost && typeof result.cost === 'object' ? result.cost.usd : null;
+    status.className = failed.length ? 'ref-status helper-note helper-warn' : 'ref-status helper-note';
+    status.textContent =
+      `Setul are acum ${produced.length}/${Object.keys(result.slots || {}).length} sloturi cu ` +
+      `referință · cost: ${approvalCostText(cost)}` +
+      (failed.length
+        ? ` · nereușite: ${failed.map((f) => `${f.slot} (${f.reason})`).join('; ')}`
+        : '');
+    await loadCharacterBibles();
+  } catch (err) {
+    status.className = 'ref-status text-error';
+    status.textContent = err.message;
+    actions.innerHTML = `<button class="quiet btn-references" type="button" data-id="${escapeHtml(characterId)}">Produ setul de referință</button>`;
+  }
 }
 
 /** Persistent production identity: the bound voice, which fields are locked, and the status. */
@@ -1697,6 +1791,26 @@ async function loadCharacterBibles() {
     listEl.innerHTML = `<div class="text-error">Loading characters failed: ${escapeHtml(err.message)}</div>`;
   }
 }
+
+// One listener for a list that is rewritten on every read. Producing a reference set spends
+// credits, so the path from a click to a generation is short enough to read in one place.
+element('characters-list').addEventListener('click', (event) => {
+  const target = event.target instanceof Element ? event.target : null;
+  if (!target) return;
+  const block = /** @type {HTMLElement|null} */ (target.closest('.char-references'));
+  if (!block) return;
+  const ask = target.closest('.btn-references');
+  const confirmed = target.closest('.btn-references-confirm');
+  const cancelled = target.closest('.btn-references-cancel');
+  const characterId = block.dataset.character || '';
+  if (ask) {
+    armReferenceSet(block, characterId);
+  } else if (confirmed) {
+    produceReferenceSet(block, characterId);
+  } else if (cancelled) {
+    loadCharacterBibles();
+  }
+});
 
 /**
  * What a render would actually use right now.
@@ -2497,6 +2611,7 @@ function render(data) {
     `Updated ${new Date(data.captured_at).toLocaleTimeString('en-GB', { timeZone: data.studio.timezone })}`;
   renderSwitch(data.policy.autonomy_stopped);
   renderEnvironment(data.policy.environment);
+  renderAutonomyMode(data.policy);
   ledger.timezone = data.studio.timezone;
   const agentNames = Object.fromEntries(officeState.agents.map((a) => [a.id || a.agent_id, a.display_name]));
   ledger.setNames(agentNames);
@@ -2585,6 +2700,8 @@ async function refresh() {
     } catch (error) {
       console.warn('ledger sync failed', error);
     }
+    // The approvals have their own, slower clock; this only lets them ride the same poll.
+    await loadApprovals();
     return true;
   } catch (error) {
     if (generation !== epoch) return false;
@@ -2643,6 +2760,14 @@ element('logout').addEventListener('click', () => {
   input.value = '';
   notify('');
   ledger.clear();
+  pendingMode = null;
+  approvalsRouteMissing = false;
+  approvalsLastRead = 0;
+  approvalsList.replaceChildren();
+  element('approvals-count').textContent = '—';
+  element('autonomy-mode-tag').textContent = '—';
+  element('autonomy-mode-meaning').textContent = '—';
+  governanceNote('');
   element('modules').replaceChildren();
   element('studio-name').textContent = 'AMN-AI';
   element('connection').textContent = 'Neconectat';
@@ -2711,6 +2836,190 @@ stopButton.addEventListener('click', async () => {
     }
   }
 });
+
+/* ---------------------------------------------------------------------------
+ * Governance: the mode the studio is in, and what a supervised studio stopped to ask.
+ *
+ * `policy.autonomy_mode` has been a real value since migration 0043 and nothing on this page
+ * read it, so a studio that had been running whole days unattended looked, to its Owner,
+ * exactly like one that asks before every step. The panel shows the mode, says in one sentence
+ * what it means for the day — the sentence every agent is given when the mode moves — and
+ * offers the other two. The mode decides what the studio may *attempt*; it never decides what
+ * a gate *concludes*, and the footnote under every request says so.
+ * ------------------------------------------------------------------------- */
+
+const modeButtons = element('autonomy-mode-buttons');
+const modeNote = element('autonomy-mode-note');
+const approvalsList = element('approvals-list');
+/** The mode command already sent and not yet confirmed; a retry repeats it, never a second one. */
+let pendingMode = null;
+
+/** @param {string} message @param {boolean} [bad] */
+function governanceNote(message, bad) {
+  modeNote.hidden = !message;
+  modeNote.textContent = message || '';
+  modeNote.className = bad ? 'helper-note helper-warn' : 'helper-note';
+}
+
+/** @param {{autonomy_mode?: string, autonomy_stopped?: boolean, version?: number}} policy */
+function renderAutonomyMode(policy) {
+  const mode = policy.autonomy_mode;
+  element('autonomy-mode-tag').textContent = pendingMode ? '…' : autonomyModeLabel(mode);
+  element('autonomy-mode-meaning').textContent = autonomyModeMeaning(mode);
+  modeButtons.querySelectorAll('.mode-btn').forEach((node) => {
+    const button = /** @type {HTMLButtonElement} */ (node);
+    const current = button.dataset.mode === mode;
+    button.classList.toggle('is-current', current);
+    button.setAttribute('aria-pressed', String(current));
+    // Only the mode the studio is already in is dead; a blocked promotion stays pressable so
+    // that pressing it answers *why* instead of leaving the Owner with a grey button.
+    button.disabled = current;
+  });
+}
+
+modeButtons.addEventListener('click', async (event) => {
+  const target = event.target instanceof Element ? event.target.closest('.mode-btn') : null;
+  if (!target || !state || !connected) return;
+  const mode = /** @type {HTMLElement} */ (target).dataset.mode || '';
+  if (mode === state.policy.autonomy_mode) return;
+  const blocked = promotionBlockedReason(state.policy, mode);
+  if (blocked) {
+    // The stop is in the snapshot, so this refusal is said here rather than spent on a request
+    // the server would refuse anyway. SAFE_MODE is not in the snapshot: that refusal arrives
+    // from the server below, in its own words.
+    governanceNote(blocked, true);
+    return;
+  }
+  if (busy) return;
+  busy = true;
+  governanceNote('');
+  const generation = epoch;
+  try {
+    // A command that was not confirmed is repeated with its own id, so a slow network is one
+    // decision; a command for a *different* mode replaces it, so an unconfirmed press never
+    // becomes the mode the Owner has since changed his mind about.
+    if (!pendingMode || pendingMode.autonomy_mode !== mode) {
+      pendingMode = autonomyModeCommand(state.policy, mode, crypto.randomUUID());
+    }
+    await api('/owner/autonomy-mode', { method: 'POST', body: JSON.stringify(pendingMode) });
+    if (generation !== epoch) return;
+    pendingMode = null;
+    governanceNote(`Modul de autonomie este acum ${autonomyModeLabel(mode)}.`, false);
+  } catch (error) {
+    if (generation !== epoch) return;
+    if (error.status === 409 || error.status === 422) pendingMode = null;
+    governanceNote(error.message, true);
+  } finally {
+    if (generation === epoch) {
+      busy = false;
+      await refresh();
+      await loadApprovals(true);
+    }
+  }
+});
+
+/**
+ * The requests a SUPERVISED studio wrote instead of acting.
+ *
+ * Read at most twice a minute rather than with every five-second snapshot: an approval is a
+ * decision that stands for a day, and a list nobody answered does not become more true by
+ * being fetched sixty times. A build whose backend has no such route says so once and stops
+ * asking, because a panel that repeats a 404 every poll teaches its Owner to ignore it.
+ */
+const APPROVALS_INTERVAL_MS = 30000;
+let approvalsLastRead = 0;
+let approvalsRouteMissing = false;
+
+/** @param {ReturnType<typeof readApprovals>[number]} request @param {number} now */
+function approvalCard(request, now) {
+  const tier = request.risk_tier || '—';
+  return `
+    <article class="approval-card">
+      <div class="approval-head">
+        <span class="approval-action" title="${escapeHtml(request.action)}">${escapeHtml(request.action_label || 'acțiune nenumită')}</span>
+        <span class="tag approval-tier" title="${escapeHtml(riskTierMeaning(tier))}">${escapeHtml(tier)}</span>
+      </div>
+      ${request.subject ? `<div class="approval-meta">Despre: ${escapeHtml(request.subject)}</div>` : ''}
+      <div class="approval-meta">Cost: ${escapeHtml(request.cost_label)} · ${escapeHtml(approvalExpiryText(request.expires_at, now))} · ${request.reversible ? 'reversibilă' : 'ireversibilă'}</div>
+      ${request.requester ? `<div class="approval-meta">Cerută de ${escapeHtml(request.requester)}</div>` : ''}
+      ${request.evidence ? `<p class="approval-evidence">${escapeHtml(request.evidence)}</p>` : ''}
+      <div class="source-actions">
+        <button class="secondary btn-approval" data-id="${escapeHtml(request.id)}" data-decision="APPROVED">Aprobă</button>
+        <button class="quiet btn-approval" data-id="${escapeHtml(request.id)}" data-decision="REFUSED">Refuză</button>
+      </div>
+      <p class="approval-footnote">Aprobarea lasă o acțiune permisă să se întâmple; nu transformă refuzul unei porți dure în trecere.</p>
+    </article>`;
+}
+
+/** @param {boolean} [force] read now, whatever the interval says */
+async function loadApprovals(force) {
+  if (!ownerToken || !connected) return;
+  if (approvalsRouteMissing && !force) return;
+  const now = Date.now();
+  if (!force && now - approvalsLastRead < APPROVALS_INTERVAL_MS) return;
+  approvalsLastRead = now;
+  try {
+    const data = await api(APPROVALS_PATH);
+    approvalsRouteMissing = false;
+    const pending = readApprovals(data).filter((request) => request.pending);
+    element('approvals-count').textContent = pending.length
+      ? `${pending.length} în așteptare`
+      : 'niciuna';
+    approvalsList.innerHTML = pending.length
+      ? pending.map((request) => approvalCard(request, Date.now())).join('')
+      : '<div class="topics-loading">Nicio cerere nu așteaptă decizia Proprietarului.</div>';
+  } catch (err) {
+    if (err.status === 404) {
+      approvalsRouteMissing = true;
+      element('approvals-count').textContent = '—';
+      approvalsList.innerHTML =
+        '<div class="topics-loading">Backend-ul acestui build nu răspunde încă la ' +
+        '/owner/approvals. Cererile există în baza de date; ruta care le arată și le ' +
+        'răspunde nu este instalată.</div>';
+      return;
+    }
+    approvalsList.innerHTML = `<div class="text-error">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+approvalsList.addEventListener('click', async (event) => {
+  const target = event.target instanceof Element ? event.target.closest('.btn-approval') : null;
+  if (!target || busy) return;
+  const button = /** @type {HTMLButtonElement} */ (target);
+  const card = button.closest('.approval-card');
+  card?.querySelectorAll('button').forEach((node) => {
+    /** @type {HTMLButtonElement} */ (node).disabled = true;
+  });
+  const id = button.dataset.id || '';
+  const decision = button.dataset.decision || '';
+  busy = true;
+  const generation = epoch;
+  try {
+    const command = approvalDecisionCommand(id, decision, crypto.randomUUID());
+    await api(APPROVAL_DECISION_PATH, {
+      method: 'POST',
+      body: JSON.stringify(command),
+    });
+    if (generation !== epoch) return;
+    governanceNote(
+      decision === 'APPROVED'
+        ? 'Cererea a fost aprobată; studioul poate relua acțiunea permisă.'
+        : 'Cererea a fost refuzată; refuzul rămâne în registru.',
+      false,
+    );
+  } catch (error) {
+    if (generation !== epoch) return;
+    governanceNote(error.message, true);
+  } finally {
+    if (generation === epoch) {
+      busy = false;
+      await loadApprovals(true);
+      await refresh();
+    }
+  }
+});
+
+element('refresh-approvals-btn').addEventListener('click', () => loadApprovals(true));
 
 async function poll() {
   if (ownerToken && !busy && !workspace.hidden && !document.hidden) {

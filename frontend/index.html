@@ -47,6 +47,19 @@
               <ol id="ledger-list" class="ledger-list"></ol>
             </section>
             <section class="panel modules-panel"><p class="eyebrow">CAPABILITIES</p><h2>Module status</h2><ul id="modules" class="modules"></ul></section>
+            <!-- Governance: the mode the studio is really in, and what a supervised studio stopped to ask. -->
+            <section class="panel governance-panel">
+              <div class="section-heading"><div><p class="eyebrow">GUVERNANȚĂ</p><h2>Mod de autonomie</h2></div><span id="autonomy-mode-tag" class="tag">—</span></div>
+              <p id="autonomy-mode-meaning" class="ledger-now">—</p>
+              <div id="autonomy-mode-buttons" class="mode-buttons" role="group" aria-label="Mod de autonomie">
+                <button class="quiet mode-btn" data-mode="MANUAL" type="button" title="Agenții pregătesc și analizează; Proprietarul aprobă trecerile între etape.">Manual</button>
+                <button class="quiet mode-btn" data-mode="SUPERVISED" type="button" title="Etapele interne merg singure; o scriere în afară devine o cerere de aprobare.">Supravegheat</button>
+                <button class="quiet mode-btn" data-mode="AUTONOMOUS_CEO" type="button" title="Directoarea execută singură treptele T0–T3 în limitele politicii; T4 rămâne a Proprietarului.">CEO autonom</button>
+              </div>
+              <p id="autonomy-mode-note" class="helper-note" hidden></p>
+              <div class="section-heading approvals-heading"><div><p class="eyebrow">APROBĂRI</p><h2>Ce așteaptă decizia ta</h2></div><span id="approvals-count" class="tag">—</span><button id="refresh-approvals-btn" class="quiet cam-square" type="button" title="Recitește cererile de aprobare">↻</button></div>
+              <div id="approvals-list" class="approvals-list"></div>
+            </section>
           </aside>
           <section class="panel office-panel">
             <div class="section-heading office-heading"><div><p class="eyebrow">WORKSPACE</p><h2>Studio Office</h2></div><span id="office-status" class="tag live-pill"><span class="live-dot" aria-hidden="true"></span><span id="office-fps">Live Renderer —</span></span></div>

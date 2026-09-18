@@ -60,6 +60,11 @@ HISTORY_TABLES: tuple[str, ...] = (
     "workflow_step",
     "workforce_proposal",
     "trend_snapshot",
+    # What the agents asked the Owner during those days, and what he answered. It is their
+    # request, not his configuration: the channel policy, the budget and the mode he set
+    # survive a reset, and the questions about individual films do not — a yes about a film
+    # that no longer exists is an authority nothing should still be able to spend.
+    "owner_approval_request",
     "command_record",
     "youtube_oauth_state",
     "outbox_record",
