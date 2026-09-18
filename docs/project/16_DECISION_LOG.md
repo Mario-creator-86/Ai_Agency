@@ -1125,7 +1125,10 @@ after the Owner stopped watching. Neither needs a single false sentence to misle
    episode is checked against that record.
 5. **A failed stage enters safe mode and stops autonomy.** An unattended studio must not carry on
    into the next day with an unexamined fault behind it. A second failure does not open a second
-   record, because that would obscure when the incident began.
+   record, because that would obscure when the incident began. Superseded in part 2026-09-17 (a
+   transient fault fails the run without safe mode) and 2026-09-18: safe mode opens only for a P0 —
+   a hard fault in media, publish or the day's log, or a database integrity error anywhere — see
+   "Safe mode is for a P0, as the playbook defines one".
 6. **Leaving safe mode requires a note and does not restart autonomy.** The note is kept.
    Examining an incident and deciding the studio should act again are separate decisions, and
    folding them into one click would let the second happen by accident while making the first.
@@ -1189,7 +1192,7 @@ The audit's central finding is one shape repeated in four places, and it is wort
 A scheduler existed that could be ticked and a queue that could be claimed, and nothing in the process did either on its own; "autonomous" meant a button pressed daily. The background worker closes that gap, and three decisions shape it. **The daily job is seeded dormant.** The Owner's studio has its autonomy stop cleared, so a job seeded active would have begun a real day — agents on paid tokens, a render, a closed log — within thirty seconds of the first restart, on a decision nobody took. The schedule exists from the first start-up; starting its clock is a recorded Owner act, `workflow.job_activated`, of the same weight as clearing the stop. Waking a dormant job whose slot is in the past sets the clock from now rather than firing on the spot, for the same reason. **A missed slot fires once under either policy.** `../architecture/09_CHANNELS_AND_AUTOMATION.md` forbids a backlog explosion after an offline period; SKIP and CATCH_UP differ only in the cadence afterwards, one re-anchored to now and one kept on the original anchor. The field had been decorative. **The slot names the task.** A fired job enqueues a task keyed on the job id and the slot it was due for, so a restart that puts the slot back — or a second scheduler leader after a lapsed lease — finds the queued work rather than duplicating it; the tick had created a workflow row and enqueued nothing, so nothing could have run it. Also decided: the scheduled daily run happens at most once per business date, because a second run on the same day is the Owner continuing after an approval, not the clock; and a task with no handler is dead-lettered with that reason rather than retried into the ground. The worker is off under test, where a loop that starts the day on its own would make every other test's timing a coincidence; it has its own tests, driven by hand, and a demo that starts the real server process and waits for a run to appear without touching anything. Rejected: a fixed local hour for the daily job, which is the right shape and needs a column; the interval-based schedule with CATCH_UP holds the anchor until then.
 
 
-The runbook walked twelve stages and asked `app.state.stage_runners` for the work of each; nothing in the application ever set that attribute, so every run in production recorded preflight and eleven SKIPPED. The framework was honest and idle. Decisions taken while connecting real work to it. **COMPLETED means the stage ran to its end; SKIPPED means it could not run.** A research stage that finds no sources has completed — it looked, and there was nothing; one with no language model configured has been skipped. Collapsing the two is how a runbook comes to imply work it never did, so every stage reports a count as well as a reason. **A refusal is not a failure.** A model that writes narration it cannot attribute to a verified claim has its draft rejected and nothing stored, which is the pipeline working; the first version let that raise, and because the runbook stops the day at the first FAILED stage, one unusable draft left the daily log unclosed and every later stage BLOCKED. Rejected scripts and rejected episodes are now counted and reported by a stage that completes. **Where a person decides, the studio stops.** Clearing the autonomy stop is what authorises a run at all, but it is not approval of a particular script: a draft is left at VERIFIED_PASS, storyboarding requires an APPROVED one, and publication still passes the five-point gate that re-checks the stop, the file, quality control, factual provenance and duplication. **Two stages stay unwired on purpose.** `idea_generation` has no implementation — topics are proposed by the Owner — and `post_run` has no defined work; naming them with an invented body would be worse than the runbook reporting that nothing is connected. Added `select_topic`, the missing verb: a topic enters production only if at least one claim about it is SUPPORTED, because selecting one whose claims are all unverified only moves the refusal a stage later while implying the day had work. Quality control selects files by mime type rather than by asset label, after the renderer's `RENDERED_VIDEO` went unmeasured by a stage looking for `VIDEO_COMPOSED` — an unmeasured file is exactly what the publishing gate exists to stop. Verified by `scripts/demo_daily_run.py`, which runs two days in a throwaway studio with an Owner approval between them and produces a real MP4 that quality control measures and fails for the right reasons.
+The runbook walked twelve stages and asked `app.state.stage_runners` for the work of each; nothing in the application ever set that attribute, so every run in production recorded preflight and eleven SKIPPED. The framework was honest and idle. Decisions taken while connecting real work to it. **COMPLETED means the stage ran to its end; SKIPPED means it could not run.** A research stage that finds no sources has completed — it looked, and there was nothing; one with no language model configured has been skipped. Collapsing the two is how a runbook comes to imply work it never did, so every stage reports a count as well as a reason. **A refusal is not a failure.** A model that writes narration it cannot attribute to a verified claim has its draft rejected and nothing stored, which is the pipeline working; the first version let that raise, and because the runbook stops the day at the first FAILED stage, one unusable draft left the daily log unclosed and every later stage BLOCKED. Rejected scripts and rejected episodes are now counted and reported by a stage that completes. **Where a person decides, the studio stops.** Clearing the autonomy stop is what authorises a run at all, but it is not approval of a particular script: a draft is left at VERIFIED_PASS, storyboarding requires an APPROVED one, and publication still passes the five-point gate that re-checks the stop, the file, quality control, factual provenance and duplication. **Two stages stay unwired on purpose.** `idea_generation` has no implementation — topics are proposed by the Owner — and `post_run` has no defined work; naming them with an invented body would be worse than the runbook reporting that nothing is connected. Added `select_topic`, the missing verb: a topic enters production only if at least one claim about it is SUPPORTED, because selecting one whose claims are all unverified only moves the refusal a stage later while implying the day had work. Quality control selects files by mime type rather than by asset label, after the renderer's `RENDERED_VIDEO` went unmeasured by a stage looking for `VIDEO_COMPOSED` — an unmeasured file is exactly what the publishing gate exists to stop. Verified by `scripts/demo_daily_run.py`, which runs two days in a throwaway studio with an Owner approval between them and produces a real MP4 that quality control measures and fails for the right reasons. Superseded in part 2026-09-18: the runbook no longer stops the day at the first FAILED stage — a failed stage blocks only the stages that take their input from it (`STAGE_PREREQUISITES`, see "A failed stage blocks only the stages that take their input from it").
 
 ## 2026-09-11 — The Owner authorises sites from the interface, and each one is tested
 
@@ -1451,7 +1454,7 @@ A preflight that asked whether a row existed passed on 36 authorised hosts of wh
 
 ## 2026-09-18 — The weekly host retest lives inside the research stage, not in a scheduled job of its own
 
-A site readable a week ago may have grown a bot wall since, and one that failed may have dropped it. **Decision: `retest_stale_hosts` touches only hosts whose last test is missing or older than `RETEST_AFTER_DAYS` (7) and runs inside the research stage, wrapped in a broad `except` and logged — on the other six days it fetches nothing and costs the sites nothing.** Rejected: a scheduled job of its own, which would have added a row to the scheduler, a handler to the worker and a second thing behind the autonomy stop to reason about, for a pass that already decides for itself when to do nothing. A site that cannot be reached is a fact about the site: under Phase A's rule such a failure costs the stage, never the studio — here, not even the stage. A host authorised by the `.env` file has no row of its own, so its result and discovered address are stored on a row marked `added_by="env"`, which never re-authorises the host once the file drops it.
+A site readable a week ago may have grown a bot wall since, and one that failed may have dropped it. **Decision: `retest_stale_hosts` touches only hosts whose last test is missing or older than `RETEST_AFTER_DAYS` (7) and runs inside the research stage, wrapped in a broad `except` and logged — on the other six days it fetches nothing and costs the sites nothing.** Rejected: a scheduled job of its own, which would have added a row to the scheduler, a handler to the worker and a second thing behind the autonomy stop to reason about, for a pass that already decides for itself when to do nothing. A site that cannot be reached is a fact about the site: under Phase A's rule such a failure costs the stage, never the studio — here, not even the stage. Corrected 2026-09-18: under Phase A's rule a failed stage blocked every stage after it, so "costs the stage" meant the rest of the day, and a hard fault in any stage opened safe mode; since 2026-09-18 a failed stage costs only its dependants. A host authorised by the `.env` file has no row of its own, so its result and discovered address are stored on a row marked `added_by="env"`, which never re-authorises the host once the file drops it.
 
 ## 2026-09-18 — The end-to-end test fakes the vendors and nothing else
 
@@ -1880,6 +1883,9 @@ studio is not a stopped studio: it may not buy a shot or upload a film, but it m
 storyboard, write the serial's episode and measure what it already has. Recording the refusal as
 BLOCKED would have ended the day at the research stage and thrown away the internal work the mode
 explicitly permits. The day then comes out PARTIAL, which is what it was.
+Superseded in part 2026-09-18: `execute_daily_run` no longer stops the day at the first BLOCKED
+or FAILED stage; a stage lost blocks only the stages that depend on it, and the Owner's STOP alone
+still blocks everything after it. SKIPPED stays the mode's word, and a skipped stage blocks nothing.
 
 ## 2026-09-18 — The upload is T3 at every visibility, and the tier is not read off the channel policy
 
@@ -2717,3 +2723,334 @@ an attribute or an import rather than characters**, so the invariant stays unbyp
 remaining explicable; measured on this tree afterwards, that file is 12 passed. Reporting both is the
 point: a document that recorded this closure as clean would be the first thing these documents exist
 to prevent.
+
+
+## 2026-09-18 — A fallback reconnect cannot supersede a recovered stream
+
+Epic's SDK can reconnect before the application fallback timer. Cancel that timer on status transitions and check the offline state inside its callback. Do not rebuild traffic to treat stream loss. A single-viewer browser test verifies recovery without restarting the user's Unreal runtime; the active Owner page must load the new bundle before evaluating the fix.
+
+
+## 2026-09-18 — A failed stage blocks only the stages that take their input from it
+
+A rehearsal on a copy of the Owner's studio ran one scheduled day with every vendor faked and every
+outside connection refused. Performance intake failed on a refused statistics token, and the runbook
+then BLOCKED the nine stages after it, because any failure blocked everything later: the day had
+nothing researched, written or filmed over a read that no film needs. **Decision: a runbook decision,
+recorded in `39_DAILY_AUTONOMOUS_RUNBOOK` §*Abort behavior* and implemented as `STAGE_PREREQUISITES`
+beside `STAGES` in `backend/app/runbook/services.py`. A stage whose every listed prerequisite FAILED
+or was BLOCKED is BLOCKED itself, with the prerequisite and the root fault named in Romanian; every
+other stage runs.** Each edge was read from what the runner in `app.runbook.stages` actually reads,
+not from the order of `STAGES`:
+- performance_intake needs nothing. It reads the channel slots and their PUBLISHED rows, nothing of
+  today.
+- idea_generation needs nothing. It reads the topic pool and the cohorts of every snapshot ever
+  stored (`research.agent._signals`, "empty when unknown").
+- research_and_verification needs nothing. It reads the whole backlog: the pool, every unextracted
+  source and every UNVERIFIED claim, whichever day wrote them.
+- selection needs research_and_verification, because it chooses only among topics with SUPPORTED
+  claims, which verification writes. The day does not choose a subject past an unexamined fault in
+  the step that turns a page into a claim a film may cite.
+- script_and_storyboard needs selection. It writes for the SELECTED topic.
+- serial_queue needs nothing. It reads the previous day's log, which is closed on the preflight line
+  and is not a stage.
+- media needs script_and_storyboard or serial_queue. Each gives an approved storyboard, and either
+  one is a film, so media is blocked only when both are lost.
+- edit_and_qc needs media, because it measures the files media rendered. publish needs edit_and_qc,
+  because it uploads what quality control passed.
+- post_run and daily_log need nothing. They are the report and the record of whatever happened.
+
+A SKIPPED prerequisite blocks nothing, as before. The Owner's stop outranks the table and still blocks
+every stage after it, and a BLOCKED preflight still blocks all stages. Rejected: keeping "stop at the
+first failure" and making performance intake unable to fail. That would have fixed the one stage the
+rehearsal met and left the same cliff behind every other stage no film depends on.
+
+## 2026-09-18 — Safe mode is for a P0, as the playbook defines one
+
+`21_FAILURE_RECOVERY_PLAYBOOK` names four P0s: a risk of duplicate publish, uncontrolled spend, a
+secret leak, and corrupted audit state. `36_RELIABILITY_SLO_RUNBOOK` gives safe mode and STOP
+AUTONOMY to P0 alone. It files "production blocked, provider unavailable" as P1: pause what is
+affected and notify. The runbook opened safe mode and set the autonomy stop on a HARD fault in any
+stage. The rehearsal's audit measured that `classify_fault` reads an HTTP 4xx from Google
+(`invalid_grant`, or a 403 from the Analytics API) as HARD, so one expired read-only token would have
+halted the studio until the Owner cleared it. **Decision: `SAFE_MODE_STAGES = (media, publish,
+daily_log)`. A HARD fault opens safe mode only in media, where the studio no longer knows what it
+spent; in publish, where it no longer knows what it uploaded; and in daily_log, the audit record.
+`_doubts_the_record` also opens it for a non-Operational `DatabaseError` or `IntegrityError` in any
+stage. A HARD fault anywhere else, a refused token or a bug in selection, costs that stage and its
+dependants and one letter from the Director.** A transient fault still never opens safe mode (Phase A).
+The classification itself is unchanged: a 4xx is still HARD, and a HARD fault is still not retried in
+place.
+
+## 2026-09-18 — The same-day re-attempt follows only a transient fault that cost a film
+
+A re-attempt re-runs the whole day. With stages that no longer stop the day, re-attempting after a
+failed report would make selection choose a new subject and the media stage buy a second film, only
+to recover the report. **Decision: `retryable_outcome(..., production_lost=)` is True only in two
+cases: a BLOCKED preflight, or a FAILED run whose failures behind a lost `PRODUCTION_STAGES` stage
+(selection, script_and_storyboard, serial_queue, media, edit_and_qc, publish) were all TRANSIENT. A
+day where only a non-production stage failed is PARTIAL, not FAILED, unless the failure was in
+daily_log, which stays FAILED because the day's own record failed.** PARTIAL is already one of the
+worker's `DAY_DONE_STATES`, so neither the clock nor a stray retry runs that day again. The run keeps
+the stage's fault class. The Director's letter then says the stage failed and that the day's films did
+not depend on it, not that "the day stopped". `production_lost` defaults to True, the old reading, for
+a caller that cannot tell.
+
+## 2026-09-18 — A statistics read that cannot be made is «fără date», never the stage's failure
+
+The rehearsal's defect 1 began in the analytics adapter. `_refresh_access_token` called `urlopen`
+outside the `try` its report had. `_report` turned an `HTTPError` into a bare `RuntimeError`.
+`measure_channel_publications` caught only `MetricsUnavailable`. **Decision: `YouTubeAnalyticsProvider`
+raises `MetricsUnavailable` in these cases. On the token refresh and on the report: a `URLError`,
+`OSError`, `HTTPException`, unreadable JSON or a missing access token. On the token refresh only: a
+4xx (`auth_refused`, keeping only Google's short error word, such as `invalid_grant`). On the report:
+a 401 or 403 (`auth_refused`, meaning the scope is missing or was withdrawn). The exception carries
+`during`, `auth_refused`, `error_class`, `http_status` and `oauth_error`, and never a token or a
+secret. After an account-level refusal, `measure_channel_publications` stops asking Google and records
+every remaining publication with the same Romanian reason. That reason names the account and the
+slot and says to press Reconectează. The refusal is also written once to the ledger
+(`youtube.token_refresh_failed`, or `youtube.analytics_refused` when the report refused a good token)
+for the preflight to read.** The class moved into the adapter module so that the provider layer does
+not import the domain service; `app.analytics.services.MetricsUnavailable` is the same object. The
+adapter still retries a 400 once without impressions, as before. Consequence, recorded and not
+changed: the manual ingest route (`analytics/router.py`) now answers 409 with the reason instead of
+502 for a transport or authentication failure.
+
+## 2026-09-18 — The run's headline counts what each stage produced
+
+Run 96b08fd8 on the rehearsal copy read COMPLETED 12/12. In that run the ideas were refused on
+schema, research verified nothing, the Director's review decided nothing and the Accountant's line
+was SKIPPED. **Decision: every stage record carries `produced`, counted by `PRODUCED_FROM` from the
+artefacts its runner already returns: measured; proposed; pages_fetched + sources_read +
+claims_verified; topic_id; scripts + storyboards; written + storyboard_id; assets; passed + failed;
+published; applied. Nothing is inferred from the status. `run_summary` writes the Romanian headline,
+for example «10 din 10 etape au rulat până la capăt; 7 au produs ceva. Fără rezultat: «…». Filme
+publicate: 2.», or «Ziua nu a produs nimic.» `execute_daily_run` and `list_runs` return it with
+`stages_productive`, and it is stored in `runbook.daily_run_finished`.** The preflight and the day's
+log are not counted, because "produced something" is about the ten stages of work between them. No
+column was needed: the counts live in `stages_json`, and a run stored before this is counted from the
+same artefacts when it is read.
+
+## 2026-09-18 — A motion shot is charged only when it was bought
+
+The rehearsal's defect 2: the books wrote four ESTIMATED Runway rows, 1.44 USD, for shots the vendor
+could not be reached for, and settled both films' holds against them. **Decision: one predicate,
+`motion_was_bought(motion) = bytes or paid_but_lost` (`backend/app/economy/accountant.py`), decides
+whether a scene's motion seconds and credits are charged. `record_render_costs` (a finished render)
+and `record_failed_render_cost` (a lost one) share it, and a refused shot no longer teaches a
+measured price.** The predicate was checked against every place `media.assembler` writes a scene's
+`motion` entry:
+- A shot that came home carries `bytes`, plus `estimated_credits` when the vendor named them.
+- A shot generated but not brought home carries `refused`, `estimated_credits` and `paid_but_lost`.
+- A shot the vendor refused, or could not be reached for, carries `refused` only.
+- A shot the price gate refused carries `refused`, `quoted_credits`, `quoted_usd` and sometimes
+  `price_was_stale`.
+- A scene never asked for has no motion entry.
+
+A quote is not a purchase, so `quoted_credits` never prices anything. The still is charged in every
+shape. Rejected: "charge whatever lacks `refused`". On today's shapes it gives the same answer, but it
+would charge a record that shows no evidence of a purchase, and the books charge what was bought and
+nothing else.
+
+## 2026-09-18 — A film whose every shot was refused settles its hold against what was bought
+
+**Decision: the reservation is still SETTLED with `settled_reference` `render:<job>`. Its
+`usd_micros` keeps the sum it held (1.30472 USD on the rehearsal copy) as history, and stops counting
+against the period, as every settled hold does. The day's spend is then only the books: the stills and
+narration that were priced, and no motion row.** On the rehearsal copy that would have been 0 USD for
+both films, because the test picture and voice adapters carry no integration id. Asserted in
+`tests/test_phase11_economy.py`. Releasing the hold instead was not taken, because a film was made
+and its stills and voice were bought.
+
+## 2026-09-18 — Documented prices per model family, and any price the Owner typed outranks every documented one
+
+The one DOCUMENTED ElevenLabs figure ('*', 0.22 USD per 1k characters, the Creator plan) priced the
+Owner's `eleven_flash_v2` at the multilingual rate. The row's own note cites the price list's line
+that Flash and Turbo bill half. **Decision: `integrations.catalog.DOCUMENTED_PRICES` gains
+`eleven_flash_*` and `eleven_turbo_*` at 0.11 USD per 1k characters. That is the cited Creator figure
+(22 USD per 100,000 credits) at the half credit per character the same list states, and no other
+number was introduced. A resource ending in `*` is a family prefix, which the Owner can also type.
+`price_row` ranks provenance first, so any non-DOCUMENTED row beats every DOCUMENTED one, then
+specificity: the exact id, then the longest family, then '*'. `seed_documented_prices` skips a
+documented row when the Owner already has an active '*' price for that unit, because that row could
+never be read.** Provenance comes first because a documented family row is more specific than his '*'
+and would otherwise overrule the plan he typed. The live studio receives the two rows at its next
+start, when `start.py` runs bootstrap. That is data seeding, not a migration. Not used: the vendor's
+own `model_rates` / `token_cost_factor`, which discovery stores when ElevenLabs sends them. Whether his
+live catalogue holds them can be read only from `data/studio.db`, and a seed cannot depend on that.
+Left open: the film's hold still takes the dearest active voice price (`estimate_film_cost_micros`),
+so it holds Flash narration at about twice its cost.
+
+## 2026-09-18 — DNS is refused like a socket, and asyncio's `sock_connect` as well
+
+The suite's autouse guard refused only `socket.connect` and `connect_ex`. A public name was therefore
+resolved before the refusal came. On Windows the proactor event loop connects through ConnectEx, so
+an async client went round the guard entirely: a new test made a real connection attempt to 192.0.2.1,
+which ended in WinError 121. **Decision: `no_network` in `tests/conftest.py` also refuses
+`getaddrinfo`, `gethostbyname` and `gethostbyname_ex` for anything but localhost or a loopback literal,
+and asyncio's proactor and selector `sock_connect`. It stays loud: it raises `AssertionError`, which no
+vendor client treats as a network fault. It records every refusal, with the studio frames that made
+it, on the fixture it returns.** A test that fakes `getaddrinfo` itself still can, because its patch
+applies after the guard's. The fix for a test that relied on real DNS is to fake that boundary, never
+to loosen the guard.
+
+## 2026-09-18 — The whole-day test and the rehearsal share one list of fakes
+
+The rehearsal kept private copies of the fakes and of the guard, and that is how a boundary went
+missing. **Decision: one list, `VENDOR_FAKES`, and one installer, `install_vendor_fakes`
+(`tests/test_autonomous_day_end_to_end.py`), whose dictionary must name exactly the list. It holds
+eight fakes: image, voice, render plan, the motion chooser, the publisher, the analytics adapter, the
+vendor balance reads and the search engine. Each is patched where the day reads it:
+`selected_youtube` and `analytics_provider_for_channel` on `app.runbook.stages`, which imports them at
+the top of the module, and the others on the module that defines them, because the stage imports those
+inside the function.** A future paid boundary on the day's path goes into both, on the module where the
+day reads it.
+
+## 2026-09-18 — The motion chooser's fake keeps the decision and replaces only the vendor
+
+**Decision: the fake reads the selected video connection. It calls the studio's own `choose_model`
+with the real TEST task, tier, ceilings and exclusions, and returns an adapter that makes a local
+test-pattern clip. That adapter names its credits as the catalogue's per-second price in the
+connection's credits, the way Runway states `estimatedCost`.** A day with a video connection is thus
+held to the Owner's TEST terms and his books, and nothing is bought. A studio with no video connection
+gets the answer the real chooser gives. Measured with a Runway-shaped connection, as on his copy:
+three shots asked in total, two at 0.204 USD each for film 1 and one at 0.372 USD for film 2, whose
+second shot did not fit the 0.60 USD film ceiling. The books recorded exactly three motion rows, and the
+guard recorded no refusal.
+
+## 2026-09-18 — A source scan checks the list of fakes
+
+A hand-written list of fakes certifies only the paths someone remembered. **Decision:
+`tests/test_no_paid_path_escapes.py` walks a call graph from `execute_daily_run` and
+`build_stage_runners` over `backend/app`. It follows bare names through each module's imports,
+`module.attr` through the named module, and `obj.method` to every method of that name; the last rule
+over-approximates on purpose. It fails on any reachable site that constructs or calls a paid adapter
+with no fake in front of it. A fake counts only where the patch is really seen. A paid module is every
+`app/providers` module not on an explicit free list, so a new vendor module is paid until someone
+reviews it.** Against the list as it stood before 2026-09-18 it named exactly five sites: the four
+unfaked boundaries the rehearsal met, and `verified_search_provider` → `SearchProvider`, which it
+never met. A pass certifies only that no statically visible paid site is reachable from those two
+roots without a fake. The scan cannot see `getattr` by string, `importlib` or code built at run time,
+and the network guard is the backstop for those. The other scheduled entry points (the watchdog, the
+Director's loop, the model review, the catalogue refresh) and the API routes are not roots yet.
+
+## 2026-09-18 — The rehearsal fakes the YouTube Analytics adapter as well
+
+**Decision: the rehearsal's analytics fake runs the slot's real binding lookup first, and every video
+then comes back `MetricsUnavailable`, so no number is invented.** On the Owner's copy the rehearsal
+therefore gets past performance intake and reaches media, quality control and publish. The cost is
+stated. The rehearsal no longer meets the real Google token refresh, so defect 1's fix is proven by
+the failure-and-analytics part's own tests with faked transports (`tests/test_phase7_analytics.py`,
+`tests/test_day_survives_a_stage.py`). Only a free real read, Verify or Reconnect in Settings, proves
+the Owner's tokens.
+
+## 2026-09-18 — A refusal of the YouTube token is BLOCKING for the day, not only for publishing
+
+**Decision: `youtube_upload_access` is BLOCKING. It fails when Google's recorded scopes lack
+`youtube.upload`, or when a refusal of the slot's token (`youtube.token_refresh_failed` with
+`auth_refused`) still stands. A later reconnect (`connected_at`) or a successful verification
+(`last_checked_at`) answers the refusal.** The upload refreshes the same refresh token the statistics
+read was refused. A day that films, spends and then cannot upload has spent money on nothing, even in
+TEST, where the upload is private. A refusal is only what Google answered: the analytics stage's
+`auth_refused` flag is taken as written, and a failure with no answer from Google (the network) is
+kept apart, because it says nothing about the token. A refused statistics report
+(`youtube.analytics_refused`: the token was fine but the scope was missing) only degrades the day
+(`youtube_statistics_access`, DEGRADING), because the films do not depend on statistics. Recorded as
+open: the uploader writes no such event. An upload-side refusal therefore reaches this check only
+after the statistics read meets the same dead token, and the first day with a dead token still films
+and pays before the upload fails.
+
+## 2026-09-18 — The seven-day Testing-mode expiry is a caveat, never a verdict
+
+The studio cannot see whether the Owner's Google OAuth app is in Testing or In production. **Decision:
+both YouTube checks give each grant's age and what a seven-day Testing-mode token life would mean, and
+fail only on a refusal Google actually gave. A connection whose scopes were never recorded is
+«necunoscute», not refused.** A check certifies only what it measured. His two grants are seven days
+old on the rehearsal copy, and the line says «tokenul poate fi deja expirat» and no more.
+
+## 2026-09-18 — The daily-budget line asks the media stage's own estimate
+
+**Decision: `daily_budget_films` calls `estimate_film_cost_micros` with an empty storyboard, so the
+motion part is exactly the hold the media stage will take: 12 USD in PRODUCTION, and 2 × 0.60 USD in
+TEST. The narration is named as extra rather than guessed. The factual short is held first and the
+serial second (`_media`), so the serial episode is the film the line names as refused.** In TEST, the
+PRODUCTION answer is INFORMATIONAL: switching is his decision, and today's TEST day loses nothing. The
+line names the two numbers he can change: the DAILY budget, to at least 24 USD for two films, and the
+per-film motion ceiling, to at most 7.5 USD in 15. The audit's own figure is about 2.9 USD for the
+first film's cost above which the second is refused, with the narration's roughly 0.1 USD inside it.
+The line says 3 USD, because it names the narration rather than pricing it.
+
+## 2026-09-18 — The preflight summary names the first line that would stop the day or lose a film
+
+The run records the preflight's summary as its stop reason. On the rehearsal copy «Studioul poate
+rula» stood above a record that foresaw the day stopping at stage 2. **Decision: the summary names the
+first BLOCKING failure, or else the first failure in `EMPTIES_THE_DAY` (today only
+`daily_budget_films`). The result carries its name as `first_stop`.** A statistics failure is
+deliberately not in the set: performance intake now records «fără date» instead of stopping the day.
+If that change is ever reverted, `youtube_statistics_access` must join the set.
+
+## 2026-09-18 — `39_DAILY_AUTONOMOUS_RUNBOOK` is edited a third time and re-hashed: which stage needs which
+
+The runbook's *Abort behavior* listed what a fault leads to and not what it costs. Its §4 said a failed
+retest "costs this stage and never the studio, by the Phase A fault rule", but under that rule a
+failed stage blocked every stage after it. **Decision: four changes, as a deliberate
+specification change under ADR-FOUNDATION-003, with the `sha256` re-recorded in
+`DOCUMENTATION_INDEX.json` (`f4d26ea2…` → `227e7604…`) and this entry as the reason:**
+- *Abort behavior* gains a dated section. It gives the stage dependency table with the reason for each
+  edge, and says that a failed stage blocks only its dependants, that SAFE_MODE follows the
+  playbook's P0 and nothing else, that the same-day re-attempt follows only a transient fault that
+  cost the films, that a day whose films went through is PARTIAL, and that the headline counts what
+  each stage produced.
+- §1 gains a dated paragraph for the three new checks and the summary's first stop.
+- §2 says what "if available" means.
+- §4's sentence keeps standing, with its dated correction.
+
+The original four-line abort list is kept as it was: it states the rule, and the new section states
+what the rule costs.
+
+## 2026-09-18 — The documents correct every sentence that promised a failed stage costs only itself, and the Owner's list grows without renumbering
+
+**Decision: every sentence that said a failed stage costs only itself, or that the day survives a
+fault, is corrected where it stands with a dated marker, and the old wording is left in place. It was
+untrue until this change. The corrected places are:**
+- `39_DAILY_AUTONOMOUS_RUNBOOK` §4.
+- The Phase A retest entry of this log.
+- Phase A's fault-class and re-attempt paragraphs and «Running on its own» in `CURRENT_STATUS.md`.
+- Phase A's fault-class tick in the roadmap.
+
+Three entries of this log that described the old cliff as the rule are marked superseded in part:
+D-P10-001's decision 5 (2026-09-10), the stage-wiring paragraph under "The clock is the Owner's to
+start" (2026-09-11), and "A mode refusal is SKIPPED, not BLOCKED". The changelog is left as it was, because each entry there records what a change did on
+its own date. What the rehearsal found that only the Owner can do is added to «Ce are Owner-ul de
+făcut» in the step it belongs to, each addition marked «Adăugat 2026-09-18 după repetiție»:
+- step 1: the migration is done, by his own start;
+- step 3: the three new checks;
+- step 5: the unpriced Ollama models and the Flash price;
+- step 8: the two YouTube connections to verify or reconnect granting statistics access, the Google
+  OAuth app out of Testing, and that a reconnect grants statistics only since `SCOPES` asks for them
+  (added by another part while these documents were being written);
+- step 10: the 40 images and their cost;
+- step 12: the mode written by 0043, and the 29 scripts of 2026-09-12 waiting for him;
+- step 13: the environment written by 0031, and in PRODUCTION one film in 15 USD, not two;
+- step 14: the audit's verdict.
+
+Renumbering was rejected: the steps are cited by number in `PROJECT_STATE.json`, in the roadmap, in
+this log and in the rehearsal's own report. One measured correction rides along. `youtube_channel_binding`
+has had a label, «Sloturi de canal legate de YouTube», since `frontend/src/readiness.js` was created.
+Three sentences that said it had none are corrected with the same dated marker.
+
+## 2026-09-18 — The rehearsal's figures are attributed, and the newest whole-suite run is older than the fixes
+
+**Decision: every figure is written with the part that measured it.**
+- The rehearsal: 1 passed on a fresh copy, with the day stopping at stage 2.
+- The audit: 1 passed on its own fresh copy, and the whole suite at 1265 passed and 2 skipped on the
+  tree as it stood at the rehearsal.
+- The failure-and-analytics part: 18, 14, 124, and 202 with 1 skipped.
+- The books part: 13, 22 and 158.
+- The fakes part: 14 with 1 skipped, 340 with 1 skipped, and the rehearsal 1 passed on the
+  scratchpad copy.
+- The preflight part: 30, 130, and `node --test` 8.
+- The documentation part: `check_docs.py` and `tests/test_documentation.py`.
+
+`PROJECT_STATE.json` records the audit's 1265 / 2 as what it is, the newest whole-suite measurement,
+taken before any of the fixes. No part made a whole-suite run, and the verifier's figure lands after
+these documents.

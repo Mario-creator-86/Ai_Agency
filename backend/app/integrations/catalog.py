@@ -226,10 +226,15 @@ CATALOG = {
 
 
 #: Prices a public price list documents, seeded as provenance DOCUMENTED and nothing more
-#: (`app.economy.prices.seed_documented_prices`). Only where the vendor publishes one figure
-#: for every model of the kind and the alternative is narration read as free. Ollama Cloud
-#: is deliberately absent: its price is the Owner's plan, and a guess in the books is worse
-#: than a gap the Accountant reports. Replaced by the Owner's own price the moment he types it.
+#: (`app.economy.prices.seed_documented_prices`). Only where the vendor publishes a figure
+#: and the alternative is narration read as free. Ollama Cloud is deliberately absent: its
+#: price is the Owner's plan, and a guess in the books is worse than a gap the Accountant
+#: reports. Replaced by any price the Owner types, whatever resource it names.
+#:
+#: A resource ending in ``*`` is a family: every model id that starts with what precedes it.
+#: The one '*' figure used to price every ElevenLabs model, and the Owner's eleven_flash_v2
+#: was read at the multilingual rate although the same price list bills Flash and Turbo half
+#: a credit a character (audit of 2026-09-18): his narration read about twice its cost.
 DOCUMENTED_PRICES: list[dict[str, str]] = [
     {
         "provider_kind": "elevenlabs",
@@ -245,4 +250,20 @@ DOCUMENTED_PRICES: list[dict[str, str]] = [
             "Replace with the plan's own price in PUT /economy/prices."
         ),
     },
+    # The half the note above names, per family: the same Creator-plan credit at half a
+    # credit a character. Nothing but that sentence of the price list stands behind it.
+    *(
+        {
+            "provider_kind": "elevenlabs",
+            "resource": family,
+            "unit": "per_1k_characters",
+            "usd": "0.11",
+            "notes": (
+                "DOCUMENTED, not the Owner's plan: ElevenLabs public price list, Creator plan, "
+                f"22 USD for 100 000 credits a month; {name} bills half a credit per character. "
+                "Any price the Owner types in PUT /economy/prices replaces it."
+            ),
+        }
+        for family, name in (("eleven_flash_*", "Flash"), ("eleven_turbo_*", "Turbo"))
+    ),
 ]

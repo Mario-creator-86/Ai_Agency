@@ -131,8 +131,9 @@ def test_a_model_the_owner_never_priced_is_unknown_in_the_books_and_not_free(eng
     studio is actually in until the Owner types his prices: the run happened, the tokens were
     counted, the cost is unknown, and `budget_status` says so in a number of its own.
     """
-    assert seed_documented_prices(engine)["seeded"] == 1
-    assert [row["provider_kind"] for row in list_prices(engine)] == ["elevenlabs"], (
+    # The ElevenLabs figure and its Flash and Turbo halves, all from the cited price list.
+    assert seed_documented_prices(engine)["seeded"] >= 1
+    assert {row["provider_kind"] for row in list_prices(engine)} == {"elevenlabs"}, (
         "a price the Owner never typed was invented"
     )
 

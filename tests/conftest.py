@@ -1,4 +1,7 @@
+import ipaddress
 import secrets
+import socket
+import traceback
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
@@ -11,47 +14,128 @@ from app.services import bootstrap_studio
 from fastapi.testclient import TestClient
 
 
+def _loopback(host: object) -> bool:
+    """localhost, or an address literal that is loopback; nothing that needs a lookup."""
+    if isinstance(host, bytes):
+        host = host.decode("ascii", "replace")
+    if not isinstance(host, str):
+        return False
+    name = host.strip().strip("[]").lower()
+    if name in ("", "localhost", "localhost."):
+        return True
+    try:
+        return ipaddress.ip_address(name.split("%", 1)[0]).is_loopback
+    except ValueError:
+        return False
+
+
+def _local(address: object) -> bool:
+    if isinstance(address, (str, bytes)):
+        return True  # a Unix socket path
+    return isinstance(address, tuple) and bool(address) and _loopback(address[0])
+
+
+class NetworkGuard:
+    """What `no_network` refused, and how a refusal is raised.
+
+    ``loud`` (the suite's default) raises AssertionError, which no vendor client catches as
+    a network fault, so a fake wired one call short fails the test. The rehearsal sets it
+    to False: the refusal is then an OSError, as a real outage would be, so the day meets
+    it exactly where it would meet the outage and goes on — the list is its evidence.
+    """
+
+    def __init__(self) -> None:
+        self.refused: list[dict] = []
+        self.loud = True
+
+    def refuse(self, kind: str, target: object) -> BaseException:
+        frames = traceback.extract_stack()[:-2]
+        self.refused.append(
+            {
+                "kind": kind,
+                "target": repr(target)[:200],
+                "studio_frames": [
+                    f"{frame.filename.split('backend')[-1]}:{frame.lineno} in {frame.name}"
+                    for frame in frames
+                    if "backend" in frame.filename and "app" in frame.filename
+                ],
+            }
+        )
+        message = (
+            f"a test tried to reach {target!r} ({kind}); every provider must be faked at its "
+            "transport (the Owner's rule: nothing costs money in a test)"
+        )
+        if self.loud:
+            return AssertionError(message)
+        if kind in ("getaddrinfo", "gethostbyname", "gethostbyname_ex"):
+            return socket.gaierror(socket.EAI_NONAME, message)
+        return ConnectionRefusedError(message)
+
+
 @pytest.fixture(autouse=True)
 def no_network(monkeypatch):
-    """No test reaches a real provider: a socket to anything but loopback is refused.
+    """No test reaches a real provider: a socket, a name lookup or an asyncio connect to
+    anything but loopback is refused.
 
     The Owner's rule (2026-09-17): models, voices, video and uploads cost money and happen
     only when everything is proven, so every adapter is faked at its transport. This
     fixture is the proof rather than the promise — a fake wired one call short fails here
     with the address it tried instead of spending at a vendor. Loopback stays open for a
     test that serves itself; a Unix socket is a local path by definition.
-    """
-    import socket
 
+    DNS is refused like a socket (measured 2026-09-18: the guard refused `connect` only, so a
+    public name was resolved before the refusal, and on Windows the proactor connects with
+    ConnectEx, past `socket.connect` altogether). A test that answers `getaddrinfo` itself
+    still can: its own monkeypatch is applied after this autouse fixture's and wins, and is
+    undone before this one's.
+    """
+    import asyncio.proactor_events
+    import asyncio.selector_events
+
+    guard = NetworkGuard()
     real_connect = socket.socket.connect
     real_connect_ex = socket.socket.connect_ex
 
-    def _local(address: object) -> bool:
-        if isinstance(address, (str, bytes)):
-            return True  # a Unix socket path
-        host = address[0] if isinstance(address, tuple) and address else None
-        return isinstance(host, str) and (
-            host in ("localhost", "::1") or host.startswith("127.") or host == ""
-        )
-
-    def refused(address: object) -> AssertionError:
-        return AssertionError(
-            f"a test tried to open a network connection to {address!r}; every provider "
-            "must be faked at its transport (the Owner's rule: nothing costs money in a test)"
-        )
-
     def guarded_connect(self, address):
         if not _local(address):
-            raise refused(address)
+            raise guard.refuse("connect", address)
         return real_connect(self, address)
 
     def guarded_connect_ex(self, address):
         if not _local(address):
-            raise refused(address)
+            raise guard.refuse("connect_ex", address)
         return real_connect_ex(self, address)
+
+    def guarded_lookup(real):
+        def resolve(host, *args, **kwargs):
+            # None is a passive lookup (a local bind), never a name on the network.
+            if host is not None and not _loopback(host):
+                raise guard.refuse(real.__name__, host)
+            return real(host, *args, **kwargs)
+
+        resolve.__name__ = f"guarded_{real.__name__}"
+        return resolve
+
+    def guarded_sock_connect(real):
+        async def sock_connect(self, sock, address):
+            if not _local(address):
+                raise guard.refuse("asyncio.sock_connect", address)
+            return await real(self, sock, address)
+
+        return sock_connect
 
     monkeypatch.setattr(socket.socket, "connect", guarded_connect)
     monkeypatch.setattr(socket.socket, "connect_ex", guarded_connect_ex)
+    for name in ("getaddrinfo", "gethostbyname", "gethostbyname_ex"):
+        monkeypatch.setattr(socket, name, guarded_lookup(getattr(socket, name)))
+    for loop_class in (
+        asyncio.proactor_events.BaseProactorEventLoop,
+        asyncio.selector_events.BaseSelectorEventLoop,
+    ):
+        monkeypatch.setattr(
+            loop_class, "sock_connect", guarded_sock_connect(loop_class.sock_connect)
+        )
+    return guard
 
 
 @pytest.fixture

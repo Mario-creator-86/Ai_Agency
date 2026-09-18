@@ -91,9 +91,12 @@ export class LiveStream {
   }
 
   _offline() {
+    if (this.status === 'live') this._copyFrame();
     this._setStatus('offline');
-    window.clearTimeout(this.retryTimer);
-    this.retryTimer = window.setTimeout(() => this.stream.reconnect(), this.settings.retryMs);
+    this.retryTimer = window.setTimeout(() => {
+      this.retryTimer = 0;
+      if (this.status === 'offline') this.stream.reconnect();
+    }, this.settings.retryMs);
   }
 
   /** Keeps the video's current frame in the still canvas (the video belongs to the library). */
@@ -111,9 +114,14 @@ export class LiveStream {
   }
 
   _setStatus(status) {
+    // The SDK can recover first. An old fallback retry must not tear down its
+    // negotiation or a live connection after the original outage has ended.
+    window.clearTimeout(this.retryTimer);
+    this.retryTimer = 0;
     this.status = status;
     window.clearInterval(this.stillTimer);
     if (status === 'live') {
+      this._copyFrame();
       this.stillTimer = window.setInterval(() => this._copyFrame(), STILL_COPY_MS);
     }
     const layers = streamLayers(status, this.hasStill);

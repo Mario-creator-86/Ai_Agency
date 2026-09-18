@@ -815,3 +815,42 @@ def test_a_film_with_no_narration_is_not_reported_as_unpriced(engine, settings):
     assert estimate["characters"] == 0
     assert estimate["unpriced"] == [] and estimate["caveat"] == ""
     assert estimate["complete"] is True
+
+
+def test_a_film_whose_every_shot_was_refused_settles_its_hold_against_what_was_bought(
+    engine, tmp_path
+):
+    """The rehearsal of 2026-09-18 settled two films' holds (1.30472 and 1.36104 USD) against
+    four Runway rows for shots the vendor never received: the day's budget counted 1.44 USD
+    that was never spent. A settled hold stops counting; what the budget then sees is the
+    books, and the books hold only what was bought — here the still, and no shot at all."""
+    from app.economy.accountant import record_render_costs
+    from app.economy.budget import (
+        BudgetCommand,
+        budget_status,
+        reserve_spend,
+        set_budget,
+        settle_reservation,
+    )
+    from app.economy.models import ProviderCostRecord, SpendReservation
+    from test_books_and_history import MOTION_SHAPES, _a_render_with_one_shot
+
+    set_budget(engine, BudgetCommand(period="DAILY", limit_usd="15"))
+    job_id, _ = _a_render_with_one_shot(
+        engine, tmp_path, MOTION_SHAPES["refused_by_the_vendor"][0], "COMPLETED"
+    )
+    hold = reserve_spend(engine, 1_304_720, "film", str(uuid4()))
+    assert budget_status(engine)["budgets"][0]["reserved_usd"] == "1.30472"
+
+    record_render_costs(engine, job_id)
+    settle_reservation(engine, hold["reservation_id"], settled_reference=f"render:{job_id}")
+
+    with Session(engine) as session:
+        rows = list(session.scalars(select(ProviderCostRecord)))
+        reservation = session.get(SpendReservation, hold["reservation_id"])
+    assert [row.attribution_json["unit"] for row in rows] == ["image"], "a refused shot charged"
+    assert (reservation.status, reservation.settled_reference) == ("SETTLED", f"render:{job_id}")
+    # The hold keeps the sum it held, as history; it no longer counts against the day.
+    assert reservation.usd_micros == 1_304_720
+    daily = budget_status(engine)["budgets"][0]
+    assert (daily["spent_usd"], daily["reserved_usd"]) == ("0.02", "0")

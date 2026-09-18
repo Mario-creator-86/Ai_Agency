@@ -424,3 +424,388 @@ def test_the_expiry_setting_refuses_a_number_that_would_break_the_rule_it_serves
                 owner_token=secrets.token_urlsafe(48),
                 approval_expires_after_hours=hours,
             )
+
+
+# ---------------------------------------------------------------------------
+# What will stop tomorrow: the YouTube grant, the daily budget, and the summary
+# ---------------------------------------------------------------------------
+#
+# Measured by the 2026-09-18 rehearsal on a copy of the Owner's studio: the preflight read
+# «Canal YouTube conectat» and «2 sloturi legate» off the stored status alone, while both
+# connections had been granted youtube.readonly and youtube.upload and not the statistics
+# scope, were seven days old, and the day stopped at performance intake on a refused token
+# refresh. And in PRODUCTION every film holds the 12 USD motion budget against his 15 USD
+# daily budget, so the second film of the day is refused. Every check below reads the
+# database and nothing else.
+
+READONLY = "https://www.googleapis.com/auth/youtube.readonly"
+UPLOAD = "https://www.googleapis.com/auth/youtube.upload"
+STATISTICS = "https://www.googleapis.com/auth/yt-analytics.readonly"
+
+#: The morning the rehearsal ran, so the age of a grant is a number and not a date the suite
+#: happens to run on.
+MORNING = datetime(2026, 9, 18, 5, 0, tzinfo=UTC)
+
+
+def bind_slot(
+    engine,
+    channel_type: str,
+    name: str,
+    *,
+    scopes: str | None,
+    connected_at: datetime,
+) -> str:
+    """A CONNECTED account with the scopes Google reported, bound to one seeded slot."""
+    connection_id = str(uuid4())
+    with Session(engine) as session, session.begin():
+        session.add(
+            YouTubeConnection(
+                id=connection_id,
+                name=name,
+                client_id="client-id",
+                redirect_uri="http://localhost/callback",
+                encrypted_secrets="opaque",
+                secret_fields=["client_secret", "refresh_token"],
+                status="CONNECTED",
+                remote_channel_id=f"UC_{connection_id[:8]}",
+                remote_channel_title=name.upper(),
+                channel_snapshot={},
+                granted_scopes=scopes,
+                connected_at=connected_at.isoformat(),
+                last_checked_at=connected_at.isoformat(),
+                created_at=connected_at.isoformat(),
+            )
+        )
+        channel = session.scalar(
+            select(ChannelRecord).where(ChannelRecord.channel_type == channel_type)
+        )
+        channel.credentials_ref = f"youtube_connection:{connection_id}"
+    return connection_id
+
+
+def refresh_failed(
+    engine,
+    connection_id: str,
+    at: datetime,
+    event_type: str = "youtube.token_refresh_failed",
+    **payload,
+) -> None:
+    """The ledger line `app.analytics.services` writes when Google refuses or is not reached,
+    in the payload shape it writes: `during`, `http_status`, `oauth_error`, `auth_refused`."""
+    from app.models import DomainEvent
+
+    with Session(engine) as session, session.begin():
+        session.add(
+            DomainEvent(
+                event_id=str(uuid4()),
+                event_type=event_type,
+                timestamp=at.isoformat(),
+                aggregate_type="youtube_connection",
+                aggregate_id=connection_id,
+                aggregate_version=1,
+                correlation_id=str(uuid4()),
+                causation_id=None,
+                schema_version=1,
+                visibility="OWNER",
+                payload={"connection_id": connection_id, **payload},
+            )
+        )
+
+
+def preflight_at(engine, settings, vault, now: datetime = MORNING) -> dict:
+    return run_preflight(engine, settings, vault, now=now)
+
+
+def named(result: dict, name: str) -> dict:
+    found = next((c for c in result["checks"] if c["name"] == name), None)
+    assert found is not None, f"the preflight has no check named {name}"
+    assert found["message"], f"{name} reported nothing"
+    return found
+
+
+def set_environment(engine, environment: str) -> None:
+    with Session(engine) as session, session.begin():
+        session.get(OwnerPolicy, 1).environment = environment
+
+
+def test_a_slot_without_the_statistics_scope_degrades_and_says_how_to_grant_it(
+    engine, settings, vault, studio
+):
+    seed_default_channels(engine)
+    bind_slot(
+        engine,
+        "MAIN_FACTUAL",
+        "Nexus Curiosity",
+        scopes=f"{READONLY} {UPLOAD}",
+        connected_at=MORNING - timedelta(days=2),
+    )
+
+    result = preflight_at(engine, settings, vault)
+    statistics = named(result, "youtube_statistics_access")
+    assert statistics["ok"] is False and statistics["severity"] == DEGRADING
+    assert "Nexus Curiosity" in statistics["message"]
+    assert "yt-analytics.readonly" in statistics["message"]
+    assert "Reconectează canalul din Setări" in statistics["message"]
+    assert "accesul la statistici" in statistics["message"]
+    # Statistics do not decide whether a film goes out, so they never block the day.
+    assert "youtube_statistics_access" in result["degrading_failures"]
+    assert result["status"] != "BLOCKED"
+    upload = named(result, "youtube_upload_access")
+    assert upload["ok"] is True
+
+    with Session(engine) as session, session.begin():
+        session.scalars(
+            select(YouTubeConnection)
+        ).one().granted_scopes = f"{READONLY} {UPLOAD} {STATISTICS}"
+    granted = named(preflight_at(engine, settings, vault), "youtube_statistics_access")
+    assert granted["ok"] is True
+
+
+def test_the_age_of_the_grant_is_said_with_the_testing_mode_caveat(engine, settings, vault, studio):
+    """The studio cannot see whether his Google app is in Testing, where a refresh token dies
+    seven days after it was granted, so the age is a caveat he reads and never a verdict."""
+    seed_default_channels(engine)
+    bind_slot(
+        engine,
+        "MAIN_FACTUAL",
+        "Nexus Curiosity",
+        scopes=f"{READONLY} {UPLOAD} {STATISTICS}",
+        connected_at=MORNING - timedelta(days=7, hours=1),
+    )
+
+    upload = named(preflight_at(engine, settings, vault), "youtube_upload_access")
+    assert upload["ok"] is True
+    assert "7 zile" in upload["message"]
+    assert "Testing" in upload["message"]
+    assert "poate fi deja expirat" in upload["message"]
+
+    with Session(engine) as session, session.begin():
+        row = session.scalars(select(YouTubeConnection)).one()
+        row.connected_at = (MORNING - timedelta(days=2)).isoformat()
+    young = named(preflight_at(engine, settings, vault), "youtube_upload_access")
+    assert "2 zile" in young["message"] and "Testing" in young["message"]
+    assert "poate fi deja expirat" not in young["message"]
+
+
+def test_a_refused_token_on_the_upload_connection_blocks_and_a_reconnect_clears_it(
+    engine, settings, vault, studio
+):
+    seed_default_channels(engine)
+    connection_id = bind_slot(
+        engine,
+        "MAIN_FACTUAL",
+        "Nexus Curiosity",
+        scopes=f"{READONLY} {UPLOAD} {STATISTICS}",
+        connected_at=MORNING - timedelta(days=7),
+    )
+    refresh_failed(
+        engine,
+        connection_id,
+        MORNING - timedelta(hours=3),
+        during="token_refresh",
+        error_class="HTTPError",
+        http_status=400,
+        oauth_error="invalid_grant",
+        auth_refused=True,
+    )
+
+    result = preflight_at(engine, settings, vault)
+    upload = named(result, "youtube_upload_access")
+    assert upload["ok"] is False and upload["severity"] == "BLOCKING"
+    assert "Nexus Curiosity" in upload["message"]
+    assert "invalid_grant" in upload["message"]
+    assert "Reconectează canalul din Setări" in upload["message"]
+    assert result["status"] == "BLOCKED"
+    assert "youtube_upload_access" in result["blocking_failures"]
+    # The same dead token cannot read statistics either.
+    assert named(result, "youtube_statistics_access")["ok"] is False
+    # The summary names the first thing that stops the day, not a generic sentence.
+    assert result["summary"].startswith("Studioul nu poate rula")
+    assert result["first_stop"] == "youtube_upload_access"
+    assert "Nexus Curiosity" in result["summary"]
+
+    # A reconnect after the refusal is a new grant: the old refusal is no longer about it.
+    with Session(engine) as session, session.begin():
+        row = session.get(YouTubeConnection, connection_id)
+        row.connected_at = (MORNING - timedelta(hours=1)).isoformat()
+        row.last_checked_at = row.connected_at
+    assert named(preflight_at(engine, settings, vault), "youtube_upload_access")["ok"] is True
+
+
+def test_a_statistics_only_refusal_degrades_and_a_network_failure_says_nothing_of_the_token(
+    engine, settings, vault, studio
+):
+    seed_default_channels(engine)
+    connection_id = bind_slot(
+        engine,
+        "MAIN_FACTUAL",
+        "Nexus Curiosity",
+        scopes=f"{READONLY} {UPLOAD} {STATISTICS}",
+        connected_at=MORNING - timedelta(days=1),
+    )
+    refresh_failed(
+        engine,
+        connection_id,
+        MORNING - timedelta(hours=2),
+        # The token was good; the statistics report itself was refused.
+        event_type="youtube.analytics_refused",
+        during="report",
+        error_class="HTTPError",
+        http_status=403,
+        oauth_error=None,
+        auth_refused=True,
+    )
+    result = preflight_at(engine, settings, vault)
+    assert named(result, "youtube_upload_access")["ok"] is True
+    statistics = named(result, "youtube_statistics_access")
+    assert statistics["ok"] is False and statistics["severity"] == DEGRADING
+    assert "citirea statisticilor" in statistics["message"] and "403" in statistics["message"]
+    assert result["status"] != "BLOCKED"
+
+    # A network failure on its own does not answer a refusal: the 403 still stands.
+    refresh_failed(
+        engine,
+        connection_id,
+        MORNING - timedelta(minutes=90),
+        during="token_refresh",
+        error_class="URLError",
+        http_status=None,
+        oauth_error=None,
+        auth_refused=False,
+    )
+    assert named(preflight_at(engine, settings, vault), "youtube_statistics_access")["ok"] is False
+
+    # A successful verification answers it; then Google is not reached at all. That is the
+    # network, and a token nobody judged is not refused.
+    with Session(engine) as session, session.begin():
+        session.get(YouTubeConnection, connection_id).last_checked_at = (
+            MORNING - timedelta(minutes=80)
+        ).isoformat()
+    refresh_failed(
+        engine,
+        connection_id,
+        MORNING - timedelta(hours=1),
+        during="token_refresh",
+        error_class="URLError",
+        http_status=None,
+        oauth_error=None,
+        auth_refused=False,
+    )
+    after = preflight_at(engine, settings, vault)
+    assert named(after, "youtube_upload_access")["ok"] is True
+    network = named(after, "youtube_statistics_access")
+    assert network["ok"] is True
+    assert "fără răspuns de la Google" in network["detail"]
+
+
+def test_an_upload_scope_google_did_not_grant_blocks_and_unrecorded_scopes_are_unknown(
+    engine, settings, vault, studio
+):
+    seed_default_channels(engine)
+    bind_slot(
+        engine,
+        "MAIN_FACTUAL",
+        "Nexus Curiosity",
+        scopes=READONLY,
+        connected_at=MORNING - timedelta(days=1),
+    )
+    result = preflight_at(engine, settings, vault)
+    upload = named(result, "youtube_upload_access")
+    assert upload["ok"] is False and upload["severity"] == "BLOCKING"
+    assert "youtube.upload" in upload["message"]
+
+    with Session(engine) as session, session.begin():
+        session.scalars(select(YouTubeConnection)).one().granted_scopes = None
+    unknown = preflight_at(engine, settings, vault)
+    # Nothing recorded is nothing measured: neither a refusal nor a certificate.
+    assert named(unknown, "youtube_upload_access")["ok"] is True
+    assert "necunoscute" in named(unknown, "youtube_upload_access")["detail"]
+    assert "necunoscute" in named(unknown, "youtube_statistics_access")["detail"]
+
+
+def test_with_no_slot_bound_there_is_no_token_to_judge(engine, settings, vault, studio):
+    result = preflight_at(engine, settings, vault)
+    upload = named(result, "youtube_upload_access")
+    assert upload["ok"] is True and "niciun token" in upload["message"].lower()
+    assert named(result, "youtube_statistics_access")["ok"] is True
+
+
+def test_in_production_the_daily_budget_that_cannot_hold_two_films_is_said_before_the_day(
+    engine, settings, vault, studio
+):
+    seed_default_channels(engine)
+    set_budget(engine, BudgetCommand(period="DAILY", limit_usd="15"))
+    set_environment(engine, "PRODUCTION")
+
+    result = preflight_at(engine, settings, vault)
+    films = named(result, "daily_budget_films")
+    assert films["ok"] is False and films["severity"] == DEGRADING
+    assert "daily_budget_films" in result["degrading_failures"]
+    # Which film, and the two numbers he can change.
+    assert "episodul serialului" in films["message"]
+    assert "12 USD" in films["message"] and "15 USD" in films["message"]
+    assert "3 USD" in films["message"]
+    assert "PUT /economy/budget" in films["message"]
+    assert "STUDIO_MOTION_BUDGET_USD" in films["message"]
+    # The summary no longer says the studio can run above a check that foresees a film lost.
+    assert "Studioul poate rula" not in result["summary"]
+    assert result["first_stop"] == "daily_budget_films"
+    assert "episodul serialului" in result["summary"]
+
+    set_budget(engine, BudgetCommand(period="DAILY", limit_usd="30"))
+    roomy = preflight_at(engine, settings, vault)
+    assert named(roomy, "daily_budget_films")["ok"] is True
+    assert "daily_budget_films" not in roomy["degrading_failures"]
+
+
+def test_a_daily_budget_below_one_film_says_the_first_film_is_refused(
+    engine, settings, vault, studio
+):
+    seed_default_channels(engine)
+    set_budget(engine, BudgetCommand(period="DAILY", limit_usd="10"))
+    set_environment(engine, "PRODUCTION")
+
+    films = named(preflight_at(engine, settings, vault), "daily_budget_films")
+    assert films["ok"] is False and films["severity"] == DEGRADING
+    assert "scurtul factual" in films["message"] and "Niciun film" in films["message"]
+
+
+def test_in_test_the_production_budget_is_said_as_information_only(engine, settings, vault, studio):
+    seed_default_channels(engine)
+    set_budget(engine, BudgetCommand(period="DAILY", limit_usd="15"))
+
+    result = preflight_at(engine, settings, vault)
+    films = named(result, "daily_budget_films")
+    # TEST holds two shots at the test ceiling, 1.2 USD a film: both fit today.
+    assert films["ok"] is False and films["severity"] == INFORMATIONAL
+    assert "TEST" in films["message"] and "PRODUCTION" in films["message"]
+    assert "1.2 USD" in films["message"]
+    assert "episodul serialului" in films["message"]
+    assert "daily_budget_films" not in result["degrading_failures"]
+    assert result["first_stop"] is None
+
+
+def test_without_a_daily_budget_nothing_refuses_the_second_film(engine, settings, vault, studio):
+    films = named(preflight_at(engine, settings, vault), "daily_budget_films")
+    assert films["ok"] is True
+    assert "Niciun buget zilnic" in films["message"]
+
+
+def test_a_degraded_day_that_loses_nothing_still_reads_as_one_that_can_run(
+    engine, settings, vault, studio
+):
+    result = preflight_at(engine, settings, vault)
+    assert result["status"] == "DEGRADED"
+    assert result["first_stop"] is None
+    assert result["summary"].startswith("Studioul poate rula")
+
+
+def test_the_preflight_reads_the_ledger_lines_by_the_names_the_analytics_stage_writes():
+    """Two copies of two names, because the preflight must not import the analytics stage to
+    read the ledger. A name changed on one side only does not fail anything: the preflight
+    simply stops seeing refusals, and says «all is well» on the morning the token died."""
+    from app.analytics import services as analytics
+    from app.youtube import services as youtube
+
+    assert youtube.TOKEN_REFRESH_FAILED == analytics.TOKEN_REFRESH_FAILED
+    assert youtube.ANALYTICS_REFUSED == analytics.ANALYTICS_REFUSED

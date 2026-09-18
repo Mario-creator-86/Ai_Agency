@@ -18,6 +18,11 @@ A DOCUMENTED default may be seeded for ElevenLabs from its public price list, ma
 such, so narration is never read as free while the Owner has not typed his plan. Ollama
 Cloud prices are never seeded: the Owner's plan is the only source, and a guess in the
 books is worse than a gap the Accountant reports.
+
+A resource is a model id, a family (a prefix ending in ``"*"``, such as
+``"eleven_flash_*"``), or ``"*"`` for the whole kind. Any price the Owner typed outranks every
+DOCUMENTED one, however specific; within each, the model's own row outranks its family, the
+longer family the shorter, and the family the kind's ``"*"``.
 """
 
 from __future__ import annotations
@@ -190,22 +195,40 @@ def list_prices(
         return [_view(row) for row in session.scalars(query)]
 
 
+def _specificity(pattern: str, resource: str) -> int | None:
+    """How closely a price's resource names this one: the length of what it matched, the
+    exact id above every family, or None when it does not cover the resource at all."""
+    if pattern == resource:
+        return len(resource) + 1
+    if pattern.endswith(ANY_RESOURCE) and resource.startswith(pattern[: -len(ANY_RESOURCE)]):
+        return len(pattern) - len(ANY_RESOURCE)
+    return None
+
+
 def price_row(
     session: Session, provider_kind: str, resource: str, unit: str
 ) -> ProviderPrice | None:
-    """The active price for this resource, or the kind's wildcard when it has none of its own."""
+    """The active price that covers this resource: the Owner's before any DOCUMENTED one,
+    and within each the most specific - the model, its longest family, the kind's '*'.
+
+    The provenance comes first because a documented family row is more specific than the
+    Owner's '*' and would otherwise overrule the plan he typed with a price-list figure.
+    """
     rows = session.scalars(
         select(ProviderPrice).where(
             ProviderPrice.provider_kind == provider_kind,
             ProviderPrice.unit == unit,
             ProviderPrice.active.is_(True),
-            ProviderPrice.resource.in_([resource, ANY_RESOURCE]),
         )
     ).all()
-    exact = [r for r in rows if r.resource == resource]
-    if exact:
-        return exact[0]
-    return next((r for r in rows if r.resource == ANY_RESOURCE), None)
+    ranked = [
+        (row.provenance != "DOCUMENTED", specificity, row)
+        for row in rows
+        if (specificity := _specificity(str(row.resource), resource)) is not None
+    ]
+    if not ranked:
+        return None
+    return max(ranked, key=lambda item: (item[0], item[1]))[2]
 
 
 def price_for(session: Session, provider_kind: str, resource: str, unit: str) -> int | None:
@@ -271,8 +294,9 @@ def usd_from_micros(micros: int) -> float:
 
 def seed_documented_prices(engine: Engine, *, correlation_id: str | None = None) -> dict[str, Any]:
     """Seed the documented defaults (`integrations.catalog.DOCUMENTED_PRICES`), marked
-    DOCUMENTED, where no price of any provenance exists for the unit. Never overrides a row
-    the Owner typed; running it twice adds nothing."""
+    DOCUMENTED, where no price of any provenance exists for the resource and unit. Never
+    overrides a row the Owner typed, and seeds nothing his own '*' for the unit already
+    outranks, since `price_row` would never read it; running it twice adds nothing."""
     from app.integrations.catalog import DOCUMENTED_PRICES  # noqa: PLC0415
 
     correlation = correlation_id or str(uuid4())
@@ -289,6 +313,17 @@ def seed_documented_prices(engine: Engine, *, correlation_id: str | None = None)
                 )
             )
             if exists is not None:
+                continue
+            owners_wildcard = session.scalar(
+                select(ProviderPrice.id).where(
+                    ProviderPrice.provider_kind == entry["provider_kind"],
+                    ProviderPrice.resource == ANY_RESOURCE,
+                    ProviderPrice.unit == entry["unit"],
+                    ProviderPrice.active.is_(True),
+                    ProviderPrice.provenance != "DOCUMENTED",
+                )
+            )
+            if owners_wildcard is not None:
                 continue
             row = ProviderPrice(
                 id=str(uuid4()),

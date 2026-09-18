@@ -26,6 +26,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 from app.agents.services import seed_initial_workforce
@@ -191,6 +192,16 @@ def allow_director_approval(engine, allowed: bool = True) -> None:
             select(ChannelRecord).where(ChannelRecord.channel_type == "OFFICE_SERIAL")
         )
         channel.director_may_approve_episodes = allowed
+
+
+def YESTERDAY_NOON() -> datetime:  # noqa: N802 - read as a moment, like TZ
+    """Noon of the studio's yesterday: the day the serial stage tells, which is over.
+
+    The stage takes only a day before today (2026-09-19): today's log is closed at the end
+    of every attempt, and a re-attempt used to film it before the day was over.
+    """
+    local = datetime.now(UTC).astimezone(ZoneInfo(TZ)) - timedelta(days=1)
+    return local.replace(hour=12, minute=0, second=0, microsecond=0).astimezone(UTC)
 
 
 def a_day(engine, when: datetime | None = None) -> tuple[dict, list[str]]:
@@ -652,7 +663,7 @@ def test_a_quiet_day_completes_with_the_reason(engine, staffed, settings, monkey
 
 def test_the_stage_runs_the_day_through_to_a_storyboard(engine, staffed, settings, monkeypatch):
     allow_director_approval(engine)
-    log, ids = a_day(engine)
+    log, ids = a_day(engine, YESTERDAY_NOON())
     names = roster_names(engine, log["id"])
     fake_showrunner(monkeypatch, episode_answer(beats_for(ids, names)))
     fake_director(monkeypatch, "PASS")
@@ -673,7 +684,7 @@ def test_a_fail_is_rewritten_once_with_the_notes_then_rejected(
     engine, staffed, settings, monkeypatch
 ):
     allow_director_approval(engine)
-    log, ids = a_day(engine)
+    log, ids = a_day(engine, YESTERDAY_NOON())
     names = roster_names(engine, log["id"])
     prompts: list[str] = []
     fake_showrunner(monkeypatch, episode_answer(beats_for(ids, names)), prompts)
@@ -696,7 +707,7 @@ def test_a_fail_is_rewritten_once_with_the_notes_then_rejected(
 def test_a_pass_without_the_policy_leaves_the_day_waiting_for_the_owner(
     engine, staffed, settings, monkeypatch
 ):
-    log, ids = a_day(engine)
+    log, ids = a_day(engine, YESTERDAY_NOON())
     names = roster_names(engine, log["id"])
     fake_showrunner(monkeypatch, episode_answer(beats_for(ids, names)))
     fake_director(monkeypatch, "PASS")
@@ -709,13 +720,36 @@ def test_a_pass_without_the_policy_leaves_the_day_waiting_for_the_owner(
     assert "aprobarea" in outcome["reason"]
 
 
+def test_today_closed_by_an_earlier_attempt_is_not_told_before_it_is_over(
+    engine, staffed, settings, monkeypatch
+):
+    """Measured on 2026-09-19 by the verifier: the day's first attempt closed today's log at
+    its end (daily_log), the clock re-attempted the day after a transient fault, and the
+    serial stage of the second attempt took today's log as the newest closed day and filmed
+    an episode of a day not yet over — a film the first attempt never decided on, bought on a
+    re-attempt. The serial tells the day that is over, never today's."""
+    allow_director_approval(engine)
+    log, ids = a_day(engine)  # today, closed as a finished attempt closes it
+    assert log["business_date"] == business_date(settings.timezone)
+    names = roster_names(engine, log["id"])
+    fake_showrunner(monkeypatch, episode_answer(beats_for(ids, names)))
+    fake_director(monkeypatch, "PASS")
+
+    outcome = run_serial_stage(engine, registry(), settings)
+
+    assert outcome["status"] == "COMPLETED", outcome
+    assert outcome["artefacts"]["episodes"] == 0, outcome
+    with Session(engine) as session:
+        assert session.scalars(select(StoryEpisode)).all() == []
+
+
 def test_a_refusal_never_raises_and_a_provider_fault_is_transient(
     engine, staffed, settings, monkeypatch
 ):
     from app.runbook.services import TransientStageError
     from app.story import services
 
-    a_day(engine)
+    a_day(engine, YESTERDAY_NOON())
     fake_showrunner(monkeypatch, "nu e JSON")
     outcome = run_serial_stage(engine, registry(), settings)
     assert outcome["status"] == "COMPLETED"

@@ -80,6 +80,7 @@ from test_serial_pipeline import (
     PRICE,
     TZ,
     URL,
+    YESTERDAY_NOON,
     a_day,
     add_event,
     beats_for,
@@ -396,7 +397,7 @@ def test_the_factual_channels_grant_does_not_let_the_director_approve_the_serial
     change_publish_policy(
         engine, channels["MAIN_FACTUAL"], _command(director_may_approve_episodes=True)
     )
-    log, ids = a_day(engine)
+    log, ids = a_day(engine, YESTERDAY_NOON())
     names = roster_names(engine, log["id"])
     fake_showrunner(monkeypatch, episode_answer(beats_for(ids, names)))
     fake_director(monkeypatch, "PASS")

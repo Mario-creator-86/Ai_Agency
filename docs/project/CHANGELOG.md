@@ -1,5 +1,65 @@
 # Changelog
 
+## The rehearsal on the Owner's data — 2026-09-18
+
+One whole scheduled day was run on a copy of the Owner's studio, through the real scheduler, worker
+and runbook, with every paid vendor faked and every outside connection refused. An independent audit
+re-ran it and gave the verdict FIX_FIRST. It found two defects, the limits of the fakes, what only the
+Owner can change, and a migration chain that is clean on his data. Four parts fixed what code could
+fix; `CURRENT_STATUS.md` («The rehearsal on the Owner's data (2026-09-18)») has the findings and the
+figures.
+
+- **A failed stage costs its dependants and nothing else.** `STAGE_PREREQUISITES`
+  (`backend/app/runbook/services.py`) states what each stage needs, each edge read from what its
+  runner reads, and a stage is BLOCKED only when every prerequisite it lists was lost, with the
+  prerequisite and the root fault named. Measured before: a refused statistics token at performance
+  intake BLOCKED the nine stages after it. The Owner's stop and a blocked preflight still block
+  everything.
+- **Safe mode only for a P0.** `SAFE_MODE_STAGES = (media, publish, daily_log)` plus
+  `_doubts_the_record` (a database integrity error in any stage), after `21_FAILURE_RECOVERY_PLAYBOOK`.
+  Any other HARD fault costs its stage, its dependants and a letter. Measured before: an HTTP 4xx
+  from Google was HARD, and a HARD fault anywhere set the autonomy stop.
+- **The re-attempt follows only a transient fault that cost a film** (`retryable_outcome(...,
+  production_lost=)`, `PRODUCTION_STAGES`). A day whose films went through while another stage failed
+  is PARTIAL.
+- **The run counts what each stage produced.** Each stage record has `produced` (`PRODUCED_FROM`), and
+  the run has `summary` and `stages_productive`, returned by `execute_daily_run` and `list_runs`.
+- **A statistics read that cannot be made is «fără date».** `YouTubeAnalyticsProvider` raises
+  `MetricsUnavailable` for a transport or authentication failure on the token refresh or the report.
+  The class now lives in `providers/youtube_analytics.py` and is re-exported by `analytics.services`.
+  `measure_channel_publications` stops asking after an account-level refusal, names the account to
+  reconnect, and writes `youtube.token_refresh_failed` or `youtube.analytics_refused` once.
+- **The books charge what was bought.** `motion_was_bought` (`bytes` or `paid_but_lost`) in
+  `economy/accountant.py`, shared by `record_render_costs` and `record_failed_render_cost`; a refused
+  shot teaches no price. Measured before: four ESTIMATED Runway rows, 1.44 USD, for shots never
+  generated, with both holds settled against them.
+- **Narration on Flash and Turbo at the documented half.** New DOCUMENTED rows `eleven_flash_*` and
+  `eleven_turbo_*` at 0.11 USD per 1k characters. `price_row` reads a trailing `*` as a family and
+  ranks any Owner price above every documented one. `seed_documented_prices` skips a documented row
+  when the Owner has an active '*' price for that unit.
+- **Tests fake every paid path.** The `no_network` guard in `tests/conftest.py` also refuses DNS and
+  asyncio's `sock_connect`, and records every refusal. `VENDOR_FAKES` / `install_vendor_fakes` is one
+  list of eight fakes, shared by the whole-day test and the rehearsal, and it now includes the motion
+  chooser and the analytics adapter. New: `tests/test_no_paid_path_escapes.py`, a call-graph scan
+  from `execute_daily_run` and `build_stage_runners` that fails on any paid adapter reachable without
+  a fake; `tests/test_day_survives_a_stage.py`; and the opt-in `tests/test_rehearsal_on_a_copy.py`,
+  which refuses `data/studio.db` and copies whatever it is given again before opening it.
+- **The preflight says what will stop tomorrow.** New checks: `youtube_upload_access` (BLOCKING),
+  `youtube_statistics_access` (DEGRADING) and `daily_budget_films` (DEGRADING, or INFORMATIONAL for
+  the PRODUCTION answer in TEST). New `first_stop` in the result, and a summary that names that check.
+  `run_preflight(..., now=)`. The publishing line says it reads the stored state. Three Romanian
+  labels were added in `frontend/src/readiness.js`.
+- **Documents.** `39_DAILY_AUTONOMOUS_RUNBOOK` gains the stage dependency table, the P0 rule, the
+  re-attempt rule, the three checks and what "if available" means at §2. It is re-hashed
+  (`f4d26ea2…` → `227e7604…`). Every sentence that said a failed stage costs only itself is corrected
+  where it stands with a dated marker. «Ce are Owner-ul de făcut» gains what only the Owner can do,
+  in the step it belongs to, without renumbering.
+- Not changed: no migration (the head stays `0045_reconciliation`), no provider called, no run queued
+  on the live studio, `data/studio.db` never opened. Added by another part while these documents
+  were being written: `SCOPES` asks for `yt-analytics.readonly` as well, so a reconnect can grant
+  statistics (`test_the_consent_asks_for_the_statistics_the_day_reads`). Still open: the uploader writes no refusal event; the hold takes the dearest voice
+  price; the panel does not show the new run fields; and nothing has met a real vendor.
+
 ## Readiness for the first day, closed — 2026-09-18
 
 The three risks the readiness section had left open, named with a file and a line each by an
@@ -3664,3 +3724,8 @@ Fixed false “Niciun model alocat” when an older office projection omits mode
 - Validation: 36 scoped integration tests; docs hashes; UE material repair/reload
   and new creation/reuse. No claim of completed visual fidelity or measured FPS.
 - Evidence and next steps: [VISUAL_AUDIT_2026-09-18.md](VISUAL_AUDIT_2026-09-18.md).
+
+
+## Prevent stale HQ reconnect retries — 2026-09-18, Codex
+
+Cancel old timers when the SDK starts/recoveries a connection and guard callbacks against reconnecting a non-offline player. Keep a still immediately when live and at disconnection. Added four lifecycle regressions and a reproducible manual browser viewer. 115 frontend tests, TypeScript/build passed; controlled real-video recovery stayed live to second 86. See STREAM_STABILITY_2026-09-18.md.

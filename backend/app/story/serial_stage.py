@@ -27,7 +27,13 @@ from sqlalchemy.orm import Session
 from app.media.serial_storyboard import SerialStoryboardError, storyboard_from_episode
 from app.story.models import DailyStudioLog, StoryEpisode
 from app.story.review import ReviewError, review_episode
-from app.story.services import NothingHappened, StoryError, ensure_projection, write_episode
+from app.story.services import (
+    NothingHappened,
+    StoryError,
+    business_date,
+    ensure_projection,
+    write_episode,
+)
 
 logger = logging.getLogger("studio.story.stage")
 
@@ -47,19 +53,22 @@ def _transient(exc: BaseException) -> bool:
     return classify_fault(exc) == TRANSIENT
 
 
-def pending_log(session: Session) -> DailyStudioLog | None:
-    """The newest CLOSED log with no episode at all.
+def pending_log(session: Session, before: str | None = None) -> DailyStudioLog | None:
+    """The newest CLOSED log with no episode at all, of a day before ``before``.
 
     A log whose drafts were all rejected is finished with: the rewrite budget was spent on
     it, and a third attempt tomorrow would be the same day told a third time.
+
+    ``before`` is today's business date: the day's own log is closed at the end of every
+    attempt (the daily_log stage), so a same-day re-attempt found today's log closed and
+    newest, and filmed an episode of a day not yet over — measured on 2026-09-19, a serial
+    film the first attempt never decided on, bought by the re-attempt.
     """
     written = set(session.scalars(select(StoryEpisode.log_id)))
-    for log in session.scalars(
-        select(DailyStudioLog)
-        .where(DailyStudioLog.status == "CLOSED")
-        .order_by(DailyStudioLog.business_date.desc())
-        .limit(5)
-    ):
+    query = select(DailyStudioLog).where(DailyStudioLog.status == "CLOSED")
+    if before is not None:
+        query = query.where(DailyStudioLog.business_date < before)
+    for log in session.scalars(query.order_by(DailyStudioLog.business_date.desc()).limit(5)):
         if log.id not in written:
             return log
     return None
@@ -88,7 +97,9 @@ def run_serial_stage(
 
     try:
         with Session(engine) as session, session.begin():
-            log = pending_log(session)
+            log = pending_log(
+                session, before=business_date(getattr(settings, "timezone", None) or "UTC")
+            )
             if log is None:
                 return _outcome(COMPLETED, "Nicio zi închisă fără episod.", **counts)
             log_id, date_iso = log.id, log.business_date

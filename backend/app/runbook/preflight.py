@@ -15,6 +15,7 @@ and would still only tell you about the moment it ran.
 from __future__ import annotations
 
 import shutil
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -24,18 +25,27 @@ from sqlalchemy.orm import Session
 from app.agents.models import Agent, ModelRecord, ProviderRecord
 from app.agents.vision import vision_agent
 from app.config import Settings
-from app.economy.budget import budget_status
+from app.economy.budget import budget_status, estimate_film_cost_micros
 from app.economy.prices import price_for
+from app.economy.services import format_micros
 from app.media.factory import describe as describe_media
 from app.media.factory import media_readiness
 from app.media.models import CharacterBible, MediaAsset
 from app.media.toolchain import find_ffprobe
-from app.models import OwnerPolicy
+from app.models import DomainEvent, OwnerPolicy
 from app.publishing.models import ChannelRecord
-from app.publishing.services import channel_bindings
+from app.publishing.services import bound_connection_id, channel_bindings
 from app.research.service import research_health
-from app.services import utc_now
+from app.services import studio_environment, utc_now
 from app.youtube.models import YouTubeConnection
+from app.youtube.services import (
+    ANALYTICS_REFUSED,
+    STATISTICS_SCOPE,
+    TOKEN_REFRESH_FAILED,
+    UPLOAD_SCOPE,
+    granted_scope_set,
+    scope_label,
+)
 
 #: A check that stops the day entirely. Everything else degrades it.
 BLOCKING = "BLOCKING"
@@ -299,8 +309,409 @@ def _serial_channel_check(session: Session, bindings: dict[str, dict]) -> dict[s
     )
 
 
-def run_preflight(engine: Engine, settings: Settings, vault: Any) -> dict[str, Any]:
-    """Report the studio's readiness without changing anything or calling anything."""
+# ------------------------------------------------------------------ what will stop tomorrow
+#
+# Three lines the 2026-09-18 rehearsal on a copy of the Owner's studio showed missing. The
+# preflight said «Canal YouTube conectat» and «2 sloturi legate» off the stored status
+# alone, while both of his connections held youtube.readonly and youtube.upload and not the
+# statistics scope, had been granted seven days earlier, and the day stopped at performance
+# intake on a token refresh. In PRODUCTION every film holds the whole motion budget (12 USD)
+# against his 15 USD daily budget, so the second film of a day is refused. And the summary
+# read «Studioul poate rula» above all of it. Each line below still reads the database only:
+# the token is judged by what Google already answered, never by asking again.
+
+#: How long Google keeps a refresh token alive while the OAuth app is in Testing. The studio
+#: cannot see the app's publishing status, so this is a caveat beside the age, never a verdict.
+TESTING_REFRESH_TOKEN_DAYS = 7
+
+#: Google's answers that refuse the token itself, as opposed to Google not being reached:
+#: 400 invalid_grant for a revoked or expired grant, 401 for a client it no longer knows,
+#: 403 for a use the grant does not cover.
+AUTH_REFUSAL_STATUSES = frozenset({400, 401, 403})
+AUTH_REFUSAL_ERRORS = frozenset(
+    {
+        "invalid_grant",
+        "invalid_client",
+        "unauthorized_client",
+        "access_denied",
+        "insufficient_scope",
+    }
+)
+
+#: How many recorded refresh failures are read, newest first. Enough for every connection
+#: many times over; the preflight runs many times an hour and must stay a cheap read.
+REFRESH_FAILURES_READ = 500
+
+#: Failed DEGRADING checks that foresee the day losing a film, not merely a worse film. The
+#: summary names the first of them (or the first BLOCKING failure) instead of saying the
+#: studio can run. A statistics refusal is not here: the films do not depend on statistics.
+EMPTIES_THE_DAY = frozenset({"daily_budget_films"})
+
+
+def _moment(value: str | None) -> datetime | None:
+    """A stored ISO timestamp as an aware datetime; None when absent or unreadable."""
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _http_status(payload: dict[str, Any]) -> int | None:
+    try:
+        return int(payload.get("http_status"))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _auth_refused(payload: dict[str, Any]) -> bool:
+    """Whether Google refused the account, as opposed to not being reached.
+
+    The analytics adapter decides it where it saw Google's answer and records `auth_refused`;
+    that verdict is taken as written. A line without it is judged by the status and Google's
+    own word, the only two things it can carry.
+    """
+    if "auth_refused" in payload:
+        return bool(payload.get("auth_refused"))
+    word = str(payload.get("oauth_error") or payload.get("error") or "")
+    return _http_status(payload) in AUTH_REFUSAL_STATUSES or word in AUTH_REFUSAL_ERRORS
+
+
+def _answer(payload: dict[str, Any]) -> str:
+    """Google's answer as recorded: the status and its own word, never more."""
+    word = payload.get("oauth_error") or payload.get("error")
+    return " ".join(str(part) for part in (_http_status(payload), word) if part)
+
+
+def _youtube_slots(session: Session, now: datetime) -> list[dict[str, Any]]:
+    """Per bound slot: what Google granted, how old the grant is, and what it last refused.
+
+    Only slots whose connection is CONNECTED — an unbound or disconnected slot is the binding
+    check's line. Two refusals are told apart because they stop different things: a refused
+    token refresh (`TOKEN_REFRESH_FAILED`) is the token every use of the account shares, the
+    upload included; a refused statistics report (`ANALYTICS_REFUSED`, the token was fine) is
+    the statistics scope alone. A refusal counts only while nothing has answered it: a
+    reconnect (`connected_at`) or a successful verification (`last_checked_at`) after it is a
+    new answer from Google. A failure with no answer from Google (the network) is kept apart,
+    because it says nothing about the token.
+    """
+    token_refusals: dict[str, DomainEvent] = {}
+    report_refusals: dict[str, DomainEvent] = {}
+    silences: dict[str, DomainEvent] = {}
+    for event in session.scalars(
+        select(DomainEvent)
+        .where(DomainEvent.event_type.in_((TOKEN_REFRESH_FAILED, ANALYTICS_REFUSED)))
+        .order_by(DomainEvent.sequence.desc())
+        .limit(REFRESH_FAILURES_READ)
+    ):
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        connection_id = str(payload.get("connection_id") or event.aggregate_id or "")
+        if not connection_id:
+            continue
+        if not _auth_refused(payload):
+            silences.setdefault(connection_id, event)
+        elif event.event_type == ANALYTICS_REFUSED or payload.get("during") == "report":
+            report_refusals.setdefault(connection_id, event)
+        else:
+            token_refusals.setdefault(connection_id, event)
+
+    connections = {row.id: row for row in session.scalars(select(YouTubeConnection))}
+    slots: list[dict[str, Any]] = []
+    for channel in session.scalars(
+        select(ChannelRecord).order_by(ChannelRecord.channel_type, ChannelRecord.channel_name)
+    ):
+        connection = connections.get(bound_connection_id(channel) or "")
+        if connection is None or connection.status != "CONNECTED":
+            continue
+        granted_at = _moment(connection.connected_at)
+        answered = max(
+            (m for m in (granted_at, _moment(connection.last_checked_at)) if m), default=None
+        )
+
+        def standing(
+            event: DomainEvent | None, answered: datetime | None = answered
+        ) -> tuple[dict[str, Any] | None, datetime | None]:
+            when = _moment(event.timestamp) if event is not None else None
+            if event is None or (answered is not None and when is not None and when <= answered):
+                return None, None
+            return (event.payload if isinstance(event.payload, dict) else {}), when
+
+        token, token_at = standing(token_refusals.get(connection.id))
+        report, report_at = standing(report_refusals.get(connection.id))
+        silence, silent_at = standing(silences.get(connection.id))
+        slots.append(
+            {
+                "label": f"«{channel.channel_name}» ({connection.name})",
+                "channel": channel.channel_name,
+                "account": connection.name,
+                "scopes": granted_scope_set(connection),
+                "age_days": (now - granted_at).days if granted_at else None,
+                "granted_on": granted_at.date().isoformat() if granted_at else None,
+                "token_refusal": (
+                    f"Google a refuzat tokenul pe {token_at:%Y-%m-%d %H:%M} UTC ({_answer(token)})"
+                    if token is not None and token_at is not None
+                    else ""
+                ),
+                "report_refusal": (
+                    f"Google a refuzat citirea statisticilor pe {report_at:%Y-%m-%d %H:%M} UTC "
+                    f"({_answer(report)})"
+                    if report is not None and report_at is not None
+                    else ""
+                ),
+                "silence": (
+                    f"{silent_at:%Y-%m-%d %H:%M} UTC, fără răspuns de la Google (rețea); nu "
+                    "spune nimic despre token"
+                    if silence is not None and silent_at is not None
+                    else ""
+                ),
+            }
+        )
+    return slots
+
+
+def _slot_detail(slot: dict[str, Any]) -> str:
+    scopes = slot["scopes"]
+    granted = (
+        ", ".join(sorted(scope_label(scope) for scope in scopes))
+        if scopes is not None
+        else "necunoscute (neînregistrate la conectare)"
+    )
+    age = (
+        f"acordat pe {slot['granted_on']}, de {slot['age_days']} zile"
+        if slot["age_days"] is not None
+        else "data acordării necunoscută"
+    )
+    last = (
+        slot["token_refusal"]
+        or slot["report_refusal"]
+        or slot["silence"]
+        or "niciuna înregistrată după acordare"
+    )
+    return (
+        f"{slot['channel']} → {slot['account']}: drepturi {granted}; {age}; "
+        f"ultima reîmprospătare eșuată: {last}"
+    )
+
+
+def _grant_age_caveat(slots: list[dict[str, Any]]) -> str:
+    """The age of each grant, and what seven days mean if his Google app is in Testing."""
+    ages = ", ".join(
+        f"{slot['account']} {slot['age_days']} zile"
+        if slot["age_days"] is not None
+        else f"{slot['account']} vârstă necunoscută"
+        for slot in slots
+    )
+    oldest = max((slot["age_days"] for slot in slots if slot["age_days"] is not None), default=None)
+    if oldest is not None and oldest >= TESTING_REFRESH_TOKEN_DAYS:
+        tail = (
+            f"Dacă aplicația Google OAuth este încă în modul Testing, Google face tokenul să "
+            f"expire la {TESTING_REFRESH_TOKEN_DAYS} zile după acordare, deci tokenul poate fi "
+            "deja expirat."
+        )
+    elif oldest is not None:
+        tail = (
+            f"Dacă aplicația Google OAuth este în modul Testing, tokenul expiră la "
+            f"{TESTING_REFRESH_TOKEN_DAYS} zile după acordare, adică peste "
+            f"{TESTING_REFRESH_TOKEN_DAYS - oldest} zile."
+        )
+    else:
+        tail = (
+            f"Dacă aplicația Google OAuth este în modul Testing, tokenul expiră la "
+            f"{TESTING_REFRESH_TOKEN_DAYS} zile după acordare."
+        )
+    return (
+        f"Vârsta acordului: {ages}. {tail} Studioul nu vede starea aplicației; un refuz apare "
+        "aici abia după ce Google l-a dat."
+    )
+
+
+def _youtube_upload_check(slots: list[dict[str, Any]]) -> dict[str, Any]:
+    """Whether the films can go out: the upload scope, and no standing refusal of the token.
+
+    BLOCKING, because a film nobody can upload is money spent on nothing: in TEST the day
+    uploads private, and a refused token refuses that upload as surely as a public one.
+    """
+    if not slots:
+        return _check(
+            "youtube_upload_access",
+            True,
+            BLOCKING,
+            "Niciun slot legat de un cont YouTube conectat, deci niciun token de judecat aici; "
+            "legarea sloturilor este linia ei.",
+            "",
+        )
+    problems = []
+    for slot in slots:
+        if slot["scopes"] is not None and UPLOAD_SCOPE not in slot["scopes"]:
+            problems.append(
+                f"{slot['label']}: Google nu a acordat dreptul de încărcare (youtube.upload)"
+            )
+        elif slot["token_refusal"]:
+            problems.append(f"{slot['label']}: {slot['token_refusal']}")
+    caveat = _grant_age_caveat(slots)
+    return _check(
+        "youtube_upload_access",
+        not problems,
+        BLOCKING,
+        f"{len(slots)} sloturi legate: niciunul nu arată dreptul de încărcare lipsă sau un refuz "
+        f"al tokenului după acordare. {caveat}",
+        f"Filmele nu pot urca pe YouTube: {'; '.join(problems)}. Reconectează canalul din "
+        "Setări (Conturi și e-mail → Reconectează) și acordă dreptul de încărcare. " + caveat,
+        detail=" | ".join(_slot_detail(slot) for slot in slots),
+    )
+
+
+def _youtube_statistics_check(slots: list[dict[str, Any]]) -> dict[str, Any]:
+    """Whether yesterday's numbers can be read: the statistics scope, and no standing refusal.
+
+    DEGRADING, never blocking: the films do not depend on statistics, only what the studio
+    learns from them does.
+    """
+    if not slots:
+        return _check(
+            "youtube_statistics_access",
+            True,
+            DEGRADING,
+            "Niciun slot legat de un cont YouTube conectat, deci nicio statistică de citit.",
+            "",
+        )
+    problems = []
+    for slot in slots:
+        if slot["token_refusal"] or slot["report_refusal"]:
+            refusal = slot["token_refusal"] or slot["report_refusal"]
+            problems.append(f"{slot['label']}: {refusal}")
+        elif slot["scopes"] is not None and STATISTICS_SCOPE not in slot["scopes"]:
+            granted = ", ".join(sorted(scope_label(scope) for scope in slot["scopes"]))
+            problems.append(f"{slot['label']}: acordate doar {granted}, fără yt-analytics.readonly")
+    return _check(
+        "youtube_statistics_access",
+        not problems,
+        DEGRADING,
+        f"{len(slots)} sloturi legate: niciunul nu arată lipsa accesului la statistici "
+        "(yt-analytics.readonly) sau un refuz al tokenului după acordare.",
+        f"Statisticile YouTube nu pot fi citite pentru {'; '.join(problems)}. Filmele nu depind "
+        "de ele: ziua le face și le publică, dar cifrele de ieri nu ajung la studio. "
+        "Reconectează canalul din Setări, acordând accesul la statistici (yt-analytics.readonly).",
+        detail=" | ".join(_slot_detail(slot) for slot in slots),
+    )
+
+
+def _motion_knob(environment: str) -> str:
+    if environment == "PRODUCTION":
+        return "plafonul de mișcare pe film (motion_budget_usd, STUDIO_MOTION_BUDGET_USD)"
+    return (
+        "plafonul de mișcare al unui film de test (test_max_cost_per_generation_usd × "
+        "test_motion_scenes, STUDIO_TEST_MAX_COST_PER_GENERATION_USD și STUDIO_TEST_MOTION_SCENES)"
+    )
+
+
+def _daily_budget_films_check(
+    engine: Engine, settings: Settings, environment: str, now: datetime
+) -> dict[str, Any]:
+    """Whether the active DAILY budget holds the day's films at the motion hold each one takes.
+
+    The media stage reserves, before each film, `estimate_film_cost_micros` — whose motion
+    part is the whole per-film ceiling of the environment (12 USD in PRODUCTION, two test
+    shots at 0.60 USD in TEST) — and the hold is refused when it does not fit what the day has
+    left. The same function is asked here, with no storyboard, so the figure is the stage's
+    own and the narration it adds is said rather than guessed. The factual short is held
+    first and the serial episode second (stages.py, `_media`), so the second film is the one
+    the budget refuses. In TEST, the PRODUCTION answer is a line he reads before he switches.
+    """
+    daily = [b for b in budget_status(engine, now)["budgets"] if b["period"] == "DAILY"]
+    with Session(engine) as session:
+        serial = (
+            session.scalar(
+                select(ChannelRecord.id).where(ChannelRecord.channel_type == "OFFICE_SERIAL")
+            )
+            is not None
+        )
+    films = 2 if serial else 1
+    if not daily:
+        return _check(
+            "daily_budget_films",
+            True,
+            DEGRADING,
+            "Niciun buget zilnic activ: nimic din buget nu refuză un film al zilei (linia "
+            "bugetului spune ce înseamnă lipsa lui).",
+            "",
+        )
+    limit = min(int(b["limit_usd_micros"]) for b in daily)
+
+    def hold(env: str) -> int:
+        return int(
+            estimate_film_cost_micros(engine, "", environment=env, settings=settings)[
+                "motion_usd_micros"
+            ]
+        )
+
+    def refused(env: str, per_film: int) -> str:
+        spare = limit - per_film
+        if spare < 0:
+            said = (
+                f"În {env} fiecare film ține {format_micros(per_film)} USD pentru mișcare, peste "
+                f"bugetul zilnic de {format_micros(limit)} USD. Niciun film nu încape: scurtul "
+                "factual este refuzat înainte de prima scenă"
+                + (", iar episodul serialului la fel." if films == 2 else ".")
+            )
+        else:
+            said = (
+                f"În {env} fiecare film ține {format_micros(per_film)} USD pentru mișcare, iar "
+                f"bugetul zilnic este de {format_micros(limit)} USD: {films} filme ar cere "
+                f"{format_micros(films * per_film)} USD, deci episodul serialului, al doilea film "
+                "al zilei, este refuzat de buget dacă scurtul factual a costat mai mult de "
+                f"{format_micros(spare)} USD (narațiunea se adaugă la fiecare film)."
+            )
+        return (
+            f"{said} Cele două numere pe care le poți schimba: bugetul zilnic (PUT "
+            f"/economy/budget, biroul Contabilitate), la cel puțin "
+            f"{format_micros(films * per_film)} USD, sau {_motion_knob(env)}, la cel mult "
+            f"{format_micros(limit // films)} USD."
+        )
+
+    here = hold(environment)
+    detail = (
+        f"{environment}: {format_micros(here)} USD pe film × {films} filme; "
+        f"zilnic {format_micros(limit)} USD"
+    )
+    if films * here > limit:
+        return _check(
+            "daily_budget_films", False, DEGRADING, "", refused(environment, here), detail=detail
+        )
+    fits = (
+        f"Bugetul zilnic de {format_micros(limit)} USD ține {films} filme la plafonul de mișcare "
+        f"din {environment} ({format_micros(here)} USD pe film)."
+    )
+    if environment == "TEST":
+        production = hold("PRODUCTION")
+        detail += f"; PRODUCTION: {format_micros(production)} USD pe film"
+        if films * production > limit:
+            # His answer about TEST is fine; the one about PRODUCTION is a line he reads now,
+            # while switching is still a decision rather than a lost film.
+            return _check(
+                "daily_budget_films",
+                False,
+                INFORMATIONAL,
+                "",
+                f"Acum ești în TEST, iar ziua încape: {films} filme la "
+                f"{format_micros(here)} USD pe film, în {format_micros(limit)} USD. La trecerea "
+                "în PRODUCTION nu mai încape. " + refused("PRODUCTION", production),
+                detail=detail,
+            )
+        fits += f" Și în PRODUCTION ({format_micros(production)} USD pe film) încap."
+    return _check("daily_budget_films", True, DEGRADING, fits, "", detail=detail)
+
+
+def run_preflight(
+    engine: Engine, settings: Settings, vault: Any, *, now: datetime | None = None
+) -> dict[str, Any]:
+    """Report the studio's readiness without changing anything or calling anything.
+
+    `now` is the moment the ages and the day's budget are read at; the clock when omitted.
+    """
+    moment = now or datetime.now(UTC)
     checks: list[dict[str, Any]] = []
 
     with Session(engine) as session:
@@ -407,7 +818,10 @@ def run_preflight(engine: Engine, settings: Settings, vault: Any) -> dict[str, A
             "youtube_channel_binding",
             bool(bound),
             DEGRADING,
-            f"{len(bound)} sloturi de canal legate de conturi YouTube conectate.",
+            # "Connected" is the stored status, not a tried token: what the grant may do and
+            # whether Google refused it are the two lines that follow, and this one says so.
+            f"{len(bound)} sloturi de canal legate de conturi YouTube marcate conectate (starea "
+            "stocată; ce poate face tokenul spun liniile despre încărcare și statistici).",
             (
                 f"{len(connected_accounts)} conturi YouTube conectate, dar niciun slot de canal "
                 "nu este legat de vreunul. Leagă-le în Publicare → Sloturi de canale: "
@@ -479,7 +893,9 @@ def run_preflight(engine: Engine, settings: Settings, vault: Any) -> dict[str, A
     # describe a channel nobody authorised through the interface.
     if youtube_connected is not None:
         publishing_detail = f"Canal conectat: {youtube_connected.remote_channel_title or '—'}."
-        publishing_ready = "Canal YouTube conectat prin OAuth."
+        publishing_ready = (
+            "Canal YouTube conectat prin OAuth (starea stocată, nu o încercare a tokenului)."
+        )
     elif settings.youtube_credentials_present:
         publishing_detail = "Credențiale din mediul serverului, neverificate prin OAuth."
         publishing_ready = "Credențiale YouTube prezente în mediul serverului."
@@ -500,7 +916,12 @@ def run_preflight(engine: Engine, settings: Settings, vault: Any) -> dict[str, A
     # What the Owner has not supplied yet. Read last, in one more session, because none of it
     # decides whether the day may start — it decides whether the day is worth having.
     checks.append(_budget_check(engine))
+    checks.append(_daily_budget_films_check(engine, settings, studio_environment(engine), moment))
     with Session(engine) as session:
+        # The token behind each bound slot, judged by what Google already answered.
+        slots = _youtube_slots(session, moment)
+        checks.append(_youtube_upload_check(slots))
+        checks.append(_youtube_statistics_check(slots))
         checks.append(_price_check(session))
         checks.append(_vision_check(session))
         checks.append(_character_reference_check(session))
@@ -511,6 +932,32 @@ def run_preflight(engine: Engine, settings: Settings, vault: Any) -> dict[str, A
     failed = [check for check in checks if not check["ok"] and check["severity"] != INFORMATIONAL]
     blocking = [check for check in failed if check["severity"] == BLOCKING]
     status = "BLOCKED" if blocking else ("DEGRADED" if failed else "READY")
+    # The first line that foresees the day stopping or losing a film. «Studioul poate rula»
+    # stood above a check that foresaw exactly that on the rehearsal's copy, and the summary
+    # is the sentence the run records as its stop reason, so it names the line itself.
+    first_stop = next(iter(blocking), None) or next(
+        (check for check in failed if check["name"] in EMPTIES_THE_DAY), None
+    )
+    if status == "BLOCKED":
+        assert first_stop is not None  # a BLOCKED status has a blocking line
+        summary = (
+            "Studioul nu poate rula până nu se rezolvă punctele blocante. Primul: "
+            + first_stop["message"]
+        )
+    elif first_stop is not None:
+        summary = (
+            "Ziua pornește, dar nu ajunge întreagă: " + first_stop["message"] + " Vezi lista "
+            "de mai jos."
+        )
+    else:
+        # Said plainly, because "DEGRADED" on its own invites being read as "fine for now".
+        summary = {
+            "READY": "Toate capabilitățile necesare sunt prezente.",
+            "DEGRADED": (
+                "Studioul poate rula, dar unele etape vor fi sărite sau vor produce rezultate "
+                "nepublicabile. Vezi lista de mai jos."
+            ),
+        }[status]
 
     return {
         "status": status,
@@ -519,13 +966,6 @@ def run_preflight(engine: Engine, settings: Settings, vault: Any) -> dict[str, A
         "checks": checks,
         "blocking_failures": [check["name"] for check in blocking],
         "degrading_failures": [check["name"] for check in failed if check["severity"] == DEGRADING],
-        # Said plainly, because "DEGRADED" on its own invites being read as "fine for now".
-        "summary": {
-            "READY": "Toate capabilitățile necesare sunt prezente.",
-            "DEGRADED": (
-                "Studioul poate rula, dar unele etape vor fi sărite sau vor produce rezultate "
-                "nepublicabile. Vezi lista de mai jos."
-            ),
-            "BLOCKED": "Studioul nu poate rula până nu se rezolvă punctele blocante.",
-        }[status],
+        "first_stop": first_stop["name"] if first_stop else None,
+        "summary": summary,
     }

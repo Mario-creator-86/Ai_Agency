@@ -416,37 +416,55 @@ def test_explicit_analytics_credentials_never_mix_with_the_environment(monkeypat
     assert from_env.channel_id is None
 
 
-def test_the_channels_adapter_carries_its_channel_and_ignores_the_environment(
-    engine, channel, monkeypatch
-):
-    from app.analytics.services import analytics_provider_for_channel
+def _bind_connection(engine, channel_id: str, name: str = "Main account") -> str:
+    """A CONNECTED account named by the slot, the way the Owner's two accounts are bound."""
     from app.youtube.models import YouTubeConnection
 
-    monkeypatch.setenv("STUDIO_YOUTUBE_ACCESS_TOKEN", "env-access")  # pragma: allowlist secret
     connection_id = str(uuid4())
     with Session(engine) as session, session.begin():
         session.add(
             YouTubeConnection(
                 id=connection_id,
-                name="Main account",
+                name=name,
                 client_id="client-id",
                 redirect_uri="http://localhost/callback",
                 encrypted_secrets="opaque",
                 secret_fields=["client_secret", "refresh_token"],
                 status="CONNECTED",
                 remote_channel_id="UC_main",
-                remote_channel_title="Main account",
+                remote_channel_title=name,
                 channel_snapshot={},
                 created_at=utc_now(),
             )
         )
-        session.get(ChannelRecord, channel).credentials_ref = f"youtube_connection:{connection_id}"
+        session.get(
+            ChannelRecord, channel_id
+        ).credentials_ref = f"youtube_connection:{connection_id}"
+    return connection_id
+
+
+class _Vault:
+    def decrypt(self, value: str) -> dict:
+        return {
+            "client_secret": "the-client-secret",  # pragma: allowlist secret
+            "refresh_token": "the-refresh-token",  # pragma: allowlist secret
+        }
+
+
+def test_the_channels_adapter_carries_its_channel_and_ignores_the_environment(
+    engine, channel, monkeypatch
+):
+    from app.analytics.services import analytics_provider_for_channel
+
+    monkeypatch.setenv("STUDIO_YOUTUBE_ACCESS_TOKEN", "env-access")  # pragma: allowlist secret
+    connection_id = _bind_connection(engine, channel)
 
     class Vault:
         def decrypt(self, value: str) -> dict:
             return {"client_secret": "s", "refresh_token": "r"}  # pragma: allowlist secret
 
     provider, reason = analytics_provider_for_channel(engine, Vault(), channel)
+    assert provider.connection_id == connection_id
     assert provider is not None and reason == ""
     assert provider.channel_id == "UC_main"
     assert provider.access_token is None
@@ -455,3 +473,205 @@ def test_the_channels_adapter_carries_its_channel_and_ignores_the_environment(
         "s",
         "r",
     )
+
+
+# ---------------------------------------------------------------------------
+# A statistics read that cannot be made is "no data", never the day's fault
+# ---------------------------------------------------------------------------
+# Measured on the Owner's copy on 2026-09-18: the refresh of the analytics token sat outside
+# every try, so a refused DNS lookup of oauth2.googleapis.com failed performance intake four
+# times over 140 s and the runbook blocked every stage after it. A revoked refresh token
+# answers HTTP 400 invalid_grant, which the runbook read as HARD and turned into safe mode.
+
+
+def _google_refuses(code: int, body: bytes):
+    import io
+    from urllib.error import HTTPError
+
+    def urlopen(request, timeout=None):
+        raise HTTPError(request.full_url, code, "Bad Request", {}, io.BytesIO(body))  # type: ignore[arg-type]
+
+    return urlopen
+
+
+def _unreachable(request, timeout=None):
+    from urllib.error import URLError
+
+    raise URLError("[Errno 11001] getaddrinfo failed")
+
+
+INVALID_GRANT = b'{"error": "invalid_grant", "error_description": "Token has been revoked."}'
+
+
+def _provider():
+    from app.providers.youtube_analytics import YouTubeAnalyticsProvider
+
+    return YouTubeAnalyticsProvider(
+        client_id="client-id",
+        client_secret="the-client-secret",  # pragma: allowlist secret
+        refresh_token="the-refresh-token",  # pragma: allowlist secret
+        channel_id="UC_main",
+    )
+
+
+def test_a_revoked_refresh_token_is_no_data_and_says_the_connection_needs_reconnecting(
+    monkeypatch,
+):
+    import asyncio
+
+    import app.providers.youtube_analytics as module
+
+    monkeypatch.setattr(module, "urlopen", _google_refuses(400, INVALID_GRANT))
+
+    with pytest.raises(MetricsUnavailable) as refused:
+        asyncio.run(_provider().fetch_video_metrics("yt_real_abc"))
+
+    exc = refused.value
+    assert exc.auth_refused is True
+    assert exc.during == "token_refresh"
+    assert exc.oauth_error == "invalid_grant"
+    assert exc.http_status == 400 and exc.error_class == "HTTPError"
+    assert "reconect" in str(exc).lower()
+    # The token and the secret never travel in what the studio says about the refusal.
+    assert "the-refresh-token" not in str(exc) and "the-client-secret" not in str(exc)
+
+
+def test_an_unreachable_token_service_is_no_data_not_an_exception_out_of_the_read(monkeypatch):
+    import asyncio
+
+    import app.providers.youtube_analytics as module
+
+    monkeypatch.setattr(module, "urlopen", _unreachable)
+
+    with pytest.raises(MetricsUnavailable) as refused:
+        asyncio.run(_provider().fetch_video_metrics("yt_real_abc"))
+
+    assert refused.value.auth_refused is False
+    assert refused.value.error_class == "URLError"
+    assert refused.value.during == "token_refresh"
+
+
+def test_a_report_google_refuses_is_no_data_and_an_impression_refusal_still_falls_back(
+    monkeypatch,
+):
+    import asyncio
+    import io
+    import json
+
+    import app.providers.youtube_analytics as module
+    from app.providers.youtube_analytics import YouTubeAnalyticsProvider
+
+    token = "a"  # pragma: allowlist secret
+    reader = YouTubeAnalyticsProvider(access_token=token, channel_id="UC_main")
+    monkeypatch.setattr(module, "urlopen", _google_refuses(403, b'{"error": {"code": 403}}'))
+    with pytest.raises(MetricsUnavailable) as forbidden:
+        asyncio.run(reader.fetch_video_metrics("yt_real_abc"))
+    assert forbidden.value.auth_refused is True and forbidden.value.during == "report"
+
+    monkeypatch.setattr(module, "urlopen", _unreachable)
+    with pytest.raises(MetricsUnavailable) as unreachable:
+        asyncio.run(reader.fetch_video_metrics("yt_real_abc"))
+    assert unreachable.value.auth_refused is False
+
+    # The one refusal the adapter has always answered by asking again: an account for which
+    # impressions are not reported. That stays a second, smaller question, not "no data".
+    calls: list[str] = []
+
+    class Answer(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def impressions_refused(request, timeout=None):
+        calls.append(request.full_url)
+        if len(calls) == 1:
+            return _google_refuses(400, b'{"error": {"code": 400}}')(request, timeout)
+        body = {"columnHeaders": [{"name": "views"}], "rows": [[12]]}
+        return Answer(json.dumps(body).encode("utf-8"))
+
+    monkeypatch.setattr(module, "urlopen", impressions_refused)
+    metrics = asyncio.run(reader.fetch_video_metrics("yt_real_abc"))
+    assert metrics.views == 12 and metrics.raw["impressions_reported"] is False
+    assert len(calls) == 2
+
+
+def test_measuring_a_channel_whose_token_google_refuses_records_no_data_and_tells_the_preflight(
+    engine, channel, monkeypatch
+):
+    """Both of the channel's real publications are listed as without data, with the words the
+    Owner acts on; the token is asked for once, not once per film; and the refusal is in the
+    ledger where the preflight reads it without calling anyone."""
+    import app.providers.youtube_analytics as module
+    from app.analytics.services import (
+        TOKEN_REFRESH_FAILED,
+        analytics_provider_for_channel,
+        measure_channel_publications,
+    )
+    from app.models import DomainEvent
+
+    connection_id = _bind_connection(engine, channel, name="Nexus Curiosity")
+    make_publication(engine, channel, remote_video_id="yt_real_1")
+    make_publication(engine, channel, remote_video_id="yt_real_2")
+    calls: list[str] = []
+    refuse = _google_refuses(400, INVALID_GRANT)
+
+    def counted(request, timeout=None):
+        calls.append(request.full_url)
+        return refuse(request, timeout)
+
+    monkeypatch.setattr(module, "urlopen", counted)
+    provider, _ = analytics_provider_for_channel(engine, _Vault(), channel)
+
+    result = measure_channel_publications(engine, channel, provider, limit=5)
+
+    assert result["candidates"] == 2 and result["measured"] == 0
+    assert len(result["unavailable"]) == 2
+    for line in result["unavailable"]:
+        assert "Nexus Curiosity" in line and "Reconectează" in line, line
+        assert "the-refresh-token" not in line
+    assert calls == ["https://oauth2.googleapis.com/token"], "one refusal is the channel's answer"
+    with Session(engine) as session:
+        events = session.scalars(
+            select(DomainEvent).where(DomainEvent.event_type == TOKEN_REFRESH_FAILED)
+        ).all()
+        assert session.scalars(select(AnalyticsSnapshot)).all() == []
+    assert TOKEN_REFRESH_FAILED == "youtube.token_refresh_failed"
+    (event,) = events
+    assert event.aggregate_type == "youtube_connection" and event.aggregate_id == connection_id
+    payload = event.payload
+    assert payload["connection_id"] == connection_id
+    assert payload["channel_id"] == channel and payload["channel_slot"] == "MAIN_FACTUAL"
+    assert payload["error_class"] == "HTTPError" and payload["http_status"] == 400
+    assert payload["oauth_error"] == "invalid_grant" and payload["auth_refused"] is True
+    flat = str(payload)
+    assert "the-refresh-token" not in flat and "the-client-secret" not in flat
+
+
+def test_an_unreachable_google_is_no_data_for_the_channel_and_not_an_authentication_refusal(
+    engine, channel, monkeypatch
+):
+    import app.providers.youtube_analytics as module
+    from app.analytics.services import (
+        TOKEN_REFRESH_FAILED,
+        analytics_provider_for_channel,
+        measure_channel_publications,
+    )
+    from app.models import DomainEvent
+
+    _bind_connection(engine, channel)
+    make_publication(engine, channel)
+    monkeypatch.setattr(module, "urlopen", _unreachable)
+    provider, _ = analytics_provider_for_channel(engine, _Vault(), channel)
+
+    result = measure_channel_publications(engine, channel, provider)
+
+    assert result["measured"] == 0 and len(result["unavailable"]) == 1
+    assert "Reconectează" not in result["unavailable"][0]
+    with Session(engine) as session:
+        (event,) = session.scalars(
+            select(DomainEvent).where(DomainEvent.event_type == TOKEN_REFRESH_FAILED)
+        ).all()
+    assert event.payload["auth_refused"] is False
+    assert event.payload["error_class"] == "URLError"

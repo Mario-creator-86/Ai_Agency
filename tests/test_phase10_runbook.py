@@ -394,13 +394,37 @@ def test_a_failed_stage_puts_the_studio_into_safe_mode(engine, settings, vault, 
         assert session.get(OwnerPolicy, 1).autonomy_stopped is True
 
 
+def test_a_hard_fault_where_nothing_is_bought_published_or_recorded_costs_the_stage_alone(
+    engine, settings, vault, studio
+):
+    """`21`'s P0 is duplicate publish, uncontrolled spend, a secret leak, a corrupted record.
+    A refused statistics token is none of them: on the Owner's copy (2026-09-18) an HTTP 400
+    from Google was HARD, and HARD opened safe mode and the autonomy stop from any stage. The
+    tests around this one therefore fail the media stage, where a hard fault is still a P0."""
+    make_a_model_available(engine)
+
+    def refused():
+        raise RuntimeError("HTTP 400 invalid_grant")
+
+    result = execute_daily_run(
+        engine, settings, vault, stage_runners={"performance_intake": refused}
+    )
+
+    stages = {s["stage"]: s for s in result["stages"]}
+    assert stages["performance_intake"]["status"] == FAILED
+    assert stages["performance_intake"]["fault_class"] == "HARD"
+    assert safe_mode_state(engine)["active"] is False
+    with Session(engine) as session:
+        assert session.get(OwnerPolicy, 1).autonomy_stopped is False
+
+
 def test_no_run_starts_while_safe_mode_is_active(engine, settings, vault, studio):
     make_a_model_available(engine)
 
     def explode():
         raise RuntimeError("disk full")
 
-    execute_daily_run(engine, settings, vault, stage_runners={"performance_intake": explode})
+    execute_daily_run(engine, settings, vault, stage_runners={"media": explode})
 
     with pytest.raises(SafeModeActive):
         execute_daily_run(engine, settings, vault)
@@ -412,7 +436,7 @@ def test_leaving_safe_mode_requires_saying_what_was_checked(engine, settings, va
         engine,
         settings,
         vault,
-        stage_runners={"performance_intake": lambda: (_ for _ in ()).throw(RuntimeError("x"))},
+        stage_runners={"media": lambda: (_ for _ in ()).throw(RuntimeError("x"))},
     )
 
     with pytest.raises(RunbookError):
@@ -428,7 +452,7 @@ def test_leaving_safe_mode_does_not_restart_autonomy(engine, settings, vault, st
         engine,
         settings,
         vault,
-        stage_runners={"performance_intake": lambda: (_ for _ in ()).throw(RuntimeError("x"))},
+        stage_runners={"media": lambda: (_ for _ in ()).throw(RuntimeError("x"))},
     )
 
     result = clear_safe_mode(engine, "Am verificat discul; era plin, l-am eliberat.")
@@ -443,7 +467,7 @@ def test_leaving_safe_mode_does_not_restart_autonomy(engine, settings, vault, st
 
 def test_a_second_failure_does_not_obscure_when_safe_mode_began(engine, settings, vault, studio):
     make_a_model_available(engine)
-    boom = {"performance_intake": lambda: (_ for _ in ()).throw(RuntimeError("x"))}
+    boom = {"media": lambda: (_ for _ in ()).throw(RuntimeError("x"))}
     execute_daily_run(engine, settings, vault, stage_runners=boom)
     first = safe_mode_state(engine)["entered_at"]
 

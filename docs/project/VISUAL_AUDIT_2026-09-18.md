@@ -122,3 +122,8 @@ backendul, au fost păstrate.
 - [Epic — FBX Static Mesh Pipeline](https://dev.epicgames.com/documentation/unreal-engine/fbx-static-mesh-pipeline-in-unreal-engine):
   referință pentru active noi (UV-uri, normale, materiale). Proiectul actual are
   export GLB existent; nu migra întregul pipeline numai pentru acest audit.
+
+
+## Continuare: stabilitatea playerului
+
+Ulterior a fost corectat un timer vechi care putea întrerupe un flux recuperat. Video real a fost verificat în browser, cu recuperare controlată și continuitate până la secunda 86. Vezi [raportul de stabilitate](STREAM_STABILITY_2026-09-18.md). Utilitarul Python WebRTC rămâne experimental; verificarea reușită a folosit componenta frontend reală. Finisarea L2 rămâne de făcut.

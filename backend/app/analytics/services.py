@@ -9,6 +9,7 @@ from typing import Any, TypedDict
 from uuid import uuid4
 
 from sqlalchemy import Engine, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.analytics.models import (
@@ -28,7 +29,7 @@ from app.analytics.schemas import (
 from app.factual.models import HookOption, ScriptDraft, StoryReview, TopicIdea
 from app.media.models import Storyboard, VideoRenderJob
 from app.providers.analytics_base import AnalyticsProvider
-from app.providers.youtube_analytics import YouTubeAnalyticsProvider
+from app.providers.youtube_analytics import MetricsUnavailable, YouTubeAnalyticsProvider
 from app.publishing.models import ChannelRecord, PublicationRecord
 from app.publishing.services import bound_connection_id
 from app.services import append_event, utc_now
@@ -138,12 +139,16 @@ def get_active_strategy(engine: Engine, channel_id: str) -> dict | None:
         return ContentStrategyView.model_validate(strat).model_dump()
 
 
-class MetricsUnavailable(RuntimeError):
-    """There is nothing measurable attached to this publication yet.
+#: The ledger event a refused or unreachable analytics token refresh leaves behind, one per
+#: channel measured. Aggregate ``youtube_connection`` / the connection id; the payload is
+#: ``connection_id, connection_name, channel_id, channel_slot, channel_name, during,
+#: error_class, http_status, oauth_error, auth_refused, reason`` — never a token or secret.
+#: The preflight reads the newest one per connection instead of calling Google itself.
+TOKEN_REFRESH_FAILED = "youtube.token_refresh_failed"
 
-    Distinct from a missing publication (404) and from a provider failure (502): the row is
-    there, the platform is reachable, but no real video exists to report on.
-    """
+#: The same record when the token was fine and the report itself refused the account (401 or
+#: 403: the statistics scope was never granted or has been withdrawn). Same payload.
+ANALYTICS_REFUSED = "youtube.analytics_refused"
 
 
 def ingest_publication_metrics(
@@ -258,8 +263,81 @@ def analytics_provider_for_channel(
             client_secret=secrets.get("client_secret"),
             refresh_token=secrets.get("refresh_token"),
             channel_id=connection.remote_channel_id,
+            connection_id=connection.id,
         )
         return provider, ""
+
+
+def _record_account_refusal(
+    engine: Engine, channel_id: str, provider: AnalyticsProvider, exc: MetricsUnavailable
+) -> str:
+    """Write down that this channel's account could not be read, and say it to the Owner.
+
+    Named the way the preflight and the slot binding name a connection — the account by its
+    name, the slot by its channel — so the line points at the button that fixes it. Returns
+    the reason in Romanian. The event is written in a transaction of its own: a statistics
+    read that failed must not take the record of why with it.
+    """
+    connection_id = getattr(provider, "connection_id", None)
+    with Session(engine) as session:
+        channel = session.get(ChannelRecord, channel_id)
+        connection = session.get(YouTubeConnection, connection_id) if connection_id else None
+        channel_name = channel.channel_name if channel else channel_id
+        channel_slot = channel.channel_type if channel else None
+        connection_name = connection.name if connection else None
+    account = f"contul „{connection_name}”" if connection_name else "contul"
+    if exc.auth_refused:
+        detail = f"HTTP {exc.http_status}" if exc.http_status else exc.error_class or "refuz"
+        if exc.oauth_error:
+            detail += f", {exc.oauth_error}"
+        reason = (
+            f"Google a refuzat {account} legat de slotul „{channel_name}” ({detail}): legătura "
+            "canalului cu YouTube trebuie refăcută — apasă Reconectează în Settings → Conturi "
+            "și e-mail. Până atunci statisticile acestui canal rămân fără date."
+        )
+    else:
+        reason = (
+            f"Google nu a putut fi întrebat pentru {account} al slotului „{channel_name}” "
+            f"({exc.error_class or 'fără răspuns'}); statisticile rămân fără date azi."
+        )
+    logger.warning(
+        "analytics_account_unreadable",
+        extra={
+            "channel_id": channel_id,
+            "connection_id": connection_id,
+            "auth_refused": exc.auth_refused,
+            "error_class": exc.error_class,
+        },
+    )
+    if connection_id is None:
+        return reason  # the environment path has no connection row to record it against
+    try:
+        with Session(engine) as session, session.begin():
+            append_event(
+                session,
+                TOKEN_REFRESH_FAILED if exc.during == "token_refresh" else ANALYTICS_REFUSED,
+                "youtube_connection",
+                connection_id,
+                1,
+                {
+                    "connection_id": connection_id,
+                    "connection_name": connection_name,
+                    "channel_id": channel_id,
+                    "channel_slot": channel_slot,
+                    "channel_name": channel_name,
+                    "during": exc.during,
+                    "error_class": exc.error_class,
+                    "http_status": exc.http_status,
+                    "oauth_error": exc.oauth_error,
+                    "auth_refused": exc.auth_refused,
+                    "reason": reason[:300],
+                },
+                str(uuid4()),
+            )
+    except SQLAlchemyError:
+        # The day's line still says "no data" and why; only the preflight's copy is lost.
+        logger.warning("analytics_refusal_not_recorded", extra={"connection_id": connection_id})
+    return reason
 
 
 def measure_channel_publications(
@@ -275,6 +353,15 @@ def measure_channel_publications(
     Only this channel's PUBLISHED rows with a remote video id are asked about: a simulated
     publication has no audience, and another channel's video is another account's number.
     Returns the count measured and, per publication, why one could not be.
+
+    A read the platform could not answer or refused is that publication's "no data", never
+    the caller's exception (`MetricsUnavailable` from the adapter). When the refusal is the
+    account's — the token could not be refreshed, or the report refused the account — every
+    publication left is recorded with the same reason instead of being asked again: the
+    next film is asked with the same token and gets the same answer, fifteen seconds of
+    timeout at a time. The refusal is written to the ledger once (`TOKEN_REFRESH_FAILED` or
+    `ANALYTICS_REFUSED`) for the preflight to read, and the reason names the account and the
+    slot in the words the Owner acts on.
     """
     with Session(engine) as session:
         query = (
@@ -291,14 +378,22 @@ def measure_channel_publications(
         identifiers = list(session.scalars(query))
 
     measured, unavailable = 0, []
+    account_refusal: str | None = None
     for publication_id in identifiers:
+        if account_refusal is not None:
+            unavailable.append(f"{publication_id}: {account_refusal}")
+            continue
         try:
             ingest_publication_metrics(
                 engine, publication_id, provider, window=window, correlation_id=str(uuid4())
             )
             measured += 1
         except MetricsUnavailable as exc:
-            unavailable.append(f"{publication_id}: {exc}")
+            if exc.during == "token_refresh" or exc.auth_refused:
+                account_refusal = _record_account_refusal(engine, channel_id, provider, exc)
+                unavailable.append(f"{publication_id}: {account_refusal}")
+            else:
+                unavailable.append(f"{publication_id}: {exc}")
     return {
         "channel_id": channel_id,
         "candidates": len(identifiers),

@@ -657,3 +657,14 @@ def test_the_flow_leaves_an_audit_trail(engine, vault, google, connection):
     # The event records which channel was authorised, and carries no credential.
     assert connected.payload["channel_id"] == "UC_alpha_test"
     assert "refresh_token" not in str(connected.payload)
+
+
+def test_the_consent_asks_for_the_statistics_the_day_reads(engine, connection):
+    """Measured on the Owner's copy on 2026-09-18: both of his connections hold youtube.readonly
+    and youtube.upload and not yt-analytics.readonly, because the consent never asked for it -
+    so a reconnect could not have granted it either, and the day's statistics read failed on
+    every refresh. The one consent now asks for everything the studio does with a channel."""
+    started = services.begin_authorization(engine, connection["id"], correlation_id=str(uuid4()))
+    scope = parse_qs(urlparse(started["authorization_url"]).query)["scope"][0].split()
+    assert services.STATISTICS_SCOPE in scope
+    assert services.UPLOAD_SCOPE in scope

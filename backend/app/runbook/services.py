@@ -69,6 +69,85 @@ STAGES = (
     "daily_log",
 )
 
+#: What each stage needs from the stages before it — the only edges along which a failure
+#: travels. A stage whose every listed prerequisite FAILED or was BLOCKED is BLOCKED itself,
+#: with the prerequisite named; a stage with an empty entry needs nothing but the preflight
+#: and runs whatever happened before it. Until 2026-09-18 any failure blocked every later
+#: stage: on a copy of the Owner's studio a refused statistics token at performance intake
+#: left the day with nothing researched, written or filmed. Each edge is read from what the
+#: runner in `app.runbook.stages.build_stage_runners` actually reads, not from STAGES' order:
+#:
+#: performance_intake — the channel slots and their PUBLISHED rows; nothing of today.
+#: idea_generation — the topic pool, plus the cohorts of every snapshot ever stored
+#:   (`research.agent._signals`, "empty when unknown"): today's numbers are not required.
+#: research_and_verification — the whole pool, every unextracted source and every UNVERIFIED
+#:   claim, whichever day wrote them; a failed idea stage leaves that backlog where it was.
+#: selection — only topics with SUPPORTED claims, which verification writes. The day does not
+#:   choose a subject on the far side of an unexamined fault in the step that turns a page
+#:   into a claim a film may cite.
+#: script_and_storyboard — writes for the SELECTED topic (`script_work`), storyboards what is
+#:   approved.
+#: serial_queue — the previous day's closed log, closed on the preflight line, not a stage.
+#: media — APPROVED storyboards: the factual one from script_and_storyboard, the serial's from
+#:   serial_queue. Either one is a film to make, so media is blocked only when both are lost.
+#: edit_and_qc — the files media rendered. publish — what quality control passed.
+#: post_run, daily_log — the report and the record of whatever happened: nothing.
+STAGE_PREREQUISITES: dict[str, tuple[str, ...]] = {
+    "performance_intake": (),
+    "idea_generation": (),
+    "research_and_verification": (),
+    "selection": ("research_and_verification",),
+    "script_and_storyboard": ("selection",),
+    "serial_queue": (),
+    "media": ("script_and_storyboard", "serial_queue"),
+    "edit_and_qc": ("media",),
+    "publish": ("edit_and_qc",),
+    "post_run": (),
+    "daily_log": (),
+}
+
+#: The stages the day's films pass through. A failure that loses one of them loses a film,
+#: and that is what the same-day re-attempt exists for; a failure anywhere else costs its own
+#: stage, and a re-attempt of the whole day would choose a new subject and buy a second film
+#: to recover a report.
+PRODUCTION_STAGES = (
+    "selection",
+    "script_and_storyboard",
+    "serial_queue",
+    "media",
+    "edit_and_qc",
+    "publish",
+)
+
+#: Where a HARD fault is a P0. `21_FAILURE_RECOVERY_PLAYBOOK` names four — duplicate publish,
+#: uncontrolled spend, secret leak, corrupted audit state — and `36_RELIABILITY_SLO_RUNBOOK`
+#: gives safe mode to P0 alone; "production blocked, provider unavailable" is P1 (pause what
+#: is affected, notify). So safe mode opens for an unexplained fault in the stage that buys
+#: generation (media: the studio no longer knows what it spent), in the one that writes to a
+#: platform (publish: it no longer knows what it uploaded), in the day's own record
+#: (daily_log), and for a database integrity error in any stage (`_doubts_the_record`). A
+#: HARD fault anywhere else — a refused statistics token at performance intake, a bug in
+#: selection — costs that stage and a letter to the Owner. It used to open safe mode and set
+#: the autonomy stop from any stage: one expired read-only token would have halted the studio.
+SAFE_MODE_STAGES = ("media", "publish", "daily_log")
+
+#: How many things each stage made, read from the artefacts its runner already returns
+#: (`app.runbook.stages`). A key holding a list counts its items, a number counts itself,
+#: anything else present counts one. The preflight checks and the day's log records, so
+#: neither is counted: "produced something" is about the ten stages of work between them.
+PRODUCED_FROM: dict[str, tuple[str, ...]] = {
+    "performance_intake": ("measured",),
+    "idea_generation": ("proposed",),
+    "research_and_verification": ("pages_fetched", "sources_read", "claims_verified"),
+    "selection": ("topic_id",),
+    "script_and_storyboard": ("scripts", "storyboards"),
+    "serial_queue": ("written", "storyboard_id"),
+    "media": ("assets",),
+    "edit_and_qc": ("passed", "failed"),
+    "publish": ("published",),
+    "post_run": ("applied",),
+}
+
 COMPLETED = "COMPLETED"
 SKIPPED = "SKIPPED"
 BLOCKED = "BLOCKED"
@@ -191,17 +270,126 @@ def stop_requested(engine: Engine) -> bool:
         return bool(policy is not None and policy.autonomy_stopped)
 
 
-def retryable_outcome(status: str, preflight_status: str, fault_class: str | None) -> bool:
+def retryable_outcome(
+    status: str,
+    preflight_status: str,
+    fault_class: str | None,
+    *,
+    production_lost: bool = True,
+) -> bool:
     """Whether a day that ended like this may be attempted again by the clock today.
 
     Yes for a BLOCKED preflight (a provider that was down at five may be up at six) and
-    for a FAILED run whose fault was transient. No for a day that did work — COMPLETED or
-    PARTIAL is one day's production, and a second is the Owner's decision — and no for a
-    hard failure, which is in safe mode waiting for a person.
+    for a FAILED run whose fault was transient and cost the day's films. No for a day that
+    did work — COMPLETED or PARTIAL is one day's production, and a second is the Owner's
+    decision — no for a hard failure, which a re-attempt would meet again, and no for a
+    transient fault in a stage no film depends on: the re-attempt runs the whole day, and
+    selection would choose a new subject and the media stage buy a second film to recover a
+    report. ``production_lost`` defaults to True, the old reading, for a caller that cannot
+    tell.
     """
     if status == "BLOCKED" and preflight_status == "BLOCKED":
         return True
-    return status == "FAILED" and fault_class == TRANSIENT
+    return status == "FAILED" and fault_class == TRANSIENT and production_lost
+
+
+def _doubts_the_record(exc: BaseException | None) -> bool:
+    """A database integrity error anywhere in the chain: `21`'s data integrity incident.
+
+    Not `OperationalError`, which is a lock or a busy file and is TRANSIENT; an
+    `IntegrityError` or any other `DatabaseError` says the record may not be what the studio
+    thinks it is, and no stage's name makes that smaller.
+    """
+    from sqlalchemy.exc import DatabaseError  # noqa: PLC0415
+
+    seen: set[int] = set()
+    current = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, DatabaseError | sqlite3.DatabaseError) and not isinstance(
+            current, OperationalError | sqlite3.OperationalError
+        ):
+            return True
+        current = current.__cause__ or (
+            None if current.__suppress_context__ else current.__context__
+        )
+    return False
+
+
+def _count(value: Any) -> int:
+    if isinstance(value, bool) or value is None:
+        return int(bool(value))
+    if isinstance(value, int | float):
+        return max(0, int(value))
+    if isinstance(value, list | tuple | set | dict):
+        return len(value)
+    return 1 if value else 0
+
+
+def produced_by(stage: dict[str, Any]) -> int | None:
+    """How many things a stage outcome made, from its own artefacts; None when not counted.
+
+    The keys of `PRODUCED_FROM` are read from what the runner returned. Nothing is inferred
+    from the status: a stage COMPLETED on a refusal made nothing, and says 0.
+    """
+    keys = PRODUCED_FROM.get(stage["stage"])
+    if keys is None:
+        return None
+    artefacts = stage.get("artefacts") or {}
+    return sum(_count(artefacts.get(key)) for key in keys)
+
+
+def run_summary(stages: list[dict[str, Any]]) -> tuple[str, int]:
+    """The day's headline in Romanian, and how many stages produced something.
+
+    "COMPLETED 12/12" was the headline of a rehearsal day whose ideas were refused, whose
+    research verified nothing and whose Director decided nothing. This counts the ten stages
+    of work: how many ran to their end, how many made something, and names the rest.
+    """
+    work = [s for s in stages if s["stage"] in PRODUCED_FROM]
+    ran = [s for s in work if s["status"] == COMPLETED]
+    productive = [s for s in work if (s.get("produced") or 0) > 0]
+    idle = [s["stage"] for s in ran if not (s.get("produced") or 0)]
+    failed = [s["stage"] for s in work if s["status"] == FAILED]
+    blocked = [s["stage"] for s in work if s["status"] == BLOCKED]
+    parts = [
+        f"{len(ran)} din {len(work)} etape au rulat până la capăt; "
+        f"{len(productive)} au produs ceva."
+    ]
+    if not productive:
+        parts.append("Ziua nu a produs nimic.")
+    elif idle:
+        parts.append("Fără rezultat: " + ", ".join(f"«{name}»" for name in idle) + ".")
+    if failed:
+        parts.append("Eșuate: " + ", ".join(f"«{name}»" for name in failed) + ".")
+    if blocked:
+        parts.append("Blocate: " + ", ".join(f"«{name}»" for name in blocked) + ".")
+    published = next((s.get("produced") or 0 for s in work if s["stage"] == "publish"), 0)
+    parts.append(f"Filme publicate: {published}." if published else "Niciun film publicat azi.")
+    return " ".join(parts), len(productive)
+
+
+def _blocked_by(name: str, lost: dict[str, dict[str, Any]]) -> str | None:
+    """Why ``name`` cannot run today, or None when one of its inputs was delivered."""
+    needs = STAGE_PREREQUISITES.get(name, ())
+    if not needs or any(need not in lost for need in needs):
+        return None
+    causes: list[str] = []
+    for need in needs:
+        for root in lost[need]["roots"]:
+            if root not in causes:
+                causes.append(root)
+    if len(needs) == 1:
+        how = "a eșuat" if lost[needs[0]]["status"] == FAILED else "a fost blocată"
+        reason = f"Nu a fost încercată: etapa de care depinde, «{needs[0]}», {how}."
+    else:
+        waited = ", ".join(f"«{need}»" for need in needs)
+        reason = (
+            f"Nu a fost încercată: niciuna dintre etapele de care depinde ({waited}) nu a livrat."
+        )
+    if causes != list(needs):
+        reason += " Cauza: " + ", ".join(f"«{root}»" for root in causes) + "."
+    return reason
 
 
 def _run_with_retries(
@@ -587,9 +775,11 @@ def execute_daily_run(
 
     A stage that raises is classified (`classify_fault`). A transient fault is retried in
     place, ``settings.stage_retry_attempts`` times with exponential backoff, and only then
-    fails the run — without safe mode, because nothing about the studio is wrong. A hard
-    fault fails the run at once and opens safe mode, as before. Between stages the Owner's
-    stop is read again: a day already running stops where it is, the rest BLOCKED, with no
+    fails the stage. A failed stage BLOCKS the stages that take their input from it
+    (`STAGE_PREREQUISITES`) and no others: the rest of the day still runs. Safe mode opens
+    only for a P0 (`SAFE_MODE_STAGES`); the day is re-attempted only when a transient fault
+    cost its films (`PRODUCTION_STAGES`). Between stages the Owner's stop is read again: a
+    day already running stops where it is, the rest BLOCKED whatever the table says, with no
     safe mode and no letter — the Owner did it.
 
     ``attempt`` of ``attempts_allowed`` is where this run stands in the day's re-attempts.
@@ -638,6 +828,21 @@ def execute_daily_run(
     stop_reason: str | None = None
     fault_class: str | None = None
     owner_stopped = False
+    # What the day lost, stage by stage: a stage that FAILED or BLOCKED itself is its own
+    # root; a stage blocked by `STAGE_PREREQUISITES` carries the roots it inherited. The
+    # Owner's stop is not in here — it is not a loss, it is his decision.
+    lost: dict[str, dict[str, Any]] = {}
+    # The stages that broke by themselves, in order, with what the run needs to say of them.
+    broken: list[str] = []
+    faults: dict[str, str | None] = {}
+    reasons: dict[str, str] = {}
+    errors: dict[str, BaseException] = {}
+
+    def breaks(name: str, status: str, reason: str, fault: str | None) -> None:
+        broken.append(name)
+        faults[name] = fault
+        reasons[name] = reason
+        lost[name] = {"status": status, "roots": [name]}
 
     _announce(
         engine,
@@ -678,18 +883,29 @@ def execute_daily_run(
             if owner_stopped:
                 stages.append(_stage(name, BLOCKED, OWNER_STOP_REASON))
                 continue
-            if stopped_at is not None:
-                stages.append(_stage(name, BLOCKED, f"Rularea s-a oprit la etapa «{stopped_at}»."))
-                continue
             # The switch is read again before every stage. It used to be read once, at the
             # gate: an Owner who pressed STOP at stage three watched the studio spend the
-            # remaining nine anyway.
+            # remaining nine anyway. It outranks the dependency table: a stage after his
+            # stop is his, whatever else happened before it.
             if stop_requested(engine):
                 owner_stopped = True
                 stopped_at = name
                 stop_reason = OWNER_STOP_REASON
                 stages.append(_stage(name, BLOCKED, OWNER_STOP_REASON))
                 _finished(engine, run_id, name, BLOCKED, OWNER_STOP_REASON, correlation)
+                continue
+            # A failure costs the stages that take their input from it, and no others. This
+            # used to be "any failure blocks everything after it": a refused statistics token
+            # at performance intake left the day with nothing filmed (rehearsal, 2026-09-18).
+            waiting = _blocked_by(name, lost)
+            if waiting is not None:
+                needs = STAGE_PREREQUISITES[name]
+                roots: list[str] = []
+                for need in needs:
+                    roots.extend(r for r in lost[need]["roots"] if r not in roots)
+                lost[name] = {"status": BLOCKED, "roots": roots}
+                stages.append(_stage(name, BLOCKED, waiting))
+                _finished(engine, run_id, name, BLOCKED, waiting, correlation)
                 continue
             runner = runners.get(name)
             _announce(
@@ -709,31 +925,36 @@ def execute_daily_run(
             )
             if error is not None:
                 reason = f"{type(error).__name__}: {error}"[:500]
-                stopped_at = name
                 if stop_requested(engine):
                     # A runner that polls `stop_requested` may raise to get out; a runner
                     # that does not may have been failed by the stop itself (a connection
                     # closed under it). Either way the Owner ended the day: BLOCKED, with
                     # what the stage said kept in the record, and no fault.
                     owner_stopped = True
+                    stopped_at = name
                     stop_reason = OWNER_STOP_REASON
                     stages.append(
                         _stage(name, BLOCKED, f"{OWNER_STOP_REASON} ({reason})", attempts=attempts)
                     )
                     _finished(engine, run_id, name, BLOCKED, OWNER_STOP_REASON, correlation)
                     continue
-                fault_class = classify_fault(error)
+                stage_fault: str | None = classify_fault(error)
                 stages.append(
-                    _stage(name, FAILED, reason, fault_class=fault_class, attempts=attempts)
+                    _stage(name, FAILED, reason, fault_class=stage_fault, attempts=attempts)
                 )
                 _finished(engine, run_id, name, FAILED, reason, correlation)
-                if fault_class == TRANSIENT:
-                    stop_reason = (
+                errors[name] = error
+                breaks(
+                    name,
+                    FAILED,
+                    (
                         f"Etapa «{name}» a eșuat după {attempts} încercări, pe o eroare "
                         f"trecătoare: {type(error).__name__}"
-                    )
-                else:
-                    stop_reason = f"Etapa «{name}» a eșuat: {type(error).__name__}"
+                        if stage_fault == TRANSIENT
+                        else f"Etapa «{name}» a eșuat: {type(error).__name__}"
+                    ),
+                    stage_fault,
+                )
                 continue
             assert outcome is not None  # one of the two is always set
             status = str(outcome.get("status", COMPLETED))
@@ -742,7 +963,6 @@ def execute_daily_run(
                 # A runner that reports its own failure says which kind, or it is hard: a
                 # stage that knows the fault is passing has to say so to be retried.
                 stage_fault = str(outcome.get("fault_class") or HARD)
-                fault_class = stage_fault
             stages.append(
                 _stage(
                     name,
@@ -754,13 +974,19 @@ def execute_daily_run(
                 )
             )
             _finished(engine, run_id, name, status, str(outcome.get("reason", "")), correlation)
-            if status in (BLOCKED, FAILED):
+            if status == BLOCKED and stop_requested(engine):
+                # The stage stopped itself because the Owner asked (the media loop between
+                # scenes): his decision, not a gate refusing.
+                owner_stopped = True
                 stopped_at = name
-                stop_reason = str(outcome.get("reason", "")) or f"Etapa «{name}» s-a oprit."
-                if status == BLOCKED and stop_requested(engine):
-                    # The stage stopped itself because the Owner asked (the media loop
-                    # between scenes): his decision, not a gate refusing.
-                    owner_stopped = True
+                stop_reason = str(outcome.get("reason", "")) or OWNER_STOP_REASON
+            elif status in (BLOCKED, FAILED):
+                breaks(
+                    name,
+                    status,
+                    str(outcome.get("reason", "")) or f"Etapa «{name}» s-a oprit.",
+                    stage_fault,
+                )
 
     # The day is closed from the event stream whenever the studio actually worked: a partial day
     # is still a day, and the log is what tomorrow's episode is checked against. A blocked
@@ -772,12 +998,36 @@ def execute_daily_run(
     if preflight["status"] != "BLOCKED" and (worked or not owner_stopped):
         stages = _close_the_day(stages, engine, settings, date_iso, run_id, wait, correlation)
         closing = next(s for s in stages if s["stage"] == "daily_log")
-        if closing["status"] == FAILED and stopped_at is None:
-            # A day that went well until its last step: the close's fault is the run's, and
-            # the Director says where it stopped, as for any stage.
-            fault_class = closing["fault_class"]
-            stopped_at = "daily_log"
-            stop_reason = f"Etapa «daily_log» a eșuat: {closing['reason'].split(':', 1)[0]}"
+        if closing["status"] == FAILED:
+            # The day's own record: a fault here is the run's, whatever else went well.
+            breaks(
+                "daily_log",
+                FAILED,
+                f"Etapa «daily_log» a eșuat: {closing['reason'].split(':', 1)[0]}",
+                closing["fault_class"],
+            )
+
+    for stage in stages:
+        stage["produced"] = produced_by(stage)
+    summary, productive = run_summary(stages)
+
+    # Which of the day's losses cost a film. A stage the films pass through that failed or
+    # was blocked by what it waited for; its roots are the faults the Owner has to hear about
+    # first, and the ones a re-attempt would have to change.
+    lost_production = [name for name in PRODUCTION_STAGES if name in lost]
+    production_roots: list[str] = []
+    for name in lost_production:
+        production_roots.extend(r for r in lost[name]["roots"] if r not in production_roots)
+    production_lost = preflight["status"] == "BLOCKED" or bool(lost_production)
+    # The record keeps the first fault that cost a film, else the first fault of the day.
+    # The fault class is the worst of those it names: HARD if any of them is, because a
+    # re-attempt would meet a hard fault again.
+    named = [r for r in STAGES if r in production_roots] or broken
+    if named and not owner_stopped and preflight["status"] != "BLOCKED":
+        stopped_at = named[0]
+        stop_reason = reasons[named[0]]
+    classes = {faults[name] for name in named if faults.get(name)}
+    fault_class = HARD if HARD in classes else TRANSIENT if classes else None
 
     if owner_stopped:
         # Not FAILED, whatever the stages say: the Owner ended the day, nothing broke. PARTIAL
@@ -785,25 +1035,65 @@ def execute_daily_run(
         status = "PARTIAL" if worked else "BLOCKED"
     else:
         status = _derive_status(stages)
-    if status != "FAILED":
+        if status in ("FAILED", "BLOCKED") and not production_lost and "daily_log" not in broken:
+            # A stage the films do not need broke, and the films went through: the studio did
+            # part of its day, which is PARTIAL — the state the clock reads as "this day ran".
+            status = "PARTIAL"
+    if not broken:
         fault_class = None
     finished_at = utc_now()
-    retryable = retryable_outcome(status, preflight["status"], fault_class)
+    retryable = retryable_outcome(
+        status, preflight["status"], fault_class, production_lost=production_lost
+    )
     another_attempt = retryable and attempt < attempts_allowed
+    # A HARD fault where `SAFE_MODE_STAGES` puts a P0, or an integrity error anywhere.
+    p0 = next(
+        (
+            name
+            for name in broken
+            if faults.get(name) == HARD
+            and (name in SAFE_MODE_STAGES or _doubts_the_record(errors.get(name)))
+        ),
+        None,
+    )
     if stopped_at is not None and not owner_stopped and not another_attempt:
         # A day that stopped is the Owner's to unblock: the Director says where and why —
         # once, after the day's last attempt, not after each of them.
         from app.agents.director import letter_to_owner  # noqa: PLC0415
 
         tried = f" Am încercat de {attempt} ori azi." if attempts_allowed > 1 and retryable else ""
-        letter_to_owner(
-            engine,
-            f"Ziua s-a oprit la etapa «{stopped_at}»",
-            f"Rularea din {date_iso} s-a oprit la etapa «{stopped_at}»: {stop_reason}. "
-            f"Etapele de după ea nu au rulat.{tried} Spune-mi ce ai reparat și pornesc din "
-            "nou. — Sarah",
-            correlation,
-        )
+        caused = [
+            s["stage"]
+            for s in stages
+            if s["stage"] in lost and s["stage"] not in broken and s["stage"] != "preflight"
+        ]
+        if stopped_at == "preflight":
+            consequence = " Etapele de după ea nu au rulat."
+        elif caused:
+            consequence = " Din cauza ei nu au rulat: " + ", ".join(f"«{c}»" for c in caused) + "."
+        else:
+            consequence = ""
+        others = [name for name in broken if name != stopped_at]
+        if others:
+            consequence += " Au mai eșuat: " + ", ".join(f"«{o}»" for o in others) + "."
+        if p0 is not None:
+            consequence += " Studioul a intrat în modul sigur până verifici."
+        if production_lost:
+            subject = f"Ziua s-a oprit la etapa «{stopped_at}»"
+            body = (
+                f"Rularea din {date_iso} s-a oprit la etapa «{stopped_at}»: {stop_reason}."
+                f"{consequence}{tried} Spune-mi ce ai reparat și pornesc din nou. — Sarah"
+            )
+        else:
+            # Not "the day stopped": it did not, and a letter that says so is the rehearsal's
+            # headline over again. Nor is the day tried again — that would buy a second film.
+            subject = f"Etapa «{stopped_at}» a eșuat; filmele zilei nu depind de ea"
+            body = (
+                f"Rularea din {date_iso}: {stop_reason}.{consequence} Filmele zilei nu depind "
+                "de ea, așa că restul zilei a rulat și nu o reiau azi. Spune-mi ce ai reparat. "
+                "— Sarah"
+            )
+        letter_to_owner(engine, subject, body, correlation)
 
     with Session(engine) as session, session.begin():
         event = append_event(
@@ -818,6 +1108,10 @@ def execute_daily_run(
                 "fault_class": fault_class,
                 "attempt": attempt,
                 "owner_stopped": owner_stopped,
+                "summary": summary,
+                "stages_productive": productive,
+                "production_lost": production_lost,
+                "retryable": retryable,
             },
             correlation,
         )
@@ -839,15 +1133,17 @@ def execute_daily_run(
                 event_id=event.event_id,
             )
         )
-        # A hard failure is a P0 for an unattended studio: it stops rather than carrying on
-        # to the next day's run with an unexamined fault behind it. A transient one is not:
-        # measured on the live copy, one "database is locked" opened safe mode and set the
-        # autonomy stop, and the studio stood still for days over a lock that was free a
-        # second later.
-        if status == "FAILED" and fault_class == HARD:
+        # A P0 for an unattended studio stops rather than carrying on to the next day's run
+        # with an unexamined fault behind it (`SAFE_MODE_STAGES` says which, and why). A
+        # transient fault never is: measured on the live copy, one "database is locked"
+        # opened safe mode and set the autonomy stop, and the studio stood still for days
+        # over a lock that was free a second later. Nor is a hard fault in a stage that
+        # neither spends, nor publishes, nor keeps the record — it costs that stage, and the
+        # letter above is how the Owner hears of it.
+        if p0 is not None and not owner_stopped:
             _open_safe_mode(
                 session,
-                stop_reason or "O etapă a rulării zilnice a eșuat.",
+                reasons.get(p0) or "O etapă a rulării zilnice a eșuat.",
                 "STAGE_FAILURE",
                 run_id,
             )
@@ -860,10 +1156,13 @@ def execute_daily_run(
         "stages": stages,
         "stages_total": len(stages),
         "stages_completed": sum(1 for s in stages if s["status"] == COMPLETED),
+        "stages_productive": productive,
+        "summary": summary,
         "stopped_at_stage": stopped_at,
         "stop_reason": stop_reason,
         "fault_class": fault_class,
         "owner_stopped": owner_stopped,
+        "production_lost": production_lost,
         "attempt": attempt,
         "retryable": retryable,
         "started_at": started_at,
@@ -872,23 +1171,37 @@ def execute_daily_run(
     }
 
 
+def _summarised(stages: list[dict[str, Any]]) -> tuple[str, int]:
+    """The headline of a stored run; a run recorded before counts existed is counted now,
+    from the same artefacts, so the list never mixes two ways of reading a day."""
+    counted = [{**stage, "produced": stage.get("produced", produced_by(stage))} for stage in stages]
+    return run_summary(counted)
+
+
 def list_runs(engine: Engine, limit: int = 20) -> list[dict[str, Any]]:
     with Session(engine) as session:
-        return [
-            {
-                "id": run.id,
-                "business_date": run.business_date,
-                "preflight_status": run.preflight_status,
-                "status": run.status,
-                "stages_total": run.stages_total,
-                "stages_completed": run.stages_completed,
-                "stopped_at_stage": run.stopped_at_stage,
-                "stop_reason": run.stop_reason,
-                "started_at": run.started_at,
-                "finished_at": run.finished_at,
-                "stages": run.stages_json,
-            }
-            for run in session.scalars(
-                select(DailyRun).order_by(DailyRun.started_at.desc()).limit(limit)
+        runs = []
+        for run in session.scalars(
+            select(DailyRun).order_by(DailyRun.started_at.desc()).limit(limit)
+        ):
+            stages = list(run.stages_json or [])
+            summary, productive = _summarised(stages)
+            runs.append(
+                {
+                    "id": run.id,
+                    "business_date": run.business_date,
+                    "preflight_status": run.preflight_status,
+                    "status": run.status,
+                    "stages_total": run.stages_total,
+                    "stages_completed": run.stages_completed,
+                    "stages_productive": productive,
+                    "summary": summary,
+                    "stopped_at_stage": run.stopped_at_stage,
+                    "stop_reason": run.stop_reason,
+                    "fault_class": run.fault_class,
+                    "started_at": run.started_at,
+                    "finished_at": run.finished_at,
+                    "stages": stages,
+                }
             )
-        ]
+        return runs

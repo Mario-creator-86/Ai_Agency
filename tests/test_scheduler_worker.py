@@ -948,3 +948,80 @@ def test_the_scheduled_job_view_shows_the_fixed_hour_and_its_timezone(client, he
         engine, name="every_hour", workflow_type=DAILY_RUN, interval_seconds=3600
     )
     assert plain["run_at_local"] is None and plain["timezone"] is None
+
+
+# ------------------------------------------ a re-attempt only for a day that lost its films --
+
+
+@pytest.fixture
+def started_studio(engine, settings):
+    """A studio whose preflight is not BLOCKED, so the real runbook runs its stages."""
+    import shutil
+
+    from app.agents.models import ModelRecord
+    from app.agents.services import seed_initial_workforce
+
+    seed_initial_workforce(engine)
+    _autonomy(engine, False)
+    with Session(engine) as session, session.begin():
+        session.scalars(select(ModelRecord)).first().is_available = True
+    settings.ffmpeg_path = settings.ffmpeg_path or shutil.which("ffmpeg") or "ffmpeg-test-stub"
+    settings.stage_retry_attempts = 0
+    settings.daily_max_attempts = 3
+    return engine
+
+
+def _stub_day(failing: str) -> dict[str, Any]:
+    from app.runbook.services import STAGES
+
+    def fails() -> dict[str, Any]:
+        raise TimeoutError(f"{failing}: the other side did not answer")
+
+    runners: dict[str, Any] = {
+        name: (lambda: {"status": "COMPLETED", "reason": "ok"}) for name in STAGES[1:-1]
+    }
+    runners[failing] = fails
+    return runners
+
+
+def test_a_transient_fault_at_performance_intake_queues_no_re_attempt_of_the_day(
+    engine, settings, vault, started_studio, monkeypatch
+):
+    """Measured on the Owner's copy: a refused statistics read failed the day TRANSIENT and a
+    retry was queued for half an hour on — a whole day of paid work again, to recover a read.
+    The films went through, so the day is done and the clock is told so."""
+    from app.story.services import business_date
+
+    monkeypatch.setattr("app.agents.director.letter_to_owner", lambda *a, **k: "id")
+    handlers = build_task_handlers(engine, settings, vault, _stub_day("performance_intake"))
+    today = business_date(settings.timezone)
+
+    _due_job(engine)
+    first = worker_pass(engine, handlers)
+
+    assert first["ran"][0]["outcome"]["status"] == "PARTIAL"
+    assert first["ran"][0]["outcome"].get("retry_task_id") is None
+    assert not any(
+        (t.idempotency_key or "").startswith(f"daily-retry-{today}") for t in _tasks(engine)
+    )
+    _due_job(engine)
+    again = worker_pass(engine, handlers)
+    assert again["ran"][0]["outcome"]["status"] == "SKIPPED"
+    assert "a rulat deja" in again["ran"][0]["outcome"]["reason"]
+
+
+def test_a_transient_fault_that_cost_the_films_queues_the_re_attempt(
+    engine, settings, vault, started_studio, monkeypatch
+):
+    from app.story.services import business_date
+
+    monkeypatch.setattr("app.agents.director.letter_to_owner", lambda *a, **k: "id")
+    handlers = build_task_handlers(engine, settings, vault, _stub_day("media"))
+    today = business_date(settings.timezone)
+
+    _due_job(engine)
+    first = worker_pass(engine, handlers)
+
+    assert first["ran"][0]["outcome"]["status"] == "FAILED"
+    retry = next(t for t in _tasks(engine) if t.idempotency_key == f"daily-retry-{today}-2")
+    assert first["ran"][0]["outcome"]["retry_task_id"] == retry.id

@@ -13,6 +13,286 @@ database resource discovery/refresh, separate production choices, UI and regress
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
 
+## The rehearsal on the Owner's data (2026-09-18)
+
+The suite was green and the studio had never been tried on the one database that matters. On
+2026-09-18 a rehearsal ran one whole scheduled day on a **copy** of the Owner's own studio, through
+the real scheduler, worker and runbook (`set_job_active`, `scheduler_tick`, `worker_pass`,
+`execute_daily_run` with `build_stage_runners`), with every paid vendor faked and every outside
+connection refused; an independent audit then read its report, re-ran it on a fresh copy and named
+what it had missed. The audit's verdict was **FIX_FIRST**. This section records what the rehearsal
+ran on and why nothing could be spent, every finding of the report and of the audit in their four
+classes, and what the four parts that followed fixed. The report and the audit are
+`rehearsal_report.txt` and `rehearsal_audit.txt` in the session's scratchpad; the repeatable harness
+is `tests/test_rehearsal_on_a_copy.py`, skipped unless `STUDIO_REHEARSAL_DB` names a copy.
+
+**What it ran on.** `data/studio.db` (11,902,976 B), its `-wal` (263,712 B) and its `-shm`
+(32,768 B) were copied together with `shutil.copy2` into the scratchpad at about 19:44 UTC, and
+sqlite was opened on the copy only (`wal_checkpoint(TRUNCATE)`, `integrity_check` ok). The
+credential key was copied beside each copy, because the preflight's media description and the
+analytics adapter decrypt integration rows; no key or secret was printed. The copy was already at
+`0045_reconciliation`, not at the 0035 the brief assumed: the Owner had restarted his studio himself
+at 22:42 local, and `start.py` runs `bootstrap.py` first, so step 1 of his checklist was done by his
+own hand before the copy was taken. What the copy holds: eight employees, all on Ollama Cloud; three
+VERIFIED integrations (ollama, elevenlabs, runway); both channel slots bound to his CONNECTED
+accounts — *Nexus Curiosity* → MAIN_FACTUAL (`youtube_connection` 69cb4598) and *Inside The Nexus*
+→ OFFICE_SERIAL (241dfcf5); 98 SUPPORTED, 11 UNVERIFIED and 1 REFUTED claims; 18 daily runs, all of
+2026-09-12; a DAILY budget of 15 USD; TEST, AUTONOMOUS_CEO, the stop off, `daily_main` inactive.
+
+**Why nothing could be spent.** Three measures, and the second held where the first did not.
+Every paid vendor was faked in the process at the boundaries the whole-day test fakes — one
+stand-in model registered under all three provider ids of the copy, the local picture and voice
+adapters, the plain render plan, and a recording publisher in place of `stages.selected_youtube`. A
+network guard was installed before any studio code was imported and proved itself first; it refused
+`connect`, `connect_ex`, `getaddrinfo`, `gethostbyname(_ex)` and asyncio's proactor and selector
+`sock_connect` for anything but loopback. And the settings were built with `_env_file=None`, every
+`STUDIO_*` variable removed, the worker, the catalogue refresh and trends off, and render storage
+moved into the scratchpad. What the rehearsal changed, it changed on copies only and with the
+Owner's own commands: `daily_main` activated through `set_job_active` with its `next_run_at` moved
+into the past, and `director_may_approve_episodes` granted on OFFICE_SERIAL through
+`change_publish_policy` (policy version 1 → 2). The guard's record is the proof: no refusal through
+migration, start-up and preflight — the preflight really calls nothing; 4 in pass 1, all
+`getaddrinfo 'oauth2.googleapis.com'`; 109 in pass 1b, where the analytics adapter was faked as well
+— `api.dev.runwayml.com` ×24, `api.elevenlabs.io` ×12, 33 authorised hosts once each, and
+`en.wikipedia.org` and `ro.wikipedia.org` ×20 each. **The only paid path the guard stopped was
+Runway's text-to-video in pass 1b, four shots** — about 0.88 USD at catalogue prices, at most
+1.20 USD; everything else it refused was a free read. The audit confirmed both halves on its own:
+nothing left the machine, and the live files were not touched by the rehearsal — they changed at
+22:55:14, when the Owner restarted his studio again from a PyCharm terminal; its read-only copy of
+them holds no rehearsal artefact (no run of 2026-09-18, no `sim:` publication, the serial's leave and
+the clock unchanged); and the harness, pointed at `data/studio.db`, refused at setup in 0.09 s with
+the live files' sizes and times identical before and after.
+
+**What the day said, stage by stage.** Pass 1 used only the whole-day test's fakes; pass 1b faked the
+analytics adapter as well, on a fresh copy of the migrated state. The reasons are the studio's own.
+
+| Stage | Pass 1 | Pass 1b |
+|---|---|---|
+| preflight | COMPLETED, DEGRADED: «Studioul poate rula, dar unele etape vor fi sărite sau vor produce rezultate nepublicabile.» | the same |
+| performance_intake | FAILED after 4 attempts over 140.1 s: «URLError: <urlopen error [Errno 11001] rehearsal guard: DNS for 'oauth2.googleapis.com' refused>» | «0 publicări măsurate pe 2 canale. 2 fără date.» |
+| idea_generation | BLOCKED: «Rularea s-a oprit la etapa «performance_intake».» | «Propunerile au fost respinse: Propunerile nu respectă schema; nimic nu a fost salvat» |
+| research_and_verification | BLOCKED, the same reason | «0 pagini preluate, 0 surse citite, 0 afirmații verificate, 11 verdicte respinse. 33 site-uri retestate (0 citibile).» |
+| selection | BLOCKED, the same reason | «Subiect selectat: Why Nepal Is Being Handed a Climate Bill It Cannot Pay.» |
+| script_and_storyboard | BLOCKED, the same reason | «1 scenarii scrise în 1 schimburi, 1 aprobate de Director, 1 storyboard-uri generate. 4 cadre descrise complet. Recenzia poveștii: PASS. Un scenariu așteaptă aprobarea ta înainte de storyboard.» |
+| serial_queue | BLOCKED, the same reason | «Episodul pentru 2026-09-17 a fost scris, citit, aprobat și pregătit de filmare.» |
+| media | BLOCKED, the same reason | «2 videoclipuri randate. Episodul serialului a fost filmat.» |
+| edit_and_qc | BLOCKED, the same reason | «2 au trecut QC, 0 au picat.» |
+| publish | BLOCKED, the same reason | «Publicat pe Main Channel A - Factual Shorts: PUBLISHED_SIMULATED (private). Publicat pe Channel B - Office Serial: PUBLISHED_SIMULATED (private).» |
+| post_run | BLOCKED, the same reason | «10 rapoarte depuse; revizuirea Directorului a fost respinsă: modelul kimi-k3 a scris 184 caractere de analiză și nu a ajuns la decizii; a doua încercare, 184 caractere, tot fără obiect.» |
+| daily_log | «Jurnalul zilei 2026-09-18 a fost închis.» | the same |
+| the run | FAILED, 2 of 12, a re-attempt queued for 20:24 UTC | COMPLETED 12/12 (run 96b08fd8) |
+
+**Found: two defects.** *One statistics read stopped the day before anything was filmed.* The Google
+token refresh in the analytics adapter (`providers/youtube_analytics.py:124`, a `urlopen` outside
+the `try` its report had) raised a `URLError`, the stage caught only `MetricsUnavailable`
+(`analytics/services.py:296-300`), and the runbook blocked every stage after any failed one; the
+re-attempt queued thirty minutes on would have met the same wall. The audit found it worse than
+reported: `classify_fault` reads an HTTP 4xx from Google — `invalid_grant`, or a 403 from the
+Analytics API — as HARD (measured on both), and a HARD fault in any stage opened safe mode and set
+AUTONOMIE OPRITĂ, so **one expired read-only token would have halted the studio until he cleared
+it**. His MAIN_FACTUAL slot has two PUBLISHED films with remote ids, so every real day asks Google
+first; the whole-day test never met this, because its publications are simulated and carry none.
+*The books charged motion that was never generated.* Pass 1b wrote four Runway cost rows, ESTIMATED
+and `failed=0` — 0.204 + 0.306 + 0.372 + 0.558 = **1.44 USD** — for shots whose render record says
+«api.dev.runwayml.com could not be reached (after 3 attempts)», with no bytes and no credits, and
+settled both films' holds (1.30472 and 1.36104 USD) against them. `_priced_scene_costs`
+(`economy/accountant.py:184-193`) priced every motion record by its `asked_seconds` whatever became
+of the shot, and the price gate's own refusals (`media/assembler.py:1197-1223`) have the same shape,
+so on a paid day every shot refused by the 0.60 USD film ceiling or the 0.12 USD-per-second ceiling
+would also have been charged against the 15 USD budget.
+
+**Found: the limits of the fakes.** *Two boundaries were not faked:* with the whole-day test's fakes
+only, the media stage chose Runway `seedance2_mini` (HERO) and `seedance2_fast` for scenes 1-2 of
+each film and made four paid `text_to_video` attempts, three tries each, which only the guard stopped
+(four `model_outcome` rows, accepted=0, TECHNICAL, were written on the copy); and the analytics
+adapter was not faked, so the harness as first written never went past stage 2 on his data. *Free
+vendor reads were refused, not faked:* the Runway and ElevenLabs balance reads
+(`economy/credits.py:29`), the host retests (`research/service.py:281`), the Wikipedia searches
+(`:543`) and the watchdog's own publisher resolver (`workflows/watchdog.py:175`, which imports
+`selected_youtube` from `integrations.services` and is not reached by the stages fake). All were best
+effort; on the copy, 34 of the 36 hosts now read FAILED (16 before) purely because of the guard.
+*The stand-in's content passed every reviewer:* selection chose his real Nepal topic, and the
+stand-in's JWST script «The light your eyes were not built for», citing the Nepal claim 0be61855,
+passed the factual gate, the story review, the Director and editorial review; the serial's upload
+carried the factual film's metadata («Infrared light and what it shows», tags space/astronomy).
+*The picture and character gates were not exercised:* both read NOT_APPLICABLE — «Kael (Video
+Editor) gave no usable verdict on the pictures (SUCCEEDED)» — and quality control still scored 1.0
+PASSED; if his real vision model answers in prose, films pass that gate unseen. *Stages reported
+COMPLETED that did no work* — the audit's finding, which the report had not counted: ideas refused
+on schema, research that verified nothing, a Director review with no decisions and the Accountant's
+line SKIPPED («books: SKIPPED — Raportul contabil nu respectă schema»), under a run that read
+COMPLETED 12/12. *Whether his real refresh tokens still work is unknown:* a rehearsal cannot refresh
+a token without leaving the machine.
+
+**Found: what only the Owner can change.** Both YouTube connections read green in the preflight
+(«2 sloturi de canal legate de conturi YouTube conectate.», «Canal YouTube conectat prin OAuth.»)
+from their stored status alone; their `granted_scopes` hold `youtube.readonly` and `youtube.upload`
+and not the `yt-analytics.readonly` the analytics adapter names; and both were connected on
+2026-09-11, so if his Google OAuth app is in Testing mode their seven-day refresh tokens end about
+now. Six Ollama Cloud models have no token price («Modele fără preț pe jetoane la: ollama. …»), the
+only DEGRADING failure of his preflight, so every employee's run is booked without a cost. The voice
+is priced at the DOCUMENTED Creator-plan figure for every model («*», 0.22 USD per 1k characters)
+while his model is `eleven_flash_v2`, which the same price list bills at half — the audit's
+finding. No character has a reference picture («8 personaje fără imagine de referință: …»); a set is
+40 images, about 0.80 USD, a cost the preflight's message does not name. The Director may not
+approve serial episodes («Canalul serialului este legat, dar Directoarea nu are dreptul să aprobe
+episoade: …») and the daily clock is off, both still so on the live data. The mode (AUTONOMOUS_CEO)
+and the environment (TEST) are the values the migrations wrote — 0043's and 0031's defaults — and
+the rehearsal found no choice of his behind either; the preflight states the mode as a fact without
+saying it was a default. 29 scripts of 2026-09-12 stand
+VERIFIED_PASS and wait for his approval, and every day repeats «Un scenariu așteaptă aprobarea ta
+înainte de storyboard.» about them. In PRODUCTION his 15 USD daily budget and the 12 USD per-film
+motion hold leave room for one film, not two — the audit's finding: after the first film settles at
+X, the second is refused whenever X + 12.1 > 15, that is whenever X is above about 2.9 USD. Each of
+these is now a dated line in «Ce are Owner-ul de făcut» below, in the step it belongs to.
+
+**Found: what worked as designed.** The migration and the seeds are clean on his data. On a copy of
+his own backup of 2026-09-12 (at `0029_editorial_review`) the chain ran one revision at a time, 0036
+to 0045 in 0.04-0.06 s each, with no warning, no pre-existing cell changed in any table and
+`foreign_key_check` empty; bootstrap run again on the live copy changed zero rows; the only change
+of meaning is the one 0043 documents, the mode. The app started through its lifespan in 0.317 s,
+`/health/ready` answered 200 and the preflight read DEGRADED. With analytics faked too, the day ran
+to its end: a factual short and a serial episode grounded in 3 of the 79 events of his real
+2026-09-17 log (episode 0b81435e, 52.8 s; grounding, privacy, length and cast passed; approved by
+the Director), rendered at 38.4 s and 54.6 s, 1080×1920, captions burnt in, quality control PASSED,
+both uploaded private to the simulator, each to its own slot, with no video on any platform; and the
+11 re-verdicts on his UNVERIFIED claims were refused because the stand-in's quote is not in their
+sources, which is the gate working on real sources.
+
+**Fixed: a failed stage costs its dependants and nothing else.** `YouTubeAnalyticsProvider` turns a
+transport or authentication failure — on the token refresh or on the report — into
+`MetricsUnavailable` (moved into `providers/youtube_analytics.py`, re-exported by
+`analytics.services`), which carries `during`, `auth_refused`, `error_class`, `http_status` and
+Google's short `oauth_error` word and never a token. `measure_channel_publications` then records
+every publication left as «fără date» with one reason instead of asking Google again, names the
+account and the slot and says to press Reconectează, and writes one `youtube.token_refresh_failed`
+or `youtube.analytics_refused` ledger event for the preflight. The runbook has `STAGE_PREREQUISITES`
+beside `STAGES` (the table, and where each edge comes from, are in `39_DAILY_AUTONOMOUS_RUNBOOK`
+§*Abort behavior* and in the decision log): a stage is BLOCKED only when every prerequisite it lists
+was lost, with «Nu a fost încercată: etapa de care depinde, «X», a eșuat.» and the root fault named;
+the Owner's stop and a blocked preflight still block everything. Safe mode opens only for a P0 as
+`21_FAILURE_RECOVERY_PLAYBOOK` defines it — a HARD fault in media, publish or the day's log, or a
+database integrity error anywhere (`SAFE_MODE_STAGES`); any other HARD fault costs its stage, its
+dependants and one letter from the Director. The same-day re-attempt follows only a transient fault
+that cost the day's films (`PRODUCTION_STAGES`), and a day whose films went through while another
+stage failed is PARTIAL, which the clock reads as done. Every stage record carries `produced`,
+counted from the artefacts its runner already returns, and the run returns a Romanian `summary` and
+`stages_productive` — «10 din 10 etape au rulat până la capăt; 7 au produs ceva. Fără rezultat:
+«…». Filme publicate: 2.», or «Ziua nu a produs nimic.» — so 12/12 no longer stands for a day that
+made nothing. **Fixed: the books charge what was bought.** `motion_was_bought` — `bytes` or
+`paid_but_lost`, the only two shapes in which the assembler also records credits — decides whether a
+shot is charged, in the finished-render and the lost-render books alike, and a refused shot no
+longer teaches a measured price; a film whose every shot was refused settles its hold against its
+stills and narration only. The seed adds two DOCUMENTED families, `eleven_flash_*` and
+`eleven_turbo_*` at 0.11 USD per 1k characters — the already-cited Creator figure at the half credit
+per character the same price list states — and `price_row` ranks any price the Owner typed above
+every documented one, then the most specific match. **Fixed: every paid path is faked, and a scan
+checks the list.** The suite's autouse guard in `tests/conftest.py` now refuses DNS for anything but
+loopback and asyncio's `sock_connect` as well — a new test caught a real ConnectEx attempt to
+192.0.2.1 on Windows before the change — and records every refusal. The whole-day test and the
+rehearsal share one list of eight fakes (`VENDOR_FAKES`, `install_vendor_fakes`), among them the
+motion chooser, which keeps the studio's own `choose_model` decision and replaces only the vendor,
+and the analytics adapter. `tests/test_no_paid_path_escapes.py` walks the call graph from
+`execute_daily_run` and `build_stage_runners` and fails on any paid adapter reachable without a fake;
+against the list as it stood before, it named exactly five sites — the four the rehearsal met and
+`verified_search_provider` → `SearchProvider`, which it never did. **Fixed: the preflight says what
+will stop tomorrow.** «Canal YouTube conectat» and «2 sloturi legate» now say they read the stored
+state; `youtube_upload_access` (BLOCKING) fails on a missing `youtube.upload` or a standing token
+refusal, and `youtube_statistics_access` (DEGRADING) on a missing `yt-analytics.readonly` or a
+standing refusal, both giving each grant's age with the Testing-mode caveat and neither counting an
+unrecorded scope or a failure Google never answered as a refusal; `daily_budget_films` asks the media
+stage's own `estimate_film_cost_micros` whether the DAILY budget holds the day's films; and the
+summary names the first check that would stop the day or lose a film (`first_stop`) instead of
+«Studioul poate rula». On a fresh copy of his copy the preflight now reads DEGRADED: statistics fail
+for Nexus Curiosity and Inside The Nexus («fără yt-analytics.readonly»), upload passes with both
+grants seven days old and «tokenul poate fi deja expirat», and the budget line is INFORMATIONAL —
+15 USD holds two TEST films at 1.2 USD each, while in PRODUCTION 2 × 12 = 24 USD and the serial is
+refused once the short costs more than 3 USD.
+
+**One real day, estimated.** The audit's `paid_run_estimate`, priced from the copy's own data, for a
+day in TEST (two motion shots per film, a 0.60 USD motion ceiling per film, at most 0.12 USD a
+second, private upload): Runway motion with `seedance2_mini` at 0.02 USD/s (HERO) and
+`seedance2_fast` at 0.03 USD/s — at the rehearsal's shot lengths film 1 is 0.204 + 0.306 = 0.51 USD
+and film 2 is 0.372 USD, its second shot (0.558) refused because only 0.228 of its ceiling is left:
+about **0.88 USD**, with a hard ceiling of 1.20 USD a day; stills with `gen4_image` at 0.02 USD each,
+7 scenes, **0.14 USD** plus any retry; narration of the rehearsal's 476 + 732 = 1,208 characters,
+**0.27 USD** at the DOCUMENTED 0.22 per 1k and about 0.13 USD at the Flash half, and 0.19-0.37 USD
+for the 800-900 characters a real film more likely has; YouTube, Analytics and research fetches
+0 USD (quota only). **Total known vendor spend: about 1.1-1.3 USD, at most about 1.7 USD**, against
+film holds of 1.30 and 1.36 USD and a 15 USD budget. In PRODUCTION (motion on every scene,
+image-to-video, a film ceiling of min(12 USD, what the day has left), the cheapest model that reaches
+quality at 0.05-0.08 USD/s): 2-4.4 USD of motion per 40-55 s film, plus about 0.07 USD of stills and
+0.1-0.2 USD of voice, about 2.3-4.7 USD a film and 4.5-9 USD a day under the 15 USD cap — except that
+each film holds 12 USD, so the second is refused whenever the first spent more than about 2.9 USD,
+and a typical PRODUCTION day is one film at about 2.5-4.5 USD. **Unknown, and said so:** the language
+models — Ollama Cloud is a subscription and he has typed no price; the rehearsal's 36 model runs were
+the stand-in's and their token counts mean nothing; his real runs of 2026-09-12 average about 4,400
+prompt and 820 completion tokens, roughly 160k and 30k a day, plus the separate `director_loop` and
+`model_review` jobs. Also unknown: whether Runway accepts these requests and charges what its credits
+estimate, how long real scripts are, how many stills are retried, and whether his tokens still work.
+The audit's two conditions on the figure — up to about 0.5 USD more in the books with defect 2, and
+most likely 0 USD spent and no film, or safe mode, with defect 1 — are removed in code by the parts
+above, under faked providers.
+
+**What was measured, and whose measurement each figure is.** The rehearsal: pass 1 on the copy, pass
+1b on a fresh copy of the migrated state, and `tests/test_rehearsal_on_a_copy.py` on a fresh copy,
+**1 passed** in 1.67 s with the day stopping at performance intake inside it. The audit: the same
+test on its own fresh copy, **1 passed** in 1.11 s with an identical record, and the whole suite,
+`uv run pytest -q tests -p no:cacheprovider`, **1265 passed, 2 skipped** in 829 s (the second skip is
+the opt-in rehearsal itself) — on the tree as it stood at the rehearsal, before any of the fixes. The
+failure-and-analytics part: `tests/test_phase7_analytics.py` **18**, `tests/test_day_survives_a_stage.py`
+**14** (new), **124** across the runbook, mail, B/C-adversary and daily-run-stage files, and **202
+passed, 1 skipped** across the ten related files. The books part: **13** in
+`tests/test_books_and_history.py` for the new cases (red first at 9 passed, 4 failed),
+`tests/test_pricing_truth.py` **22** (red first), **158** across seven economy and media files, with
+`ruff`, `ruff format --check` and `mypy` clean. The fakes part: **14 passed, 1 skipped** across
+`tests/test_no_paid_path_escapes.py` (new, red first), the whole-day test and the rehearsal; **340
+passed, 1 skipped** across every file that fakes `getaddrinfo` and the research, provider and
+adversary files; and the opt-in rehearsal on the scratchpad copy **1 passed** — the day COMPLETED
+through all twelve stages, the chooser picked `seedance2_mini` for two shots at 20.4 credits each,
+both through the fake, one film reached the simulator, and the guard made 74 refusals, all free
+research reads. The preflight part: **30** across `tests/test_readiness.py` and
+`tests/test_sources_and_readiness.py` (red first at 17 passed, 12 failed), **130** across the
+preflight's direct consumers, and `node --test frontend/tests/readiness.test.js` **8**. This
+documentation part: `scripts/check_docs.py` and `tests/test_documentation.py`. **No whole-suite run
+was made by any of the four parts or by this one**; the audit's 1265 / 2 is the newest and is older
+than the fixes. No migration was taken: the head stays `0045_reconciliation` and 0046 is free. No
+provider was called, nothing was rendered by a vendor, no run was queued on the live studio, no
+credit was spent and `data/studio.db` was never opened by any of them.
+
+Not finished, honestly: **the reconnect the Owner is told to make can grant statistics access only
+since a change made while these documents were being written.** `SCOPES`
+(`backend/app/youtube/services.py`) asked Google for `youtube.readonly` and `youtube.upload` only,
+so no reconnect could have granted the statistics scope; another part added `yt-analytics.readonly`
+on the night of 2026-09-18, with
+`tests/test_youtube_connections.py::test_the_consent_asks_for_the_statistics_the_day_reads` (**1
+passed**, run by this documentation part; nothing else of that change was measured here). His
+consent screen now asks for one more permission, the change reaches him only when his studio runs
+this code, and a connection made before it must be reconnected once to hold the scope — until then
+statistics stay «fără date». The
+uploader (`providers/youtube.py`) logs a refused refresh and writes no ledger event, so a refusal at
+upload reaches the preflight only after the statistics read meets the same dead token — and on the
+first day with a dead token the films are made and paid for before the upload fails. The film's hold
+still takes the dearest voice price (`estimate_film_cost_micros`), so it holds Flash narration at
+about twice its cost while the books now charge the half. The harness now fakes the analytics
+adapter, so the real Google refresh on his copy is no longer rehearsed: defect 1's fix is proven by
+the failure-and-analytics part's tests with faked transports, and only a free real read — Verify or
+Reconnect in Settings — proves his tokens; and the free rehearsal after the fixes, on a fresh copy,
+has not been run. The panel does not read `summary`, `stages_productive`, `produced` or `first_stop`
+yet, and `frontend/dist` is not rebuilt. `backend/app/runbook/stages.py`'s module docstring still
+says a raised fault «stops the day», and `_performance_intake` keeps the reconnect sentence in its
+artefacts and the ledger rather than in its own reason line. The manual ingest endpoint
+(`analytics/router.py`) now answers 409 with the Romanian reason, not 502, for a transport or
+authentication failure. The scan's roots are the daily day only: the watchdog, the Director's loop,
+the model review, the catalogue refresh, the reference-set route and the API routes are held by the
+network guard alone, and the scan cannot see `getattr` by string, `importlib` or code built at run
+time. The free research reads are refused in a rehearsal, not faked, so which of his 36 hosts are
+readable today is a real run's measurement. And nothing here proves a vendor: whether Runway returns
+usable clips at the estimated credits, whether his models answer the idea, Director and Accountant
+schemas (kimi-k3 had already rambled on 2026-09-12), whether a vision model answers the picture gate,
+whether the reviewers catch narration its cited claim does not support, and whether the Publisher
+titles the serial as the episode — the first real day, watched, is where each of those is measured.
+
 ## Readiness for the first day (2026-09-18)
 
 Six phases are built and the suite is green, which is not the same thing as a studio that can be
@@ -194,7 +474,9 @@ second one. **Corrected at the same day's closure (2026-09-18): the panel render
 and names the checks** — a failing INFORMATIONAL check reads INFORMATIV in neutral grey instead of a
 red "DEGRADES", and the five new checks and `autonomy_mode` have Romanian labels. What is still true
 of the interface: `youtube_channel_binding` has no label either and still shows by its code name, as
-it did before this phase; neither reconciliation screen exists; and `frontend/dist` is still not
+it did before this phase (corrected 2026-09-18, measured in the tree while the rehearsal's documents
+were written: `frontend/src/readiness.js` carries «Sloturi de canal legate de YouTube» for it, and
+did since the commit that created the module); neither reconciliation screen exists; and `frontend/dist` is still not
 rebuilt, so the Owner sees none of any of it until he builds.
 
 ### Closed the same day — 2026-09-18: the employee who can see arrives when the model does, a guessed name steers nothing, and the day speaks at the hour it stops
@@ -322,7 +604,8 @@ was started, no browser was opened and `frontend/dist` was deliberately not rebu
 build is his own launch act (step 2), so nobody has yet looked at an INFORMATIV card or an amber
 caveat. `RUNBOOK_CHECK_LABELS` covers every check name this phase added and every one the panel
 already named, but not `youtube_channel_binding`, which `run_preflight` also emits and which showed
-by its code name before this work and still does. The guessed cast is on the ledger event and not in
+by its code name before this work and still does (corrected 2026-09-18: it has a label, «Sloturi de
+canal legate de YouTube», in the same module). The guessed cast is on the ledger event and not in
 the REST answer: `get_storyboard` returns `cast_note` and not the map, so the Owner cannot yet see on
 the storyboard page which names the studio read and refused to cast on. The serial's own board
 (`backend/app/media/serial_storyboard.py`) writes no `guessed_cast`, correctly — its cast comes from
@@ -360,7 +643,10 @@ Lista de mai jos este ordinea dimineții primei zile adevărate. Numai Owner-ul 
 din ea; studioul nu le face singur și nu le cere de două ori. Fiecare rând spune ce are de făcut, cu
 ce comandă sau pe ce ecran, și ce se întâmplă dacă sare peste el. Rescrisă ca listă ordonată pe
 2026-09-18; niciun rând de dinainte nu a fost scos, iar rândurile noi ale acestei faze sunt așezate
-la locul lor în ordine.
+la locul lor în ordine. Completată 2026-09-18 după repetiția pe o copie a datelor lui (secțiunea
+«The rehearsal on the Owner's data (2026-09-18)» de mai sus): ce a găsit repetiția și numai el poate
+face este adăugat în rândul căruia îi aparține, marcat «Adăugat 2026-09-18 după repetiție», fără să
+schimbe numerotarea, pentru că pașii sunt citați după număr în alte documente.
 
 1. **Migrează baza de date live** — `uv run python scripts/bootstrap.py`. Lanțul este 0039 (economia
    și rezervările), 0040 (sursele de cercetare), 0043 (modul de autonomie), 0044 (subiectul unei
@@ -370,7 +656,11 @@ la locul lor în ordine.
    liberă. Corectat 2026-09-18: rândul acesta a cerut pe rând `0040_research_sources`,
    `0043_autonomy_mode` și `0044_approval_answered`. **Dacă sare peste:** `backend/app/main.py` cere
    exact revizia `0045_reconciliation` la pornire, deci serverul nu pornește deloc. Niciun test nu
-   atinge baza live.
+   atinge baza live. Măsurat 2026-09-18 de repetiție, pe o copie: **pasul acesta este făcut**, de
+   mâna lui — repornirea studioului de la 22:42 a rulat `scripts/bootstrap.py` (`start.py` îl
+   rulează primul), iar copia luată după ea era deja la `0045_reconciliation`; bootstrap rulat încă
+   o dată pe copie nu a schimbat niciun rând. De la următoarea pornire, bootstrap mai seamănă două
+   prețuri DOCUMENTED pentru narație (pasul 5).
 2. **Construiește interfața** — `npm run build --prefix frontend`. Ecranele schimbate pe 2026-09-18 —
    starea site-urilor în *Cercetare → Surse*, banii ținuți în biroul Contabilitate, panoul de
    guvernanță (modul de autonomie, lista de aprobări, pastilele seturilor de referință) — sunt în
@@ -389,7 +679,16 @@ la locul lor în ordine.
    un personaj a cărui înfățișare nu este blocată — în loc de «DEGRADES» roșu, iar cele cinci
    verificări noi și `autonomy_mode` își au numele în limba lui. Singura care rămâne cu numele ei de
    cod este `youtube_channel_binding`, care nu avea etichetă nici înainte. Toate acestea se văd
-   numai după pasul 2. **Dacă sare peste:** merge mai departe fără să știe ce lipsește.
+   numai după pasul 2. Corectat 2026-09-18, măsurat în cod: și `youtube_channel_binding` are
+   etichetă, «Sloturi de canal legate de YouTube». Adăugat 2026-09-18 după repetiție: «Canal
+   YouTube conectat» și «2 sloturi legate» erau verzi citind numai starea stocată, nu tokenul; acum
+   spun asta, iar trei verificări noi le urmează — «Dreptul de a încărca pe YouTube»
+   (`youtube_upload_access`, **BLOCHEAZĂ** când Google nu a acordat încărcarea sau a refuzat tokenul
+   după acordare), «Accesul la statisticile YouTube» (`youtube_statistics_access`, DEGRADEAZĂ) și
+   «Filmele zilei în bugetul zilnic» (`daily_budget_films`). Rezumatul de sus nu mai spune
+   «Studioul poate rula» deasupra unei verificări care vede ziua oprindu-se: numește prima linie care
+   ar opri ziua sau ar pierde un film. **Dacă sare peste:** merge mai departe fără să știe ce
+   lipsește.
 4. **Pune bugetele** — `PUT /economy/budget`, biroul Contabilitate: zilnic, săptămânal, lunar. Nimeni
    altcineva nu le poate pune; Contabilul doar escaladează, nu aprobă. **Dacă sare peste:** rezervarea
    ține banii filmului, dar nu are de ce să îl refuze — o zi de reîncercări cheltuie cât îi vinde
@@ -401,6 +700,14 @@ la locul lor în ordine.
    raportează `unpriced_agent_runs`. Narația este singura excepție: bootstrap seamănă cifra publică
    ElevenLabs, marcată DOCUMENTED, care nu este planul lui. Ollama Cloud nu este semănată niciodată,
    pentru că un preț ghicit în cărți este mai rău decât golul pe care Contabilul îl raportează.
+   Adăugat 2026-09-18 după repetiție: pe datele lui, șase modele Ollama Cloud (glm-5.3-flash,
+   kimi-k3, minimax-m3, mistral-large-3:675b, nemotron-3-ultra, qwen3.5:397b) nu au preț — singura
+   linie DEGRADEAZĂ a preflight-ului lui —, iar vocea lui, `eleven_flash_v2`, era prețuită la cifra
+   DOCUMENTED pentru orice model («*», 0,22 USD la 1000 de caractere), deși aceeași listă de prețuri
+   spune că Flash costă jumătate. De la următoarea pornire bootstrap seamănă și `eleven_flash_*` și
+   `eleven_turbo_*` la 0,11 USD, tot DOCUMENTED; prețul pe care îl tastează el trece peste amândouă.
+   Rezervarea filmului ia încă prețul cel mai scump al vocii, deci ține pentru narația Flash cam
+   dublu față de ce costă.
 6. **Pune plafonul de jetoane pe zi**, dacă vrea unul — `STUDIO_AGENT_DAILY_TOKEN_BUDGET`. 0 înseamnă
    fără plafon, așa cum a mers studioul până acum. **Dacă sare peste:** nimic nu se strică, dar bucla
    Directoarei și rundele de corespondență rulează fără tavan. Peste plafon, rularea este oprită
@@ -419,7 +726,31 @@ la locul lor în ordine.
    (`director_may_approve_episodes`). **Dacă sare peste:** canalul serialului apare în preflight ca
    `serial_channel` — fără legătură, episoadele se produc și nu au unde urca; fără dreptul
    Directoarei, un episod trecut de ea rămâne DRAFT și așteaptă mâna lui, ceea ce este dreptul lui și
-   nu este autonomie.
+   nu este autonomie. Măsurat 2026-09-18 de repetiție: ambele sloturi sunt legate, dar dreptul
+   Directoarei de a aproba episoade este încă `false` pe datele lui (repetiția l-a dat numai pe o
+   copie, cu comanda lui).
+   Adăugat 2026-09-18 după repetiție: **verifică sau reconectează cele două conexiuni YouTube** —
+   *Nexus Curiosity* (slotul MAIN_FACTUAL) și *Inside The Nexus* (slotul OFFICE_SERIAL) — din
+   *Setări → Conturi și e-mail* (Verifică sau Reconectează, un apel gratuit), înainte de orice zi
+   plătită. Amândouă au fost conectate pe 2026-09-11, Google le-a acordat numai `youtube.readonly` și
+   `youtube.upload`, fără accesul la statistici (`yt-analytics.readonly`), iar dacă tokenurile lor
+   mai merg nu se știe: repetiția nu le putea încerca fără să iasă din calculator, iar preflight-ul le
+   arăta verzi citind numai starea stocată.
+   **Reconectează-le pe amândouă acordând accesul la statistici**, și **scoate aplicația lui Google
+   OAuth din modul Testing** (în Google Cloud Console, pe ecranul de consimțământ OAuth): cât timp
+   aplicația este în Testing, tokenul de reîmprospătare moare la șapte zile după acordare — pentru
+   conexiunile din 11 septembrie, cam acum — și va muri din nou la o săptămână după fiecare
+   reconectare. Studioul nu vede în ce mod este aplicația; preflight-ul îi arată vârsta fiecărui
+   acord. Ecranul lui Google oferă accesul la statistici numai dacă studioul îl cere, iar `SCOPES`
+   (`backend/app/youtube/services.py`) a cerut doar `youtube.readonly` și `youtube.upload` — de aceea
+   nicio reconectare de până acum nu putea acorda statisticile. În noaptea de 2026-09-18 i s-a
+   adăugat `yt-analytics.readonly`: după ce studioul lui pornește cu codul acesta, ecranul îi cere o
+   permisiune în plus, pe care trebuie s-o accepte. Până la reconectarea de după acea pornire,
+   statisticile rămân «fără date». **Dacă sare peste:** un token mort se vede abia după ce Google l-a refuzat o
+   dată. În prima zi cu el statisticile ies «fără date», iar filmele se fac și se plătesc, apoi
+   încărcarea lor eșuează; de a doua zi `youtube_upload_access` blochează ziua înainte să cheltuie
+   ceva. Până la reparația din 2026-09-18, același refuz oprea ziua la al doilea pas, înainte de
+   orice filmare, și punea studioul în mod sigur cu AUTONOMIE OPRITĂ.
 9. **Admite un model care poate privi** — Angajați → Model, după ce sincronizarea catalogului îl
    aduce de la furnizor. Niciun model semănat nu declară vedere, iar studioul nu presupune niciodată
    că unul vede: capabilitatea `vision` se atașează doar când vendorul însuși o declară. Rolul
@@ -449,7 +780,10 @@ la locul lor în ordine.
     spune** — lista de personaje a scenaristului, sau numele întreg în imaginea cerută — niciodată un
     prenume pe care proza doar l-a scris. Un nume ghicit nu cumpără niciun portret, nu refuză niciun
     film și nu apare nicăieri în studio: rămâne pe evenimentul de creare al storyboard-ului, ca să se
-    vadă ce a citit studioul și ce a refuzat să creadă.
+    vadă ce a citit studioul și ce a refuzat să creadă. Măsurat 2026-09-18 de auditul repetiției: pe
+    datele lui niciunul dintre cele 8 personaje nu are imagine de referință, iar un set întreg
+    înseamnă 8 × 5 = 40 de imagini, circa 0,80 USD la 0,02 USD pe imagine (`gen4_image`) — un cost
+    pe care mesajul din preflight nu îl numește.
 11. **Aprobă furnizorii de rezervă**, dacă vrea unul — `approved_fallbacks`, pe nivelul de politică al
     canalului, al seriei sau al storyboard-ului; pentru un personaj blocat, lista din
     `approved_fallbacks_json` scrisă de o schimbare de identitate APROBATĂ. Aprobarea este dovada că
@@ -485,6 +819,16 @@ la locul lor în ordine.
     o oră o întrebare i-ar putea expira înainte să o citească, peste o săptămână un «da» s-ar putea
     cheltui mult după filmul despre care a fost întrebat). **Dacă sare peste:** studioul rulează în
     modul scris în coloană, adică AUTONOMOUS_CEO, fără ca el să fi ales asta.
+    Adăugat 2026-09-18 după repetiție: pe datele lui coloana arată AUTONOMOUS_CEO pentru că a scris-o
+    migrarea 0043 (valoarea ei implicită), la pornirea lui, nu pentru că a ales-o el — iar
+    preflight-ul o spune ca pe un fapt («Modul de autonomie este AUTONOMOUS_CEO: …»), fără să spună
+    că este valoarea implicită. Tot răspunsul lui așteaptă și **cele 29 de scenarii din 2026-09-12**
+    care au trecut poarta factuală (VERIFIED_PASS) și nu au fost aprobate de nimeni:
+    `GET /api/v1/factual/scripts` le arată, iar butonul «Approve script» din pagina scenariilor (sau
+    `POST /api/v1/factual/scripts/{id}/approve`) aprobă câte unul. Un scenariu aprobat intră în
+    storyboard la ziua următoare și poate fi filmat, deci fiecare aprobare este o hotărâre de
+    cheltuială; nu există o comandă care să le respingă. **Dacă sare peste:** nimic nu se pierde, dar
+    fiecare zi repetă despre ele «Un scenariu așteaptă aprobarea ta înainte de storyboard.»
 13. **Alege mediul studioului: TEST sau PRODUCTION** — `POST /api/v1/owner/environment`, comanda
     lui versionată, sau pagina Owner. Adăugat 2026-09-18, după ce un verificator adversarial a
     răspuns la întrebarea „ce produce studioul mâine la 05:00 dacă face diseară toată lista" și a
@@ -504,12 +848,29 @@ la locul lor în ordine.
     film. Trei ieșiri, toate ale lui: ridică pragul peste bugetul de mișcare, coboară bugetul de
     mișcare, sau alege AUTONOMOUS_CEO și lasă porțile dure să fie cele care stau între zi și
     furnizor. Așa cum sunt acum, SUPERVISED și PRODUCTION nu pot coexista cu o dimineață autonomă.
+    Adăugat 2026-09-18 după repetiție: pe datele lui coloana arată TEST, valoarea implicită scrisă
+    de migrarea 0031; repetiția nu a găsit în spatele ei o alegere a lui. Și, pentru PRODUCTION: **bugetul
+    lui zilnic de 15 USD ține un singur film la plafonul de mișcare de 12 USD, nu două.** Fiecare film
+    ține 12 USD pentru mișcare, plus narația, înainte de prima scenă; scurtul factual este ținut
+    primul, iar episodul serialului al doilea, deci episodul este refuzat de buget ori de câte ori
+    scurtul a costat mai mult de circa 3 USD (auditul repetiției a socotit 2,9 USD, cu narația
+    inclusă). O zi obișnuită în PRODUCTION este, așa cum stau numerele, un singur film de circa
+    2,5-4,5 USD. Cele două numere pe care le poate schimba înainte de trecere: bugetul zilnic (pasul
+    4), la cel puțin 24 USD pentru două filme, sau plafonul de mișcare pe film
+    (`STUDIO_MOTION_BUDGET_USD`), la cel mult 7,5 USD. De azi preflight-ul îi arată asta, cât timp
+    studioul este în TEST, ca linie INFORMATIV («Filmele zilei în bugetul zilnic»).
 14. **Abia acum pornește ceasul** — activarea lucrării `daily_main` din panoul zilei, care este actul
     lui înregistrat (`workflow.job_activated`), și instalarea sarcinii Windows („AMN-AI Studio",
     `scripts/install_studio_service.ps1`), cu confirmarea o singură dată în `data/studio-service.log`
     că o autentificare S4U deschide cheia. **Dacă sare peste:** lucrarea zilei stă adormită și nu se
     întâmplă nimic — ceea ce este exact regula lui: generarea video costă bani și se face numai după
     ce totul s-a dovedit. Rândurile 1-13 sunt „totul": de aceea acesta este ultimul.
+    Adăugat 2026-09-18 după repetiție: verdictul auditului a fost «REPARĂ ÎNTÂI». Cele două defecte
+    găsite — o citire refuzată a statisticilor oprea ziua, iar cărțile treceau ca plătite clipurile
+    Runway refuzate — sunt reparate în cod și dovedite numai cu furnizori imitați; repetiția gratuită
+    de după reparații, pe o copie proaspătă, nu a fost încă rulată. O zi reală plătită în TEST (circa
+    1,1-1,3 USD, cel mult circa 1,7 USD, fără modelele de limbaj, al căror cost este necunoscut)
+    rămâne decizia lui, cu ceasul pornit de el.
 15. **După prima zi cu cheltuială reală: reconciliază facturile furnizorilor** —
     `PUT /economy/reconciliations` (adăugat 2026-09-18), cu numărul facturii, ce acoperă (o perioadă
     sau un lucru numit, azi o randare) și `expected_version`, care aici este cerut pentru că
@@ -1339,11 +1700,22 @@ a policy refusal, a missing file, a full disk, a bug. A transient fault is retri
 each retry a `runbook.stage_retrying` event; a stage still failing makes the run FAILED with
 `fault_class` TRANSIENT on the stage, the run and the new `daily_run.fault_class` column
 (migration 0035), and does not open safe mode. A hard fault keeps the old behaviour: FAILED,
-safe mode, the autonomy stop set, a person looks.
+safe mode, the autonomy stop set, a person looks. **Corrected 2026-09-18, after the rehearsal on
+the Owner's data: a failed stage did not cost only itself — any failure blocked every stage after
+it, so one statistics token refused at performance intake left the day with nothing filmed, and a
+hard fault in any stage, an HTTP 4xx from Google included, opened safe mode and set the autonomy
+stop.** Since that day a failed stage blocks only the stages that take their input from it
+(`STAGE_PREREQUISITES`), and a hard fault opens safe mode only where it is a P0 — in media, publish
+or the day's log, or a database integrity error in any stage (`SAFE_MODE_STAGES`); anywhere else it
+costs its stage, its dependants and one letter. See «The rehearsal on the Owner's data
+(2026-09-18)» above.
 
 **The clock re-attempts a day that could not run.** A clock-fired run is skipped only when
 the date already has a run that did work (COMPLETED or PARTIAL) or `STUDIO_DAILY_MAX_ATTEMPTS`
-(3) is spent; a BLOCKED preflight or a TRANSIENT failure queues attempt n+1 under the
+(3) is spent; a BLOCKED preflight or a TRANSIENT failure queues attempt n+1 (corrected
+2026-09-18: a TRANSIENT failure queues it only when it cost the day's films — a stage from
+selection to publish lost — because a re-attempt re-runs the whole day and would buy a second film
+to recover a report; a day whose films went through is PARTIAL and done) under the
 idempotency key `daily-retry-<date>-<n>`, held `STUDIO_DAILY_RETRY_SECONDS` (1800) by the
 queue's `next_attempt_at` gate (`enqueue_task` gained `not_before`, and the gate is now
 tested). A retry that outlives its date skips itself; a waiting retry no longer refuses the
@@ -1810,7 +2182,11 @@ is the Owner's button, which counts toward the attempts); a day that could not r
 BLOCKED preflight, a stage that failed on a TRANSIENT fault — is re-attempted the same day
 after `STUDIO_DAILY_RETRY_SECONDS` (1800), up to `STUDIO_DAILY_MAX_ATTEMPTS` (3), each attempt
 queued under `daily-retry-<date>-<n>` and held by the queue's `not_before`; a re-attempt that
-outlives its date skips itself, and a HARD fault opens safe mode and is not re-attempted. Of
+outlives its date skips itself, and a HARD fault opens safe mode and is not re-attempted
+(corrected 2026-09-18: a HARD fault opens safe mode only in media, publish or the day's log, or
+for a database integrity error; a failed stage blocks only the stages that depend on it, and the
+re-attempt follows only a transient fault that cost the day's films — see «The rehearsal on the
+Owner's data (2026-09-18)»). Of
 the twelve runbook stages, `build_stage_runners` supplies ten (`performance_intake` through
 `post_run`, and `serial_queue`); `preflight` and `daily_log` are built into the run itself,
 and every stage reports COMPLETED or SKIPPED with a count and a reason.
@@ -2389,3 +2765,18 @@ and reuse also passed in the isolated UE project, including independent reload.
 Direct Python WebRTC capture remains experimental (connected, zero video frames).
 See [VISUAL_AUDIT_2026-09-18.md](VISUAL_AUDIT_2026-09-18.md) for evidence, backups, limits and the next AI's exact steps.
 Concurrent backend changes and the earlier build_vehicles.py edit were preserved.
+
+
+## Codex L2 review — claim released 2026-09-18; art pass deferred for stream fix
+
+Scope: isolated Blender mesh variant and copied Unreal review level, L2 composition only. Preserve live HQ_Dusk, materials outside the review assets, backend IDs and all concurrent changes. Render before/after and record actual results. Agent: Codex /root.
+
+
+### Scope steering — stream stability, 2026-09-18
+
+Owner reports UI freezes/flicker and briefly appearing cars. L2 edits deferred while fixing proven stale reconnect timers in frontend/src/hq_stream.js and regression tests frontend/tests/hq_stream_lifecycle.test.js. No artistic assets changed in this continuation; Blender/UE inventories completed read-only.
+
+
+## HQ stream stability fix — 2026-09-18, Codex
+
+A stale fallback reconnect timer could tear down a recovered connection. Fixed cancellation/state guarding and immediate/final frame preservation in hq_stream.js. Three red regressions now pass; all 115 frontend tests, TypeScript and Vite build pass. The server serves the new bundle. Actual browser viewer recovered from a controlled outage and remained live through second 86 without another disconnect. Authenticated Owner page requires reload; full UI/traffic stability is not yet proven there. Evidence and next checks: [STREAM_STABILITY_2026-09-18.md](STREAM_STABILITY_2026-09-18.md). L2 inventory completed read-only; no art asset changed during this continuation. Scope released.

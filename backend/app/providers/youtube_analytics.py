@@ -7,15 +7,18 @@ carrying the https://www.googleapis.com/auth/yt-analytics.readonly scope.
 Every number this adapter returns was reported by YouTube for the window that was asked for.
 Nothing is estimated: if YouTube does not return impressions for a query, impressions and CTR
 come back as zero and ``raw["impressions_reported"]`` is false, rather than being back-computed
-from views. The adapter raises when it is not configured or when the API does not answer; it
-never falls back to a plausible-looking figure.
+from views. The adapter raises when it is not configured, and raises `MetricsUnavailable` when
+Google does not answer or refuses the account — a statistics read is "no data" to the studio,
+never a fault that ends its day; it never falls back to a plausible-looking figure.
 """
 
 from __future__ import annotations
 
+import http.client
 import json
 import logging
 import os
+import re
 from datetime import date, timedelta
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -24,6 +27,62 @@ from urllib.request import Request, urlopen
 from app.providers.analytics_base import AnalyticsProvider, ChannelMetrics, VideoMetrics
 
 logger = logging.getLogger("studio.analytics.youtube")
+
+#: What a read of the platform can fail on without the studio being wrong: the network, the
+#: HTTP exchange, an answer that is not the JSON it should be. Not OSError wholesale by
+#: intent of the runbook's classifier, but here every OSError comes out of `urlopen` or the
+#: read of its answer — a socket, never a disk.
+_TRANSPORT_ERRORS = (URLError, OSError, http.client.HTTPException, ValueError, KeyError)
+
+#: Google's token endpoint names its refusal in a short snake_case word (invalid_grant,
+#: invalid_client). Only a word of that shape is kept from the answer: the rest of the body
+#: is Google's prose, and nothing of the request (the refresh token, the secret) is in it.
+_OAUTH_ERROR = re.compile(r"^[a-z_]{3,40}$")
+
+
+class MetricsUnavailable(RuntimeError):
+    """There is nothing the studio can measure for this publication right now.
+
+    Three causes, one meaning — no number, and none invented in its place. The publication
+    has no real video on the platform; or the platform could not be asked (the network, a
+    5xx, an answer that is not a report); or the platform refused this account — a revoked
+    or expired refresh token answers HTTP 400 ``invalid_grant``, a missing statistics scope
+    answers 403. Measured on the Owner's copy on 2026-09-18: the last two used to escape as
+    URLError or RuntimeError, and one statistics read cost the whole day.
+
+    ``auth_refused`` is the one the Owner has to act on (the account needs reconnecting);
+    ``during`` says which request it was (``token_refresh`` or ``report``); ``error_class``,
+    ``http_status`` and ``oauth_error`` are what was observed, never a credential.
+    Defined here, in the adapter that raises it, and re-exported by `app.analytics.services`
+    where it has always been imported from.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        during: str | None = None,
+        auth_refused: bool = False,
+        error_class: str | None = None,
+        http_status: int | None = None,
+        oauth_error: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.during = during
+        self.auth_refused = auth_refused
+        self.error_class = error_class
+        self.http_status = http_status
+        self.oauth_error = oauth_error
+
+
+def _oauth_error(exc: HTTPError) -> str | None:
+    """The refusal's own word from Google's answer, or None; never more than the word."""
+    try:
+        body = json.loads(exc.read(4096).decode("utf-8", "replace"))
+    except (OSError, ValueError, AttributeError):
+        return None
+    word = body.get("error") if isinstance(body, dict) else None
+    return word if isinstance(word, str) and _OAUTH_ERROR.match(word) else None
 
 
 class YouTubeAnalyticsProvider(AnalyticsProvider):
@@ -36,6 +95,7 @@ class YouTubeAnalyticsProvider(AnalyticsProvider):
         refresh_token: str | None = None,
         access_token: str | None = None,
         channel_id: str | None = None,
+        connection_id: str | None = None,
     ) -> None:
         # Explicit credentials are one account's and are taken whole. The constructor used
         # to fill every argument left None from STUDIO_YOUTUBE_*, so an adapter built from a
@@ -57,6 +117,10 @@ class YouTubeAnalyticsProvider(AnalyticsProvider):
         #: Whose numbers these are: the bound connection's remote channel id, so a reader can
         #: check the account against the slot's binding. None on the environment path.
         self.channel_id = channel_id
+        #: The studio's own connection row the credentials came from, so a refusal can be
+        #: recorded against the account that has to be reconnected. None on the environment
+        #: path, which has no row.
+        self.connection_id = connection_id
 
     @classmethod
     def from_verified_settings(
@@ -121,10 +185,47 @@ class YouTubeAnalyticsProvider(AnalyticsProvider):
             method="POST",
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
-        with urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            self.access_token = data["access_token"]
-            return self.access_token
+        # The refresh is a read like the report, and fails like one: it sat outside every try,
+        # so a refused DNS lookup of this host at 05:00 left the adapter as a URLError and the
+        # day stopped behind it. A 4xx here is Google refusing the account (invalid_grant is
+        # a revoked or expired refresh token, invalid_client a secret it no longer accepts):
+        # no retry changes that answer, only reconnecting the account does.
+        try:
+            with urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                self.access_token = str(data["access_token"])
+                return self.access_token
+        except HTTPError as exc:
+            refused = 400 <= exc.code < 500 and exc.code not in (408, 429)
+            word = _oauth_error(exc)
+            logger.warning(
+                "youtube_analytics_token_refused",
+                extra={"http_status": exc.code, "oauth_error": word},
+            )
+            raise MetricsUnavailable(
+                (
+                    f"Google a refuzat reînnoirea accesului la statistici "
+                    f"(HTTP {exc.code}{', ' + word if word else ''}): legătura contului cu "
+                    "YouTube trebuie refăcută — apasă Reconectează."
+                )
+                if refused
+                else f"Serviciul de acces Google a răspuns HTTP {exc.code}; fără date azi.",
+                during="token_refresh",
+                auth_refused=refused,
+                error_class=type(exc).__name__,
+                http_status=exc.code,
+                oauth_error=word,
+            ) from exc
+        except _TRANSPORT_ERRORS as exc:
+            logger.warning(
+                "youtube_analytics_token_unreachable", extra={"error": type(exc).__name__}
+            )
+            raise MetricsUnavailable(
+                f"Serviciul de acces Google nu a putut fi întrebat ({type(exc).__name__}); "
+                "fără date azi.",
+                during="token_refresh",
+                error_class=type(exc).__name__,
+            ) from exc
 
     @staticmethod
     def _date_range(window: str) -> tuple[str, str]:
@@ -150,11 +251,38 @@ class YouTubeAnalyticsProvider(AnalyticsProvider):
             with urlopen(req, timeout=20) as resp:
                 body = resp.read(4_000_001)
                 if len(body) > 4_000_000:
-                    raise RuntimeError("YouTube Analytics response exceeds the size limit")
+                    raise MetricsUnavailable(
+                        "Răspunsul YouTube Analytics depășește limita de mărime; fără date.",
+                        during="report",
+                    )
                 return json.loads(body.decode("utf-8"))
-        except (HTTPError, URLError) as exc:
-            logger.error("youtube_analytics_api_error: %s", exc)
-            raise RuntimeError(f"YouTube Analytics API request failed: {exc}") from exc
+        except HTTPError as exc:
+            # 401 is a token Google no longer honours; 403 is an account that never granted
+            # the statistics scope (both of the Owner's connections hold youtube.readonly and
+            # youtube.upload only, measured 2026-09-18). Either way the account is what needs
+            # reconnecting. Any other status is this query refused, which the caller may ask
+            # again in a smaller shape.
+            refused = exc.code in (401, 403)
+            logger.error("youtube_analytics_api_error: HTTP %s", exc.code)
+            raise MetricsUnavailable(
+                (
+                    f"YouTube Analytics a refuzat contul (HTTP {exc.code}): accesul la "
+                    "statistici lipsește sau a expirat — apasă Reconectează."
+                )
+                if refused
+                else f"YouTube Analytics a răspuns HTTP {exc.code}; fără date.",
+                during="report",
+                auth_refused=refused,
+                error_class=type(exc).__name__,
+                http_status=exc.code,
+            ) from exc
+        except _TRANSPORT_ERRORS as exc:
+            logger.error("youtube_analytics_api_error: %s", type(exc).__name__)
+            raise MetricsUnavailable(
+                f"YouTube Analytics nu a putut fi întrebat ({type(exc).__name__}); fără date.",
+                during="report",
+                error_class=type(exc).__name__,
+            ) from exc
 
     async def fetch_video_metrics(
         self, remote_video_id: str, window: str = "LIFETIME"
@@ -188,9 +316,13 @@ class YouTubeAnalyticsProvider(AnalyticsProvider):
         impressions_reported = True
         try:
             data = self._report(params, token)
-        except RuntimeError:
+        except MetricsUnavailable as exc:
             # Impression metrics are not available for every account or query shape. Retry with
-            # the core metrics and report no impressions rather than inventing them.
+            # the core metrics and report no impressions rather than inventing them. Only a
+            # query the API refused is asked again: an account it refused, or a network that
+            # did not answer, would answer the smaller question the same way.
+            if exc.auth_refused or exc.http_status is None:
+                raise
             impressions_reported = False
             params["metrics"] = ",".join(base_metrics)
             data = self._report(params, token)

@@ -667,8 +667,8 @@ Evidence: `tests/test_mail.py` 18/18; backend 544/1; frontend 86/86; live on a c
 
 ## The clock and durability (Phase A of running unattended) — 2026-09-17
 
-- [x] Fault classes: a stage's TRANSIENT fault is retried in place (3 retries, 20/40/80 s) and fails the run without safe mode; a HARD fault still opens safe mode. `daily_run.fault_class`, migration 0035.
-- [x] Same-day re-attempts: a BLOCKED preflight or a TRANSIENT day is tried again after 30 minutes, three attempts per business date; a date that did work is never rerun by the clock.
+- [x] Fault classes: a stage's TRANSIENT fault is retried in place (3 retries, 20/40/80 s) and fails the run without safe mode; a HARD fault still opens safe mode. `daily_run.fault_class`, migration 0035. Corrected 2026-09-18 (the rehearsal on the Owner's data): a failed stage, of either class, blocked every stage after it, so it cost the day and not the stage; since then it blocks only its dependants (`STAGE_PREREQUISITES`), and a HARD fault opens safe mode only in media, publish or the day's log, or for a database integrity error (`SAFE_MODE_STAGES`).
+- [x] Same-day re-attempts: a BLOCKED preflight or a TRANSIENT day is tried again after 30 minutes, three attempts per business date; a date that did work is never rerun by the clock. Corrected 2026-09-18: a TRANSIENT failure is re-attempted only when it cost the day's films (`PRODUCTION_STAGES`); a day whose films went through is PARTIAL.
 - [x] The daily job on the wall clock: `run_at_local` and `timezone` on the row, DST-safe, `STUDIO_DAILY_RUN_HOUR_LOCAL` 05:00; still seeded dormant, the Owner starts it.
 - [x] STOP AUTONOMY cancels a running day between stages: PARTIAL or BLOCKED, no safe mode, no letter.
 - [x] Provider retries: one bounded, jittered policy (`providers/retry.py`) for every adapter; a billed request that got no answer is not sent again.
@@ -681,7 +681,7 @@ Evidence: `tests/test_mail.py` 18/18; backend 544/1; frontend 86/86; live on a c
 - [ ] Employees other than the VideoEditor left WORKING by a crash are reset (the "stuck agent runtime" item of `../architecture/18_AUTOMATION_ORCHESTRATION.md`).
 - [ ] An autouse fixture in `tests/conftest.py` patching `app.providers.retry.sleep`, so the remote-state honesty test is instant again.
 - [ ] An end-to-end watchdog fire with the real module through the worker (the dispatch was tested with an injected stub).
-- [ ] The Owner's part: run the migration (`scripts/bootstrap.py`), install the task, confirm once in `data/studio-service.log` that an S4U logon opens the credential key, and start the clock — his recorded act.
+- [ ] The Owner's part: run the migration (`scripts/bootstrap.py`), install the task, confirm once in `data/studio-service.log` that an S4U logon opens the credential key, and start the clock — his recorded act. Measured 2026-09-18 by the rehearsal: the migration is done — his own start at 22:42 local ran bootstrap, and a copy taken after it was at `0045_reconciliation`; the task, the S4U check and the clock are still his.
 
 Evidence: 66 (runbook, scheduler/worker, schema match), 28 (provider retry), 46 + 24 (media, Ollama, integration settings), 34 (existing adapter tests), 11 (watchdog) passed on the changed files; ruff, format, mypy and `check_docs.py` clean. The whole suite is the verifier's.
 
@@ -754,7 +754,8 @@ Detailed acceptance and evidence: [VISUAL_AUDIT_2026-09-18.md](VISUAL_AUDIT_2026
   `npm run build --prefix frontend` has not been run, so the served bundle is still the old one.
 - [ ] The script-only heuristic and the OpenSearch discovery measured against live hosts — the
   first weekly retest on the live database (tests may not open a socket).
-- [ ] The Owner's part: run the migration (`scripts/bootstrap.py`) to `0040_research_sources`, set
+- [ ] The Owner's part: run the migration (`scripts/bootstrap.py`) to `0040_research_sources` (done by
+  his own start, measured by the rehearsal of 2026-09-18: the live copy is at `0045_reconciliation`), set
   the budgets, type the plan's prices, connect a search engine or add hosts, set the publish policy
   per channel, and start the clock. Nothing above spends money on its own.
 
@@ -1029,9 +1030,11 @@ was rendered, no run was queued and no credit was spent.
   (`rb-informational` neutral, no class at all for an unknown severity) and `approvalCaveat`; `main.js`
   imports them and `style.css` gains the two rules. Separate module because `main.js` touches the
   document on import and cannot be loaded by `node --test`.
-- [ ] `RUNBOOK_CHECK_LABELS` has no entry for `youtube_channel_binding`, which `run_preflight` also
+- [x] `RUNBOOK_CHECK_LABELS` has no entry for `youtube_channel_binding`, which `run_preflight` also
   emits: it showed by its code name before this phase and still does. Anyone adding a check to
-  `backend/app/runbook/preflight.py` must add a line there.
+  `backend/app/runbook/preflight.py` must add a line there. Corrected 2026-09-18, measured in the
+  tree: it has one, «Sloturi de canal legate de YouTube», since the module was created; the three
+  checks added after the rehearsal have theirs too.
 - [ ] The Accountancy office still needs the reconciliation list and its form, and the cost list must
   show `reconciled_at` and the two new labels, or a row that no longer counts looks like one that does;
   and `frontend/dist` is still not rebuilt, so the Owner sees none of the panel's new words until
@@ -1098,3 +1101,102 @@ had begun to fail because its whole-tree scan for the string "ApprovalRequest" f
 the Accountant gained in this phase, and the scan now walks the parsed module rather than its
 characters: **12 passed** afterwards. No provider was called, nothing was rendered, no run was queued,
 no credit was spent and `data/studio.db` was not opened.
+
+
+### Stream stability correction — 2026-09-18
+
+- [x] Reproduce and fix stale fallback retries interrupting a recovered live stream.
+- [x] Verify real browser video recovery beyond the old retry deadline.
+- [ ] Verify the authenticated Owner page after reload; separately investigate traffic-only popping if it persists while video time continues.
+
+
+## The rehearsal on the Owner's data — 2026-09-18
+
+- [x] A whole scheduled day rehearsed on a copy of the Owner's studio: the real scheduler, worker and
+  runbook, every paid vendor faked, every outside connection refused. The copy was made from a plain
+  file copy of `studio.db`, its `-wal` and its `-shm`, and the live file was never opened. An
+  independent audit re-ran it on a fresh copy, with the verdict FIX_FIRST. The repeatable harness is
+  `tests/test_rehearsal_on_a_copy.py`, opt-in through `STUDIO_REHEARSAL_DB`; it refuses
+  `data/studio.db`.
+- [x] Defect 1, "one statistics read stops the day, and a 4xx from Google halts the studio":
+  `MetricsUnavailable` for every transport and authentication failure of the analytics adapter;
+  «fără date» per publication, with one ledger event per refused account; `STAGE_PREREQUISITES`, so
+  a failed stage blocks only its dependants; `SAFE_MODE_STAGES`, so safe mode opens only for a P0;
+  the re-attempt only after a transient fault that cost a film; PARTIAL for a day whose films went
+  through.
+- [x] Defect 2, "the books charge motion never generated": `motion_was_bought` in both render
+  books, and a refused shot teaches no price.
+- [x] The run's headline counts what each stage produced (`produced`, `summary`,
+  `stages_productive`), so 12/12 no longer stands for a day that made nothing.
+- [x] Narration on Flash and Turbo at the documented half (`eleven_flash_*`, `eleven_turbo_*`,
+  0.11 USD per 1k characters), with any Owner price outranking every documented one.
+- [x] Every paid path faked in the tests. DNS and asyncio's `sock_connect` are refused by the suite's
+  guard. One shared list of eight fakes, including the motion chooser and the analytics adapter. A
+  call-graph scan (`tests/test_no_paid_path_escapes.py`) fails on any paid adapter reachable from the
+  day without a fake.
+- [x] The preflight says what will stop tomorrow: `youtube_upload_access` (BLOCKING),
+  `youtube_statistics_access` and `daily_budget_films`, the publishing line saying it reads the
+  stored state, and a summary that names `first_stop`.
+- [x] `39_DAILY_AUTONOMOUS_RUNBOOK` states which stage needs which and that a failed stage blocks
+  only its dependants. It is re-hashed, and every sentence that said a failed stage costs only
+  itself is corrected with a dated marker.
+- [x] `SCOPES` (`backend/app/youtube/services.py`) asks Google for `yt-analytics.readonly`. Before
+  that, the reconnect the preflight tells the Owner to make could not grant statistics access.
+  Added by another part while these documents were being written, with
+  `tests/test_youtube_connections.py::test_the_consent_asks_for_the_statistics_the_day_reads` (1
+  passed in this documentation part's run). His consent screen asks for one more permission, and
+  each existing connection must be reconnected once, after his studio runs this code.
+- [ ] The uploader (`backend/app/providers/youtube.py`) writes `youtube.token_refresh_failed` with
+  `during='upload'` when Google refuses its refresh. Until then, an upload-side refusal reaches the
+  preflight only after the statistics read meets the same dead token.
+- [ ] The film's hold prices narration at the voice model's own price (`price_row` for the model in
+  `media_production_config`) rather than the dearest active ElevenLabs price
+  (`economy/budget.py`, `estimate_film_cost_micros`). The dearest price stays only as the fallback.
+- [ ] The panel shows `run.summary`, `stages_productive`, each stage's `produced`, the reason «Nu a
+  fost încercată: etapa de care depinde, «X», a eșuat.» and the preflight's `first_stop`; a PARTIAL
+  run's `stopped_at_stage` reads «etapa eșuată» (`frontend/src/main.js`); and `frontend/dist` is
+  rebuilt by the Owner.
+- [ ] `backend/app/runbook/stages.py`'s module docstring still says a raised fault «stops the day».
+  `_performance_intake` could carry the first «fără date» reason in its own reason line.
+- [ ] The paid-path scan and a fixture's fakes extended to the other scheduled entry points: the
+  watchdog (`workflows/watchdog.py:175` resolves the publisher through `integrations.services`),
+  `director_loop`, `model_review`, the catalogue refresh and the reference-set route.
+- [ ] The free rehearsal re-run on a fresh copy after the fixes, as the audit recommended before any
+  paid day.
+- [ ] The Owner's part, from the rehearsal. Each item is a dated line in «Ce are Owner-ul de făcut».
+  - Verify or reconnect *Nexus Curiosity* and *Inside The Nexus*, granting statistics access.
+  - Move his Google OAuth app out of Testing.
+  - Type the Ollama Cloud prices and his voice plan's price.
+  - Decide on the 29 VERIFIED_PASS scripts of 2026-09-12.
+  - Choose the mode and the environment the migrations wrote for him.
+  - Before PRODUCTION, raise the DAILY budget to at least 24 USD, or lower the per-film motion
+    ceiling to at most 7.5 USD. Otherwise the 15 USD budget holds one film, not two.
+  - Grant the Director's leave, produce the reference sets (about 0.80 USD) and start the clock.
+- [ ] Measured only by a real day, watched:
+  - whether Runway returns usable clips at the estimated credits;
+  - whether his models answer the idea, Director and Accountant schemas;
+  - whether a vision model answers the picture gate on his frames;
+  - whether the reviewers catch narration its cited claim does not support;
+  - whether the Publisher titles the serial as the episode;
+  - which of his 36 hosts are readable today.
+
+Evidence, each figure named for the part that measured it:
+- The rehearsal: the opt-in test 1 passed on a fresh copy.
+- The audit: the opt-in test 1 passed on its own fresh copy, and the whole suite 1265 passed, 2 skipped
+  on the tree as it stood at the rehearsal, before the fixes.
+- The failure-and-analytics part: `tests/test_phase7_analytics.py` 18,
+  `tests/test_day_survives_a_stage.py` 14 (new), 124 across the runbook, mail, B/C-adversary and
+  daily-run-stage files, and 202 passed, 1 skipped across ten related files.
+- The books part: 13 new cases in `tests/test_books_and_history.py` (red first at 9 passed, 4
+  failed), `tests/test_pricing_truth.py` 22, and 158 across seven economy and media files.
+- The fakes part: 14 passed, 1 skipped across the scan, the whole-day test and the rehearsal; 340
+  passed, 1 skipped across the `getaddrinfo`, research, provider and adversary files; and the opt-in
+  rehearsal 1 passed on the scratchpad copy, all twelve stages COMPLETED, with 0 refusals to a paid
+  vendor.
+- The preflight part: 30 across the two readiness files (red first at 17 passed, 12 failed), 130
+  across the preflight's consumers, and `node --test frontend/tests/readiness.test.js` 8.
+- The documents: `scripts/check_docs.py` and `tests/test_documentation.py`.
+
+No part made a whole-suite run. No migration was taken, and the head stays `0045_reconciliation`. No
+provider was called, no run was queued on the live studio, no credit was spent, and `data/studio.db`
+was never opened.

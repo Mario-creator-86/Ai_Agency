@@ -45,12 +45,49 @@ GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
 
-#: Read the channel the Owner authorised, and be able to upload to it later. Requested together
-#: so one consent covers both; Google reports back what it actually granted.
+#: Read the channel the Owner authorised, upload to it, and read its statistics. Requested
+#: together so one consent covers everything the studio does with a channel; Google reports
+#: back what it actually granted. The statistics scope was missing until 2026-09-18, so a
+#: reconnect could not grant it and the day's statistics read failed on every refresh; a
+#: connection made before then must be reconnected once to add it.
 SCOPES = (
     "https://www.googleapis.com/auth/youtube.readonly "
-    "https://www.googleapis.com/auth/youtube.upload"
+    "https://www.googleapis.com/auth/youtube.upload "
+    "https://www.googleapis.com/auth/yt-analytics.readonly"
 )
+
+#: What each use of a connection needs Google to have granted. Uploading needs the upload
+#: scope; the statistics are read through the YouTube Analytics API, whose adapter
+#: (`app.providers.youtube_analytics`) asks for yt-analytics.readonly. Measured on the
+#: Owner's copy on 2026-09-18: both of his connections hold youtube.readonly and
+#: youtube.upload and not the statistics scope, because `SCOPES` above never asked for it.
+UPLOAD_SCOPE = "https://www.googleapis.com/auth/youtube.upload"
+STATISTICS_SCOPE = "https://www.googleapis.com/auth/yt-analytics.readonly"
+
+#: The ledger lines `app.analytics.services` writes when Google refuses, or never answers, a
+#: stored connection: a token refresh (the token every use of the account shares), or a
+#: statistics report the token was good for. Aggregate `youtube_connection` / the connection
+#: id; payload `connection_id, during, http_status, oauth_error, auth_refused, ...`, never a
+#: token. Named here too so the preflight reads them without importing the analytics stage;
+#: tests/test_readiness.py holds the two copies equal.
+TOKEN_REFRESH_FAILED = "youtube.token_refresh_failed"
+ANALYTICS_REFUSED = "youtube.analytics_refused"
+
+
+def granted_scope_set(row: YouTubeConnection) -> frozenset[str] | None:
+    """The scopes Google reported granting, as stored at consent; None when none was stored.
+
+    None is "not recorded", never "nothing granted": a row written before the column was
+    filled has no answer to give, and reading that as a refusal would invent a fault.
+    """
+    stored = (row.granted_scopes or "").split()
+    return frozenset(stored) if stored else None
+
+
+def scope_label(scope: str) -> str:
+    """The last part of a scope URL, the name Google's consent screen and docs use."""
+    return scope.rstrip("/").rsplit("/", 1)[-1]
+
 
 #: Exactly the parts the Owner's brief asks for.
 CHANNEL_PARTS = "snippet,id,contentDetails,statistics"

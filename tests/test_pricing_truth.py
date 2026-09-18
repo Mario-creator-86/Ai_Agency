@@ -286,7 +286,13 @@ def test_the_documented_seed_is_marked_and_never_overrides_the_owner(engine):
         for r in list_prices(engine, provider_kind="elevenlabs")
         if r["unit"] == "per_1k_characters"
     ]
-    assert [(r["resource"], r["provenance"], r["usd"]) for r in active] == [("*", "OWNER", "0.1")]
+    assert [(r["resource"], r["provenance"], r["usd"]) for r in active] == [
+        ("*", "OWNER", "0.1"),
+        ("eleven_flash_*", "DOCUMENTED", "0.11"),
+        ("eleven_turbo_*", "DOCUMENTED", "0.11"),
+    ]
+    # The documented family rows stay listed, and his '*' is what every model is read at.
+    assert _per_1k(engine, "eleven_flash_v2") == 100_000
 
 
 # --------------------------------------------------------------------------- the books
@@ -624,13 +630,22 @@ def test_bootstrap_seeds_the_documented_price_beside_the_chart_of_accounts(engin
 
     # And what the caller gets: the one published figure, never Ollama Cloud, and a second
     # bootstrap over a price the Owner typed in between leaves his price standing.
-    assert seed_documented_prices(engine)["seeded"] == 1
+    assert seed_documented_prices(engine)["seeded"] == 3
     assert [
         (row["provider_kind"], row["resource"], row["provenance"]) for row in list_prices(engine)
-    ] == [("elevenlabs", "*", "DOCUMENTED")]
-    price(engine, "elevenlabs", "*", "per_1k_characters", "0.11")
+    ] == [
+        ("elevenlabs", "*", "DOCUMENTED"),
+        ("elevenlabs", "eleven_flash_*", "DOCUMENTED"),
+        ("elevenlabs", "eleven_turbo_*", "DOCUMENTED"),
+    ]
+    price(engine, "elevenlabs", "*", "per_1k_characters", "0.12")
     assert seed_documented_prices(engine)["seeded"] == 0
-    assert [(row["usd"], row["provenance"]) for row in list_prices(engine)] == [("0.11", "OWNER")]
+    assert [(row["usd"], row["provenance"]) for row in list_prices(engine)] == [
+        ("0.12", "OWNER"),
+        ("0.11", "DOCUMENTED"),
+        ("0.11", "DOCUMENTED"),
+    ]
+    assert _per_1k(engine, "eleven_turbo_v2_5") == 120_000, "his price, not the price list's"
 
 
 def test_a_price_makes_an_estimate_and_only_the_invoice_makes_it_the_truth(engine):
@@ -694,3 +709,129 @@ def test_a_price_makes_an_estimate_and_only_the_invoice_makes_it_the_truth(engin
     assert row.status == "ESTIMATED" and row.reconciled_at, (
         "the estimate is kept whole — it is the record of what the studio believed"
     )
+
+
+# ------------------------------------------------------------ the documented price, per family
+
+
+def _per_1k(engine, model: str) -> int | None:
+    from app.economy.prices import price_for
+
+    with Session(engine) as session:
+        return price_for(session, "elevenlabs", model, "per_1k_characters")
+
+
+def test_the_documented_voice_price_is_half_for_the_models_the_price_list_bills_half(engine):
+    """The audit of 2026-09-18: the one DOCUMENTED ElevenLabs figure (resource '*', 0.22 USD
+    a thousand characters) priced the Owner's eleven_flash_v2 at the multilingual rate,
+    although the very row's note says Flash and Turbo bill half a credit a character, so his
+    narration read about twice its cost in the books. The figure per family comes from that
+    same cited price list, and nothing else is invented: every other model keeps the '*'."""
+    from app.integrations.catalog import DOCUMENTED_PRICES
+
+    seed_documented_prices(engine)
+    everything = next(e for e in DOCUMENTED_PRICES if e["resource"] == "*")
+    for family in ("eleven_flash_*", "eleven_turbo_*"):
+        entry = next(e for e in DOCUMENTED_PRICES if e["resource"] == family)
+        assert float(entry["usd"]) * 2 == float(everything["usd"]), family
+        assert "price list" in entry["notes"] and "half" in entry["notes"], family
+
+    assert _per_1k(engine, "eleven_flash_v2") == 110_000
+    assert _per_1k(engine, "eleven_flash_v2_5") == 110_000
+    assert _per_1k(engine, "eleven_turbo_v2_5") == 110_000
+    assert _per_1k(engine, "eleven_multilingual_v2") == 220_000
+    assert _per_1k(engine, "eleven_v3") == 220_000
+    # The adapter reads the same lookup: 1 000 characters on Flash cost 0.11, not 0.22.
+    assert tts_cost_vr(price_lookup(engine, "elevenlabs"), "eleven_flash_v2", 1000) == "0.11"
+
+
+def test_any_price_the_owner_types_outranks_every_documented_one(engine):
+    """A documented family row is more specific than the Owner's '*', and must still lose to
+    it: his plan's figure is the price, the price list only a stand-in until he types it."""
+    seed_documented_prices(engine)
+    price(engine, "elevenlabs", "*", "per_1k_characters", "0.10")
+    assert _per_1k(engine, "eleven_flash_v2") == 100_000
+    assert _per_1k(engine, "eleven_multilingual_v2") == 100_000
+    # Among his own prices the most specific wins: the model, then its family, then '*'.
+    price(engine, "elevenlabs", "eleven_flash_*", "per_1k_characters", "0.05")
+    assert _per_1k(engine, "eleven_flash_v2_5") == 50_000
+    price(engine, "elevenlabs", "eleven_flash_v2", "per_1k_characters", "0.04")
+    assert _per_1k(engine, "eleven_flash_v2") == 40_000
+    assert _per_1k(engine, "eleven_flash_v2_5") == 50_000
+    assert _per_1k(engine, "eleven_multilingual_v2") == 100_000
+
+
+def test_a_documented_row_the_owners_wildcard_already_covers_is_not_seeded(engine):
+    """A studio where the Owner typed his plan before the family rows existed gets nothing
+    new: a documented row his '*' outranks would never be read, only listed."""
+    price(engine, "elevenlabs", "*", "per_1k_characters", "0.10")
+    assert seed_documented_prices(engine)["seeded"] == 0
+    assert [(r["resource"], r["provenance"]) for r in list_prices(engine)] == [("*", "OWNER")]
+
+
+def test_a_render_on_flash_is_charged_at_the_flash_figure(engine, tmp_path, client, headers):
+    """The books, not only the adapter: the Accountant prices a scene the catalogue has no
+    price for from the same table, so a Flash narration is charged at the Flash figure."""
+    from app.economy.accountant import record_render_costs
+    from app.media.models import VideoRenderJob
+    from test_production_policy import make_storyboard
+
+    identifier = str(uuid4())
+    with Session(engine) as session, session.begin():
+        event = append_event(
+            session, "settings.integration_saved", "integration", identifier, 1, {}, "c"
+        )
+        session.add(
+            Integration(
+                id=identifier,
+                kind="elevenlabs",
+                name="Voice",
+                config={},
+                encrypted_secrets=CredentialVault(
+                    Path(str(engine.url.database)).with_suffix(".credentials.key")
+                ).encrypt({"api_key": "k"}),
+                secret_fields=["api_key"],
+                version=1,
+                status="VERIFIED",
+                checked_at=utc_now(),
+                event_id=event.event_id,
+            )
+        )
+    seed_documented_prices(engine)
+    storyboard_id = make_storyboard(engine, tmp_path)
+    job_id = str(uuid4())
+    with Session(engine) as session, session.begin():
+        event = append_event(
+            session, "media.render_started", "video_render_job", job_id, 1, {}, str(uuid4())
+        )
+        session.add(
+            VideoRenderJob(
+                id=job_id,
+                storyboard_id=storyboard_id,
+                status="COMPLETED",
+                started_at=utc_now(),
+                finished_at=utc_now(),
+                production_json={
+                    "voice": {"integration_id": identifier},
+                    "scenes": [
+                        {"scene_index": 1, "model_id": "eleven_flash_v2", "characters": 1000},
+                        {
+                            "scene_index": 2,
+                            "model_id": "eleven_multilingual_v2",
+                            "characters": 1000,
+                        },
+                    ],
+                },
+                event_id=event.event_id,
+            )
+        )
+    assert record_render_costs(engine, job_id)["recorded"] == 2
+    with Session(engine) as session:
+        rows = {
+            r.attribution_json["model_id"]: (r.usd_micros, r.attribution_json["price_provenance"])
+            for r in session.scalars(select(ProviderCostRecord))
+        }
+    assert rows == {
+        "eleven_flash_v2": (110_000, "DOCUMENTED"),
+        "eleven_multilingual_v2": (220_000, "DOCUMENTED"),
+    }

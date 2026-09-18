@@ -365,3 +365,132 @@ def test_the_sources_screen_is_given_the_origin_and_the_reason_it_shows(
     )
     owned = client.get("/api/v1/factual/sources/allowed-hosts", headers=headers).json()["hosts"][0]
     assert owned["search_template_origin"] == "OWNER"
+
+
+# ------------------------------------------------------ a studio configured like his copy
+
+
+def test_a_studio_shaped_like_the_owners_copy_reads_what_the_rehearsal_audit_found(
+    engine, settings, tmp_path
+):
+    """The 2026-09-18 rehearsal ran on a copy of the Owner's studio and its preflight said
+    «Canal YouTube conectat» and «2 sloturi legate» with a green tick. The copy's shape: TEST,
+    AUTONOMOUS_CEO, a DAILY budget of 15 USD, both seeded slots bound to CONNECTED accounts —
+    Nexus Curiosity and Inside The Nexus, connected 2026-09-11 with youtube.readonly and
+    youtube.upload and not yt-analytics.readonly. Rebuilt here on a temporary database, it
+    must now say what the audit said, from the database alone."""
+    from datetime import timedelta
+
+    from app.agents.models import ModelRecord
+    from app.agents.services import seed_initial_workforce
+    from app.economy.budget import BudgetCommand, set_budget
+    from app.models import DomainEvent, OwnerPolicy
+    from app.publishing.models import ChannelRecord
+    from app.publishing.services import seed_default_channels
+    from app.youtube.models import YouTubeConnection
+    from sqlalchemy import select as query
+    from sqlalchemy.orm import Session
+
+    vault = CredentialVault(tmp_path / "copy.credentials.key")
+    seed_initial_workforce(engine)
+    seed_default_channels(engine)
+    settings.ffmpeg_path = settings.ffmpeg_path or "ffmpeg-test-stub"
+    granted = datetime(2026, 9, 11, 9, 30, tzinfo=UTC)
+    morning = datetime(2026, 9, 18, 19, 44, tzinfo=UTC)
+    accounts = {}
+    with Session(engine) as session, session.begin():
+        policy = session.get(OwnerPolicy, 1)
+        policy.autonomy_stopped = False
+        policy.environment = "TEST"
+        policy.autonomy_mode = "AUTONOMOUS_CEO"
+        session.scalars(query(ModelRecord)).first().is_available = True
+        for channel_type, name in (
+            ("MAIN_FACTUAL", "Nexus Curiosity"),
+            ("OFFICE_SERIAL", "Inside The Nexus"),
+        ):
+            identifier = str(uuid4())
+            accounts[name] = identifier
+            session.add(
+                YouTubeConnection(
+                    id=identifier,
+                    name=name,
+                    client_id="client.apps.googleusercontent.com",
+                    redirect_uri="http://127.0.0.1:8000/auth/youtube/callback",
+                    encrypted_secrets="opaque",
+                    secret_fields=["client_secret", "refresh_token"],
+                    status="CONNECTED",
+                    remote_channel_id=f"UC-{identifier[:6]}",
+                    remote_channel_title=name.upper(),
+                    channel_snapshot={},
+                    granted_scopes=(
+                        "https://www.googleapis.com/auth/youtube.readonly "
+                        "https://www.googleapis.com/auth/youtube.upload"
+                    ),
+                    connected_at=granted.isoformat(),
+                    last_checked_at=granted.isoformat(),
+                    created_at=granted.isoformat(),
+                )
+            )
+            session.scalar(
+                query(ChannelRecord).where(ChannelRecord.channel_type == channel_type)
+            ).credentials_ref = f"youtube_connection:{identifier}"
+    set_budget(engine, BudgetCommand(period="DAILY", limit_usd="15"))
+
+    preflight = run_preflight(engine, settings, vault, now=morning)
+    assert preflight["status"] == "DEGRADED"
+
+    # The binding and the publishing lines no longer read as a verdict on the token.
+    assert check(preflight, "youtube_channel_binding")["ok"] is True
+    assert "starea stocată" in check(preflight, "youtube_channel_binding")["message"]
+    assert "starea stocată" in check(preflight, "publishing")["message"]
+
+    # Statistics: both slots lack the scope; the words say what to do.
+    statistics = check(preflight, "youtube_statistics_access")
+    assert statistics["ok"] is False and statistics["severity"] == "DEGRADING"
+    for name in ("Nexus Curiosity", "Inside The Nexus"):
+        assert name in statistics["message"]
+    assert "yt-analytics.readonly" in statistics["message"]
+    assert (
+        "Reconectează canalul din Setări, acordând accesul la statistici" in (statistics["message"])
+    )
+
+    # Upload: granted, no refusal recorded — and seven days old, which he is told.
+    upload = check(preflight, "youtube_upload_access")
+    assert upload["ok"] is True and upload["severity"] == "BLOCKING"
+    assert "7 zile" in upload["message"] and "Testing" in upload["message"]
+    assert "poate fi deja expirat" in upload["message"]
+
+    # The budget: two TEST films fit today; PRODUCTION would refuse the serial.
+    films = check(preflight, "daily_budget_films")
+    assert films["ok"] is False and films["severity"] == "INFORMATIONAL"
+    assert "PRODUCTION" in films["message"] and "episodul serialului" in films["message"]
+
+    # The morning Google refuses his token, the preflight says the day stops, and where.
+    with Session(engine) as session, session.begin():
+        session.add(
+            DomainEvent(
+                event_id=str(uuid4()),
+                event_type="youtube.token_refresh_failed",
+                timestamp=(morning - timedelta(minutes=5)).isoformat(),
+                aggregate_type="youtube_connection",
+                aggregate_id=accounts["Nexus Curiosity"],
+                aggregate_version=1,
+                correlation_id=str(uuid4()),
+                causation_id=None,
+                schema_version=1,
+                visibility="OWNER",
+                payload={
+                    "connection_id": accounts["Nexus Curiosity"],
+                    "during": "token_refresh",
+                    "error_class": "HTTPError",
+                    "http_status": 400,
+                    "oauth_error": "invalid_grant",
+                    "auth_refused": True,
+                },
+            )
+        )
+    refused = run_preflight(engine, settings, vault, now=morning)
+    assert refused["status"] == "BLOCKED"
+    assert refused["first_stop"] == "youtube_upload_access"
+    assert "Studioul poate rula" not in refused["summary"]
+    assert "Nexus Curiosity" in refused["summary"]

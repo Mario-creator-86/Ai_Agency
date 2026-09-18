@@ -56,9 +56,33 @@ does refuse a film, and it is a blocked day he can prevent the evening before. T
 is computed over BLOCKING and DEGRADING only, so this holds structurally and not by the
 checks happening to pass.
 
+Three more read the account behind each bound channel slot and the day's money (since
+2026-09-18, after a rehearsal on a copy of the Owner's data found the YouTube lines green
+from the stored status alone). `youtube_upload_access` is BLOCKING: it fails when the scopes
+Google recorded lack the upload scope, or when a refusal Google gave for the slot's token
+(`youtube.token_refresh_failed` with `auth_refused`) still stands — a reconnect or a
+successful verification after it answers it — because a day that films and spends and then
+cannot upload has spent for nothing, in TEST as in PRODUCTION. `youtube_statistics_access`
+is DEGRADING: it fails when the statistics scope was not granted or a token or statistics
+refusal stands, and never blocks, because the films do not depend on statistics. Both give
+each grant's age and what a seven-day Testing-mode token life would mean, and neither calls
+Google: a scope never recorded is unknown, and a failure Google never answered is not a
+refusal. `daily_budget_films` is DEGRADING: it asks §8's own estimate for the hold each film
+takes and fails when the active DAILY budget cannot hold the day's films at that hold; in
+TEST, the PRODUCTION answer is an INFORMATIONAL line. The summary names the first check that
+would stop the day or lose a film (`first_stop`), because the summary is what a run records
+as its stop reason.
+
 ## 2. Previous performance intake
 
 Analytics snapshot ingestion if available.
+
+"If available" is literal (since 2026-09-18): a statistics read that cannot be made — Google
+unreachable, a token refresh refused, a report refused for the account — is that
+publication's "no data", recorded with the reason and the account to reconnect, and never
+the stage's failure. When the account itself was refused, the remaining publications are
+recorded with the same reason instead of being asked again, and the refusal is written to
+the ledger once for §1 to read.
 
 Growth Agent creates evidence-based recommendations.
 
@@ -99,7 +123,10 @@ The weekly retest of authorised hosts lives inside this stage and not in a sched
 its own (`retest_stale_hosts`, seven days): only hosts nobody has tested for a week are read,
 one front page each, so on the other six days the pass fetches nothing and costs the sites
 nothing. A retest that fails costs this stage and never the studio, by the Phase A fault
-rule. Each retest looks again for the site's own search address, and a host that answers 403,
+rule. Corrected 2026-09-18: under that rule a failed stage blocked every stage after it, so
+"this stage" was in fact the rest of the day; the retest is caught inside the stage and
+fails nothing, and since 2026-09-18 a failed stage costs only the stages that depend on it
+(*Abort behavior*). Each retest looks again for the site's own search address, and a host that answers 403,
 limits requests or serves a script-only shell is recorded FAILED with a reason from a closed
 vocabulary the preflight can show without parsing prose.
 
@@ -203,6 +230,47 @@ At any stage:
 - retryable failure → bounded retry;
 - ambiguous external effect → repair/reconcile;
 - P0 → SAFE_MODE.
+
+What a failed stage costs (since 2026-09-18). Until then any failed stage blocked every stage
+after it, and a hard fault in any stage opened SAFE_MODE and set STOP AUTONOMY: on a copy of
+the Owner's data one statistics token refused at §2 left the day with nothing researched,
+written or filmed, and an HTTP 4xx from Google would have halted the studio. A failed stage
+now blocks only the stages that take their input from it, and the rest of the day runs.
+Each stage needs what its work actually reads, not what comes before it in the order:
+
+| Stage | Needs | Why |
+|---|---|---|
+| §2 performance intake | — | the channel slots and their published films; nothing of today |
+| §3 idea generation | — | the topic pool and whatever snapshots are stored, empty when unknown |
+| §4 research and verification | — | the whole backlog of topics, sources and unverified claims |
+| §5 selection | §4 | it chooses only among topics with supported claims, which §4 writes |
+| §6 script/storyboard | §5 | it writes for the selected topic |
+| §7 serial queue | — | the previous day's log, closed on the preflight line |
+| §8 media | §6 **or** §7 | an approved storyboard from either is a film; blocked only when both are lost |
+| §9 edit/QC | §8 | the files §8 rendered |
+| §10 publish | §9 | what §9 passed |
+| §11 post-run | — | the report of whatever happened |
+| §12 daily log | — | the record of whatever happened |
+
+A stage is blocked only when every prerequisite it lists failed or was itself blocked, and
+its reason names the prerequisite and the fault at the root. A skipped prerequisite blocks
+nothing. The Owner's STOP outranks the table — every stage after it is blocked, with no
+safe mode and no letter — and a blocked preflight still blocks every stage.
+
+SAFE_MODE follows `21_FAILURE_RECOVERY_PLAYBOOK`'s P0 and nothing else: a hard fault in §8
+(the studio no longer knows what it spent), in §10 (it no longer knows what it uploaded) or
+in §12 (the audit record), or a database integrity error in any stage. Any other hard fault
+— a refused token at §2, a bug in §5 — is P1: it costs its stage and the stages that depend
+on it, and the Director writes the Owner once.
+
+The same-day re-attempt follows a blocked preflight, or a failure that cost the day's films
+(§5 to §10) and whose cause was transient; a re-attempt runs the whole day again, and must
+not choose a new subject and buy a second film to recover a report. A day whose films went
+through while another stage failed is PARTIAL — the state the clock reads as a day that ran —
+unless the failed stage is §12, which fails the day. Each stage records how many things it
+produced, counted from what it returned, and the run's headline says how many stages ran,
+how many produced something and how many films were published, so a day of completed
+stages that made nothing says so.
 
 
 ## V4 Marketing loop

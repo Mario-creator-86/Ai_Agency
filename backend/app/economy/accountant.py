@@ -18,7 +18,9 @@ narration at the stored per-character price of the model that voiced it, or — 
 live ElevenLabs models carry no catalogue price — at the Owner's own price for the model
 (`provider_price`). A render that failed midway is costed for what was attempted
 (`record_failed_render_cost`), because the vendor charges for the shot it made whether or
-not the studio brought it home. Usage with no stored price is reported as unpriced, never as
+not the studio brought it home. A shot is charged only when it was bought
+(`motion_was_bought`): refused by the vendor or by the studio's own price gate, it cost
+nothing and writes no row. Usage with no stored price is reported as unpriced, never as
 free.
 
 Three letters leave this desk on their own. A day whose film the budget refused was silent —
@@ -133,6 +135,21 @@ def _owner_price_usd(
     return round(amount * row.usd_micros / 1_000_000 / per, 6), row.provenance
 
 
+def motion_was_bought(motion: dict[str, Any]) -> bool:
+    """Whether the vendor charged for this scene's shot: it came home (`bytes`), or it was
+    generated and lost on the way (`paid_but_lost`). The assembler sets `estimated_credits`
+    in exactly those two cases and nowhere else.
+
+    Every other motion record is a shot that was not bought — the vendor could not be
+    reached or refused the task, or the studio's own price gate refused the quote — and it
+    still carries the model and the seconds it asked for. Priced by those seconds, the
+    rehearsal of 2026-09-18 on a copy of the Owner's studio wrote four ESTIMATED Runway rows
+    (1.44 USD) for shots the vendor never even received, and settled both films' holds
+    against them.
+    """
+    return bool(motion.get("bytes")) or bool(motion.get("paid_but_lost"))
+
+
 def _priced_scene_costs(
     session: Session,
     render_job_id: str,
@@ -162,6 +179,9 @@ def _priced_scene_costs(
         # the narration, the still, and the seconds of film the still was moved for.
         raw_motion = scene.get("motion")
         motion: dict[str, Any] = raw_motion if isinstance(raw_motion, dict) else {}
+        # A shot is charged only when it was bought; a refused one is a still given a push,
+        # and the still is charged below like any other.
+        bought = motion_was_bought(motion)
         # Which vendor drew *this* scene's still. The film-level record names the first
         # vendor of the chain; a scene the Owner's approved alternative drew was charged to
         # a model that never made it, or priced at nothing when the two vendors differ.
@@ -189,12 +209,12 @@ def _priced_scene_costs(
                 # The credits Runway named for this shot, and the seconds as the fallback
                 # for a vendor that priced the model but said nothing per task.
                 {
-                    "credits": float(motion.get("estimated_credits") or 0),
-                    "seconds": float(motion.get("asked_seconds") or 0),
+                    "credits": float(motion.get("estimated_credits") or 0) if bought else 0.0,
+                    "seconds": float(motion.get("asked_seconds") or 0) if bought else 0.0,
                 },
             ),
         ]
-        if motion.get("model") and motion.get("estimated_credits"):
+        if bought and motion.get("model") and motion.get("estimated_credits"):
             motion_connection = motion.get("integration_id") or motion_connection
             per_credit = (
                 credit_usd(session, motion["integration_id"])

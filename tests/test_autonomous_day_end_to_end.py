@@ -38,6 +38,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 from app.agents.services import seed_initial_workforce
@@ -412,12 +413,282 @@ class RecordingPublisher:
         return await self.inner.upload_video(file_path, **kwargs)
 
 
+@lru_cache(maxsize=16)
+def _test_clip(seconds: float) -> bytes:
+    """A real h264 clip of the asked length, made locally by the encoder the day requires.
+
+    A moving test pattern, not a flat colour: quality control reads motion and structure,
+    and a blank clip would be refused for the right reason and prove nothing.
+    """
+    import subprocess
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as folder:
+        target = Path(folder) / "shot.mp4"
+        subprocess.run(
+            [
+                find_ffmpeg(),
+                "-v",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                f"testsrc2=s=540x960:r=25:d={max(0.5, seconds):.3f}",
+                "-pix_fmt",
+                "yuv420p",
+                str(target),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        return target.read_bytes()
+
+
+class TestMotion:
+    """The fake video model: a real clip for each shot, and the credits a vendor would name.
+
+    It carries the model the studio's own chooser picked and the connection it belongs to, so
+    the render, the model outcomes and the books see exactly what they would see from the
+    vendor — the credits Runway states for a task are its catalogue price for those seconds,
+    in the connection's own credits — while nothing is asked of anyone.
+    """
+
+    PROVIDER_NAME = "TEST_VIDEO_PROVIDER"
+
+    def __init__(self, model: str, integration_id: str, credits_per_second: float | None) -> None:
+        self.model = model
+        self.integration_id = integration_id
+        self.credits_per_second = credits_per_second
+        self.last_estimated_credits: float | None = None
+        self.jobs: dict[str, float] = {}
+
+    async def health_check(self) -> dict[str, Any]:
+        return {"status": "HEALTHY"}
+
+    async def create_generation(
+        self,
+        prompt: str,
+        *,
+        image_ref: bytes | None = None,
+        duration_seconds: float = 4.0,
+        aspect_ratio: str = "9:16",
+        extra: dict[str, Any] | None = None,
+    ) -> str:
+        job_id = f"test-task-{uuid4()}"
+        self.jobs[job_id] = float(duration_seconds)
+        if self.credits_per_second is not None:
+            self.last_estimated_credits = round(
+                float(duration_seconds) * self.credits_per_second, 3
+            )
+        return job_id
+
+    async def get_generation_status(self, job_id: str) -> Any:
+        from app.providers.media_base import VideoGenerationResult
+
+        return VideoGenerationResult(
+            job_id=job_id,
+            status="COMPLETED",
+            video_bytes=_test_clip(round(self.jobs[job_id], 3)),
+            raw_response={"task_status": "SUCCEEDED", "engine": "test"},
+        )
+
+
+class FakeMotionChooser:
+    """`factory.motion_for_scene`, with the vendor taken out and the decision left in.
+
+    The studio's own router still decides — the selected video connection, the TEST task,
+    the tier, the ceilings, `choose_model` over the catalogue rows — so a day with a video
+    connection is held to the Owner's terms exactly as it would be. Only the adapter is
+    replaced: the fake above, never `video_provider_for`, which builds the vendor's. A
+    studio with no video connection gets the answer the real one gives, and no shot.
+    Remembers every question put to a connection and every shot it handed out.
+    """
+
+    def __init__(self) -> None:
+        self.asked: list[dict[str, Any]] = []
+        self.delivered: list[TestMotion] = []
+
+    def __call__(
+        self,
+        engine: Any,
+        vault: Any,
+        scene: dict,
+        *,
+        environment: str,
+        tier: str = "STANDARD",
+        seconds: float = 0.0,
+        budget_usd: float | None = None,
+        forced_model: str | None = None,
+        exclude: tuple[str, ...] = (),
+        max_usd_per_second: float | None = None,
+    ) -> tuple[TestMotion | None, dict]:
+        from app.integrations.models import Integration, ProviderResource, ServiceSelection
+        from app.media.factory import VERIFIED_STATUSES
+        from app.media.production_policy import (
+            PROMPT_TO_VIDEO,
+            SceneRequirement,
+            choose_model,
+            credit_usd,
+        )
+
+        with Session(engine) as session:
+            selection = session.get(ServiceSelection, "video")
+            row = (
+                session.get(Integration, selection.integration_id)
+                if selection is not None and selection.integration_id
+                else None
+            )
+            if row is None or row.status not in VERIFIED_STATUSES:
+                return None, {"model_id": None, "reason": "No connection is selected for video."}
+            self.asked.append(
+                {
+                    "integration_id": row.id,
+                    "scene_index": scene.get("scene_index"),
+                    "tier": tier,
+                    "seconds": seconds,
+                    "budget_usd": budget_usd,
+                }
+            )
+            requirement = SceneRequirement(
+                purpose="video",
+                tasks=(PROMPT_TO_VIDEO,) if environment == "TEST" else ("image_to_video",),
+                tier=tier,
+                scene_category=str(scene.get("scene_category") or "GENERAL"),
+                seconds=seconds,
+                budget_usd=budget_usd,
+                max_usd_per_second=max_usd_per_second,
+            )
+            decision = choose_model(
+                session,
+                row.id,
+                requirement,
+                environment=environment,
+                exclude=exclude,
+                forced=forced_model,
+            )
+            if not decision.get("model_id"):
+                return None, decision
+            # The credits a vendor names for a task are its catalogue price for those
+            # seconds, in the connection's own credits. A model priced some other way names
+            # none, and the books fall back to what they know, as they would for the vendor.
+            resource = session.scalar(
+                select(ProviderResource).where(
+                    ProviderResource.integration_id == row.id,
+                    ProviderResource.resource_type == "MODEL",
+                    ProviderResource.remote_id == decision["model_id"],
+                )
+            )
+            pricing = resource.pricing if resource and isinstance(resource.pricing, dict) else {}
+            per_second = pricing.get("per_second_usd")
+            per_credit = credit_usd(session, row.id)
+            shot = TestMotion(
+                decision["model_id"],
+                row.id,
+                float(per_second) / per_credit
+                if isinstance(per_second, int | float) and per_credit
+                else None,
+            )
+        self.delivered.append(shot)
+        return shot, decision
+
+
+class UnmeasuredAnalytics:
+    """YouTube Analytics with nothing to say: every video is unmeasurable, no number made up.
+
+    The slot's real binding lookup still runs first, so an unbound or disconnected slot is
+    skipped with the studio's own reason; only the adapter that would ask Google is replaced.
+    """
+
+    PROVIDER_NAME = "TEST_ANALYTICS"
+
+    def __init__(self, channel_id: str | None = None) -> None:
+        self.channel_id = channel_id
+
+    async def fetch_video_metrics(self, remote_video_id: str, window: str = "LIFETIME") -> Any:
+        from app.analytics.services import MetricsUnavailable
+
+        raise MetricsUnavailable("test: no platform is asked, so no number exists")
+
+    async def fetch_channel_metrics(self, remote_channel_id: str, window: str = "LIFETIME") -> Any:
+        from app.analytics.services import MetricsUnavailable
+
+        raise MetricsUnavailable("test: no platform is asked, so no number exists")
+
+
+#: Every paid boundary a day can reach, as the (module, attribute) the fakes replace. The
+#: attribute is patched where the day reads it: `stages` imported `selected_youtube` and
+#: `analytics_provider_for_channel` at its top, so they are replaced on `stages`; the
+#: others are imported inside the function that calls them, so they are replaced on the
+#: module that defines them. tests/test_no_paid_path_escapes.py reads this list and fails
+#: when a paid call site the day can reach is not behind one of these.
+VENDOR_FAKES = (
+    ("app.media.factory", "image_provider"),
+    ("app.media.factory", "tts_provider"),
+    ("app.media.factory", "render_plan"),
+    ("app.media.factory", "motion_for_scene"),
+    ("app.runbook.stages", "selected_youtube"),
+    ("app.runbook.stages", "analytics_provider_for_channel"),
+    ("app.economy.credits", "credit_balances"),
+    ("app.research.service", "verified_search_provider"),
+)
+
+
+def install_vendor_fakes(monkeypatch, *, publisher: Any, motion: FakeMotionChooser) -> None:
+    """Replace every name in VENDOR_FAKES — the end-to-end studio and the rehearsal alike.
+
+    One list, one installer: a rehearsal that kept its own copy of the fakes was one boundary
+    short of this fixture and bought nothing only because its network guard refused the
+    purchase. The dictionary must name exactly the list, so the two cannot drift apart.
+    """
+    import importlib
+
+    from app.analytics.services import analytics_provider_for_channel
+
+    def analytics(engine_: Any, vault: Any, channel_id: str) -> tuple[Any, str]:
+        provider, reason = analytics_provider_for_channel(engine_, vault, channel_id)
+        if provider is None:
+            return None, reason
+        return UnmeasuredAnalytics(getattr(provider, "channel_id", None)), ""
+
+    fakes = {
+        ("app.media.factory", "image_provider"): lambda *a, **k: TestImages(),
+        ("app.media.factory", "tts_provider"): lambda *a, **k: TestVoice(),
+        # The plan is the plain one a studio with no connections resolves to.
+        ("app.media.factory", "render_plan"): lambda engine_, vault, board: {
+            "image": TestImages(),
+            "tts_for_scene": lambda *a: TestVoice(),
+            "video_for_scene": lambda *a: None,
+            "plan": {},
+        },
+        ("app.media.factory", "motion_for_scene"): motion,
+        ("app.runbook.stages", "selected_youtube"): lambda *a, **k: publisher,
+        ("app.runbook.stages", "analytics_provider_for_channel"): analytics,
+        # What the vendors say the account holds: nobody is asked, so nothing is measured,
+        # and the books fall back to the credits each shot named, as they do when a vendor
+        # does not answer.
+        ("app.economy.credits", "credit_balances"): lambda *a, **k: {},
+        # No web search engine, as in a studio that never connected one.
+        ("app.research.service", "verified_search_provider"): lambda *a, **k: None,
+    }
+    assert set(fakes) == set(VENDOR_FAKES), set(fakes) ^ set(VENDOR_FAKES)
+    for (module, attribute), fake in fakes.items():
+        monkeypatch.setattr(importlib.import_module(module), attribute, fake)
+
+
 # ------------------------------------------------------------------------ the studio --
 
 
 def _yesterdays_events(engine) -> None:
-    """Three things that happened yesterday, of the kinds the serial may retell."""
-    moment = (datetime.now(UTC) - timedelta(days=1)).replace(hour=12).isoformat()
+    """Three things that happened yesterday, of the kinds the serial may retell.
+
+    Yesterday on the studio's clock (TZ), at its noon. It was noon of yesterday in UTC, which
+    between 00:00 and 03:00 in Bucharest is the day before yesterday: the verifier's suite
+    run of 2026-09-19 started at 00:10 local, the serial found yesterday quiet, and three
+    tests of this file failed on the hour alone.
+    """
+    local = datetime.now(UTC).astimezone(ZoneInfo(TZ)) - timedelta(days=1)
+    moment = local.replace(hour=12, minute=0, second=0, microsecond=0).astimezone(UTC).isoformat()
     for event_type, payload in (
         ("factual.topic_selected", {"title": "Infrared light"}),
         ("factual.script_approved", {"claims_count": 1}),
@@ -444,10 +715,8 @@ def _yesterdays_events(engine) -> None:
 @pytest.fixture
 def studio(engine, settings, monkeypatch, connect_youtube):
     """A studio that has everything a day needs, and nothing that costs money."""
-    from app.media import factory
     from app.media.services import seed_default_character_bibles
     from app.publishing.services import list_channels, seed_default_channels
-    from app.runbook import stages
 
     settings.timezone = TZ
     settings.ffmpeg_path = settings.ffmpeg_path or shutil.which("ffmpeg")
@@ -520,28 +789,25 @@ def studio(engine, settings, monkeypatch, connect_youtube):
     )
     _yesterdays_events(engine)
 
-    # The vendors. The picture and the voice are local files under a test name; the
-    # publisher is the simulator; the plan is the plain one a studio with no connections
-    # resolves to. Everything between them is the studio's own code.
+    # The vendors, every one of them (VENDOR_FAKES): the picture and the voice are local
+    # files under a test name, the moving shots a local test pattern on the model the
+    # studio's own router chose, the publisher the simulator, the analytics an account with
+    # no numbers, the balances unread and the search engine absent. Everything between them
+    # is the studio's own code.
     publisher = RecordingPublisher()
-    monkeypatch.setattr(factory, "image_provider", lambda *a, **k: TestImages())
-    monkeypatch.setattr(factory, "tts_provider", lambda *a, **k: TestVoice())
-    monkeypatch.setattr(
-        factory,
-        "render_plan",
-        lambda engine_, vault, board: {
-            "image": TestImages(),
-            "tts_for_scene": lambda *a: TestVoice(),
-            "video_for_scene": lambda *a: None,
-            "plan": {},
-        },
-    )
-    monkeypatch.setattr(stages, "selected_youtube", lambda *a, **k: publisher)
+    motion = FakeMotionChooser()
+    install_vendor_fakes(monkeypatch, publisher=publisher, motion=motion)
 
     model = StudioModel()
     registry = ProviderRegistry()
     registry.register(provider_id, model)
-    return {"registry": registry, "model": model, "publisher": publisher, "topic_id": topic_id}
+    return {
+        "registry": registry,
+        "model": model,
+        "publisher": publisher,
+        "motion": motion,
+        "topic_id": topic_id,
+    }
 
 
 def _due_daily_job(engine) -> str:
@@ -795,3 +1061,173 @@ def test_an_autonomous_ceo_day_publishes_under_the_channels_own_policy(engine, s
     assert {record.privacy_status for record in published} == {"private"}
     # Nothing was asked of the Owner: in this mode a T3 within policy is the Director's.
     assert _approval_requests(engine) == []
+
+
+# ------------------------------------------------------ a studio with a video connection --
+
+
+#: Two video models on the test connection, priced and shaped the way the Owner's Runway
+#: catalogue rows are (2026-09-18 copy: per-second prices, the tasks and the vertical ratio
+#: the contract lists, admitted to PRODUCTION). The ids are the test's own, not a vendor's.
+TEST_VIDEO_MODELS = {
+    "test-motion-cheap": {"per_second_usd": 0.02, "quality": 0.6},
+    "test-motion-dearer": {"per_second_usd": 0.03, "quality": 0.7},
+}
+
+
+def _video_connection(engine) -> str:
+    """A verified video connection selected for "video", as the Owner's data has one.
+
+    His copy holds a runway integration (VERIFIED, credit_usd "0.01"), a service_selection
+    row naming it for video, and discovered MODEL rows with a per-second price. This builds
+    the same rows. The key is a test string sealed in the test's own vault: nothing here
+    could authenticate anywhere, and nothing is asked to.
+    """
+    from app.integrations.models import Integration, ProviderResource, ServiceSelection
+    from app.integrations.vault import CredentialVault
+    from app.services import append_event
+
+    vault = CredentialVault(Path(str(engine.url.database)).with_suffix(".credentials.key"))
+    identifier = str(uuid4())
+    ratios = ["720:1280", "1280:720"]
+    with Session(engine) as session, session.begin():
+        saved = append_event(
+            session, "settings.integration_saved", "integration", identifier, 1, {}, str(uuid4())
+        )
+        session.add(
+            Integration(
+                id=identifier,
+                kind="runway",
+                name="Test video connection",
+                config={"credit_usd": "0.01"},
+                encrypted_secrets=vault.encrypt({"api_key": "test-not-a-key"}),
+                secret_fields=["api_key"],
+                version=1,
+                status="VERIFIED",
+                checked_at=utc_now(),
+                event_id=saved.event_id,
+            )
+        )
+        session.flush()
+        selected = append_event(
+            session, "settings.service_selected", "integration", identifier, 2, {}, str(uuid4())
+        )
+        session.add(
+            ServiceSelection(
+                purpose="video", integration_id=identifier, version=1, event_id=selected.event_id
+            )
+        )
+        for remote_id, terms in TEST_VIDEO_MODELS.items():
+            session.add(
+                ProviderResource(
+                    id=str(uuid4()),
+                    integration_id=identifier,
+                    resource_type="MODEL",
+                    remote_id=remote_id,
+                    name=remote_id,
+                    api_metadata={
+                        "tasks": ["image_to_video", "text_to_video"],
+                        "ratios": {"image_to_video": ratios, "text_to_video": ratios},
+                        "durations": {},
+                        "needs_references": {"image_to_video": False, "text_to_video": False},
+                    },
+                    api_available=True,
+                    last_seen_at=utc_now(),
+                    pricing={
+                        "per_second_usd": terms["per_second_usd"],
+                        "unit": "per second of video",
+                    },
+                    capabilities={"quality_score": terms["quality"], "reliability_score": 0.8},
+                    metadata_version=1,
+                    production_status="PRODUCTION",
+                )
+            )
+    return identifier
+
+
+@requires_ffmpeg
+def test_a_test_day_with_a_video_connection_buys_its_shots_only_through_the_fake(
+    engine, settings, studio, no_network
+):
+    """On the Owner's data the day meets the motion chooser, and until 2026-09-18 no fake
+    stood in front of it: a TEST day on a copy of his studio chose two models per film and
+    tried four paid text_to_video calls, three times each, which only the rehearsal's DNS
+    guard refused. Here the studio has the same kind of video connection, the chooser is
+    the fixture's fake, and the day is held to the Owner's TEST terms: at most
+    `test_motion_scenes` shots per film, every one of them asked of the fake, and the books
+    charging exactly the shots that were delivered, at the credits the fake named."""
+    from app.economy.models import ProviderCostRecord, SpendReservation
+    from app.media.models import VideoRenderJob
+    from app.services import studio_environment
+
+    connection = _video_connection(engine)
+    assert studio_environment(engine) == "TEST"
+    limit = settings.test_motion_scenes
+    assert limit >= 1
+
+    by_name = _run_a_day(engine, settings, studio)
+
+    assert by_name["media"]["status"] == "COMPLETED", by_name["media"]["reason"]
+    with Session(engine) as session:
+        jobs = [
+            job
+            for job in session.scalars(select(VideoRenderJob))
+            if isinstance(job.production_json, dict)
+        ]
+        costs = list(session.scalars(select(ProviderCostRecord)))
+        holds = list(session.scalars(select(SpendReservation)))
+    assert len(jobs) == 2, [job.status for job in jobs]  # the factual short and the episode
+
+    motion = studio["motion"]
+    # The path was really taken: the chooser was asked, and it chose from this connection.
+    assert motion.asked, "the day never asked for a moving shot; the test proves nothing"
+    assert {ask["integration_id"] for ask in motion.asked} == {connection}
+    shots = []
+    for job in jobs:
+        production = job.production_json
+        records = [
+            (scene["scene_index"], scene["motion"])
+            for scene in production["scenes"]
+            if isinstance(scene.get("motion"), dict)
+        ]
+        # The TEST limit, per film: never more shots asked for than the Owner allows.
+        assert production["motion"]["scene_limit"] == limit
+        assert 1 <= len(records) <= limit, records
+        for scene_index, record in records:
+            # Every shot was the fake's, on one of this connection's models.
+            assert record["provider"] == TestMotion.PROVIDER_NAME, record
+            assert record["model"] in TEST_VIDEO_MODELS, record
+            assert record["integration_id"] == connection, record
+            shots.append((job.id, scene_index, record))
+    assert len(motion.delivered) == len(shots) == len(motion.asked)
+    assert all(record.get("bytes") for *_, record in shots), "a shot the fake made never landed"
+
+    # The books: one motion row per shot delivered, at the credits the fake named times the
+    # connection's credit price, which is the catalogue's price per second because the fake
+    # names credits the way the vendor does. Nothing else is charged for motion.
+    motion_rows = [row for row in costs if (row.attribution_json or {}).get("unit") == "motion"]
+    assert len(motion_rows) == len(shots), [row.attribution_json for row in motion_rows]
+    for job_id, scene_index, record in shots:
+        (row,) = [
+            r
+            for r in motion_rows
+            if r.attribution_json["render_job_id"] == job_id
+            and r.attribution_json["scene_index"] == scene_index
+        ]
+        assert row.attribution_json["model_id"] == record["model"]
+        assert row.attribution_json["credits"] == record["estimated_credits"]
+        expected = record["estimated_credits"] * 0.01
+        per_second = TEST_VIDEO_MODELS[record["model"]]["per_second_usd"]
+        assert abs(expected - record["asked_seconds"] * per_second) < 0.011
+        assert row.provider == "runway" and row.status == "ESTIMATED" and not row.failed
+        assert abs(row.usd_micros - round(expected * 1_000_000)) <= 1, (row.usd_micros, expected)
+    # Within the Owner's TEST ceiling per film, and every hold closed against the books.
+    for job in jobs:
+        spent = sum(
+            r.usd_micros for r in motion_rows if r.attribution_json["render_job_id"] == job.id
+        )
+        assert spent <= round(settings.test_max_cost_per_generation_usd * 1_000_000), spent
+    assert holds and all(hold.status in ("SETTLED", "RELEASED") for hold in holds)
+
+    # And nothing left the machine, or even tried to: no refusal was needed.
+    assert no_network.refused == [], no_network.refused

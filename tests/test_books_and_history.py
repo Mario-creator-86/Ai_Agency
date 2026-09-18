@@ -736,3 +736,193 @@ def test_a_render_the_vendor_may_have_charged_for_is_costed_even_though_it_faile
     assert budget_status(engine)["budgets"][0]["spent_usd"] == "0.45", "counted like any estimate"
     costs = list_provider_costs(engine)
     assert all(c["failed"] is True and c["label"] == "ESTIMAT (randare eșuată)" for c in costs)
+
+
+# --------------------------------------------------------------------------- motion bought or not
+
+#: The shapes `media.assembler.assemble_video_job` writes into a scene's `motion` entry, one
+#: per branch of its motion loop, with the fields that branch sets. The rehearsal of
+#: 2026-09-18 on a copy of the Owner's studio wrote four ESTIMATED Runway rows (0.204 +
+#: 0.306 + 0.372 + 0.558 = 1.44 USD) for the "unreachable" shape and settled both films'
+#: holds against them: the books charged shots that never existed.
+_SHOT = {
+    "provider": "RUNWAY",
+    "model": "a-motion",
+    "asked_seconds": 10.2,
+    "tier": "HERO",
+    "scene_category": "GENERAL",
+    "decision": None,
+}
+MOTION_SHAPES: dict[str, tuple[dict | None, str | None]] = {
+    # Bought, and the vendor named the credits (assembler :1240-1251).
+    "bought_with_credits": (
+        {**_SHOT, "quoted_credits": 20.0, "estimated_credits": 20.0, "bytes": 4096, "task": "OK"},
+        "200000",
+    ),
+    # Bought from a vendor that named no credits: the catalogue's price a second decides.
+    "bought_without_credits": ({**_SHOT, "bytes": 4096, "task": "SUCCEEDED"}, "204000"),
+    # Generated and charged, then lost on the way home (assembler :1253-1265).
+    "paid_but_lost": (
+        {
+            **_SHOT,
+            "refused": "the clip could not be downloaded",
+            "estimated_credits": 20.0,
+            "paid_but_lost": True,
+        },
+        "200000",
+    ),
+    # The vendor could not be reached or refused the task, and charged nothing (:1254).
+    "refused_by_the_vendor": (
+        {**_SHOT, "refused": "api.dev.runwayml.com could not be reached (after 3 attempts)"},
+        None,
+    ),
+    # The studio's own price gate refused the quote before buying (:1197-1225).
+    "refused_by_the_price_gate": (
+        {
+            **_SHOT,
+            "quoted_credits": 90.0,
+            "quoted_usd": 0.9,
+            "price_was_stale": {"stored": 0.02, "observed": 0.0882},
+            "refused": "the vendor quotes 0.90 USD, above the 0.60 USD this render may spend "
+            "on a shot",
+        },
+        None,
+    ),
+    # Never asked for: a test's scene limit, a spent budget, no model (:1120-1149). The
+    # scene is a still given a push, and only the still is bought.
+    "fell_back_to_a_still": (None, None),
+}
+
+
+def _a_runway_connection(engine) -> str:
+    from app.integrations.models import Integration, ProviderResource
+
+    integration_id = str(uuid4())
+    with Session(engine) as session, session.begin():
+        event = append_event(
+            session, "settings.integration_saved", "integration", integration_id, 1, {}, "c"
+        )
+        session.add(
+            Integration(
+                id=integration_id,
+                kind="runway",
+                name="runway",
+                # One dollar, a hundred credits: the Owner's own purchase.
+                config={"credit_usd": "0.01"},
+                encrypted_secrets=vault_for(engine).encrypt({"api_key": "k"}),
+                secret_fields=["api_key"],
+                version=1,
+                status="VERIFIED",
+                checked_at=utc_now(),
+                event_id=event.event_id,
+            )
+        )
+        session.flush()
+        for remote_id, pricing in (
+            ("a-still", {"per_image_usd": 0.02}),
+            ("a-motion", {"per_second_usd": 0.02}),
+        ):
+            session.add(
+                ProviderResource(
+                    id=str(uuid4()),
+                    integration_id=integration_id,
+                    resource_type="MODEL",
+                    remote_id=remote_id,
+                    name=remote_id,
+                    api_metadata={},
+                    api_available=True,
+                    last_seen_at=utc_now(),
+                    pricing=pricing,
+                    capabilities={},
+                    metadata_version=1,
+                )
+            )
+    return integration_id
+
+
+def _a_render_with_one_shot(engine, tmp_path, shape: dict | None, status: str) -> tuple[str, str]:
+    integration_id = _a_runway_connection(engine)
+    scene: dict = {"scene_index": 1, "model_id": "unpriced-voice", "characters": 0}
+    if shape is not None:
+        scene["motion"] = {**shape, "integration_id": integration_id}
+    storyboard_id = make_storyboard(engine, tmp_path)
+    job_id = str(uuid4())
+    with Session(engine) as session, session.begin():
+        event = append_event(
+            session, "media.render_started", "video_render_job", job_id, 1, {}, str(uuid4())
+        )
+        session.add(
+            VideoRenderJob(
+                id=job_id,
+                storyboard_id=storyboard_id,
+                status=status,
+                started_at=utc_now(),
+                finished_at=utc_now(),
+                production_json={
+                    "image": {"integration_id": integration_id, "model": "a-still"},
+                    "scenes": [scene],
+                },
+                event_id=event.event_id,
+            )
+        )
+    return job_id, integration_id
+
+
+def _charged(engine) -> dict[str, int]:
+    with Session(engine) as session:
+        return {
+            row.attribution_json["unit"]: row.usd_micros
+            for row in session.scalars(select(ProviderCostRecord))
+        }
+
+
+@pytest.mark.parametrize("shape_name", list(MOTION_SHAPES))
+def test_a_finished_render_charges_a_shot_only_when_it_was_bought(engine, tmp_path, shape_name):
+    shape, motion_micros = MOTION_SHAPES[shape_name]
+    job_id, _ = _a_render_with_one_shot(engine, tmp_path, shape, "COMPLETED")
+
+    record_render_costs(engine, job_id)
+
+    charged = _charged(engine)
+    # The still was bought in every shape: a refused shot falls back to it.
+    assert charged.pop("image") == 20_000
+    if motion_micros is None:
+        assert charged == {}, f"{shape_name}: a shot nobody paid for was charged"
+    else:
+        assert charged == {"motion": int(motion_micros)}, shape_name
+
+
+@pytest.mark.parametrize("shape_name", list(MOTION_SHAPES))
+def test_a_failed_render_charges_a_shot_by_the_same_rule(engine, tmp_path, shape_name):
+    from app.economy.accountant import record_failed_render_cost
+
+    shape, motion_micros = MOTION_SHAPES[shape_name]
+    job_id, _ = _a_render_with_one_shot(engine, tmp_path, shape, "FAILED")
+
+    record_failed_render_cost(engine, job_id)
+
+    charged = _charged(engine)
+    assert charged.pop("image") == 20_000
+    if motion_micros is None:
+        assert charged == {}, f"{shape_name}: a lost render charged a shot never bought"
+    else:
+        assert charged == {"motion": int(motion_micros)}, shape_name
+
+
+def test_a_refused_shot_teaches_the_studio_no_price(engine, tmp_path):
+    """A price is learnt from what a render was charged; a shot that was refused was charged
+    nothing, and its seconds must not dilute the price a second of the bought one teaches."""
+    from app.integrations.models import ProviderResource
+
+    job_id, integration_id = _a_render_with_one_shot(
+        engine, tmp_path, MOTION_SHAPES["refused_by_the_price_gate"][0], "COMPLETED"
+    )
+    record_render_costs(engine, job_id)
+    with Session(engine) as session:
+        row = session.scalar(
+            select(ProviderResource).where(
+                ProviderResource.integration_id == integration_id,
+                ProviderResource.remote_id == "a-motion",
+            )
+        )
+        assert row.pricing == {"per_second_usd": 0.02}, "a refused quote rewrote the price"

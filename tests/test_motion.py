@@ -279,6 +279,8 @@ def test_the_books_price_narration_by_the_character_a_still_by_the_image_and_mot
                                 "integration_id": integration_id,
                                 "model": "a-motion",
                                 "asked_seconds": 4.4,
+                                # The shot came home: only a bought shot is charged.
+                                "bytes": 4096,
                             },
                         }
                     ],
