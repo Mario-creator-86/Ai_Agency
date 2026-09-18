@@ -467,9 +467,12 @@ la locul lor în ordine.
     zero — și cât mai stă în picioare), iar `POST /api/v1/owner/approvals/decision` este răspunsul, o
     singură dată pentru un singur act. De azi Contabilul îi scrie o dată pe zi, la închiderea zilei,
     ce întrebări stau în picioare și până când. Corectat la închiderea zilei (2026-09-18):
-    **scrisoarea pleacă în minutul în care se naște întrebarea**, din pasul media care oprește
-    filmul, nu abia la închidere — tot una pe zi, oricare capăt al zilei o ridică primul — deci cele
-    douăzeci și patru de ore îi rămân întregi. Tot de la închiderea zilei, acolo unde studioul nu a
+    **scrisoarea pleacă din pasul media, îndată ce acela a terminat de întrebat**, nu abia la
+    închidere — tot una pe zi, oricare capăt al zilei o ridică primul, și numește fiecare întrebare
+    pe care pasul a ridicat-o — deci cele douăzeci și patru de ore îi rămân aproape întregi.
+    Corectat 2026-09-18 de verificatorul ultimei runde: o defecțiune de randare la un film de mai
+    târziu în aceeași rulare iese din pas înaintea scrisorii, așa că întrebarea aceea îl așteaptă
+    până la închiderea zilei. Tot de la închiderea zilei, acolo unde studioul nu a
     putut prețui o parte a filmului, cifra spune asta lângă ea, la fel în scrisoare, pe cartonașul de
     aprobare și în nota rezervării: «estimare incompletă: narația nu are preț stocat și este numărată
     ca zero». Ce nu spune: imaginile nu sunt prețuite deloc în estimare, deci nu lipsesc din ea ca
