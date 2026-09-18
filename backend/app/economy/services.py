@@ -698,6 +698,7 @@ def record_provider_cost(
     fx_snapshot_id: str | None = None,
     attribution: dict | None = None,
     correlation_id: str | None = None,
+    failed: bool = False,
 ) -> dict:
     """Record what the studio actually spends with an external provider.
 
@@ -706,6 +707,9 @@ def record_provider_cost(
     debiting Provider & Cloud Expense and crediting VR Cash. That posting is the only way VR Cash
     can currently fall, and it is what makes a treasury deficit reachable — a studio that shows
     income and no cost of running itself is telling a flattering story rather than a true one.
+
+    ``failed`` marks the cost of a render the vendor may have charged for and the studio never
+    brought home. It is an estimate like any other and counts the same; a bill is never failed.
     """
     provider = provider.strip()
     status = status.upper()
@@ -713,6 +717,8 @@ def record_provider_cost(
         raise EconomyError("Name the provider that billed.")
     if status not in {"ESTIMATED", "BILLED"}:
         raise EconomyError("A provider cost is either ESTIMATED or BILLED.")
+    if failed and status == "BILLED":
+        raise EconomyError("A billed cost is what the vendor charged; it cannot be 'failed'.")
     if not external_reference.strip():
         raise EconomyError("A provider cost needs the provider's own reference.")
     amount_micros = to_micros(amount)
@@ -746,6 +752,7 @@ def record_provider_cost(
             attribution_json=attribution or {},
             recorded_at=now,
             billed_at=now if status == "BILLED" else None,
+            failed=bool(failed),
         )
         session.add(cost)
         if status == "BILLED":
@@ -1058,7 +1065,14 @@ def _cost_view(cost: ProviderCostRecord) -> dict:
         "provider": cost.provider,
         "external_reference": cost.external_reference,
         "status": cost.status,
-        "label": "BILLED" if cost.status == "BILLED" else "ESTIMAT",
+        "label": (
+            "BILLED"
+            if cost.status == "BILLED"
+            else "ESTIMAT (randare eșuată)"
+            if cost.failed
+            else "ESTIMAT"
+        ),
+        "failed": bool(cost.failed),
         "original_amount": format_micros(cost.amount_micros),
         "currency": cost.currency,
         "vr": format_micros(cost.usd_micros),

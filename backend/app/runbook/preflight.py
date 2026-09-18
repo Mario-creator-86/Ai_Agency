@@ -27,7 +27,7 @@ from app.media.factory import media_readiness
 from app.media.toolchain import find_ffprobe
 from app.models import OwnerPolicy
 from app.publishing.services import channel_bindings
-from app.research.service import allowed_host_rows
+from app.research.service import research_health
 from app.services import utc_now
 from app.youtube.models import YouTubeConnection
 
@@ -156,18 +156,30 @@ def run_preflight(engine: Engine, settings: Settings, vault: Any) -> dict[str, A
         )
     )
 
-    hosts = allowed_host_rows(settings, engine)
-    tested = [h for h in hosts if h["last_test_status"] == "PASSED"]
-    untested = [h["host"] for h in hosts if h["last_test_status"] != "PASSED"]
+    # Whether the studio can find pages at all, not merely whether a host is authorised.
+    # The old check passed on the existence of a row: thirty-six hosts authorised, fourteen
+    # of them behind bot walls, nothing with a search address and no engine connected was a
+    # READY preflight followed by a day that fetched nothing. `research_health` reads the
+    # record — it probes nothing, so it is safe on every run — and names what is missing.
+    report = research_health(engine, settings)
+    failing = ", ".join(f"{h['host']} ({h['reason']})" for h in report["hosts_failing"])
+    # The counts go in the detail, not only in the message a passing check shows: the run
+    # the Owner needs them for is the one where the check failed.
+    counted = (
+        f"{report['hosts_total']} site-uri autorizate, {report['hosts_tested_ok']} testate cu "
+        f"succes, {report['hosts_with_template']} cu adresă de căutare, motor de căutare: "
+        f"{report['search_provider']}, {report['claims_available']} afirmații verificate "
+        "disponibile."
+    )
     checks.append(
         _check(
             "research_sources",
-            bool(hosts),
+            report["status"] == "OK",
             DEGRADING,
-            f"{len(hosts)} site-uri autorizate pentru preluarea surselor, {len(tested)} "
-            "testate cu succes.",
-            "Niciun site autorizat; adaugă și testează site-uri în Cercetare → Surse.",
-            detail=("Netestate sau picate: " + ", ".join(untested)) if untested else "",
+            counted,
+            " ".join(report["degraded_reasons"])
+            or "Cercetarea nu poate găsi pagini; vezi Cercetare → Surse.",
+            detail=counted + (f" Picate: {failing}" if failing else ""),
         )
     )
 

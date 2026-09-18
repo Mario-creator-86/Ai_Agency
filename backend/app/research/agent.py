@@ -52,6 +52,7 @@ from app.research.service import (
     HostNotAllowed,
     allowed_host_rows,
     find_pages,
+    research_budget,
     retrieve_and_ingest,
 )
 from app.services import append_event, utc_now
@@ -78,7 +79,9 @@ LEGACY_SCORE_NAMES = {
 #: synonym in the middle does not smuggle yesterday's topic back in as new.
 DUPLICATE_RATIO = 0.6
 MAX_CANDIDATES = 8
-MAX_URLS = 4
+#: The most pages a plan may name for one topic, whatever the settings say: the budget is
+#: the Owner's (``research_pages_per_topic``), this is the ceiling under it.
+MAX_URLS = 8
 
 
 class ResearchAgentError(ValueError):
@@ -623,6 +626,19 @@ _SOURCE_INSTRUCTIONS = (
     "subject over a section front page. Return only JSON: "
     '{{"urls": [{{"url": "https://...", "why": "..."}}]}}.\n'
 )
+#: When the studio found pages, the plan is a choice among them. Measured on the clean
+#: studio's first days: every address the Researcher guessed returned 404, and every page
+#: a site's own search returned existed. A guess next to a real page is a page not read.
+_FOUND_INSTRUCTIONS = (
+    "Pages the studio has already found on the authorised sites for this topic — they exist "
+    "and can be read, so prefer them: choose up to {limit} among them. An address that is "
+    "not in this list is a guess and is not fetched today:\n"
+)
+#: Why a guessed address is set aside when real pages exist; shown in the run's record.
+GUESS_SET_ASIDE = (
+    "adresă ghicită, nefolosită: studioul a găsit pagini reale pentru subiect și citește "
+    "doar dintre ele"
+)
 
 
 def gather_sources(
@@ -631,10 +647,18 @@ def gather_sources(
     settings: Settings,
     topic_id: str,
     correlation_id: str | None = None,
-    limit: int = 3,
+    limit: int | None = None,
 ) -> dict[str, Any]:
-    """Have the Researcher name pages for a topic, then fetch them. Returns what was stored."""
+    """Have the Researcher name pages for a topic, then fetch them. Returns what was stored.
+
+    ``limit`` is the pages read for this topic; left out, it is the Owner's
+    ``research_pages_per_topic`` (``research_budget``), capped at ``MAX_URLS``. When the
+    sites' own searches or the verified search engine found pages, the plan is a choice
+    among them and a guessed address is set aside unread; when nothing was found, the
+    Researcher's addresses are tried as before, and the letter says what each answered.
+    """
     correlation = correlation_id or str(uuid4())
+    limit = max(1, min(limit or research_budget(settings)[1], MAX_URLS))
     hosts = _tested_hosts(settings, engine)
     if not hosts:
         raise NoAuthorisedHosts(
@@ -659,20 +683,20 @@ def gather_sources(
 
     shortlist = planned or hosts
     # Before the Researcher names anything, the studio asks the authorised sites that have a
-    # search address: pages found this way exist, and a plan that starts from them is read.
+    # search address, then the verified search engine: pages found this way exist, and a
+    # plan that starts from them is read. `found_via` says which way found what and how
+    # many engine results fell outside the allowlist.
+    found_via: dict[str, Any] = {}
     found = [
         p
-        for p in find_pages(settings, engine, search_queries(title, topic.topic))
+        for p in find_pages(settings, engine, search_queries(title, topic.topic), report=found_via)
         if p["url"] not in already
     ]
     payload = json.dumps({"title": title, "angle": angle}, ensure_ascii=False)
-    prompt = _SOURCE_INSTRUCTIONS.format(
-        limit=min(limit, MAX_URLS), hosts=", ".join(shortlist[:12])
-    )
+    prompt = _SOURCE_INSTRUCTIONS.format(limit=limit, hosts=", ".join(shortlist[:12]))
     if found:
         prompt += (
-            "Pages the studio has already found on the authorised sites for this topic — "
-            "they exist and can be read, so prefer them and add others only if clearly better:\n"
+            _FOUND_INSTRUCTIONS.format(limit=limit)
             + "\n".join(f"- {p['url']} — {p['title']}" for p in found)
             + "\n"
         )
@@ -720,19 +744,25 @@ def gather_sources(
             logger.info("source_not_retrieved", extra={"url_host": url[:80]})
         already.add(url)
 
+    found_urls = {p["url"].rstrip("/") for p in found}
     for candidate in plan.urls[:limit]:
         # ".../webb" and ".../webb/" are one page; the third clean day stored it twice.
         url = candidate.url.strip()
-        if url.rstrip("/") not in {u.rstrip("/") for u in already}:
-            read(url)
-    # The Researcher's guesses all failed: the pages the studio found are read anyway. A
-    # plan is his choice among pages; it is not a way to lose the ones that exist.
-    if not fetched:
-        for page in found:
-            if len(fetched) >= limit:
-                break
-            if page["url"] not in already:
-                read(page["url"])
+        if url.rstrip("/") in {u.rstrip("/") for u in already}:
+            continue
+        if found and url.rstrip("/") not in found_urls:
+            # Real pages exist for this topic: a guess is not fetched, and its being set
+            # aside is recorded so the Director can see the plan and the choice.
+            failed.append({"url": url, "why": GUESS_SET_ASIDE})
+            continue
+        read(url)
+    # The plan is the Researcher's choice among the pages that exist; it is not a way to
+    # lose the ones he did not choose. What was found is read up to the limit.
+    for page in found:
+        if len(fetched) >= limit:
+            break
+        if page["url"] not in already:
+            read(page["url"])
 
     with Session(engine) as session, session.begin():
         if fetched:
@@ -758,7 +788,8 @@ def gather_sources(
                     "(AutonomousAIStudio-SourceRetriever), și niciuna nu a putut fi citită:\n"
                     + "\n".join(f"- {f['url']} — {f['why']}" for f in failed)
                     + "\nUn 404 pe o adresă ghicită înseamnă că pagina nu există sau că site-ul "
-                    "nu o servește unui program; nu am unealtă de căutare. — Dr. Aris"
+                    "nu o servește unui program. Căutările site-urilor și motorul de căutare, "
+                    "dacă este conectat, nu au găsit pagini pentru acest subiect. — Dr. Aris"
                 ),
                 from_agent_id=researcher_id,
                 to_agent_id=None,
@@ -772,4 +803,5 @@ def gather_sources(
         "fetched": fetched,
         "failed": failed,
         "found": found,
+        "found_via": found_via,
     }

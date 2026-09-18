@@ -418,3 +418,208 @@ def test_a_render_is_costed_per_scene_at_the_stored_price_and_only_once(
         assert all(r.status == "ESTIMATED" and r.provider == "elevenlabs" for r in rows)
         assert session.get(Integration, identifier) is not None
     assert budget_status(engine, datetime.now(UTC))["today"]["spent_usd"] == "0.45"
+
+
+# --------------------------------------------------------------------------- the business date
+
+
+def _recorded_at(engine, reference: str, stamp: str) -> None:
+    with Session(engine) as session, session.begin():
+        row = session.scalar(
+            select(ProviderCostRecord).where(ProviderCostRecord.external_reference == reference)
+        )
+        row.recorded_at = stamp
+
+
+def test_a_budget_period_starts_at_the_studios_own_midnight_not_utcs(engine):
+    """Bucharest is two hours ahead of UTC in September, three in December.
+
+    A cost at 22:30 UTC on the 17th is 01:30 on the 18th where the studio is: today's, not
+    yesterday's. The window used to open at UTC midnight, so the day's first two hours of
+    spend were counted against the day before.
+    """
+    from zoneinfo import ZoneInfo
+
+    from app.models import Studio
+
+    with Session(engine) as session:
+        assert session.get(Studio, 1).timezone == "Europe/Bucharest"
+    set_budget(engine, BudgetCommand(period="DAILY", limit_usd="10"))
+    set_budget(engine, BudgetCommand(period="MONTHLY", limit_usd="100"))
+    record_provider_cost(
+        engine, provider="runway", external_reference="late", status="ESTIMATED", amount="7.50"
+    )
+    record_provider_cost(
+        engine, provider="runway", external_reference="earlier", status="ESTIMATED", amount="1.00"
+    )
+    _recorded_at(engine, "late", "2026-09-17T22:30:00+00:00")  # 01:30 local, the 18th
+    _recorded_at(engine, "earlier", "2026-09-17T20:30:00+00:00")  # 23:30 local, the 17th
+
+    now = datetime(2026, 9, 18, 0, 30, tzinfo=UTC)  # 03:30 in Bucharest
+    status = budget_status(engine, now)
+    daily = next(b for b in status["budgets"] if b["period"] == "DAILY")
+    assert daily["spent_usd"] == "7.5", "the 01:30 local cost is today's; the 23:30 one is not"
+    assert status["today"]["since"] == datetime(2026, 9, 17, 21, tzinfo=UTC).isoformat()
+    assert not may_spend(engine, 3_000_000, now)["allowed"]
+    assert may_spend(engine, 2_000_000, now)["allowed"]
+
+    # The month too: 30 September 21:30 UTC is 1 October 00:30 in Bucharest.
+    _recorded_at(engine, "late", "2026-09-30T21:30:00+00:00")
+    _recorded_at(engine, "earlier", "2026-09-30T20:30:00+00:00")
+    october = datetime(2026, 10, 1, 5, 0, tzinfo=UTC)
+    monthly = next(b for b in budget_status(engine, october)["budgets"] if b["period"] == "MONTHLY")
+    assert monthly["spent_usd"] == "7.5"
+    assert budget_status(engine, october)["month"]["since"] == (
+        datetime(2026, 10, 1, tzinfo=ZoneInfo("Europe/Bucharest")).astimezone(UTC).isoformat()
+    )
+
+
+# --------------------------------------------------------------------------- the letters
+
+
+def test_a_day_without_a_film_is_never_silent_and_is_said_once(engine, staffed):
+    from app.economy.accountant import budget_refusal_letter
+
+    nadia = staffed["agents"]["Accountant"]
+    first = budget_refusal_letter(
+        engine, "Bugetul daily de 15 USD ar fi depășit: 14.99 USD cheltuiți deja.", str(uuid4())
+    )
+    assert first["written"] is True and first["message_id"]
+    second = budget_refusal_letter(engine, "the same day, another reason", str(uuid4()))
+    assert second["written"] is False and second["message_id"] == first["message_id"]
+    with Session(engine) as session:
+        letters = session.scalars(
+            select(AgentMessage).where(AgentMessage.from_agent_id == nadia.id)
+        ).all()
+        assert len(letters) == 1
+        letter = letters[0]
+        assert letter.intent == "ESCALATE" and letter.body_json["to"] == "Owner"
+        assert letter.body_json["kind"] == "budget_refusal"
+        assert letter.body_json["date"] == first["date"]
+        assert "14.99" in (letter.body_text or "")
+        assert "nu a fost filmat" in (letter.body_text or "").lower()
+
+
+def test_the_token_ceiling_blocks_a_run_and_the_accountant_writes_once_a_day(engine, staffed):
+    from types import SimpleNamespace
+
+    from app.agents.models import AgentRun
+    from app.economy.accountant import may_run_agent
+
+    director = staffed["agents"]["Director"]
+
+    def spent(prompt: int, completion: int) -> None:
+        with Session(engine) as session, session.begin():
+            session.add(
+                AgentRun(
+                    id=str(uuid4()),
+                    agent_id=director.id,
+                    task_type="mail_round",
+                    objective="x",
+                    prompt_template_version="t",
+                    model_name="m",
+                    provider_name="p",
+                    status="SUCCEEDED",
+                    prompt_tokens=prompt,
+                    completion_tokens=completion,
+                    cost_vr=None,
+                    correlation_id=str(uuid4()),
+                    started_at=utc_now(),
+                    finished_at=utc_now(),
+                )
+            )
+
+    unlimited = SimpleNamespace(agent_daily_token_budget=0)
+    ceiling = SimpleNamespace(agent_daily_token_budget=100)
+    spent(50, 30)
+    assert may_run_agent(engine, unlimited)["allowed"], "zero is unlimited, as configured today"
+    verdict = may_run_agent(engine, ceiling)
+    assert verdict["allowed"] and verdict["tokens_used"] == 80 and verdict["ceiling"] == 100
+    spent(15, 10)
+    blocked = may_run_agent(engine, ceiling)
+    assert blocked["allowed"] is False and blocked["status"] == "BLOCKED_BUDGET"
+    assert "tokeni" in blocked["reason"] and "105" in blocked["reason"]
+    assert blocked["letter"]["written"] is True
+    again = may_run_agent(engine, ceiling)
+    assert again["letter"]["written"] is False, "one letter a day, however many runs are refused"
+    with Session(engine) as session:
+        letters = [
+            m
+            for m in session.scalars(select(AgentMessage))
+            if m.body_json.get("kind") == "token_ceiling"
+        ]
+        assert len(letters) == 1 and letters[0].body_json["to"] == "Owner"
+        assert letters[0].from_agent_id == staffed["agents"]["Accountant"].id
+
+
+# --------------------------------------------------------------------------- failed renders
+
+
+def test_a_render_the_vendor_may_have_charged_for_is_costed_even_though_it_failed(
+    engine, tmp_path, elevenlabs_api, client, headers
+):
+    from app.economy.accountant import record_failed_render_cost
+    from app.economy.services import list_provider_costs
+    from app.integrations.models import ProviderResource
+
+    identifier = str(uuid4())
+    saved = client.put(
+        f"/api/v1/settings/integrations/{identifier}",
+        headers=headers,
+        json={"kind": "elevenlabs", "name": "Voice", "secrets": {"api_key": f"k-{uuid4()}"}},
+    )
+    assert saved.status_code == 200
+    model_id = elevenlabs_api.models[0]["model_id"]
+    with Session(engine) as session, session.begin():
+        resource = session.scalar(
+            select(ProviderResource).where(ProviderResource.remote_id == model_id)
+        )
+        resource.pricing = {"per_1k_characters_usd": 0.30}
+    storyboard_id = make_storyboard(engine, tmp_path)
+    set_budget(engine, BudgetCommand(period="DAILY", limit_usd="10"))
+    job_id = str(uuid4())
+    scenes = [
+        {"scene_index": 1, "model_id": model_id, "characters": 1000},
+        {"scene_index": 2, "model_id": model_id, "characters": 500},
+    ]
+    with Session(engine) as session, session.begin():
+        event = append_event(
+            session, "media.render_failed", "video_render_job", job_id, 1, {}, str(uuid4())
+        )
+        # The assembler marks a failed job without its production record, as it does today.
+        session.add(
+            VideoRenderJob(
+                id=job_id,
+                storyboard_id=storyboard_id,
+                status="FAILED",
+                started_at=utc_now(),
+                finished_at=utc_now(),
+                production_json={},
+                event_id=event.event_id,
+            )
+        )
+
+    nothing = record_failed_render_cost(engine, job_id)
+    assert nothing == {"render_job_id": job_id, "recorded": 0, "unpriced_scenes": 0, "scenes": 0}
+
+    outcome = record_failed_render_cost(
+        engine,
+        job_id,
+        scenes_attempted=scenes,
+        voice_integration_id=identifier,
+        correlation_id=str(uuid4()),
+    )
+    assert (outcome["recorded"], outcome["scenes"]) == (2, 2)
+    repeat = record_failed_render_cost(
+        engine, job_id, scenes_attempted=scenes, voice_integration_id=identifier
+    )
+    assert repeat["recorded"] == 0, "a re-run charges nothing"
+    with Session(engine) as session:
+        rows = session.scalars(select(ProviderCostRecord)).all()
+        assert sorted(r.usd_micros for r in rows) == [150_000, 300_000]
+        assert all(r.failed and r.status == "ESTIMATED" for r in rows)
+        assert all(":failed:" in r.external_reference for r in rows)
+        assert all(r.attribution_json["failed"] is True for r in rows)
+    assert budget_status(engine)["budgets"][0]["spent_usd"] == "0.45", "counted like any estimate"
+    costs = list_provider_costs(engine)
+    assert all(c["failed"] is True and c["label"] == "ESTIMAT (randare eșuată)" for c in costs)

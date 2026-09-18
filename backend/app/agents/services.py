@@ -1,11 +1,17 @@
 """Phase 1 agent/role/provider services and the Owner Policy Kernel gate.
 
 The policy kernel runs before every LLM invocation:
-1. autonomy_stopped check
-2. agent lifecycle check
-3. capability match check
-4. provider health check (cached)
-5. adapter presence check
+1. the day's token ceiling (`economy.accountant.may_run_agent`)
+2. autonomy_stopped check
+3. agent lifecycle check
+4. capability match check
+5. provider health check (cached)
+6. adapter presence check
+
+The ceiling is first because it is the only one of the six that costs money to learn the
+hard way: the others refuse a run that would have been wrong, this one refuses a run that
+would have been paid for. A refusal is recorded as BLOCKED_BUDGET on the run row, like
+every other block, and the Accountant writes to the Owner once that day.
 """
 
 from __future__ import annotations
@@ -14,6 +20,8 @@ import asyncio
 import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
+from functools import lru_cache
+from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import Engine, func, select
@@ -32,6 +40,7 @@ from app.agents.models import (
 )
 from app.agents.schemas import AgentRunView, AgentView, ModelView, ProviderView, RoleView
 from app.db import lock_for_write
+from app.economy.accountant import may_run_agent
 from app.models import OwnerPolicy
 from app.providers.registry import ProviderRegistry
 from app.services import append_event, utc_now
@@ -480,6 +489,25 @@ def _has_live_run(session: Session, agent_id: str) -> bool:
     return live
 
 
+@lru_cache(maxsize=1)
+def _studio_settings() -> Any:
+    """The studio's settings when they can be built here, else None.
+
+    `run_agent_task` is called from twenty places, none of which carry a settings object;
+    the same shortcut `providers.retry` takes for the vendors' retry policy. A studio
+    without a usable `.env` gets None, and every ceiling read through `getattr` falls back
+    to the code's own default — which for the token ceiling is 0, no ceiling, as the studio
+    has run until now. Cached, because a settings object read once per process is a
+    configuration, not a measurement; a test overrides this function.
+    """
+    from app.config import Settings  # noqa: PLC0415
+
+    try:
+        return Settings()  # type: ignore[call-arg]
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _assert_policy_allows_run(session: Session, agent: Agent, registry: ProviderRegistry) -> None:
     """Full policy kernel gate. Raises PolicyKernelError on any block."""
     # 1. Autonomy stop
@@ -574,6 +602,15 @@ def run_agent_task(
     system_prompt: str | None = None
     context: dict = {}
 
+    # The day's token ceiling, before the run's write transaction opens: the Accountant's
+    # letter to the Owner writes in a transaction of its own, and two writers on one SQLite
+    # connection are a lock, not a policy. Measured on a copy of the live database:
+    # 391 runs on Ollama Cloud, the Director's loop and the mail rounds among them, ran
+    # under no ceiling at all. The verdict is carried into the kernel below and refused
+    # there, so a blocked run is recorded exactly like every other BLOCKED_* — a row with
+    # the reason, not an exception the twenty callers would each have to learn.
+    budget_verdict = may_run_agent(engine, _studio_settings(), correlation_id=correlation_id)
+
     with Session(engine) as session, session.begin():
         # This transaction reads the agent and its identity and then writes the run: it is
         # a writer from the start, so it says so before it reads anything.
@@ -605,6 +642,8 @@ def run_agent_task(
 
         # --- Policy kernel ---
         try:
+            if not budget_verdict["allowed"]:
+                raise PolicyKernelError(budget_verdict["reason"], budget_verdict["status"])
             _assert_policy_allows_run(session, agent, registry)
         except PolicyKernelError as exc:
             run = AgentRun(

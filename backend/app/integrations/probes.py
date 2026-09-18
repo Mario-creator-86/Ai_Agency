@@ -47,6 +47,15 @@ def probe(kind: str, config: dict, secrets: dict) -> bool:
     if kind == "openai_media":
         data = get_json("api.openai.com", "/v1/models/" + quote(config["model"], safe=""), headers)
         return data.get("id") == config["model"]
+    if kind == "search":
+        # One query with one neutral word; the answer's shape is what is verified, and
+        # nothing it names is stored (app.providers.search.SearchProvider.probe).
+        from app.providers.search import SearchProvider, SearchProviderError
+
+        try:
+            return SearchProvider(config, secrets["api_key"]).probe()
+        except SearchProviderError:
+            return False
     if kind == "email":
         context = ssl.create_default_context()
         host, port = config["smtp_host"], int(config["smtp_port"])

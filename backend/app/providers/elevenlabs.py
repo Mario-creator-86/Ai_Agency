@@ -20,6 +20,7 @@ import time
 from typing import Any
 from urllib.parse import quote, urlencode
 
+from app.economy.prices import PriceLookup, tts_cost_vr
 from app.providers.media_base import TTSProvider, TTSResult
 from app.providers.media_http import (
     MediaProviderError,
@@ -41,6 +42,7 @@ class ElevenLabsTTSAdapter(TTSProvider):
         api_key: str,
         voice_id: str | None = None,
         model: str | None = None,
+        price_lookup: PriceLookup | None = None,
     ) -> None:
         if not api_key:
             raise MediaProviderNotConfigured("ElevenLabs needs an API key")
@@ -49,6 +51,10 @@ class ElevenLabsTTSAdapter(TTSProvider):
         self.model = model or ""
         #: Per-character voice settings from the bible's binding; the API's defaults otherwise.
         self.voice_settings: dict[str, Any] = {}
+        #: The Owner's per-thousand-character prices (`app.economy.prices.price_lookup`).
+        #: Nine live models carried `pricing {}` and narration was never costed; with a
+        #: price every synthesis reports what its characters cost, and None without one.
+        self.price_lookup = price_lookup
 
     def _headers(self, accept: str) -> dict[str, str]:
         return {"xi-api-key": self.api_key, "Accept": accept, "Content-Type": "application/json"}
@@ -205,11 +211,15 @@ class ElevenLabsTTSAdapter(TTSProvider):
             # The API returns no word timings on this endpoint, so none are reported. An
             # invented alignment would drive subtitle timing that matches nothing.
             word_timings=[],
+            # The characters sent, at the Owner's price per thousand for this model — the
+            # unit the vendor bills in. None when no price covers the model, never zero.
+            cost_vr=tts_cost_vr(self.price_lookup, self.model, len(narration)),
             raw_response={
                 "provider": self.PROVIDER_NAME,
                 "model": self.model,
                 "voice_id": voice,
                 "content_type": content_type,
                 "bytes": len(audio),
+                "characters": len(narration),
             },
         )

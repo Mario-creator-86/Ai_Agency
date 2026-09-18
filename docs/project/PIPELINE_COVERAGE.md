@@ -43,9 +43,14 @@ carry a candidate. Each is stored as `TopicIdea` PROPOSED with `scores_json`,
 `source_plan_json` and the proposing employee. Duplicates and unauthorised hosts are dropped
 with the reason, and the surviving candidates are handed to the Director as a message.
 
-**Source gathering** (`…::gather_sources`). For a topic with no sources, the Researcher names
-up to four pages on authorised hosts; the studio fetches each through the same retriever the
-Owner's own "add source" button uses. This is what keeps it honest: a URL the model invented
+**Source gathering** (`…::gather_sources`). Since 2026-09-18 the studio looks for the pages
+itself first (`find_pages`): each authorised site's own search address — the one the Owner
+typed, else the one discovered on the site's front page — and then, when a search engine is
+connected and verified, the addresses it names, filtered against the allowlist before anything
+downstream sees them. Where that found pages, the Researcher's plan is a choice among them and
+a guessed address is set aside unread; where it found none, the Researcher names pages on
+authorised hosts as before. The studio fetches each through the same retriever the Owner's own
+"add source" button uses, never an engine's copy. This is what keeps it honest: a URL the model invented
 does not resolve and is recorded as failed, and one that does resolve is stored with the text
 that came back — never with the text the model expected. The Fact Checker still has to find
 each claim in that text, verbatim.
@@ -71,10 +76,15 @@ was right: a verified connection should not need a second, hidden step. It:
 
 ## Remaining limitations
 
-- The Researcher has no search engine. It names URLs from what it knows, on hosts the Owner
-  authorised, and the fetch is the check. Pages it cannot guess are not found.
-- `gather_sources` runs for at most two candidates a day and four URLs each: this is reading,
-  not crawling.
+- The Researcher still names URLs from what it knows when nothing was found, on hosts the Owner
+  authorised, and the fetch is the check. (Corrected 2026-09-18: the studio now finds pages
+  through each site's own search address, discovered as well as typed, and through a web search
+  engine the Owner connects — which may name addresses and nothing else, filtered to the
+  allowlist. No engine is connected on the live studio, and the allowlist cannot be widened by
+  an agent, a request or a result.)
+- `gather_sources` reads `STUDIO_RESEARCH_CANDIDATES_PER_DAY` candidates at
+  `STUDIO_RESEARCH_PAGES_PER_TOPIC` pages (four and four, clamped 1..12; two and four before
+  2026-09-18): this is reading, not crawling.
 - A topic proposed today usually becomes producible tomorrow: the claims extracted from
   today's pages are verified in the same stage, but a page fetched late in the stage is read
   on the next run.

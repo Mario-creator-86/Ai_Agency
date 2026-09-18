@@ -76,6 +76,13 @@ class RetrievedSource:
     body_sha256: str
     content_sha256: str
     content_type: str
+    #: Addresses of OpenSearch descriptions the page named (``<link rel="search"
+    #: type="application/opensearchdescription+xml">``), as written, unresolved. A host's
+    #: own search is found here instead of typed by the Owner (migration 0040).
+    search_links: tuple[str, ...] = ()
+    #: The page is an application shell: what came back is a script bundle and a note asking
+    #: for JavaScript. Its text is not the site's content, so it is not a source.
+    scripts_required: bool = False
 
     def ingest_command(self, topic_id: str | None = None) -> IngestSourceCommand:
         # Retrieval does not establish publisher identity, credibility or claim correctness.
@@ -91,7 +98,22 @@ class RetrievedSource:
         )
 
     def receipt(self) -> dict:
-        return {key: value for key, value in asdict(self).items() if key != "text"}
+        return {
+            key: value
+            for key, value in asdict(self).items()
+            if key not in ("text", "search_links", "scripts_required")
+        }
+
+
+#: The media type of an OpenSearch description document, and what the retriever accepts
+#: when asked for one. A description is small, so the XML is kept as text for the caller
+#: to read; nothing here interprets it.
+OPENSEARCH_DESCRIPTION = "application/opensearchdescription+xml"
+_XML_TYPES = (OPENSEARCH_DESCRIPTION, "application/xml", "text/xml")
+#: A page whose visible text is this short and which asks for JavaScript is an application
+#: shell. Measured on the hosts that failed retrieval: their shells carried a title, an
+#: empty root element and a one-line <noscript> notice, never a paragraph.
+_SHELL_TEXT_CHARS = 500
 
 
 class _PageText(HTMLParser):
@@ -101,10 +123,20 @@ class _PageText(HTMLParser):
         self.in_title = False
         self.title: list[str] = []
         self.parts: list[str] = []
+        self.search_links: list[str] = []
+        self.noscript: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag in {"script", "style", "noscript", "template"}:
             self.excluded.append(tag)
+        if tag == "link":
+            given = {key.lower(): (value or "") for key, value in attrs}
+            if (
+                "search" in given.get("rel", "").lower().split()
+                and given.get("type", "").lower() == OPENSEARCH_DESCRIPTION
+                and given.get("href", "").strip()
+            ):
+                self.search_links.append(given["href"].strip())
         if tag == "title":
             self.in_title = True
         if tag in {"p", "div", "br", "li", "h1", "h2", "h3", "article", "section"}:
@@ -120,6 +152,10 @@ class _PageText(HTMLParser):
 
     def handle_data(self, data: str) -> None:
         if self.excluded:
+            # What a page says to a client without scripts is kept apart from its text: it
+            # is the evidence that the page has no text of its own to give.
+            if self.excluded[-1] == "noscript":
+                self.noscript.append(data)
             return
         if self.in_title:
             self.title.append(data)
@@ -179,8 +215,20 @@ class SourceRetriever:
         self.policy = policy
         self._cache: OrderedDict[str, tuple[float, RetrievedSource]] = OrderedDict()
 
-    def fetch(self, url: str, *, accept_json: bool = False) -> RetrievedSource:
-        """Read a page — or, with ``accept_json``, a site's search answer — under the policy."""
+    def describe_search(self, url: str) -> RetrievedSource:
+        """Read an OpenSearch description document under the policy; its XML is the text.
+
+        A separate name on purpose: template discovery asks for this method and skips
+        discovery when the retriever it was given does not have it, so a stand-in built for
+        pages alone never has an unexpected keyword thrown at it.
+        """
+        return self.fetch(url, accept_xml=True)
+
+    def fetch(
+        self, url: str, *, accept_json: bool = False, accept_xml: bool = False
+    ) -> RetrievedSource:
+        """Read a page — or, with ``accept_json``, a site's search answer, or with
+        ``accept_xml``, an OpenSearch description — under the policy."""
         requested, _ = validate_url(url, self.policy)
         cached = self._cache.get(requested)
         if cached and time.monotonic() - cached[0] < self.policy.cache_seconds:
@@ -206,6 +254,8 @@ class SourceRetriever:
                         headers={
                             "Accept": "application/json"
                             if accept_json
+                            else ", ".join(_XML_TYPES)
+                            if accept_xml
                             else "text/html, text/plain",
                             "Accept-Encoding": "identity",
                             "User-Agent": "AutonomousAIStudio-SourceRetriever/1.0",
@@ -223,11 +273,18 @@ class SourceRetriever:
                     if response.status != 200:
                         raise RetrievalError(f"Source returned HTTP {response.status}")
                     mime = response.headers.get_content_type()
-                    wanted = ("application/json",) if accept_json else ("text/html", "text/plain")
+                    if accept_json:
+                        wanted: tuple[str, ...] = ("application/json",)
+                    elif accept_xml:
+                        wanted = _XML_TYPES
+                    else:
+                        wanted = ("text/html", "text/plain")
                     if mime not in wanted:
                         raise RetrievalError(
                             "Search did not answer JSON"
                             if accept_json
+                            else "Site did not answer an OpenSearch description"
+                            if accept_xml
                             else "Source is not supported HTML or plain text"
                         )
                     if response.getheader("Content-Encoding", "identity").lower() != "identity":
@@ -250,14 +307,28 @@ class SourceRetriever:
                     charset = response.headers.get_content_charset() or "utf-8"
                     decoded = bytes(body).decode(charset, errors="replace")
                     title = host
+                    search_links: tuple[str, ...] = ()
+                    noscript = ""
                     if mime == "text/html":
                         parser = _PageText()
                         parser.feed(decoded)
                         decoded = "".join(parser.parts)
                         title = " ".join("".join(parser.title).split()) or host
+                        search_links = tuple(dict.fromkeys(parser.search_links))[:3]
+                        noscript = " ".join("".join(parser.noscript).split())
                     text = "\n".join(
                         line for part in decoded.splitlines() if (line := " ".join(part.split()))
                     ).strip()
+                    scripts_required = (
+                        mime == "text/html"
+                        and len(text) < _SHELL_TEXT_CHARS
+                        and "javascript" in (noscript + " " + text).lower()
+                    )
+                    if len(text) < 10 and scripts_required:
+                        raise RetrievalError(
+                            "Page needs JavaScript: the served HTML carries no text, only a "
+                            "request to enable scripts"
+                        )
                     if not 10 <= len(text) <= self.policy.max_text_chars:
                         raise RetrievalError(
                             "Extracted source text is empty, too short or too large"
@@ -272,6 +343,8 @@ class SourceRetriever:
                         hashlib.sha256(body).hexdigest(),
                         hashlib.sha256(text.encode("utf-8")).hexdigest(),
                         mime,
+                        search_links,
+                        scripts_required,
                     )
                     self._cache[requested] = (time.monotonic(), source)
                     while len(self._cache) > self.policy.cache_entries:

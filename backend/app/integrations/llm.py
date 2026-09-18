@@ -17,6 +17,7 @@ import json
 from typing import Any
 from urllib.parse import urlsplit
 
+from app.economy.prices import PriceLookup, llm_cost_vr
 from app.providers.base import GenerateResult, HealthResult, LLMProvider, ModelInfo
 from app.providers.retry import call_with_retries, parse_retry_after
 
@@ -53,10 +54,22 @@ class ProviderUnreachable(OSError):
 class ConfiguredLLM(LLMProvider):
     ADAPTER_VERSION = "1.0.0"
 
-    def __init__(self, kind: str, config: dict, secrets: dict) -> None:
+    def __init__(
+        self,
+        kind: str,
+        config: dict,
+        secrets: dict,
+        price_lookup: PriceLookup | None = None,
+    ) -> None:
         self.kind = kind
         self.base_url = BASE_URLS.get(kind, config.get("base_url", "")).rstrip("/")
         self.key = secrets.get("api_key", "")
+        #: The Owner's per-million-token prices for this kind of connection
+        #: (`app.economy.prices.price_lookup`). Every run used to say `cost_vr=None` — 391
+        #: Ollama Cloud runs on the live copy with no cost — and the budget could not see
+        #: the tokens. With a price for the model, the run carries what it cost; without
+        #: one it still says None, never zero.
+        self.price_lookup = price_lookup
 
     def request(self, method: str, path: str, body: dict | None = None) -> dict:
         """One call to the provider, asked again a bounded number of times on 429, 5xx and a
@@ -175,7 +188,9 @@ class ConfiguredLLM(LLMProvider):
                 data.get("response") or "",
                 data.get("prompt_eval_count"),
                 data.get("eval_count"),
-                None,
+                llm_cost_vr(
+                    self.price_lookup, model, data.get("prompt_eval_count"), data.get("eval_count")
+                ),
                 # Never the reasoning itself — only that there was some, and how the call ended.
                 raw_response={
                     "done_reason": data.get("done_reason"),
@@ -202,10 +217,18 @@ class ConfiguredLLM(LLMProvider):
         usage = data.get("usage", {})
         if self.kind == "anthropic":
             text = "".join(x["text"] for x in data["content"] if x.get("type") == "text")
-            return GenerateResult(text, usage.get("input_tokens"), usage.get("output_tokens"), None)
+            prompt_tokens, completion_tokens = usage.get("input_tokens"), usage.get("output_tokens")
+            return GenerateResult(
+                text,
+                prompt_tokens,
+                completion_tokens,
+                llm_cost_vr(self.price_lookup, model, prompt_tokens, completion_tokens),
+            )
+        prompt_tokens = usage.get("prompt_tokens")
+        completion_tokens = usage.get("completion_tokens")
         return GenerateResult(
             data["choices"][0]["message"]["content"],
-            usage.get("prompt_tokens"),
-            usage.get("completion_tokens"),
-            None,
+            prompt_tokens,
+            completion_tokens,
+            llm_cost_vr(self.price_lookup, model, prompt_tokens, completion_tokens),
         )

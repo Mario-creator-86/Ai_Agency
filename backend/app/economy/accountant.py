@@ -14,8 +14,17 @@ separate on purpose:
   not the model agrees; the model's report explains, it does not decide.
 
 Costs are recorded where the studio knows a price (`record_render_costs`): a render's
-narration at the stored per-character price of the model that voiced it. Usage with no stored
-price is reported as unpriced, never as free.
+narration at the stored per-character price of the model that voiced it, or — since the nine
+live ElevenLabs models carry no catalogue price — at the Owner's own price for the model
+(`provider_price`). A render that failed midway is costed for what was attempted
+(`record_failed_render_cost`), because the vendor charges for the shot it made whether or
+not the studio brought it home. Usage with no stored price is reported as unpriced, never as
+free.
+
+Two letters leave this desk on their own. A day whose film the budget refused was silent —
+the stage was SKIPPED and nobody wrote to the Owner; `budget_refusal_letter` writes once a
+day. And the Director's loop and the mail rounds spent tokens under no ceiling;
+`may_run_agent` is the ceiling, and its refusal is a letter, once a day, not a run per run.
 """
 
 from __future__ import annotations
@@ -24,16 +33,19 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
 from app.agents.identity import blocker_of, clipped
 from app.agents.memory import agent_for_role, remember
 from app.agents.messages import post_message
-from app.agents.models import AgentMessage
-from app.economy.budget import budget_status
+from app.agents.models import AgentMessage, AgentRun
+from app.db import lock_for_write
+from app.economy.budget import _period_start, budget_status, studio_timezone
+from app.economy.prices import price_row
 from app.economy.services import EconomyError, format_micros, record_provider_cost
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.integrations.models import Integration
@@ -67,6 +79,7 @@ def daily_figures(engine: Engine, now: datetime | None = None) -> dict[str, Any]
                 "period": b["period"],
                 "limit_usd": b["limit_usd"],
                 "spent_usd": b["spent_usd"],
+                "reserved_usd": b["reserved_usd"],
                 "remaining_usd": b["remaining_usd"],
                 "ratio": b["ratio"],
                 "state": b["state"],
@@ -79,6 +92,141 @@ def daily_figures(engine: Engine, now: datetime | None = None) -> dict[str, Any]
 
 
 # ----------------------------------------------------------------------------- render costs
+
+
+#: The unit of the Owner's price table each purchase falls back to when the catalogue row
+#: of the model has no price of its own, and the quantity that unit multiplies.
+_PRICE_FALLBACK = {
+    "voice": ("per_1k_characters", "characters", 1000.0),
+    "image": ("per_generation", "images", 1.0),
+    "motion": ("per_second", "seconds", 1.0),
+}
+
+
+def _owner_price_usd(
+    session: Session, integration_id: str, model_id: str, unit: str, quantity: dict[str, float]
+) -> tuple[float | None, str | None]:
+    """The Owner's price for what a scene used, when the catalogue has none. Returns the
+    dollars and the price's provenance, or (None, None)."""
+    price_unit, key, per = _PRICE_FALLBACK[unit]
+    amount = float(quantity.get(key, 0.0))
+    if amount <= 0:
+        return None, None
+    integration = session.get(Integration, integration_id)
+    if integration is None:
+        return None, None
+    row = price_row(session, integration.kind, str(model_id), price_unit)
+    if row is None or row.usd_micros <= 0:
+        return None, None
+    return round(amount * row.usd_micros / 1_000_000 / per, 6), row.provenance
+
+
+def _priced_scene_costs(
+    session: Session,
+    render_job_id: str,
+    production: dict[str, Any],
+    scenes: list[Any],
+    *,
+    reference_tag: str = "scene",
+    voice_integration_id: str | None = None,
+) -> tuple[list[dict[str, Any]], int, dict[str, tuple[float, float]], str | None]:
+    """Price what each scene bought — narration, still, seconds of film — where a price
+    exists: the catalogue's, else the Owner's table. Shared by the finished render and the
+    failed one; only the reference differs, so the two can never charge the same scene."""
+    priced: list[dict[str, Any]] = []
+    unpriced = 0
+    # model -> (dollars charged, seconds bought), so a render teaches what a second costs.
+    measured: dict[str, tuple[float, float]] = {}
+    motion_connection: str | None = None
+    raw_image = production.get("image")
+    image: dict[str, Any] = raw_image if isinstance(raw_image, dict) else {}
+    production_voice = (production.get("voice") or {}).get("integration_id") or voice_integration_id
+    for scene in scenes:
+        if not isinstance(scene, dict):
+            continue
+        index = scene.get("scene_index")
+        voice_integration = scene.get("integration_id") or production_voice
+        # Three things can be bought for one scene, each by its own model and unit:
+        # the narration, the still, and the seconds of film the still was moved for.
+        raw_motion = scene.get("motion")
+        motion: dict[str, Any] = raw_motion if isinstance(raw_motion, dict) else {}
+        wanted: list[tuple[str, Any, Any, dict[str, float]]] = [
+            (
+                "voice",
+                voice_integration,
+                scene.get("model_id"),
+                {"characters": float(scene.get("characters") or 0)},
+            ),
+            (
+                "image",
+                image.get("integration_id"),
+                image.get("model"),
+                {"images": 0.0 if scene.get("still") is False else 1.0},
+            ),
+            (
+                "motion",
+                motion.get("integration_id"),
+                motion.get("model"),
+                # The credits Runway named for this shot, and the seconds as the fallback
+                # for a vendor that priced the model but said nothing per task.
+                {
+                    "credits": float(motion.get("estimated_credits") or 0),
+                    "seconds": float(motion.get("asked_seconds") or 0),
+                },
+            ),
+        ]
+        if motion.get("model") and motion.get("estimated_credits"):
+            motion_connection = motion.get("integration_id") or motion_connection
+            per_credit = (
+                credit_usd(session, motion["integration_id"])
+                if motion.get("integration_id")
+                else None
+            )
+            if per_credit:
+                usd = float(motion["estimated_credits"]) * per_credit
+                seconds = float(motion.get("asked_seconds") or 0)
+                before = measured.get(str(motion["model"]), (0.0, 0.0))
+                measured[str(motion["model"])] = (before[0] + usd, before[1] + seconds)
+        for unit, integration_id, model_id, quantity in wanted:
+            if not integration_id or not model_id or not any(quantity.values()):
+                continue
+            provenance = "catalogue"
+            estimate = estimate_cost_usd(
+                session,
+                integration_id,
+                model_id,
+                characters=int(quantity.get("characters", 0)),
+                images=int(quantity.get("images", 0)),
+                seconds=quantity.get("seconds", 0.0),
+                credits=quantity.get("credits", 0.0),
+            )
+            if estimate is None or estimate <= 0:
+                # The catalogue row has no price (every live ElevenLabs model): the Owner's
+                # own table prices it, and the row says whose price that was.
+                estimate, owner_provenance = _owner_price_usd(
+                    session, integration_id, model_id, unit, quantity
+                )
+                provenance = owner_provenance or provenance
+            if estimate is None or estimate <= 0:
+                unpriced += 1
+                continue
+            integration = session.get(Integration, integration_id)
+            priced.append(
+                {
+                    "provider": integration.kind if integration else "unknown",
+                    "reference": f"render:{render_job_id}:{reference_tag}:{index}:{unit}",
+                    "amount": f"{estimate:.6f}",
+                    "attribution": {
+                        "render_job_id": render_job_id,
+                        "scene_index": index,
+                        "unit": unit,
+                        "model_id": model_id,
+                        "price_provenance": provenance,
+                        **quantity,
+                    },
+                }
+            )
+    return priced, unpriced, measured, motion_connection
 
 
 def record_render_costs(
@@ -100,94 +248,9 @@ def record_render_costs(
             raise EconomyError("Render job not found")
         production = job.production_json if isinstance(job.production_json, dict) else {}
         scenes = production.get("scenes") or []
-        priced: list[dict[str, Any]] = []
-        unpriced = 0
-        # model -> (dollars charged, seconds bought), so a render teaches what a second costs.
-        measured: dict[str, tuple[float, float]] = {}
-        motion_connection: str | None = None
-        for scene in scenes:
-            if not isinstance(scene, dict):
-                continue
-            index = scene.get("scene_index")
-            voice_integration = scene.get("integration_id") or (
-                (production.get("voice") or {}).get("integration_id")
-            )
-            # Three things can be bought for one scene, each by its own model and unit:
-            # the narration, the still, and the seconds of film the still was moved for.
-            raw_motion = scene.get("motion")
-            motion: dict[str, Any] = raw_motion if isinstance(raw_motion, dict) else {}
-            raw_image = production.get("image")
-            image: dict[str, Any] = raw_image if isinstance(raw_image, dict) else {}
-            wanted: list[tuple[str, Any, Any, dict[str, float]]] = [
-                (
-                    "voice",
-                    voice_integration,
-                    scene.get("model_id"),
-                    {"characters": float(scene.get("characters") or 0)},
-                ),
-                (
-                    "image",
-                    image.get("integration_id"),
-                    image.get("model"),
-                    {"images": 0.0 if scene.get("still") is False else 1.0},
-                ),
-                (
-                    "motion",
-                    motion.get("integration_id"),
-                    motion.get("model"),
-                    # The credits Runway named for this shot, and the seconds as the fallback
-                    # for a vendor that priced the model but said nothing per task.
-                    {
-                        "credits": float(motion.get("estimated_credits") or 0),
-                        "seconds": float(motion.get("asked_seconds") or 0),
-                    },
-                ),
-            ]
-            if motion.get("model") and motion.get("estimated_credits"):
-                motion_connection = motion.get("integration_id") or motion_connection
-                per_credit = (
-                    credit_usd(session, motion["integration_id"])
-                    if motion.get("integration_id")
-                    else None
-                )
-                if per_credit:
-                    usd = float(motion["estimated_credits"]) * per_credit
-                    seconds = float(motion.get("asked_seconds") or 0)
-                    before = measured.get(str(motion["model"]), (0.0, 0.0))
-                    measured[str(motion["model"])] = (
-                        before[0] + usd,
-                        before[1] + seconds,
-                    )
-            for unit, integration_id, model_id, quantity in wanted:
-                if not integration_id or not model_id or not any(quantity.values()):
-                    continue
-                estimate = estimate_cost_usd(
-                    session,
-                    integration_id,
-                    model_id,
-                    characters=int(quantity.get("characters", 0)),
-                    images=int(quantity.get("images", 0)),
-                    seconds=quantity.get("seconds", 0.0),
-                    credits=quantity.get("credits", 0.0),
-                )
-                if estimate is None or estimate <= 0:
-                    unpriced += 1
-                    continue
-                integration = session.get(Integration, integration_id)
-                priced.append(
-                    {
-                        "provider": integration.kind if integration else "unknown",
-                        "reference": f"render:{render_job_id}:scene:{index}:{unit}",
-                        "amount": f"{estimate:.6f}",
-                        "attribution": {
-                            "render_job_id": render_job_id,
-                            "scene_index": index,
-                            "unit": unit,
-                            "model_id": model_id,
-                            **quantity,
-                        },
-                    }
-                )
+        priced, unpriced, measured, motion_connection = _priced_scene_costs(
+            session, render_job_id, production, scenes
+        )
     # What the vendor charged for this render becomes the model's price. A guess that said
     # 0.025 USD a second survived four renders that measured 0.43; measurement ends that.
     alerts: list[dict[str, Any]] = []
@@ -207,6 +270,18 @@ def record_render_costs(
     if alerts:
         price_change_alert(engine, alerts, correlation)
 
+    recorded = _record_priced(engine, priced, correlation, failed=False)
+    return {
+        "render_job_id": render_job_id,
+        "recorded": recorded,
+        "unpriced_scenes": unpriced,
+        "price_alerts": alerts,
+    }
+
+
+def _record_priced(
+    engine: Engine, priced: list[dict[str, Any]], correlation: str, *, failed: bool
+) -> int:
     recorded = 0
     for item in priced:
         try:
@@ -216,18 +291,61 @@ def record_render_costs(
                 external_reference=item["reference"],
                 status="ESTIMATED",
                 amount=item["amount"],
-                attribution=item["attribution"],
+                attribution={**item["attribution"], "failed": failed},
                 correlation_id=correlation,
+                failed=failed,
             )
             recorded += 1
         except EconomyError:
             # Already recorded for this scene: the day was re-run, and one scene costs once.
             continue
+    return recorded
+
+
+def record_failed_render_cost(
+    engine: Engine,
+    job_id: str,
+    scenes_attempted: list[dict[str, Any]] | None = None,
+    *,
+    voice_integration_id: str | None = None,
+    correlation_id: str | None = None,
+) -> dict[str, Any]:
+    """The cost of a render a `MediaProviderError` interrupted, for what was attempted.
+
+    The vendor charges for the shot it generated and the narration it voiced whether or not
+    the film was finished: two lost shots cost six dollars on 2026-09-16 and the books said
+    nothing, so the day's budget saw a day that had spent nothing. `scenes_attempted` is the
+    render's scene records as the assembler builds them (model ids, characters, motion);
+    without it the job's own `production_json` is read, and a job that failed before writing
+    one records nothing and says so. Rows are ESTIMATED, `failed=True`, referenced
+    `render:{job}:failed:scene:{n}:{unit}` so a re-run charges once, and counted by every
+    budget like any other estimate.
+    """
+    correlation = correlation_id or str(uuid4())
+    with Session(engine) as session:
+        job = session.get(VideoRenderJob, job_id)
+        if job is None:
+            raise EconomyError("Render job not found")
+        production = job.production_json if isinstance(job.production_json, dict) else {}
+        scenes = (
+            list(scenes_attempted)
+            if scenes_attempted is not None
+            else list(production.get("scenes") or [])
+        )
+        priced, unpriced, _measured, _connection = _priced_scene_costs(
+            session,
+            job_id,
+            production,
+            scenes,
+            reference_tag="failed:scene",
+            voice_integration_id=voice_integration_id,
+        )
+    recorded = _record_priced(engine, priced, correlation, failed=True)
     return {
-        "render_job_id": render_job_id,
+        "render_job_id": job_id,
         "recorded": recorded,
         "unpriced_scenes": unpriced,
-        "price_alerts": alerts,
+        "scenes": len([s for s in scenes if isinstance(s, dict)]),
     }
 
 
@@ -271,6 +389,150 @@ def price_change_alert(engine: Engine, alerts: list[dict[str, Any]], correlation
             to_owner=True,
             correlation_id=correlation,
         )
+
+
+# ----------------------------------------------------------------------------- the letters
+
+
+def _letter_once_a_day(
+    engine: Engine,
+    kind: str,
+    *,
+    subject: str,
+    body: dict[str, Any],
+    body_text: str,
+    correlation: str,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """One letter of this kind per business date, from the Accountant (the Director when
+    the studio has no Accountant). Idempotent by the date in the letter's body, decided
+    behind the write lock so two stages refused in the same minute write one letter."""
+    moment = now or datetime.now(UTC)
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        timezone = studio_timezone(session)
+        day_start = _period_start("DAILY", moment, timezone)
+        date_iso = moment.astimezone(ZoneInfo(timezone)).date().isoformat()
+        for existing in session.scalars(
+            select(AgentMessage).where(
+                AgentMessage.created_at >= day_start, AgentMessage.to_agent_id.is_(None)
+            )
+        ):
+            letter = existing.body_json if isinstance(existing.body_json, dict) else {}
+            if letter.get("kind") == kind and letter.get("date") == date_iso:
+                return {"written": False, "message_id": existing.id, "date": date_iso}
+        author = agent_for_role(session, ACCOUNTANT_ROLE) or agent_for_role(session, "Director")
+        if author is None:
+            return {"written": False, "message_id": None, "date": date_iso}
+        message = post_message(
+            session,
+            intent="ESCALATE",
+            subject=subject[:200],
+            body={**body, "kind": kind, "date": date_iso},
+            body_text=body_text,
+            from_agent_id=author.id,
+            to_agent_id=None,
+            to_owner=True,
+            correlation_id=correlation,
+        )
+        return {"written": True, "message_id": message.id, "date": date_iso}
+
+
+def budget_refusal_letter(
+    engine: Engine, reason: str, correlation_id: str, *, now: datetime | None = None
+) -> dict[str, Any]:
+    """When the budget refuses the day's film, the Owner is told the same day, once.
+
+    The media stage used to return SKIPPED with the reason in a run summary nobody reads by
+    itself; a day without a film was silent. The letter carries the figures and the one
+    decision only the Owner can take — raise the limit, or accept the day — and is written
+    once per business date however many films were refused.
+    """
+    figures = daily_figures(engine, now)
+    budgets = ", ".join(
+        f"{b['period'].lower()} {b['spent_usd']}/{b['limit_usd']} USD ({b['state']})"
+        for b in figures["budgets"]
+    )
+    return _letter_once_a_day(
+        engine,
+        "budget_refusal",
+        subject="Filmul de azi nu a fost filmat: bugetul l-a refuzat",
+        body={"reason": reason, "figures": figures, "owner_attention": True},
+        body_text=(
+            "Către Owner. Filmul de azi nu a fost filmat, pentru că bugetul l-a refuzat: "
+            f"{reason}\n"
+            f"Cifrele cărții: azi {figures['today']['spent_usd']} USD, luna aceasta "
+            f"{figures['month']['spent_usd']} USD"
+            + (f"; bugete: {budgets}" if budgets else "")
+            + ".\nNumai Owner-ul poate ridica limita; până atunci studioul nu filmează."
+        ),
+        correlation=correlation_id,
+        now=now,
+    )
+
+
+def agent_tokens_since(session: Session, since_iso: str) -> int:
+    """Every token the studio's employees spent since a moment, whatever the run's outcome:
+    an empty answer and a failed parse were billed like a good one."""
+    used = session.execute(
+        select(func.sum(AgentRun.prompt_tokens), func.sum(AgentRun.completion_tokens)).where(
+            AgentRun.started_at >= since_iso
+        )
+    ).one()
+    return int(used[0] or 0) + int(used[1] or 0)
+
+
+def may_run_agent(
+    engine: Engine,
+    settings: Any,
+    *,
+    correlation_id: str | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Whether another model run fits under the day's token ceiling.
+
+    `settings.agent_daily_token_budget` is the ceiling; 0 means none, as the studio ran
+    until now. Past it the verdict is `BLOCKED_BUDGET` with the reason in the Owner's
+    language, and the Accountant writes to the Owner once that day. Call it before opening
+    the run's write transaction: the letter writes in a transaction of its own.
+    """
+    ceiling = int(getattr(settings, "agent_daily_token_budget", 0) or 0)
+    moment = now or datetime.now(UTC)
+    with Session(engine) as session:
+        since = _period_start("DAILY", moment, studio_timezone(session))
+        used = agent_tokens_since(session, since)
+    if ceiling <= 0 or used < ceiling:
+        return {
+            "allowed": True,
+            "status": None,
+            "reason": "",
+            "tokens_used": used,
+            "ceiling": ceiling,
+        }
+    reason = (
+        f"Plafonul zilnic de {ceiling} tokeni pentru angajați este atins: {used} tokeni "
+        "folosiți azi. Nicio rulare până mâine sau până când Owner-ul ridică plafonul."
+    )
+    letter = _letter_once_a_day(
+        engine,
+        "token_ceiling",
+        subject="Plafonul zilnic de tokeni a fost atins",
+        body={"tokens_used": used, "ceiling": ceiling, "owner_attention": True},
+        body_text=(
+            f"Către Owner. {reason} Rulările refuzate sunt înregistrate BLOCKED_BUDGET; "
+            "plafonul este STUDIO_AGENT_DAILY_TOKEN_BUDGET."
+        ),
+        correlation=correlation_id or str(uuid4()),
+        now=now,
+    )
+    return {
+        "allowed": False,
+        "status": "BLOCKED_BUDGET",
+        "reason": reason,
+        "tokens_used": used,
+        "ceiling": ceiling,
+        "letter": letter,
+    }
 
 
 # ----------------------------------------------------------------------------- the report

@@ -191,7 +191,11 @@ def test_owner_adds_tests_and_removes_authorised_sites(client, headers, engine, 
         "last_test_at": None,
         "last_test_status": None,
         "last_test_detail": None,
+        "last_test_reason": None,
         "search_template": None,
+        "discovered_search_template": None,
+        "discovered_at": None,
+        "search_template_origin": None,
     }
 
     for bad in ("localhost", "www.nasa.gov:443", "127.0.0.1", "NASA.gov", "*.gov"):
@@ -234,12 +238,14 @@ def test_owner_adds_tests_and_removes_authorised_sites(client, headers, engine, 
         retriever=app.state.source_retriever,
     )
     assert stored["source"]["url"] == "https://www.nasa.gov/news"
+    # The preflight now reports whether the studio can find pages at all, not merely whether
+    # a row exists: two authorised sites none of which has passed its test is DEGRADED, and
+    # the reasons say why rather than counting rows and calling it ready.
     sources = check(
         run_preflight(engine, app.state.settings, vault_for(engine)), "research_sources"
     )
-    assert sources["ok"] and "2 site-uri autorizate" in sources["message"]
-    assert "0 testate cu succes" in sources["message"]
-    assert "www.nasa.gov" in sources["detail"]
+    assert sources["ok"] is False
+    assert "niciun site autorizat nu a trecut testul" in sources["message"].lower()
 
     removed = client.delete("/api/v1/factual/sources/allowed-hosts/www.nasa.gov", headers=headers)
     assert removed.status_code == 200

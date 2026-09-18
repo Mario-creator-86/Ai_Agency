@@ -257,3 +257,74 @@ def test_refuted_without_quote_is_rejected(research_ready):
         json={"command_id": str(uuid4())},
     )
     assert response.status_code == 422
+
+
+def test_a_page_named_by_the_search_engine_is_read_by_the_studio_and_its_claims_start_unverified(
+    research_ready, monkeypatch
+):
+    """The engine names addresses; the studio reads them. The snippet the engine sent is
+    never what the Researcher extracts from — the prompt carries the retriever's text."""
+    import hashlib
+
+    from app.providers.search import SearchResult
+    from app.research.retrieval import RetrievedSource
+    from app.research.service import add_allowed_host, find_pages, retrieve_and_ingest
+    from app.services import utc_now
+
+    engine, client, headers = (
+        research_ready["engine"],
+        research_ready["client"],
+        research_ready["headers"],
+    )
+    settings = client.app.app.state.settings
+    add_allowed_host(engine, "en.wikipedia.org")
+    page = "https://en.wikipedia.org/wiki/Example_domain"
+    studio_text = "The example domains are reserved by IANA for documentation and testing."
+
+    class Engine_:
+        def search(self, query, limit=10):
+            return [
+                SearchResult(page, "Example domain"),
+                SearchResult("https://evil.example/anything", "Not on the list"),
+            ]
+
+    class Retriever:
+        def __init__(self):
+            self.asked = []
+
+        def fetch(self, url, *, accept_json=False):
+            self.asked.append(url)
+            return RetrievedSource(
+                url,
+                url,
+                "Example domain",
+                "en.wikipedia.org",
+                studio_text,
+                utc_now(),
+                hashlib.sha256(b"body").hexdigest(),
+                hashlib.sha256(studio_text.encode()).hexdigest(),
+                "text/html",
+            )
+
+    report: dict = {}
+    found = find_pages(settings, engine, "Example domain", search=Engine_(), report=report)
+    assert [p["url"] for p in found] == [page] and report["search"]["dropped"] == 1
+    retriever = Retriever()
+    stored = retrieve_and_ingest(
+        engine, settings, found[0]["url"], str(uuid4()), retriever=retriever
+    )
+    assert retriever.asked == [page] and stored["source"]["credibility_score"] == 0
+
+    adapter = _StubAdapter(VALID_CLAIMS_JSON)
+    client.app.app.state.registry.register(research_ready["provider_id"], adapter)
+    response = client.post(
+        f"/api/v1/factual/sources/{stored['source']['id']}/extract-with-agent",
+        headers=headers,
+        json={"command_id": str(uuid4())},
+    )
+    assert response.status_code == 200, response.text
+    assert all(
+        status == "UNVERIFIED" for _, status in _claims_for_source(engine, stored["source"]["id"])
+    )
+    assert studio_text in adapter.prompts[0], "the Researcher reads what the studio fetched"
+    assert "ENGINE" not in adapter.prompts[0]

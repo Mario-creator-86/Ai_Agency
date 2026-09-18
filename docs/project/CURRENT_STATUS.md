@@ -13,6 +13,180 @@ database resource discovery/refresh, separate production choices, UI and regress
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
 
+## Money and sources (2026-09-17/18)
+
+Phases E and F of running unattended: what a film costs before it is made, and where the day's
+pages come from. Measured on a copy of the live database before the work: the check before a
+render was `may_spend(engine, 0)` under a comment claiming the plan was costed, so a day at 14.99
+of 15 USD started a full film; 391 `agent_run` rows on Ollama Cloud carried `cost_vr` NULL; all
+nine live ElevenLabs models carried `pricing {}`, so narration was never costed at all; a render
+that a `MediaProviderError` interrupted recorded no cost for the shots the vendor had already
+generated; the DAILY window opened at UTC midnight while the studio's day is Europe/Bucharest; a
+budget refusal was a SKIPPED stage nobody wrote to the Owner about; the Director's loop and the
+mail rounds spent tokens under no ceiling; page discovery ran only through the OpenSearch address
+the Owner had typed per host, and only the two Wikipedias carried one; 14 of the 36 authorised
+hosts failed retrieval behind bot walls or script-only shells; the Researcher guessed addresses
+that answered 404; the day read at most two topics of three pages; and the last live run fetched
+0 pages and verified 0 claims, the studio living off the 98 claims verified on 2026-09-12.
+
+**The books hold the money before it is spent, and the day begins when the studio's day begins.**
+Migration `0039_pricing_truth_and_reservations` adds `provider_price`, `spend_reservation` and
+`provider_cost_record.failed`. A budget period now opens at the studio's own midnight and first of
+the month: `_period_start` takes the zone from the `studio` row, which bootstrap writes from
+`STUDIO_TIMEZONE`, so the period the books count is the same business date the daily log closes,
+and a cost at 22:30 UTC on the 17th belongs to the 18th. `reserve_spend` decides behind the write
+lock and writes a RESERVED row that every budget counts until `settle_reservation` (the real cost
+rows are in) or `release_reservation` (the film was not made); two films racing for the last ten
+dollars get one hold, not two. `release_stale_reservations` is the watchdog's fourth sweep, for
+holds older than `STUDIO_RESERVATION_TTL_SECONDS` (six hours) left by a process that died under a
+render. `estimate_film_cost_micros` prices a plan conservatively before a frame exists — the
+motion at the ceiling that render will be given (`motion_budget_usd` in PRODUCTION,
+`test_max_cost_per_generation_usd` × `test_motion_scenes` in TEST) and the narration at the dearest
+active per-thousand price over the storyboard's own voiceover — and reports `narration_priced=False`
+when no voice price exists, so the stage can say the plan was only partly costed. A film that costs
+less settles for less; a film let through on a hopeful estimate would spend the week.
+
+**A price is the Owner's, or it is documented and says so.** A `ProviderPrice` row is written only
+by `PUT /economy/prices` — Owner-only, idempotent by command id, versioned with `expected_version`,
+provenance OWNER | DOCUMENTED | QUOTED | BILLED — or by `seed_documented_prices`, which carries one
+row and one only: ElevenLabs' public list price (Creator plan, 22 USD for 100 000 credits, one
+credit a character, so 0.22 USD per 1 000; Flash and Turbo bill half, so the figure is the dearer
+one), marked DOCUMENTED with a note saying it is not the Owner's plan. It never overrides a row of
+any provenance and adds nothing on a second run. Ollama Cloud is deliberately absent: its price is
+whatever the Owner's plan says, and a guess in the books is worse than a gap the Accountant reports
+as `unpriced_agent_runs`. Resource `"*"` prices every model of a kind that has no row of its own;
+a model's own row outranks it. The ElevenLabs, Ollama and configured-LLM adapters take a
+`price_lookup` and cost every call from what they measured — the characters actually sent, the
+tokens the vendor reported — and answer None, never zero, without a price or with half of one: a
+run priced on one side would be read by the budget as cheaper than it was.
+
+**A render the vendor refused is still a cost, and a refusal is a letter.** `record_failed_render_cost`
+writes ESTIMATED rows flagged `failed=True` for the scenes that were attempted, under their own
+reference (`render:{job}:failed:scene:{n}:{unit}`), so a finished and a failed reading of the same
+job cannot charge the same scene twice and a re-run charges nothing; the books count them like any
+estimate and `GET /economy/provider-costs` labels them "ESTIMAT (randare eșuată)". `budget_refusal_letter`
+and `may_run_agent` each write the Accountant's letter to the Owner once per business date, decided
+behind the write lock, so two stages refused in the same minute write one letter; the Accountant
+signs, the Director signs when the studio has no Accountant, and with neither the function reports
+that nothing was written rather than inventing an author. `may_run_agent` is the Policy Kernel's
+first gate, before the run's write transaction: it counts every token of every run since local
+midnight, whatever its outcome, against `STUDIO_AGENT_DAILY_TOKEN_BUDGET` (0 = no ceiling, as the
+studio has run until now), and past it the run is recorded BLOCKED_BUDGET like every other block.
+
+**The studio finds its own pages, and the allowlist is not widened by finding them.** When a host
+is tested (`test_allowed_host`) or retested by the weekly pass (`retest_stale_hosts`, seven days),
+its front page is read through the same DNS-pinned, size-bounded retriever and its own search
+address is looked for in `<link rel="search" type="application/opensearchdescription+xml">` and at
+`/opensearch.xml`; what is found is stored as DISCOVERED (migration `0040_research_sources`:
+`discovered_search_template`, `discovered_at`, `last_test_reason`), and the Owner's own address,
+where he typed one, keeps winning. A host that answers 403, limits requests or serves a script-only
+shell is FAILED with a reason from a closed vocabulary — HTTP_403, HTTP_ERROR, RATE_LIMITED,
+SCRIPT_ONLY, NETWORK, OTHER — that the preflight can show without parsing prose. A web search API
+the Owner connects through Settings → *Conexiuni* (catalog kind `search`, one HTTPS JSON contract:
+endpoint, key header, result-list path, field names, the key in the vault; "Verify access" sends
+one neutral word and checks the shape of the answer) may name addresses and nothing else:
+`find_pages` asks the Owner's addresses, then the discovered ones, then the verified engine,
+filters the engine's answers against the allowlist before anything downstream sees them, counts
+what it dropped, and every page is then read by the studio's own retriever — never the engine's
+copy, snippet or "answer". When any of these found pages, the Researcher's plan is a choice among
+them and a guessed address is set aside unread and recorded (GUESS_SET_ASIDE); when nothing was
+found, his addresses are tried as before and the escalation letter says what each answered. The
+day's reading is the Owner's: `STUDIO_RESEARCH_CANDIDATES_PER_DAY` and
+`STUDIO_RESEARCH_PAGES_PER_TOPIC`, four and four, clamped 1..12 so a typo cannot turn a research
+pass into a crawl.
+
+**The preflight asks whether the studio can find pages, not whether a row exists.**
+`research_health` is computed from the record and probes nothing, so it is safe on every run: how
+many hosts are authorised, how many were tested successfully, how many carry a search address,
+which are failing and why, whether a search engine is VERIFIED, and how many SUPPORTED claims are
+in hand. It reports DEGRADED with named Romanian reasons when no host passed, when there is no way
+to find pages at all (no search address anywhere and no engine, which returns the Researcher to
+guessing), or when fewer than ten verified claims remain — a thirty-second short spends three to
+five. A DEGRADED report stops nothing by itself: a day that finds nothing completes honestly with
+nothing, and the report is a fact for the Owner to read.
+
+**The day is wired to both, and the studio has run one end to end.** The media stage reads the
+day's remaining budget one line *before* it places the film's own hold (a film that counted its own
+reservation against itself would render stills with money in the account), prices the plan, holds
+the sum, settles only after `record_render_costs` has written the real rows, and releases on every
+path where the film was not made — the Owner's stop between two scenes, an encoder that cannot run,
+a vendor's refusal, which is costed first. The research stage gathers the Owner's number of
+candidates, re-tests every authorised site nobody has tested for a week (one front page each,
+nothing on the other six days, so no new scheduled job was needed) and the preflight reports the
+health. And the project has the test it never had: `tests/test_autonomous_day_end_to_end.py` fires
+the scheduled job, lets the worker execute the real runbook with the real stage runners against a
+temporary database, and holds the whole day — twelve stages under a `scheduled:` idempotency key, a
+claim extracted from a source and verified by a second employee, a script the Director passed, two
+films encoded by FFmpeg and measured by quality control, both published private through the five
+gates each to its own channel, and yesterday's serial episode grounded in yesterday's events and
+approved under the Owner's Channel B policy — then a second tick that starts nothing. Only the
+vendors are faked: one language model answering each prompt in that prompt's own schema, the local
+picture and voice adapters, the publishing simulator. No socket leaves the machine, nothing was
+rendered by a paid vendor and nothing cost money.
+
+Tests, by file set: economy 70 passed (`tests/test_pricing_truth.py` new, with
+`test_phase11_economy`, `test_books_and_history`, `test_economy_under_concurrency` and
+`test_schema_and_audit_trail`); research 87 passed (`tests/test_research_sources.py` new, 25 tests,
+with `test_factual_agent_pipeline`, `test_claim_verification`, `test_sources_and_readiness`,
+`test_research_retrieval` and the migration's schema match); the wiring 2 passed
+(`tests/test_autonomous_day_end_to_end.py`, new), with 21 (the daily run's stages), 30 (scheduler
+and worker), 44 (the runbook and its preflight) and 38 (the adversary, watchdog and sources files,
+two of whose assertions the wiring changed). The whole suite on the
+integrated tree: **1028 passed, 1 skipped** (the opt-in real-Ollama test), 1029 collected; ruff,
+`ruff format --check` and mypy clean on every changed file; `scripts/check_docs.py` passes. Nothing ran against
+a real model, provider or platform, no daily run was queued and no credits were spent.
+
+Not finished, honestly: no adapter is yet *built* with a `price_lookup` (`main.py`,
+`integrations/services.py`, `integrations/router.py`, `media/factory.py` construct them without
+one), so an agent run still records `cost_vr` NULL and narration is still unpriced in the books —
+the reservation is priced, the settled cost is only as complete as the rows the adapters write;
+`seed_documented_prices` has no caller yet (`scripts/bootstrap.py` or the start-up seeds), so the
+one documented ElevenLabs price is not in the live database; `record_failed_render_cost` is called
+on every provider refusal and honestly charges nothing today, because `assembler._fail_job` writes
+`production_json` only for a finished render, so a FAILED job carries no scenes — the stage refuses
+to reconstruct the attempt from the plan and charge for shots the vendor may never have generated;
+reconciling ESTIMATED rows against a vendor's invoice (a BILLED row replacing the estimates of one
+render) has a vocabulary and no function; no HTTP route exposes `research_health` or
+`retest_stale_hosts` and the *Cercetare → Surse* screen does not show the discovered address, its
+origin or the failure reason; the frontend does not yet label BLOCKED_BUDGET, and the Books office
+does not show the new `reserved_usd`, `failed_render_usd` or `unpriced_agent_runs`; the script-only
+heuristic and the OpenSearch discovery are proven on fixture HTML modelled on the hosts that failed
+and not on live pages, because no test may open a socket — the first weekly retest on the live
+database is the measurement; and the end-to-end test skips where FFmpeg is absent, by the
+convention `tests/test_phase5_media.py` already uses, the two tests taking about fifty seconds
+together because they encode two real films.
+
+### Ce are Owner-ul de făcut
+
+Numai Owner-ul poate face lucrurile de mai jos; studioul nu le face singur și nu le cere de două ori.
+
+- **Migrarea bazei de date live**: `scripts/bootstrap.py` aduce baza la `0040_research_sources`
+  (0039 economia, apoi 0040 cercetarea). `main.py` cere această revizie la pornire, deci migrarea
+  se face înainte de prima pornire pe versiunea aceasta. Niciun test nu atinge baza live.
+- **Bugetele** (`PUT /economy/budget`, biroul Contabilitate): zilnic, săptămânal, lunar. Nimeni
+  altcineva nu le poate pune — Contabilul doar escaladează, nu aprobă. Fără un buget, rezervarea
+  ține banii, dar nu are de ce să refuze.
+- **Prețurile planului** (`PUT /economy/prices`): ce plătește în realitate pentru ElevenLabs,
+  Ollama Cloud și Runway, pe model sau `*` pentru tot felul. Până atunci cărțile văd o fracțiune
+  din zi: rularea unui angajat rămâne fără cost, iar narația se prețuiește doar după lista publică
+  ElevenLabs, marcată DOCUMENTED, care nu este planul lui.
+- **Un motor de căutare** (Setări → *Conexiuni* → „Căutare web (API JSON)"), dacă vrea ca studioul
+  să găsească pagini și pe site-urile fără adresă proprie de căutare; și **site-urile autorizate**
+  (`PUT /sources/allowed-hosts/{host}`). Lista nu poate fi lărgită de niciun agent, de nicio cerere și
+  de niciun rezultat al motorului: motorul numește adrese, studioul păstrează doar ce este pe lista
+  lui și citește el însuși pagina.
+- **Politica de publicare pe canal** (`POST /publishing/channels/{id}/publish-policy`):
+  vizibilitatea, întârzierea, `public_publish_enabled` și dreptul Directoarei de a aproba episoade.
+  Fără dreptul acesta, un episod trecut de Directoare rămâne DRAFT și așteaptă mâna lui.
+- **Ceasul**: activarea lucrării `daily_main` din panoul zilei — actul lui înregistrat
+  (`workflow.job_activated`) — și instalarea sarcinii Windows („AMN-AI Studio",
+  `scripts/install_studio_service.ps1`), cu confirmarea o singură dată în `data/studio-service.log`
+  că o autentificare S4U deschide cheia. Până atunci lucrarea zilei stă adormită, după regula lui:
+  generarea video costă bani și se face numai după ce totul s-a dovedit.
+- **Plafonul de jetoane pe zi** (`STUDIO_AGENT_DAILY_TOKEN_BUDGET`), dacă vrea unul: 0 înseamnă
+  fără plafon, așa cum a mers studioul până acum. Peste el, rularea este oprită BLOCKED_BUDGET și
+  Contabilul îi scrie o dată în ziua aceea.
+
 ## Delivery and the serial (2026-09-17/18)
 
 Phase B/C of running unattended: what the studio delivers, and the serial as a film. Measured
@@ -1311,6 +1485,19 @@ on PATH: **311 passed / 1 skipped** (the render tests no longer skip and pass on
 FFmpeg path). Future `start.cmd` launches pick FFmpeg up from the registry PATH.
 
 
-## Codex visual continuation — active claim 2026-09-17T19:13:15.254136+00:00
+## Codex visual continuation — claim released 2026-09-18
 
 Scope: art-source/unreal/flat_material.py, an isolated material repair/verification script, and visual evidence under output/visual-audit. Investigate skeletal material fallback, validate repair in a copied asset before applying, capture the existing HQ_Dusk baseline and preserve the existing Pixel Streaming/backend integration. No architecture changes. Preserve the pre-existing modification in art-source/blender/hq/build_vehicles.py. Agent: Codex /root.
+
+
+## Studio Office material repair and native visual audit — 2026-09-18, Codex
+
+Closed the narrow visual-audit scope: M_HQ_Flat skeletal usage and four garment
+instances repaired, persisted in a separate UE 5.8.2 process, backed up and applied.
+Captured a fresh native PlateCam still at 1920x1008 and compared L2 to the exact
+Owner reference. Runtime restored after capture. No L2 geometry/look changes yet.
+36 office/layout/stream/bridge tests passed; check_docs passed. New-material creation
+and reuse also passed in the isolated UE project, including independent reload.
+Direct Python WebRTC capture remains experimental (connected, zero video frames).
+See [VISUAL_AUDIT_2026-09-18.md](VISUAL_AUDIT_2026-09-18.md) for evidence, backups, limits and the next AI's exact steps.
+Concurrent backend changes and the earlier build_vehicles.py edit were preserved.

@@ -252,6 +252,10 @@ class ProviderCostRecord(Base):
     event_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("domain_event.event_id"), nullable=True
     )
+    #: The cost of a render the vendor may have charged for and the studio never brought
+    #: home (a MediaProviderError midway). Counted by budgets like any estimate: the money is
+    #: as gone as if the film had been finished.
+    failed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
 class LedgerTransaction(Base):
@@ -333,6 +337,100 @@ class SpendingBudget(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(String(40), nullable=False)
     replaced_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    event_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("domain_event.event_id"), nullable=True
+    )
+
+
+#: The units a price can be quoted in. Every adapter that costs a call names one of these
+#: and multiplies by what it measured — characters sent, tokens counted, seconds bought.
+PRICE_UNITS = (
+    "per_1k_characters",
+    "per_1m_input_tokens",
+    "per_1m_output_tokens",
+    "per_second",
+    "per_generation",
+)
+
+#: Where a price came from, dearest evidence last: what the Owner typed, what a public price
+#: list documents, what a vendor quoted before generating, what an invoice said.
+PRICE_PROVENANCES = ("OWNER", "DOCUMENTED", "QUOTED", "BILLED")
+
+
+class ProviderPrice(Base):
+    """What one unit of a provider's resource costs, as the Owner supplied it.
+
+    One active row per ``(provider_kind, resource, unit)``; a new price deactivates the
+    previous one and keeps it, versioned, so the books can say what a token cost on any day.
+    ``resource`` is the model id the adapter reports; ``"*"`` prices every resource of the kind
+    that has no row of its own. Written only by the Owner's command (``PUT /economy/prices``)
+    or a documented seed marked as such; never by an agent, a search result or a vendor page.
+    """
+
+    __tablename__ = "provider_price"
+    __table_args__ = (
+        CheckConstraint(
+            "unit IN ('per_1k_characters','per_1m_input_tokens','per_1m_output_tokens',"
+            "'per_second','per_generation')",
+            name="ck_provider_price_unit",
+        ),
+        CheckConstraint(
+            "provenance IN ('OWNER','DOCUMENTED','QUOTED','BILLED')",
+            name="ck_provider_price_provenance",
+        ),
+        CheckConstraint("usd_micros >= 0", name="ck_provider_price_non_negative"),
+        UniqueConstraint(
+            "provider_kind", "resource", "unit", "version", name="uq_provider_price_version"
+        ),
+        Index("ix_provider_price_lookup", "provider_kind", "resource", "unit", "active"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    #: The catalogue kind of the connection: "ollama", "openai", "anthropic", "elevenlabs".
+    provider_kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    resource: Mapped[str] = mapped_column(String(200), nullable=False)
+    unit: Mapped[str] = mapped_column(String(32), nullable=False)
+    usd_micros: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    provenance: Mapped[str] = mapped_column(String(12), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    set_by: Mapped[str] = mapped_column(String(100), nullable=False, default="owner")
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    set_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    replaced_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    event_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("domain_event.event_id"), nullable=True
+    )
+
+
+class SpendReservation(Base):
+    """A sum held against the period's budget while a film is being made.
+
+    RESERVED counts in every budget check exactly like a recorded cost, so two films started
+    together cannot both fit on the last ten dollars. It ends one of two ways: SETTLED when
+    the real cost rows replace it, or RELEASED when the film was not made — or when the
+    watchdog finds it older than the reservation TTL, left by a process that died under it.
+    """
+
+    __tablename__ = "spend_reservation"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('RESERVED','RELEASED','SETTLED')", name="ck_spend_reservation_status"
+        ),
+        CheckConstraint("usd_micros > 0", name="ck_spend_reservation_positive"),
+        Index("ix_spend_reservation_status", "status", "reserved_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    purpose: Mapped[str] = mapped_column(String(200), nullable=False)
+    correlation_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    usd_micros: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    status: Mapped[str] = mapped_column(String(10), nullable=False, default="RESERVED")
+    reserved_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    released_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    #: What replaced or released it: the render job's id, or the watchdog's reason.
+    settled_reference: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
     event_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("domain_event.event_id"), nullable=True
     )

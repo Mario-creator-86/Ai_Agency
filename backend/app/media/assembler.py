@@ -894,6 +894,13 @@ def assemble_video_job(
                 job_rec.status = "FAILED"
                 job_rec.execution_log = log[-8000:]
                 job_rec.command_args_json = command_args
+                # What the render had already built when it stopped: the scenes whose
+                # narration was recorded and whose shots were generated, in the shape the
+                # finished render writes. The vendor charges for those whether or not the
+                # film was finished, and `economy.accountant.record_failed_render_cost`
+                # reads them from here; a job that kept this empty priced a lost render
+                # at nothing, and the day's budget saw a day that had spent nothing.
+                job_rec.production_json = production
                 job_rec.finished_at = utc_now()
             append_event(
                 session,
@@ -920,108 +927,118 @@ def assemble_video_job(
             _fail_job(STOP_REASON, STOP_REASON)
             raise RenderStopped(STOP_REASON)
 
-    for position, scene in enumerate(scenes_data):
-        if position:
-            _stop_if_asked()  # the first scene is the render starting; the stage just asked
-        index = scene["scene_index"]
-        with _at_work(
-            engine if image_adapter is not None else None,
-            "VideoEditor",
-            "generate_image",
-            f"imaginea scenei {index}",
-        ):
-            img_res = asyncio.run(
-                visual_adapter.generate_image(
-                    scene["visual_prompt"],
-                    width=1080,
-                    height=1920,
-                    extra={"title": storyboard_title, "scene_index": index},
-                )
-            )
-        suffix = img_res.format if img_res.format in ("png", "jpeg", "webp") else "svg"
-        still = work_dir / f"scene_{index:02d}.{suffix}"
-        still.write_bytes(img_res.image_bytes)
-        if image_adapter is not None:
-            from app.media.prompt_agent import strip_on_screen_text  # noqa: PLC0415
-            from app.media.qc import still_is_degenerate  # noqa: PLC0415
-
-            measuring = find_ffmpeg(ffmpeg_path)
-            broken = still_is_degenerate(measuring, still)
-            if broken:
-                # One more attempt, told plainly what a picture is. A still costs cents; a scene
-                # of stripes costs the film.
-                production.setdefault("image_retries", []).append(
-                    {"scene_index": index, "reason": broken}
-                )
-                with _at_work(
-                    engine,
-                    "VideoEditor",
-                    "generate_image",
-                    f"imaginea scenei {index} (reluare)",
-                ):
-                    again = asyncio.run(
-                        visual_adapter.generate_image(
-                            strip_on_screen_text(scene["visual_prompt"])
-                            + " A real, detailed scene: no text, no letters, no stripes, "
-                            "no repeating pattern.",
-                            width=1080,
-                            height=1920,
-                            extra={"title": storyboard_title, "scene_index": index},
-                        )
+    # A vendor that refuses a picture or a narration ends the render, and the job must
+    # say so: the error carries no job id, so a job left RENDERING is a render nobody can
+    # price afterwards. The Owner's stop already failed the job cleanly between two
+    # scenes; a refusal now does the same, keeps what was built, and is re-raised for the
+    # media stage to cost and to report.
+    try:
+        for position, scene in enumerate(scenes_data):
+            if position:
+                _stop_if_asked()  # the first scene is the render starting; the stage just asked
+            index = scene["scene_index"]
+            with _at_work(
+                engine if image_adapter is not None else None,
+                "VideoEditor",
+                "generate_image",
+                f"imaginea scenei {index}",
+            ):
+                img_res = asyncio.run(
+                    visual_adapter.generate_image(
+                        scene["visual_prompt"],
+                        width=1080,
+                        height=1920,
+                        extra={"title": storyboard_title, "scene_index": index},
                     )
-                still.write_bytes(again.image_bytes)
+                )
+            suffix = img_res.format if img_res.format in ("png", "jpeg", "webp") else "svg"
+            still = work_dir / f"scene_{index:02d}.{suffix}"
+            still.write_bytes(img_res.image_bytes)
+            if image_adapter is not None:
+                from app.media.prompt_agent import strip_on_screen_text  # noqa: PLC0415
+                from app.media.qc import still_is_degenerate  # noqa: PLC0415
+
+                measuring = find_ffmpeg(ffmpeg_path)
                 broken = still_is_degenerate(measuring, still)
                 if broken:
-                    production.setdefault("degenerate_stills", []).append(
+                    # One more attempt, told plainly what a picture is. A still costs cents; a scene
+                    # of stripes costs the film.
+                    production.setdefault("image_retries", []).append(
                         {"scene_index": index, "reason": broken}
                     )
+                    with _at_work(
+                        engine,
+                        "VideoEditor",
+                        "generate_image",
+                        f"imaginea scenei {index} (reluare)",
+                    ):
+                        again = asyncio.run(
+                            visual_adapter.generate_image(
+                                strip_on_screen_text(scene["visual_prompt"])
+                                + " A real, detailed scene: no text, no letters, no stripes, "
+                                "no repeating pattern.",
+                                width=1080,
+                                height=1920,
+                                extra={"title": storyboard_title, "scene_index": index},
+                            )
+                        )
+                    still.write_bytes(again.image_bytes)
+                    broken = still_is_degenerate(measuring, still)
+                    if broken:
+                        production.setdefault("degenerate_stills", []).append(
+                            {"scene_index": index, "reason": broken}
+                        )
 
-        if image_adapter is not None:
-            # A real still goes to the encoder as it arrived; ffmpeg scales it to 1080x1920.
-            generated_frames.append(still)
-        else:
-            frame_path = work_dir / f"frame_{index:02d}.ppm"
-            write_placeholder_frame_ppm(frame_path, index)
-            frame_files.append(frame_path)
+            if image_adapter is not None:
+                # A real still goes to the encoder as it arrived; ffmpeg scales it to 1080x1920.
+                generated_frames.append(still)
+            else:
+                frame_path = work_dir / f"frame_{index:02d}.ppm"
+                write_placeholder_frame_ppm(frame_path, index)
+                frame_files.append(frame_path)
 
-        real_voice = scene_voices[scenes_data.index(scene)]
-        voice_adapter: TTSProvider = (real_voice if all_real else None) or placeholder_voice
-        voice_started = time.monotonic()
-        with _at_work(
-            engine if all_real else None,
-            "VoiceArtist",
-            "synthesize_voice",
-            f"vocea scenei {index}",
-        ):
-            tts_res = asyncio.run(voice_adapter.synthesize(scene["voiceover_segment"]))
-        production["scenes"].append(
-            {
-                "scene_index": index,
-                "voice_provider": getattr(
-                    voice_adapter, "PROVIDER_NAME", PLACEHOLDER_VOICE_PROVIDER
-                ),
-                "model_id": getattr(voice_adapter, "model", None) or None,
-                "voice_id": getattr(voice_adapter, "voice_id", None) or None,
-                "characters": len(scene["voiceover_segment"]),
-                "audio_seconds": round(tts_res.duration_seconds, 3),
-                "synthesis_ms": round((time.monotonic() - voice_started) * 1000, 1),
-                "attempts": 1,
-            }
-        )
-        # The captions are timed from this: the scene's words last as long as its recording.
-        scene["audio_seconds"] = round(tts_res.duration_seconds, 3)
-        if all_real:
-            segment = work_dir / f"voice_{index:02d}.{tts_res.format}"
-            segment.write_bytes(tts_res.audio_bytes)
-            voice_segments.append(segment)
-            # The scene lasts as long as the narration actually recorded for it, measured from
-            # the returned audio. Keeping the storyboard's planned duration here would let the
-            # picture drift away from the voice while looking correct.
-            scene["duration_seconds"] = max(scene["duration_seconds"], tts_res.duration_seconds)
-        elif not master_audio_bytes:
-            master_audio_bytes = bytearray(tts_res.audio_bytes)
-        elif len(tts_res.audio_bytes) > 44:
-            master_audio_bytes.extend(tts_res.audio_bytes[44:])
+            real_voice = scene_voices[scenes_data.index(scene)]
+            voice_adapter: TTSProvider = (real_voice if all_real else None) or placeholder_voice
+            voice_started = time.monotonic()
+            with _at_work(
+                engine if all_real else None,
+                "VoiceArtist",
+                "synthesize_voice",
+                f"vocea scenei {index}",
+            ):
+                tts_res = asyncio.run(voice_adapter.synthesize(scene["voiceover_segment"]))
+            production["scenes"].append(
+                {
+                    "scene_index": index,
+                    "voice_provider": getattr(
+                        voice_adapter, "PROVIDER_NAME", PLACEHOLDER_VOICE_PROVIDER
+                    ),
+                    "model_id": getattr(voice_adapter, "model", None) or None,
+                    "voice_id": getattr(voice_adapter, "voice_id", None) or None,
+                    "characters": len(scene["voiceover_segment"]),
+                    "audio_seconds": round(tts_res.duration_seconds, 3),
+                    "synthesis_ms": round((time.monotonic() - voice_started) * 1000, 1),
+                    "attempts": 1,
+                }
+            )
+            # The captions are timed from this: the scene's words last as long as its recording.
+            scene["audio_seconds"] = round(tts_res.duration_seconds, 3)
+            if all_real:
+                segment = work_dir / f"voice_{index:02d}.{tts_res.format}"
+                segment.write_bytes(tts_res.audio_bytes)
+                voice_segments.append(segment)
+                # The scene lasts as long as the narration actually recorded for it, measured from
+                # the returned audio. Keeping the storyboard's planned duration here would let the
+                # picture drift away from the voice while looking correct.
+                scene["duration_seconds"] = max(scene["duration_seconds"], tts_res.duration_seconds)
+            elif not master_audio_bytes:
+                master_audio_bytes = bytearray(tts_res.audio_bytes)
+            elif len(tts_res.audio_bytes) > 44:
+                master_audio_bytes.extend(tts_res.audio_bytes[44:])
+
+    except MediaProviderError as exc:
+        _fail_job(f"The vendor refused the render: {exc}", str(exc))
+        raise
 
     if image_adapter is not None:
         frame_files = generated_frames

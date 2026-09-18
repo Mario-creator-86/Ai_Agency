@@ -253,3 +253,36 @@ def test_a_verdict_wrapped_in_a_markdown_fence_is_still_read(engine, claim, monk
     result, _ = run(engine, claim, fenced, monkeypatch)
 
     assert result["claim"]["status"] == "SUPPORTED"
+
+
+def test_a_verdict_must_quote_what_the_studio_read_not_what_the_search_engine_sent(
+    engine, workforce, monkeypatch
+):
+    """The search engine's snippet of a page is never stored (app.providers.search returns
+    addresses only), so a verifier quoting it is quoting nothing in the record."""
+    snippet = "Hubble, launched 1990, still operating with 1.5 million observations."
+    source = ingest_source_snapshot(
+        engine,
+        "https://en.wikipedia.org/wiki/Hubble_Space_Telescope",
+        "Hubble Space Telescope",
+        "en.wikipedia.org",
+        None,
+        SOURCE_TEXT,
+        0,
+        str(uuid4()),
+    )
+    created = extract_claims(
+        engine,
+        source["id"],
+        [ExtractClaimItem(claim_text=CLAIM, claim_type="HISTORICAL_EVENT", confidence=0.9)],
+        str(uuid4()),
+        extracted_by_agent_id=workforce[0],
+    )
+    claim_id = created[0]["id"]
+    with pytest.raises(VerificationRejected):
+        run(engine, claim_id, verdict("SUPPORTED", snippet), monkeypatch)
+    assert stored(engine, claim_id).status == "UNVERIFIED"
+    result, _ = run(
+        engine, claim_id, verdict("SUPPORTED", "launched into low Earth orbit in 1990"), monkeypatch
+    )
+    assert result["claim"]["status"] == "SUPPORTED"

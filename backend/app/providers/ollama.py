@@ -18,6 +18,7 @@ from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+from app.economy.prices import PriceLookup, llm_cost_vr
 from app.providers.base import GenerateResult, HealthResult, LLMProvider, ModelInfo
 from app.providers.retry import call_with_retries
 
@@ -31,9 +32,14 @@ class OllamaProvider(LLMProvider):
         self,
         base_url: str = "http://127.0.0.1:11434",
         api_key: str | None = None,
+        price_lookup: PriceLookup | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
+        #: The Owner's prices for this kind (`app.economy.prices.price_lookup`). A local
+        #: model has none and costs nothing; a cloud model served through this endpoint
+        #: costs what the Owner typed, and None — never zero — until he has.
+        self.price_lookup = price_lookup
 
     def _get_headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -162,7 +168,9 @@ class OllamaProvider(LLMProvider):
             text=text,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
-            cost_vr=None,  # Ollama is local; no monetary cost tracked
+            # From the tokens Ollama counted at the Owner's per-million prices for this
+            # model; None without them. 391 cloud runs carried no cost before this.
+            cost_vr=llm_cost_vr(self.price_lookup, model, prompt_tokens, completion_tokens),
             raw_response={
                 "done_reason": data.get("done_reason"),
                 "thinking_chars": len(thinking),

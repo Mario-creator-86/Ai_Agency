@@ -1,5 +1,70 @@
 # Changelog
 
+## Money and sources — 2026-09-18
+
+Phases E and F of running unattended, built in three parts and wired into the day: what a film
+costs before it is made, where the day's pages come from, and the first test of a whole day.
+
+- **The books hold money before it is spent.** Migration `0039_pricing_truth_and_reservations`
+  (`provider_price`, `spend_reservation`, `provider_cost_record.failed`). `reserve_spend` decides
+  behind the write lock and writes a RESERVED row every budget counts until `settle_reservation`
+  or `release_reservation`; `estimate_film_cost_micros` prices a plan conservatively (motion at the
+  ceiling that render will be given, narration at the dearest active per-thousand price over the
+  storyboard's own voiceover); budget periods open at the studio's own midnight, read from the
+  `studio` row, not at UTC's; `release_stale_reservations` is the watchdog's fourth sweep, at
+  `STUDIO_RESERVATION_TTL_SECONDS` (six hours).
+- **Prices are the Owner's.** `PUT /economy/prices` and `GET /economy/prices` (`app/economy/prices.py`),
+  Owner-only, idempotent by command id, versioned, provenance OWNER | DOCUMENTED | QUOTED | BILLED;
+  `seed_documented_prices` seeds one DOCUMENTED row — ElevenLabs' public Creator-plan figure — and
+  nothing for Ollama Cloud. The ElevenLabs, Ollama and configured-LLM adapters take a `price_lookup`
+  and cost every call from what they measured, answering None and never zero without a full price.
+- **A refused render is still a cost, and a refusal is a letter.** `record_failed_render_cost`
+  writes ESTIMATED rows flagged `failed=True` under their own reference, idempotent, shown as
+  "ESTIMAT (randare eșuată)"; `budget_refusal_letter` and `may_run_agent` write the Accountant's
+  letter to the Owner once per business date, decided behind the write lock. `may_run_agent` is the
+  Policy Kernel's first gate: past `STUDIO_AGENT_DAILY_TOKEN_BUDGET` (0 = no ceiling) a run is
+  recorded BLOCKED_BUDGET.
+- **The studio finds its own pages.** Migration `0040_research_sources` (`discovered_search_template`,
+  `discovered_at`, `last_test_reason`). A host test and the weekly `retest_stale_hosts` (7 days,
+  inside the research stage) read the front page and look for the site's own OpenSearch address;
+  the Owner's address keeps winning. Failures get a closed-vocabulary reason (HTTP_403, HTTP_ERROR,
+  RATE_LIMITED, SCRIPT_ONLY, NETWORK, OTHER).
+- **A search engine may name addresses and nothing else.** New catalog kind `search` (one HTTPS
+  JSON contract, key in the vault, neutral-word probe) and `backend/app/providers/search.py`, which
+  returns addresses and titles only. `find_pages` asks the Owner's addresses, then the discovered
+  ones, then the verified engine, filters every result against the allowlist before anything
+  downstream sees it, counts what it dropped, and reads each page with the studio's own DNS-pinned
+  retriever. A guessed address is set aside when real pages were found. The day reads
+  `STUDIO_RESEARCH_CANDIDATES_PER_DAY` × `STUDIO_RESEARCH_PAGES_PER_TOPIC` (4 × 4, clamped 1..12).
+- **The preflight asks whether the studio can find pages.** `research_health` replaces the
+  row-exists check: hosts authorised / tested / with a search address / failing and why, the
+  engine's status, verified claims in hand, DEGRADED with named reasons. It probes nothing.
+- **The day is wired.** `runbook/stages.py` (estimate → hold → settle or release, the refusal
+  letter, the failed-render cost, the research budget and the weekly retest), `runbook/preflight.py`,
+  `workflows/watchdog.py`, `agents/services.py` and four settings in `config.py`
+  (`reservation_ttl_seconds`, `agent_daily_token_budget`, `research_candidates_per_day`,
+  `research_pages_per_topic`).
+- **The first test of a whole day.** `tests/test_autonomous_day_end_to_end.py` (new): the scheduled
+  job fires, the worker runs the real runbook against a temporary database, two films are encoded
+  and published private to their own channels, the serial is written and filmed, and a second tick
+  starts nothing. Only the vendors are faked; the test skips without FFmpeg.
+- **Documents.** `CURRENT_STATUS.md` gains the section above and the Owner's own list («Ce are
+  Owner-ul de făcut»); `16_DECISION_LOG.md` records twenty-three decisions of this phase;
+  `13_ROADMAP_TODO.md` ticks cost reservation and hard budgets, marks the keyword-search item
+  partial and adds the phase's own list with what is still open; `PROJECT_STATE.json` moves to
+  migration 0040 (41 migrations) and 1028/1 of 1029; `PIPELINE_COVERAGE.md` corrects in place,
+  dated, the two sentences saying the Researcher has no search engine and that the day reads two
+  candidates of four pages. No architecture document changed.
+- Suite on the integrated tree: **1028 passed, 1 skipped** (the opt-in real-Ollama test), 1029
+  collected; ruff, `ruff format --check` and mypy clean; `scripts/check_docs.py` passes. Nothing
+  ran against a real model, provider or platform; no daily run was queued and no credits were
+  spent.
+- Open, and named in `CURRENT_STATUS.md`: no adapter is yet constructed with a `price_lookup` and
+  `seed_documented_prices` has no caller, so agent runs still record `cost_vr` NULL and the live
+  books hold no price; a FAILED render carries no scenes until `assembler._fail_job` writes them,
+  so the failed-render cost honestly records nothing today; no route exposes `research_health` or
+  the retest, and no screen shows the discovered address or BLOCKED_BUDGET.
+
 ## Phase B/C tried as an adversary — 2026-09-18
 
 Seven defects measured by an adversarial pass over delivery and the serial, each with a red-first
@@ -3198,3 +3263,15 @@ Clock is now freestanding on the right side of the street. Bottom control dock C
 ## 2026-09-10 — Correct agent inspector model assignment
 
 Fixed false “Niciun model alocat” when an older office projection omits model metadata. Inspector now loads persisted agent/model details, handles errors explicitly and discards late responses. All 7 live agents matched Settings in read-only browser QA; 38 frontend tests passed. See `INSPECTOR_MODEL_FIX.md`.
+
+
+## HQ material usage and visual baseline — 2026-09-18, Codex
+
+- Existing and new M_HQ_Flat parents explicitly support skeletal garments; failed
+  persistence raises an error. Audited/reloaded copied assets before applying five
+  backed-up .uasset files to the real project.
+- Added audit_flat_materials.py; captured the existing scene through the native
+  editor and saved an L2 comparison. capture_stream_frame.py is explicitly experimental.
+- Validation: 36 scoped integration tests; docs hashes; UE material repair/reload
+  and new creation/reuse. No claim of completed visual fidelity or measured FPS.
+- Evidence and next steps: [VISUAL_AUDIT_2026-09-18.md](VISUAL_AUDIT_2026-09-18.md).

@@ -474,23 +474,32 @@ def test_the_stop_pressed_during_the_factual_film_leaves_the_serial_unfilmed(
 
 
 def test_the_budget_is_asked_once_per_film(engine, settings, monkeypatch):
+    """And asked with a figure, not with zero: each film is costed from its own plan and
+    the sum is held before a frame is generated, so what the first film took is against the
+    budget by the time the second is asked about."""
+    from app.economy.models import SpendReservation
+
     _autonomy_on(engine)
     _approved_board(engine, "Office serial", serial=True)
     _approved_board(engine, "A factual short")
     rendered: list[str] = []
     _media_stage_with_a_fake_camera(monkeypatch, rendered)
-    asked: list[float] = []
+    asked: list[int] = []
+    take = stages.reserve_spend
 
-    def may_spend(engine_, usd):
-        asked.append(usd)
-        return {"allowed": True, "period": None, "reason": ""}
+    def watched(engine_, usd_micros, purpose, correlation, **kwargs):
+        asked.append(usd_micros)
+        return take(engine_, usd_micros, purpose, correlation, **kwargs)
 
-    monkeypatch.setattr(stages, "may_spend", may_spend)
+    monkeypatch.setattr(stages, "reserve_spend", watched)
 
     outcome = stages._media(engine, settings, None, None)
 
     assert outcome["status"] == "COMPLETED", outcome
     assert len(rendered) == 2 and len(asked) == 2
+    assert all(usd_micros > 0 for usd_micros in asked), "a film was held at nothing"
+    with Session(engine) as session:
+        assert len(list(session.scalars(select(SpendReservation)))) == 2
 
 
 # ------------------------------------------------------- (8) a blank frame rejects both kinds --

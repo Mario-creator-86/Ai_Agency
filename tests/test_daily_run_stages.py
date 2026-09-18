@@ -705,11 +705,19 @@ def test_a_budget_refusal_after_the_factual_film_skips_the_serial_and_says_so(
     _media_stage_with_a_fake_camera(monkeypatch, rendered)
     answers = iter(
         [
-            {"allowed": True, "period": None, "reason": ""},
-            {"allowed": False, "period": "DAILY", "reason": "Bugetul zilnic ar fi depășit."},
+            {"allowed": True, "period": None, "reason": "", "reservation_id": None},
+            {
+                "allowed": False,
+                "period": "DAILY",
+                "reason": "Bugetul zilnic ar fi depășit.",
+                "reservation_id": None,
+            },
         ]
     )
-    monkeypatch.setattr(stages, "may_spend", lambda engine_, usd: next(answers))
+    # The stage now *holds* the money instead of reading a snapshot; what is stubbed here is
+    # the verdict, so this test stays about the order of the two films. The hold itself, the
+    # settlement and the Accountant's letter are the three tests below.
+    monkeypatch.setattr(stages, "reserve_spend", lambda *a, **k: next(answers))
 
     outcome = stages._media(engine, settings, None, None)
 
@@ -717,6 +725,106 @@ def test_a_budget_refusal_after_the_factual_film_skips_the_serial_and_says_so(
     assert rendered == [factual]
     assert outcome["artefacts"]["skipped_for_budget"] == [serial]
     assert "serial" in outcome["reason"].lower() and "Bugetul" in outcome["reason"]
+
+
+# ------------------------------------------- the money is held before it is spent --
+
+
+def _daily_budget(engine, usd: str) -> None:
+    """The Owner's own command, as the books' route would write it."""
+    from app.economy.budget import BudgetCommand, set_budget
+
+    set_budget(engine, BudgetCommand(period="DAILY", limit_usd=usd))
+
+
+def _reservations(engine) -> list[Any]:
+    from app.economy.models import SpendReservation
+    from sqlalchemy import select
+
+    with Session(engine) as session:
+        return list(session.scalars(select(SpendReservation)))
+
+
+def test_the_film_holds_its_estimated_cost_and_settles_the_hold_when_it_is_made(
+    engine, settings, monkeypatch
+):
+    """The check before a render used to be `may_spend(engine, 0)`: a day at 14.99 of 15 USD
+    started a full film, and two films asked in the same second were both told the last ten
+    dollars were free. The plan is now priced, the sum held, and the hold settled once the
+    render is in the books."""
+    from app.runbook import stages
+
+    _autonomy_on(engine)
+    _approved_board(engine, "A factual short")
+    _media_stage_with_a_fake_camera(monkeypatch, [])
+
+    outcome = stages._media(engine, settings, None, None)
+
+    assert outcome["status"] == "COMPLETED", outcome
+    (hold,) = _reservations(engine)
+    assert hold.usd_micros > 0, "the plan was costed at nothing"
+    assert hold.status == "SETTLED"
+    assert hold.settled_reference.startswith("render:")
+
+
+def test_a_render_that_was_refused_lets_its_hold_go(engine, settings, monkeypatch):
+    """A hold is money pledged to a film. The film was not made, so the day gets it back at
+    once — not in six hours when the watchdog sweeps."""
+    from app.providers.media_http import MediaProviderError
+    from app.runbook import stages
+
+    _autonomy_on(engine)
+    _approved_board(engine, "A factual short")
+    _media_stage_with_a_fake_camera(monkeypatch, [])
+
+    def refuses(*args: Any, **kwargs: Any) -> None:
+        raise MediaProviderError("the model refused this shot")
+
+    monkeypatch.setattr("app.media.assembler.assemble_video_job", refuses)
+
+    outcome = stages._media(engine, settings, None, None)
+
+    assert outcome["status"] == "COMPLETED", outcome
+    assert "refuzate de furnizor" in outcome["reason"]
+    (hold,) = _reservations(engine)
+    assert hold.status == "RELEASED"
+    assert "refuzat" in (hold.settled_reference or "")
+
+
+def test_a_budget_that_cannot_pay_for_the_film_refuses_it_and_the_owner_is_told(
+    engine, settings, monkeypatch
+):
+    """A budget refusal used to be a SKIPPED line in a run summary nobody reads by itself.
+    The Accountant writes to the Owner the same day, once, with the figures and the one
+    decision only he can take."""
+    from app.agents.models import AgentMessage
+    from app.agents.services import seed_initial_workforce
+    from app.runbook import stages
+    from sqlalchemy import select
+
+    _autonomy_on(engine)
+    seed_initial_workforce(engine)
+    _approved_board(engine, "A factual short")
+    rendered: list[str] = []
+    _media_stage_with_a_fake_camera(monkeypatch, rendered)
+    _daily_budget(engine, "0.10")  # less than any film the studio can plan
+
+    outcome = stages._media(engine, settings, None, None)
+
+    assert outcome["status"] == "SKIPPED", outcome
+    assert "Bugetul" in outcome["reason"]
+    assert rendered == [], "money was refused and the camera still rolled"
+    assert _reservations(engine) == [], "a refused film holds nothing"
+    with Session(engine) as session:
+        letters = [
+            message
+            for message in session.scalars(
+                select(AgentMessage).where(AgentMessage.to_agent_id.is_(None))
+            )
+            if (message.body_json or {}).get("kind") == "budget_refusal"
+        ]
+    assert len(letters) == 1, "the Owner was not told, or was told twice"
+    assert "bugetul" in letters[0].body_text.lower()
 
 
 # --------------------------------------------------- the Owner's stop between two scenes --

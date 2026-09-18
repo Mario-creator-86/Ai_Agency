@@ -123,6 +123,55 @@ def test_every_check_says_what_it_found(engine, settings, vault, studio):
         assert check["severity"] in ("BLOCKING", "DEGRADING")
 
 
+def test_the_preflight_asks_whether_the_studio_can_find_pages_not_whether_a_row_exists(
+    engine, settings, vault, studio
+):
+    """Thirty-six authorised hosts, fourteen behind bot walls, none with a search address and
+    no engine connected used to read as a passing check followed by a day that fetched
+    nothing. The check is the research health report: counts, the failing hosts with their
+    reason codes, and the reasons it calls the day degraded."""
+    from app.research.models import ResearchAllowedHost
+    from app.services import utc_now
+
+    def check(name: str) -> dict:
+        return next(
+            c for c in run_preflight(engine, settings, vault)["checks"] if c["name"] == name
+        )
+
+    make_a_model_available(engine)
+    empty = check("research_sources")
+    assert empty["ok"] is False
+    assert "niciun site autorizat" in empty["message"].lower()
+
+    with Session(engine) as session, session.begin():
+        session.add(
+            ResearchAllowedHost(
+                host="www.example.org",
+                added_by="owner",
+                added_at=utc_now(),
+                last_test_at=utc_now(),
+                last_test_status="FAILED",
+                last_test_detail="403",
+                last_test_reason="HTTP_403",
+            )
+        )
+    walled = check("research_sources")
+    assert walled["ok"] is False
+    assert "www.example.org (HTTP_403)" in walled["detail"]
+    assert "1 site-uri autorizate, 0 testate cu succes" in walled["detail"]
+
+    with Session(engine) as session, session.begin():
+        row = session.get(ResearchAllowedHost, "www.example.org")
+        row.last_test_status, row.last_test_reason = "PASSED", None
+        row.search_template = "https://www.example.org/search?q={query}"
+    passing = check("research_sources")
+    # Still not OK, and honestly so: nothing has been verified to say yet, which is the one
+    # thing a factual film cannot do without.
+    assert passing["ok"] is False
+    assert "afirmații verificate" in passing["message"]
+    assert "1 cu adresă de căutare" in passing["detail"]
+
+
 def test_preflight_changes_nothing(engine, settings, vault, studio):
     """It is read before deciding whether to act; a check with a side effect would be a trap."""
     with Session(engine) as session:

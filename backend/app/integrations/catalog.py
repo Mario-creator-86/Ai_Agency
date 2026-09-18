@@ -197,4 +197,52 @@ CATALOG = {
         "opțional. Salvarea nu trimite și nu citește mesaje.",
         "https://support.google.com/accounts/answer/185833",
     ),
+    # A web search API the studio may ask for page addresses. Not a source: every address it
+    # names is kept only if its host is on the Owner's allowlist and is then read by the
+    # studio's own retriever. The fields describe one HTTPS JSON contract, so any engine that
+    # answers a GET with a key in a header and a list of {url, title} can be connected.
+    "search": service(
+        "Căutare web (API JSON)",
+        "social",
+        [
+            field("endpoint", "Adresă API de căutare (HTTPS, fără parametri)", kind="url"),
+            field(
+                "auth_header",
+                "Antetul care poartă cheia (ex. X-Subscription-Token; Authorization trimite "
+                "Bearer)",
+            ),
+            field("results_path", "Calea listei de rezultate în răspuns (ex. web.results)"),
+            field("query_param", "Parametrul de interogare (implicit q)", False),
+            field("url_field", "Câmpul cu adresa paginii (implicit url)", False),
+            field("title_field", "Câmpul cu titlul (implicit title)", False),
+            KEY,
+        ],
+        "search",
+        "Motorul întoarce doar adrese. Studioul păstrează numai paginile de pe site-urile "
+        "autorizate și le citește el însuși; copia motorului nu este folosită niciodată.",
+        "https://github.com/dewitt/opensearch/blob/master/opensearch-1-1-draft-6.md",
+    ),
 }
+
+
+#: Prices a public price list documents, seeded as provenance DOCUMENTED and nothing more
+#: (`app.economy.prices.seed_documented_prices`). Only where the vendor publishes one figure
+#: for every model of the kind and the alternative is narration read as free. Ollama Cloud
+#: is deliberately absent: its price is the Owner's plan, and a guess in the books is worse
+#: than a gap the Accountant reports. Replaced by the Owner's own price the moment he types it.
+DOCUMENTED_PRICES: list[dict[str, str]] = [
+    {
+        "provider_kind": "elevenlabs",
+        "resource": "*",
+        "unit": "per_1k_characters",
+        # Creator plan on the public price list: 22 USD a month for 100 000 credits, one
+        # credit a character on the multilingual models (Flash and Turbo bill half). The
+        # Owner's plan may differ; this is the documented figure, not his invoice.
+        "usd": "0.22",
+        "notes": (
+            "DOCUMENTED, not the Owner's plan: ElevenLabs public price list, Creator plan, "
+            "22 USD for 100 000 credits a month, one credit per character (Flash/Turbo: half). "
+            "Replace with the plan's own price in PUT /economy/prices."
+        ),
+    },
+]

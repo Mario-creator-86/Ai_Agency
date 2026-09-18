@@ -1,17 +1,17 @@
 {
-  "phase": "10 (Phase B/C of autonomy: delivery and the serial)",
-  "completed_milestone": "Phase A (the clock, fault classes, provider retries, the watchdog; verified 863/863 twice) and Phase B/C (per-channel publish policy, the serial filmed in-run, captions and loudness measured; closed 2026-09-18 with the Director's serial reading and the Director's leave as a policy column)",
-  "active_task": "Tracking documents brought to the truth (2026-09-18); the whole suite with both closures is the verifier's to run",
-  "next_task": "The first real day with both channels bound, watched by the Owner (the daily job stays dormant until the Owner's recorded activation); move the end-of-run close of today's log so every date has a full-day log; a screen for the publish policy and the Director's leave",
+  "phase": "10 (Phases E/F of autonomy: money and sources)",
+  "completed_milestone": "Phase A (the clock, fault classes, provider retries, the watchdog), Phase B/C (per-channel publish policy, the serial filmed in-run, captions and loudness measured; closed 2026-09-18) and Phases E/F (2026-09-18: a film's cost estimated and held before it is made, prices the Owner's alone, a failed render costed, a token ceiling with the Accountant's letter; the studio's own page discovery, a search engine filtered to the allowlist, the research health report in the preflight; the day wired to both and one whole day tested end to end)",
+  "active_task": "Tracking documents brought to the truth for Phases E/F (2026-09-18); the whole suite was run on the integrated tree (1028 passed / 1 skipped) and the frontend was not touched",
+  "next_task": "Wire the price lookups into the adapters that are actually built (main.py, integrations/services.py, integrations/router.py, media/factory.py) and call seed_documented_prices from the bootstrap, so agent runs stop recording cost_vr NULL and the books hold a price; make assembler._fail_job write the scenes it had already built so a refused render can be costed; a route and a screen for research_health, the discovered search addresses and BLOCKED_BUDGET. Then the first real day with both channels bound, watched by the Owner (the daily job stays dormant until his recorded activation)",
   "last_green_test_commit": null,
-  "verification": "docs/project/CURRENT_STATUS.md, sections 'Delivery and the serial (2026-09-17/18)' and 'The clock, and a day that asks again (2026-09-17)'",
+  "verification": "docs/project/CURRENT_STATUS.md, sections 'Money and sources (2026-09-17/18)', 'Delivery and the serial (2026-09-17/18)' and 'The clock, and a day that asks again (2026-09-17)'",
   "tests": {
-    "python_passed": 974,
+    "python_passed": 1028,
     "python_skipped": 1,
-    "python_collected": 975,
+    "python_collected": 1029,
     "javascript_passed": 87,
     "failed": 0,
-    "note": "974 passed / 1 skipped is the whole-suite run on the final tree of Phase B/C and its closure (2026-09-18, after the verifier's seven fixes and its 21 adversarial tests, with the loopback-only socket guard active); 975 collected with 'uv run pytest --collect-only -q tests'; 87 frontend tests with 'npm test --prefix frontend'"
+    "note": "1028 passed / 1 skipped is the whole-suite run on the integrated tree of Phases E/F (2026-09-18), with the loopback-only socket guard active; the skip is the opt-in real Ollama test. 1029 collected with 'uv run pytest --collect-only -q tests'. The 87 frontend tests are the Phase B/C figure: no frontend file changed in Phases E/F and 'npm test --prefix frontend' was not re-run"
   },
   "known_blockers": [
     "The daily job is seeded dormant and stays so until the Owner's recorded activation (workflow.job_activated); no daily run has been queued by anyone since Phase A, by the Owner's rule that video generation costs money and happens only when everything is proven",
@@ -20,7 +20,13 @@
     "Today's log is still closed at the end of the run, so a date whose run completes is frozen at the run's hour; a full-day log for every date needs that close moved",
     "Character-drift QC is NOT_IMPLEMENTED: quality control reports the check as not performed",
     "No frontend screen sets the publish policy or the Director's leave, and the scheduler panel does not yet read run_at_local; the API carries both",
-    "The seeded Character Bibles carry no voice binding and the assembler synthesises one voice per scene, so every serial scene is the narrator until the Owner binds voices"
+    "The seeded Character Bibles carry no voice binding and the assembler synthesises one voice per scene, so every serial scene is the narrator until the Owner binds voices",
+    "The live database is still at 0038: migrations 0039 (pricing and reservations) and 0040 (research sources) chain in that order and main.py pins 0040, so scripts/bootstrap.py must be run by the Owner before the server starts on this version",
+    "No budget and no price are set on the live studio: budgets are the Owner's alone (PUT /economy/budget) and a price enters the books only through PUT /economy/prices, so until he types them a reservation holds a plan priced from settings and the public ElevenLabs figure, and nothing refuses a day that has no budget",
+    "No adapter is constructed with a price_lookup (main.py, integrations/services.py, integrations/router.py, media/factory.py) and seed_documented_prices has no caller, so every agent_run still records cost_vr NULL and narration is unpriced in the books",
+    "A FAILED render carries no scenes, because assembler._fail_job writes production_json only for a finished render: record_failed_render_cost is called on every provider refusal and honestly charges nothing until that one-line change lands",
+    "No search engine is connected and no route exposes research_health or the weekly retest; the Cercetare -> Surse screen does not show the discovered address, its origin or the failure reason, and the frontend does not label BLOCKED_BUDGET",
+    "The script-only heuristic and the OpenSearch discovery are proven on fixture HTML modelled on the hosts that failed, not on live pages (no test may open a socket); the first weekly retest on the live database is the measurement"
   ],
   "future_integration_dependencies": [
     "A real day with both YouTube channels bound (the Owner watches the first)",
@@ -30,7 +36,7 @@
   "configured_provider_names": [
     "Ollama Cloud (LLM), ElevenLabs (voice), Runway (picture), YouTube (two OAuth connections) — verified by the Owner on the live studio; not present on a clean install"
   ],
-  "migration_version": "0038_director_may_approve_episodes",
+  "migration_version": "0040_research_sources",
   "autonomy_mode": "MANUAL",
   "feature_flags": {
     "public_publish_enabled": false,
@@ -39,6 +45,6 @@
     "provider_auto_switch_enabled": false,
     "world_generation_enabled": false
   },
-  "migration_count": 39,
+  "migration_count": 41,
   "feature_flags_note": "public_publish_enabled is per channel since migration 0037 (channel_record.public_publish_enabled, seeded false on both slots); the studio-wide flag here is the seeded default"
 }

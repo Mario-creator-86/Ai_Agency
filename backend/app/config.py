@@ -179,6 +179,30 @@ class Settings(BaseSettings):
     #: a good run is luck, not evidence.
     min_test_samples_for_promotion: int = Field(default=3, ge=1, le=100)
 
+    #: How long a film may hold money it has not spent. The media stage reserves what the
+    #: plan is estimated to cost before it generates anything and settles the hold against
+    #: the real cost rows when the render is in the books; a hold older than this was left
+    #: by a process that died under it, and the watchdog lets it go
+    #: (`app.economy.budget.release_stale_reservations`). Six hours: a film takes minutes
+    #: and a day of retries hours, so nothing honest is still holding at that age.
+    reservation_ttl_seconds: int = Field(default=21600, ge=60, le=86400)
+
+    #: The ceiling on what every employee together may spend in tokens in one business date.
+    #: 0 means none, which is how the studio has run until now: measured on the live copy,
+    #: 391 runs on Ollama Cloud went through the Director's loop and the mail rounds under no
+    #: ceiling at all. Past it the Policy Kernel records the run BLOCKED_BUDGET and the
+    #: Accountant writes to the Owner once that day (`app.economy.accountant.may_run_agent`);
+    #: the letter names this setting as STUDIO_AGENT_DAILY_TOKEN_BUDGET.
+    agent_daily_token_budget: int = Field(default=0, ge=0)
+
+    #: How much reading the day does: candidates the research stage gathers pages for, and
+    #: pages read per candidate. Measured on the live copy: two candidates of three pages
+    #: left the studio with nothing on a day when both plans guessed addresses that 404'd.
+    #: Clamped to 1..12 by `app.research.service.research_budget`, so a typo in the
+    #: environment cannot turn a research pass into a crawl.
+    research_candidates_per_day: int = Field(default=4, ge=1, le=12)
+    research_pages_per_topic: int = Field(default=4, ge=1, le=12)
+
     #: A price that moves by at least this much is a letter to the Owner, and a vendor quote
     #: that disagrees with the stored price by more than the tolerance makes it stale.
     price_change_alert_percent: float = Field(default=10.0, ge=0.1, le=1000.0)

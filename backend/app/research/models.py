@@ -28,4 +28,13 @@ class ResearchAllowedHost(Base):
     #: The site's own search address (OpenSearch Suggestions JSON) with ``{query}`` where the
     #: words go — the studio finds pages here instead of guessing them (migration 0030).
     search_template: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    #: The same kind of address, read from the host's own front page (``<link rel="search">``
+    #: or ``/opensearch.xml``) when the host was tested (migration 0040). The Owner's
+    #: ``search_template`` wins whenever both exist: what he typed is a decision, this is a
+    #: finding, and a finding never overrides a decision.
+    discovered_search_template: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    discovered_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    #: Why the last test FAILED, in a closed vocabulary the preflight can show without parsing
+    #: the detail: HTTP_403 | HTTP_ERROR | RATE_LIMITED | SCRIPT_ONLY | NETWORK | OTHER.
+    last_test_reason: Mapped[str | None] = mapped_column(String(30), nullable=True)
     event_id: Mapped[str | None] = mapped_column(ForeignKey("domain_event.event_id"), nullable=True)

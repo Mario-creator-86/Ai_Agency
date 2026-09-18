@@ -7,13 +7,16 @@ live database: two `video_render_job` rows had been RENDERING since 2026-09-12 w
 NULL. In the same way, an upload whose answer was lost leaves a publication in REMOTE_UNKNOWN,
 and `reconcile_publication` — written for exactly that — had no caller outside the tests.
 
-One pass of the watchdog does three things and records each. It fails renders that have made
+One pass of the watchdog does four things and records each. It fails renders that have made
 no progress past a threshold, with the reason on the row and an event, the way the assembler
 itself records a failure. It sends every uncertain publication through the reconciliation that
 already exists, a bounded number of times, and then hands the row to the Owner rather than
 asking a platform that does not answer forever. And it reports task leases that have lapsed
 without touching them: the queue re-claims an expired lease on its own (`claim_task`), and a
-second mechanism doing the same would be two owners of one row.
+second mechanism doing the same would be two owners of one row. And it releases the money a
+film held and never spent: the media stage reserves what a render is estimated to cost and
+settles the hold when the cost rows are in the books, so a process killed in between leaves
+the day's budget pledged to a film nobody is making.
 
 What it will not do. It changes nothing while the Owner's autonomy stop is set — safe mode sets
 that stop too — because a stopped studio is a studio in which nothing moves, including repair.
@@ -31,6 +34,7 @@ from uuid import uuid4
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
+from app.economy.budget import DEFAULT_RESERVATION_TTL_SECONDS, release_stale_reservations
 from app.media.models import VideoRenderJob
 from app.models import DomainEvent, OwnerPolicy
 from app.providers.publishing_base import PublishingProvider
@@ -405,7 +409,7 @@ def run_watchdog(
     *,
     publisher_for: PublisherResolver | None = None,
 ) -> dict[str, Any]:
-    """One pass: fail stuck renders, reconcile uncertain publications, report lapsed leases.
+    """One pass: fail stuck renders, reconcile publications, report leases, free stale holds.
 
     Thresholds are read through `getattr` so the pass works before the settings carry them.
     `publisher_for` maps a channel id to the account that can be asked about it; the default
@@ -419,6 +423,7 @@ def run_watchdog(
             "renders": {"failed": 0, "failed_ids": [], "rendering": 0},
             "publications": {"checked": 0, "reasons": []},
             "leases": {"expired": 0, "task_ids": []},
+            "reservations": {"released": [], "ttl_seconds": 0, "cutoff": None},
             "correlation_id": correlation,
         }
         logger.info("watchdog_skipped", extra={"reason": "autonomy_stopped"})
@@ -437,6 +442,18 @@ def run_watchdog(
         correlation,
     )
     leases = _lapsed_leases(engine)
+    # The fourth thing a dead process leaves behind. A film holds the money it is about to
+    # spend (`reserve_spend`) and releases or settles it when the render ends; a process
+    # killed under a hold leaves the day's budget pledged to a film nobody is making, and
+    # every later film is refused for money that was never spent. Same threshold logic as
+    # the renders above: read through the settings when they carry it.
+    reservations = release_stale_reservations(
+        engine,
+        ttl_seconds=int(
+            getattr(settings, "reservation_ttl_seconds", DEFAULT_RESERVATION_TTL_SECONDS)
+        ),
+        correlation_id=correlation,
+    )
 
     result = {
         "status": "COMPLETED",
@@ -444,6 +461,7 @@ def run_watchdog(
         "renders": renders,
         "publications": publications,
         "leases": leases,
+        "reservations": reservations,
         "correlation_id": correlation,
     }
     logger.info(
@@ -453,6 +471,7 @@ def run_watchdog(
             "publications_checked": publications["checked"],
             "publications_handed_to_owner": publications["handed_to_owner"],
             "leases_expired": leases["expired"],
+            "reservations_released": len(reservations["released"]),
         },
     )
     return result

@@ -812,6 +812,107 @@ def test_the_watchdog_task_is_dispatched_to_its_module(engine, settings, vault, 
     assert seen == [(engine, settings, "task-1")]
 
 
+def test_the_watchdog_releases_the_money_a_dead_process_left_held(engine, settings, vault):
+    """The fourth thing a killed process leaves behind. A film holds what it is about to
+    spend; a process that dies under the hold leaves the day's budget pledged to a film
+    nobody is making, and every later film is refused for money never spent."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.economy.budget import reserve_spend
+    from app.economy.models import SpendReservation
+    from app.workflows.watchdog import WATCHDOG, run_watchdog
+
+    _autonomy(engine, False)
+    fresh = reserve_spend(engine, 4_000_000, "film de azi", str(uuid4()))
+    stale = reserve_spend(engine, 4_000_000, "film abandonat", str(uuid4()))
+    old = (datetime.now(UTC) - timedelta(seconds=settings.reservation_ttl_seconds + 60)).isoformat()
+    with Session(engine) as session, session.begin():
+        session.get(SpendReservation, stale["reservation_id"]).reserved_at = old
+
+    result = run_watchdog(engine, settings, correlation_id=str(uuid4()))
+
+    assert result["reservations"]["released"] == [stale["reservation_id"]]
+    assert result["reservations"]["ttl_seconds"] == settings.reservation_ttl_seconds
+    with Session(engine) as session:
+        assert session.get(SpendReservation, stale["reservation_id"]).status == "RELEASED"
+        assert session.get(SpendReservation, fresh["reservation_id"]).status == "RESERVED"
+
+    # And nothing at all while the Owner's switch is set: a stopped studio does not move,
+    # including to repair itself.
+    _autonomy(engine, True)
+    stopped = run_watchdog(engine, settings, correlation_id=str(uuid4()))
+    assert stopped["status"] == "SKIPPED"
+    assert stopped["reservations"]["released"] == []
+    assert WATCHDOG == "WATCHDOG"
+
+
+def test_a_run_past_the_days_token_ceiling_is_blocked_and_the_owner_is_told(engine, monkeypatch):
+    """The Policy Kernel's first gate. Measured on a copy of the live database: 391 runs on
+    Ollama Cloud went through the Director's loop and the mail rounds under no ceiling."""
+    from types import SimpleNamespace
+
+    from app.agents import services as agent_services
+    from app.agents.models import Agent, AgentMessage, AgentRun, ModelRecord
+    from app.agents.services import run_agent_task, seed_initial_workforce
+    from app.providers.base import GenerateResult, HealthResult
+    from app.providers.registry import ProviderRegistry
+
+    class Model:
+        async def health_check(self):
+            return HealthResult("HEALTHY")
+
+        async def list_models(self):
+            return []
+
+        async def generate(self, model, prompt, **kwargs):
+            return GenerateResult("un răspuns", 400, 400, None)
+
+    _autonomy(engine, False)
+    seed_initial_workforce(engine)
+    with Session(engine) as session, session.begin():
+        for record in session.scalars(select(ModelRecord)):
+            record.is_available = True
+    with Session(engine) as session:
+        agent = session.scalars(select(Agent)).first()
+        agent_id, provider_id = agent.id, agent.provider_id
+    registry = ProviderRegistry()
+    registry.register(provider_id, Model())
+    monkeypatch.setattr(
+        agent_services, "_studio_settings", lambda: SimpleNamespace(agent_daily_token_budget=500)
+    )
+
+    first = run_agent_task(engine, registry, agent_id, "t", "spune ceva", "v1", str(uuid4()))
+    assert first["status"] == "SUCCEEDED", first  # 800 tokens: the ceiling was not reached yet
+    second = run_agent_task(engine, registry, agent_id, "t", "spune altceva", "v1", str(uuid4()))
+
+    assert second["status"] == "BLOCKED_BUDGET", second
+    assert "plafonul zilnic" in (second["error_detail"] or "").lower()
+    with Session(engine) as session:
+        runs = list(session.scalars(select(AgentRun)))
+        letters = [
+            message
+            for message in session.scalars(
+                select(AgentMessage).where(AgentMessage.to_agent_id.is_(None))
+            )
+            if (message.body_json or {}).get("kind") == "token_ceiling"
+        ]
+    assert [run.status for run in runs].count("BLOCKED_BUDGET") == 1
+    assert len(letters) == 1, "the Owner was not told, or was told twice"
+
+    # A blocked run costs nothing and is refused again, and the letter is still one.
+    third = run_agent_task(engine, registry, agent_id, "t", "și încă ceva", "v1", str(uuid4()))
+    assert third["status"] == "BLOCKED_BUDGET"
+    with Session(engine) as session:
+        again = [
+            message
+            for message in session.scalars(
+                select(AgentMessage).where(AgentMessage.to_agent_id.is_(None))
+            )
+            if (message.body_json or {}).get("kind") == "token_ceiling"
+        ]
+    assert len(again) == 1
+
+
 def test_activation_is_owner_only_and_reachable(client, headers, engine):
     job = ensure_scheduled_job(
         engine, name="api", workflow_type=DAILY_RUN, interval_seconds=86400, active=False

@@ -580,3 +580,69 @@ def test_a_billed_cost_debits_the_provider_expense_account(books):
     assert lines["5000"]["debit"] == "7.5"
     assert lines["1000"]["credit"] == "7.5"
     assert trial_balance(books)["balanced"] is True
+
+
+# --------------------------------------------------------------------------- provider prices --
+
+
+def test_prices_are_set_only_by_the_owner_versioned_and_replayed_safely(client, headers, engine):
+    """`PUT /economy/prices` follows the budget command: Owner-only, kept, versioned."""
+    body = {
+        "command_id": str(uuid4()),
+        "provider_kind": "ollama",
+        "resource": "gpt-oss:120b-cloud",
+        "unit": "per_1m_input_tokens",
+        "usd": "0.15",
+        "notes": "Ollama Cloud pricing page, 2026-09-18",
+    }
+    assert client.put("/api/v1/economy/prices", json=body).status_code == 401
+    assert client.get("/api/v1/economy/prices").status_code == 401
+
+    first = client.put("/api/v1/economy/prices", headers=headers, json=body)
+    assert first.status_code == 200, first.text
+    assert (first.json()["version"], first.json()["provenance"]) == (1, "OWNER")
+    # The same command again is a retry, not a second price.
+    assert client.put("/api/v1/economy/prices", headers=headers, json=body).json() == first.json()
+    # The same command with another figure is a conflict.
+    conflict = client.put("/api/v1/economy/prices", headers=headers, json={**body, "usd": "0.20"})
+    assert conflict.status_code == 409
+    second = client.put(
+        "/api/v1/economy/prices",
+        headers=headers,
+        json={**body, "command_id": str(uuid4()), "usd": "0.20", "expected_version": 1},
+    )
+    assert second.status_code == 200 and second.json()["version"] == 2
+    stale = client.put(
+        "/api/v1/economy/prices",
+        headers=headers,
+        json={**body, "command_id": str(uuid4()), "usd": "0.30", "expected_version": 1},
+    )
+    assert stale.status_code == 409
+    listed = client.get("/api/v1/economy/prices", headers=headers).json()["prices"]
+    assert [(p["resource"], p["usd"], p["version"]) for p in listed] == [
+        ("gpt-oss:120b-cloud", "0.2", 2)
+    ]
+    # A unit the books do not know, or a provenance nobody can vouch for, never reaches them.
+    unit = client.put("/api/v1/economy/prices", headers=headers, json={**body, "unit": "per_pound"})
+    assert unit.status_code == 422
+    guessed = client.put(
+        "/api/v1/economy/prices", headers=headers, json={**body, "provenance": "GUESSED"}
+    )
+    assert guessed.status_code == 422
+
+
+def test_a_failed_render_cost_is_labelled_as_such_in_the_owners_list(books, client, headers):
+    record_provider_cost(
+        books,
+        provider="elevenlabs",
+        external_reference="render:j:failed:scene:1:voice",
+        status="ESTIMATED",
+        amount="0.30",
+        attribution={"failed": True},
+        failed=True,
+    )
+    listed = client.get("/api/v1/economy/provider-costs", headers=headers).json()["costs"]
+    assert listed[0]["failed"] is True and "eșuată" in listed[0]["label"]
+    # Still an estimate: never posted, nothing in the ledger.
+    assert treasury_snapshot(books)["spendable"]["amount"] == "0"
+    assert trial_balance(books)["balanced"] is True

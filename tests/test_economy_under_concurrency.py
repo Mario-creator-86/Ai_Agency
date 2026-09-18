@@ -181,3 +181,103 @@ def test_two_deliberate_contributions_of_the_same_amount_both_count(books):
             command_id=str(uuid4()),
         )
     assert treasury_snapshot(books)["spendable"]["amount"] == "500"
+
+
+# --------------------------------------------------------------------------- reservations
+
+
+def test_two_films_cannot_both_reserve_the_last_ten_dollars(books):
+    """Read-then-decide on the budget, pressed by simultaneous callers.
+
+    `may_spend` answered from a snapshot, so two films asked together were both told the
+    last ten dollars were free. A reservation is decided inside the writing transaction,
+    behind the write lock, so the second caller reads the first one's hold.
+    """
+    from app.economy.budget import (
+        BudgetCommand,
+        may_spend,
+        release_reservation,
+        reserve_spend,
+        set_budget,
+    )
+
+    set_budget(books, BudgetCommand(period="DAILY", limit_usd="10"))
+    held: list[dict] = []
+    lock = threading.Lock()
+
+    def reserve() -> None:
+        verdict = reserve_spend(books, 10_000_000, "film", str(uuid4()))
+        if not verdict["allowed"]:
+            raise EconomyError(verdict["reason"])
+        with lock:
+            held.append(verdict)
+
+    outcomes = _race(reserve)
+
+    assert outcomes.count("accepted") == 1, outcomes
+    assert not [o for o in outcomes if o.startswith("error:")], outcomes
+    assert len(held) == 1 and held[0]["reservation_id"]
+    # The hold counts like a cost: one more cent is refused while it stands, and the
+    # refusal says what is held rather than pretending it was spent.
+    refused = may_spend(books, 10_000)
+    assert not refused["allowed"] and "rezerva" in refused["reason"]
+    # Let go, the money is free again; a second release is a no-op, not a second refund.
+    assert release_reservation(books, held[0]["reservation_id"], "film not made")["released"]
+    assert not release_reservation(books, held[0]["reservation_id"], "again")["released"]
+    assert may_spend(books, 10_000_000)["allowed"]
+
+
+def test_a_settled_reservation_stops_counting_once_the_real_cost_is_in_the_books(books):
+    from app.economy.budget import (
+        BudgetCommand,
+        budget_status,
+        reserve_spend,
+        set_budget,
+        settle_reservation,
+    )
+    from app.economy.services import record_provider_cost
+
+    set_budget(books, BudgetCommand(period="DAILY", limit_usd="10"))
+    hold = reserve_spend(books, 8_000_000, "film", str(uuid4()))
+    assert hold["allowed"]
+    daily = budget_status(books)["budgets"][0]
+    assert (daily["reserved_usd"], daily["remaining_usd"], daily["state"]) == ("8", "2", "WARNING")
+    record_provider_cost(
+        books, provider="runway", external_reference="task-1", status="ESTIMATED", amount="3.00"
+    )
+    settled = settle_reservation(books, hold["reservation_id"], settled_reference="render:job-1")
+    assert settled["status"] == "SETTLED"
+    daily = budget_status(books)["budgets"][0]
+    assert (daily["spent_usd"], daily["reserved_usd"], daily["remaining_usd"]) == ("3", "0", "7")
+
+
+def test_a_reservation_older_than_the_ttl_is_released_by_the_watchdogs_hand(books):
+    from datetime import UTC, datetime, timedelta
+
+    from app.economy.budget import (
+        BudgetCommand,
+        may_spend,
+        release_stale_reservations,
+        reserve_spend,
+        set_budget,
+    )
+    from app.economy.models import SpendReservation
+    from sqlalchemy.orm import Session
+
+    set_budget(books, BudgetCommand(period="DAILY", limit_usd="10"))
+    fresh = reserve_spend(books, 4_000_000, "film A", str(uuid4()))
+    stale = reserve_spend(books, 4_000_000, "film B", str(uuid4()))
+    assert fresh["allowed"] and stale["allowed"]
+    assert not may_spend(books, 3_000_000)["allowed"]
+    with Session(books) as session, session.begin():
+        row = session.get(SpendReservation, stale["reservation_id"])
+        row.reserved_at = (datetime.now(UTC) - timedelta(hours=7)).isoformat()
+
+    swept = release_stale_reservations(books, ttl_seconds=6 * 3600)
+
+    assert swept["released"] == [stale["reservation_id"]]
+    assert may_spend(books, 3_000_000)["allowed"], "four dollars held, six free"
+    assert release_stale_reservations(books, ttl_seconds=6 * 3600)["released"] == []
+    with Session(books) as session:
+        row = session.get(SpendReservation, stale["reservation_id"])
+        assert row.status == "RELEASED" and "watchdog" in (row.settled_reference or "")

@@ -252,8 +252,8 @@ yesterday's real events → today's coherent episode with correct cast. (Code co
 - [ ] approval queue — the Director approves the scripts she passes (2026-09-12) and, under the
   Owner's per-channel leave, the episodes (2026-09-18); an episode without that leave waits
   DRAFT for the Owner, and there is no queue view.
-- [ ] cost reservation
-- [ ] hard budgets
+- [x] cost reservation — since 2026-09-18 the media stage prices the plan (`estimate_film_cost_micros`) and *holds* the sum behind the write lock (`reserve_spend`, migration 0039), settles it against the real cost rows and releases it on every path where the film was not made; the watchdog frees a hold older than six hours.
+- [x] hard budgets — a refusal now stops the film and the Accountant writes to the Owner the same day, and a business date has a token ceiling (`STUDIO_AGENT_DAILY_TOKEN_BUDGET`, 0 = none) enforced as the Policy Kernel's first gate (BLOCKED_BUDGET). Budgets are still set only by the Owner, and none is set on the live studio yet.
 - [x] STOP AUTONOMY — the scheduler and the task queue both refuse while the stop is set, and
   since 2026-09-17 a day already running stops between stages (PARTIAL or BLOCKED, no safe mode).
 - [x] stuck-job watchdog — the scheduled `watchdog` job (2026-09-17): renders stuck past three
@@ -512,7 +512,7 @@ The economy data contracts and command boundaries should be designed early, but 
 
 - [x] Owner-selected public HTTPS URL retrieval with allowlist, DNS pinning, bounded extraction and source hashes; verified against a real IANA source.
 - [x] Import retrieved text through the existing authenticated source endpoint; sanitized persistence verified in an isolated database.
-- [ ] Keyword search/discovery adapter and independent claim-verifier authorization.
+- [~] Keyword search/discovery adapter and independent claim-verifier authorization — the discovery half landed 2026-09-18: each authorised site's own search address is discovered as well as typed, and a web search API the Owner connects (catalog kind `search`) may name addresses, which are filtered against the allowlist and read by the studio's own retriever. No engine is connected on the live studio. The Fact Checker has verified claims against the fetched text since 2026-09-12 and cannot verify a claim it made.
 - [ ] Worker/UI integration after coordination with the active UI developer.
 
 This increment does not close Phase 4 acceptance. See `RESEARCH_HANDOFF.md`.
@@ -625,3 +625,71 @@ Evidence: `tests/test_mail.py` 18/18; backend 544/1; frontend 86/86; live on a c
 - [ ] The Owner's part: run the migration (`scripts/bootstrap.py`), install the task, confirm once in `data/studio-service.log` that an S4U logon opens the credential key, and start the clock — his recorded act.
 
 Evidence: 66 (runbook, scheduler/worker, schema match), 28 (provider retry), 46 + 24 (media, Ollama, integration settings), 34 (existing adapter tests), 11 (watchdog) passed on the changed files; ruff, format, mypy and `check_docs.py` clean. The whole suite is the verifier's.
+
+
+## HQ visual continuation — 2026-09-18
+
+- [x] Diagnose/fix skeletal garment material fallback in isolated assets, reload,
+  backup and apply to HQ; preserve live integration.
+- [x] Capture a fresh native scene and compare L2 with the exact target image.
+- [ ] Capture the actual browser stream at documented quality settings.
+- [ ] Finish L2 on a copied level before extending the artistic pass to other floors.
+- [ ] Measure game and browser performance after the visual pass.
+
+Detailed acceptance and evidence: [VISUAL_AUDIT_2026-09-18.md](VISUAL_AUDIT_2026-09-18.md).
+
+
+## Money and sources (Phases E/F of running unattended) — 2026-09-18
+
+- [x] Cost reservation: `reserve_spend` holds a film's estimated cost behind the write lock,
+  `settle_reservation` after the real cost rows, `release_reservation` on every path where the film
+  was not made; the watchdog frees holds older than `STUDIO_RESERVATION_TTL_SECONDS` (6 h).
+  Migration 0039 (`provider_price`, `spend_reservation`, `provider_cost_record.failed`).
+- [x] Hard budgets: a budget refusal now stops the film and writes to the Owner the same day
+  (`budget_refusal_letter`), and a day's tokens have a ceiling
+  (`STUDIO_AGENT_DAILY_TOKEN_BUDGET`, 0 = none) enforced as the Policy Kernel's first gate with
+  the verdict BLOCKED_BUDGET. Budgets are still set only by the Owner; the Accountant escalates.
+- [x] Budget periods on the studio's own calendar (the `studio` row's zone), so the books count the
+  business date the daily log closes.
+- [x] Prices are the Owner's: `PUT/GET /economy/prices`, versioned, idempotent, provenance
+  OWNER | DOCUMENTED | QUOTED | BILLED; one DOCUMENTED seed (ElevenLabs' public figure) and
+  nothing guessed for Ollama Cloud.
+- [x] Adapters cost their own calls from what they measured (`price_lookup` on ElevenLabs, Ollama
+  and `ConfiguredLLM`), answering None and never zero without a full price.
+- [x] A render the vendor refused is costed (`record_failed_render_cost`, ESTIMATED + `failed`,
+  idempotent per scene).
+- [x] Site search discovered, not only typed: a host test and the weekly retest read the front page
+  and the OpenSearch description; the Owner's address keeps winning. Migration 0040
+  (`discovered_search_template`, `discovered_at`, `last_test_reason`).
+- [x] A web search engine the Owner connects (catalog kind `search`) may name addresses and nothing
+  else: `find_pages` filters every result against the allowlist and reads each page with the
+  studio's own retriever; the allowlist cannot be widened by an agent, a request or a result.
+- [x] Host failures carry a reason code (HTTP_403, HTTP_ERROR, RATE_LIMITED, SCRIPT_ONLY, NETWORK,
+  OTHER) and the preflight asks `research_health` — whether the studio can find pages — instead of
+  whether a row exists.
+- [x] The day's reading is the Owner's: `STUDIO_RESEARCH_CANDIDATES_PER_DAY` and
+  `STUDIO_RESEARCH_PAGES_PER_TOPIC` (4 and 4, clamped 1..12).
+- [x] One test of a whole day: `tests/test_autonomous_day_end_to_end.py` — the scheduled job, the
+  real runbook, two films encoded and published private to their own channels, the serial filmed,
+  a second tick that starts nothing; only the vendors are faked.
+- [ ] Price lookups reach the adapters that are actually built (`main.py`,
+  `integrations/services.py`, `integrations/router.py`, `media/factory.py`), so an agent run stops
+  recording `cost_vr` NULL and narration is priced in the books.
+- [ ] `seed_documented_prices` is called from `scripts/bootstrap.py` or the start-up seeds.
+- [ ] `assembler._fail_job` writes the scenes it had already built into `production_json`, so the
+  failed-render cost has something to charge (today it honestly records nothing).
+- [ ] The Accountant reconciles ESTIMATED rows against a vendor's invoice (a BILLED row replacing
+  the estimates of one render).
+- [ ] Routes for `research_health` and a forced retest, and the *Cercetare → Surse* screen showing
+  the discovered address, its origin and the failure reason.
+- [ ] The frontend labels BLOCKED_BUDGET, and the Books office shows `reserved_usd`,
+  `failed_render_usd` and `unpriced_agent_runs`.
+- [ ] The script-only heuristic and the OpenSearch discovery measured against live hosts — the
+  first weekly retest on the live database (tests may not open a socket).
+- [ ] The Owner's part: run the migration (`scripts/bootstrap.py`) to `0040_research_sources`, set
+  the budgets, type the plan's prices, connect a search engine or add hosts, set the publish policy
+  per channel, and start the clock. Nothing above spends money on its own.
+
+Evidence: 70 (economy files), 87 (research files), 2 + 21 + 30 + 44 + 38 (the wiring's files)
+passed; the whole suite on the integrated tree 1028 passed / 1 skipped, 1029 collected; ruff,
+format, mypy and `check_docs.py` clean. Nothing ran against a real model, provider or platform.

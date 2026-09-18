@@ -62,8 +62,19 @@ from app.analytics.services import (
 )
 from app.analytics.trends import is_fresh, refresh_trends
 from app.config import Settings
-from app.economy.accountant import AccountantError, reconcile_day, record_render_costs
-from app.economy.budget import may_spend
+from app.economy.accountant import (
+    AccountantError,
+    budget_refusal_letter,
+    reconcile_day,
+    record_failed_render_cost,
+    record_render_costs,
+)
+from app.economy.budget import (
+    estimate_film_cost_micros,
+    release_reservation,
+    reserve_spend,
+    settle_reservation,
+)
 from app.economy.services import EconomyError
 from app.factual.agent_pipeline import (
     NoVerifiedClaims,
@@ -120,6 +131,7 @@ from app.research.agent import (
     gather_sources,
     propose_topics,
 )
+from app.research.service import research_budget, retest_stale_hosts
 from app.runbook.services import BLOCKED, OWNER_STOP_REASON, stop_requested
 from app.services import studio_environment, utc_now
 from app.story.serial_stage import run_serial_stage
@@ -291,9 +303,13 @@ def _gather_for_candidates(
 ) -> list[dict[str, Any]]:
     """Fetch pages for the best candidates that have none yet (runbook §4, retrieval half).
 
-    Bounded to a couple of candidates a day: the point is to give verification something real
-    to read, not to crawl. Every page is downloaded by the studio itself.
+    Bounded to the Owner's `research_candidates_per_day` candidates, `research_pages_per_topic`
+    pages each (`research_budget`, four and four, clamped 1..12): the point is to give
+    verification something real to read, not to crawl. Two candidates of three pages was the
+    old literal, and on a day when both plans guessed addresses that 404'd it left the studio
+    with nothing. Every page is downloaded by the studio itself.
     """
+    candidates_per_day, pages_per_topic = research_budget(settings)
     with Session(engine) as session:
         with_sources = {
             row for row in session.scalars(select(SourceSnapshot.topic_id)) if row is not None
@@ -324,12 +340,16 @@ def _gather_for_candidates(
                 continue  # the same title proposed twice needs one set of sources
             seen_titles.add(topic.title)
             candidates.append(topic.id)
-            if len(candidates) == 2:
+            if len(candidates) == candidates_per_day:
                 break
     gathered = []
     for topic_id in candidates:
         try:
-            gathered.append(gather_sources(engine, registry, settings, topic_id, str(uuid4())))
+            gathered.append(
+                gather_sources(
+                    engine, registry, settings, topic_id, str(uuid4()), limit=pages_per_topic
+                )
+            )
         except (ResearchAgentError, NoResearcher, NoAuthorisedHosts, ValueError) as exc:
             logger.info("source_gathering_skipped", extra={"reason": type(exc).__name__})
     return gathered
@@ -346,6 +366,20 @@ def _research_and_verification(
     """
     if not _has_language_model(registry):
         return _outcome(SKIPPED, "Niciun model de limbaj disponibil; agenții nu pot rula.")
+
+    # Before the day reads anything, the sites it is allowed to read are re-tested — but only
+    # the ones nobody has tested for a week. A site readable seven days ago may have grown a
+    # bot wall since, and one that failed may have dropped it; on the other six days the pass
+    # fetches nothing and costs the sites nothing, so it needs no scheduled job of its own.
+    # Each test also looks again for the site's own search address, which is what keeps the
+    # Researcher from guessing addresses that 404. A retest that fails is the retest's loss,
+    # never the day's (Phase A's rule): the hosts it did reach are recorded before it stops.
+    retested: list[dict[str, Any]] = []
+    if settings is not None:
+        try:
+            retested = retest_stale_hosts(engine, settings, correlation_id=str(uuid4()))
+        except Exception as exc:  # noqa: BLE001 - a site that cannot be reached is not a fault
+            logger.info("host_retest_incomplete", extra={"reason": type(exc).__name__})
 
     # The studio reads for itself before it reads what it was given: a candidate topic with no
     # source can never be verified, and waiting for the Owner to paste a link is not research.
@@ -403,12 +437,22 @@ def _research_and_verification(
             logger.info("verification_refused", extra={"claim_id": claim_id, "reason": str(exc)})
             refused += 1
 
+    retest_line = ""
+    if retested:
+        passed = len([r for r in retested if r["status"] == "PASSED"])
+        retest_line = f" {len(retested)} site-uri retestate ({passed} citibile)."
     if not pending_sources and not unverified and not pages:
-        return _outcome(COMPLETED, "Nicio sursă nouă și nicio afirmație neverificată.", claims=0)
+        return _outcome(
+            COMPLETED,
+            "Nicio sursă nouă și nicio afirmație neverificată." + retest_line,
+            claims=0,
+            hosts_retested=len(retested),
+        )
     reason = (
         f"{pages} pagini preluate, {extracted} surse citite, {verified} afirmații verificate, "
         f"{refused} verdicte respinse."
         + (f" {unreadable} surse fără afirmații citibile." if unreadable else "")
+        + retest_line
     )
     return _outcome(
         COMPLETED,
@@ -417,6 +461,7 @@ def _research_and_verification(
         sources_read=extracted,
         claims_verified=verified,
         verdicts_refused=refused,
+        hosts_retested=len(retested),
     )
 
 
@@ -893,6 +938,52 @@ def is_serial_storyboard(board: Storyboard) -> bool:
     return channel_type_for_storyboard(board) == "OFFICE_SERIAL"
 
 
+def _release(engine: Engine, reservation_id: str | None, reason: str, correlation: str) -> None:
+    """Let a film's hold go, for every path on which the film was not made.
+
+    Releasing, never settling: a settlement says the real cost rows are in the books, and a
+    film that was not made has none. A failure here is logged and swallowed — the watchdog
+    releases what the day left behind (`release_stale_reservations`), so a second fault must
+    not take the stage down on top of the first.
+    """
+    if not reservation_id:
+        return
+    try:
+        release_reservation(engine, reservation_id, reason[:120], correlation_id=correlation)
+    except (EconomyError, ValueError):
+        logger.info("reservation_not_released", extra={"reservation_id": reservation_id})
+
+
+def _record_failed_attempt(engine: Engine, storyboard_id: str, correlation: str) -> int:
+    """Charge the studio for what an interrupted render bought, and return the rows written.
+
+    The error the assembler raises does not carry the job id, so the job is found by its
+    storyboard and its FAILED status — the newest, because a storyboard may have been tried
+    before. What was attempted is read from the job's own record; a job that failed before
+    recording one records nothing, and that is the honest answer until the assembler writes
+    the scenes it had already built (it keeps `production_json` for the finished render
+    only). Nothing here can charge twice: the rows are referenced by job and scene.
+    """
+    with Session(engine) as session:
+        job = session.scalar(
+            select(VideoRenderJob)
+            .where(
+                VideoRenderJob.storyboard_id == storyboard_id,
+                VideoRenderJob.status == "FAILED",
+            )
+            .order_by(VideoRenderJob.started_at.desc())
+        )
+        job_id = job.id if job is not None else None
+    if job_id is None:
+        return 0
+    try:
+        charged = record_failed_render_cost(engine, job_id, correlation_id=correlation)
+        return int(charged["recorded"])
+    except (AccountantError, EconomyError, ValueError):
+        logger.info("failed_render_cost_not_recorded", extra={"storyboard_id": storyboard_id})
+        return 0
+
+
 def _media(
     engine: Engine, settings: Settings, vault: Any, registry: ProviderRegistry | None = None
 ) -> dict[str, Any]:
@@ -971,7 +1062,8 @@ def _media(
     voice = tts_provider(engine, vault)
     produced: list[str] = []
     serial_assets: list[str] = []
-    refused: list[dict[str, str]] = []
+    # A refusal carries the storyboard, the vendor's words and what the attempt cost.
+    refused: list[dict[str, Any]] = []
     skipped_for_budget: list[str] = []
     budget_reason = ""
     narration_reviews = []
@@ -991,17 +1083,47 @@ def _media(
                 stopped_storyboard=storyboard_id,
             )
         # The budget is asked before anything is generated for this film (runbook §7,
-        # "reserve budget"). What the render will cost is estimated from the plan at the
-        # stored price of each scene's model; scenes without a price count as zero here and
-        # are reported as unpriced later. A refusal before the first film is the stage
-        # skipped, as it always was; after a film has been made, the one refused is named.
-        budget = may_spend(engine, 0)
-        if not budget["allowed"]:
+        # "reserve budget"), and now it is asked with a figure: `estimate_film_cost_micros`
+        # prices the plan conservatively — the motion at the ceiling this render will be
+        # given, the narration at the dearest active per-thousand price over the
+        # storyboard's own voiceover. The check used to be `may_spend(engine, 0)` under a
+        # comment that said the plan was costed, so a day at 14.99 of 15 USD started a full
+        # film. The sum is *held*, not merely read: `reserve_spend` decides behind the write
+        # lock and writes a row every budget counts until the film is in the books, so two
+        # films asked in the same second cannot both be told the last ten dollars are free.
+        # A refusal before the first film is the stage skipped, as it always was; after a
+        # film has been made, the one refused is named — and either way the Accountant
+        # writes to the Owner the same day, once, because a day without a film used to be
+        # a SKIPPED line in a run summary nobody reads by itself.
+        correlation = str(uuid4())
+        # Read before this film's own hold is written, and not after: what the day still
+        # allows is the ceiling this film may spend on motion, and the reservation about to
+        # be made *is* that spend. Measured after the hold, a film asked for 12 USD would
+        # have been given a ceiling of whatever was left after its own 12 were set aside —
+        # nothing — and would have rendered stills. Other films' holds still count.
+        left_usd = _budget_left_usd(engine, settings)
+        plan_cost = estimate_film_cost_micros(
+            engine, storyboard_id, environment=environment, settings=settings
+        )
+        hold = reserve_spend(
+            engine,
+            plan_cost["usd_micros"],
+            f"film {storyboard_id}",
+            correlation,
+            note=(
+                f"estimat: {plan_cost['usd']} USD"
+                + ("" if plan_cost["narration_priced"] else "; narațiunea nu are preț stocat")
+            ),
+        )
+        if not hold["allowed"]:
+            budget_refusal_letter(engine, hold["reason"], correlation)
             if not produced and not refused:
-                return _outcome(SKIPPED, budget["reason"], budget=budget["period"])
+                return _outcome(SKIPPED, hold["reason"], budget=hold["period"])
             skipped_for_budget.append(storyboard_id)
-            budget_reason = budget["reason"]
+            budget_reason = hold["reason"]
             continue
+        # None when the plan priced at zero: there is nothing to hold, and nothing to settle.
+        reservation_id = hold.get("reservation_id")
         if registry is not None and _has_language_model(registry):
             try:
                 review = review_narration(engine, registry, storyboard_id, str(uuid4()))
@@ -1059,7 +1181,7 @@ def _media(
                 motion_budget_usd=(
                     settings.test_max_cost_per_generation_usd
                     if environment == "TEST"
-                    else min(settings.motion_budget_usd, _budget_left_usd(engine, settings))
+                    else min(settings.motion_budget_usd, left_usd)
                 ),
                 motion_max_usd_per_second=(
                     settings.test_max_cost_per_second_usd if environment == "TEST" else None
@@ -1077,6 +1199,9 @@ def _media(
         except RenderStopped as exc:
             # The Owner's switch, read between two scenes: his decision, not a fault. The
             # runbook records the stage BLOCKED and the day PARTIAL, and opens no safe mode.
+            # The hold goes with the film: money pledged to a film that was not made must
+            # not sit against the day's budget until the watchdog's six hours are up.
+            _release(engine, reservation_id, f"randare oprită: {exc}", correlation)
             return _outcome(
                 BLOCKED,
                 f"{OWNER_STOP_REASON} {exc}"[:500],
@@ -1085,12 +1210,29 @@ def _media(
                 stopped_storyboard=storyboard_id,
             )
         except RenderEngineUnavailable as exc:
+            _release(engine, reservation_id, f"randarea nu poate rula: {exc}", correlation)
             return _outcome(SKIPPED, f"Randarea nu poate rula: {exc}", assets=produced)
         except MediaProviderError as exc:
             # A provider's refusal is that render's failure, not the day's: the storyboard
             # stays approved and unrendered, tomorrow's stage tries it again, and the Owner
             # reads why in the Director's report — not in a safe-mode banner.
-            refused.append({"storyboard_id": storyboard_id, "error": str(exc)[:200]})
+            #
+            # The vendor charges for the shot it generated and the narration it voiced
+            # whether or not the film was finished — two lost shots cost six dollars on
+            # 2026-09-16 and the books said nothing. So the attempt is costed first (from
+            # what the failed job recorded of its production; nothing recorded is nothing
+            # charged, and the count says so), and only then is the hold let go: the
+            # estimate stops counting, the real cost of the attempt starts.
+            failed_cost = _record_failed_attempt(engine, storyboard_id, correlation)
+            _release(engine, reservation_id, f"randare refuzată: {exc}"[:120], correlation)
+            refused.append(
+                {
+                    "storyboard_id": storyboard_id,
+                    "error": str(exc)[:200],
+                    "costs_recorded": failed_cost,
+                }
+            )
+            costs_recorded += failed_cost
             logger.info("render_refused", extra={"storyboard_id": storyboard_id})
             continue
         produced.append(result["output_asset_id"])
@@ -1102,16 +1244,25 @@ def _media(
         if measured:
             credit_lines.append(measured)
         # Into the books at once, at the stored price, so the day's close and the next
-        # budget check see what was just spent.
+        # budget check see what was just spent. Only then is the hold settled: between the
+        # two the film is counted twice rather than not at all, which is the error a budget
+        # may make.
         try:
             costs_recorded += record_render_costs(
                 engine,
                 result["job_id"],
-                str(uuid4()),
+                correlation,
                 alert_percent=settings.price_change_alert_percent,
             )["recorded"]
         except (EconomyError, KeyError):
             logger.info("render_cost_not_recorded", extra={"storyboard_id": storyboard_id})
+        if reservation_id:
+            settle_reservation(
+                engine,
+                reservation_id,
+                settled_reference=f"render:{result['job_id']}",
+                correlation_id=correlation,
+            )
 
     substitutes = images is None or voice is None
     reason = f"{len(produced)} videoclipuri randate."
