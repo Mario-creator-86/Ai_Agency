@@ -267,3 +267,101 @@ def test_without_any_site_the_message_points_to_the_interface(client, headers):
     )
     assert response.status_code == 503
     assert "Cercetare → Surse" in response.json()["detail"]
+
+
+# ------------------------------------------------------------------- health of the sources
+
+
+def test_owner_reads_the_health_report_and_forces_a_retest(client, headers, engine, settings):
+    """The two things the Owner cannot see from the host list alone.
+
+    The health report is the preflight's own verdict on whether the studio can find and read
+    pages at all, and the forced retest is the "now" the weekly pass does not offer. Both go
+    through a stub retriever: conftest refuses every non-loopback socket, so a real front page
+    is never fetched here.
+    """
+    app = inner(client)
+    app.state.settings = settings_allowing(settings, "www.iana.org")
+
+    first = client.get("/api/v1/factual/research/health", headers=headers)
+    assert first.status_code == 200, first.text
+    report = first.json()
+    assert set(report) == {
+        "hosts_total",
+        "hosts_tested_ok",
+        "hosts_with_template",
+        "hosts_failing",
+        "search_provider",
+        "claims_available",
+        "status",
+        "degraded_reasons",
+    }
+    # One authorised host, never tested, no search address, no engine, no claims.
+    assert (report["hosts_total"], report["hosts_tested_ok"], report["hosts_with_template"]) == (
+        1,
+        0,
+        0,
+    )
+    assert report["search_provider"] == "NONE" and report["claims_available"] == 0
+    assert report["status"] == "DEGRADED" and report["hosts_failing"] == []
+    assert any("nu a trecut testul" in reason for reason in report["degraded_reasons"])
+
+    # A failing host is named with its reason code, not merely counted.
+    app.state.source_retriever = StubRetriever(error=RetrievalError("Source returned HTTP 403"))
+    failed = client.post("/api/v1/factual/research/allowed-hosts/retest", headers=headers)
+    assert failed.status_code == 200, failed.text
+    assert [r["status"] for r in failed.json()["tested"]] == ["FAILED"]
+    assert client.get("/api/v1/factual/research/health", headers=headers).json()[
+        "hosts_failing"
+    ] == [
+        {
+            "host": "www.iana.org",
+            "reason": "HTTP_403",
+            "detail": "Source returned HTTP 403",
+        }
+    ]
+
+    # Forced means now: a host tested a second ago is tested again, which is the point of the
+    # button — the weekly pass would leave it alone for seven days.
+    app.state.source_retriever = StubRetriever(a_source("https://www.iana.org/"))
+    again = client.post("/api/v1/factual/research/allowed-hosts/retest", headers=headers)
+    assert again.status_code == 200, again.text
+    tested = again.json()["tested"]
+    assert [(r["host"], r["status"]) for r in tested] == [("www.iana.org", "PASSED")]
+    healthy = client.get("/api/v1/factual/research/health", headers=headers).json()
+    assert healthy["hosts_tested_ok"] == 1 and healthy["hosts_failing"] == []
+    # Still DEGRADED, and honestly so: nothing can find pages and there are no claims.
+    assert healthy["status"] == "DEGRADED"
+    assert len(healthy["degraded_reasons"]) == 2
+
+
+def test_the_sources_screen_is_given_the_origin_and_the_reason_it_shows(
+    client, headers, engine, settings
+):
+    """The three fields the Cercetare → Surse table now prints for each host.
+
+    There is no test runner for main.js (frontend/package.json runs node --test over
+    frontend/tests, and main.js touches the document at import), so what the screen renders is
+    pinned here, at the API that feeds it: the discovered address, whose address is in force,
+    and why the last test failed.
+    """
+    app = inner(client)
+    app.state.settings = settings_allowing(settings)
+    added = client.put("/api/v1/factual/sources/allowed-hosts/www.nasa.gov", headers=headers)
+    assert added.status_code == 200, added.text
+
+    app.state.source_retriever = StubRetriever(error=RetrievalError("Page needs JavaScript"))
+    client.post("/api/v1/factual/research/allowed-hosts/retest", headers=headers)
+    row = client.get("/api/v1/factual/sources/allowed-hosts", headers=headers).json()["hosts"][0]
+    assert row["last_test_reason"] == "SCRIPT_ONLY"
+    assert "JavaScript" in row["last_test_detail"]
+    assert row["search_template_origin"] is None and row["discovered_search_template"] is None
+
+    # The Owner's address is a decision and wins the origin, whatever discovery found.
+    client.put(
+        "/api/v1/factual/sources/allowed-hosts/www.nasa.gov/search",
+        headers=headers,
+        json={"template": "https://www.nasa.gov/search?q={query}&format=json"},
+    )
+    owned = client.get("/api/v1/factual/sources/allowed-hosts", headers=headers).json()["hosts"][0]
+    assert owned["search_template_origin"] == "OWNER"

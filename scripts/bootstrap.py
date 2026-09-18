@@ -11,6 +11,7 @@ from app.agents.services import seed_initial_workforce  # noqa: E402
 from app.analytics.services import seed_default_strategy  # noqa: E402
 from app.config import Settings  # noqa: E402
 from app.db import create_db_engine, migrate  # noqa: E402
+from app.economy.prices import seed_documented_prices  # noqa: E402
 from app.economy.services import seed_chart_of_accounts  # noqa: E402
 from app.media.services import seed_default_character_bibles  # noqa: E402
 from app.publishing.services import seed_default_channels  # noqa: E402
@@ -40,6 +41,12 @@ def main() -> None:
         # The virtual books need their accounts before anything can be posted. Seeding creates
         # the structure only; the ledger stays empty until real evidence is recorded.
         seed_chart_of_accounts(engine)
+        # The one figure a vendor publishes for every model of its kind (ElevenLabs), marked
+        # DOCUMENTED so nobody reads it as the Owner's plan. Without it a studio where he has
+        # typed no price costs narration at nothing, which is worse than the gap the
+        # Accountant reports. It never overrides a price of any provenance, so running
+        # bootstrap again over a live studio changes nothing he has set.
+        seed_documented_prices(engine)
         # Neutral v1 editorial strategy per channel; it expresses no preference until real
         # analytics snapshots produce a recommendation the Owner applies.
         seed_default_strategy(engine)

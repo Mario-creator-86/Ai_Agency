@@ -124,6 +124,51 @@ vendors are faked: one language model answering each prompt in that prompt's own
 picture and voice adapters, the publishing simulator. No socket leaves the machine, nothing was
 rendered by a paid vendor and nothing cost money.
 
+**Every adapter now costs what it spends, and the price table reaches the day.** The prices
+existed and nothing carried them: `price_lookup` appeared in the three adapters and in
+`economy/prices.py` and at no place where the studio actually builds one, so every
+`agent_run.cost_vr` was NULL and every narration unpriced whatever the Owner had typed, and the
+budgets counted a fraction of the day. The four construction sites are wired — the seeded Ollama
+endpoint (`main.register_seeded_ollama`), the language connections loaded at start-up
+(`integrations.services.load_registry`), the one re-registered when the Owner saves a connection
+while the studio runs (`integrations/router.py`), and both doors into a voice
+(`media.factory.tts_provider` and `tts_provider_for`) — each handed `price_lookup(engine, kind)`,
+one short read per call, so a price typed this afternoon costs this evening's runs without a
+restart; a model with no row still reports None, never zero. `integrations/credits.py` and
+`integrations/discovery.py` are deliberately left without one, because reading a subscription or
+listing voices generates nothing, and the list of priced sites is written down in
+`tests/test_pricing_truth.py::PRICED_CONSTRUCTION_SITES` with the reason beside it — the scan that
+walks it fails on a fifth site added later without a table, and fails too if a listed module stops
+building an adapter at all. `seed_documented_prices(engine)` has a caller at last, in
+`scripts/bootstrap.py` beside `seed_chart_of_accounts`: the one figure ElevenLabs publishes, marked
+DOCUMENTED, never Ollama Cloud, and never over a price of any provenance, so a second bootstrap over
+a live studio leaves the Owner's own price standing. And the failed render that recorded nothing is
+now proved as well as fixed: a three-scene film whose vendor refuses the third leaves a FAILED job
+carrying exactly scenes one and two — the attempt, never the plan — and `record_failed_render_cost`
+writes two ESTIMATED rows flagged `failed=True`, referenced `render:{job}:failed:scene:{n}:voice`,
+with a second reading charging nothing.
+
+**The Owner can see the state of his sources, and the money that is held as well as the money that
+is gone.** `research_health` and the forced retest were computed by the research half and called by
+nothing; both now have a route under the factual router, behind the same Owner-only dependency the
+allowlist endpoints already carry. `GET /api/v1/factual/research/health` returns the report as the
+service builds it and probes nothing, so the screen may ask on every refresh;
+`POST /api/v1/factual/research/allowed-hosts/retest` runs `retest_stale_hosts` with
+`max_age_days=0`, which is what makes it "now" — the runbook's weekly pass leaves a site tested this
+week alone, and this is the Owner asking anyway after fixing something. A test pins the 401 on both
+from the other side of the door. *Cercetare → Surse* now prints, for every authorised site, whose
+search address is in force (his, or the site's own), the address the studio found on the site itself
+and when it found it, and, where the last test failed, the closed-vocabulary reason before the
+site's own words for it, so a bot wall and a script-only shell are two different jobs rather than
+one paragraph of Romanian; the header line above the list is the health report rather than a count
+of rows, «Try it» is offered wherever any address is in force, and a «Test the sites» button asks
+for the retest — the first control in the interface that reaches the network on the Owner's click.
+In the Books office a run blocked by the day's token ceiling reads as a sentence instead of the raw
+word BLOCKED_BUDGET, each budget card prints the sum held for films in production beside the
+percentage it is already counted in, and the day prints what is held, what was paid for renders that
+failed midway, and how many runs have no recorded price — named, because an unpriced run is real
+usage the books cannot value and a total that hid it would read as complete.
+
 Tests, by file set: economy 70 passed (`tests/test_pricing_truth.py` new, with
 `test_phase11_economy`, `test_books_and_history`, `test_economy_under_concurrency` and
 `test_schema_and_audit_trail`); research 87 passed (`tests/test_research_sources.py` new, 25 tests,
@@ -133,28 +178,45 @@ with `test_factual_agent_pipeline`, `test_claim_verification`, `test_sources_and
 and worker), 44 (the runbook and its preflight) and 38 (the adversary, watchdog and sources files,
 two of whose assertions the wiring changed). The whole suite on the
 integrated tree: **1028 passed, 1 skipped** (the opt-in real-Ollama test), 1029 collected; ruff,
-`ruff format --check` and mypy clean on every changed file; `scripts/check_docs.py` passes. Nothing ran against
-a real model, provider or platform, no daily run was queued and no credits were spent.
+`ruff format --check` and mypy clean on every changed file; `scripts/check_docs.py` passes.
+After the closure and its adversarial verification the whole suite is **1067 passed, 1 skipped**,
+with `ruff check`, `ruff format --check`, `mypy backend` (183 source files) and
+`scripts/check_docs.py` all clean.
+The closure measured its own: 17 in
+`tests/test_pricing_truth.py` (six new, each written failing first) and 19 in
+`tests/test_phase5_media.py` (one new); 108 across the media, discovery, settings and
+multi-LLM files and 69 across the adversary, production-policy and economy files; 15 across
+`tests/test_phase4_factual.py` and `tests/test_sources_and_readiness.py` for the two new
+routes; and 87 frontend tests, with `tsc`, ruff, `ruff format --check` and mypy clean.
+Nothing ran against a real model, provider or platform, no daily run was queued and no
+credits were spent.
 
-Not finished, honestly: no adapter is yet *built* with a `price_lookup` (`main.py`,
-`integrations/services.py`, `integrations/router.py`, `media/factory.py` construct them without
-one), so an agent run still records `cost_vr` NULL and narration is still unpriced in the books —
-the reservation is priced, the settled cost is only as complete as the rows the adapters write;
-`seed_documented_prices` has no caller yet (`scripts/bootstrap.py` or the start-up seeds), so the
-one documented ElevenLabs price is not in the live database; `record_failed_render_cost` is called
-on every provider refusal and honestly charges nothing today, because `assembler._fail_job` writes
-`production_json` only for a finished render, so a FAILED job carries no scenes — the stage refuses
-to reconstruct the attempt from the plan and charge for shots the vendor may never have generated;
-reconciling ESTIMATED rows against a vendor's invoice (a BILLED row replacing the estimates of one
-render) has a vocabulary and no function; no HTTP route exposes `research_health` or
-`retest_stale_hosts` and the *Cercetare → Surse* screen does not show the discovered address, its
-origin or the failure reason; the frontend does not yet label BLOCKED_BUDGET, and the Books office
-does not show the new `reserved_usd`, `failed_render_usd` or `unpriced_agent_runs`; the script-only
-heuristic and the OpenSearch discovery are proven on fixture HTML modelled on the hosts that failed
-and not on live pages, because no test may open a socket — the first weekly retest on the live
-database is the measurement; and the end-to-end test skips where FFmpeg is absent, by the
-convention `tests/test_phase5_media.py` already uses, the two tests taking about fifty seconds
-together because they encode two real films.
+Not finished, honestly: **the Owner's own prices are not in the database.** Wiring the lookups made
+a cost computable; it did not invent one. Until `PUT /economy/prices` carries a per-million input
+and output price for each model the studio actually runs — Ollama Cloud above all, which is
+deliberately never seeded — every `agent_run.cost_vr` stays None and the Accountant keeps reporting
+`unpriced_agent_runs`. Narration is the one exception from today: bootstrap seeds the DOCUMENTED
+ElevenLabs figure, so a studio with no Owner price costs narration at the public Creator-plan rate
+and says DOCUMENTED, not OWNER — that figure is the published list and not his invoice. The live
+database has still not been migrated to `0040_research_sources` or bootstrapped, which is an Owner
+act because no test may open `data/studio.db`; running bootstrap again is safe, the seed never
+overriding a price of any provenance. `frontend/dist` is not rebuilt, so the served page still
+carries the old bundle: a build is the Owner's release step, and nothing in this closure was seen
+rendering in a browser. Reconciling ESTIMATED rows against a vendor's invoice — a BILLED row
+replacing the estimates of one render — still has a vocabulary and no function, so every figure in
+the books is ESTIMATED or DOCUMENTED. The one question the closure left open was answered in its
+verification rather than left standing: the `except RenderStopped` branch released the film's hold
+and recorded nothing, although the assembler leaves the same `production_json` for the Owner's stop
+as for a vendor refusal, so a film stopped after one scene read in the books as a film that cost
+nothing. The branch now costs the attempt before letting the hold go, in the order the refusal
+branch already used — the switch decides whether the studio keeps working, not whether a vendor has
+already been paid. Neither new route was exercised against a real site, and the
+script-only heuristic and the OpenSearch discovery are still proven only on fixture HTML modelled on
+the hosts that failed, because `tests/conftest.py` refuses every non-loopback socket — the first
+retest against live hosts, which the Owner can now ask for with one button, is the measurement. And
+the end-to-end test still skips where FFmpeg is absent, by the convention
+`tests/test_phase5_media.py` already uses, its two tests taking about fifty seconds together because
+they encode two real films.
 
 ### Ce are Owner-ul de făcut
 
@@ -186,6 +248,10 @@ Numai Owner-ul poate face lucrurile de mai jos; studioul nu le face singur și n
 - **Plafonul de jetoane pe zi** (`STUDIO_AGENT_DAILY_TOKEN_BUDGET`), dacă vrea unul: 0 înseamnă
   fără plafon, așa cum a mers studioul până acum. Peste el, rularea este oprită BLOCKED_BUDGET și
   Contabilul îi scrie o dată în ziua aceea.
+- **Reconstruirea interfeței** (`npm run build --prefix frontend`): ecranele schimbate pe
+  2026-09-18 — starea site-urilor în *Cercetare → Surse*, banii ținuți în biroul
+  Contabilitate — sunt în sursă, nu în pachetul servit. Construirea este actul lui de
+  lansare; niciun agent nu a construit și nu a pornit serverul.
 
 ## Delivery and the serial (2026-09-17/18)
 

@@ -1460,3 +1460,213 @@ The project had every stage tested and no test of a day. **Decision: `tests/test
 ## 2026-09-18 — Migration numbering: economy 0039, research 0040
 
 Two implementers needed a schema change in the same tree. **Decision: `0039_pricing_truth_and_reservations` (economy) first, `0040_research_sources` (research) chained after it with `down_revision = "0039_pricing_truth_and_reservations"`, and `main.py` pins `0040_research_sources` as the head.** Both are additive — two tables and a column for the economy, three nullable columns for research, plain `ADD COLUMN` as 0030 did — and every existing row keeps its meaning. `scripts/bootstrap.py` must run against the live database before the server starts on this version, and no test touches it.
+
+## 2026-09-18 — A price table is passed at construction, never fetched at the call site
+
+The three adapters already took `price_lookup: PriceLookup | None = None` and no construction site
+passed one, so every `agent_run.cost_vr` was NULL and every narration unpriced whatever the Owner
+had typed. **Decision: the four places that build an adapter hand it `price_lookup(engine, kind)`
+— the seeded Ollama endpoint (`main.register_seeded_ollama`), the language connections loaded at
+start-up (`integrations.services.load_registry`), the one re-registered when the Owner saves a
+connection while the studio runs (`integrations/router.py`), and both doors into a voice
+(`media.factory.tts_provider` and `tts_provider_for`) — rather than handing each adapter an
+`Engine` and letting it read the table itself.** The alternative would have put the database inside
+`elevenlabs.py`, `ollama.py` and `integrations/llm.py`, which is exactly what the callable was
+designed to avoid. The consequence is that the engine must be in hand where the adapter is built,
+and it is at all four: two take one as a parameter, the settings router reads
+`request.app.state.engine`, and both voice doors already take `engine` as their first argument. No
+signature changed. One short read per call, so a price typed this afternoon costs this evening's
+runs without a restart; a model with no row still reports None, never zero.
+
+## 2026-09-18 — The connection re-registered by the router carries the same table as the one start-up registered
+
+`PUT /settings/integrations/{id}` replaces the adapter in the live registry for any connection
+whose runtime is `llm`. **Decision: wire the router's re-registration as well as `load_registry`,
+and prove each by its own test.** Wiring only start-up would have meant that a connection the Owner
+edited at noon ran the rest of the day reporting `cost_vr` NULL while an untouched one was priced —
+the kind of asymmetry that is discovered months later in the books rather than in a test.
+
+## 2026-09-18 — `credits.py` and `discovery.py` build an ElevenLabs adapter and are deliberately left unpriced
+
+Those two construct one to read the subscription balance and to list the models and voices a
+connection offers. **Decision: neither is given a price table, because neither call generates
+audio, so neither has characters to price and `tts_cost_vr` would answer None for them anyway; and
+rather than leave that as a silent omission, the list of priced construction sites is written down
+in `tests/test_pricing_truth.py::PRICED_CONSTRUCTION_SITES` with the reason beside it.** The scan
+that walks the list fails on a fifth site added later without a table, and also fails if a listed
+module stops building an adapter at all, so it can never pass by finding nothing to look at.
+
+## 2026-09-18 — The documented seed goes in bootstrap alone, because there are no start-up seeds
+
+The economy implementer offered `scripts/bootstrap.py` "or the start-up seeds in `main.py`".
+**Decision: `seed_documented_prices(engine)` is called from bootstrap, beside
+`seed_chart_of_accounts`, and from nowhere else.** `main.py` has no seeds — its lifespan migrates
+nothing and seeds nothing, it loads the registry and registers the seeded endpoint — and a seed
+that wrote a price row on every server start would be a write the Owner did not ask for at a moment
+he is not watching. The test therefore *reads* `scripts/bootstrap.py` rather than running it:
+bootstrap writes `.env` and migrates the database named in it, which is the Owner's own, and no
+test may open that.
+
+## 2026-09-18 — The failed-render test plans three scenes and stops at the third, so the plan and the attempt cannot be confused
+
+The existing adversary test refuses the second of two, which a job writing the *plan* minus its last
+scene would also pass. **Decision: the new test plans three scenes and has the vendor refuse the
+third, and asserts the exact scene list `[1, 2]` and exactly two ESTIMATED cost rows named by their
+references, rather than a count a third row would still satisfy.** With three planned and two made,
+a `production_json` carrying the plan would charge the day for a shot the vendor was never asked
+for — the opposite error to the one this work fixed, and just as wrong in the books. The fix itself
+was already in the committed tree (the assembler wraps its scene loop and `_fail_job` writes the
+production it had built); what was missing was the proof that it writes the attempt and not the
+plan, and a second reading charges nothing.
+
+## 2026-09-18 — The research health report and the forced retest are the Owner's, on the factual router
+
+The research half computed a health report and a forced retest that nothing called. **Decision:
+both get a route on the factual router — `GET /api/v1/factual/research/health` and
+`POST /api/v1/factual/research/allowed-hosts/retest` — rather than a research router of their own,
+because that is where `/sources/allowed-hosts` already lives and the router's
+`dependencies=[Depends(require_owner)]` is what makes them his.** The retest fetches front pages
+and the report names every failing site and every site the studio can read, which is a map of the
+studio's reach that an unauthenticated caller has no business reading. A test pins the 401 on both,
+from the other side of the door. The health route probes nothing, so the screen may ask for it on
+every refresh.
+
+## 2026-09-18 — The retest route takes no body and forces the pass with `max_age_days=0`
+
+**Decision: the route accepts no parameters; `max_age_days=0` is hard-coded, which is what makes it
+"now", and the retriever is taken from `app.state.source_retriever` the way the existing per-host
+test route takes it.** A parameter would have been a way for a caller to widen what the button
+does, and the weekly age is the runbook's decision, not the interface's: the route is the Owner's
+"now" after he has fixed something, and nothing else. The retriever hand-off is what lets a test
+drive it with a stub — `tests/conftest.py` refuses every non-loopback socket, so without it the
+route could not be tested at all without spending someone's bandwidth.
+
+## 2026-09-18 — The discovered search address is shown even where the Owner has typed his own
+
+**Decision: *Cercetare → Surse* prints, for every authorised site, whose address is in force
+(marking the discovered one «not used, yours wins» where the Owner typed his), the address the
+studio found on the site itself and when it found it, and «Try it» resolves whichever address is in
+force, because `search_pages` resolves it the same way.** Hiding the discovered address where the
+Owner has his own would have been tidier and wrong: his address is a decision and the discovered one
+a finding, and he can only judge whether his decision is still the better one if he can see what the
+site now offers. For the same reason the badge names whose address is in force rather than merely
+saying «search», and «Try it» is offered wherever any address exists, including on a site that came
+from `.env` and has no row of his to edit.
+
+## 2026-09-18 — A failure reason is printed as a label from a closed list, with the site's own words after it
+
+**Decision: the screen prints `last_test_reason` through a fixed label map and the site's own detail
+after it, and an unknown code falls through to itself rather than to a friendly guess.** The code is
+the same word on every host and can be compared down a column; the detail is what actually came back
+and cannot be. A bot wall and a script-only shell are two different jobs for the Owner rather than
+one paragraph of Romanian. A reason the backend adds later shows as the backend's own word instead
+of silently reading as something else.
+
+## 2026-09-18 — The budget card prints what is held apart from what was spent, and names the unpriced runs
+
+**Decision: a budget card prints the held sum only when there is one, as «held for films in
+production» rather than folded into what was spent; and the day prints what is held, what was paid
+for renders that failed midway, and how many runs have no recorded price, named.** The percentage on
+that card is already of spent plus held — that is how the backend computes it — so a card printing
+only what was paid would leave the Owner reading a ratio he could not reconstruct and believing the
+day has room it does not have. The unpriced-run line says in words that the total is lower than the
+real spend, because a zero that means "not known" is the one number this studio must never present
+as a fact. A run blocked by the day's token ceiling reads as a sentence instead of the raw word
+BLOCKED_BUDGET.
+
+## 2026-09-18 — The two changed screens are pinned at the API that feeds them, not by a DOM harness invented for them
+
+`frontend/package.json` runs `node --test` over `frontend/tests`, and `main.js` touches the document
+at import, so it cannot be imported there. **Decision: no DOM harness was invented for one screen;
+what the screens render is pinned instead at the API — a Python test asserts that a failing host
+comes back with `last_test_reason` SCRIPT_ONLY and a Romanian detail, and that the Owner's address
+wins `search_template_origin` — and the file itself is kept honest by `tsc`, which type-checks
+`src/*.js` with `checkJs`.** The honest next step, if the screens themselves are to be tested, is to
+lift `renderAllowedHosts`, `budgetCard` and the run-status map into a module that takes data and
+returns HTML; that is a refactor of `main.js` and not a test, and it was not this part's work.
+
+## 2026-09-18 — The daily runbook is edited and its index hash re-recorded
+
+The runbook still described the budget check, the research stage and the preflight as they were
+before Phases E and F, and an architecture document that contradicts the code is worse than one that
+is silent. **Decision: this is a deliberate specification change under ADR-FOUNDATION-003 — §1 now
+states that the research check answers whether the studio can find pages at all; §4 states the order
+in which pages are found (the Owner's search address, then the one the studio discovered on the
+site, then a verified search engine filtered to the allowlist, every page read by the studio's own
+DNS-pinned retriever and never the engine's copy) and that the weekly retest of authorised hosts
+lives inside the research stage rather than in a scheduled job; §8 states the money path (the film
+priced and the sum held before a frame is made, settled after the real cost rows are written,
+released on every path where the film was not made, and a hold left by a dead process released by
+the watchdog after six hours) — and the document's `sha256` in `DOCUMENTATION_INDEX.json` is updated
+in the same change (`70dc698c…` → `1de4ef7a…`), with this entry as the recorded
+reason.** Nothing was removed: every line the runbook already carried is still there, and each addition is dated in place so a reader can see what
+the stage was before. No other architecture document was touched, and the check was not bypassed.
+
+## 2026-09-18 — PIPELINE_COVERAGE's research and media rows follow the code, and its analytics line is corrected in place
+
+**Decision: the stage table's rows 4 and 8 now say what those stages do and refuse today — the
+retest and the three-tier page search, every engine result dropped and counted before anything
+downstream sees it; the plan estimated and reserved behind the write lock before a frame is made —
+and the stale limitation "Analytics measures through the first bound slot; per-channel measurement
+needs one call per binding" is struck through with a dated correction rather than deleted.**
+`measure_channel_publications` has measured per channel since Phase B/C, so the line was untrue; the
+document already corrects in place with a dated marker, and striking it through keeps what the
+document once claimed visible beside what is true now, which is the property that makes a coverage
+audit readable a year later. What survives the correction is narrower and stated: a channel whose
+slot is unbound is still not measured at all.
+
+## 2026-09-18 — The economy's own documents name `provider_price`, `spend_reservation` and the hold inside `spend_since`
+
+`PHASE11_ECONOMY.md` and `ACCOUNTING_AND_HISTORY.md` described a ledger that recorded what a vendor
+had charged and a budget measured only from what was already recorded; neither mentioned the two
+tables migration 0039 added. **Decision: both gain a dated section in their own voice — what a
+RESERVED row is, that it is settled only when the real cost rows replace it and released on every
+path where the film was not made or by the watchdog after six hours, that `spend_since` reports the
+held sum apart from the spent one and every budget counts spent plus held, and that a price is the
+Owner's with its provenance recorded (OWNER, DOCUMENTED, QUOTED, BILLED) and never a figure the
+studio discovered for itself.** Both are project documents and neither is hashed, so no index entry
+changed. The two documents' stale limitations are corrected in place, dated, rather than deleted: a
+run and a narration are priced now, image and video generation still are not, and a model the Owner
+has not priced is still reported as unpriced usage instead of as free.
+
+## 2026-09-18 — The shots bought before the Owner pressed STOP are charged to the day
+
+The verification of the Phase E/F closure left one open question from the previous pass: the media
+stage's `except RenderStopped` branch released the film's hold and recorded no cost, although the
+assembler now writes `production_json` for the Owner's stop exactly as for a vendor's refusal. A
+test written against that branch found a stopped film whose FAILED job carried scene 1, whose hold
+was RELEASED, and whose day was charged nothing. **Decision: the stop branch calls
+`_record_failed_attempt` before `_release`, in the order the refusal branch already uses — the
+estimate stops counting exactly when the real cost of the attempt starts.** The Owner's switch is a
+decision about whether the studio keeps working; it is not a decision about whether a vendor has
+already been paid. A shot generated in the minute before STOP was bought exactly as one the vendor
+then refused, and a film the Owner stopped after one scene read in the books as a film that cost
+nothing. Nothing is reconstructed from the plan: the attempt is read from the job's own record, so a
+render that stopped before it made anything still charges nothing, and `record_failed_render_cost`
+remains idempotent per job and scene, so a re-read charges nothing twice. `_record_failed_attempt`'s
+docstring, which still said the assembler kept `production_json` for a finished render only, was
+corrected to what the code does.
+
+## 2026-09-18 — Every construction of a priced adapter is scanned, not four named files
+
+The closure proved its price wiring with a scan of the four files it had changed. **Decision: the
+verification replaces that list with a walk of all 183 application modules
+(`tests/test_phase_ef_closure_adversary.py`), matching attribute calls as well as bare names, and
+requires every site it finds to be either a priced one or a documented exception.** A whitelist
+passes for whatever is on it, and the invariant is about the studio and not about four modules: a
+fifth construction site would most likely arrive in a module nobody thought to list. The two
+exceptions are named with their reason — `economy/credits.py` reads a subscription balance and
+`integrations/discovery.py` lists models and voices, and neither generates anything to price. The
+scan was run against a deliberately incomplete list first and named `economy/credits.py`, which is
+how it is known to bite.
+
+## 2026-09-18 — The roadmap and PROJECT_STATE are ticked against the closure
+
+`13_ROADMAP_TODO.md` still carried open boxes for the price lookups, the documented seed's caller,
+the failed-render record and the routes and screens, and `PROJECT_STATE.json` carried the matching
+`known_blockers` and a `next_task` describing work already done. **Decision: the five closed boxes
+are ticked with the date and the evidence, and the blockers are replaced by what is actually open —
+the Owner's own prices, a bundle that is not rebuilt, and the reconciliation of ESTIMATED rows
+against a vendor's invoice, which still has a vocabulary and no function.** A tracking document that
+keeps listing closed work teaches the next reader to stop reading it, and the cost of leaving it is
+that the work is done twice.

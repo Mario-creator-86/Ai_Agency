@@ -60,6 +60,8 @@ from app.research.service import (
     allowed_hosts,
     list_sources,
     remove_allowed_host,
+    research_health,
+    retest_stale_hosts,
     retrieve_and_ingest,
     search_pages,
     set_search_template,
@@ -203,6 +205,32 @@ def create_factual_router() -> APIRouter:
                 retriever=getattr(request.app.state, "source_retriever", None),
             ),
         }
+
+    @router.get("/research/health")
+    def get_research_health(request: Request) -> dict:
+        """How the studio stands for finding and reading pages, as the preflight sees it.
+
+        Computed from the record and probing nothing, so the screen may ask for it as often
+        as it likes: the counts, the failing hosts with their reason codes, whether a search
+        engine is verified, how many verified claims are left, and the DEGRADED reasons.
+        """
+        return research_health(request.app.state.engine, request.app.state.settings)
+
+    @router.post("/research/allowed-hosts/retest")
+    def post_retest_allowed_hosts(request: Request) -> dict:
+        """Re-test every authorised site now, instead of waiting for the weekly pass.
+
+        ``max_age_days=0`` is what makes it "now": the runbook's pass leaves a site tested
+        this week alone, and this is the Owner asking anyway after fixing something. One
+        front page per site through the same DNS-pinned retriever, nothing stored as a source.
+        """
+        tested = retest_stale_hosts(
+            request.app.state.engine,
+            request.app.state.settings,
+            max_age_days=0,
+            retriever=getattr(request.app.state, "source_retriever", None),
+        )
+        return {"tested": tested}
 
     @router.post("/sources/retrieve", response_model=RetrievedSourceView)
     def post_retrieve_source(request: Request, cmd: RetrieveSourceCommand) -> dict:

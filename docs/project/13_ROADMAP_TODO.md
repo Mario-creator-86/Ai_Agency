@@ -672,18 +672,27 @@ Detailed acceptance and evidence: [VISUAL_AUDIT_2026-09-18.md](VISUAL_AUDIT_2026
 - [x] One test of a whole day: `tests/test_autonomous_day_end_to_end.py` — the scheduled job, the
   real runbook, two films encoded and published private to their own channels, the serial filmed,
   a second tick that starts nothing; only the vendors are faked.
-- [ ] Price lookups reach the adapters that are actually built (`main.py`,
+- [x] Price lookups reach the adapters that are actually built (`main.py`,
   `integrations/services.py`, `integrations/router.py`, `media/factory.py`), so an agent run stops
-  recording `cost_vr` NULL and narration is priced in the books.
-- [ ] `seed_documented_prices` is called from `scripts/bootstrap.py` or the start-up seeds.
-- [ ] `assembler._fail_job` writes the scenes it had already built into `production_json`, so the
-  failed-render cost has something to charge (today it honestly records nothing).
+  recording `cost_vr` NULL and narration is priced in the books. Closed 2026-09-18; a whole-tree
+  scan (`tests/test_phase_ef_closure_adversary.py`) holds every construction of a priced adapter,
+  and names `economy/credits.py` and `integrations/discovery.py` as the two that generate nothing.
+- [x] `seed_documented_prices` is called from `scripts/bootstrap.py` or the start-up seeds. Closed
+  2026-09-18: in `scripts/bootstrap.py` beside `seed_chart_of_accounts`; `main.py` has no start-up
+  seeds, and a price written on every server start would be a write the Owner did not ask for.
+- [x] `assembler._fail_job` writes the scenes it had already built into `production_json`, so the
+  failed-render cost has something to charge. Closed 2026-09-18 (committed at 441e431): the scene
+  loop is wrapped, and the media stage now charges the attempt on the Owner's stop as well as on a
+  vendor's refusal — a shot bought in the minute before STOP was bought all the same.
 - [ ] The Accountant reconciles ESTIMATED rows against a vendor's invoice (a BILLED row replacing
   the estimates of one render).
-- [ ] Routes for `research_health` and a forced retest, and the *Cercetare → Surse* screen showing
-  the discovered address, its origin and the failure reason.
-- [ ] The frontend labels BLOCKED_BUDGET, and the Books office shows `reserved_usd`,
-  `failed_render_usd` and `unpriced_agent_runs`.
+- [x] Routes for `research_health` and a forced retest, and the *Cercetare → Surse* screen showing
+  the discovered address, its origin and the failure reason. Closed 2026-09-18:
+  `GET /factual/research/health` and `POST /factual/research/allowed-hosts/retest`, both behind the
+  factual router's `require_owner`.
+- [x] The frontend labels BLOCKED_BUDGET, and the Books office shows `reserved_usd`,
+  `failed_render_usd` and `unpriced_agent_runs`. Closed 2026-09-18 in source only:
+  `npm run build --prefix frontend` has not been run, so the served bundle is still the old one.
 - [ ] The script-only heuristic and the OpenSearch discovery measured against live hosts — the
   first weekly retest on the live database (tests may not open a socket).
 - [ ] The Owner's part: run the migration (`scripts/bootstrap.py`) to `0040_research_sources`, set
@@ -693,3 +702,6 @@ Detailed acceptance and evidence: [VISUAL_AUDIT_2026-09-18.md](VISUAL_AUDIT_2026
 Evidence: 70 (economy files), 87 (research files), 2 + 21 + 30 + 44 + 38 (the wiring's files)
 passed; the whole suite on the integrated tree 1028 passed / 1 skipped, 1029 collected; ruff,
 format, mypy and `check_docs.py` clean. Nothing ran against a real model, provider or platform.
+After the closure and its verification (2026-09-18): the whole suite 1067 passed / 1 skipped, ruff,
+format, mypy and `check_docs.py` clean, no socket left the machine and nothing was rendered,
+uploaded or paid for.

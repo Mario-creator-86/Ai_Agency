@@ -552,3 +552,18 @@ def test_ollama_cloud_models_assigned_to_factual_agent(engine, client, headers):
             select(ModelRecord).where(ModelRecord.model_name == "glm-5.2:cloud")
         ).one()
         assert glm_rec.is_available is True
+
+
+def test_research_health_and_retest_are_the_owners_alone(client, headers):
+    """Neither route is a way around the Owner's door.
+
+    The retest fetches front pages and the report names every failing site; both carry the
+    router's require_owner dependency, and an unauthenticated caller gets 401 rather than a
+    map of what the studio reads.
+    """
+    for method, path in (
+        ("get", "/api/v1/factual/research/health"),
+        ("post", "/api/v1/factual/research/allowed-hosts/retest"),
+    ):
+        assert getattr(client, method)(path).status_code == 401, path
+        assert getattr(client, method)(path, headers=headers).status_code == 200, path

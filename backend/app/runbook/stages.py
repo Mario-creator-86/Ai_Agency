@@ -959,10 +959,12 @@ def _record_failed_attempt(engine: Engine, storyboard_id: str, correlation: str)
 
     The error the assembler raises does not carry the job id, so the job is found by its
     storyboard and its FAILED status — the newest, because a storyboard may have been tried
-    before. What was attempted is read from the job's own record; a job that failed before
-    recording one records nothing, and that is the honest answer until the assembler writes
-    the scenes it had already built (it keeps `production_json` for the finished render
-    only). Nothing here can charge twice: the rows are referenced by job and scene.
+    before. What was attempted is read from the job's own record: the assembler writes
+    `production_json` on every path that ends a render, so the job carries the scenes whose
+    narration was recorded and whose shots were generated, and never the plan. A job that
+    failed before it made anything records nothing, and that is the honest answer — nothing
+    is reconstructed here from a plan the vendor may never have executed. Nothing can charge
+    twice either: the rows are referenced by job and scene.
     """
     with Session(engine) as session:
         job = session.scalar(
@@ -1199,6 +1201,15 @@ def _media(
         except RenderStopped as exc:
             # The Owner's switch, read between two scenes: his decision, not a fault. The
             # runbook records the stage BLOCKED and the day PARTIAL, and opens no safe mode.
+            #
+            # His decision ends the film; it does not un-buy what the vendor had already
+            # made. The assembler fails the job the same way here as for a refusal and keeps
+            # the scenes it had built, so the attempt is costed from that record before the
+            # hold is let go — same order, same reason as below: the estimate stops counting
+            # exactly when the real cost of the attempt starts. A shot generated in the
+            # minute before STOP read in the books as free until this line existed.
+            failed_cost = _record_failed_attempt(engine, storyboard_id, correlation)
+            costs_recorded += failed_cost
             # The hold goes with the film: money pledged to a film that was not made must
             # not sit against the day's budget until the watchdog's six hours are up.
             _release(engine, reservation_id, f"randare oprită: {exc}", correlation)
@@ -1208,6 +1219,7 @@ def _media(
                 assets=produced,
                 serial_assets=serial_assets,
                 stopped_storyboard=storyboard_id,
+                costs_recorded=costs_recorded,
             )
         except RenderEngineUnavailable as exc:
             _release(engine, reservation_id, f"randarea nu poate rula: {exc}", correlation)

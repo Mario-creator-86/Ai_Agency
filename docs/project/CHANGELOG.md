@@ -1,5 +1,52 @@
 # Changelog
 
+## Money and sources, closed — 2026-09-18
+
+The four ends Phase E/F left open in files its implementers did not own.
+
+- **Every adapter is built with the price table.** `price_lookup(engine, kind)` at the four
+  construction sites — `main.register_seeded_ollama`, `integrations.services.load_registry`, the
+  re-registration in `integrations/router.py` when the Owner saves a connection while the studio
+  runs, and both voice doors in `media/factory.py` — so an employee's run and a narration carry a
+  cost instead of NULL. `integrations/credits.py` and `integrations/discovery.py` stay unpriced on
+  purpose (reading a subscription and listing voices generate nothing), and
+  `tests/test_pricing_truth.py::PRICED_CONSTRUCTION_SITES` is the written-down list a fifth site
+  cannot slip past.
+- **`seed_documented_prices` has a caller**: `scripts/bootstrap.py`, beside
+  `seed_chart_of_accounts`. One DOCUMENTED ElevenLabs row, nothing for Ollama Cloud, and never over
+  a price of any provenance — a second bootstrap over a live studio leaves the Owner's own price
+  standing.
+- **A refused render is proved to charge the attempt and not the plan.** A three-scene film whose
+  vendor refuses the third leaves a FAILED job carrying exactly scenes one and two, and two
+  ESTIMATED rows flagged `failed=True` under `render:{job}:failed:scene:{n}:voice`; a second
+  reading charges nothing.
+- **The research report and the retest have routes, and the screens show them.** `GET
+  /factual/research/health` (probes nothing, safe on every refresh) and `POST
+  /factual/research/allowed-hosts/retest` (`max_age_days=0`, the Owner's "now"), both Owner-only,
+  with a test pinning the 401 from the other side of the door. *Cercetare → Surse* prints whose
+  search address is in force, the one discovered on the site and when, and the failure reason code
+  before the site's own words; a «Test the sites» button asks for the retest. The Books office
+  labels BLOCKED_BUDGET, prints the sum held for films in production, the cost of renders that
+  failed midway, and how many runs have no recorded price.
+- **Documents.** `../architecture/39_DAILY_AUTONOMOUS_RUNBOOK.md` gains the order in which pages
+  are found, the weekly retest's home inside the research stage, the media stage's money path and
+  the preflight's new question — a deliberate specification change, its `sha256` re-recorded in
+  `DOCUMENTATION_INDEX.json` (`70dc698c…` → `1de4ef7a…`) with the reason in the decision log.
+  `PIPELINE_COVERAGE.md` follows in its research and media rows and strikes through, dated, the
+  stale line about per-channel analytics. `PHASE11_ECONOMY.md` and `ACCOUNTING_AND_HISTORY.md`
+  describe `provider_price`, `spend_reservation` and the hold inside `spend_since` for the first
+  time. Fourteen decisions added to `16_DECISION_LOG.md`.
+- Measured by the closure's implementers: 17 in `tests/test_pricing_truth.py` (six new, each
+  written failing first), 19 in `tests/test_phase5_media.py` (one new), 108 across the media,
+  discovery, settings and multi-LLM files, 69 across the adversary, production-policy and economy
+  files, 15 across `tests/test_phase4_factual.py` and `tests/test_sources_and_readiness.py`, and 87
+  frontend tests; ruff, `ruff format --check`, mypy and `tsc` clean. Every vendor faked at its
+  transport: no socket left the machine and nothing was rendered, uploaded or paid for.
+- Still open, and named in `CURRENT_STATUS.md`: the Owner's own prices, the live database's
+  migration and bootstrap, `frontend/dist` not rebuilt, reconciliation of ESTIMATED rows against a
+  vendor's invoice, and whether a render stopped by the Owner's own switch should be charged for
+  the shots it had already bought.
+
 ## Money and sources — 2026-09-18
 
 Phases E and F of running unattended, built in three parts and wired into the day: what a film

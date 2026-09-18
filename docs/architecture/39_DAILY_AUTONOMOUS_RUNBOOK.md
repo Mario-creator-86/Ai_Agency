@@ -23,6 +23,16 @@ Check:
 Result:
 READY / DEGRADED / BLOCKED.
 
+The research check answers whether the studio can find pages at all, not whether an
+authorised site exists as a row (`research_health`, since 2026-09-18). It reports how many
+hosts are authorised, how many were read successfully, how many carry a search address,
+which are failing and under which reason code, whether a search engine is verified, and how
+many verified claims are in hand. It reads the record and opens no connection, so it is safe
+on every run. It is DEGRADING, and it degrades the day when no host passed, when there is no
+way to find pages at all, or when fewer than ten verified claims remain. The counts are in
+the check's detail as well as in the message a passing check shows, because the run they are
+needed for is the one where the check failed.
+
 ## 2. Previous performance intake
 
 Analytics snapshot ingestion if available.
@@ -53,6 +63,23 @@ Fact-check.
 
 Reject unsupported.
 
+Pages are found in this order (`find_pages`, since 2026-09-18): the Owner's own search
+address for an authorised site; then the address the studio discovered on that site itself
+(OpenSearch, stored as a finding, which never overrides the Owner's decision); then a
+verified search engine, whose results are filtered against the allowlist before anything
+downstream sees them, the rest dropped and counted. Every page is then read by the studio's
+own DNS-pinned retriever — never the engine's cached copy, snippet or "answer", which would
+be fetching through a third party what the studio would not fetch itself. The allowlist is
+the Owner's rows: no agent, no request and no search result can widen it.
+
+The weekly retest of authorised hosts lives inside this stage and not in a scheduled job of
+its own (`retest_stale_hosts`, seven days): only hosts nobody has tested for a week are read,
+one front page each, so on the other six days the pass fetches nothing and costs the sites
+nothing. A retest that fails costs this stage and never the studio, by the Phase A fault
+rule. Each retest looks again for the site's own search address, and a host that answers 403,
+limits requests or serves a script-only shell is recorded FAILED with a reason from a closed
+vocabulary the preflight can show without parsing prose.
+
 ## 5. Selection
 
 Director chooses production candidate under policy.
@@ -79,6 +106,23 @@ Reserve budget.
 Generate assets/video/voice.
 
 Use fallback if needed.
+
+"Reserve budget" is literal since 2026-09-18. The film is priced before a frame is made —
+the motion at the ceiling this render will be given, the narration at the dearest active
+per-thousand price over the storyboard's own voiceover — and the sum is **held**: a
+reservation row written behind the write lock, which every budget check counts until it ends,
+so two films asked for in the same second cannot both be told the last ten dollars are free.
+The day's remaining budget is read one line before the hold is written, so a film never
+counts its own reservation against itself.
+
+The hold is settled only after the real cost rows for that render are written: between the
+two the film is counted twice rather than not at all, which is the error a budget may make.
+It is released on every path where the film was not made — the Owner's stop read between two
+scenes, an encoder that cannot run, a vendor's refusal, which is costed first because the
+vendor charges for the shot it generated whether or not the film was finished. A hold left by
+a process that died under a render is released by the watchdog once it is older than the
+reservation TTL, six hours. A refusal by the budget is not a silent SKIPPED line: the
+Accountant writes to the Owner once per business date.
 
 ## 9. Edit/QC
 

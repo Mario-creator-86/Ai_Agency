@@ -18,6 +18,7 @@ from typing import TypeVar
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
+from app.economy.prices import price_lookup
 from app.integrations.discovery import production_resource
 from app.integrations.models import (
     Integration,
@@ -174,7 +175,10 @@ def tts_provider(engine: Engine, vault: CredentialVault) -> TTSProvider | None:
         if kind == "elevenlabs":
             return _from_connection(
                 ElevenLabsTTSAdapter(
-                    secrets.get("api_key", ""), config.get("voice_id"), config.get("model")
+                    secrets.get("api_key", ""),
+                    config.get("voice_id"),
+                    config.get("model"),
+                    price_lookup=price_lookup(engine, "elevenlabs"),
                 ),
                 row_id,
             )
@@ -201,7 +205,10 @@ def tts_provider_for(engine: Engine, vault: CredentialVault, resolved: dict) -> 
     try:
         if kind == "elevenlabs":
             adapter = ElevenLabsTTSAdapter(
-                secrets.get("api_key", ""), resolved.get("voice_id"), resolved.get("model_id")
+                secrets.get("api_key", ""),
+                resolved.get("voice_id"),
+                resolved.get("model_id"),
+                price_lookup=price_lookup(engine, "elevenlabs"),
             )
             settings = resolved.get("voice_settings")
             if isinstance(settings, dict) and settings:

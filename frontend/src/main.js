@@ -516,6 +516,9 @@ const RUN_STATUS = {
   SUCCEEDED: 'No text in the answer.',
   BLOCKED_POLICY: 'Blocked by policy.',
   BLOCKED_PROVIDER: 'Blocked: the provider or the model is unavailable.',
+  // The day's token ceiling, not a spending budget: the run never reached a model, so it
+  // cost nothing. Without this line the status printed as the raw word BLOCKED_BUDGET.
+  BLOCKED_BUDGET: "Blocked: the day's token ceiling for employees was reached.",
   FAILED: 'Failed.',
 };
 
@@ -802,6 +805,33 @@ if (refreshSourcesBtn) {
   refreshSourcesBtn.addEventListener('click', loadSources);
 }
 
+/**
+ * Test every authorised site now. The daily run retests one only after seven days, which is
+ * right for the sites and wrong for the Owner who has just fixed something; this is the
+ * "now". One front page per site, through the studio's own retriever, stored as no source.
+ */
+const retestHostsBtn = document.getElementById('retest-hosts-btn');
+if (retestHostsBtn) {
+  retestHostsBtn.addEventListener('click', async () => {
+    const button = /** @type {HTMLButtonElement} */ (retestHostsBtn);
+    button.disabled = true;
+    try {
+      const result = await api('/factual/research/allowed-hosts/retest', { method: 'POST' });
+      const tested = Array.isArray(result.tested) ? result.tested : [];
+      const failed = tested.filter((t) => t.status !== 'PASSED');
+      showSourceStatus(
+        `${tested.length} sites tested, ${tested.length - failed.length} readable${failed.length ? `. Cannot be read: ${failed.map((t) => `${t.host} (${t.reason})`).join(', ')}` : '.'}`,
+        failed.length > 0,
+      );
+    } catch (err) {
+      showSourceStatus(err.message, true);
+    } finally {
+      button.disabled = false;
+      await loadSources();
+    }
+  });
+}
+
 const refreshScriptsBtn = document.getElementById('refresh-scripts-btn');
 if (refreshScriptsBtn) {
   refreshScriptsBtn.addEventListener('click', loadScripts);
@@ -906,11 +936,28 @@ function claimCountsSummary(counts) {
 const HOST_TEST_LABEL = { PASSED: 'readable', FAILED: 'cannot be read' };
 
 /**
+ * Why the last test failed, in the closed vocabulary the backend records. A site behind a
+ * bot wall and a site that is an empty shell until its scripts run are two different jobs
+ * for the Owner, and the reason code is what tells them apart without reading the detail.
+ */
+const HOST_REASON_LABEL = {
+  HTTP_403: 'refused the studio (403)',
+  HTTP_ERROR: 'answered with an error',
+  RATE_LIMITED: 'limits the requests',
+  SCRIPT_ONLY: 'shows nothing without JavaScript',
+  NETWORK: 'did not answer',
+  OTHER: 'answered with nothing usable',
+};
+
+/** Whose search address is in force: the Owner's is a decision, a discovered one a finding. */
+const TEMPLATE_ORIGIN_LABEL = { OWNER: 'your search', DISCOVERED: 'its own search' };
+
+/**
  * The authorised sites, each with the result of its last connectivity test. A site is a
  * source only if the studio can actually read it, so the test is next to the entry, and a
  * site that never passed is marked as such rather than assumed fine.
  */
-function renderAllowedHosts(rows) {
+function renderAllowedHosts(rows, health) {
   const box = element('allowed-hosts');
   const allowEl = element('sources-allowlist');
   if (!rows.length) {
@@ -920,8 +967,21 @@ function renderAllowedHosts(rows) {
     return;
   }
   const passed = rows.filter((r) => r.last_test_status === 'PASSED').length;
-  allowEl.textContent = `${rows.length} authorised sites, ${passed} tested successfully. Only the Owner can change the list; the agents have no tool for it.`;
-  allowEl.className = passed ? 'helper-note' : 'helper-note helper-warn';
+  const searchable = rows.filter((r) => r.search_template_origin).length;
+  // A count of rows says nothing about whether the studio can work today. The health report
+  // answers that: how it would find pages, and how many verified claims a film could rest
+  // on. Its reasons are the studio's own words and are shown as they are.
+  const line = [
+    `${rows.length} authorised sites, ${passed} tested successfully, ${searchable} with a search address.`,
+  ];
+  if (health) {
+    line.push(health.search_provider === 'VERIFIED' ? 'A web search engine is connected.' : 'No web search engine is connected.');
+    line.push(`${health.claims_available} verified claims on record.`);
+    if (health.status === 'DEGRADED') line.push(...(health.degraded_reasons || []));
+  }
+  line.push('Only the Owner can change the list; the agents have no tool for it.');
+  allowEl.textContent = line.join(' ');
+  allowEl.className = (health ? health.status === 'DEGRADED' : !passed) ? 'helper-note helper-warn' : 'helper-note';
   box.innerHTML = rows
     .map((r) => {
       const status = r.last_test_status
@@ -933,21 +993,43 @@ function renderAllowedHosts(rows) {
         : '';
       // The site's own search address: with one, the studio finds pages that exist instead
       // of the Researcher guessing addresses that 404. Only a row the Owner added holds it.
+      // "Try it" runs whichever address is in force, the Owner's or the one the studio
+      // found, because the search resolves the same way. Typing one in belongs to the
+      // Owner's own rows: a site that comes from .env has no entry of his to edit, but its
+      // own search address still works and is still worth trying.
+      const tryIt = r.search_template_origin
+        ? `<button class="quiet btn-host-search-try" data-host="${escapeHtml(r.host)}">Try it</button>`
+        : '';
       const search = r.source === 'owner'
         ? `<div class="host-search">
             <input class="host-search-template" data-host="${escapeHtml(r.host)}" value="${escapeHtml(r.search_template || '')}" placeholder="the site's search address, with {query} where the words go (OpenSearch JSON)" title="For example, for a MediaWiki encyclopedia: https://${escapeHtml(r.host)}/w/api.php?action=opensearch&search={query}&limit=5&namespace=0&format=json">
             <button class="quiet btn-host-search-save" data-host="${escapeHtml(r.host)}">Save search</button>
-            ${r.search_template ? `<button class="quiet btn-host-search-try" data-host="${escapeHtml(r.host)}">Try it</button>` : ''}
+            ${tryIt}
           </div>`
+        : tryIt ? `<div class="host-search">${tryIt}</div>` : '';
+      // The address the studio found on the site itself, when a test read one. It is shown
+      // even where the Owner typed his own, which supersedes it: the point is that he can
+      // see what the studio would search this site with, and when it last saw it.
+      const found = r.discovered_search_template
+        ? `<div class="host-test-detail">${escapeHtml(TEMPLATE_ORIGIN_LABEL.DISCOVERED)}${r.discovered_at ? ` · ${escapeHtml(new Date(r.discovered_at).toLocaleString('ro-RO'))}` : ''}: <code>${escapeHtml(r.discovered_search_template)}</code>${r.search_template ? ' — not used, yours wins' : ''}</div>`
+        : '';
+      const badge = r.search_template_origin
+        ? ` <span class="host-search-badge" title="${escapeHtml(r.search_template || r.discovered_search_template || '')}">${escapeHtml(TEMPLATE_ORIGIN_LABEL[r.search_template_origin] || r.search_template_origin)}</span>`
+        : '';
+      // The reason code first, then the site's own words for it: the code is the same on
+      // every host and can be compared, the detail is what actually came back.
+      const why = r.last_test_status === 'FAILED'
+        ? `<div class="host-test-detail text-error">${escapeHtml(HOST_REASON_LABEL[r.last_test_reason] || r.last_test_reason || 'cannot be read')}${r.last_test_detail ? ` · ${escapeHtml(r.last_test_detail)}` : ''}</div>`
         : '';
       return `
         <div class="allowed-host-row" data-host="${escapeHtml(r.host)}">
-          <code class="allowed-host-name">${escapeHtml(r.host)}</code> ${origin} ${status}${r.search_template ? ' <span class="host-search-badge" title="has a search address">search</span>' : ''}
+          <code class="allowed-host-name">${escapeHtml(r.host)}</code> ${origin} ${status}${badge}
           <span class="allowed-host-actions">
             <button class="quiet btn-host-test" data-host="${escapeHtml(r.host)}">Test</button>
             ${remove}
           </span>
-          ${r.last_test_status === 'FAILED' && r.last_test_detail ? `<div class="host-test-detail text-error">${escapeHtml(r.last_test_detail)}</div>` : ''}
+          ${why}
+          ${found}
           ${search}
         </div>`;
     })
@@ -1052,7 +1134,15 @@ async function loadSources() {
   const listEl = element('sources-list');
   try {
     const data = await api('/factual/sources');
-    renderAllowedHosts(data.allowed_host_rows || []);
+    // The report is computed from the record and probes nothing, so asking for it on every
+    // refresh costs the sites nothing. The list is still shown if it cannot be read.
+    let health = null;
+    try {
+      health = await api('/factual/research/health');
+    } catch {
+      health = null;
+    }
+    renderAllowedHosts(data.allowed_host_rows || [], health);
 
     const sources = data.sources || [];
     if (!sources.length) {
@@ -2879,16 +2969,39 @@ function treasuryTile(row, extraClass = '') {
   return tile;
 }
 
+/**
+ * One budget against its period. The percentage is of spent plus held, not of spent alone,
+ * which is why the held sum is printed beside it: a film in production has taken that money
+ * out of what is still free to spend, and a card that showed only what was paid would tell
+ * the Owner the day has room it does not have.
+ */
 function budgetCard(period) {
   const label = period.period === 'DAILY' ? 'Daily' : 'Monthly';
-  return `<div class="budget-card budget-${escapeHtml(period.state)}"><span class="stat-label">${escapeHtml(label)} · ${escapeHtml(period.state)}</span><strong>${escapeHtml(period.spent_usd)} / ${escapeHtml(period.limit_usd)} USD</strong><span>remaining ${escapeHtml(period.remaining_usd)} USD · ${Math.round(period.ratio * 100)}%</span>${period.unpriced_agent_runs ? `<div class="helper">${period.unpriced_agent_runs} runs with no recorded price</div>` : ''}</div>`;
+  const reserved = period.reserved_usd_micros
+    ? `<div class="helper">${escapeHtml(period.reserved_usd)} USD held for films in production</div>`
+    : '';
+  return `<div class="budget-card budget-${escapeHtml(period.state)}"><span class="stat-label">${escapeHtml(label)} · ${escapeHtml(period.state)}</span><strong>${escapeHtml(period.spent_usd)} / ${escapeHtml(period.limit_usd)} USD</strong><span>remaining ${escapeHtml(period.remaining_usd)} USD · ${Math.round(period.ratio * 100)}%</span>${reserved}${period.unpriced_agent_runs ? `<div class="helper">${period.unpriced_agent_runs} runs with no recorded price</div>` : ''}</div>`;
 }
 
 async function loadBudget() {
   const cards = element('budget-cards');
   try {
     const data = await api('/economy/budget');
-    const spend = `<div class="budget-card"><span class="stat-label">Spent</span><strong>today ${escapeHtml(data.today.spent_usd)} USD</strong><span>this month ${escapeHtml(data.month.spent_usd)} USD · ${data.month.agent_runs} agent runs, ${data.month.unpriced_agent_runs} unpriced</span></div>`;
+    // Money held apart from money spent, and the two figures that say the total is
+    // incomplete: a render paid for that delivered nothing, and the runs whose model has no
+    // stored price. An unpriced run is real usage the books cannot value, so it is named
+    // rather than counted as zero.
+    const today = data.today;
+    const held = today.reserved_usd_micros
+      ? `<div class="helper">${escapeHtml(today.reserved_usd)} USD held today for films in production, not yet spent</div>`
+      : '';
+    const wasted = today.failed_render_usd_micros
+      ? `<div class="helper">${escapeHtml(today.failed_render_usd)} USD for renders that failed midway</div>`
+      : '';
+    const unpriced = today.unpriced_agent_runs
+      ? `<div class="helper">${today.unpriced_agent_runs} runs today with no recorded price — the total is lower than the real spend</div>`
+      : '';
+    const spend = `<div class="budget-card"><span class="stat-label">Spent</span><strong>today ${escapeHtml(today.spent_usd)} USD</strong><span>this month ${escapeHtml(data.month.spent_usd)} USD · ${data.month.agent_runs} agent runs, ${data.month.unpriced_agent_runs} unpriced</span>${held}${wasted}${unpriced}</div>`;
     const providers = data.month.by_provider.map((p) => `<div class="budget-card"><span class="stat-label">${escapeHtml(p.provider)}</span><strong>${escapeHtml(((p.estimated_usd_micros + p.billed_usd_micros) / 1e6).toFixed(2))} USD</strong><span>${p.records} entries · billed ${escapeHtml((p.billed_usd_micros / 1e6).toFixed(2))}</span></div>`).join('');
     cards.innerHTML = spend + (data.budgets.length ? data.budgets.map(budgetCard).join('') : '<div class="budget-card"><span class="stat-label">Budget</span><strong>not set</strong><span>no limit, nothing stops spending</span></div>') + providers;
   } catch (error) {

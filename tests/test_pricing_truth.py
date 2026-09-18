@@ -11,12 +11,15 @@ before, never zero. Every vendor is faked at its transport; nothing here costs m
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import io
 import json
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from app.agents.models import ProviderRecord
 from app.economy.models import ProviderCostRecord, ProviderPrice
 from app.economy.prices import (
     PriceCommand,
@@ -29,8 +32,18 @@ from app.economy.prices import (
 )
 from app.economy.services import EconomyError
 from app.integrations.llm import ConfiguredLLM
+from app.integrations.models import (
+    Integration,
+    MediaProductionConfig,
+    ProviderResource,
+    ServiceSelection,
+)
+from app.integrations.services import SaveIntegration, load_registry, save
+from app.integrations.vault import CredentialVault
 from app.providers.elevenlabs import ElevenLabsTTSAdapter
 from app.providers.ollama import OllamaProvider
+from app.providers.registry import ProviderRegistry
+from app.services import append_event, utc_now
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -341,3 +354,280 @@ def test_settings_are_not_needed_to_read_a_price(engine):
     price(engine, "anthropic", "claude-x", "per_1m_input_tokens", "3")
     assert lookup("claude-x", "per_1m_input_tokens") == 3_000_000
     assert lookup("claude-x", "per_1m_output_tokens") is None
+
+
+# ------------------------------------------------------------------- the construction sites
+
+#: The repository root, for the one test that reads the studio's own source.
+ROOT = Path(__file__).resolve().parents[1]
+
+#: Every module where the studio itself builds an adapter that can cost money, and the class
+#: it builds there. `integrations/credits.py` and `integrations/discovery.py` are deliberately
+#: absent: they build an ElevenLabs adapter to read a subscription or list voices, calls that
+#: generate nothing and so have nothing to price.
+PRICED_CONSTRUCTION_SITES = {
+    "backend/app/main.py": "OllamaProvider",
+    "backend/app/integrations/services.py": "ConfiguredLLM",
+    "backend/app/integrations/router.py": "ConfiguredLLM",
+    "backend/app/media/factory.py": "ElevenLabsTTSAdapter",
+}
+
+
+def _priced_calls(path: str) -> list[ast.Call]:
+    """Every call in `path` that builds that module's priced adapter."""
+    source = (ROOT / path).read_text(encoding="utf-8")
+    wanted = PRICED_CONSTRUCTION_SITES[path]
+    return [
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == wanted
+    ]
+
+
+def _elevenlabs_connection(engine, vault) -> str:
+    """A verified ElevenLabs connection with its production model and voice discovered —
+    what both doors in `media.factory` require before they will build a voice at all."""
+    identifier = str(uuid4())
+    with Session(engine) as session, session.begin():
+        event = append_event(
+            session, "settings.integration_saved", "integration", identifier, 1, {}, str(uuid4())
+        )
+        session.add(
+            Integration(
+                id=identifier,
+                kind="elevenlabs",
+                name="Voice",
+                config={"voice_id": "v-narrator", "model": "test-model"},
+                encrypted_secrets=vault.encrypt({"api_key": "k-" + identifier}),
+                secret_fields=["api_key"],
+                version=1,
+                status="ACCESS_VERIFIED",
+                checked_at=None,
+                event_id=event.event_id,
+            )
+        )
+        session.flush()
+        session.add(
+            MediaProductionConfig(
+                integration_id=identifier,
+                model_id="test-model",
+                voice_id="v-narrator",
+                version=1,
+                updated_at=utc_now(),
+            )
+        )
+        for resource_type, remote_id in (("MODEL", "test-model"), ("VOICE", "v-narrator")):
+            session.add(
+                ProviderResource(
+                    id=str(uuid4()),
+                    integration_id=identifier,
+                    resource_type=resource_type,
+                    remote_id=remote_id,
+                    name=remote_id,
+                    api_available=True,
+                    last_seen_at=utc_now(),
+                    api_metadata={"can_do_text_to_speech": True}
+                    if resource_type == "MODEL"
+                    else {},
+                )
+            )
+        selection_event = append_event(
+            session, "settings.service_selected", "service_selection", "voice", 1, {}, str(uuid4())
+        )
+        session.merge(
+            ServiceSelection(
+                purpose="voice",
+                integration_id=identifier,
+                version=1,
+                event_id=selection_event.event_id,
+            )
+        )
+    return identifier
+
+
+def test_no_place_the_studio_builds_a_priced_adapter_is_left_without_the_price_table():
+    """The adapters could cost a call from the day the price table existed; nothing handed
+    them one.
+
+    Measured before this: `grep -rn price_lookup backend/` found the keyword in the three
+    adapters and in `economy/prices.py`, and at no construction site — so every `agent_run`
+    carried `cost_vr` NULL and every narration was unpriced, whatever the Owner had typed.
+    A behavioural test per site follows; this one refuses a fifth site added later without one.
+    """
+    unpriced = [
+        f"{path}:{call.lineno} {call.func.id}"
+        for path in PRICED_CONSTRUCTION_SITES
+        for call in _priced_calls(path)
+        if not any(keyword.arg == "price_lookup" for keyword in call.keywords)
+    ]
+    assert not unpriced, f"adapters the studio builds without a price table: {unpriced}"
+    # And each named module still builds one: a module that stopped would make the scan
+    # above pass by finding nothing to look at.
+    assert all(_priced_calls(path) for path in PRICED_CONSTRUCTION_SITES)
+
+
+def test_the_seeded_ollama_endpoint_is_registered_with_the_price_table(engine, monkeypatch):
+    """The endpoint bootstrap seeds is the one the employees run on, so it costs what it spends."""
+    from app.main import register_seeded_ollama
+
+    identifier = str(uuid4())
+    with Session(engine) as session, session.begin():
+        event = append_event(
+            session, "settings.provider_seeded", "provider_record", identifier, 1, {}, str(uuid4())
+        )
+        session.add(
+            ProviderRecord(
+                id=identifier,
+                name="ollama-" + identifier[:8],
+                provider_type="OLLAMA",
+                base_url="http://127.0.0.1:11434",
+                status="UNKNOWN",
+                last_health_check=None,
+                adapter_version="1.0.0",
+                notes="",
+                created_at=utc_now(),
+                event_id=event.event_id,
+            )
+        )
+
+    registry = ProviderRegistry()
+    register_seeded_ollama(engine, registry)
+    adapter = registry.get(identifier)
+    assert isinstance(adapter, OllamaProvider)
+
+    body = {"response": "blue", "prompt_eval_count": 1000, "eval_count": 500, "done": True}
+    monkeypatch.setattr("app.providers.ollama.urlopen", lambda req, timeout=None: _Response(body))
+    assert asyncio.run(adapter.generate("llama:cloud", "Why?")).cost_vr is None
+    price(engine, "ollama", "llama:cloud", "per_1m_input_tokens", "2")
+    price(engine, "ollama", "llama:cloud", "per_1m_output_tokens", "10")
+    assert asyncio.run(adapter.generate("llama:cloud", "Why?")).cost_vr == "0.007"
+
+
+def test_the_connections_the_studio_loads_at_start_up_carry_the_price_table(engine, monkeypatch):
+    """A saved language connection is registered once, at start-up, and priced from then on."""
+    vault = CredentialVault(Path(str(engine.url.database)).with_suffix(".credentials.key"))
+    identifier = str(uuid4())
+    save(
+        engine,
+        vault,
+        identifier,
+        SaveIntegration(
+            kind="openai", name="Writer", config={}, secrets={"api_key": "k-" + identifier}
+        ),
+    )
+
+    registry = ProviderRegistry()
+    load_registry(engine, vault, registry)
+    adapter = registry.get(identifier)
+    assert isinstance(adapter, ConfiguredLLM)
+
+    def request(self, method, path, body=None):
+        return {
+            "choices": [{"message": {"content": "fine"}}],
+            "usage": {"prompt_tokens": 1_000_000, "completion_tokens": 0},
+        }
+
+    monkeypatch.setattr(ConfiguredLLM, "request", request)
+    assert asyncio.run(adapter.generate("gpt-test", "hi")).cost_vr is None
+    price(engine, "openai", "gpt-test", "per_1m_input_tokens", "1.25")
+    price(engine, "openai", "gpt-test", "per_1m_output_tokens", "10")
+    assert asyncio.run(adapter.generate("gpt-test", "hi")).cost_vr == "1.25"
+
+
+def test_a_connection_saved_while_the_studio_runs_is_registered_with_the_price_table(
+    client, headers, engine
+):
+    """The other half of the same registry: the connection the Owner types in today, which
+    replaces the adapter start-up registered and must not lose its prices doing it."""
+    identifier = str(uuid4())
+    answer = client.put(
+        f"/api/v1/settings/integrations/{identifier}",
+        headers=headers,
+        json={
+            "kind": "openai",
+            "name": "Writer",
+            "config": {},
+            "secrets": {"api_key": "k-" + identifier},
+            "expected_version": 0,
+        },
+    )
+    assert answer.status_code == 200, answer.text
+
+    # `.app.app` is the FastAPI inside the trusted-host middleware, as the other tests reach it.
+    adapter = client.app.app.state.registry.get(identifier)
+    assert isinstance(adapter, ConfiguredLLM)
+    assert adapter.price_lookup is not None, "saved, registered, and unable to cost a run"
+    price(engine, "openai", "gpt-test", "per_1m_input_tokens", "3")
+    assert adapter.price_lookup("gpt-test", "per_1m_input_tokens") == 3_000_000
+
+
+def test_the_voice_a_render_is_given_costs_the_narration_it_speaks(engine, tmp_path, monkeypatch):
+    """Both doors into a voice — the one the Owner selected and the one a scene's policy
+    resolves — hand the render an adapter that can price what it says."""
+    from app.media.factory import tts_provider, tts_provider_for
+    from app.providers import elevenlabs
+
+    vault = CredentialVault(tmp_path / "voice.credentials.key")
+    identifier = _elevenlabs_connection(engine, vault)
+
+    def transport(host, method, path, headers, body=None, **kwargs):
+        return None, b"ID3fake-audio", "audio/mpeg"
+
+    monkeypatch.setattr(elevenlabs, "request", transport)
+    monkeypatch.setattr(elevenlabs, "mp3_duration_seconds", lambda audio: 1.5)
+    narration = "Hubble was launched in 1990."  # 28 characters
+
+    selected = tts_provider(engine, vault)
+    resolved = tts_provider_for(
+        engine,
+        vault,
+        {
+            "valid": True,
+            "integration_id": identifier,
+            "voice_id": "v-narrator",
+            "model_id": "test-model",
+        },
+    )
+    assert isinstance(selected, ElevenLabsTTSAdapter)
+    assert isinstance(resolved, ElevenLabsTTSAdapter)
+    assert asyncio.run(selected.synthesize(narration)).cost_vr is None, "no price, no cost"
+
+    price(engine, "elevenlabs", "test-model", "per_1k_characters", "0.30")
+    assert asyncio.run(selected.synthesize(narration)).cost_vr == "0.0084"
+    assert asyncio.run(resolved.synthesize(narration)).cost_vr == "0.0084"
+
+
+# ------------------------------------------------------------------ the seed has a caller now
+
+
+def test_bootstrap_seeds_the_documented_price_beside_the_chart_of_accounts(engine):
+    """`seed_documented_prices` had no caller outside this file, so a studio where the Owner
+    had typed no price read narration as free.
+
+    The source is read rather than run: bootstrap writes `.env` and migrates the database
+    named in it, which is the Owner's own, and no test may open it. What is asserted is
+    that `main` calls the seed, in the company of the seeds that make the books usable.
+    """
+    source = (ROOT / "scripts" / "bootstrap.py").read_text(encoding="utf-8")
+    main = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.FunctionDef) and node.name == "main"
+    )
+    called = {
+        node.func.id
+        for node in ast.walk(main)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "seed_documented_prices" in called, "the documented seed still has no caller"
+    assert "seed_chart_of_accounts" in called, "read beside the seed it belongs with"
+
+    # And what the caller gets: the one published figure, never Ollama Cloud, and a second
+    # bootstrap over a price the Owner typed in between leaves his price standing.
+    assert seed_documented_prices(engine)["seeded"] == 1
+    assert [
+        (row["provider_kind"], row["resource"], row["provenance"]) for row in list_prices(engine)
+    ] == [("elevenlabs", "*", "DOCUMENTED")]
+    price(engine, "elevenlabs", "*", "per_1k_characters", "0.11")
+    assert seed_documented_prices(engine)["seeded"] == 0
+    assert [(row["usd"], row["provenance"]) for row in list_prices(engine)] == [("0.11", "OWNER")]

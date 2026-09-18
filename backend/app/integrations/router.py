@@ -16,6 +16,7 @@ from app.agents.services import (
     run_agent_task,
     sync_provider_models,
 )
+from app.economy.prices import price_lookup
 from app.integrations.autoconfig import auto_configure
 from app.integrations.catalog import CATALOG
 from app.integrations.discovery import (
@@ -167,10 +168,14 @@ def create_settings_router() -> APIRouter:
                     row = session.get(Integration, str(identifier))
                     if row is None:
                         raise HTTPException(409, "Conexiunea a fost ștearsă")
+                    # This adapter replaces the one start-up registered, so it carries the
+                    # same price table: a connection re-saved during the day must not go
+                    # back to reporting every run at `cost_vr` NULL.
                     adapter = ConfiguredLLM(
                         row.kind,
                         row.config,
                         request.app.state.credential_vault.decrypt(row.encrypted_secrets),
+                        price_lookup=price_lookup(request.app.state.engine, row.kind),
                     )
                     request.app.state.registry.register(str(identifier), adapter)
             return result

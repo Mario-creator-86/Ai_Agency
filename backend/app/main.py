@@ -23,6 +23,7 @@ from app.agents.router import create_agents_router, create_providers_router
 from app.analytics.router import create_analytics_router
 from app.config import ROOT, Settings
 from app.db import create_db_engine
+from app.economy.prices import price_lookup
 from app.economy.router import create_economy_router
 from app.factual.router import create_factual_router
 from app.integrations.discovery import refresh_due_catalogs
@@ -100,7 +101,16 @@ def register_seeded_ollama(engine: Engine, registry: ProviderRegistry) -> None:
             select(ProviderRecord).where(ProviderRecord.provider_type == "OLLAMA")
         ):
             if registry.get(provider.id) is None:
-                registry.register(provider.id, OllamaProvider(base_url=provider.base_url))
+                # With the Owner's price table in hand the adapter costs every generation
+                # from the tokens it counted. Without it 391 runs on the live copy carried
+                # `cost_vr` NULL and the day's budget saw none of them. A local model has no
+                # price and still costs None — never zero.
+                registry.register(
+                    provider.id,
+                    OllamaProvider(
+                        base_url=provider.base_url, price_lookup=price_lookup(engine, "ollama")
+                    ),
+                )
 
 
 def create_app(settings: Settings | None = None) -> ASGIApp:

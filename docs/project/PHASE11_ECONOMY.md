@@ -97,6 +97,45 @@ maturity refusal, the euro-without-a-rate and rate-without-a-source refusals, th
 loan at 7.25% and a 500 EUR contribution at 1.08, giving 2540 VR$ spendable with 2000 VR$ of debt
 and a balanced ledger. Screenshot: `output/playwright/funding-form.png`.
 
+## What the ledger gained since — a price, and money held (2026-09-18)
+
+Phase 11 recorded what a vendor *had* charged. Migration `0039_pricing_truth_and_reservations`
+adds two rows that let the books say what a thing costs before an invoice exists, and hold the
+money while it is being spent. Both sit beside the ledger: neither posts an entry, and the four
+invariants above are untouched by either.
+
+**`provider_price` — what one unit costs, and who says so.** One active row per
+`(provider_kind, resource, unit)` in integer micros, versioned: a new price deactivates the
+previous one and keeps it, so the books can still say what a token cost on a past day. `resource`
+is the model id the adapter reports, and `"*"` prices every model of a kind that has no row of its
+own; a model's own row outranks it. Every row carries its provenance — OWNER, DOCUMENTED, QUOTED
+or BILLED — because a price is the Owner's decision and not a fact the studio may discover for
+itself. It is written only by `PUT /economy/prices` (Owner-only, idempotent by command id,
+versioned with `expected_version`) or by `seed_documented_prices`, which writes one DOCUMENTED row
+and one only — ElevenLabs' public Creator-plan figure, 0.22 USD per 1 000 characters, with a note
+saying it is the public list and not the Owner's invoice — never overrides a row of any
+provenance, and adds nothing on a second run. `scripts/bootstrap.py` is its one caller. Ollama
+Cloud is deliberately unseeded: its price is the plan the Owner bought, and by the same rule that
+refuses an invented FX rate, a guess in the books is worse than a gap the Accountant reports as
+`unpriced_agent_runs`. The ElevenLabs, Ollama and configured-LLM adapters are built with this
+table, so a language run and a narration now carry a cost computed from what they measured — and
+answer None, never zero, where the price is missing or only half of it is known.
+
+**`spend_reservation` — money held, which is neither spent nor free.** Before a film is made the
+media stage prices the plan and `reserve_spend` writes a RESERVED row behind the write lock, so two
+films started together cannot both fit on the last ten dollars. The row ends one of two ways:
+SETTLED, once the real `provider_cost_record` rows for that render are written and the estimate is
+replaced by the fact; or RELEASED, on every path where the film was not made. The watchdog releases
+— never settles — a hold older than the reservation TTL of six hours: a process that died under a
+hold made no film.
+
+`spend_since` reports the held sum as `reserved_usd_micros`, apart from `spent_usd_micros` and
+never folded into it, and every budget check counts spent plus held against the limit, so the ratio
+and the remaining figure the Owner reads are of money *committed* rather than only of money gone.
+A RESERVED row is the first thing in this studio that keeps an amount out of a budget before the
+amount exists — and it is still not a payment. Nothing in the API pays, purchases or transfers,
+and a test asserts that over the whole OpenAPI surface.
+
 ## What Phase 11 does not do
 
 - **Nothing spends VR$.** There is no procurement, no purchase, no checkout and no payment route

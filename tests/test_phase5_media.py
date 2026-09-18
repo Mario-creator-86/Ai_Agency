@@ -294,8 +294,12 @@ def test_storyboard_blocked_when_autonomy_stopped(engine):
         generate_storyboard_from_script(engine, script_id, "MOTION_GRAPHIC", "9:16", corr_id)
 
 
-def _seeded_storyboard(engine, tmp_path: Path) -> tuple[str, str]:
-    """Create an approved script with a SUPPORTED claim and return (storyboard_id, claim_id)."""
+def _seeded_storyboard(engine, tmp_path: Path, scenes: int = 2) -> tuple[str, str]:
+    """Create an approved script with a SUPPORTED claim and return (storyboard_id, claim_id).
+
+    `scenes` is how many the script plans; a render that is stopped part way through needs a
+    plan longer than what it managed, or the attempt and the plan cannot be told apart.
+    """
     now = utc_now()
     corr_id = str(uuid4())
     script_id = str(uuid4())
@@ -348,7 +352,7 @@ def _seeded_storyboard(engine, tmp_path: Path) -> tuple[str, str]:
                         "transition_in": "FADE",
                         "claim_ids": [claim_id],
                     }
-                    for i in (1, 2)
+                    for i in range(1, scenes + 1)
                 ],
                 status="APPROVED",
                 claim_ids_json=[claim_id],
@@ -963,3 +967,94 @@ def test_the_owners_render_button_hands_the_settings_to_the_camera_and_to_qc(
     response = client.post(f"/api/v1/media/qc/{asset_id}", headers=headers)
     assert response.status_code == 200, response.text
     assert received["qc"]["settings"] is settings
+
+
+# --------------------------------------------------------------------------------------------
+# A render the vendor stopped: the job keeps what was attempted, never what was planned
+# --------------------------------------------------------------------------------------------
+
+
+def test_a_render_refused_at_the_third_scene_keeps_the_two_it_made_and_the_books_charge_for_them(
+    engine, tmp_path: Path
+):
+    """`_fail_job` used to leave `production_json` untouched, so a render the vendor stopped
+    looked free: the Accountant found no scenes and charged nothing although the shots were
+    generated and billed. The job now carries the scenes it actually made — and only those.
+
+    Three scenes are planned and the vendor refuses the third, so the plan and the attempt
+    differ by exactly one scene: a job that wrote the plan instead would charge the day for
+    a shot that was never asked for, which is the opposite error and just as wrong.
+    """
+    from app.economy.accountant import record_failed_render_cost
+    from app.economy.models import ProviderCostRecord
+    from app.economy.prices import PriceCommand, set_price
+    from app.integrations.services import SaveIntegration, save
+    from app.integrations.vault import CredentialVault
+    from app.providers.media_http import MediaProviderError
+
+    connection = str(uuid4())
+    save(
+        engine,
+        CredentialVault(tmp_path / "render.credentials.key"),
+        connection,
+        SaveIntegration(
+            kind="elevenlabs", name="Voice", config={}, secrets={"api_key": "k-" + connection}
+        ),
+    )
+    set_price(
+        engine,
+        PriceCommand(
+            command_id=uuid4(),
+            provider_kind="elevenlabs",
+            resource="*",
+            unit="per_1k_characters",
+            usd="0.30",
+        ),
+    )
+    storyboard_id, _claim_id = _seeded_storyboard(engine, tmp_path, scenes=3)
+
+    class VoiceThatStopsAtTheThirdScene(DeterministicTTSAdapter):
+        PROVIDER_NAME = "elevenlabs"
+        model = "eleven_turbo_v2_5"
+        integration_id = connection
+        calls = 0
+
+        async def synthesize(self, text: str, **kwargs):
+            type(self).calls += 1
+            if type(self).calls > 2:
+                raise MediaProviderError("the vendor refused this narration")
+            return await super().synthesize(text, **kwargs)
+
+    with pytest.raises(MediaProviderError):
+        assemble_video_job(
+            engine,
+            storyboard_id,
+            str(uuid4()),
+            storage_root=tmp_path / "media",
+            tts_adapter=VoiceThatStopsAtTheThirdScene(),
+        )
+
+    with Session(engine) as session:
+        job = session.scalars(select(VideoRenderJob)).one()
+        job_id = job.id
+        production = job.production_json if isinstance(job.production_json, dict) else {}
+    assert job.status == "FAILED", "a refused render left its job open"
+    attempted = list(production.get("scenes") or [])
+    assert [scene["scene_index"] for scene in attempted] == [1, 2], attempted
+    assert all(scene["characters"] > 0 and scene["model_id"] for scene in attempted)
+
+    charged = record_failed_render_cost(engine, job_id, correlation_id=str(uuid4()))
+
+    assert (charged["scenes"], charged["recorded"], charged["unpriced_scenes"]) == (2, 2, 0)
+    with Session(engine) as session:
+        rows = sorted(
+            session.scalars(select(ProviderCostRecord)), key=lambda r: r.external_reference
+        )
+    assert len(rows) == 2, "one row a scene, for the two scenes that were made"
+    assert all(row.status == "ESTIMATED" and row.failed for row in rows)
+    assert [row.external_reference for row in rows] == [
+        f"render:{job_id}:failed:scene:1:voice",
+        f"render:{job_id}:failed:scene:2:voice",
+    ]
+    # The same reading again charges nothing: a re-run of the books is not a second bill.
+    assert record_failed_render_cost(engine, job_id)["recorded"] == 0

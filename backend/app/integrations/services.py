@@ -7,6 +7,7 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from app.agents.models import Agent, ModelRecord, ProviderRecord
+from app.economy.prices import price_lookup
 from app.integrations.catalog import CATALOG
 from app.integrations.discovery import DISCOVERED_KINDS, reset_discovery
 from app.integrations.llm import ConfiguredLLM
@@ -145,9 +146,18 @@ def load_registry(engine: Engine, vault: CredentialVault, registry: ProviderRegi
     with Session(engine) as session:
         for row in session.scalars(select(Integration)):
             if CATALOG[row.kind]["runtime"] == "llm":
+                # The price table of this connection's kind, read once per call inside the
+                # adapter: a price the Owner types this afternoon costs this evening's runs
+                # without a restart. Registered without one, every run of the connection
+                # reported `cost_vr` NULL whatever he had typed.
                 registry.register(
                     row.id,
-                    ConfiguredLLM(row.kind, row.config, vault.decrypt(row.encrypted_secrets)),
+                    ConfiguredLLM(
+                        row.kind,
+                        row.config,
+                        vault.decrypt(row.encrypted_secrets),
+                        price_lookup=price_lookup(engine, row.kind),
+                    ),
                 )
 
 
