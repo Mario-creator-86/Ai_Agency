@@ -141,9 +141,10 @@ def list_roles(engine: Engine) -> list[dict]:
         roles = session.scalars(select(Role).order_by(Role.name)).all()
         result = []
         for role in roles:
-            # REQUIRED only: the field is called `required_capabilities` and a role may now
-            # also *prefer* one (ROLE_PREFERENCES), which blocks nothing. Listing a preference
-            # here would tell the Owner his Video Editor needs a seeing model to work at all.
+            # The two levels are kept apart in two fields, never merged into one list: a
+            # preference listed as a requirement would tell the Owner his Video Editor needs a
+            # seeing model to work at all, and she works without one. `preferred_capabilities`
+            # is what her page reads to say why she is on the model she is on.
             caps = session.scalars(
                 select(Capability.name)
                 .join(RoleCapability, RoleCapability.capability_id == Capability.id)
@@ -152,8 +153,18 @@ def list_roles(engine: Engine) -> list[dict]:
                     RoleCapability.requirement_level == REQUIRED,
                 )
             ).all()
+            preferred = session.scalars(
+                select(Capability.name)
+                .join(RoleCapability, RoleCapability.capability_id == Capability.id)
+                .where(
+                    RoleCapability.role_id == role.id,
+                    RoleCapability.requirement_level == PREFERRED,
+                )
+                .order_by(Capability.name)
+            ).all()
             view = RoleView.model_validate(role)
             view.required_capabilities = list(caps)
+            view.preferred_capabilities = list(preferred)
             result.append(view.model_dump())
         return result
 
@@ -412,6 +423,31 @@ def sync_provider_models(
         # A configuration file that cannot be applied is a thing to report, not a reason to
         # fail the model sync the Owner asked for.
         logger.warning("llm_allocation_failed", extra={"reason": str(exc)[:200]})
+
+    # And then what a role *prefers*, which only a sync can satisfy: `record_declared` above
+    # is the only place in the studio that ever writes `vision` on a model, so this call is
+    # the first moment at which a seeing model exists as a row. After the allocation and not
+    # before it: the allocation is the studio's baseline and skips only employees who already
+    # carry `agent.model_assigned`, which a preferred move deliberately does not write — run
+    # first, the preference would be undone by the file three lines later. Measured
+    # 2026-09-18: without this call the only caller was `seed_initial_workforce`, i.e.
+    # `scripts/bootstrap.py`, so a model the Owner admitted after his first start reached
+    # nobody, `vision_agent` returned None at 05:00 and the picture gate stood down on every
+    # film. Idempotent, and it never moves an employee he placed himself.
+    try:
+        preference = prefer_capable_models(engine)
+        if preference["moved"] or preference["skipped"]:
+            logger.info(
+                "role_preference_after_sync",
+                extra={
+                    "moved": len(preference["moved"]),
+                    "skipped": len(preference["skipped"]),
+                },
+            )
+    except (ValueError, RuntimeError) as exc:
+        # Same rule as the allocation above: a preference that cannot be applied is reported,
+        # and the models the sync did record are kept.
+        logger.warning("role_preference_failed", extra={"reason": str(exc)[:200]})
 
     return list_provider_models(engine, provider_id)
 
@@ -1121,9 +1157,9 @@ def prefer_capable_models(engine: Engine) -> dict[str, list[dict[str, str]]]:
 
     Three rules keep it from being an assignment nobody asked for:
 
-    - **The Owner's own choice stands.** An employee whose models were ever saved through the
-      assignment command (`agent.model_assigned`) is left alone, the same guard
-      `apply_llm_allocation` uses, or the next start would quietly undo what he chose.
+    - **The Owner's own choice stands.** An employee he put on a model by hand is left alone
+      (`_owner_chose_models`), or the next start would quietly undo what he chose. The
+      studio's own starting allocation is not his hand, and is refined.
     - **A candidate must do the whole job.** It must be available, declare every capability
       the role *requires*, and declare what the role prefers; otherwise the move would trade
       a working employee for a blocked one.
@@ -1169,15 +1205,7 @@ def prefer_capable_models(engine: Engine) -> dict[str, list[dict[str, str]]]:
             )
             if preferred <= _model_capabilities(session, agent.model_id):
                 continue  # her model already has it; nothing to prefer
-            assigned = session.scalar(
-                select(DomainEvent.event_id)
-                .where(
-                    DomainEvent.event_type == "agent.model_assigned",
-                    DomainEvent.aggregate_id == agent.id,
-                )
-                .limit(1)
-            )
-            if assigned is not None:
+            if _owner_chose_models(session, agent, role_name):
                 skipped.append({"role": role_name, "why": "modelele au fost alese de Owner"})
                 continue
             if agent.runtime_state not in ("IDLE", "BLOCKED", "ERROR"):
@@ -1229,6 +1257,84 @@ def prefer_capable_models(engine: Engine) -> dict[str, list[dict[str, str]]]:
             "role_capability_preference", extra={"moved": len(moved), "skipped": len(skipped)}
         )
     return {"moved": moved, "skipped": skipped}
+
+
+def _owner_chose_models(session: Session, agent: Agent, role_name: str) -> bool:
+    """Whether this employee's models are the Owner's own choice, rather than the file's.
+
+    The guard here used to be the bare existence of an `agent.model_assigned` event, which is
+    written by the Owner's command and by `apply_llm_allocation` alike, because the allocation
+    applies the studio's own file *through* that command. Measured 2026-09-18 on this tree:
+    the first model sync assigns the Video Editor the primary her role is allocated in
+    `config/workforce_seed.json`, and writes that event — so a seeing model admitted afterwards
+    could never reach her, and the preference stood down for a choice the Owner never made.
+
+    What decides it is the last event that moved her models:
+
+    - nothing at all — she is where the seed hired her, and may be moved;
+    - `agent.model_preferred` — this function moved her last, so it may move her again;
+    - `agent.model_assigned` — the studio's file when her three slots hold exactly the models
+      that file names for her role, and the Owner's hand otherwise.
+
+    Two cases are read as his on purpose: a role the allocation does not name at all, and an
+    allocation that cannot be read. Standing down costs a picture check that says honestly it
+    could not run; moving wrongly overwrites a decision, and only one of the two is undoable
+    by the studio.
+
+    One case the record cannot decide: the Owner who assigns an employee, by hand, to exactly
+    the three models his own file already names for her. That is read as the file's, and she
+    may be moved. The move goes only to a model declaring everything her role requires as well
+    as what it prefers, and writes `agent.model_preferred` rather than his event, so his next
+    assignment still wins and stays won.
+    """
+    from app.agents.ensemble import resolve_model  # noqa: PLC0415
+
+    last = session.scalar(
+        select(DomainEvent)
+        .where(
+            DomainEvent.aggregate_id == agent.id,
+            DomainEvent.event_type.in_(("agent.model_assigned", "agent.model_preferred")),
+        )
+        .order_by(DomainEvent.sequence.desc())
+        .limit(1)
+    )
+    if last is None or last.event_type == "agent.model_preferred":
+        return False
+    entry = _allocation_entry(role_name)
+    if entry is None:
+        return True
+    held = {
+        "primary": agent.model_id,
+        "secondary": agent.secondary_model_id,
+        "tertiary": agent.tertiary_model_id,
+    }
+    for slot, model_id in held.items():
+        wanted = entry.get(slot)
+        # `resolve_model`, not the name, because the file may spell a model the way the Owner
+        # types it and the registry the way the vendor returns it (":cloud", "-cloud").
+        row = resolve_model(session, wanted) if wanted else None
+        if (row.id if row is not None else None) != (model_id or None):
+            return True
+    return False
+
+
+def _allocation_entry(role_name: str) -> dict[str, Any] | None:
+    """What the studio's own starting allocation says about this role, or None.
+
+    None also when the file cannot be read: the caller reads that as the Owner's own choice,
+    which leaves the employee exactly where she is.
+    """
+    from app.agents.seed_config import load_seed_config  # noqa: PLC0415
+
+    try:
+        allocation = load_seed_config().get("llm_allocation") or []
+    except (OSError, ValueError, KeyError) as exc:
+        logger.warning("llm_allocation_unreadable", extra={"reason": str(exc)[:200]})
+        return None
+    for entry in allocation:
+        if isinstance(entry, dict) and entry.get("role") == role_name:
+            return dict(entry)
+    return None
 
 
 def _model_capabilities(session: Session, model_id: str | None) -> set[str]:

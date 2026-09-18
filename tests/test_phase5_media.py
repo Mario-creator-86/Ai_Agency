@@ -1299,8 +1299,10 @@ def test_a_factual_scene_that_names_a_character_records_that_character(engine):
 
     Measured before this: `generate_storyboard_from_script` wrote `character_ids_json=[]` on
     every scene of every factual film, and `character_drift_qc` answered "no scene in this
-    film lists a character" on every one of them. A scene whose picture names Sarah now
-    records Sarah — and only her: the scene that shows the telescope shows nobody.
+    film lists a character" on every one of them. A scene whose picture names Sarah
+    Executive by her whole name now records her — and only her: the scene that shows the
+    telescope shows nobody. The whole canonical name is the film's own statement of who is
+    in it; the bare given name is the guess measured two tests below.
     """
     from app.media.services import storyboard_cast_note
 
@@ -1310,7 +1312,9 @@ def test_a_factual_scene_that_names_a_character_records_that_character(engine):
         [
             {
                 "scene_index": 1,
-                "visual_description": "Sarah at the studio window, reading the day's figures",
+                "visual_description": (
+                    "Sarah Executive at the studio window, reading the day's figures"
+                ),
                 "narration": "The day starts with the numbers.",
             },
             {
@@ -1459,3 +1463,94 @@ def test_a_surname_the_bible_does_not_hold_is_not_the_studios_character(engine):
 
     assert board["scenes"][0]["character_ids_json"] == []
     assert board["cast_note"] == NO_CAST_BY_DESIGN
+
+
+def test_a_name_the_prose_merely_spells_is_a_guess_and_casts_nobody(engine):
+    """Three sentences measured on this tree, each of which used to cast an employee.
+
+    "Hurricane Elena made landfall" recorded Elena Fact-Checker, "Lyra, the constellation,
+    rises" recorded Lyra Voice Artist and "the Kael river delta" recorded Kael Video Editor,
+    because a bare given name counted whenever the next word was lower case. What a cast is
+    for decides this: a recorded character steers a paid render towards a portrait and
+    refuses the film when the look is locked, so a name the studio merely guessed is not
+    one. The scene stays empty, the guess is kept on the board's own record with the reading
+    that produced it, and the note says the empty cast is a guess refused — not a film
+    designed without people.
+    """
+    from app.media.services import NO_CAST_ONLY_GUESSED, storyboard_cast_record
+
+    seed_default_character_bibles(engine)
+    script_id = _factual_script(
+        engine,
+        [
+            {
+                "scene_index": 1,
+                "visual_description": "Hurricane Elena made landfall before dawn",
+                "narration": "The storm came ashore.",
+            },
+            {
+                "scene_index": 2,
+                "visual_description": "Lyra, the constellation, rises over the ridge",
+                "narration": "A small harp of stars.",
+            },
+            {
+                "scene_index": 3,
+                "visual_description": "The Kael river delta seen from orbit",
+                "narration": "Silt spreading into the sea.",
+            },
+        ],
+        title="Three false positives",
+    )
+
+    board = generate_storyboard_from_script(
+        engine, script_id, "MOTION_GRAPHIC", "9:16", str(uuid4())
+    )
+
+    assert [scene["character_ids_json"] for scene in board["scenes"]] == [[], [], []]
+    with Session(engine) as session:
+        names = {row.id: row.canonical_name for row in session.scalars(select(CharacterBible))}
+        record = storyboard_cast_record(session, board["id"])
+    guessed = {index: sorted(names[cid] for cid in ids) for index, ids in record["guessed"].items()}
+    assert guessed == {
+        "1": ["Elena Fact-Checker"],
+        "2": ["Lyra Voice Artist"],
+        "3": ["Kael Video Editor"],
+    }
+    assert record["note"] == NO_CAST_ONLY_GUESSED
+    assert board["cast_note"] == NO_CAST_ONLY_GUESSED
+
+
+def test_a_guess_is_not_recorded_twice_when_the_scene_states_the_same_person(engine):
+    """A scene that states its cast is certain, and the guess for it is not kept beside it.
+
+    The writer's own list is the film's statement of who is in the scene, whichever form of
+    the name it writes; the prose of the same scene adds nothing to it.
+    """
+    from app.media.services import storyboard_cast_record
+
+    seed_default_character_bibles(engine)
+    script_id = _factual_script(
+        engine,
+        [
+            {
+                "scene_index": 1,
+                "visual_description": "Sarah at the studio window, mid-sentence",
+                "narration": "The day starts with the numbers.",
+                "characters": ["Sarah"],
+            }
+        ],
+        title="Stated and spelled",
+    )
+
+    board = generate_storyboard_from_script(
+        engine, script_id, "MOTION_GRAPHIC", "9:16", str(uuid4())
+    )
+
+    with Session(engine) as session:
+        sarah = session.scalar(
+            select(CharacterBible).where(CharacterBible.canonical_name == "Sarah Executive")
+        )
+        record = storyboard_cast_record(session, board["id"])
+    assert board["scenes"][0]["character_ids_json"] == [sarah.id]
+    assert record["guessed"] == {}
+    assert record["note"] is None

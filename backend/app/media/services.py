@@ -659,6 +659,14 @@ NO_CAST_BY_DESIGN = (
     "omission — the narrator has no face and the scenes show material, not people"
 )
 
+#: Said instead of the above on a board whose scenes never state who is in them although
+#: their prose spells names the bible holds. Not "by design": nobody decided this film has
+#: no cast — the studio read words it could not be sure of and refused to cast on a guess.
+NO_CAST_ONLY_GUESSED = (
+    "no scene in this film states who is in it: the names its prose spells were read as a "
+    "guess, and a guessed name draws nobody's portrait and refuses no film"
+)
+
 
 def _character_keys(canonical_name: str) -> tuple[str, tuple[str, ...]] | tuple[()]:
     """A canonical name as a scene may write it: the whole name, and the given name alone.
@@ -680,26 +688,34 @@ def _character_keys(canonical_name: str) -> tuple[str, tuple[str, ...]] | tuple[
 
 
 def _characters_named_in(
-    text: str, keys_by_id: dict[str, tuple[str, tuple[str, ...]]]
+    text: str,
+    keys_by_id: dict[str, tuple[str, tuple[str, ...]]],
+    *,
+    given_names: bool = True,
 ) -> list[str]:
-    """The studio characters this text actually names, in the order it names them.
+    """The studio characters this text names, in the order it names them.
 
     Matched as written, capital and all: a name is a proper noun, and a lower-case word that
     happens to spell one is not a person on screen.
 
     A given name on its own is not counted when another capitalised word follows it, because
     that word is usually a surname the bible does not hold: a factual film says "the Vera
-    Rubin Observatory" and means a telescope, not the studio's Publisher. The whole canonical
-    name is always counted. The cost of the rule is a scene in Title Case whose character is
-    missed; the cost of dropping it is a cast this function invented, which would make the
-    character check certify a comparison nobody asked for.
+    Rubin Observatory" and means a telescope, not the studio's Publisher.
+
+    `given_names` is which of the two readings this is. False reads only whole canonical
+    names — the strict reading, whose every hit is the text's own statement about a studio
+    character. True also reads the bare given name, which was measured on this tree to find
+    Elena Fact-Checker in "Hurricane Elena made landfall", Lyra Voice Artist in "Lyra, the
+    constellation, rises" and Kael Video Editor in "the Kael river delta". That reading is
+    right where the text is a record of a cast and wrong where it is prose, so the caller
+    says which it is holding rather than one regex trying to be both.
     """
     import re  # noqa: PLC0415 - only the storyboard's cast reads a scene's prose
 
     found: list[tuple[int, str]] = []
     for character_id, (given, full) in keys_by_id.items():
         patterns = [rf"(?<![\w-]){re.escape(name)}(?![\w-])" for name in full]
-        if given:
+        if given and given_names:
             patterns.append(rf"(?<![\w-]){re.escape(given)}(?![\w-])(?!\s+[A-Z])")
         hits = [match.start() for p in patterns if (match := re.search(p, text))]
         if hits:
@@ -724,22 +740,48 @@ def _scene_visual(scene: dict, index: int) -> str:
 
 def _scene_cast(
     scene: dict, visual_prompt: str, keys_by_id: dict[str, tuple[str, tuple[str, ...]]]
-) -> list[str]:
-    """Who is on screen in one factual scene, decided from what the scene itself says.
+) -> tuple[list[str], list[str]]:
+    """Who is on screen in one factual scene, and who the scene's prose only suggests is.
 
-    Two readings, in order of evidence: the writer's own cast list for the scene (the shape
-    the serial's script already uses), then the names in the picture the scene asks for. The
-    narration is deliberately not read — in a factual film it is the narrator's voice, and a
-    name spoken over a photograph of a telescope does not put that person in the shot.
+    Returned as (stated, guessed), because a cast is not a label — it steers a paid render
+    towards a stored portrait, it is what the character gate compares the frame with, and it
+    refuses the film outright when that character's look is locked and no reference exists.
+    Two of those three must never follow a guess, so the two readings are kept apart:
+
+    * **stated** — the writer's own cast list for the scene (the shape the serial's script
+      already uses), read by given name because a list of characters is a record of who is
+      in the scene; plus whole canonical names in the picture the scene asks for, because
+      "Sarah Executive at the window" is the film saying who is at the window.
+    * **guessed** — a bare given name in that same prose. It is kept, never acted on: the
+      board records it so the gate can look, and so a reader can see what the studio read.
+
+    The narration is deliberately not read at all — in a factual film it is the narrator's
+    voice, and a name spoken over a photograph of a telescope puts nobody in the shot.
     """
-    stated = " ".join(
-        str(name) for name in (scene.get("characters") or []) if isinstance(name, str)
-    )
-    cast = _characters_named_in(stated, keys_by_id)
-    for character_id in _characters_named_in(visual_prompt, keys_by_id):
-        if character_id not in cast:
-            cast.append(character_id)
-    return cast
+    # One entry at a time, never the whole list joined into a line. Measured 2026-09-18: the
+    # list was read as one string, so the rule that protects "the Vera Rubin Observatory" —
+    # a given name followed by another capitalised word is somebody else's surname — saw
+    # `["Elena", "Kael"]` as «Elena Kael» and dropped Elena. A scene that stated two studio
+    # characters recorded one, and the one it dropped was neither stated nor guessed: her
+    # stored portrait was not attached to the paid render, the character gate never compared
+    # her, and a locked look would have been invented. The rule is right inside one entry,
+    # where the two words really are one name, and was only ever wrong across two of them.
+    stated: list[str] = []
+    for name in scene.get("characters") or []:
+        if not isinstance(name, str):
+            continue
+        for character_id in _characters_named_in(name, keys_by_id):
+            if character_id not in stated:
+                stated.append(character_id)
+    for character_id in _characters_named_in(visual_prompt, keys_by_id, given_names=False):
+        if character_id not in stated:
+            stated.append(character_id)
+    guessed = [
+        character_id
+        for character_id in _characters_named_in(visual_prompt, keys_by_id)
+        if character_id not in stated
+    ]
+    return stated, guessed
 
 
 def generate_storyboard_from_script(
@@ -756,10 +798,12 @@ def generate_storyboard_from_script(
     Every scene also records its cast. Measured 2026-09-18: this function wrote
     `character_ids_json=[]` on every scene of every factual film — the studio's main product —
     so `character_drift_qc` had nothing to compare and reported "no scene in this film lists a
-    character" for ever, while only the serial's storyboard ever filled it. A scene that names
-    a studio character now records that character; a scene of landscapes records nobody, and
-    the creation event says once that the empty cast is the film's design rather than an
-    omission. Nothing is invented to give a gate something to measure.
+    character" for ever, while only the serial's storyboard ever filled it. A scene that
+    states a studio character — the writer's cast list, or the whole canonical name in the
+    picture it asks for — now records that character; a scene of landscapes records nobody,
+    and the creation event says once whether the empty cast is the film's design or a name
+    the studio read and refused to act on. Nothing is invented to give a gate something to
+    measure, and nothing the studio merely guessed reaches the column a paid render reads.
     """
     storyboard_id = str(uuid4())
     now = utc_now()
@@ -832,7 +876,17 @@ def generate_storyboard_from_script(
             _scene_cast(scene, _scene_visual(scene, index), keys_by_id)
             for index, scene in enumerate(scenes_data, start=1)
         ]
-        scenes_with_cast = sum(1 for cast in casts if cast)
+        scenes_with_cast = sum(1 for stated, _ in casts if stated)
+        # What the prose suggested and the board refused to cast on, by scene index as a
+        # string because this is a JSON payload. Kept so the gate can look at a suggested
+        # face without the film ever depending on it, and so the reading that produced a
+        # cast is readable afterwards rather than re-derived from the prose by a second
+        # regex that could disagree with this one.
+        guessed_cast = {
+            str(index): guessed
+            for index, (_stated, guessed) in enumerate(casts, start=1)
+            if guessed
+        }
 
         event = append_event(
             session,
@@ -846,11 +900,19 @@ def generate_storyboard_from_script(
                 "visual_style": visual_style,
                 "aspect_ratio": aspect_ratio,
                 "scene_count": len(scenes_data),
-                # The storyboard's own record of its cast: how many scenes show somebody,
-                # and — when none does — that this is the film's design. A check that finds
-                # no character reads this instead of guessing why there is none.
+                # The storyboard's own record of its cast: how many scenes state somebody,
+                # which names the prose only suggested, and — when nobody is stated — why
+                # there is no cast. A check that finds no character reads this instead of
+                # guessing why there is none, and the two reasons are not the same reason:
+                # a film of landscapes shows nobody by design, while a film whose prose
+                # spelled a name was refused a cast it could not be sure of.
                 "scenes_with_cast": scenes_with_cast,
-                "cast_note": None if scenes_with_cast else NO_CAST_BY_DESIGN,
+                "guessed_cast": guessed_cast,
+                "cast_note": (
+                    None
+                    if scenes_with_cast
+                    else (NO_CAST_ONLY_GUESSED if guessed_cast else NO_CAST_BY_DESIGN)
+                ),
             },
             correlation_id,
         )
@@ -900,7 +962,12 @@ def generate_storyboard_from_script(
                 voiceover_segment=vo,
                 shot_type=st,
                 transition_in=tr,
-                character_ids_json=casts[idx - 1],
+                # Only the stated cast is written here. Everything downstream treats this
+                # column as the film's own word on who is in the shot: the assembler hands
+                # it to the render, the factory turns it into the vendor's referenceImages,
+                # and a locked look with no reference refuses the scene from it. A guess
+                # may do none of those, so it stays on the creation event.
+                character_ids_json=casts[idx - 1][0],
                 claim_ids_json=claims,
                 created_at=now,
             )
@@ -941,13 +1008,17 @@ def list_scripts_awaiting_storyboard(engine: Engine) -> list[dict]:
         ]
 
 
-def storyboard_cast_note(session: Session, storyboard_id: str) -> str | None:
-    """Why this film has no cast, when its maker decided it has none; otherwise None.
+def storyboard_cast_record(session: Session, storyboard_id: str) -> dict:
+    """What this board's maker decided about its cast: the note, and what it only guessed.
 
     The storyboard's own record is its creation event: `media.storyboard_created` carries
     what the builder decided about the cast, the way `agent.model_assigned` carries who chose
-    an employee's model. A board written before this was recorded, or one whose scenes do
-    list characters, answers None — "nobody said" and "somebody is in it" are both not this.
+    an employee's model. Returned as ``{"note": str | None, "guessed": {scene: [id, ...]}}``
+    with scene indices as strings, exactly as the payload holds them.
+
+    A board written before any of this was recorded answers the empty record, which is
+    "nobody said" — not "nobody is in it". The two must not read the same, because a check
+    that reports the second on the evidence of the first certifies something nobody measured.
     """
     from app.models import DomainEvent  # noqa: PLC0415 - read projection only
 
@@ -960,8 +1031,24 @@ def storyboard_cast_note(session: Session, storyboard_id: str) -> str | None:
         .order_by(DomainEvent.sequence)
         .limit(1)
     )
-    note = (payload or {}).get("cast_note") if isinstance(payload, dict) else None
-    return str(note) if note else None
+    payload = payload if isinstance(payload, dict) else {}
+    note = payload.get("cast_note")
+    written = payload.get("guessed_cast")
+    guessed: dict[str, list[str]] = {}
+    if isinstance(written, dict):
+        for index, ids in written.items():
+            if isinstance(ids, list):
+                guessed[str(index)] = [cid for cid in ids if isinstance(cid, str)]
+    return {"note": str(note) if note else None, "guessed": guessed}
+
+
+def storyboard_cast_note(session: Session, storyboard_id: str) -> str | None:
+    """Why this film has no cast, in its maker's own words; None when it has one.
+
+    A board whose scenes do state characters answers None, and so does one built before the
+    note was recorded.
+    """
+    return storyboard_cast_record(session, storyboard_id)["note"]
 
 
 def get_storyboard(engine: Engine, storyboard_id: str) -> dict | None:

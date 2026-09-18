@@ -22,6 +22,7 @@ against the period until the real cost replaces it or it is let go.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
@@ -494,6 +495,34 @@ def release_stale_reservations(
     return {"released": released, "ttl_seconds": int(ttl_seconds), "cutoff": cutoff}
 
 
+#: What a part of a film is called when the studio has to say it could not price it. One
+#: place, because the letter, the question and the reservation must name it in the same words.
+UNPRICED_PART_LABELS: dict[str, str] = {"narration": "narația"}
+
+#: The first words of that sentence, so a reader of a stored note or of the Owner's question
+#: can find the caveat inside a longer line without the sentence being parsed or guessed at.
+UNPRICED_CAVEAT_PREFIX = "estimare incompletă"
+
+
+def unpriced_caveat(parts: Sequence[str]) -> str:
+    """The one sentence the studio says about a figure it could not complete, or "".
+
+    An estimate that counted a part of the film as nothing is not wrong by a rounding: the
+    part is simply absent from it. Said in the Owner's language, and said identically wherever
+    the figure is shown, because a total that reads as complete in one place and incomplete in
+    another is worse than either.
+    """
+    if not parts:
+        return ""
+    names = ", ".join(UNPRICED_PART_LABELS.get(part, part) for part in parts)
+    tail = (
+        "nu are preț stocat și este numărată ca zero"
+        if len(parts) == 1
+        else "nu au preț stocat și sunt numărate ca zero"
+    )
+    return f"{UNPRICED_CAVEAT_PREFIX}: {names} {tail}"
+
+
 def estimate_film_cost_micros(
     engine: Engine,
     storyboard_id: str,
@@ -508,6 +537,12 @@ def estimate_film_cost_micros(
     and the narration at the dearest active ElevenLabs price per thousand characters over
     the storyboard's own voiceover. A film that costs less settles for less; a film that was
     let through on a hopeful estimate is the one that spends the week.
+
+    It also returns what it could not price. With no active ElevenLabs price per thousand
+    characters the narration was counted as zero and the total read as a complete estimate of
+    the film, so a SUPERVISED Owner answered a question about a figure that was missing a part
+    of it; `unpriced`, `caveat` and `complete` travel with the figure to the reservation's
+    note, to that question and to the letter about it, so all three say the same thing.
     """
     from app.economy.models import ProviderPrice  # noqa: PLC0415
     from app.media.models import StoryboardScene  # noqa: PLC0415
@@ -529,6 +564,10 @@ def estimate_film_cost_micros(
             )
         )
     narration = (characters * int(per_1k) + 500) // 1000 if per_1k else 0
+    # What the figure below does not contain. Only where there was something to price: a
+    # storyboard with no voiceover costs nothing for narration whatever the books hold, and a
+    # caveat on every film would teach the Owner to read past the one that matters.
+    unpriced = ["narration"] if characters and not per_1k else []
     if environment == "TEST":
         motion_usd = float(getattr(settings, "test_max_cost_per_generation_usd", 0.0)) * int(
             getattr(settings, "test_motion_scenes", 0)
@@ -544,4 +583,14 @@ def estimate_film_cost_micros(
         "narration_priced": bool(per_1k),
         "characters": characters,
         "motion_usd_micros": motion,
+        # The three the callers carry onward: the parts as data, the sentence the Owner
+        # reads, and the one flag a caller can branch on without knowing either. `complete`
+        # means every part this function *tried* to price was priced — the narration and the
+        # motion ceiling — and never that the figure is the whole film: the stills are not
+        # priced here at all, so a film's image spend is outside the estimate rather than
+        # inside it as a zero. A caller that reads this as "the whole cost" would be making
+        # the claim the caveat exists to stop.
+        "unpriced": unpriced,
+        "caveat": unpriced_caveat(unpriced),
+        "complete": not unpriced,
     }

@@ -692,3 +692,126 @@ def test_the_owners_invoice_retires_the_estimate_it_pays_for(books, client, head
     assert costs[window["external_reference"]]["reconciled_at"]
     assert "înlocuit de factura" in costs[window["external_reference"]]["label"]
     assert costs["RUNWAY-2026-09"]["posted"] is True
+
+
+# ------------------------------- what an estimate says about the part it could not price --
+#
+# The figure a SUPERVISED day puts in front of the Owner is this one. Measured before these
+# tests: with no active ElevenLabs per-thousand-character price the narration was counted as
+# zero and the total read as a complete estimate of the film, so a question he answered at
+# 4.20 USD bought a film that also buys narration at a price nobody has stored.
+
+
+def _a_film_with_voiceover(engine, lines: tuple[str, ...]) -> str:
+    """The smallest thing `estimate_film_cost_micros` reads, on the chain of rows SQLite's
+    foreign keys require: a topic, a script, a storyboard and its scenes."""
+    from app.factual.models import ScriptDraft, TopicIdea
+    from app.media.models import Storyboard, StoryboardScene
+    from app.services import utc_now
+
+    topic_id, script_id, board_id = str(uuid4()), str(uuid4()), str(uuid4())
+    now = utc_now()
+    with Session(engine) as session, session.begin():
+        session.add(
+            TopicIdea(
+                id=topic_id,
+                title="Un subiect de probă",
+                topic="Test",
+                angle="Test",
+                target_audience="test",
+                novelty_score=0.9,
+                status="SELECTED",
+                created_at=now,
+            )
+        )
+    # Three transactions rather than one: SQLite checks its foreign keys as each row lands,
+    # and the unit of work orders four tables it was given at once by its own rules.
+    with Session(engine) as session, session.begin():
+        session.add(
+            ScriptDraft(
+                id=script_id,
+                topic_id=topic_id,
+                version=1,
+                title="Un film de probă",
+                target_duration_seconds=12,
+                voiceover_full_text=" ".join(lines),
+                scenes_json=[],
+                status="APPROVED",
+                claim_ids_json=[],
+                unverified_claim_ids_json=[],
+                created_at=now,
+            )
+        )
+    with Session(engine) as session, session.begin():
+        session.add(
+            Storyboard(
+                id=board_id,
+                script_draft_id=script_id,
+                title="Un film de probă",
+                visual_style="MOTION_GRAPHIC",
+                aspect_ratio="9:16",
+                target_duration_seconds=12,
+                status="APPROVED",
+                total_scenes=len(lines),
+                created_at=now,
+            )
+        )
+        for index, line in enumerate(lines, start=1):
+            session.add(
+                StoryboardScene(
+                    id=str(uuid4()),
+                    storyboard_id=board_id,
+                    scene_index=index,
+                    visual_prompt=f"scene {index}",
+                    visual_type="MOTION_GRAPHIC",
+                    duration_seconds=6.0,
+                    voiceover_segment=line,
+                    shot_type="MEDIUM",
+                    transition_in="CUT",
+                    character_ids_json=[],
+                    claim_ids_json=[],
+                    created_at=now,
+                )
+            )
+    return board_id
+
+
+def test_an_estimate_that_could_not_price_the_narration_says_so(engine, settings):
+    """The understatement itself, and the words that stop it reading as a complete figure.
+
+    The bare studio the `engine` fixture builds has no voice price at all — `bootstrap.py`
+    seeds the DOCUMENTED ElevenLabs figure and nothing else does — so the blind estimate is
+    what a studio measures first, and the priced one is what it measures after the Owner's
+    (or bootstrap's) figure is in the books.
+    """
+    from app.economy.budget import estimate_film_cost_micros
+    from app.economy.prices import seed_documented_prices
+
+    board = _a_film_with_voiceover(engine, ("O primă replică.", "A doua replică."))
+    blind = estimate_film_cost_micros(engine, board, environment="PRODUCTION", settings=settings)
+
+    assert blind["narration_usd_micros"] == 0
+    assert blind["unpriced"] == ["narration"] and blind["complete"] is False
+    assert "narația" in blind["caveat"] and "zero" in blind["caveat"]
+
+    seed_documented_prices(engine)
+    priced = estimate_film_cost_micros(engine, board, environment="PRODUCTION", settings=settings)
+
+    assert priced["narration_usd_micros"] > 0
+    assert priced["usd_micros"] > blind["usd_micros"], "the understatement is the whole point"
+    assert priced["unpriced"] == [] and priced["caveat"] == "" and priced["complete"] is True
+
+
+def test_a_film_with_no_narration_is_not_reported_as_unpriced(engine, settings):
+    """A check certifies only what it measured. A storyboard with no voiceover costs nothing
+    for narration whether or not a voice price exists, so there is nothing to caveat — and a
+    caveat on every film would teach the Owner to read past the one that matters."""
+    from app.economy.budget import estimate_film_cost_micros
+
+    board = _a_film_with_voiceover(engine, ("", ""))
+
+    estimate = estimate_film_cost_micros(engine, board, environment="PRODUCTION", settings=settings)
+
+    assert estimate["characters"] == 0
+    assert estimate["unpriced"] == [] and estimate["caveat"] == ""
+    assert estimate["complete"] is True

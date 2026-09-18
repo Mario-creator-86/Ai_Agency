@@ -26,6 +26,7 @@ transport and `tests/conftest.py` refuses every non-loopback socket.
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -194,11 +195,30 @@ def test_only_the_owners_command_module_reaches_an_approval_row():
     — a writer added later in a router, an agent or a stage would be an authority nobody
     granted, and it would pass a test that only listed the writers of the day it was written.
     """
-    readers = {
-        path.relative_to(ROOT).as_posix()
-        for path in APPLICATION.rglob("*.py")
-        if "ApprovalRequest" in path.read_text(encoding="utf-8")
-    }
+    readers = set()
+    for path in APPLICATION.rglob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        if "ApprovalRequest" not in source:
+            continue
+        # The scan reads the parsed module rather than its characters: a docstring that
+        # explains where the Owner's question keeps its cost names the class without
+        # reaching the row, and a test that could not tell the two apart would make the
+        # invariant unwritable in prose. Names in code — an import, an attribute, a call —
+        # are what would be an authority nobody granted.
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            named = (
+                (isinstance(node, ast.ClassDef) and node.name == "ApprovalRequest")
+                or (isinstance(node, ast.Name) and node.id == "ApprovalRequest")
+                or (isinstance(node, ast.Attribute) and node.attr == "ApprovalRequest")
+                or (
+                    isinstance(node, ast.ImportFrom)
+                    and any(alias.name == "ApprovalRequest" for alias in node.names)
+                )
+            )
+            if named:
+                readers.add(path.relative_to(ROOT).as_posix())
+                break
     assert readers == {"backend/app/models.py", "backend/app/services.py"}, readers
 
 

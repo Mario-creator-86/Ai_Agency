@@ -431,3 +431,92 @@ def test_an_approval_never_lifts_a_mode_that_was_not_asking(engine):
     assert verdict["status"] == "BLOCKED_MODE"
     with Session(engine) as session:
         assert session.get(ApprovalRequest, request).consumed_at is None
+
+
+# ------------------------------- the letter says the same thing about the same figure --
+
+
+def _owner_letter(engine, kind: str):
+    """The one letter of a kind the Accountant's desk wrote today, or None."""
+    from app.agents.models import AgentMessage
+
+    with Session(engine) as session:
+        letters = [
+            message
+            for message in session.scalars(select(AgentMessage))
+            if isinstance(message.body_json, dict) and message.body_json.get("kind") == kind
+        ]
+        assert len(letters) <= 1, "one letter of a kind a day"
+        return letters[0] if letters else None
+
+
+def test_the_letter_repeats_the_caveat_beside_a_cost_that_is_not_the_whole_film(engine):
+    """A figure that reads as complete is the worst of the three outcomes.
+
+    Measured before this: the caveat `estimate_film_cost_micros` produced reached the
+    reservation's note and nothing else, so the letter about the waiting question said
+    «cost 4.2 USD» about a film whose narration had been counted as nothing. The letter now
+    carries the stage's own words, beside the figure rather than under it.
+    """
+    from app.agents.services import seed_initial_workforce
+    from app.economy.accountant import waiting_approvals_letter
+    from app.economy.budget import UNPRICED_CAVEAT_PREFIX, unpriced_caveat
+    from app.services import request_approval
+
+    seed_initial_workforce(engine)
+    a_studio_that_asks(engine)
+    caveat = unpriced_caveat(["narration"])
+    with Session(engine) as session, session.begin():
+        request_approval(
+            session,
+            DEAR_RENDER,
+            "T3",
+            "video_editor",
+            subject="storyboard-1",
+            evidence=f"storyboard storyboard-1, estimat 4.200000 USD ({caveat})",
+            cost_usd=4.2,
+        )
+
+    written = waiting_approvals_letter(engine, str(uuid4()))
+
+    assert written["written"] is True and written["questions"] == 1
+    letter = _owner_letter(engine, "owner_waiting")
+    assert letter is not None
+    assert f"cost 4.2 USD ({UNPRICED_CAVEAT_PREFIX}" in (letter.body_text or ""), letter.body_text
+    assert "narația" in (letter.body_text or "")
+    # Once, and whole. The evidence line is clipped at 120 characters in the letter, which cut
+    # the caveat mid-sentence when it was left inside it.
+    assert (letter.body_text or "").count(UNPRICED_CAVEAT_PREFIX) == 1
+    assert caveat in (letter.body_text or "")
+    # And as data beside the figure, so nothing downstream has to read the sentence back out
+    # of a line written for a human.
+    assert letter.body_json["questions"][0]["cost_caveat"] == caveat
+
+
+def test_a_question_whose_figure_is_whole_carries_no_caveat(engine):
+    """The caveat is a measurement, not a disclaimer: a question about a complete estimate
+    must read as complete, or the Owner learns to skip the words."""
+    from app.agents.services import seed_initial_workforce
+    from app.economy.accountant import waiting_approvals_letter
+    from app.economy.budget import UNPRICED_CAVEAT_PREFIX
+    from app.services import request_approval
+
+    seed_initial_workforce(engine)
+    a_studio_that_asks(engine)
+    with Session(engine) as session, session.begin():
+        request_approval(
+            session,
+            DEAR_RENDER,
+            "T3",
+            "video_editor",
+            subject="storyboard-2",
+            evidence="storyboard storyboard-2, estimat 4.200000 USD",
+            cost_usd=4.2,
+        )
+
+    waiting_approvals_letter(engine, str(uuid4()))
+
+    letter = _owner_letter(engine, "owner_waiting")
+    assert letter is not None
+    assert UNPRICED_CAVEAT_PREFIX not in (letter.body_text or "")
+    assert letter.body_json["questions"][0]["cost_caveat"] == ""

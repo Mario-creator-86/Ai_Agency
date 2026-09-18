@@ -26,8 +26,11 @@ the stage was SKIPPED and nobody wrote to the Owner; `budget_refusal_letter` wri
 day. And the Director's loop and the mail rounds spent tokens under no ceiling;
 `may_run_agent` is the ceiling, and its refusal is a letter, once a day, not a run per run.
 And a SUPERVISED day left one approval request per film in a page nobody was told to open;
-`waiting_approvals_letter` names what is standing, what each question would cost, and when the
-oldest runs out — once a day, and never when nothing waits.
+`waiting_approvals_letter` names what is standing, what each question would cost — with the
+caveat the stage wrote about its own figure — and when the oldest runs out. Once a day, never
+when nothing waits, and written from both ends of the day: by the stage that raised the
+questions, once it has finished asking, and by the close, so a run that stops at the media
+stage does not have to reach `_post_run` before he hears about it.
 """
 
 from __future__ import annotations
@@ -47,7 +50,12 @@ from app.agents.memory import agent_for_role, remember
 from app.agents.messages import post_message
 from app.agents.models import AgentMessage, AgentRun
 from app.db import lock_for_write
-from app.economy.budget import _period_start, budget_status, studio_timezone
+from app.economy.budget import (
+    UNPRICED_CAVEAT_PREFIX,
+    _period_start,
+    budget_status,
+    studio_timezone,
+)
 from app.economy.prices import price_row
 from app.economy.services import EconomyError, format_micros, record_provider_cost
 from app.factual.sanitizer import wrap_in_inert_boundary
@@ -497,6 +505,26 @@ def _local_moment(iso: str, timezone: str) -> str:
     return moment.astimezone(ZoneInfo(timezone)).strftime("%d.%m.%Y %H:%M")
 
 
+def _cost_caveat(evidence: str | None) -> str:
+    """What the stage said its own figure was missing, read back out of the question, or "".
+
+    The Owner's question is where the caveat is stored: `ApprovalRequest` has a `cost_usd` and
+    an `evidence` line and no column for "this figure is not the whole film", and the media
+    stage writes the sentence `unpriced_caveat` produced into that line. Found by its first
+    words rather than parsed, so a line the stage lengthens later still yields the caveat and
+    a line without one yields nothing at all — the letter must never invent a doubt about a
+    figure that was whole.
+    """
+    if not evidence:
+        return ""
+    start = evidence.find(UNPRICED_CAVEAT_PREFIX)
+    if start < 0:
+        return ""
+    # The stage writes the sentence inside brackets after the figure; the trailing bracket is
+    # the line's punctuation, not part of what the Accountant is repeating.
+    return evidence[start:].rstrip(") ")
+
+
 def waiting_approvals_letter(
     engine: Engine, correlation_id: str | None = None, *, now: datetime | None = None
 ) -> dict[str, Any]:
@@ -512,10 +540,19 @@ def waiting_approvals_letter(
     the business date in the letter's body, decided behind the write lock. Nothing is written
     when nothing waits: a silent inbox must keep meaning "nothing to decide".
 
+    That idempotency is what lets both ends of the day call this, and is also why the media
+    stage calls it once it has finished asking rather than at its first refusal: one letter a
+    business date means the first call is the only one, and a SUPERVISED day makes two films.
+    Until this had a second caller the only one was `reconcile_day` inside `_post_run`, the
+    day's last working stage: a question raised at 05:30 was told to him at the run's end at
+    best, and not at all when the run stopped earlier — and it expired after
+    `approval_expires_after_hours` with the film never made.
+
     Each question is named by what it is about in his own language (`APPROVAL_ACTION_LABELS`),
-    with what it would cost — «necunoscut» where the studio cannot compute it, never zero — and
-    when the oldest of them runs out. The questions are ordered as the day raised them, so the
-    first line is the oldest and the deadline in the last line is its deadline.
+    with what it would cost — «necunoscut» where the studio cannot compute it, never zero, and
+    the stage's own caveat beside a figure that priced only part of the film — and when the
+    oldest of them runs out. The questions are ordered as the day raised them, so the first
+    line is the oldest and the deadline in the last line is its deadline.
     """
     waiting = sorted(pending_approvals(engine), key=lambda request: request.created_at)
     if not waiting:
@@ -532,6 +569,8 @@ def waiting_approvals_letter(
             "requester": request.requester,
             "cost_usd": request.cost_usd,
             "cost_label": request.cost_label,
+            # Empty for a figure that was whole; never a phrase invented here.
+            "cost_caveat": _cost_caveat(request.evidence),
             "expires_at": request.expires_at,
             "created_at": request.created_at,
         }
@@ -542,9 +581,19 @@ def waiting_approvals_letter(
         # The evidence is the one part of a question written by a model (a film's title, a
         # storyboard's estimate). It is what the governance panel already shows him beside the
         # same question, clipped here so one long title cannot become the whole letter.
-        about = f" — {request.evidence[:120]}" if request.evidence else ""
+        # The caveat is said once, beside the figure, so it is taken out of the evidence here:
+        # the clip at 120 characters cut it mid-sentence («…nu are preț stocat și est»), and a
+        # half-said caveat is the one thing worse than none.
+        described = request.evidence or ""
+        start = described.find(UNPRICED_CAVEAT_PREFIX)
+        if start >= 0:
+            described = described[:start].rstrip(" (")
+        about = f" — {described[:120]}" if described else ""
+        # Beside the figure and not under it: a caveat further down the line is read after the
+        # number has already been believed.
+        caveat = f" ({question['cost_caveat']})" if question["cost_caveat"] else ""
         lines.append(
-            f"{index}. {question['action_label']}{about}; cost {question['cost_label']}; "
+            f"{index}. {question['action_label']}{about}; cost {question['cost_label']}{caveat}; "
             f"expiră {_local_moment(request.expires_at, timezone)}."
         )
     oldest_expires_at = waiting[0].expires_at

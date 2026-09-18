@@ -1292,3 +1292,96 @@ def test_a_film_the_owner_refused_stays_qc_passed_and_unpublished_and_is_not_ask
     # Nothing asks him again the same day: one row, still his refusal.
     assert [(row.id, row.result) for row in _approvals(engine)] == [(request.id, "REFUSED")]
     assert again["status"] == "COMPLETED"
+
+
+# ----------------- the day tells him the moment it stops, and with a figure that is honest --
+
+
+def _owner_letters(engine, kind: str) -> list[Any]:
+    from app.agents.models import AgentMessage
+    from sqlalchemy import select
+
+    with Session(engine) as session:
+        return [
+            message
+            for message in session.scalars(select(AgentMessage))
+            if isinstance(message.body_json, dict) and message.body_json.get("kind") == kind
+        ]
+
+
+def test_the_owner_is_told_when_the_media_stage_stops_and_not_only_at_the_days_close(
+    engine, settings, monkeypatch
+):
+    """Measured before this: `waiting_approvals_letter` was called only from `reconcile_day`,
+    which runs inside `_post_run` — the last working stage of the day. A media stage that
+    stopped at 05:30 under SUPERVISED left its question in a page nobody was told to open,
+    and a run that never reached `_post_run` left it there until it expired twenty-four hours
+    later and the film was never made. The letter is now written where the question is born,
+    and the once-a-day idempotency keeps the day's close from writing a second one.
+    """
+    from app.agents.services import seed_initial_workforce
+    from app.runbook import stages
+
+    _autonomy_on(engine)
+    _mode(engine, "SUPERVISED")
+    seed_initial_workforce(engine)
+    settings.paid_generation_approval_threshold_usd = 0.0
+    _approved_board(engine, "A factual short")
+    rendered: list[str] = []
+    _media_stage_with_a_fake_camera(monkeypatch, rendered)
+
+    outcome = stages._media(engine, settings, None, None)
+
+    assert outcome["status"] == "SKIPPED" and rendered == []
+    (request,) = _approvals(engine)
+    letters = _owner_letters(engine, "owner_waiting")
+    assert len(letters) == 1, "the stage that raised the question also wrote the letter"
+    assert [q["id"] for q in letters[0].body_json["questions"]] == [request.id]
+
+    # The same day again — the run retried, or the close reaching `reconcile_day` — is still
+    # one letter: the Owner must not be taught that this letter is noise.
+    stages._media(engine, settings, None, None)
+    from app.economy.accountant import waiting_approvals_letter
+
+    waiting_approvals_letter(engine, str(uuid4()))
+    assert [m.id for m in _owner_letters(engine, "owner_waiting")] == [letters[0].id]
+
+
+def test_the_question_carries_the_same_caveat_as_the_figure_it_asks_about(
+    engine, settings, monkeypatch
+):
+    """The estimate the Owner answers is the one `estimate_film_cost_micros` computed, so
+    where that figure counted the narration as nothing the question says so. Before this the
+    caveat reached the reservation's note — a row he never reads — and never the question."""
+    from app.economy.budget import UNPRICED_CAVEAT_PREFIX
+    from app.runbook import stages
+
+    _autonomy_on(engine)
+    _mode(engine, "SUPERVISED")
+    settings.paid_generation_approval_threshold_usd = 0.0
+    _approved_board(engine, "A factual short")
+    _media_stage_with_a_fake_camera(monkeypatch, [])
+
+    stages._media(engine, settings, None, None)
+
+    (request,) = _approvals(engine)
+    assert UNPRICED_CAVEAT_PREFIX in (request.evidence or ""), request.evidence
+    assert "narația" in (request.evidence or "")
+
+
+def test_a_hold_taken_on_an_incomplete_estimate_says_so_in_its_own_note(
+    engine, settings, monkeypatch
+):
+    """The note the books keep beside the money says what the figure was missing, in the
+    same words the question and the letter use."""
+    from app.economy.budget import unpriced_caveat
+    from app.runbook import stages
+
+    _autonomy_on(engine)
+    _approved_board(engine, "A factual short")
+    _media_stage_with_a_fake_camera(monkeypatch, [])
+
+    stages._media(engine, settings, None, None)
+
+    (hold,) = _reservations(engine)
+    assert unpriced_caveat(["narration"]) in (hold.note or ""), hold.note

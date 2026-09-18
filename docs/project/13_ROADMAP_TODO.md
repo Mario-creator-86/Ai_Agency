@@ -958,34 +958,96 @@ was rendered, no run was queued and no credit was spent.
   model means knowing which model a plan will pick.
 - [ ] The secondary and tertiary model slots are not priced by the check, because `vision_agent` counts
   only the primary model and the two checks must agree about which model an employee runs on.
-- [ ] `prefer_capable_models` runs only from `seed_initial_workforce`, so a seeing model admitted after
-  bootstrap reaches the Video Editor at the next seed. The second call belongs at the end of
-  `sync_provider_models`, immediately *after* `apply_llm_allocation` — order matters, the allocation
-  rewrites the slots and the preference must follow it.
-- [ ] The preference is invisible in the interface: `list_roles` returns REQUIRED capabilities only, and
-  `RoleView` would need a `preferred_capabilities` field filled from the PREFERRED rows.
-- [ ] `backend/app/media/picture_qc.py` does not read the storyboard's cast note: where a factual film
-  genuinely shows nobody, the detail still says "no scene in this film lists a character" rather than
-  "this film has no characters by design". One call to `storyboard_cast_note` with the session open and
-  `board.id` carries it the rest of the way; the status stays NOT_APPLICABLE with `passed` None either
-  way.
+- [x] Closed the same day — 2026-09-18: `prefer_capable_models` has its second call site at the end of
+  `sync_provider_models`, immediately *after* `apply_llm_allocation` and inside its own try/except, so
+  a seeing model admitted through the Owner's own sync reaches the Video Editor in that same sync — not
+  at the next seed and not at a restart. `record_declared` a few lines above is the only code that ever
+  writes `vision` on a model, so the sync is the first moment one exists as a row.
+- [x] Closed the same day — 2026-09-18: the guard that protected the Owner's choice read the studio's
+  own allocation file as his hand, because `apply_llm_allocation` writes `agent.model_assigned` too, so
+  the first sync of any studio killed the preference for a choice he never made. `_owner_chose_models`
+  judges the *last* event that moved her models, and compares her three slots against
+  `config/workforce_seed.json` through `resolve_model`; a role the file does not name, and a file that
+  cannot be read, are both read as his.
+- [x] Closed the same day — 2026-09-18: `RoleView.preferred_capabilities`, filled in `list_roles` from
+  the PREFERRED rows, beside `required_capabilities` and never merged into it — a preference listed as a
+  requirement would tell the Owner his Video Editor cannot work without a seeing model. Additive,
+  defaulting to `[]`.
+- [ ] One corner `_owner_chose_models` cannot decide from the record: an Owner who assigns an employee by
+  hand to exactly the three models his own allocation file already names for her role is read as the
+  file, and she may be moved. Bounded (the move only ever goes to a model declaring everything the role
+  requires as well as prefers, and writes `agent.model_preferred`), and closing it means marking the
+  assignment's origin in the `agent.model_assigned` payload — `backend/app/integrations/services.py`,
+  its own decision.
+- [x] Closed the same day — 2026-09-18: `backend/app/media/picture_qc.py` reads the board's record, and
+  `character_drift_qc` reports in order the guessed-names line, the board's own note, "no character in
+  this film could be compared with the bible", and only then the old sentence, which now means only what
+  it says. The status stays NOT_APPLICABLE with `passed` None either way.
+- [x] Closed the same day — 2026-09-18: the cast reading itself was the larger fault.
+  `_characters_named_in` counted a bare given name whenever the next word was lower case, so "Hurricane
+  Elena made landfall" cast the Fact-Checker into a column the assembler, the factory's
+  `referenceImages` and the locked-look refusal all read. It gains a `given_names` flag (one matcher,
+  two readings, no drift), `_scene_cast` returns `(stated, guessed)`, and `character_ids_json` carries
+  the stated cast only: the writer's `characters` list read by given name, plus whole canonical names in
+  the requested picture.
+- [x] Closed the same day — 2026-09-18: the guess is kept, never acted on. `media.storyboard_created`
+  carries `guessed_cast` beside `scenes_with_cast` and `cast_note`, read back by
+  `storyboard_cast_record` (`storyboard_cast_note` is now a thin reader over it); `cast_note`
+  distinguishes `NO_CAST_BY_DESIGN` from `NO_CAST_ONLY_GUESSED`. No column, no migration — 0046 stays
+  free.
+- [x] Closed the same day — 2026-09-18: `evaluate_pictures` asks about a guessed name in the same single
+  look and records it `status: "OBSERVED"`, `basis: "guessed"`, counted in `characters_observed` and
+  never in `characters_measured`; it can never enter `character_failures` or move
+  `character_drift_qc.passed`, and it pulls no stored portrait into the question.
+- [ ] The guessed cast is not in the REST answer: `get_storyboard` returns `cast_note` and not the map,
+  so the Owner cannot see on the storyboard page which names the studio read and refused to cast on.
+  `data["guessed_cast"] = storyboard_cast_record(...)["guessed"]` beside the note, plus a line in
+  `frontend/src`, is the whole of it.
+- [ ] `backend/app/media/serial_storyboard.py` writes no `guessed_cast` — correct, its cast comes from
+  the episode roster and is always stated — so `storyboard_cast_record` answers the empty record for
+  serial boards. A later reader must not take that emptiness for "nobody is in it".
 - [ ] An employee's run is not reconcilable: `spend_since` sums `agent_run.cost_vr` separately and those
   figures never pass through `provider_cost_record`, so an Ollama Cloud invoice cannot yet replace the
   token cost the studio computed for itself.
 - [ ] An invoice matches on a correlation exactly and knows one default key, `render_job_id`; a hosting
   charge or a monthly subscription must be reconciled by period or with a key the Owner names. No
   matching by reference prefix was invented.
-- [ ] The waiting-approvals letter leaves only at the day's close. The hooks where the question is born
-  — `backend/app/runbook/stages.py`, after the media stage where `awaiting_owner` is built and after the
-  publish stage — are not wired, so the Owner learns in the evening rather than at the hour the film was
-  stopped. The function is idempotent per day and safe to call from anywhere; it returns
-  `{"written": False, "message_id": None, "questions": 0}` when there is nothing to say.
-- [ ] The frontend has not moved: `frontend/src/main.js` prints every failing check as "DEGRADES" in red
-  and two of the new checks can now fail while INFORMATIONAL, so it needs a third badge and a third
-  class; `RUNBOOK_CHECK_LABELS` has no entry for the five new checks (nor for `autonomy_mode`); the
-  Accountancy office needs the reconciliation list and its form, and the cost list must show
-  `reconciled_at` and the two new labels, or a row that no longer counts looks like one that does; and
-  `frontend/dist` is still not rebuilt.
+- [x] Closed the same day — 2026-09-18: `waiting_approvals_letter` is called from `_media` the moment
+  the refusal is recorded, guarded by `refusal.get("approval_id")` so a MANUAL refusal writes nothing,
+  and `reconcile_day`'s call is kept. `_letter_once_a_day`'s business-date idempotency makes the two
+  callers safe: one letter a day, whichever end of the day notices first. The Owner now has the whole
+  twenty-four hours rather than the remainder after the run's close.
+- [x] Closed the same day — 2026-09-18: `estimate_film_cost_micros` returns `unpriced`, `caveat` and
+  `complete`; `unpriced_caveat`/`UNPRICED_CAVEAT_PREFIX` (`backend/app/economy/budget.py`) are the one
+  wording, and the media stage carries it to the hold's note, the Owner's question and the Accountant's
+  letter, where `_cost_caveat` and `approvalCaveat` read it back by its first words and yield "" when it
+  is absent. The letter strips it out of the 120-character evidence clip first, because that clip cut it
+  mid-sentence.
+- [x] Closed the same day — 2026-09-18: `frontend/src/readiness.js` (new) holds `RUNBOOK_CHECK_LABELS`
+  with a Romanian line for the five new checks and for `autonomy_mode`, `checkVerdictWord`
+  (BLOCHEAZĂ / DEGRADEAZĂ / INFORMATIV, an unknown severity printed as it came), `checkClassName`
+  (`rb-informational` neutral, no class at all for an unknown severity) and `approvalCaveat`; `main.js`
+  imports them and `style.css` gains the two rules. Separate module because `main.js` touches the
+  document on import and cannot be loaded by `node --test`.
+- [ ] `RUNBOOK_CHECK_LABELS` has no entry for `youtube_channel_binding`, which `run_preflight` also
+  emits: it showed by its code name before this phase and still does. Anyone adding a check to
+  `backend/app/runbook/preflight.py` must add a line there.
+- [ ] The Accountancy office still needs the reconciliation list and its form, and the cost list must
+  show `reconciled_at` and the two new labels, or a row that no longer counts looks like one that does;
+  and `frontend/dist` is still not rebuilt, so the Owner sees none of the panel's new words until
+  `npm run build --prefix frontend` — his own launch act, step 2 of his checklist. Nobody has yet
+  looked at an INFORMATIV card or an amber caveat in a browser.
+- [ ] The caveat is stored in the request's `evidence` text and read back by its first words instead of
+  living in a column, because a column needs migration 0046 and `backend/app/services.py` /
+  `backend/app/schemas.py` were out of scope. A column is the right shape; three readers move onto it
+  together when one is taken.
+- [ ] `estimate_film_cost_micros` still does not price the stills at all (it prices narration plus the
+  motion ceiling), so a film's image spend is outside the figure rather than counted as zero inside it.
+  Naming that in the caveat would be a claim the function cannot measure.
+- [ ] `waiting_approvals_letter` is called from `_media` without a try/except, matching the unguarded
+  `budget_refusal_letter` call four lines below it: if the Accountant's desk raised from inside it the
+  media stage would fail instead of returning SKIPPED. Whether both should be guarded belongs to whoever
+  owns that stage's failure semantics.
 - [ ] Nothing here has met a real vendor, a real model or a real invoice. Every test fakes every
   provider at its transport and `tests/conftest.py` refuses every non-loopback socket, so whether a
   model that declares `vision` answers the picture gate's schema on real frames, and whether a real
@@ -1011,3 +1073,28 @@ ten files the migration-head move in `main.py` can reach and **5** whole-day tes
 `ruff format --check` and `mypy backend` clean on every changed file. The chain is 0039 → 0040 → 0043
 → 0044 → 0045 with `main.py` pinning `0045_reconciliation`, and 0046 is free. No provider was called,
 nothing was rendered, no run was queued and no credit was spent.
+
+Evidence added by the closure of 2026-09-18, each figure named for the part that measured it and **no
+whole-suite run made by any of them**: `tests/test_seeing_employee.py` **5** (new; red first at 1
+passed / 4 failed) inside **60** with `tests/test_phase1_agents.py`, `tests/test_multi_llm.py` and
+`tests/test_provider_discovery.py`, plus **54** across picture QC, workflows, the factual suite and
+the truthfulness gates and **79** across picture QC, readiness, the readiness adversary and the
+runbook, with `ruff`, `ruff format --check` and `mypy` clean on its two backend files;
+`tests/test_phase5_media.py` **30**, `tests/test_picture_qc.py` **17** and
+`tests/test_character_references.py` **23** — **70** together — with **72** across picture QC, the
+seeing employee and editorial quality and **91** across the daily run, the serial pipeline, the
+readiness adversary and the production policy, `ruff` and `ruff format --check` clean on its five
+files; `tests/test_phase11_economy.py` **36**, `tests/test_daily_run_stages.py` **34**,
+`tests/test_approvals.py` **20** and `tests/test_books_and_history.py` **17**, with **234** across
+those four and six neighbouring suites, and `node --test tests/readiness.test.js` **8** (new) inside
+`node --test tests/*.test.js` **110** with `npm run check --prefix frontend` clean; and
+`scripts/check_docs.py` with `tests/test_documentation.py` for the documents. No migration was taken:
+the head stays `0045_reconciliation` and **0046 is still free**. One failure in the tree belongs to no
+part of this closure and is reported rather than repaired: `mypy backend/app/media/picture_qc.py`
+line 285 (`union-attr` on `board.id`, a narrowing gap and not a runtime fault). A second was closed
+in the tree while these documents were written —
+`tests/test_phase_dg_closure_adversary.py::test_only_the_owners_command_module_reaches_an_approval_row`
+had begun to fail because its whole-tree scan for the string "ApprovalRequest" found a docstring line
+the Accountant gained in this phase, and the scan now walks the parsed module rather than its
+characters: **12 passed** afterwards. No provider was called, nothing was rendered, no run was queued,
+no credit was spent and `data/studio.db` was not opened.

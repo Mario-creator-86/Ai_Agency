@@ -23,6 +23,11 @@ class RoleView(BaseModel):
     allowed_task_types: str
     prohibited_actions: str
     required_capabilities: list[str] = []
+    #: What the role would rather its employee's model could do, which no gate reads: a
+    #: studio whose Owner has admitted no model with it works exactly as before. It is here
+    #: so the Owner's page can say why an employee sits on the model she sits on —
+    #: `prefer_capable_models` moved her for this — without reading the database to explain it.
+    preferred_capabilities: list[str] = []
 
 
 class ProviderView(BaseModel):

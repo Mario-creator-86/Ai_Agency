@@ -722,8 +722,8 @@ def test_the_character_check_measures_a_factual_film_that_named_its_cast(
 
     Measured before this: every factual scene was written with an empty cast, so this check
     answered "no scene in this film lists a character" on every film the studio has ever
-    made. The storyboard path now records the character its own picture names, and the check
-    compares that scene against the bible.
+    made. The storyboard path now records the character the film states is in the scene, and
+    the check compares that scene against the bible.
     """
     a_character(engine, name="Sarah Executive")
     ids = a_factual_film(
@@ -733,6 +733,7 @@ def test_the_character_check_measures_a_factual_film_that_named_its_cast(
                 "scene_index": 1,
                 "visual_description": "Sarah at the studio window, reading the day's figures",
                 "narration": "The day starts with the numbers.",
+                "characters": ["Sarah"],
             },
             {
                 "scene_index": 2,
@@ -791,5 +792,75 @@ def test_a_factual_film_of_landscapes_has_no_cast_and_the_storyboard_says_why(
     drift = result["character_drift_qc"]
     assert drift["status"] == "NOT_APPLICABLE" and drift["passed"] is None
     assert drift["characters_measured"] == 0
+    # The check says what the record says: "no characters by design", not "nobody listed
+    # them". Both were the same sentence until the storyboard began recording its decision.
+    assert drift["detail"] == NO_CAST_BY_DESIGN
     with Session(engine) as session:
         assert storyboard_cast_note(session, ids["board"]) == NO_CAST_BY_DESIGN
+
+
+def test_a_guessed_name_is_looked_at_and_can_never_fail_the_film(engine, staffed, seen_frames):
+    """A name the prose merely spells informs the comparison and refuses nothing.
+
+    "Sarah at the studio window" is a guess: the storyboard does not cast her, so no
+    reference is bought for her and no lock refuses the film on her account. The gate may
+    still ask whether the frame shows her — that costs nothing but a line in the question —
+    but a "no" is an observation, never a failure, because the studio was never told she was
+    in the shot. The check therefore certifies nothing here: `passed` stays None.
+    """
+    a_character(engine, name="Sarah Executive")
+    ids = a_factual_film(
+        engine,
+        [
+            {
+                "scene_index": 1,
+                "visual_description": "Sarah at the studio window, reading the day's figures",
+                "narration": "The day starts with the numbers.",
+            },
+            {
+                "scene_index": 2,
+                "visual_description": "A spectrum with a water line marked",
+                "narration": "A line of water.",
+            },
+        ],
+        title="A guess",
+    )
+    give_vision(engine, staffed["agents"]["VideoEditor"].id)
+    answer = json.dumps(
+        {
+            "scenes": [
+                {"scene": i, "is_a_picture": True, "shows_the_scene": True, "reason": "as asked"}
+                for i in (1, 2)
+            ],
+            "characters": [
+                {
+                    "scene": 1,
+                    "character": "Sarah Executive",
+                    "matches": False,
+                    "reason": "there is no person in this frame at all",
+                }
+            ],
+        }
+    )
+    registry, model = registry_with(staffed, lambda _: answer)
+
+    result = evaluate_pictures(engine, registry, ids["asset"], str(uuid4()))
+
+    with Session(engine) as session:
+        assert [
+            scene.character_ids_json
+            for scene in session.scalars(
+                select(StoryboardScene)
+                .where(StoryboardScene.storyboard_id == ids["board"])
+                .order_by(StoryboardScene.scene_index)
+            )
+        ] == [[], []]
+    drift = result["character_drift_qc"]
+    assert drift["status"] == "NOT_APPLICABLE" and drift["passed"] is None
+    assert drift["characters_measured"] == 0 and drift["characters_observed"] == 1
+    observed = drift["characters"][0]
+    assert observed["status"] == "OBSERVED" and observed["basis"] == "guessed"
+    assert observed["scene"] == 1 and observed["matches"] is False
+    assert result["failures"] == [], "a guess never fails a film"
+    assert result["picture_qc"]["passed"] is True
+    assert len(model.calls) == 1, "one look per film"

@@ -175,10 +175,19 @@ The close writes the Owner one letter about the approval requests still standing
 first act and before any question is put to a model (`waiting_approvals_letter`, since
 2026-09-18): one letter per business date, decided behind the write lock like the budget
 refusal letter of §8, naming each question by what it is, with its cost — unknown where the
-studio cannot compute one, never zero — and the hour the oldest expires. Nothing is written
-when nothing is waiting, so a silent mailbox still means there is nothing to decide. A
-vendor's invoice is reconciled against the estimates of §8 by the Owner and by nobody else,
-because only he sees it; that act is not part of the day and is never performed by a stage.
+studio cannot compute one, never zero, and with the caveat the stage wrote about a figure it
+could price only in part — and the hour the oldest expires. Nothing is written when nothing
+is waiting, so a silent mailbox still means there is nothing to decide. A vendor's invoice is
+reconciled against the estimates of §8 by the Owner and by nobody else, because only he sees
+it; that act is not part of the day and is never performed by a stage.
+
+The letter leaves from both ends of the day (corrected the same day, 2026-09-18). The stage
+that raises a question writes it in the minute it stops — §8's media stage, as soon as the
+approval is recorded — because a question raised at 05:30 must not wait for the last stage
+of the run, and a run that never reaches the close must not leave it unsaid until it expires.
+The close's call stands, and the day still writes exactly one letter: the business date in
+the letter's body is the lock, so whichever end of the day notices first is the one that
+writes, and the other writes nothing.
 
 ## 12. Daily Studio Log
 

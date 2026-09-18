@@ -2487,3 +2487,233 @@ neighbours for the economy part, `check_docs.py` and `tests/test_documentation.p
 verifier's measurement of 2026-09-18, now older than the tree.** The whole-suite figure for this
 phase lands when the verifier takes it, after these documents. Inventing a number for a run nobody
 made is the one thing these documents exist to prevent.
+
+## 2026-09-18 — The preference is applied where the studio learns about models, not only where it hires
+
+The adversarial reading of the first-day checklist measured that `prefer_capable_models` ran once, at
+seed time, hours before the Owner admits a seeing model, so the whole quality story of the first day
+rested on him also assigning that model to an employee by hand. **Decision: call it a second time
+from `sync_provider_models`, immediately after `apply_llm_allocation` and before the models are read
+back, inside its own try/except, so a preference that cannot be applied is reported and the models
+the sync did record are kept — exactly the rule the allocation call above it already follows.** The
+position is not a matter of taste: `record_declared`, in the same function, is the only code in the
+studio that ever writes `vision` on a model, so the sync is the first instant a seeing model exists
+at all; and the allocation applies `config/workforce_seed.json` to any employee who does not yet
+carry `agent.model_assigned`, which is precisely what a preferred move leaves unwritten, so a
+preference applied before it would be undone by the file in the same call. No other call site was
+added: the start-up path (`backend/app/main.py`) only registers the Ollama adapter and syncs nothing,
+and the daily job at 05:00 syncs nothing either. The consequence worth stating: a studio whose seeing
+model entered the catalogue through a sync made *before* this preference existed is moved by its next
+sync or its next `scripts/bootstrap.py` run, not by a restart.
+
+## 2026-09-18 — The studio's own allocation file is not the Owner's hand, and the record now says which is which
+
+`prefer_capable_models` protected his choice by refusing to move any employee with an
+`agent.model_assigned` event. Measured on this tree, that event is written by his command in Settings
+*and* by `apply_llm_allocation`, which applies the studio's own file through that same command — so
+the first model sync of any studio wrote it for the Video Editor, on the primary the file names for
+her, and the preference was dead from that moment. **Decision: judge the last event that moved her
+models rather than the existence of one — no event means the seed hired her; `agent.model_preferred`
+means this function moved her last; `agent.model_assigned` is the file's only when her primary,
+secondary and tertiary slots resolve to exactly the models the file names for her role, and his
+otherwise — and read the two undecidable cases, a role the file does not name and a file that cannot
+be read, as his.** The slots are compared through `resolve_model`, not by name, because the file may
+spell a model the way the Owner types it and the registry the way the vendor returns it (":cloud",
+"-cloud"). One case the record genuinely cannot decide is an Owner who assigns an employee by hand to
+exactly the three models his own file already gives her; that is read as the file's, and the
+consequence is bounded: the move only ever goes to a model declaring everything the role requires as
+well as what it prefers, and it writes `agent.model_preferred`, never his event, so his next
+assignment wins and stays won. Closing that corner properly would mean marking the assignment's
+origin in the `agent.model_assigned` payload, written in `backend/app/integrations/services.py`,
+which is an event-payload change deserving its own decision.
+
+## 2026-09-18 — A role's preference is a second field on the projection, not a longer list of requirements
+
+The Owner's page had `required_capabilities` and nothing else, and `frontend/src/settings.js` filters
+the model list by it, so folding `vision` into that list would have hidden every model that cannot
+see from the Video Editor's model picker and told him she needs eyes to work at all. **Decision: add
+`preferred_capabilities` to `RoleView` as its own field, filled in `list_roles` from the PREFERRED
+rows in role order, and leave `required_capabilities` reading REQUIRED exactly as before.** PREFERRED
+remains a word no gate reads — `_check_required_capabilities` enforces REQUIRED alone — and the new
+field exists so that the page can explain a placement the studio made (`agent.model_preferred`)
+without a reader having to open the database to find out why. The field is additive and defaults to
+`[]`, so every existing reader keeps its reading.
+
+## 2026-09-18 — A cast is what the film states, not what its prose spells; a guess is recorded and never acted on
+
+The adversary offered two repairs — narrow the given-name reading to the scene's own characters list
+and leave the picture to whole canonical names, or record which reading produced a cast so a locked
+character can never be refused on an inference — and observed that either is another regex with its
+own opposite cost. They stopped being alternatives once the question became what a cast is *for*. A
+recorded character does three things: it steers a paid render towards a stored portrait, it is what
+the character gate compares the frame with, and it refuses the film when the look is locked and no
+reference exists. The first and the third spend the Owner's money or kill his day's only film, so
+they must follow evidence, not inference; only the second is free and reversible. **Decision: take
+both repairs, each where it belongs.** `_characters_named_in` gained a `given_names` flag rather than
+a second regex, so there is one matcher with two readings and they cannot drift apart. `_scene_cast`
+returns `(stated, guessed)`: stated is the writer's `characters` list read by given name plus whole
+canonical names in the requested picture; guessed is a bare given name in that same prose.
+`character_ids_json` carries the stated cast only. The cost of this choice, stated rather than
+hidden: a factual scene whose picture writes "Sarah at the studio window" and states nothing is no
+longer cast from prose, and the reference the Owner paid for is not used unless the writer lists her.
+That is the right cost — the studio may miss a portrait it could have used, and may not buy one for
+somebody nobody said was there.
+
+## 2026-09-18 — The guess is kept on the storyboard's creation event, not in a column and not thrown away
+
+Throwing it away would leave the same prose re-read later by a second regex that could disagree with
+the first, and would hide from the Owner what the studio read. A column would have needed migration
+0046 and would make the guess indistinguishable, downstream, from the film's own word — exactly the
+confusion being removed. **Decision: `media.storyboard_created` carries `guessed_cast` ({scene index
+as a string: [character id]}) beside `scenes_with_cast` and `cast_note`, the way the same event
+already carries why a film has no cast, and `storyboard_cast_record` reads it back.**
+`storyboard_cast_note` remains, now a thin reader over that record, so every existing caller is
+unchanged. No schema change was needed; the head stays `0045_reconciliation` and 0046 stays free.
+The serial's own board (`backend/app/media/serial_storyboard.py`) writes no `guessed_cast`, correctly
+— its cast comes from the episode roster and is always stated — which means `storyboard_cast_record`
+answers the empty record for serial boards, and a later reader must not take that emptiness for
+"nobody is in it".
+
+## 2026-09-18 — A guessed name may inform the picture gate's comparison and may never refuse a film
+
+**Decision: `evaluate_pictures` reads the board's record and asks the seeing employee about guessed
+names as well as stated ones — a line in the question, no extra call, still one look per film — and
+records the verdict with `status: "OBSERVED"` and `basis: "guessed"`.** It is not added to
+`characters_measured`, never enters `character_failures`, and cannot move `character_drift_qc.passed`,
+which stays None when only guesses were looked at. A guessed name also pulls no stored portrait into
+the question: reference images are attached for stated characters only, so a guess buys nothing and
+shows nothing anywhere in the studio. This keeps the standing rule that a check certifies only what
+it measured, while the Owner can still read, in the report, what the prose suggested and what the
+model made of it.
+
+## 2026-09-18 — The character check says what the record says
+
+`character_drift_qc` printed one sentence, "no scene in this film lists a character", for every
+reason there could be. **Decision: report, in order, the guessed-names line when only guesses were
+looked at; otherwise the board's own note, which for a film of landscapes is the design sentence and
+for a film whose prose named somebody is the guess sentence (`NO_CAST_ONLY_GUESSED`); otherwise "no
+character in this film could be compared with the bible" when characters were present but
+uncomparable; and only then the old sentence, which now means what it says.** Where the bible holds
+no characters at all the check stays NOT_IMPLEMENTED, as before. This closes the line the readiness
+phase left open — `picture_qc` reading the storyboard's cast note — and closes it with a record that
+distinguishes two facts the single sentence had merged.
+
+## 2026-09-18 — `estimate_film_cost_micros` returns what it could not price, and the figure carries that sentence everywhere the Owner meets it
+
+The figure is produced once and read three times: in the reservation's note, in the question he
+answers, and in the Accountant's letter about that question. It used to be complete in none of them
+and caveated in one — the note — so the two he actually reads said «estimat 4.20 USD» about a film
+whose narration had been counted as nothing. **Decision: the estimate returns `unpriced`, `caveat`
+and `complete` beside the figure, and the media stage carries that one sentence to all three
+places.** `unpriced_caveat` (`backend/app/economy/budget.py`) is the single wording, «estimare
+incompletă: narația nu are preț stocat și este numărată ca zero», and `UNPRICED_CAVEAT_PREFIX` is its
+first words so a reader can find it inside a longer line without parsing the sentence.
+`narration_priced` is kept unchanged beside them, because the decision log and CURRENT_STATUS
+document it. The caveat is raised only where there was something to price: a storyboard with no
+voiceover costs nothing for narration whatever the books hold, and a caveat on every film would teach
+him to read past the one that matters. What the caveat deliberately does not claim: the stills are
+not priced by the estimate at all, so a film's image spend is outside the figure rather than counted
+as zero inside it, and naming that in the caveat would be a claim the function cannot measure.
+
+## 2026-09-18 — The caveat travels in the request's `evidence` line, and both the Accountant and the panel read it back by its first words
+
+`ApprovalRequest` and `ApprovalView` have a `cost_usd`, a `cost_label` and an `evidence` line, and no
+column for "this figure is not the whole film"; `backend/app/services.py` and
+`backend/app/schemas.py` were out of scope for that part, and inventing a column without a migration
+would have been worse than the read-back. **Decision: `_cost_caveat` (accountant) and
+`approvalCaveat` (`frontend/src/readiness.js`) find the sentence by `UNPRICED_CAVEAT_PREFIX` and
+yield "" when it is absent, so nothing ever invents a doubt about a figure that was whole.** Where
+the letter clips the evidence to 120 characters the caveat is removed from the clip first, because
+that clip cut it mid-sentence («…nu are preț stocat și est») and a half-said caveat is the one thing
+worse than none; it is then said once, in full, beside the cost. A column is the right shape: if a
+later phase takes migration 0046 or later for it, three readers move onto it together — `_cost_caveat`
+in `accountant.py`, `approvalCaveat` in `readiness.js`, and the `evidence=` string the media stage
+writes in `backend/app/runbook/stages.py`.
+
+## 2026-09-18 — The letter about what waits is written where the question is born as well as at the day's close
+
+**Decision: call `waiting_approvals_letter` from `_media` immediately after the refusal is recorded,
+guarded by `refusal.get("approval_id")` so a MANUAL refusal — which raises no question — writes
+nothing, and keep `reconcile_day`'s call.** `_letter_once_a_day`'s idempotency (the business date in
+the letter's body, decided behind the write lock) is what makes two callers safe: one letter a day
+however many films stop and whichever end of the day notices first. The alternative — moving the
+close's call earlier in the runbook — would still have left a run that fails before that stage
+silent, and the point of the change is precisely that the Owner must not depend on the day reaching
+its last stage to hear that it stopped at its fifth. The call is unguarded by try/except, matching
+the existing unguarded `budget_refusal_letter` call four lines below it: if the Accountant's desk
+ever raised from inside it the media stage would fail instead of returning SKIPPED. The two were left
+consistent rather than one of them guarded; whether both should be guarded belongs to whoever owns
+that stage's failure semantics.
+
+## 2026-09-18 — A check's severity decides its word and its colour, and an unknown severity is shown rather than rounded
+
+`frontend/src/main.js` printed every failing check as BLOCKING or DEGRADES, which was true while
+those were the only two severities; `serial_channel` and an unlocked `character_references` are
+INFORMATIONAL and can fail, so the Owner read red about something that costs him nothing.
+**Decision: `checkVerdictWord` and `checkClassName` (`frontend/src/readiness.js`) map the three
+severities the preflight emits to BLOCHEAZĂ / DEGRADEAZĂ / INFORMATIV and to `rb-blocking` /
+`rb-degrading` / `rb-informational`, and a severity the page has never heard of is printed as it came
+with no colour class at all** — rounding a new severity into DEGRADES would be this same defect
+again, one severity later. `RUNBOOK_CHECK_LABELS` moves into the same module and gains a Romanian
+line for the five checks this phase added and for `autonomy_mode`. It does not gain one for
+`youtube_channel_binding`, which `run_preflight` also emits and which showed by its code name before
+this work and still does; anyone adding a check to `backend/app/runbook/preflight.py` should add a
+line there, since an unlabelled name is shown as its code name and an unknown severity renders
+neutral rather than alarming, which is safe but not good. The module is separate from `main.js` for
+the reason `governance.js` already gives in its own header: `main.js` touches the document on import
+and cannot be loaded by `node --test`, and every one of these is a word the Owner reads.
+
+## 2026-09-18 — `39_DAILY_AUTONOMOUS_RUNBOOK` is edited a second time and re-hashed: the letter now leaves from both ends of the day
+
+§11 of the runbook said "The close writes the Owner one letter about the approval requests still
+standing, as its first act". After this closure that sentence is false for the case it was written
+for: on a SUPERVISED day the media stage writes the letter at the hour it stops, and the close then
+writes nothing, because `_letter_once_a_day` already holds that business date. **Decision: edit §11's
+paragraph with a dated sentence saying the letter leaves from the stage that raises the question as
+well as from the close, and that the day still writes exactly one — a deliberate specification change
+under ADR-FOUNDATION-003, with its `sha256` re-recorded in `DOCUMENTATION_INDEX.json` (`226397b6…` →
+`f4d26ea2…`) and this entry as the reason.** §1's preflight paragraph was read again and left alone:
+the five checks and their severities are unchanged by this work, and the third severity's *rendering*
+is a fact about `frontend/src`, not about the runbook. `31_GOVERNANCE_APPROVAL_POLICY`,
+`50_CONTENT_GATE_MATRIX` and `24_VISUAL_CONTINUITY_ASSET_SYSTEM` were read against the cast change
+and are untouched by it: none of them describes how a scene's cast is read, and the gates they
+specify are unchanged — the character gate still certifies only what it measured, and now says so
+about guesses too.
+
+## 2026-09-18 — «Ce are Owner-ul de făcut» is corrected in four lines and rewritten in none
+
+The checklist was re-read against this closure with the rule that only what is now untrue may change.
+**Decision: correct step 3 (a merely informational check now reads INFORMATIV in neutral grey instead
+of a red "DEGRADES", the five new checks and `autonomy_mode` have names in his language, and
+`youtube_channel_binding` still does not — all of it visible only after step 2's build), step 9 (he
+has nothing to assign by hand after admitting a seeing model, and needs neither a second seed run nor
+a restart: the sync that brings the model moves the Video Editor), step 10 (the refusal by a locked
+character follows a cast the film *states*, never a given name its prose merely spelled) and step 12
+(the letter leaves in the minute the question is born, and a figure the studio could not complete
+says so beside itself) — and change nothing else, drop no line and keep the order.** The old sentence
+is left standing in each case with the correction dated after it, which is how this document has
+recorded corrections since 2026-09-09: a reader who remembers the old promise finds it, and finds
+what replaced it.
+
+## 2026-09-18 — The closure's figures are attributed, and two defects in the tree are reported rather than fixed
+
+No whole-suite run was made by any of the three parts of this closure, and the brief for the
+documents forbids running one. **Decision: every figure is written with the part that measured it
+beside it — 5 (new) + 60 and its neighbours for the seeing-employee part, 70 across three owned files
+with 72 and 91 across their neighbours for the cast part, 36 + 34 + 20 + 17 with 234 in all and
+`node --test` 8 inside 110 for the letter-and-panel part, `check_docs.py` and
+`tests/test_documentation.py` for this one — and `PROJECT_STATE.json` keeps 1194 passed / 1 skipped
+as what it is: the Phase D/G closure verifier's measurement of 2026-09-18, now older than the tree
+twice over.** One defect lives in the tree and is named here rather than repaired, because it
+belongs to a file no part of this closure owns: `uv run mypy backend/app/media/picture_qc.py` reports
+one `union-attr` error at line 285 (`board.id`, where the narrowing that makes it safe is `scenes`
+being non-empty — a type-narrowing gap, not a runtime fault). A second was recorded as open here and
+closed in the tree before these documents were finished, which is itself worth the line:
+`tests/test_phase_dg_closure_adversary.py::test_only_the_owners_command_module_reaches_an_approval_row`
+had begun to fail because its whole-tree scan for the string "ApprovalRequest" found a docstring line
+the Accountant gained in this phase — the invariant was written in prose that its own test could not
+distinguish from code. **The scan now walks the parsed module and counts a class definition, a name,
+an attribute or an import rather than characters**, so the invariant stays unbypassable while
+remaining explicable; measured on this tree afterwards, that file is 12 passed. Reporting both is the
+point: a document that recorded this closure as clean would be the first thing these documents exist
+to prevent.

@@ -78,6 +78,7 @@ from app.economy.accountant import (
     reconcile_day,
     record_failed_render_cost,
     record_render_costs,
+    waiting_approvals_letter,
 )
 from app.economy.budget import (
     estimate_film_cost_micros,
@@ -1186,6 +1187,9 @@ def _media(
     skipped_for_budget: list[str] = []
     # Films the Owner's mode will not let the studio buy on its own, with his reason.
     awaiting_owner: list[dict[str, Any]] = []
+    # The correlation of the first film this stage had to ask him about, and the flag that
+    # the Accountant owes him a letter about what is standing. Empty means nothing was asked.
+    asked_correlation = ""
     budget_reason = ""
     narration_reviews = []
     costs_recorded = 0
@@ -1196,6 +1200,11 @@ def _media(
         # the factual film's last scene used to start the serial's render regardless
         # (measured: two films, the stop set inside the first, both rendered).
         if stop_requested(engine):
+            # His stop ends the stage, so the questions it already raised leave with it: the
+            # runbook attempts no stage after a BLOCKED one, `_post_run` never runs, and a
+            # question nobody told him about expires after `approval_expires_after_hours`.
+            if asked_correlation:
+                waiting_approvals_letter(engine, asked_correlation)
             return _outcome(
                 BLOCKED,
                 f"{OWNER_STOP_REASON} Filmul următor nu a fost început."[:500],
@@ -1233,6 +1242,12 @@ def _media(
         # asked — and under SUPERVISED the T3 question writes the Approval the Owner answers.
         estimated_usd = float(plan_cost["usd"])
         dear = estimated_usd > settings.paid_generation_approval_threshold_usd
+        # What the estimate could not price travels with it from here to all three places the
+        # Owner can meet the figure — his question, the hold's note and the Accountant's
+        # letter — in the one wording `unpriced_caveat` produces. It used to reach the note
+        # alone, a row he never reads, so a SUPERVISED day asked him to approve 4.20 USD for a
+        # film whose narration had been counted as nothing.
+        caveat = plan_cost["caveat"]
         # The request is about *this* storyboard. Keyed by the action alone, the second and
         # dearer film of a SUPERVISED day reused the first film's row, so the Owner would
         # have been shown one question carrying the first film's price and his one answer
@@ -1242,21 +1257,28 @@ def _media(
             "media.paid_generation_over_threshold" if dear else "media.paid_generation",
             requester="video_editor",
             subject=storyboard_id,
-            evidence=f"storyboard {storyboard_id}, estimat {plan_cost['usd']} USD",
+            evidence=(
+                f"storyboard {storyboard_id}, estimat {plan_cost['usd']} USD"
+                + (f" ({caveat})" if caveat else "")
+            ),
             cost_usd=estimated_usd,
         )
         if refusal is not None:
             awaiting_owner.append({"storyboard_id": storyboard_id, **refusal})
+            # Remembered, not written: the letter is one a business date, so a letter sent
+            # from inside this loop would be the day's only one and would name the first
+            # film alone. It is written below, once the stage has finished asking. A refusal
+            # that raised no question (MANUAL) is not remembered here either, because the
+            # letter is about what is standing and nothing is.
+            if refusal.get("approval_id") and not asked_correlation:
+                asked_correlation = correlation
             continue
         hold = reserve_spend(
             engine,
             plan_cost["usd_micros"],
             f"film {storyboard_id}",
             correlation,
-            note=(
-                f"estimat: {plan_cost['usd']} USD"
-                + ("" if plan_cost["narration_priced"] else "; narațiunea nu are preț stocat")
-            ),
+            note=f"estimat: {plan_cost['usd']} USD" + (f"; {caveat}" if caveat else ""),
         )
         if not hold["allowed"]:
             budget_refusal_letter(engine, hold["reason"], correlation)
@@ -1444,6 +1466,18 @@ def _media(
                 settled_reference=f"render:{result['job_id']}",
                 correlation_id=correlation,
             )
+
+    # The Owner hears about every question this stage raised, and hears it here rather than at
+    # the day's close. `waiting_approvals_letter` was called from `reconcile_day` alone, inside
+    # `_post_run` — the day's last working stage — so a question raised at 05:30 reached him at
+    # the run's end at best and not at all when the run stopped earlier; it then expired after
+    # `approval_expires_after_hours` and that film was never made. Written once the stage has
+    # finished asking rather than at the first refusal, because the letter is one a business
+    # date: sent from inside the loop it named the first film and could never name the second,
+    # and a SUPERVISED day makes two. `_letter_once_a_day` keeps the close from writing a
+    # second one, and a stage that asked him nothing leaves his inbox silent.
+    if asked_correlation:
+        waiting_approvals_letter(engine, asked_correlation)
 
     if awaiting_owner and not produced and not refused:
         # Nothing was filmed and the mode is why: the stage could not run, which is SKIPPED

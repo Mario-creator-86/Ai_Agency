@@ -69,13 +69,19 @@ behaviour is unchanged.
 **Somebody can be hired who can see, and a factual film records who is in it.** The role now says
 what it would want: `ROLE_PREFERENCES` writes `vision` on the Video Editor's role at the PREFERRED
 level — which is not a gate and never becomes one — and `prefer_capable_models` moves that employee
-onto a model that sees at the next start-up, if the Owner has admitted one. PREFERRED was read
+onto a model that sees at the next start-up, if the Owner has admitted one. **Corrected at the same
+day's closure (2026-09-18): she moves in the same sync that admits the model**, not at the next
+start-up; see «Closed the same day» below. PREFERRED was read
 nowhere in the code before (the only reading was `requirement_level == "REQUIRED"`, in
 `_check_required_capabilities` and in the role projection); it is now read in the hiring path inside
 `seed_initial_workforce`, and nowhere that could refuse a run: a studio whose Owner has admitted no
 seeing model hires the same way, edits the same way, and is told honestly that nobody looked. His
 choice stays his — an employee whose models were ever saved by the assignment command
-(`agent.model_assigned`) is not touched, the same guard the start-up allocation uses — and the move
+(`agent.model_assigned`) is not touched, the same guard the start-up allocation uses (**corrected at
+the same day's closure, 2026-09-18: that guard read the studio's own allocation file as his hand**,
+because `apply_llm_allocation` writes the same event, so the first sync of any studio killed the
+preference for a choice he had never made; `_owner_chose_models` now judges the last event that
+moved her models) — and the move
 writes `agent.model_preferred`, never `agent.model_assigned`, because that second event is the proof
 of his choice and `apply_llm_allocation` reads it as "already configured". The capability itself is a
 row and not a claim about any model: the seed creates `Capability(name="vision")`, because a role can
@@ -89,7 +95,11 @@ character list first, then the names the requested picture calls for — not the
 narrator has no face, and a name spoken over a photograph of a mirror does not put that person in
 frame. A first name followed by another capitalised word is not counted (the observer "Vera Rubin" is
 a telescope, not the cast), because an invented cast would make the gate certify a comparison nobody
-asked for. A film that shows nobody records an empty cast and says once, in the storyboard's own
+asked for. **Corrected at the same day's closure (2026-09-18): that one exclusion was not enough** —
+a bare given name whose next word is lower case ("Hurricane Elena made landfall") was cast as well,
+so the reading is now split, the prose's guesses are recorded and never written to the scene, and
+only what the film states buys a portrait or refuses a locked character; see «Closed the same day»
+below. A film that shows nobody records an empty cast and says once, in the storyboard's own
 creation event (`media.storyboard_created`, keys `scenes_with_cast` and `cast_note`), that the
 absence is deliberate — readable through `app.media.services.storyboard_cast_note` and returned by
 `get_storyboard` as `cast_note`. The consequence is that the reference sets reach the factual film at
@@ -99,33 +109,36 @@ rule that was until now unreachable from a factual film, because no factual scen
 
 **The Accountant tells him what is waiting, and the books learn what things really cost.**
 `waiting_approvals_letter` writes one letter a day, with the same idempotence as the other two — the
-studio's business date decided behind the write lock — and writes nothing when nothing is waiting, so
-a silent mailbox still means "nothing to decide". Each question is named by what it is in his
+studio's business date decided behind the write lock — and writes nothing when nothing is waiting,
+so a silent mailbox still means "nothing to decide". Each question is named by what it is in his
 language (`APPROVAL_ACTION_LABELS`), with its cost — «necunoscut» where the studio cannot compute
 one, never zero, taken from the request's own `cost_label` so that the governance page and the
-mailbox can never say two different things about the same question — and with the hour the oldest one
-expires; the questions are ordered as the day raised them, and the model-written evidence (a film's
-title, a storyboard's estimate) is cut at 120 characters, because a long title may not become the
-whole letter. The day's close carries it as its first act, before any question is put to a model, so
-a close that fails because the report never came back does not swallow the one letter that says he
-has decisions standing. Beside it, migration **0045_reconciliation** gives the books the one word
-they had a vocabulary for and no function: `provider_reconciliation`, plus `reconciled_at` and
-`reconciled_by_id` on `provider_cost_record`, both NULL, so every existing row keeps the reading it
-had. Reconciliation is the Owner's act and nobody else's, because only he sees the invoice:
-`PUT /economy/reconciliations` has the shape of `PUT /economy/prices` — a `command_id` (a retry
-returns the original answer, the same id with a different figure is 409) and `expected_version`,
-which here is required rather than optional, because replacing an invoice moves money. An invoice
-covers a period (the same half-open window `spend_since` reads) or one named thing — today a render,
-through the attribution key every row carries. It writes the BILLED row that posts against VR Cash,
-stamps `reconciled_at` on the estimates it covers, and keeps on the row, as data, every row it
-touched and could not replace, with the reason. The estimate is marked, never subtracted: it is the
-document of what the studio believed a film would cost, and `spend_since` skips it. The billed row
-carries the hour of the last spend it pays for, not the hour the Owner typed it, so the period that
-counted the estimates is the period that counts the invoice: afterwards a period counts the billed
-figure once, plus whatever the invoice did not cover, and `treasury_snapshot.unbilled_provider_costs`
-falls the same way, because an estimate that has been paid is no longer an obligation coming.
-A correction is a new version, which reverses the previous invoice's posting in the ledger
-(`reverses_transaction_id`) and re-adopts its estimates; nothing is edited and nothing is deleted.
+mailbox can never say two different things about the same question — and with the hour the oldest
+one expires; the questions are ordered as the day raised them, and the model-written evidence (a
+film's title, a storyboard's estimate) is cut at 120 characters, because a long title may not become
+the whole letter. The day's close carries it as its first act, before any question is put to a
+model, so a close that fails because the report never came back does not swallow the one letter that
+says he has decisions standing. **Corrected at the same day's closure (2026-09-18): the media stage
+writes it too, in the minute the question is born**, and the figure in it now carries what the
+estimate could not price; see «Closed the same day» below. Beside it, migration
+**0045_reconciliation** gives the books the one word they had a vocabulary for and no function:
+`provider_reconciliation`, plus `reconciled_at` and `reconciled_by_id` on `provider_cost_record`,
+both NULL, so every existing row keeps the reading it had. Reconciliation is the Owner's act and
+nobody else's, because only he sees the invoice: `PUT /economy/reconciliations` has the shape of
+`PUT /economy/prices` — a `command_id` (a retry returns the original answer, the same id with a
+different figure is 409) and `expected_version`, which here is required rather than optional,
+because replacing an invoice moves money. An invoice covers a period (the same half-open window
+`spend_since` reads) or one named thing — today a render, through the attribution key every row
+carries. It writes the BILLED row that posts against VR Cash, stamps `reconciled_at` on the
+estimates it covers, and keeps on the row, as data, every row it touched and could not replace, with
+the reason. The estimate is marked, never subtracted: it is the document of what the studio believed
+a film would cost, and `spend_since` skips it. The billed row carries the hour of the last spend it
+pays for, not the hour the Owner typed it, so the period that counted the estimates is the period
+that counts the invoice: afterwards a period counts the billed figure once, plus whatever the
+invoice did not cover, and `treasury_snapshot.unbilled_provider_costs` falls the same way, because
+an estimate that has been paid is no longer an obligation coming. A correction is a new version,
+which reverses the previous invoice's posting in the ledger (`reverses_transaction_id`) and
+re-adopts its estimates; nothing is edited and nothing is deleted.
 
 **What was measured, and whose measurement each figure is.** The preflight part: `tests/test_readiness.py`
 **11 passed** (new) and `tests/test_phase10_runbook.py` **46**, with `tests/test_approvals.py` **18**,
@@ -149,42 +162,197 @@ phase lands after this document. The migration chain is 0039 → 0040 → 0043 �
 needed no column and took neither 0045 nor 0046, so **0046 is free**. No provider was called, nothing
 was rendered, no run was queued and no credit was spent by any of the four.
 
-Not finished, honestly: **nothing here has met a real vendor, a real model or a real invoice.** Every
-test fakes every provider at its transport and `tests/conftest.py` refuses every non-loopback socket,
-by the Owner's rule of 2026-09-17, so what is proven is behaviour and not a vendor's answer: that a
-model declaring `vision` really does return the picture gate's schema on real frames is unmeasured
-until he admits one, and the first true reconciliation — his, with his invoice in his hand — is the
-measurement of the books. The preflight's five messages have been read in Romanian by their author
-and not yet by him. `model_prices` covers the LLM token sides only, on the primary model of each
-ACTIVE agent, because that is exactly what makes an agent run's `cost_vr` None; it does not check the
-voice price (`per_1k_characters`) or the motion and image prices (`per_second`, `per_generation`),
-because naming the voice kind honestly would mean reading the media selection through the vault
-rather than the price table and pricing a motion model would mean knowing which model a plan will
-pick, and a check that half-covered them would report a pass certifying less than it looks like. The
-secondary and tertiary model slots are not priced either, because `vision_agent` counts only the
-primary model and the two checks must agree about which model an employee runs on. The Video Editor's
-preference reaches a studio that is already running only at the next seed: `prefer_capable_models` is
-idempotent and callable from anywhere, but the second call — after `sync_provider_models` and
-*after* `apply_llm_allocation`, in that order — is not wired, and the preference is invisible in the
-interface, because `list_roles` returns REQUIRED capabilities only and a preference listed there
-would tell the Owner the Video Editor needs a seeing model to work at all, which is false.
-`picture_qc` does not yet read the storyboard's cast note: where a factual film genuinely shows
-nobody, the detail still says "no scene in this film lists a character" rather than "this film has no
-characters by design", and one line in `backend/app/media/picture_qc.py` — a file nobody in this
-phase owned — carries the fact the rest of the way. An employee's run is still not reconcilable: the
-token cost the studio computes for itself lives in `agent_run.cost_vr` and never passes through
-`provider_cost_record`, so an Ollama Cloud invoice cannot yet replace it. An invoice matches on a
-correlation exactly and knows one default key, `render_job_id`, which is what `_priced_scene_costs`
-and `record_failed_render_cost` write; a hosting charge or a monthly subscription must be reconciled
-by period, or with a key he names, because a book does not guess. The waiting-approvals letter leaves
-only at the day's close: the hooks where the question is actually born, in
-`backend/app/runbook/stages.py`, belong to another part and are not wired, so he learns in the
-evening rather than at the hour the film was stopped. And the interface has not moved: nothing renders
-the preflight's INFORMATIONAL severity — `frontend/src/main.js` prints every failing check as
-"DEGRADES" in red, and two of the new checks can now fail while being informational, which would tell
-the Owner in red about something that does not degrade his day — the five fall through to their raw
-names for want of a label, neither reconciliation screen exists, and `frontend/dist` is still not
+Not finished, honestly: **nothing here has met a real vendor, a real model or a real invoice.**
+Every test fakes every provider at its transport and `tests/conftest.py` refuses every non-loopback
+socket, by the Owner's rule of 2026-09-17, so what is proven is behaviour and not a vendor's answer:
+that a model declaring `vision` really does return the picture gate's schema on real frames is
+unmeasured until he admits one, and the first true reconciliation — his, with his invoice in his
+hand — is the measurement of the books. The preflight's five messages have been read in Romanian by
+their author and not yet by him. `model_prices` covers the LLM token sides only, on the primary
+model of each ACTIVE agent, because that is exactly what makes an agent run's `cost_vr` None; it
+does not check the voice price (`per_1k_characters`) or the motion and image prices (`per_second`,
+`per_generation`), because naming the voice kind honestly would mean reading the media selection
+through the vault rather than the price table and pricing a motion model would mean knowing which
+model a plan will pick, and a check that half-covered them would report a pass certifying less than
+it looks like. The secondary and tertiary model slots are not priced either, because `vision_agent`
+counts only the primary model and the two checks must agree about which model an employee runs on.
+**Corrected at the same day's closure (2026-09-18): the Video Editor's preference no longer waits
+for the next seed and is no longer invisible** — the second call is wired at the end of
+`sync_provider_models`, after `apply_llm_allocation`, and `RoleView` carries
+`preferred_capabilities` beside `required_capabilities`; what stands open of it is named below.
+**Corrected at the same day's closure (2026-09-18): `picture_qc` reads the storyboard's record**, so
+a film that genuinely shows nobody reports the board's own note and the old sentence now means only
+what it says. An employee's run is still not reconcilable: the token cost the studio computes for
+itself lives in `agent_run.cost_vr` and never passes through `provider_cost_record`, so an Ollama
+Cloud invoice cannot yet replace it. An invoice matches on a correlation exactly and knows one
+default key, `render_job_id`, which is what `_priced_scene_costs` and `record_failed_render_cost`
+write; a hosting charge or a monthly subscription must be reconciled by period, or with a key he
+names, because a book does not guess. **Corrected at the same day's closure (2026-09-18): the
+waiting-approvals letter no longer leaves only at the day's close** — the media stage writes it in
+the minute it raises the question and stops, and `_letter_once_a_day` keeps the close from writing a
+second one. **Corrected at the same day's closure (2026-09-18): the panel renders the third severity
+and names the checks** — a failing INFORMATIONAL check reads INFORMATIV in neutral grey instead of a
+red "DEGRADES", and the five new checks and `autonomy_mode` have Romanian labels. What is still true
+of the interface: `youtube_channel_binding` has no label either and still shows by its code name, as
+it did before this phase; neither reconciliation screen exists; and `frontend/dist` is still not
 rebuilt, so the Owner sees none of any of it until he builds.
+
+### Closed the same day — 2026-09-18: the employee who can see arrives when the model does, a guessed name steers nothing, and the day speaks at the hour it stops
+
+Three things the section above left open, in its own words: a preference that "reaches a studio that
+is already running only at the next seed", a picture gate that "does not yet read the storyboard's
+cast note", and a letter that "leaves only at the day's close" beside an interface that "has not
+moved". An adversarial reading of the checklist — if the Owner did every line of it tonight, what
+would the studio make tomorrow at 05:00 and what would most likely go wrong — named the same three
+with a file and a line each, measured against this tree. All three are closed, and the second turned
+out to be a larger fault than the note it had been filed as.
+
+**The employee who can see arrives on the day the Owner admits the model, not on the day he first
+seeded the studio.** Measured before the work: `prefer_capable_models` had exactly one caller,
+`seed_initial_workforce`, and that caller one of its own, `scripts/bootstrap.py` — step 1 of his
+morning, hours before step 9, where he admits a model that declares vision. Nothing looked again
+between the two, so `app.agents.vision.vision_agent` returned None at 05:00, `picture_qc` and
+`character_drift_qc` stood down on every film, and a short of eight blank fields would have reached
+the Director as finished work. The preference now has its second call site, in `sync_provider_models`
+and after `apply_llm_allocation`: `record_declared` a few lines above is the only place in the studio
+that ever writes `vision` on a model, so the sync is the first moment at which a seeing model exists
+as a row, and it is the Owner's own act — «sincronizează» in *Angajați → Model*, «verifică» in
+*Setări → Conexiuni*. After the allocation and never before it, because the allocation is the
+studio's baseline and skips only employees who already carry `agent.model_assigned`, which a
+preferred move deliberately does not write: run first, the preference would be undone by the file
+three lines later. The guard that protected the Owner's own choice was the bare existence of
+`agent.model_assigned` — an event written by his command *and* by `apply_llm_allocation`, which
+applies `config/workforce_seed.json` through that same command — so the first sync of any studio
+assigned the Video Editor the file's own primary and the preference then stood down for ever for a
+choice he had never made. `_owner_chose_models` reads instead the last event that moved her models:
+none at all means the seed hired her and she may be moved; `agent.model_preferred` means this same
+function moved her last and may move her again; `agent.model_assigned` is the file's when her three
+slots hold exactly the models the file names for her role (compared through `resolve_model`, so a
+":cloud" spelling is not mistaken for a different model) and his hand otherwise. A role the
+allocation does not name, and an allocation that cannot be read, are both read as his: standing down
+costs a picture check that says honestly it could not run, while moving wrongly overwrites a
+decision, and only one of the two is undoable by the studio. Beside it, `RoleView` now carries
+`preferred_capabilities` alongside `required_capabilities` — two fields, never one list, because a
+preference listed as a requirement would tell him his Video Editor cannot work without a seeing
+model, and she works without one — so his page can say why she sits on the model she sits on without
+reading the database to explain it.
+
+**A cast the studio guessed steers nothing it cannot take back.** Measured before the work:
+`_characters_named_in` counted a bare given name whenever the next word was lower case, so
+"Hurricane Elena made landfall" cast Elena Fact-Checker, "Lyra, the constellation, rises" cast Lyra
+Voice Artist and "the Kael river delta" cast Kael Video Editor — and that column is not a label:
+`assembler.py` hands it to the render, `factory.py` turns it into the vendor's `referenceImages`, and
+`image_reference_for_scene` refuses the film outright when the named character's look is locked and
+no reference is stored. Once step 10 of his list fills the reference slots, an astronomy short about
+a constellation would have been drawn from the Voice Artist's portrait with real credits, and with
+`identity_locks_json['visual']` set the same false positive would have refused the day's only factual
+film. The reading is now split at the place where the evidence differs. A scene states its cast in
+the writer's own `characters` list — read by given name, because a list of characters is a record of
+who is in the scene — or by writing a character's whole canonical name in the picture it asks for;
+that stated cast alone is written to `character_ids_json`, and it alone buys a portrait, is certified
+by the character gate and may refuse a locked film. A bare given name in the prose is a guess: it is
+recorded, per scene, on the storyboard's own creation event (`media.storyboard_created`, key
+`guessed_cast`, read back through `app.media.services.storyboard_cast_record`), it never reaches the
+scene, and the picture gate may look at it — the frame is asked about, the verdict kept as OBSERVED
+with `basis: "guessed"`, no stored portrait attached — but it is never counted and can never fail a
+film, because a check that measured only guesses has measured nothing. A film whose prose named
+somebody and stated nobody therefore no longer claims an empty cast "by design": `cast_note` says
+`NO_CAST_ONLY_GUESSED` instead of `NO_CAST_BY_DESIGN`, and the two are different facts. The line the
+readiness phase left open is closed with it: `character_drift_qc` reads the board's note, so a film
+that honestly shows nobody reports that its cast is empty by design rather than the old single
+sentence "no scene in this film lists a character", which now means only what it says — nobody listed
+anybody and the board never said why. The cost of the choice is stated rather than hidden: a factual
+scene whose picture writes "Sarah at the studio window" and states nothing is no longer cast from
+prose, so a reference the Owner paid for goes unused unless the writer lists her. That is the right
+cost — the studio may miss a portrait it could have used, and may not buy one for somebody nobody
+said was there.
+
+**Under SUPERVISED the day says it stopped, in the same minute, and with a figure that admits what it
+left out.** Measured before the work: `waiting_approvals_letter` had one caller, `reconcile_day`,
+which runs inside `_post_run` — the day's last working stage — so a question the media stage raised
+at 05:30 reached the Owner at the run's end at best, and not at all when the run stopped before
+`_post_run`; the question then expired after `approval_expires_after_hours` and that film was never
+made. And the figure in it was understated whenever ElevenLabs has no active `per_1k_characters`
+price: `estimate_film_cost_micros` counted the narration as 0 and the caveat reached only the
+reservation's note, a row he never reads. What he sees now, in order, on a first SUPERVISED morning:
+**05:00** the day starts and the preflight is on the panel, every check by a Romanian name — «Buget
+de cheltuieli», «Prețurile modelelor», «Angajat care poate privi», «Imaginile de referință ale
+personajelor», «Canalul serialului», «Modul de autonomie» — and each failure marked by what it
+actually is: BLOCHEAZĂ in red, DEGRADEAZĂ in amber, and, new, INFORMATIV in neutral grey for the
+serial channel he has not created and the character whose look he has not locked, which used to print
+as a red "DEGRADES" about a day they do not degrade. **≈05:30** the media stage prices the film,
+finds the question is his (T3, over his threshold), writes it and stops — and writes the letter in
+the same minute rather than waiting for the close: «O întrebare așteaptă răspunsul tău / 1. Un
+randat plătit peste pragul stabilit — storyboard …, estimat 1.2 USD; cost 1.2 USD (estimare
+incompletă: narația nu are preț stocat și este numărată ca zero); expiră 19.09.2026 05:30.»
+**≈05:35 onward** the day runs its remaining stages and `_post_run`'s close calls the same letter and
+writes nothing, because `_letter_once_a_day` already has today's date on it: one letter, whatever end
+of the day raises it. **Whenever he opens the panel** the approvals card carries the same words
+beside the number — «Cost: 1.2 USD (estimare incompletă: narația nu are preț stocat și este numărată
+ca zero)» — so the caveat is read where the figure is read, not four lines below it, and the hold in
+the books carries it too. **By 05:30 the next morning** the question is dead; he now has the
+twenty-four hours he was supposed to have rather than the remainder after the run's close, and if his
+answer comes in time the next run films the film it was about.
+
+**What was measured, and whose measurement each figure is.** The seeing-employee part:
+`tests/test_seeing_employee.py` **5 passed** (new, red first at 1 passed / 4 failed), with
+`tests/test_phase1_agents.py`, `tests/test_multi_llm.py` and `tests/test_provider_discovery.py`
+**60** together, **54** across the picture-QC, workflow, factual and truthfulness suites and **79**
+across picture QC, readiness and the runbook; `ruff`, `ruff format --check` and `mypy` clean on its
+two backend files. The cast part: `tests/test_phase5_media.py` **30**, `tests/test_picture_qc.py`
+**17**, `tests/test_character_references.py` **23** — **70** together — with **72** across picture
+QC, the seeing employee and editorial quality and **91** across the daily run, the serial pipeline,
+the readiness adversary and the production policy; `ruff` and `ruff format --check` clean on its five
+files. The letter-and-panel part: `tests/test_phase11_economy.py` **36**,
+`tests/test_daily_run_stages.py` **34**, `tests/test_approvals.py` **20**,
+`tests/test_books_and_history.py` **17**, and **234** across those four with the E/F adversary,
+pricing truth, the runbook, readiness, the readiness adversary and the autonomy modes; on the panel
+side `node --test tests/readiness.test.js` **8** (new) inside `node --test tests/*.test.js` **110**,
+with `npm run check --prefix frontend` clean. This documentation part: `scripts/check_docs.py` and
+`tests/test_documentation.py`. **No whole-suite run was made by any of the four**, and the figure in
+`PROJECT_STATE.json` is still the Phase D/G closure verifier's 1194 passed / 1 skipped of 2026-09-18,
+older than the tree twice over now; the verifier's figure for the readiness phase and for this
+closure lands after this document. No migration was taken: the head stays `0045_reconciliation` and
+**0046 is still free**. No provider was called, nothing was rendered, no run was queued, no credit
+was spent and `data/studio.db` was not opened.
+
+Not finished, honestly: **the three closures are behaviour under faked providers, and the Owner has
+still seen none of them.** The panel was proved by `node --test` and `npm run check` only — no server
+was started, no browser was opened and `frontend/dist` was deliberately not rebuilt, because that
+build is his own launch act (step 2), so nobody has yet looked at an INFORMATIV card or an amber
+caveat. `RUNBOOK_CHECK_LABELS` covers every check name this phase added and every one the panel
+already named, but not `youtube_channel_binding`, which `run_preflight` also emits and which showed
+by its code name before this work and still does. The guessed cast is on the ledger event and not in
+the REST answer: `get_storyboard` returns `cast_note` and not the map, so the Owner cannot yet see on
+the storyboard page which names the studio read and refused to cast on. The serial's own board
+(`backend/app/media/serial_storyboard.py`) writes no `guessed_cast`, correctly — its cast comes from
+the episode roster and is always stated — which means `storyboard_cast_record` answers the empty
+record for serial boards, and a later reader must not take that emptiness for "nobody is in it". The
+caveat covers narration only, because narration is the only part of the estimate that can silently
+become zero; `estimate_film_cost_micros` still does not price the stills at all, so a film's real
+image spend is outside the figure rather than counted as zero inside it, and saying so in the caveat
+would be a claim the function cannot measure. The caveat itself lives in the request's `evidence`
+text and is read back by its first words (`UNPRICED_CAVEAT_PREFIX`) in three places — the
+Accountant's letter, the approvals card and the media stage that writes it — because a column would
+have needed migration 0046; a column is the right shape when a later phase takes one. The corner case
+`_owner_chose_models` names is real and undecidable from the record: an Owner who assigns an employee
+by hand to exactly the three models his own allocation file already gives her is read as the file,
+and she may be moved — bounded, because the move only ever goes to a model declaring everything the
+role requires as well as what it prefers and writes `agent.model_preferred`, so his next assignment
+wins and stays won. `waiting_approvals_letter` is called from `_media` without a try/except, matching
+the unguarded `budget_refusal_letter` call four lines below it, so if the Accountant's desk raised
+from inside it the media stage would fail rather than return SKIPPED; the two were left consistent
+rather than one of them guarded. One defect in the tree is named here rather than fixed, because it
+belongs to a file this part does not own: `uv run mypy backend/app/media/picture_qc.py` reports one
+`union-attr` error at line 285 — `board.id`, where the narrowing that makes it safe is `scenes` being
+non-empty, so it is a type-narrowing gap and not a runtime fault. A second, recorded as open while
+these documents were being written, was closed in the tree before they were finished:
+`tests/test_phase_dg_closure_adversary.py::test_only_the_owners_command_module_reaches_an_approval_row`
+had begun to fail because its whole-tree scan for the string "ApprovalRequest" found a docstring line
+the Accountant gained in this phase; the scan now walks the parsed module and counts a class
+definition, a name, an attribute or an import rather than characters, so prose that explains where
+the Owner's question keeps its cost no longer reads as a writer of the row. Measured after that
+change on this tree: `uv run pytest -q tests/test_phase_dg_closure_adversary.py` **12 passed**.
 
 ### Ce are Owner-ul de făcut
 
@@ -216,7 +384,12 @@ la locul lor în ordine.
    serialului (`serial_channel`). Niciuna dintre ele nu oprește ziua — o verificare nu are voie să
    refuze ziua pentru o alegere a lui — deci lista aceasta este exact ce îi rămâne de făcut mai jos.
    Preflight-ul citește numai baza de date: nu întreabă niciun furnizor, nu folosește nicio cheie și
-   nu pune nimic la coadă. **Dacă sare peste:** merge mai departe fără să știe ce lipsește.
+   nu pune nimic la coadă. Corectat la închiderea zilei (2026-09-18): pe panou, o verificare care
+   cade fără să strice ziua se citește acum **INFORMATIV**, într-un gri neutru — canalul serialului,
+   un personaj a cărui înfățișare nu este blocată — în loc de «DEGRADES» roșu, iar cele cinci
+   verificări noi și `autonomy_mode` își au numele în limba lui. Singura care rămâne cu numele ei de
+   cod este `youtube_channel_binding`, care nu avea etichetă nici înainte. Toate acestea se văd
+   numai după pasul 2. **Dacă sare peste:** merge mai departe fără să știe ce lipsește.
 4. **Pune bugetele** — `PUT /economy/budget`, biroul Contabilitate: zilnic, săptămânal, lunar. Nimeni
    altcineva nu le poate pune; Contabilul doar escaladează, nu aprobă. **Dacă sare peste:** rezervarea
    ține banii filmului, dar nu are de ce să îl refuze — o zi de reîncercări cheltuie cât îi vinde
@@ -251,10 +424,16 @@ la locul lor în ordine.
    aduce de la furnizor. Niciun model semănat nu declară vedere, iar studioul nu presupune niciodată
    că unul vede: capabilitatea `vision` se atașează doar când vendorul însuși o declară. Rolul
    Monteurului o *preferă* de azi, deci angajata se mută pe un astfel de model la următoarea rulare a
-   seed-ului — preferința nu cere nimic și nu refuză nicio rulare. **Dacă sare peste:** verificarea
-   imaginilor și cea a personajelor stau deoparte la fiecare film, cinstit și vizibil în raport
-   (`vision_capability`), deci un film de opt câmpuri goale trece toate verificările automate și
-   ajunge la Directoare ca un scurtmetraj terminat.
+   seed-ului — preferința nu cere nimic și nu refuză nicio rulare. Corectat la închiderea zilei
+   (2026-09-18): **nu mai are nimic de atribuit cu mâna după ce admite modelul, și nu mai este nevoie
+   nici de o a doua rulare a seed-ului, nici de o repornire.** Mutarea se face în chiar sincronizarea
+   care aduce modelul de la furnizor — «sincronizează» în *Angajați → Model*, «verifică» în *Setări →
+   Conexiuni* — pentru că acolo se scrie pentru prima oară `vision` pe un rând de model. Dacă îi
+   atribuie el însuși un model, alegerea lui rămâne a lui și preferința nu o atinge; ce se mută este
+   numai angajata lăsată pe modelul pe care i l-a dat fișierul studioului. **Dacă sare peste:**
+   verificarea imaginilor și cea a personajelor stau deoparte la fiecare film, cinstit și vizibil în
+   raport (`vision_capability`), deci un film de opt câmpuri goale trece toate verificările automate
+   și ajunge la Directoare ca un scurtmetraj terminat.
 10. **Produ seturile de referință ale personajelor** —
     `POST /media/characters/{id}/reference-set`, sau butonul de pe fișa personajului (fiecare slot
     este o pastilă, plină sau goală; butonul spune că se consumă credite de imagine și nu produce
@@ -265,7 +444,12 @@ la locul lor în ordine.
     peste:** fiecare imagine a unui personaj este o invenție nouă și verificarea personajelor nu are
     cu ce compara; iar un personaj cu înfățișarea blocată și fără referință citibilă **refuză
     filmul** — de azi și filmul factual, nu doar episodul de serial — în loc să i se inventeze o
-    față. Preflight-ul îi numește pe cei blocați înaintea zilei, ca să nu afle din refuz.
+    față. Preflight-ul îi numește pe cei blocați înaintea zilei, ca să nu afle din refuz. Corectat la
+    închiderea zilei (2026-09-18): refuzul acela urmează numai un personaj pe care **filmul îl
+    spune** — lista de personaje a scenaristului, sau numele întreg în imaginea cerută — niciodată un
+    prenume pe care proza doar l-a scris. Un nume ghicit nu cumpără niciun portret, nu refuză niciun
+    film și nu apare nicăieri în studio: rămâne pe evenimentul de creare al storyboard-ului, ca să se
+    vadă ce a citit studioul și ce a refuzat să creadă.
 11. **Aprobă furnizorii de rezervă**, dacă vrea unul — `approved_fallbacks`, pe nivelul de politică al
     canalului, al seriei sau al storyboard-ului; pentru un personaj blocat, lista din
     `approved_fallbacks_json` scrisă de o schimbare de identitate APROBATĂ. Aprobarea este dovada că
@@ -282,7 +466,14 @@ la locul lor în ordine.
     treapta de risc, cine întreabă, costul — «necunoscut» când studioul nu îl poate calcula, niciodată
     zero — și cât mai stă în picioare), iar `POST /api/v1/owner/approvals/decision` este răspunsul, o
     singură dată pentru un singur act. De azi Contabilul îi scrie o dată pe zi, la închiderea zilei,
-    ce întrebări stau în picioare și până când. Un «da» nu trece niciodată peste o poartă care refuză;
+    ce întrebări stau în picioare și până când. Corectat la închiderea zilei (2026-09-18):
+    **scrisoarea pleacă în minutul în care se naște întrebarea**, din pasul media care oprește
+    filmul, nu abia la închidere — tot una pe zi, oricare capăt al zilei o ridică primul — deci cele
+    douăzeci și patru de ore îi rămân întregi. Tot de la închiderea zilei, acolo unde studioul nu a
+    putut prețui o parte a filmului, cifra spune asta lângă ea, la fel în scrisoare, pe cartonașul de
+    aprobare și în nota rezervării: «estimare incompletă: narația nu are preț stocat și este numărată
+    ca zero». Ce nu spune: imaginile nu sunt prețuite deloc în estimare, deci nu lipsesc din ea ca
+    zero, ci sunt în afara ei. Un «da» nu trece niciodată peste o poartă care refuză;
     oprirea și SAFE_MODE refuză înaintea lui și îi lasă «da»-ul necheltuit; o politică de canal
     schimbată după ce a răspuns îl retrage, pentru că a spus «da» filmului aceluia la vizibilitatea
     aceea. Pragul peste care o randare plătită devine decizia lui este
@@ -291,13 +482,32 @@ la locul lor în ordine.
     o oră o întrebare i-ar putea expira înainte să o citească, peste o săptămână un «da» s-ar putea
     cheltui mult după filmul despre care a fost întrebat). **Dacă sare peste:** studioul rulează în
     modul scris în coloană, adică AUTONOMOUS_CEO, fără ca el să fi ales asta.
-13. **Abia acum pornește ceasul** — activarea lucrării `daily_main` din panoul zilei, care este actul
+13. **Alege mediul studioului: TEST sau PRODUCTION** — `POST /api/v1/owner/environment`, comanda
+    lui versionată, sau pagina Owner. Adăugat 2026-09-18, după ce un verificator adversarial a
+    răspuns la întrebarea „ce produce studioul mâine la 05:00 dacă face diseară toată lista" și a
+    măsurat că lista nu îl întreba niciodată: coloana `owner_policy.environment` pornește pe TEST
+    (`backend/app/models.py`), nimic din `scripts/bootstrap.py` nu o mută, iar în TEST fiecare film
+    primește cel mult două cadre în mișcare (`STUDIO_TEST_MOTION_SCENES`) și restul stop-cadre, iar
+    `resolve_publish_visibility` ține și „public" și „nelistat" la PRODUCTION — deci ambele filme ar
+    pleca private, oricât de deschisă ar fi politica pe canal. **Dacă sare peste:** primește două
+    filme scurte, făcute aproape numai din stop-cadre, pe care nu le poate vedea nimeni în afară de
+    el; nu este o eroare, este exact ce înseamnă TEST, dar nu este ziua pe care o aștepta.
+    **Dacă îl mută pe PRODUCTION:** filmele se fac la bugetul de mișcare întreg
+    (`STUDIO_MOTION_BUDGET_USD`, 12 USD implicit pe film), iar vizibilitatea devine cea din politica
+    fiecărui canal. Atunci cele două numere de la pasul 12 trebuie alese împreună cu acesta: pragul
+    peste care o randare devine decizia lui (`paid_generation_approval_threshold_usd`, 5 USD) stă
+    sub bugetul de mișcare, deci în PRODUCTION **fiecare** film trece pragul — sub SUPERVISED ziua
+    nu ar mai face nimic singură și i-ar lăsa în fiecare dimineață câte o întrebare pentru fiecare
+    film. Trei ieșiri, toate ale lui: ridică pragul peste bugetul de mișcare, coboară bugetul de
+    mișcare, sau alege AUTONOMOUS_CEO și lasă porțile dure să fie cele care stau între zi și
+    furnizor. Așa cum sunt acum, SUPERVISED și PRODUCTION nu pot coexista cu o dimineață autonomă.
+14. **Abia acum pornește ceasul** — activarea lucrării `daily_main` din panoul zilei, care este actul
     lui înregistrat (`workflow.job_activated`), și instalarea sarcinii Windows („AMN-AI Studio",
     `scripts/install_studio_service.ps1`), cu confirmarea o singură dată în `data/studio-service.log`
     că o autentificare S4U deschide cheia. **Dacă sare peste:** lucrarea zilei stă adormită și nu se
     întâmplă nimic — ceea ce este exact regula lui: generarea video costă bani și se face numai după
-    ce totul s-a dovedit. Rândurile 1-12 sunt „totul": de aceea acesta este ultimul.
-14. **După prima zi cu cheltuială reală: reconciliază facturile furnizorilor** —
+    ce totul s-a dovedit. Rândurile 1-13 sunt „totul": de aceea acesta este ultimul.
+15. **După prima zi cu cheltuială reală: reconciliază facturile furnizorilor** —
     `PUT /economy/reconciliations` (adăugat 2026-09-18), cu numărul facturii, ce acoperă (o perioadă
     sau un lucru numit, azi o randare) și `expected_version`, care aici este cerut pentru că
     înlocuirea unei facturi mișcă bani. Numai el vede factura, deci numai el poate face asta.

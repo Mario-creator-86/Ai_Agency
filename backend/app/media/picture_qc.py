@@ -25,6 +25,15 @@ is None, and the film's verdict is exactly what it would have been. A check that
 run never reports a pass. Where the bible holds no characters at all, the character check
 stays NOT_IMPLEMENTED, as it was.
 
+The same rule decides what a cast is worth here. A scene's `character_ids_json` is the film's
+own word on who is in the shot, and that is what this check certifies. Beside it the
+storyboard records the names its prose merely spelled — read from a bare given name, which
+was measured to find the Fact-Checker in "Hurricane Elena made landfall" — and those are
+asked about too, recorded as OBSERVED, and never counted: a guess cannot fail a film, and a
+check that looked only at guesses has measured nothing. Where a film states nobody at all,
+the detail is the board's own note, so "this film has no characters by design" no longer
+reads as "nobody listed them".
+
 The second is that a failure here fails the film in every environment. The fallback-scene
 gate is conditional — in TEST two motion scenes are the studio's own policy and the rest
 push by design, so the same count is a warning there and a failure in PRODUCTION. Nothing
@@ -202,6 +211,8 @@ def _not_applicable(reason: str, *, characters_configured: int = 0) -> dict[str,
                 else reason
             ),
             "characters_configured": characters_configured,
+            "characters_measured": 0,
+            "characters_observed": 0,
             "characters": [],
             "reference_images": 0,
         },
@@ -234,35 +245,56 @@ def evaluate_pictures(
             select(VideoRenderJob).where(VideoRenderJob.output_asset_id == media_asset_id)
         )
         board = session.get(Storyboard, job.storyboard_id) if job is not None else None
-        title = str(board.title or "") if board is not None else ""
+        if board is None:
+            # A film with no storyboard behind it has no scenes to compare its pictures with,
+            # which is the same answer as a storyboard with no scenes and is given in the same
+            # words. Returned here rather than folded into the `not scenes` check below so
+            # that everything after this line has a storyboard to read the cast from.
+            return _not_applicable(
+                "the film has no storyboard scenes to compare its pictures with",
+                characters_configured=characters_configured,
+            )
+        title = str(board.title or "")
         # The storyboard read out as plain values. Everything below this session runs with it
         # closed — the model call must not hold a connection while it waits — and a detached
         # ORM row is a lock or an error waiting for a reader who forgot which it was.
-        scenes: list[dict[str, Any]] = (
-            [
-                {
-                    "index": scene.scene_index,
-                    "seconds": scene.duration_seconds,
-                    "picture": scene.visual_prompt,
-                    "narration": scene.voiceover_segment,
-                    "characters": [
-                        cid for cid in (scene.character_ids_json or []) if isinstance(cid, str)
-                    ],
-                }
-                for scene in session.scalars(
-                    select(StoryboardScene)
-                    .where(StoryboardScene.storyboard_id == board.id)
-                    .order_by(StoryboardScene.scene_index)
-                )
-            ]
-            if board is not None
-            else []
-        )
+        scenes: list[dict[str, Any]] = [
+            {
+                "index": scene.scene_index,
+                "seconds": scene.duration_seconds,
+                "picture": scene.visual_prompt,
+                "narration": scene.voiceover_segment,
+                "characters": [
+                    cid for cid in (scene.character_ids_json or []) if isinstance(cid, str)
+                ],
+            }
+            for scene in session.scalars(
+                select(StoryboardScene)
+                .where(StoryboardScene.storyboard_id == board.id)
+                .order_by(StoryboardScene.scene_index)
+            )
+        ]
         if not scenes:
             return _not_applicable(
                 "the film has no storyboard scenes to compare its pictures with",
                 characters_configured=characters_configured,
             )
+        # What the board's maker decided about its cast. Two things come from it: the names
+        # its prose spelled and it refused to cast on — asked about below like any other,
+        # and unable to fail the film, because the studio was never told that person is in
+        # the shot — and, when the film states nobody at all, the maker's own reason for
+        # that, so this check reports "no characters by design" where that is what happened
+        # instead of the one sentence it used to print for every reason there could be.
+        from app.media.services import storyboard_cast_record  # noqa: PLC0415 - read only
+
+        record = storyboard_cast_record(session, board.id)
+        cast_note = record["note"]
+        for scene in scenes:
+            scene["guessed"] = [
+                cid
+                for cid in record["guessed"].get(str(scene["index"]), [])
+                if cid not in scene["characters"]
+            ]
         if registry is None or not registry.registered_ids():
             return _not_applicable(
                 "no language-model provider is registered: nobody could look at the pictures",
@@ -277,7 +309,10 @@ def evaluate_pictures(
         looker_id, looker_name = looker
         # Read the bible for the people this storyboard actually puts on screen, while the
         # session is open; the model call below must not hold one.
-        wanted = [cid for scene in scenes for cid in scene["characters"]]
+        wanted = [cid for scene in scenes for cid in scene["characters"] + scene["guessed"]]
+        #: The characters the film itself states are in it. Only these may pull a stored
+        #: portrait into the question: a guessed name buys nothing and shows nothing.
+        stated_ids = {cid for scene in scenes for cid in scene["characters"]}
         bibles = (
             {
                 character.id: character
@@ -294,6 +329,8 @@ def evaluate_pictures(
         }
         reference_images: dict[str, str] = {}
         for cid, (_, reference_id, _name) in described.items():
+            if cid not in stated_ids:
+                continue
             if reference_id is None or len(reference_images) >= MAX_REFERENCE_IMAGES:
                 continue
             encoded = _reference_image(session, reference_id)
@@ -318,11 +355,16 @@ def evaluate_pictures(
     looked = scenes[: len(frames)]
     unlooked = [scene["index"] for scene in scenes[len(frames) :]]
 
-    #: (scene_index, character_id) pairs the model is asked about, and the ones it cannot be.
-    pairs: list[tuple[int, str]] = []
+    #: (scene_index, character_id, basis) triples the model is asked about, and the ones it
+    #: cannot be. `basis` is which reading put that name here: "stated" is the film's own
+    #: word and is what this check certifies; "guessed" is a name the prose spelled, looked
+    #: at for the record and never counted for or against the film.
+    pairs: list[tuple[int, str, str]] = []
     not_applicable_characters: list[dict[str, Any]] = []
     for scene in looked:
-        for cid in scene["characters"]:
+        asked = [(cid, "stated") for cid in scene["characters"]]
+        asked += [(cid, "guessed") for cid in scene["guessed"]]
+        for cid, basis in asked:
             if cid not in described:
                 continue
             description, reference_id, name = described[cid]
@@ -331,6 +373,7 @@ def evaluate_pictures(
                     {
                         "scene": scene["index"],
                         "character": name,
+                        "basis": basis,
                         "status": "NOT_APPLICABLE",
                         "matches": None,
                         "reason": (
@@ -340,12 +383,12 @@ def evaluate_pictures(
                     }
                 )
                 continue
-            pairs.append((scene["index"], cid))
+            pairs.append((scene["index"], cid, basis))
 
     attached_references = [
         {"character": described[cid][2], "image": image}
         for cid, image in reference_images.items()
-        if any(cid == pair_id for _, pair_id in pairs)
+        if any(cid == pair_id and basis == "stated" for _, pair_id, basis in pairs)
     ]
     shown = {
         "title": title,
@@ -364,7 +407,7 @@ def evaluate_pictures(
                 "bible": described[cid][0],
                 "reference": described[cid][2] if cid in reference_images else None,
             }
-            for index, cid in pairs
+            for index, cid, _basis in pairs
         ],
         "references": [entry["character"] for entry in attached_references],
     }
@@ -480,7 +523,8 @@ def evaluate_pictures(
     character_failures: list[str] = []
     by_pair = {(verdict.scene, verdict.character.strip()): verdict for verdict in parsed.characters}
     measured_characters = 0
-    for index, cid in pairs:
+    observed_characters = 0
+    for index, cid, basis in pairs:
         name = described[cid][2]
         person = by_pair.get((index, name))
         if person is None:
@@ -488,9 +532,28 @@ def evaluate_pictures(
                 {
                     "scene": index,
                     "character": name,
+                    "basis": basis,
                     "status": "NOT_APPLICABLE",
                     "matches": None,
                     "reason": "no verdict was returned for this character in this scene",
+                }
+            )
+            continue
+        if basis == "guessed":
+            # The storyboard did not put this person in the scene; its prose spelled the
+            # name and the board refused to cast on it. What the model saw is worth
+            # recording — it is the only place a reader can see what that guess was worth —
+            # but a film is never failed for a person nobody said was in it, and a check
+            # that measured only guesses has measured nothing.
+            observed_characters += 1
+            character_records.append(
+                {
+                    "scene": index,
+                    "character": name,
+                    "basis": basis,
+                    "status": "OBSERVED",
+                    "matches": person.matches,
+                    "reason": person.reason,
                 }
             )
             continue
@@ -499,6 +562,7 @@ def evaluate_pictures(
             {
                 "scene": index,
                 "character": name,
+                "basis": basis,
                 "status": "MEASURED",
                 "matches": person.matches,
                 "reason": person.reason,
@@ -517,15 +581,21 @@ def evaluate_pictures(
             "detail": "No character is configured in the bible; this check certifies nothing.",
         }
     elif measured_characters == 0:
-        drift = {
-            "status": "NOT_APPLICABLE",
-            "passed": None,
-            "detail": (
-                "no character in this film could be compared with the bible"
-                if character_records
-                else "no scene in this film lists a character"
-            ),
-        }
+        # Why nothing was measured, in the order the reasons actually rule each other out.
+        # The last of them is the one this check used to print for all of them: it now means
+        # only what it says — nobody listed anybody, and the board never said why.
+        if observed_characters:
+            detail = (
+                f"no scene in this film states who is in it; {observed_characters} name(s) "
+                "its prose spells were looked at and certify nothing"
+            )
+        elif cast_note:
+            detail = cast_note
+        elif character_records:
+            detail = "no character in this film could be compared with the bible"
+        else:
+            detail = "no scene in this film lists a character"
+        drift = {"status": "NOT_APPLICABLE", "passed": None, "detail": detail}
     else:
         drift = {
             "status": "MEASURED",
@@ -536,6 +606,9 @@ def evaluate_pictures(
         {
             "characters_configured": characters_configured,
             "characters_measured": measured_characters,
+            # Looked at but not counted: the names the board read in the prose and refused
+            # to cast on. Reported separately so a reader never mistakes them for evidence.
+            "characters_observed": observed_characters,
             "characters": character_records,
             "reference_images": len(attached_references),
             "run_id": run_id,

@@ -1,5 +1,11 @@
 import { loadAgentDetails } from './agent_details.js';
 import { escapeHtml } from './html.js';
+import {
+  approvalCaveat,
+  checkClassName,
+  checkLabel,
+  checkVerdictWord,
+} from './readiness.js';
 import './style.css';
 import { initSettings } from './settings.js';
 import { acceptSnapshot } from './projection.js';
@@ -2933,6 +2939,9 @@ let approvalsRouteMissing = false;
 /** @param {ReturnType<typeof readApprovals>[number]} request @param {number} now */
 function approvalCard(request, now) {
   const tier = request.risk_tier || '—';
+  // Beside the figure and not under it in the evidence line: the Owner answers the number, so
+  // a figure that priced only part of the film has to say so where the number is read.
+  const caveat = approvalCaveat(request.evidence);
   return `
     <article class="approval-card">
       <div class="approval-head">
@@ -2940,7 +2949,7 @@ function approvalCard(request, now) {
         <span class="tag approval-tier" title="${escapeHtml(riskTierMeaning(tier))}">${escapeHtml(tier)}</span>
       </div>
       ${request.subject ? `<div class="approval-meta">Despre: ${escapeHtml(request.subject)}</div>` : ''}
-      <div class="approval-meta">Cost: ${escapeHtml(request.cost_label)} · ${escapeHtml(approvalExpiryText(request.expires_at, now))} · ${request.reversible ? 'reversibilă' : 'ireversibilă'}</div>
+      <div class="approval-meta">Cost: ${escapeHtml(request.cost_label)}${caveat ? ` <span class="approval-caveat">(${escapeHtml(caveat)})</span>` : ''} · ${escapeHtml(approvalExpiryText(request.expires_at, now))} · ${request.reversible ? 'reversibilă' : 'ireversibilă'}</div>
       ${request.requester ? `<div class="approval-meta">Cerută de ${escapeHtml(request.requester)}</div>` : ''}
       ${request.evidence ? `<p class="approval-evidence">${escapeHtml(request.evidence)}</p>` : ''}
       <div class="source-actions">
@@ -3927,19 +3936,6 @@ const RUNBOOK_STAGE_LABELS = {
   serial_queue: 'Coada serialului',
 };
 
-/** Preflight check names, as the Owner would say them. */
-const RUNBOOK_CHECK_LABELS = {
-  stop_autonomy: 'STOP autonomie',
-  llm_provider: 'Model de limbaj',
-  agents: 'Available agents',
-  render_engine: 'Motor de randare (FFmpeg)',
-  media_inspection: 'Media inspection (FFprobe)',
-  research_sources: 'Authorised source sites',
-  image_provider: 'Image provider',
-  voice_provider: 'Voice provider',
-  publishing: 'Publishing',
-};
-
 function runbookStatus(message, isError) {
   const box = element('runbook-status');
   box.hidden = false;
@@ -3949,10 +3945,6 @@ function runbookStatus(message, isError) {
 
 function stageLabel(name) {
   return RUNBOOK_STAGE_LABELS[name] || name;
-}
-
-function checkLabel(name) {
-  return RUNBOOK_CHECK_LABELS[name] || name;
 }
 
 async function loadPreflight() {
@@ -3967,14 +3959,17 @@ async function loadPreflight() {
         <span>${escapeHtml(data.summary || '')}</span>
       </div>`;
     // Every check is shown, passing ones included: the value of a preflight is that the Owner
-    // can see what it actually looked at, not only what it complained about.
+    // can see what it actually looked at, not only what it complained about. The word and the
+    // colour come from `readiness.js`, because a failing check is not always a fault: an
+    // INFORMATIONAL one — a serial channel he has not created, a character he has not locked —
+    // used to print as a red "DEGRADES" about a day it does not degrade.
     checksEl.innerHTML = (data.checks || [])
       .map(
         (check) => `
-        <div class="runbook-check ${check.ok ? 'rb-ok' : `rb-fail rb-${escapeHtml(String(check.severity).toLowerCase())}`}">
+        <div class="${escapeHtml(checkClassName(check))}">
           <div class="topic-card-header">
             <strong class="topic-card-title">${escapeHtml(checkLabel(check.name))}</strong>
-            <span class="topic-card-novelty">${check.ok ? 'OK' : escapeHtml(check.severity === 'BLOCKING' ? 'BLOCKING' : 'DEGRADES')}</span>
+            <span class="topic-card-novelty">${escapeHtml(checkVerdictWord(check))}</span>
           </div>
           <div class="topic-card-meta">${escapeHtml(check.message || '')}${check.detail ? ` · ${escapeHtml(check.detail)}` : ''}</div>
         </div>`,

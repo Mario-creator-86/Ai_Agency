@@ -632,8 +632,10 @@ def test_a_reference_set_finally_reaches_a_factual_film(engine):
 
     `image_reference_for_scene` reads a scene's cast, and until now every factual scene was
     written with an empty one — so a portrait the Owner had produced could only ever be used
-    by the serial. A factual scene whose picture names the character now carries it, and the
-    scene that shows a spectrum still carries nothing.
+    by the serial. A factual scene that states its character now carries it, and the scene
+    that shows a spectrum still carries nothing. The cast is the writer's own list here,
+    because only a stated cast may steer a paid render: the bare given name in the same
+    line is a guess, and a guess buys no portrait.
     """
     character_id = a_named_character(engine, "Sarah Executive")
     asset_id = reference_the_character(engine, character_id)
@@ -645,6 +647,7 @@ def test_a_reference_set_finally_reaches_a_factual_film(engine):
                 "scene_index": 1,
                 "visual_description": "Sarah at the studio window, mid-sentence",
                 "narration": "The day starts with the numbers.",
+                "characters": ["Sarah"],
             },
             {
                 "scene_index": 2,
@@ -668,6 +671,7 @@ def test_a_locked_character_named_in_a_factual_scene_refuses_a_face_it_has_not_g
     A character whose look is locked and whose slots are empty refuses the scene rather than
     letting a face be invented. This was unreachable from a factual film while every factual
     scene listed nobody; a studio that locks a look must produce the reference set first.
+    The refusal follows a cast the film states — here the writer's own list.
     """
     character_id = a_named_character(engine, "Sarah Executive")
     lock_the_look(engine, character_id)
@@ -679,6 +683,7 @@ def test_a_locked_character_named_in_a_factual_scene_refuses_a_face_it_has_not_g
                 "scene_index": 1,
                 "visual_description": "Sarah at the studio window, mid-sentence",
                 "narration": "The day starts with the numbers.",
+                "characters": ["Sarah"],
             }
         ],
         title="Locked",
@@ -686,3 +691,31 @@ def test_a_locked_character_named_in_a_factual_scene_refuses_a_face_it_has_not_g
 
     with pytest.raises(ReferenceRequired, match="referință"):
         image_reference_for_scene(engine, board["scenes"][0]["character_ids_json"])
+
+
+def test_a_locked_character_is_never_refused_on_a_name_the_prose_merely_spells(engine):
+    """A guess must not be able to refuse the day's only factual film.
+
+    Measured before this: a bare given name followed by a lower-case word was recorded as
+    cast, so "Hurricane Elena made landfall" put the Fact-Checker in the shot — and if her
+    look were locked, `ReferenceRequired` would have refused an astronomy short about a
+    storm at the render stage. The guess no longer reaches the scene's cast, so the locked
+    character it named refuses nothing: there is nobody in the scene to refuse it for.
+    """
+    character_id = a_named_character(engine, "Elena Fact-Checker")
+    lock_the_look(engine, character_id)
+
+    board = a_factual_board(
+        engine,
+        [
+            {
+                "scene_index": 1,
+                "visual_description": "Hurricane Elena made landfall before dawn",
+                "narration": "The storm came ashore.",
+            }
+        ],
+        title="Hurricane",
+    )
+
+    assert board["scenes"][0]["character_ids_json"] == []
+    assert image_reference_for_scene(engine, board["scenes"][0]["character_ids_json"]) is None

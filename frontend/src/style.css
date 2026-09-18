@@ -613,6 +613,12 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 .runbook-check.rb-ok { border-left-color: var(--ok-ink); }
 .runbook-check.rb-fail.rb-degrading { border-left-color: var(--warn-ink); background: var(--warn-bg); }
 .runbook-check.rb-fail.rb-blocking { border-left-color: var(--alert-ink); background: var(--alert-bg); }
+/* A failing INFORMATIONAL check costs the day nothing — a serial channel he has not created,
+   a character whose look he has not locked — so it is neither amber nor red. Without this rule
+   it fell through to the plain card and was read as a fault anyway; the word beside it says
+   INFORMATIV, and the colour has to agree. */
+.runbook-check.rb-fail.rb-informational { border-left-color: var(--line-strong); background: var(--surface-sunk); }
+.runbook-check.rb-fail.rb-informational .topic-card-novelty { color: var(--ink-3); }
 
 .runbook-run { border-left-color: var(--line-strong); }
 .runbook-run.rb-completed { border-left-color: var(--ok-ink); }
@@ -948,6 +954,9 @@ main { font-size: 13px; }
 .approval-action { font-size: 12.5px; font-weight: 600; color: var(--ink); word-break: break-word; }
 .approval-tier { background: var(--warn-bg); color: var(--warn-ink); }
 .approval-meta { font-size: 11.5px; color: var(--ink-3); }
+/* The studio saying its own figure is not the whole film. Amber rather than red: the estimate
+   is not wrong, it is incomplete, and he is about to answer a question about it. */
+.approval-caveat { color: var(--warn-ink); }
 .approval-evidence { margin: 0; font-size: 11.5px; line-height: 1.5; color: var(--ink-2); }
 .approval-footnote { margin: 0; font-size: 10.5px; line-height: 1.4; color: var(--ink-3); font-style: italic; }
 

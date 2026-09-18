@@ -1,5 +1,110 @@
 # Changelog
 
+## Readiness for the first day, closed — 2026-09-18
+
+The three risks the readiness section had left open, named with a file and a line each by an
+adversarial reading of the Owner's own checklist: the employee who can see never arriving, a cast the
+studio guessed steering a paid render, and a SUPERVISED day that stops without saying so.
+
+- **The preference is applied where the studio learns about models.** `prefer_capable_models` gains a
+  second call site in `sync_provider_models` (`backend/app/agents/services.py`), immediately after
+  `apply_llm_allocation` and inside its own try/except: `record_declared` a few lines above is the only
+  place in the studio that ever writes `vision` on a model, so the sync is the first moment a seeing
+  model exists as a row, and the allocation must run first because it rewrites the slots of any
+  employee who does not carry `agent.model_assigned` — which a preferred move deliberately does not
+  write. Measured before the change: the only caller was `seed_initial_workforce`, i.e.
+  `scripts/bootstrap.py`, step 1 of his morning, hours before step 9.
+- **The studio's own allocation file is no longer mistaken for the Owner's hand.** The guard was the
+  bare existence of `agent.model_assigned`, which `apply_llm_allocation` writes too, so the first sync
+  of any studio killed the preference for a choice he never made. `_owner_chose_models` judges the last
+  event that moved an employee's models — none means the seed hired her, `agent.model_preferred` means
+  this function moved her last, `agent.model_assigned` is the file's only when her three slots resolve
+  (through `resolve_model`) to exactly what `config/workforce_seed.json` names for her role — and reads
+  a role the file does not name, and a file it cannot read, as his.
+- **`RoleView.preferred_capabilities`** (`backend/app/agents/schemas.py`), filled in `list_roles` from
+  the PREFERRED rows: two fields and never one list, because a preference listed as a requirement
+  would tell the Owner his Video Editor cannot work without a seeing model, and she works without one.
+  Additive, defaulting to `[]`.
+- **A cast is what the film states; a guess is recorded and never acted on.** `_characters_named_in`
+  gains a `given_names` flag rather than a second regex, and `_scene_cast`
+  (`backend/app/media/services.py`) returns `(stated, guessed)`: stated is the writer's `characters`
+  list read by given name plus whole canonical names in the requested picture, and only that reaches
+  `character_ids_json`, which the assembler, the factory's `referenceImages` and the locked-look
+  refusal all read. A bare given name in the prose — measured to cast Elena Fact-Checker from
+  "Hurricane Elena made landfall" — is recorded per scene on `media.storyboard_created` as
+  `guessed_cast`, read back by `storyboard_cast_record`, and never written to a scene. `cast_note` now
+  distinguishes `NO_CAST_BY_DESIGN` from `NO_CAST_ONLY_GUESSED`.
+- **The picture gate looks at a guess and can never fail a film for one.** `evaluate_pictures`
+  (`backend/app/media/picture_qc.py`) asks about guessed names in the same single look, records them
+  `status: "OBSERVED"` with `basis: "guessed"`, counts them in `characters_observed` and never in
+  `characters_measured`, and attaches a stored portrait for stated characters only.
+  `character_drift_qc` now reports, in order, the guessed-names line, the board's own note, "no
+  character in this film could be compared with the bible", and only then the old sentence "no scene
+  in this film lists a character" — which now means only what it says. This closes the readiness
+  phase's open line about `picture_qc` reading the storyboard's cast note.
+- **An estimate says what it could not price.** `estimate_film_cost_micros`
+  (`backend/app/economy/budget.py`) returns `unpriced`, `caveat` and `complete` beside the figure, with
+  `unpriced_caveat` the single wording («estimare incompletă: narația nu are preț stocat și este
+  numărată ca zero») and `UNPRICED_CAVEAT_PREFIX` its first words. The media stage carries that one
+  sentence to all three places the Owner can meet the figure — his question's `evidence`, the hold's
+  note and the Accountant's letter — and `_cost_caveat` (accountant) and `approvalCaveat`
+  (`frontend/src/readiness.js`) read it back by that prefix, yielding "" when it is absent. The
+  caveat is raised only where there was something to price.
+- **The letter about what is waiting leaves in the minute the question is born.**
+  `waiting_approvals_letter` is called from `_media` (`backend/app/runbook/stages.py`) as soon as the
+  refusal is recorded, guarded by `refusal.get("approval_id")` so a MANUAL refusal writes nothing, and
+  `reconcile_day`'s call is kept: `_letter_once_a_day`'s business-date idempotency makes two callers
+  safe, so the day writes exactly one letter whichever end of it notices first. Measured before the
+  change: a question raised at 05:30 reached him at the run's end at best, and not at all when the run
+  stopped before `_post_run` — after which it expired and the film was never made.
+- **The panel says INFORMATIV and names every check it can.** New module
+  `frontend/src/readiness.js` holds `RUNBOOK_CHECK_LABELS` (moved out of `main.js`, with Romanian
+  lines for the five checks this phase added and for `autonomy_mode`), `checkVerdictWord`,
+  `checkClassName` and `approvalCaveat`; `main.js` imports them, and `style.css` gains
+  `.rb-informational` (neutral) and `.approval-caveat` (amber). A severity the page has never heard of
+  is printed as it came, with no colour class, rather than rounded into DEGRADES. The module is
+  separate because `main.js` touches the document on import and cannot be loaded by `node --test`.
+  `youtube_channel_binding` still has no label and still shows by its code name, as before this phase.
+- Measured, each figure by the part that took it and **no whole-suite run made by any of them**:
+  `tests/test_seeing_employee.py` 5 (new, red first at 1/4) inside 60 with the agents, multi-LLM and
+  provider-discovery suites, plus 54 and 79 across the picture-QC, workflow, factual, truthfulness,
+  readiness and runbook suites; `tests/test_phase5_media.py` 30, `tests/test_picture_qc.py` 17 and
+  `tests/test_character_references.py` 23 — 70 together — with 72 and 91 across the seeing-employee,
+  editorial-quality, daily-run, serial-pipeline, readiness-adversary and production-policy suites;
+  `tests/test_phase11_economy.py` 36, `tests/test_daily_run_stages.py` 34, `tests/test_approvals.py`
+  20 and `tests/test_books_and_history.py` 17, with 234 across those and six neighbours, and
+  `node --test tests/readiness.test.js` 8 (new) inside `node --test tests/*.test.js` 110 with
+  `npm run check --prefix frontend` clean; `scripts/check_docs.py` and `tests/test_documentation.py`
+  for the documents. No migration was taken: the head stays `0045_reconciliation` and **0046 is still
+  free**. No provider was called, nothing was rendered, no run was queued, no credit was spent and
+  `data/studio.db` was not opened.
+- **Documents.** `CURRENT_STATUS.md` gains *Closed the same day — 2026-09-18* inside the readiness
+  section and corrects in place, each with a dated marker, the three risks that section recorded as
+  open plus the four sentences this work made untrue. «Ce are Owner-ul de făcut» is corrected in four
+  lines and rewritten in none: step 3 (INFORMATIV in neutral grey, the new checks named, visible only
+  after step 2's build), step 9 (**nothing to assign by hand after admitting a seeing model, and
+  neither a second seed run nor a restart**), step 10 (a locked character refuses a film only on a
+  cast the film states) and step 12 (the letter leaves when the question is born; an incomplete figure
+  says so beside itself). `../architecture/39_DAILY_AUTONOMOUS_RUNBOOK.md` §11 is edited a second time
+  to say the letter leaves from both ends of the day, with its `sha256` re-recorded in
+  `DOCUMENTATION_INDEX.json` and a decision-log entry as the reason;
+  `../architecture/31_GOVERNANCE_APPROVAL_POLICY.md`, `../architecture/50_CONTENT_GATE_MATRIX.md` and
+  `../architecture/24_VISUAL_CONTINUITY_ASSET_SYSTEM.md` were read against the cast change and left
+  untouched, because none of them describes how a scene's cast is read.
+- Still open and named: nothing here has met a real vendor or a real model; `frontend/dist` is still
+  not rebuilt and no server or browser has rendered the INFORMATIV card or the amber caveat; the
+  guessed cast is on the ledger event and not in `get_storyboard`'s answer; the caveat lives in the
+  request's `evidence` text and not in a column; `estimate_film_cost_micros` still does not price the
+  stills at all; `youtube_channel_binding` has no label; `waiting_approvals_letter` is called from
+  `_media` without a try/except, matching the `budget_refusal_letter` call below it; and one defect
+  in the tree belongs to nobody in this closure and is reported rather than repaired,
+  `mypy backend/app/media/picture_qc.py` line 285 (`union-attr` on `board.id`, a narrowing gap and
+  not a runtime fault). A second was closed in the tree while these documents were being written:
+  `tests/test_phase_dg_closure_adversary.py::test_only_the_owners_command_module_reaches_an_approval_row`
+  had begun to fail because its whole-tree scan for the string "ApprovalRequest" found a docstring
+  line the Accountant gained in this phase, and the scan now walks the parsed module — a class
+  definition, a name, an attribute, an import — instead of characters (12 passed afterwards).
+
 ## Readiness for the first day — 2026-09-18
 
 What the studio still needs from the Owner before it is left alone on Monday morning, said by the
