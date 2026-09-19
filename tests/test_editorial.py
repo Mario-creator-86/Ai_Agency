@@ -152,7 +152,14 @@ def a_film(
                     id=ids["claim"],
                     topic_id=ids["topic"],
                     source_id=ids["source"] if with_source else None,
-                    claim_text="Webb measured water vapour on GJ 486 b.",
+                    # The claim says what ENGLISH says: the year, the telescope, the
+                    # planet's distance. With only "Webb measured water vapour on GJ 486 b."
+                    # behind it, six of the narration's seven numbers and names came from no
+                    # claim, and the grounding check refuses a film like that.
+                    claim_text=(
+                        "In 2023 the James Webb Space Telescope measured water vapour on "
+                        "GJ 486 b, a rocky planet 26 light years away."
+                    ),
                     claim_type="SCIENTIFIC_FACT",
                     importance="CRITICAL",
                     status="SUPPORTED",
@@ -411,6 +418,47 @@ def test_a_serial_film_is_judged_as_a_dramatisation_not_for_its_missing_claims(e
     with Session(engine) as session:
         assert latest_editorial(session, ids["asset"]).verdict == "APPROVE"
         assert session.get(Storyboard, ids["board"]).status == "RENDERED"
+
+
+#: A narration about something its claim never says: the rehearsal of 2026-09-18 approved a
+#: telescope film on a Nepal topic, and this is the same drift the other way round.
+OFF_CLAIM = (
+    "Nepal is the fourth most vulnerable country on Earth to climate change. In August 2018 "
+    "flash floods and landslides along its southern border cost six hundred million dollars in "
+    "damages, and the money promised by richer countries never arrived in the valleys that "
+    "flooded. Who should pay that bill?"
+)
+
+
+def test_the_director_reads_what_the_narration_was_measured_against(engine, staffed):
+    """Her facts carry the grounding measurement, so her verdict can cite it."""
+    ids = a_film(engine, voiceover=ENGLISH, with_source=True)
+    with Session(engine) as session:
+        facts = gather_facts(session, ids["asset"], "en")
+    assert facts["grounding"]["status"] == "PASSED"
+    assert facts["grounding"]["claims"][0]["present"] is True
+
+
+def test_a_film_whose_narration_does_not_say_its_claim_is_refused_before_any_model(engine, staffed):
+    ids = a_film(engine, voiceover=OFF_CLAIM, with_source=True)
+    with Session(engine) as session:
+        facts = gather_facts(session, ids["asset"], "en")
+    assert facts["grounding"]["status"] == "REFUSED"
+    assert len(facts["hard_rejects"]) == 1
+    assert facts["hard_rejects"][0].startswith("narațiunea nu spune ce spun afirmațiile ei")
+    assert "nu o spune" in facts["hard_rejects"][0]
+
+    registry, model = registry_with(staffed, lambda p: json.dumps({"verdict": "APPROVE"}))
+    result = editorial_review(engine, registry, ids["asset"], language="en")
+    assert result["verdict"] == "REJECT" and model.calls == []
+
+
+def test_a_serial_film_is_not_measured_against_claims(engine, staffed):
+    ids = a_film(engine, voiceover=EPISODE, with_source=False, serial=True)
+    with Session(engine) as session:
+        facts = gather_facts(session, ids["asset"], "en")
+    assert facts["grounding"] is None
+    assert facts["hard_rejects"] == []
 
 
 def test_a_serial_film_still_needs_words_pictures_and_the_audience_language(engine, staffed):

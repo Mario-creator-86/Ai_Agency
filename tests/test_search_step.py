@@ -494,26 +494,47 @@ def test_a_providers_refusal_fails_the_render_not_the_day(engine, settings, stud
     """Runway answered HTTP 400 on the seventh clean day; the media stage raised, the day
     failed and the studio entered safe mode. A refusal is that render's failure: the
     storyboard stays approved for tomorrow and the report says who refused."""
-    from app.factual.models import ScriptDraft
+    from app.factual.models import FactualClaim, ScriptDraft
     from app.media import assembler, factory
     from app.media.services import generate_storyboard_from_script
     from app.providers.media_http import MediaProviderError
     from app.runbook import stages
 
     script_id = str(uuid4())
+    topic_id = a_topic(engine)
+    narration = "UNESCO's atlas lists about 2,500 endangered languages."
     with Session(engine) as session, session.begin():
+        # The film says what its claim says: the gate before the render measures that now
+        # (`app.factual.grounding`), and a film citing a claim that does not exist is held
+        # there, before the refusal this test is about could happen.
+        session.add(
+            FactualClaim(
+                id="c1",
+                topic_id=topic_id,
+                claim_text=(
+                    "UNESCO's Atlas of the World's Languages in Danger lists about 2,500 "
+                    "endangered languages."
+                ),
+                claim_type="STATISTIC",
+                importance="CRITICAL",
+                status="SUPPORTED",
+                confidence=0.9,
+                created_at=utc_now(),
+            )
+        )
+        session.flush()
         session.add(
             ScriptDraft(
                 id=script_id,
-                topic_id=a_topic(engine),
+                topic_id=topic_id,
                 version=1,
                 title="A film",
                 target_duration_seconds=50,
-                voiceover_full_text="Words that carry a claim.",
+                voiceover_full_text=narration,
                 scenes_json=[
                     {
                         "scene_number": 1,
-                        "narration": "Words that carry a claim, spoken.",
+                        "narration": narration,
                         "visual_description": "A picture.",
                         "claim_ids": ["c1"],
                     }

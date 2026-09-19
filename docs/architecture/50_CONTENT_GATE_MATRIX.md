@@ -6,6 +6,7 @@
 |---|---:|---:|---:|
 | Source/evidence quality | Yes | Recheck if changed | Yes for stale-sensitive |
 | Claim factual verification | Yes | Yes if storyboard adds implication | Yes |
+| Narration grounding (Channel A) | No | Script | Yes |
 | Novelty/duplication | Candidate | Script | Final metadata |
 | Rights/license | Source media planning | Asset generation/sourcing | Final package |
 | Platform policy | Topic | Storyboard as needed | Final |
@@ -79,6 +80,55 @@ a scene past the frame cap with the reason that no frame was cut for it — neit
 pass. Where the Character Bible holds no characters at all, the character gate stays
 NOT_IMPLEMENTED. A studio whose workforce has no vision-capable model therefore sees these two gates
 stand down in every report, visibly and with the reason, which is the honest reading and not a pass.
+
+## Narration grounding (built 2026-09-19)
+
+The row added to the table above exists in code (`backend/app/factual/grounding.py`). The claim
+factual verification row certifies the claims, not the film: the claim gate
+(`evaluate_factual_gate`) passes a script when every claim id it cites exists and is SUPPORTED, and
+fails an empty or dangling list. It never reads the narration. On the rehearsal of 2026-09-18, on a
+copy of the Owner's data, a stand-in writer's script about the James Webb telescope cited a
+SUPPORTED claim of the selected topic "Why Nepal Is Being Handed a Climate Bill It Cannot Pay", and
+it passed the claim gate, the story review and the Director. Nothing computed had compared the
+words with the claims.
+
+**What it measures.** It reads the voiceover, the topic's title and angle, and the text of each
+cited claim. It uses no model and costs nothing.
+- Every cited claim is said: at least two of the claim's terms (content words, numbers, names)
+  appear in the voiceover, or all of them when the claim has fewer.
+- The voiceover is about its topic: at least two of the terms of the topic's title and angle
+  appear in it.
+- The voiceover is not someone else's story: it is refused when more than half of its numbers and
+  names, and at least two of them, appear in no cited claim and not in the topic.
+
+Words are compared by stem, with diacritics folded. Numbers are normalised, and number words are
+read in English and in Romanian. So a faithful paraphrase passes, and so does a translation into
+the audience language.
+
+**Where it refuses.** Three times before any money is spent, and once before publishing:
+- the story review's blocking check `narration_is_grounded`, which asks for a rewrite (REVISE)
+  with a note naming the claim that went unsaid, and becomes REJECT at the last exchange like any
+  blocking check;
+- the Director's approval of the script;
+- `story_gate`, before the shot descriptions and the render. It measures again, so a PASS recorded
+  earlier cannot buy a shot;
+- the Director's last look at the finished film, which refuses a factual film that fails it before
+  any model is asked.
+
+It only adds refusals. The claim gate, the Director's verdict and the five publishing points are
+unchanged.
+
+**What it certifies, and what it does not.** PASSED certifies that the words rest on the claims and
+the topic, measured on the words. It does not certify meaning: a narration that repeats two of a
+claim's terms while contradicting it passes. That judgement stays with the Director, who receives
+the measurement. NOT_MEASURED is not the stand-down described under *Gate behavior*. That rule is
+for a gate whose equipment is missing, and this gate needs nothing but the script and its rows. It
+cannot measure only when the script lacks what every factual script must carry: a cited claim, a
+claim that still exists, or a narration. The defect is then the script's, so the record carries the
+status, the reason and `passed: false`, and the script is refused. In the first two cases the claim
+gate refuses the same script already. An episode of the office serial makes no claims about the
+world and is not measured, recognised by `story_json.kind == office_serial_episode` or by a topic
+whose status is SERIAL.
 
 ## Gate immutability
 

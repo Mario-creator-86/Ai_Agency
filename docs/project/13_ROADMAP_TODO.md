@@ -1155,7 +1155,12 @@ no credit was spent and `data/studio.db` was not opened.
 - [ ] The panel shows `run.summary`, `stages_productive`, each stage's `produced`, the reason «Nu a
   fost încercată: etapa de care depinde, «X», a eșuat.» and the preflight's `first_stop`; a PARTIAL
   run's `stopped_at_stage` reads «etapa eșuată» (`frontend/src/main.js`); and `frontend/dist` is
-  rebuilt by the Owner.
+  rebuilt by the Owner. Corrected 2026-09-19:
+  - done in `frontend/src`: the summary, `stages_productive`, `produced` and `first_stop`, through
+    `frontend/src/day_outcome.js`;
+  - the dependant's reason was already shown as the stage's reason line;
+  - what stays open is «etapa eșuată» and the rebuild. See «After the rehearsal — 2026-09-19»
+    below.
 - [ ] `backend/app/runbook/stages.py`'s module docstring still says a raised fault «stops the day».
   `_performance_intake` could carry the first «fără date» reason in its own reason line.
 - [ ] The paid-path scan and a fixture's fakes extended to the other scheduled entry points: the
@@ -1176,7 +1181,9 @@ no credit was spent and `data/studio.db` was not opened.
   - whether Runway returns usable clips at the estimated credits;
   - whether his models answer the idea, Director and Accountant schemas;
   - whether a vision model answers the picture gate on his frames;
-  - whether the reviewers catch narration its cited claim does not support;
+  - whether the reviewers catch narration its cited claim does not support (corrected 2026-09-19:
+    a computed check now refuses it before any money is spent; a real day measures whether a real
+    writer repairs the script within the exchange budget);
   - whether the Publisher titles the serial as the episode;
   - which of his 36 hosts are readable today.
 
@@ -1200,3 +1207,61 @@ Evidence, each figure named for the part that measured it:
 No part made a whole-suite run. No migration was taken, and the head stays `0045_reconciliation`. No
 provider was called, no run was queued on the live studio, no credit was spent, and `data/studio.db`
 was never opened.
+
+### After the rehearsal — 2026-09-19
+
+- [x] The narration is measured against its claims and its topic (`backend/app/factual/grounding.py`,
+  new). The rehearsal's telescope script on the Nepal topic cited a SUPPORTED claim and passed the
+  factual gate, the story review and the Director.
+  - What it asks: each cited claim appears by two of its terms, the topic by two of its terms, and
+    no more than half of the narration's numbers and names come from nowhere.
+  - What it returns: NOT_MEASURED does not pass.
+  - Where it refuses: the story review's blocking check `narration_is_grounded` (REVISE, then
+    REJECT at the last exchange), `_director_approves`, `story_gate` before the shot descriptions
+    and the render, and the Director's last look (`gather_facts`).
+
+  It only adds refusals, and serial episodes are not measured.
+- [x] Calibrated on the real model's 31 scripts of 2026-09-12. Both approved films pass (LHC
+  f243bf48, ATLAS 37fc8ef6). 25 of the 29 waiting pass, and the 4 refused each cite a claim their
+  narration never says.
+- [x] `50_CONTENT_GATE_MATRIX` names the gate and what it certifies, and is re-hashed (`a436dab0…` →
+  `6750c35d…`).
+- [x] The panel says what the day made (`frontend/src/day_outcome.js`, new, 9 node tests): the run's
+  `summary`, each stage's `produced`, `rb-empty` for a COMPLETED day that made nothing, and
+  `first_stop` above the preflight list. A missing count is never read as zero.
+- [x] The module docstring of `backend/app/factual/grounding.py` says two letters of prefix slack,
+  as `SUFFIX_SLACK` does (the verify part, 2026-09-19).
+- [x] Spelled-out numbers are read as numbers in English and Romanian, and ranks from third to
+  tenth on both sides. Before, a faithful narration saying «six hundred million dollars» was
+  refused (the verify part, red at 3 failed, then 22 passed).
+- [x] Two fixtures that broke the writer's brief now narrate what their claims say:
+  `tests/test_phase_bc_adversary.py` and `tests/test_search_step.py`.
+- [ ] What a word count cannot hear stays the Director's: negation, one claim said with the others
+  carried by generic and topic words, keywords in unrelated sentences. Stricter rules refuse the
+  Owner's approved LHC and ATLAS films. «opt» and «nouă» still read as 8 and 9.
+- [ ] A PARTIAL run's `stopped_at_stage` reads «etapa eșuată», and `frontend/dist` is rebuilt by
+  the Owner.
+- [ ] The Owner's part: 4 of the 29 waiting scripts (92028a88, 8d4f7306, aa3da89f, 670d6279) fail
+  the check. If he approves one by hand, `story_gate` holds it. This is the dated line in step 12 of
+  «Ce are Owner-ul de făcut».
+- [ ] Measured only by a real day: whether a real writer, given the Romanian note, repairs a refused
+  script within the exchange budget. Also untested: claims whose sources are in a language other
+  than English, beyond a Romanian narration of English claims.
+
+Evidence, each figure named for the part that measured it:
+- The grounding part: `tests/test_script_grounding.py` 15 (new), `tests/test_editorial.py` 16
+  (3 new), and 352 passed, 1 skipped across seventeen factual, editorial, pipeline, runbook, media,
+  publishing and whole-day files, the skip being the opt-in rehearsal. `ruff check` and
+  `ruff format --check` were clean on its six files.
+- The panel part: `node --test tests/day_outcome.test.js` red first (0 passed, 1 failed, the module
+  missing), then 9; `npm test --prefix frontend` 124; tsc clean; and a scratch `vite build`.
+- The verify part: a whole suite of 1523 passed, 4 skipped, 2 failed on the tree it found (both
+  fixtures, corrected); `tests/test_script_grounding.py` 22; the seventeen files 359 passed, 1
+  skipped; `ruff check` clean; `mypy backend` clean on 191 files; `npm test` 125.
+- The committing session: a whole suite of 1518 passed, 4 skipped, 12 failed, 2 errors, all 14
+  the machine out of commit memory (`MemoryError`, FFmpeg dying mid-encode, Windows low-memory
+  events at 14:09, 14:14 and 14:20); their seven files again: 169 passed.
+- The documents: `scripts/check_docs.py` passed, and `tests/test_documentation.py` 3 passed.
+
+No provider was called, no run was queued, no credit was spent, and
+`data/studio.db` was never opened.

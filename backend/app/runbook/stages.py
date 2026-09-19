@@ -94,6 +94,7 @@ from app.factual.agent_pipeline import (
     agent_verify_claim,
     agent_write_script,
 )
+from app.factual.grounding import script_grounding
 from app.factual.models import FactualClaim, ScriptDraft, SourceSnapshot, TopicIdea
 from app.factual.services import (
     FactualGateError,
@@ -820,6 +821,18 @@ def _director_approves(engine: Engine, script_id: str, review: dict[str, Any]) -
     with Session(engine) as session:
         director = agent_for_role(session, "Director")
         director_id = director.id if director else None
+        # The factual gate asks whether the cited claims exist and are SUPPORTED; this asks
+        # whether the narration says them. On the rehearsal of 2026-09-18 only the first was
+        # asked, and a telescope film on the Nepal topic was approved. A PASS from a review
+        # that measured it has already answered; the measurement is repeated because it costs
+        # nothing and her approval must never rest on a review that did not take it.
+        grounding = script_grounding(session, session.get(ScriptDraft, script_id))
+    if grounding is not None and not grounding["passed"]:
+        logger.info(
+            "script_approval_refused",
+            extra={"script_id": script_id, "reason": " ".join(grounding["reasons"])[:300]},
+        )
+        return None
     try:
         approve_script_draft(
             engine,

@@ -6,6 +6,7 @@ import {
   checkLabel,
   checkVerdictWord,
 } from './readiness.js';
+import { firstStop, runClassName, runHeadline, stageClassName, stageProducedWord } from './day_outcome.js';
 import './style.css';
 import { initSettings } from './settings.js';
 import { acceptSnapshot } from './projection.js';
@@ -3963,10 +3964,21 @@ async function loadPreflight() {
     // colour come from `readiness.js`, because a failing check is not always a fault: an
     // INFORMATIONAL one — a serial channel he has not created, a character he has not locked —
     // used to print as a red "DEGRADES" about a day it does not degrade.
-    checksEl.innerHTML = (data.checks || [])
+    // The first check that stops or empties the day, above the list: on the rehearsal's copy
+    // «Studioul poate rula» stood above the one line that foresaw the day losing its film, and
+    // it was the ninth of nineteen. The words are the check's own message.
+    const stop = firstStop(data);
+    const stopLine = stop
+      ? `<div class="runbook-first-stop ${stop.blocking ? 'rb-blocking' : 'rb-degrading'}">
+          <span class="runbook-label">${stop.blocking ? 'Primul punct blocant' : 'Ziua nu ajunge întreagă'}</span>
+          <strong>${escapeHtml(stop.label)}</strong>
+          ${stop.message ? `<span>${escapeHtml(stop.message)}</span>` : ''}
+        </div>`
+      : '';
+    checksEl.innerHTML = stopLine + (data.checks || [])
       .map(
         (check) => `
-        <div class="${escapeHtml(checkClassName(check))}">
+        <div class="${escapeHtml(checkClassName(check))}${stop && check.name === stop.name ? ' rb-first-stop' : ''}">
           <div class="topic-card-header">
             <strong class="topic-card-title">${escapeHtml(checkLabel(check.name))}</strong>
             <span class="topic-card-novelty">${escapeHtml(checkVerdictWord(check))}</span>
@@ -4008,8 +4020,11 @@ async function loadSafeMode() {
 
 function renderRunCard(run) {
   const stages = run.stages || [];
+  // What the day made, not only how far it got: the backend's sentence under the header and,
+  // per stage, its count. A COMPLETED day that produced nothing loses its green (`rb-empty`).
+  const headline = runHeadline(run);
   return `
-    <div class="topic-card runbook-run rb-${escapeHtml(String(run.status).toLowerCase())}">
+    <div class="${escapeHtml(runClassName(run))}">
       <div class="topic-card-header">
         <strong class="topic-card-title">${escapeHtml(run.business_date || '')}</strong>
         <span class="topic-card-novelty">${escapeHtml(run.status)}</span>
@@ -4019,14 +4034,15 @@ function renderRunCard(run) {
         · <span>preflight ${escapeHtml(run.preflight_status || '—')}</span>
         ${run.stopped_at_stage ? ` · <span>stopped at «${escapeHtml(stageLabel(run.stopped_at_stage))}»</span>` : ''}
       </div>
+      ${headline.text ? `<div class="runbook-run-summary${headline.empty ? ' rb-empty' : ''}">${escapeHtml(headline.text)}</div>` : ''}
       ${run.stop_reason ? `<div class="claim-notes">${escapeHtml(run.stop_reason)}</div>` : ''}
       <div class="runbook-stages">
         ${stages
           .map(
             (stage) => `
-          <div class="runbook-stage rb-${escapeHtml(String(stage.status).toLowerCase())}">
+          <div class="${escapeHtml(stageClassName(stage))}">
             <span class="runbook-stage-name">${escapeHtml(stageLabel(stage.stage))}</span>
-            <span class="runbook-stage-status">${escapeHtml(stage.status)}</span>
+            <span class="runbook-stage-status">${escapeHtml(stage.status)}${stageProducedWord(stage) ? `<span class="runbook-stage-produced">${escapeHtml(stageProducedWord(stage))}</span>` : ''}</span>
             <span class="runbook-stage-reason">${escapeHtml(stage.reason || '')}</span>
           </div>`,
           )

@@ -625,6 +625,19 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 .runbook-run.rb-partial { border-left-color: var(--gold-ink); }
 .runbook-run.rb-blocked { border-left-color: var(--warn-ink); }
 .runbook-run.rb-failed { border-left-color: var(--alert-ink); }
+/* A COMPLETED day that made nothing is not coloured as a success: the rehearsal's day of
+   refused ideas and unverified research read green "COMPLETED 12/12". */
+.runbook-run.rb-empty { border-left-color: var(--warn-ink); }
+.runbook-run-summary { margin-top: 7px; font-size: 12px; line-height: 1.5; color: var(--ink); }
+.runbook-run-summary.rb-empty { color: var(--warn-ink); font-weight: 500; }
+
+/* The preflight's first stop, above the list, so the line that costs the day is read first. */
+.runbook-first-stop { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 9px 12px; border: 1px solid var(--warn-line); border-left: 3px solid var(--warn-ink); border-radius: var(--radius-sm); background: var(--warn-bg); font-size: 12px; line-height: 1.5; }
+.runbook-first-stop strong { color: var(--warn-ink); }
+.runbook-first-stop span:last-child { flex: 1 1 240px; color: var(--ink-2); }
+.runbook-first-stop.rb-blocking { border-color: var(--alert-line); border-left-color: var(--alert-ink); background: var(--alert-bg); }
+.runbook-first-stop.rb-blocking strong { color: var(--alert-ink); }
+.runbook-check.rb-first-stop { outline: 1px solid var(--warn-line); }
 
 .runbook-stages { display: grid; gap: 3px; margin-top: 9px; }
 .runbook-stage { display: grid; grid-template-columns: minmax(120px, 1fr) 84px minmax(0, 2fr); gap: 8px; align-items: baseline; padding: 5px 8px; border-radius: var(--radius-sm); background: var(--surface-sunk); font-size: 11.5px; }
@@ -636,6 +649,10 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 .runbook-stage.rb-blocked .runbook-stage-status { color: var(--warn-ink); }
 .runbook-stage.rb-failed .runbook-stage-status { color: var(--alert-ink); }
 .runbook-stage.rb-failed { background: var(--alert-bg); }
+.runbook-stage-produced { display: block; margin-top: 1px; font-size: 10px; letter-spacing: 0; }
+.runbook-stage.rb-produced .runbook-stage-produced { color: var(--ok-ink); }
+/* Ran to its end and made nothing: the status is green, the count says what it is worth. */
+.runbook-stage.rb-idle .runbook-stage-produced { color: var(--warn-ink); }
 
 .runbook-safe-mode { margin-bottom: 14px; padding: 12px 13px; border: 1px solid var(--alert-line); border-left: 3px solid var(--alert-ink); border-radius: var(--radius-sm); background: var(--alert-bg); display: grid; gap: 7px; }
 .runbook-safe-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; align-items: baseline; }

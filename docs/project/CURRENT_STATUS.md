@@ -279,7 +279,9 @@ adapter, so the real Google refresh on his copy is no longer rehearsed: defect 1
 the failure-and-analytics part's tests with faked transports, and only a free real read — Verify or
 Reconnect in Settings — proves his tokens; and the free rehearsal after the fixes, on a fresh copy,
 has not been run. The panel does not read `summary`, `stages_productive`, `produced` or `first_stop`
-yet, and `frontend/dist` is not rebuilt. `backend/app/runbook/stages.py`'s module docstring still
+yet, and `frontend/dist` is not rebuilt. (Corrected 2026-09-19: `frontend/src` reads all four,
+through `frontend/src/day_outcome.js`; see the subsection below. `frontend/dist` is still not
+rebuilt.) `backend/app/runbook/stages.py`'s module docstring still
 says a raised fault «stops the day», and `_performance_intake` keeps the reconnect sentence in its
 artefacts and the ledger rather than in its own reason line. The manual ingest endpoint
 (`analytics/router.py`) now answers 409 with the Romanian reason, not 502, for a transport or
@@ -292,6 +294,194 @@ usable clips at the estimated credits, whether his models answer the idea, Direc
 schemas (kimi-k3 had already rambled on 2026-09-12), whether a vision model answers the picture gate,
 whether the reviewers catch narration its cited claim does not support, and whether the Publisher
 titles the serial as the episode — the first real day, watched, is where each of those is measured.
+(Corrected 2026-09-19: narration that does not say its cited claims is now refused by a computed
+check, before any money is spent; see the subsection below. What a real day still measures is
+whether a real writer, given the check's note, repairs the script within the exchange budget.)
+
+### After the rehearsal — 2026-09-19: the narration says what its claims say, and the panel says what the day made
+
+Two parts closed two of the rehearsal's findings in code, under faked providers. The grounding part
+made the narration answer to its claims. The panel part made the page show what a day produced.
+This subsection records what each changed, what each measured and what is still open. The
+rehearsal's findings above stand as they were found.
+
+**Why the narration needed a measure.** In pass 1b the day selected the Owner's real topic «Why
+Nepal Is Being Handed a Climate Bill It Cannot Pay», with verified claims about it. The stand-in
+writer returned script 5ee7e22e, «The light your eyes were not built for», about the James Webb
+telescope. Every scene cited the Nepal claim 0be61855, a SUPPORTED claim about the 83.3 billion
+dollars of climate finance given to developing countries in 2020. The script passed the factual
+gate, the story review and the Director, and was approved and published to the simulator (the
+report's and the audit's FAKE_LIMIT finding). The factual gate (`evaluate_factual_gate`) asks
+whether the cited claims exist and are SUPPORTED. Nothing the studio computed asked whether the
+narration says them, so only a model's judgement stood between that script and a film. With a real
+model the risk is smaller, but real: a film whose words drift from its sources is exactly the
+factual failure the gates exist to prevent.
+
+**Fixed: the narration is measured against its claims and its topic.**
+`backend/app/factual/grounding.py` (new) reads the voiceover, the topic's title and angle, and the
+text of each cited claim, with no model and at no cost. It measures three things, and each failure
+gets a Romanian reason naming what is missing:
+- every cited claim is present: at least two of the claim's terms (content words, numbers or
+  names) appear in the voiceover;
+- the voiceover is about the topic: at least two terms of the topic's title and angle appear in it;
+- the voiceover is not taken over by facts from elsewhere: it is refused when more than half of its
+  numbers and names, and at least two of them, appear in no cited claim and not in the topic.
+
+Words match on their stem, with diacritics folded. Numbers are normalised: «7,000», «7.000» and
+«7 000» are one number, and «about 83 billion» says 83.3. Number words are read in English and
+Romanian. A script it cannot measure (no claims, a cited claim that no longer exists, or no
+narration) is NOT_MEASURED and does not pass. An episode of the office serial is not measured.
+
+It refuses in four places, all but the last before any money is spent:
+- The story review has a new blocking check, `narration_is_grounded`. A failure sends the script
+  back for a rewrite (REVISE) with a note naming the unsaid claim, and becomes REJECT at the last
+  exchange, as the budget already did.
+- `_director_approves` measures again and will not approve a script that fails.
+- `story_gate`, before the shot descriptions and the render, measures again, so a PASS recorded
+  earlier, or given by hand, cannot buy a shot.
+- The Director's last look at the finished film (`gather_facts`) carries the measurement and
+  refuses a factual film that fails it, before any model is asked.
+
+The story review's facts for the Director carry the measurement too, placed last so that a
+truncated payload keeps the scenes. Every one of the four only adds refusals: the factual gate, the
+Director's verdict, the five publishing points and the other hard gates are unchanged. Its limit is
+stated in the module: it measures words, not meaning, so a narration that repeats two of a claim's
+terms while contradicting it passes. That judgement stays with the Director, who now receives the
+measurement. `50_CONTENT_GATE_MATRIX` gains the gate's row and a section on what it certifies, and
+is re-hashed (the decision log has the reason).
+
+**Calibrated on his real scripts: the grounding part's measurement.** The part opened copies of the
+rehearsal databases only, read-only. The real model wrote 31 factual scripts on 2026-09-12:
+- Both approved scripts pass: f243bf48, the LHC film, and 37fc8ef6, the ATLAS film.
+- 25 of the 29 waiting for the Owner's approval pass.
+- The 4 refused each cite a claim their narration never says. 92028a88 cites the sunshield cooling
+  the mirror to 40 kelvins, while its scene says «you just block it, one layer at a time».
+  8d4f7306, aa3da89f and 670d6279 cite the decommissioning on Aug. 8, 2024, while their scenes say
+  the equivalent of «NASA switched it off».
+- Across these scripts, the highest share of numbers and names from nowhere was 0.40, against a
+  limit of 0.5. The rehearsal's script measured 1.0 and is refused on all three counts.
+
+A stricter rule, asking for each claim's own distinctive words, was rejected. It refused the
+approved LHC film, which says «doesn't glow, doesn't absorb light» for «does not interact with the
+electromagnetic force». The prefix slack was lowered from three letters to two after «bill» matched
+«billion». One existing fixture was changed rather than the check weakened. In
+`tests/test_editorial.py`, the film's one claim did not carry the narration's 2023, James Webb
+Space Telescope and twenty-six light years, which is exactly what the writer's brief forbids. The
+claim now carries them.
+
+**Fixed: the panel says what the day made.** `frontend/src/day_outcome.js` (new) decides, and
+`frontend/src/main.js`, `frontend/src/ledger.js` and `frontend/src/style.css` show:
+- **Run cards.** The backend's Romanian `summary` appears under the header of each run card.
+- **Stage counts.** Each stage row shows its count: «a produs N», «nu a produs nimic», nothing when
+  the backend says the stage is not counted (`produced: null`, as for the preflight and the day's
+  log), or «nenumărat» for a record older than the counts.
+- **Empty and idle.** A COMPLETED run with `stages_productive === 0` gets `rb-empty`, a warning
+  colour instead of the green of success. A stage that finished and made nothing gets `rb-idle`.
+- **Preflight.** On the preflight card, the check named by `first_stop` sits above the list with
+  its own message, labelled «Primul punct blocant» (BLOCKING) or «Ziua nu ajunge întreagă», and is
+  outlined inside the list.
+- **Ledger.** The ledger's «daily run finished» line carries the summary, and the head line adds
+  «· N etape au produs ceva» when the event has the count.
+
+A missing count is never read as zero. A run without `stages_productive` is not called empty, and
+a stage record without `produced` is not called idle, because `list_runs` returns older stage
+records as stored. Events recorded before the count read exactly as they did. The dependant's
+reason, «Nu a fost încercată: etapa de care depinde, «X», a eșuat.», was already shown as the
+stage's reason line. It is display only: no gate, verdict or button permission changed, and the
+Start button still follows the preflight status.
+
+**What was measured, and whose measurement each figure is.**
+- The grounding part:
+  - `tests/test_script_grounding.py` **15 passed** (new);
+  - `tests/test_editorial.py` **16 passed**, 3 of them new;
+  - the factual, editorial, pipeline, runbook, media, publishing and whole-day files together
+    (`test_script_grounding`, `test_editorial`, `test_editorial_quality`, `test_phase4_factual`,
+    `test_factual_agent_pipeline`, `test_script_writing`, `test_phase9_story`,
+    `test_pipeline_coverage`, `test_serial_pipeline`, `test_autonomous_day_end_to_end`,
+    `test_daily_run_stages`, `test_day_survives_a_stage`, `test_phase10_runbook`,
+    `test_phase5_media`, `test_phase6_publishing`, `test_publish_policy`,
+    `test_rehearsal_on_a_copy`) **352 passed, 1 skipped**, the skip being the opt-in rehearsal
+    harness;
+  - `ruff check` and `ruff format --check` clean on its six files.
+- The panel part:
+  - `node --test tests/day_outcome.test.js` red first, **0 passed, 1 failed**, because the module
+    did not exist, then **9 passed**;
+  - `npm test --prefix frontend` **124 passed** (125 on the tree as committed, which also carries
+    the stream test of 9ce725a);
+  - `npm run check --prefix frontend` (tsc) clean;
+  - a `vite build` into a scratch directory compiled, with `frontend/dist` untouched.
+- This documentation part: `scripts/check_docs.py` passed, with the matrix re-hashed, and
+  `tests/test_documentation.py` **3 passed**.
+- The verify part (adversarial, after the documents):
+  - the whole suite on the tree it found: **1523 passed, 4 skipped, 2 failed**. Both failures
+    were the new check refusing a fixture that breaks the writer's brief:
+    `tests/test_phase_bc_adversary.py` narrated the serial's dialogue under a Webb claim, and
+    `tests/test_search_step.py` cited a claim `c1` that does not exist, which is NOT_MEASURED
+    and held at `story_gate`. The fixtures were corrected, not the check;
+  - a faithful narration with its numbers spelled out («six hundred million dollars», «șase
+    sute», «twenty eighteen», «locul patru») was refused. The number reader now reads a whole
+    spelled-out number in English and Romanian, and ranks from third to tenth on both sides.
+    `tests/test_script_grounding.py` went red at **3 failed, 19 passed**, then **22 passed**.
+    The recalibration on the copied scripts is identical: both approved films pass, the same 4
+    are refused, and the rehearsal's 5ee7e22e is refused;
+  - the module docstring now says two letters of prefix slack, as the code does;
+  - `ruff check` clean, `mypy backend` clean on 191 files, `npm test --prefix frontend`
+    **125 passed**, `scripts/check_docs.py` passed. The build part's seventeen files:
+    **359 passed, 1 skipped**;
+  - its second whole run had 3 render tests failing that passed alone and with their files
+    (52 passed). The cause was not proven there; the next run below shows it.
+- The session that committed (2026-09-19, 14:09–14:24): the whole suite on the tree as committed,
+  `uv run pytest -q tests -p no:cacheprovider -rfE`: **1518 passed, 4 skipped, 12 failed, 2
+  errors** in 917 s. Every one of the 14 is the machine out of commit memory, not the code:
+  the two errors and two failures are `MemoryError` inside SQLAlchemy, the render failures are
+  FFmpeg dying mid-encode, and Windows logged a low-virtual-memory condition at 14:09, 14:14 and
+  14:20 (the Owner's Market Signals held 22.6 GB of commit, the live Unreal stream 13.6 GB). The
+  seven files that held them (`test_media_selection`, `test_motion`, `test_phase5_media`,
+  `test_phase_bc_adversary`, `test_reattempt_buys_nothing_twice`, `test_phase10_runbook`,
+  `test_youtube_connections`) were run again at 16:45: **169 passed**. So 1532 of 1532 pass,
+  in two runs. The same shortage stopped the Owner's live stream at 14:23: Unreal crashed in a
+  background worker, and a restart at 16:39 died at its second frame on `E_OUTOFMEMORY` with 41 MB
+  of commit left. It was restarted at 16:45, when 27 GB were free, and loaded the level.
+
+*Corrected 2026-09-19, after the verify part:* the verify part and the committing session each
+made a whole-suite run, recorded above. What stood here: «No part made a whole-suite run, so the
+audit's 1265 passed, 2 skipped is still the newest, and it is older than every fix.» No provider was called, nothing was rendered, no run was queued, no credit
+was spent, and `data/studio.db`, `art-source/` and `backend/app/office/` were not touched.
+
+Not finished, honestly:
+- **The Owner's queue.** 4 of the 29 scripts waiting for his approval (92028a88, 8d4f7306,
+  aa3da89f, 670d6279) would now be sent back for a rewrite, or held at `story_gate` if he approved
+  one by hand. This is a dated line in step 12 of «Ce are Owner-ul de făcut».
+- **A real rewrite.** Only a real model run shows whether a writer given the Romanian note fixes
+  the script within the exchange budget. The replayed stand-in does not rewrite, so in its test it
+  runs until REJECT.
+- **Other languages.** Claims whose sources are in another language were tested only as a Romanian
+  narration of English claims. Across languages, ordinary words match only where stems are shared;
+  otherwise the match rests on numbers and names.
+- *Corrected 2026-09-19 by the verify part:* the module docstring says two letters, as
+  `SUFFIX_SLACK` does. What stood here: the docstring said «at most three letters to spare».
+- **What a word count cannot hear, measured by the verify part.** The check is lexical, and these
+  pass it; each stays the Director's judgement, and she now receives the measurement:
+  - negation: «Nepal is NOT ranked fourth ... no US$600 million in damages» measured PASSED;
+  - one claim said and the others carried by generic and topic words («countries», «developed»,
+    «billion», «Nepal», «climate»). Two stricter rules were tried on the real scripts and both
+    refuse the Owner's approved LHC and ATLAS films, so neither was adopted;
+  - the claims' keywords in unrelated sentences, with no number from elsewhere;
+  - «opt» and «nouă» are read as 8 and 9, so «opt in» or the Romanian «new» can add a number
+    from nowhere. Nothing in the calibration set was affected;
+  - when the Director refuses on grounding after a review said PASS (only if the text changed
+    between the two reads), the rewrite's notes do not mention grounding. No money is at risk:
+    `story_gate` measures again before the shot descriptions, the media stage and the render.
+- **The panel.** `frontend/dist` is not rebuilt, so the Owner sees none of it until
+  `npm run build --prefix frontend` or until `start.py` rebuilds a stale bundle. The panel was not
+  seen in a browser against a live backend. A PARTIAL run's `stopped_at_stage` still reads
+  «stopped at «X»» rather than «etapa eșuată». The ledger and the run cards still mix English and
+  Romanian.
+- **Unchanged.** `backend/app/runbook/stages.py`'s module docstring still says a raised fault
+  «stops the day». The serial's upload taking the factual film's metadata, found by the rehearsal,
+  is not addressed.
+- **Scratch files.** The calibration copies (`grounding_calib/` in the session's scratchpad) can be
+  deleted.
 
 ## Readiness for the first day (2026-09-18)
 
@@ -646,7 +836,10 @@ ce comandă sau pe ce ecran, și ce se întâmplă dacă sare peste el. Rescris�
 la locul lor în ordine. Completată 2026-09-18 după repetiția pe o copie a datelor lui (secțiunea
 «The rehearsal on the Owner's data (2026-09-18)» de mai sus): ce a găsit repetiția și numai el poate
 face este adăugat în rândul căruia îi aparține, marcat «Adăugat 2026-09-18 după repetiție», fără să
-schimbe numerotarea, pentru că pașii sunt citați după număr în alte documente.
+schimbe numerotarea, pentru că pașii sunt citați după număr în alte documente. Completată din nou
+2026-09-19, la pașii 2 și 12, cu rânduri marcate «Adăugat 2026-09-19»: ce s-a schimbat pe panou și
+ce înseamnă pentru scenariile care îl așteaptă verificarea care arată dacă narațiunea spune ce spun
+afirmațiile ei.
 
 1. **Migrează baza de date live** — `uv run python scripts/bootstrap.py`. Lanțul este 0039 (economia
    și rezervările), 0040 (sursele de cercetare), 0043 (modul de autonomie), 0044 (subiectul unei
@@ -667,6 +860,12 @@ schimbe numerotarea, pentru că pașii sunt citați după număr în alte docume
    sursă, nu în pachetul servit. **Dacă sare peste:** pagina servită rămâne pachetul vechi și el nu
    vede nici modul în care rulează studioul, nici întrebările care îl așteaptă. Construirea este
    actul lui de lansare; niciun agent nu a construit și nu a pornit serverul.
+   Adăugat 2026-09-19: tot numai în sursă este și ce spune panoul zilei despre ce a produs ziua.
+   Sub antetul fiecărei rulări apare propoziția ei. Lângă fiecare etapă scrie «a produs N», «nu a
+   produs nimic» sau, la o rulare mai veche decât numărătoarea, «nenumărat». O zi COMPLETED care
+   nu a produs nimic nu mai are verdele succesului. Deasupra listei preflight-ului stă prima
+   verificare care ar opri ziua («Primul punct blocant») sau ar pierde un film («Ziua nu ajunge
+   întreagă»). Le vede numai după construire.
 3. **Pornește studioul și citește preflight-ul** — panoul zilei, sau `GET /api/v1/runbook/preflight`.
    De azi raportul numește și cele cinci lucruri pe care numai el le poate aduce: bugetul
    (`spending_budget`), prețurile modelelor (`model_prices`), un angajat care poate privi
@@ -829,6 +1028,19 @@ schimbe numerotarea, pentru că pașii sunt citați după număr în alte docume
     storyboard la ziua următoare și poate fi filmat, deci fiecare aprobare este o hotărâre de
     cheltuială; nu există o comandă care să le respingă. **Dacă sare peste:** nimic nu se pierde, dar
     fiecare zi repetă despre ele «Un scenariu așteaptă aprobarea ta înainte de storyboard.»
+    Adăugat 2026-09-19: de azi studioul măsoară dacă narațiunea unui scenariu spune ce spun
+    afirmațiile pe care le citează. **4 dintre cele 29 nu trec măsurătoarea**, pentru că fiecare
+    citează o afirmație pe care narațiunea ei nu o spune:
+    - 92028a88 citează parasolarul care răcește oglinda la 40 de kelvini, iar scena ei spune doar
+      «you just block it, one layer at a time»;
+    - 8d4f7306, aa3da89f și 670d6279 citează oprirea telescopului pe 8 august 2024, iar scenele lor
+      spun doar, în cuvinte diferite, că NASA l-a oprit.
+
+    Dacă aprobă cu mâna unul dintre ele, poarta dinaintea descrierii cadrelor și a randării
+    (`story_gate`) îl oprește, cu motivul, înainte de orice cadru plătit. Un asemenea scenariu scris
+    de acum ar fi trimis înapoi la rescriere de recenzia poveștii. Celelalte 25 trec, la fel ca cele
+    două filme aprobate deja (LHC și ATLAS). Măsurătoarea s-a făcut pe copii ale bazelor repetiției,
+    deschise numai pentru citire. Baza lui nu a fost deschisă.
 13. **Alege mediul studioului: TEST sau PRODUCTION** — `POST /api/v1/owner/environment`, comanda
     lui versionată, sau pagina Owner. Adăugat 2026-09-18, după ce un verificator adversarial a
     răspuns la întrebarea „ce produce studioul mâine la 05:00 dacă face diseară toată lista" și a

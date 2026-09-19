@@ -37,6 +37,7 @@ from app.agents.memory import agent_for_role
 from app.agents.messages import post_message
 from app.agents.services import run_agent_task
 from app.factual.editorial import expected_seconds, failed, revision_notes, story_checks
+from app.factual.grounding import grounding_check, script_grounding
 from app.factual.models import ScriptDraft, StoryReview
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.services import append_event, utc_now
@@ -187,6 +188,10 @@ def _script_facts(session: Session, script: ScriptDraft) -> dict[str, Any]:
         }
         for index, scene in enumerate(script.scenes_json or [], start=1)
     ]
+    # What the studio measured about whether the narration says what its claims and its topic
+    # say (`app.factual.grounding`), so her reading can cite the numbers instead of guessing
+    # them. None for a dramatisation of the serial, which makes no claims to say.
+    grounding = script_grounding(session, script)
     return {
         "title": script.title,
         "topic": topic.title if topic else "",
@@ -195,6 +200,9 @@ def _script_facts(session: Session, script: ScriptDraft) -> dict[str, Any]:
         "target_seconds": script.target_duration_seconds,
         "estimated_seconds": expected_seconds(script.scenes_json or []),
         "scenes": scenes,
+        # Last, because the payload she reads is cut at a fixed length and the scenes are
+        # what she must not lose.
+        "grounding": grounding,
     }
 
 
@@ -225,6 +233,13 @@ def review_story(
             story=dict(script.story_json or {}),
             target_seconds=target,
         )
+        # Whether the narration says what its topic and its claims say. Measured on the
+        # rehearsal of 2026-09-18: a telescope film on the Nepal climate-finance topic cited a
+        # SUPPORTED Nepal claim and passed every check above, because none of them reads the
+        # claims. It refuses as a rewrite (REVISE), not as a closed story: the writer can
+        # write the film its claims allow, and the notes say which claim went unsaid.
+        if facts["grounding"] is not None:
+            checks["narration_is_grounded"] = grounding_check(facts["grounding"])
         earlier = session.scalar(
             select(StoryReview).where(StoryReview.script_id == script_id).limit(1)
         )
@@ -510,5 +525,14 @@ def story_gate(session: Session, script_id: str) -> tuple[bool, str]:
         return False, (
             f"Recenzia de poveste s-a încheiat cu {review.verdict}. "
             + " ".join(str(note) for note in notes[:3])
+        )
+    # Measured again here rather than trusted from the review: a PASS written before the
+    # narration was measured, or by hand, must not buy a shot for a film about something its
+    # claims never say. The measurement is text against rows and costs nothing.
+    grounding = script_grounding(session, session.get(ScriptDraft, script_id))
+    if grounding is not None and not grounding["passed"]:
+        return False, (
+            "Narațiunea nu spune ce spun afirmațiile și subiectul ei. "
+            + " ".join(grounding["reasons"][:3])
         )
     return True, ""

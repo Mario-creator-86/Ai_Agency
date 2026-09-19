@@ -72,7 +72,7 @@ from test_daily_run_stages import (
     _seeded_channels,
     _serial_film,
 )
-from test_editorial import EPISODE, a_film, registry_with
+from test_editorial import ENGLISH, EPISODE, a_film, registry_with
 from test_phase6_publishing import _create_verified_asset_bundle
 from test_publish_policy import _command, _to_production
 from test_serial_pipeline import (
@@ -511,7 +511,12 @@ def test_a_blank_frame_rejects_a_serial_film_as_it_rejects_a_factual_one(
     engine, film_studio, monkeypatch, serial
 ):
     assert "garbled writing in any of them means REJECT" in instructions_for(serial, "")
-    ids = a_film(engine, voiceover=EPISODE, with_source=not serial, serial=serial)
+    # The factual film narrates what its claim says. Narrating the serial's dialogue under a
+    # claim about Webb is refused by the grounding check before any model looks at a frame
+    # (measured 2026-09-19), which is a different refusal from the one this test is about.
+    ids = a_film(
+        engine, voiceover=EPISODE if serial else ENGLISH, with_source=not serial, serial=serial
+    )
     monkeypatch.setattr("app.agents.editorial.model_can_see", lambda session, agent_id: True)
     monkeypatch.setattr("app.agents.editorial.frames_for", lambda *a, **k: ["ZmFrZS1mcmFtZQ=="])
 

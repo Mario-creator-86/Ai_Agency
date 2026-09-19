@@ -399,7 +399,9 @@ export function describeEvent(event, names = {}) {
       break;
     case 'runbook.daily_run_finished':
       label = `daily run ${statusLabel(payload.status)}`;
-      text = payload.preflight ? `preflight ${payload.preflight}` : '';
+      // The backend's sentence of what the day made, when the event carries one: a status
+      // alone read COMPLETED for a rehearsal day that produced nothing.
+      text = payload.summary || (payload.preflight ? `preflight ${payload.preflight}` : '');
       break;
     case 'runbook.safe_mode_entered':
       label = 'SAFE MODE';
@@ -501,6 +503,8 @@ export function productionStatus(events) {
   let stage = null;
   let run = null;
   let running = null;
+  /** @type {number | null} */
+  let productive = null;
   for (const event of events) {
     const payload = event.payload || {};
     const type = String(event.event_type);
@@ -514,13 +518,20 @@ export function productionStatus(events) {
     }
     if (!run && type === 'runbook.daily_run_finished') {
       run = payload.status || null;
+      productive = typeof payload.stages_productive === 'number' ? payload.stages_productive : null;
     }
     if (stage && run && running !== null) break;
   }
   const parts = [];
   if (running) parts.push(`Now: ${runStageLabel(running)}`);
   if (stage) parts.push(`production: ${stageLabel(stage)}`);
-  if (run) parts.push(`last daily run ${statusLabel(run)}`);
+  // How many stages made something, beside the status: "completed" alone is what a day that
+  // made nothing looked like. An event without the count says only its status.
+  if (run) {
+    parts.push(
+      `last daily run ${statusLabel(run)}${productive === null ? '' : ` · ${productive} etape au produs ceva`}`,
+    );
+  }
   if (!parts.length) return { stage, run, running: null, text: 'No production in progress.' };
   const text = parts.join(' · ');
   return { stage, run, running: running || null, text: text[0].toUpperCase() + text.slice(1) };

@@ -3054,3 +3054,172 @@ Three sentences that said it had none are corrected with the same dated marker.
 `PROJECT_STATE.json` records the audit's 1265 / 2 as what it is, the newest whole-suite measurement,
 taken before any of the fixes. No part made a whole-suite run, and the verifier's figure lands after
 these documents.
+
+## 2026-09-19 — A computed check asks whether the narration says what its claims say
+
+The factual gate passed the rehearsal's telescope script on the Nepal topic. The gate checks that
+the cited claims exist and are SUPPORTED, not that the narration says them. **Decision: a computed
+grounding check (`app.factual.grounding`) runs in four places, all but the last before any money is
+spent:**
+- the story review, as the blocking check `narration_is_grounded`;
+- `_director_approves`;
+- `story_gate`, before the shot descriptions and the render;
+- the Director's last look at the film (`gather_facts`).
+
+Every one only adds refusals. None changes the factual gate, the Director's verdict, the publishing
+points or the other hard gates. A factual script it cannot measure (no claims, a missing claim, no
+narration) is NOT_MEASURED and does not pass. Episodes of the office serial are not measured. They
+are recognised by `story_json.kind == office_serial_episode` or by a topic with status SERIAL, the
+same marks `is_serial_film` reads.
+
+## 2026-09-19 — Words, numbers and names are measured, not meaning, and two of a claim's terms say it
+
+**Decision: the check compares words, numbers and names, and a claim counts as said when two of its
+terms are in the narration.**
+- **Words** match on their stem. Diacritics are folded, and two words are the same when they share
+  their first five letters, or when the shorter is a prefix of the longer with at most two letters
+  left over. That covers paraphrase, word endings and the cognates between English and Romanian.
+- **Numbers** are normalised: «7,000», «7.000» and «7 000» are all 7000, and a decimal matches its
+  rounded whole («about 83 billion» matches 83.3).
+- **Number words** are read in both languages, including «twenty-six» and «decade».
+
+Numbers and names are what survive translation from a source's language into the audience language
+(`content_language`, English by the Owner's rule).
+
+Two alternatives were rejected:
+- **A stricter rule** that required each claim's own distinctive words. It refused the Owner's
+  approved LHC film, which says «doesn't glow, doesn't absorb light» for «does not interact with
+  the electromagnetic force». The only words shared with that claim are «dark» and «matter».
+- **A prefix slack of three letters.** It was lowered to two after «bill» matched «billion».
+
+The known limit is stated in the module. A narration that repeats two of a claim's words while
+contradicting it passes. That judgement stays with the Director, who now receives the measurement.
+
+## 2026-09-19 — A grounding failure asks for a rewrite, and the count of foreign facts reads numbers and names
+
+**Decision: a grounding failure sends the script back for a rewrite (REVISE), not closed
+(REJECT).** Rewriting text costs nothing, and the note tells the writer which claim went unsaid and
+which of its terms are missing. It becomes REJECT only at the last exchange, as the budget already
+does.
+
+**Decision: the count of facts from elsewhere uses numbers and names, not all content words.** The
+whole-day test's single-claim infrared film is legitimate, yet about three quarters of its content
+words appear in no claim. Its numbers and names all come from its claim and its topic. On the
+scripts of 2026-09-12, the highest share of numbers and names from nowhere was 0.40, against a
+limit of 0.5. The rehearsal's script measured 1.0.
+
+## 2026-09-19 — A fixture that broke the writer's brief is corrected, not the check
+
+The fixture narration of `a_film` in `tests/test_editorial.py` states a year, a telescope and a
+distance that its one claim did not carry. The writer's brief forbids exactly that («Nu adăuga
+niciun fapt, cifră, dată, nume ... care nu apare în ele»), so refusing that film is the check
+working. **Decision: the claim text of the fixture changes, not the check.** The claim now carries
+what the narration says.
+
+## 2026-09-19 — The panel never reads a missing count as zero
+
+**Decision: a count the page does not have is never read as zero.**
+- A run without `stages_productive` is not marked empty.
+- A stage record without a `produced` key reads «nenumărat» and is not called idle.
+- Only an explicit `produced: null`, which is the backend saying «not counted», shows nothing.
+
+The reason: `list_runs` recomputes the run's summary for older records, but returns their stage
+records as stored. Those older stages have no `produced` field, and calling them idle would claim
+something the page never measured.
+
+## 2026-09-19 — The panel shows the backend's sentences as written, and adds only labels
+
+**Decision: the run's sentence and the check messages appear exactly as the backend wrote them.**
+The panel adds only short Romanian labels of its own:
+- «a produs N», «nu a produs nimic» and «nenumărat»;
+- «Primul punct blocant»;
+- «Ziua nu ajunge întreagă», which follows the backend's own preflight wording;
+- «N etape au produs ceva», which follows `run_summary`.
+
+The ledger's head line mixes these Romanian words into its existing English phrasing. The rest of
+`ledger.js` was not translated, because that was outside the task. It is display only: nothing here
+changes a gate, a verdict or a button's permission, and the Start button still follows the
+preflight status.
+
+## 2026-09-19 — `50_CONTENT_GATE_MATRIX` names the narration grounding gate, and is re-hashed
+
+The matrix listed the claim factual verification row, and nothing in it said that this row
+certifies the claims and not the words of the film. It also had no row for the gate that now reads
+the words. Its *Gate behavior* section says a check that could not run carries `passed: null` and
+adds no failure. The new check's NOT_MEASURED carries `passed: false` and refuses. Left
+unexplained, that would read as the code breaking the matrix's rule.
+
+**Decision: a deliberate specification change under ADR-FOUNDATION-003.**
+- The gate table gains the row *Narration grounding (Channel A)*: No before the script, Script
+  before media, Yes before publish.
+- A new dated section, *Narration grounding (built 2026-09-19)*, states:
+  - what the claim gate measures and what it never read;
+  - the three counts;
+  - the four places the check refuses, and that it only adds refusals;
+  - its limit: words and not meaning;
+  - why its NOT_MEASURED is not the stand-down of the rule above. The check needs nothing but the
+    script and its rows, so it cannot measure only when the script lacks what every factual script
+    must carry. The defect is then the script's, and the claim gate refuses two of those three
+    cases already.
+- The document's `sha256` in `DOCUMENTATION_INDEX.json` is re-recorded in the same change
+  (`a436dab0…` → `6750c35d…`), with this entry as the reason.
+
+Nothing was removed. Every row and rule the matrix carried still stands.
+
+Two other documents were read and deliberately left unedited, with their hashes unchanged:
+- `39_DAILY_AUTONOMOUS_RUNBOOK` §6 says «Run claim/visual consistency checks». That is now more
+  true than before, not less.
+- `08_VIDEO_PIPELINE`'s «Fact-check not only narration» is unchanged in meaning.
+
+## 2026-09-19 — The documents place both parts' work, and correct two stale sentences where they stand
+
+**Decision: the work goes into the newest section about the rehearsal, as a dated subsection.** It
+is not a new top-level section, because both parts close findings of that rehearsal. The findings
+stay as they were found. Two sentences of that section's «Not finished» paragraph became untrue,
+and each is corrected in place with a dated marker, the old wording left:
+- the panel does not read the run's new fields;
+- only a real day could show whether reviewers catch narration its claims do not support.
+
+«Ce are Owner-ul de făcut» grows by two dated lines without renumbering:
+- **step 2:** what the panel now shows, and that it is seen only after the build;
+- **step 12:** the 4 of the 29 waiting scripts that the check refuses, each with the claim it
+  leaves unsaid.
+
+Every figure is written with the part that measured it:
+- **The grounding part:** 15, 16, and 352 passed with 1 skipped.
+- **The panel part:** red first at 0 and 1, then 9, 124, and tsc clean.
+- **This documentation part:** `check_docs.py` passed, and `tests/test_documentation.py` 3 passed.
+
+The audit's 1265 passed, 2 skipped is still recorded as the newest whole-suite figure, and it is
+older than every fix. One defect is reported rather than fixed, because code is outside this part:
+the module docstring of `backend/app/factual/grounding.py` says a prefix may have «at most three
+letters to spare», while `SUFFIX_SLACK` is 2, with its own comment saying why.
+
+## 2026-09-19 — Spelled-out numbers are numbers, and fixtures that break the brief are corrected, not the check
+
+The verify part tried to break the grounding check from both sides. A faithful narration that
+spelled its numbers out, as a voiceover is written, was refused: «six hundred million dollars»
+read as a 6 and a 100 that no claim carries. **Decision: the check reads a whole spelled-out
+number in English and Romanian, and ranks from third to tenth on both sides.** «First» and
+«second» are left out, because they are ordinary words far more often than ranks. The
+recalibration on the copied scripts of 2026-09-12 gives the same result as before.
+
+The whole suite showed two more fixtures the check refuses: a factual film narrating the serial's
+dialogue under a Webb claim, and a film citing a claim that does not exist. **Decision: both
+fixtures now narrate what their claims say.** Each broke the writer's brief, as the editorial
+fixture did; weakening the check to keep them would let a real script do the same.
+
+Not adopted, measured on the real scripts: requiring two matched terms that are not topic terms,
+or one of the claim's own numbers or names. Both refuse the Owner's approved LHC and ATLAS films.
+What a word count cannot hear (negation, generic words standing in for a claim) stays the
+Director's, and she receives the measurement.
+
+## 2026-09-19 — A whole-suite run is a machine-wide load, and it is read with the machine's state
+
+The committing session's whole run gave 1518 passed and 14 failed or errored. All 14 were the
+machine out of commit memory (Windows logged it three times in fifteen minutes), and their seven
+files passed when run again, 169 of 169. The same shortage stopped the Owner's live stream at
+14:23. **Decision: a failure is recorded with the memory state it happened in, and re-run before it
+is called a defect or called flaky.** A whole-suite run is not started while free commit is
+below what the live stream needs to restart (about 14 GB), because on this machine the test run,
+the Owner's other programs and the stream share one commit limit.

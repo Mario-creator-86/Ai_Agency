@@ -43,6 +43,7 @@ from app.agents.language import audience_language_line, language_name, looks_lik
 from app.agents.memory import agent_for_role, remember
 from app.agents.messages import post_message
 from app.agents.models import Agent, Capability, ModelCapability, Role
+from app.factual.grounding import script_grounding
 from app.factual.models import FactualClaim, ScriptDraft, SourceSnapshot, TopicIdea
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.media.models import (
@@ -229,6 +230,16 @@ def gather_facts(session: Session, media_asset_id: str, language: str) -> dict[s
     # committed events makes no claims about the world and is not asked for any.
     if script and not claims and not serial:
         hard.append("scenariul nu se sprijină pe nicio afirmație")
+    # Whether the narration says what its claims and its topic say, measured on the text
+    # (`app.factual.grounding`). The rehearsal of 2026-09-18 approved a telescope film on the
+    # Nepal climate-finance topic because nothing computed asked; the story review and the gate
+    # before the render refuse it now, and this is the last look, for a film that reached the
+    # file some other way. A factual film it could not measure is not waved through either.
+    grounding = script_grounding(session, script) if script and not serial else None
+    if grounding is not None and not grounding["passed"] and claims:
+        hard.append(
+            "narațiunea nu spune ce spun afirmațiile ei: " + " ".join(grounding["reasons"][:2])
+        )
     qc = session.scalar(
         select(QualityControlReport)
         .where(QualityControlReport.media_asset_id == media_asset_id)
@@ -255,6 +266,9 @@ def gather_facts(session: Session, media_asset_id: str, language: str) -> dict[s
         "voiceover": voiceover,
         "words": words,
         "claims": claims,
+        # What was measured about the narration against its claims and its topic, so her
+        # verdict can cite it. None for an episode of the serial.
+        "grounding": grounding,
         "scenes": [
             {
                 "index": s.scene_index,

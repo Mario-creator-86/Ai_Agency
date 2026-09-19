@@ -1,5 +1,58 @@
 # Changelog
 
+## After the rehearsal: the narration says what its claims say — 2026-09-19
+
+The rehearsal's stand-in wrote a James Webb telescope script for the Nepal climate-finance topic.
+The script cited a SUPPORTED Nepal claim, and it passed the factual gate, the story review and the
+Director, because nothing computed compared the words with the claims. Two parts closed two of the
+rehearsal's findings, under faked providers. The details and the figures are in `CURRENT_STATUS.md`
+(«After the rehearsal — 2026-09-19»).
+
+- **The narration is measured against its claims and its topic.** New module
+  `backend/app/factual/grounding.py` (`measure_grounding`, `script_grounding`, `grounding_check`).
+  Each cited claim must appear in the voiceover by two of its terms, the voiceover must carry two
+  of the topic's terms, and it is refused when more than half of its numbers and names come from
+  nowhere. It returns PASSED, REFUSED or NOT_MEASURED with Romanian reasons, and NOT_MEASURED does
+  not pass. It refuses in four places:
+  - the story review's new blocking check `narration_is_grounded` (REVISE, then REJECT at the last
+    exchange);
+  - `_director_approves` in `backend/app/runbook/stages.py`;
+  - `story_gate`, before the shot descriptions and the render;
+  - `gather_facts` in `backend/app/agents/editorial.py`, which also passes the measurement to the
+    Director.
+
+  Serial episodes are not measured. Measured before: the rehearsal's script 5ee7e22e was approved
+  and published to the simulator. On the 31 real scripts of 2026-09-12, both approved films pass,
+  and 4 of the 29 waiting for the Owner are refused.
+- **Tests.** New `tests/test_script_grounding.py` (22 after the verify part).
+  `tests/test_editorial.py` gains 3 tests, and its `a_film` claim now carries the facts its
+  narration states. `tests/test_phase_bc_adversary.py` and `tests/test_search_step.py` now
+  narrate what their claims say; both broke the writer's brief and the new check refused them.
+- **Spelled-out numbers are numbers.** The verify part found a faithful narration refused for
+  saying «six hundred million dollars»; the check now reads whole spelled-out numbers in English
+  and Romanian, and ranks from third to tenth. The calibration is unchanged.
+- **The panel says what the day made.** New module `frontend/src/day_outcome.js` (`runHeadline`,
+  `runClassName`, `stageProducedWord`, `stageClassName`, `firstStop`), with 9 tests in
+  `frontend/tests/day_outcome.test.js`.
+  - Run cards show the backend's `summary` and each stage's `produced` count.
+  - A COMPLETED run that made nothing gets `rb-empty`.
+  - The preflight card puts `first_stop` above the list.
+  - The ledger's «daily run finished» line carries the summary.
+
+  `frontend/dist` is not rebuilt.
+- **Documents.** `50_CONTENT_GATE_MATRIX` gains the row *Narration grounding (Channel A)* and a
+  section on what it certifies. It is re-hashed (`a436dab0…` → `6750c35d…`). «Ce are Owner-ul de
+  făcut» gains dated lines at steps 2 and 12, without renumbering.
+- Not changed: the factual gate, the Director's verdict, the five publishing points and the other
+  hard gates. There is no migration, and the head stays `0045_reconciliation`. No provider was
+  called, and `data/studio.db` was never opened.
+- Still open:
+  - whether a real writer repairs a refused script within the exchange budget;
+  - what a word count cannot hear (negation, generic words standing in for a claim), which stays
+    the Director's;
+  - a PARTIAL run's «etapa eșuată»;
+  - `frontend/dist`.
+
 ## The rehearsal on the Owner's data — 2026-09-18
 
 One whole scheduled day was run on a copy of the Owner's studio, through the real scheduler, worker
