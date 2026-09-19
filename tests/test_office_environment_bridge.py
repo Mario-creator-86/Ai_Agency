@@ -52,7 +52,13 @@ REPORT = {
     "version": 1,
     "level": "/Game/HQ/HQ_Dusk",
     "labels": {
-        "sun": entry("Sun", "DirectionalLight_1", "LightComponent0"),
+        "sun": entry("Sun", "DirectionalLight_1", "LightComponent0", intensity=0.0),
+        "twilight_evening": entry(
+            "SunDusk", "DirectionalLight_2", "LightComponent0", intensity=2.5
+        ),
+        "twilight_morning": entry(
+            "SunDawn", "DirectionalLight_3", "LightComponent0", intensity=0.0
+        ),
         "sky_light": entry("SkyLight", "SkyLight_0", "SkyLightComponent0"),
         "fog": entry("HeightFog", "ExponentialHeightFog_0", "HeightFogComponent0"),
         "sky_backdrop": entry("SkyBackdrop", "StaticMeshActor_223", "StaticMeshComponent0"),
@@ -339,6 +345,103 @@ def test_the_reference_dusk_sends_todays_values(tmp_path):
     assert sender.last("DirectionalLight_1.LightComponent0", "SetIntensity")["parameters"] == {
         "NewIntensity": 0.0
     }
+    # the warm key of the dusk is SunDusk as built: 2.5, its own colour, never turned
+    assert sender.last("DirectionalLight_2.LightComponent0", "SetIntensity")["parameters"] == {
+        "NewIntensity": 2.5
+    }
+    colour = sender.last("DirectionalLight_2.LightComponent0", "SetLightColor")["parameters"]
+    assert colour == {"NewLightColor": {"R": 1.0, "G": 0.62, "B": 0.38, "A": 1.0}, "bSRGB": True}
+    assert sender.last("DirectionalLight_3.LightComponent0", "SetIntensity")["parameters"] == {
+        "NewIntensity": 0.0
+    }
+    # the room windows: the dusk picture, neither the day nor the night state
+    for name in ("DayBlend", "NightBlend"):
+        view = sender.last(
+            "StaticMeshActor_12.StaticMeshComponent0", "SetScalarParameterValueOnMaterials", name
+        )
+        assert view["parameters"]["ParameterValue"] == 0.0, name
+
+
+# ---------------------------------------------------------------- the twilight keys
+def test_the_twilight_keys_are_never_turned(tmp_path):
+    """SunDusk and SunDawn are Stationary: the game refuses to rotate them, and their direction is
+    the sunset's and the sunrise's side by construction. Only intensity and colour are sent."""
+    rep, sender, clock = report(tmp_path), Recorder(), Clock()
+    env = EnvironmentPass(sender, clock=clock)
+    for i, (elevation, azimuth) in enumerate(
+        ((-2.5, 274.3), (-4.0, 280.0), (-2.5, 85.4), (1.0, 95.0), (20.9, 109.6), (-22.9, 330.0))
+    ):
+        clock.now = 30.0 * i
+        env.sync(world(elevation, azimuth), rep, 180.0)
+    for key in ("DirectionalLight_2", "DirectionalLight_3"):
+        functions = {b["functionName"] for b in sender.calls if key in b["objectPath"]}
+        assert functions == {"SetIntensity", "SetLightColor"}, key
+    turned = {b["objectPath"] for b in sender.calls if b["functionName"] == "K2_SetWorldRotation"}
+    assert turned == {f"{LEVEL}.DirectionalLight_1.LightComponent0"}
+
+
+def test_a_morning_lights_the_morning_key_and_leaves_the_evening_one_dark(tmp_path):
+    rep, sender = report(tmp_path), Recorder()
+    EnvironmentPass(sender, clock=Clock()).sync(world(-2.5, 85.4), rep, 180.0)
+    assert sender.last("DirectionalLight_3.LightComponent0", "SetIntensity")["parameters"] == {
+        "NewIntensity": 2.5
+    }
+    assert sender.last("DirectionalLight_2.LightComponent0", "SetIntensity")["parameters"] == {
+        "NewIntensity": 0.0
+    }
+
+
+def test_by_day_the_sun_carries_the_light_and_at_night_nothing_does(tmp_path):
+    rep = report(tmp_path)
+    day, night = Recorder(), Recorder()
+    EnvironmentPass(day, clock=Clock()).sync(world(46.97, 180.0), rep, 180.0)
+    EnvironmentPass(night, clock=Clock()).sync(world(-22.9, 330.0), rep, 180.0)
+
+    def lit(sender, key):
+        return sender.last(f"{key}.LightComponent0", "SetIntensity")["parameters"]["NewIntensity"]
+
+    assert lit(day, "DirectionalLight_1") > 2.5
+    assert lit(day, "DirectionalLight_2") == lit(day, "DirectionalLight_3") == 0.0
+    for key in ("DirectionalLight_1", "DirectionalLight_2", "DirectionalLight_3"):
+        assert lit(night, key) == 0.0, key
+    view = night.last(
+        "StaticMeshActor_12.StaticMeshComponent0",
+        "SetScalarParameterValueOnMaterials",
+        "NightBlend",
+    )
+    assert view["parameters"]["ParameterValue"] == 1.0
+
+
+def test_the_near_blocks_take_their_day_colour_from_the_real_sun(tmp_path):
+    """look_hq_live.near_blocks_day gives the near blocks' darkest plain slots M_HQ_CityDay, whose
+    Daylight blends the dusk colour (0, the build's value) to the slot's own hue at a facade's
+    albedo (1). The backend sets it from the same day weight as the room windows' DayBlend, on the
+    near_blocks component whether or not its glow scales uniformly: no other slot has Daylight."""
+
+    def daylight(elevation, azimuth):
+        sender = Recorder()
+        EnvironmentPass(sender, clock=Clock()).sync(world(elevation, azimuth), rep, 180.0)
+        found = [b for b in sender.calls if b["parameters"].get("ParameterName") == "Daylight"]
+        assert [b["objectPath"] for b in found] == [
+            f"{LEVEL}.StaticMeshActor_11.StaticMeshComponent0"
+        ]
+        assert found[0]["functionName"] == "SetScalarParameterValueOnMaterials"
+        return found[0]["parameters"]["ParameterValue"]
+
+    rep = report(tmp_path)
+    assert daylight(-2.5, 274.3) == 0.0
+    assert daylight(-22.9, 330.0) == 0.0
+    assert daylight(46.97, 180.0) == 1.0
+    assert 0.0 < daylight(1.0, 95.0) < 1.0
+
+
+def test_a_report_without_the_twilight_keys_drives_the_rest(tmp_path):
+    older = json.loads(json.dumps(REPORT))
+    del older["labels"]["twilight_evening"], older["labels"]["twilight_morning"]
+    rep, sender = load_env_report(write_report(tmp_path, older)), Recorder()
+    assert EnvironmentPass(sender, clock=Clock()).sync(world(), rep, 180.0) > 0
+    assert not any("DirectionalLight_2" in b["objectPath"] for b in sender.calls)
+    assert sender.last("DirectionalLight_1.LightComponent0", "SetIntensity") is not None
 
 
 def test_the_sky_scalars_travel_in_one_batch(tmp_path):
@@ -696,10 +799,15 @@ def test_the_report_the_rebuild_writes_is_the_report_the_bridge_reads(tmp_path):
         modules[name] = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(modules[name])
     level = modules["env_writer_tests"]
+    records = level.full_level() + [
+        level.actor("SunDusk", "DirectionalLight", 2, comp_cls="DirectionalLightComponent"),
+        level.actor("SunDawn", "DirectionalLight", 3, comp_cls="DirectionalLightComponent"),
+    ]
     written, missing = modules["env_writer"].assemble(
-        level.full_level(), level.AXES, 180.0, expected_counts={"tree_uplights": 2}
+        records, level.AXES, 180.0, expected_counts={"tree_uplights": 2}
     )
     assert missing == []
+    assert modules["env_writer"].missing_twilight_keys(written) == []
     rep = load_env_report(write_report(tmp_path, written))
     assert rep is not None
     assert rep.world == "/Game/HQ/HQ_Dusk.HQ_Dusk"
@@ -707,6 +815,8 @@ def test_the_report_the_rebuild_writes_is_the_report_the_bridge_reads(tmp_path):
     assert rep.axes == ((1.0, 0.0, 0.0), (0.0, -1.0, 0.0), (0.0, 0.0, 1.0))
     for role in (
         "sun",
+        "twilight:evening",
+        "twilight:morning",
         "sky_light",
         "fog",
         "sky_backdrop",
@@ -724,3 +834,33 @@ def test_the_report_the_rebuild_writes_is_the_report_the_bridge_reads(tmp_path):
     plan = scene_params(world(), rep.frame(180.0), game_time_s=10.0)
     for call in environment_calls(plan, rep):
         assert (call.cls, call.function) in ENVIRONMENT_CALLS
+
+
+def test_the_rebuild_fails_without_both_twilight_keys(tmp_path):
+    """env_report_hq_live.py's main() refuses a level without SunDusk and SunDawn: the bridge would
+    leave the dusk without its warm key rather than guess an object."""
+    import importlib.util
+    from pathlib import Path
+
+    tests = Path(__file__).resolve().parent
+    script = tests.parent / "art-source" / "unreal" / "env_report_hq_live.py"
+    modules = {}
+    for name, path in (
+        ("env_writer2", script),
+        ("env_writer_tests2", tests / "test_env_report.py"),
+    ):
+        spec = importlib.util.spec_from_file_location(name, path)
+        modules[name] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(modules[name])
+    level, writer = modules["env_writer_tests2"], modules["env_writer2"]
+    dawn = level.actor("SunDawn", "DirectionalLight", 3, comp_cls="DirectionalLightComponent")
+    written, _ = writer.assemble(
+        level.full_level() + [dawn], level.AXES, 180.0, expected_counts={"tree_uplights": 2}
+    )
+    assert writer.missing_twilight_keys(written) == ["twilight_evening: SunDusk"]
+    # a mesh called SunDusk is not a light
+    fake = level.mesh("SunDusk", 99)
+    written, _ = writer.assemble(
+        level.full_level() + [dawn, fake], level.AXES, 180.0, expected_counts={"tree_uplights": 2}
+    )
+    assert writer.missing_twilight_keys(written) == ["twilight_evening: SunDusk"]

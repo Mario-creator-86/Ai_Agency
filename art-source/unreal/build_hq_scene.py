@@ -7,13 +7,15 @@ Creates /Game/HQ/Scene_<timestamp> (imported meshes, materials, textures; earlie
 are deleted once the level is saved) and the level /Game/HQ/HQ_Dusk:
 every mesh at the origin (the exporter bakes world transforms), the scene's lights, the sky as a
 picture on an unlit backdrop (an orthographic camera cannot see a sky atmosphere or volumetric
-clouds: its rays all run 10 degrees below the horizon), light height fog, a movable sun labelled
-"Sun", a sky light, the plates' orthographic camera and a fixed-exposure look.
+clouds: its rays all run 10 degrees below the horizon), light height fog, the two twilight keys
+(SunDusk, SunDawn), a movable sun labelled "Sun", a sky light, the plates' orthographic camera and
+a fixed-exposure look.
 
 Everything is built at the Owner's picture (dusk, sun at -2.5 degrees), the look he approved. The
-backend then moves it to the real hour over Remote Control: the sun's rotation, intensity and
-colour, and the sky backdrop's cells (compose_sky_backdrop.py --atlas; PlateA, PlateB, PlateBlend,
-Mirror, Gain). At those parameters' defaults the backdrop shows today's dusk plate.
+backend then moves it to the real hour over Remote Control: the twilight keys' intensity and colour,
+the sun's rotation, intensity and colour, and the sky backdrop's cells (compose_sky_backdrop.py
+--atlas; PlateA, PlateB, PlateBlend, Mirror, Gain). At those parameters' defaults the backdrop shows
+today's dusk plate, and the lights are today's: SunDusk at 2.5, the morning key and the sun dark.
 
 The importer's axis convention and unit scale are measured from marker cubes the exporter places
 at known positions, never assumed, and written to axis_map.json for the passes after this one
@@ -25,7 +27,8 @@ at known positions, never assumed, and written to axis_map.json for the passes a
 Tunables come from the environment: AMN_LM_PER_W (lumens per Blender watt, default 120),
 AMN_EV (exposure compensation, default 0; the Owner has not approved a moving exposure, D2, so it
 stays fixed), AMN_SKY_ATMOSPHERE (a lighting-only sky atmosphere, off by default: D7) and
-AMN_SUN_SHADOW_DISTANCE_CM / AMN_SUN_SHADOW_CASCADES (the movable sun's cascaded shadows).
+AMN_SUN_SHADOW_DISTANCE_CM / AMN_SUN_SHADOW_CASCADES (the movable sun's cascaded shadows; the
+defaults are the cascades SunDusk draws, see SUN_SHADOW_DISTANCE_CM).
 """
 
 import json
@@ -73,16 +76,45 @@ EXPOSURE = float(os.environ.get("AMN_EV", "0"))
 SKY_ATLAS_PNG = os.path.join(HERE, "sky_atlas.png")
 SKY_ATLAS_JSON = os.path.join(HERE, "sky_atlas.json")
 AXIS_MAP_JSON = os.path.join(HERE, "axis_map.json")
-# The sun is Movable so the backend can turn it to the real sun (a Stationary light refuses any
-# rotation in a game world). A movable directional light renders cascaded shadow maps every frame
-# (virtual shadow maps are off: r.Shadow.Virtual.Enable defaults to 0 and no ini sets it), so the
-# distance and the cascade count are set here rather than left implicit. 20000 cm and 3 cascades are
-# the engine's own defaults for a movable sun; with no built lighting in the level the Stationary
-# sun should already have been previewing its shadows the movable way, so the look is not expected
-# to move. Neither that nor the cost is measured yet: the rebuild window measures the frame time
-# before and after (p95 <= 25 ms) and compares the frame at the reference dusk.
-SUN_SHADOW_DISTANCE_CM = float(os.environ.get("AMN_SUN_SHADOW_DISTANCE_CM", "20000"))
-SUN_SHADOW_CASCADES = int(os.environ.get("AMN_SUN_SHADOW_CASCADES", "3"))
+# The lights of the hour. After sunset the warm light on a facade comes from the still-bright sky
+# over the sunset, not from the sun, and the approved dusk is lit exactly that way: SunDusk, a warm
+# key from the front-left (the west with D1), 8 degrees down, 2.5. It stays as every build since
+# 2026-09-13 has made it - Stationary, same direction, colour and intensity - as the evening
+# twilight key. SunDawn is its mirror from the front-right for the morning, built dark. A Stationary
+# light may change its intensity and colour in the game but never its direction, and the backend
+# sends only those two (from the real solar depression, on the real side of the sky).
+#
+# The rebuild of 2026-09-19 (rolled back) had turned SunDusk itself into the Movable sun, with
+# cascades to 20000 cm. The build frame, before any value was sent, then scored 7.7-7.8 against the
+# reference (6.3-6.4 for the old level): L1 and the ground floor 4-7 grey levels brighter. The plate
+# camera stands 246 m in front of the facade, so a 200 m cascade range never reached the building
+# and the sun lit the rooms through their unshadowed shells. At the real -2.5 degrees that one sun
+# was also at 0 and the frame scored 10.3. Hence two roles in separate lights.
+TWILIGHT_KEY_INTENSITY = 2.5
+TWILIGHT_KEY_COLOR = (1.0, 0.62, 0.38)
+TWILIGHT_KEY_MOBILITY = unreal.ComponentMobility.STATIONARY
+TWILIGHT_KEY_TRAVEL_EVENING = (0.9, 0.43, -math.sin(math.radians(8.0)))
+TWILIGHT_KEY_TRAVEL_MORNING = (-0.9, 0.43, -math.sin(math.radians(8.0)))
+TWILIGHT_MORNING_BUILD_INTENSITY = 0.0
+# The direct sun: Movable so the backend can turn it to the real elevation and azimuth, lit only
+# while the real sun is above the horizon. Built at 0, so the build frame is today's: a light
+# whose colour times intensity is black is not drawn at all, shadows included
+# (FLightSceneInfo::ShouldRenderLightViewIndependent, LightSceneInfo.cpp in 5.8). Its colour is
+# SunDusk's, which is also what the backend gives it at the reference.
+SUN_BUILD_INTENSITY = 0.0
+SUN_BUILD_COLOR = (1.0, 0.62, 0.38)
+SUN_MOBILITY = unreal.ComponentMobility.MOVABLE
+# Its cascades are the ones SunDusk draws in the game today: the level's lighting is never built,
+# so a Stationary directional light previews its shadows with r.Shadow.UnbuiltWholeSceneDynamic-
+# ShadowRadius (200000 cm) and r.Shadow.UnbuiltNumWholeSceneDynamicShadowCascades (4)
+# (DirectionalLightComponent.cpp, with r.Shadow.UnbuiltPreviewInGame 1 by default). The same range
+# covers the facade at 246 m and the backdrop behind it, so daylight shadows fall where the dusk's
+# do. Ray-traced distance-field shadows (on by default for a Movable light) are turned off: the
+# cascades already reach everything in the frame, and a Stationary light never used them. The
+# rebuild window still measures p95 frame time with the sun lit (the day), not only at dusk, where
+# it is not drawn.
+SUN_SHADOW_DISTANCE_CM = float(os.environ.get("AMN_SUN_SHADOW_DISTANCE_CM", "200000"))
+SUN_SHADOW_CASCADES = int(os.environ.get("AMN_SUN_SHADOW_CASCADES", "4"))
 # Owner decision D7, not taken: an invisible SkyAtmosphere for lighting only (the sun's colour
 # through the air, and something for the sky light's real-time capture to see). Off until the
 # rehearsal gate at the reference dusk passes with it on (compare.py mean <= 6.4 over five frames).
@@ -439,30 +471,43 @@ def street_fill(ax):
     log(f"street fill {STREET_FILL:.0f} lm")
 
 
-def dusk_environment(ax):
-    """The picture's dusk: a warm low sun from the left, slightly from above so it rims the building
-    instead of lighting it from below; a sky light; light fog.
+def directional(ax, label, travel, mobility, intensity, colour):
+    light = spawn(unreal.DirectionalLight, vec(0, 0, 0), unreal.MathLibrary.make_rot_from_x(ax.direction(travel)), label)
+    comp = light.light_component
+    comp.set_mobility(mobility)
+    comp.set_intensity(intensity)
+    comp.set_light_color(unreal.LinearColor(colour[0], colour[1], colour[2], 1.0))
+    return comp
 
-    The sun is built where the approved look has it (8 degrees above the horizon, 2.5, warm), which
-    is not where a real sun stands at the picture's -2.5 degrees: the backend turns it to the real
-    one. It is Movable for that, with its cascaded shadows stated (SUN_SHADOW_*). The sky light stays
-    Stationary: its real-time capture works as it is and its intensity and colour are settable, so
-    Movable would only add risk. That capture sees only a sky atmosphere, clouds and IsSky meshes,
-    none of which this level has by default (the backdrop is an ordinary unlit mesh), so it gathers
-    almost nothing; with AMN_SKY_ATMOSPHERE it has the atmosphere to see."""
-    travel = ax.direction((0.9, 0.43, -math.sin(math.radians(8.0))))
-    sun = spawn(unreal.DirectionalLight, vec(0, 0, 0), unreal.MathLibrary.make_rot_from_x(travel), "Sun")
-    sun_comp = sun.light_component
-    sun_comp.set_mobility(unreal.ComponentMobility.MOVABLE)
-    sun_comp.set_intensity(2.5)
-    sun_comp.set_light_color(unreal.LinearColor(1.0, 0.62, 0.38, 1.0))
+
+def dusk_environment(ax):
+    """The picture's dusk: the evening twilight key, a warm light from the left slightly from above
+    so it rims the building instead of lighting it from below; its morning mirror and the real sun,
+    both dark; a sky light; light fog.
+
+    SunDusk is spawned first and exactly as before (TWILIGHT_KEY_*), so the frame the level shows
+    before the backend sends anything is today's. The height fog's directional inscattering follows
+    the brightest atmosphere-sun light (FScene::ProcessAtmosphereLightAddition), which at the build
+    is SunDusk alone, as today. The sky light stays Stationary: its real-time capture works as it
+    is and its intensity and colour are settable, so Movable would only add risk. That capture sees
+    only a sky atmosphere, clouds and IsSky meshes, none of which this level has by default (the
+    backdrop is an ordinary unlit mesh), so it gathers almost nothing; with AMN_SKY_ATMOSPHERE it has
+    the atmosphere to see."""
+    evening = directional(ax, "SunDusk", TWILIGHT_KEY_TRAVEL_EVENING, TWILIGHT_KEY_MOBILITY,
+                          TWILIGHT_KEY_INTENSITY, TWILIGHT_KEY_COLOR)
+    morning = directional(ax, "SunDawn", TWILIGHT_KEY_TRAVEL_MORNING, TWILIGHT_KEY_MOBILITY,
+                          TWILIGHT_MORNING_BUILD_INTENSITY, TWILIGHT_KEY_COLOR)
+    # built along SunDusk's travel; the backend turns it to the real sun before it is ever lit
+    sun_comp = directional(ax, "Sun", TWILIGHT_KEY_TRAVEL_EVENING, SUN_MOBILITY, SUN_BUILD_INTENSITY, SUN_BUILD_COLOR)
     for prop, value in (("dynamic_shadow_distance_movable_light", SUN_SHADOW_DISTANCE_CM),
-                        ("dynamic_shadow_cascades", SUN_SHADOW_CASCADES)):
+                        ("dynamic_shadow_cascades", SUN_SHADOW_CASCADES),
+                        ("use_ray_traced_distance_field_shadows", False)):
         try:
             sun_comp.set_editor_property(prop, value)
         except Exception as err:
             raise RuntimeError(f"sun shadow setting {prop} refused: {err}") from err
-    log(f"sun Movable, cascaded shadows to {SUN_SHADOW_DISTANCE_CM:.0f} cm in {SUN_SHADOW_CASCADES} cascades")
+    log(f"twilight keys SunDusk ({TWILIGHT_KEY_INTENSITY}) and SunDawn ({TWILIGHT_MORNING_BUILD_INTENSITY}) Stationary; "
+        f"sun Movable at {SUN_BUILD_INTENSITY}, cascaded shadows to {SUN_SHADOW_DISTANCE_CM:.0f} cm in {SUN_SHADOW_CASCADES} cascades")
     sky_backdrop(ax)
     sky = spawn(unreal.SkyLight, vec(0, 0, 500), label="SkyLight")
     sky_comp = sky.light_component
@@ -481,6 +526,10 @@ def dusk_environment(ax):
         log(f"fog settings skipped: {err}")
     if SKY_ATMOSPHERE:
         sky_atmosphere(fog)
+        # only the real sun lights the atmosphere; the keys stand at 8 degrees above the horizon,
+        # where the real sky does not have them
+        for key in (evening, morning):
+            key.set_editor_property("atmosphere_sun_light", False)
     log(f"dusk environment placed (sky atmosphere {'ON, lighting only' if SKY_ATMOSPHERE else 'off'})")
 
 

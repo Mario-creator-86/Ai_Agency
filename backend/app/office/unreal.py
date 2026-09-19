@@ -279,6 +279,9 @@ class EnvReport:
 #: report "labels" key -> role; a light role names the scene_params light factor that drives it
 SINGLE_ROLES = {
     "sun": "sun",
+    # the Stationary twilight keys (SunDusk, SunDawn): intensity and colour only, never turned
+    "twilight_evening": "twilight:evening",
+    "twilight_morning": "twilight:morning",
     "sky_light": "sky_light",
     "fog": "fog",
     "sky_backdrop": "sky_backdrop",
@@ -386,7 +389,8 @@ def load_env_report(path: Path) -> EnvReport | None:
     if isinstance(road, Mapping) and isinstance(road.get("component"), str):
         objects.append(EnvObject(role="road", label="street_ground", path=road["component"]))
     window = report.get("window_view")
-    # DayBlend lives only in M_HQ_WindowView: with no slot of it on props there is nothing to set
+    # DayBlend and NightBlend live only in the window views' own parent (look_hq_live.py): with no
+    # slot of it on props there is nothing to set
     if (
         isinstance(window, Mapping)
         and isinstance(window.get("component"), str)
@@ -484,6 +488,17 @@ def environment_calls(plan: Mapping[str, Any], report: EnvReport) -> list[EnvCal
                     kind="rotation",
                 )
             )
+    for side in ("evening", "morning"):
+        # SunDusk and SunDawn are Stationary: the game refuses to turn them, and their direction is
+        # the sunset's and the sunrise's side by construction, so only intensity and colour go
+        for twilight in report.of(f"twilight:{side}")[:1]:
+            k, path = plan["twilight"][side], twilight.path
+            calls.append(
+                EnvCall("LightComponent", path, "SetIntensity", "twilight", k["intensity"])
+            )
+            calls.append(
+                EnvCall("LightComponent", path, "SetLightColor", "twilight", tuple(k["color"]))
+            )
     for sky_light in report.of("sky_light")[:1]:
         k = plan["sky_light"]
         path = sky_light.path
@@ -548,16 +563,23 @@ def environment_calls(plan: Mapping[str, Any], report: EnvReport) -> list[EnvCal
                 calls.append(
                     EnvCall("MeshComponent", component.path, vector, "EmissiveFactor", (f, f, f))
                 )
-    for props in report.of("window_view")[:1]:
+    for component in report.of("near_blocks")[:1]:
+        # Daylight exists only on the near blocks' M_HQ_CityDay slots, so one call on the component
+        # reaches them and nothing else, uniform glow or not; at the reference it is 0, the build's
         calls.append(
             EnvCall(
                 "MeshComponent",
-                props.path,
+                component.path,
                 scalar,
-                "DayBlend",
-                float(plan["window_view"]["DayBlend"]),
+                "Daylight",
+                float(plan["near_blocks_day"]["Daylight"]),
             )
         )
+    for props in report.of("window_view")[:1]:
+        for name in ("DayBlend", "NightBlend"):
+            calls.append(
+                EnvCall("MeshComponent", props.path, scalar, name, float(plan["window_view"][name]))
+            )
     for ground in report.of("road")[:1]:
         for name in ("Roughness Min", "Roughness Max"):
             calls.append(

@@ -9,10 +9,16 @@ Two rules shape it:
 
 * The approved dusk does not drift. At the reference instant (the sun at -2.5 deg, a clear sky,
   rain in the last three hours) every output is exactly the value the level is built with today
-  (tests/test_scene_params.py reads them from the build scripts). The single exception is the
-  sun's key light: the build's SunDusk is a light 8 deg ABOVE the horizon, and at -2.5 deg the
-  real sun is below it, so the real sun gives no light there (critic, hole 1). Its absence is
-  measured in the rebuild window, never papered over with a sun that is not in the sky.
+  (tests/test_scene_params.py reads them from the build scripts), every light included.
+* After sunset the warm light on a facade comes from the still-bright twilight sky over the
+  sunset, not from the sun, and that is how the dusk is lit. The level keeps the build's SunDusk
+  (Stationary, from the front-left, 8 deg down, warm, 2.5) as the evening twilight key and its
+  mirror SunDawn as the morning key; their direction is fixed, and only their intensity and colour
+  follow the real solar depression on the real side of the sky, fading to nothing by the end of
+  civil twilight (-6 deg). The real sun is a separate Movable light that turns to the real
+  elevation and azimuth and carries direct light only while it is above the horizon. The rejected
+  rebuild of 2026-09-19 had one sun doing both: at the real -2.5 deg it was 0, the warm key was
+  gone and the reference moment scored 10.3 against the limit of 6.4.
 * Nothing is invented. Where the look between two real states needs a shape (how fast the city's
   windows dim at sunrise, how blue the day haze is), the shape comes from the scene's own sources:
   the plate palette of ``frontend/src/hq_time.js`` and ``compose_sky_backdrop.py`` and the Blender
@@ -41,11 +47,21 @@ Vec3 = tuple[float, float, float]
 SKY_GAIN = 1.1
 #: build_hq_scene.py SKYLIGHT (AMN_SKYLIGHT) and the live describe: 0.6, white, black below.
 SKY_LIGHT_DUSK = 0.6
-#: build_hq_scene.py SunDusk: 2.5 at 8 deg above the horizon, LinearColor(1.0, 0.62, 0.38)
-#: (live: FColor 255/206/166). The sun curve below passes through this point.
+#: build_hq_scene.py SunDusk: 2.5, lighting from 8 deg above the horizon, LinearColor(1.0, 0.62,
+#: 0.38) (live: FColor 255/206/166, Stationary). It is the evening twilight key at the reference
+#: (TWILIGHT_KEY_*), and the direct sun's curve below passes through its 2.5 at its 8 deg, so a
+#: real sun standing where SunDusk seems to stand gives the light the approved look gives.
 SUN_KEY_ELEVATION = 8.0
 SUN_KEY_INTENSITY = 2.5
 SUN_DUSK_COLOR: Vec3 = (1.0, 0.62, 0.38)
+#: build_hq_scene.py TWILIGHT_KEY_INTENSITY and TWILIGHT_KEY_COLOR: the twilight key at the
+#: reference is SunDusk exactly.
+TWILIGHT_KEY_INTENSITY = SUN_KEY_INTENSITY
+TWILIGHT_KEY_COLOR: Vec3 = SUN_DUSK_COLOR
+#: The end of civil twilight: with the sun this far below the horizon the sky over the sunset no
+#: longer lights a facade (the ground illuminance is down to about 3 lux against about 400 at
+#: sunset), so the key is dark from here down.
+TWILIGHT_END_ELEVATION = -6.0
 #: look_hq_live.py AMN_LOOK_FOG and fog_inscattering_luminance (live: 0.008, 0.3/0.34/0.55).
 FOG_DENSITY = 0.008
 FOG_DUSK: Vec3 = (0.3, 0.34, 0.55)
@@ -92,6 +108,11 @@ SKY_STOPS = {
     "day": ("#3f78c8", "#79a9e0", "#cfe2f3", "#b9cde2"),
 }
 STOP_POSITIONS = (0.0, 0.24, 0.4, 0.62)
+#: compose_sky_backdrop.py: the plate's horizon row (HORIZON 350 of H 840), where the warm glow is
+#: centred, and the glow's colour and opacity there (its radial "warm" layer, first stop).
+PLATE_HORIZON_ROW = 350.0 / 840.0
+PLATE_GLOW_SRGB: Vec3 = (250.0, 165.0, 115.0)
+PLATE_GLOW_OPACITY = 0.85
 
 HAZE_LABELS = (
     "SkylineHaze_near_left",
@@ -183,19 +204,22 @@ def plate_stops(elevation: float) -> list[Vec3]:
     return stops
 
 
+def gradient_at(stops: list[Vec3], row: float) -> Vec3:
+    """The plate's gradient (sRGB bytes) at ``row`` (0 top, 1 bottom), as compose fills it."""
+    for i in range(3):
+        if STOP_POSITIONS[i] <= row <= STOP_POSITIONS[i + 1]:
+            t = (row - STOP_POSITIONS[i]) / (STOP_POSITIONS[i + 1] - STOP_POSITIONS[i])
+            return mix3(stops[i], stops[i + 1], t)
+    return stops[-1]
+
+
 def plate_mean_linear(elevation: float, samples: int = 64) -> Vec3:
     """The plate gradient's mean colour, linear: how much light that sky gives."""
     stops = plate_stops(elevation)
     acc = [0.0, 0.0, 0.0]
     for j in range(samples):
         row = (j + 0.5) / samples
-        colour = stops[-1]
-        for i in range(3):
-            if STOP_POSITIONS[i] <= row <= STOP_POSITIONS[i + 1]:
-                t = (row - STOP_POSITIONS[i]) / (STOP_POSITIONS[i + 1] - STOP_POSITIONS[i])
-                colour = mix3(stops[i], stops[i + 1], t)
-                break
-        lin = linear3(colour)
+        lin = linear3(gradient_at(stops, row))
         for q in range(3):
             acc[q] += lin[q] / samples
     return (acc[0], acc[1], acc[2])
@@ -252,6 +276,67 @@ def sun_colour(elevation: float) -> Vec3:
     return mix3(SUN_DUSK_COLOR, SUN_COLOR_DAY, t) if t > 0.0 else SUN_DUSK_COLOR
 
 
+def sunrise_side(sun: Sun) -> bool:
+    """True while the sun is in the eastern half of the sky: the morning side, on the frame's
+    right with D1 (the facade faces south). The sky plate's glow is mirrored by the same rule, so
+    the twilight key always lights from the side the glow is painted on."""
+    return sun.azimuth_deg < 180.0
+
+
+# ---------------------------------------------------------------- the twilight key
+def twilight_intensity(elevation: float) -> float:
+    """The twilight key's intensity for the real sun's elevation (either side of the sky).
+
+    It is the light of the bright sky over the sunset, so it rises and falls with the glow the
+    plates paint there (compose's dusk_of, peaking just above the horizon), normalised to
+    SunDusk's 2.5 at the reference. Below the reference it fades to nothing at the end of civil
+    twilight; above it, it yields to the direct sun as the day comes (day_weight, the same weight
+    that brings the city and the windows to day), dark from DAY_FULL_ELEVATION. At the reference
+    every factor is exactly 1, so the value is exactly SunDusk's."""
+    if elevation <= TWILIGHT_END_ELEVATION or elevation >= DAY_FULL_ELEVATION:
+        return 0.0
+    glow = plate_dusk(elevation) / plate_dusk(REFERENCE_DUSK_ELEVATION)
+    dusk_fade = smoothstep(TWILIGHT_END_ELEVATION, REFERENCE_DUSK_ELEVATION, elevation)
+    return TWILIGHT_KEY_INTENSITY * glow * dusk_fade * (1.0 - day_weight(elevation))
+
+
+def twilight_arch_linear(elevation: float) -> Vec3:
+    """The plate's own colour where its glow is centred (the horizon row on the glow's side), as
+    compose paints it at this elevation: the gradient there under the warm glow at its opacity.
+    Linear. compose's final tint multiplies every channel by a constant, which cancels in the
+    ratio twilight_colour takes, so it is left out."""
+    base = gradient_at(plate_stops(elevation), PLATE_HORIZON_ROW)
+    alpha = PLATE_GLOW_OPACITY * plate_dusk(elevation)
+    return linear3(mix3(base, PLATE_GLOW_SRGB, alpha))
+
+
+def twilight_colour(elevation: float) -> Vec3:
+    """The key's colour: SunDusk's, turned as the sky over the sunset turns from the reference to
+    this elevation (the arch's colour here over its colour at the reference, channel by channel),
+    brightest channel at 1. Deeper in twilight the glow thins and the blue sky shows through, so
+    the key cools; at the reference the ratio is 1 in every channel and the colour is SunDusk's."""
+    here = twilight_arch_linear(elevation)
+    ref = twilight_arch_linear(REFERENCE_DUSK_ELEVATION)
+    turned = (
+        TWILIGHT_KEY_COLOR[0] * here[0] / ref[0],
+        TWILIGHT_KEY_COLOR[1] * here[1] / ref[1],
+        TWILIGHT_KEY_COLOR[2] * here[2] / ref[2],
+    )
+    return normalised(turned)
+
+
+def twilight_keys(sun: Sun) -> dict[str, dict[str, Any]]:
+    """Both keys: the one on the sun's side of the sky at twilight_intensity, the other dark. Each
+    carries the colour of the hour, so a key that comes on starts from the right colour."""
+    lit = "morning" if sunrise_side(sun) else "evening"
+    intensity = twilight_intensity(sun.elevation_deg)
+    colour = twilight_colour(sun.elevation_deg)
+    return {
+        side: {"intensity": intensity if side == lit else 0.0, "color": colour}
+        for side in ("evening", "morning")
+    }
+
+
 def sun_rotation(sun: Sun, frame: SceneFrame) -> dict[str, float]:
     """The directional light's world rotation (degrees) for the real sun, through the level's
     measured axes and the facade's heading (D1). The light travels away from the sun."""
@@ -283,7 +368,7 @@ def sky_plates(sun: Sun) -> dict[str, float]:
     - compose's own two functions - falls between the two cells' pairs, so a blended plate reads
     as the plate compose would have made at that elevation."""
     e = sun.elevation_deg
-    mirror = 1.0 if sun.azimuth_deg < 180.0 else 0.0  # the glow on the sun's side: right mornings
+    mirror = 1.0 if sunrise_side(sun) else 0.0  # the glow on the sun's side: right mornings
     cells = ATLAS_ELEVATIONS
     if e <= cells[0]:
         return {"PlateA": 0, "PlateB": 0, "PlateBlend": 0.0, "Mirror": mirror, "Gain": SKY_GAIN}
@@ -409,6 +494,7 @@ def scene_params(
 
     city = mix(1.0, CITY_DAY_EMISSION, day)
     return {
+        # the direct sun: the Movable light, lit only above the horizon
         "sun": {
             "elevation_deg": e,
             "azimuth_deg": sun.azimuth_deg,
@@ -416,6 +502,8 @@ def scene_params(
             "color": sun_colour(e),
             "rotation": sun_rotation(sun, frame) if frame is not None else None,
         },
+        # the sky over the sunset (or the sunrise): the Stationary keys, intensity and colour only
+        "twilight": twilight_keys(sun),
         "sky_light": {
             "intensity": sky_intensity,
             "color": sky_colour,
@@ -432,7 +520,14 @@ def scene_params(
         },
         "sky": sky_plates(sun),
         "emissive_factor": {"skyline": city, "near_blocks": city},
-        "window_view": {"DayBlend": day},
+        # the room windows' picture: dusk at the reference, the day picture by day, the night
+        # state from the reference down to -12 deg (the same weight the sky light and the haze
+        # darken by), so no window shows the dusk horizon in the night
+        "window_view": {"DayBlend": day, "NightBlend": night},
+        # the near blocks' darkest plain slots (M_HQ_CityDay, look_hq_live.near_blocks_day): their
+        # dusk colour at 0, their own hue at a facade's albedo by day, by the same day weight; the
+        # rejected rebuild showed them as black cardboard at noon
+        "near_blocks_day": {"Daylight": day},
         "haze": haze,
         "fog": {"inscattering": fog, "density": FOG_DENSITY},
         "road": road(weather),

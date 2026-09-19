@@ -68,6 +68,15 @@ SINGLES = (
     ("props", "props", "mesh"),
     ("street_ground", "street_ground", "mesh"),
 )
+# The twilight keys (build_hq_scene.py): SunDusk, the evening key the approved dusk is lit by, and
+# its morning mirror SunDawn. Stationary lights; the backend sets their intensity and colour from the
+# real solar depression. Reported under their own keys and required by main() (missing_twilight_keys):
+# a level without them would lose the dusk's warm light, which the rejected rebuild of 2026-09-19
+# measured at 10.3 against the reference.
+TWILIGHT_KEYS = (
+    ("twilight_evening", "SunDusk", "light"),
+    ("twilight_morning", "SunDawn", "light"),
+)
 # reported when present: the lighting-only atmosphere exists only with AMN_SKY_ATMOSPHERE=1, and the
 # baked digits stay in the level, hidden, once clock_hq_live.py has put the live display over them
 OPTIONAL = (
@@ -88,9 +97,56 @@ PATTERN_GROUPS = (
 )
 EMISSIVE_COMPONENTS = ("skyline", "near_blocks", "shell", "props")
 GLTF_ROOT = "/InterchangeAssets/gltf/"
+NO_GLOW_ROOTS = ("/Game/HQ/Materials/M_HQ_CityDay",)  # city_emissive.DAY_MASTER
 WINDOW_VIEW_PREFIX = "MI_HQ_WindowView"
 SKY_PARAMETERS = ["PlateA", "PlateB", "PlateBlend", "Mirror", "Gain"]
 CLOCK_UNSYNCED = -1.0e10  # clock_hq_live.UNSYNCED_OFFSET
+CLOCK_ATLAS = "/Game/HQ/Clock/T_HQ_ClockDigits"  # clock_hq_live.TEXTURE
+CLOCK_MATERIAL = "/Game/HQ/Clock/M_HQ_DigitDisplay"  # clock_hq_live.MATERIAL
+CLOCK_ATLAS_READ = ("srgb", "compression_settings", "filter", "mip_gen_settings", "never_stream", "lod_bias")
+
+
+def clock_entry(atlas=None, material=None):
+    """The clock's part of the report. atlas and material are what the saved level's display was
+    built with, read in Unreal (_clock_build()): the first display was unreadable partly because
+    its atlas went in with the import's defaults, so the report records the settings the digits
+    are drawn with, next to the parameter the backend sends."""
+    entry = {
+        "parameter": "ClockOffsetS",
+        "unsynced_default": CLOCK_UNSYNCED,
+        "unsynced_reads": "--:--",
+        "time": "the material's Time node: the world's game seconds (the live game is never paused)",
+        "offset": "local seconds of the day in Europe/Bucharest minus that game time, "
+                  "resent on every full refresh and at a DST change",
+    }
+    if atlas is not None:
+        entry["atlas"] = atlas
+    if material is not None:
+        entry["material"] = material
+    return entry
+
+
+def _clock_build():
+    """(atlas, material) settings of the clock display as saved, or (None, None) outside Unreal."""
+    if unreal is None:
+        return None, None
+    atlas, material = {"path": CLOCK_ATLAS}, {"path": CLOCK_MATERIAL}
+    try:
+        tex = unreal.load_asset(CLOCK_ATLAS)
+        atlas["size"] = [tex.blueprint_get_size_x(), tex.blueprint_get_size_y()]
+        for prop in CLOCK_ATLAS_READ:
+            atlas[prop] = str(tex.get_editor_property(prop))
+    except Exception as err:
+        atlas["error"] = f"unreadable: {err}"
+    try:
+        mat = unreal.load_asset(CLOCK_MATERIAL)
+        material["blend_mode"] = str(mat.get_editor_property("blend_mode"))
+        material["opacity_mask_clip_value"] = float(mat.get_editor_property("opacity_mask_clip_value"))
+        material["ClockOffsetS_default"] = float(
+            unreal.MaterialEditingLibrary.get_material_default_scalar_parameter_value(mat, "ClockOffsetS"))
+    except Exception as err:
+        material["error"] = f"unreadable: {err}"
+    return atlas, material
 
 
 # ---------------------------------------------------------------- pure: the report from records
@@ -126,6 +182,11 @@ def emissive_uniform(slots):
         reasons.append("no material slots")
     for s in slots:
         name = s["material"].rsplit("/", 1)[-1].split(".")[0]
+        # the near blocks' plain slots by day (look_hq_live.near_blocks_day, city_emissive.py): a
+        # material of factors alone with no EmissiveFactor and no glow, so the backend's one
+        # factor neither reaches it nor has anything of it to scale
+        if str(s.get("root") or "").startswith(NO_GLOW_ROOTS) and s.get("emissive_factor") is None:
+            continue
         if not str(s.get("root") or "").startswith(GLTF_ROOT):
             reasons.append(f"slot {s['index']} {name}: parent {s.get('root')} is not a glTF master")
             continue
@@ -189,7 +250,7 @@ def assemble(records, axes, heading_deg, expected_counts=None, sky_atlas=None, r
             missing.append(f"{key}: {label}")
         else:
             labels[key] = _entry(r)
-    for key, label, kind in OPTIONAL:
+    for key, label, kind in OPTIONAL + TWILIGHT_KEYS:
         r = find(label, kind)
         labels[key] = _entry(r) if r else None
     for key, names, kind in NAMED_GROUPS:
@@ -251,16 +312,16 @@ def assemble(records, axes, heading_deg, expected_counts=None, sky_atlas=None, r
             "parameter": "DayBlend",
         },
         "sky": {"parameters": list(SKY_PARAMETERS), "atlas": sky_atlas},
-        "clock": {
-            "parameter": "ClockOffsetS",
-            "unsynced_default": CLOCK_UNSYNCED,
-            "time": "the material's Time node: the world's game seconds (the live game is never paused)",
-            "offset": "local seconds of the day in Europe/Bucharest minus that game time, "
-                      "resent on every full refresh and at a DST change",
-        },
+        "clock": clock_entry(*_clock_build()),
         "reference": reference or {},
     }
     return report, missing
+
+
+def missing_twilight_keys(report):
+    """Every twilight key the report lacks, as "key: label" (main() fails the rebuild on any)."""
+    labels = report.get("labels", {})
+    return [f"{key}: {label}" for key, label, _ in TWILIGHT_KEYS if not labels.get(key)]
 
 
 # ---------------------------------------------------------------- inside Unreal
@@ -341,6 +402,16 @@ def _reference(records):
                       "mobility": str(sun.get_editor_property("mobility"))}
     except Exception as err:
         out["sun"] = f"unreadable: {err}"
+    for key, label, _ in TWILIGHT_KEYS:
+        try:
+            light = actors[label].light_component
+            rot = light.get_world_rotation()
+            c = light.get_editor_property("light_color")
+            out[key] = {"intensity": light.get_editor_property("intensity"), "light_color": [c.r, c.g, c.b],
+                        "rotation": {"pitch": rot.pitch, "yaw": rot.yaw, "roll": rot.roll},
+                        "mobility": str(light.get_editor_property("mobility"))}
+        except Exception as err:
+            out[key] = f"unreadable: {err}"
     try:
         sky = actors["SkyLight"].light_component
         out["sky_light"] = {"intensity": sky.get_editor_property("intensity")}
@@ -386,6 +457,7 @@ def main():
     report, missing = assemble(records, axes, FACADE_HEADING_DEG, expected_counts=expected,
                                sky_atlas=sky_atlas, reference=_reference(records),
                                written_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
+    missing += missing_twilight_keys(report)
     if missing:
         with open(FAILED, "w", encoding="utf-8") as fh:
             json.dump({**report, "missing": missing}, fh, indent=1)

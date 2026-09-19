@@ -21,7 +21,11 @@
 # Blender, so its rebuild runs with it and the baked atlases stay as they are).
 #
 # Logs go to -LogDir (default: art-source/unreal/renders/logs, ignored by Git). Every step stops the
-# pass on failure. Only processes this pass started (by name and command line) are restarted.
+# pass on failure: an Unreal step fails on a non-zero exit code, on a fatal line in its log (out of
+# memory, a crash, a Python error) even after the level was saved, and on a log that never says the
+# commandlet finished (Test-UnrealLog). Before anything is stopped the pass warns when free memory
+# is under what the last rebuild used. Only processes this pass started (by name and command line)
+# are restarted.
 
 param(
     [switch]$SkipExport,
@@ -48,15 +52,106 @@ function Step([string]$name, [scriptblock]$body) {
     Write-Output ("   done in {0:N0} s" -f ((Get-Date) - $t).TotalSeconds)
 }
 
+# What ends a commandlet step. On 2026-09-19 build_hq_scene.py saved the level ("level saved"), then
+# ran out of memory while force-deleting the old Scene_20260916_214930 folder: "Fatal error ... Ran
+# out of memory allocating 67108864 (64.0 MiB) bytes ... The paging file is too small for this
+# operation to complete", then "Unhandled Exception: 0x0000c000". It left no "LogPython: Error"
+# line, which was all this script looked for, so the pass went on as if the step had finished. A
+# step now fails on any of these lines, wherever they stand in the log (a "level saved" before them
+# proves nothing), on a non-zero exit code, and on a log without the commandlet's own last word:
+# every one of the 646 step logs in renders/logs that finished carries "finished execution (result
+# 0)", and the only two without it are that crash and a run that ended "result -1".
+$UnrealFailurePatterns = @(
+    "LogPython: Error",
+    "Fatal error",
+    "Ran out of memory",
+    "paging file is too small",
+    "Unhandled Exception",
+    # a material a pass built that does not compile is drawn as the engine's default material in
+    # the game (the window views' copied master, the near blocks' M_HQ_CityDay, the clock display):
+    # MaterialEditingLibrary.recompile_material returns nothing to check, the log is where it shows.
+    # None of the 648 step logs in renders/logs up to 2026-09-19 carries it.
+    "Failed to compile Material"
+)
+$UnrealFinishedPattern = "finished execution \(result 0\)"
+
+function Test-UnrealLog([string]$Path) {
+    # The lines that fail a commandlet's log, first ones first; none when the step finished cleanly.
+    if (-not (Test-Path -LiteralPath $Path)) { return @("no log was written at $Path") }
+    $hits = @(Select-String -LiteralPath $Path -Pattern $UnrealFailurePatterns -SimpleMatch | Select-Object -First 8 | ForEach-Object { $_.Line.Trim() })
+    if ($hits.Count -gt 0) { return $hits }
+    if (-not (Select-String -LiteralPath $Path -Pattern $UnrealFinishedPattern -Quiet)) {
+        return @("the commandlet never logged 'finished execution (result 0)': it did not run to its end")
+    }
+    return @()
+}
+
 function RunUnrealScript([string]$script) {
     $log = Join-Path $LogDir ("ue_" + [IO.Path]::GetFileNameWithoutExtension($script) + ".log")
+    # the last rebuild's log goes aside first, named as the editor names its own backups: an editor
+    # that never started writes no log, and the old one's "finished execution (result 0)" must not
+    # pass for this run's
+    if (Test-Path -LiteralPath $log) { Move-Item -LiteralPath $log -Destination ($log -replace '\.log$', ("-backup-" + (Get-Date -Format "yyyy.MM.dd-HH.mm.ss.fff") + ".log")) -Force }
+    # the exit code is read the way the Blender step reads its own: under "Stop" a line on stderr would
+    # end the pass before the code could be read, and the code is what says the editor died
+    $ErrorActionPreference = "Continue"
     & $ueCmd "$uproject" -run=pythonscript "-script=$((Join-Path $unrealDir $script) -replace '\\', '/')" -unattended -nosplash "-abslog=$log" | Out-Null
-    $errors = Select-String -Path $log -Pattern "LogPython: Error" -ErrorAction SilentlyContinue
-    Select-String -Path $log -Pattern "AMN_(UE|DRESS|TRAFFIC|SEAT|STREET|LOOK|SURF|HAZE|CLOCK|ENV) " -ErrorAction SilentlyContinue | Select-Object -Last 6 | ForEach-Object { "   " + $_.Line.Substring($_.Line.IndexOf("AMN_")) }
-    if ($errors) {
-        $errors | Select-Object -First 8 | ForEach-Object { "   " + $_.Line }
-        throw "$script reported Python errors (log: $log)"
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = "Stop"
+    # (a missing log is said by Test-UnrealLog below, not by a path error here)
+    if (Test-Path -LiteralPath $log) { Select-String -LiteralPath $log -Pattern "AMN_(UE|DRESS|TRAFFIC|SEAT|STREET|LOOK|SURF|HAZE|CLOCK|ENV) " -ErrorAction SilentlyContinue | Select-Object -Last 6 | ForEach-Object { "   " + $_.Line.Substring($_.Line.IndexOf("AMN_")) } }
+    $failure = @(Test-UnrealLog $log)
+    if ($code -ne 0 -or $failure.Count -gt 0) {
+        $failure | ForEach-Object { "   " + $_ }
+        # a throw ends the pass here: nothing after it runs, the stream is not restarted on a
+        # half-built level, and the runbook's ROLLBACK restores the backup
+        throw "$script failed: exit code $code$(if ($failure.Count -gt 0) { '; ' + $failure[0] }) (log: $log)"
     }
+}
+
+# Memory before a rebuild. The same 2026-09-19 build logged, at its start, 7988 MB of physical memory
+# free and 15834 MB of commit (physical plus page file) free, with Market Signals, Codex and other
+# processes running; at its crash the editor alone had used PeakUsedVirtual 27112116224 bytes
+# (25.25 GiB) and wanted 64 MiB more. So the pass warns before it stops anything when free physical
+# memory plus free page file, counting back what the stream's own processes will give up when they
+# stop, is under what the last rebuild used: the largest PeakUsedVirtual any step log in -LogDir
+# records, and never less than the 25.3 GiB measured then.
+$MeasuredRebuildPeakGB = 25.3
+
+function Get-LastRebuildPeakGB([string]$Dir) {
+    $peak = $MeasuredRebuildPeakGB
+    Get-ChildItem -LiteralPath $Dir -Filter "ue_*.log" -File -ErrorAction SilentlyContinue | ForEach-Object {
+        Select-String -LiteralPath $_.FullName -Pattern "PeakUsedVirtual (\d+)" -ErrorAction SilentlyContinue | ForEach-Object {
+            $gb = [double]$_.Matches[0].Groups[1].Value / 1GB
+            if ($gb -gt $peak) { $peak = $gb }
+        }
+    }
+    return [math]::Round($peak, 2)
+}
+
+function Get-FreeMemoryGB {
+    # free physical memory plus the free part of every page file, plus what the stream's own
+    # processes hold (StopStream gives it back before Unreal starts); GB, and what each part was
+    $os = Get-CimInstance Win32_OperatingSystem
+    $physical = [double]$os.FreePhysicalMemory * 1KB / 1GB
+    $page = 0.0
+    Get-CimInstance Win32_PageFileUsage -ErrorAction SilentlyContinue | ForEach-Object {
+        $page += ([double]$_.AllocatedBaseSize - [double]$_.CurrentUsage) * 1MB / 1GB
+    }
+    $stream = 0.0
+    Get-CimInstance Win32_Process | Where-Object {
+        ($_.Name -eq "UnrealEditor.exe" -and $_.CommandLine -match "PixelStreamingConnectionURL") -or
+        ($_.Name -eq "node.exe" -and $_.CommandLine -match "SignallingWebServer\\dist\\index\.js")
+    } | ForEach-Object { $stream += [double]$_.PrivatePageCount / 1GB }
+    return [pscustomobject]@{ Total = $physical + $page + $stream; Physical = $physical; PageFile = $page; Stream = $stream }
+}
+
+function Test-RebuildMemory([double]$FreeGB, [double]$NeededGB) {
+    # the warning to print, or nothing when there is room
+    if ($FreeGB -ge $NeededGB) { return $null }
+    return ("only {0:N1} GB of memory is free (physical plus page file) where the last rebuild used {1:N1} GB: " +
+            "build_hq_scene.py ran out of memory like this on 2026-09-19. Close Market Signals, Codex and " +
+            "other heavy programs, or enlarge the page file, before going on.") -f $FreeGB, $NeededGB
 }
 
 function StopStream {
@@ -65,6 +160,14 @@ function StopStream {
         ($_.Name -eq "node.exe" -and $_.CommandLine -match "SignallingWebServer\\dist\\index\.js")
     } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -Confirm:$false }
 }
+
+# Pre-flight, before anything is stopped: a warning, not a stop (the Owner's window may still go on
+# with more memory freed), printed where whoever runs the pass reads it first.
+$memory = Get-FreeMemoryGB
+$needed = Get-LastRebuildPeakGB $LogDir
+Write-Output ("== Memory: {0:N1} GB free ({1:N1} physical, {2:N1} page file, {3:N1} from the stream); the last rebuild used {4:N1} GB" -f $memory.Total, $memory.Physical, $memory.PageFile, $memory.Stream, $needed)
+$short = Test-RebuildMemory $memory.Total $needed
+if ($short) { Write-Warning $short }
 
 # The sky first, export or not: compose_sky_backdrop.py --atlas writes sky_atlas.png (one cell per sun
 # elevation, the -2.5 cell being the dusk plate the stream has shown since 2026-09-16) and its
