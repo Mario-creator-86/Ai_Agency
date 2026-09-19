@@ -3,6 +3,13 @@ import { streamLayers } from './hq_stream_config.js';
 
 /** How often a frame of the live video is kept, to be shown frozen if the stream drops. */
 const STILL_COPY_MS = 2000;
+/**
+ * How long the page waits for a picture before it asks the signalling server again. Measured
+ * 2026-09-19: after a restart Unreal joined signalling 22 s after the server started, the library
+ * asked for streamers for about 11 s and then stopped, and the page showed no picture for ten
+ * minutes. A negotiation under way takes a few seconds, so half a minute leaves it alone.
+ */
+const CONNECTING_RETRY_MS = 30000;
 const NOTES = {
   reconnecting: 'Reconnecting to the live headquarters…',
   starting: 'Starting the live headquarters…',
@@ -18,7 +25,7 @@ const NOTES = {
 export class LiveStream {
   /**
    * @param {HTMLElement} viewport the element the scene is drawn in
-   * @param {{signallingUrl: string, streamerId: string, retryMs: number}} settings
+   * @param {{signallingUrl: string, streamerId: string, retryMs: number, connectingRetryMs?: number}} settings
    * @param {{onStatus?: (status: 'connecting'|'live'|'offline') => void}} [options]
    */
   constructor(viewport, settings, options = {}) {
@@ -119,6 +126,17 @@ export class LiveStream {
     window.clearTimeout(this.retryTimer);
     this.retryTimer = 0;
     this.status = status;
+    if (status === 'connecting') {
+      // Nothing streaming yet: ask again, and keep asking, until a picture arrives. A live
+      // stream or an outage clears this timer on its own next status.
+      const wait = this.settings.connectingRetryMs || CONNECTING_RETRY_MS;
+      this.retryTimer = window.setTimeout(() => {
+        this.retryTimer = 0;
+        if (this.status !== 'connecting') return;
+        this.stream.reconnect();
+        this._setStatus('connecting');
+      }, wait);
+    }
     window.clearInterval(this.stillTimer);
     if (status === 'live') {
       this._copyFrame();

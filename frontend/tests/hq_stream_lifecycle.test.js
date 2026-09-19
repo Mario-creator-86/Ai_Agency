@@ -62,3 +62,20 @@ test('a short live interval keeps a frame instead of flashing the empty viewport
   assert.equal(f.player.still.hidden, false);
   assert.equal(f.player.badge.textContent, 'Reconnecting to the live headquarters…');
 });
+
+test('a page that connected before Unreal joined keeps asking until the stream is live', (t) => {
+  // Measured 2026-09-19 12:47: Unreal took 22 s to join signalling after a restart, the pages
+  // asked for streamers for about 11 s and then stopped, and sat with no picture for ten
+  // minutes until the signalling server was restarted by hand.
+  const f = fixture(t);
+  f.player._setStatus('connecting');
+  t.mock.timers.tick(29000);
+  assert.equal(f.reconnects(), 0, 'a negotiation under way is given its time');
+  t.mock.timers.tick(1000);
+  assert.equal(f.reconnects(), 1);
+  t.mock.timers.tick(30000);
+  assert.equal(f.reconnects(), 2, 'and it keeps asking while nothing is streaming');
+  f.player._setStatus('live');
+  t.mock.timers.tick(120000);
+  assert.equal(f.reconnects(), 2, 'a live stream is never torn down by the waiting timer');
+});

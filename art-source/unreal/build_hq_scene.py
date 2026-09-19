@@ -623,7 +623,14 @@ def main():
     unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).save_current_level()
     unreal.EditorAssetLibrary.save_directory(PKG)
     log(f"level saved {LEVEL}")
-    remove_old_scenes()
+    # Deleting earlier builds' Scene_ folders is a memory spike after the work is saved: on
+    # 2026-09-19 it killed this commandlet twice ("Ran out of memory ... paging file is too
+    # small", 20.5 GiB used with another program holding 20.8 GB of commit). The saved level no
+    # longer references them, so they are only disk; a run that wants them gone asks for it.
+    if os.environ.get("AMN_REMOVE_OLD_SCENES") == "1":
+        remove_old_scenes()
+    else:
+        log("old scene folders kept (set AMN_REMOVE_OLD_SCENES=1 to delete them)")
 
 
 def remove_old_scenes():

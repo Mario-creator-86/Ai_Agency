@@ -320,3 +320,32 @@ def test_the_memory_check_comes_before_anything_is_stopped():
     assert first(r"^\$memory = Get-FreeMemoryGB") < warn
     assert warn < first(r"if \(-not \$NoStream\) \{ StopStream \}")
     assert warn < first(r'RunUnrealScript "build_hq_scene\.py"')
+
+
+# ---------------------------------------------------------------- the second window's crash
+# 2026-09-19 12:43: build_hq_scene.py saved the new level and then died again while deleting the
+# old Scene_ folders ("Ran out of memory allocating 67108864 bytes", AvailableVirtual 0.05 GiB at
+# UsedVirtual 20.51 GiB). The deletion is a memory spike after the work is saved, and the level no
+# longer references those folders, so the build keeps them unless it is asked to clean up.
+BUILD_SCENE = Path(__file__).resolve().parents[1] / "art-source" / "unreal" / "build_hq_scene.py"
+
+
+def test_the_build_does_not_delete_old_scenes_unless_asked():
+    source = BUILD_SCENE.read_text(encoding="utf-8")
+    calls = [line for line in source.splitlines() if re.match(r"\s+remove_old_scenes\(\)", line)]
+    assert calls, "the cleanup still exists, for a run that asks for it"
+    for line in calls:
+        index = source.splitlines().index(line)
+        guard = "\n".join(source.splitlines()[max(0, index - 3) : index])
+        assert "AMN_REMOVE_OLD_SCENES" in guard, "old scenes are deleted only when asked"
+
+
+def test_the_memory_check_measures_free_commit_not_page_file_space():
+    # The page file's unused space (AllocatedBaseSize - CurrentUsage) read 57.2 GB free while the
+    # commit left was 16.8 GB of an 83.5 GB limit: the editor dies on commit, so commit is measured.
+    body = SCRIPT.read_text(encoding="utf-8")
+    start = body.index("function Get-FreeMemoryGB")
+    end = body.index("function Test-RebuildMemory")
+    function = body[start:end]
+    assert "FreeVirtualMemory" in function
+    assert "AllocatedBaseSize" not in function

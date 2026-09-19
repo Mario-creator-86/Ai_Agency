@@ -130,26 +130,26 @@ function Get-LastRebuildPeakGB([string]$Dir) {
 }
 
 function Get-FreeMemoryGB {
-    # free physical memory plus the free part of every page file, plus what the stream's own
-    # processes hold (StopStream gives it back before Unreal starts); GB, and what each part was
+    # the commit the system can still hand out (FreeVirtualMemory: physical plus page file, minus
+    # what every process has already committed), plus what the stream's own processes hold, which
+    # StopStream gives back before Unreal starts; GB, and what each part was. Not the page file's
+    # unused space: on 2026-09-19 that read 57.2 GB while the commit left was 16.8 GB, and the
+    # editor died on commit.
     $os = Get-CimInstance Win32_OperatingSystem
     $physical = [double]$os.FreePhysicalMemory * 1KB / 1GB
-    $page = 0.0
-    Get-CimInstance Win32_PageFileUsage -ErrorAction SilentlyContinue | ForEach-Object {
-        $page += ([double]$_.AllocatedBaseSize - [double]$_.CurrentUsage) * 1MB / 1GB
-    }
+    $page = [double]$os.FreeVirtualMemory * 1KB / 1GB
     $stream = 0.0
     Get-CimInstance Win32_Process | Where-Object {
         ($_.Name -eq "UnrealEditor.exe" -and $_.CommandLine -match "PixelStreamingConnectionURL") -or
         ($_.Name -eq "node.exe" -and $_.CommandLine -match "SignallingWebServer\\dist\\index\.js")
     } | ForEach-Object { $stream += [double]$_.PrivatePageCount / 1GB }
-    return [pscustomobject]@{ Total = $physical + $page + $stream; Physical = $physical; PageFile = $page; Stream = $stream }
+    return [pscustomobject]@{ Total = $page + $stream; Physical = $physical; PageFile = $page; Stream = $stream }
 }
 
 function Test-RebuildMemory([double]$FreeGB, [double]$NeededGB) {
     # the warning to print, or nothing when there is room
     if ($FreeGB -ge $NeededGB) { return $null }
-    return ("only {0:N1} GB of memory is free (physical plus page file) where the last rebuild used {1:N1} GB: " +
+    return ("only {0:N1} GB of memory of commit is free where the last rebuild used {1:N1} GB: " +
             "build_hq_scene.py ran out of memory like this on 2026-09-19. Close Market Signals, Codex and " +
             "other heavy programs, or enlarge the page file, before going on.") -f $FreeGB, $NeededGB
 }
