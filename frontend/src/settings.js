@@ -154,10 +154,13 @@ export function initSettings(api, hooks = {}) {
     });
     row.append(picker, add);
     content.append(row);
-    if (active === 'llm') renderLegacyProviders(content);
     const items = data.integrations.filter(item => data.catalog[item.kind].group === active);
-    if (!items.length) content.append(node('p', 'You have not added any connection from the catalogue in this section yet.', 'helper'));
+    // One grid, not two stacked. Appended straight onto the section, the providers
+    // that predate this screen sat one per row while the catalogue's cards beside
+    // them shared three columns; kept in separate grids they left the last card of
+    // the first one stranded across the full width. Same card, same grid, in order.
     const list = node('div', '', 'settings-connections');
+    if (active === 'llm') renderLegacyProviders(list);
     for (const item of items) {
       const spec = data.catalog[item.kind];
       const card = node('article', '', 'settings-card');
@@ -197,6 +200,9 @@ export function initSettings(api, hooks = {}) {
       list.append(card);
     }
     content.append(list);
+    // The sentence is about the catalogue, so it follows the cards rather than
+    // standing above the providers that predate the catalogue entirely.
+    if (!items.length) content.append(node('p', 'You have not added any connection from the catalogue in this section yet.', 'helper'));
     if (active === 'media') renderAutoConfigure(content);
     if (active === 'media' || active === 'social') renderSelections(content, items);
     if (active === 'social' && data.legacy_youtube_configured) content.append(node('p', 'There is also a YouTube configuration in the server environment. A YouTube selection saved here takes priority.', 'helper'));
@@ -369,6 +375,11 @@ export function initSettings(api, hooks = {}) {
   function renderAgents(container) {
     container.append(node('p', 'Add and verify an AI provider, then assign a model to each agent. The test runs one real request through the assigned model.', 'helper'));
     if (!data.agents.length) container.append(node('p', 'There are no agents in the studio yet.'));
+    // An agent's card carries four pickers, so its grid takes a wider track than
+    // the connection cards' — two columns on a 1000px dialog, never four cramped ones.
+    const grid = node('div', '', 'settings-connections settings-agent-grid');
+    container.append(grid);
+    container = grid;
     for (const agent of data.agents) {
       const card = node('article', '', 'settings-card');
       const role = data.roles.find(role => role.id === agent.role_id);

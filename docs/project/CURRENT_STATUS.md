@@ -13,6 +13,86 @@ database resource discovery/refresh, separate production choices, UI and regress
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
 
+## The interface, brought to a finish (2026-09-22/23)
+
+The Owner asked for the interface to be finished «la un nivel extrem de bun cu detalii și
+polisare, realism și profesionalism, ca jocurile moderne din 2026 AAA». What stood before: a
+light, warm-paper administration page with a black-green top bar, a photoreal night render pasted
+in the middle of it, and eight dialogs that were white sheets of dense prose. Nothing about the
+studio's behaviour changed in this work: no user-facing string, no Romanian wording, no data flow,
+no API call and no gate.
+
+**How the interface was seen at all.** The Owner's studio was not running, so a harness was built
+that opens the real page without it (`<scratchpad>/ui/`): `capture_fixtures.py` copies
+`data/studio.db` (plus `-wal` and `-shm`), blanks every encrypted column in the copy under a key
+made for it, builds the application against the copy with the worker and the catalogue refresh off
+behind a loopback-only network guard, and writes **254 captured answers** — one JSON per read-only
+route, including the detail views. `shoot.mjs` then serves the built page, answers every
+`/api/v1` request from those files, replays his real events over a stubbed websocket, and
+photographs eleven views (login, workspace, the eight dialogs, the agent inspector) plus the mail
+thread at any width. No provider, no network, no cost, and the live database is never opened.
+
+**Three directions were built, not one.** Three designers each restyled the real code in their own
+worktree and photographed it: A, one continuous dark ground with the render as the only heavy
+object; B, a warm broadcast charcoal; C, the best possible light room. A judge looked at every
+picture and chose **A**, with named grafts from C (the wide page spread, the two-tier scene
+console, the chip scale, the figure treatment, the section-head rule) and from B (the dialog rail,
+the row rhythm, the storyboard card header), and wrote the specification the build followed
+(`<scratchpad>/ui/SPEC.md`).
+
+**What the Owner will see.**
+- **One dark ground, and the render is the hero.** The page is a single near-black surface with a
+  fixed key light where the 3D window sits; the render carries the only deep well shadow on the
+  page. The top bar is a deep green band with the brand on a pale plate.
+- **The ledger reads at a glance.** A 54 px time rail in tabular mono figures, the subject in ink
+  and the detail beneath it, a colour rail at the row edge for the kind, correspondence on its own
+  rail with its way into the thread — and **seventeen identical watchdog rows folded into one**,
+  carrying ×17 and the span they cover. Nothing is dropped and correspondence never folds.
+- **The daily run is a dashboard**, not six stacked bars: small-caps label, one promoted figure,
+  supporting lines in tabular figures, and the tiles of a row close on one edge.
+- **Every dialog has one shell**: a header that does not move, a body that scrolls on its own, a
+  104-character measure on prose; the three long ones (media, daily run, treasury) have a sticky
+  rail of section links that follows the reading (`frontend/src/dialog_rail.js`).
+- **The page has no dead area** at 1280, 1440, 1920 or 2560: above 1560 px the register stands
+  full height on the left with the render and the two panels beside it, and between 1051 and
+  1559 px the same cure with one column fewer.
+- **The detail**: one type scale of eight sizes, tabular figures everywhere by default, four
+  visibly different button states, one tag system, one shape for every empty, loading and error
+  state (keeping the product's own words), dialogs that arrive and leave in 160–200 ms, a new
+  ledger row lit once, and exactly one looping animation on the page (the live dot).
+
+**Measured, by the parts that measured them.**
+- The architecture part: no horizontal overflow at 1024, 1280, 1440, 1920 or 2560; the register
+  equals the grid's height exactly; the filter chips sit on one line with a true 32 px hit box.
+- The dialog part: the header's y is identical before and after the body is scrolled on all eight
+  dialogs at 1920 and 1440; zero controls under 32 px; worst contrast pair 4.86:1.
+- The finishing part: exactly eight font sizes in use at four widths; 308 places with shifting
+  figures before, 0 after; 0 heading widows; one infinite animation; `--ink-3` lifted to `#8a98b2`
+  after it measured 4.47:1 on the ground a hovered ledger row wears.
+- The adversarial part: **655 contrast pairs per width** measured from the running page at 1280,
+  1920 and 2560 — 4 failures before it started, **0 after**; worst pair now 5.59:1. A real Tab walk
+  over 10 + 34 + 12×8 stops: no invisible focus, no trap, Escape closes all eight dialogs and
+  returns focus to the button that opened each. `report.json`: **0 missing fixtures and 0 console
+  errors** on every view at every width.
+- Tests: **143 frontend tests pass** (125 before), `tsc` clean, the build succeeds. Seven of the
+  new tests are the ledger fold, which changes *what* is on screen and had none.
+
+**Not finished, honestly.**
+- The research dialog is the longest in the product and is the only long one without a section
+  rail; the specification does not ask for one there.
+- The login page's gold line breaks the rule that gold is rationed to what is live or waiting for
+  the Owner; it is the only accent on that screen and the call is the Owner's.
+- The ledger's internal scroll always ends on a clipped half-row.
+- The Governance panel carries 180–250 px of empty ground at 1920 and above.
+- The thin scrollbar the stylesheet asks for is unverified: this harness's browser hides
+  scrollbars entirely, so no photograph in any pass shows one.
+- Everything was photographed over the page's own canvas renderer. **The interface has not been
+  seen over the live Unreal stream**, which by this project's standard leaves that a guess.
+- The separate per-agent «Live window» (`frontend/src/live_window.js`) still carries the old light
+  palette, written into the file as literals: it will open pale beside the dark page.
+- `frontend/dist` in the repository is rebuilt, but the Owner still has to restart his studio to
+  serve it.
+
 ## The rehearsal on the Owner's data (2026-09-18)
 
 The suite was green and the studio had never been tried on the one database that matters. On

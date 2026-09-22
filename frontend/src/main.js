@@ -7,6 +7,7 @@ import {
   checkVerdictWord,
 } from './readiness.js';
 import { firstStop, runClassName, runHeadline, stageClassName, stageProducedWord } from './day_outcome.js';
+import { attachRail } from './dialog_rail.js';
 import './style.css';
 import { initSettings } from './settings.js';
 import { acceptSnapshot } from './projection.js';
@@ -2467,9 +2468,8 @@ async function loadPublishingHub() {
             <button class="secondary" data-bind-channel="${escapeHtml(c.id)}" data-event="${escapeHtml(c.event_id || '')}">Bind</button>
             <span class="helper">${c.publisher_ready ? `Publishes to ${escapeHtml(c.youtube_channel_title || c.youtube_connection_name || '')}` : 'Not bound: this slot does not publish and has no analytics.'}</span>
           </div>
+          <span class="channel-status-tag ${c.status === 'AUTHENTICATED' ? 'channel-status-ok' : 'channel-status-warn'}">${escapeHtml(CHANNEL_STATUS_LABEL[c.status] || c.status)}</span>
         </div>
-        <span class="channel-status-tag ${c.status === 'AUTHENTICATED' ? 'channel-status-ok' : 'channel-status-warn'}">${escapeHtml(CHANNEL_STATUS_LABEL[c.status] || c.status)}</span>
-      </div>
     `,
         )
         .join('');
@@ -2645,7 +2645,12 @@ function render(data) {
   for (const [name, status] of Object.entries(data.modules)) {
     const item = document.createElement('li');
     item.textContent = labels[name] || name;
+    // The status word stays exactly as it was; the data attribute only lets the
+    // stylesheet draw a three-step meter beside it, so a column of words reads
+    // as a reading of the studio rather than as a list.
+    item.dataset.status = String(status);
     const badge = document.createElement('span');
+    badge.className = 'module-state';
     badge.textContent = status === 'NOT_IMPLEMENTED' ? 'Neimplementat' : String(status);
     item.append(badge);
     modules.append(item);
@@ -4122,6 +4127,11 @@ async function loadRunbookSchedule() {
     box.innerHTML = `<p class="runbook-note text-error">The schedule could not be read: ${escapeHtml(err.message)}</p>`;
   }
 }
+
+// The two long reports carry a section rail. It marks what he is reading as he scrolls;
+// the links repeat the headings already on the page and change nothing else.
+attachRail(runbookModal.querySelector('.dialog-body'));
+attachRail(treasuryModal.querySelector('.dialog-body'));
 
 element('open-runbook-btn').addEventListener('click', () => {
   runbookModal.showModal();

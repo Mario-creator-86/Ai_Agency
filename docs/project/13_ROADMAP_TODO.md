@@ -1265,3 +1265,28 @@ Evidence, each figure named for the part that measured it:
 
 No provider was called, no run was queued, no credit was spent, and
 `data/studio.db` was never opened.
+
+## The interface, brought to a finish — 2026-09-22/23
+
+- [x] Three visual directions built on the real code and photographed; a judge chose the cinematic
+  dark one and wrote the specification (`<scratchpad>/ui/SPEC.md`).
+- [x] One token block: six grounds, three hairlines, four inks, rationed gold, rhythm and metric
+  tokens, an eight-step type scale. Zero colour and zero font-size literals below it.
+- [x] The page composes with no dead area at 1024, 1280, 1440, 1920 and 2560, and never scrolls
+  sideways.
+- [x] The ledger register: time rail, kind rails, folded repeats (proven by 7 tests), a one-time
+  arrival highlight.
+- [x] One dialog shell for all eight plus the inspector; a section rail for media, daily run and
+  treasury (`frontend/src/dialog_rail.js`, 8 tests).
+- [x] The finishing pass: one type scale, tabular figures by default, four button states, one tag
+  system, one shape per empty/loading/error state, motion with `prefers-reduced-motion` honoured.
+- [x] Adversarial verification: 655 contrast pairs per width (0 failures), a real Tab walk, Escape
+  on all eight dialogs, 0 console errors and 0 missing fixtures at four widths. 143 tests pass.
+- [x] A harness that opens the interface without the studio: 254 answers captured from a copy of
+  the database, secrets blanked, loopback only.
+- [ ] The research dialog has no section rail, and it is the longest in the product.
+- [ ] The per-agent «Live window» still carries the old light palette as literals.
+- [ ] The login page: the gold line breaks the ration, the brand artwork sits on a pale plate, and
+  the screen is otherwise empty.
+- [ ] The thin scrollbar is unverified (the harness's browser hides scrollbars) and the interface
+  has never been photographed over the live Unreal stream.

@@ -1,5 +1,5 @@
 .settings-dialog { width: min(1000px, 94vw); max-width: 1000px; max-height: 92dvh; overflow-y: auto; }
-.settings-dialog h3 { font-size: 1.05rem; margin: .3rem 0 .6rem; }
+.settings-dialog h3 { font-size: var(--fs-h3); margin: .3rem 0 .6rem; }
 .settings-intro { margin: 0 0 1rem; }
 .settings-tabs { display: flex; flex-wrap: wrap; gap: .5rem; padding-block: .5rem; border-bottom: 1px solid var(--line); }
 .settings-content { display: grid; gap: 1rem; }
@@ -10,15 +10,142 @@
 .settings-card, .settings-editor { border: 1px solid var(--line); padding: 1rem; border-radius: .6rem; min-width: 0; }
 .settings-card h3, .settings-card p { overflow-wrap: anywhere; }
 .settings-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin: 1rem 0; }
-.settings-fields label { display: flex; flex-direction: column; gap: .4rem; font-size: .88rem; }
+.settings-fields label { display: flex; flex-direction: column; gap: .4rem; font-size: var(--fs-body); }
 .settings-dialog input, .settings-dialog select { width: 100%; min-width: 0; box-sizing: border-box; padding: .7rem; border: 1px solid var(--line); border-radius: .35rem; background: var(--surface-sunk); color: var(--ink); font: inherit; }
 .settings-add select, .settings-actions select { flex: 1; min-width: 170px; }
 .settings-dialog button { white-space: normal; }
 .settings-editor > button { margin-right: .6rem; }
 .settings-editor a { text-decoration: underline; }
-.settings-limitation { font-size: .85rem; color: var(--ink-3); }
+.settings-limitation { font-size: var(--fs-meta); color: var(--ink-3); }
 .settings-routing { display: grid; grid-template-columns: 130px minmax(0, 1fr) auto; gap: .7rem; align-items: center; }
 @media (max-width: 640px) { .settings-fields { grid-template-columns: 1fr; } .settings-routing { grid-template-columns: 1fr; } .settings-dialog { padding: 1rem; } }
 
 .settings-tabs > button { width: auto; flex: 1 1 150px; }
 .settings-autoconfig-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* ==========================================================================
+   Settings in the dialog shell (2026-09-23)
+   ==========================================================================
+   Settings builds its own children straight onto the dialog, so it cannot use
+   the two-row grid the other eight share. It gets the same behaviour from a
+   flex column: the title, the one-line purpose and the four section tabs stay
+   put, and only the section itself scrolls. This file loads after style.css,
+   so these rules are the last word on .settings-dialog.
+   ========================================================================== */
+.settings-dialog[open] {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  max-height: 90vh;
+}
+.settings-dialog > * { flex: none; }
+.settings-dialog > .dialog-header { padding: var(--s6) var(--s7) var(--s5); }
+.settings-intro {
+  margin: 0;
+  padding: var(--s5) var(--s7) 0;
+  max-width: var(--measure);
+  font-size: var(--fs-lead);
+  line-height: var(--lh-snug);
+  color: var(--ink-2);
+}
+.settings-tabs {
+  gap: var(--s2);
+  padding: var(--s4) var(--s7);
+  border-bottom: 1px solid var(--line);
+  box-shadow: none;
+  background: transparent;
+}
+/* The section tabs speak the chip language the ledger filters and the media rail
+   speak: one height, sentence case, a filled ground only when selected. */
+.settings-tabs > button {
+  flex: 0 0 auto;
+  width: auto;
+  min-height: var(--hit);
+  padding: 0 var(--s4);
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: var(--surface-quiet);
+  color: var(--ink-2);
+  font-size: var(--fs-body);
+  font-weight: var(--w-med);
+  box-shadow: none;
+}
+.settings-tabs > button.quiet { background: var(--surface-quiet); }
+.settings-tabs > button.quiet:hover { background: var(--surface-hi); color: var(--ink); }
+.settings-tabs > button.primary {
+  background: var(--forest);
+  border-color: var(--forest-lift);
+  color: var(--ink-on-dark);
+  box-shadow: var(--lit-edge);
+}
+.settings-message { margin: 0; padding: 0 var(--s7); font-size: var(--fs-body); }
+.settings-message:empty { min-height: 0; padding: 0; }
+/* The one scrolling region. Everything above it is chrome. */
+.settings-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  gap: var(--s5);
+  padding: var(--s5) var(--s7) var(--s7);
+}
+/* The connection grid finally gets its width: the section above it is a grid
+   item in a flex column, and without this it measured itself against its own
+   content instead of against the dialog. */
+.settings-content > * { min-width: 0; }
+.settings-connections { gap: var(--s3); }
+.settings-card, .settings-editor {
+  padding: var(--s4);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunk);
+  display: grid;
+  align-content: start;
+  gap: var(--s2);
+}
+.settings-card h3, .settings-editor h3 {
+  margin: 0;
+  font-size: var(--fs-h3);
+  font-weight: var(--w-semi);
+  letter-spacing: var(--track-tight);
+}
+.settings-card p, .settings-editor p { margin: 0; font-size: var(--fs-meta); line-height: var(--lh-snug); max-width: var(--measure); }
+.settings-actions, .settings-add { gap: var(--s2); margin-top: var(--s1); }
+/* One form control, everywhere: a sunk well, a strong hairline, one height. */
+.settings-dialog input, .settings-dialog select {
+  min-height: var(--hit-lg);
+  padding: 0 var(--s3);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-body);
+}
+.settings-dialog textarea { padding: var(--s2) var(--s3); font-size: var(--fs-body); }
+.settings-fields { gap: var(--s4); margin: var(--s4) 0; }
+.settings-fields label { gap: var(--s1); font-size: var(--fs-micro); font-weight: var(--w-bold); letter-spacing: var(--track-caps); text-transform: uppercase; color: var(--ink-3); }
+.settings-fields label input, .settings-fields label select { font-weight: var(--w-body); letter-spacing: normal; text-transform: none; color: var(--ink); }
+.settings-fields label small { font-weight: var(--w-body); letter-spacing: normal; text-transform: none; }
+.settings-limitation { font-size: var(--fs-meta); line-height: var(--lh-snug); max-width: var(--measure); }
+@media (max-width: 600px) {
+  .settings-dialog > .dialog-header { padding: var(--s5) var(--s4) var(--s4); }
+  .settings-intro, .settings-message { padding-inline: var(--s4); }
+  .settings-tabs { padding: var(--s3) var(--s4); }
+  .settings-content { padding: var(--s4) var(--s4) var(--s6); }
+}
+
+/* A card with four pickers on it needs a wider track than a card with a name and
+   a line of state. Same grid, one ceiling raised. */
+.settings-agent-grid { grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); }
+@media (max-width: 900px) { .settings-agent-grid { grid-template-columns: minmax(0, 1fr); } }
+
+/* Across a row of connection cards the action rows must land on one line: a card
+   with a three-line caption and a card with one must still put "Verify and load
+   models" at the same height, or the row reads as three unrelated boxes. */
+.settings-connections > .settings-card { display: flex; flex-direction: column; }
+.settings-connections > .settings-card > .settings-actions { margin-top: auto; padding-top: var(--s2); }
+
+/* The screen where he types provider credentials had the quietest field edge on
+   the page: --line at 1.1:1 against the well it draws. Same measured edge as every
+   other field (3.42:1 on --surface-sunk); stated here because settings.css is
+   loaded after style.css and would otherwise win. */
+.settings-dialog input, .settings-dialog select, .settings-dialog textarea {
+  border-color: var(--line-field);
+}

@@ -1,54 +1,136 @@
 /* The headquarters panel, styled after the reference: a dark navy panel, the scene in a rounded
    frame at the building's own proportions, pills floating over the scene and one control bar
    below it. */
-.office-panel { background: linear-gradient(180deg, #111a33 0%, #0b1226 100%); border: 1px solid #1e2a4a; border-radius: 18px; color: #e6ebf5; }
+.office-panel { background: linear-gradient(180deg, var(--sheen), transparent 140px), var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius); color: var(--ink); }
 .office-panel .office-heading { padding: 18px 22px 12px; align-items: center; }
-.office-panel .office-heading .eyebrow { color: #9fb0cf; letter-spacing: .28em; font-size: 11px; margin: 0 0 4px; }
-.office-panel .office-heading h2 { color: #f4f7fc; font-size: 22px; font-weight: 500; margin: 0; }
-.live-pill { display: inline-flex; align-items: center; gap: 8px; padding: 7px 14px; border-radius: 999px; background: rgba(9, 15, 30, .85); border: 1px solid #2b3a5e; color: #e6ebf5; font-size: 13px; font-weight: 500; text-transform: none; letter-spacing: 0; }
-.live-dot { width: 9px; height: 9px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 8px rgba(34, 197, 94, .8); }
+.office-panel .office-heading .eyebrow { color: var(--ink-3); letter-spacing: .24em; font-size: var(--fs-micro); margin: 0 0 4px; }
+.office-panel .office-heading h2 { color: var(--ink); font-size: var(--fs-h2); font-weight: 600; letter-spacing: -.02em; margin: 0; }
+.live-pill { display: inline-flex; align-items: center; gap: 8px; padding: 7px 14px; border-radius: 999px; background: var(--scene-chrome); border: 1px solid var(--scene-chrome-edge); color: var(--scene-chrome-ink); font-size: var(--fs-meta); font-weight: 600; text-transform: none; letter-spacing: .01em; box-shadow: var(--shadow-raised); }
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--teal); box-shadow: 0 0 9px var(--focus-glow); }
 
 #office-scene-container { position: relative; height: auto; min-height: 0; display: flex; flex-direction: column; gap: 10px; margin: 0 16px; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; overflow: visible; }
-#office-scene-container .scene-viewport { position: relative; width: 100%; aspect-ratio: 1600 / 840; border: 1px solid #25355c; border-radius: 16px; overflow: hidden; background: #060a14; box-shadow: 0 18px 40px rgba(2, 6, 18, .45); }
-#office-scene-container .office-canvas { position: absolute; inset: 0; width: 100%; height: 100%; background: #060a14; }
+#office-scene-container .scene-viewport { position: relative; width: 100%; aspect-ratio: 1600 / 840; border: 1px solid var(--scene-frame); border-radius: var(--radius); overflow: hidden; background: var(--scene); box-shadow: var(--shadow-scene), 0 0 0 1px var(--sheen-faint); }
+#office-scene-container .office-canvas { position: absolute; inset: 0; width: 100%; height: 100%; background: var(--scene); }
 /* The streamed Unreal headquarters lies over the renderer and lets clicks through to it. */
-#office-scene-container .live-stream-layer { position: absolute; inset: 0; z-index: 2; pointer-events: none; background: #060a14; }
+#office-scene-container .live-stream-layer { position: absolute; inset: 0; z-index: 2; pointer-events: none; background: var(--scene); }
 #office-scene-container .live-stream-layer video { position: absolute; inset: 0; width: 100% !important; height: 100% !important; object-fit: cover; }
 /* While not live the layer still covers the other renderer: the last frame, frozen, or a note. */
 #office-scene-container .live-stream-layer.paused video { visibility: hidden; }
-#office-scene-container .live-stream-layer.waiting .live-stream-badge { right: 50%; bottom: 50%; transform: translate(50%, 50%); font-size: 14px; }
+#office-scene-container .live-stream-layer.waiting .live-stream-badge { right: 50%; bottom: 50%; transform: translate(50%, 50%); font-size: var(--fs-lead); }
 #office-scene-container .live-stream-still { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; }
-#office-scene-container .live-stream-badge { position: absolute; right: 14px; bottom: 14px; z-index: 2; padding: 6px 12px; border-radius: 10px; background: rgba(8, 13, 28, .82); border: 1px solid #2b3a5e; color: #e6ebf5; font: 500 12px/1.2 "Segoe UI", system-ui, sans-serif; letter-spacing: .04em; }
-.scene-info-pill { position: absolute; top: 14px; left: 14px; z-index: 5; padding: 7px 14px; border-radius: 10px; background: rgba(8, 13, 28, .82); border: 1px solid #2b3a5e; color: #e6ebf5; font: 500 12px/1.2 "Segoe UI", system-ui, sans-serif; letter-spacing: .08em; pointer-events: none; backdrop-filter: blur(6px); white-space: pre; }
+#office-scene-container .live-stream-badge { position: absolute; right: 14px; bottom: 14px; z-index: 2; padding: 6px 12px; border-radius: var(--radius-sm); background: var(--scene-chrome); border: 1px solid var(--scene-chrome-edge); color: var(--scene-chrome-ink); font-weight: var(--w-semi); font-size: var(--fs-meta); line-height: var(--lh-tight); font-family: var(--font-sans); letter-spacing: .06em; backdrop-filter: blur(6px); }
+.scene-info-pill { position: absolute; top: 14px; left: 14px; z-index: 5; padding: 7px 13px; border-radius: var(--radius-sm); background: var(--scene-chrome); border: 1px solid var(--scene-chrome-edge); color: var(--scene-chrome-ink); font-weight: var(--w-semi); font-size: var(--fs-meta); line-height: var(--lh-tight); font-family: var(--font-mono); letter-spacing: .1em; pointer-events: none; backdrop-filter: blur(8px); white-space: pre; box-shadow: var(--shadow-raised); }
 
 #office-scene-container .camera-toolbar {
   position: static; inset: auto; transform: none;
   height: max-content; display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 8px 14px;
   width: auto; max-width: none; padding: 9px 10px;
-  border: 1px solid #25355c; border-radius: 14px;
-  background: rgba(8, 13, 28, .9); box-shadow: 0 10px 30px rgba(2, 6, 18, .45);
+  border: 1px solid var(--line-strong); border-radius: var(--radius);
+  background: var(--surface-sunk); box-shadow: var(--shadow-panel);
 }
 #office-scene-container .toolbar-group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 #office-scene-container .toolbar-modules { justify-content: flex-end; margin-left: auto; }
-#office-scene-container .cam-btn { display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 11px; border-radius: 9px; border: 1px solid #2b3a5e; background: rgba(255, 255, 255, .03); color: #e6ebf5; font: 500 13px/1 "Segoe UI", system-ui, sans-serif; letter-spacing: 0; text-transform: none; white-space: nowrap; }
-#office-scene-container .cam-btn:hover { background: #17223f; border-color: #3d5286; }
-#office-scene-container .cam-square { width: 36px; padding: 0; justify-content: center; font-size: 18px; }
-#office-scene-container .cam-icon { width: 17px; height: 17px; fill: none; stroke: #9fb0cf; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+#office-scene-container .cam-btn { display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 11px; border-radius: 9px; border: 1px solid var(--line-strong); background: var(--surface-quiet); color: var(--ink-2); font-weight: var(--w-semi); font-size: var(--fs-body); line-height: 1; font-family: var(--font-sans); letter-spacing: .01em; text-transform: none; white-space: nowrap; transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease); }
+#office-scene-container .cam-btn:hover { background: var(--surface-hi); border-color: var(--line-lit); color: var(--ink); }
+#office-scene-container .cam-square { width: var(--hit-lg); padding: 0; justify-content: center; font-size: var(--fs-h3); }
+#office-scene-container .cam-icon { width: 16px; height: 16px; fill: none; stroke: var(--ink-3); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex: none; transition: stroke var(--dur) var(--ease); }
 #office-scene-container .cam-switch { height: 36px; padding: 0 12px; }
-#office-scene-container .cam-switch .switch-label { color: #7f94c2; font-size: 11px; letter-spacing: .14em; }
+#office-scene-container .cam-switch .switch-label { color: var(--ink-3); font-size: var(--fs-micro); font-weight: 700; letter-spacing: var(--track-caps); }
 #office-scene-container .cam-switch .switch-track { width: 42px; height: 22px; border-radius: 7px; }
 #office-scene-container .cam-switch .switch-knob { top: 3px; left: 3px; width: 16px; height: 14px; border-radius: 4px; }
 #office-scene-container .cam-switch.is-on .switch-knob { left: 22px; }
 
 #office-scene-container:fullscreen,
-#office-scene-container.is-fullscreen { position: fixed; inset: 0; z-index: 1000; height: 100vh; margin: 0; padding: 16px; background: #070c19; }
+#office-scene-container.is-fullscreen { position: fixed; inset: 0; z-index: 1000; height: 100vh; margin: 0; padding: 16px; background: var(--scene-deep); }
 #office-scene-container:fullscreen .scene-viewport,
 #office-scene-container.is-fullscreen .scene-viewport { flex: 1; aspect-ratio: auto; min-height: 0; }
 
-.office-panel .office-footer { color: #7f8fb0; }
+.office-panel .office-footer { color: var(--ink-3); }
 
 @media (max-width: 720px) {
   #office-scene-container { margin: 0 8px; }
-  .scene-info-pill { top: 8px; left: 8px; padding: 5px 9px; font-size: 10px; }
-  #office-scene-container .cam-btn { height: 32px; padding: 0 10px; font-size: 12px; }
+  .scene-info-pill { top: 8px; left: 8px; padding: 5px 9px; font-size: var(--fs-micro); }
+  #office-scene-container .cam-btn { height: 32px; padding: 0 10px; font-size: var(--fs-meta); }
+}
+
+/* The module buttons are what the Owner presses all day; they are the brightest
+   thing in the bar after the render, and their icon lights with them. */
+#office-scene-container .toolbar-modules .cam-btn:hover .cam-icon { stroke: var(--forest-ink); }
+#office-scene-container .cam-btn:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+#office-scene-container .camera-toolbar { padding: 10px; }
+#office-scene-container { gap: 12px; margin: 0 18px; }
+
+/* ==========================================================================
+   THE SCENE CONSOLE (2026-09-23) — two tiers, one bar.
+   The camera and the two state switches on the first tier; the eight rooms on
+   the second, spread edge to edge like running heads. Before this the two
+   groups shared one row and the module group was pushed right with
+   margin-left:auto, which left a dead gap on the left of the second line at
+   every width and broke the bar in half at about 1600px.
+   ========================================================================== */
+#office-scene-container .camera-toolbar {
+  padding: 0;
+  gap: 0;
+  flex-wrap: wrap;
+  align-items: stretch;
+  background: var(--scene-chrome);
+  border: 1px solid var(--scene-chrome-edge);
+  border-radius: var(--radius);
+  box-shadow: var(--lit-edge), var(--shadow-raised);
+  overflow: hidden;
+}
+/* Tier 1: the camera and the two state switches, on the bezel's own ground. */
+#office-scene-container .toolbar-scene {
+  flex: 1 1 100%;
+  gap: var(--s2);
+  padding: var(--s2) var(--s3);
+}
+/* Tier 2: the eight rooms, its own row under a hairline, on a darker ground
+   so the bar reads as two registers rather than as one long queue. */
+#office-scene-container .toolbar-modules {
+  flex: 1 1 100%;
+  margin-left: 0;
+  justify-content: space-between;
+  flex-wrap: nowrap;
+  gap: var(--s1);
+  padding: var(--s2) var(--s3);
+  border-top: 1px solid var(--scene-frame);
+  background: color-mix(in srgb, var(--scene-deep) 38%, transparent);
+}
+#office-scene-container .toolbar-modules .cam-btn {
+  flex: 0 1 auto;
+  min-width: 0;
+  height: var(--hit-lg);
+  padding: 0 var(--s3);
+  background: transparent;
+  border-color: transparent;
+  color: var(--scene-chrome-ink);
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+#office-scene-container .toolbar-modules .cam-btn:hover {
+  background: var(--surface-quiet);
+  border-color: transparent;
+  color: var(--ink);
+}
+#office-scene-container .toolbar-modules .cam-icon { width: 15px; height: 15px; stroke: var(--scene-chrome-muted); }
+#office-scene-container .toolbar-scene .cam-btn { height: var(--hit-lg); font-size: var(--fs-meta); }
+#office-scene-container .toolbar-scene .cam-square { width: var(--hit-lg); }
+#office-scene-container .cam-switch .switch-label { color: var(--scene-chrome-muted); }
+
+/* The render is the heaviest object on the page: the only black well, one
+   hairline bezel, and a lit top edge where the light falls on the glass. */
+#office-scene-container .scene-viewport {
+  background: var(--scene-deep);
+  box-shadow: var(--shadow-scene), inset 0 1px 0 var(--scene-frame-top);
+}
+.office-panel { border-color: var(--line); }
+.office-panel .office-footer { color: var(--scene-chrome-muted); font-variant-numeric: tabular-nums; }
+
+/* Below 900px the two tiers are allowed to wrap; above it they never do. */
+@media (max-width: 900px) {
+  #office-scene-container .toolbar-modules { flex-wrap: wrap; justify-content: flex-start; }
+  #office-scene-container .toolbar-modules .cam-btn,
+  #office-scene-container .toolbar-scene .cam-btn { height: var(--hit); font-size: var(--fs-meta); }
+  #office-scene-container .toolbar-scene .cam-square { width: var(--hit); }
 }

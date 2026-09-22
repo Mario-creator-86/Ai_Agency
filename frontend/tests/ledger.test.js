@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { describeEvent, productionStatus } from '../src/ledger.js';
+import { describeEvent, productionStatus, arrivingIds, LEDGER_SETTLE_MS } from '../src/ledger.js';
 
 const names = { 'a-1': 'Dr. Aris (Researcher)', 'a-2': 'Sarah (Director)' };
 
@@ -166,4 +166,27 @@ test('a routine job that starts is not called production', () => {
   const day = describeEvent({ event_type: 'workflow.created', payload: { job_name: 'daily_main', workflow_type: 'DAILY_RUN' } });
   assert.equal(day.label, 'production started');
   assert.equal(day.kind, 'production');
+});
+
+/* A row that arrives while the Owner is watching is lit once. The history that
+   fills the column in the first seconds after the page opens is not news, and
+   lighting it would be a flash of the whole register saying nothing. */
+
+test('the backfill that fills the column when the page opens is not lit', () => {
+  const opened = 1_000_000;
+  const fresh = [{ event_id: 'e1' }, { event_id: 'e2' }];
+  assert.equal(arrivingIds(fresh, opened, opened + 50).size, 0);
+  assert.equal(arrivingIds(fresh, opened, opened + LEDGER_SETTLE_MS).size, 0);
+});
+
+test('an event recorded while he watches is lit, by its own id', () => {
+  const opened = 1_000_000;
+  const marks = arrivingIds([{ event_id: 'e7' }, { event_id: 'e8' }], opened, opened + LEDGER_SETTLE_MS + 1);
+  assert.deepEqual([...marks], ['e7', 'e8']);
+});
+
+test('an event with no id is never lit, and nothing is lit from nothing', () => {
+  const late = 1_000_000 + LEDGER_SETTLE_MS + 1;
+  assert.equal(arrivingIds([{}, { event_id: '' }], 1_000_000, late).size, 0);
+  assert.equal(arrivingIds(undefined, 1_000_000, late).size, 0);
 });

@@ -1,5 +1,33 @@
 # Changelog
 
+## The interface is finished to the level he asked for — 2026-09-22/23
+
+Presentation only: no user-facing string, no Romanian wording, no data flow, no API call and no
+gate changed. Three directions were built on the real code and photographed, a judge chose the
+cinematic dark one with named grafts from the other two, and three parts built it before an
+adversary measured it. `CURRENT_STATUS.md` («The interface, brought to a finish») has the figures.
+
+- **One dark ground; the 3D render is the only heavy object on the page.** New token block in
+  `frontend/src/style.css`: six grounds, three hairlines, four inks, a rationed gold, the rhythm
+  and metric tokens (`--s1..--s9`, `--topbar-h`, `--hit`, `--measure`, `--rail-w`) and an eight-step
+  type scale. Zero colour and zero font-size literals below the block, in `style.css`,
+  `office_scene.css` and `settings.css`.
+- **The page composes at every width**: the wide spread above 1560 px and its two-column form
+  between 1051 and 1559 px; no horizontal overflow at 1024–2560.
+- **The ledger** gains a time rail, kind rails, a one-time arrival highlight and the fold of
+  consecutive identical rows (`arrivingIds`, `LEDGER_SETTLE_MS` in `frontend/src/ledger.js`).
+- **The dialogs** gain one shell (fixed header, body that scrolls), a section rail for the three
+  long ones (`frontend/src/dialog_rail.js`, new), section-head hairlines, figure tiles and a
+  storyboard card that no longer cuts a word.
+- **The detail**: four distinct button states, one tag system, one shape per empty/loading/error
+  state, dialog open and close motion, `prefers-reduced-motion` honoured throughout, a field
+  boundary that measures 3.4:1 and a focus ring on every field.
+- **Tests**: `frontend/tests/dialog_rail.test.js` (new, 8), `frontend/tests/ledger_fold.test.js`
+  (new, 7) and three new cases in `ledger.test.js`: 143 pass, `tsc` clean.
+- **A harness to see the interface without the studio**: `<scratchpad>/ui/capture_fixtures.py`
+  (254 answers from a copy of the database, secrets blanked, loopback-only) and `shoot.mjs`
+  (every view photographed at any width, 0 missing fixtures, 0 console errors).
+
 ## After the rehearsal: the narration says what its claims say — 2026-09-19
 
 The rehearsal's stand-in wrote a James Webb telescope script for the Nepal climate-finance topic.

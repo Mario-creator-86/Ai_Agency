@@ -540,6 +540,32 @@ export function productionStatus(events) {
 /** How many entries the ledger keeps on screen. Older ones are in the events endpoint. */
 export const LEDGER_CAPACITY = 400;
 
+/** How long after the page opens the ledger stops treating an arrival as history. */
+export const LEDGER_SETTLE_MS = 4000;
+
+/**
+ * Which of the events that just arrived should be lit as NEW.
+ *
+ * A row is lit only when it arrived while the Owner was watching. The first
+ * seconds after the page opens are the snapshot and the backfill — seventy
+ * rows of the day's history — and lighting those would be a flash of the whole
+ * column saying nothing. After the settle, anything fresh is genuinely news.
+ *
+ * @param {{event_id?: string}[]} fresh events add() has just accepted
+ * @param {number} openedAt when the ledger was constructed
+ * @param {number} now
+ * @param {number} [settleMs]
+ * @returns {Set<string>} the ids to mark, empty during the settle
+ */
+export function arrivingIds(fresh, openedAt, now, settleMs = LEDGER_SETTLE_MS) {
+  const ids = new Set();
+  if (!Array.isArray(fresh) || now - openedAt <= settleMs) return ids;
+  for (const event of fresh) {
+    if (event && event.event_id) ids.add(event.event_id);
+  }
+  return ids;
+}
+
 export class Ledger {
   /**
    * @param {{list: HTMLElement, now: HTMLElement, filters: HTMLElement, escape: (s: string) => string,
@@ -568,6 +594,10 @@ export class Ledger {
     this.backfilled = false;
     this.kind = 'all';
     this.timezone = undefined;
+    // When this column started showing history, and the ids lit on the next render.
+    this.openedAt = Date.now();
+    /** @type {Set<string>} */
+    this.arrived = new Set();
     this.renderFilters();
   }
 
@@ -600,6 +630,7 @@ export class Ledger {
       for (const old of sorted.slice(LEDGER_CAPACITY)) this.events.delete(old.event_id);
     }
     if (fresh.length) {
+      for (const id of arrivingIds(fresh, this.openedAt, Date.now())) this.arrived.add(id);
       this.render();
       if (this.onEvents) this.onEvents(fresh);
     }
@@ -664,6 +695,11 @@ export class Ledger {
       const id = (e.payload && e.payload.thread_id) || e.aggregate_id;
       threadLength.set(id, (threadLength.get(id) || 0) + 1);
     }
+    // A routine that ran ten times is one fact, not ten. Consecutive entries that
+    // say exactly the same thing are folded into the row they would each have
+    // drawn: the newest time, the count, and the span the run covers. Nothing is
+    // reworded and nothing is dropped — correspondence never folds, because every
+    // letter is its own event with its own thread.
     const rows = [];
     for (const event of events) {
       const item = describeEvent(event, this.names);
@@ -686,16 +722,32 @@ export class Ledger {
           (item.excerpt ? `<div class="ledger-text">${this.escape(item.excerpt)}</div>` : '') +
           `<div class="ledger-open">Open the thread${letters > 1 ? ` · ${letters} scrisori` : ''} ↗</div>`
         : item.text ? `<div class="ledger-text">${this.escape(item.text)}</div>` : '';
-      rows.push(
-        `<li class="ledger-item ledger-${item.kind}${mail}"><time>${this.escape(time)}</time><div>` +
-          `<div class="ledger-head">${route}</div>` +
-          body +
-          `</div></li>`,
-      );
+      const last = rows[rows.length - 1];
+      const key = item.thread ? null : `${item.kind}\u0000${route}\u0000${body}`;
+      if (key && last && last.key === key) {
+        last.count += 1;
+        last.oldest = time;
+        continue;
+      }
+      rows.push({ key, kind: item.kind, mail, route, body, time, oldest: time, count: 1, id: event.event_id });
       if (rows.length >= 150) break;
     }
     this.list.innerHTML = rows.length
-      ? rows.join('')
+      ? rows
+          .map((row) => {
+            return (
+              `<li class="ledger-item ledger-${row.kind}${row.count > 1 ? ' is-repeat' : ''}${this.arrived.has(row.id) ? ' is-new' : ''}${row.mail}">` +
+              `<time>${this.escape(row.time)}</time><div>` +
+              `<div class="ledger-head">${row.route}${row.count > 1 ? `<span class="ledger-repeat">×${row.count}</span>` : ''}</div>` +
+              row.body +
+              (row.count > 1 ? `<span class="ledger-span">${this.escape(row.oldest)} – ${this.escape(row.time)}</span>` : '') +
+              `</div></li>`
+            );
+          })
+          .join('')
       : '<li class="ledger-empty">Nothing recorded yet for this filter.</li>';
+    // The highlight plays once. A later render — a filter change, the office
+    // layout arriving with its names — must not replay it on the same rows.
+    this.arrived.clear();
   }
 }

@@ -3223,3 +3223,44 @@ files passed when run again, 169 of 169. The same shortage stopped the Owner's l
 is called a defect or called flaky.** A whole-suite run is not started while free commit is
 below what the live stream needs to restart (about 14 GB), because on this machine the test run,
 the Owner's other programs and the stream share one commit limit.
+
+## 2026-09-22/23 — The interface goes dark, because the render is the product
+
+The Owner asked for an interface «ca jocurile moderne din 2026 AAA». **Decision: the page becomes
+one continuous dark ground and the 3D headquarters is the only object on it with real weight.**
+Three directions were built on the real code and photographed before the choice: A (cinematic
+dark), B (broadcast charcoal), C (the best possible light room). A judge chose A on three measured
+grounds: it is the only one that changed the substance of the screen rather than its skin; dense
+data became readable (the daily run became a dashboard, the ledger a register); and in C's own
+words a light page puts a ~17:1 luminance step at the glass, so the night render reads as a hole
+cut in a lightbox. C's page architecture, scene console, chip scale, figure treatment and section
+rule and B's dialog rail, row rhythm and storyboard header were grafted by name.
+
+The previous identity (warm paper, deep forest, muted gold) is not discarded: the forest band and
+the rationed gold survive as the chrome and the one accent. Gold is spent only on what is live or
+what waits for the Owner.
+
+## 2026-09-23 — A routine that ran seventeen times is one row, and it is proven so
+
+**Decision: consecutive ledger entries that are identical in kind, route and text fold into one
+row carrying ×N and the span they cover.** Nothing is reworded and nothing is dropped;
+correspondence never folds, because every letter is its own thread. Measured before: the column
+opened with eleven repetitions of «routine job started / watchdog» and the studio's actual
+correspondence was below the fold.
+
+This is the one place the interface changes *what* is on screen rather than how it looks, so it is
+the one place that must be proven: `frontend/tests/ledger_fold.test.js` (7 cases) shows that single
+rows plus the sum of every count equals the number of events, that a run interrupted by a letter is
+not welded across it, that three identical letters stay three rows, and that a filter hides rows
+rather than folding them into another row's count.
+
+## 2026-09-23 — The interface is judged from photographs of the real page, not from opinions
+
+**Decision: no look is accepted until it has been photographed on the real markup with the
+Owner's own data.** The studio was not running, so the harness under the session's scratchpad
+copies `data/studio.db`, blanks every encrypted column in the copy, serves the built page and
+answers every request from 254 captured answers behind a loopback-only guard, then photographs
+eleven views at any width. Every claim in this work — no overflow at four widths, 655 contrast
+pairs, focus on every stop, zero console errors — is a measurement taken that way. What could not
+be measured is named: the scrollbar (this browser hides it) and the interface over the live Unreal
+stream (never photographed).
