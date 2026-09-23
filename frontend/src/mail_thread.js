@@ -59,6 +59,23 @@ function letterText(message) {
 }
 
 /**
+ * The letter's body, when it is not already the end of its own subject.
+ *
+ * A report's subject is "selection: COMPLETED — <the sentence>" and its body is
+ * <the sentence>, so the window printed it as the title, as the subject and as the
+ * body. Nothing is reworded: the third copy is not drawn.
+ *
+ * @param {string|undefined} subject @param {string} text
+ */
+function bodyBeyondSubject(subject, text) {
+  const tail = String(text || '').trim();
+  if (!tail) return '';
+  const head = String(subject || '').trim().toLowerCase();
+  const b = tail.toLowerCase();
+  return head && (head === b || head.endsWith(b)) ? '' : tail;
+}
+
+/**
  * @param {{thread_id: string, subject: string, messages: any[]}} thread
  * @param {{escape: (s: any) => string, timezone?: string}} options
  * @returns {string}
@@ -72,10 +89,17 @@ export function renderThread(thread, { escape, timezone }) {
     .map((m, index) => {
       const from = m.from_name || 'Owner';
       const to = m.to_name || 'Director';
-      const text = letterText(m);
+      const full = letterText(m);
+      const text = bodyBeyondSubject(m.subject, full);
+      // The window's title is the thread's subject, so a letter whose subject is that
+      // same sentence would print it again 150px below it (measured 2026-09-23: the
+      // sentence appeared twice in one window). The intent tag still says what kind of
+      // letter it is; only the repeated sentence is dropped.
+      const subjectEchoesTitle =
+        String(m.subject || '').trim().toLowerCase() === String(thread.subject || '').trim().toLowerCase();
       const footer =
         m.status && m.status !== 'OPEN'
-          ? `<div class="mail-footer">${escape(STATUS_LABEL[m.status] || m.status)}${m.resolved_by ? ` by ${escape(m.resolved_by)}` : ''}${m.resolution && m.resolution !== text ? ` — ${escape(m.resolution)}` : ''}</div>`
+          ? `<div class="mail-footer">${escape(STATUS_LABEL[m.status] || m.status)}${m.resolved_by ? ` by ${escape(m.resolved_by)}` : ''}${m.resolution && m.resolution !== full ? ` — ${escape(m.resolution)}` : ''}</div>`
           : '';
       const forOwner = Boolean(m.for_owner) || to === 'Owner';
       return (
@@ -83,8 +107,14 @@ export function renderThread(thread, { escape, timezone }) {
         (forOwner && m.status === 'OPEN' ? '<div class="mail-owner-flag">To you — awaiting your reply</div>' : '') +
         `<div class="mail-meta"><span class="mail-route"><strong>${escape(from)}</strong> <span class="mail-arrow">→</span> <strong>${escape(to)}</strong></span>` +
         `<time>${escape(when(m.created_at, timezone))}</time></div>` +
-        `<div class="mail-subject"><span class="policy-tag policy-locked">${escape(INTENT_LABEL[m.intent] || m.intent)}</span> ${escape(m.subject)}</div>` +
-        (text ? `<div class="mail-body">${escape(text)}</div>` : '<div class="mail-body mail-empty">(no text; subject only)</div>') +
+        `<div class="mail-subject"><span class="policy-tag policy-locked">${escape(INTENT_LABEL[m.intent] || m.intent)}</span>${subjectEchoesTitle ? '' : ` ${escape(m.subject)}`}</div>` +
+        // A letter with no text at all says so; a letter whose text is already the end
+        // of its own subject simply does not print it a second time.
+        (text
+          ? `<div class="mail-body">${escape(text)}</div>`
+          : full
+            ? ''
+            : '<div class="mail-body mail-empty">(no text; subject only)</div>') +
         footer +
         '</article>'
       );

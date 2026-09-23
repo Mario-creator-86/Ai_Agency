@@ -139,6 +139,30 @@ function short(text, max = 160) {
 }
 
 /**
+ * The second line of a row, when it has something to add.
+ *
+ * A letter's excerpt is very often the whole of its subject after the colon, so the
+ * register printed the same sentence twice — once in the row's own headline and once in
+ * the grey line under it — on ten consecutive rows. Nothing here rewords anything: when
+ * the detail is already the end of (or the whole of) the headline, the copy is dropped
+ * and the row says it once. Case and surrounding space are ignored, because a subject
+ * ends in a full stop as often as it does not.
+ *
+ * @param {string|undefined|null} headline what the row already says
+ * @param {string|undefined|null} detail what it was going to say again
+ * @returns {string} the detail, or '' when it is an echo
+ */
+export function withoutEcho(headline, detail) {
+  const tail = String(detail || '').trim();
+  if (!tail) return '';
+  const head = String(headline || '').trim();
+  if (!head) return tail;
+  const a = head.toLowerCase();
+  const b = tail.toLowerCase();
+  return a === b || a.endsWith(b) ? '' : tail;
+}
+
+/**
  * Describe one event for the Owner.
  *
  * @param {{event_type: string, aggregate_id?: string, payload?: any}} event
@@ -163,7 +187,9 @@ export function describeEvent(event, names = {}) {
       break;
     case 'agent.message_posted':
       label = `${payload.in_reply_to ? 'replies' : 'writes'} · ${MAIL_INTENT[payload.intent] || payload.intent || 'message'}`;
-      text = [payload.subject, payload.excerpt].filter(Boolean).join(' — ');
+      text = [payload.subject, withoutEcho(payload.subject, payload.excerpt)]
+        .filter(Boolean)
+        .join(' — ');
       kind = 'speech';
       // A letter: the ledger names both ends and opens the thread it belongs to. One
       // addressed to the Owner is the Owner's business: it files under the Owner chip and
@@ -177,7 +203,7 @@ export function describeEvent(event, names = {}) {
         thread: payload.thread_id || event.aggregate_id || null,
         forOwner: Boolean(payload.for_owner),
         subject: payload.subject || '',
-        excerpt: payload.excerpt || '',
+        excerpt: withoutEcho(payload.subject, payload.excerpt),
       };
     case 'agent.message_answered':
       label = 'replied to a message';
@@ -721,7 +747,10 @@ export class Ledger {
         ? `<div class="ledger-subject">${this.escape(item.subject || item.text)}</div>` +
           (item.excerpt ? `<div class="ledger-text">${this.escape(item.excerpt)}</div>` : '') +
           `<div class="ledger-open">Open the thread${letters > 1 ? ` · ${letters} scrisori` : ''} ↗</div>`
-        : item.text ? `<div class="ledger-text">${this.escape(item.text)}</div>` : '';
+        : (() => {
+            const detail = withoutEcho(`${item.who} ${item.label}`, item.text);
+            return detail ? `<div class="ledger-text">${this.escape(detail)}</div>` : '';
+          })();
       const last = rows[rows.length - 1];
       const key = item.thread ? null : `${item.kind}\u0000${route}\u0000${body}`;
       if (key && last && last.key === key) {

@@ -108,6 +108,26 @@
   --glow-live:     0 0 9px var(--focus-glow);  /* the live indicator's own halo */
 
   /* --------------------------------------------------------------- shape --- */
+  /* The widest a dialog runs. One number for the whole family, so the eight
+     doors open at one width; a step wider above 1900px, where the old cap left
+     the report at 46% of the screen and the rest as margin. */
+  --dialog-w:    1180px;
+  /* Where every dialog's top edge sits. Seven of them already opened here; the
+     three short ones drifted down because a centred dialog's top edge is only
+     whatever its own content leaves over. */
+  --dialog-top:  5vh;
+  /* The status word beside a module's meter. Fixed, because each row is its own
+     grid: with an auto column the longest word pulled its own meter 18px to the
+     left and the modules that are not built drew their bar further along than
+     the ones that are half built. */
+  --module-state-w: 108px;
+  /* How far a scrolling list fades at its bottom lip, so a row that is cut is
+     read as more-below rather than as a clipping fault. One line of body type. */
+  --edge-fade:   21px;
+  /* An opaque stop for a mask gradient. Not a surface colour: only its alpha is
+     read, and a mask needs a literal that the rest of the sheet may not state. */
+  --mask-solid:  #000;
+
   --radius:      12px;
   --radius-sm:   8px;
   --radius-xs:   5px;
@@ -365,7 +385,7 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
   /* One size for every dialog: the Owner reads long reports, role contracts, source
      lists and production plans in these, and a 520px column turned each of them into a
      narrow strip with its own inner scrollbar. */
-  width: min(1180px, 94vw);
+  width: min(var(--dialog-w), 94vw);
   max-width: none;
   max-height: 88vh;
   overflow-y: auto;
@@ -741,6 +761,10 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
    anything short of READY, so DEGRADED cannot be skimmed as "fine". */
 
 .runbook-summary { margin-bottom: 11px; }
+/* A row of tiles is as tall as each tile, not as tall as the longest one: the
+   AGENTS tile held two lines and 168px of nothing under them because WHAT LIMITS
+   GROWTH beside it printed its paragraph twice. */
+.runbook-summary { align-items: start; }
 .runbook-verdict { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-left-width: 3px; border-radius: var(--radius-sm); background: var(--surface-sunk); }
 .runbook-verdict strong { font-size: var(--fs-body); letter-spacing: .04em; }
 .runbook-verdict span { flex: 1 1 240px; font-size: var(--fs-meta); line-height: 1.5; color: var(--ink-2); }
@@ -1603,7 +1627,7 @@ main:has(> #login:not([hidden])) {
 .modules-panel { padding: 18px; }
 .modules li {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 34px auto;
+  grid-template-columns: minmax(0, 1fr) 34px var(--module-state-w);
   align-items: center;
   gap: 12px;
   padding: 8px 0;
@@ -1624,6 +1648,7 @@ main:has(> #login:not([hidden])) {
 .modules li[data-status="PARTIAL"]     { --meter: 55%;  --meter-fill: var(--gold); }
 .modules .module-state {
   grid-column: 3;
+  min-width: 0;
   font-size: var(--fs-micro);
   font-weight: 700;
   letter-spacing: var(--track-caps);
@@ -1871,8 +1896,11 @@ main:has(> #login:not([hidden])) {
   .login { padding: var(--s7) var(--s6); margin: var(--s6) auto; }
   .studio-dialog { padding: 0 18px 20px; }
   .dialog-header { margin: 0 -18px 16px; padding: 18px 18px 14px; }
-  .modules li { grid-template-columns: minmax(0, 1fr) 28px auto; gap: 8px; }
-  .modules .module-state { min-width: 0; }
+  /* One track at one width here too: with `auto` the longest state word pulled its
+     own meter left, so the modules that are not built read as further along than the
+     ones that are half built (measured 2026-09-23 at the wider rules; this block had
+     kept the old geometry). */
+  .modules li { grid-template-columns: minmax(0, 1fr) 28px var(--module-state-w); gap: 8px; }
 }
 
 /* ==========================================================================
@@ -1881,7 +1909,7 @@ main:has(> #login:not([hidden])) {
 
 /* The meter and the word belong on the module's own line, not under it: an
    explicit row keeps auto-placement from pushing the bar to a second row. */
-.modules li { grid-template-columns: minmax(0, 1fr) 46px auto; }
+.modules li { grid-template-columns: minmax(0, 1fr) 46px var(--module-state-w); }
 .modules li::after { grid-row: 1; height: 3px; align-self: center; }
 .modules .module-state { grid-row: 1; }
 
@@ -2093,29 +2121,28 @@ main { max-width: var(--page-max); padding: var(--s5) var(--gutter) var(--s7); }
 .dialog-body.mail-thread { max-height: none; padding: var(--s6) var(--s7); }
 
 /* ------------------------------------------------------------- the rail --
-   A sticky column of section links. The rail's ground and its right hairline
-   are painted by the body underneath it, so both run the full height of the
-   report while the links themselves stay level with the reader. */
+   A sticky card of section links, as tall as its links and no taller. The ground
+   and the hairline used to be painted by the body underneath, so the column ran
+   the full height of the report: in Media that was two links above 780px of lit,
+   empty ground, and it read as a sidebar whose contents had failed to load. */
 .dialog-body-railed {
   display: grid;
   grid-template-columns: var(--rail-w) minmax(0, 1fr);
   padding: 0;
-  background:
-    linear-gradient(90deg,
-      var(--surface-sunk) 0 calc(var(--rail-w) - 1px),
-      var(--line) calc(var(--rail-w) - 1px) var(--rail-w),
-      transparent var(--rail-w));
 }
 .dialog-rail {
   position: sticky;
-  top: 0;
+  top: var(--s5);
   align-self: start;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: var(--s5) var(--s3);
-  margin: 0;
-  border: 0;
+  padding: var(--s3) var(--s3);
+  margin: var(--s5) 0 var(--s5) var(--s5);
+  background: var(--surface-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--lit-edge);
 }
 .dialog-rail a,
 .dialog-rail .media-tab {
@@ -2249,7 +2276,11 @@ main { max-width: var(--page-max); padding: var(--s5) var(--gutter) var(--s7); }
    caption reads beneath in small caps, and the caption box is two lines tall
    whether it needs one or two, so captions line up across the row. */
 .workforce-summary { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--s3); margin-bottom: var(--s4); }
-.treasury-summary { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--s3); margin-bottom: var(--s4); }
+/* Six tiles, three and three. auto-fit alone counts however many 240px tracks
+   fit, so the wider dialog turned the most finished component in the product
+   into a row of four over a row of two with two empty cells beside it. The
+   floor is still 240px; the ceiling is now three columns, at every width. */
+.treasury-summary { grid-template-columns: repeat(auto-fit, minmax(max(240px, (100% - 2 * var(--s3)) / 3), 1fr)); gap: var(--s3); margin-bottom: var(--s4); }
 .budget-grid { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--s3); margin: var(--s3) 0 var(--s4); }
 
 .wf-stat, .budget-card, .treasury-tile {
@@ -2406,7 +2437,20 @@ main { max-width: var(--page-max); padding: var(--s5) var(--gutter) var(--s7); }
 .stat-uuid { font-size: var(--fs-meta); overflow-wrap: anywhere; }
 .dialog-btn-row { gap: var(--s2); margin-bottom: var(--s6); }
 #inspector-mission { margin: 0 0 var(--s4); font-size: var(--fs-body); line-height: var(--lh-body); }
-.identity-grid { gap: var(--s6); font-size: var(--fs-body); }
+/* Six blocks of wildly different length in a fixed 2-up grid left the right
+   column 220px short of the left at 1920 and a wholly empty column beside the
+   last block at 2560. Flowed as columns, a short block is followed by the next
+   block; nothing is reordered and nothing is broken across a column. */
+.identity-grid {
+  display: block;
+  column-count: 2;
+  column-gap: var(--s6);
+  font-size: var(--fs-body);
+}
+.identity-grid > .identity-block {
+  break-inside: avoid;
+  margin: 0 0 var(--s6);
+}
 .identity-block > .stat-label { margin-bottom: var(--s2); }
 .identity-block li, .identity-list li { font-size: var(--fs-meta); line-height: var(--lh-snug); }
 .identity-prompt { font-size: var(--fs-body); }
@@ -2668,6 +2712,19 @@ details[open] > summary::before { transform: rotate(90deg); }
   scrollbar-color: var(--line-strong) transparent;
 }
 
+/* A single-line field keeps a form's measure. Widening the dialog to 1440px
+   stretched the research form's three fields to 1175px, which is a very long run
+   for one line of typing (measured 2026-09-23). A textarea keeps the full width,
+   because a paragraph is what it is for. */
+.dialog-form input.dialog-input,
+.dialog-form select.dialog-input { max-width: var(--measure-lead); }
+/* The two fields of one row stay a pair: capping each of them inside a 1fr 1fr grid
+   pushed the second to the far side of the dialog with 280px of ground between them
+   (measured 2026-09-23 at 1920). The row itself carries the measure, and the fields
+   fill it. */
+.dialog-form .topic-input-grid { max-width: var(--measure-lead); }
+.dialog-form .topic-input-grid input.dialog-input { max-width: none; }
+
 /* ==========================================================================
    3 STATES — WHAT A LIST SAYS WHEN IT HAS NOTHING TO SAY
    ==========================================================================
@@ -2698,7 +2755,11 @@ details[open] > summary::before { transform: rotate(90deg); }
   font-style: normal;
   line-height: var(--lh-snug);
   text-wrap: pretty;
-  max-width: var(--measure);
+  /* The plate spans its section, so it meets the section rule above it rather than
+     stopping two thirds of the way across (measured 2026-09-23, after the dialog grew
+     to 1440px: a state well ended at 1200 where its head rule ran to 1647). The
+     sentence inside keeps the measure, held off the right edge by the padding. */
+  padding-inline-end: max(var(--s5), 100% - var(--measure));
 }
 /* A mark, so the line reads as a state and not as a stray caption. */
 .topics-loading::before,
@@ -2730,7 +2791,8 @@ details[open] > summary::before { transform: rotate(90deg); }
   font-size: var(--fs-body);
   line-height: var(--lh-snug);
   text-wrap: pretty;
-  max-width: var(--measure);
+  /* As above: the card meets its section, the sentence keeps its measure. */
+  padding-inline-end: max(var(--s4), 100% - var(--measure));
 }
 /* The trends list is a grid of tiles, and its own `li` rule outranks the state
    classes, so its three states drew as tiles with coloured text instead of as
@@ -2910,9 +2972,19 @@ details[open] > summary::before { transform: rotate(90deg); }
    Measured at 1920: the three tiles in the first row ended at 309, 373 and
    373, and the three in the second at 540, 475 and 628 — a 153px staircase in
    the one screen the judge called the biggest improvement in the pack. The
-   cards were told to start; they are told to fill the row instead, so a row
-   of tiles closes on one edge like every other figure grid in the product. */
-#company-state.runbook-summary { align-items: stretch; }
+   cards were told to start; they were told to fill the row instead, so a row
+   of tiles closed on one edge like every other figure grid in the product.
+
+   REVERSED, 2026-09-23, and the reason is written down because this is the
+   second time the line has moved. Filling the row bought a flush bottom edge
+   with emptiness INSIDE two of the three cards: measured at 1920, the AGENTS
+   tile held two lines of type and 168px of nothing beneath them, and at 1280
+   AUTONOMY IS ON held one line and 120px, because the row took its height from
+   a third tile that prints the same paragraph twice. Empty ground inside a
+   card reads as an unfinished card at every width; a ragged edge BETWEEN cards
+   of different length reads as cards of different length. Each tile is its own
+   height again. The staircase above was the price and it is the smaller one. */
+#company-state.runbook-summary { align-items: start; }
 
 /* 5 — THE STORYBOARD PROMPT READ AS A RENDERING BUG.
    The prompt scrolls inside a fixed 11.6em box, and the specification puts it
@@ -2997,4 +3069,82 @@ details[open] > summary::before { transform: rotate(90deg); }
   .studio-dialog, .studio-dialog[open] { translate: none; }
   /* A new row is marked by nothing moving: the highlight is skipped, not sped up. */
   .ledger-item.is-new { animation: none; }
+}
+
+
+/* ==========================================================================
+   7 ONE SHELL FOR THE EIGHT DOORS, AND ROOM WHEN THE SCREEN HAS IT
+   ==========================================================================
+   Seven dialogs opened with their title and their close at one height; Story
+   opened 60px lower, Settings 230px lower and Mail 245px lower, because a
+   centred dialog's top edge is whatever its own content leaves. Pinned instead
+   to the offset the seven already used, the close button stops moving halfway
+   down the screen depending on which door was opened. Nothing about the header,
+   the width or the content of any one of them changes.
+   ========================================================================== */
+.studio-dialog[open] {
+  margin-block: var(--dialog-top) auto;
+  margin-inline: auto;
+}
+/* The expanded inspector asks for 95vh and gets the whole height it asks for. */
+.studio-dialog[open].dialog-max { margin-block: auto; }
+
+/* Settings was also 180px narrower than the other seven and carried its own
+   maximum. One width for the family. */
+.settings-dialog, .settings-dialog[open] { width: min(var(--dialog-w), 94vw); max-width: none; }
+
+/* A wide screen should buy content, not margin. Above 1900px the cap steps up
+   and the inspector's contract flows in three columns instead of two, so the
+   extra pixels carry the blocks that used to sit beside empty ground. */
+@media (min-width: 1900px) {
+  :root { --dialog-w: 1440px; }
+  .identity-grid { column-count: 3; }
+}
+
+/* ==========================================================================
+   7 WHERE A LIST IS CUT
+   ==========================================================================
+   Every inner scroller ended by slicing a line of type through the middle of
+   its letters — "VoiceArtist · 6 runs · 0% failures" cut at half height, with
+   no fade and no visible scrollbar — so it read as a clipping fault rather than
+   as more content below. The last line of type fades over one line-height, and
+   the fade is driven by the scroller's own position so it is gone once the
+   reader reaches the end. Where the browser has no scroll timeline the rule
+   does not apply at all and nothing is masked.
+   ========================================================================== */
+@supports (animation-timeline: scroll(self)) {
+  @property --list-cut {
+    syntax: "<length>";
+    inherits: false;
+    initial-value: 0px;
+  }
+  @keyframes list-cut-fade {
+    0%, 88% { --list-cut: var(--edge-fade); }
+    100%    { --list-cut: 0px; }
+  }
+  .ledger-list,
+  .topics-container,
+  .chat-history,
+  .events {
+    mask-image: linear-gradient(to bottom,
+      var(--mask-solid) 0 calc(100% - var(--list-cut)), transparent 100%);
+    animation: list-cut-fade linear both;
+    animation-timeline: scroll(self);
+  }
+}
+
+/* ==========================================================================
+   7 A CARD TITLED WITH A MACHINE IDENTIFIER
+   ==========================================================================
+   The identifier keeps every character it had; it is printed as the card's meta
+   line rather than in the largest type on the card, in the mono face every
+   other identifier in the product wears, with the whole string on hover.
+   ========================================================================== */
+.settings-card-id {
+  margin: calc(-1 * var(--s1)) 0 var(--s2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  letter-spacing: -.02em;
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
 }

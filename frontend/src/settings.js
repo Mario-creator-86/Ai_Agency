@@ -164,7 +164,14 @@ export function initSettings(api, hooks = {}) {
     for (const item of items) {
       const spec = data.catalog[item.kind];
       const card = node('article', '', 'settings-card');
-      card.append(node('h3', item.name), node('p', `${spec.label} · ${statuses[item.status] || item.status}`, 'helper'));
+      const named = splitIdentifier(item.name);
+      card.append(node('h3', named.title));
+      if (named.identifier) {
+        const line = node('p', named.identifier, 'settings-card-id');
+        line.title = item.name;
+        card.append(line);
+      }
+      card.append(node('p', `${spec.label} · ${statuses[item.status] || item.status}`, 'helper'));
       if (item.checked_at) card.append(node('p', `Verified: ${new Date(item.checked_at).toLocaleString('en-GB')}`, 'helper'));
       // Three different truths, and the card says which one applies. "stored" means the
       // credentials are kept but nothing in the pipeline calls this vendor yet; "media" means
@@ -206,6 +213,27 @@ export function initSettings(api, hooks = {}) {
     if (active === 'media') renderAutoConfigure(content);
     if (active === 'media' || active === 'social') renderSelections(content, items);
     if (active === 'social' && data.legacy_youtube_configured) content.append(node('p', 'There is also a YouTube configuration in the server environment. A YouTube selection saved here takes priority.', 'helper'));
+  }
+
+  /**
+   * A stored name that is really a machine identifier, read as two things.
+   *
+   * The installer writes connections named "<what made it>:<uuid>". Printed whole at
+   * heading weight that is the loudest thing on the screen and it says nothing. The
+   * word before the identifier is the title; the identifier is returned separately so
+   * the card can print it small, in mono, with the whole string on hover. A name with
+   * no identifier in it comes back unchanged and nothing below it is drawn.
+   *
+   * @param {string} name @returns {{title: string, identifier: string}}
+   */
+  function splitIdentifier(name) {
+    const whole = String(name || '').trim();
+    const found = whole.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+    if (!found) return { title: whole, identifier: '' };
+    const before = whole.slice(0, found.index).replace(/[\s:·\-_/]+$/, '').trim();
+    return before
+      ? { title: before, identifier: whole }
+      : { title: found[0].split('-')[0], identifier: whole };
   }
 
   function edit(container, kind, existing) {
@@ -340,10 +368,14 @@ export function initSettings(api, hooks = {}) {
     for (const provider of data.legacy_providers || []) {
       const card = node('article', '', 'settings-card');
       const verified = Boolean(provider.last_health_check);
-      card.append(
-        node('h3', provider.name),
-        node('p', `${provider.provider_type} · ${provider.base_url}`, 'helper'),
-      );
+      const named = splitIdentifier(provider.name);
+      card.append(node('h3', named.title));
+      if (named.identifier) {
+        const line = node('p', named.identifier, 'settings-card-id');
+        line.title = provider.name;
+        card.append(line);
+      }
+      card.append(node('p', `${provider.provider_type} · ${provider.base_url}`, 'helper'));
       card.append(
         node(
           'p',

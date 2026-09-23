@@ -148,6 +148,106 @@ the render's top edge that was whole before. At 1280×800 the sign-in card leave
 footer on the first screen. The research rail's column is empty below its five links. And the
 interface has still never been photographed over the live Unreal stream.
 
+### Closing the critic's list — 2026-09-23
+
+A stranger read the thirteen views at four widths and ranked twenty findings. Eleven are closed in
+the view layer and the stylesheet; nine are refused, and the reason for each is written below so the
+Owner can check it rather than take it. **Not one user-facing word was added, removed or reworded,
+and the 3D art was not touched.**
+
+**Closed.**
+
+- **A row printed its own sentence twice.** Ten consecutive ledger rows read
+  `publish: COMPLETED — <sentence>` in bold and `<sentence>` again in grey beneath, because a
+  letter's excerpt is usually the whole of its subject after the colon. `withoutEcho()` in
+  `frontend/src/ledger.js` drops a detail that is already the end of the headline; the mail window
+  does the same for a letter's body (`mail_thread.js`), and because the rule lives in
+  `describeEvent`, the per-agent Live window stopped joining the two copies with an em dash as
+  well. A letter with genuinely no text still says so; only an echo is dropped. The ×17 fold is
+  untouched.
+- **The Daily Run tiles.** `align-items` on `#company-state` is back to `start`. This is the second
+  time the line has moved and the stylesheet now records both measurements: filling the row bought
+  a flush bottom edge with 168px of empty ground *inside* the AGENTS tile at 1920 and 120px inside
+  AUTONOMY IS ON at 1280, because the row took its height from a third tile whose data repeats a
+  paragraph. Empty ground inside a card reads as an unfinished card; a ragged edge between cards of
+  different length reads as cards of different length.
+- **The agent inspector's two columns never matched** — the right one stopped 220px short of the
+  left at 1920 and left a wholly empty column beside the last block at 2560. `.identity-grid` flows
+  the six blocks as CSS columns with `break-inside: avoid`, so a short block is followed by the next
+  block. Three columns above 1900px. Nothing is reordered.
+- **The long dialogs' rails** painted a 208px column of lit ground the full height of the report —
+  in Media, two links above 780px of it. The ground and the hairline move onto `.dialog-rail`
+  itself, which is `align-self: start` and sticky: the rail is now a card as tall as its links.
+- **The module-status meters read backwards.** Each row is its own grid, so the longest status word
+  pulled its own meter left and the modules that are *not* built drew a bar further along than the
+  ones half built. `--module-state-w` fixes the status column, so all three states draw one track at
+  one x and one width, filled 100 / 50 / 0.
+- **The eight dialogs did not share a top edge** — Story opened 60px lower, Settings 230px and Mail
+  245px, so the close button moved halfway down the screen depending on the door. Every dialog is
+  pinned to `--dialog-top` (5vh), the offset the other seven already used. Settings also gives up
+  its own 1000px cap and joins the family width.
+- **A wide screen bought margin, not content.** `--dialog-w` steps from 1180px to 1440px above
+  1900px and the inspector's contract flows in three columns there. The treasury's six tiles are
+  capped at three columns so the most finished component in the product stays three and three
+  rather than four and two.
+- **Inner scrollers ended by slicing a line of type through the middle of its letters.** The
+  ledger, the topic lists, the agent list and the chat history fade over one line-height at the
+  bottom lip, driven by the scroller's own position: no fade on a list that does not scroll, and
+  none once the reader reaches the end. Measured: ledger 21px of fade at rest, 0px at
+  `scrollTop === max`, 0px on every list whose `scrollHeight === clientHeight`. Where a browser has
+  no scroll timeline the rule does not apply at all.
+- **A connection card was titled with a machine identifier** — `settings:9298e62d-…-64120311942a`
+  wrapping to two lines in the biggest type on the card, beside two cards titled `local-ollama` and
+  `Ollama Cloud`. Every character is kept: the word before the identifier takes the title, the whole
+  string is printed as the card's meta line in the mono face every identifier wears, and the
+  untruncated value is on hover.
+- **The live badge claimed a picture that was not there.** While the viewport shows its loading or
+  error plate, the badge in the opposite corner went on reading `Live Renderer 68fps` over a frame
+  whose only other content was "The headquarters art could not be loaded." One `:has()` rule hides
+  it for exactly as long as a plate is up.
+- **«Fullscreen» did not look like a control at rest** beside a bordered, filled group of four. It
+  is the last key of the same instrument and now wears the same plate. The slate's stamp also joins
+  the bezel's other figures on a fixed advance.
+- **The per-agent Live window** pinned its caption to the floor 430px under three entries. The
+  window is a column now and the caption follows the content. Its palette was already the page's
+  (`--ink-2` body, `--ink-3` rail, measured 6.39:1); the "cyan" the critic read is an artefact of a
+  downscaled capture.
+
+**Refused, and why.**
+
+- **Two display languages in one row** (Module status, the publishing channel row, the six treasury
+  captions, the inspector's fourth caption). Every candidate fix is a string change. It is the
+  loudest unfinished signal on the screen and it needs one decision from the Owner about which
+  language the interface speaks; presentation must not paper over it by inventing words.
+- **The `.md` filename, the `.env` sentence, the three unlabelled research fields and the box
+  pre-filled with `general`.** All four want words the form does not own as labels (the only names
+  those fields have are placeholder *examples*). Owner's call.
+- **The Governance dead ground.** The empty plate is centred in its region on purpose, recorded in
+  the sheet with the alternative already tried and rejected. The panel is stretched to Module
+  status beside it, so pinning the plate under the head rule would not remove the emptiness — it
+  would gather all ~200px of it under the note instead of splitting it. Moving a void is not
+  closing it.
+- **The storyboard prompt well.** A fade mask there was tried in an earlier pass and rejected by a
+  judge; the well is sized so the cut lands *between* lines rather than through letters, and an
+  "expand" affordance would be a new control with a new word.
+- **The numeric fps.** Hiding the badge over a failed frame is a fault fixed. Hiding the figure
+  itself is not: it is the Owner's own measurement of his renderer, and the studio's standing rule
+  is that nothing in the office view is decoration. Collected for him.
+- **The seven room icons.** Two of them do mean the wrong thing (a house for Daily Run, a slashed
+  circle for Distribution) and two are drawn at a different weight. Redrawing them is new art.
+- **The three-weight button system and Pause/Resume.** The ghost-control language is a whole-surface
+  decision the record already names; hiding whichever of Pause/Resume does not apply is a change in
+  behaviour, not in presentation.
+- **The sign-in brand plate and the «Not connected» chip.** `--plate` is a named token and the mark
+  is dark-on-light by design; dulling it is brand. The chip is a true state readout.
+- **The «Studio Office» band and the three clocks.** Both need a word the product must already own,
+  in a place the Owner chooses.
+
+**Measured on this build.** `report.json`: 0 missing fixtures and 0 console errors at 1280×800,
+1440×900, 1920×1080 and 2560×1440. 673 text/ground pairs read from the real pixels of 20 views —
+**0 below threshold**, worst 5.73:1. **146 frontend tests pass**, `tsc` clean, the build succeeds.
+Pictures: `scratchpad/ui/shots_p7_final/` (four widths), `shots_live_p7/`, `shots_scene_p7/`.
+
 ## The rehearsal on the Owner's data (2026-09-18)
 
 The suite was green and the studio had never been tried on the one database that matters. On
@@ -3127,3 +3227,84 @@ Owner reports UI freezes/flicker and briefly appearing cars. L2 edits deferred w
 ## HQ stream stability fix — 2026-09-18, Codex
 
 A stale fallback reconnect timer could tear down a recovered connection. Fixed cancellation/state guarding and immediate/final frame preservation in hq_stream.js. Three red regressions now pass; all 115 frontend tests, TypeScript and Vite build pass. The server serves the new bundle. Actual browser viewer recovered from a controlled outage and remained live through second 86 without another disconnect. Authenticated Owner page requires reload; full UI/traffic stability is not yet proven there. Evidence and next checks: [STREAM_STABILITY_2026-09-18.md](STREAM_STABILITY_2026-09-18.md). L2 inventory completed read-only; no art asset changed during this continuation. Scope released.
+
+
+### The result, measured independently — 2026-09-23
+
+A third pass re-shot all thirteen views at 1280×800, 1440×900, 1920×1080 and 2560×1440 into
+`shots_final3`, looked at every one against `shots_final2`, and re-measured from the real pixels
+rather than from the cascade. Nothing in `frontend/src` was changed by this pass; two test files
+were added.
+
+**What the numbers say.** 2 998 text/ground pairs read from the pixels of 22 views at three
+widths: **0 below threshold, worst 5.09:1** (`04-media` at 2560, the model-choice reason). Over the
+render: 28 pairs, 0 below, worst 5.99:1. In the per-agent Live window: 14 pairs, 0 below, worst
+5.73:1. Geometry at all four widths: `scrollWidth` equals the viewport, **0** elements past the
+right edge, **0** controls under 32px. A real Tab walk over the sign-in screen, the workspace and
+all eight dialogs at all four widths: 0 invisible focus rings, 0 rings under 3:1, 0 focus escapes,
+0 traps, Escape closes all eight and returns focus to the control that opened them. `report.json`:
+**0 missing fixtures and 0 console errors at every width**. **162 frontend tests pass** (146 + 16
+new), `tsc` clean, the build succeeds.
+
+**The claims, checked one by one.** The register prints **0** rows whose detail repeats its
+headline, at all three widths (was 10 of 13). The eight dialogs now open at **one** top edge per
+width (40 / 54 / 72px) and **one** width (1180px at 1280, 1440px at 1920 and 2560) — before, the
+tops ran 55 … 300px. The inspector's contract is three columns with a **57px** rag at 1920 and at
+2560 (was 225px at 1920 and a wholly empty column at 2560). The rails are cards 92–208px tall
+instead of 858px of painted ground. The module meters draw one track at one x. The live badge is
+gone from the failure and loading plates.
+
+**Two tests were added, for rules that nothing could see break.**
+`frontend/tests/no_echo.test.js` holds the "print the sentence once" rule at all three places it is
+applied — `withoutEcho`, the register's own row through `describeEvent`, and the letter in the mail
+window — including the cases that must *not* be dropped. `frontend/tests/one_shell.test.js` reads
+`style.css` and holds the one-top-edge, one-width and one-meter-track rules, and names the phone
+block as the exception it still is.
+
+**What this pass found that is still open.**
+
+- **The mail window says its sentence twice, not three times.** The body echo is gone, but the
+  dialog title and the letter's own subject line still carry the same sentence 150px apart. Closing
+  that is a string or a markup decision, not a stylesheet one.
+- **The Live window's void moved rather than closed.** The caption now sits at y335 directly under
+  the last entry, but the 430px below it is empty and nothing anchors the window's foot. The
+  duplicate-sentence half of that finding is a clear win; the layout half reads no better than
+  before, and arguably worse.
+- **The Daily Run tiles are a measured staircase**: rows rag 45px and 114px at 1920, 64px and 153px
+  at 1280. This is the trade the stylesheet records, taken knowingly — but `audit_final.mjs`'s
+  "tiles that share a row but not a bottom edge" check reports 0 because it looks for
+  `.company-card` / `.wf-stat` / `.stat-card` and these tiles are `.runbook-check`. The check has a
+  blind spot exactly where the trade was made.
+- **The meters still read backwards under 600px.** `@media (max-width: 600px)` lays `.modules li`
+  out with an `auto` status column and `min-width: 0` on the meter — the very geometry that was
+  fixed above it. No width the Owner uses reaches it; `one_shell.test.js` names it out loud.
+- **The wider dialog leaves some boxes short of their own section rule.** At 1440px the error,
+  loading and empty wells in Research and Daily Run stop at ~1200px while the head rule beside them
+  runs to the margin, and at 2560 the publishing checks card ends 125px above the channel card
+  beside it.
+- Everything the section above refuses is unchanged and still the Owner's: one display language,
+  the `.env` sentence and the `.md` filename, the numeric fps, the seven room icons, the band above
+  the render, the research form's four labels, the sign-in brand plate, and the ghost-control
+  borders.
+
+**Closed after that report, in this session, by hand (evidence `shots_last/`):**
+
+- A state plate now meets its own section rule instead of stopping two thirds of the way across:
+  the plate spans the section and the sentence keeps its 104-character measure through the box's
+  own padding (`.topics-loading`, `.ledger-empty`, `.text-error`, `.settings-error`).
+- A single-line form field keeps a form's measure (72ch) now that a dialog is 1440px wide, and the
+  two fields of one row stay a pair instead of being pushed to opposite sides of the dialog.
+- The mail window prints its sentence once: a letter whose subject *is* the window's title shows
+  its intent tag without repeating the sentence 150px below it. Two tests hold the rule
+  (`frontend/tests/no_echo.test.js`), and a letter with its own subject still prints it.
+- The per-agent Live window's caption closes the window again (`margin-top: auto`), instead of
+  floating directly under three entries with 430px of bare ground beneath it.
+- The module meter reads the same under 600px as it does at every wider rule: one track, one width,
+  filled 100/50/0. The phone block had kept the old `auto` geometry.
+
+Frontend tests: **164 pass** (162 after the verifier's two files, plus the two for the mail rule),
+`tsc` clean, the build succeeds, 0 missing fixtures and 0 console errors at 1920 and 1280.
+
+Evidence: `shots_final3/`, `shots_live_p8/`, `shots_scene_p8/`, `shots_p8_states/`,
+`shots_p8_dstates/` in the session scratchpad. No server, no Unreal, no Python suite, no provider,
+no git command that changes state.

@@ -107,13 +107,19 @@ const LIVE_STYLES = `
      is watching one employee work, so it shows the second as well, and eight
      mono figures do not fit in 54. */
   --live-rail: 62px;
-  /* The feed scrolls under a fixed footer; this is the room kept for it. */
-  --live-foot: 44px;
+  /* The window is a column: header, the standing line, the feed, and the caption
+     directly under whatever the feed holds — not pinned to the floor of an empty
+     window. --live-foot is the caption's own room when the feed does fill. */
+  --live-foot: var(--s2);
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
 body {
   margin: 0;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
   background: var(--bg);
   color: var(--ink);
   font: var(--fs-body)/var(--lh-body) var(--font-sans);
@@ -194,10 +200,10 @@ header h1 { margin: 0; font-size: var(--fs-h3); font-weight: var(--w-semi); lett
 .live-owner { border-left-color: var(--alert-ink); }
 .live-empty { padding: var(--s5) var(--s4); color: var(--ink-3); font-style: italic; }
 footer {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
+  /* The caption follows the feed, and when the feed is short it still closes the
+     window instead of floating in the middle of it: measured 2026-09-23, three
+     entries left the caption at y335 with 430px of bare ground under it. */
+  margin-top: auto;
   padding: var(--s2) var(--s4);
   font-size: var(--fs-micro);
   color: var(--ink-3);

@@ -404,3 +404,32 @@
   .scene-viewport .scene-readout-info, .scene-viewport .scene-readout-live { padding: 0 var(--s2); }
   .scene-viewport .scene-slate { padding: 0 var(--s3); }
 }
+
+
+/* ==========================================================================
+   7 THE LIVE BADGE DOES NOT CLAIM A PICTURE THAT IS NOT THERE
+   ==========================================================================
+   While the viewport is showing its loading plate or its error plate, the badge
+   in the opposite corner went on reading "Live Renderer 68fps" over a frame
+   whose only other content was the sentence saying the headquarters could not
+   be drawn. The badge is hidden for exactly as long as a plate is up; it says
+   the same words, at the same place, the moment the render is back.
+   ========================================================================== */
+.scene-viewport:has(.scene-note) .scene-readout-live { visibility: hidden; }
+
+/* The slate's stamp joins every other figure on the bezel on a fixed advance,
+   so the seconds stop shoving the caption beside them. */
+.scene-viewport .scene-slate #snapshot-time { font-variant-numeric: tabular-nums; }
+
+/* Fullscreen is the last key of the camera and now looks like one at rest: it
+   stood beside a bordered, filled group of four as bare text with no edge of
+   its own, and did not read as a control until the pointer was on it. */
+#office-scene-container .btn-fs {
+  background: var(--surface-sunk);
+  border-color: var(--scene-chrome-edge);
+  box-shadow: var(--lit-edge);
+}
+#office-scene-container .btn-fs:hover:not(:disabled) {
+  background: var(--surface-hi);
+  border-color: var(--scene-chrome-edge);
+}
