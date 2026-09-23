@@ -2,6 +2,15 @@
 
 ## The interface is finished to the level he asked for — 2026-09-22/23
 
+*Polishing pass, the same day:* the «Live window» popup on the new palette (with a test that
+catches a token drift), a section rail for the research dialog, a sign-in screen standing in the
+product's own world with the Settings button hidden until the key is accepted, one instrument
+family let into the render's bezel, selection and hover marks drawn at a constant size on screen, a
+scene that answers the keyboard, and the renderer's interface colours taken from the page's tokens
+(`frontend/src/hq_palette.js`, new). Seven measured defects fixed, including a key light that had
+never reached the screen and four invisible placeholders. 146 frontend tests pass; 2 853 contrast
+pairs read from the real pixels, none below threshold.
+
 Presentation only: no user-facing string, no Romanian wording, no data flow, no API call and no
 gate changed. Three directions were built on the real code and photographed, a judge chose the
 cinematic dark one with named grafts from the other two, and three parts built it before an

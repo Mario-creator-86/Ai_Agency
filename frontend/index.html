@@ -62,20 +62,31 @@
             </section>
           </aside>
           <section class="panel office-panel">
-            <div class="section-heading office-heading"><div><p class="eyebrow">WORKSPACE</p><h2>Studio Office</h2></div><span id="office-status" class="tag live-pill"><span class="live-dot" aria-hidden="true"></span><span id="office-fps">Live Renderer —</span></span></div>
+            <div class="section-heading office-heading"><div><p class="eyebrow">WORKSPACE</p><h2>Studio Office</h2></div></div>
             <div class="office-scene office-scene-container" id="office-scene-container">
+              <!-- THE RENDER AND ITS INSTRUMENTS. The three readouts are let into the bezel of the
+                   viewport itself — the clock and the weather in the top-left corner, the live state
+                   in the top-right, the slate along the bottom lip — rather than floating over the
+                   picture or standing about on the panel outside it. The canvas takes focus so the
+                   employees can be reached with the arrows as well as with a pointer. -->
               <div class="scene-viewport" id="scene-viewport">
-              <canvas id="office-canvas" class="office-canvas" aria-label="The AMN-AI headquarters, live"></canvas>
-              <div class="scene-info-pill" title="Local time in Bucharest and the live weather the studio reads. With no weather service configured the scene draws no weather."><span id="scene-info">—  •  BUCHAREST</span></div>
+              <canvas id="office-canvas" class="office-canvas" tabindex="0" aria-label="The AMN-AI headquarters, live. Use the arrow keys to move between employees and Enter to open one."></canvas>
+              <div class="scene-readout scene-readout-info" title="Local time in Bucharest and the live weather the studio reads. With no weather service configured the scene draws no weather."><span id="scene-info">—  •  BUCHAREST</span></div>
+              <span id="office-status" class="tag live-pill scene-readout scene-readout-live"><span class="live-dot" aria-hidden="true"></span><span id="office-fps">Live Renderer —</span></span>
+              <div class="scene-slate"><span id="room-caption">—</span><span id="snapshot-time">—</span></div>
               </div>
               <div class="camera-toolbar">
                 <div class="toolbar-group toolbar-scene">
                 <button id="stop-toggle" class="cam-btn cam-switch" disabled title="Studio autonomy: on or off. Stopping persists and never starts agents or publishing."><span class="switch-label">AUTONOMY</span><span class="switch-track"><span class="switch-knob"></span></span><span id="switch-state" class="switch-state">—</span></button>
                 <button id="environment-toggle" class="cam-btn cam-switch" disabled title="Studio environment. TEST: the minimum is generated on the cheapest compatible model. PRODUCTION: the cheapest model that reaches the quality each scene needs."><span class="switch-label">ENVIRONMENT</span><span id="environment-state" class="switch-state">—</span></button>
+                <!-- The camera is one instrument, not four loose boxes: the four controls that
+                     move the same eye share one plate and are divided by hairlines. -->
+                <div class="cam-group" role="group" aria-label="Camera">
                 <button id="zoom-in" class="quiet cam-btn cam-square" title="Zoom in">+</button>
                 <button id="zoom-out" class="quiet cam-btn cam-square" title="Zoom out">−</button>
                 <button id="zoom-fit" class="quiet cam-btn" title="Fit the whole building">Fit</button>
                 <button id="zoom-reset" class="quiet cam-btn" title="Actual size">1:1</button>
+                </div>
                 <button id="fullscreen-btn" class="quiet cam-btn btn-fs" title="Fullscreen">Fullscreen</button>
                 <button id="exit-fullscreen-btn" class="quiet cam-btn btn-exit-fs hidden" title="Exit fullscreen">✕ Exit</button>
                 </div>
@@ -91,7 +102,6 @@
               </div>
               <div id="rooms" class="rooms" hidden></div>
             </div>
-            <div class="office-footer"><span id="room-caption">—</span><span id="snapshot-time">—</span></div>
           </section>
         </div>
       </section>
@@ -157,8 +167,16 @@
           </div>
           <button id="close-research-btn" class="dialog-close">✕</button>
         </div>
-        <div class="dialog-body">
-          <div class="dialog-section-bottom">
+        <div class="dialog-body dialog-body-railed">
+          <nav class="dialog-rail" aria-label="Research sections">
+            <a href="#rs-trends">What people are searching for now</a>
+            <a href="#rs-propose">Propune un subiect</a>
+            <a href="#rs-topics">Recent topics and novelty score</a>
+            <a href="#rs-sources">Sources and claims</a>
+            <a href="#rs-scripts">Scripts</a>
+          </nav>
+          <div class="dialog-pane">
+          <div class="dialog-section-bottom" id="rs-trends">
             <div class="trends-head">
               <h3 class="dialog-section-header-bright">What people are searching for now</h3>
               <button id="trends-refresh" class="quiet" type="button">Read trends ↻</button>
@@ -166,7 +184,7 @@
             <p class="helper">Google Trends for the studio's country, read daily. A trend is a hook, not a source: the researcher uses it only where authorised sites can prove it.</p>
             <ul id="trends-list" class="trends-list"><li class="helper">Loading…</li></ul>
           </div>
-          <div class="dialog-section-bottom">
+          <div class="dialog-section-bottom" id="rs-propose">
             <h3 class="dialog-section-header-bright">Propune un subiect</h3>
             <form id="topic-propose-form" class="dialog-form">
               <input id="topic-title" placeholder="Episode title (e.g. James Webb finds the oldest galaxy yet)" required class="dialog-input" />
@@ -179,7 +197,7 @@
             </form>
             <div id="topic-propose-status" class="dialog-status-msg" hidden></div>
           </div>
-          <div>
+          <div id="rs-topics">
             <div class="topics-header-row">
               <h3 class="dialog-section-header-bright-compact">Recent topics and novelty score</h3>
               <button id="refresh-topics-btn" class="quiet btn-refresh">Refresh</button>
@@ -189,7 +207,7 @@
             </div>
           </div>
 
-          <div class="dialog-section-top">
+          <div class="dialog-section-top" id="rs-sources">
             <div class="topics-header-row">
               <h3 class="dialog-section-header-bright-compact">Sources and claims</h3>
               <button id="retest-hosts-btn" class="quiet btn-refresh">Test the sites</button>
@@ -211,7 +229,7 @@
             </div>
           </div>
 
-          <div class="dialog-section-top">
+          <div class="dialog-section-top" id="rs-scripts">
             <div class="topics-header-row">
               <h3 class="dialog-section-header-bright-compact">Scripts</h3>
               <button id="refresh-scripts-btn" class="quiet btn-refresh">Refresh</button>
@@ -225,6 +243,7 @@
             <div id="scripts-list" class="topics-container">
               <div class="topics-loading">Loading scripts…</div>
             </div>
+          </div>
           </div>
         </div>
       </dialog>

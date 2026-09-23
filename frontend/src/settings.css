@@ -40,11 +40,20 @@
   max-height: 90vh;
 }
 .settings-dialog > * { flex: none; }
-.settings-dialog > .dialog-header { padding: var(--s6) var(--s7) var(--s5); }
+/* This dialog is built in code (settings.js), and it appends its sentence AFTER the
+   header rather than inside it — so the rule that closes a dialog head was drawn between
+   the title and its own sentence. Measured on the running page: the description sits 40px
+   BELOW the rule here and 21px ABOVE it in the other seven dialogs. The rule moves to the
+   far side of the sentence, and the sentence takes the head's own bottom room, so all
+   eight heads read the same. No markup and no word is touched. */
+.settings-dialog > .dialog-header { padding: var(--s6) var(--s7) 0; border-bottom: 0; }
 .settings-intro {
   margin: 0;
-  padding: var(--s5) var(--s7) 0;
-  max-width: var(--measure);
+  padding: var(--s3) var(--s7) var(--s5);
+  /* The head is one plate: the sentence stands on the header's own ground, not on the
+     dialog's, or a four-step band shows between the title and its own sentence. */
+  background: var(--surface);
+  max-width: none;
   font-size: var(--fs-lead);
   line-height: var(--lh-snug);
   color: var(--ink-2);
@@ -52,6 +61,10 @@
 .settings-tabs {
   gap: var(--s2);
   padding: var(--s4) var(--s7);
+  /* The head's own rule, drawn on the tab row's top edge rather than under the sentence,
+     so that it runs the dialog's full width whatever the sentence does. Same hairline as
+     the border below it. */
+  border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
   box-shadow: none;
   background: transparent;

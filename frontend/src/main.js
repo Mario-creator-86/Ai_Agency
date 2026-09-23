@@ -4128,10 +4128,13 @@ async function loadRunbookSchedule() {
   }
 }
 
-// The two long reports carry a section rail. It marks what he is reading as he scrolls;
-// the links repeat the headings already on the page and change nothing else.
+// The long reports carry a section rail. It marks what he is reading as he scrolls;
+// the links repeat the headings already on the page and change nothing else. Research is
+// the longest body in the product — 6284px against the daily run's 2197 — so it carries
+// one too; it had none because the specification only named the other three.
 attachRail(runbookModal.querySelector('.dialog-body'));
 attachRail(treasuryModal.querySelector('.dialog-body'));
+attachRail(researchModal.querySelector('.dialog-body'));
 
 element('open-runbook-btn').addEventListener('click', () => {
   runbookModal.showModal();

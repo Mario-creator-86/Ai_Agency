@@ -96,6 +96,16 @@
   --scene-chrome-edge: #26334f;
   --scene-chrome-ink: #dfe7f5;
   --scene-chrome-muted: #8496b8;
+  /* The instruments on the glass. A readout is let into the bezel of the
+     viewport — the clock and the weather in one corner, the live state in the
+     other, the slate along the bottom lip — and all three are drawn at one
+     height, on one plate, in one family, so they read as instruments belonging
+     to the render and never as labels laid on a photograph. */
+  --scene-readout: 28px;   /* the height of every readout on the bezel */
+  --scene-blur:    10px;   /* the glass the readouts are frosted on */
+  --scene-note:    380px;  /* the widest the scene's own empty/loading/error plate runs */
+  --scene-icon:    15px;   /* a room's icon in the console's second tier */
+  --glow-live:     0 0 9px var(--focus-glow);  /* the live indicator's own halo */
 
   /* --------------------------------------------------------------- shape --- */
   --radius:      12px;
@@ -130,8 +140,17 @@
 
   /* ----------------------------------------------------------------- type -- */
   /* The one pale surface on the page: the plate the dark-on-light brand
-     artwork is printed on, so the mark is never a black square on black. */
+     artwork is printed on, so the mark is never a black square on black.
+     The artwork is a white bitmap and may not be edited, so the plate is not
+     an apology for it — it is a printed badge, and it is drawn as one: a warm
+     paper ground, its own cut edge so the white never bleeds into the dark,
+     a lit top edge and a shadow that says it is lying on the surface. */
   --plate: #eef0ea;
+  --plate-edge: #c7cdc2;
+  --shadow-badge:
+    inset 0 1px 0 rgba(255, 255, 255, .75),
+    0 1px 1px rgba(0, 0, 0, .55),
+    0 18px 30px -16px rgba(0, 0, 0, .9);
 
   --font-mono: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace;
   --track-caps: .16em;   /* small-caps label tracking */
@@ -166,7 +185,19 @@
   --hit:       32px;   /* the smallest a control may be drawn to */
   --hit-lg:    36px;   /* a field, or a control inside a bar */
   --chip-h:    26px;   /* a filter chip's drawn height; its hit box is --hit */
+  /* The studio's one toggle, drawn once. The knob sits --switch-inset inside
+     the track on every side, so its travel is arithmetic rather than a
+     fourth number somebody has to keep in step: the scene's console had a
+     scaled-up copy of these five numbers and its knob stopped 2px short of
+     the right inset because the copy's travel was never recomputed. */
+  --switch-w:     34px;
+  --switch-h:     16px;
+  --switch-knob:  12px;
+  --switch-inset: 2px;
+  --switch-r:     3px;   /* the knob's corner, inside --radius-xs */
   --time-rail: 54px;   /* the ledger's mono time column */
+  --badge-w:   172px;  /* the printed brand badge on the sign-in card */
+  --login-w:   560px;  /* the sign-in card */
   --register:  384px;  /* the ledger register in the wide spread */
   --rail-w:    208px;  /* a long dialog's section rail */
   --measure:   104ch;  /* the widest a paragraph of running prose may run */
@@ -190,11 +221,24 @@
   --gold-glow:    rgba(224, 176, 98, .80);
   --alert-wash:   rgba(255, 157, 143, .10);
   --ok-wash:      rgba(111, 217, 171, .10);
-  --veil:         rgba(13, 19, 30, .86);    /* a note laid over the render */
+  /* --veil was the film under the CSS office's dashed empty plate. The scene's
+     empty, loading and error states are real plates on --surface-sunk now
+     (office_scene.css, .scene-note), so the film has no user left. */
+  /* The sign-in backdrop: the studio's own night skyline, held far down. Four
+     films over one plate — an even haze that knocks the window lights back, a
+     core that goes almost solid where the card sits so nothing competes with
+     the form, and a floor and a sky that carry the plate off the edges. */
+  --login-haze:   rgba(5, 8, 14, .70);
+  --login-core:   rgba(5, 8, 14, .94);
+  --login-floor:  rgba(5, 8, 14, .97);
+  --login-sky:    rgba(5, 8, 14, .48);
   --backdrop-deep: rgba(2, 4, 8, .82);
   --shadow-knob:  0 1px 2px rgba(0, 0, 0, .6);
-  --shadow-scene-warm: 0 22px 48px -26px rgba(23, 41, 39, .55);
-  --edge-hairline: inset 0 0 0 1px rgba(255, 255, 255, .04);
+  /* --shadow-scene-warm and --edge-hairline belonged to the older scene frame
+     that this sheet drew before office_scene.css owned the viewport. The render
+     wears --shadow-scene and one hairline of --scene-frame; a second, warmer
+     well under the same object is how the page grows two heroes. Removed with
+     the rules that used them. */
 
   font-family: var(--font-sans);
   color: var(--ink);
@@ -242,15 +286,23 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 .ledger-column { display: grid; gap: 22px; }
 .side-column { display: grid; gap: 22px; }
 .office-panel { padding: 0; overflow: hidden; }
-.office-panel .section-heading { padding: 22px 25px 8px; }
-.office-scene { position: relative; margin: 10px 24px 0; min-height: 330px; border: 12px solid var(--scene-frame); border-top: 20px solid var(--scene-frame-top); border-radius: 7px; background-color: var(--scene); background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px); background-size: 30px 30px; box-shadow: var(--inset-well); }
-.window { position: absolute; top: -17px; width: 25%; height: 12px; background: var(--surface-quiet); border: 3px solid var(--line-strong); }
-.window-one { left: 10%; }.window-two { right: 10%; }
-.empty-office { position: relative; width: 86%; margin: 36px auto; padding: 20px 10px 30px; text-align: center; background: var(--veil); border: 1px dashed var(--line-strong); border-radius: var(--radius); }
-.empty-office p { font-size: var(--fs-body); }.empty-symbol { display: block; font-size: var(--fs-num-xl); color: var(--ink-3); }
-.floor-label { position: absolute; bottom: 9px; left: 15px; font-size: var(--fs-micro); letter-spacing: 3px; color: var(--ink-3); }
-.rooms { position: absolute; top: 8px; left: 10px; font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: 1px; color: var(--ink-3); }
-.office-footer { padding: 14px 24px 18px; display: flex; justify-content: space-between; gap: 12px; color: var(--ink-3); font-size: var(--fs-meta); letter-spacing: .02em; }
+.office-panel .section-heading { padding: var(--s5) var(--s6) var(--s2); }
+/* THE OFFICE THAT WAS DRAWN IN CSS (removed 2026-09-23). Before the scene was a
+   canvas, the headquarters was a div with a 12px frame, two windows, a floor
+   label and a dashed .empty-office plate for when nobody was at a desk. Every
+   one of those rules was dead: no markup in this product has carried .window,
+   .floor-label, .empty-office or .empty-symbol since the first commit, and the
+   frame they drew was already overruled by #office-scene-container. They were
+   also the last literals in the scene's CSS (12px, 20px, 7px, 30px, 86%, 36px).
+   They are gone, and with them the temptation to style a second office.
+   The scene's real empty, loading and error states are .scene-note in
+   office_scene.css; #room-caption below the render says how many employees are
+   at their desks, in main.js's own words. */
+.rooms { position: absolute; top: var(--s2); left: var(--s3); font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: 1px; color: var(--ink-3); }
+/* The slate that says what is being looked at and when it was last read used
+   to hang below the console on the panel's bare ground. It is now the bottom
+   lip of the render's own frame (office_scene.css, .scene-slate), and it is
+   the only rule that dresses it. */
 .mode-row { display: flex; justify-content: space-between; gap: 12px; font-size: var(--fs-meta); margin: 16px 0; }
 .mode-row strong { font-size: var(--fs-micro); letter-spacing: .4px; }
 .primary, .danger { padding: 13px 18px; border-radius: 7px; width: 100%; font-size: var(--fs-body); font-weight: 600; }
@@ -280,70 +332,25 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 .login-lockup { display: block; width: 200px; height: auto; margin: 0 auto 26px; }.login label { display: block; font-size: var(--fs-meta); margin: 28px 0 8px; }.login input { width: 100%; padding: 12px; border: 1px solid var(--line-strong); border-radius: 7px; margin-bottom: 15px; }
 .message { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--alert-bg); color: var(--alert-ink); padding: 16px 22px; border: 1px solid var(--alert-line); border-radius: var(--radius-sm); max-width: 90vw; box-shadow: var(--shadow-dialog); z-index: 60; }
 @media (max-width: 1050px) { .workspace-grid { grid-template-columns: 1fr; }.ledger-column { order: 2; } }
-@media (max-width: 600px) { .topbar { height: 78px; }.topbar > .text-sm { display: none; }main { padding-top: 26px; }.page-heading { align-items: start; }.quiet { font-size: var(--fs-micro); }.notice { padding: 14px; }.notice .tag { display: none; }.side-column { grid-template-columns: 1fr; }.panel { padding: 20px; }.office-panel { padding: 0; }.office-scene { margin: 10px 12px 0; }.empty-office { width: 94%; }.office-footer { flex-direction: column; }.login { padding: 26px; }.section-heading { gap: 8px; } }
+@media (max-width: 600px) { .topbar { height: 78px; }.topbar > .text-sm { display: none; }main { padding-top: 26px; }.page-heading { align-items: start; }.quiet { font-size: var(--fs-micro); }.notice { padding: 14px; }.notice .tag { display: none; }.side-column { grid-template-columns: 1fr; }.panel { padding: 20px; }.office-panel { padding: 0; }.login { padding: 26px; }.section-heading { gap: 8px; } }
 /* (reduced motion is handled once, at the end of this file) */
 
 /* ==========================================================================
-   2D office viewport
-   The rendered scene stays dark — it is a night-time building interior — but it
-   is framed like the rest of the studio, so it reads as a window in the page
-   rather than a second application.
+   THE 3D WINDOW
+   ==========================================================================
+   The viewport, the console under it and the three readouts let into its bezel
+   are all in frontend/src/office_scene.css, which the renderer loads beside
+   this sheet and which reads the tokens above. What stood here was the older
+   copy of the same thing — a toolbar floating at top-right of the picture, a
+   second set of .cam-btn rules with its own padding, radius and .15s
+   transitions, a container with a clamped height — and every rule of it was
+   already beaten by the id-scoped rules in that file. Two stylesheets styling
+   one object is how the scene ends up with two of everything, so this sheet
+   now states only what belongs to the page around the render: the cursor over
+   the canvas, and nothing else.
    ========================================================================== */
-.office-scene-container {
-  position: relative;
-  /* A definite height is required: the canvas is sized from its parent, so if the parent's
-     height came from the canvas instead, leaving fullscreen would leave the canvas stuck at
-     its enlarged size with nothing to shrink it back. */
-  height: clamp(560px, 76vh, 1040px);
-  margin: 10px 24px 0;
-  border: 1px solid var(--scene-frame);
-  border-radius: 12px;
-  overflow: hidden;
-  background: var(--scene);
-  box-shadow: var(--shadow-scene-warm), var(--edge-hairline);
-}
-.office-canvas { width: 100%; height: 100%; display: block; background: var(--scene); cursor: grab; }
+.office-canvas { display: block; cursor: grab; }
 .office-canvas:active { cursor: grabbing; }
-
-.camera-toolbar { position: absolute; top: 12px; right: 12px; display: flex; gap: 6px; z-index: 10; }
-/* Scene chrome: dark, high-contrast controls that sit on the night render without competing
-   with the pixel art. Text stays >= 12px and >= 7:1 against the chrome. */
-.cam-btn {
-  padding: 6px 12px;
-  background: var(--scene-chrome);
-  color: var(--scene-chrome-ink);
-  border: 1px solid var(--scene-chrome-edge);
-  border-radius: 8px;
-  font-size: var(--fs-meta);
-  font-weight: 600;
-  letter-spacing: .01em;
-  line-height: 1.2;
-  transition: background .15s, border-color .15s, transform .12s;
-}
-.cam-btn:hover { background: var(--surface-hi); border-color: var(--line-strong); }
-.cam-btn:active { transform: translateY(1px); }
-.cam-btn:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
-.cam-btn-active { background: var(--forest); border-color: var(--forest-ink); color: var(--ink); }
-.cam-btn-active:hover { background: var(--forest-lift); }
-.cam-btn-media, .cam-btn-pub { background: var(--scene-chrome); color: var(--scene-chrome-ink); }
-.cam-btn-media:hover, .cam-btn-pub:hover { background: var(--surface-hi); border-color: var(--line-strong); }
-.btn-fs { background: var(--scene-chrome); color: var(--scene-chrome-ink); }
-.btn-fs:hover { background: var(--surface-hi); border-color: var(--line-strong); }
-.btn-exit-fs { background: var(--alert-bg); color: var(--alert-ink); border-color: var(--alert-line); }
-.btn-exit-fs:hover { background: var(--alert-bg-hi); }
-
-.office-scene-container:fullscreen,
-.office-scene-container.is-fullscreen {
-  position: fixed; top: 0; left: 0;
-  width: 100vw; height: 100vh;
-  padding: 0; margin: 0; border: none; border-radius: 0;
-  z-index: 9999;
-  background: var(--scene-deep);
-}
-.office-scene-container:fullscreen .office-canvas,
-.office-scene-container.is-fullscreen .office-canvas { width: 100%; height: 100%; }
-.office-scene-container:fullscreen .camera-toolbar,
-.office-scene-container.is-fullscreen .camera-toolbar { top: 20px; right: 24px; }
 
 /* ==========================================================================
    Dialogs — same paper, borders and ink as the panels behind them.
@@ -392,7 +399,10 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 
 .dialog-form { display: flex; flex-direction: column; gap: 10px; }
 .dialog-input { padding: 10px 12px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); color: var(--ink); font-size: var(--fs-body); width: 100%; }
-.dialog-input::placeholder { color: var(--ink-3); }
+.dialog-input::placeholder,
+.runbook-textarea::placeholder,
+.wf-notes::placeholder,
+.host-search-template::placeholder { color: var(--ink-3); }
 .dialog-input:focus { border-color: var(--teal); outline: none; box-shadow: 0 0 0 3px var(--focus-glow); }
 .dialog-submit-btn { padding: 11px; background: var(--forest); color: var(--ink-on-dark); border: 1px solid var(--forest); border-radius: var(--radius-sm); font-size: var(--fs-body); font-weight: 600; width: 100%; }
 .dialog-submit-btn:hover { background: var(--forest-lift); border-color: var(--forest-lift); }
@@ -631,7 +641,7 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 
 @media (max-width: 600px) {
   .studio-dialog { padding: 20px; width: 94%; }
-  .office-scene-container { margin: 10px 12px 0; height: clamp(360px, 58vh, 520px); border-width: 8px; border-top-width: 14px; }
+  /* the scene's own narrow rules are in office_scene.css, with the rest of it */
   .qc-scores-grid { grid-template-columns: repeat(2, 1fr); }
   .pub-actions-row, .pub-item-card, .channel-item { flex-direction: column; align-items: stretch; gap: 10px; }
   /* Badges label their card; they must not stretch into buttons. */
@@ -906,14 +916,16 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 .modules-panel { padding: 18px 20px; }
 
 /* ---------------------------------------------------------------- autonomy switch -- */
-.cam-switch { display: inline-flex; align-items: center; gap: 8px; padding: 5px 10px 5px 12px; font-family: var(--font-mono, ui-monospace, monospace); letter-spacing: .08em; text-transform: uppercase; }
+.cam-switch { display: inline-flex; align-items: center; gap: var(--s2); padding: var(--s1) var(--s3); font-family: var(--font-mono, ui-monospace, monospace); letter-spacing: .08em; text-transform: uppercase; }
 .cam-switch:disabled { opacity: .6; cursor: wait; }
 .switch-label { font-size: var(--fs-micro); color: var(--scene-chrome-muted); }
-.switch-track { position: relative; width: 34px; height: 16px; border-radius: var(--radius-xs); background: var(--alert-bg); border: 1px solid var(--alert-line); box-shadow: var(--inset-well); transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease); }
-.switch-knob { position: absolute; top: 2px; left: 2px; width: 12px; height: 10px; background: var(--alert-ink); border-radius: 3px; box-shadow: var(--shadow-knob); transition: left var(--dur) var(--ease), background var(--dur) var(--ease); }
+.switch-track { position: relative; width: var(--switch-w); height: var(--switch-h); border-radius: var(--radius-xs); background: var(--alert-bg); border: 1px solid var(--alert-line); box-shadow: var(--inset-well); transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease); }
+/* The knob's height and its travel are both read off the track, so the toggle
+   cannot drift out of square again: 2px is the track's two 1px borders. */
+.switch-knob { position: absolute; top: var(--switch-inset); left: var(--switch-inset); width: var(--switch-knob); height: calc(var(--switch-h) - var(--switch-inset) * 2 - 2px); background: var(--alert-ink); border-radius: var(--switch-r); box-shadow: var(--shadow-knob); transition: left var(--dur) var(--ease), background var(--dur) var(--ease); }
 .switch-state { font-size: var(--fs-meta); font-weight: 700; min-width: 26px; text-align: left; color: var(--alert-ink); font-variant-numeric: tabular-nums; }
 .cam-switch.is-on .switch-track { background: var(--ok-bg); border-color: var(--ok-ink); }
-.cam-switch.is-on .switch-knob { left: 18px; background: var(--teal); }
+.cam-switch.is-on .switch-knob { left: calc(var(--switch-w) - var(--switch-knob) - var(--switch-inset) - 2px); background: var(--teal); }
 .cam-switch.is-on .switch-state { color: var(--teal); }
 .cam-switch.is-pending .switch-state { color: var(--gold-ink); }
 
@@ -1099,6 +1111,17 @@ main { font-size: var(--fs-body); }
 .mode-btn.is-current { background: var(--forest); color: var(--ink-on-dark); border-color: var(--forest); cursor: default; opacity: 1; }
 .approvals-heading { margin-top: 6px; }
 .approvals-list { display: flex; flex-direction: column; gap: 8px; }
+/* Side by side with Module status, this panel is stretched to the taller one's height, so
+   the approvals region below the plate carried a band of dead ground that read as an
+   unfinished page (measured at 2560: 175px). The region is the approvals' room: when the
+   only thing in it is the panel's own empty plate, that plate is centred in the room it
+   owns, the way an empty state is placed rather than left hanging from the rule above it.
+   A plate stretched to the full height was tried and rejected: .topics-loading is capped
+   at --measure, so a tall one is a tall box narrower than its panel. When there ARE
+   approvals the list is a list again and the cards start at the top. */
+.governance-panel { display: flex; flex-direction: column; }
+.governance-panel > .approvals-list { flex: 1 1 auto; }
+.governance-panel > .approvals-list:has(> .topics-loading:only-child) { justify-content: center; }
 .approval-card { background: var(--surface-sunk); border: 1px solid var(--line); border-radius: var(--radius); padding: 11px; display: flex; flex-direction: column; gap: 6px; }
 .approval-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .approval-action { font-size: var(--fs-body); font-weight: 600; color: var(--ink); word-break: break-word; }
@@ -1134,8 +1157,12 @@ main { font-size: var(--fs-body); }
    The page is a lit room, not a flat fill: a cool key light from above-centre
    where the render sits, falling off to near-black at the corners. Fixed, so
    it does not travel while the ledger scrolls. */
+/* No background here. `:root` already paints --bg, and the root's background IS the
+   canvas: a second --bg on `body` is an ordinary in-flow background, which CSS paints
+   after every negative-z-index descendant of the body — so it buried the key light
+   below and the light never once reached the screen. The page is the same colour
+   without it, and the light is now on top of it where it was always written to be. */
 body {
-  background: var(--bg);
   min-height: 100vh;
 }
 body::before {
@@ -1285,6 +1312,13 @@ code, pre, .stat-uuid, .provenance-badge, .source-url {
   box-shadow: var(--lit-edge);
 }
 #open-settings.topbar-logout:hover { background: var(--forest-lift); color: var(--ink-on-dark); }
+/* Settings needs the Owner key, so before anyone has signed in it is a button that cannot
+   work — and it was the brightest object on the login screen. The workspace carries the
+   `hidden` attribute until the key is accepted, so that one attribute already states the
+   session; this reads it rather than adding a second source of truth in the script. Sign
+   out puts `hidden` back and the button leaves with it. Presentation only: nothing here
+   touches what the button does or when it is created. */
+body:has(#workspace[hidden]) #open-settings { display: none; }
 .topbar .env-banner { padding: 0 var(--s3); border-radius: var(--radius-sm); font-size: var(--fs-micro); letter-spacing: var(--track-caps); }
 .topbar .connection {
   padding: 0 var(--s3);
@@ -1314,31 +1348,109 @@ code, pre, .stat-uuid, .provenance-badge, .source-url {
 .ledger-column, .side-column { gap: 18px; }
 
 /* ------------------------------------------------------------------ login --
-   One object on a dark stage: the plate, the promise, the key. */
+   One object on a dark stage: the plate, the promise, the key — and, behind
+   it, the studio itself.
+
+   THE BACKDROP. This is the first screen a stranger sees, and it was an empty
+   room. It now carries the product's own world and no invented art: the night
+   city plate the headquarters is built from (`/assets/hq/plates`, the same
+   file the 3D window composites) stands behind the card, anchored to the
+   floor of the viewport so the skyline rises out of the bottom edge. It does
+   not move, it does not parallax and it never animates: it is a held frame,
+   and the form is the only thing on the screen that answers.
+
+   It cannot cost the card its legibility. The card is `.panel`, an opaque
+   --surface, so every measured pair inside it is exactly what it was on the
+   flat ground. Outside the card only the footer sits over the plate, and the
+   --login-core film takes the middle of the screen to 95% before the plate is
+   even reached, with --login-floor carrying the bottom strip to 98%.
+
+   WHY IT IS NOT A NEGATIVE-z LAYER ON body. A `body::after` at z-index -1 or
+   -2 was painted and then buried by the body's own background: measured from
+   the running page, a magenta test layer at -1 and at -2 sampled (5, 8, 14) at
+   three points and only appeared at 0. The body's background has since been
+   removed so that the key light can paint (see the `body` rule), but this
+   backdrop stays a positioned layer at z-index 0 on `main` regardless: it must
+   sit ABOVE the key light, not under it, or the light would wash the plate.
+   Everything that must stay above it already outranks it — the masthead is sticky at 40,
+   the card is positioned, the toast is fixed at 60 — and the footer, which is
+   the one plain block below it, is given `position: relative` for the same
+   reason. */
+main:has(> #login:not([hidden]))::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(52% 50% at 50% 44%, var(--login-core), transparent 82%),
+    linear-gradient(to bottom, var(--login-sky) 0%, transparent 26%, transparent 56%, var(--login-floor) 86%, var(--login-floor) 100%),
+    linear-gradient(var(--login-haze), var(--login-haze)),
+    url('/assets/hq/plates/night_city.webp');
+  background-repeat: no-repeat;
+  background-position: center, center, center, 50% 100%;
+  /* The plate is laid out to its full width and stands on the floor of the
+     viewport: `cover` would crop the two tall towers that frame the card. */
+  background-size: cover, cover, cover, 100% auto;
+}
+/* The one plain block that shares the screen with the backdrop. */
+.site-footer { position: relative; }
+/* The card stands in the middle of the room rather than hanging from the top
+   of it: at 1280x800 a fixed 6vh top margin put its last line 33px below the
+   fold, so the first screen a stranger saw ended mid-sentence. `safe center`
+   so a card taller than the space still starts at the top and scrolls, which
+   is what centring alone would have cost.
+
+   The height it is centred in is the screen less the three things that are
+   not it: the masthead (--topbar-h), this element's own top and bottom
+   padding (--s5 + --s7, which is --s9 + --s3), and the footer beneath it
+   (--s9 again, its two paddings and its one line of small caps). Take less
+   than that and the footer is pushed off the bottom of the first screen. */
+main:has(> #login:not([hidden])) {
+  display: flex;
+  align-items: safe center;
+  justify-content: center;
+  min-height: calc(100vh - var(--topbar-h) - var(--s9) - var(--s3) - var(--s9));
+}
 .login {
-  max-width: 560px;
-  margin: 6vh auto 9vh;
-  padding: 44px 46px 40px;
-  border-radius: 18px;
+  position: relative;
+  width: 100%;
+  max-width: var(--login-w);
+  margin: var(--s7) auto;
+  padding: var(--s9) var(--s9) var(--s8);
+  border-radius: var(--radius);
+  border-color: var(--line-strong);
   box-shadow: var(--shadow-dialog);
 }
+/* A printed badge, not a hole knocked in the card: the paper has its own cut
+   edge and its own shadow, and it sits flush with the words it introduces
+   rather than floating centred above left-aligned text. */
 .login-lockup {
-  width: 168px;
-  margin: 0 auto 28px;
-  padding: 16px 20px;
+  width: var(--badge-w);
+  margin: 0 0 var(--s7);
+  padding: var(--s4) var(--s5) var(--s5);
   background: var(--plate);
-  border-radius: 14px;
-  box-shadow: var(--shadow-raised);
+  border: 1px solid var(--plate-edge);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-badge);
 }
-.login h1 { font-size: var(--fs-hero); margin: 10px 0 14px; }
-.login .eyebrow { display: block; letter-spacing: .2em; color: var(--gold-ink); }
+.login h1 { font-size: var(--fs-hero); margin: var(--s2) 0 var(--s3); }
+/* Gold is rationed to what is live or waits for the Owner. The sign-in
+   eyebrow is neither: it is a standing line of type on a screen where nothing
+   is running yet, and spending the studio's one warm accent on it taught the
+   Owner that gold can mean "decoration" before he had seen it mean anything
+   else. It joins every other eyebrow in the product at --ink-3 (6.4:1 on
+   --surface); the forest of the sign-in button is left as the only saturated
+   thing on the screen, which is the one control that acts. */
+.login .eyebrow { display: block; letter-spacing: .2em; color: var(--ink-3); }
 .login label { color: var(--ink-3); font-size: var(--fs-micro); font-weight: 700; letter-spacing: var(--track-caps); text-transform: uppercase; }
 .login input {
   background: var(--surface-sunk);
   border: 1px solid var(--line-strong);
   color: var(--ink);
   border-radius: var(--radius-sm);
-  padding: 13px 14px;
+  padding: var(--s3) var(--s4);
   box-shadow: var(--inset-well);
   transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
@@ -1530,6 +1642,13 @@ code, pre, .stat-uuid, .provenance-badge, .source-url {
 .mode-buttons { gap: 6px; }
 .mode-btn { padding: 0 12px; font-size: var(--fs-meta); font-weight: 600; letter-spacing: .04em; }
 .mode-btn.is-current { background: var(--forest); border-color: var(--forest-lift); box-shadow: var(--lit-edge), var(--shadow-raised); }
+/* The one heading in the product with three children: label, count, reread. Left to
+   `space-between` the count floated in the middle of the rule (measured at 1920: 371px
+   from the left edge, 220px of empty ground to the button). The count and the button
+   are one group at the right end, the way the tag sits on every other heading. */
+.approvals-heading > .tag { margin-left: auto; }
+.approvals-heading > .tag + button { margin-left: var(--s3); }
+
 .approval-card { background: var(--surface-sunk); border-color: var(--line-strong); border-left: 2px solid var(--gold); }
 .tag {
   background: var(--surface-quiet);
@@ -1549,7 +1668,8 @@ code, pre, .stat-uuid, .provenance-badge, .source-url {
    is the viewport's and nothing else's, or the page grows a second hero. */
 .office-panel { box-shadow: var(--shadow-panel); }
 .office-panel .section-heading { border-bottom-color: var(--line-lit); }
-.office-footer { letter-spacing: .06em; text-transform: uppercase; font-size: var(--fs-micro); }
+/* The slate under the render carries its own setting now, on the bezel it is
+   seated in (office_scene.css, .scene-slate). */
 
 /* ---------------------------------------------------------------- dialogs --
    A dialog is a pane of glass lifted off the page, not a sheet of paper. The
@@ -1748,7 +1868,7 @@ code, pre, .stat-uuid, .provenance-badge, .source-url {
 }
 @media (max-width: 600px) {
   main { padding: 16px 14px 24px; }
-  .login { padding: 28px 22px; margin: 3vh auto 6vh; }
+  .login { padding: var(--s7) var(--s6); margin: var(--s6) auto; }
   .studio-dialog { padding: 0 18px 20px; }
   .dialog-header { margin: 0 -18px 16px; padding: 18px 18px 14px; }
   .modules li { grid-template-columns: minmax(0, 1fr) 28px auto; gap: 8px; }
@@ -2437,6 +2557,25 @@ input:disabled, select:disabled, textarea:disabled {
 .quiet:disabled, .quiet:disabled:hover { background: var(--surface-sunk); color: var(--ink-3); border-color: var(--line); }
 .danger:disabled, .danger:disabled:hover { background: var(--surface-sunk); color: var(--ink-3); border-color: var(--line); }
 
+/* ONE EXCEPTION, and it is not a refusal. The governance panel says which mode
+   the studio is in by disabling that mode's button — so the plate above would
+   paint the single most important state on the panel fainter and darker than
+   the two modes the studio is NOT in. A current mode is a selection, and this
+   page already has a language for a selection: the forest fill the ledger's
+   own active filter and the dialog's own active tab wear. It keeps it, at full
+   opacity and full saturation; only the pixel of press travel is taken away,
+   because there is nothing left to press. */
+.mode-btn.is-current,
+.mode-btn.is-current:disabled,
+.mode-btn.is-current:disabled:hover {
+  background: var(--forest);
+  border-color: var(--forest-lift);
+  color: var(--ink-on-dark);
+  opacity: 1;
+  filter: none;
+  box-shadow: var(--lit-edge), var(--shadow-raised);
+}
+
 /* DANGER — the one variant that was missing a hover. Destructive controls get
    a hotter ground, never a lighter one. */
 .danger:hover:not(:disabled) { background: var(--alert-bg-hi); border-color: var(--alert-ink); color: var(--alert-ink); }
@@ -2783,8 +2922,18 @@ details[open] > summary::before { transform: rotate(90deg); }
    With the well it reads as a window onto a longer text. (Nothing here fades
    or masks: every word is still there and still selectable.) */
 .scene-card .scene-prompt {
+  /* The well is 11.6em, which at this line-height is exactly eight lines — but every box
+     on this page is border-box, so the well's own padding and hairline ate into those
+     eight and the reader was left looking at 6.9 lines: the seventh was cut through the
+     middle of its letters in all five cards at once. The well measures its own content,
+     so the number stays the eight it was written as and the cut lands BETWEEN lines.
+     Nothing is hidden and nothing fades: the text below still scrolls. */
+  box-sizing: content-box;
   margin: var(--s3) var(--s3) 0;
-  padding: var(--s2) var(--s2) var(--s2) var(--s3);
+  /* No room at the foot. Content scrolls THROUGH a box's bottom padding, so eight whole
+     lines plus eight pixels of padding shows a sliver of a ninth; with the content box
+     ending at the hairline, the ninth line begins exactly where the window ends. */
+  padding: var(--s2) var(--s2) 0 var(--s3);
   background: var(--surface-sunk);
   border: 1px solid var(--line);
   border-radius: var(--radius-xs);

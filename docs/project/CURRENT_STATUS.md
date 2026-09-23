@@ -78,8 +78,8 @@ the row rhythm, the storyboard card header), and wrote the specification the bui
   new tests are the ledger fold, which changes *what* is on screen and had none.
 
 **Not finished, honestly.**
-- The research dialog is the longest in the product and is the only long one without a section
-  rail; the specification does not ask for one there.
+- *Corrected 2026-09-23 by the polishing pass:* the research dialog has the rail. What stood
+  here: it was the longest in the product and the only long one without one.
 - The login page's gold line breaks the rule that gold is rationed to what is live or waiting for
   the Owner; it is the only accent on that screen and the call is the Owner's.
 - The ledger's internal scroll always ends on a clipped half-row.
@@ -88,10 +88,65 @@ the row rhythm, the storyboard card header), and wrote the specification the bui
   scrollbars entirely, so no photograph in any pass shows one.
 - Everything was photographed over the page's own canvas renderer. **The interface has not been
   seen over the live Unreal stream**, which by this project's standard leaves that a guess.
-- The separate per-agent «Live window» (`frontend/src/live_window.js`) still carries the old light
-  palette, written into the file as literals: it will open pale beside the dark page.
+- *Corrected 2026-09-23 by the polishing pass:* the «Live window» is on the new palette, with a
+  test that catches a token drift. What stood here: it still carried the old light palette,
+  written into the file as literals.
 - `frontend/dist` in the repository is rebuilt, but the Owner still has to restart his studio to
   serve it.
+
+### The polishing pass — 2026-09-23
+
+Four of the five gaps the section above left open are closed, and an adversary measured the result
+twice by two independent methods.
+
+- **The per-agent «Live window» is on the new palette.** `frontend/src/live_window.js` builds a
+  separate popup document and cannot import the page's stylesheet, so its token block is a copy of
+  the one in `style.css`, with a comment saying why it is duplicated and that the two must move
+  together — and a test (`frontend/tests/hq_palette.test.js`) that fails when a token drifts,
+  because a drift is invisible in a browser.
+- **The research dialog has the section rail** the other three long dialogs have: five links that
+  repeat its own headings, on the wrappers that already existed.
+- **The sign-in screen** stands in the product's own world: the headquarters plate behind the card
+  under four named veils, the brand artwork on a deliberate printed badge, the gold eyebrow removed
+  (gold is rationed to what is live or waits for the Owner), and the Settings button hidden until
+  the key is accepted, by reading the `hidden` attribute the page already keeps.
+- **The chrome around the render is one instrument family.** Three readouts (clock and weather, the
+  live state, the slate) are let into the bezel — square where they meet the frame, rounded only
+  towards the picture — and the console's two tiers now start and end on the same margins, with the
+  camera as one grouped instrument. Every word each readout said, it still says.
+- **The scene answers the pointer and the keyboard.** Selection and hover marks are drawn at a
+  constant size *on screen*, so they read at fit zoom as at 4×, in the page's own focus colour and
+  geometry; the canvas takes focus, the arrows walk the seats in the renderer's own order, Enter
+  selects and Escape clears. The renderer's interface colours come from the page's tokens
+  (`frontend/src/hq_palette.js`, new); the art is untouched.
+- **What the scene says when it has nothing** — loading, failure, reconnecting, starting — uses the
+  product's own sentences in the page's empty/loading/error shapes, as elements with `role=status`
+  rather than grey text painted on the canvas.
+
+**Measured on the final build.** 2 853 text/ground pairs read from the *real pixels* of 22 views at
+1280, 1920 and 2560 — 0 below threshold, worst 5.28:1 — and the cascade-based sweep agreeing at
+671 pairs per width. 84 pairs over the render and 14 in the popup, all passing. A real Tab walk at
+1920 and 1280 over the sign-in screen, the workspace and all eight dialogs: no invisible focus, no
+trap, no ring under 3:1. `report.json`: 0 missing fixtures and 0 console errors at four widths.
+**146 frontend tests pass**, `tsc` clean, the build succeeds.
+
+**Seven defects the adversary found and fixed**, each measured before it was touched: the autonomy
+mode the studio is *in* was painted darker and fainter than the modes it is not in (1.05:1 plate,
+now the studio's green at 6.54:1); the page's key light had never once reached the screen, because
+`body` repainted the ground over it; four fields' placeholder sentences were written and invisible
+(1.1:1); the «NICIUNA» tag floated in the middle of the approvals heading; the Governance panel
+carried 175px of dead ground; the storyboard's text well cut its seventh line through the middle of
+the letters, in five cards at once; and the Settings dialog was the only one whose head rule was
+drawn between the title and its own sentence.
+
+**Still not finished, honestly.** 447 of 574 control borders measure under 3:1 — the ghost-control
+language the scene pass introduced deliberately, and a whole-surface decision rather than a small
+fix (WCAG does not require a boundary for a control whose label is visible). Moving the live badge
+onto the glass left the «Studio Office» heading alone in a wide empty band, and what belongs there
+must be a word the product already owns — the Owner's call. The two corner readouts cover 440px of
+the render's top edge that was whole before. At 1280×800 the sign-in card leaves no room for the
+footer on the first screen. The research rail's column is empty below its five links. And the
+interface has still never been photographed over the live Unreal stream.
 
 ## The rehearsal on the Owner's data (2026-09-18)
 

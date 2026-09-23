@@ -1,5 +1,6 @@
 import { HQAssets } from './hq_assets.js';
 import { WorldSimulationManager, HQRenderer } from './hq_world.js';
+import { scenePalette } from './hq_palette.js';
 
 /**
  * AMN-AI headquarters — the living office.
@@ -77,6 +78,21 @@ export const WORLD_H = 840;
 const LEGACY_CAB_OFFSET = 66;
 const LEGACY_FLOOR_OFFSET = 12;
 
+/**
+ * WHAT THE SCENE SAYS WHEN IT HAS NOTHING TO SHOW.
+ *
+ * These two sentences are the product's own and are unchanged, word for word, from when they were
+ * painted straight onto the canvas in a grey nobody chose. They are now laid over the viewport as
+ * real elements, so they take the same shape every other empty, loading and error state on the
+ * page takes (style.css, "3 STATES"): a calm plate with a rail at its edge, the product's words on
+ * it, and for a failure the alert triple. A screen reader can read them, which a fill of text on a
+ * canvas can never be.
+ */
+const SCENE_NOTES = {
+  loading: 'Loading the AMN-AI headquarters…',
+  error: 'The headquarters art could not be loaded.',
+};
+
 const WEATHER_ICONS = { clear: '☀', partly_cloudy: '⛅', cloudy: '☁', fog: '🌫', drizzle: '🌦', rain: '🌧', snow: '❄', storm: '⛈', unknown: '' };
 
 export class OfficeEngine {
@@ -138,6 +154,10 @@ export class OfficeEngine {
     /** @type {HQRenderer|null} */
     this.renderer = null;
     this.assetsFailed = false;
+    /** The element laid over the viewport while the scene is loading or its art failed. @type {HTMLElement|null} */
+    this._note = null;
+    /** @type {'loading'|'error'|null|undefined} */
+    this._noteKind = undefined;
 
     if (typeof document !== 'undefined' && !document.getElementById('office-scene-theme')) {
       const theme = document.createElement('link');
@@ -284,6 +304,62 @@ export class OfficeEngine {
       },
       { passive: false },
     );
+
+    /*
+     * THE KEYBOARD IN THE SCENE.
+     *
+     * Every employee in the headquarters was reachable with a pointer and with nothing else: the
+     * canvas took no focus, so a keyboard walked straight past the largest, most important object
+     * on the page. It is now a stop on the tab walk (tabindex in index.html) and it answers the
+     * arrows the way the pointer answers a move — the mark travels from employee to employee,
+     * reading the floor left to right and then down, and it is exactly the mark the pointer
+     * leaves. Enter and Space then do what a click does, through the same one call; nothing new
+     * is opened and no new request is made.
+     */
+    c.addEventListener('keydown', (e) => {
+      const key = e.key;
+      if (key === 'ArrowRight' || key === 'ArrowDown' || key === 'ArrowLeft' || key === 'ArrowUp') {
+        const order = this._seatOrder();
+        if (!order.length) return;
+        e.preventDefault();
+        const step = key === 'ArrowRight' || key === 'ArrowDown' ? 1 : -1;
+        const at = order.findIndex((a) => (a.id || a.agent_id) === this.hoverAgentId);
+        const next = at < 0 ? (step > 0 ? 0 : order.length - 1) : (at + step + order.length) % order.length;
+        this.hoverAgentId = order[next].id || order[next].agent_id;
+        return;
+      }
+      if (key === 'Enter' || key === ' ' || key === 'Spacebar') {
+        const order = this._seatOrder();
+        const agent = order.find((a) => (a.id || a.agent_id) === this.hoverAgentId);
+        if (!agent) return;
+        e.preventDefault();
+        this.selectedAgentId = agent.id || agent.agent_id;
+        this.onSelectAgent(agent);
+        return;
+      }
+      if (key === 'Escape' && this.hoverAgentId) {
+        e.preventDefault();
+        this.hoverAgentId = null;
+      }
+    });
+    c.addEventListener('blur', () => {
+      this.hoverAgentId = null;
+    });
+  }
+
+  /**
+   * The employees the keyboard walks, in the order a reader takes the building: each floor left
+   * to right, floors from the top down. Seats come from the renderer's own hit boxes, so what the
+   * arrows reach is exactly what a click can reach.
+   * @returns {any[]}
+   */
+  _seatOrder() {
+    const hits = this.renderer ? this.renderer.hits : [];
+    if (!hits || !hits.length) return this.agents.filter((a) => a && (a.id || a.agent_id));
+    return hits
+      .slice()
+      .sort((a, b) => (Math.round(a.y1 / 40) - Math.round(b.y1 / 40)) || (a.x0 - b.x0))
+      .map((h) => h.agent);
   }
 
   /** @param {number} sx @param {number} sy */
@@ -325,12 +401,27 @@ export class OfficeEngine {
     this.fps = Math.round((this._fpsFrames * 1000) / (now - this._fpsStart));
     this._fpsFrames = 0;
     this._fpsStart = now;
-    if (this.fpsElement) this.fpsElement.textContent = `Live Renderer ${this.fps}fps`;
+    // "Live Renderer 144fps" — the same four words and the same figure. The live state carries
+    // the weight; what it is and how fast it runs are the standing label and the telemetry.
+    if (this.fpsElement) {
+      this._setParts(this.fpsElement, [
+        ['scene-live', 'Live'],
+        ['scene-label', ' Renderer '],
+        ['scene-figure', `${this.fps}fps`],
+      ]);
+    }
     if (this.infoElement && this.world) {
       const time = this.world.time.state;
       const weather = this.world.weather;
       const icon = /** @type {Record<string,string>} */ (WEATHER_ICONS)[weather.state.condition] || '';
-      this.infoElement.textContent = `${time.text}  •  BUCHAREST  •  ${icon ? `${icon} ` : ''}${weather.label()}`;
+      const separator = '  •  ';
+      this._setParts(this.infoElement, [
+        ['scene-figure', time.text],
+        ['scene-sep', separator],
+        ['scene-label', 'BUCHAREST'],
+        ['scene-sep', separator],
+        ['scene-weather', `${icon ? `${icon} ` : ''}${weather.label()}`],
+      ]);
     }
   }
 
@@ -340,16 +431,15 @@ export class OfficeEngine {
     const w = this.canvas.width;
     const h = this.canvas.height;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = '#060a14';
+    // The empty viewport is the page's own --scene, read from the token block rather than
+    // repeated here: the ground behind the render and the ground of the render are one colour.
+    ctx.fillStyle = scenePalette().scene;
     ctx.fillRect(0, 0, w, h);
     if (!this.renderer) {
-      ctx.fillStyle = '#94a3b8';
-      ctx.font = `${Math.round(13 * this.dpr)}px system-ui, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.fillText(this.assetsFailed ? 'The headquarters art could not be loaded.' : 'Loading the AMN-AI headquarters…', w / 2, h / 2);
-      ctx.textAlign = 'left';
+      this._setNote(this.assetsFailed ? 'error' : 'loading');
       return;
     }
+    this._setNote(null);
     const { zoom, panX, panY } = this.viewport;
     ctx.setTransform(zoom, 0, 0, zoom, panX, panY);
     ctx.save();
@@ -372,6 +462,59 @@ export class OfficeEngine {
     });
     ctx.restore();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+
+  /* ------------------------------------------------------- what it says -- */
+
+  /**
+   * Lay the scene's own state over the viewport, or take it away. One element, reused, so the
+   * note does not flicker in and out of the document on every frame. The words are SCENE_NOTES's
+   * and the shape is the page's.
+   * @param {'loading'|'error'|null} kind
+   */
+  _setNote(kind) {
+    if (this._noteKind === kind) return;
+    const parent = this.canvas.parentElement;
+    if (!parent || typeof document === 'undefined') return;
+    this._noteKind = kind;
+    if (!kind) {
+      if (this._note) this._note.remove();
+      this._note = null;
+      return;
+    }
+    if (!this._note) {
+      this._note = document.createElement('div');
+      // A status, not an alert: it is read when the reader next pauses, and never interrupts.
+      this._note.setAttribute('role', 'status');
+      parent.append(this._note);
+    }
+    this._note.className = `scene-note scene-note-${kind}`;
+    this._note.textContent = SCENE_NOTES[kind];
+  }
+
+  /**
+   * THE TWO READOUTS ON THE BEZEL.
+   *
+   * Both say exactly the words they said before, character for character — `textContent` of each
+   * element is unchanged and every test that reads it still reads it. What is new is that the
+   * words are handed to the stylesheet in pieces, so the figure can be set in the page's mono
+   * with tabular figures (a clock whose seconds do not shove the city name sideways) and the
+   * standing label can be set as a label. Built with real elements rather than markup in a
+   * string: the page is served under a Content-Security-Policy.
+   *
+   * @param {HTMLElement} host @param {Array<[string, string]>} parts class name, then its text
+   */
+  _setParts(host, parts) {
+    if (typeof document === 'undefined' || typeof host.replaceChildren !== 'function') {
+      host.textContent = parts.map(([, text]) => text).join('');
+      return;
+    }
+    host.replaceChildren(...parts.map(([name, text]) => {
+      const span = document.createElement('span');
+      if (name) span.className = name;
+      span.textContent = text;
+      return span;
+    }));
   }
 
   /* ---------------------------------------------------------------- lift -- */

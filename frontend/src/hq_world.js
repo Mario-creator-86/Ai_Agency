@@ -6,6 +6,7 @@ import { PedestrianManager } from './hq_pedestrians.js';
 import { AgentVisualStateManager, spriteFor, screenModeFor, stateOf } from './hq_agents.js';
 import { SkyRenderer } from './hq_sky.js';
 import { bubbleFrame } from './speech_bubble.js';
+import { scenePalette, withAlpha } from './hq_palette.js';
 
 /**
  * WorldSimulationManager owns every manager of the living headquarters and advances them in one
@@ -848,8 +849,11 @@ export class HQRenderer {
       const bh = frame.lines.length * 8 + 9;
       const bx = Math.min(this.world.worldW - bw - 4, Math.max(4, x - bw / 2));
       const by = y - bh;
-      ctx.fillStyle = 'rgba(12,18,34,0.92)';
-      ctx.strokeStyle = 'rgba(148,163,184,0.6)';
+      // The caption is interface, not art: it is drawn on the same plate the readouts on the
+      // bezel are drawn on, in the scene's own chrome tokens rather than in a slate of its own.
+      const c = scenePalette();
+      ctx.fillStyle = withAlpha(c.scene, 0.92);
+      ctx.strokeStyle = withAlpha(c.chromeEdge, 0.9);
       ctx.lineWidth = 0.8;
       roundRect(ctx, bx, by, bw, bh, 4);
       ctx.fill();
@@ -859,36 +863,95 @@ export class HQRenderer {
       ctx.lineTo(x, by + bh + 4);
       ctx.lineTo(x + 3, by + bh);
       ctx.fill();
-      ctx.fillStyle = '#e2e8f0';
+      ctx.fillStyle = c.chromeInk;
       frame.lines.forEach((line, i) => ctx.fillText(line, bx + 6, by + 10 + i * 8));
       if (frame.pageCount > 1) {
-        ctx.fillStyle = '#64748b';
+        ctx.fillStyle = c.chromeMuted;
         ctx.font = '600 4.5px "Segoe UI", system-ui, sans-serif';
         ctx.fillText(`${frame.pageIndex + 1}/${frame.pageCount}`, bx + bw - 14, by + bh - 3);
       }
     }
   }
 
-  /** @param {CanvasRenderingContext2D} ctx @param {any} state */
+  /**
+   * THE POINTER AND THE SELECTION, 2026-09-23.
+   *
+   * What stood here drew a name tag 6.5 world-pixels tall under the seat, in a teal that was not
+   * the page's teal. The Owner looks at this scene at fit zoom, where the world is drawn at about
+   * 0.86 of its size at 1920 and at about 0.55 in the wide spread: a 6.5px tag arrives as five
+   * screen pixels of type, and the figure itself was given no mark at all, so "which one is under
+   * my hand" and "which one did I open" were both unanswerable at the zoom he actually uses.
+   *
+   * Now every mark is drawn at a CONSTANT SIZE ON THE SCREEN — measured in screen pixels and
+   * divided by the live zoom into world units — so the ring and the tag are the same size at fit
+   * zoom, at 1:1 and at 4x, exactly like the chrome around the render. The selected employee wears
+   * the page's own focus colour (--teal, the same ring every button on the page answers the
+   * keyboard with); the employee merely under the pointer wears the scene's chrome, which is the
+   * same plate the readouts on the bezel are drawn on. Both come from the token block.
+   *
+   * @param {CanvasRenderingContext2D} ctx @param {any} state
+   */
   drawSelection(ctx, state) {
-    for (const id of new Set([state.selectedId, state.hoverId])) {
+    const c = scenePalette();
+    const zoom = state.scale && state.scale > 0 ? state.scale : 1;
+    /** screen pixels, in world units at the zoom being drawn @param {number} n */
+    const px = (n) => n / zoom;
+    for (const id of new Set([state.hoverId, state.selectedId])) {
       if (!id) continue;
       const agent = state.agents.find((/** @type {any} */ a) => (a.id || a.agent_id) === id);
       const seat = agent ? this.m.seats?.[agent.desk_id] : null;
       if (!seat) continue;
+      const chosen = id === state.selectedId;
+      const hit = this.hits.find((/** @type {any} */ h) => (h.agent.id || h.agent.agent_id) === id);
+
+      // The mark on the figure. A ring the pointer can see from across the room, drawn round the
+      // same box a click is tested against, so what lights is exactly what is clickable.
+      if (hit) {
+        const pad = px(3);
+        ctx.save();
+        ctx.lineWidth = px(chosen ? 2 : 1.5);
+        ctx.strokeStyle = chosen ? c.teal : withAlpha(c.chromeInk, 0.65);
+        roundRect(ctx, hit.x0 - pad, hit.y0 - pad, hit.x1 - hit.x0 + pad * 2, hit.y1 - hit.y0 + pad * 2, px(4));
+        if (chosen) {
+          // The selected one also carries the page's focus geometry: a dark ring outside the
+          // bright one, so the mark survives a bright wall behind it exactly as --focus-ring does.
+          ctx.save();
+          ctx.lineWidth = px(4);
+          ctx.strokeStyle = withAlpha(c.sceneDeep, 0.75);
+          ctx.stroke();
+          ctx.restore();
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // The name tag, at a size that can be read: 11 screen pixels, the page's --fs-meta.
       const name = String(agent.display_name || agent.role_name || 'Agent');
       const status = stateOf(agent);
       const text = `${name} · ${status}`;
-      ctx.font = '600 6.5px "Segoe UI", system-ui, sans-serif';
-      const tw = ctx.measureText(text).width + 12;
-      const x = seat.x - tw / 2;
-      const y = seat.y + 4;
-      ctx.fillStyle = id === state.selectedId ? 'rgba(20,184,166,0.92)' : 'rgba(12,18,34,0.88)';
-      roundRect(ctx, x, y, tw, 11, 5);
+      ctx.save();
+      ctx.font = `600 ${px(11)}px "Segoe UI", system-ui, sans-serif`;
+      const padX = px(8);
+      const tw = ctx.measureText(text).width + padX * 2;
+      const th = px(20);
+      const x = Math.min(this.world.worldW - tw - px(2), Math.max(px(2), seat.x - tw / 2));
+      const y = (hit ? hit.y1 : seat.y) + px(5);
+      ctx.fillStyle = chosen ? c.teal : withAlpha(c.scene, 0.92);
+      roundRect(ctx, x, y, tw, th, px(4));
       ctx.fill();
-      ctx.fillStyle = '#f8fafc';
-      ctx.fillText(text, x + 6, y + 8);
+      if (!chosen) {
+        ctx.lineWidth = px(1);
+        ctx.strokeStyle = withAlpha(c.chromeEdge, 0.9);
+        ctx.stroke();
+      }
+      // On the teal plate the label is the page's deepest ground, as it is on every teal the page
+      // fills; on the chrome plate it is the chrome's own ink.
+      ctx.fillStyle = chosen ? c.sceneDeep : c.chromeInk;
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, x + padX, y + th / 2);
+      ctx.restore();
     }
+    ctx.textBaseline = 'alphabetic';
   }
 }
 

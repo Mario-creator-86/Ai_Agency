@@ -51,38 +51,159 @@ export function nowLine(runtimeState, taskType) {
   return 'no task right now';
 }
 
-/** The popup's stylesheet, through CSSOM because the CSP forbids an inline <style>. */
+/**
+ * The popup's stylesheet, through CSSOM because the CSP forbids an inline `<style>`.
+ *
+ * WHY THE PALETTE IS WRITTEN OUT AGAIN HERE. A popup is a separate document: it cannot
+ * import the page's stylesheet, and a constructable sheet built in the opener's realm is
+ * refused by the popup's own, so the values have to be copied into the file. The source of
+ * truth is the `:root` block at the top of `frontend/src/style.css` — every custom property
+ * below is a verbatim copy of the one there, under the same name, and a token that changes
+ * there has to be changed here in the same commit or this window drifts away from the page
+ * it belongs to. Nothing below states a colour, a size, a radius or a shadow of its own;
+ * the rules use the tokens exactly as the page's own rules do.
+ *
+ * Two properties are this document's own, because the page has no equivalent, and both say
+ * so where they are declared. There is no transition, no animation and no scripted smooth
+ * scroll anywhere in this sheet: nothing here moves, so `prefers-reduced-motion` has
+ * nothing to switch off.
+ */
 const LIVE_STYLES = `
 :root {
-  --bg: #f5f4ef; --surface: #fffefa; --surface-sunk: #f2f2ea; --surface-quiet: #eef0e6;
-  --line: #dfe3d9; --line-strong: #c9d1c2;
-  --ink: #233b37; --ink-2: #5d6a62; --ink-3: #5f6a5d;
-  --forest: #254e43; --forest-lift: #326753; --teal: #218371;
-  --ok-bg: #e6ede4; --ok-line: #b4c9b8; --ok-ink: #3f6b52;
-  --warn-bg: #f4eedd; --warn-line: #ddcba0; --warn-ink: #7f6329;
-  --alert-bg: #f5eae3; --alert-line: #e6c3b0; --alert-ink: #9a573c;
-  --info-bg: #e4efea; --info-line: #b3cfc4; --info-ink: #1f6b5c;
+  /* --- copied from the :root block of frontend/src/style.css --------------- */
+  --bg:            #05080e;
+  --surface:       #0d131e;
+  --surface-quiet: #161e2e;
+  --line:          #1e2839;
+  --line-strong:   #2d3b53;
+  --ink:           #eaf0fb;
+  --ink-2:         #a9b6cc;
+  --ink-3:         #8a98b2;
+  --forest-deep:   #0a1512;
+  --forest-ink:    #63c9a9;
+  --gold:          #e0b062;
+  --warn-bg:       #2a2011;
+  --warn-line:     #5c4620;
+  --warn-ink:      #f0c887;
+  --alert-ink:     #ff9d8f;
+  --info-ink:      #7ad4ea;
+  --radius-sm:     8px;
+  --radius-pill:   999px;
+  --lit-edge:      inset 0 1px 0 rgba(255, 255, 255, .13);
+  --font-sans:     "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Inter", "Helvetica Neue", Arial, sans-serif;
+  --font-mono:     ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace;
+  --track-caps:    .16em;
+  --fs-micro:      10px;
+  --fs-meta:       11.5px;
+  --fs-body:       13px;
+  --fs-h3:         15px;
+  --lh-snug:       1.4;
+  --lh-body:       1.6;
+  --w-semi:        600;
+  --w-bold:        700;
+  --s1: 4px;  --s2: 8px;  --s3: 12px; --s4: 16px; --s5: 20px;
+  /* --- this document's own, because the page has nothing that does this job - */
+  /* The page's ledger rail is --time-rail (54px) and shows HH:MM. This window
+     is watching one employee work, so it shows the second as well, and eight
+     mono figures do not fit in 54. */
+  --live-rail: 62px;
+  /* The feed scrolls under a fixed footer; this is the room kept for it. */
+  --live-foot: 44px;
+  color-scheme: dark;
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--ink); font: 13px/1.5 "Segoe UI", Arial, sans-serif; }
-header { position: sticky; top: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 16px; background: var(--forest); color: #fff; }
-header h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -.2px; }
-.pill { font-size: 10px; font-weight: 700; letter-spacing: .08em; padding: 4px 10px; border-radius: 20px; background: var(--surface-quiet); color: var(--ink-2); border: 1px solid var(--line-strong); white-space: nowrap; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: var(--fs-body)/var(--lh-body) var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  font-synthesis: none;
+}
+header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding: var(--s3) var(--s4);
+  background: var(--forest-deep);
+  color: var(--ink);
+  border-bottom: 1px solid var(--line);
+  box-shadow: var(--lit-edge);
+}
+header h1 { margin: 0; font-size: var(--fs-h3); font-weight: var(--w-semi); letter-spacing: -.015em; }
+.pill {
+  font-size: var(--fs-micro);
+  font-weight: var(--w-bold);
+  letter-spacing: var(--track-caps);
+  padding: var(--s1) var(--s3);
+  border-radius: var(--radius-pill);
+  background: var(--surface-quiet);
+  color: var(--ink-3);
+  border: 1px solid var(--line-strong);
+  white-space: nowrap;
+}
 .pill.is-busy { background: var(--warn-bg); color: var(--warn-ink); border-color: var(--warn-line); }
-.now { margin: 0; padding: 10px 16px; font-size: 12.5px; color: var(--ink-2); border-bottom: 1px solid var(--line); background: var(--surface); }
+.now {
+  margin: 0;
+  padding: var(--s3) var(--s4);
+  font-size: var(--fs-meta);
+  color: var(--ink-2);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
 .now strong { color: var(--ink); }
-.live-feed { list-style: none; margin: 0; padding: 6px 16px 16px; display: flex; flex-direction: column; gap: 6px; }
-.live-row { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 8px; padding: 7px 8px; background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--line-strong); border-radius: 6px; }
-.live-row time { font-size: 10.5px; color: var(--ink-3); padding-top: 2px; font-variant-numeric: tabular-nums; }
-.live-head { color: var(--ink); }
-.live-head strong { font-weight: 650; }
-.live-text { color: var(--ink-2); margin-top: 2px; overflow-wrap: anywhere; white-space: pre-wrap; }
-.live-speech { border-left-color: var(--forest); }
-.live-production { border-left-color: #4a7fb5; }
-.live-money { border-left-color: var(--warn-ink); }
+.live-feed {
+  list-style: none;
+  margin: 0;
+  padding: var(--s2) var(--s4) var(--live-foot);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+.live-row {
+  display: grid;
+  grid-template-columns: var(--live-rail) minmax(0, 1fr);
+  gap: var(--s2);
+  padding: var(--s2);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+}
+.live-row time {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  letter-spacing: -.03em;
+  color: var(--ink-3);
+  padding-top: 1px;
+  font-variant-numeric: tabular-nums;
+}
+.live-head { color: var(--ink-2); line-height: var(--lh-snug); }
+.live-head strong { color: var(--ink); font-weight: 650; }
+.live-text { color: var(--ink-3); margin-top: 2px; line-height: var(--lh-snug); overflow-wrap: anywhere; white-space: pre-wrap; }
+/* The kind rails, the same four meanings and the same four colours the ledger
+   on the page gives them: what an employee said, what the studio produced,
+   what it cost, and what is for the Owner. */
+.live-speech { border-left-color: var(--forest-ink); }
+.live-production { border-left-color: var(--info-ink); }
+.live-money { border-left-color: var(--gold); }
 .live-owner { border-left-color: var(--alert-ink); }
-.live-empty { padding: 18px 16px; color: var(--ink-3); font-style: italic; }
-footer { position: fixed; bottom: 0; left: 0; right: 0; padding: 8px 16px; font-size: 10.5px; color: var(--ink-3); background: var(--surface); border-top: 1px solid var(--line); }
+.live-empty { padding: var(--s5) var(--s4); color: var(--ink-3); font-style: italic; }
+footer {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: var(--s2) var(--s4);
+  font-size: var(--fs-micro);
+  color: var(--ink-3);
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+}
 `;
 
 export class LiveWindows {
