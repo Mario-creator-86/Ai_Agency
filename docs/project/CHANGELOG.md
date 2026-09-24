@@ -1,5 +1,15 @@
 # Changelog
 
+## The replay offered once, lit by its own hour — the first YES — 2026-09-24
+
+- **The invitation** (`frontend/src/replay_invite.js`): once per session, while the studio is truly at rest, a glass pane under the building with words from the record only; «Vezi reluarea» / «Nu acum»; never loops, never starts by itself; a live event removes it.
+- **The replay lit by its own hour**: the replayed instant's real sun, no weather drawn («vremea de atunci nu e cunoscută»), the shelter clock marked ATUNCI; the register drawer notes that it stays live.
+- **The books as they were** (`backend/app/economy/as_of.py`, `GET /api/v1/economy/as-of`): balance, budgets, spend and tokens at up to 240 past moments in eight queries; the walls say «atunci» in the replay.
+- **The run found in one read**: `GET /api/v1/events?since=<instant>` (covering index); the page falls back to bisection against an older studio.
+- Migration `0047_replay_reads` (two additive indexes); keyboard focus returns to the dock's «Reluare» key after an automatic return to live; the reduced-motion drawer snap restyles only the panel.
+- The judge's honesty fixes: «Ultima rulare încheiată» instead of «Ultima zi de lucru»; no live «Actualizat» beside a replayed «acum:»; no as-of request to a studio without the route.
+- Tests: frontend 396/396, tsc clean; backend 103 passed; ruff and mypy clean.
+
 ## The day replayed from its record, and a live arrival seen across the room — 2026-09-24
 
 - **«Reluarea zilei»** (`frontend/src/day_replay.js`, `replay_player.js`): the newest finished run played back from its recorded events only, time-compressed, with quiet stretches named and sped up; labelled at every instant (letterbox, grey-violet grade, «RELUARE» chip, «ATUNCI» clock, violet tags); play, pause, scrub by stage, 1×/4×/16×, Esc; live wins within 6 s; hidden when no run has finished. Verified against an independent reducer on two real runs: 0 differences in 889 checks.

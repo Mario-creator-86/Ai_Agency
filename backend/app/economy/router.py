@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.economy.accountant import AccountantError, daily_figures, reconcile_day
+from app.economy.as_of import MAX_MOMENTS, economy_as_of
 from app.economy.budget import BudgetCommand, budget_status, set_budget
 from app.economy.prices import PriceCommand, list_prices, set_price
 from app.economy.services import (
@@ -128,6 +129,21 @@ def create_economy_router() -> APIRouter:
     def get_treasury(request: Request) -> dict:
         """Balances by money class, with every figure labelled and the trial balance attached."""
         return treasury_snapshot(request.app.state.engine)
+
+    @router.get("/as-of")
+    def get_as_of(
+        request: Request,
+        at: Annotated[list[str] | None, Query(max_length=MAX_MOMENTS)] = None,
+    ) -> dict:
+        """The spendable balance and the day's budget, spend and tokens at past moments.
+
+        One reading per `at` (repeat it, up to 240), from the books' own rows up to that moment:
+        what the Treasury's wall and the tokens plate said then, for the replay of a day.
+        """
+        try:
+            return economy_as_of(request.app.state.engine, at or [])
+        except ValueError as exc:
+            raise HTTPException(422, f"at: {exc}") from None
 
     @router.get("/budget")
     def get_budget(request: Request) -> dict:

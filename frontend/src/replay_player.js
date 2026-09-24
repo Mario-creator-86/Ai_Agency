@@ -13,8 +13,9 @@
  */
 
 import {
-  LIVE_WINS_MS, REPLAY_BUBBLE_MS, REPLAY_SPEEDS, REPLAY_STEP_MS, ReplayClock, agentsAt, buildTimeline, crossed, frameAt,
-  captionLines, indexAt, nextStageTime, prevStageTime, quietSpans, readRecord, replayBubble, replayWords, replayableRun, stageTicks,
+  LIVE_WINS_MS, REPLAY_BUBBLE_MS, REPLAY_SPEEDS, REPLAY_STEP_MS, ReplayClock, acceptFigures, agentsAt, buildTimeline, crossed, figuresQuery,
+  figuresAt, frameAt, captionLines, indexAt, nextStageTime, prevStageTime, quietSpans, readRecord, replayBubble, replayWords, replayableRun,
+  stageTicks,
 } from './day_replay.js';
 import { latestFilm } from './hq_screens.js';
 import { describeEvent } from './ledger.js';
@@ -83,6 +84,15 @@ export class DayReplayPlayer {
     this.returnFocus = null;
     this.film = /** @type {{assetId: string, date: string|null, canvas: HTMLCanvasElement}|null} */ (null);
     this.filmRead = 'none';
+    /** How the record was read the last time: one read by time, or bisection (an older studio). */
+    this.readMethod = '';
+    /**
+     * The books at the moments the run crossed (/economy/as-of, W15), sorted; null when the studio
+     * cannot answer them (an older studio), and the Treasury and the tokens plate then say «—».
+     * @type {any[]|null}
+     */
+    this.figures = null;
+    this.figuresRun = '';
     this.el = {
       toggle: /** @type {HTMLButtonElement} */ ($('replay-toggle')),
       viewport: $('scene-viewport'),
@@ -105,6 +115,8 @@ export class DayReplayPlayer {
       liveGo: /** @type {HTMLButtonElement} */ ($('replay-live-go')),
       liveCount: $('replay-live-count'),
       announce: $('replay-announce'),
+      weather: $('replay-weather'),
+      note: $('register-replay-note'),
       speeds: /** @type {HTMLButtonElement[]} */ (Array.from(document.querySelectorAll('#replay-bar .replay-speed'))),
     };
     this._loop = this._loop.bind(this);
@@ -160,11 +172,20 @@ export class DayReplayPlayer {
     this.say('Se încarcă reluarea zilei din registrul studioului…');
     try {
       if (!this.timeline || this.timeline.runId !== String(run.id)) {
-        const record = await readRecord((after, limit) => this.deps.api(`/events?after=${after}&limit=${limit}`), run, { cursor: this.deps.cursor(), known: this.deps.known() });
+        const record = await readRecord((after, limit) => this.deps.api(`/events?after=${after}&limit=${limit}`), run, {
+          cursor: this.deps.cursor(),
+          known: this.deps.known(),
+          // one read by time where the studio has it (W15); an older one is bisected as before
+          since: (iso, limit) => this.deps.api(`/events?since=${encodeURIComponent(iso)}&limit=${limit}`),
+        });
         this.timeline = buildTimeline(run, record.events, { complete: record.complete });
         this.requests = record.requests;
+        this.readMethod = record.method;
       }
-      await this._readFilm(run);
+      // the world will be lit by the run's own hour: its plates are composed while this is read
+      const engine = this.deps.engine();
+      const lit = engine && engine.prepareMoment && this.timeline ? engine.prepareMoment(this.timeline.start).catch(() => false) : Promise.resolve(false);
+      await Promise.all([this._readFilm(run), this._readFigures(this.timeline), lit]);
     } catch {
       this.timeline = null;
       this.say('Registrul rulării nu a putut fi citit. Clădirea rămâne live.');
@@ -196,6 +217,10 @@ export class DayReplayPlayer {
     this.el.viewport.dataset.replay = 'on';
     this.el.bar.hidden = false;
     this.el.then.hidden = false;
+    this.el.weather.hidden = false;
+    const day = timeline.date ? timeline.date.slice(8, 10) + '.' + timeline.date.slice(5, 7) : '';
+    this.el.note.textContent = `Clădirea redă ${day || 'ultima rulare încheiată'} · registrul rămâne live`;
+    this.el.note.hidden = false;
     this.el.toggle.setAttribute('aria-pressed', 'true');
     this.el.toggle.title = 'Ieși din reluare (Esc)';
     this._speed(1);
@@ -203,7 +228,7 @@ export class DayReplayPlayer {
     this.last = performance.now();
     this.raf = requestAnimationFrame(this._loop);
     const w = this.words();
-    if (w) this.say(`Reluarea zilei a început: rularea din ${w.chip.replace(/^RELUARE · /, '').replace(' · ', ', ora ')}. Nu este live. Esc iese.`);
+    if (w) this.say(`Reluarea zilei a început: rularea din ${w.chip.replace(/^RELUARE · /, '').replace(' · ', ', ora ')}. Nu este live; vremea de atunci nu e cunoscută. Registrul rămâne live. Esc iese.`);
     this.el.play.focus({ preventScroll: true });
   }
 
@@ -222,6 +247,8 @@ export class DayReplayPlayer {
     this.el.live.hidden = true;
     this.el.bar.hidden = true;
     this.el.then.hidden = true;
+    this.el.weather.hidden = true;
+    this.el.note.hidden = true;
     delete this.el.viewport.dataset.replay;
     this.el.toggle.setAttribute('aria-pressed', 'false');
     this.el.toggle.title = 'Reluarea zilei: ultima rulare încheiată, redată din registrul studioului';
@@ -258,7 +285,14 @@ export class DayReplayPlayer {
     };
     tick();
     this.liveTick = window.setInterval(tick, 250);
-    this.liveTimer = window.setTimeout(() => this.exit({ focus: false }), LIVE_WINS_MS);
+    this.liveTimer = window.setTimeout(() => {
+      // Back to live by itself (W15): the keyboard that was on the replay's controls lands on the
+      // dock's «Reluare» key, which is still there, rather than on nothing.
+      const active = document.activeElement;
+      const onControls = Boolean(active && (this.el.bar.contains(active) || this.el.live.contains(active)));
+      this.exit({ focus: false });
+      if (onControls && !this.el.toggle.hidden) this.el.toggle.focus({ preventScroll: true });
+    }, LIVE_WINS_MS);
   }
 
   /* ---------------------------------------------------------- the frames -- */
@@ -315,6 +349,8 @@ export class DayReplayPlayer {
    * @param {import('./day_replay.js').ReplayFrame} frame
    */
   facts(frame) {
+    // the books as they stood at the moment (/economy/as-of): the newest reading at or before it
+    const reading = /** @type {any} */ (figuresAt(this.figures, frame.t));
     const film = latestFilm([frame.run]);
     const shown = film && this.film && this.film.assetId === film.assetId ? { ...film, canvas: this.film.canvas } : null;
     return {
@@ -322,8 +358,8 @@ export class DayReplayPlayer {
       track: frame.track,
       today: this.deps.today(),
       live: true,
-      treasury: null,
-      budget: null,
+      treasury: reading ? reading.treasury : null,
+      budget: reading ? reading.budget : null,
       episodes: null,
       topics: frame.topics,
       film: shown,
@@ -333,8 +369,28 @@ export class DayReplayPlayer {
       stopped: null,
       timeZone: this.deps.timeZone(),
       replay: true,
-      reads: { runs: 'ok', episodes: 'pending', figures: 'pending', ledger: frame.topics.titles.length ? 'ok' : 'pending', film: film ? (shown ? 'ok' : this.filmRead === 'failed' ? 'failed' : 'pending') : 'pending' },
+      reads: { runs: 'ok', episodes: 'pending', figures: reading ? 'ok' : 'pending', ledger: frame.topics.titles.length ? 'ok' : 'pending', film: film ? (shown ? 'ok' : this.filmRead === 'failed' ? 'failed' : 'pending') : 'pending' },
     };
+  }
+
+  /**
+   * The books at every moment the run can have moved a figure (day_replay.js figureMoments), in
+   * one request, once per run. A studio without /economy/as-of answers 404: the walls say «—».
+   * @param {import('./day_replay.js').Timeline|null} timeline
+   */
+  async _readFigures(timeline) {
+    if (!timeline) return;
+    if (this.figuresRun === timeline.runId && this.figures) return;
+    // a studio that could not read its log by time predates the books' read too (W16): not asked
+    const query = figuresQuery(timeline, this.readMethod);
+    if (!query) {
+      this.figures = null;
+      this.figuresRun = '';
+      return;
+    }
+    const answer = await this.deps.api(query.path).catch(() => null);
+    this.figures = acceptFigures(answer, query.moments);
+    this.figuresRun = this.figures ? timeline.runId : '';
   }
 
   /** @param {any} run */
@@ -358,6 +414,8 @@ export class DayReplayPlayer {
     const clock = this.clock;
     if (!timeline || !clock) return;
     const engine = this.deps.engine();
+    // the world is lit by the replayed moment's own sun (the world re-reads it once a second)
+    if (engine) engine.setReplayMoment(clock.t);
     const index = indexAt(timeline, clock.t);
     if (force || index !== this.lastIndex) {
       this.lastIndex = index;

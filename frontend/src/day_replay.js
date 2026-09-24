@@ -123,29 +123,52 @@ export async function locateStart(probe, t, bounds) {
 }
 
 /**
- * The run's events, read from the studio's record once: the start located by bisection, then
- * pages forward until the run's own finish event (or its recorded finish time) is passed.
+ * The run's events, read from the studio's record once. A studio that reads its log by time
+ * (`/events?since=`, W15) gives the run's first page in one request: `options.since(iso, limit)`
+ * asks from a moment before the run's recorded start, and the page is believed only when it
+ * names the instant it was read from (an older studio ignores the parameter and answers from the
+ * log's beginning). Otherwise the start is located by bisection. Then pages forward until the
+ * run's own finish event (or its recorded finish time) is passed.
  * @param {(after: number, limit: number) => Promise<{events?: any[], next_cursor?: number, has_more?: boolean}>} get
  * @param {any} run a replayableRun
- * @param {{cursor?: number, known?: any[]}} [options]
- * @returns {Promise<{events: any[], requests: number, complete: boolean}>}
+ * @param {{cursor?: number, known?: any[], since?: (iso: string, limit: number) => Promise<any>}} [options]
+ * @returns {Promise<{events: any[], requests: number, complete: boolean, method: 'since'|'bisect'}>}
  */
 export async function readRecord(get, run, options = {}) {
   const start = Date.parse(String(run.started_at));
   const end = Date.parse(String(run.finished_at));
-  const bounds = searchBounds(options.known || [], start, options.cursor || 0);
-  const probe = async (/** @type {number} */ after) => {
-    const page = await get(after, 1);
-    return (page && Array.isArray(page.events) && page.events[0]) || null;
-  };
-  const located = await locateStart(probe, start, bounds);
+  let requests = 0;
+  /** @type {any} */
+  let firstPage = null;
+  let method = /** @type {'since'|'bisect'} */ ('bisect');
+  let after = 0;
+  if (options.since) {
+    const from = new Date(start - REPLAY_TAIL_MS).toISOString();
+    requests += 1;
+    const page = await options.since(from, REPLAY_PAGE).catch(() => null);
+    if (page && typeof page.since === 'string' && Array.isArray(page.events)) {
+      firstPage = page;
+      method = 'since';
+    }
+  }
+  if (!firstPage) {
+    const bounds = searchBounds(options.known || [], start, options.cursor || 0);
+    const probe = async (/** @type {number} */ k) => {
+      const page = await get(k, 1);
+      return (page && Array.isArray(page.events) && page.events[0]) || null;
+    };
+    const located = await locateStart(probe, start, bounds);
+    requests += located.requests;
+    after = located.after;
+  }
   /** @type {any[]} */
   const events = [];
-  let after = located.after;
   let pages = 0;
   let complete = false;
   while (!complete && pages < REPLAY_MAX_PAGES) {
-    const page = await get(after, REPLAY_PAGE);
+    const page = firstPage || (await get(after, REPLAY_PAGE));
+    if (!firstPage) requests += 1;
+    firstPage = null;
     pages += 1;
     const rows = page && Array.isArray(page.events) ? page.events : [];
     for (const event of rows) {
@@ -166,7 +189,89 @@ export async function readRecord(get, run, options = {}) {
     }
     after = Number(page.next_cursor) || Number(rows[rows.length - 1].sequence) || after + rows.length;
   }
-  return { events, requests: located.requests + pages, complete };
+  return { events, requests, complete, method };
+}
+
+/** The most moments one read of the books asks about (the backend's own cap). */
+export const FIGURES_MAX = 240;
+/** A reading is taken this long after the event that moved a figure, and shown from its event on. */
+export const FIGURE_STEP_MS = 1;
+
+/**
+ * The moments at which the replay asks the books what the Treasury and the tokens plate said
+ * (/economy/as-of, W15): the run's start and end, and every event after which a figure can have
+ * changed: a finished agent run (its tokens and price are counted when it finishes) and every
+ * economy event (a cost recorded or billed, a hold, a budget, money in). The books' rows are
+ * stamped before the event that announces them, so a reading a millisecond after the event's own
+ * stamp (FIGURE_STEP_MS: the page's clock counts whole milliseconds, the record microseconds)
+ * holds it. Between two such moments nothing the walls show can change. Sorted, without repeats,
+ * at most FIGURES_MAX (the start, the end and the first changes).
+ * @param {Timeline} timeline
+ * @returns {string[]} ISO instants
+ */
+export function figureMoments(timeline) {
+  const times = new Set([timeline.start]);
+  for (const event of timeline.events) {
+    const type = String(event.event_type || '');
+    if (type === 'agent.run_completed' || type.startsWith('economy.')) {
+      const at = stamp(event);
+      if (Number.isFinite(at)) times.add(at + FIGURE_STEP_MS);
+    }
+  }
+  const last = timeline.end + FIGURE_STEP_MS;
+  const sorted = [...times].filter((t) => Number.isFinite(t) && t < last).sort((a, b) => a - b);
+  const kept = sorted.slice(0, FIGURES_MAX - 1);
+  kept.push(last);
+  return kept.map((t) => new Date(t).toISOString());
+}
+
+/**
+ * The books' read for a replay, or null when the studio cannot answer it (W16). /events?since
+ * and /economy/as-of came with the same backend (migration 0047): a studio whose log did not
+ * name the instant asked (readRecord's method 'bisect') predates both, so the books are not
+ * asked at all, rather than answered with a 404 the browser logs as an error. Its walls say «—».
+ * @param {Timeline|null} timeline
+ * @param {'since'|'bisect'|string|null|undefined} method how readRecord read the run's events
+ * @returns {{path: string, moments: string[]}|null}
+ */
+export function figuresQuery(timeline, method) {
+  if (!timeline || method !== 'since') return null;
+  const moments = figureMoments(timeline);
+  return { path: `/economy/as-of?${moments.map((m) => `at=${encodeURIComponent(m)}`).join('&')}`, moments };
+}
+
+/**
+ * The books' reading that held at `t`: the newest one taken at or before it; null before the
+ * first (a replayed wall then says «—»).
+ * @param {Array<{at: string}>|null|undefined} readings sorted by `at`
+ * @param {number} t ms
+ */
+export function figuresAt(readings, t) {
+  if (!Array.isArray(readings)) return null;
+  let found = null;
+  for (const reading of readings) {
+    const at = Date.parse(String(reading && reading.at));
+    if (!Number.isFinite(at) || at > t + FIGURE_STEP_MS) break;
+    found = reading;
+  }
+  return found;
+}
+
+/**
+ * The books' answer, believed only when it answers the moments asked, in order: an older studio
+ * answers 404 (the page's read fails) and nothing else would do. The readings, sorted by moment.
+ * @param {any} answer /economy/as-of
+ * @param {string[]} asked
+ * @returns {any[]|null}
+ */
+export function acceptFigures(answer, asked) {
+  const readings = answer && Array.isArray(answer.readings) ? answer.readings : null;
+  if (!readings || readings.length !== asked.length) return null;
+  for (let i = 0; i < asked.length; i += 1) {
+    const r = readings[i];
+    if (!r || Date.parse(String(r.at)) !== Date.parse(asked[i]) || !r.treasury || !r.budget) return null;
+  }
+  return readings.slice().sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 }
 
 /**

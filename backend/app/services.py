@@ -1127,22 +1127,52 @@ def snapshot(engine: Engine) -> dict:
         }
 
 
-def read_events(engine: Engine, after: int, limit: int) -> dict:
+def read_instant(value: str) -> str:
+    """An instant a page asks the record about, as the record stamps its rows: UTC, ISO 8601.
+
+    A naive time is read as UTC. Anything that is not an instant raises ValueError. The stamps
+    are ``datetime.isoformat()`` strings in UTC, so the answer compares with them as text.
+    """
+    moment = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    return moment.astimezone(UTC).isoformat()
+
+
+def read_events(engine: Engine, after: int, limit: int, since: str | None = None) -> dict:
+    """A page of the record, in sequence order, after `after`.
+
+    With `since` (an instant from `read_instant`), the page starts at the first event stamped at
+    or after it: the lowest sequence among those stamps, so an event two writers committed a
+    moment apart in the other order is not skipped. It is one query, the stamp found through
+    ``ix_domain_event_timestamp``; the replay of a day finds its run's start with it at once
+    instead of bisecting the log. The answer names the instant, so a page can tell a studio that
+    read it from one that ignored it.
+    """
     from app.maintenance import ledger_floor  # noqa: PLC0415
 
     with Session(engine) as session, session.begin():
         # A history that was deleted is not read back: the ledger begins at the reset line.
         after = max(after, ledger_floor(session) - 1)
-        events = session.scalars(
-            select(DomainEvent)
-            .where(DomainEvent.sequence > after)
-            .order_by(DomainEvent.sequence)
-            .limit(limit + 1)
-        ).all()
+        query = select(DomainEvent).where(DomainEvent.sequence > after)
+        if since is not None:
+            # `sequence + 0`: a bare MIN(sequence) lets SQLite walk the whole log by sequence
+            # until a stamp is late enough; this way it reads only the stamps from the instant
+            # on, from the index alone.
+            first = (
+                select(func.min(DomainEvent.sequence + 0))
+                .where(DomainEvent.timestamp >= since)
+                .scalar_subquery()
+            )
+            query = query.where(DomainEvent.sequence >= first)
+        events = session.scalars(query.order_by(DomainEvent.sequence).limit(limit + 1)).all()
         selected = events[:limit]
-        return {
+        page = {
             "schema_version": 1,
             "events": [EventView.model_validate(e).model_dump() for e in selected],
             "next_cursor": selected[-1].sequence if selected else after,
             "has_more": len(events) > limit,
         }
+        if since is not None:
+            page["since"] = since
+        return page

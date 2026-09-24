@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, FastAPI, Query, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -64,6 +64,7 @@ from app.services import (
     decide_approval,
     pending_approvals,
     read_events,
+    read_instant,
     snapshot,
 )
 from app.story.router import create_story_router
@@ -180,8 +181,9 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
             # an approval is about, and the Owner's answer on the row) onto 0043. 0045 adds
             # the vendor invoice that replaces the studio's estimates, so a budget stops
             # counting an estimate and its bill together. 0046 indexes each employee's runs
-            # by start, for the snapshot's last task per employee.
-            if revision != "0046_agent_run_last_task":
+            # by start, for the snapshot's last task per employee. 0047 indexes the events by
+            # stamp and the runs by start, for the replay's reads by time.
+            if revision != "0047_replay_reads":
                 raise RuntimeError("Run scripts/bootstrap.py with this application version")
             if connection.scalar(text("SELECT COUNT(*) FROM owner_policy")) != 1:
                 raise RuntimeError("Run scripts/bootstrap.py to initialize the studio")
@@ -479,9 +481,19 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
 
     @router.get("/events")
     def get_events(
-        after: Annotated[int, Query(ge=0)] = 0, limit: Annotated[int, Query(ge=1, le=300)] = 50
+        after: Annotated[int, Query(ge=0)] = 0,
+        limit: Annotated[int, Query(ge=1, le=300)] = 50,
+        since: Annotated[str | None, Query(max_length=40)] = None,
     ) -> dict:
-        return read_events(engine, after, limit)
+        """The record, paged by sequence; with `since`, from the first event stamped at or
+        after that instant (the replay of a day finds its run's start in one read)."""
+        instant = None
+        if since is not None:
+            try:
+                instant = read_instant(since)
+            except ValueError:
+                raise HTTPException(422, "since: an ISO 8601 instant is expected") from None
+        return read_events(engine, after, limit, instant)
 
     @router.post("/owner/environment", response_model=PolicyResult)
     def set_environment(command: EnvironmentCommand) -> PolicyResult | JSONResponse:

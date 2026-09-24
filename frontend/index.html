@@ -69,6 +69,8 @@
               <!-- The gold mark: requests that wait for the Owner, as the approvals route lists them.
                    It stays while they wait and takes him to them. -->
               <button id="owner-mark" class="owner-mark" type="button" hidden><span class="owner-mark-dot" aria-hidden="true"></span><span id="owner-mark-text">—</span><span class="owner-mark-go" aria-hidden="true">↓</span></button>
+              <!-- While the building replays a past day, the register says it stays live (W15). -->
+              <p id="register-replay-note" class="register-replay-note" hidden></p>
               <p id="ledger-now" class="ledger-now">Se încarcă…</p>
               <div id="ledger-filters" class="ledger-filters" role="tablist" aria-label="Filtrele registrului"></div>
               <ol id="ledger-list" class="ledger-list"></ol>
@@ -88,6 +90,9 @@
                    a letterbox closes over the sky row and the street, so no one takes it for live. -->
               <div class="replay-letterbox" aria-hidden="true"></div>
               <div class="scene-readout scene-readout-info" title="Ora locală din București și vremea reală pe care o citește studioul. Fără un serviciu de vreme configurat, scena nu desenează vremea."><span id="scene-info">—  •  BUCUREȘTI</span><span id="replay-then" class="replay-then" title="Ora din registru a momentului reluat" hidden><span class="replay-then-label">ATUNCI</span><span id="replay-then-time" class="scene-figure">—</span></span></div>
+              <!-- The replayed world is lit by its own hour's sun and draws no weather: the page does
+                   not know the weather of that night, and says so under the ATUNCI clock (W15). -->
+              <p id="replay-weather" class="replay-weather" hidden>vremea de atunci nu e cunoscută</p>
               <span id="office-status" class="tag live-pill scene-readout scene-readout-live" data-state="reconnecting"><span class="live-dot" aria-hidden="true"></span><span id="office-fps"><span class="scene-live">Se conectează</span></span></span>
               <!-- The slate: what is being looked at, the day's run as one segment per stage (the
                    runbook's own events, hud_charts.js), and when the studio was last read. -->
@@ -122,6 +127,20 @@
               <!-- LIVE WINS: live news while the day is replayed ends the replay (replay_player.js). -->
               <div id="replay-live" class="replay-live" role="alert" hidden><p class="replay-live-eyebrow"><span class="live-dot" aria-hidden="true"></span>SE ÎNTÂMPLĂ ACUM</p><p id="replay-live-what" class="replay-live-what"></p><button id="replay-live-go" class="replay-live-go" type="button">Înapoi la live · <span id="replay-live-count">6</span></button></div>
               <p id="replay-announce" class="moment-announce" role="status" aria-live="polite"></p>
+              <!-- THE REPLAY OFFERED (W15, replay_invite.js): once per session, when the studio rests by
+                   its own record, a pane of the drawers' glass under the building offers the last
+                   working day. Its words are the runbook's; it never starts the replay by itself. -->
+              <section id="replay-invite" class="replay-invite" aria-labelledby="replay-invite-eyebrow replay-invite-lead" hidden>
+                <div class="replay-invite-text">
+                  <p id="replay-invite-eyebrow" class="replay-invite-eyebrow"><span class="replay-dot" aria-hidden="true"></span>RELUAREA ZILEI</p>
+                  <p id="replay-invite-lead" class="replay-invite-lead"></p>
+                  <p id="replay-invite-line" class="replay-invite-line"></p>
+                </div>
+                <div class="replay-invite-keys">
+                  <button id="replay-invite-go" class="replay-invite-go" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.8 12a7.2 7.2 0 1 0 2.1-5.1"/><path d="M4.4 4.2v4.2h4.2"/><path d="M10.4 9.1l4.6 2.9-4.6 2.9z"/></svg><span>Vezi reluarea</span></button>
+                  <button id="replay-invite-later" class="replay-invite-later" type="button" title="Nu acum (Esc)">Nu acum</button>
+                </div>
+              </section>
               <!-- A chapter of the serial, over the render for under three seconds, only when an
                    episode is drafted or approved as it happens (moments.js). -->
               <div id="moment-chapter" class="moment moment-chapter" hidden></div>

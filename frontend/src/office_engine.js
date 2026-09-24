@@ -3,6 +3,8 @@ import { HQAssets } from './hq_assets.js';
 import { WorldSimulationManager, HQRenderer } from './hq_world.js';
 import { scenePalette } from './hq_palette.js';
 import { NO_INSETS, between, easeOut, frameFit } from './game_frame.js';
+import { bucharestTime } from './office_clock.js';
+import { timeOfDay } from './hq_time.js';
 
 /**
  * AMN-AI headquarters — the living office.
@@ -240,6 +242,8 @@ export class OfficeEngine {
     this._looping = false;
     /** @type {ResizeObserver|null} */
     this._sizeWatch = null;
+    /** A resize waiting for the next frame (the size watch). */
+    this._resizeQueued = false;
     this.animTime = 0;
     this.lastFrame = typeof performance !== 'undefined' ? performance.now() : 0;
     this.running = true;
@@ -285,7 +289,15 @@ export class OfficeEngine {
         const key = box ? `${Math.round(box.width)}x${Math.round(box.height)}` : '';
         if (!key || key === last || !box.width) return;
         last = key;
-        if (!this.parked) this.resize();
+        if (this.parked || this._resizeQueued) return;
+        // W15: the canvas takes its new size on the next frame, not inside the frame whose layout
+        // changed (a drawer's snap under reduced motion, the fullscreen), so that frame only lays
+        // the page out and the reallocation of the canvas has a frame of its own.
+        this._resizeQueued = true;
+        requestAnimationFrame(() => {
+          this._resizeQueued = false;
+          if (!this.parked) this.resize();
+        });
       });
       this._sizeWatch.observe(canvas.parentElement);
     }
@@ -351,8 +363,26 @@ export class OfficeEngine {
     this.viewport.bottomInset = 0;
     if (this._cssInsets) this._restateInsets();
     this.viewport.fitFrame(this.worldW, this.worldH);
-    this.renderer.warmTints(this.world.time.state, this.world.weather.effects);
+    this.renderer.warmTints(this.world.time.state, this.world.effects);
     this._draw(true);
+    // «Reluarea zilei» lights the world by the replayed moment (W15): a replayed night entered from
+    // a live noon drew, for the first time in the visit, everything a night draws (the lit
+    // windows, the road's lights, the night grade) and the replay's own grade: one 90-158 ms frame
+    // while the GPU built those programs; a second replay in the same visit had none. One frame of
+    // the other light, graded as a replay, is drawn here under the title, then the true one.
+    // The plates are composed at once for each light (the first draw of a light's plates at the
+    // replay's switch built their GPU copies then: the 90 ms frame that remained).
+    if (this.world) {
+      const wasReplay = this.replay;
+      this.replay = true;
+      this.world.setReplayMoment(this.world.time.now().getTime() + 12 * 3600 * 1000);
+      this.renderer.composeNow(this.viewport.zoom, this.world.time.state);
+      this._draw(true);
+      this.world.setReplayMoment(null);
+      this.replay = wasReplay;
+      this.renderer.composeNow(this.viewport.zoom, this.world.time.state);
+      this._draw(true);
+    }
     // Reading one pixel back makes the browser carry out the queued drawing now, while nothing
     // is moving, rather than at the first frame after the key.
     try {
@@ -565,6 +595,8 @@ export class OfficeEngine {
    */
   setReplay(on) {
     this.replay = Boolean(on);
+    // back to live: the world is lit by the real hour and the real weather again, at once
+    if (!this.replay && this.world) this.world.setReplayMoment(null);
     if (!this.renderer) return;
     this.renderer.arrivals.clear();
     this.renderer.glints.reset();
@@ -586,6 +618,47 @@ export class OfficeEngine {
       this.renderer.glintCount += 1;
     }
     return started;
+  }
+
+  /**
+   * The replayed moment the world is lit by (W15): its own sun over Bucharest, and no weather.
+   * @param {number} ms a moment of the record
+   */
+  setReplayMoment(ms) {
+    if (this.world && this.replay) this.world.setReplayMoment(ms);
+  }
+
+  /**
+   * The frame in the canvas's CSS px: the room the drawers and the sky row leave, and the
+   * building as the camera shows it (for the replay's invitation, W15).
+   */
+  frameBox() {
+    const dpr = this.dpr || 1;
+    const vp = this.viewport;
+    const ins = vp.insets || NO_INSETS;
+    const floor = vp.floor || NO_INSETS;
+    const b = this.building || BUILDING;
+    const a = vp.worldToScreen(b.x, b.y);
+    const z = vp.worldToScreen(b.x + b.width, b.y + b.height);
+    return {
+      room: {
+        left: Math.max(ins.left, floor.left) / dpr,
+        top: Math.max(ins.top, floor.top) / dpr,
+        right: (this.canvas.width - Math.max(ins.right, floor.right)) / dpr,
+        bottom: (this.canvas.height - Math.max(ins.bottom, floor.bottom)) / dpr,
+      },
+      building: { x: a.x / dpr, y: a.y / dpr, w: (z.x - a.x) / dpr, h: (z.y - a.y) / dpr },
+    };
+  }
+
+  /**
+   * Before a replay lights the world by its own moment, the plates for that light are composed a
+   * group at a time while the replay is read (W15), so the switch is an ordinary frame.
+   * @param {number} ms
+   */
+  async prepareMoment(ms) {
+    if (!this.renderer || !this.world) return false;
+    return this.renderer.prepareLight(this.viewport.zoom, timeOfDay(new Date(ms), this.world.time.location));
   }
 
   /** A seek in the replay: what was arriving belongs to the moment left. */
@@ -869,12 +942,14 @@ export class OfficeEngine {
     this._fpsStart = now;
     if (this.onFrameRate) this.onFrameRate(this.fps);
     if (this.infoElement && this.world) {
-      const time = this.world.time.state;
+      // The glass keeps the live hour: while a day is replayed the world's own clock is the
+      // replayed moment's, and that one stands beside it under ATUNCI (replay_player.js).
+      const text = this.world.replayAt != null ? bucharestTime(new Date()).text : this.world.time.state.text;
       const weather = this.world.weather;
       const icon = /** @type {Record<string,string>} */ (WEATHER_ICONS)[weather.state.condition] || '';
       const separator = '  •  ';
       this._setParts(this.infoElement, [
-        ['scene-figure', time.text],
+        ['scene-figure', text],
         ['scene-sep', separator],
         ['scene-label', 'BUCUREȘTI'],
         ['scene-sep', separator],

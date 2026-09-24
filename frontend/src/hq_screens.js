@@ -204,10 +204,11 @@ export function renderBayFace(input) {
 
 /**
  * The Treasury's wall ticker.
- * @param {any} treasury /economy/treasury
- * @param {any} budget /economy/budget
+ * @param {any} treasury /economy/treasury (or a reading of /economy/as-of)
+ * @param {any} budget /economy/budget (or a reading of /economy/as-of)
+ * @param {string} [day] whose day the spend is: «azi» live, «atunci» in the replay (W15)
  */
-export function treasuryFace(treasury, budget) {
+export function treasuryFace(treasury, budget, day = 'azi') {
   const cash = treasury && treasury.spendable ? String(treasury.spendable.amount ?? '') : '';
   const balance = /^[+-]?\d+(\.\d+)?$/.test(cash) ? amount(wholeOrCents(cash)) : '—';
   const deficit = Boolean(treasury && treasury.in_deficit);
@@ -217,7 +218,7 @@ export function treasuryFace(treasury, budget) {
   const limit = daily && /^\d+(\.\d+)?$/.test(String(daily.limit_usd)) ? amount(wholeOrCents(String(daily.limit_usd))) : null;
   const ratio = daily && Number.isFinite(Number(daily.ratio)) ? Math.max(0, Math.min(1, Number(daily.ratio))) : null;
   const state = daily ? String(daily.state || 'OK') : null;
-  const line = spent === '—' ? 'azi —' : limit ? `azi ${spent} / ${limit} USD` : `azi ${spent} USD · fără buget`;
+  const line = spent === '—' ? `${day} —` : limit ? `${day} ${spent} / ${limit} USD` : `${day} ${spent} USD · fără buget`;
   return { balance, deficit, line, ratio, state, key: `t|${balance}|${deficit}|${line}|${ratio}|${state}` };
 }
 
@@ -356,17 +357,19 @@ export function publishFace(run) {
 }
 
 /**
- * Tokens the employees used today (/economy/budget -> today).
+ * Tokens the employees used today (/economy/budget -> today), or that day up to the replayed
+ * moment (/economy/as-of, «atunci», W15).
  * @param {any} budget
+ * @param {string} [day]
  */
-export function tokensFace(budget) {
+export function tokensFace(budget, day = 'azi') {
   const today = budget && budget.today;
   const p = today ? Number(today.prompt_tokens) : NaN;
   const c = today ? Number(today.completion_tokens) : NaN;
-  if (!Number.isFinite(p) || !Number.isFinite(c)) return { text: 'tokenuri azi —', key: 'tk|none' };
+  if (!Number.isFinite(p) || !Number.isFinite(c)) return { text: `tokenuri ${day} —`, key: `tk|none|${day}` };
   const n = Math.max(0, Math.floor(p + c));
   const rest = n % 100;
-  const noun = n === 1 ? 'token azi' : `${n >= 20 && (rest === 0 || rest >= 20) ? 'de ' : ''}tokenuri azi`;
+  const noun = n === 1 ? `token ${day}` : `${n >= 20 && (rest === 0 || rest >= 20) ? 'de ' : ''}tokenuri ${day}`;
   const text = `${amount(String(n))} ${noun}`;
   return { text, key: `tk|${text}` };
 }

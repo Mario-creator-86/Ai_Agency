@@ -67,6 +67,9 @@ export function weatherEffects(w) {
   }
 }
 
+/** What the scene draws for a weather it does not know: nothing (the replay of a past day, W15). */
+export const NO_WEATHER = Object.freeze(weatherEffects(normalizeWeather(null)));
+
 export const WEATHER_LABELS = {
   clear: 'Senin',
   partly_cloudy: 'Parțial înnorat',

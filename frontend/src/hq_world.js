@@ -1,5 +1,5 @@
-import { TimeOfDayManager } from './hq_time.js';
-import { WeatherManager } from './hq_weather.js';
+import { TimeOfDayManager, timeOfDay } from './hq_time.js';
+import { NO_WEATHER, WeatherManager } from './hq_weather.js';
 import { RandomEventManager, streetRule } from './hq_events.js';
 import { TrafficManager, EMERGENCY } from './hq_traffic.js';
 import { PedestrianManager } from './hq_pedestrians.js';
@@ -141,6 +141,14 @@ export class AmbientAnimationManager {
   }
 }
 
+/**
+ * What the weather draws in a world: nothing while a day is replayed (W15), else the live weather.
+ * @param {{replayAt?: number|null, weather: {effects: any}}} world
+ */
+function effectsOf(world) {
+  return world.replayAt != null ? NO_WEATHER : world.weather.effects;
+}
+
 export class WorldSimulationManager {
   /**
    * @param {{assets:any, fetchWeather:() => Promise<any>, seed?:number, now?:() => Date}} options
@@ -153,6 +161,8 @@ export class WorldSimulationManager {
     this.worldW = m.world.width;
     this.worldH = m.world.height;
     this.time = new TimeOfDayManager({ now: options.now });
+    /** The replayed moment the world is lit by, or null for the real hour (setReplayMoment). @type {number|null} */
+    this.replayAt = null;
     this.weather = new WeatherManager(options.fetchWeather);
     this.events = new RandomEventManager(assets.events, this.rng);
     const street = m.street;
@@ -193,6 +203,30 @@ export class WorldSimulationManager {
     this.weather.first(this.time.now().getTime()).then(warmUp, warmUp);
   }
 
+  /**
+   * «Reluarea zilei» (W15): while a day is replayed, the world is lit by the replayed moment's own
+   * sun over Bucharest (hq_time.js, at the record's instant), not today's; the weather of that
+   * night is not known to the page, so none is drawn. null gives the world back to the real
+   * hour and the real weather at once. Re-read only when the moment moves a second or more.
+   * @param {number|null} ms
+   */
+  setReplayMoment(ms) {
+    if (ms === null || !Number.isFinite(ms)) {
+      if (this.replayAt === null) return;
+      this.replayAt = null;
+      this.time.state = timeOfDay(this.time.now(), this.time.location);
+      return;
+    }
+    if (this.replayAt !== null && Math.abs(ms - this.replayAt) < 1000) return;
+    this.replayAt = ms;
+    this.time.state = timeOfDay(new Date(ms), this.time.location);
+  }
+
+  /** What the weather draws: nothing while a day is replayed (its weather is not known). */
+  get effects() {
+    return effectsOf(this);
+  }
+
   /** The minute of city time the street is warmed up with, once. */
   warmUp() {
     if (this.warm) return;
@@ -227,15 +261,16 @@ export class WorldSimulationManager {
     // A weather service that never answers does not keep the street empty: after three seconds
     // of frames the street is warmed up with what is known.
     if (!this.warm && (this._unwarmed += dt) > 3) this.warmUp();
-    const time = this.time.update(dt);
+    const replaying = this.replayAt != null;
+    const time = replaying ? this.time.state : this.time.update(dt);
     if (nowMs) this.weather.update(nowMs);
-    const fx = this.weather.effects;
+    const fx = effectsOf(this);
     // No backend state says there is an emergency, so `emergency` is not passed and no siren
     // drives. Wire it here the day the backend has one.
     const rule = streetRule({ hour: time.hour, day: time.day, ymd: time.ymd, effects: fx, live, still });
     this.rule = rule;
     const move = rule.moving ? dt : 0;
-    this.events.update(move, { weather: this.weather.state.condition, phase: time.phase, emergency: rule.sirens, buses: rule.buses });
+    this.events.update(move, { weather: replaying ? 'unknown' : this.weather.state.condition, phase: time.phase, emergency: rule.sirens, buses: rule.buses });
     this.traffic.crosswalkBusy = this.pedestrians.crosswalkBusy;
     this.traffic.waitingAtShelter = this.pedestrians.waitingAtShelter;
     this.traffic.update(move, { hour: time.hour, day: rule.day, effects: fx });
@@ -258,6 +293,14 @@ export class HQRenderer {
     /** @type {Map<string, {canvas: HTMLCanvasElement, x:number, y:number, w:number, h:number}>} */
     this.caches = new Map();
     this.cacheKey = '';
+    /** The light the caches were composed for, and a change of light being composed a group a frame (W15). */
+    this._cacheLight = -1;
+    /** @type {{key: string, light: number, queue: Array<[string, string[]]>, map: Map<string, any>}|null} */
+    this._staging = null;
+    /** The previous light's canvases, reused by the next change of light. @type {Map<string, any>|null} */
+    this._spare = null;
+    /** A light composed ahead of its first frame (prepareLight). @type {{key: string, light: number, map: Map<string, any>}|null} */
+    this._prepared = null;
     this._wantedScale = 0;
     this._scaleSince = 0;
     /** @type {Map<string, {tag: string, canvas: HTMLCanvasElement}>} */
@@ -327,6 +370,12 @@ export class HQRenderer {
 
   /**
    * Compose the plate groups for this display scale and light, when either has changed.
+   *
+   * A small change of light (the real sun's step, W15) is composed one group per frame into a
+   * second set of canvases, which replaces the first whole once every group is done: the frames
+   * between keep the previous light, never a mix. A jump of light (a replay's own hour) is composed
+   * ahead of its first frame (prepareLight) when entering a replay, and at once when leaving it;
+   * a change of scale is composed at once.
    * @param {number} displayScale canvas px per world px
    * @param {any} time
    */
@@ -342,35 +391,117 @@ export class HQRenderer {
     const light = Math.round(time.daylight * 40);
     const loaded = `${Object.keys(this.assets.layers.night).length}/${Object.keys(this.assets.layers.day).length}`;
     const key = `${bucket}|${light}|${loaded}`;
-    if (key === this.cacheKey || !settled) return this.caches.size > 0;
-    this.cacheKey = key;
-    for (const [group, layers] of PLATE_GROUPS) {
-      const rect = this.groupRect(layers);
-      if (!rect) continue;
-      let entry = this.caches.get(group);
-      const cw = Math.max(1, Math.round(rect.w * bucket));
-      const ch = Math.max(1, Math.round(rect.h * bucket));
-      if (!entry || entry.canvas.width !== cw || entry.canvas.height !== ch) {
-        const canvas = document.createElement('canvas');
-        canvas.width = cw;
-        canvas.height = ch;
-        entry = { canvas, ...rect };
-        this.caches.set(group, entry);
-      }
-      Object.assign(entry, rect);
-      const c = entry.canvas.getContext('2d');
-      if (!c) continue;
-      c.setTransform(1, 0, 0, 1, 0, 0);
-      c.clearRect(0, 0, cw, ch);
-      c.imageSmoothingEnabled = true;
-      c.imageSmoothingQuality = 'high';
-      c.setTransform(bucket, 0, 0, bucket, -rect.x * bucket, -rect.y * bucket);
-      for (const name of layers) {
-        this.layer(c, name, time);
-        if (name === 'city') this.drawSkySlogan(c, time);
-      }
+    if (key === this.cacheKey || !settled) {
+      this._staging = null;
+      return this.caches.size > 0;
     }
+    // a light composed ahead of time (prepareLight) is taken whole
+    if (this._prepared && this._prepared.key === key) {
+      this._spare = this.caches;
+      this.caches = this._prepared.map;
+      this.cacheKey = key;
+      this._cacheLight = this._prepared.light;
+      this._prepared = null;
+      this._staging = null;
+      return true;
+    }
+    // one prepared for another scale or light is not kept
+    this._prepared = null;
+    // Only the sun's own small steps are composed a group a frame: the sky is drawn every frame
+    // with the new light, and a jump (back to live from a replayed night) kept on the old plates
+    // for seven frames read as a night building under a noon sky. A jump is composed at once.
+    const lightOnly = this.caches.size > 0 && this.cacheKey === `${bucket}|${this._cacheLight}|${loaded}` && Math.abs(light - this._cacheLight) <= 2;
+    if (lightOnly) {
+      if (!this._staging || this._staging.key !== key) this._staging = { key, light, queue: PLATE_GROUPS.slice(), map: new Map() };
+      const staging = this._staging;
+      const next = staging.queue.shift();
+      if (next) this.composeGroup(staging.map, next[0], next[1], bucket, time, this._spare);
+      if (!staging.queue.length) {
+        this._spare = this.caches;
+        this.caches = staging.map;
+        this.cacheKey = key;
+        this._cacheLight = light;
+        this._staging = null;
+      }
+      return true;
+    }
+    this._staging = null;
+    this.cacheKey = key;
+    this._cacheLight = light;
+    for (const [group, layers] of PLATE_GROUPS) this.composeGroup(this.caches, group, layers, bucket, time, null);
     return true;
+  }
+
+  /**
+   * Compose every plate group now, for this scale and light, whatever was composed before: the
+   * engine's prewarm, under the title, does it for both lights (W15).
+   * @param {number} displayScale @param {any} time
+   */
+  composeNow(displayScale, time) {
+    this._staging = null;
+    this.cacheKey = '';
+    this._cacheLight = -1;
+    this._scaleSince = -Infinity;
+    return this.ensureCaches(displayScale, time);
+  }
+
+  /**
+   * Compose the plates for a light ahead of its first frame (W15): a group at a time, a pause
+   * between, into a set of canvases that the frame lit by that light then takes whole. Entering a
+   * replayed night from a live noon composed them in the frames of the switch: one 64-158 ms frame.
+   * @param {number} displayScale @param {any} time @param {number} [gapMs]
+   */
+  async prepareLight(displayScale, time, gapMs = 40) {
+    if (typeof document === 'undefined') return false;
+    const bucket = Math.min(2.5, Math.max(0.2, Math.round(displayScale * 1000) / 1000));
+    const light = Math.round(time.daylight * 40);
+    const loaded = `${Object.keys(this.assets.layers.night).length}/${Object.keys(this.assets.layers.day).length}`;
+    const key = `${bucket}|${light}|${loaded}`;
+    if (key === this.cacheKey) return true;
+    /** @type {Map<string, any>} */
+    const map = new Map();
+    for (const [group, layers] of PLATE_GROUPS) {
+      await new Promise((ok) => setTimeout(ok, gapMs));
+      await new Promise((ok) => requestAnimationFrame(() => ok(undefined)));
+      this.composeGroup(map, group, layers, bucket, time, null);
+    }
+    this._prepared = { key, light, map };
+    return true;
+  }
+
+  /**
+   * Compose one plate group into `target`, reusing its canvas (or a spare one of the same size).
+   * @param {Map<string, any>} target @param {string} group @param {string[]} layers
+   * @param {number} bucket @param {any} time @param {Map<string, any>|null|undefined} spare
+   */
+  composeGroup(target, group, layers, bucket, time, spare) {
+    const rect = this.groupRect(layers);
+    if (!rect) return;
+    const cw = Math.max(1, Math.round(rect.w * bucket));
+    const ch = Math.max(1, Math.round(rect.h * bucket));
+    const fits = (/** @type {any} */ e) => e && e.canvas.width === cw && e.canvas.height === ch;
+    let entry = target.get(group);
+    if (!fits(entry)) entry = spare && fits(spare.get(group)) ? spare.get(group) : null;
+    if (!entry) {
+      const canvas = document.createElement('canvas');
+      canvas.width = cw;
+      canvas.height = ch;
+      entry = { canvas, ...rect };
+    }
+    if (spare && spare.get(group) === entry) spare.delete(group);
+    target.set(group, entry);
+    Object.assign(entry, rect);
+    const c = entry.canvas.getContext('2d');
+    if (!c) return;
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    c.clearRect(0, 0, cw, ch);
+    c.imageSmoothingEnabled = true;
+    c.imageSmoothingQuality = 'high';
+    c.setTransform(bucket, 0, 0, bucket, -rect.x * bucket, -rect.y * bucket);
+    for (const name of layers) {
+      this.layer(c, name, time);
+      if (name === 'city') this.drawSkySlogan(c, time);
+    }
   }
 
   /** @param {CanvasRenderingContext2D} ctx @param {string} group @param {any} time */
@@ -394,7 +525,7 @@ export class HQRenderer {
   draw(ctx, state) {
     const w = this.world;
     const time = w.time.state;
-    const fx = w.weather.effects;
+    const fx = effectsOf(w);
     w.agentList = state.agents;
     this.reduced = Boolean(state.reduced);
     this.useCaches = this.ensureCaches(state.scale || 1, time);
@@ -421,7 +552,7 @@ export class HQRenderer {
     w.sky.drawSkyEvents(ctx, w.events, time, 'near');
     this.drawTokens(ctx, state);
     this.plate(ctx, 'street_props', time);
-    this.drawShelter(ctx, time);
+    this.drawShelter(ctx, time, Boolean(state.replay));
     this.drawPedestrians(ctx, fx, time);
     this.plate(ctx, 'street_kerb', time);
     this.drawVehicles(ctx, time, fx);
@@ -656,7 +787,7 @@ export class HQRenderer {
     }
 
     // the Treasury's wall ticker
-    const treasury = treasuryFace(facts.treasury, facts.budget);
+    const treasury = treasuryFace(facts.treasury, facts.budget, facts.replay ? 'atunci' : 'azi');
     this.faceBlit(ctx, 'treasury_board', treasury.key, WALL.treasury_board, scale, (c, w, h) => paintTreasury(c, w, h, treasury));
     lit.push({ r: WALL.treasury_board, rgb: '163,230,53', strength: 0.3, zone: 'accounting_office' });
     // the fact-check whiteboard (a board, not a screen: it takes the room's light)
@@ -1006,7 +1137,7 @@ export class HQRenderer {
       ctx.fillStyle = withAlpha('#ffffff', Math.max(0, pulse));
       ctx.fillRect(x + 2 + sign.running * (sw + gap), y + 13.5, sw, 5);
     }
-    const tokens = tokensFace(facts.budget);
+    const tokens = tokensFace(facts.budget, facts.replay ? 'atunci' : 'azi');
     this.faceBlit(ctx, 'infra_plate', tokens.key, WALL.infra_plate, scale, (c, w, h) => paintInfra(c, w, h, tokens));
   }
 
@@ -1290,8 +1421,13 @@ export class HQRenderer {
     }
   }
 
-  /** @param {CanvasRenderingContext2D} ctx @param {any} time */
-  drawShelter(ctx, time) {
+  /**
+   * The bus shelter's clock. In «Reluarea zilei» the world is lit by the replayed moment, so the
+   * street's clock shows that moment's time under the replay's mark, ATUNCI, never the live time
+   * inside the replayed world (W15).
+   * @param {CanvasRenderingContext2D} ctx @param {any} time @param {boolean} [replay]
+   */
+  drawShelter(ctx, time, replay = false) {
     const clock = this.m.street.shelter_clock?.rect;
     if (clock) {
       const [x, y, cw, ch] = clock;
@@ -1299,7 +1435,7 @@ export class HQRenderer {
       ctx.fillRect(x, y, cw, ch);
       ctx.fillStyle = '#9fd8d0';
       ctx.font = '600 5.5px "Segoe UI", system-ui, sans-serif';
-      ctx.fillText('BUCUREȘTI', x + 4, y + 8);
+      ctx.fillText(replay ? 'ATUNCI' : 'BUCUREȘTI', x + 4, y + 8);
       ctx.fillStyle = '#5eead4';
       ctx.font = '600 17px "Cascadia Mono", Consolas, monospace';
       ctx.shadowColor = 'rgba(94,234,212,0.8)';

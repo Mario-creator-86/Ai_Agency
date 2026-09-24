@@ -150,7 +150,11 @@ class AgentRun(Base):
     __tablename__ = "agent_run"
     #: Each employee's newest run, for the snapshot's «last task» (migration 0046): one grouped
     #: MAX(started_at) per agent, read from the index rather than the table.
-    __table_args__ = (Index("ix_agent_run_agent_started", "agent_id", "started_at"),)
+    #: And by start alone (migration 0047): the day's spend and tokens, live and as of a moment.
+    __table_args__ = (
+        Index("ix_agent_run_agent_started", "agent_id", "started_at"),
+        Index("ix_agent_run_started", "started_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     agent_id: Mapped[str] = mapped_column(ForeignKey("agent.id"))

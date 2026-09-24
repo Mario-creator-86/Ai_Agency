@@ -110,7 +110,11 @@ class ApprovalRequest(Base):
 
 class DomainEvent(Base):
     __tablename__ = "domain_event"
-    __table_args__ = {"sqlite_autoincrement": True}
+    #: Read by time for the replay's first page (`/events?since=`, migration 0047).
+    __table_args__ = (
+        Index("ix_domain_event_timestamp", "timestamp"),
+        {"sqlite_autoincrement": True},
+    )
 
     sequence: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     event_id: Mapped[str] = mapped_column(String(36), unique=True)

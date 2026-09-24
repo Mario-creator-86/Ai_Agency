@@ -453,6 +453,8 @@
   --replay-bar-top: var(--hud-top);           /* the top bar: the sky row the dock hangs in */
   --replay-bar-bottom: 84px;                  /* the bottom bar: the controls and the slate */
   --replay-tick:   rgba(201, 184, 255, .55);  /* a stage's start on the scrubber */
+  --replay-on-fill: #0e0a22;                  /* the ink on --replay-fill (the invitation's «Vezi reluarea»): 5.5:1 measured */
+  --dur-invite:    420ms;                     /* the invitation rises once into the free room (W15) */
   /* --shadow-scene-warm and --edge-hairline belonged to the older scene frame
      that this sheet drew before office_scene.css owned the viewport. The render
      wears --shadow-scene and one hairline of --scene-frame; a second, warmer
@@ -1173,6 +1175,11 @@ main { font-size: var(--fs-body); }
 .ledger-chip { font-size: var(--fs-meta); padding: 5px 11px; transition: background .12s, color .12s; }
 .ledger-now { display: inline-flex; align-items: center; gap: 8px; padding: 6px 11px 6px 9px; border-radius: 999px; background: var(--info-bg); border: 1px solid var(--info-line); color: var(--info-ink); font-size: var(--fs-meta); margin: 6px 0 12px; }
 .ledger-now::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--info-ink); flex: none; }
+/* W15: while the building replays a past day, the register's head says the register stays live
+   (replay_player.js). The replay's violet, which belongs to the replay alone. */
+.register-replay-note { display: flex; align-items: center; gap: var(--s2); margin: 0 0 var(--s2); padding: var(--s1) var(--s3); border: 1px solid var(--replay-line); border-radius: var(--radius-xs); background: var(--replay-bg); color: var(--replay-ink); font-size: var(--fs-meta); font-weight: var(--w-semi); line-height: var(--lh-tight); }
+.register-replay-note::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--replay-ink); flex: none; }
+.register-replay-note[hidden] { display: none; }
 
 /* Dialogs */
 .studio-dialog { padding: 28px 30px; border-radius: 16px; }
@@ -3433,6 +3440,10 @@ details[open] > summary::before { transform: rotate(90deg); }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  /* W15: under reduced motion a drawer snaps, with no glide to spread its cost over. A closed
+     register's list is then not restyled at all (content-visibility: hidden skips its two
+     hundred rows); with motion the list stays drawn while it slides out. */
+  :root[data-register="closed"] .ledger-list { content-visibility: hidden; }
   *, *::before, *::after {
     animation-duration: .001ms !important;
     animation-iteration-count: 1 !important;
@@ -3795,8 +3806,12 @@ details[open] > summary::before { transform: rotate(90deg); }
 
 @media (min-width: 1051px) and (min-height: 600px) {
   :root { --hud-l: var(--drawer-rail); --hud-r: var(--drawer-rail); }
-  :root[data-register="open"] { --hud-l: var(--drawer-register); }
-  :root[data-side="open"]     { --hud-r: var(--drawer-side); }
+  /* W15: the open drawers' room is set on the render's own panel, where every use of it is, not
+     on :root. A custom property changed on :root restyles the whole document, the register's
+     two hundred rows included: 7-22 ms of forced style in the click that opens a drawer, which
+     under reduced motion (no glide to hide it in) made the snap cost 2-5 frames over 33 ms. */
+  :root[data-register="open"] .office-panel { --hud-l: var(--drawer-register); }
+  :root[data-side="open"] .office-panel     { --hud-r: var(--drawer-side); }
 
   /* One screen: the frame is sized from the viewport, so nothing scrolls it. */
   body:has(#workspace:not([hidden])) { overflow: hidden; }

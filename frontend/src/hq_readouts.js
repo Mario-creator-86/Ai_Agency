@@ -302,7 +302,7 @@ function openWords(room) {
 }
 
 /** What the idle façade's card offers when a finished day is on record (W13). */
-export const REPLAY_ACTION = 'Clic sau Enter: Vezi ultima zi de lucru.';
+export const REPLAY_ACTION = 'Clic sau Enter: Vezi ultima rulare încheiată.';
 
 /**
  * Whether the façade sign offers «Reluarea zilei»: a finished run is on record (facts.replayOffer)
@@ -353,14 +353,14 @@ export function surfaceReadout(id, input) {
   if (!surface) return null;
 
   if (id === 'treasury_board') {
-    const face = treasuryFace(facts.treasury, facts.budget);
+    const face = treasuryFace(facts.treasury, facts.budget, facts.replay ? 'atunci' : 'azi');
     const known = Boolean(facts.treasury || facts.budget);
     return keyed({
       id,
       eyebrow: surface.name,
       value: face.balance === '—' ? '—' : `${face.balance} VR$ cheltuibili`,
       line: known ? face.line : reads.figures === 'failed' ? 'trezoreria nu a putut fi citită' : '',
-      context: face.deficit ? 'Trezoreria este în deficit.' : 'Soldul cheltuibil și cheltuiala de azi față de bugetul zilnic.',
+      context: face.deficit ? 'Trezoreria este în deficit.' : facts.replay ? 'Soldul cheltuibil și cheltuiala zilei reluate, din registrul de atunci, până la acest moment.' : 'Soldul cheltuibil și cheltuiala de azi față de bugetul zilnic.',
       action,
       tone: face.deficit ? 'alert' : face.state && face.state !== 'OK' ? 'warn' : 'quiet',
       poster: false,
@@ -445,13 +445,13 @@ export function surfaceReadout(id, input) {
     });
   }
   if (id === 'infra_plate') {
-    const face = tokensFace(facts.budget);
+    const face = tokensFace(facts.budget, facts.replay ? 'atunci' : 'azi');
     return keyed({
       id,
       eyebrow: surface.name,
       value: face.text,
       line: facts.budget ? '' : reads.figures === 'failed' ? 'bugetul nu a putut fi citit' : '',
-      context: 'Tokenurile folosite azi de angajați, după bugetul de azi.',
+      context: facts.replay ? 'Tokenurile folosite de angajați în ziua reluată, până la acest moment, din registrul de atunci.' : 'Tokenurile folosite azi de angajați, după bugetul de azi.',
       action,
       tone: 'quiet',
       poster: false,

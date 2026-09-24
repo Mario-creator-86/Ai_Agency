@@ -481,7 +481,7 @@ test('a live stage start glints the sign even when its words did not change', ()
 test("«Reluarea zilei» (W13): the idle façade's card offers the last working day; a run under way or open does not", () => {
   const idle = read('run_sign', { ...FACTS, replayOffer: true });
   assert.equal(idle.action, REPLAY_ACTION);
-  assert.equal(REPLAY_ACTION, 'Clic sau Enter: Vezi ultima zi de lucru.');
+  assert.equal(REPLAY_ACTION, 'Clic sau Enter: Vezi ultima rulare încheiată.');
   assert.equal(read('run_sign', { ...FACTS, replayOffer: false }).action, 'Clic sau Enter: deschide Rularea zilei.', 'no finished day on record: the room, as before');
   const underWay = dayTrack([{ event_type: 'runbook.stage_started', payload: { stage: 'media', index: 7, total: 12 }, timestamp: '2026-09-24T09:04:00Z' }]);
   const busy = read('run_sign', { ...FACTS, track: underWay, live: true, replayOffer: true });

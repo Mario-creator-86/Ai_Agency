@@ -28,6 +28,7 @@ import { latestFilm, boardTopics } from './hq_screens.js';
 import { REPLAY_ACTION, canvasLabel, lastTasks, lastTaskLine, newerTasks, nextRunSign, surfaceReadout, tasksFromRecord } from './hq_readouts.js';
 import { interruptsReplay } from './day_replay.js';
 import { DayReplayPlayer } from './replay_player.js';
+import { ReplayInvite, invitePlacement, inviteWords, restingNow } from './replay_invite.js';
 import { SceneReadout } from './scene_readout.js';
 import { studioReadout } from './side_readout.js';
 import { friendlyAnswer } from './friendly_text.js';
@@ -84,6 +85,8 @@ let connected = false;
  */
 let replay = null;
 const replaying = () => Boolean(replay && replay.active);
+/** The invitation to the replay (W15, replay_invite.js); assigned with the player. @type {ReplayInvite|null} */
+let replayInvite = null;
 
 /**
  * What the page knows is happening, from which every «live» it prints is decided
@@ -169,6 +172,8 @@ const eventsLink = new EventsLink({
     updateOfficeCanvas();
     // A live arrival says itself from across the room for a few seconds (hq_arrivals.js): the
     // same socket, the same event, nothing fetched; never a replay, never under reduced motion.
+    // a live event takes the invitation away: the building is live news now (W15)
+    if (live && interruptsReplay(eventData) && replayInvite) replayInvite.liveArrived();
     if (replay && replay.active) {
       if (live && interruptsReplay(eventData)) replay.liveArrived(eventData);
     } else if (officeEngine) {
@@ -384,6 +389,7 @@ function pushWorldFacts() {
   if (officeEngine && !replaying()) officeEngine.setFacts({ ...worldFacts });
   renderStudioReadout();
   refreshSceneReadout();
+  considerInvite();
 }
 
 /* ---------------------------------------------------------------------------
@@ -501,6 +507,46 @@ replay = new DayReplayPlayer({
     pushWorldFacts();
   },
 });
+
+/*
+ * THE REPLAY OFFERED (W15, replay_invite.js): once per browser session, after the entry has
+ * settled, while the studio rests by its own record, an invitation under the building offers the
+ * last working day. It is asked again whenever the facts or the people change; nothing is fetched.
+ */
+replayInvite = new ReplayInvite({
+  card: element('replay-invite'),
+  lead: element('replay-invite-lead'),
+  line: element('replay-invite-line'),
+  go: /** @type {HTMLButtonElement} */ (element('replay-invite-go')),
+  later: /** @type {HTMLButtonElement} */ (element('replay-invite-later')),
+  say: (text) => { element('replay-announce').textContent = text; },
+  reduced: () => reducedMotion(),
+  place: (card) => placeInvite(card),
+  storage: () => window.sessionStorage,
+  // the keyboard returns to the dock's key when the replay ends, as if it had been pressed
+  onGo: () => { if (replay) replay.start(/** @type {HTMLElement} */ (element('replay-toggle'))); },
+  recheck: () => considerInvite(),
+});
+
+/** @param {{w: number, h: number}} card */
+function placeInvite(card) {
+  if (!officeEngine || !officeEngine.renderer) return null;
+  const box = officeEngine.frameBox();
+  const slate = /** @type {HTMLElement|null} */ (document.querySelector('.scene-viewport .scene-slate'));
+  const room = { ...box.room, bottom: box.room.bottom - (slate ? slate.offsetHeight : 0) };
+  return invitePlacement({ room, building: box.building, card });
+}
+
+function considerInvite() {
+  if (!replay || !replayInvite) return;
+  const run = replay.run;
+  const known = worldFacts.reads.runs === 'ok' && worldFacts.reads.ledger === 'ok';
+  replayInvite.consider({
+    resting: Boolean(ownerToken) && !workspace.hidden && known && restingNow({ run, live: worldFacts.live, agents: officeState.agents }),
+    replaying: replaying() || replay.loading,
+    words: inviteWords(run, { timeZone: worldFacts.timeZone }),
+  });
+}
 
 function resetWorldFacts() {
   Object.assign(worldFacts, { run: null, track: null, today: null, live: true, treasury: null, budget: null, episodes: null, topics: { titles: [], key: '' }, film: null, jobs: null, tasks: { tasks: {}, key: '' }, nextRun: '', reads: freshReads() });
@@ -878,6 +924,8 @@ async function startLiveStream() {
 const drawers = new Drawers({
   onInsets: (insets, options) => {
     if (officeEngine) officeEngine.setInsets(insets, options);
+    // the invitation keeps its place under the building once the camera has settled
+    if (replayInvite && replayInvite.shown) window.setTimeout(() => { if (replayInvite) replayInvite.relayout(); }, options && options.glide ? 460 : 0);
   },
   world: () => ({
     worldW: officeEngine ? officeEngine.worldW : WORLD_W,
@@ -1251,6 +1299,7 @@ function updateOfficeCanvas() {
   officeState.cleanupExpiredBubbles();
   // while the day is replayed the world is the record's; the live state is given back at the end
   if (replaying()) return;
+  considerInvite();
   officeEngine.setAgents(officeState.agents);
   officeEngine.setSpeechBubbles(officeState.speechBubbles);
   officeEngine.setProjectTokens(officeState.projectTokens);
@@ -3593,6 +3642,8 @@ element('login-form').addEventListener('submit', async (event) => {
     // it waits until the building has been entered, and then reads the frame the visitor sees.
     if (plays) window.setTimeout(() => { if (ownerToken) keyLight.start(); }, ENTRY.totalMs + 80);
     else keyLight.start();
+    // W15: the invitation to the replay waits for the entry to settle
+    if (replayInvite) replayInvite.entered(plays ? ENTRY.totalMs : 0);
     // The faces' first values are the page arriving, not news: no glint for them (hq_readouts.js).
     if (officeEngine) officeEngine.resetGlints();
     loadDayRecord();
@@ -3632,6 +3683,7 @@ element('logout').addEventListener('click', () => {
   notify('');
   ledger.clear();
   if (replay) replay.reset();
+  if (replayInvite) replayInvite.reset();
   pendingMode = null;
   approvalsRouteMissing = false;
   approvalsLastRead = 0;
