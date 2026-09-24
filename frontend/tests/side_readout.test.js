@@ -38,7 +38,11 @@ test('the day\'s run is the slate\'s own words, and says a run is under way only
   assert.equal(row.note, 'Rularea din 12.09');
   assert.match(row.value, /^12\/12 · /);
   assert.equal(row.tone, 'quiet');
-  assert.equal(studioReadout({ track: { empty: true, text: 'Nicio rulare a zilei în registru' } }).rows[0].value, 'nicio rulare în registru');
+  assert.equal(studioReadout({ track: { empty: true, text: 'Nicio rulare a zilei în registru' }, reads: { runs: 'ok' } }).rows[0].value, 'nicio rulare în registru');
+  // not read is not empty (W12)
+  assert.equal(studioReadout({ track: { empty: true } }).rows[0].value, '—');
+  assert.equal(studioReadout({ track: { empty: true }, reads: { runs: 'failed' } }).rows[0].value, 'registrul nu a putut fi citit');
+  assert.equal(studioReadout({ reads: { figures: 'failed' } }).rows[1].note, 'trezoreria nu a putut fi citită');
 });
 
 test('the key changes only when a line does', () => {

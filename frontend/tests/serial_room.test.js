@@ -24,6 +24,9 @@ import {
   rubricRows,
   serialBoardHtml,
   serialStageNotes,
+  journalCoverHtml,
+  coverVerdict,
+  dayWords,
   splitName,
   textParts,
 } from '../src/serial_room.js';
@@ -249,9 +252,11 @@ test('a computed FAIL draws no rubric and says why; an approved episode has no a
 test('the serial board says where canon stands, in agreement', () => {
   assert.equal(serialBoardHtml(null), '');
   const html = serialBoardHtml({ canon_episode_number: 1, threads: [{ id: 'T1', text: 'x' }], recurring: [], summaries: [] });
-  assert.ok(html.includes('episod aprobat'));
   assert.ok(html.includes('1 fir deschis'));
-  assert.ok(serialBoardHtml({ canon_episode_number: 0, threads: [] }).includes('Niciun fir deschis'));
+  // W12: an empty panel is folded away; the canon's count is on the cover
+  assert.equal(serialBoardHtml({ canon_episode_number: 0, threads: [] }), '');
+  assert.equal(serialBoardHtml({ canon_episode_number: 0, threads: [], recurring: [] }), '');
+  assert.ok(serialBoardHtml({ threads: [], recurring: ['the plastic plant'] }).includes('Revin'));
 });
 
 test('the plan card is «Scenariul de mâine» only while the plan still waits for tomorrow', () => {
@@ -260,4 +265,50 @@ test('the plan card is «Scenariul de mâine» only while the plan still waits f
   assert.equal(planHeading('PLANNED', 'REJECTED').live, false, "a refused draft's plan is not tomorrow's");
   assert.equal(planHeading('KEPT', 'APPROVED').title, 'Planul pentru episodul următor');
   assert.equal(planHeading('DROPPED', 'APPROVED').live, false);
+});
+
+
+/* ------------------------------------------------------------ W12: the cover -- */
+
+test('the cover is the newest episode as a poster: number, title, the day it tells, the verdict', () => {
+  const episode = {
+    id: 'e3',
+    status: 'DRAFT',
+    title: "The Render That Wouldn't Wait",
+    beats: [{}, {}, {}, {}, {}],
+    grounded_event_ids: ['a', 'b', 'c'],
+    continuity: { episode_number: 3, business_date: '2026-09-23' },
+    review: {
+      verdict: 'PASS',
+      scores: { hook: 4, situation: 4, turn: 5, payoff: 3, voices: 4, button: 5 },
+      checks: { grounding: { passed: true }, privacy: { passed: true }, cast: { passed: false, reason: 'x' }, old: { passed: false, legacy: true } },
+    },
+  };
+  const html = journalCoverHtml(episode, { canon_episode_number: 2 });
+  assert.ok(html.includes('<span class="cover-n">03</span>'));
+  assert.ok(html.includes('The Render That Wouldn&#39;t Wait') || html.includes("The Render That Wouldn't Wait"));
+  assert.ok(html.includes('ziua povestită 23.09.2026'));
+  assert.ok(html.includes('>PASS<'));
+  assert.ok(html.includes('nota medie 4,2 din 5'));
+  assert.ok(html.includes('2 din 3 verificări trecute'), 'a legacy check is not counted');
+  assert.ok(html.includes('5 beat-uri · 3 evenimente reale citate'));
+  assert.ok(html.includes('<strong>2</strong> episoade aprobate'));
+  assert.ok(html.includes('href="#ep-e3"'));
+  assert.ok(html.includes('verdict-pass'));
+});
+
+test('an unnumbered, unread draft says so, and no episode is a cover that says none', () => {
+  const html = journalCoverHtml({ id: 'd', status: 'DRAFT', title: 'Inside The Nexus', beats: [], grounded_event_ids: [], continuity: { business_date: '2026-09-12' } }, { canon_episode_number: 0 });
+  assert.ok(html.includes('<span class="cover-n is-none">—</span>'));
+  assert.ok(html.includes('fără număr în serial'));
+  assert.ok(html.includes('Directorul nu a citit încă episodul.'));
+  assert.ok(html.includes('>—<'));
+  assert.ok(html.includes('<strong>0</strong> episoade aprobate'));
+  const none = journalCoverHtml(null, null);
+  assert.ok(none.includes('Niciun episod încă'));
+  assert.ok(!none.includes('episoade aprobate'), 'a serial not read says no count');
+  assert.deepEqual(coverVerdict(null), { verdict: '—', mean: '', checks: '', read: false });
+  assert.equal(coverVerdict({ verdict: 'FAIL', scores: {}, checks: {} }).mean, '', 'a computed FAIL has no scores to average');
+  assert.equal(dayWords('2026-09-12'), '12.09.2026');
+  assert.equal(dayWords(''), '');
 });

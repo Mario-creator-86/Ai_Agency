@@ -892,3 +892,273 @@
 @media (prefers-reduced-motion: reduce) {
   .scene-viewport .face-card { animation: none; }
 }
+
+/* --------------------------------------------------------------------------
+   «RELUAREA ZILEI» (W13)
+   --------------------------------------------------------------------------
+   The newest finished day, played back from the studio's own record
+   (day_replay.js, replay_player.js). Everything here says «this is not live»
+   before a word is read: a letterbox closes over the sky row and the street,
+   the world under it is graded towards grey and washed violet by the
+   renderer (hq_world.js drawReplayGrade; the words it draws are laid after
+   the grade, clear), the corner says RELUARE in the replay's violet in place
+   of «Live», and the moment's real clock stands beside the live one. Violet
+   is the replay's alone: gold is live or waiting for the Owner, green is act.
+   The controls are one plate on the letterbox's bottom bar, over the slate. */
+.scene-viewport .replay-letterbox { display: none; }
+.scene-viewport[data-replay] .replay-letterbox {
+  display: block;
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+.scene-viewport[data-replay] .replay-letterbox::before,
+.scene-viewport[data-replay] .replay-letterbox::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: var(--replay-letterbox);
+  animation: replay-bar-in var(--dur-slow) var(--ease) both;
+}
+.scene-viewport[data-replay] .replay-letterbox::before { top: 0; height: var(--replay-bar-top); border-bottom: 1px solid var(--replay-line); transform-origin: top; }
+.scene-viewport[data-replay] .replay-letterbox::after { bottom: 0; height: var(--replay-bar-bottom); border-top: 1px solid var(--replay-line); transform-origin: bottom; }
+@keyframes replay-bar-in { from { transform: scaleY(0); } }
+/* The live clock keeps its hour and its city; the present's weather steps aside for the
+   replayed moment's clock (the engine writes five parts: hour, dot, city, dot, weather). */
+.scene-viewport[data-replay] #scene-info > :nth-child(n+4) { display: none; }
+/* In a narrower frame the live clock keeps its hour; the city is its title. */
+@media (max-width: 1599.98px) {
+  .scene-viewport[data-replay] #scene-info > :nth-child(n+2) { display: none; }
+}
+/* The stream's layer stays connected and is only not shown: the replay is the page's own drawing. */
+.scene-viewport[data-replay] .live-stream-layer { visibility: hidden; }
+
+/* The corner: RELUARE in place of «Live», in the replay's ink. */
+.scene-viewport .scene-readout-live[data-state="replay"] { border-color: var(--replay-line); }
+.scene-viewport .scene-readout-live[data-state="replay"] .live-dot { background: var(--replay-ink); box-shadow: none; }
+.scene-viewport .scene-readout-live[data-state="replay"] .scene-live { color: var(--replay-ink); letter-spacing: var(--track-caps); font-size: var(--fs-micro); font-weight: var(--w-bold); }
+/* Beside the live clock: the replayed moment's own clock, from the record. */
+.scene-viewport .replay-then {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-left: var(--s3);
+  padding-left: var(--s3);
+  border-left: 1px solid var(--replay-line);
+}
+.scene-viewport .replay-then[hidden] { display: none; }
+.scene-viewport .replay-then-label { color: var(--replay-ink); font-size: var(--fs-micro); font-weight: var(--w-bold); letter-spacing: var(--track-caps); }
+
+/* The dock's key: pressed while the day is replayed. */
+#office-scene-container .replay-toggle[aria-pressed="true"],
+#office-scene-container .replay-toggle[aria-pressed="true"] .dock-icon { color: var(--replay-ink); }
+#office-scene-container .replay-toggle[aria-pressed="true"] { background: var(--replay-bg); border-color: var(--replay-line); }
+#office-scene-container .replay-toggle[aria-busy="true"] { cursor: progress; }
+
+/* THE CONTROLS: one plate of the scene's glass, edged in the replay's violet. */
+.scene-viewport .replay-bar {
+  container: replay / inline-size;
+  position: absolute;
+  z-index: 6;
+  left: calc(var(--hud-l) + var(--s3));
+  right: calc(var(--hud-r) + var(--s3));
+  bottom: calc(var(--scene-readout) + var(--s2));
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  min-height: var(--s9);
+  padding: 0 var(--s2) 0 var(--s3);
+  background: var(--scene-chrome);
+  border: 1px solid var(--replay-line);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--lit-edge), var(--shadow-raised);
+  backdrop-filter: blur(var(--scene-blur));
+  color: var(--scene-chrome-ink);
+  font-family: var(--font-sans);
+  animation: replay-plate-in var(--dur-slow) var(--ease) both;
+}
+.scene-viewport .replay-bar[hidden] { display: none; }
+@keyframes replay-plate-in { from { opacity: 0; translate: 0 var(--s2); } }
+.scene-viewport .replay-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  flex: none;
+  padding: 0 var(--s2);
+  height: var(--chip-h);
+  border: 1px solid var(--replay-line);
+  border-radius: var(--radius-xs);
+  background: var(--replay-bg);
+  color: var(--replay-ink);
+  font-size: var(--fs-micro);
+  font-weight: var(--w-bold);
+  letter-spacing: var(--track-caps);
+}
+.scene-viewport .replay-dot { width: var(--s2); height: var(--s2); border-radius: var(--radius-pill); background: var(--replay-ink); }
+.scene-viewport .replay-keys { display: inline-flex; gap: var(--s1); flex: none; }
+.scene-viewport .replay-key,
+.scene-viewport .replay-speed {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s2);
+  min-width: var(--hit);
+  height: var(--hit);
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--scene-chrome-ink);
+  font-size: var(--fs-meta);
+  font-weight: var(--w-semi);
+  line-height: 1;
+}
+.scene-viewport .replay-key:hover,
+.scene-viewport .replay-speed:hover { background: var(--surface-quiet); color: var(--ink); }
+.scene-viewport .replay-key:focus-visible,
+.scene-viewport .replay-speed:focus-visible,
+.scene-viewport .replay-scrub:focus-visible,
+.scene-viewport .replay-live-go:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+.scene-viewport .replay-key .ui-icon { width: var(--icon); height: var(--icon); }
+.scene-viewport .replay-play { background: var(--replay-bg); border-color: var(--replay-line); color: var(--replay-ink); }
+.scene-viewport .replay-play[data-state="playing"] .replay-icon-play,
+.scene-viewport .replay-play[data-state="paused"] .replay-icon-pause { display: none; }
+.scene-viewport .replay-play .replay-icon-play { fill: currentColor; }
+
+/* The run as a line: the part played in the replay's fill, each stage's start a tick. */
+.scene-viewport .replay-track {
+  --replay-p: 0%;
+  position: relative;
+  flex: 2 1 var(--card-w);
+  min-width: var(--s9);
+  height: var(--hit);
+}
+.scene-viewport .replay-scrub {
+  -webkit-appearance: none;
+  appearance: none;
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: var(--hit);
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.scene-viewport .replay-scrub::-webkit-slider-runnable-track {
+  height: var(--s1);
+  border-radius: var(--radius-pill);
+  background: linear-gradient(90deg, var(--replay-fill) var(--replay-p), var(--replay-rest) var(--replay-p));
+}
+.scene-viewport .replay-scrub::-moz-range-track {
+  height: var(--s1);
+  border-radius: var(--radius-pill);
+  background: linear-gradient(90deg, var(--replay-fill) var(--replay-p), var(--replay-rest) var(--replay-p));
+}
+.scene-viewport .replay-scrub::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: var(--s4);
+  height: var(--s4);
+  margin-top: calc((var(--s1) - var(--s4)) / 2);
+  border: 2px solid var(--scene);
+  border-radius: var(--radius-pill);
+  background: var(--replay-ink);
+  box-shadow: 0 0 0 1px var(--replay-line);
+}
+.scene-viewport .replay-scrub::-moz-range-thumb {
+  width: var(--s4);
+  height: var(--s4);
+  border: 2px solid var(--scene);
+  border-radius: var(--radius-pill);
+  background: var(--replay-ink);
+}
+.scene-viewport .replay-ticks { position: absolute; inset: 0; pointer-events: none; }
+.scene-viewport .replay-tick {
+  position: absolute;
+  top: 50%;
+  width: 2px;
+  height: var(--s3);
+  translate: -50% -50%;
+  border-radius: 1px;
+  background: var(--replay-tick);
+}
+/* A quiet stretch of the record (nothing written for 30 s or more) passes in 2 s: on the line it
+   is a dotted run, as short as it is on the page, and the rate beside the line gives its times. */
+.scene-viewport .replay-quiet {
+  position: absolute;
+  top: 50%;
+  z-index: 2;
+  height: var(--s3);
+  translate: 0 -50%;
+  border-radius: 1px;
+  background: repeating-linear-gradient(90deg, var(--replay-tick) 0 2px, transparent 2px 5px);
+}
+.scene-viewport .replay-when {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 30ch;
+  min-width: 22ch;
+  max-width: 62ch;
+  margin: 0;
+  line-height: var(--lh-tight);
+}
+.scene-viewport .replay-when > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.scene-viewport .replay-time { color: var(--replay-ink); font-family: var(--font-mono); font-size: var(--fs-body); font-weight: var(--w-semi); font-variant-numeric: tabular-nums; }
+.scene-viewport .replay-stage { color: var(--scene-chrome-ink); font-size: var(--fs-meta); }
+.scene-viewport .replay-meta { color: var(--scene-chrome-muted); font-size: var(--fs-micro); }
+.scene-viewport .replay-progress { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.scene-viewport .replay-speeds { display: inline-flex; flex: none; padding: 1px; gap: 1px; border: 1px solid var(--scene-chrome-edge); border-radius: var(--radius-sm); }
+.scene-viewport .replay-speed { min-width: var(--s8); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.scene-viewport .replay-speed[aria-pressed="true"] { background: var(--replay-bg); border-color: var(--replay-line); color: var(--replay-ink); }
+.scene-viewport .replay-exit { flex: none; padding: 0 var(--s3); border-color: var(--scene-chrome-edge); }
+/* What the plate spells out for the room it has. */
+@container replay (max-width: 999.98px) {
+  .scene-viewport .replay-badge { display: none; }
+}
+@container replay (max-width: 859.98px) {
+  .scene-viewport .replay-exit span { display: none; }
+  .scene-viewport .replay-exit { padding: 0; }
+}
+
+/* LIVE WINS: the prompt, in the live gold, over the replay's grey. */
+.scene-viewport .replay-live {
+  position: absolute;
+  z-index: 7;
+  top: calc(var(--replay-bar-top) + var(--s4));
+  left: calc(var(--hud-l) + (100% - var(--hud-l) - var(--hud-r)) / 2);
+  translate: -50% 0;
+  width: min(var(--toast-w), calc(100% - var(--hud-l) - var(--hud-r) - var(--s6)));
+  padding: var(--s3) var(--s4);
+  background: linear-gradient(180deg, var(--sheen), transparent 60%), var(--card-glass);
+  border: 1px solid var(--moment-edge);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--lit-edge), var(--shadow-raised);
+  backdrop-filter: blur(var(--drawer-blur));
+  animation: replay-plate-in var(--dur) var(--ease) both;
+}
+.scene-viewport .replay-live[hidden] { display: none; }
+.scene-viewport .replay-live-eyebrow { display: flex; align-items: center; gap: var(--s2); margin: 0; color: var(--gold-ink); font-size: var(--fs-micro); font-weight: var(--w-bold); letter-spacing: var(--track-caps); }
+.scene-viewport .replay-live-eyebrow .live-dot { background: var(--gold); }
+.scene-viewport .replay-live-what { margin: var(--s2) 0 var(--s3); color: var(--ink); font-size: var(--fs-body); line-height: var(--lh-snug); overflow-wrap: anywhere; }
+.scene-viewport .replay-live-go {
+  min-height: var(--hit);
+  padding: 0 var(--s4);
+  border: 1px solid var(--forest-lift);
+  border-radius: var(--radius-xs);
+  background: var(--forest);
+  color: var(--ink-on-dark);
+  font-size: var(--fs-meta);
+  font-weight: var(--w-semi);
+  font-variant-numeric: tabular-nums;
+}
+.scene-viewport .replay-live-go:hover { background: var(--forest-lift); }
+
+@media (prefers-reduced-motion: reduce) {
+  .scene-viewport[data-replay] .replay-letterbox::before,
+  .scene-viewport[data-replay] .replay-letterbox::after,
+  .scene-viewport .replay-bar,
+  .scene-viewport .replay-live { animation: none; }
+}

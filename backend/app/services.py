@@ -3,10 +3,11 @@ import json
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-from sqlalchemy import Engine, func, select, update
+from sqlalchemy import Engine, and_, func, select, update
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session
 
+from app.agents.models import AgentRun
 from app.config import Settings
 from app.models import ApprovalRequest, CommandRecord, DomainEvent, OwnerPolicy, Room, Studio
 from app.publishing.models import ChannelRecord
@@ -1011,6 +1012,49 @@ MODE_MEMORY = {
 }
 
 
+def last_task_per_agent(session: Session) -> dict[str, dict]:
+    """Each employee's newest run, started or finished, from the studio's own records.
+
+    A run is written the moment its model call starts (agents/services.py run_agent_task), so
+    the newest row by ``started_at`` is the last task the employee took up: a RUNNING one while
+    the call is out, or how the last one ended. An employee with no run has no entry. One
+    grouped query over ``ix_agent_run_agent_started`` (migration 0046), because the snapshot
+    that carries it is read every five seconds.
+    """
+    newest = (
+        select(AgentRun.agent_id.label("agent_id"), func.max(AgentRun.started_at).label("at"))
+        .group_by(AgentRun.agent_id)
+        .subquery()
+    )
+    rows = session.execute(
+        select(
+            AgentRun.agent_id,
+            AgentRun.task_type,
+            AgentRun.status,
+            AgentRun.started_at,
+            AgentRun.finished_at,
+        )
+        .join(
+            newest,
+            and_(AgentRun.agent_id == newest.c.agent_id, AgentRun.started_at == newest.c.at),
+        )
+        .order_by(AgentRun.agent_id, AgentRun.id)
+    ).all()
+    tasks: dict[str, dict] = {}
+    for agent_id, task_type, status, started_at, finished_at in rows:
+        # two runs started in the same microsecond: the first by id, so the answer is stable
+        tasks.setdefault(
+            agent_id,
+            {
+                "task_type": task_type,
+                "status": status,
+                "started_at": started_at,
+                "finished_at": finished_at,
+            },
+        )
+    return tasks
+
+
 def snapshot(engine: Engine) -> dict:
     with Session(engine) as session, session.begin():
         studio = session.get(Studio, 1)
@@ -1077,6 +1121,9 @@ def snapshot(engine: Engine) -> dict:
                 "financing": "PARTIAL",
             },
             "events": [EventView.model_validate(e).model_dump() for e in reversed(recent)],
+            # The name tags in the headquarters read each employee's last task from here,
+            # not only from the events the page happened to replay (W12).
+            "last_tasks": last_task_per_agent(session),
         }
 
 

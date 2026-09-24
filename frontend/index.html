@@ -84,7 +84,10 @@
                    employees can be reached with the arrows as well as with a pointer. -->
               <div class="scene-viewport" id="scene-viewport">
               <canvas id="office-canvas" class="office-canvas" tabindex="0" aria-label="Sediul AMN-AI. Săgețile trec de la un angajat la altul, apoi prin ecranele clădirii; Enter deschide ce ai ales."></canvas>
-              <div class="scene-readout scene-readout-info" title="Ora locală din București și vremea reală pe care o citește studioul. Fără un serviciu de vreme configurat, scena nu desenează vremea."><span id="scene-info">—  •  BUCUREȘTI</span></div>
+              <!-- «RELUAREA ZILEI» (W13): while the newest finished day is played back from its record,
+                   a letterbox closes over the sky row and the street, so no one takes it for live. -->
+              <div class="replay-letterbox" aria-hidden="true"></div>
+              <div class="scene-readout scene-readout-info" title="Ora locală din București și vremea reală pe care o citește studioul. Fără un serviciu de vreme configurat, scena nu desenează vremea."><span id="scene-info">—  •  BUCUREȘTI</span><span id="replay-then" class="replay-then" title="Ora din registru a momentului reluat" hidden><span class="replay-then-label">ATUNCI</span><span id="replay-then-time" class="scene-figure">—</span></span></div>
               <span id="office-status" class="tag live-pill scene-readout scene-readout-live" data-state="reconnecting"><span class="live-dot" aria-hidden="true"></span><span id="office-fps"><span class="scene-live">Se conectează</span></span></span>
               <!-- The slate: what is being looked at, the day's run as one segment per stage (the
                    runbook's own events, hud_charts.js), and when the studio was last read. -->
@@ -94,6 +97,31 @@
                    technology; its words are said once in the polite live region under it. -->
               <div id="face-card" class="face-card" aria-hidden="true" hidden><canvas class="face-card-poster" width="180" height="320" hidden></canvas><div class="face-card-text"><p class="face-card-eyebrow"></p><p class="face-card-value"></p><p class="face-card-line"></p><p class="face-card-context"></p><p class="face-card-action"></p></div></div>
               <p id="face-card-announce" class="moment-announce" role="status" aria-live="polite"></p>
+              <!-- THE REPLAY'S CONTROLS, on the slate (replay_player.js): play and pause, the stages,
+                   the run as a scrubber with each stage's start marked, the moment's real clock, the
+                   speed, and the way out. Esc also leaves; Space plays and pauses. -->
+              <section id="replay-bar" class="replay-bar" aria-label="Reluarea zilei" hidden>
+                <span class="replay-badge" aria-hidden="true"><span class="replay-dot"></span>RELUARE</span>
+                <div class="replay-keys" role="group" aria-label="Redare">
+                  <button id="replay-prev" class="replay-key" type="button" aria-label="Etapa anterioară" title="Etapa anterioară (Page Up pe cronologie)"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 5.5v13"/><path d="M18 6.2L9.6 12l8.4 5.8z"/></svg></button>
+                  <button id="replay-play" class="replay-key replay-play" type="button" data-state="paused" aria-label="Redă" title="Redă (Spațiu)"><svg class="ui-icon replay-icon-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 5.8v12.4M15.5 5.8v12.4"/></svg><svg class="ui-icon replay-icon-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 5.6L18.6 12 7.5 18.4z"/></svg></button>
+                  <button id="replay-next" class="replay-key" type="button" aria-label="Etapa următoare" title="Etapa următoare (Page Down pe cronologie)"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M17.5 5.5v13"/><path d="M6 6.2l8.4 5.8L6 17.8z"/></svg></button>
+                </div>
+                <div id="replay-track" class="replay-track">
+                  <input id="replay-scrub" class="replay-scrub" type="range" min="0" max="1000" step="5" value="0" aria-label="Momentul din rulare">
+                  <div id="replay-ticks" class="replay-ticks" aria-hidden="true"></div>
+                </div>
+                <p class="replay-when"><span id="replay-time" class="replay-time">—</span><span id="replay-stage" class="replay-stage">—</span><span class="replay-meta"><span id="replay-progress" class="replay-progress">—</span> · <span id="replay-rate" class="replay-rate">—</span></span></p>
+                <div class="replay-speeds" role="group" aria-label="Viteza reluării">
+                  <button class="replay-speed" type="button" data-speed="1" aria-pressed="true">1×</button>
+                  <button class="replay-speed" type="button" data-speed="4" aria-pressed="false">4×</button>
+                  <button class="replay-speed" type="button" data-speed="16" aria-pressed="false">16×</button>
+                </div>
+                <button id="replay-exit" class="replay-key replay-exit" type="button" title="Ieși din reluare (Esc)"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></svg><span>Ieși din reluare</span></button>
+              </section>
+              <!-- LIVE WINS: live news while the day is replayed ends the replay (replay_player.js). -->
+              <div id="replay-live" class="replay-live" role="alert" hidden><p class="replay-live-eyebrow"><span class="live-dot" aria-hidden="true"></span>SE ÎNTÂMPLĂ ACUM</p><p id="replay-live-what" class="replay-live-what"></p><button id="replay-live-go" class="replay-live-go" type="button">Înapoi la live · <span id="replay-live-count">6</span></button></div>
+              <p id="replay-announce" class="moment-announce" role="status" aria-live="polite"></p>
               <!-- A chapter of the serial, over the render for under three seconds, only when an
                    episode is drafted or approved as it happens (moments.js). -->
               <div id="moment-chapter" class="moment moment-chapter" hidden></div>
@@ -110,6 +138,7 @@
                 <button id="zoom-fit" class="quiet cam-btn cam-worded" title="Încadrează toată clădirea"><svg class="ui-icon dock-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.6 8.6v-4h4M15.4 4.6h4v4M19.4 15.4v4h-4M8.6 19.4h-4v-4"/><rect x="8.8" y="9.2" width="6.4" height="5.6" rx="1"/></svg><span class="dock-label">Încadrează</span></button>
                 <button id="zoom-reset" class="quiet cam-btn" title="Mărime reală">1:1</button>
                 </div>
+                <button id="replay-toggle" class="quiet cam-btn cam-worded replay-toggle" type="button" aria-pressed="false" title="Reluarea zilei: ultima rulare încheiată, redată din registrul studioului" hidden><svg class="ui-icon dock-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.8 12a7.2 7.2 0 1 0 2.1-5.1"/><path d="M4.4 4.2v4.2h4.2"/><path d="M10.4 9.1l4.6 2.9-4.6 2.9z"/></svg><span class="dock-label">Reluare</span></button>
                 <button id="fullscreen-btn" class="quiet cam-btn btn-fs cam-worded" title="Ecran complet"><svg class="ui-icon dock-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.2 4.6h5.2v5.2M19.4 4.6l-5.6 5.6M9.8 19.4H4.6v-5.2M4.6 19.4l5.6-5.6"/></svg><span class="dock-label">Ecran complet</span></button>
                 <button id="exit-fullscreen-btn" class="quiet cam-btn btn-exit-fs hidden" title="Ieși din ecran complet"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></svg>Ieși</button>
                 </div>
@@ -302,9 +331,10 @@
         </div>
       </dialog>
       <!-- Phase 9: Daily log and Office Serial -->
-      <dialog id="story-modal" class="studio-dialog research-dialog">
+      <dialog id="story-modal" class="studio-dialog research-dialog journal-dialog">
         <div class="dialog-header">
           <div>
+            <p class="eyebrow">JURNAL · OFFICE SERIAL</p>
             <h2 class="dialog-title">Jurnalul zilei și Office Serial</h2>
             <p class="dialog-desc">Ziua, numărată din fluxul de evenimente. Episodul se scrie doar din ce s-a întâmplat: fiecare beat citează evenimentele reale pe care le dramatizează.</p>
           </div>
@@ -314,10 +344,13 @@
           <!-- The writers room comes first: it is what the Journal is opened for, and at 1080 the
                closed days above it pushed the episodes below the fold (W8). -->
           <div class="dialog-section-bottom">
-            <h3 class="dialog-section-header-bright-compact">Episoade</h3>
-            <!-- THE WRITERS ROOM (serial_room.js). Where canon stands and the threads it carries,
-                 above the episodes; each episode below is a script page with the Director's
-                 reading and tomorrow's plan beside it. -->
+            <!-- THE COVER (W12, serial_room.js journalCoverHtml): the newest episode as a poster,
+                 its number, title, the day it tells and the Director's verdict. -->
+            <div id="story-cover" class="journal-cover-slot"></div>
+            <h3 class="dialog-section-header-bright-compact journal-heading">Episoade</h3>
+            <!-- THE WRITERS ROOM (serial_room.js). The threads canon carries, above the episodes
+                 (folded away when there are none); each episode below is a script page with the
+                 Director's reading and tomorrow's plan beside it. -->
             <div id="story-serial-board"></div>
             <div id="story-episodes" class="topics-container writers-room">
               <div class="topics-loading">Se încarcă episoadele…</div>
@@ -325,7 +358,7 @@
           </div>
           <div>
             <div class="topics-header-row">
-              <h3 class="dialog-section-header-bright-compact">Zile închise</h3>
+              <h3 class="dialog-section-header-bright-compact journal-heading">Zile închise</h3>
               <button id="close-day-btn" class="quiet btn-media-action">Închide ziua</button>
             </div>
             <div id="story-status" class="dialog-status-msg" hidden></div>

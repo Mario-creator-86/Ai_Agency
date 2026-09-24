@@ -10,7 +10,7 @@
  * Writes to the document only when what it says or where it stands has changed.
  */
 
-import { placeReadout, readoutSentence } from './hq_readouts.js';
+import { SURFACES, placeReadout, readoutSentence } from './hq_readouts.js';
 
 export class SceneReadout {
   /**
@@ -116,7 +116,9 @@ export class SceneReadout {
     const inset = 8;
     const room = { left: ox + target.room.left + inset, top: oy + target.room.top + inset, right: ox + target.room.right - inset, bottom: bottom - inset };
     const rect = { x: ox + target.rect.x, y: oy + target.rect.y, w: target.rect.w, h: target.rect.h };
-    const at = placeReadout(rect, this.size, room, 14);
+    // a face may ask for a side first: the façade sign's card stands under it, off the lettering
+    const surface = SURFACES.find((s) => s.id === target.id);
+    const at = placeReadout(rect, this.size, room, 14, surface ? surface.prefer : undefined);
     const key = `${at.x},${at.y},${at.side}`;
     if (key === this.placeKey) return;
     this.placeKey = key;

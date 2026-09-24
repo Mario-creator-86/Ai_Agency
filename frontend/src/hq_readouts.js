@@ -22,6 +22,7 @@
 
 import {
   WALL, NOTES, paneMode, renderBayFace, treasuryFace, runSignFace, factCheckFace, writersFace, publishFace, tokensFace,
+  listWords, NOT_READ,
 } from './hq_screens.js';
 import { runtimeLabel, taskLabel } from './ledger.js';
 import { nextRunWords } from './side_readout.js';
@@ -44,10 +45,12 @@ export function unionRect(rects) {
  * The bound walls, in the order the keyboard reaches them after the employees: the façade sign,
  * then the floors from the top down, each left to right. `room` is the dialog a click or Enter
  * opens (the masthead menu's own buttons), `name` how the readout names the face.
- * @type {Array<{id: string, name: string, room: string, rect?: number[], screen?: string}>}
+ * `prefer` is the side its card takes first (placeReadout).
+ * @type {Array<{id: string, name: string, room: string, rect?: number[], screen?: string, prefer?: 'right'|'left'|'above'|'below'}>}
  */
 export const SURFACES = [
-  { id: 'run_sign', name: 'FAȚADA · RULAREA ZILEI', room: 'open-runbook-btn', rect: WALL.run_sign },
+  // The sign's card stands under it: beside it, it lay over the AMN-AI lettering (W12).
+  { id: 'run_sign', name: 'FAȚADA · RULAREA ZILEI', room: 'open-runbook-btn', rect: WALL.run_sign, prefer: 'below' },
   { id: 'research_board', name: 'CERCETARE · L3', room: 'open-research-btn', rect: unionRect(NOTES) },
   { id: 'factcheck_board', name: 'VERIFICAREA FAPTELOR · L3', room: 'open-research-btn', rect: WALL.factcheck_board },
   { id: 'writers_screen', name: 'OFFICE SERIAL · L2', room: 'open-story-btn', rect: WALL.writers_screen },
@@ -68,8 +71,29 @@ export const ROOM_WORD = {
 };
 
 /**
- * Every surface with its rectangle in world px: the walls, and the monitor on every occupied
- * desk (a desk monitor is found by the pointer; the keyboard reaches its employee instead).
+ * The desk as a place the pointer can stand on (W12): the monitor, the chair and the figure at
+ * it, and the desk itself, not the monitor alone. At fit zoom the monitor was 9-13 screen px;
+ * this is 48x54 world px, 38-55 screen px at 1280-2560. The figure's own box (hq_world.js
+ * drawAgents: 32x46 above the seat) and the monitor are inside it.
+ * @param {{x: number, y: number}} seat @param {number[]} monitor [x, y, w, h] world px
+ * @returns {[number, number, number, number]}
+ */
+export function deskRegion(seat, monitor) {
+  const [mx, my, mw] = monitor;
+  const x0 = Math.min(seat.x - DESK_HALF_W, mx - 4);
+  const x1 = Math.max(seat.x + DESK_HALF_W, mx + mw + 4);
+  const y0 = Math.min(seat.y - 46, my - 4);
+  const y1 = seat.y + 8;
+  return [x0, y0, x1 - x0, y1 - y0];
+}
+
+/** Half the desk region's width, in world px: the desk's top reaches ±24 of the seat. */
+export const DESK_HALF_W = 24;
+
+/**
+ * Every surface with its rectangle in world px: the walls, and every occupied desk — the
+ * monitor, the chair and the figure at it (deskRegion; the keyboard reaches its employee
+ * instead).
  * @param {any} manifest the plates' manifest
  * @param {any[]} agents the employees, each with a desk_id
  * @returns {Array<{id: string, rect: number[], agent: any, room: string|null, desk: boolean}>}
@@ -85,7 +109,9 @@ export function surfaceRects(manifest, agents) {
   for (const [name, screen] of Object.entries(screens)) {
     if (!/^desk_.+_monitor$/.test(name) || !screen || !screen.desk) continue;
     const agent = (agents || []).find((a) => a && a.desk_id === screen.desk);
-    if (agent) out.push({ id: `desk:${screen.desk}`, rect: [...screen.rect], agent, room: null, desk: true });
+    const seat = manifest && manifest.seats ? manifest.seats[screen.desk] : null;
+    const rect = seat ? deskRegion(seat, screen.rect) : [...screen.rect];
+    if (agent) out.push({ id: `desk:${screen.desk}`, rect, agent, room: null, desk: true });
   }
   return out;
 }
@@ -109,6 +135,21 @@ export function hitAt(hits, x, y) {
     }
   }
   return best;
+}
+
+/**
+ * What the pointer stands on (W12): the smallest box under it, except that an employee's figure
+ * is part of their desk — the pointer on the figure stands on the desk, whose card says who sits
+ * there and what they last did. A figure with no desk region is itself.
+ * @template {{x0: number, y0: number, x1: number, y1: number, agent?: any, desk?: boolean, surface?: string}} H
+ * @param {H[]} hits @param {number} x @param {number} y
+ * @returns {H|null}
+ */
+export function pointerHit(hits, x, y) {
+  const hit = hitAt(hits, x, y);
+  if (!hit || hit.surface || !hit.agent) return hit;
+  const desk = (hits || []).find((h) => h.desk && h.agent === hit.agent);
+  return desk || hit;
 }
 
 /* ------------------------------------------------------------------------------------------
@@ -173,8 +214,47 @@ export function lastTasks(events) {
     if (!Number.isFinite(at)) continue;
     tasks[id] = { task: taskLabel(String(payload.task_type)), at, status };
   }
-  const key = Object.keys(tasks).sort().map((id) => `${id}|${tasks[id].task}|${tasks[id].at}`).join('#');
-  return { tasks, key };
+  return { tasks, key: taskKey(tasks) };
+}
+
+/**
+ * Each employee's last task from the studio's own records (W12): the snapshot's `last_tasks`,
+ * the newest run of each employee, started or finished (backend app.services
+ * last_task_per_agent). The register only holds the events the page replayed, so without this
+ * six of the Owner's eight name tags said «—».
+ * @param {Record<string, {task_type?: string, status?: string, started_at?: string, finished_at?: string|null}>|null|undefined} record
+ * @returns {{tasks: Record<string, {task: string, at: number, status: string|null}>, key: string}}
+ */
+export function tasksFromRecord(record) {
+  /** @type {Record<string, {task: string, at: number, status: string|null}>} */
+  const tasks = {};
+  for (const [id, run] of Object.entries(record && typeof record === 'object' ? record : {})) {
+    if (!run || !run.task_type) continue;
+    const at = Date.parse(String(run.finished_at || run.started_at || ''));
+    if (!Number.isFinite(at)) continue;
+    tasks[id] = { task: taskLabel(String(run.task_type)), at, status: run.status ? String(run.status) : null };
+  }
+  return { tasks, key: taskKey(tasks) };
+}
+
+/**
+ * The newer of two readings of each employee's last task: the register's (live events) and the
+ * record's (the snapshot). A live event is newer than the snapshot it arrived after, and the
+ * snapshot remembers what the register never replayed.
+ * @param {{tasks: Record<string, any>}} a @param {{tasks: Record<string, any>}} b
+ */
+export function newerTasks(a, b) {
+  /** @type {Record<string, {task: string, at: number, status: string|null}>} */
+  const tasks = { ...((a && a.tasks) || {}) };
+  for (const [id, task] of Object.entries((b && b.tasks) || {})) {
+    if (!tasks[id] || task.at > tasks[id].at) tasks[id] = task;
+  }
+  return { tasks, key: taskKey(tasks) };
+}
+
+/** @param {Record<string, {task: string, at: number}>} tasks */
+function taskKey(tasks) {
+  return Object.keys(tasks).sort().map((id) => `${id}|${tasks[id].task}|${tasks[id].at}`).join('#');
 }
 
 /**
@@ -221,6 +301,18 @@ function openWords(room) {
   return word ? `Clic sau Enter: deschide ${word}.` : '';
 }
 
+/** What the idle façade's card offers when a finished day is on record (W13). */
+export const REPLAY_ACTION = 'Clic sau Enter: Vezi ultima zi de lucru.';
+
+/**
+ * Whether the façade sign offers «Reluarea zilei»: a finished run is on record (facts.replayOffer)
+ * and none is under way or open today (W13).
+ * @param {any} facts @param {{underWay: boolean, open: boolean}} face
+ */
+export function replayOffered(facts, face) {
+  return Boolean(facts && facts.replayOffer) && !face.underWay && !face.open;
+}
+
 /** @param {any[]} agents @param {string} desk */
 const atDesk = (agents, desk) => (agents || []).find((a) => a && a.desk_id === desk) || null;
 
@@ -233,6 +325,9 @@ const atDesk = (agents, desk) => (agents || []).find((a) => a && a.desk_id === d
 export function surfaceReadout(id, input) {
   const facts = input.facts || {};
   const agents = input.agents || [];
+  // How each list behind the faces was read (W12): 'pending', 'ok' or 'failed'. A face never
+  // says its record is empty unless the record was read and is.
+  const reads = facts.reads || {};
   const now = Number.isFinite(input.now) ? Number(input.now) : Date.now();
   const surface = SURFACES.find((s) => s.id === id);
   const action = surface ? openWords(surface.room) : '';
@@ -264,7 +359,7 @@ export function surfaceReadout(id, input) {
       id,
       eyebrow: surface.name,
       value: face.balance === '—' ? '—' : `${face.balance} VR$ cheltuibili`,
-      line: known ? face.line : '',
+      line: known ? face.line : reads.figures === 'failed' ? 'trezoreria nu a putut fi citită' : '',
       context: face.deficit ? 'Trezoreria este în deficit.' : 'Soldul cheltuibil și cheltuiala de azi față de bugetul zilnic.',
       action,
       tone: face.deficit ? 'alert' : face.state && face.state !== 'OK' ? 'warn' : 'quiet',
@@ -272,7 +367,7 @@ export function surfaceReadout(id, input) {
     });
   }
   if (id === 'run_sign') {
-    const face = runSignFace(facts.track, { today: facts.today, live: facts.live });
+    const face = runSignFace(facts.track, { today: facts.today, live: facts.live, read: reads.runs });
     const running = face.underWay;
     const next = face.open ? '' : nextRunSign(facts.jobs, { stopped: facts.stopped, timeZone: facts.timeZone });
     return keyed({
@@ -281,7 +376,9 @@ export function surfaceReadout(id, input) {
       value: face.tally === '—' ? face.state : `${face.title} · ${face.tally}`,
       line: face.tally === '—' ? '' : face.state,
       context: running ? 'O rulare este în lucru acum.' : face.open ? 'Rularea de azi nu s-a încheiat încă.' : next ? `${next[0].toUpperCase()}${next.slice(1)}.` : '',
-      action,
+      // While the studio rests and a finished day is on record, the sign's click plays that day
+      // back from the record (W13, day_replay.js); while a run is under way it is live, not a replay.
+      action: replayOffered(facts, face) ? REPLAY_ACTION : action,
       tone: running ? 'ok' : 'quiet',
       poster: false,
     });
@@ -297,7 +394,7 @@ export function surfaceReadout(id, input) {
       id,
       eyebrow: surface.name,
       value: verified === null && refused === null ? '—' : `${verified === null ? '—' : counted(verified, 'afirmație verificată', 'afirmații verificate')} · ${refused === null ? '—' : counted(refused, 'verdict respins', 'verdicte respinse')}`,
-      line: face.date ? `rularea din ${face.date}` : 'nicio rulare în registru',
+      line: face.date ? `rularea din ${face.date}` : facts.run ? 'cea mai nouă rulare nu are etapa de verificare' : listWords(reads.runs, 'nicio rulare în registru').replace(/^—$/, ''),
       context: 'Afirmațiile verificate și verdictele respinse ale celei mai noi rulări.',
       action,
       tone: 'quiet',
@@ -309,8 +406,8 @@ export function surfaceReadout(id, input) {
     return keyed({
       id,
       eyebrow: surface.name,
-      value: titles.length ? counted(titles.length, 'subiect propus', 'subiecte propuse') : 'niciun subiect propus în registru',
-      line: titles.length ? `cel mai nou: ${titles[0]}` : '',
+      value: titles.length ? counted(titles.length, 'subiect propus', 'subiecte propuse') : reads.ledger === 'ok' ? 'niciun subiect propus în registru' : '—',
+      line: titles.length ? `cel mai nou: ${titles[0]}` : reads.ledger === 'failed' ? NOT_READ : '',
       context: 'Subiectele propuse de Cercetător, câte unul pe fiecare notiță.',
       action,
       tone: 'quiet',
@@ -323,7 +420,7 @@ export function surfaceReadout(id, input) {
       id,
       eyebrow: surface.name,
       value: face.state ? `${face.number} · ${face.state}` : face.number,
-      line: face.title,
+      line: face.title || (facts.episodes ? '' : reads.episodes === 'failed' ? 'serialul nu a putut fi citit' : ''),
       context: 'Cel mai nou episod al serialului.',
       action,
       tone: 'quiet',
@@ -340,7 +437,7 @@ export function surfaceReadout(id, input) {
       id,
       eyebrow: surface.name,
       value: busy ? 'ÎN LUCRU' : face.date ? `${face.word} · ${face.date}` : face.word,
-      line: busy ? 'Publicatorul lucrează acum.' : title,
+      line: busy ? 'Publicatorul lucrează acum.' : title || (facts.run ? '' : listWords(reads.runs, 'nicio rulare în registru').replace(/^—$/, '')),
       context: 'Ce a publicat cea mai nouă rulare.',
       action,
       tone: busy ? 'ok' : face.word === 'EȘUAT' ? 'alert' : 'quiet',
@@ -353,7 +450,7 @@ export function surfaceReadout(id, input) {
       id,
       eyebrow: surface.name,
       value: face.text,
-      line: '',
+      line: facts.budget ? '' : reads.figures === 'failed' ? 'bugetul nu a putut fi citit' : '',
       context: 'Tokenurile folosite azi de angajați, după bugetul de azi.',
       action,
       tone: 'quiet',
@@ -376,7 +473,13 @@ export function surfaceReadout(id, input) {
       line = sampled > 1 ? `cel mai luminos dintre ${sampled} cadre-cheie ale filmului` : 'un cadru din fișierul filmului';
     } else {
       value = face.word;
-      line = 'niciun film randat în registru';
+      // Not read is not empty (W12): the record's film, or why there is no frame of it.
+      const frame = reads.film;
+      line = frame === 'failed'
+        ? 'cadrul filmului nu a putut fi citit'
+        : frame === 'pending'
+          ? ''
+          : listWords(reads.runs, 'niciun film randat în registru').replace(/^—$/, '');
     }
     return keyed({
       id,
@@ -426,9 +529,10 @@ export function readoutSentence(r) {
  * @param {{w: number, h: number}} size the readout
  * @param {{left: number, top: number, right: number, bottom: number}} room
  * @param {number} [gap]
+ * @param {'right'|'left'|'above'|'below'} [prefer] the side to try first (the sign: below)
  * @returns {{x: number, y: number, side: 'right'|'left'|'above'|'below'}}
  */
-export function placeReadout(target, size, room, gap = 12) {
+export function placeReadout(target, size, room, gap = 12, prefer) {
   const clampX = (/** @type {number} */ x) => Math.max(room.left, Math.min(room.right - size.w, x));
   const clampY = (/** @type {number} */ y) => Math.max(room.top, Math.min(room.bottom - size.h, y));
   const midY = target.y + target.h / 2 - size.h / 2;
@@ -439,7 +543,8 @@ export function placeReadout(target, size, room, gap = 12) {
     { side: 'above', x: clampX(midX), y: target.y - gap - size.h, room: target.y - gap - size.h - room.top },
     { side: 'below', x: clampX(midX), y: target.y + target.h + gap, room: room.bottom - (target.y + target.h + gap) - size.h },
   ]);
-  const fits = sides.find((s) => s.room >= 0 && s.x >= room.left - 0.5 && s.x + size.w <= room.right + 0.5 && s.y >= room.top - 0.5 && s.y + size.h <= room.bottom + 0.5);
+  const order = prefer ? [...sides.filter((s) => s.side === prefer), ...sides.filter((s) => s.side !== prefer)] : sides;
+  const fits = order.find((s) => s.room >= 0 && s.x >= room.left - 0.5 && s.x + size.w <= room.right + 0.5 && s.y >= room.top - 0.5 && s.y + size.h <= room.bottom + 0.5);
   const pick = fits || sides.reduce((a, b) => (b.room > a.room ? b : a));
   return { x: Math.round(clampX(pick.x)), y: Math.round(clampY(pick.y)), side: pick.side };
 }
@@ -495,6 +600,15 @@ export class GlintTracker {
     if (UNKNOWN.test(key) || UNKNOWN.test(before)) return false;
     this.since.set(id, now);
     return true;
+  }
+
+  /**
+   * A glint asked for by a live event rather than a changed key (W12: a stage that starts,
+   * live, glints the façade sign even when its words were already the same).
+   * @param {string} id @param {number} now
+   */
+  force(id, now) {
+    this.since.set(id, now);
   }
 
   /** 0..1 of the glint under way on a face, or null. @param {string} id @param {number} now */

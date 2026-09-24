@@ -44,6 +44,9 @@ test('the written-out copy of the tokens still says what style.css says', () => 
     ['gold', 'gold'],
     ['segPending', 'seg-pending'],
     ['segUnrun', 'seg-unrun'],
+    ['replayInk', 'replay-ink'],
+    ['replayGrade', 'replay-grade'],
+    ['replayTone', 'replay-tone'],
   ];
   for (const [key, token] of pairs) {
     assert.equal(

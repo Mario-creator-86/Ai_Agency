@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import {
   SURFACES, ROOM_WORD, GLINT_MS, GlintTracker, agoWords, canvasLabel, counted, hitAt, lastTaskLine, lastTasks, nextRunSign,
   placeReadout, readoutSentence, screenRect, surfaceReadout, surfaceRects, unionRect,
+  deskRegion, pointerHit, tasksFromRecord, newerTasks, REPLAY_ACTION, replayOffered,
 } from '../src/hq_readouts.js';
 import { NOTES, WALL, runSignFace } from '../src/hq_screens.js';
 import { dayTrack, dayTrackFromRun } from '../src/hud_charts.js';
@@ -40,11 +41,52 @@ test('every bound wall is a surface with its own face\'s rectangle, and opens a 
   }
 });
 
-test('only an occupied desk\'s monitor is a surface, and it names its employee', () => {
+test('only an occupied desk is a surface, and it names its employee', () => {
   const desks = surfaceRects(MANIFEST, AGENTS).filter((r) => r.desk);
   assert.deepEqual(desks.map((r) => r.id).sort(), ['desk:desk_director', 'desk:desk_publish', 'desk:desk_video']);
   assert.equal(desks.find((r) => r.id === 'desk:desk_director').agent.id, 'sarah');
-  assert.deepEqual(desks.find((r) => r.id === 'desk:desk_director').rect, MANIFEST.screens.desk_director_monitor.rect);
+  const seat = MANIFEST.seats.desk_director;
+  assert.deepEqual(desks.find((r) => r.id === 'desk:desk_director').rect, deskRegion(seat, MANIFEST.screens.desk_director_monitor.rect));
+});
+
+test('a desk is the monitor, the chair and the figure at it, at least 32 px at fit zoom (W12)', () => {
+  for (const [desk, seat] of Object.entries(MANIFEST.seats)) {
+    const monitor = MANIFEST.screens[`${desk}_monitor`].rect;
+    const [x, y, w, h] = deskRegion(seat, monitor);
+    // the monitor inside
+    assert.ok(x <= monitor[0] && y <= monitor[1] && x + w >= monitor[0] + monitor[2] && y + h >= monitor[1] + monitor[3], desk);
+    // the figure's own box (hq_world.js drawAgents) inside
+    assert.ok(x <= seat.x - 16 && x + w >= seat.x + 16 && y <= seat.y - 44 && y + h >= seat.y + 2, desk);
+    // fit zoom at 1920 is about 0.78 screen px per world px (1280 is smaller still, and the
+    // monitor there was 9 px): 48 x 54 world px is at least 37 x 42 screen px at 0.78
+    assert.ok(w * 0.78 >= 32 && h * 0.78 >= 32, `${desk} ${w}x${h}`);
+  }
+});
+
+test('the pointer on an employee stands on their desk; a figure without a desk is itself', () => {
+  const seat = MANIFEST.seats.desk_director;
+  const employee = { agent: AGENTS[0], x0: seat.x - 16, y0: seat.y - 44, x1: seat.x + 16, y1: seat.y + 2 };
+  const [dx, dy, dw, dh] = deskRegion(seat, MANIFEST.screens.desk_director_monitor.rect);
+  const desk = { agent: AGENTS[0], surface: 'desk:desk_director', desk: true, x0: dx, y0: dy, x1: dx + dw, y1: dy + dh };
+  const wall = { agent: null, surface: 'run_sign', x0: 0, y0: 0, x1: 2000, y1: 2000 };
+  assert.equal(pointerHit([employee, desk, wall], seat.x, seat.y - 20), desk, 'the figure is part of the desk');
+  assert.equal(pointerHit([employee, desk, wall], dx + 1, dy + dh - 1), desk, 'the corner of the desk');
+  assert.equal(pointerHit([employee, wall], seat.x, seat.y - 20), employee);
+  assert.equal(pointerHit([employee, desk, wall], 1900, 1900), wall);
+  assert.equal(pointerHit([], 1, 1), null);
+});
+
+test('the façade sign\'s card stands under it, off the AMN-AI lettering', () => {
+  const sign = SURFACES.find((s) => s.id === 'run_sign');
+  assert.equal(sign.prefer, 'below');
+  const room = { left: 0, top: 0, right: 1200, bottom: 900 };
+  const target = { x: 600, y: 60, w: 160, h: 30 };
+  assert.equal(placeReadout(target, { w: 300, h: 120 }, room, 14).side, 'right', 'without a preference, right first');
+  const at = placeReadout(target, { w: 300, h: 120 }, room, 14, 'below');
+  assert.equal(at.side, 'below');
+  assert.ok(at.y >= target.y + target.h, 'under the sign');
+  // no room below: the other sides still hold it
+  assert.equal(placeReadout({ x: 600, y: 820, w: 160, h: 30 }, { w: 300, h: 120 }, room, 14, 'below').side, 'right');
 });
 
 test('the pointer finds the smallest box under it: a desk\'s monitor in front of its employee', () => {
@@ -124,7 +166,12 @@ test('the sign adds the next run while no run is under way, and never while one 
   assert.ok(done.state.endsWith(` · ${next}`), done.state);
   const empty = runSignFace(null, { next });
   assert.equal(empty.state, next);
-  assert.equal(runSignFace(null).state, 'nicio rulare în registru');
+  // not read is not empty (W12)
+  assert.equal(runSignFace(null).state, '—');
+  assert.equal(runSignFace(null, { read: 'pending' }).state, '—');
+  assert.equal(runSignFace(null, { read: 'ok' }).state, 'nicio rulare în registru');
+  assert.equal(runSignFace(null, { read: 'failed' }).state, 'registrul nu a putut fi citit');
+  assert.notEqual(runSignFace(null, { read: 'ok' }).key, runSignFace(null, { read: 'failed' }).key);
   const live = dayTrack([
     { event_type: 'runbook.stage_started', payload: { stage: 'media', index: 7, total: 12 }, timestamp: '2026-09-24T09:10:00Z' },
     { event_type: 'runbook.daily_run_started', aggregate_id: 'r', payload: { date: '2026-09-24', preflight: 'READY', stages: 12 }, timestamp: '2026-09-24T09:00:00Z' },
@@ -197,9 +244,11 @@ test('the sign\'s readout says the day and, with no run under way, the scheduler
   assert.equal(r.context, 'Programarea zilnică este oprită.');
   const active = read('run_sign', { ...FACTS, jobs: [{ workflow_type: 'DAILY_RUN', is_active: true, next_run_at: '2026-09-25T02:00:00Z' }], timeZone: 'Europe/Bucharest' });
   assert.equal(active.context, 'Următoarea rulare vin. 25.09, 05:00.');
-  const empty = read('run_sign', {});
+  const empty = read('run_sign', { reads: { runs: 'ok' } });
   assert.equal(empty.value, 'nicio rulare în registru');
   assert.equal(empty.context, '');
+  assert.equal(read('run_sign', {}).value, '—', 'a record not read yet');
+  assert.equal(read('run_sign', { reads: { runs: 'failed' } }).value, 'registrul nu a putut fi citit');
 });
 
 test('the boards, the screens and the plate say their counts in words that agree', () => {
@@ -208,10 +257,10 @@ test('the boards, the screens and the plate say their counts in words that agree
   assert.equal(read('factcheck_board', { run }).line, 'rularea din 12.09');
   assert.equal(read('factcheck_board', { run: { ...run, stages: [{ stage: 'research_and_verification', artefacts: { claims_verified: 0, verdicts_refused: null } }] } }).value, '0 afirmații verificate · —');
   assert.equal(read('factcheck_board', {}).value, '—');
-  assert.equal(read('factcheck_board', {}).line, 'nicio rulare în registru');
+  assert.equal(read('factcheck_board', { reads: { runs: 'ok' } }).line, 'nicio rulare în registru');
   assert.equal(read('research_board').value, '2 subiecte propuse');
   assert.equal(read('research_board').line, 'cel mai nou: How CERN Measures the Higgs Boson');
-  assert.equal(read('research_board', {}).value, 'niciun subiect propus în registru');
+  assert.equal(read('research_board', { reads: { ledger: 'ok' } }).value, 'niciun subiect propus în registru');
   assert.equal(read('writers_screen').value, 'EP 3 · Ciornă');
   assert.equal(read('writers_screen').line, 'Inside The Nexus');
   assert.equal(read('infra_plate').value, '1.234 de tokenuri azi');
@@ -240,7 +289,7 @@ test('the render bay\'s readout shows the render at work, the film\'s frame, or 
   assert.equal(poster.value, 'ultimul film · 12.09');
   assert.equal(poster.line, 'cel mai luminos dintre 5 cadre-cheie ale filmului');
   assert.equal(poster.poster, true);
-  const bare = read('render_bay', {}, idle);
+  const bare = read('render_bay', { reads: { runs: 'ok', film: 'none' } }, idle);
   assert.equal(bare.value, 'ÎN AȘTEPTARE');
   assert.equal(bare.line, 'niciun film randat în registru');
 });
@@ -365,4 +414,79 @@ test('the glass readout is in the render, hidden from assistive technology, and 
   assert.doesNotMatch(block, /#[0-9a-f]{3,8}\b|rgba?\(/i, 'the card states no colour of its own');
   assert.match(block, /pointer-events: none/);
   assert.match(block, /@media \(prefers-reduced-motion: reduce\) \{\s*\.scene-viewport \.face-card \{ animation: none; \}/);
+});
+
+
+/* ------------------------------------------------------------------ W12: not read is not empty -- */
+
+test('a list that could not be read is «—» or says so, never an empty record', () => {
+  const failed = { reads: { runs: 'failed', ledger: 'failed', episodes: 'failed', figures: 'failed', film: 'none' } };
+  const pending = { reads: { runs: 'pending', ledger: 'pending', episodes: 'pending', figures: 'pending', film: 'none' } };
+  const idle = [{ ...AGENTS[1], runtime_state: 'IDLE' }];
+  for (const facts of [failed, pending, {}]) {
+    const words = ['run_sign', 'factcheck_board', 'research_board', 'writers_screen', 'publish_radar', 'infra_plate', 'treasury_board', 'render_bay']
+      .map((id) => read(id, facts, idle))
+      .map((r) => [r.value, r.line].join(' | '));
+    for (const w of words) assert.doesNotMatch(w, /nicio rulare|niciun film|niciun subiect|niciun episod/, w);
+  }
+  assert.equal(read('factcheck_board', failed).line, 'registrul nu a putut fi citit');
+  assert.equal(read('factcheck_board', pending).line, '');
+  assert.equal(read('publish_radar', failed).line, 'registrul nu a putut fi citit');
+  assert.equal(read('research_board', failed).value, '—');
+  assert.equal(read('research_board', failed).line, 'registrul nu a putut fi citit');
+  assert.equal(read('writers_screen', failed).line, 'serialul nu a putut fi citit');
+  assert.equal(read('treasury_board', failed).line, 'trezoreria nu a putut fi citită');
+  assert.equal(read('infra_plate', failed).line, 'bugetul nu a putut fi citit');
+  assert.equal(read('render_bay', failed, idle).line, 'registrul nu a putut fi citit');
+  // the record names a film whose frame could not be read: not «no film»
+  assert.equal(read('render_bay', { reads: { runs: 'ok', film: 'failed' } }, idle).line, 'cadrul filmului nu a putut fi citit');
+  assert.equal(read('render_bay', { reads: { runs: 'ok', film: 'pending' } }, idle).line, '');
+  // a run was read, and it has no verification stage
+  assert.equal(read('factcheck_board', { run: { business_date: '2026-09-12', stages: [] }, reads: { runs: 'ok' } }).line, 'cea mai nouă rulare nu are etapa de verificare');
+});
+
+test('the name tags read the studio\'s record of runs, and a live event newer than it wins', () => {
+  const record = {
+    sarah: { task_type: 'director_review', status: 'SUCCEEDED', started_at: '2026-09-18T21:03:47Z', finished_at: '2026-09-18T21:03:55Z' },
+    kael: { task_type: 'research_models', status: 'RUNNING', started_at: '2026-09-19T00:10:01Z', finished_at: null },
+    lyra: { task_type: 'direct_company:critique', status: 'SUCCEEDED', started_at: '2026-09-18T21:03:31Z', finished_at: '2026-09-18T21:03:35Z' },
+    bad: { task_type: 'x', started_at: 'not a date' },
+  };
+  const fromRecord = tasksFromRecord(record);
+  assert.deepEqual(Object.keys(fromRecord.tasks).sort(), ['kael', 'lyra', 'sarah']);
+  assert.equal(fromRecord.tasks.sarah.task, 'revizuirea Directorului');
+  assert.equal(fromRecord.tasks.sarah.at, Date.parse('2026-09-18T21:03:55Z'), 'a finished run is dated by its end');
+  assert.equal(fromRecord.tasks.kael.at, Date.parse('2026-09-19T00:10:01Z'), 'a run under way by its start');
+  assert.equal(fromRecord.tasks.kael.task, 'cercetarea modelelor');
+  assert.equal(fromRecord.tasks.lyra.task, 'conducerea companiei', 'a step of a task is said as its task');
+  assert.deepEqual(tasksFromRecord(null).tasks, {});
+  const live = { tasks: { sarah: { task: 'idei de subiect', at: Date.parse('2026-09-24T09:00:00Z'), status: null } } };
+  const merged = newerTasks(live, fromRecord);
+  assert.equal(merged.tasks.sarah.task, 'idei de subiect', 'the live event is newer');
+  assert.equal(merged.tasks.kael.task, 'cercetarea modelelor', 'the record fills what the register never replayed');
+  assert.equal(newerTasks({ tasks: {} }, fromRecord).key, fromRecord.key);
+  const older = { tasks: { sarah: { task: 'scenariu', at: Date.parse('2026-09-01T09:00:00Z'), status: null } } };
+  assert.equal(newerTasks(older, fromRecord).tasks.sarah.task, 'revizuirea Directorului');
+});
+
+test('a live stage start glints the sign even when its words did not change', () => {
+  const g = new GlintTracker(0);
+  g.note('run_sign', 'a', 0);
+  assert.equal(g.progress('run_sign', 10), null);
+  g.force('run_sign', 100);
+  assert.ok(g.progress('run_sign', 100 + GLINT_MS / 2) > 0.4);
+  assert.equal(g.progress('run_sign', 100 + GLINT_MS + 1), null);
+});
+
+test("«Reluarea zilei» (W13): the idle façade's card offers the last working day; a run under way or open does not", () => {
+  const idle = read('run_sign', { ...FACTS, replayOffer: true });
+  assert.equal(idle.action, REPLAY_ACTION);
+  assert.equal(REPLAY_ACTION, 'Clic sau Enter: Vezi ultima zi de lucru.');
+  assert.equal(read('run_sign', { ...FACTS, replayOffer: false }).action, 'Clic sau Enter: deschide Rularea zilei.', 'no finished day on record: the room, as before');
+  const underWay = dayTrack([{ event_type: 'runbook.stage_started', payload: { stage: 'media', index: 7, total: 12 }, timestamp: '2026-09-24T09:04:00Z' }]);
+  const busy = read('run_sign', { ...FACTS, track: underWay, live: true, replayOffer: true });
+  assert.equal(busy.action, 'Clic sau Enter: deschide Rularea zilei.', 'live work is not replayed');
+  assert.equal(replayOffered({ replayOffer: true }, { underWay: false, open: true }), false, "today's run still open");
+  assert.equal(replayOffered({ replayOffer: true }, { underWay: false, open: false }), true);
+  assert.equal(replayOffered(null, { underWay: false, open: false }), false);
 });

@@ -233,17 +233,38 @@ export function wholeOrCents(text) {
   return cents ? `${whole}.${cents}` : whole;
 }
 
+/** What a list the page could not read says in its place (W12). */
+export const NOT_READ = 'registrul nu a putut fi citit';
+
+/**
+ * The words for a list the page reads: what it holds once it has been read (`empty` when it
+ * holds nothing), «—» while it has not been read yet, and NOT_READ (or the `failed` words given)
+ * when the read failed: a 404 or a timeout never reads as an empty record.
+ * @param {'pending'|'ok'|'failed'|string|null|undefined} read @param {string} empty @param {string} [failed]
+ */
+export function listWords(read, empty, failed = NOT_READ) {
+  if (read === 'ok') return empty;
+  if (read === 'failed') return failed;
+  return '—';
+}
+
 /**
  * The façade's run track: the slate's own segments and words. While no run is under way, the
  * state line also says what comes next, in the scheduler's own words (hq_readouts.js
  * nextRunSign): «încheiată · următoarea rulare vin. 25.09, 05:00», or that the daily schedule is
  * stopped. Never a countdown to a time nobody set.
  * @param {import('./hud_charts.js').DayTrack|null|undefined} track
- * @param {{today?: string|null, live?: boolean, next?: string}} [context]
+ * @param {{today?: string|null, live?: boolean, next?: string, read?: string}} [context] `read`: how the
+ *   runbook's record was read ('pending', 'ok', 'failed'), for a track with nothing on it
  */
 export function runSignFace(track, context = {}) {
   const next = context.next || '';
-  if (!track || track.empty) return { title: 'RULAREA ZILEI', tally: '—', state: next || 'nicio rulare în registru', segments: [], running: -1, underWay: false, open: false, key: `rs|empty|${next}` };
+  if (!track || track.empty) {
+    // Not read is not empty (W12): «nicio rulare» only when the runbook's record was read and
+    // holds none; «—» while it is being read; and a record that could not be read says so.
+    const nothing = listWords(context.read, 'nicio rulare în registru');
+    return { title: 'RULAREA ZILEI', tally: '—', state: next || nothing, segments: [], running: -1, underWay: false, open: false, key: `rs|empty|${next}|${nothing}` };
+  }
   const words = dayTrackWords(track, context);
   const [title, tally, ...rest] = words.label.split(' · ');
   const segments = track.segments.map((s) => s.state);

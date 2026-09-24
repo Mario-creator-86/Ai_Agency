@@ -372,3 +372,54 @@ export async function filmPoster(options) {
     clearTimeout(timer);
   }
 }
+
+/**
+ * One decode per film, however many surfaces show it (W12). The film toast took the single
+ * frame at POSTER_AT, a second read of the same file, while the render bay kept the brightest
+ * of five; the toast now shows the render bay's frame, from the same one read. A film whose
+ * frame could not be read is asked again next time, not remembered as having none.
+ */
+export class PosterCache {
+  /** @param {(key: string) => Promise<HTMLCanvasElement|null>} load */
+  constructor(load) {
+    this.load = load;
+    /** @type {Map<string, Promise<HTMLCanvasElement|null>>} */
+    this.pending = new Map();
+  }
+
+  /** @param {string} key the film's asset id */
+  get(key) {
+    let promise = this.pending.get(key);
+    if (!promise) {
+      promise = Promise.resolve()
+        .then(() => this.load(key))
+        .catch(() => null)
+        .then((canvas) => {
+          if (!canvas && this.pending.get(key) === promise) this.pending.delete(key);
+          return canvas || null;
+        });
+      this.pending.set(key, promise);
+    }
+    return promise;
+  }
+
+  /** Sign-out: the next visitor's films are read again. */
+  clear() {
+    this.pending.clear();
+  }
+}
+
+/**
+ * A copy of a decoded frame, for a surface that places the element itself (the toast appends
+ * its canvas; the render bay and the readout only draw from theirs).
+ * @param {HTMLCanvasElement} source
+ */
+export function copyCanvas(source) {
+  const canvas = document.createElement('canvas');
+  canvas.width = source.width;
+  canvas.height = source.height;
+  const ctx = canvas.getContext('2d');
+  if (ctx) ctx.drawImage(source, 0, 0);
+  Object.assign(canvas.dataset, source.dataset);
+  return canvas;
+}

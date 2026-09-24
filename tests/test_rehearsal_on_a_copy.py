@@ -194,7 +194,7 @@ def test_a_whole_day_on_a_copy_of_the_owners_studio(
     finally:
         engine.dispose()
     report["revision_after"] = _revision(rehearsal_copy)
-    assert report["revision_after"] == "0045_reconciliation", report
+    assert report["revision_after"] == "0046_agent_run_last_task", report
 
     # 2. The application starts on it, and the preflight answers.
     headers = {"Authorization": f"Bearer {settings.owner_token.get_secret_value()}"}

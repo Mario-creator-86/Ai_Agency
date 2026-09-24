@@ -711,21 +711,104 @@ export function episodeHtml(episode, context = {}) {
  */
 export function serialBoardHtml(continuity) {
   if (!continuity) return '';
-  const canon = Number(continuity.canon_episode_number) || 0;
   const threads = Array.isArray(continuity.threads) ? continuity.threads : [];
   const recurring = Array.isArray(continuity.recurring) ? continuity.recurring : [];
-  const last = Array.isArray(continuity.summaries) && continuity.summaries.length ? continuity.summaries[continuity.summaries.length - 1] : null;
+  // An empty panel is folded away (W12): «NICIUN FIR DESCHIS» over nothing was a box with
+  // nothing in it. The canon's count is on the Journal's cover (journalCoverHtml).
+  if (!threads.length && !recurring.length) return '';
   return `<div class="serial-board">
-      <div class="serial-canon">
-        <span class="writers-label">În serial</span>
-        <strong class="serial-canon-number">${canon}</strong>
-        <span class="serial-canon-word">${canon === 1 ? 'episod aprobat' : 'episoade aprobate'}</span>
-        ${last ? `<span class="serial-canon-last">ultimul: <span lang="en">„${escapeHtml(String(last.title || ''))}”</span>${last.business_date ? `, ${escapeHtml(String(last.business_date))}` : ''}</span>` : ''}
-      </div>
       <div class="serial-threads">
         <span class="writers-label">${threads.length ? countWord(threads.length, 'fir deschis', 'fire deschise') : 'Niciun fir deschis'}</span>
         ${threads.length ? `<ul class="serial-thread-list">${threads.map((t) => `<li><span class="thread-chip">${escapeHtml(String(t.id || ''))}</span> <span lang="en">${escapeHtml(String(t.text || ''))}</span></li>`).join('')}</ul>` : ''}
         ${recurring.length ? `<p class="serial-recurring"><span class="writers-label">Revin</span> <span lang="en">${recurring.map((r) => escapeHtml(String(r))).join(' · ')}</span></p>` : ''}
       </div>
     </div>`;
+}
+
+/**
+ * A business date as the page writes a day: «2026-09-12» -> «12.09.2026». Anything else as it came.
+ * @param {unknown} date
+ */
+export function dayWords(date) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(date || ''));
+  return m ? `${m[3]}.${m[2]}.${m[1]}` : String(date || '');
+}
+
+/**
+ * The Director's reading in three figures for the cover: the verdict as she gave it, the mean
+ * of her six scores (one decimal, Romanian comma) and how many computed checks passed. Only
+ * what the review carries: no review is no verdict.
+ * @param {Record<string, any> | null | undefined} review
+ * @returns {{verdict: string, mean: string, checks: string, read: boolean}}
+ */
+export function coverVerdict(review) {
+  if (!review) return { verdict: '—', mean: '', checks: '', read: false };
+  const verdict = String(review.verdict || '').toUpperCase() || '—';
+  const scores = rubricRows(review).map((row) => row.score).filter((v) => v !== null);
+  const mean = scores.length
+    ? `nota medie ${(scores.reduce((a, b) => a + Number(b), 0) / scores.length).toFixed(1).replace('.', ',')} din 5`
+    : '';
+  const rows = checkRows(review).filter((row) => !row.legacy);
+  const checks = rows.length ? `${rows.filter((row) => row.passed).length} din ${countWord(rows.length, 'verificare trecută', 'verificări trecute')}` : '';
+  return { verdict, mean, checks, read: true };
+}
+
+/**
+ * THE JOURNAL'S COVER (W12): the newest episode as a poster — its number in the display face,
+ * its title, the day it tells, and the Director's verdict — with the serial's canon count under
+ * it. The episode's words are the showrunner's (English, lang="en"); the labels are the page's.
+ * A value the record does not hold is «—».
+ *
+ * @param {Record<string, any> | null | undefined} episode the newest episode
+ * @param {Record<string, any> | null | undefined} continuity the serial's memory (/story/continuity)
+ */
+export function journalCoverHtml(episode, continuity) {
+  const canon = continuity ? Number(continuity.canon_episode_number) || 0 : null;
+  const canonLine = canon === null
+    ? ''
+    : `<span class="cover-canon"><span class="writers-label">În serial</span> <strong>${canon}</strong> ${canon === 1 ? 'episod aprobat' : 'episoade aprobate'}</span>`;
+  if (!episode) {
+    return `<section class="journal-cover is-empty" aria-label="Coperta jurnalului">
+        <div class="cover-clapper" aria-hidden="true"></div>
+        <div class="cover-number"><span class="cover-ep">EPISODUL</span><span class="cover-n is-none">—</span></div>
+        <div class="cover-body">
+          <p class="cover-kicker">OFFICE SERIAL</p>
+          <h3 class="cover-title">Niciun episod încă</h3>
+          <p class="cover-meta">Episodul se scrie după ce ziua se închide.</p>
+          <div class="cover-foot">${canonLine}</div>
+        </div>
+      </section>`;
+  }
+  const id = String(episode.id || '');
+  const status = String(episode.status || '').toUpperCase();
+  const c = episode.continuity || {};
+  const number = typeof c.episode_number === 'number' ? c.episode_number : null;
+  const day = dayWords(c.business_date);
+  const statusWord = /** @type {Record<string,string>} */ (STATUS_WORD)[status] || status;
+  const beats = Array.isArray(episode.beats) ? episode.beats.length : 0;
+  const cited = (episode.grounded_event_ids || []).length;
+  const v = coverVerdict(episode.review);
+  const tone = v.verdict === 'PASS' ? 'pass' : v.verdict === 'FAIL' ? 'fail' : 'none';
+  return `<section class="journal-cover status-${escapeHtml(status.toLowerCase())} verdict-${tone}" aria-label="Coperta jurnalului: cel mai nou episod">
+      <div class="cover-clapper" aria-hidden="true"></div>
+      <div class="cover-number">
+        <span class="cover-ep">EPISODUL</span>
+        <span class="cover-n${number === null ? ' is-none' : ''}">${number !== null ? String(number).padStart(2, '0') : '—'}</span>
+        ${number === null ? '<span class="cover-n-note">fără număr în serial</span>' : ''}
+      </div>
+      <div class="cover-body">
+        <p class="cover-kicker">OFFICE SERIAL · <span class="cover-state state-${escapeHtml(status.toLowerCase())}">${escapeHtml(statusWord)}</span>${day ? ` · ziua povestită ${escapeHtml(day)}` : ''}</p>
+        <h3 class="cover-title" lang="en">${escapeHtml(String(episode.title || '—'))}</h3>
+        <p class="cover-meta">${escapeHtml([countWord(beats, 'beat', 'beat-uri'), countWord(cited, 'eveniment real citat', 'evenimente reale citate')].join(' · '))}</p>
+        <div class="cover-foot">
+          <a class="cover-read" href="#ep-${escapeHtml(id)}">Citește scenariul</a>
+          ${canonLine}
+        </div>
+      </div>
+      <div class="cover-verdict tone-${tone}">
+        <span class="writers-label">Verdictul Directorului</span>
+        <strong class="cover-verdict-word">${escapeHtml(v.verdict)}</strong>
+        ${v.read ? [v.mean, v.checks].filter(Boolean).map((line) => `<span class="cover-verdict-line">${escapeHtml(line)}</span>`).join('') : '<span class="cover-verdict-line">Directorul nu a citit încă episodul.</span>'}
+      </div>
+    </section>`;
 }

@@ -191,6 +191,20 @@ const TASK_LABEL = {
   reconcile_day: 'închiderea zilei',
   direct_task: 'sarcină directă',
   TEST_CONNECTIVITY: 'test de conexiune',
+  // W12: the task types the studio's own runs record (agent_run.task_type on the Owner's data),
+  // which the name tags now read from the snapshot and which had no word yet
+  answer_mail: 'răspunsul la corespondență',
+  research_models: 'cercetarea modelelor',
+  direct_company: 'conducerea companiei',
+  editorial_review: 'revizuirea editorială',
+  story_review: 'citirea episodului',
+  episode_review: 'citirea episodului',
+  shot_prompts: 'descrierea cadrelor',
+  visual_bible: 'ghidul vizual',
+  picture_qc: 'controlul imaginii',
+  owner_chat: 'discuția cu Proprietarul',
+  WEEKLY_REVIEW: 'bilanțul săptămânii',
+  DAILY_RUN: 'rularea zilei',
 };
 
 /** What a state change says in the register; IDLE and anything unlisted is «a terminat». @type {Record<string, string>} */
@@ -212,7 +226,10 @@ const STATE_CHANGE_LABEL = {
  * @param {string} type
  */
 export function taskLabel(type) {
-  return TASK_LABEL[type] || String(type || '').replace(/_/g, ' ');
+  if (TASK_LABEL[type]) return TASK_LABEL[type];
+  // a step of a task («direct_company:critique») is said as its task
+  const base = String(type || '').split(':')[0];
+  return TASK_LABEL[base] || String(type || '').replace(/_/g, ' ');
 }
 
 /**

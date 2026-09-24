@@ -1,5 +1,5 @@
 import { dayTrackWords } from './hud_charts.js';
-import { treasuryFace } from './hq_screens.js';
+import { listWords, treasuryFace } from './hq_screens.js';
 
 /**
  * THE STUDIO AT A GLANCE, at the foot of the side drawer on a tall screen (W8).
@@ -44,7 +44,8 @@ export function nextRunWords(jobs, context = {}) {
 
 /**
  * The three lines.
- * @param {{track?: any, today?: string|null, live?: boolean, treasury?: any, budget?: any, jobs?: any[]|null, stopped?: boolean|null, timeZone?: string}} facts
+ * @param {{track?: any, today?: string|null, live?: boolean, treasury?: any, budget?: any, jobs?: any[]|null, stopped?: boolean|null, timeZone?: string, reads?: Record<string, string>}} facts
+ *   `reads`: how each list was read ('pending', 'ok', 'failed'); a list not read is never «nicio …» (W12)
  * @returns {{rows: ReadoutRow[], key: string}}
  */
 export function studioReadout(facts) {
@@ -56,7 +57,7 @@ export function studioReadout(facts) {
     const [title, ...rest] = words.label.split(' · ');
     rows.push({ label: 'Rularea zilei', value: rest.join(' · ') || '—', note: title, tone: track.running && facts.live !== false ? 'ok' : 'quiet' });
   } else {
-    rows.push({ label: 'Rularea zilei', value: track ? 'nicio rulare în registru' : '—', tone: 'quiet' });
+    rows.push({ label: 'Rularea zilei', value: listWords(facts.reads && facts.reads.runs, 'nicio rulare în registru'), tone: 'quiet' });
   }
   if (facts.treasury || facts.budget) {
     const face = treasuryFace(facts.treasury, facts.budget);
@@ -67,7 +68,7 @@ export function studioReadout(facts) {
       tone: face.deficit ? 'alert' : face.state && face.state !== 'OK' ? 'warn' : 'quiet',
     });
   } else {
-    rows.push({ label: 'Trezorerie', value: '—', tone: 'quiet' });
+    rows.push({ label: 'Trezorerie', value: '—', note: facts.reads && facts.reads.figures === 'failed' ? 'trezoreria nu a putut fi citită' : undefined, tone: 'quiet' });
   }
   const next = nextRunWords(facts.jobs, { stopped: facts.stopped, timeZone: facts.timeZone });
   rows.push({ label: 'Următoarea rulare', value: next.value, tone: next.tone });

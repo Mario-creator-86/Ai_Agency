@@ -209,3 +209,11 @@ test('the entry count follows the Romanian rule for «de»', async () => {
   assert.equal(entryCountLabel(120), '120 de intrări');
   assert.equal(entryCountLabel(200), '200 de intrări');
 });
+
+test('the tasks the studio\'s own runs record have words, and a step of a task is said as its task (W12)', async () => {
+  const { taskLabel } = await import('../src/ledger.js');
+  assert.equal(taskLabel('answer_mail'), 'răspunsul la corespondență');
+  assert.equal(taskLabel('research_models'), 'cercetarea modelelor');
+  assert.equal(taskLabel('direct_company:final'), 'conducerea companiei');
+  assert.equal(taskLabel('something_new'), 'something new');
+});

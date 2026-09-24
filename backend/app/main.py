@@ -179,8 +179,9 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
             # columns that already existed — so 0043 chains onto 0040, and 0044 (the subject
             # an approval is about, and the Owner's answer on the row) onto 0043. 0045 adds
             # the vendor invoice that replaces the studio's estimates, so a budget stops
-            # counting an estimate and its bill together.
-            if revision != "0045_reconciliation":
+            # counting an estimate and its bill together. 0046 indexes each employee's runs
+            # by start, for the snapshot's last task per employee.
+            if revision != "0046_agent_run_last_task":
                 raise RuntimeError("Run scripts/bootstrap.py with this application version")
             if connection.scalar(text("SELECT COUNT(*) FROM owner_policy")) != 1:
                 raise RuntimeError("Run scripts/bootstrap.py to initialize the studio")

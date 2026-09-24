@@ -546,6 +546,221 @@
   line-height: var(--lh-snug);
 }
 
+/* ==========================================================================
+   THE JOURNAL IN THE FRAME'S GLASS (W12)
+   ==========================================================================
+   Four strangers read the Journal as the least game-like surface: a sheet of
+   paper lifted over the headquarters, with an empty «NICIUN FIR DESCHIS» box
+   at its head. It is now the drawers' own pane (their glass, their sheen,
+   their lit edge, their blur) with the newest episode as a poster on its
+   cover: the number in the display face, the title, the day it tells, the
+   Director's verdict. The empty threads panel is not drawn at all.
+   ========================================================================== */
+
+#story-modal.journal-dialog {
+  background:
+    linear-gradient(180deg, var(--sheen), transparent calc(var(--topbar-h) * 3)),
+    var(--drawer-glass);
+  border: 1px solid var(--drawer-edge);
+  box-shadow: var(--lit-edge), var(--shadow-dialog);
+  backdrop-filter: blur(var(--drawer-blur));
+}
+/* the headquarters stays in sight behind the pane, as it does behind the drawers */
+#story-modal.journal-dialog::backdrop { background: var(--backdrop); backdrop-filter: blur(2px); }
+#story-modal.journal-dialog .dialog-header {
+  background: transparent;
+  border-bottom: 1px solid var(--drawer-edge);
+}
+#story-modal.journal-dialog .dialog-header .eyebrow { color: var(--gold-ink); }
+#story-modal .journal-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin-block: var(--s6) var(--s3);
+  font-size: var(--fs-h3);
+}
+#story-modal .journal-heading::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--drawer-edge), transparent);
+}
+#story-modal .topics-header-row .journal-heading { flex: 1; margin-block: 0; }
+#story-modal .writers-room .script-episode {
+  background: linear-gradient(180deg, var(--sheen-soft), transparent 40%), var(--drawer-glass-hi);
+  border-color: var(--drawer-edge);
+}
+#story-modal .writers-room .episode-slate { background: linear-gradient(180deg, var(--sheen), transparent); }
+#story-modal .writers-room .episode-slate:hover { background: linear-gradient(180deg, var(--surface-hi), transparent); }
+#story-modal .serial-board {
+  background: var(--drawer-glass-hi);
+  border-color: var(--drawer-edge);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* ------------------------------------------------------------- the cover */
+.journal-cover-slot:empty { display: none; }
+.journal-cover {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--s7);
+  align-items: center;
+  min-height: var(--cover-min-h);
+  margin-top: var(--s2);
+  padding: var(--s7) var(--s7) var(--s8);
+  border: 1px solid var(--drawer-edge);
+  border-radius: var(--radius);
+  background:
+    radial-gradient(ellipse 34% 90% at 10% 55%, var(--cover-glow), transparent 70%),
+    radial-gradient(ellipse 50% 120% at 100% 0%, var(--cover-cool), transparent 70%),
+    linear-gradient(180deg, var(--sheen), transparent 55%),
+    var(--drawer-glass-hi);
+  box-shadow: var(--lit-edge), var(--shadow-panel);
+  overflow: hidden;
+  isolation: isolate;
+  animation: cover-in calc(var(--dur) * 3) var(--ease) both;
+}
+/* the clapperboard's lip across the top: gold once the episode is approved or passed */
+.journal-cover .cover-clapper {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: var(--s2);
+  background: repeating-linear-gradient(-45deg, var(--line-strong) 0 var(--s3), transparent var(--s3) var(--s5));
+  border-bottom: 1px solid var(--drawer-edge);
+}
+.journal-cover.status-approved .cover-clapper,
+.journal-cover.verdict-pass .cover-clapper {
+  background: repeating-linear-gradient(-45deg, var(--gold-line) 0 var(--s3), transparent var(--s3) var(--s5));
+}
+/* a film strip's perforations along the foot: the poster is a frame of a film */
+.journal-cover::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 var(--s2) 0;
+  height: var(--s2);
+  background: repeating-linear-gradient(90deg, var(--cover-ghost) 0 var(--s3), transparent var(--s3) var(--s5));
+  z-index: -1;
+}
+.cover-number {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  min-width: calc(var(--s9) * 3);
+  padding: var(--s4) var(--s5);
+  border: 1px solid var(--drawer-edge);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, var(--sheen), transparent), var(--bg-lift);
+  box-shadow: var(--inset-well);
+}
+.cover-ep {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  letter-spacing: var(--track-caps);
+  color: var(--ink-3);
+}
+.cover-n {
+  font-family: var(--font-display);
+  font-weight: var(--w-display);
+  font-size: var(--fs-cover-num);
+  line-height: 1;
+  letter-spacing: var(--track-tight);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.status-approved .cover-n { color: var(--gold-ink); }
+/* no number in the serial yet: the dash is a placeholder, not a figure */
+.cover-n.is-none { color: var(--ink-3); font-size: calc(var(--fs-cover-num) * .6); padding-block: var(--s2); }
+.cover-n-note { font-size: var(--fs-meta); color: var(--ink-3); }
+.cover-body { display: grid; gap: var(--s2); min-width: 0; }
+.cover-kicker {
+  margin: 0;
+  font-size: var(--fs-micro);
+  font-weight: var(--w-semi);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.cover-kicker .cover-state { color: var(--ink-2); }
+.cover-kicker .cover-state.state-draft { color: var(--warn-ink); background: none; border: 0; }
+.cover-kicker .cover-state.state-approved { color: var(--ok-ink); background: none; border: 0; }
+.cover-kicker .cover-state.state-rejected { color: var(--alert-ink); background: none; border: 0; }
+.journal-cover .cover-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: var(--w-display);
+  font-size: var(--fs-cover-title);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--track-tight);
+  color: var(--ink);
+  text-wrap: balance;
+}
+.cover-meta { margin: 0; font-size: var(--fs-body); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.cover-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s3) var(--s5); margin-top: var(--s2); }
+.cover-read {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--hit);
+  padding: 0 var(--s4);
+  border: 1px solid var(--gold-line);
+  border-radius: var(--radius-pill);
+  background: var(--gold-soft);
+  color: var(--gold-ink);
+  font-size: var(--fs-body);
+  font-weight: var(--w-semi);
+  text-decoration: none;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.cover-read:hover { background: var(--warn-bg); border-color: var(--gold); }
+.cover-read:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.cover-canon { font-size: var(--fs-body); color: var(--ink-2); }
+.cover-canon strong { font-family: var(--font-display); color: var(--gold-ink); font-variant-numeric: tabular-nums; }
+.cover-canon .writers-label { margin-right: var(--s1); }
+.cover-verdict {
+  display: grid;
+  gap: var(--s1);
+  justify-items: end;
+  align-content: center;
+  min-width: calc(var(--s9) * 4);
+  padding-left: var(--s6);
+  border-left: 1px solid var(--drawer-edge);
+  text-align: right;
+}
+.cover-verdict-word {
+  font-family: var(--font-display);
+  font-weight: var(--w-display);
+  font-size: var(--fs-cover-verdict);
+  line-height: 1;
+  letter-spacing: var(--track-caps);
+  color: var(--ink-2);
+}
+.cover-verdict.tone-pass .cover-verdict-word { color: var(--ok-ink); }
+.cover-verdict.tone-fail .cover-verdict-word { color: var(--alert-ink); }
+.cover-verdict-line { font-size: var(--fs-meta); color: var(--ink-2); max-width: 26ch; }
+.journal-cover.is-empty { grid-template-columns: auto minmax(0, 1fr); }
+@keyframes cover-in {
+  from { opacity: 0; translate: 0 var(--s2); }
+  to { opacity: 1; translate: 0 0; }
+}
+@media (max-width: 1100px) {
+  .journal-cover { grid-template-columns: auto minmax(0, 1fr); gap: var(--s5); padding: var(--s6) var(--s5) var(--s7); }
+  .cover-verdict {
+    grid-column: 1 / -1;
+    justify-items: start;
+    padding: var(--s3) 0 0;
+    border-left: 0;
+    border-top: 1px solid var(--drawer-edge);
+    text-align: left;
+  }
+}
+@media (max-width: 640px) {
+  .journal-cover { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .journal-cover { animation: none; }
+  .cover-read { transition: none; }
+}
+
 /* ------------------------------------------------------ narrower rooms */
 @container (max-width: 860px) {
   .episode-room { grid-template-columns: minmax(0, 1fr); }

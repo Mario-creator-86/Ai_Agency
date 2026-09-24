@@ -12,7 +12,7 @@ import { firstStop, runClassName, runHeadline, stageClassName, stageProducedWord
 import { attachRail } from './dialog_rail.js';
 import './style.css';
 import './serial_room.css';
-import { approvalMessage, daysClosedNote, episodeHtml, serialBoardHtml, serialStageNotes } from './serial_room.js';
+import { approvalMessage, daysClosedNote, episodeHtml, journalCoverHtml, serialBoardHtml, serialStageNotes } from './serial_room.js';
 import { initSettings } from './settings.js';
 import { acceptSnapshot } from './projection.js';
 import { OfficeEngine, BUILDING, WORLD_W, WORLD_H } from './office_engine.js';
@@ -23,9 +23,11 @@ import { Ledger, entryCountLabel, productionStatus, runtimeLabel, taskLabel } fr
 import { streetMoves } from './hq_events.js';
 import { budgetRing, budgetRingSvg, channelFilmsHtml, dayTrack, dayTrackFromRun, dayTrackGeometry, dayTrackWords, newerTrack, pipelineSvg } from './hud_charts.js';
 import { Moments } from './moments.js';
-import { filmPoster, POSTER_SAMPLES } from './film_poster.js';
+import { copyCanvas, filmPoster, PosterCache, POSTER_SAMPLES } from './film_poster.js';
 import { latestFilm, boardTopics } from './hq_screens.js';
-import { canvasLabel, lastTasks, lastTaskLine, nextRunSign, surfaceReadout } from './hq_readouts.js';
+import { REPLAY_ACTION, canvasLabel, lastTasks, lastTaskLine, newerTasks, nextRunSign, surfaceReadout, tasksFromRecord } from './hq_readouts.js';
+import { interruptsReplay } from './day_replay.js';
+import { DayReplayPlayer } from './replay_player.js';
 import { SceneReadout } from './scene_readout.js';
 import { studioReadout } from './side_readout.js';
 import { friendlyAnswer } from './friendly_text.js';
@@ -74,6 +76,14 @@ let pendingEnvironment = null;
 let epoch = 0;
 let busy = false;
 let connected = false;
+/**
+ * «Reluarea zilei» (W13, replay_player.js): the newest finished day played back from its record.
+ * While it is active the world is the replay's alone; the page's live path keeps its state and
+ * gives it back when the replay ends. Assigned once the pieces it needs exist (below).
+ * @type {DayReplayPlayer|null}
+ */
+let replay = null;
+const replaying = () => Boolean(replay && replay.active);
 
 /**
  * What the page knows is happening, from which every «live» it prints is decided
@@ -86,6 +96,34 @@ let liveReadoutKey = '';
 
 /** Writes the corner readout, the masthead chip and the slate caption from liveSignals. */
 function renderLiveSignals() {
+  const words = replay ? replay.words() : null;
+  if (words) {
+    const key = JSON.stringify(['replay', words.chip, words.caption]);
+    if (key === liveReadoutKey) return;
+    liveReadoutKey = key;
+    const pill = element('office-status');
+    pill.dataset.state = 'replay';
+    pill.title = words.title;
+    pill.setAttribute('aria-hidden', 'false');
+    const [word, ...rest] = words.chip.split(' · ');
+    const live = document.createElement('span');
+    live.className = 'scene-live';
+    live.textContent = word;
+    const when = document.createElement('span');
+    when.className = 'scene-label';
+    when.textContent = ` · ${rest.join(' · ')}`;
+    element('office-fps').replaceChildren(live, when);
+    const long = document.createElement('span');
+    long.className = 'room-caption-long';
+    long.textContent = words.caption;
+    const brief = document.createElement('span');
+    brief.className = 'room-caption-short';
+    brief.textContent = words.captionShort;
+    element('room-caption').replaceChildren(long, brief);
+    element('room-caption').title = words.title;
+    officeCanvas.setAttribute('aria-label', `Sediul AMN-AI în reluare, nu live: ${words.caption}. Săgețile trec de la un angajat la altul, apoi prin ecranele clădirii; Enter deschide ce ai ales. Esc iese din reluare.`);
+    return;
+  }
   const readout = sceneReadout(liveSignals);
   const staff = officeState.agents.length;
   const caption = roomCaption(staff, readout.live);
@@ -129,6 +167,13 @@ const eventsLink = new EventsLink({
   onEvent: (eventData, live) => {
     officeState.handleDomainEvent(eventData, live);
     updateOfficeCanvas();
+    // A live arrival says itself from across the room for a few seconds (hq_arrivals.js): the
+    // same socket, the same event, nothing fetched; never a replay, never under reduced motion.
+    if (replay && replay.active) {
+      if (live && interruptsReplay(eventData)) replay.liveArrived(eventData);
+    } else if (officeEngine) {
+      officeEngine.offerArrival(eventData, live);
+    }
     ledger.add(eventData);
     element('ledger-count').textContent = entryCountLabel(ledger.events.size);
     // A milestone plays only when the socket delivered it as it happened (moments.js).
@@ -299,8 +344,34 @@ let dayRecord = null;
  * newest film's frame once per film. A value the page does not hold stays null, and its screen
  * says «—».
  * ------------------------------------------------------------------------- */
-/** @type {{run: any, track: any, today: string|null, live: boolean, treasury: any, budget: any, episodes: any, topics: {titles: string[], key: string}, film: any, jobs: any[]|null, tasks: {tasks: Record<string, any>, key: string}, nextRun: string, stopped: boolean|null, timeZone: string|undefined}} */
-const worldFacts = { run: null, track: null, today: null, live: true, treasury: null, budget: null, episodes: null, topics: { titles: [], key: '' }, film: null, jobs: null, tasks: { tasks: {}, key: '' }, nextRun: '', stopped: null, timeZone: undefined };
+/**
+ * `reads` says how each list behind the faces was read (W12): 'pending' until the first answer,
+ * 'ok' once it answered, 'failed' when it could not be read (a 404, a timeout) and nothing had
+ * been read before. A face says its record is empty only when the record was read and is; a
+ * record not read is «—», or «registrul nu a putut fi citit». `film`: 'none' (the record names
+ * no film), 'pending', 'ok', or 'failed' (the film is named but its frame could not be read).
+ * @typedef {{runs: string, episodes: string, figures: string, ledger: string, film: string}} WorldReads
+ */
+/** @returns {WorldReads} */
+const freshReads = () => ({ runs: 'pending', episodes: 'pending', figures: 'pending', ledger: 'pending', film: 'none' });
+/** @type {{run: any, track: any, today: string|null, live: boolean, treasury: any, budget: any, episodes: any, topics: {titles: string[], key: string}, film: any, jobs: any[]|null, tasks: {tasks: Record<string, any>, key: string}, nextRun: string, stopped: boolean|null, timeZone: string|undefined, reads: WorldReads, replayOffer: boolean}} */
+const worldFacts = { run: null, track: null, today: null, live: true, treasury: null, budget: null, episodes: null, topics: { titles: [], key: '' }, film: null, jobs: null, tasks: { tasks: {}, key: '' }, nextRun: '', stopped: null, timeZone: undefined, reads: freshReads(), replayOffer: false };
+
+/** A read that failed: 'failed', unless an earlier read of the same list succeeded. @param {keyof WorldReads} list */
+function readFailed(list) {
+  if (worldFacts.reads[list] !== 'ok') worldFacts.reads[list] = 'failed';
+}
+
+/**
+ * Each employee's last task: the register's live events and the studio's own record of runs
+ * (the snapshot's last_tasks), the newer of the two per employee (W12).
+ */
+function refreshLastTasks() {
+  const tasks = newerTasks(lastTasks(ledger.sorted()), tasksFromRecord(state ? state.last_tasks : null));
+  if (tasks.key === worldFacts.tasks.key) return;
+  worldFacts.tasks = tasks;
+  pushWorldFacts();
+}
 
 function pushWorldFacts() {
   // The façade sign's next run, in the scheduler's own words, only while no run is under way
@@ -308,7 +379,9 @@ function pushWorldFacts() {
   worldFacts.stopped = state && state.policy ? Boolean(state.policy.autonomy_stopped) : null;
   worldFacts.timeZone = state && state.studio ? state.studio.timezone : undefined;
   worldFacts.nextRun = nextRunSign(worldFacts.jobs, { stopped: worldFacts.stopped, timeZone: worldFacts.timeZone });
-  if (officeEngine) officeEngine.setFacts({ ...worldFacts });
+  // while the day is replayed the world's facts are the record's (replay_player.js); the drawers
+  // and the readouts outside the world keep the live ones
+  if (officeEngine && !replaying()) officeEngine.setFacts({ ...worldFacts });
   renderStudioReadout();
   refreshSceneReadout();
 }
@@ -334,16 +407,21 @@ function refreshSceneReadout() {
     faceReadout.show(null, null);
     return;
   }
-  const agents = officeState ? officeState.agents : [];
+  // In the replay the glass says what the replayed world shows, and says that it is the replay's.
+  const world = replay ? replay.world() : null;
+  const facts = world ? world.facts : worldFacts;
+  const agents = world ? world.agents : officeState ? officeState.agents : [];
+  const now = world ? world.now : Date.now();
   if (target.kind === 'agent') {
     const agent = agents.find((a) => (a.id || a.agent_id) === target.id) || target.agent;
     const status = String(agent.lifecycle || '').toUpperCase() === 'PAUSED' ? 'PAUSED' : String(agent.runtime_state || 'IDLE');
-    const speech = `${agent.display_name || agent.role_name || 'Angajat'} · ${runtimeLabel(status)} · ${lastTaskLine(worldFacts.tasks.tasks[target.id], Date.now())}. Enter deschide fișa.`;
+    const speech = `${world ? 'Reluare: ' : ''}${agent.display_name || agent.role_name || 'Angajat'} · ${runtimeLabel(status)} · ${lastTaskLine(facts.tasks.tasks[target.id], now)}. Enter deschide fișa.`;
     faceReadout.show(target, null, { speech });
     return;
   }
-  const readout = surfaceReadout(target.id, { facts: worldFacts, agents });
-  faceReadout.show(target, readout, { poster: worldFacts.film && worldFacts.film.canvas ? worldFacts.film.canvas : null });
+  let readout = surfaceReadout(target.id, { facts, agents, now });
+  if (readout && world) readout = { ...readout, eyebrow: `RELUARE · ${readout.eyebrow}`, key: `replay|${readout.key}` };
+  faceReadout.show(target, readout, { poster: facts.film && facts.film.canvas ? facts.film.canvas : null });
 }
 
 /**
@@ -363,6 +441,7 @@ function renderStudioReadout() {
     treasury: worldFacts.treasury,
     budget: worldFacts.budget,
     jobs: worldFacts.jobs,
+    reads: worldFacts.reads,
     stopped: policy ? Boolean(policy.autonomy_stopped) : null,
     timeZone: state && state.studio ? state.studio.timezone : undefined,
   });
@@ -375,9 +454,58 @@ function renderStudioReadout() {
 
 let filmAsset = '';
 
+/**
+ * Each film's frame is decoded once, whoever shows it (film_poster.js PosterCache): five key
+ * frames across the film, read once; the brightest that is a picture is kept (pickBrightest),
+ * at twice the render bay's pixels (180x320). The render bay and the film toast show the same
+ * frame (W12; the toast used to take the single early one).
+ */
+const posters = new PosterCache((assetId) => filmPoster({ url: `/api/v1/media/assets/${encodeURIComponent(assetId)}/stream`, token: ownerToken, width: 90, height: 160, scale: 2, samples: POSTER_SAMPLES, timeoutMs: 8000 }));
+
+/*
+ * «RELUAREA ZILEI» (W13): the player, with what it needs from the page. The record is read once
+ * when a replay starts; the film's frame is the render bay's own decode (PosterCache).
+ */
+replay = new DayReplayPlayer({
+  api: (path) => api(path),
+  engine: () => officeEngine,
+  agents: () => officeState.agents,
+  known: () => ledger.sorted(),
+  cursor: () => Math.max(state ? Number(state.cursor) || 0 : 0, ledger.cursor || 0),
+  timeZone: () => (state && state.studio ? state.studio.timezone : undefined),
+  today: () => worldFacts.today,
+  reduced: () => reducedMotion(),
+  names: () => Object.fromEntries(officeState.agents.map((a) => [a.id || a.agent_id, a.display_name || a.role_name || ''])),
+  poster: (assetId) => posters.get(assetId),
+  onEnter: () => {
+    renderLiveSignals();
+    refreshSceneReadout();
+    scheduleDayTrack();
+  },
+  onExit: (liveEvents) => {
+    // the world is the live one again, and a live arrival that ended the replay is still seen
+    updateOfficeCanvas();
+    pushWorldFacts();
+    renderLiveSignals();
+    scheduleDayTrack();
+    if (officeEngine) for (const event of liveEvents) officeEngine.offerArrival(event, true);
+  },
+  onChange: () => {
+    renderLiveSignals();
+    scheduleDayTrack();
+    if (readoutTarget) refreshSceneReadout();
+  },
+  onOffer: (offered) => {
+    if (worldFacts.replayOffer === offered) return;
+    worldFacts.replayOffer = offered;
+    pushWorldFacts();
+  },
+});
+
 function resetWorldFacts() {
-  Object.assign(worldFacts, { run: null, track: null, today: null, live: true, treasury: null, budget: null, episodes: null, topics: { titles: [], key: '' }, film: null, jobs: null, tasks: { tasks: {}, key: '' }, nextRun: '' });
+  Object.assign(worldFacts, { run: null, track: null, today: null, live: true, treasury: null, budget: null, episodes: null, topics: { titles: [], key: '' }, film: null, jobs: null, tasks: { tasks: {}, key: '' }, nextRun: '', reads: freshReads() });
   filmAsset = '';
+  posters.clear();
   pushWorldFacts();
 }
 
@@ -387,14 +515,24 @@ function resetWorldFacts() {
  * @param {{assetId: string, date: string|null}|null} film
  */
 async function loadFilmFrame(film) {
-  if (!film || !ownerToken || film.assetId === filmAsset) return;
+  if (!film) {
+    // the record was read and names no film
+    if (worldFacts.reads.film !== 'ok') worldFacts.reads.film = 'none';
+    return;
+  }
+  if (!ownerToken || film.assetId === filmAsset) return;
   filmAsset = film.assetId;
   const session = epoch;
-  // Five key frames across the film, read once per film; the brightest that is a picture is kept
-  // (film_poster.js pickBrightest), decoded at twice the render bay's pixels (180x320).
-  const canvas = await filmPoster({ url: `/api/v1/media/assets/${encodeURIComponent(film.assetId)}/stream`, token: ownerToken, width: 90, height: 160, scale: 2, samples: POSTER_SAMPLES, timeoutMs: 8000 }).catch(() => null);
+  if (!worldFacts.film) {
+    worldFacts.reads.film = 'pending';
+    pushWorldFacts();
+  }
+  const canvas = await posters.get(film.assetId);
   if (session !== epoch || filmAsset !== film.assetId) return;
   worldFacts.film = canvas ? { ...film, canvas } : null;
+  worldFacts.reads.film = canvas ? 'ok' : 'failed';
+  // a frame that could not be read is asked again with the next record, not remembered as none
+  if (!canvas) filmAsset = '';
   pushWorldFacts();
 }
 
@@ -408,6 +546,8 @@ async function loadWorldFigures() {
   if (treasury) worldFacts.treasury = treasury;
   if (budget) worldFacts.budget = budget;
   if (Array.isArray(jobs)) worldFacts.jobs = jobs;
+  if (treasury || budget) worldFacts.reads.figures = 'ok';
+  else readFailed('figures');
   pushWorldFacts();
 }
 
@@ -416,8 +556,14 @@ async function loadSerialFacts() {
   if (!ownerToken) return;
   const session = epoch;
   const episodes = await api('/story/episodes').catch(() => null);
-  if (session !== epoch || !episodes) return;
+  if (session !== epoch) return;
+  if (!episodes) {
+    readFailed('episodes');
+    pushWorldFacts();
+    return;
+  }
   worldFacts.episodes = episodes;
+  worldFacts.reads.episodes = 'ok';
   pushWorldFacts();
 }
 
@@ -436,13 +582,7 @@ function soon(which) {
 function noteWorldEvents(events) {
   const types = events.map((event) => String((event && event.event_type) || ''));
   // Each employee's last real task, for the faint line under a name and the desk's readout.
-  if (types.some((t) => t === 'agent.run_completed' || t === 'agent.state_changed')) {
-    const tasks = lastTasks(ledger.sorted());
-    if (tasks.key !== worldFacts.tasks.key) {
-      worldFacts.tasks = tasks;
-      pushWorldFacts();
-    }
-  }
+  if (types.some((t) => t === 'agent.run_completed' || t === 'agent.state_changed')) refreshLastTasks();
   if (types.includes('factual.topic_proposed')) {
     const topics = boardTopics(ledger.sorted());
     if (topics.key !== worldFacts.topics.key) {
@@ -463,7 +603,10 @@ async function loadDayRecord() {
     const data = await api('/runbook/runs');
     const newest = (data.runs || [])[0];
     dayRecord = dayTrackFromRun(newest);
+    // the newest finished day is what «Reluarea zilei» plays; with none, it is not offered
+    if (replay) replay.setRuns(data.runs);
     worldFacts.run = newest || null;
+    worldFacts.reads.runs = 'ok';
     pushWorldFacts();
     loadFilmFrame(latestFilm(data.runs));
     // «Acum» reads the same record: a stage that started before the day's recorded finish is
@@ -471,7 +614,11 @@ async function loadDayRecord() {
     const closed = newest ? Date.parse(String(newest.finished_at || '')) : NaN;
     ledger.closedAt = Number.isFinite(closed) ? closed : null;
   } catch {
-    dayRecord = null;
+    // Not read is not empty (W12): a 404 or a timeout is «—» or «registrul nu a putut fi
+    // citit» on the faces, never «nicio rulare în registru».
+    if (worldFacts.reads.runs !== 'ok') dayRecord = null;
+    readFailed('runs');
+    pushWorldFacts();
   }
   ledger.renderNow();
   renderDayTrack();
@@ -505,13 +652,19 @@ function renderDayTrack() {
   worldFacts.today = studioToday();
   worldFacts.live = live;
   pushWorldFacts();
-  const words = dayTrackWords(track, { today: studioToday(), live });
-  const geometry = dayTrackGeometry(track);
+  // W14: the slate lies inside the replay's letterbox, beside «reluarea rulării din …»: while the
+  // day is replayed it shows the replayed run as the record stood then, as the façade sign does
+  // (it said 12/12 under a sign at 5/12). Nothing live is lost: a live runbook event ends the
+  // replay (day_replay.js interruptsReplay). The live facts above are kept as they are.
+  const frame = replaying() && replay ? replay.frame : null;
+  const shown = frame ? frame.track : track;
+  const words = dayTrackWords(shown, { today: studioToday(), live: frame ? true : live });
+  const geometry = dayTrackGeometry(shown);
   const key = JSON.stringify([words.label, geometry.rects.map((r) => r.state)]);
   if (key === dayTrackKey) return;
   dayTrackKey = key;
   dayTrackBox.setAttribute('aria-label', words.sentence);
-  dayTrackBox.dataset.state = track.empty ? 'empty' : track.finished ? 'finished' : 'running';
+  dayTrackBox.dataset.state = shown.empty ? 'empty' : shown.finished ? 'finished' : 'running';
   const long = document.createElement('span');
   long.className = 'day-track-long';
   long.textContent = words.label;
@@ -573,11 +726,11 @@ const moments = new Moments({
   },
   poster: async (moment) => {
     if (!moment.assetId) return null;
-    const canvas = await filmPoster({ url: `/api/v1/media/assets/${encodeURIComponent(moment.assetId)}/stream`, token: ownerToken });
-    // The film just rendered is now the newest: the render bay takes its own, brighter frame of
-    // it, read once (loadFilmFrame).
+    // The brightest real frame of the film, the render bay's own (PosterCache: one read of the
+    // file for both). The film just rendered is now the newest, so the bay takes it too.
+    const canvas = await posters.get(moment.assetId);
     if (canvas) loadFilmFrame({ assetId: moment.assetId, date: studioToday() });
-    return canvas;
+    return canvas ? copyCanvas(canvas) : null;
   },
 });
 // The scene script and the tests reach the moments through the page's handle.
@@ -770,7 +923,15 @@ function buildOfficeEngine() {
       }
     },
     // A face opens its room: the same dialog the masthead's menu opens.
-    onSelectSurface: (_id, room) => {
+    onSelectSurface: (id, room) => {
+      // the idle façade offers the last working day (W13): its card says so, and its click plays it
+      if (id === 'run_sign' && replay && !replay.active) {
+        const card = surfaceReadout('run_sign', { facts: worldFacts, agents: officeState.agents });
+        if (card && card.action === REPLAY_ACTION) {
+          replay.start(officeCanvas);
+          return;
+        }
+      }
       const opener = room ? document.getElementById(room) : null;
       if (opener) opener.click();
     },
@@ -1080,6 +1241,7 @@ function publishSceneHandle() {
   /** @type {any} */ (window).__studio = {
     engine: officeEngine,
     state: officeState,
+    replay,
   };
 }
 
@@ -1087,6 +1249,8 @@ function updateOfficeCanvas() {
   if (readoutTarget) refreshSceneReadout();
   if (!officeEngine) return;
   officeState.cleanupExpiredBubbles();
+  // while the day is replayed the world is the record's; the live state is given back at the end
+  if (replaying()) return;
   officeEngine.setAgents(officeState.agents);
   officeEngine.setSpeechBubbles(officeState.speechBubbles);
   officeEngine.setProjectTokens(officeState.projectTokens);
@@ -3347,11 +3511,21 @@ async function refresh() {
     render(state);
     stopButton.disabled = busy;
     // Everything recorded since the ledger last looked, not only the twenty in the snapshot.
+    // the name tags' last tasks: the studio's own record of runs rides this snapshot (W12)
+    refreshLastTasks();
     try {
       await ledger.sync(api, state.cursor);
       element('ledger-count').textContent = entryCountLabel(ledger.events.size);
+      if (worldFacts.reads.ledger !== 'ok') {
+        worldFacts.reads.ledger = 'ok';
+        pushWorldFacts();
+      }
     } catch (error) {
       console.warn('ledger sync failed', error);
+      if (!ledger.events.size && worldFacts.reads.ledger !== 'failed') {
+        readFailed('ledger');
+        pushWorldFacts();
+      }
     }
     // The approvals have their own, slower clock; this only lets them ride the same poll.
     await loadApprovals();
@@ -3457,6 +3631,7 @@ element('logout').addEventListener('click', () => {
   input.value = '';
   notify('');
   ledger.clear();
+  if (replay) replay.reset();
   pendingMode = null;
   approvalsRouteMissing = false;
   approvalsLastRead = 0;
@@ -4488,8 +4663,11 @@ async function loadEpisodes() {
     ]);
     boardEl.innerHTML = serialBoardHtml(continuity);
     worldFacts.episodes = data;
+    worldFacts.reads.episodes = 'ok';
     pushWorldFacts();
     const episodes = data.episodes || [];
+    // the newest episode as the Journal's cover (W12); the list below opens on the same one
+    element('story-cover').innerHTML = journalCoverHtml(episodes[0] || null, continuity);
     if (!episodes.length) {
       listEl.innerHTML = '<div class="topics-loading">Niciun episod încă.</div>';
       return;
@@ -4503,9 +4681,32 @@ async function loadEpisodes() {
       btn.addEventListener('click', () => decideEpisode(btn));
     });
   } catch (err) {
+    // not read is not empty: the cover says nothing it did not read
+    element('story-cover').innerHTML = '';
+    readFailed('episodes');
+    pushWorldFacts();
     listEl.innerHTML = `<div class="text-error">${escapeHtml(err.message)}</div>`;
   }
 }
+
+// The cover's «Citește scenariul» goes to the newest episode's script, inside the dialog, the
+// way a beat card goes to its beat (below).
+element('story-cover').addEventListener('click', (event) => {
+  const link = /** @type {HTMLElement} */ (event.target).closest('a.cover-read');
+  if (!link) return;
+  const target = document.getElementById(String(link.getAttribute('href') || '').slice(1));
+  if (!target) return;
+  event.preventDefault();
+  if (target instanceof HTMLDetailsElement) target.open = true;
+  const still = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const scroller = target.closest('.dialog-body');
+  if (scroller) {
+    const top = target.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+    scroller.scrollTo({ top: Math.max(0, top - 16), behavior: still ? 'auto' : 'smooth' });
+  }
+  const summary = target.querySelector('summary');
+  if (summary) summary.focus({ preventScroll: true });
+});
 
 // A card on the beat board goes to its beat on the script page, inside the dialog: the anchor
 // would leave a fragment in the address bar, and a scripted glide ignores the CSS that zeroes

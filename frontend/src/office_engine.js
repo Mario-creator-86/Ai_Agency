@@ -1,4 +1,4 @@
-import { hitAt, screenRect } from './hq_readouts.js';
+import { pointerHit, screenRect } from './hq_readouts.js';
 import { HQAssets } from './hq_assets.js';
 import { WorldSimulationManager, HQRenderer } from './hq_world.js';
 import { scenePalette } from './hq_palette.js';
@@ -225,6 +225,8 @@ export class OfficeEngine {
      * boxes, so a click on the video still finds who sits there, and paints nothing.
      */
     this.hitsOnly = false;
+    /** «Reluarea zilei» (W13): the world is the record played back (setReplay). */
+    this.replay = false;
     /** Told whenever the camera or the box changes: the stream follows it (game_frame.js). */
     this.onView = typeof options.onView === 'function' ? options.onView : null;
     this._viewKey = '';
@@ -534,9 +536,67 @@ export class OfficeEngine {
     if (this.renderer) this.renderer.setFacts(this.facts);
   }
 
+  /**
+   * A live event from the socket (W12): an employee starting work wears their tag for a few
+   * seconds, a stage that starts brings its room to full light and glints the façade sign
+   * (hq_arrivals.js). Only as it happened, never a replay, and nothing under reduced motion:
+   * the state itself still changes through setAgents, without the flourish.
+   * @param {any} event @param {boolean} live
+   * @returns {'tag'|'room'|null}
+   */
+  offerArrival(event, live) {
+    if (!this.renderer || this.reducedMotion()) return null;
+    const now = typeof performance !== 'undefined' ? performance.now() : 0;
+    const started = this.renderer.arrivals.offer(event, { live, now, wallNow: Date.now(), agents: this.agents });
+    if (started === 'room') {
+      this.renderer.glints.force('run_sign', now);
+      this.renderer.glintCount += 1;
+    }
+    return started;
+  }
+
+  /**
+   * «RELUAREA ZILEI» (W13, day_replay.js): while on, the world is the record played back. The
+   * renderer grades the world so it cannot be taken for live (hq_world.js drawReplayGrade) and
+   * draws even under the Unreal stream's layer, which the page hides for the replay. Turning it on
+   * or off clears what was arriving and forgets the faces' values, so the switch itself glints
+   * nothing.
+   * @param {boolean} on
+   */
+  setReplay(on) {
+    this.replay = Boolean(on);
+    if (!this.renderer) return;
+    this.renderer.arrivals.clear();
+    this.renderer.glints.reset();
+  }
+
+  /**
+   * An event of the replayed day, crossed while it plays forward: it says itself in the world as
+   * a live one would (hq_arrivals.js, `replay`), under the replay's grade. Nothing under reduced
+   * motion: the replay then steps from stage to stage.
+   * @param {any} event
+   * @returns {'tag'|'room'|null}
+   */
+  offerReplayArrival(event) {
+    if (!this.renderer || !this.replay || this.reducedMotion()) return null;
+    const now = typeof performance !== 'undefined' ? performance.now() : 0;
+    const started = this.renderer.arrivals.offer(event, { live: false, replay: true, now, agents: this.agents });
+    if (started === 'room') {
+      this.renderer.glints.force('run_sign', now);
+      this.renderer.glintCount += 1;
+    }
+    return started;
+  }
+
+  /** A seek in the replay: what was arriving belongs to the moment left. */
+  clearArrivals() {
+    if (this.renderer) this.renderer.arrivals.clear();
+  }
+
   /** A new key: what the faces show next is the studio being read, not a live change. */
   resetGlints() {
     if (this.renderer) this.renderer.glints.reset();
+    if (this.renderer) this.renderer.arrivals.clear();
   }
 
   /** @param {any} agentId */
@@ -720,7 +780,8 @@ export class OfficeEngine {
   _hitBoxAt(sx, sy) {
     if (!this.renderer) return null;
     const { x, y } = this.viewport.screenToWorld(sx, sy);
-    return hitAt(this.renderer.hits, x, y);
+    // an employee's figure is part of their desk: the pointer on it stands on the desk (W12)
+    return pointerHit(this.renderer.hits, x, y);
   }
 
   /** @param {number} sx @param {number} sy */
@@ -826,7 +887,9 @@ export class OfficeEngine {
   _draw(force = false) {
     const ctx = this.ctx;
     if (!ctx) return;
-    if (this.hitsOnly && !force && this.renderer) {
+    // The replay is drawn by the page's own renderer, even where the stream's layer stood (the
+    // page hides that layer while the day is replayed).
+    if (this.hitsOnly && !force && !this.replay && this.renderer) {
       this._setNote(null);
       this.renderer.keepHits(this.agents);
       return;
@@ -869,6 +932,7 @@ export class OfficeEngine {
       liftStops: this.liftStops,
       scale: zoom,
       skyTop,
+      replay: this.replay,
     });
     ctx.restore();
     ctx.setTransform(1, 0, 0, 1, 0, 0);

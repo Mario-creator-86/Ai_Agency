@@ -1,5 +1,15 @@
 # Changelog
 
+## The day replayed from its record, and a live arrival seen across the room — 2026-09-24
+
+- **«Reluarea zilei»** (`frontend/src/day_replay.js`, `replay_player.js`): the newest finished run played back from its recorded events only, time-compressed, with quiet stretches named and sped up; labelled at every instant (letterbox, grey-violet grade, «RELUARE» chip, «ATUNCI» clock, violet tags); play, pause, scrub by stage, 1×/4×/16×, Esc; live wins within 6 s; hidden when no run has finished. Verified against an independent reducer on two real runs: 0 differences in 889 checks.
+- **A live arrival seen across the room** (`frontend/src/hq_arrivals.js`): the employee's tag for 4 s and widening rings on a live WORKING; the stage's rooms lit on `runbook.stage_started`; never for a replayed event, never under reduced motion.
+- **Not read is not empty**: a failed read says «registrul nu a putut fi citit» (and the like), never «nicio rulare în registru».
+- **Desk targets** of 55×62 px at 1920 (were 13×12); the façade card sits below the sign.
+- **The real last task per employee** from the backend (`app.services.last_task_per_agent`, one grouped query over the new index of migration `0046_agent_run_last_task`), in the snapshot as `last_tasks`.
+- **A premium Journal**: the drawers' glass, the newest episode as a poster cover, the empty thread panel folded away; the film toast uses the brightest real frame.
+- Tests: frontend 383/383, tsc clean; backend 71 passed across the touched files; ruff and mypy clean.
+
 ## The building's truth is legible — 2026-09-24
 
 - **Readouts on every face** (`frontend/src/hq_readouts.js`, `scene_readout.js`): a glass card on hover and keyboard focus for the eight bound walls and every occupied desk's monitor, from the same facts store (nothing fetched), placed in the free room and never over its face, announced once through a polite live region; Enter or a click opens the wall's room.

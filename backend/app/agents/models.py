@@ -148,6 +148,9 @@ class AgentRun(Base):
     """Envelope for a real LLM invocation."""
 
     __tablename__ = "agent_run"
+    #: Each employee's newest run, for the snapshot's «last task» (migration 0046): one grouped
+    #: MAX(started_at) per agent, read from the index rather than the table.
+    __table_args__ = (Index("ix_agent_run_agent_started", "agent_id", "started_at"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     agent_id: Mapped[str] = mapped_column(ForeignKey("agent.id"))

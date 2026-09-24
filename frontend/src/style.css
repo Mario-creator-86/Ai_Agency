@@ -307,7 +307,7 @@
   /* What the clock and the live state leave between them for the dock: its
      icons-only width (355px) and a gap each side. Wider rooms spell the dock
      out (office_scene.css @container dock) and have the room for it. */
-  --dock-room:       372px;
+  --dock-room:       408px;
   --dur-drawer:      300ms;
   /* The drawers' glass. Dark enough that --ink-3 keeps 4.5:1 over the noon
      sky behind it (measured from pixels, scratchpad ui/w4), clear enough that
@@ -429,6 +429,30 @@
   --poster-w:      54px;                      /* the film's own frame, 9:16 */
   --poster-h:      96px;
   --fs-chapter:    clamp(20px, 1.5vw, 28px);  /* the episode's title on its card */
+  /* THE JOURNAL'S COVER (W12, serial_room.css): the newest episode as a poster. */
+  --fs-cover-num:   clamp(64px, 5.4vw, 112px); /* its number, in the display face */
+  --fs-cover-title: clamp(24px, 1.75vw, 36px); /* its title */
+  --fs-cover-verdict: clamp(28px, 2.1vw, 44px); /* the Director's PASS / FAIL */
+  --cover-glow:    rgba(224, 176, 98, .15);   /* the warm light the number stands in */
+  --cover-cool:    rgba(90, 150, 255, .10);   /* the cool light across the poster's far side */
+  --cover-ghost:   rgba(150, 180, 230, .07);  /* the film strip's perforations */
+  --cover-min-h:   clamp(188px, 15vw, 260px);
+  /* «RELUAREA ZILEI» (W13, day_replay.js, office_scene.css): the newest real day played back
+     from its record. Its colour is violet, which nothing else on the page wears: gold means live
+     or waiting for the Owner, green means act, and a replay is neither. The world it plays is
+     graded most of the way to grey and washed violet (hq_world.js drawReplayGrade), and a
+     letterbox closes over the sky row and the street, so no one can take it for live. */
+  --replay-ink:    #c9b8ff;   /* the replay's words and marks: 10.9:1 on --scene-chrome over the letterbox, 9.75:1 on --replay-bg */
+  --replay-bg:     #1b1633;   /* the chip's ground */
+  --replay-line:   #4b3f86;   /* its edge */
+  --replay-rest:   #6b5db8;   /* the scrubber's run still to play: 3.56:1 on the plate (W14; --replay-line was 2.16:1) */
+  --replay-fill:   #8f7ae6;   /* the part of the run already played */
+  --replay-grade:  rgba(128, 128, 128, .66);  /* the world taken towards grey (a saturation fill) */
+  --replay-tone:   rgba(120, 96, 200, .34);   /* and washed violet (a soft-light fill) */
+  --replay-letterbox: rgba(2, 3, 8, .9);      /* the bars over the sky row and the street */
+  --replay-bar-top: var(--hud-top);           /* the top bar: the sky row the dock hangs in */
+  --replay-bar-bottom: 84px;                  /* the bottom bar: the controls and the slate */
+  --replay-tick:   rgba(201, 184, 255, .55);  /* a stage's start on the scrubber */
   /* --shadow-scene-warm and --edge-hairline belonged to the older scene frame
      that this sheet drew before office_scene.css owned the viewport. The render
      wears --shadow-scene and one hairline of --scene-frame; a second, warmer

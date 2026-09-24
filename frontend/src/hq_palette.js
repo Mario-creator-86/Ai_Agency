@@ -43,6 +43,9 @@ const FALLBACK = {
   gold: '#e0b062',
   segPending: 'rgba(150, 180, 230, .18)',
   segUnrun: 'rgba(150, 180, 230, .08)',
+  replayInk: '#c9b8ff',
+  replayGrade: 'rgba(128, 128, 128, .66)',
+  replayTone: 'rgba(120, 96, 200, .34)',
 };
 
 /** Which custom property each name reads. */
@@ -66,6 +69,10 @@ const TOKENS = {
   gold: '--gold',
   segPending: '--seg-pending',
   segUnrun: '--seg-unrun',
+  // «Reluarea zilei» (W13): the replay's ink, and the grade laid over the world it plays back
+  replayInk: '--replay-ink',
+  replayGrade: '--replay-grade',
+  replayTone: '--replay-tone',
 };
 
 /** @type {Record<string, string>|null} */

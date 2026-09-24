@@ -104,3 +104,27 @@ test('detail is measured between blocks, so a fine texture does not count and a 
   assert.ok(shape.detail > POSTER_MIN_DETAIL, `a bright shape on black: ${shape.detail}`);
   assert.ok(Number.isNaN(lumaStats(new Uint8ClampedArray(0), 0, 0).mean));
 });
+
+test('one decode per film, whoever asks; a frame that could not be read is asked again (W12)', async () => {
+  const { PosterCache } = await import('../src/film_poster.js');
+  const calls = [];
+  const frame = { width: 180, height: 320 };
+  let answer = null;
+  const cache = new PosterCache(async (key) => {
+    calls.push(key);
+    return answer;
+  });
+  assert.equal(await cache.get('a'), null);
+  answer = frame;
+  const [bay, toast] = await Promise.all([cache.get('a'), cache.get('a')]);
+  assert.equal(bay, frame);
+  assert.equal(toast, frame);
+  assert.deepEqual(calls, ['a', 'a'], 'the failed read was asked again, and the good one once for both');
+  await cache.get('a');
+  assert.equal(calls.length, 2);
+  const broken = new PosterCache(async () => { throw new Error('network'); });
+  assert.equal(await broken.get('b'), null);
+  cache.clear();
+  await cache.get('a');
+  assert.equal(calls.length, 3, 'a new visitor reads again');
+});

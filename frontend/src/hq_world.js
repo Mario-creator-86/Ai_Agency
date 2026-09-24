@@ -14,6 +14,8 @@ import {
   drawPane, paintTreasury, paintRunSign, paintFactCheck, paintNote, paintWriters, paintPublish, paintInfra, paintRenderBay,
 } from './hq_screens.js';
 import { surfaceRects, GlintTracker, lastTaskLine, unionRect } from './hq_readouts.js';
+import { Arrivals, arrivalAccent } from './hq_arrivals.js';
+import { runStageWord } from './hud_charts.js';
 
 /**
  * WorldSimulationManager owns every manager of the living headquarters and advances them in one
@@ -274,6 +276,8 @@ export class HQRenderer {
     this.reduced = false;
     /** Glints drawn so far, for QA. */
     this.glintCount = 0;
+    /** What a live event brings up for a few seconds: a tag, a room at full light (W12). */
+    this.arrivals = new Arrivals();
   }
 
   /**
@@ -385,7 +389,7 @@ export class HQRenderer {
 
   /**
    * @param {CanvasRenderingContext2D} ctx
-   * @param {{agents:any[], bubbles:any[], tokens:any[], lift:any, trip:any, selectedId:any, hoverId:any, liftStops:any, scale?:number, skyTop?:number, surfaceId?: string|null, surfaceVia?: string, reduced?: boolean}} state
+   * @param {{agents:any[], bubbles:any[], tokens:any[], lift:any, trip:any, selectedId:any, hoverId:any, liftStops:any, scale?:number, skyTop?:number, surfaceId?: string|null, surfaceVia?: string, reduced?: boolean, replay?: boolean}} state
    */
   draw(ctx, state) {
     const w = this.world;
@@ -409,8 +413,11 @@ export class HQRenderer {
     this.drawDeskMonitors(ctx, state.agents);
     this.drawRoomLights(ctx, state.agents, time);
     this.drawScreenLight(ctx, time);
+    this.drawRoomFlares(ctx, time);
     this.plate(ctx, 'building_shell', time);
     this.drawFacade(ctx, state.scale || 1);
+    // In the replay the rooms' chips are words, drawn after the replay's grade (below)
+    this.drawRoomRims(ctx, state, state.replay ? 'rim' : 'all');
     w.sky.drawSkyEvents(ctx, w.events, time, 'near');
     this.drawTokens(ctx, state);
     this.plate(ctx, 'street_props', time);
@@ -421,7 +428,14 @@ export class HQRenderer {
     this.plate(ctx, 'street_front', time);
     w.sky.drawWeather(ctx, time, fx, skyTop);
     this.drawNightGrade(ctx, time, skyTop);
+    // «Reluarea zilei» (W13): the world played back from the record wears a grade no one can take
+    // for live; the words drawn over it (chips, captions, tags, marks) are drawn after it, clear.
+    if (state.replay) {
+      this.drawReplayGrade(ctx, skyTop);
+      this.drawRoomRims(ctx, state, 'label');
+    }
     this.drawBubbles(ctx, state);
+    this.drawArrivals(ctx, state);
     this.drawSelection(ctx, state);
   }
 
@@ -721,12 +735,14 @@ export class HQRenderer {
     const seats = this.m.seats || {};
     const seated = new Set(Object.values(seats).map((/** @type {any} */ s) => s.zone));
     this.roomStates = {};
+    // a stage that started live brings its room up to full light for a few seconds (W12)
+    const flares = new Map((this.reduced ? [] : this.arrivals.rooms(nowMs())).map((f) => [f.zone, f.strength]));
     for (const [zone, room] of Object.entries(rooms)) {
       if (!seated.has(zone)) continue;
       const inRoom = agents.filter((a) => this.zoneOf(a) === zone);
       const occupancy = roomOccupancy(inRoom);
-      const alpha = roomShade(occupancy, time.daylight);
-      this.roomStates[zone] = { occupancy, alpha };
+      const alpha = roomShade(occupancy, time.daylight) * (1 - (flares.get(zone) || 0));
+      this.roomStates[zone] = { occupancy, alpha, flare: flares.get(zone) || 0 };
       if (alpha <= 0.001) continue;
       ctx.save();
       ctx.beginPath();
@@ -773,12 +789,209 @@ export class HQRenderer {
   }
 
   /**
+   * THE ROOM THAT STARTS A STAGE, AT FULL LIGHT (W12). A live runbook.stage_started lifts the
+   * shade off the rooms that do that stage's work (drawRoomLights) and pours the room's own
+   * ceiling light down it for ROOM_FLARE_MS (hq_arrivals.js), softer by day, when the rooms are
+   * lit already. Off under reduced motion.
+   * @param {CanvasRenderingContext2D} ctx @param {any} time
+   */
+  drawRoomFlares(ctx, time) {
+    if (this.reduced) return;
+    const flares = this.arrivals.rooms(nowMs());
+    if (!flares.length) return;
+    const rooms = this.m.rooms || {};
+    const lift = 0.34 - 0.14 * Math.max(0, Math.min(1, time.daylight));
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (const f of flares) {
+      const room = rooms[f.zone];
+      if (!room) continue;
+      const k = f.strength * lift;
+      const g = ctx.createLinearGradient(0, room.y, 0, room.y + room.h);
+      g.addColorStop(0, `rgba(255,238,206,${k})`);
+      g.addColorStop(0.4, `rgba(255,238,206,${k * 0.45})`);
+      g.addColorStop(1, `rgba(255,238,206,${k * 0.16})`);
+      ctx.fillStyle = g;
+      ctx.fillRect(room.x, room.y, room.w, room.h);
+    }
+    ctx.restore();
+  }
+
+  /**
+   * The flared room's soft edge, over the shell so it reads from across the room: a lit line on
+   * the room's frame with a halo that fades outward, and one chip on the room's floor, right, with the
+   * stage's own words («acum: documentare și verificare», hud_charts.js runStageWord), the same
+   * words the slate and the sign say. Constant size on the screen, like every mark.
+   * @param {CanvasRenderingContext2D} ctx @param {any} state
+   * @param {'all'|'rim'|'label'} [part] the rim, the chip, or both (the replay draws its chips
+   *   after its grade, so the words are never tinted)
+   */
+  drawRoomRims(ctx, state, part = 'all') {
+    if (this.reduced) return;
+    const flares = this.arrivals.rooms(nowMs());
+    if (!flares.length) return;
+    const rooms = this.m.rooms || {};
+    const zoom = state.scale && state.scale > 0 ? state.scale : 1;
+    const px = (/** @type {number} */ n) => n / zoom;
+    const c = scenePalette();
+    // the replay's violet in «Reluarea zilei», the register's green live (hq_arrivals.js arrivalAccent)
+    const accent = c[arrivalAccent(Boolean(state.replay))];
+    const labelled = new Set();
+    for (const f of flares) {
+      const room = rooms[f.zone];
+      if (!room) continue;
+      const k = f.strength;
+      if (part !== 'label') {
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        const halo = [[0, 1.6, 0.62], [px(3), 3, 0.2], [px(7), 4, 0.09], [px(12), 5, 0.04]];
+        for (const [pad, width, alpha] of halo) {
+          ctx.lineWidth = px(width);
+          ctx.strokeStyle = `rgba(255,238,206,${alpha * k})`;
+          ctx.strokeRect(room.x - pad, room.y - pad, room.w + pad * 2, room.h + pad * 2);
+        }
+        ctx.restore();
+      }
+      if (part === 'rim' || labelled.has(f.stage)) continue;
+      labelled.add(f.stage);
+      const text = `acum: ${runStageWord(f.stage)}`;
+      ctx.save();
+      ctx.globalAlpha = k;
+      ctx.font = `600 ${px(12)}px "Segoe UI", system-ui, sans-serif`;
+      const padX = px(9);
+      const dot = px(7);
+      const tw = ctx.measureText(text).width + padX * 2 + dot + px(6);
+      const th = px(24);
+      // A narrow room at a small zoom (1280) would be half covered by its own chip: the lit room
+      // and the sign's «acum: …» say it there.
+      if (tw > room.w * 0.62) {
+        ctx.restore();
+        continue;
+      }
+      // the room's floor, right: its name plate and its boards are along the top, and the
+      // arriving employee's tag stands under the desks
+      const x = room.x + room.w - tw - px(8);
+      const y = room.y + room.h - th - px(6);
+      ctx.fillStyle = withAlpha(c.scene, 0.92);
+      roundRect(ctx, x, y, tw, th, px(5));
+      ctx.fill();
+      ctx.lineWidth = px(1);
+      ctx.strokeStyle = withAlpha(accent, 0.7);
+      ctx.stroke();
+      ctx.fillStyle = accent;
+      ctx.beginPath();
+      ctx.arc(x + padX + dot / 2, y + th / 2, dot / 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = c.chromeInk;
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, x + padX + dot + px(6), y + th / 2 + px(0.5));
+      ctx.restore();
+    }
+    ctx.textBaseline = 'alphabetic';
+  }
+
+  /**
+   * THE LIVE ARRIVAL'S TAG (W12): an employee who starts to work, live, wears their world tag
+   * under their desk for about four seconds («Dr. Aris (Researcher) · lucrează · idei de
+   * subiect») at 13 screen pixels, and one ring widens from their desk twice, so a visitor
+   * looking at the other side of the building sees where. The words are the event's own
+   * (hq_arrivals.js). The employee under the pointer or the keyboard, or chosen, already wears a
+   * tag: theirs is not doubled. Off under reduced motion.
+   * @param {CanvasRenderingContext2D} ctx @param {any} state
+   */
+  drawArrivals(ctx, state) {
+    if (this.reduced) return;
+    const tags = this.arrivals.tags(nowMs());
+    if (!tags.length) return;
+    const c = scenePalette();
+    const accent = c[arrivalAccent(Boolean(state.replay))];
+    const zoom = state.scale && state.scale > 0 ? state.scale : 1;
+    const px = (/** @type {number} */ n) => n / zoom;
+    for (const tag of tags) {
+      const hit = this.hits.find((/** @type {any} */ h) => !h.surface && h.agent && String(h.agent.id || h.agent.agent_id) === tag.id);
+      if (!hit) continue;
+      const k = tag.strength;
+      // the rings: two, 380 ms apart, widening from the figure's box and fading as they go
+      for (const delay of [0, 380]) {
+        const t = (tag.age - delay) / 1100;
+        if (t < 0 || t >= 1) continue;
+        const grow = 1 - (1 - t) ** 3;
+        const pad = px(3) + px(30) * grow;
+        ctx.save();
+        ctx.lineWidth = px(2.2 * (1 - t) + 0.8);
+        ctx.strokeStyle = withAlpha(accent, 0.9 * (1 - t));
+        roundRect(ctx, hit.x0 - pad, hit.y0 - pad, hit.x1 - hit.x0 + pad * 2, hit.y1 - hit.y0 + pad * 2, px(6) + pad * 0.3);
+        ctx.stroke();
+        ctx.restore();
+      }
+      if (tag.id === String(state.hoverId || '') || tag.id === String(state.selectedId || '')) continue;
+      const parts = tag.words.split(' · ');
+      const name = parts[0] || '';
+      const verb = parts[1] || '';
+      const task = parts.slice(2).join(' · ');
+      ctx.save();
+      ctx.globalAlpha = k;
+      const bold = `600 ${px(13)}px "Segoe UI", system-ui, sans-serif`;
+      const plain = `500 ${px(13)}px "Segoe UI", system-ui, sans-serif`;
+      const sep = ' · ';
+      ctx.font = bold;
+      const wName = ctx.measureText(name).width;
+      const wVerb = ctx.measureText(verb).width;
+      ctx.font = plain;
+      const wSep = ctx.measureText(sep).width;
+      const wTask = task ? ctx.measureText(task).width : 0;
+      const padX = px(10);
+      const bar = px(3);
+      const tw = bar + padX + wName + wSep + wVerb + (task ? wSep + wTask : 0) + padX;
+      const th = px(28);
+      const mid = (hit.x0 + hit.x1) / 2;
+      const x = Math.min(this.world.worldW - tw - px(2), Math.max(px(2), mid - tw / 2));
+      // under the desk, where the pointer's own tag stands: above the head it lay over the
+      // room's boards and the render bay's screen
+      const y = hit.y1 + px(6) + px(6) * (1 - k);
+      ctx.fillStyle = withAlpha(c.scene, 0.94);
+      roundRect(ctx, x, y, tw, th, px(5));
+      ctx.fill();
+      ctx.lineWidth = px(1);
+      ctx.strokeStyle = withAlpha(accent, 0.55);
+      ctx.stroke();
+      ctx.fillStyle = accent;
+      ctx.fillRect(x + px(1), y + px(5), bar, th - px(10));
+      ctx.textBaseline = 'middle';
+      let at = x + bar + padX;
+      const line = y + th / 2 + px(0.5);
+      ctx.font = bold;
+      ctx.fillStyle = c.chromeInk;
+      ctx.fillText(name, at, line);
+      at += wName;
+      ctx.font = plain;
+      ctx.fillStyle = c.chromeMuted;
+      ctx.fillText(sep, at, line);
+      at += wSep;
+      ctx.font = bold;
+      ctx.fillStyle = verb === 'lucrează' ? accent : c.chromeInk;
+      ctx.fillText(verb, at, line);
+      at += wVerb;
+      if (task) {
+        ctx.font = plain;
+        ctx.fillStyle = c.chromeMuted;
+        ctx.fillText(sep, at, line);
+        at += wSep;
+        ctx.fillStyle = c.chromeInk;
+        ctx.fillText(task, at, line);
+      }
+      ctx.restore();
+    }
+    ctx.textBaseline = 'alphabetic';
+  }
+
+  /**
    * The façade: the day's run on the sign, and the tokens used today on the server room's plate.
    * @param {CanvasRenderingContext2D} ctx @param {number} scale
    */
   drawFacade(ctx, scale) {
     const facts = this.facts || {};
-    const sign = runSignFace(facts.track, { today: facts.today, live: facts.live, next: facts.nextRun || '' });
+    const sign = runSignFace(facts.track, { today: facts.today, live: facts.live, next: facts.nextRun || '', read: facts.reads ? facts.reads.runs : undefined });
     const palette = scenePalette();
     this.blitFace(ctx, 'run_sign', `${sign.key}|${palette.okInk}`, WALL.run_sign, scale, (c, w, h) => paintRunSign(c, w, h, sign, palette));
     // the glint follows the day's own words, not the next-run line (which follows the scheduler)
@@ -1142,6 +1355,71 @@ export class HQRenderer {
     ctx.restore();
   }
 
+  /**
+   * THE REPLAY'S GRADE (W13). The world played back from the record is taken most of the way to
+   * grey and washed with the replay's own violet (--replay-grade, --replay-tone), sky and street
+   * included, so no one can take it for the live building; with the letterbox the page lays over
+   * the frame (office_scene.css) and the «RELUARE» chip in place of «Live». Two fills of the
+   * world's rectangle, composited on the GPU.
+   * @param {CanvasRenderingContext2D} ctx @param {number} skyTop
+   */
+  drawReplayGrade(ctx, skyTop) {
+    const c = scenePalette();
+    const h = this.world.worldH - skyTop;
+    ctx.save();
+    ctx.globalCompositeOperation = 'saturation';
+    ctx.fillStyle = c.replayGrade;
+    ctx.fillRect(0, skyTop, this.world.worldW, h);
+    ctx.globalCompositeOperation = 'soft-light';
+    ctx.fillStyle = c.replayTone;
+    ctx.fillRect(0, skyTop, this.world.worldW, h);
+    ctx.restore();
+  }
+
+  /**
+   * A replayed caption (W13): the words the record says the employee spoke, in their own case,
+   * two lines at most (day_replay.js captionLines), at a constant 12 screen px like every mark,
+   * with its label «RELUARE · 23:51:02» over it, so a caption of the replay is never read as said
+   * now.
+   * @param {CanvasRenderingContext2D} ctx @param {any} state @param {any} bubble @param {number} x @param {number} y
+   */
+  drawReplayCaption(ctx, state, bubble, x, y) {
+    const c = scenePalette();
+    const zoom = state.scale && state.scale > 0 ? state.scale : 1;
+    const px = (/** @type {number} */ n) => n / zoom;
+    const lines = Array.isArray(bubble.lines) ? bubble.lines : [];
+    if (!lines.length) return;
+    ctx.save();
+    ctx.font = `600 ${px(12)}px "Segoe UI", system-ui, sans-serif`;
+    const tw = Math.max(...lines.map((l) => ctx.measureText(l).width));
+    ctx.font = `700 ${px(9.5)}px "Segoe UI", system-ui, sans-serif`;
+    const lw = ctx.measureText(bubble.label).width;
+    const padX = px(9);
+    const bw = Math.max(tw, lw) + padX * 2;
+    const bh = px(26) + px(16) * lines.length;
+    const bx = Math.min(this.world.worldW - bw - px(2), Math.max(px(2), x - bw / 2));
+    const by = y - bh - px(6);
+    ctx.fillStyle = withAlpha(c.scene, 0.94);
+    ctx.strokeStyle = withAlpha(c.replayInk, 0.7);
+    ctx.lineWidth = px(1);
+    roundRect(ctx, bx, by, bw, bh, px(5));
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x - px(4), by + bh);
+    ctx.lineTo(x, by + bh + px(5));
+    ctx.lineTo(x + px(4), by + bh);
+    ctx.fill();
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = c.replayInk;
+    ctx.fillText(bubble.label, bx + padX, by + px(12));
+    ctx.font = `600 ${px(12)}px "Segoe UI", system-ui, sans-serif`;
+    ctx.fillStyle = c.chromeInk;
+    lines.forEach((line, i) => ctx.fillText(line, bx + padX, by + px(28) + i * px(16)));
+    ctx.restore();
+    ctx.textBaseline = 'alphabetic';
+  }
+
   /** @param {CanvasRenderingContext2D} ctx @param {any} state */
   drawBubbles(ctx, state) {
     const now = Date.now();
@@ -1150,6 +1428,10 @@ export class HQRenderer {
       const seat = agent ? this.m.seats?.[agent.desk_id] : null;
       const x = seat ? seat.x : bubble.x;
       const y = seat ? seat.y - 42 : bubble.y;
+      if (bubble.label) {
+        this.drawReplayCaption(ctx, state, bubble, x, y);
+        continue;
+      }
       const frame = bubbleFrame(bubble.pages || [], (now - bubble.createdAt) / 1000);
       if (!frame.lines.length) continue;
       ctx.font = '600 6px "Segoe UI", system-ui, sans-serif';
@@ -1302,6 +1584,11 @@ export class HQRenderer {
 
 /** The research board's notes, as one surface. */
 const BOARD = unionRect(NOTES);
+
+/** The frame clock the flourishes are timed on (performance.now; 0 without it, in tests). */
+function nowMs() {
+  return typeof performance !== 'undefined' ? performance.now() : 0;
+}
 
 /** @param {CanvasRenderingContext2D} ctx */
 function roundRect(ctx, x, y, w, h, r) {
