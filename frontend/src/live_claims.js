@@ -18,11 +18,13 @@
  * belongs to one of them is never printed under the name of the other.
  */
 
+import { HELD_STILL_MS } from './hq_stream_config.js';
+
 /**
  * @typedef {'pending'|'off'|'connecting'|'live'|'offline'} StreamState
  * @typedef {'connecting'|'open'|'reconnecting'|'refused'|'closed'} SocketState
  * @typedef {{stream: StreamState, hasStill: boolean, socket: SocketState, data: 'fresh'|'stale',
- *            streamFps: number|null, pageFps: number|null}} LiveSignals
+ *            streamFps: number|null, pageFps: number|null, streamHeld?: boolean}} LiveSignals
  * @typedef {{state: 'live'|'frozen'|'starting'|'reconnecting'|'stale'|'offline',
  *            live: boolean, hidden: boolean, parts: Array<[string, string]>, title: string}} Readout
  */
@@ -50,7 +52,11 @@ function figure(fps) {
   return typeof fps === 'number' && Number.isFinite(fps) && fps >= 0 ? `${Math.round(fps)}fps` : '';
 }
 
+/** Under reduced motion the stream is seen one frame at a time (hq_stream_config.js HELD_STILL_MS). */
+const HELD_SECONDS = Math.round(HELD_STILL_MS / 1000);
+
 const TITLES = {
+  held: `Sediul din Unreal, transmis live prin Pixel Streaming. Sistemul tău cere mișcare redusă: se vede un cadru nou la fiecare ${HELD_SECONDS} secunde, fără mișcare între ele.`,
   stream: 'Sediul din Unreal, transmis live prin Pixel Streaming. Cifra: cadrele pe secundă pe care pagina le primește de la Unreal.',
   page: 'Biroul desenat de pagină din starea reală a studioului, primită live de la backend. Cifra: cadrele pe secundă desenate de pagină, nu de Unreal.',
   frozen: 'Transmisia din Unreal s-a întrerupt. Se vede ultimul cadru primit, oprit, până revine.',
@@ -68,6 +74,10 @@ export function sceneReadout(signals) {
   const { stream, hasStill, socket, data } = signals;
   if (data === 'stale') {
     return { state: 'stale', live: false, hidden: false, parts: [['scene-live', 'Date neactualizate']], title: TITLES.stale };
+  }
+  if (stream === 'live' && signals.streamHeld) {
+    // one real frame at a time: a frame rate would describe a motion the visitor is not shown
+    return { state: 'live', live: true, hidden: false, parts: [['scene-live', 'Live'], ['scene-label', ` · Unreal · un cadru la ${HELD_SECONDS} s`]], title: TITLES.held };
   }
   if (stream === 'live') {
     const fps = figure(signals.streamFps);

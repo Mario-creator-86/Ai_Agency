@@ -194,6 +194,12 @@ export async function readRecord(get, run, options = {}) {
 
 /** The most moments one read of the books asks about (the backend's own cap). */
 export const FIGURES_MAX = 240;
+/**
+ * The most reads of the books one replay makes, all of them when it starts (W17): 8 x 240 moments.
+ * A run that moved its figures more often than that shows «—» on its walls after the last moment
+ * read, never a stale figure.
+ */
+export const FIGURES_READS_MAX = 8;
 /** A reading is taken this long after the event that moved a figure, and shown from its event on. */
 export const FIGURE_STEP_MS = 1;
 
@@ -205,7 +211,8 @@ export const FIGURE_STEP_MS = 1;
  * stamped before the event that announces them, so a reading a millisecond after the event's own
  * stamp (FIGURE_STEP_MS: the page's clock counts whole milliseconds, the record microseconds)
  * holds it. Between two such moments nothing the walls show can change. Sorted, without repeats,
- * at most FIGURES_MAX (the start, the end and the first changes).
+ * every one of them (W17: it was cut at 240, and the walls then kept the 239th moment's figures to
+ * the run's end).
  * @param {Timeline} timeline
  * @returns {string[]} ISO instants
  */
@@ -220,34 +227,48 @@ export function figureMoments(timeline) {
   }
   const last = timeline.end + FIGURE_STEP_MS;
   const sorted = [...times].filter((t) => Number.isFinite(t) && t < last).sort((a, b) => a - b);
-  const kept = sorted.slice(0, FIGURES_MAX - 1);
-  kept.push(last);
-  return kept.map((t) => new Date(t).toISOString());
+  sorted.push(last);
+  return sorted.map((t) => new Date(t).toISOString());
 }
 
 /**
- * The books' read for a replay, or null when the studio cannot answer it (W16). /events?since
+ * The books' reads for a replay, or null when the studio cannot answer them (W16). /events?since
  * and /economy/as-of came with the same backend (migration 0047): a studio whose log did not
  * name the instant asked (readRecord's method 'bisect') predates both, so the books are not
  * asked at all, rather than answered with a 404 the browser logs as an error. Its walls say «—».
+ *
+ * W17: every moment is asked, in reads of at most FIGURES_MAX moments, all made when the replay
+ * starts (nothing is read per frame), at most FIGURES_READS_MAX of them. `until` is the first
+ * moment not asked (ms), or null when all were: from it on the walls say «—» (figuresAt).
  * @param {Timeline|null} timeline
  * @param {'since'|'bisect'|string|null|undefined} method how readRecord read the run's events
- * @returns {{path: string, moments: string[]}|null}
+ * @returns {{reads: Array<{path: string, moments: string[]}>, moments: string[], until: number|null}|null}
  */
 export function figuresQuery(timeline, method) {
   if (!timeline || method !== 'since') return null;
-  const moments = figureMoments(timeline);
-  return { path: `/economy/as-of?${moments.map((m) => `at=${encodeURIComponent(m)}`).join('&')}`, moments };
+  const all = figureMoments(timeline);
+  const cap = FIGURES_MAX * FIGURES_READS_MAX;
+  const moments = all.slice(0, cap);
+  const until = all.length > cap ? Date.parse(all[cap]) : null;
+  const reads = [];
+  for (let i = 0; i < moments.length; i += FIGURES_MAX) {
+    const chunk = moments.slice(i, i + FIGURES_MAX);
+    reads.push({ path: `/economy/as-of?${chunk.map((m) => `at=${encodeURIComponent(m)}`).join('&')}`, moments: chunk });
+  }
+  return { reads, moments, until };
 }
 
 /**
  * The books' reading that held at `t`: the newest one taken at or before it; null before the
- * first (a replayed wall then says «—»).
+ * first (a replayed wall then says «—»), and null from `until` on (W17: the first moment the
+ * books were not asked about; what the walls said then is not known).
  * @param {Array<{at: string}>|null|undefined} readings sorted by `at`
  * @param {number} t ms
+ * @param {number|null} [until] ms
  */
-export function figuresAt(readings, t) {
+export function figuresAt(readings, t, until = null) {
   if (!Array.isArray(readings)) return null;
+  if (until !== null && Number.isFinite(until) && t + FIGURE_STEP_MS >= until) return null;
   let found = null;
   for (const reading of readings) {
     const at = Date.parse(String(reading && reading.at));

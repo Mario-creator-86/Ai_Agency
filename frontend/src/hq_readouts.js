@@ -295,6 +295,35 @@ function keyed(r) {
   return { ...r, key: [r.id, r.eyebrow, r.value, r.line, r.context, r.action, r.tone, r.poster].join('|') };
 }
 
+/** The states the register words «lucrează» (ledger.js): the card's tone is «ok» while one holds. */
+const AT_WORK = new Set(['WORKING', 'THINKING', 'EXECUTING', 'RUNNING', 'PLANNING', 'REVIEWING']);
+
+/**
+ * An employee reached by the keyboard while the Unreal stream covers the page's renderer (W18):
+ * the ring and the name tag the renderer draws lie under the video, so the glass card says who it
+ * is, in the desk card's words. Null without an employee.
+ * @param {any} agent
+ * @param {{facts?: any, now?: number}} [input]
+ * @returns {Readout|null}
+ */
+export function agentReadout(agent, input = {}) {
+  if (!agent) return null;
+  const id = String(agent.id || agent.agent_id || '');
+  const state = String(agent.lifecycle || '').toUpperCase() === 'PAUSED' ? 'PAUSED' : String(agent.runtime_state || 'IDLE').toUpperCase();
+  const tasks = (input.facts && input.facts.tasks && input.facts.tasks.tasks) || {};
+  const now = Number.isFinite(input.now) ? Number(input.now) : Date.now();
+  return keyed({
+    id: `agent:${id}`,
+    eyebrow: 'ANGAJAT',
+    value: String(agent.display_name || agent.role_name || '—'),
+    line: runtimeLabel(state),
+    context: lastTaskLine(tasks[id], now),
+    action: 'Enter: deschide fișa angajatului.',
+    tone: state === 'ERROR' ? 'alert' : AT_WORK.has(state) ? 'ok' : 'quiet',
+    poster: false,
+  });
+}
+
 /** @param {string} room */
 function openWords(room) {
   const word = /** @type {Record<string, string>} */ (ROOM_WORD)[room];

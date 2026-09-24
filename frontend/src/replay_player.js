@@ -18,6 +18,7 @@ import {
   stageTicks,
 } from './day_replay.js';
 import { latestFilm } from './hq_screens.js';
+import { fromKeyboard, replayFocus } from './replay_invite.js';
 import { describeEvent } from './ledger.js';
 
 /**
@@ -82,6 +83,8 @@ export class DayReplayPlayer {
     this.liveUntil = 0;
     /** @type {HTMLElement|null} */
     this.returnFocus = null;
+    /** Whether this replay was started from the keyboard (W17): only then does the page move focus. */
+    this.byKeyboard = false;
     this.film = /** @type {{assetId: string, date: string|null, canvas: HTMLCanvasElement}|null} */ (null);
     this.filmRead = 'none';
     /** How the record was read the last time: one read by time, or bisection (an older studio). */
@@ -93,6 +96,8 @@ export class DayReplayPlayer {
      */
     this.figures = null;
     this.figuresRun = '';
+    /** The first moment the books were not asked about (ms), or null (W17). @type {number|null} */
+    this.figuresUntil = null;
     this.el = {
       toggle: /** @type {HTMLButtonElement} */ ($('replay-toggle')),
       viewport: $('scene-viewport'),
@@ -108,6 +113,7 @@ export class DayReplayPlayer {
       progress: $('replay-progress'),
       rate: $('replay-rate'),
       exit: /** @type {HTMLButtonElement} */ ($('replay-exit')),
+      back: /** @type {HTMLButtonElement} */ ($('replay-back')),
       then: $('replay-then'),
       thenTime: $('replay-then-time'),
       live: $('replay-live'),
@@ -163,8 +169,11 @@ export class DayReplayPlayer {
 
   /* --------------------------------------------------------- start / exit -- */
 
-  /** @param {HTMLElement|null} [origin] where the keyboard was, to return it there */
-  async start(origin = null) {
+  /**
+   * @param {HTMLElement|null} [origin] where the keyboard was, to return it there
+   * @param {{keyboard?: boolean}} [how] started from the keyboard (W17): only then is focus moved
+   */
+  async start(origin = null, how = {}) {
     if (this.active || this.loading || !this.run) return;
     const run = this.run;
     this.loading = true;
@@ -202,6 +211,7 @@ export class DayReplayPlayer {
     const engine = this.deps.engine();
     if (!engine) return;
     this.returnFocus = origin || /** @type {HTMLElement|null} */ (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+    this.byKeyboard = Boolean(how.keyboard);
     this.active = true;
     this.clock = new ReplayClock(timeline);
     this.clock.play();
@@ -229,7 +239,7 @@ export class DayReplayPlayer {
     this.raf = requestAnimationFrame(this._loop);
     const w = this.words();
     if (w) this.say(`Reluarea zilei a început: rularea din ${w.chip.replace(/^RELUARE · /, '').replace(' · ', ', ora ')}. Nu este live; vremea de atunci nu e cunoscută. Registrul rămâne live. Esc iese.`);
-    this.el.play.focus({ preventScroll: true });
+    if (replayFocus({ keyboard: this.byKeyboard, inControls: false }).onStart) this.el.play.focus({ preventScroll: true });
   }
 
   /**
@@ -239,6 +249,9 @@ export class DayReplayPlayer {
    */
   exit(options = {}) {
     if (!this.active) return;
+    // where the keyboard is, read before the controls go (W17)
+    const focused = document.activeElement;
+    const inControls = Boolean(focused && (this.el.bar.contains(focused) || this.el.live.contains(focused)));
     this.active = false;
     cancelAnimationFrame(this.raf);
     this.raf = 0;
@@ -246,6 +259,8 @@ export class DayReplayPlayer {
     window.clearTimeout(this.liveTimer);
     this.el.live.hidden = true;
     this.el.bar.hidden = true;
+    this.el.back.hidden = true;
+    this.el.exit.hidden = false;
     this.el.then.hidden = true;
     this.el.weather.hidden = true;
     this.el.note.hidden = true;
@@ -260,8 +275,10 @@ export class DayReplayPlayer {
     this.liveEvents = [];
     this.deps.onExit(live);
     if (!options.silent) this.say('Înapoi la live.');
-    if (options.focus !== false && this.returnFocus && document.contains(this.returnFocus)) this.returnFocus.focus({ preventScroll: true });
+    const moveFocus = replayFocus({ keyboard: this.byKeyboard, inControls }).onExit;
+    if (options.focus !== false && moveFocus && this.returnFocus && document.contains(this.returnFocus)) this.returnFocus.focus({ preventScroll: true });
     this.returnFocus = null;
+    this.byKeyboard = false;
   }
 
   /**
@@ -350,7 +367,7 @@ export class DayReplayPlayer {
    */
   facts(frame) {
     // the books as they stood at the moment (/economy/as-of): the newest reading at or before it
-    const reading = /** @type {any} */ (figuresAt(this.figures, frame.t));
+    const reading = /** @type {any} */ (figuresAt(this.figures, frame.t, this.figuresUntil));
     const film = latestFilm([frame.run]);
     const shown = film && this.film && this.film.assetId === film.assetId ? { ...film, canvas: this.film.canvas } : null;
     return {
@@ -385,11 +402,24 @@ export class DayReplayPlayer {
     const query = figuresQuery(timeline, this.readMethod);
     if (!query) {
       this.figures = null;
+      this.figuresUntil = null;
       this.figuresRun = '';
       return;
     }
-    const answer = await this.deps.api(query.path).catch(() => null);
-    this.figures = acceptFigures(answer, query.moments);
+    // one read per 240 moments, one after the other, all now: nothing is read while it plays (W17)
+    /** @type {any[]|null} */
+    let readings = [];
+    for (const read of query.reads) {
+      const answer = await this.deps.api(read.path).catch(() => null);
+      const part = acceptFigures(answer, read.moments);
+      if (!part) {
+        readings = null;
+        break;
+      }
+      readings.push(...part);
+    }
+    this.figures = readings && readings.length ? readings : null;
+    this.figuresUntil = this.figures ? query.until : null;
     this.figuresRun = this.figures ? timeline.runId : '';
   }
 
@@ -463,6 +493,16 @@ export class DayReplayPlayer {
       this.el.track.style.setProperty('--replay-p', `${Number(permille) / 10}%`);
     }
     const playing = clock.playing;
+    // W17: at the end, paused on the whole run, the way back to live is offered beside it
+    const over = clock.ended && !playing;
+    if (this.el.back.hidden === over) {
+      const hadExit = document.activeElement === this.el.exit;
+      const hadBack = document.activeElement === this.el.back;
+      this.el.back.hidden = !over;
+      this.el.exit.hidden = over;
+      if (over && hadExit) this.el.back.focus({ preventScroll: true });
+      if (!over && hadBack) this.el.exit.focus({ preventScroll: true });
+    }
     if (this.el.play.dataset.state !== (playing ? 'playing' : 'paused')) {
       this.el.play.dataset.state = playing ? 'playing' : 'paused';
       const label = playing ? 'Pauză' : clock.ended ? 'Redă din nou' : 'Redă';
@@ -533,11 +573,12 @@ export class DayReplayPlayer {
 
   _bind() {
     const el = this.el;
-    el.toggle.addEventListener('click', () => (this.active ? this.exit() : this.start(el.toggle)));
+    el.toggle.addEventListener('click', (e) => (this.active ? this.exit() : this.start(el.toggle, { keyboard: fromKeyboard(e) })));
     el.play.addEventListener('click', () => this.toggle());
     el.prev.addEventListener('click', () => this.timeline && this.clock && this.seek(prevStageTime(this.timeline, this.clock.t)));
     el.next.addEventListener('click', () => this.timeline && this.clock && this.seek(nextStageTime(this.timeline, this.clock.t)));
     el.exit.addEventListener('click', () => this.exit());
+    el.back.addEventListener('click', () => this.exit());
     el.liveGo.addEventListener('click', () => this.exit());
     el.scrub.addEventListener('input', () => {
       if (!this.clock) return;

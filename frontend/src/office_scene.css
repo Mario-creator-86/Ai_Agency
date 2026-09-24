@@ -231,14 +231,38 @@
 /* The scene answers the keyboard with the same ring every control on the page
    answers it with, drawn inside the bezel so the frame's own corners keep it. */
 #office-scene-container .office-canvas:focus-visible { outline: 2px solid var(--teal); outline-offset: calc(-1 * var(--s1)); border-radius: var(--radius); }
+/* W18, seen with the real stream: the stream's layer lies over the canvas and the drawers over its
+   edges, so the canvas's own ring was never seen and a keyboard visitor on the building saw no focus
+   at all. The same ring is drawn over the room the drawers leave, above the stream and under the
+   instruments; the canvas's own outline is then not needed. */
+#office-scene-container .office-canvas:focus-visible { outline-color: transparent; }
+#office-scene-container .scene-viewport:has(.office-canvas:focus-visible)::after {
+  content: '';
+  position: absolute;
+  z-index: 3;
+  top: var(--s1);
+  bottom: calc(var(--scene-readout) + var(--s1));
+  left: calc(var(--hud-l) + var(--s1));
+  right: calc(var(--hud-r) + var(--s1));
+  border: 2px solid var(--teal);
+  border-radius: var(--radius-sm);
+  pointer-events: none;
+}
 
 /* The streamed Unreal headquarters lies over the renderer and lets clicks through to it. */
 #office-scene-container .live-stream-layer { position: absolute; inset: 0; z-index: 2; pointer-events: none; background: var(--scene); }
 /* The video is laid in its box whole (contain), so none of its rows -- the sky over the roof, the
    roof's railing -- is cut before the page's camera places it (game_frame.js streamTransform). */
-#office-scene-container .live-stream-layer video { position: absolute; inset: 0; width: 100% !important; height: 100% !important; object-fit: contain; }
+#office-scene-container .live-stream-layer video { position: absolute; inset: 0; width: 100% !important; height: 100% !important; object-fit: contain; pointer-events: none !important; }
+/* W17, seen through the real stream: Pixel Streaming's VideoPlayer writes pointer-events: all on its
+   own video element, so the video took every click, hover and drag meant for the renderer under
+   it (no employee opened, no face's readout, no pan). The page's viewer sends no input to Unreal;
+   the pointer belongs to the page's hit boxes. */
 /* While not live the layer still covers the other renderer: the last frame, frozen, or a note. */
 #office-scene-container .live-stream-layer.paused video { visibility: hidden; }
+/* W18: reduced motion. The video still plays underneath (the stream stays connected); what is seen
+   is one real frame of it, kept and renewed every 10 s (hq_stream.js, HELD_STILL_MS). */
+#office-scene-container .live-stream-layer.held video { visibility: hidden; }
 /* Reconnecting: a readout of the same family, seated above the slate on the
    right, because the picture behind it is a real frame that must stay seen. */
 #office-scene-container .live-stream-badge {
@@ -931,7 +955,18 @@
 /* In a narrower frame the live clock keeps its hour; the city is its title. */
 @media (max-width: 1599.98px) {
   .scene-viewport[data-replay] #scene-info > :nth-child(n+2) { display: none; }
+  /* W17: without its city the live hour needs its own word beside ATUNCI: it is now. */
+  .scene-viewport[data-replay] .replay-now-label { display: inline; }
+  /* With both drawers open the corner has room for one clock only (about 140 px at 1280): the
+     replayed moment's, which is the one the picture is lit by. The live hour steps aside whole
+     rather than being cut to «A…» «2…»; the register beside it stays live and says so. */
+  :root[data-register="open"][data-side="open"] .scene-viewport[data-replay] .replay-now-label,
+  :root[data-register="open"][data-side="open"] .scene-viewport[data-replay] #scene-info { display: none; }
+  :root[data-register="open"][data-side="open"] .scene-viewport[data-replay] .replay-then { margin-left: 0; padding-left: 0; border-left: 0; }
 }
+/* The replayed moment's clock is never the part that is cut. */
+.scene-viewport .replay-then { flex-shrink: 0; }
+.scene-viewport .replay-now-label { display: none; margin-right: var(--s2); }
 /* The stream's layer stays connected and is only not shown: the replay is the page's own drawing. */
 .scene-viewport[data-replay] .live-stream-layer { visibility: hidden; }
 /* W16: the live snapshot's «Actualizat hh:mm:ss» steps aside inside the letterbox. Beside the
@@ -1118,6 +1153,24 @@
 .scene-viewport .replay-speed { min-width: var(--s8); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .scene-viewport .replay-speed[aria-pressed="true"] { background: var(--replay-bg); border-color: var(--replay-line); color: var(--replay-ink); }
 .scene-viewport .replay-exit { flex: none; padding: 0 var(--s3); border-color: var(--scene-chrome-edge); }
+.scene-viewport .replay-exit[hidden] { display: none; }
+/* W17: at the end, paused on the whole run, the way back to live stands beside it, in the act's
+   green (the prompt's «Înapoi la live · 6» key, without a count: nothing is waiting). */
+.scene-viewport .replay-back {
+  flex: none;
+  min-height: var(--hit);
+  padding: 0 var(--s4);
+  border: 1px solid var(--forest-lift);
+  border-radius: var(--radius-xs);
+  background: var(--forest);
+  color: var(--ink-on-dark);
+  font-size: var(--fs-meta);
+  font-weight: var(--w-semi);
+  white-space: nowrap;
+}
+.scene-viewport .replay-back[hidden] { display: none; }
+.scene-viewport .replay-back:hover { background: var(--forest-lift); }
+.scene-viewport .replay-back:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
 /* What the plate spells out for the room it has. */
 @container replay (max-width: 999.98px) {
   .scene-viewport .replay-badge { display: none; }
@@ -1172,7 +1225,9 @@
   font-size: var(--fs-micro);
   font-weight: var(--w-semi);
   line-height: var(--lh-tight);
-  white-space: nowrap;
+  /* W17: in the room left of the dock, as the clock above it; where that room is short (both
+     drawers open at 1280) the line wraps instead of running under the dock. */
+  max-width: calc((100% - var(--hud-l, 0px) - var(--hud-r, 0px) - var(--dock-room, 0px)) / 2);
   pointer-events: none;
 }
 .scene-viewport .replay-weather[hidden] { display: none; }

@@ -1,3 +1,5 @@
+import { MODE_LABEL } from './governance.js';
+
 /**
  * The live ledger: everything the studio does and says, in the order it happened.
  *
@@ -33,6 +35,7 @@ const FAMILY_KIND = {
   strategy: 'money',
   analytics: 'money',
   autonomy: 'owner',
+  owner: 'owner',
   settings: 'owner',
   provider: 'owner',
   youtube: 'owner',
@@ -622,6 +625,19 @@ export function describeEvent(event, names = {}) {
       break;
     case 'autonomy.stop_cleared':
       label = 'Proprietarul a pornit autonomia';
+      break;
+    // W17: the Owner's own switches, seen in the register of 24.09 as raw keys
+    // («autonomy mode changed · autonomy_mode: AUTONOMOUS_CEO · …»); the modes in the words the
+    // governance drawer gives them (governance.js MODE_LABEL), the environment as the banner says it.
+    case 'owner.autonomy_mode_changed': {
+      const mode = (/** @type {unknown} */ m) => (typeof m === 'string' && m ? /** @type {Record<string, string>} */ (MODE_LABEL)[m] || m : '');
+      label = 'Proprietarul a schimbat modul de autonomie';
+      text = [mode(payload.previous_autonomy_mode), mode(payload.autonomy_mode)].filter(Boolean).join(' → ');
+      break;
+    }
+    case 'owner.environment_changed':
+      label = 'Proprietarul a schimbat mediul';
+      text = payload.environment ? `MEDIU ${payload.environment}` : '';
       break;
     case 'research.host_tested':
       label = `site testat: ${payload.status || ''}`.trim();

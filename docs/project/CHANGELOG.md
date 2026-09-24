@@ -1,5 +1,14 @@
 # Changelog
 
+## The real stream in the game frame — 2026-09-24
+
+- **Clicks reach the building through the live video** (`frontend/src/office_scene.css`): Pixel Streaming set `pointer-events: all` on its `<video>`, which swallowed every click, hover and drag on the Owner's live page; figures seen in the video now open the right employee (12 of 12), readouts stand over the video's faces, and panning works.
+- **Over the stream**: the building's focus ring is drawn above the video, the arrow keys show the chosen employee's card, and reduced motion holds a real frame every 10 s («Live · Unreal · un cadru la 10 s») instead of moving traffic.
+- **The replay's first entry** no longer stalls: the replay-graded night frame is flushed under the title and the plate groups are rastered one at a time.
+- **Replay polish**: «Înapoi la live» at the end; focus moves only for keyboard visitors; «ACUM» beside «ATUNCI» on narrow screens; the as-of books read in chunks, «—» past the last covered moment; the invitation follows a zoom.
+- **The register words the Owner's own switches** («Proprietarul a schimbat modul de autonomie · Supravegheat → CEO autonom»).
+- Tests: frontend 410/410, tsc clean.
+
 ## The replay offered once, lit by its own hour — the first YES — 2026-09-24
 
 - **The invitation** (`frontend/src/replay_invite.js`): once per session, while the studio is truly at rest, a glass pane under the building with words from the record only; «Vezi reluarea» / «Nu acum»; never loops, never starts by itself; a live event removes it.

@@ -27,6 +27,11 @@ export const INVITE_DELAY_MS = 1500;
 
 /** Where the page remembers, for this browser session, that the invitation was offered. */
 export const INVITE_KEY = 'amn.replay.invite';
+/**
+ * After the visitor's camera (zoom, drag, a drawer's glide) has rested this long, the invitation is
+ * placed again under the building where it now is (W18: zoomed in, it stayed over L1).
+ */
+export const INVITE_RELAYOUT_MS = 180;
 
 const WEEKDAYS = ['duminică', 'luni', 'marți', 'miercuri', 'joi', 'vineri', 'sâmbătă'];
 
@@ -170,10 +175,33 @@ export function inviteMemory(storage) {
 }
 
 /**
+ * Whether a click came from the keyboard (Enter or Space on a button, or assistive technology):
+ * the browser gives such a click no pointer press, so its `detail` is 0 (W17).
+ * @param {{detail?: number}|null|undefined} event
+ */
+export function fromKeyboard(event) {
+  return Boolean(event) && event.detail === 0;
+}
+
+/**
+ * WHERE THE KEYBOARD GOES (W17). The page moves focus by itself only for a visitor who started
+ * the replay from the keyboard: onto the replay's play key when it starts, and back where they
+ * were when it ends. A pointer visitor's focus is left alone, so the dock key's focus label
+ * («RELUARE») never ends up standing over the live building after a mouse visit; the one
+ * exception is a focus that sits on the replay's own controls when they go (it would otherwise
+ * be lost with them).
+ * @param {{keyboard: boolean, inControls: boolean}} how
+ * @returns {{onStart: boolean, onExit: boolean}}
+ */
+export function replayFocus({ keyboard, inControls }) {
+  return { onStart: Boolean(keyboard), onExit: Boolean(keyboard) || Boolean(inControls) };
+}
+
+/**
  * @typedef {{
  *   card: HTMLElement, lead: HTMLElement, line: HTMLElement, go: HTMLButtonElement, later: HTMLButtonElement,
  *   say: (text: string) => void, reduced: () => boolean, place: (card: {w: number, h: number}) => {x: number, y: number}|null,
- *   storage: () => Storage|null, onGo: () => void, recheck: () => void,
+ *   storage: () => Storage|null, onGo: (keyboard: boolean) => void, recheck: () => void,
  * }} InviteDeps
  */
 
@@ -188,9 +216,9 @@ export class ReplayInvite {
     /** Offered already in this page (or this session): never again. */
     this.done = this.memory.seen();
     this.timer = 0;
-    deps.go.addEventListener('click', () => {
+    deps.go.addEventListener('click', (e) => {
       this.hide('go');
-      deps.onGo();
+      deps.onGo(fromKeyboard(e));
     });
     deps.later.addEventListener('click', () => this.hide('later'));
     window.addEventListener('keydown', (e) => {

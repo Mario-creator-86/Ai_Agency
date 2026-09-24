@@ -55,9 +55,10 @@ export class SceneReadout {
       this.hide();
       return;
     }
-    if (target.kind === 'agent') {
+    if (target.kind === 'agent' && !readout) {
       // An employee reached by the keyboard: the ring and the name tag are drawn in the world;
-      // the page says who it is.
+      // the page says who it is. Under the Unreal stream the world's marks are not seen, and the
+      // page gives a card as well (W18, hq_readouts.js agentReadout).
       this.hide();
       if (extra.speech) this.speak(extra.speech, true);
       return;
@@ -73,7 +74,7 @@ export class SceneReadout {
       this.placeKey = '';
     }
     this.place(target);
-    this.speak(readoutSentence(readout), target.via === 'keyboard');
+    this.speak(extra.speech || readoutSentence(readout), target.via === 'keyboard');
   }
 
   /** @param {import('./hq_readouts.js').Readout} r @param {HTMLCanvasElement|null} poster */
@@ -88,7 +89,7 @@ export class SceneReadout {
     p.action.textContent = r.action;
     p.action.hidden = !r.action;
     this.card.dataset.tone = r.tone;
-    this.card.dataset.surface = r.id.startsWith('desk:') ? 'desk' : r.id;
+    this.card.dataset.surface = r.id.startsWith('desk:') ? 'desk' : r.id.startsWith('agent:') ? 'agent' : r.id;
     const showPoster = Boolean(r.poster && poster && p.poster);
     if (p.poster) {
       p.poster.hidden = !showPoster;

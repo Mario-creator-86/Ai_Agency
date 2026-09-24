@@ -56,7 +56,6 @@ test('the books are asked at the run start, its end and after every event that c
   const expected = new Set([timeline.start, timeline.end + 1]);
   for (const e of timeline.events) if (e.event_type === 'agent.run_completed' || e.event_type.startsWith('economy.')) expected.add(Date.parse(e.timestamp) + 1);
   assert.deepEqual(moments.map((m) => Date.parse(m)), [...expected].sort((a, b) => a - b));
-  assert.ok(moments.length <= 240);
 });
 
 test('a wall shows the reading that held at the moment, «—» before the first', () => {
@@ -241,7 +240,9 @@ test('W16: the books are asked only of a studio that read its log by time (no 40
   const query = figuresQuery(timeline, 'since');
   assert.ok(query);
   assert.deepEqual(query.moments, figureMoments(timeline));
-  assert.ok(query.path.startsWith('/economy/as-of?at='));
-  const asked = new URLSearchParams(query.path.split('?')[1]).getAll('at');
+  assert.equal(query.reads.length, 1, 'a run of 12.09 is one read');
+  assert.equal(query.until, null);
+  assert.ok(query.reads[0].path.startsWith('/economy/as-of?at='));
+  const asked = new URLSearchParams(query.reads[0].path.split('?')[1]).getAll('at');
   assert.deepEqual(asked, query.moments, 'every moment asked, in order, encoded');
 });

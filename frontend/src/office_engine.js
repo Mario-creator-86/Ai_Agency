@@ -378,6 +378,12 @@ export class OfficeEngine {
       this.world.setReplayMoment(this.world.time.now().getTime() + 12 * 3600 * 1000);
       this.renderer.composeNow(this.viewport.zoom, this.world.time.state);
       this._draw(true);
+      // W17, traced and tested: the browser only records a canvas's drawing, and the live frame
+      // drawn next over the whole canvas made it drop this one unexecuted, so the GPU never ran the
+      // replayed light under the replay's grade here. The first replay of a visit entered from a
+      // live day then built those programs at its first frame (a 61-96 ms frame). Reading a pixel
+      // back makes the GPU carry this frame out now, under the title.
+      this._flushCanvas();
       this.world.setReplayMoment(null);
       this.replay = wasReplay;
       this.renderer.composeNow(this.viewport.zoom, this.world.time.state);
@@ -385,13 +391,18 @@ export class OfficeEngine {
     }
     // Reading one pixel back makes the browser carry out the queued drawing now, while nothing
     // is moving, rather than at the first frame after the key.
+    this._flushCanvas();
+    this.warmed = true;
+    return true;
+  }
+
+  /** The canvas's recorded drawing, carried out by the GPU now (one pixel read back). */
+  _flushCanvas() {
     try {
       if (this.ctx) this.ctx.getImageData(0, 0, 1, 1);
     } catch {
       // a lost canvas: the frame is simply drawn on the first real one
     }
-    this.warmed = true;
-    return true;
   }
 
   /* --------------------------------------------------------------- camera -- */
@@ -902,7 +913,20 @@ export class OfficeEngine {
       }
     } else if (this.hoverAgentId && this.agentViaKeyboard) {
       const agent = this.agents.find((a) => (a.id || a.agent_id) === this.hoverAgentId);
-      if (agent) target = { kind: 'agent', id: String(this.hoverAgentId), via: 'keyboard', agent };
+      if (agent) {
+        target = /** @type {any} */ ({ kind: 'agent', id: String(this.hoverAgentId), via: 'keyboard', agent });
+        // Under the Unreal stream the ring and the name tag drawn here are not seen: the page is
+        // told where the employee stands, and that the world's marks are covered (W18).
+        const hit = hits.find((/** @type {any} */ h) => !h.surface && h.agent && (h.agent.id || h.agent.agent_id) === this.hoverAgentId);
+        if (hit && this.hitsOnly && !this.replay) {
+          const r = screenRect([hit.x0, hit.y0, hit.x1 - hit.x0, hit.y1 - hit.y0], this.viewport, this.dpr || 1);
+          const dpr = this.dpr || 1;
+          const ins = this.viewport.insets || { left: 0, right: 0, top: 0, bottom: 0 };
+          target.covered = true;
+          target.rect = { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.w), h: Math.round(r.h) };
+          target.room = { left: ins.left / dpr, top: ins.top / dpr, right: (this.canvas.width - ins.right) / dpr, bottom: this.canvas.height / dpr };
+        }
+      }
     }
     const key = target
       ? `${target.kind}|${target.id}|${target.via}|${target.rect ? `${target.rect.x},${target.rect.y},${target.rect.w},${target.rect.h}` : ''}|${target.room ? `${target.room.left},${target.room.right},${target.room.bottom}` : ''}`

@@ -25,10 +25,10 @@ import { budgetRing, budgetRingSvg, channelFilmsHtml, dayTrack, dayTrackFromRun,
 import { Moments } from './moments.js';
 import { copyCanvas, filmPoster, PosterCache, POSTER_SAMPLES } from './film_poster.js';
 import { latestFilm, boardTopics } from './hq_screens.js';
-import { REPLAY_ACTION, canvasLabel, lastTasks, lastTaskLine, newerTasks, nextRunSign, surfaceReadout, tasksFromRecord } from './hq_readouts.js';
+import { REPLAY_ACTION, agentReadout, canvasLabel, lastTasks, lastTaskLine, newerTasks, nextRunSign, surfaceReadout, tasksFromRecord } from './hq_readouts.js';
 import { interruptsReplay } from './day_replay.js';
 import { DayReplayPlayer } from './replay_player.js';
-import { ReplayInvite, invitePlacement, inviteWords, restingNow } from './replay_invite.js';
+import { INVITE_RELAYOUT_MS, ReplayInvite, invitePlacement, inviteWords, restingNow } from './replay_invite.js';
 import { SceneReadout } from './scene_readout.js';
 import { studioReadout } from './side_readout.js';
 import { friendlyAnswer } from './friendly_text.js';
@@ -94,7 +94,7 @@ let replayInvite = null;
  * frame rates, each under its own name.
  * @type {import('./live_claims.js').LiveSignals}
  */
-const liveSignals = { stream: 'pending', hasStill: false, socket: 'closed', data: 'fresh', streamFps: null, pageFps: null };
+const liveSignals = { stream: 'pending', hasStill: false, socket: 'closed', data: 'fresh', streamFps: null, pageFps: null, streamHeld: false };
 let liveReadoutKey = '';
 
 /** Writes the corner readout, the masthead chip and the slate caption from liveSignals. */
@@ -422,7 +422,8 @@ function refreshSceneReadout() {
     const agent = agents.find((a) => (a.id || a.agent_id) === target.id) || target.agent;
     const status = String(agent.lifecycle || '').toUpperCase() === 'PAUSED' ? 'PAUSED' : String(agent.runtime_state || 'IDLE');
     const speech = `${world ? 'Reluare: ' : ''}${agent.display_name || agent.role_name || 'Angajat'} · ${runtimeLabel(status)} · ${lastTaskLine(facts.tasks.tasks[target.id], now)}. Enter deschide fișa.`;
-    faceReadout.show(target, null, { speech });
+    // under the Unreal stream the world's ring is not seen: the glass says who it is (W18)
+    faceReadout.show(target, target.covered ? agentReadout(agent, { facts, now }) : null, { speech });
     return;
   }
   let readout = surfaceReadout(target.id, { facts, agents, now });
@@ -523,10 +524,21 @@ replayInvite = new ReplayInvite({
   reduced: () => reducedMotion(),
   place: (card) => placeInvite(card),
   storage: () => window.sessionStorage,
-  // the keyboard returns to the dock's key when the replay ends, as if it had been pressed
-  onGo: () => { if (replay) replay.start(/** @type {HTMLElement} */ (element('replay-toggle'))); },
+  // a keyboard visitor returns to the dock's key when the replay ends, as if it had been pressed;
+  // a pointer visitor's focus is left where it is (W17)
+  onGo: (keyboard) => { if (replay) replay.start(/** @type {HTMLElement} */ (element('replay-toggle')), { keyboard }); },
   recheck: () => considerInvite(),
 });
+
+let inviteRelayoutTimer = 0;
+/** The camera moved: the invitation is placed again once it has rested for a moment. */
+function relayoutInviteSoon() {
+  window.clearTimeout(inviteRelayoutTimer);
+  inviteRelayoutTimer = window.setTimeout(() => {
+    inviteRelayoutTimer = 0;
+    if (replayInvite) replayInvite.relayout();
+  }, INVITE_RELAYOUT_MS);
+}
 
 /** @param {{w: number, h: number}} card */
 function placeInvite(card) {
@@ -900,6 +912,7 @@ async function startLiveStream() {
       if (officeEngine) officeEngine.setCovered(true);
       liveSignals.stream = status;
       liveSignals.hasStill = Boolean(liveStream && liveStream.hasStill);
+      liveSignals.streamHeld = Boolean(liveStream && liveStream.held);
       renderLiveSignals();
     },
     // Unreal's frames, as the page receives them: the figure beside «Live» while the stream plays.
@@ -907,7 +920,14 @@ async function startLiveStream() {
       liveSignals.streamFps = fps;
       renderLiveSignals();
     },
+    // Reduced motion: the street's traffic does not drive past; one real frame at a time (W18).
+    held: () => reducedMotion(),
   });
+  if (typeof window.matchMedia === 'function') {
+    window.matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', () => {
+      if (liveStream) liveStream.setHeld(reducedMotion());
+    });
+  }
   if (officeEngine) {
     const view = officeEngine.view();
     const t = streamTransform(view);
@@ -958,6 +978,9 @@ function buildOfficeEngine() {
     },
     // The streamed picture follows the page's camera, so zoom and pan act on what is seen.
     onView: (view) => {
+      // the visitor's zoom and drag move the building: the invitation follows it once the camera
+      // rests, or steps aside when the zoomed building leaves no free room under it (W18)
+      if (replayInvite && replayInvite.shown) relayoutInviteSoon();
       if (!liveStream) return;
       const t = streamTransform(view);
       liveStream.setView({ k: t.k, tx: t.tx / view.dpr, ty: t.ty / view.dpr });
@@ -976,7 +999,7 @@ function buildOfficeEngine() {
       if (id === 'run_sign' && replay && !replay.active) {
         const card = surfaceReadout('run_sign', { facts: worldFacts, agents: officeState.agents });
         if (card && card.action === REPLAY_ACTION) {
-          replay.start(officeCanvas);
+          replay.start(officeCanvas, { keyboard: officeEngine.surfaceVia === 'keyboard' });
           return;
         }
       }

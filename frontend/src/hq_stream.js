@@ -1,5 +1,5 @@
 import { Config, Flags, PixelStreaming } from '@epicgames-ps/lib-pixelstreamingfrontend-ue5.8';
-import { streamLayers } from './hq_stream_config.js';
+import { HELD_STILL_MS, streamLayers } from './hq_stream_config.js';
 
 /** How often a frame of the live video is kept, to be shown frozen if the stream drops. */
 const STILL_COPY_MS = 2000;
@@ -10,6 +10,8 @@ const STILL_COPY_MS = 2000;
  * minutes. A negotiation under way takes a few seconds, so half a minute leaves it alone.
  */
 const CONNECTING_RETRY_MS = 30000;
+/** Under reduced motion, how soon the first frame of a live stream is asked again when the video had none yet. */
+const HELD_FIRST_MS = 250;
 const NOTES = {
   reconnecting: 'Se reconectează la sediul live…',
   starting: 'Pornește sediul live…',
@@ -37,7 +39,7 @@ export class LiveStream {
   /**
    * @param {HTMLElement} viewport the element the scene is drawn in
    * @param {{signallingUrl: string, streamerId: string, retryMs: number, connectingRetryMs?: number}} settings
-   * @param {{onStatus?: (status: 'connecting'|'live'|'offline') => void, onFrameRate?: (fps: number|null) => void}} [options]
+   * @param {{onStatus?: (status: 'connecting'|'live'|'offline') => void, onFrameRate?: (fps: number|null) => void, held?: () => boolean}} [options]
    */
   constructor(viewport, settings, options = {}) {
     this.viewport = viewport;
@@ -48,6 +50,10 @@ export class LiveStream {
     this.retryTimer = 0;
     this.stillTimer = 0;
     this.hasStill = false;
+    /** Reduced motion: the stream is seen one kept frame at a time (hq_stream_config.js HELD_STILL_MS). */
+    this.held = Boolean(options.held && options.held());
+    /** Whether a frame has been kept since the stream last went live. */
+    this.keptLive = false;
     this.layer = document.createElement('div');
     // "fixed-size": the page's stylesheet sizes the layer; the library would otherwise write an
     // inline style, which the page's Content-Security-Policy refuses.
@@ -99,7 +105,20 @@ export class LiveStream {
   /** @param {any} event */
   _stats(event) {
     if (this.status !== 'live') return;
+    // held, one frame is seen at a time: a frame rate would describe a motion not shown
+    if (this.held) return;
     this.onFrameRate(inboundFrameRate(event?.data?.aggregatedStats));
+  }
+
+  /**
+   * The visitor's system asks for reduced motion, or no longer does: the video, or one real frame
+   * of it at a time.
+   * @param {boolean} held
+   */
+  setHeld(held) {
+    if (this.held === Boolean(held)) return;
+    this.held = Boolean(held);
+    if (this.status === 'live') this._setStatus('live');
   }
 
   start() {
@@ -156,18 +175,35 @@ export class LiveStream {
     }, this.settings.retryMs);
   }
 
-  /** Keeps the video's current frame in the still canvas (the video belongs to the library). */
+  /**
+   * While live, keeps a frame of the video: every STILL_COPY_MS for the frozen frame an outage
+   * would show, or, held, the frame that is seen, every HELD_STILL_MS (sooner until the first).
+   */
+  _keepFrames() {
+    window.clearTimeout(this.stillTimer);
+    this.stillTimer = 0;
+    if (this.status !== 'live') return;
+    if (this._copyFrame()) this.keptLive = true;
+    const wait = !this.held ? STILL_COPY_MS : this.keptLive ? HELD_STILL_MS : HELD_FIRST_MS;
+    this.stillTimer = window.setTimeout(() => this._keepFrames(), wait);
+  }
+
+  /**
+   * Keeps the video's current frame in the still canvas (the video belongs to the library).
+   * @returns {boolean} whether a frame was kept
+   */
   _copyFrame() {
     const video = this.layer.querySelector('video');
-    if (!video || !video.videoWidth || video.readyState < 2) return;
+    if (!video || !video.videoWidth || video.readyState < 2) return false;
     if (this.still.width !== video.videoWidth || this.still.height !== video.videoHeight) {
       this.still.width = video.videoWidth;
       this.still.height = video.videoHeight;
     }
     const context = this.still.getContext('2d');
-    if (!context) return;
+    if (!context) return false;
     context.drawImage(video, 0, 0);
     this.hasStill = true;
+    return true;
   }
 
   _setStatus(status) {
@@ -187,22 +223,24 @@ export class LiveStream {
         this._setStatus('connecting');
       }, wait);
     }
-    window.clearInterval(this.stillTimer);
+    window.clearTimeout(this.stillTimer);
+    this.stillTimer = 0;
     if (status === 'live') {
-      this._copyFrame();
-      this.stillTimer = window.setInterval(() => this._copyFrame(), STILL_COPY_MS);
+      this.keptLive = false;
+      this._keepFrames();
     }
-    const layers = streamLayers(status, this.hasStill);
+    const layers = streamLayers(status, this.hasStill, this.held);
     // the layer always covers the page's own renderer while a stream is configured
     this.layer.hidden = false;
     // the library's video is hidden by a class, not touched: the frozen copy or the note shows
     this.layer.classList.toggle('paused', status !== 'live');
+    this.layer.classList.toggle('held', layers.held);
     this.layer.classList.toggle('waiting', layers.waiting);
     this.still.hidden = !layers.still;
     this.badge.hidden = !layers.note;
     this.badge.textContent = NOTES[layers.note] || '';
     // A figure measured while the video played means nothing once it has stopped.
-    if (status !== 'live') this.onFrameRate(null);
+    if (status !== 'live' || this.held) this.onFrameRate(null);
     this.onStatus(status);
   }
 }

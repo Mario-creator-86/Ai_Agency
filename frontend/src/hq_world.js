@@ -458,12 +458,26 @@ export class HQRenderer {
     const loaded = `${Object.keys(this.assets.layers.night).length}/${Object.keys(this.assets.layers.day).length}`;
     const key = `${bucket}|${light}|${loaded}`;
     if (key === this.cacheKey) return true;
+    // composed already and not yet taken (a replay asked for again while its record is read)
+    if (this._prepared && this._prepared.key === key) return true;
     /** @type {Map<string, any>} */
     const map = new Map();
     for (const [group, layers] of PLATE_GROUPS) {
       await new Promise((ok) => setTimeout(ok, gapMs));
       await new Promise((ok) => requestAnimationFrame(() => ok(undefined)));
       this.composeGroup(map, group, layers, bucket, time, null);
+      // W17, traced: a canvas's drawing is only recorded here; the GPU carried it out when the
+      // canvas was first used, at the replay's first frame, for every group at once (24-39 ms of
+      // GPU raster each, and that frame waited 60 ms on the GPU). A snapshot now has the GPU
+      // raster each group in its own gap, without blocking the page (createImageBitmap is async).
+      const entry = map.get(group);
+      if (entry && typeof createImageBitmap === 'function') {
+        try {
+          (await createImageBitmap(entry.canvas)).close();
+        } catch {
+          // no snapshot: the group is rastered at its first frame, as before
+        }
+      }
     }
     this._prepared = { key, light, map };
     return true;

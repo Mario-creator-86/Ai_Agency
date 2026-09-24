@@ -1373,3 +1373,13 @@ No provider was called, no run was queued, no credit was spent, and
 ## The replay offered once, lit by its own hour: the first YES (2026-09-24)
 
 - W16 next wave: (1) remove the one 63-91 ms frame of the first replay entered from a live day, by prewarming while the invitation is up or by tracing the GPU flush at the switch; (2) move focus programmatically only for a keyboard-started replay, so a mouse visitor is not left with the dock key's «RELUARE» label over the live building; (3) the Owner decides whether a film that is private on YouTube is «publicat» to visitors; (4) read the books in chunks when a run has more than 239 figure-moving events, instead of holding the 239th reading; (5) recapture the harness fixtures with the current backend's run summaries; (6) offer «Înapoi la live» when a replay reaches its end; (7) label the live clock beside ATUNCI below 1600 px; (8) test the replay over the Unreal stream; (9) the Owner's next start applies 0046 and 0047 through bootstrap.
+
+## The real stream in the game frame (2026-09-24)
+
+- next wave after W18:
+1. One building from title to live: a kept real Unreal frame for the title and the 'starting' plate, so there is no dark gap and no change of building (the Owner's art choice).
+2. The studio's numbers visible over the stream: world-anchored labels for the façade, fact-check, EP board, PUBLICAT, RANDARE, Treasury and tokens, or Unreal screens fed by the backend bridge.
+3. A replay that does not jump from Unreal to a different building (a crossfade through the kept frame, or the Owner's choice of the replay's look).
+4. The Owner's decision on the encoder commands and quality-control request sent to the shared encoder.
+5. Unreal-side alignment of the run-sign board, right tower and lamp with the plates' face positions.
+6. «live» on the slate only while both the stream and the studio's events are live.
