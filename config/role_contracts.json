@@ -280,7 +280,8 @@
         "quality control measured from the file: resolution, duration, audio, placeholder frames",
         "a render made with substitute images or voice: it may be looked at, never published",
         "the video model resolved per scene; on the locked channel a character's look is protected",
-        "what the model actually delivered: measured retention and click-through of finished videos against what each render cost"
+        "what the model actually delivered: measured retention and click-through of finished videos against what each render cost",
+        "a serial shot (shot_prompts on an Inside The Nexus storyboard): the series look is fixed and opens every prompt; describe who is in frame facing the viewer, their action and expression from the line's direction, the camera varied from establishing to singles, in the beat's own room; nothing written in frame, and what people say is heard, never drawn"
       ],
       "investigate": [
         "every failed quality control report: which check failed and what in the render caused it",

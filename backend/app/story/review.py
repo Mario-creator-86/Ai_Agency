@@ -79,7 +79,10 @@ logger = logging.getLogger("studio.story.review")
 
 REVIEW_TASK = "episode_review"
 #: v2 (2026-09-24): the cited events, the voices and the memory in the facts; the rubric.
-TEMPLATE_VERSION = "episode-review-v2"
+#: v3 (2026-09-24, the adversary's read): the 3-second hook, the button as the last
+#: words, beats that change something, and a letter's invented contents as a truth
+#: failure, the same rules the showrunner's brief v5 states.
+TEMPLATE_VERSION = "episode-review-v3"
 REVIEWER_ROLE = "Director"
 #: What the Director scores, 1 to 5, in the order an episode plays.
 RUBRIC = ("hook", "situation", "turn", "payoff", "voices", "button")
@@ -166,11 +169,14 @@ _INSTRUCTIONS = (
     "1. Truth. A beat may dramatise its events: jokes, pauses, reactions, compressed talk. "
     "FAIL the episode if any beat shows an outcome that is not in the event it cites: a "
     "decision, a verdict, a success or a failure, a publication, a hire or a departure, "
-    "money, an audience, or an ending the event leaves open. Name the beat and the outcome "
-    "in the reasons.\n"
-    "2. The viewer. Does the hook stand alone for someone who has never seen the serial; is "
-    "there one situation with a turn and a payoff; does the button land; is the humour in "
-    "the situation rather than in explaining the studio.\n"
+    "money, an audience, or an ending the event leaves open; or a line that quotes what a "
+    "letter said when its event gives only the letter's subject. Name the beat and the "
+    "outcome in the reasons.\n"
+    "2. The viewer. Does the hook stand alone for someone who has never seen the serial, "
+    "with its first line heard inside the first 3 seconds and not a greeting; is there one "
+    "situation with a turn and a payoff, each beat changing something; does the button land "
+    "as the last words, ideally calling back to the hook; is the humour in the situation "
+    "rather than in explaining the studio.\n"
     "3. Voices. Does each speaker sound like their bible (register, cadence, habits, their "
     "own phrases) and like a person, not a status report.\n"
     "4. Continuity. Does it continue or close the open threads it claims to.\n"

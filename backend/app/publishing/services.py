@@ -30,6 +30,7 @@ from app.publishing.schemas import (
     PublicationView,
     PublishPolicyCommand,
 )
+from app.publishing.serial_identity import hook_of
 from app.services import CommandConflict, append_event, utc_now
 
 
@@ -1058,9 +1059,14 @@ def _shares_a_term(title_terms: set[str], source_terms: set[str]) -> bool:
 
 
 def _same_metadata_key(title: str, tags: list[str]) -> tuple[str, frozenset[str]]:
-    """What "word for word" compares: the title and the set of tags, spacing and case aside."""
+    """What "word for word" compares: the title and the set of tags, spacing and case aside.
+
+    The title is read without the series marker the studio adds to every episode (S10,
+    ``<hook> | Inside The Nexus Ep. N``), so another film's title copied as the hook is still
+    the copy it is.
+    """
     return (
-        " ".join(str(title or "").split()).casefold(),
+        " ".join(hook_of(str(title or "")).split()).casefold(),
         frozenset(" ".join(str(t).split()).casefold() for t in tags or [] if str(t).strip()),
     )
 
@@ -1156,13 +1162,21 @@ def publication_metadata_refusals(
                 (str(body["title"]), list(body.get("tags") or []), body.get("channel_id"))
             )
     for other_title, other_tags, other_channel in others:
-        if _same_metadata_key(other_title, other_tags) == mine:
+        theirs = _same_metadata_key(other_title, other_tags)
+        # The title alone is enough (adversary pass, 2026-09-24): the factual film's exact
+        # title under the episode's own tags passed whenever one of its words was also in
+        # the episode. Two films of one day on two channels never share a title.
+        if theirs == mine or (mine[0] and theirs[0] == mine[0]):
             channel = session.get(ChannelRecord, other_channel) if other_channel else None
             where = channel.channel_name if channel is not None else "alt canal"
+            what = (
+                "Titlul și etichetele episodului sunt, cuvânt cu cuvânt, cele ale"
+                if theirs == mine
+                else "Titlul episodului este, cuvânt cu cuvânt, cel al"
+            )
             reasons.append(
-                f"Titlul și etichetele episodului sunt, cuvânt cu cuvânt, cele ale altui film "
-                f"pregătit sau publicat în ultimele 24 de ore pentru {where}; un episod pleacă "
-                "doar cu metadatele lui."
+                f"{what} altui film pregătit sau publicat în ultimele 24 de ore pentru "
+                f"{where}; un episod pleacă doar cu metadatele lui."
             )
             break
 
@@ -1172,7 +1186,9 @@ def publication_metadata_refusals(
             "Episodul din spatele filmului nu poate fi citit (nu are niciun cuvânt), deci "
             "titlul nu poate fi verificat față de el; filmul nu pleacă până nu poate fi."
         )
-    elif not _shares_a_term(_terms(title), source):
+    # The hook alone: "Inside The Nexus Ep. 3" is on every episode's title, so a word of it
+    # proves nothing about this one, and a title about another film must not pass on it.
+    elif not _shares_a_term(_terms(hook_of(title)), source):
         reasons.append(
             f"Titlul „{str(title)[:100]}” nu are niciun cuvânt comun cu episodul pe care îl "
             "descrie (titlul, replicile, scenele, personajele); un titlu greșit pe YouTube "

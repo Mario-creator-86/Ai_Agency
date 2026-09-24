@@ -71,13 +71,22 @@ from app.story.lines import (
 )
 from app.story.locations import location_id, studio_locations
 from app.story.models import ContinuityState, DailyStudioLog, StoryEpisode
-from app.story.projection import left_out, project_day, select_story, story_weight
+from app.story.projection import (
+    is_stage_report,
+    left_out,
+    project_day,
+    select_story,
+    story_weight,
+)
 
 MAX_BEATS = 8
 #: The showrunner's brief and answer schema. v3 (2026-09-24): lines ``{speaker, text,
 #: direction?}`` in place of free dialogue, the five-part structure, the studio's rooms, and
-#: the day, the names, the events and the serial's memory given as data.
-EPISODE_TEMPLATE_VERSION = "episode-v3"
+#: the day, the names, the events and the serial's memory given as data. v4 (S10,
+#: 2026-09-24): the show's tone stated, full bibles only for those who act in the day's
+#: events (one line for the rest), and a "logline" the Publisher opens the description with.
+#: The answer schema is v3's plus that one optional field, so a v3 episode reads as before.
+EPISODE_TEMPLATE_VERSION = "episode-v5"
 #: The structure a writers' room asks of a short: in this order, the hook first and the
 #: button last; situation, turn and payoff may take more than one beat each.
 EPISODE_PARTS = ("hook", "situation", "turn", "payoff", "button")
@@ -286,6 +295,12 @@ class _Episode(BaseModel):
     _clip_summary = field_validator("summary", mode="before")(
         lambda value: clipped(600)(_text_or_empty(value))
     )
+    #: One sentence a stranger reads under the title (v4); the Publisher's description opens
+    #: with it. Optional: an episode without one is described from its summary's first line.
+    logline: str = Field(default="", max_length=300)
+    _clip_logline = field_validator("logline", mode="before")(
+        lambda value: clipped(300)(_text_or_empty(value))
+    )
     #: What the episode did with the threads it was handed, by their ids, and what it opened.
     threads_continued: list[str] = Field(default_factory=list, max_length=12)
     threads_closed: list[str] = Field(default_factory=list, max_length=12)
@@ -350,6 +365,8 @@ def _notable(events: list[DomainEvent]) -> list[dict]:
 
         def weight(event: DomainEvent) -> int:
             payload = event.payload if isinstance(event.payload, dict) else {}
+            if is_stage_report(event.event_type, payload):
+                return 1
             verdict = payload.get("verdict") or payload.get("status")
             return story_weight(event.event_type, str(verdict or ""))
 
@@ -714,6 +731,35 @@ def _who_they_are(name: str, bible: CharacterBible | None) -> str:
     return " ".join(parts)
 
 
+def _in_one_line(bible: CharacterBible | None) -> str:
+    """Who a cast member is in one short line: the first traits and the register, verbatim.
+
+    For the people who do not act in the day's events (brief v4): they may stand in the
+    background, and the writer still knows who they are, without their full bible.
+    """
+    if bible is None:
+        return ""
+    speech = bible.speech_style_json if isinstance(bible.speech_style_json, dict) else {}
+    persona = bible.personality_json if isinstance(bible.personality_json, dict) else {}
+    parts = []
+    if traits := _texts(persona.get("traits"))[:2]:
+        parts.append("Is: " + ", ".join(traits) + ".")
+    if isinstance(register := speech.get("register"), str) and register:
+        parts.append(f"Speaks: {register}.")
+    return " ".join(parts)
+
+
+def acting_cast(projection: list[dict], names: NameBook) -> list[str]:
+    """The roster members who act in the day's public events, in the order they first act."""
+    acting: list[str] = []
+    for item in projection:
+        for name in participants(item, names.names):
+            member = names.canonical(name)
+            if member and member not in acting:
+                acting.append(member)
+    return acting
+
+
 def voice_of(bible: CharacterBible | None) -> dict[str, Any]:
     """How one cast member talks, as data: the bible's voice fields, verbatim.
 
@@ -782,18 +828,46 @@ def get_episode(engine: Engine, episode_id: str) -> dict | None:
 #: named no structure and took dialogue as free text — which one voice then read, names and
 #: stage directions included. Every rule the Director and the computed checks judge by is
 #: stated here, because a rule the writer was never told is a day lost to its refusal.
+#: v4 (S10) adds THE SHOW, the tone the architecture sets for the serial (SHOW_TONE below).
+#: v5 (the adversary's showrunner read, 2026-09-24) asks for what a short lives or dies
+#: by: a hook heard inside 3 seconds that is not a greeting (each bible's own greeting
+#: invited one), a button that is the last words and calls back, beats that each change
+#: something, and a letter known only by its subject played as the sending and the
+#: reaction, never given invented contents (the day's events are subjects, rarely bodies).
+
+#: The serial's comic engine and tone, from 07_STORY_ENGINE.md: a "short workplace serial",
+#: the narrative layer a "dramatized/comedic rendering" of the real day, with jokes, pauses,
+#: reactions, playful rivalry, mild drama and comic framing allowed and nothing invented;
+#: each episode understandable to a new viewer. Until v4 the brief never said any of it.
+SHOW_TONE = (
+    "Inside The Nexus is a deadpan workplace comedy about AI employees who take their jobs "
+    "completely seriously, told from their own real day. The laugh is in the gap between how "
+    "much the work matters to them and how small the moment is, in dry reactions, pauses and "
+    "playful rivalry, and in each of them being exactly themselves; mild drama is welcome, "
+    "but the joke is never on the work, never cruel and never something the day did not "
+    "hold. A stranger who has seen no other episode must be able to follow this one."
+)
+
 _INSTRUCTIONS = """You are the showrunner of "Inside The Nexus", a vertical workplace serial \
 about the people of AMN-AI, an autonomous film studio. This is EPISODE {episode_number}. It \
 dramatises what really happened in the studio on {date}: the EVENTS below are everything \
 that happened on {date} that you may use, and nothing else did.
 
+THE SHOW
+{tone}
+
 THE BRIEF
 1. Structure. {min_beats} to {max_beats} beats, each with a "part", in this order: "hook" \
-(the first beat only: one line or image that makes a stranger stay, and shows who is in the \
-room and where), "situation" (who wants what), "turn" (the event that changes it: a \
-refusal, a verdict, a letter), "payoff" (what the turn costs or earns them) and "button" \
-(the last beat only: one short line that lands the laugh or the sting). Situation, turn \
-and payoff may take more than one beat each.
+(the first beat only: its first line is the first thing heard, inside the first 3 seconds, \
+at most 8 words, never a greeting, a date or an introduction; it drops a stranger into the \
+middle of a want or a problem, and the picture shows who is in the room and where), \
+"situation" (who wants what, and why the other one is in the way), "turn" (the event that \
+changes it: a refusal, a verdict, a letter), "payoff" (what the turn costs or earns them) \
+and "button" (the last beat only: one short line that lands the laugh or the sting, and \
+nothing is said after it; the best button calls back to the hook or to something set up \
+earlier). Situation, turn and payoff may take more than one beat each. Every beat changes \
+something: it escalates, reverses or reveals; a beat that only restates the one before it \
+is cut.
 2. Speaking cast. {min_speakers} to {max_speakers} people speak in the whole episode, chosen \
 from those who act in the events you cite (each event's "who"). When the events you cite \
 name fewer than two people, those they name speak and the rest of the speaking cast comes \
@@ -805,8 +879,9 @@ direction.
 4. Length. Each beat is {min_words} to {max_words} spoken words (a scene holds at most 9 \
 seconds); the whole episode is {min_episode_words} to {max_episode_words} spoken words, 45 \
 to 70 seconds at 2.5 words a second.
-5. Language. The title, the lines and the summary are in English. Some event texts (letter \
-subjects, titles) are in Romanian: say what they mean in English, never quote the Romanian.
+5. Language. The title, the lines, the summary and the logline are in English. Some event \
+texts (letter subjects, titles) are in Romanian: say what they mean in English, never quote \
+the Romanian.
 6. Locations. Each beat's "location" is one id from LOCATIONS; people work at their own \
 desks. The "scene" says what the camera sees: people, posture, props, light. No written \
 text in the scene: no signs, captions, labels, readable screens or documents, because the \
@@ -817,7 +892,9 @@ one of their own phrases at most once in the episode.
 rivalry, comic framing. You may not invent hires or departures, successes or failures, \
 audience numbers or money, vendor outages, a decision given to someone other than who made \
 it, or an ending for anything the events leave open. Never name a vendor, a model, a price \
-or an address.
+or an address. An event that gives a letter or a note only by its subject tells you who \
+wrote it, to whom and about what, never what it said: play the writing, the waiting and \
+the reaction, and never invent what it said.
 9. Grounding. Each beat's "event_ids" are the ids of the events it dramatises, copied \
 exactly from EVENTS. One id that is not there refuses the whole episode, not only the beat. \
 No event is cited by more than half the beats, unless it is the only event of the day: tell \
@@ -851,13 +928,15 @@ Answer ONLY with one JSON object in this format, nothing before or after it:
     "background": ["<a silent name from ALLOWED_NAMES>"],
     "event_ids": ["<an id from EVENTS>"]}}],
   "summary": "<one paragraph: what happened in this episode>",
+  "logline": "<one sentence for a stranger: who wants what today, without the button>",
   "threads_continued": [], "threads_closed": [], "threads_opened": [], "recurring": [],
   "next_episode": {{"premise": "<one sentence: what the next episode is about>",
     "cold_open_line": "<the line it could open on>",
     "open_question": "<the question it would answer>", "threads_to_pay_off": []}},
   "plan_kept": null, "plan_note": ""}}
 
-CAST ON {date} (who they are, from their character bibles):
+CAST ON {date} (who they are, from their character bibles; in full for the people who \
+act in the day's events, one line for everyone else):
 {roster}
 
 LOCATIONS (id: the room, where it is; who has a desk there):
@@ -1257,11 +1336,22 @@ def write_episode(
         bibles = bibles_for_roster(session, roster)
         names = NameBook(roster, bibles)
         locations = studio_locations(session, roster)
+        # Full bibles for the people who act in the day's events, one line for the rest
+        # (v4): measured on his eight bibles, the v3 brief carried about 16.5k characters of
+        # them although two to four speak. A day where fewer than two people act lets the
+        # writer cast from anyone, so everyone is described in full.
+        acting = acting_cast(projection, names)
+        in_full = len(acting) < SPEAKING_CAST[0]
         cast_lines = []
         for member in roster:
             name = member["display_name"]
             state_note = "" if member.get("lifecycle") == "ACTIVE" else f", {member['lifecycle']}"
-            who = _who_they_are(name, bibles.get(name))
+            member_name = names.canonical(name) or name
+            who = (
+                _who_they_are(name, bibles.get(name))
+                if in_full or member_name in acting
+                else _in_one_line(bibles.get(name))
+            )
             cast_lines.append(
                 f"- {name} — {member['role_name']}{state_note}." + (f" {who}" if who else "")
             )
@@ -1288,6 +1378,7 @@ def write_episode(
 
     prompt = audience_language_line(language) + _INSTRUCTIONS.format(
         episode_number=episode_number,
+        tone=SHOW_TONE,
         date=date_iso,
         min_beats=MIN_BEATS,
         min_episode_words=EPISODE_WORDS[0],
@@ -1400,8 +1491,9 @@ def write_episode(
     left_as_format = [
         text for text in [draft.title, *threads_opened, *recurring] if _placeholder(text)
     ]
-    if draft.summary and _placeholder(draft.summary):
-        left_as_format.append(draft.summary)
+    for text in (draft.summary, draft.logline):
+        if text and _placeholder(text):
+            left_as_format.append(text)
     if left_as_format:
         raise DraftRefused(
             "Episodul a păstrat textul-exemplu al formatului în loc de conținut: "
@@ -1443,6 +1535,9 @@ def write_episode(
                 "episode_number": episode_number,
                 "template_version": EPISODE_TEMPLATE_VERSION,
                 "summary": draft.summary.strip(),
+                # The sentence a stranger reads under the title (v4); the Publisher opens the
+                # description with it.
+                "logline": " ".join(draft.logline.split()),
                 "threads_continued": threads_continued,
                 "threads_closed": threads_closed,
                 "threads_opened": threads_opened,

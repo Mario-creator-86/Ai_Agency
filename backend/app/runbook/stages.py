@@ -119,6 +119,7 @@ from app.media.models import (
 )
 from app.media.prompt_agent import PromptError, write_shot_prompts
 from app.media.qc import evaluate_media_qc
+from app.media.serial_storyboard import describe_serial_shots
 from app.media.services import generate_storyboard_from_script
 from app.providers.registry import ProviderRegistry
 from app.publishing.models import ChannelRecord, PublicationRecord
@@ -1220,6 +1221,13 @@ def _media(
         )
     pending = allowed
 
+    # A serial episode's shots are described from its beats before anything is bought (S8).
+    # The serial stage already did it for a storyboard it built; this catches the one the
+    # Owner's approval built, and one composed under an older series look. Once per look.
+    for storyboard_id in pending:
+        if storyboard_id in serial_ids:
+            describe_serial_shots(engine, registry, storyboard_id, str(uuid4()))
+
     # Which environment the day renders in is the studio's own state, not a parameter.
     environment = studio_environment(engine)
     images = image_provider(engine, vault)
@@ -1368,6 +1376,9 @@ def _media(
                 reference_for_scene=planned.get("reference_for_scene"),
                 tts_adapter=voice,
                 tts_adapter_for_scene=planned["tts_for_scene"],
+                # One take per speaker in that character's voice, where the lines say who
+                # speaks (the office serial); None for a scene read whole.
+                voice_segments_for_scene=planned.get("voice_segments_for_scene"),
                 # The model of each scene is chosen against what the scene requires, in
                 # the environment the studio is in: a test buys the cheapest that can do the
                 # job, production the least expensive that reaches the quality. A model a

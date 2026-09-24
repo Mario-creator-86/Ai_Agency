@@ -1,5 +1,16 @@
 # Changelog
 
+## The serial made well: a voice per character, one look, its own identity — 2026-09-24
+
+- **One voice per speaker** (`backend/app/media/speaker_voices.py`, `assembler.py`, `factory.py`): a beat's lines become takes in each character's voice (lock, then binding, then the proposal in `config/serial_voice_cast.json`, then the narrator), joined with a 0.3 s breath, captions per take; a broken lock silences the scene instead of borrowing another character's voice.
+- **Narration no longer runs ahead of the pictures**: each scene's audio is padded to its shot (every film with real voices, factual ones included).
+- **The series look** (`backend/app/media/series_look.py`, `config/serial_series_look.json`): one versioned style block opens every serial shot prompt, written from the beat (room, who faces the viewer, action, camera); style overrides a model adds are stripped; no written text in frame.
+- **The serial's identity at publish** (`backend/app/publishing/serial_identity.py`): "<hook> | Inside The Nexus Ep. N", the logline first, the previous episode named; a Publisher answer carrying another film's title is replaced by the studio's own metadata.
+- **The honest record**: an episode the Owner approves unread is recorded as his approval, without a Director's review.
+- **Brief episode-v5 and review episode-review-v3**: the show's tone, full bibles only for who acts, a hook inside 3 s, a button that calls back, escalating beats, no invented letter contents.
+- **The writer's day is cleaner** (`backend/app/story/projection.py`): the run's own stage reports no longer fill the day's story; a letter to the Director names her; years are no longer redacted as card numbers; a resumed episode carries the day it tells.
+- Tests: serial files 233 passed, neighbours 139 passed (new `test_serial_voices`, `test_serial_look`, `test_serial_identity`, `test_serial_quality_adversary`); the opt-in two-day rehearsal on a copy passed; ruff and mypy clean.
+
 ## The workspace becomes a game frame, and the serial a writers room — 2026-09-24
 
 - **The render is the hero** (`frontend/src/game_frame.js`, `drawers.js`, `office_engine.js`): full-bleed between the masthead and a footer strip; the register (left) and governance, approvals and module status (right) as glass drawers that close by transform to 40px rails with their real counts; the camera re-centres the building in the free room (420 ms glide, a jump under reduced motion); the page's zoom and pan act on the stream's video; the canvas paints nothing under a stream but keeps the hit boxes.

@@ -318,19 +318,25 @@ def motion_for_scene(
 def render_plan(engine: Engine, vault: CredentialVault, storyboard_id: str) -> dict:
     """Resolve the production hierarchy for a storyboard and build its adapters.
 
-    Returns the plan (recorded on the render job as production_json) plus `tts_for_scene`
-    and `video_for_scene` callables and the image adapter. A storyboard without a channel
-    resolves at the Organization level, which is exactly what `tts_provider()` returned
-    before policies existed, so nothing changes for videos that never named a channel.
+    Returns the plan (recorded on the render job as production_json) plus `tts_for_scene`,
+    `voice_segments_for_scene` (a scene's takes, one per speaker, for a scene whose lines
+    name their speakers; None otherwise) and `video_for_scene` callables and the image
+    adapter. A storyboard without a channel resolves at the Organization level, which is
+    exactly what `tts_provider()` returned before policies existed, so nothing changes for
+    videos that never named a channel.
     """
     from app.media.models import Storyboard
     from app.media.production_policy import resolve_storyboard_plan
+    from app.media.speaker_voices import plan_speakers
 
     with Session(engine) as session:
         board = session.get(Storyboard, storyboard_id)
         if board is None:
             raise ValueError(f"Storyboard {storyboard_id} not found")
         plan = resolve_storyboard_plan(session, board)
+        # One voice per speaker (S7): a scene whose lines say who speaks them gets one take
+        # per speaker, each in that character's voice, recorded on the plan.
+        plan_speakers(session, board, plan)
     adapters: dict[int, TTSProvider | None] = {}
     cache: dict[tuple, TTSProvider | None] = {}
     video_adapters: dict[int, VideoProvider | None] = {}
@@ -347,10 +353,54 @@ def render_plan(engine: Engine, vault: CredentialVault, storyboard_id: str) -> d
         if video_key not in video_cache:
             video_cache[video_key] = video_provider_for(engine, vault, video)
         video_adapters[scene["scene_index"]] = video_cache[video_key]
+    #: scene index -> its takes, each with the adapter of the voice it is spoken in (None
+    #: when that voice has no usable adapter: the scene's own voice then speaks the take).
+    takes: dict[int, list[dict]] = {}
+    for scene in plan["scenes"]:
+        speakers = scene.get("speakers") or []
+        if not speakers:
+            continue
+        built = []
+        for take in speakers:
+            voice = take["voice"]
+            key = (voice.get("integration_id"), voice.get("model_id"), voice.get("voice_id"))
+            if key not in cache:
+                cache[key] = tts_provider_for(engine, vault, voice)
+            built.append(
+                {
+                    "speaker": take["speaker"],
+                    "character_id": take["character_id"],
+                    "text": take["text"],
+                    "adapter": cache[key],
+                    "voice_source": voice.get("speaker_source"),
+                }
+            )
+        # A locked voice that cannot be used is never replaced by another voice: the take
+        # would fall back to the scene's, which may be another character's lock. The scene
+        # is then unspeakable in real voices, exactly as a scene whose first locked
+        # character's voice is unusable already is (the render records placeholders).
+        broken = [
+            str(take.get("speaker") or "")
+            for take, made in zip(speakers, built, strict=True)
+            if take["voice"].get("speaker_source") == "character_lock" and made["adapter"] is None
+        ]
+        if broken:
+            adapters[scene["scene_index"]] = None
+            scene["speakers_note"] = (
+                "The locked voice of "
+                + ", ".join(broken)
+                + " cannot be used; no other voice may speak a locked character, so the "
+                "scene has no real voice until the lock is fixed."
+            )
+        takes[scene["scene_index"]] = built
 
     def tts_for_scene(scene: dict) -> TTSProvider | None:
         index = scene.get("scene_index")
         return adapters.get(index) if isinstance(index, int) else None
+
+    def voice_segments_for_scene(scene: dict) -> list[dict] | None:
+        index = scene.get("scene_index")
+        return takes.get(index) if isinstance(index, int) else None
 
     def video_for_scene(scene: dict) -> VideoProvider | None:
         index = scene.get("scene_index")
@@ -373,6 +423,7 @@ def render_plan(engine: Engine, vault: CredentialVault, storyboard_id: str) -> d
     return {
         "plan": plan,
         "tts_for_scene": tts_for_scene,
+        "voice_segments_for_scene": voice_segments_for_scene,
         "video_for_scene": video_for_scene,
         # The hierarchy's image choice, when it resolves to a usable adapter; else the
         # Organization's selection, exactly as before policies existed.

@@ -1325,3 +1325,29 @@ No provider was called, no run was queued, no credit was spent, and
 ## The workspace becomes a game frame, and the serial a writers room (2026-09-24)
 
 - Page wave 3, from the judge, in order: (1) real data inside the world so the idle building is alive with truth - the render bay's screen the last real poster or frame, the Treasury display the real balance, the lobby screen the day track, the fact-check board the real claim counts, monitors and window lights following who is WORKING; (2) 60-100 px of real sky above the roof in the plates, then a top inset for the HUD row (the chips lie on the roof railing today); (3) the dock off the zebra crossing (a corner, or icons until hovered); (4) the Unreal stream seen through the game frame on the Owner's machine (video under the drawers, zoom and pan, a click on a figure opening the right inspector); (5) precompile the workspace's GPU shaders under the title to remove the one-time first-visit freeze; (6) keyboard order register -> frame and dock -> side drawer; (7) fill the empty glass under module status at 2560; (8) the Owner decides «Directorul» or «Directoarea» and it is applied in one pass; (9) recapture the fixtures (the module status still shows Office Serial NEIMPLEMENTAT, the backend says PARTIAL); (10) the Journal opens on the episodes, not on «Zile închise».
+
+## The serial made well: a voice per character, one look, its own identity (2026-09-24)
+
+- S7 (one voice per speaker, captions per take) is done, faked. Next for voices: bind and lock the eight voices once he has heard them (identity locks then keep them across episodes), and backfill speaker_bibles on storyboards built before S7.
+
+- S8 (the series look and serial shot prompts) is done, faked. Next for pictures: S9 (free character references from Unreal, rendered in the series rendering), a per-series seed where a vendor honours one, and his paid render to judge whether the look holds from shot to shot.
+
+- S10 (the serial's identity at publish, the honest review record, the brief's tone and cast) is done, faked. Still open: the page labels for metadata_source, refusals and the approval source; a real Publisher model to see it write hooks in the format; and links to previous episodes once Channel B publishes publicly.
+
+- S12 (two days on a copy of his data) is done, faked. One click filmed yesterday's episode and wrote tomorrow's script on day 1, and filmed that script without rewriting it on day 2, on his real history. Next: his decision on the Director's leave and on the log that freezes at the run's hour; S13 (a real model answering the v4 brief, the rubric and the plan); his paid render to hear the voices and see the look. Rerun the rehearsal with: STUDIO_REHEARSAL_DB=<copy> REHEARSAL_REPORT_PATH=<file> uv run pytest -q -s tests/test_rehearsal_on_a_copy.py -k two_days.
+
+- serial, open - backend/app/agents/reviews.py / publishing guard: Only the Publisher's title and tags are checked against other films. A READY answer with the right title but another film's description, or unrelated tags, still goes out: the logline is prepended, but the rest is hers.
+
+- serial, open - backend/app/media/assembler.py (degenerate-still retry): The retry appends 'A real, detailed scene', which pulls a serial still toward realism against the series look. The line is shared with factual films and the file is S7's, so I left it; 'A detailed, coherent scene' would be neutral.
+
+- serial, open - frontend (Settings) / POST /api/v1/publishing/channels/{id}/publish-policy: No page control grants or withdraws the Director's leave (director_may_approve_episodes). It is only a versioned API command, so the Owner cannot flip it from the page.
+
+- serial, open - backend/app/story/projection.py: The Director's own notes reach the writer cut at about 150 characters with '…' (on 09-19 that was the weekly-review verdict, the funniest fact of the day). 'an employee reported to the team (task: WEEKLY_REVIEW)' is flat machine text. Model names show as '[redacted]' inside subjects.
+
+- serial, open - backend/app/media/factory.py (voice adapter cache): The adapter cache key is (integration, model, voice) and ignores voice_settings. A character binding and the narrator on the same voice id with different settings would share the first adapter's settings. This does not happen on his data, where no bible has a voice.
+
+- serial, open - backend/app/story (computed checks): The 8-word, 3-second hook is asked for and judged by the Director but not computed. The rehearsal stand-in's hook was 10 words and passed. This is left to the rubric on purpose.
+
+- serial, open - backend/app/runbook/services.py + story close_daily_log: (Carried from S12) A day's log freezes at the run's 05:00, so a date's episode tells only what happened before the run. This is the Owner's decision (39_DAILY_AUTONOMOUS_RUNBOOK §7).
+
+- serial, open - real providers: No real-model, real-voice or real-image proof exists. Three things stay unproven until his paid click: whether a model follows v5 and the rubric, how the eight voices sound together with 0.3 s breaths, and whether faces hold across shots.

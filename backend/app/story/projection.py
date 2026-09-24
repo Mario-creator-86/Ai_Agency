@@ -173,8 +173,11 @@ _MODEL_FAMILY = re.compile(
     r"byteplus|hailuo|moonshot|zhipu)[\w.:-]*"
 )
 _MODEL_SHAPE = re.compile(r"\b[a-z][a-z_]*[-_:]?\d+(?:[.:-][a-z0-9]+)*\b")
-#: A card or account number: four or more digits in a row inside a longer digit run.
-_CARD = re.compile(r"\b\d{4,}\b")
+#: A card or account number: four or more digits in a row inside a longer digit run. A year
+#: (19xx, 20xx) standing alone is not one: "Ziua povestită: 2026-09-19" reached the writer
+#: as "[redacted]-09-19", and a line naming a year failed the review's privacy check
+#: (rehearsal on a copy of his data, 2026-09-24).
+_CARD = re.compile(r"\b(?!(?:19|20)\d\d\b)\d{4,}\b")
 
 _PATTERNS = (
     _SECRET,
@@ -251,6 +254,28 @@ def classify_event_type(event_type: str) -> str:
     return PUBLIC_SAFE if event_type in PUBLIC_SAFE_EVENTS else OWNER_PRIVATE
 
 
+#: The subject `app.agents.director.file_stage_reports` gives the letter each stage's owner
+#: posts to the Director's desk at the end of a run: "<stage>: <STATUS> — <reason>".
+_STAGE_REPORT_SUBJECT = re.compile(r"^[a-z][a-z0-9_]*: [A-Z_]+ — ")
+#: The Director's desk: a letter with no addressee is posted to her inbox under this name.
+_DESK = "Director"
+
+
+def is_stage_report(event_type: str, payload: dict[str, Any]) -> bool:
+    """Whether an event is one of the run's own end-of-run reports.
+
+    The same facts as the stages ending (`runbook.stage_finished`, routine), written as a
+    letter. Rehearsal on a copy of his data (2026-09-24): as letters they weighed 8, so the
+    fifteen lines of a day were fifteen reports, and the episode filmed and published that
+    morning was not among them. A stage that failed is still story, by its own event.
+    """
+    if event_type != "agent.message_posted" or payload.get("to_agent_id"):
+        return False
+    return str(payload.get("intent") or "") == "STATUS" and bool(
+        _STAGE_REPORT_SUBJECT.match(str(payload.get("subject") or ""))
+    )
+
+
 def _is_owner_letter(payload: dict[str, Any]) -> bool:
     if any(payload.get(marker) for marker in _OWNER_MARKERS):
         return True
@@ -298,8 +323,13 @@ def describe_public(
     payload: dict[str, Any],
     claim_text: str | None = None,
     private_names: Iterable[str] = (),
+    director: str | None = None,
 ) -> str | None:
-    """The public sentence for one event, in English, or None when the type is private."""
+    """The public sentence for one event, in English, or None when the type is private.
+
+    ``director`` is the name of the day's Director (her roster entry): a letter to her desk
+    is to her, and one she posts there herself is a note, not a letter to a second person.
+    """
     entry = PUBLIC_SAFE_EVENTS.get(event_type)
     if entry is None:
         return None
@@ -314,6 +344,11 @@ def describe_public(
     if event_type == "agent.message_posted":
         sender, to = _value(payload.get("from_name")), _value(payload.get("to_name"))
         subject = _value(payload.get("subject"))
+        if director and to == _DESK and not payload.get("to_agent_id"):
+            to = director
+        if sender and to == sender:
+            line = f"{sender} noted" + (f': "{subject}"' if subject else "")
+            return redact(line, private_names)
         if sender and to:
             line = f"{sender} wrote to {to}" + (f': "{subject}"' if subject else "")
             return redact(line, private_names)
@@ -365,12 +400,20 @@ def project_events(
         if member.get("agent_id")
     }
     cast = set(names.values())
+    director = next(
+        (
+            str(member.get("display_name"))
+            for member in roster
+            if str(member.get("role_name") or "") == _DESK and member.get("display_name")
+        ),
+        None,
+    )
     private = tuple(private_names)
     projection: list[dict] = []
     for event in events:
         payload = event.payload if isinstance(event.payload, dict) else {}
         claim_text = (claims or {}).get(event.aggregate_id)
-        description = describe_public(event.event_type, payload, claim_text, private)
+        description = describe_public(event.event_type, payload, claim_text, private, director)
         if description is None:
             continue
         actor = _actor(event, payload, names, cast)
@@ -384,6 +427,7 @@ def project_events(
                 "classification": PUBLIC_SAFE,
                 "description": prefix + description,
                 **_story_keys(event.event_type, payload, claim_text, private),
+                **({"routine": True} if is_stage_report(event.event_type, payload) else {}),
             }
         )
     return projection
@@ -532,7 +576,11 @@ def select_story(projection: list[dict]) -> list[dict]:
         if counts[key] > 1:
             item["repeats"] = counts[key]
             item["description"] = f"{item['description']} ({counts[key]} times that day)"
-        weight = story_weight(item["event_type"], item.get("verdict"))
+        weight = (
+            _ROUTINE_WEIGHT
+            if item.get("routine")
+            else story_weight(item["event_type"], item.get("verdict"))
+        )
         collapsed.append((weight, index, item))
     story = sorted((c for c in collapsed if c[0] > _ROUTINE_WEIGHT), key=lambda c: (-c[0], c[1]))
     if not story:

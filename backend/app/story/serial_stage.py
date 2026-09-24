@@ -25,7 +25,11 @@ from uuid import uuid4
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
-from app.media.serial_storyboard import SerialStoryboardError, storyboard_from_episode
+from app.media.serial_storyboard import (
+    SerialStoryboardError,
+    describe_serial_shots,
+    storyboard_from_episode,
+)
 from app.story.models import DailyStudioLog, StoryEpisode
 from app.story.review import ReviewError, review_episode
 from app.story.services import (
@@ -166,18 +170,26 @@ def unfinished_episodes(session: Session, before: str) -> list[tuple[str, StoryE
 
 
 def _ready_for_filming(
-    engine: Engine, episode_id: str, counts: dict[str, Any], correlation: str
+    engine: Engine,
+    episode_id: str,
+    counts: dict[str, Any],
+    correlation: str,
+    registry: Any = None,
 ) -> bool:
     """Build the storyboard of an APPROVED episode; False (with the reason) when it cannot be.
 
     `storyboard_from_episode` returns the one an episode already has, so a second call never
-    builds a second storyboard.
+    builds a second storyboard. Its shots are then described from the beats by the video
+    editor's model (S8), once per series look: a second call asks no model again, and
+    without a model the shots keep the look the storyboard composed them with.
     """
     try:
         counts["storyboard_id"] = storyboard_from_episode(engine, episode_id, correlation)
     except SerialStoryboardError as exc:
         counts["refusal"] = str(exc)[:300]
         return False
+    described = describe_serial_shots(engine, registry, counts["storyboard_id"], correlation)
+    counts["shots_described"] = len(described.get("shots") or [])
     return True
 
 
@@ -287,7 +299,7 @@ def _tell_the_day(
             "mâine îl pregătește de filmare și îl filmează.",
             **counts,
         )
-    if not _ready_for_filming(engine, episode_id, counts, correlation):
+    if not _ready_for_filming(engine, episode_id, counts, correlation, registry):
         return _outcome(
             COMPLETED, f"Episodul aprobat nu a devenit storyboard: {counts['refusal']}", **counts
         )
@@ -333,6 +345,8 @@ def _new_counts() -> dict[str, Any]:
         "approved": 0,
         "episodes": 0,
         "storyboard_id": None,
+        #: Shots the video editor's model described from the beats this run (S8).
+        "shots_described": 0,
         "episode_id": None,
         "refusal": None,
         "resumed": None,
@@ -364,8 +378,13 @@ def run_serial_stage(
         for item in _left_by_earlier_runs(engine, today):
             counts["episode_id"], counts["resumed"] = item["episode_id"], item["kind"]
             title, date_iso = item["title"][:80], item["date"]
+            # The day it tells, on the run card too: the morning that films yesterday's
+            # script is every morning after the first (rehearsal on a copy, 2026-09-24).
+            counts["told_date"] = date_iso
             if item["kind"] == "storyboard":
-                if not _ready_for_filming(engine, item["episode_id"], counts, correlation):
+                if not _ready_for_filming(
+                    engine, item["episode_id"], counts, correlation, registry
+                ):
                     # Built from rows, so the failure repeats until the episode changes; it
                     # is logged and does not hold up the rest of the day.
                     logger.info(
@@ -401,7 +420,7 @@ def run_serial_stage(
                 "că numărul lui în serial se fixează la aprobare.",
                 **counts,
             )
-        counts["episode_id"] = counts["resumed"] = None
+        counts["episode_id"] = counts["resumed"] = counts["told_date"] = None
 
         if not has_model:
             return _outcome(SKIPPED, no_model, **counts)

@@ -31,6 +31,7 @@ from app.agents.language import audience_language_line, publication_language_hol
 from app.agents.memory import agent_for_role, remember
 from app.agents.messages import open_messages, post_message
 from app.agents.services import run_agent_task
+from app.factual.models import ScriptDraft
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.media.models import (
     MediaAsset,
@@ -41,6 +42,14 @@ from app.media.models import (
 )
 from app.providers.registry import ProviderRegistry
 from app.publishing.models import ChannelRecord
+from app.publishing.serial_identity import (
+    episode_identity,
+    fallback_metadata,
+    hook_of,
+    series_description,
+    series_tags,
+    series_title,
+)
 from app.publishing.services import publication_metadata_refusals
 
 REVIEW_TEMPLATE_VERSION = "review-v1"
@@ -362,6 +371,16 @@ _PUBLICATION_INSTRUCTIONS = (
     '{"verdict": "READY" | "HOLD", "title": "...", "description": "...", "tags": [...], '
     '"hold_reasons": [...]}.\n'
 )
+#: What an episode of the office serial adds to the brief (S10, 2026-09-24): the series'
+#: title format, the logline first, and the previous episode named for a returning viewer
+#: (07_STORY_ENGINE.md, "New viewer accessibility"). Every value is in the facts below.
+_SERIAL_PUBLICATION_INSTRUCTIONS = (
+    'This video is an episode of the serial named in "series" below. Title it in the '
+    'series\' format, "title_format": a hook of a few words from this episode, then '
+    '" | <series> Ep. <episode_number>". Open the description with the "logline", word '
+    'for word, and, when "previous_episode" is given, end it by naming that episode. The '
+    "title and the description describe this episode and no other film.\n"
+)
 
 
 def prepare_publication(
@@ -387,9 +406,14 @@ def prepare_publication(
         board = session.get(Storyboard, job.storyboard_id) if job else None
         if board is None:
             raise ReviewError("The candidate has no storyboard; nothing to describe")
-        script_title = board.title
+        script = session.get(ScriptDraft, board.script_draft_id) if board.script_draft_id else None
+        # The script's own title: the storyboard's carries the label "Storyboard: ", which
+        # the Publisher was handed as the film's title until S10.
+        script_title = hook_of(script.title if script is not None and script.title else board.title)
+        identity = episode_identity(session, script)
+        characters = _episode_characters(script)
         channel_name = channel.channel_name
-        facts = {
+        facts: dict[str, Any] = {
             "script_title": script_title,
             "channel": {
                 "name": channel.channel_name,
@@ -398,10 +422,13 @@ def prepare_publication(
             },
             "scenes": _scene_lines(session, board.id),
         }
+        if identity is not None:
+            facts = {"script_title": script_title, **identity, **facts}
     payload = json.dumps(facts, ensure_ascii=False)[:12000]
     prompt = (
         audience_language_line(language)
         + _PUBLICATION_INSTRUCTIONS
+        + (_SERIAL_PUBLICATION_INSTRUCTIONS if identity is not None else "")
         + wrap_in_inert_boundary(payload, "publication-candidate")
     )
     result = _run(
@@ -445,10 +472,57 @@ def prepare_publication(
         metadata_holds = publication_metadata_refusals(
             session, media_asset_id, channel_id, metadata.title, tags
         )
-    if metadata_holds:
+    publisher_answer: dict[str, Any] | None = None
+    refused: list[str] = []
+    if identity is not None and metadata.verdict == "READY" and metadata_holds:
+        # The guard refused the Publisher's words for this episode: another film's metadata,
+        # or a title with no word of its own story. Her answer never goes out; the studio's
+        # own, built from the episode alone, is judged by the same guard and the language
+        # rule, and goes only if it passes (S10). A HOLD she gave herself stays hers.
+        refused = list(metadata_holds)
+        publisher_answer = {"title": metadata.title, "tags": tags}
+        fallback = fallback_metadata(identity, characters)
+        with Session(engine) as session:
+            fallback_holds = publication_metadata_refusals(
+                session, media_asset_id, channel_id, fallback["title"], fallback["tags"]
+            )
+        fallback_language = publication_language_hold(
+            fallback["title"], fallback["description"], language
+        )
+        tags = list(fallback["tags"])
+        metadata = metadata.model_copy(
+            update={
+                "title": fallback["title"],
+                "description": fallback["description"],
+                "hold_reasons": [],
+            }
+        )
+        if fallback_holds or fallback_language:
+            metadata = metadata.model_copy(
+                update={
+                    "verdict": "HOLD",
+                    "hold_reasons": [
+                        *refused,
+                        *([fallback_language] if fallback_language else []),
+                        *fallback_holds,
+                    ],
+                }
+            )
+    elif metadata_holds:
         metadata = metadata.model_copy(
             update={"verdict": "HOLD", "hold_reasons": [*metadata.hold_reasons, *metadata_holds]}
         )
+    if identity is not None:
+        # One format for every episode, whoever wrote the words: the hook, then the series
+        # and the number; the logline first in the description; the series among the tags.
+        # The guard above judged the hook itself, and the upload's gate reads it the same way.
+        metadata = metadata.model_copy(
+            update={
+                "title": series_title(metadata.title, identity.get("episode_number")),
+                "description": series_description(metadata.description, identity),
+            }
+        )
+        tags = series_tags(tags)
     with Session(engine) as session, session.begin():
         remember(
             session,
@@ -473,6 +547,20 @@ def prepare_publication(
                 "description": metadata.description,
                 "tags": tags,
                 "hold_reasons": metadata.hold_reasons,
+                **(
+                    {
+                        "series": identity["series"],
+                        "episode_number": identity["episode_number"],
+                        "metadata_source": "studio_fallback" if refused else "publisher",
+                    }
+                    if identity is not None
+                    else {}
+                ),
+                **(
+                    {"refused_publisher_metadata": publisher_answer, "refusals": refused}
+                    if refused
+                    else {}
+                ),
             },
             from_agent_id=publisher_id,
             to_agent_id=None,
@@ -490,7 +578,20 @@ def prepare_publication(
         "description": metadata.description,
         "tags": tags,
         "hold_reasons": metadata.hold_reasons,
+        "metadata_source": "studio_fallback" if refused else "publisher",
+        "refusals": refused,
     }
+
+
+def _episode_characters(script: ScriptDraft | None) -> list[str]:
+    """Who is in an episode, in order of first appearance, from the script it was shot from."""
+    names: list[str] = []
+    for scene in (script.scenes_json or []) if script is not None else []:
+        if isinstance(scene, dict):
+            for name in scene.get("characters") or []:
+                if str(name) not in names:
+                    names.append(str(name))
+    return names
 
 
 def publication_hold(session: Session, media_asset_id: str) -> dict[str, Any] | None:

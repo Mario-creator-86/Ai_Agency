@@ -1143,13 +1143,22 @@ class ReferenceRequired(ValueError):
 
 
 def _reference_prompt(row: CharacterBible, slot: str) -> str:
-    """One slot's prompt, composed from the bible and nothing else."""
+    """One slot's prompt, composed from the bible and the serial's rendering, nothing else.
+
+    The characters are the office serial's cast, so their sheets are drawn in the series'
+    rendering (`app.media.series_look`, S8): a reference in another style would pull every
+    shot drawn from it away from the look the shots are asked for.
+    """
+    from app.media.series_look import load_series_look  # noqa: PLC0415
+
     palette = ", ".join(
         f"{name} {value}" for name, value in sorted((row.palette_json or {}).items())
     )
+    rendering = load_series_look().get("rendering") or ""
     parts = [
         f"Character reference sheet of {row.canonical_name}, a single character, "
         "plain neutral grey background, even studio lighting, no text, no logos, no border.",
+        *([rendering] if rendering else []),
         REFERENCE_FRAMINGS.get(slot, "Character reference sheet, neutral stance."),
         f"Face and hair: {row.face_hair_desc}.",
         f"Outfit: {row.outfit_desc}.",

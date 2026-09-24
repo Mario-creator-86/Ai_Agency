@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "status": "PROPOSED",
+  "proposed_on": "2026-09-24",
+  "proposed_by": "S8, the series look",
+  "series_key": "office_serial",
+  "series": "Inside The Nexus",
+  "use_until_the_owner_changes_it": true,
+  "note": "A proposal the Owner may change or switch off; it is not in his database. The look was written from the studio's own headquarters picture (art-source/reference/headquarters_dusk_primary.png, described in docs/project/HQ_LIVING_OFFICE.md), the HQ manifest's rooms and the eight character bibles. style_block opens every shot prompt of every episode, word for word, so the serial is one look from shot to shot and from episode to episode; a character's face and clothes come from their bible, never from this file. The time of day is not fixed here: the Owner's rule is that the headquarters' sky follows the real conditions, never an eternal dusk. Change the words and bump the version: shots described under an older version are described again. With use_until_the_owner_changes_it false, serial shots carry no series look and the image model draws in its own default style.",
+  "style_block": "Stylised cinematic 3D animation with a warm feature-film finish, adults at natural human proportions with expressive faces. The AMN-AI headquarters in Bucharest: warm wood, dark steel and glass, glowing monitors, bookshelves and potted plants. Warm lamp and screen light, soft shadows. Eye-level camera at human scale. Vertical 9:16 frame. No written words, letters or logos anywhere. Screens show abstract glow.",
+  "rendering": "Stylised cinematic 3D animation with a warm feature-film finish, adults at natural human proportions with expressive faces.",
+  "palette": "Warm amber lamp light and wood tones against cool blue glass and steel; each department keeps its own accent colour (Executive green, Research blue, Fact Check terracotta, Content wood, Distribution teal, Production violet).",
+  "continuity_rules": [
+    "a character's face, hair, clothing and props are exactly as their character bible says, in every shot and every episode",
+    "every scene is inside the studio's own headquarters, in the room the beat names",
+    "one look for the whole series: the same rendering, materials and warm interior light"
+  ],
+  "avoid": [
+    "photorealistic live-action footage",
+    "flat 2D cartoon or anime style",
+    "chibi or toy proportions",
+    "warped or extra hands and fingers",
+    "faces or clothes changing between shots",
+    "writing on walls, boards or screens",
+    "watermarks or logos"
+  ],
+  "shot_sizes": {
+    "establishing": "Establishing wide shot at eye level, the whole room in view",
+    "two_shot": "Medium two-shot at eye level, both speakers facing the viewer",
+    "single": "Medium close-up single at eye level on {name}, facing the viewer",
+    "close": "Close-up at eye level on {name}'s reaction, facing the viewer"
+  },
+  "max_prompt_chars": 900
+}

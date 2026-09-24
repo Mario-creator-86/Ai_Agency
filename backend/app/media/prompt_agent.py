@@ -24,6 +24,13 @@ spacecraft does not acquire a battle. And it writes the same package in both env
 TEST saves money by choosing a cheaper model, never by thinking less. `visual_prompt` keeps
 holding what is actually sent, composed from the package, so the entire render path downstream
 is unchanged by any of this.
+
+An episode of the office serial takes the same path with its own brief (S8, 2026-09-24). Its
+look is not decided per film: the storyboard's bible is the series' one look
+(`app.media.series_look`), and every serial prompt opens with its style block word for word,
+then the beat's room, the camera, the people in frame as their bibles describe them and the
+action, within the look's cap (`compose_serial_prompt`). The model is asked only for the
+people: who is in frame facing the viewer, what they do and feel, where the camera stands.
 """
 
 from __future__ import annotations
@@ -43,6 +50,13 @@ from app.factual.editorial import SCENE_PURPOSES
 from app.factual.models import FactualClaim, ScriptDraft
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.media.models import CharacterBible, Storyboard, StoryboardScene
+from app.media.series_look import (
+    PART_PURPOSES,
+    SHOT_TYPES,
+    load_series_look,
+    serial_shot_size,
+    series_bible,
+)
 from app.services import append_event, utc_now
 
 logger = logging.getLogger("studio.prompt_agent")
@@ -52,6 +66,12 @@ logger = logging.getLogger("studio.prompt_agent")
 PROMPT_ROLE = "VideoEditor"
 BIBLE_TEMPLATE = "visual-bible-v1"
 SHOTS_TEMPLATE = "shot-prompts-v1"
+SERIAL_SHOTS_TEMPLATE = "serial-shot-prompts-v1"
+
+#: The marks of an office-serial film, as `storyboard_from_episode` writes them (the same
+#: marks `app.agents.editorial.is_serial_film` reads; that module imports this one).
+SERIAL_SERIES_KEY = "office_serial"
+SERIAL_SCRIPT_KIND = "office_serial_episode"
 
 #: What the studio will not accept in any generated picture, whatever the story. Not a style
 #: preference: these are the failures that make a film look like a raw AI generation.
@@ -185,7 +205,78 @@ _SHOTS_INSTRUCTIONS = (
 )
 
 
+#: The office serial's brief (S8, 2026-09-24). The factual brief asks for a look to be
+#: decided and a world to be described; an episode has both already: the series' look is
+#: fixed in config/serial_series_look.json, and every beat is set in one of the studio's own
+#: rooms. What a shot of the serial needs from the editor is the people: who is in frame,
+#: what they do and feel, and where the camera stands.
+_SERIAL_SHOTS_INSTRUCTIONS = (
+    "You are the studio's video editor, and this is an approved episode of the studio's own "
+    "office serial, Inside The Nexus. The beats are as they will be filmed and must not "
+    "change. The series has one look, given below as series_look: it is fixed, it opens every "
+    "prompt word for word, and you do not describe style, rendering, light or palette "
+    "yourself. Each beat is set in the room its location names, one of the studio's own "
+    "rooms, and nowhere else.\n\n"
+    "For every beat describe one shot: who is in frame, facing the viewer; what they are "
+    "doing, as movement rather than a label, and their expression, both taken from the "
+    "line's direction and from what they say; the camera, varied across the episode (an "
+    "establishing wide shot for the opening beat, two-shots while people talk, a single or a "
+    "close-up for a turn or a reaction); the background life, which must not compete with "
+    "the speakers; and what must match the previous shot. What people say is heard, never "
+    "drawn. Never ask for writing in the picture: no text, sign, label, title, screen words or "
+    "written number, because a generator draws letters as gibberish. Do not add events, "
+    "objects or people the beat does not have. Return only JSON: "
+    '{"shots": [{"scene_index": 1, "subject": "...", "action": "...", "emotion": "...", '
+    '"camera": "...", "background": "...", "continuity": "...", "ending_frame": "...", '
+    '"audio_intent": "...", "transition": "..."}]}.\n'
+)
+
+
 # ------------------------------------------------------------------ what the film is
+
+
+def _is_serial(board: Storyboard, script: ScriptDraft | None) -> bool:
+    """Whether a storyboard is an episode of the office serial, by the marks it carries."""
+    if str(board.series_key or "").strip().lower() == SERIAL_SERIES_KEY:
+        return True
+    story = script.story_json if script is not None and isinstance(script.story_json, dict) else {}
+    return story.get("kind") == SERIAL_SCRIPT_KIND
+
+
+def _serial_scene_facts(session: Session, entry: dict[str, Any]) -> dict[str, Any]:
+    """What a serial beat adds to a scene's facts: its part, room, lines and background.
+
+    The room is the name the storyboard stored; a storyboard built before it stored one
+    (before S8) is given the name from the headquarters' rooms, as the storyboard would.
+    """
+    room = str(entry.get("location_name") or "").strip()
+    if not room and entry.get("location"):
+        from app.story.locations import location_name, studio_locations  # noqa: PLC0415
+
+        room = location_name(entry["location"], studio_locations(session, []))
+    lines = [
+        {
+            "speaker": line.get("speaker"),
+            "direction": line.get("direction") or "",
+            "text": line.get("text") or "",
+        }
+        for line in entry.get("lines") or []
+        if isinstance(line, dict)
+    ]
+    given = entry.get("speaker_bibles")
+    bibles: dict[str, Any] = given if isinstance(given, dict) else {}
+    speaker_ids: list[str] = []
+    for line in lines:
+        bible_id = bibles.get(str(line.get("speaker") or ""))
+        if bible_id and bible_id not in speaker_ids:
+            speaker_ids.append(str(bible_id))
+    return {
+        "part": str(entry.get("part") or ""),
+        "location": room,
+        "lines": lines,
+        "speaker_ids": speaker_ids,
+        "background": [str(name) for name in entry.get("background") or []],
+    }
 
 
 def _film_facts(session: Session, board: Storyboard) -> dict[str, Any]:
@@ -222,7 +313,9 @@ def _film_facts(session: Session, board: Storyboard) -> dict[str, Any]:
             )
         )
     }
-    return {
+    serial = _is_serial(board, script)
+    facts: dict[str, Any] = {
+        "serial": serial,
         "title": board.title,
         "aspect_ratio": board.aspect_ratio,
         "visual_style": board.visual_style,
@@ -248,6 +341,7 @@ def _film_facts(session: Session, board: Storyboard) -> dict[str, Any]:
                 "claims": [claims.get(cid, "") for cid in (scene.claim_ids_json or [])],
                 "characters": [
                     {
+                        "id": cid,
                         "name": characters[cid].canonical_name,
                         "face_hair": characters[cid].face_hair_desc,
                         "outfit": characters[cid].outfit_desc,
@@ -261,6 +355,12 @@ def _film_facts(session: Session, board: Storyboard) -> dict[str, Any]:
             for scene in scenes
         ],
     }
+    if serial:
+        scene_list: list[dict[str, Any]] = facts["scenes"]
+        for scene_facts in scene_list:
+            entry = script_scenes.get(int(scene_facts["scene_index"]), {})
+            scene_facts.update(_serial_scene_facts(session, entry))
+    return facts
 
 
 def _allowed_text(facts: dict[str, Any]) -> str:
@@ -303,6 +403,43 @@ def strip_on_screen_text(text: str) -> str:
     parts = re.split(r"(?<=[.!?])\s+|\s*;\s*", str(text or ""))
     kept = [part for part in parts if part.strip() and not _TEXT_REQUEST.search(part)]
     return " ".join(" ".join(kept).split())
+
+
+#: A clause that asks for another rendering than the series' look: another medium, another
+#: studio's style, another frame. The adversary's pass (2026-09-24) found that a model's
+#: action, camera, expression and background reached a serial prompt whole, so one
+#: "photorealistic live-action, shot on 35mm film" after the style block pulled the still
+#: away from the look the block had just asked for. A lens ("35mm lens") is not a style.
+_STYLE_OVERRIDE = re.compile(
+    r"(?:photo|hyper|ultra)[- ]?realis\w*|\brealism\b|live[- ]action|real[- ]life footage|"
+    r"documentary (?:footage|style)|\bshot on (?:\d+ ?mm )?film\b|\bfilm (?:grain|stock)\b|"
+    r"\b\d+ ?mm film\b|\banime\b|\bmanga\b|\bcartoon\w*|\b2d\b|hand[- ]drawn|cel[- ]shad\w*|"
+    r"watercolou?r|oil[- ]paint\w*|(?:pencil|charcoal|ink) (?:sketch|drawing)|sketch style|"
+    r"pixel[- ]art|claymation|stop[- ]motion|black[- ]and[- ]white|monochrome|\bsepia\b|"
+    r"\bnoir\b|\bchibi\b|low[- ]poly|comic[- ]book|\bin the style of\b|"
+    r"\b(?:pixar|disney|ghibli|dreamworks)\b|\b16 ?: ?9\b|widescreen|"
+    r"horizontal (?:frame|format)|landscape (?:frame|format|orientation)|"
+    r"\b(?:unreal engine|octane render|v-?ray)\b",
+    re.IGNORECASE,
+)
+
+
+def strip_style_overrides(text: str) -> str:
+    """The description with every clause that restyles the picture removed, the rest kept
+    with its own punctuation. Clauses are sentences, and the parts between ';' and ','."""
+    pieces = re.split(r"((?<=[.!?])\s+|\s*[;,]\s*)", str(text or ""))
+    kept: list[str] = []
+    separator = ""
+    for position, piece in enumerate(pieces):
+        if position % 2:
+            separator = piece
+            continue
+        if not piece.strip() or _STYLE_OVERRIDE.search(piece):
+            continue
+        if kept:
+            kept.append("; " if ";" in separator else ", " if "," in separator else " ")
+        kept.append(piece.strip())
+    return " ".join("".join(kept).split())
 
 
 def _flatten(value: Any) -> str:
@@ -523,7 +660,16 @@ def write_shot_prompts(
         editor = agent_for_role(session, PROMPT_ROLE)
         editor_id = editor.id if editor else None
         lessons = prompt_lessons(session)
-    if need_bible:
+    serial = bool(facts.get("serial"))
+    # An episode of the serial does not decide a look: it has the series' one, read from the
+    # Owner's proposal and written onto the storyboard every time, never asked of a model.
+    look = load_series_look() if serial else {}
+    if serial:
+        with Session(engine) as session, session.begin():
+            board = session.get(Storyboard, storyboard_id)
+            if board is not None:
+                board.visual_bible_json = series_bible(look, board.aspect_ratio)
+    elif need_bible:
         build_visual_bible(engine, registry, storyboard_id, correlation)
     with Session(engine) as session:
         board = session.get(Storyboard, storyboard_id)
@@ -532,18 +678,28 @@ def write_shot_prompts(
     packs: dict[int, ShotPrompt] = {}
     run_id = None
     if editor_id is not None and registry is not None:
-        payload = json.dumps(
-            {"visual_bible": bible, "film": facts, "lessons": lessons},
-            ensure_ascii=False,
-            default=str,
-        )[:16000]
+        if serial:
+            data: dict[str, Any] = {
+                "series_look": {
+                    "style_block": look.get("block") or "",
+                    "version": look.get("version"),
+                    "continuity_rules": look.get("continuity_rules") or [],
+                },
+                "episode": facts,
+                "lessons": lessons,
+            }
+            instructions, template = _SERIAL_SHOTS_INSTRUCTIONS, SERIAL_SHOTS_TEMPLATE
+        else:
+            data = {"visual_bible": bible, "film": facts, "lessons": lessons}
+            instructions, template = _SHOTS_INSTRUCTIONS, SHOTS_TEMPLATE
+        payload = json.dumps(data, ensure_ascii=False, default=str)[:16000]
         result = _run(
             engine,
             registry,
             editor_id,
             "shot_prompts",
-            _SHOTS_INSTRUCTIONS + wrap_in_inert_boundary(payload, "approved-film"),
-            SHOTS_TEMPLATE,
+            instructions + wrap_in_inert_boundary(payload, "approved-film"),
+            template,
             correlation,
             f"Scriu prompturile pentru {len(facts['scenes'])} cadre.",
             7000,
@@ -572,7 +728,12 @@ def write_shot_prompts(
             shot = packs.get(scene.scene_index)
             package, notes = _validated_package(shot, scene_facts, bible, allowed, previous_ending)
             refused.extend(f"cadrul {scene.scene_index}: {note}" for note in notes)
-            composed = compose_prompt(package, bible)
+            if serial:
+                package = _serial_package(package, shot, scene_facts, look)
+                scene.shot_type = SHOT_TYPES[package["shot_size"]]
+                composed = compose_serial_prompt(package, look)
+            else:
+                composed = compose_prompt(package, bible)
             scene.prompt_json = package
             scene.story_purpose = package["story_purpose"]
             scene.visual_prompt = composed
@@ -677,6 +838,189 @@ def _validated_package(
                 text = re.sub(rf"\b{re.escape(value)}\b", "", text)
             package[key] = " ".join(text.split())
     return package, notes
+
+
+def _short_name(name: Any) -> str:
+    """How a shot names a character: "Sarah Executive" -> "Sarah", "Dr. Aris ..." -> "Dr. Aris"."""
+    words = str(name or "").split()
+    if not words:
+        return ""
+    if words[0].rstrip(".").lower() in ("dr", "mr", "mrs", "ms", "prof") and len(words) > 1:
+        return f"{words[0]} {words[1]}"
+    return words[0]
+
+
+def _fit(text: str, limit: int) -> str:
+    """``text`` cut at a word boundary to at most ``limit`` characters."""
+    said = " ".join(str(text or "").split())
+    if len(said) <= limit:
+        return said
+    cut = said[: max(0, limit)].rsplit(" ", 1)[0]
+    return cut.rstrip(",;: ")
+
+
+def _clauses(text: Any, separators: str) -> list[str]:
+    said = " ".join(str(text or "").split()).rstrip(". ")
+    return [part.strip() for part in re.split(f"[{separators}]", said) if part.strip()]
+
+
+def _identity(character: dict[str, Any], limit: int) -> str:
+    """A character as their bible describes them, in at most ``limit`` characters.
+
+    Whole clauses, most telling first: the hair, then the first garment, then the rest of the
+    face and of the outfit while they fit. Cut mid-phrase, "a navy executive blazer" became
+    "a navy executive", a garment the bible never named.
+    """
+    face = _clauses(character.get("face_hair"), ";")
+    outfit = _clauses(character.get("outfit"), ",;")
+    if outfit:
+        outfit[0] = f"wearing {outfit[0][:1].lower()}{outfit[0][1:]}"
+    name = f"{_short_name(character.get('name'))}: "
+    kept = set(face[:1] + outfit[:1])
+    size = len(name) + sum(len(part) + 2 for part in kept)
+    for extra in face[1:] + outfit[1:]:
+        if size + len(extra) + 2 > limit:
+            break
+        kept.add(extra)
+        size += len(extra) + 2
+    # Said in the bible's order: the whole face, then the clothes.
+    return _fit(name + ", ".join(part for part in face + outfit if part in kept), limit)
+
+
+def _serial_package(
+    package: dict[str, Any],
+    shot: ShotPrompt | None,
+    scene: dict[str, Any],
+    look: dict[str, Any],
+) -> dict[str, Any]:
+    """A serial shot's package: the beat's room, the people in frame and the camera.
+
+    The room is the beat's, never the model's; the people are the beat's speakers first, as
+    their bibles describe them; the camera is the model's, or the size the beat's part asks
+    for. Without a model the action is the beat's scene line with each speaker's direction,
+    and what they say is left to the voice: a line in a picture prompt is drawn as writing.
+    """
+    cast = [c for c in scene.get("characters") or [] if isinstance(c, dict)]
+    by_id = {c.get("id"): c for c in cast}
+    speakers = [by_id[cid] for cid in scene.get("speaker_ids") or [] if cid in by_id]
+    if not speakers:
+        speakers = cast[:2]
+    size = serial_shot_size(scene.get("part"), int(scene.get("scene_index") or 1), len(speakers))
+    if size == "establishing":
+        in_frame = speakers or cast
+    elif size == "two_shot":
+        in_frame = speakers[:2]
+    else:
+        in_frame = speakers[:1]
+    # The people of the beat who do not speak stand at their own desks; a speaker outside a
+    # single's frame is off camera, not in the background.
+    others = [
+        _short_name(c.get("name"))
+        for c in cast
+        if c not in in_frame and c not in speakers and c.get("name")
+    ]
+    others += [_short_name(name) for name in scene.get("background") or [] if name]
+    focus = _short_name(in_frame[0].get("name")) if in_frame else "the speaker"
+    sizes = look.get("shot_sizes") or {}
+    default_camera = str(sizes.get(size) or "").replace("{name}", focus)
+
+    said: list[str] = []
+    feelings: list[str] = []
+    previous = None
+    for line in scene.get("lines") or []:
+        who = _short_name(line.get("speaker"))
+        if not who or who == previous:
+            continue
+        direction = strip_on_screen_text(str(line.get("direction") or ""))
+        verb = "speaks" if previous is None else "answers"
+        said.append(f"{who}, {direction}, {verb}" if direction else f"{who} {verb}")
+        if direction:
+            feelings.append(f"{who} {direction}")
+        previous = who
+    writer_line = strip_on_screen_text(str(scene.get("writer_visual") or ""))
+    spoken = "; ".join(said) + "." if said else ""
+    fallback_action = " ".join(part for part in (writer_line, spoken) if part)
+
+    # While the series has a look, a model may describe the shot but never restyle it: what
+    # it wrote that asks for another medium or frame is taken out (`strip_style_overrides`).
+    restyle = strip_style_overrides if look.get("in_use") else (lambda text: text)
+    package = dict(package)
+    model_action = restyle(str(package.get("action") or "")) if shot and shot.action else ""
+    package["action"] = model_action or fallback_action
+    package["emotion"] = (restyle(shot.emotion) if shot and shot.emotion else "") or "; ".join(
+        feelings
+    )
+    model_camera = restyle(strip_on_screen_text(shot.camera)) if shot and shot.camera else ""
+    package["camera"] = model_camera or default_camera
+    background = restyle(str(package.get("background") or "")) if shot and shot.background else ""
+    if not background and others:
+        background = "at their own desks behind them: " + ", ".join(dict.fromkeys(others))
+    package["background"] = background
+    package["location"] = str(scene.get("location") or "")
+    package["shot_size"] = size
+    package["in_frame"] = in_frame
+    if look.get("in_use"):
+        package["lighting"] = "the series look"
+    package["avoid"] = list(look.get("avoid") or []) or package.get("avoid") or []
+    package["series_look_version"] = look.get("version") if look.get("in_use") else None
+    package["from_model"] = shot is not None
+    purpose = PART_PURPOSES.get(str(scene.get("part") or "").lower())
+    if purpose and not (shot and shot.story_purpose):
+        package["story_purpose"] = purpose
+    return package
+
+
+def compose_serial_prompt(package: dict[str, Any], look: dict[str, Any]) -> str:
+    """The text the model receives for a serial shot, the series' look first, word for word.
+
+    Then the room, the camera, the people in frame (each as their bible describes them) and
+    the action; then, while there is room, the expression, the background, the continuity and
+    the exclusions. The people are given less of their description, and then the action less
+    of its words, until the prompt fits the look's cap: the look and the room never shrink.
+    """
+    cap = int(look.get("max_prompt_chars") or 900)
+    camera = " ".join(str(package.get("camera") or "").split()).rstrip(". ")
+    head = [
+        str(look.get("block") or "").strip(),
+        f"Location: {package['location']}." if package.get("location") else "",
+        f"Camera: {camera}." if camera else "",
+    ]
+    people = [c for c in package.get("in_frame") or [] if isinstance(c, dict)]
+    action = " ".join(str(package.get("action") or "").split())
+    if action and not action.endswith("."):
+        action += "."
+
+    def build(per_person: int, action_text: str) -> str:
+        who = "; ".join(_identity(c, per_person) for c in people)
+        parts = [
+            *head,
+            f"In frame, facing the viewer: {who}." if who else "",
+            f"Action: {action_text}" if action_text else "",
+        ]
+        return " ".join(part for part in parts if part)
+
+    per = 220 if len(people) <= 1 else 130 if len(people) == 2 else 90
+    text = build(per, action)
+    while len(text) > cap and per > 45:
+        per -= 10
+        text = build(per, action)
+    if len(text) > cap and action:
+        room = len(action) - (len(text) - cap)
+        text = build(per, _fit(action, room - 1) + "." if room > 20 else "")
+    text = _fit(text, cap)
+    for label, value in (
+        ("Expression", package.get("emotion")),
+        ("Background", package.get("background")),
+        ("Continuity", package.get("continuity")),
+        ("Avoid", ", ".join(str(a) for a in (package.get("avoid") or [])[:6])),
+    ):
+        said = " ".join(str(value or "").split()).rstrip(". ")
+        if not said:
+            continue
+        candidate = f"{text} {label}: {said}."
+        if len(candidate) <= cap:
+            text = candidate
+    return text
 
 
 def compose_prompt(package: dict[str, Any], bible: dict[str, Any]) -> str:
@@ -924,5 +1268,16 @@ def production_package(engine: Engine, storyboard_id: str) -> dict[str, Any]:
                 "storyboard_status": board.status,
                 "story_review": review.verdict if review else "NONE",
                 "story_review_at": review.created_at if review else None,
+                # Who let the story through, as the record says (S10): a serial episode the
+                # Owner approved without the Director's reading reads as his approval here,
+                # never as her review. A factual script has no source and shows None.
+                "story_review_source": (review.notes_json or {}).get("source") if review else None,
+                "approved_by": (review.notes_json or {}).get("approved_by") if review else None,
+                "director_review": (
+                    (review.notes_json or {}).get("director_review") if review else None
+                ),
+                "story_review_notes": (
+                    list((review.notes_json or {}).get("notes") or []) if review else []
+                ),
             },
         }

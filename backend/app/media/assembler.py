@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from app.config import ROOT
 from app.media.models import MediaAsset, Storyboard, StoryboardScene, VideoRenderJob
 from app.media.production_policy import record_quoted_price
+from app.media.speaker_voices import SPEAKER_GAP_SECONDS
 from app.media.toolchain import (
     LOUDNESS_TARGET_LUFS,
     TRUE_PEAK_TARGET_DBTP,
@@ -223,6 +224,11 @@ def caption_cues(scenes: list[dict]) -> list[dict[str, Any]]:
     that time by their length, so a long sentence stays up longer. A sentence that will not
     fit two lines of forty-two becomes as many consecutive cues as it needs. A scene with no
     words has no cue: a caption is never invented from a visual prompt.
+
+    A scene spoken as takes, one per speaker (``voice_segments``: each take's words, where it
+    starts inside the scene and how long it lasts), is captioned take by take: each take's
+    sentences share that take's own time, and the breath between two speakers has no
+    caption, so the words on screen change when the voice does.
     """
     cues: list[dict[str, Any]] = []
     clock = 0.0
@@ -234,35 +240,46 @@ def caption_cues(scenes: list[dict]) -> list[dict[str, Any]]:
             # Words never spill into the next scene, whose own words start there.
             span = min(span, planned)
         text = " ".join(str(scene.get("voiceover_segment") or "").split())
-        if text and span > 0:
-            chunks: list[list[str]] = []
-            for sentence in _SENTENCE_END.split(text):
-                lines = _caption_lines(sentence)
-                for at in range(0, len(lines), CAPTION_MAX_LINES):
-                    chunks.append(lines[at : at + CAPTION_MAX_LINES])
-            weights = [sum(len(line) for line in chunk) for chunk in chunks]
-            total_weight = float(sum(weights)) or 1.0
-            start = clock
-            elapsed = 0
-            for position, (chunk, weight) in enumerate(zip(chunks, weights, strict=True)):
-                elapsed += weight
-                # The last cue ends exactly where the narration does, whatever rounding the
-                # shares before it accumulated.
-                end = (
-                    clock + span
-                    if position == len(chunks) - 1
-                    else clock + span * (elapsed / total_weight)
-                )
-                cues.append(
-                    {
-                        "scene_index": scene.get("scene_index"),
-                        "start": start,
-                        "end": end,
-                        "lines": chunk,
-                    }
-                )
-                start = end
+        takes = scene.get("voice_segments")
+        if isinstance(takes, list) and takes and span > 0:
+            for take in takes:
+                offset = float(take.get("offset") or 0.0)
+                if offset >= span:
+                    break
+                length = min(float(take.get("seconds") or 0.0), span - offset)
+                words = " ".join(str(take.get("text") or "").split())
+                if words and length > 0:
+                    cues.extend(
+                        _timed_cues(words, clock + offset, length, scene.get("scene_index"))
+                    )
+        elif text and span > 0:
+            cues.extend(_timed_cues(text, clock, span, scene.get("scene_index")))
         clock += planned
+    return cues
+
+
+def _timed_cues(text: str, begin: float, span: float, scene_index: Any) -> list[dict[str, Any]]:
+    """One passage's cues: a cue per sentence (or per two lines of one), sharing ``span``
+    seconds from ``begin`` by their length."""
+    chunks: list[list[str]] = []
+    for sentence in _SENTENCE_END.split(text):
+        lines = _caption_lines(sentence)
+        for at in range(0, len(lines), CAPTION_MAX_LINES):
+            chunks.append(lines[at : at + CAPTION_MAX_LINES])
+    weights = [sum(len(line) for line in chunk) for chunk in chunks]
+    total_weight = float(sum(weights)) or 1.0
+    cues: list[dict[str, Any]] = []
+    start = begin
+    elapsed = 0
+    for position, (chunk, weight) in enumerate(zip(chunks, weights, strict=True)):
+        elapsed += weight
+        # The last cue ends exactly where the narration does, whatever rounding the shares
+        # before it accumulated.
+        end = (
+            begin + span if position == len(chunks) - 1 else begin + span * (elapsed / total_weight)
+        )
+        cues.append({"scene_index": scene_index, "start": start, "end": end, "lines": chunk})
+        start = end
     return cues
 
 
@@ -292,20 +309,50 @@ def captions_filter(srt_name: str = "captions.srt") -> str:
     return f"subtitles=filename={srt_name}:force_style='{CAPTION_STYLE}'"
 
 
-def _concatenate_audio(ffmpeg_exe: str, segments: list[Path], work_dir: Path) -> Path:
+def _concatenate_audio(
+    ffmpeg_exe: str, segments: list[Path], work_dir: Path, pads: list[float] | None = None
+) -> Path:
     """Join the per-scene narration files into one track, with ffmpeg rather than by hand.
 
     The placeholder path can splice raw WAV bodies because it produced them itself and knows
     their format. A provider's audio is whatever the vendor encoded, so it is concatenated by
     the decoder instead of by byte surgery, which would silently corrupt a differing format.
+
+    ``pads`` is the silence after each segment, in seconds: the breath between two speakers
+    of a scene, and after a scene's last take whatever its picture lasts beyond its words,
+    so the next scene's words start with the next scene's shot. With any silence to add the
+    segments are decoded and joined by the concat filter, each padded with ``apad``.
     """
     if not segments:
         raise RenderEngineUnavailable("No narration audio was produced for this storyboard")
+    output = work_dir / "master_audio.m4a"
+    if pads and any(pad > 0 for pad in pads):
+        args = [ffmpeg_exe, "-y"]
+        for segment in segments:
+            args += ["-i", str(segment)]
+        chains = []
+        for position in range(len(segments)):
+            pad = pads[position] if position < len(pads) else 0.0
+            chains.append(
+                f"[{position}:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=mono"
+                + (f",apad=pad_dur={pad:.3f}" if pad > 0 else "")
+                + f"[s{position}]"
+            )
+        joined = "".join(f"[s{position}]" for position in range(len(segments)))
+        graph = ";".join(chains) + f";{joined}concat=n={len(segments)}:v=0:a=1[voice]"
+        args += ["-filter_complex", graph, "-map", "[voice]", "-c:a", "aac", "-b:a", "192k"]
+        joined_run = subprocess.run(  # noqa: S603
+            [*args, str(output)], capture_output=True, text=True, timeout=600, check=False
+        )
+        if joined_run.returncode != 0 or not output.is_file() or output.stat().st_size == 0:
+            raise RenderEngineUnavailable(
+                f"FFmpeg could not join the narration segments (exit code {joined_run.returncode})"
+            )
+        return output
     listing = work_dir / "voice_segments.txt"
     listing.write_text(
         "".join(f"file '{segment.as_posix()}'\n" for segment in segments), encoding="utf-8"
     )
-    output = work_dir / "master_audio.m4a"
     result = subprocess.run(  # noqa: S603
         [
             ffmpeg_exe,
@@ -729,6 +776,7 @@ def assemble_video_job(
     reference_for_scene: Callable[[dict[str, Any]], dict[str, Any] | None] | None = None,
     tts_adapter: TTSProvider | None = None,
     tts_adapter_for_scene: Callable[[dict[str, Any]], TTSProvider | None] | None = None,
+    voice_segments_for_scene: Callable[[dict[str, Any]], list[dict[str, Any]] | None] | None = None,
     video_adapter_for_scene: Callable[[dict[str, Any]], VideoProvider | None] | None = None,
     motion_chooser: Callable[..., tuple[VideoProvider | None, dict[str, Any]]] | None = None,
     environment: str = "PRODUCTION",
@@ -790,7 +838,16 @@ def assemble_video_job(
 
     ``tts_adapter_for_scene`` resolves a voice per scene (a recurring character's locked
     voice, or a scene override); when it returns None for a scene, ``tts_adapter`` is used,
-    and when that is None too the placeholder narrator is. ``production_plan`` is the
+    and when that is None too the placeholder narrator is.
+
+    ``voice_segments_for_scene`` answers with a scene's takes, one per speaker in the order
+    they speak (``{speaker, character_id, text, adapter, voice_source}``,
+    `app.media.speaker_voices`), or None for a scene read whole. Each take is spoken by its
+    own adapter (the scene's voice when it has none), the takes are joined with
+    ``SPEAKER_GAP_SECONDS`` of silence, and the captions are timed to each take, so they
+    follow the speaker. A speaker's name is never read and never captioned.
+
+    ``production_plan`` is the
     resolved hierarchy the caller built; it is stored on the job with what each scene
     actually used, so a render can be audited without re-running the resolution.
 
@@ -906,6 +963,9 @@ def assemble_video_job(
 
     generated_frames: list[Path] = []
     voice_segments: list[Path] = []
+    #: The silence after each file of `voice_segments`: a breath between two speakers, and
+    #: after a scene's last take whatever its picture lasts beyond its words.
+    voice_pads: list[float] = []
 
     # The encode's command and the editor's id are filled in later; the failure helper is
     # defined here because the scene loop below can already fail the job (the Owner's stop),
@@ -1044,50 +1104,115 @@ def assemble_video_job(
                 frame_files.append(frame_path)
 
             real_voice = scene_voices[scenes_data.index(scene)]
-            voice_adapter: TTSProvider = (real_voice if all_real else None) or placeholder_voice
+            # One take per speaker where the scene's lines say who speaks them (S7), each in
+            # its own voice and the scene's voice when that has none; otherwise the scene's
+            # words are one take in the scene's voice, as they always were.
+            given = voice_segments_for_scene(scene) if voice_segments_for_scene else None
+            parts: list[dict[str, Any]] = [p for p in (given or []) if str(p.get("text") or "")]
+            by_speaker = bool(parts)
+            if not by_speaker:
+                parts = [{"text": scene["voiceover_segment"]}]
             voice_started = time.monotonic()
-            with _at_work(
-                engine if all_real else None,
-                "VoiceArtist",
-                "synthesize_voice",
-                f"vocea scenei {index}",
-            ):
-                tts_res = asyncio.run(voice_adapter.synthesize(scene["voiceover_segment"]))
-            production["scenes"].append(
-                {
-                    "scene_index": index,
-                    "voice_provider": getattr(
-                        voice_adapter, "PROVIDER_NAME", PLACEHOLDER_VOICE_PROVIDER
-                    ),
-                    "model_id": getattr(voice_adapter, "model", None) or None,
-                    "voice_id": getattr(voice_adapter, "voice_id", None) or None,
-                    "characters": len(scene["voiceover_segment"]),
-                    "audio_seconds": round(tts_res.duration_seconds, 3),
-                    "synthesis_ms": round((time.monotonic() - voice_started) * 1000, 1),
-                    "attempts": 1,
-                    # Which vendor actually drew this scene's still. The books used to price
-                    # every still at the film-level record, so a scene the approved
-                    # alternative drew was charged to the first vendor's model.
-                    "image": image_attempts[-1] if image_attempts else None,
-                }
-            )
+            takes: list[tuple[dict[str, Any], TTSProvider, Any]] = []
+            for part in parts:
+                take_voice: TTSProvider = (
+                    (part.get("adapter") or real_voice) if all_real else None
+                ) or placeholder_voice
+                with _at_work(
+                    engine if all_real else None,
+                    "VoiceArtist",
+                    "synthesize_voice",
+                    f"vocea scenei {index}",
+                ):
+                    said = asyncio.run(take_voice.synthesize(str(part["text"])))
+                takes.append((part, take_voice, said))
+            voice_adapter = takes[0][1]
+            gap = SPEAKER_GAP_SECONDS if len(takes) > 1 else 0.0
+            spoken_seconds = sum(t[2].duration_seconds for t in takes) + gap * (len(takes) - 1)
+            scene_record: dict[str, Any] = {
+                "scene_index": index,
+                "voice_provider": getattr(
+                    voice_adapter, "PROVIDER_NAME", PLACEHOLDER_VOICE_PROVIDER
+                ),
+                "model_id": getattr(voice_adapter, "model", None) or None,
+                "voice_id": getattr(voice_adapter, "voice_id", None) or None,
+                "characters": sum(len(str(t[0]["text"])) for t in takes),
+                "audio_seconds": round(spoken_seconds, 3),
+                "synthesis_ms": round((time.monotonic() - voice_started) * 1000, 1),
+                "attempts": 1,
+                # Which vendor actually drew this scene's still. The books used to price
+                # every still at the film-level record, so a scene the approved
+                # alternative drew was charged to the first vendor's model.
+                "image": image_attempts[-1] if image_attempts else None,
+            }
+            if by_speaker:
+                # Who said what, in which voice: the render can be read back take by take.
+                scene_record["segments"] = [
+                    {
+                        "speaker": part.get("speaker"),
+                        "character_id": part.get("character_id"),
+                        "voice_provider": getattr(
+                            adapter, "PROVIDER_NAME", PLACEHOLDER_VOICE_PROVIDER
+                        ),
+                        "model_id": getattr(adapter, "model", None) or None,
+                        "voice_id": getattr(adapter, "voice_id", None) or None,
+                        "voice_source": (
+                            (part.get("voice_source") if part.get("adapter") else "scene_voice")
+                            if all_real
+                            else "placeholder"
+                        ),
+                        "characters": len(str(part["text"])),
+                        "audio_seconds": round(said.duration_seconds, 3),
+                    }
+                    for part, adapter, said in takes
+                ]
+                # The captions follow the takes: each take's words are up while it is said.
+                offset = 0.0
+                timed: list[dict[str, Any]] = []
+                for part, _adapter, said in takes:
+                    timed.append(
+                        {
+                            "text": str(part["text"]),
+                            "offset": round(offset, 3),
+                            "seconds": round(said.duration_seconds, 3),
+                        }
+                    )
+                    offset += said.duration_seconds + gap
+                scene["voice_segments"] = timed
+            production["scenes"].append(scene_record)
             production.setdefault("image_attempts", []).append(
                 {"scene_index": index, "attempts": image_attempts}
             )
             # The captions are timed from this: the scene's words last as long as its recording.
-            scene["audio_seconds"] = round(tts_res.duration_seconds, 3)
+            scene["audio_seconds"] = round(spoken_seconds, 3)
             if all_real:
-                segment = work_dir / f"voice_{index:02d}.{tts_res.format}"
-                segment.write_bytes(tts_res.audio_bytes)
-                voice_segments.append(segment)
+                for position, (_part, _adapter, said) in enumerate(takes):
+                    name = (
+                        f"voice_{index:02d}.{said.format}"
+                        if len(takes) == 1
+                        else f"voice_{index:02d}_{position + 1:02d}.{said.format}"
+                    )
+                    segment = work_dir / name
+                    segment.write_bytes(said.audio_bytes)
+                    voice_segments.append(segment)
+                    voice_pads.append(gap if position < len(takes) - 1 else 0.0)
                 # The scene lasts as long as the narration actually recorded for it, measured from
                 # the returned audio. Keeping the storyboard's planned duration here would let the
                 # picture drift away from the voice while looking correct.
-                scene["duration_seconds"] = max(scene["duration_seconds"], tts_res.duration_seconds)
-            elif not master_audio_bytes:
-                master_audio_bytes = bytearray(tts_res.audio_bytes)
-            elif len(tts_res.audio_bytes) > 44:
-                master_audio_bytes.extend(tts_res.audio_bytes[44:])
+                scene["duration_seconds"] = max(scene["duration_seconds"], spoken_seconds)
+                # And the next scene's words start with its shot: a scene whose picture lasts
+                # longer than its words is padded with silence to its length. Joined back to
+                # back, the narration ran ahead of the pictures by every such second.
+                voice_pads[-1] = max(0.0, float(scene["duration_seconds"]) - spoken_seconds)
+            else:
+                for position, (_part, _adapter, said) in enumerate(takes):
+                    if not master_audio_bytes:
+                        master_audio_bytes = bytearray(said.audio_bytes)
+                    elif len(said.audio_bytes) > 44:
+                        master_audio_bytes.extend(said.audio_bytes[44:])
+                    if position < len(takes) - 1:
+                        # The placeholder voice is 44.1 kHz 16-bit mono PCM: silence is zeros.
+                        master_audio_bytes.extend(bytes(2 * int(gap * 44100)))
 
     except ReferenceRequired as exc:
         # Not the vendor refusing, but the studio: a character whose look the Owner locked has
@@ -1325,7 +1450,7 @@ def assemble_video_job(
             raise RenderEngineUnavailable(
                 "FFmpeg is required to join provider narration audio, and it was not found."
             )
-        audio_file = _concatenate_audio(ffmpeg_exe, voice_segments, work_dir)
+        audio_file = _concatenate_audio(ffmpeg_exe, voice_segments, work_dir, voice_pads)
     else:
         audio_file.write_bytes(master_audio_bytes)
 

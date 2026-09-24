@@ -307,6 +307,9 @@ def create_media_router() -> APIRouter:
                 reference_for_scene=planned.get("reference_for_scene"),
                 tts_adapter=injected_tts or tts_provider(engine, vault),
                 tts_adapter_for_scene=None if injected_tts else planned["tts_for_scene"],
+                voice_segments_for_scene=(
+                    None if injected_tts else planned.get("voice_segments_for_scene")
+                ),
                 # The Owner's own render button makes the same film the day does: a shot per
                 # scene from the scene's motion model, not a slideshow.
                 video_adapter_for_scene=(

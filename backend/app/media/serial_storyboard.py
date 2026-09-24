@@ -16,23 +16,37 @@ row is written honestly and says what it is:
 - The `StoryReview` the media stage's `story_gate` asks for is written PASS from the
   Director's episode review, with the review's checks and reasons, because that review is
   the reading of this story — asking the factual story checks about a hook and an attributed
-  claim would be asking the wrong questions of a comedy.
+  claim would be asking the wrong questions of a comedy. An episode the Owner approved that
+  she never read is written PASS as his approval, with no reviewer, no run and no checks,
+  and the reason says so (`_story_gate_record`, S10).
 - The `TopicIdea` behind the script carries status SERIAL so the factual selection never
   picks it and never counts it as a topic in production.
 
 Voices: each scene lists the bible ids of the characters in its beat, the speakers first in
-the order they speak, so the production policy binds the first speaker's voice where a bible
-has one, and the narrator otherwise. What a voice reads is the lines' words alone
-(`app.story.lines`): measured before the lines existed (2026-09-24), the beat's free dialogue
-went whole to one voice, and "Sarah: (sighs)" was read aloud. A v2 episode is read the same
-way, the labels the roster knows taken off and the stage directions out. Each scene's lines,
-with their speakers and directions, are kept on the script's `scenes_json` for per-speaker
-voices. The visual prompt is the beat's room, its scene and each character's bible lines,
-quoted verbatim, so the look is the bible's and not the model's guess.
+the order they speak. What a voice reads is the lines' words alone (`app.story.lines`):
+measured before the lines existed (2026-09-24), the beat's free dialogue went whole to one
+voice, and "Sarah: (sighs)" was read aloud. A v2 episode is read the same way, the labels the
+roster knows taken off and the stage directions out. Each scene's lines, with their speakers
+and directions, are kept on the script's `scenes_json`, with `speaker_bibles` naming the
+bible each speaker has: the render speaks one take per speaker in that character's voice
+(`app.media.speaker_voices`, S7), and a scene whose lines are gone is read whole by the
+voice the production policy binds for it.
+
+Pictures (S8): measured before it (2026-09-24), the serial's style was the label
+"CHARACTER_ANIMATION", which no prompt carried, and the vendor was handed the showrunner's
+raw scene line. Now the storyboard's visual bible is the series' one look
+(`app.media.series_look`, a proposal in config/serial_series_look.json, never decided per
+episode), and every shot prompt opens with its style block, then the beat's room, the camera,
+the people in frame as their bibles describe them, and the action. The storyboard composes
+these itself through the prompt agent's own path (`write_shot_prompts`, no model), so a
+serial shot never reaches a vendor without the look; `describe_serial_shots` then has the
+video editor's model write each shot from the beat, once per look version.
 """
 
 from __future__ import annotations
 
+import logging
+from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import Engine, select
@@ -42,6 +56,14 @@ from app.agents.memory import agent_for_role
 from app.agents.models import AgentRun
 from app.factual.models import ScriptDraft, StoryReview, TopicIdea
 from app.media.models import CharacterBible, Storyboard, StoryboardScene
+from app.media.prompt_agent import PromptError, write_shot_prompts
+from app.media.series_look import (
+    PART_PURPOSES,
+    SHOT_TYPES,
+    load_series_look,
+    serial_shot_size,
+    series_bible,
+)
 from app.publishing.models import ChannelRecord
 from app.services import append_event, utc_now
 from app.story.lines import NameBook, beat_lines, speakers_of, spoken_text
@@ -49,7 +71,11 @@ from app.story.locations import location_name, studio_locations
 from app.story.models import DailyStudioLog, StoryEpisode
 from app.story.services import SERIES_KEY, bibles_for_roster
 
-#: The look the serial is drawn in. One value for every episode, so the channel is one thing.
+logger = logging.getLogger("studio.media.serial_storyboard")
+
+#: The storyboard's style label. The look itself is the series' style block
+#: (`app.media.series_look`), which every shot prompt carries; this label is what the plan
+#: and the page show.
 VISUAL_STYLE = "CHARACTER_ANIMATION"
 ASPECT_RATIO = "9:16"
 WORDS_PER_SECOND = 2.5
@@ -65,6 +91,66 @@ def _character_line(bible: CharacterBible) -> str:
     return (
         f"{bible.canonical_name}: {bible.face_hair_desc}. {bible.outfit_desc}. {bible.props_desc}"
     ).strip()
+
+
+#: The reason on the record of an episode the Owner approved without the Director's reading.
+OWNER_ONLY_NOTE = (
+    "Aprobat de Owner fără recenzia Directorului: episodul nu a fost citit de ea înainte de "
+    "aprobare. Verificările calculate ale Directorului nu au rulat pe el."
+)
+
+
+def _story_gate_record(
+    episode: StoryEpisode,
+    review: dict[str, Any],
+    review_run: str | None,
+    director_id: str | None,
+) -> dict[str, Any]:
+    """The story gate's record for an approved episode, saying who actually read it.
+
+    Measured on the code of 2026-09-24: every serial storyboard wrote PASS with the
+    Director as reviewer, so an episode the Owner approved straight from DRAFT read as if she
+    had passed it. The verdict stays PASS: it is the only value the gate and the table's
+    constraint accept, and the Owner's approval is what lets the episode be filmed (a new
+    verdict would need a migration and the application's head check). Everything else on
+    the row is the truth:
+
+    - her review passed it (whoever approved it after): her checks, her reasons, her run,
+      and she is the reviewer;
+    - she never read it, or her reading is not a PASS: no reviewer, no run, no checks, and
+      the reason says the Owner approved it without her review.
+    """
+    approved_by = episode.reviewed_by or "owner"
+    base = {"episode_id": episode.id, "reviewed_by": approved_by, "approved_by": approved_by}
+    if review.get("verdict") == "PASS":
+        return {
+            "verdict": "PASS",
+            "checks_json": dict(review.get("checks") or {}),
+            "notes_json": {
+                **base,
+                "notes": list(review.get("reasons") or []),
+                "source": "story.episode_review",
+                "director_review": "PASS",
+            },
+            "reviewer_agent_id": director_id,
+            "run_id": review_run,
+        }
+    notes = [OWNER_ONLY_NOTE]
+    if review.get("verdict"):
+        notes.append(f"Recenzia Directorului a fost {review['verdict']}.")
+    return {
+        "verdict": "PASS",
+        "checks_json": {},
+        "notes_json": {
+            **base,
+            "notes": notes,
+            "source": "owner_approval",
+            "director_review": review.get("verdict"),
+            "director_review_run_id": review_run,
+        },
+        "reviewer_agent_id": None,
+        "run_id": None,
+    }
 
 
 def storyboard_from_episode(engine: Engine, episode_id: str, correlation_id: str) -> str:
@@ -91,6 +177,7 @@ def storyboard_from_episode(engine: Engine, episode_id: str, correlation_id: str
             select(ChannelRecord).where(ChannelRecord.channel_type == "OFFICE_SERIAL")
         )
         director = agent_for_role(session, "Director")
+        look = load_series_look()
         beats = list(episode.beats_json or [])
         if not beats:
             raise SerialStoryboardError("Episodul nu are niciun beat")
@@ -132,8 +219,20 @@ def storyboard_from_episode(engine: Engine, episode_id: str, correlation_id: str
                 "characters": list(beat.get("characters") or []),
                 "event_ids": list(beat.get("event_ids") or []),
                 "lines": lines[index - 1],
+                # Which bible speaks each line: the render's takes are spoken in the voice
+                # of the character, not of the scene.
+                "speaker_bibles": {
+                    name: bibles[name].id
+                    for name in speakers_of(lines[index - 1])
+                    if name in bibles
+                },
                 "part": beat.get("part"),
                 "location": beat.get("location"),
+                # The room as the shot prompts name it, and who stands in the background.
+                "location_name": (
+                    location_name(beat["location"], locations) if beat.get("location") else ""
+                ),
+                "background": [str(name) for name in beat.get("background") or []],
             }
             for index, beat in enumerate(beats, start=1)
         ]
@@ -164,24 +263,17 @@ def storyboard_from_episode(engine: Engine, episode_id: str, correlation_id: str
         )
         session.flush()
         # The story gate the media stage asks before spending anything, satisfied by the
-        # reading that actually happened: the Director's episode review.
+        # reading that actually happened, and recorded as that reading (S10).
         session.add(
             StoryReview(
                 id=str(uuid4()),
                 script_id=script_id,
-                verdict="PASS",
-                checks_json=dict(review.get("checks") or {}),
+                **_story_gate_record(
+                    episode, review, review_run, director.id if director else None
+                ),
                 retention_json={},
                 scores_json={},
-                notes_json={
-                    "notes": list(review.get("reasons") or []),
-                    "source": "story.episode_review",
-                    "episode_id": episode.id,
-                    "reviewed_by": episode.reviewed_by,
-                },
                 estimated_seconds=float(target_seconds),
-                reviewer_agent_id=director.id if director else None,
-                run_id=review_run,
                 created_at=now,
             )
         )
@@ -214,6 +306,8 @@ def storyboard_from_episode(engine: Engine, episode_id: str, correlation_id: str
                 channel_id=channel.id if channel else None,
                 series_key=SERIES_KEY,
                 production_overrides_json={},
+                # The series' one look, read-only: an episode never decides its own.
+                visual_bible_json=series_bible(look, ASPECT_RATIO),
                 created_at=now,
                 event_id=event.event_id,
             )
@@ -231,10 +325,16 @@ def storyboard_from_episode(engine: Engine, episode_id: str, correlation_id: str
                 visual = f"{location_name(beat['location'], locations)}. {visual}"
             if present:
                 visual += " Characters: " + " ".join(_character_line(b) for b in present)
+            if look.get("block"):
+                # Replaced by the composed shot below; the look opens even this first draft.
+                visual = f"{look['block']} {visual}"
             # Without a stated duration a scene lasts as long as its words take to say
             # (about 2.5 a second), within what a short's scene can hold — the same rule as
             # the factual storyboard, so the assembler sees nothing new.
             duration = min(9.0, max(3.0, round(len(narration.split()) / WORDS_PER_SECOND, 1)))
+            # The camera varies across the episode by the beat's part; the prompt pass
+            # below writes the same size into the shot's prompt.
+            size = serial_shot_size(beat.get("part"), index, len(speakers))
             session.add(
                 StoryboardScene(
                     id=str(uuid4()),
@@ -244,7 +344,8 @@ def storyboard_from_episode(engine: Engine, episode_id: str, correlation_id: str
                     visual_type=VISUAL_STYLE,
                     duration_seconds=duration,
                     voiceover_segment=narration,
-                    shot_type="MEDIUM",
+                    shot_type=SHOT_TYPES[size],
+                    story_purpose=PART_PURPOSES.get(str(beat.get("part") or "").lower()),
                     transition_in="FADE" if index == 1 else "CUT",
                     character_ids_json=[b.id for b in present],
                     claim_ids_json=[],
@@ -254,4 +355,56 @@ def storyboard_from_episode(engine: Engine, episode_id: str, correlation_id: str
             )
         episode.storyboard_id = storyboard_id
         session.flush()
+    # Every shot composed with the series' look, through the prompt agent's own path and with
+    # no model: the raw scene line above never reaches a vendor. A model's description, when
+    # there is one, comes after (`describe_serial_shots`).
+    try:
+        write_shot_prompts(engine, None, storyboard_id, correlation_id)
+    except PromptError as exc:
+        logger.info("serial_shots_not_composed", extra={"reason": str(exc)[:160]})
     return storyboard_id
+
+
+def _registered(registry: Any) -> bool:
+    try:
+        return registry is not None and bool(registry.registered_ids())
+    except (AttributeError, TypeError):
+        return False
+
+
+def describe_serial_shots(
+    engine: Engine, registry: Any, storyboard_id: str, correlation_id: str
+) -> dict[str, Any]:
+    """Have the video editor's model write each shot of a serial storyboard from its beat.
+
+    Once per look version: shots a model already described under the current look are left
+    as they are (``skipped``), and so are shots the studio composed when no model is
+    registered. Shots composed under an older look, or never composed (a storyboard built
+    before S8), are composed again, by the model when there is one. The model's failure is a
+    degradation: `write_shot_prompts` keeps the studio's composition. Never raises for a
+    refusal; returns ``{"skipped", "shots", ...}``.
+    """
+    look = load_series_look()
+    version = look.get("version") if look.get("in_use") else None
+    has_model = _registered(registry)
+    with Session(engine) as session:
+        packages = [
+            dict(scene.prompt_json or {})
+            for scene in session.scalars(
+                select(StoryboardScene).where(StoryboardScene.storyboard_id == storyboard_id)
+            )
+        ]
+    current = bool(packages) and all(
+        "series_look_version" in p and p.get("series_look_version") == version for p in packages
+    )
+    by_model = current and all(p.get("from_model") for p in packages)
+    if current and (by_model or not has_model):
+        return {"storyboard_id": storyboard_id, "skipped": True, "shots": []}
+    try:
+        written = write_shot_prompts(
+            engine, registry if has_model else None, storyboard_id, correlation_id
+        )
+    except PromptError as exc:
+        logger.info("serial_shots_not_described", extra={"reason": str(exc)[:160]})
+        return {"storyboard_id": storyboard_id, "skipped": True, "shots": [], "error": str(exc)}
+    return {**written, "skipped": False}

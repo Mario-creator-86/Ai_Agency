@@ -11,7 +11,10 @@ prompt carries only its own film. So it was the stand-in.
 A real model can make the stand-in's mistake, and a wrong title on YouTube is public. The
 rest hold the computed check added for that: an episode whose title and tags are word for
 word another channel's film of the last day, or whose title shares no word with its own
-episode, is held by the Publisher and refused at the upload, with the reason in Romanian.
+episode, is refused by the Publisher's check and at the upload, with the reason in Romanian.
+Since S10 (2026-09-24) the refused answer is replaced by the studio's own metadata, built
+from the episode and judged by the same check, and every episode's title takes the series
+format "<hook> | Inside The Nexus Ep. N" (tests/test_serial_identity.py holds that part).
 The factual film is not touched by either.
 """
 
@@ -31,6 +34,7 @@ from app.models import OwnerPolicy
 from app.providers.base import GenerateResult, HealthResult
 from app.providers.registry import ProviderRegistry
 from app.publishing.models import ChannelRecord, PublicationRecord
+from app.publishing.serial_identity import series_title
 from app.publishing.services import (
     PublishingGateError,
     create_publication_intent,
@@ -51,7 +55,10 @@ from test_serial_pipeline import (
 )
 from test_serial_pipeline import registry as story_registry
 
-EPISODE_TITLE = "O zi la studio"
+EPISODE_TITLE = "The Number Before Good Morning"
+#: The episode's logline (brief v4), which opens its description.
+LOGLINE = "Sarah wants the number before good morning, and Aris brings the evidence instead."
+SERIES = "Inside The Nexus"
 FACTUAL_TITLE = "Apa de pe GJ 486 b"
 
 #: What the stand-in answered every Publisher prompt with, on both films.
@@ -76,6 +83,11 @@ EPISODE_METADATA = {
     "tags": ["office serial", "studio life"],
     "hold_reasons": [],
 }
+
+#: What goes out: the Publisher's hook in the series' format, or, when her answer is refused,
+#: the studio's own title from the episode (S10).
+EPISODE_SERIES_TITLE = series_title(EPISODE_METADATA["title"], 1)
+FALLBACK_TITLE = f"{EPISODE_TITLE} | {SERIES} Ep. 1"
 
 
 class PublisherModel:
@@ -115,7 +127,10 @@ def studio(engine, monkeypatch):
     # The day's episode, approved, through the serial's own path to its storyboard.
     log, ids = a_day(engine)
     names = roster_names(engine, log["id"])
-    fake_showrunner(monkeypatch, episode_answer(beats_for(ids, names), title=EPISODE_TITLE))
+    fake_showrunner(
+        monkeypatch,
+        episode_answer(beats_for(ids, names), title=EPISODE_TITLE, logline=LOGLINE),
+    )
     episode = write_episode(engine, story_registry(), log["id"], str(uuid4()))["episode"]
     decide_episode(engine, episode["id"], True, "")
     serial_board = storyboard_from_episode(engine, episode["id"], str(uuid4()))
@@ -186,7 +201,7 @@ def test_each_film_is_described_from_its_own_script(engine, studio):
     episode = _prepare(engine, studio, model, "episode")
 
     assert factual["verdict"] == "READY" and factual["title"] == FACTUAL_METADATA["title"]
-    assert episode["verdict"] == "READY" and episode["title"] == EPISODE_METADATA["title"]
+    assert episode["verdict"] == "READY" and episode["title"] == EPISODE_SERIES_TITLE
     # Each prompt carried its own film and not the other one.
     factual_prompt, episode_prompt = model.prompts
     assert FACTUAL_TITLE in factual_prompt and EPISODE_TITLE not in factual_prompt
@@ -198,10 +213,11 @@ def test_each_film_is_described_from_its_own_script(engine, studio):
             "description": FACTUAL_METADATA["description"],
             "tags": FACTUAL_METADATA["tags"],
         }
+        # The episode's own words, in the series' format (S10).
         assert approved_metadata(session, studio["episode_asset"]) == {
-            "title": EPISODE_METADATA["title"],
-            "description": EPISODE_METADATA["description"],
-            "tags": EPISODE_METADATA["tags"],
+            "title": EPISODE_SERIES_TITLE,
+            "description": f"{LOGLINE}\n\n{EPISODE_METADATA['description']}",
+            "tags": [SERIES, *EPISODE_METADATA["tags"]],
         }
 
 
@@ -210,32 +226,34 @@ def test_each_film_is_described_from_its_own_script(engine, studio):
 # ---------------------------------------------------------------------------
 
 
-def test_the_stand_ins_answer_on_the_episode_is_held_and_the_factual_film_is_not(engine, studio):
+def test_the_stand_ins_answer_on_the_episode_is_refused_and_the_factual_film_is_not(engine, studio):
     model = PublisherModel(for_episode=STAND_IN, for_factual=STAND_IN)
 
     factual = _prepare(engine, studio, model, "factual")
     episode = _prepare(engine, studio, model, "episode")
 
     assert factual["verdict"] == "READY" and factual["hold_reasons"] == []
-    assert episode["verdict"] == "HOLD"
-    reasons = " ".join(episode["hold_reasons"])
+    # Refused by the check; the studio's own metadata, from the episode, goes instead.
+    assert episode["metadata_source"] == "studio_fallback" and episode["verdict"] == "READY"
+    reasons = " ".join(episode["refusals"])
     assert "cuvânt cu cuvânt" in reasons and FACTUAL_METADATA["title"] not in reasons
     assert "niciun cuvânt comun" in reasons
     with Session(engine) as session:
-        # A HOLD is not metadata the upload may take.
-        assert approved_metadata(session, studio["episode_asset"]) is None
+        # The refused answer is not metadata the upload may take.
+        assert approved_metadata(session, studio["episode_asset"])["title"] == FALLBACK_TITLE
         assert approved_metadata(session, studio["factual_asset"])["title"] == STAND_IN["title"]
 
 
-def test_an_episode_titled_word_for_word_like_the_other_channels_film_is_held(engine, studio):
-    """The title belongs to the episode, but it is the factual film's too: held for the copy."""
+def test_an_episode_titled_word_for_word_like_the_other_channels_film_is_refused(engine, studio):
+    """The title belongs to the episode, but it is the factual film's too: refused for the
+    copy, and the episode goes under the studio's own title."""
     model = PublisherModel(for_episode=EPISODE_METADATA, for_factual=EPISODE_METADATA)
 
     assert _prepare(engine, studio, model, "factual")["verdict"] == "READY"
     episode = _prepare(engine, studio, model, "episode")
 
-    assert episode["verdict"] == "HOLD"
-    (reason,) = episode["hold_reasons"]
+    assert episode["metadata_source"] == "studio_fallback" and episode["title"] == FALLBACK_TITLE
+    (reason,) = episode["refusals"]
     assert "cuvânt cu cuvânt" in reason and "Main Channel A" in reason
 
 
@@ -249,13 +267,13 @@ def test_the_same_title_with_other_tags_is_not_a_copy(engine, studio):
     assert _prepare(engine, studio, model, "episode")["verdict"] == "READY"
 
 
-def test_an_episode_whose_title_shares_no_word_with_its_story_is_held(engine, studio):
+def test_an_episode_whose_title_shares_no_word_with_its_story_is_refused(engine, studio):
     model = PublisherModel(for_episode=STAND_IN, for_factual=FACTUAL_METADATA)
 
     episode = _prepare(engine, studio, model, "episode")
 
-    assert episode["verdict"] == "HOLD"
-    (reason,) = episode["hold_reasons"]
+    assert episode["metadata_source"] == "studio_fallback" and episode["title"] == FALLBACK_TITLE
+    (reason,) = episode["refusals"]
     assert "niciun cuvânt comun" in reason and STAND_IN["title"] in reason
 
 
@@ -446,7 +464,10 @@ def test_a_lifted_hold_on_a_refused_title_is_prepared_again_not_blocked(
     from app.runbook import stages
 
     asset = studio["episode_asset"]
-    held = stages._publish(engine, None, _registry(studio, PublisherModel(STAND_IN, STAND_IN)))
+    # A HOLD the Publisher gave herself stays a hold (a refused READY is replaced by the
+    # studio's own metadata since S10), and its title is the copy the check refuses.
+    held_copy = {**STAND_IN, "verdict": "HOLD", "hold_reasons": ["Unsure of the tone."]}
+    held = stages._publish(engine, None, _registry(studio, PublisherModel(held_copy, STAND_IN)))
     assert held["status"] == "COMPLETED" and serial_slot.uploads == [], held
     _lift_the_hold(engine, asset)
 
@@ -454,7 +475,7 @@ def test_a_lifted_hold_on_a_refused_title_is_prepared_again_not_blocked(
     outcome = stages._publish(engine, None, _registry(studio, model))
 
     assert outcome["status"] == "COMPLETED", outcome
-    assert [u["title"] for u in serial_slot.uploads] == [EPISODE_METADATA["title"]]
+    assert [u["title"] for u in serial_slot.uploads] == [EPISODE_SERIES_TITLE]
     assert len(model.prompts) == 1  # asked once more, not every time
     assert [r.status for r in _episode_publications(engine, asset)] == ["PUBLISHED_SIMULATED"]
 
@@ -487,7 +508,7 @@ def test_a_film_the_gate_blocked_once_is_offered_again(engine, studio, serial_sl
     outcome = stages._publish(engine, None, _registry(studio, model))
 
     assert outcome["status"] == "COMPLETED", outcome
-    assert [u["title"] for u in serial_slot.uploads] == [EPISODE_METADATA["title"]]
+    assert [u["title"] for u in serial_slot.uploads] == [EPISODE_SERIES_TITLE]
     assert sorted(r.status for r in _episode_publications(engine, asset)) == [
         "BLOCKED_GATE",
         "PUBLISHED_SIMULATED",

@@ -1494,6 +1494,112 @@ def test_a_letter_between_employees_names_both_and_its_subject(engine, staffed):
     assert item["actor"] == "Sarah (Director)"
 
 
+def _stage_report(engine, when: datetime, stage: str, reporter: str, reason: str) -> str:
+    """A letter as `file_stage_reports` posts it at the end of every run: one per stage,
+    from the stage's owner to the Director's desk, its subject the stage's own outcome."""
+    return add_event(
+        engine,
+        "agent.message_posted",
+        when,
+        {
+            "intent": "STATUS",
+            "subject": f"{stage}: COMPLETED — {reason}",
+            "from_name": reporter,
+            "to_agent_id": None,
+            "to_name": "Director",
+            "for_owner": False,
+        },
+        "agent_message",
+    )
+
+
+def test_the_runs_own_stage_reports_are_routine_and_its_film_is_the_story(engine, staffed):
+    """Rehearsal on a copy of his data (2026-09-24): on the second day the fifteen lines the
+    writer was handed were the run's fifteen end-of-run reports, one per stage, and the
+    episode that was filmed and published that morning was not among them."""
+    when = NOON_DAYS_AGO(2)
+    story = [
+        add_event(engine, "media.storyboard_created", when, {"title": "The record, read twice"}),
+        add_event(engine, "media.video_rendered", when + timedelta(minutes=1), {}),
+        add_event(
+            engine,
+            "publishing.video_published_simulated",
+            when + timedelta(minutes=2),
+            {"title": "The record, read twice | Inside The Nexus Ep. 2"},
+        ),
+    ]
+    for index, stage in enumerate(
+        ("performance_intake", "idea_generation", "research_and_verification", "selection")
+        + ("script_and_storyboard", "serial_queue", "media", "edit_and_qc", "publish")
+        + ("post_run", "serial_next", "books", "daily_log", "preflight", "analytics")
+    ):
+        _stage_report(
+            engine, when + timedelta(minutes=10 + index), stage, "Lyra (Voice Artist)", "gata."
+        )
+
+    log = close_daily_log(engine, TZ, date_days_ago(2))
+
+    projection = log["narrative_projection"]
+    kept = {item["event_id"] for item in projection}
+    assert set(story) <= kept, [item["description"] for item in projection]
+    # The reports only fill a short day up to its eight lines, as the stages ending do.
+    assert len(projection) == 8, [item["description"] for item in projection]
+
+
+def test_a_note_to_the_directors_own_desk_is_not_a_letter_to_a_stranger(engine, staffed):
+    """A letter to the Director's desk was projected as '... wrote to Director', and hers
+    as 'Sarah (Director) wrote to Director': a writer reads two people where there is one."""
+    own = add_event(
+        engine,
+        "agent.message_posted",
+        payload={
+            "intent": "STATUS",
+            "subject": "Vizionare: APPROVE — The record, read twice",
+            "from_name": "Sarah (Director)",
+            "to_agent_id": None,
+            "to_name": "Director",
+        },
+        aggregate_type="agent_message",
+    )
+    other = add_event(
+        engine,
+        "agent.message_posted",
+        payload={
+            "intent": "STATUS",
+            "subject": "Publication READY: The record, read twice",
+            "from_name": "Vera (Publisher)",
+            "to_agent_id": None,
+            "to_name": "Director",
+        },
+        aggregate_type="agent_message",
+    )
+    log = close_daily_log(engine, TZ)
+
+    assert projected(log, own)["description"] == (
+        'Sarah (Director) noted: "Vizionare: APPROVE — The record, read twice"'
+    )
+    assert projected(log, other)["description"] == (
+        'Vera (Publisher) wrote to Sarah (Director): "Publication READY: The record, read twice"'
+    )
+
+
+@pytest.mark.parametrize(
+    ("text", "kept"),
+    [
+        ("Ziua povestită: 2026-09-19.", True),
+        ("The 1969 landing, told again.", True),
+        ("The card ends in 4242.", False),
+        ("Account 4111111111111111 was charged.", False),
+        ("Order 12345 shipped.", False),
+    ],
+)
+def test_a_year_is_not_an_account_number(text, kept):
+    """'[redacted]-09-25' reached the writer (rehearsal, 2026-09-24): every four-digit run
+    was read as an account number, a date's year included, and a line naming a year failed
+    the review's privacy check."""
+    assert (redact(text) == text) is kept, redact(text)
+
+
 def test_a_day_of_routine_alone_has_nothing_to_tell(engine, staffed):
     """A day where only stages ended and letters were answered is a quiet day: the serial
     goes back to the newest day that happened rather than dramatise the machinery."""
@@ -2392,6 +2498,9 @@ def test_the_next_morning_readies_it_for_filming_without_writing_it_again(
     assert outcome["status"] == "COMPLETED", outcome
     assert artefacts["resumed"] == "storyboard"
     assert artefacts["episode_id"] == first["artefacts"]["episode_id"]
+    # The day it films is named on the run card, as on the day it was written (rehearsal on
+    # a copy of his data, 2026-09-24: the resumed stage said told_date None every morning).
+    assert artefacts["told_date"] == first["artefacts"]["told_date"]
     assert artefacts["storyboard_id"]
     assert artefacts["written"] == artefacts["reviewed"] == 0
     assert len(written_) == 1 and len(reviewed) == 1
