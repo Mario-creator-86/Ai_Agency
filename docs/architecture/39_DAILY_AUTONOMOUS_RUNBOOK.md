@@ -147,7 +147,25 @@ Prepare Channel B production job from previous-day safe narrative events.
 Runs before Media (the order of `STAGES` in the runbook code since 2026-09-17) so that the
 same run writes, reviews, films and routes the episode instead of leaving its storyboard for
 the next day; it still prepares Channel B from the previous day's closed log, which is closed
-at the start of the run, while today's log (§12) stays last.
+at the start of the run.
+
+Tomorrow's script (since 2026-09-24, the Owner's done-condition: one click films today's
+episode and writes the next). A second serial stage, `serial_next`, runs after today's log
+is closed (§12) and is the last stage of the run. It writes, reviews and — under the
+channel's policy on who may approve an episode — approves the episode of today, from
+today's log as closed at the run's hour, and makes no storyboard: nothing of a day not yet
+over is filmed or bought. The next run's §7 readies that approved episode for filming (an
+approved episode with no storyboard is taken up before any new day is told) and its §8
+films it. The media stage films a serial episode only once the day it tells is over, so a
+same-day re-run films nothing of today, whoever approved it. `serial_next` writes nothing
+when today's log is not closed (it waits on §12), when today already has an episode, or
+when an earlier episode waits for the Owner's approval or the Director's reading, because
+the episode number is fixed on approval.
+
+Every episode carries a plan for the next one — premise, cold-open line, open question and
+the threads to pay off — stored as PLANNED. The next writer is handed it and keeps it only
+if the day's events support it (the teaser rule of `07_STORY_ENGINE`), says whether it did,
+and the plan is closed as KEPT, DROPPED or UNSAID when that episode is approved.
 
 ## 8. Media
 
@@ -251,6 +269,7 @@ Each stage needs what its work actually reads, not what comes before it in the o
 | §10 publish | §9 | what §9 passed |
 | §11 post-run | — | the report of whatever happened |
 | §12 daily log | — | the record of whatever happened |
+| §7 tomorrow's script | §12 | today's closed log, which it writes the next episode from |
 
 A stage is blocked only when every prerequisite it lists failed or was itself blocked, and
 its reason names the prerequisite and the fault at the root. A skipped prerequisite blocks

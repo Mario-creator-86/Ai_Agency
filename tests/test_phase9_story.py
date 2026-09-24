@@ -60,8 +60,14 @@ def add_event(engine, event_type: str, when: datetime | None = None, payload=Non
 
 
 #: A beat the schema accepts, so tests exercise grounding rather than field lengths.
-SCENE = "Redacția, dimineața"
-LINE = "Sarah cere o temă nouă."
+SCENE = "The newsroom, morning"
+LINE = "Sarah asks for a new topic."
+SARAH = "Sarah (Director)"
+
+
+def beat(event_id: str, text: str = LINE, speaker: str = SARAH, scene: str = SCENE) -> dict:
+    """A beat of the showrunner's v3 schema: one spoken line, one citation."""
+    return {"scene": scene, "lines": [{"speaker": speaker, "text": text}], "event_ids": [event_id]}
 
 
 @pytest.fixture
@@ -70,8 +76,17 @@ def staffed(engine):
     return engine
 
 
+#: The plan for the next episode, which every stored answer carries (schema v3, S6).
+NEXT = {
+    "premise": "Sarah finally gets a topic before she asks for one.",
+    "cold_open_line": "I have a topic, and you did not even have to ask.",
+    "open_question": "Will Sarah accept a topic she did not ask for?",
+    "threads_to_pay_off": [],
+}
+
+
 def episode_answer(beats: list[dict], title: str = "O zi la studio") -> str:
-    return json.dumps({"title": title, "beats": beats})
+    return json.dumps({"title": title, "beats": beats, "next_episode": NEXT})
 
 
 def run(engine, log_id, answer, monkeypatch, roster_name="Sarah (Director)"):
@@ -182,18 +197,8 @@ def test_a_grounded_episode_is_stored_with_its_citations(engine, staffed, monkey
 
     answer = episode_answer(
         [
-            {
-                "scene": "Dimineața în redacție",
-                "dialogue": "Sarah cere o temă nouă.",
-                "event_ids": [first],
-                "characters": ["Sarah (Director)"],
-            },
-            {
-                "scene": "Sala de montaj",
-                "dialogue": "Randarea se termină.",
-                "event_ids": [second],
-                "characters": [],
-            },
+            beat(first, scene="The newsroom in the morning"),
+            beat(second, "The render is finished.", "Kael (Video Editor)", "The edit suite"),
         ]
     )
 
@@ -216,13 +221,8 @@ def test_a_beat_citing_an_event_that_did_not_happen_fails_the_whole_episode(
 
     answer = episode_answer(
         [
-            {"scene": SCENE, "dialogue": LINE, "event_ids": [real], "characters": []},
-            {
-                "scene": "Sala serverelor",
-                "dialogue": "Furnizorul a picat toată dimineața.",
-                "event_ids": [str(uuid4())],
-                "characters": [],
-            },
+            beat(real),
+            beat(str(uuid4()), "The vendor was down all morning.", scene="The server room"),
         ]
     )
 
@@ -241,12 +241,7 @@ def test_an_event_from_another_day_cannot_be_cited(engine, staffed, monkeypatch)
 
     answer = episode_answer(
         [
-            {
-                "scene": SCENE,
-                "dialogue": "Asta a fost ieri.",
-                "event_ids": [yesterday],
-                "characters": [],
-            }
+            beat(yesterday, "That was yesterday."),
         ]
     )
 
@@ -262,12 +257,7 @@ def test_the_serial_cannot_cast_someone_who_was_not_there(engine, staffed, monke
 
     answer = episode_answer(
         [
-            {
-                "scene": "Ședință",
-                "dialogue": "Cineva nou intră pe ușă.",
-                "event_ids": [real],
-                "characters": ["Un stagiar inventat"],
-            }
+            beat(real, "Someone new walks in.", "Un stagiar inventat", "A meeting"),
         ]
     )
 
@@ -282,7 +272,7 @@ def test_a_beat_with_no_citation_is_refused(engine, staffed, monkeypatch):
     log = close_daily_log(engine, TZ)
 
     answer = episode_answer(
-        [{"scene": SCENE, "dialogue": "O scenă fără sursă.", "event_ids": [], "characters": []}]
+        [{"scene": SCENE, "lines": [{"speaker": SARAH, "text": "A scene with no source."}]}]
     )
 
     with pytest.raises(StoryError):
@@ -291,7 +281,16 @@ def test_a_beat_with_no_citation_is_refused(engine, staffed, monkeypatch):
 
 @pytest.mark.parametrize(
     "answer",
-    ["Iată episodul!", '{"title": "T", "beats": []}', '{"beats": [{"scene": "A"}]}', ""],
+    [
+        "Iată episodul!",
+        '{"title": "T", "beats": []}',
+        '{"beats": [{"scene": "A"}]}',
+        "",
+        # The v2 shape, dialogue with no speaker on it: one voice would read it all, so the
+        # v3 schema refuses it rather than guess who says what.
+        '{"title": "Old shape", "beats": [{"scene": "The newsroom", "dialogue": "No names.",'
+        ' "event_ids": ["x"]}]}',
+    ],
 )
 def test_an_answer_that_is_not_an_episode_stores_nothing(engine, staffed, monkeypatch, answer):
     add_event(engine, "agent.message_sent")
@@ -312,9 +311,7 @@ def test_an_answer_that_is_not_an_episode_stores_nothing(engine, staffed, monkey
 def test_grounding_can_be_audited_after_the_fact(engine, staffed, monkeypatch):
     real = add_event(engine, "agent.message_sent")
     log = close_daily_log(engine, TZ)
-    answer = episode_answer(
-        [{"scene": SCENE, "dialogue": LINE, "event_ids": [real], "characters": []}]
-    )
+    answer = episode_answer([beat(real)])
     episode = run(engine, log["id"], answer, monkeypatch)["episode"]
 
     report = grounding_report(engine, episode["id"])
@@ -328,9 +325,7 @@ def test_the_audit_names_a_citation_that_is_not_in_the_log(engine, staffed, monk
     """Defence in depth: if a row were ever written past the check, the report still catches it."""
     real = add_event(engine, "agent.message_sent")
     log = close_daily_log(engine, TZ)
-    answer = episode_answer(
-        [{"scene": SCENE, "dialogue": LINE, "event_ids": [real], "characters": []}]
-    )
+    answer = episode_answer([beat(real)])
     episode = run(engine, log["id"], answer, monkeypatch)["episode"]
 
     invented = str(uuid4())
@@ -354,7 +349,7 @@ def test_an_episode_can_be_rejected_with_a_reason(engine, staffed, monkeypatch):
     episode = run(
         engine,
         log["id"],
-        episode_answer([{"scene": SCENE, "dialogue": LINE, "event_ids": [real], "characters": []}]),
+        episode_answer([beat(real)]),
         monkeypatch,
     )["episode"]
 
@@ -370,7 +365,7 @@ def test_an_episode_cannot_be_decided_twice(engine, staffed, monkeypatch):
     episode = run(
         engine,
         log["id"],
-        episode_answer([{"scene": SCENE, "dialogue": LINE, "event_ids": [real], "characters": []}]),
+        episode_answer([beat(real)]),
         monkeypatch,
     )["episode"]
     decide_episode(engine, episode["id"], True, "")
@@ -412,7 +407,7 @@ def test_the_operational_record_is_untouched_by_the_narrative(engine, staffed, m
     run(
         engine,
         log["id"],
-        episode_answer([{"scene": SCENE, "dialogue": LINE, "event_ids": [real], "characters": []}]),
+        episode_answer([beat(real)]),
         monkeypatch,
     )
 

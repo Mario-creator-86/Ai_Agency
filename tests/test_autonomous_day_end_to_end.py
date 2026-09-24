@@ -4,7 +4,7 @@ Every other test in this suite holds one piece: a stage, a gate, a ledger, a que
 held the whole day together, so the studio could pass a thousand tests and still fail at the
 seam between two of them — which is where a day actually breaks. This drives the real thing:
 the scheduler fires the daily job, the queue hands the task to the worker, and the worker
-executes the runbook with the real stage runners, twelve stages in order, against a
+executes the runbook with the real stage runners, thirteen stages in order, against a
 temporary database.
 
 WHAT IS REAL HERE: the scheduler, the task queue and its idempotency key, the runbook and
@@ -76,19 +76,24 @@ TZ = "Europe/Bucharest"
 #: the stored source verbatim, so the source, the claim and the quote are the same sentence.
 FACT = "The James Webb telescope observes the universe in infrared light."
 
-#: A beat's dialogue: three of these are about 130 spoken words, inside the serial's own
-#: 45-70 second window. Nothing in it is a price, a model name or an address, because the
-#: episode's privacy check reads every line.
-BEAT_LINE = (
-    "Sarah opens the board and asks for the number before anyone says good morning. "
-    "Aris answers with the evidence first and the opinion never, which is his whole style. "
-    "The room laughs, the cup goes down, and the day has officially started in here."
+#: A beat's two lines, ten spoken words each: six beats of them are 120 words, inside the
+#: serial's own 45-70 second window and the brief's 8-22 words a beat. Nothing in them is a
+#: price, a model name or an address, because the episode's privacy check reads every line.
+BEAT_LINES = (
+    "Right, where are we with the number this morning, everyone?",
+    "The evidence first, then the opinion, and never the reverse.",
 )
+#: The structure the brief (v3) asks for, over six beats.
+BEAT_PARTS = ("hook", "situation", "situation", "turn", "payoff", "button")
 
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 
 # --------------------------------------------------------------------- the faked vendors --
+
+
+#: The episode the stand-in showrunner writes; the Publisher knows the serial by it.
+EPISODE_TITLE = "The number before good morning"
 
 
 class StudioModel:
@@ -170,6 +175,20 @@ class StudioModel:
         if "pronunciation" in prompt:
             return json.dumps({"verdict": "PASS", "notes": [], "pronunciation": []})
         if "hold_reasons" in prompt:
+            # Each film is described from its own prompt, as a real Publisher would. The
+            # rehearsal of 2026-09-18 ran with one fixed answer here, and both films went up
+            # as 'Infrared light and what it shows': the stand-in's limit, not the studio's
+            # (tests/test_publication_metadata_per_film.py), and now a HOLD for the episode.
+            if EPISODE_TITLE in prompt:
+                return json.dumps(
+                    {
+                        "verdict": "READY",
+                        "title": "The number before good morning",
+                        "description": "Sarah asks for the number; Aris brings the evidence.",
+                        "tags": ["office serial", "studio"],
+                        "hold_reasons": [],
+                    }
+                )
             return json.dumps(
                 {
                     "verdict": "READY",
@@ -191,9 +210,15 @@ class StudioModel:
         if "event_ids" in prompt:
             return self._episode(prompt)
         if '"verdict": "PASS" | "FAIL"' in prompt:
+            # The episode review v2 asks for the rubric; a PASS without all six scores is
+            # no verdict, so the stand-in scores every part as working.
             return json.dumps(
                 {
                     "verdict": "PASS",
+                    "scores": {
+                        part: 4
+                        for part in ("hook", "situation", "turn", "payoff", "voices", "button")
+                    },
                     "reasons": ["One situation, a turn, a payoff."],
                     "notes": "",
                     "story": "A morning in the office, told once.",
@@ -282,38 +307,59 @@ class StudioModel:
         )
 
     def _episode(self, prompt: str) -> str:
-        # The cast is read from the cast section alone and the events from theirs: a name
-        # lifted out of an event's description would put someone in a room the record says
-        # they were not in, and the episode's own grounding check would refuse the episode.
-        cast_block = prompt.split("DISTRIBUȚIA DE AZI", 1)[-1].split("EVENIMENTELE DE AZI", 1)[0]
-        events_block = prompt.split("EVENIMENTELE DE AZI", 1)[-1]
-        events = re.findall(r"^- (" + _UUID.pattern + r"): ", events_block, re.MULTILINE)
-        # A cast line reads "- Sarah (Director) (Director/CEO, ACTIVE) — who she is": the
-        # display name carries brackets of its own, so the name is what stands before the
-        # bracket that holds the role and the lifecycle, not before the first bracket.
-        names = re.findall(r"^- (.+?) \([^()]+, [A-Z]+\)", cast_block, re.MULTILINE)
-        if not events or not names:
+        # Written as the brief (v3) asks, from its data alone: the names from ALLOWED_NAMES,
+        # the rooms from LOCATIONS, the events and who acts in them from EVENTS. The speakers
+        # are two who act in the cited events, as the Owner's cast rule asks; anyone else
+        # stands in the background of the first beat.
+        allowed = re.search(r"^ALLOWED_NAMES: (\[.*\])$", prompt, re.MULTILINE)
+        names = json.loads(allowed.group(1)) if allowed else []
+        rooms_block = prompt.split("LOCATIONS (", 1)[-1].split("EVENTS OF", 1)[0]
+        rooms = re.findall(r"^- ([a-z0-9_-]+): ", rooms_block, re.MULTILINE)
+        events_block = prompt.split("EVENTS OF", 1)[-1].split("PREVIOUSLY:", 1)[0]
+        events = [
+            json.loads(row)
+            for row in events_block.splitlines()
+            if row.startswith('{"id"') and _UUID.search(row)
+        ]
+        if not events or len(names) < 2 or not rooms:
             return "Nu am din ce scrie episodul."
+        planned = "Written with Ep." in prompt
+        cited = [events[index % len(events)] for index in range(len(BEAT_PARTS))]
+        acting = list(dict.fromkeys(name for event in cited for name in event["who"]))
+        speakers = (acting + [name for name in names if name not in acting])[:2]
         beats = [
             {
-                "scene": f"Redacția, dimineața. Scena {index + 1}.",
-                "dialogue": BEAT_LINE,
-                "event_ids": [events[index % len(events)]],
-                # Everyone on today's cast is in the first beat: the episode's own check
-                # refuses a day in which someone who was there never appears.
-                "characters": names if index == 0 else names[:1],
+                "part": part,
+                "location": rooms[0],
+                "scene": f"The studio in the morning, scene {index + 1}, {speakers[0]} at a desk.",
+                "lines": [
+                    {"speaker": speakers[0], "text": BEAT_LINES[0]},
+                    {"speaker": speakers[1], "text": BEAT_LINES[1]},
+                ],
+                "background": [n for n in names if n not in speakers] if index == 0 else [],
+                "event_ids": [cited[index]["id"]],
             }
-            for index in range(3)
+            for index, part in enumerate(BEAT_PARTS)
         ]
         return json.dumps(
             {
-                "title": "The number before good morning",
+                "title": EPISODE_TITLE,
                 "beats": beats,
                 "summary": "Sarah asked for the number; Aris brought the evidence first.",
                 "threads_continued": [],
                 "threads_closed": [],
                 "threads_opened": ["whether anyone will ever bring the number first"],
                 "recurring": ["the espresso cup"],
+                # The plan for the next episode, and what became of the one this brief
+                # carried (a plan is offered only once an episode is in canon).
+                "next_episode": {
+                    "premise": "Aris brings the number before Sarah can ask for it.",
+                    "cold_open_line": "Before you ask, the number is already on your desk.",
+                    "open_question": "Will Sarah trust a number she did not ask for?",
+                    "threads_to_pay_off": [],
+                },
+                "plan_kept": False if planned else None,
+                "plan_note": "The day did not bring the number first." if planned else "",
             }
         )
 
@@ -858,10 +904,10 @@ def test_the_clock_starts_a_day_that_ends_in_a_published_film_and_an_episode(
         [(stage["stage"], stage["status"], stage["reason"][:200]) for stage in stages_ran],
     )
     assert run.business_date == business_date(TZ)
-    # 2. Twelve stages, each with its own recorded outcome — never a stage left out.
+    # 2. Thirteen stages, each with its own recorded outcome — never a stage left out.
     names = [stage["stage"] for stage in stages_ran]
     assert names == list(STAGES), names
-    assert run.stages_total == 12
+    assert run.stages_total == 13
     by_name = {stage["stage"]: stage for stage in stages_ran}
     for name in ("research_and_verification", "selection", "script_and_storyboard", "media"):
         assert by_name[name]["status"] == "COMPLETED", (name, by_name[name]["reason"])
@@ -894,20 +940,29 @@ def test_the_clock_starts_a_day_that_ends_in_a_published_film_and_an_episode(
     assert published.privacy_status == "private"
     assert all(record.privacy_status == "private" for record in publications)
     assert len(studio["publisher"].uploads) == 2, studio["publisher"].uploads
+    # Each upload carries its own film's title, never the other channel's.
+    assert len({upload["title"] for upload in studio["publisher"].uploads}) == 2
     assert {upload["privacy_status"] for upload in studio["publisher"].uploads} == {"private"}
 
-    # 5. The serial wrote yesterday's episode — the day that is over, never today's.
+    # 5. The serial filmed yesterday's episode — the day that is over — and wrote today's
+    #    for tomorrow, which nothing films today.
     assert episodes, by_name["serial_queue"]["reason"]
-    (episode,) = episodes
+    with Session(engine) as session:
+        from app.story.models import DailyStudioLog
+
+        dated = {session.get(DailyStudioLog, e.log_id).business_date: e for e in episodes}
+    assert len(episodes) == 2, sorted(dated)
+    episode = dated[business_date(TZ, datetime.now(UTC) - timedelta(days=1))]
     # Grounded in yesterday's events, read by the Director, and approved by her because the
     # Owner's policy on Channel B lets her — the whole chain, in one run.
     assert episode.status == "APPROVED", (episode.status, episode.review_json)
     assert episode.grounded_event_ids_json, "the episode cited nothing that happened"
-    with Session(engine) as session:
-        from app.story.models import DailyStudioLog
-
-        log = session.get(DailyStudioLog, episode.log_id)
-    assert log.business_date == business_date(TZ, datetime.now(UTC) - timedelta(days=1))
+    assert episode.storyboard_id
+    tomorrows = dated[business_date(TZ)]
+    assert by_name["serial_next"]["status"] == "COMPLETED", by_name["serial_next"]["reason"]
+    assert tomorrows.status == "APPROVED", (tomorrows.status, tomorrows.review_json)
+    assert tomorrows.storyboard_id is None
+    assert tomorrows.continuity_json["next_episode"]["status"] == "PLANNED"
     # Two storyboards: the factual film's and the serial's, both filmed in the same day.
     assert len(boards) == 2, [board.title for board in boards]
     assert any(board.series_key == "office_serial" for board in boards)
@@ -957,7 +1012,7 @@ def _set_mode(engine, mode: str) -> None:
 
 
 def _run_a_day(engine, settings, studio):
-    """The scheduler's tick, the queue, the worker and the twelve stages — the real day."""
+    """The scheduler's tick, the queue, the worker and the thirteen stages — the real day."""
     from app.integrations.vault import CredentialVault
 
     vault = CredentialVault(Path(str(engine.url.database)).with_suffix(".credentials.key"))
@@ -1231,3 +1286,122 @@ def test_a_test_day_with_a_video_connection_buys_its_shots_only_through_the_fake
 
     # And nothing left the machine, or even tried to: no refusal was needed.
     assert no_network.refused == [], no_network.refused
+
+
+# ----------------------------------------------- one click, today's film and tomorrow's --
+
+
+class _Tomorrow(datetime):
+    """The studio's calendar one day on: what `business_date` and the day's closes read.
+
+    Only the calendar moves. Every event the run writes keeps the real clock's timestamp, so
+    the next day's own log holds none of them: a quiet day, which is what a run at dawn sees.
+    """
+
+    @classmethod
+    def now(cls, tz: Any = None) -> Any:  # type: ignore[override]
+        return datetime.now(tz) + timedelta(days=1)
+
+
+def _the_serial(engine) -> dict[str, dict[str, Any]]:
+    """Each episode by the day it tells: its status, storyboard and whether it was filmed."""
+    from app.media.models import VideoRenderJob
+    from app.story.models import DailyStudioLog
+
+    with Session(engine) as session:
+        told: dict[str, dict[str, Any]] = {}
+        for episode in session.scalars(select(StoryEpisode)):
+            date = session.get(DailyStudioLog, episode.log_id).business_date
+            assert date not in told, f"two episodes for {date}"
+            filmed = episode.storyboard_id is not None and (
+                session.scalar(
+                    select(VideoRenderJob.id).where(
+                        VideoRenderJob.storyboard_id == episode.storyboard_id,
+                        VideoRenderJob.status == "COMPLETED",
+                    )
+                )
+                is not None
+            )
+            told[date] = {
+                "id": episode.id,
+                "status": episode.status,
+                "storyboard_id": episode.storyboard_id,
+                "filmed": filmed,
+                "plan": (episode.continuity_json or {}).get("plan"),
+                "verdict": (episode.review_json or {}).get("verdict"),
+                "scores": (episode.review_json or {}).get("scores"),
+            }
+        return told
+
+
+def _episode_prompts(studio) -> int:
+    return sum(1 for prompt in studio["model"].prompts if "ALLOWED_NAMES:" in prompt)
+
+
+@requires_ffmpeg
+def test_one_click_films_one_episode_and_writes_the_next(engine, settings, studio, monkeypatch):
+    """The Owner's done-condition (2026-09-24): one click creates today's episode and the
+    script of the next one. Day D films the episode of D-1 and writes, reads and approves the
+    one of D, with no storyboard; a second click on D films nothing of D; day D+1 films the
+    episode of D without writing it again."""
+    from app.integrations.vault import CredentialVault
+    from app.runbook.services import execute_daily_run
+
+    vault = CredentialVault(Path(str(engine.url.database)).with_suffix(".credentials.key"))
+    day_d = business_date(TZ)
+    day_before = business_date(TZ, datetime.now(UTC) - timedelta(days=1))
+
+    def click() -> dict[str, dict[str, Any]]:
+        runners = build_stage_runners(engine, settings, vault, studio["registry"])
+        result = execute_daily_run(engine, settings, vault, stage_runners=runners)
+        return {stage["stage"]: stage for stage in result["stages"]}
+
+    # Day D: yesterday's episode is written, approved, storyboarded and filmed; today's is
+    # written, read and approved under the Owner's policy, and nothing more.
+    first = click()
+    serial = _the_serial(engine)
+    assert sorted(serial) == [day_before, day_d], (first["serial_queue"], first["serial_next"])
+    assert serial[day_before]["status"] == "APPROVED"
+    assert serial[day_before]["filmed"], first["media"]["reason"]
+    assert serial[day_d]["status"] == "APPROVED", first["serial_next"]["reason"]
+    assert serial[day_d]["storyboard_id"] is None
+    assert first["serial_queue"]["artefacts"]["told_date"] == day_before
+    assert first["serial_queue"]["artefacts"]["storyboard_id"]
+    tomorrow = first["serial_next"]["artefacts"]
+    assert tomorrow["told_date"] == day_d
+    assert tomorrow["storyboard_id"] is None
+    # Tomorrow's script was written once and read by the Director through the whole rubric,
+    # on the same run that filmed yesterday's: the Owner's two halves in one click.
+    assert tomorrow["written"] == tomorrow["reviewed"] == tomorrow["approved"] == 1, tomorrow
+    assert serial[day_d]["verdict"] == "PASS" and len(serial[day_d]["scores"]) == 6
+    assert first["media"]["status"] == "COMPLETED", first["media"]["reason"]
+    # The next writer was handed the plan of the episode before and said what became of it.
+    assert serial[day_d]["plan"]["from_episode_id"] == serial[day_before]["id"]
+    assert serial[day_d]["plan"]["kept"] is False
+    written_on_d = _episode_prompts(studio)
+    assert written_on_d == 2
+
+    # A second click the same day: nothing of D is storyboarded, filmed or written again.
+    again = click()
+    serial = _the_serial(engine)
+    assert sorted(serial) == [day_before, day_d]
+    assert serial[day_d]["storyboard_id"] is None and not serial[day_d]["filmed"]
+    assert again["serial_next"]["artefacts"]["written"] == 0, again["serial_next"]["reason"]
+    assert _episode_prompts(studio) == written_on_d
+
+    # Day D+1: the episode written on D is readied from its rows and filmed; no model is
+    # asked to write it again, and D+1 itself (quiet: nothing is timestamped on it) gets none.
+    monkeypatch.setattr("app.story.services.datetime", _Tomorrow)
+    assert business_date(TZ) != day_d
+    next_day = click()
+    serial = _the_serial(engine)
+    assert sorted(serial) == [day_before, day_d], next_day["serial_next"]["reason"]
+    assert next_day["serial_queue"]["artefacts"]["resumed"] == "storyboard"
+    assert next_day["serial_queue"]["artefacts"]["episode_id"] == serial[day_d]["id"]
+    assert serial[day_d]["storyboard_id"]
+    assert serial[day_d]["filmed"], next_day["media"]["reason"]
+    assert _episode_prompts(studio) == written_on_d
+    # D+1's own script is not written from a day with nothing on it, and the stage says so.
+    assert next_day["serial_next"]["status"] == "COMPLETED", next_day["serial_next"]
+    assert next_day["serial_next"]["artefacts"]["written"] == 0
+    assert next_day["serial_next"]["reason"].strip()

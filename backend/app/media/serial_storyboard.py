@@ -7,7 +7,7 @@ narration review, quality control, the Director's viewing and the five-point pub
 run on it unchanged. Where the shape forces a row the serial does not naturally have, the
 row is written honestly and says what it is:
 
-- The `ScriptDraft` is the episode's dialogue as one voiceover, `claim_ids_json` empty and
+- The `ScriptDraft` is the episode's spoken words as one voiceover, `claim_ids_json` empty and
   `story_json` marking it a dramatisation. **The factual claim gate does not apply to a
   dramatisation**: an episode makes no claims about the world, it dramatises committed
   events of a closed log, and its truth is the grounding check, not a source. The publishing
@@ -20,10 +20,15 @@ row is written honestly and says what it is:
 - The `TopicIdea` behind the script carries status SERIAL so the factual selection never
   picks it and never counts it as a topic in production.
 
-Voices: each scene lists the bible ids of the characters in its beat, in the beat's order, so
-the production policy binds the first locked character's voice where a bible has one, and
-the narrator otherwise. The visual prompt is the beat's scene plus each character's bible
-lines, quoted verbatim, so the look is the bible's and not the model's guess.
+Voices: each scene lists the bible ids of the characters in its beat, the speakers first in
+the order they speak, so the production policy binds the first speaker's voice where a bible
+has one, and the narrator otherwise. What a voice reads is the lines' words alone
+(`app.story.lines`): measured before the lines existed (2026-09-24), the beat's free dialogue
+went whole to one voice, and "Sarah: (sighs)" was read aloud. A v2 episode is read the same
+way, the labels the roster knows taken off and the stage directions out. Each scene's lines,
+with their speakers and directions, are kept on the script's `scenes_json` for per-speaker
+voices. The visual prompt is the beat's room, its scene and each character's bible lines,
+quoted verbatim, so the look is the bible's and not the model's guess.
 """
 
 from __future__ import annotations
@@ -39,6 +44,8 @@ from app.factual.models import ScriptDraft, StoryReview, TopicIdea
 from app.media.models import CharacterBible, Storyboard, StoryboardScene
 from app.publishing.models import ChannelRecord
 from app.services import append_event, utc_now
+from app.story.lines import NameBook, beat_lines, speakers_of, spoken_text
+from app.story.locations import location_name, studio_locations
 from app.story.models import DailyStudioLog, StoryEpisode
 from app.story.services import SERIES_KEY, bibles_for_roster
 
@@ -78,6 +85,8 @@ def storyboard_from_episode(engine: Engine, episode_id: str, correlation_id: str
         log = session.get(DailyStudioLog, episode.log_id)
         roster = list(log.roster_json or []) if log else []
         bibles = bibles_for_roster(session, roster)
+        names = NameBook(roster, bibles)
+        locations = studio_locations(session, roster)
         channel = session.scalar(
             select(ChannelRecord).where(ChannelRecord.channel_type == "OFFICE_SERIAL")
         )
@@ -93,7 +102,9 @@ def storyboard_from_episode(engine: Engine, episode_id: str, correlation_id: str
         if review_run and session.get(AgentRun, review_run) is None:
             review_run = None
 
-        dialogue = "\n\n".join(str(beat.get("dialogue") or "").strip() for beat in beats)
+        lines = [beat_lines(beat, names) for beat in beats]
+        spoken = [spoken_text(said) for said in lines]
+        dialogue = "\n\n".join(spoken)
         words = len(dialogue.split())
         target_seconds = max(30, min(75, round(words / WORDS_PER_SECOND)))
 
@@ -116,10 +127,13 @@ def storyboard_from_episode(engine: Engine, episode_id: str, correlation_id: str
         scenes_json = [
             {
                 "scene_index": index,
-                "narration": str(beat.get("dialogue") or "").strip(),
+                "narration": spoken[index - 1],
                 "visual_description": str(beat.get("scene") or "").strip(),
                 "characters": list(beat.get("characters") or []),
                 "event_ids": list(beat.get("event_ids") or []),
+                "lines": lines[index - 1],
+                "part": beat.get("part"),
+                "location": beat.get("location"),
             }
             for index, beat in enumerate(beats, start=1)
         ]
@@ -206,10 +220,15 @@ def storyboard_from_episode(engine: Engine, episode_id: str, correlation_id: str
         )
         session.flush()
         for index, beat in enumerate(beats, start=1):
-            narration = str(beat.get("dialogue") or "").strip()
-            names = [str(name) for name in (beat.get("characters") or [])]
-            present = [bibles[name] for name in names if name in bibles]
+            narration = spoken[index - 1]
+            speakers = speakers_of(lines[index - 1])
+            cast = speakers + [
+                str(name) for name in (beat.get("characters") or []) if name not in speakers
+            ]
+            present = [bibles[name] for name in cast if name in bibles]
             visual = str(beat.get("scene") or "").strip()
+            if beat.get("location"):
+                visual = f"{location_name(beat['location'], locations)}. {visual}"
             if present:
                 visual += " Characters: " + " ".join(_character_line(b) for b in present)
             # Without a stated duration a scene lasts as long as its words take to say

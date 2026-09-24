@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
+import unicodedata
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -1017,6 +1019,168 @@ def evaluate_publishing_gate(
     }
 
 
+# ---------------------------------------------------------------- an episode's own metadata --
+
+#: How far back "the same day" reaches for another film's metadata. A window, not a calendar
+#: date: the daily run can straddle midnight, and a copy made at 23:50 is the same mistake at
+#: 00:10.
+METADATA_COPY_WINDOW = timedelta(hours=24)
+
+#: Words that say nothing about what a film is: a title sharing only these with its episode
+#: shares nothing. English and Romanian, because the Publisher writes in the audience's
+#: language and the showrunner writes the episode in the studio's.
+_FILLER_TERMS = frozenset(
+    "the and for with what that this from how why who are was were its his her not but you "
+    "out all one can has have had into about over when where which your their there they "
+    "them then than just also more most very some any each our ours will would could should "
+    "does did done being been is it in on of to at by an or as be do if so no up we he she "
+    "pentru care este sunt cum dar din dupa sau mai lui cei cel cea ale unei unui prin spre "
+    "fara intr intre catre despre acest aceasta acesta aceste acei ceea cand unde cine ce "
+    "nu da si sa se la de pe cu un o in al ai ei ea el".split()
+)
+_TERM = re.compile(r"[^\W_]+", re.UNICODE)
+
+
+def _terms(text: str) -> set[str]:
+    """The words of a text that can carry meaning: case and diacritics folded, fillers out."""
+    folded = unicodedata.normalize("NFKD", str(text or "").casefold())
+    plain = "".join(ch for ch in folded if not unicodedata.combining(ch))
+    return {w for w in _TERM.findall(plain) if len(w) >= 3 and w not in _FILLER_TERMS}
+
+
+def _shares_a_term(title_terms: set[str], source_terms: set[str]) -> bool:
+    """One word in common, or one inflection of it: Romanian and English both bend the ending
+    ("biroul"/"birou", "lights"/"light"), so five shared leading letters count as one word."""
+    if title_terms & source_terms:
+        return True
+    stems = {t[:5] for t in source_terms if len(t) >= 5}
+    return any(len(t) >= 5 and t[:5] in stems for t in title_terms)
+
+
+def _same_metadata_key(title: str, tags: list[str]) -> tuple[str, frozenset[str]]:
+    """What "word for word" compares: the title and the set of tags, spacing and case aside."""
+    return (
+        " ".join(str(title or "").split()).casefold(),
+        frozenset(" ".join(str(t).split()).casefold() for t in tags or [] if str(t).strip()),
+    )
+
+
+def _episode_words(session: Session, script: ScriptDraft) -> str:
+    """Everything the episode itself says: its title, its lines, its scenes, who is in it,
+    and the summary the showrunner wrote — read from the script the film was shot from and
+    from the episode row behind it."""
+    from app.story.models import StoryEpisode  # noqa: PLC0415 - story imports publishing
+
+    parts: list[str] = [script.title or "", script.voiceover_full_text or ""]
+    for scene in script.scenes_json or []:
+        if isinstance(scene, dict):
+            parts += [str(scene.get("narration") or ""), str(scene.get("visual_description") or "")]
+            parts += [str(name) for name in scene.get("characters") or []]
+    story = script.story_json if isinstance(script.story_json, dict) else {}
+    episode_id = story.get("episode_id")
+    episode = session.get(StoryEpisode, episode_id) if episode_id else None
+    if episode is not None:
+        parts.append(episode.title or "")
+        for beat in episode.beats_json or []:
+            if isinstance(beat, dict):
+                parts += [str(beat.get("scene") or ""), str(beat.get("dialogue") or "")]
+                parts += [str(name) for name in beat.get("characters") or []]
+        continuity = episode.continuity_json if isinstance(episode.continuity_json, dict) else {}
+        parts.append(str(continuity.get("summary") or ""))
+    return "\n".join(parts)
+
+
+def publication_metadata_refusals(
+    session: Session,
+    media_asset_id: str,
+    channel_id: str,
+    title: str,
+    tags: list[str],
+) -> list[str]:
+    """Why an office-serial episode may not go out under this title and these tags, in Romanian.
+
+    Measured in the rehearsal of 2026-09-18: the factual film and the serial episode both went
+    up as 'Infrared light and what it shows', tagged space/astronomy. The studio had asked for
+    each film's metadata from its own storyboard; the stand-in model answered every Publisher
+    prompt with the same JSON. A real model can make that mistake too, and a wrong title on
+    YouTube is public, so two things are computed before an episode leaves:
+
+    - its title and tags must not be, word for word, those of another film prepared or
+      published in the last 24 hours for a different channel;
+    - its title must share at least one meaning-bearing word with the episode itself (its
+      title, lines, scenes, characters, summary). That is a necessary condition, not proof
+      the title is good: it catches a title about something else entirely, nothing finer.
+
+    An episode is a film whose script says it is one (`story_json.kind`, written by
+    `storyboard_from_episode`). Every other film returns no reason: the factual film's
+    metadata is the Publisher's and the claim gate's, and this check does not touch it. An
+    episode whose words cannot be read is refused, never passed: the second test could not
+    run.
+    """
+    script_id, storyboard_id = film_identity(session, media_asset_id)
+    script = session.get(ScriptDraft, script_id) if script_id else None
+    story = script.story_json if script is not None and isinstance(script.story_json, dict) else {}
+    if script is None or story.get("kind") != "office_serial_episode":
+        return []
+
+    reasons: list[str] = []
+    own_film = {key for key in (script_id, storyboard_id) if key}
+    mine = _same_metadata_key(title, tags)
+    since = (datetime.now(UTC) - METADATA_COPY_WINDOW).isoformat()
+
+    def other_film(asset_id: str | None, other_channel: str | None) -> bool:
+        if not asset_id or asset_id == media_asset_id or other_channel == channel_id:
+            return False
+        return not own_film & {k for k in film_identity(session, asset_id) if k}
+
+    # Another film's metadata: what was already put on a channel (or tried), and what the
+    # Publisher prepared and is waiting to go — whichever film the run reaches first.
+    others: list[tuple[str, list[str], str | None]] = []
+    for record in session.scalars(
+        select(PublicationRecord).where(PublicationRecord.created_at >= since)
+    ):
+        if other_film(record.media_asset_id, record.channel_id):
+            others.append((record.title, list(record.tags_json or []), record.channel_id))
+    from app.agents.models import AgentMessage  # noqa: PLC0415 - agents import publishing
+
+    for message in session.scalars(
+        select(AgentMessage).where(
+            AgentMessage.intent.in_(("STATUS", "ESCALATE")), AgentMessage.created_at >= since
+        )
+    ):
+        body = message.body_json or {}
+        if "title" not in body or body.get("verdict") != "READY":
+            continue
+        if other_film(body.get("media_asset_id"), body.get("channel_id")):
+            others.append(
+                (str(body["title"]), list(body.get("tags") or []), body.get("channel_id"))
+            )
+    for other_title, other_tags, other_channel in others:
+        if _same_metadata_key(other_title, other_tags) == mine:
+            channel = session.get(ChannelRecord, other_channel) if other_channel else None
+            where = channel.channel_name if channel is not None else "alt canal"
+            reasons.append(
+                f"Titlul și etichetele episodului sunt, cuvânt cu cuvânt, cele ale altui film "
+                f"pregătit sau publicat în ultimele 24 de ore pentru {where}; un episod pleacă "
+                "doar cu metadatele lui."
+            )
+            break
+
+    source = _terms(_episode_words(session, script))
+    if not source:
+        reasons.append(
+            "Episodul din spatele filmului nu poate fi citit (nu are niciun cuvânt), deci "
+            "titlul nu poate fi verificat față de el; filmul nu pleacă până nu poate fi."
+        )
+    elif not _shares_a_term(_terms(title), source):
+        reasons.append(
+            f"Titlul „{str(title)[:100]}” nu are niciun cuvânt comun cu episodul pe care îl "
+            "descrie (titlul, replicile, scenele, personajele); un titlu greșit pe YouTube "
+            "este public."
+        )
+    return reasons
+
+
 def create_publication_intent(
     engine: Engine,
     channel_id: str,
@@ -1073,6 +1237,19 @@ def create_publication_intent(
         policy_version=policy_version,
         scheduled_publish_time=scheduled_publish_time,
     )
+    # The metadata is checked here as well as by the Publisher: this is the one road every
+    # upload takes, so a HOLD the Director lifted, or a caller that never asked her, still
+    # cannot put an episode on its channel under another film's title.
+    with Session(engine) as session:
+        metadata_reasons = publication_metadata_refusals(
+            session, media_asset_id, channel_id, title, tags
+        )
+    if metadata_reasons:
+        gate_result = {
+            **gate_result,
+            "eligible": False,
+            "reasons": [*gate_result["reasons"], *metadata_reasons],
+        }
     pub_id = str(uuid4())
     now = utc_now()
 

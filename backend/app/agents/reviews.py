@@ -41,6 +41,7 @@ from app.media.models import (
 )
 from app.providers.registry import ProviderRegistry
 from app.publishing.models import ChannelRecord
+from app.publishing.services import publication_metadata_refusals
 
 REVIEW_TEMPLATE_VERSION = "review-v1"
 
@@ -435,6 +436,19 @@ def prepare_publication(
             update={"verdict": "HOLD", "hold_reasons": [*metadata.hold_reasons, language_hold]}
         )
     tags = [" ".join(t.split())[:30] for t in metadata.tags if str(t).strip()][:15]
+    # An episode's metadata must be its own. Measured in the rehearsal of 2026-09-18: both
+    # films of the day went up as 'Infrared light and what it shows' because the stand-in
+    # model gave every prompt the same answer; a real model can do the same. The check is
+    # computed (`publication_metadata_refusals`), a factual film is never measured by it,
+    # and its HOLD reaches the Director like any other.
+    with Session(engine) as session:
+        metadata_holds = publication_metadata_refusals(
+            session, media_asset_id, channel_id, metadata.title, tags
+        )
+    if metadata_holds:
+        metadata = metadata.model_copy(
+            update={"verdict": "HOLD", "hold_reasons": [*metadata.hold_reasons, *metadata_holds]}
+        )
     with Session(engine) as session, session.begin():
         remember(
             session,

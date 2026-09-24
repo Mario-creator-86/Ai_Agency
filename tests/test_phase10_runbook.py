@@ -1102,12 +1102,45 @@ def test_a_render_cost_is_read_from_the_credits(engine):
 # ---------------------------------------------------------------------------
 
 
-def test_the_serial_stage_runs_before_the_media_stage_and_the_log_closes_last():
+def test_the_serial_stage_runs_before_the_media_stage_and_tomorrows_script_after_the_log():
     """The serial's storyboard is rendered by the same run's media stage, so the stage that
-    writes it comes first; the day's own log is still the last thing the run does."""
+    writes it comes first. Tomorrow's script (serial_next) is written from today's log, so it
+    comes after the log is closed, as the last stage of the run."""
     assert STAGES.index("serial_queue") < STAGES.index("media")
     assert STAGES.index("script_and_storyboard") < STAGES.index("serial_queue")
-    assert STAGES[-1] == "daily_log"
+    assert STAGES[-2:] == ("daily_log", "serial_next")
+
+
+def test_tomorrows_script_is_written_after_todays_log_is_closed(engine, settings, vault, studio):
+    """The runbook closed today's log after every stage; a stage reading it has to run after
+    that close, not merely after the ``daily_log`` entry in the order."""
+    from app.story.models import DailyStudioLog
+    from app.story.services import business_date
+
+    make_a_model_available(engine)
+    today = business_date(settings.timezone)
+    seen: dict[str, str | None] = {}
+
+    def serial_next() -> dict:
+        with Session(engine) as session:
+            log = session.scalars(
+                select(DailyStudioLog).where(DailyStudioLog.business_date == today)
+            ).first()
+            seen["status"] = log.status if log else None
+        return {"status": COMPLETED, "reason": "ok", "artefacts": {"written": 1}}
+
+    runners = {name: (lambda: {"status": COMPLETED, "reason": "ok"}) for name in STAGES[1:]}
+    runners["serial_next"] = serial_next
+
+    result = execute_daily_run(engine, settings, vault, stage_runners=runners)
+
+    assert seen["status"] == "CLOSED", "tomorrow's script was asked for before today closed"
+    names = [stage["stage"] for stage in result["stages"]]
+    assert names == list(STAGES)
+    last = result["stages"][-1]
+    assert last["stage"] == "serial_next" and last["status"] == COMPLETED
+    assert last["produced"] == 1
+    assert result["status"] == "COMPLETED"
 
 
 def test_yesterday_is_closed_in_full_before_any_stage_runs(engine, settings, vault, studio):

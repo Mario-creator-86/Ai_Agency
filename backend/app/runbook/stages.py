@@ -131,6 +131,7 @@ from app.publishing.services import (
     evaluate_publishing_gate,
     film_identity,
     publication_footer,
+    publication_metadata_refusals,
     publish_media_asset,
     published_films,
     resolve_publish_visibility,
@@ -146,7 +147,9 @@ from app.research.agent import (
 from app.research.service import research_budget, retest_stale_hosts
 from app.runbook.services import BLOCKED, OWNER_STOP_REASON, stop_requested
 from app.services import may_act, studio_environment, utc_now
-from app.story.serial_stage import run_serial_stage
+from app.story.models import DailyStudioLog, StoryEpisode
+from app.story.serial_stage import run_serial_next_stage, run_serial_stage
+from app.story.services import business_date
 
 logger = logging.getLogger("studio.runbook.stages")
 
@@ -198,6 +201,8 @@ def _outcome(status: str, reason: str, **artefacts: Any) -> dict[str, Any]:
 #:   policy decides who may see it. Tiering it by visibility would have made the day's riskiest
 #:   act depend on a setting the same day could change.
 #: post_run — T1: the Director reads the day's reports and writes to the Owner, inside.
+#: serial_next — T1, "create draft", as script_and_storyboard: tomorrow's episode is text, and
+#:   it builds no storyboard, so nothing is bought and nothing leaves.
 #:
 #: preflight and daily_log have no runner and no entry: one reads the studio's own state and
 #: refuses nothing by itself, the other is the run's own record of what already happened.
@@ -212,6 +217,7 @@ STAGE_ACTIONS: dict[str, tuple[str, str]] = {
     "edit_and_qc": ("media.quality_control", "T1"),
     "publish": ("publishing.public_publish", "T3"),
     "post_run": ("runbook.day_report", "T1"),
+    "serial_next": ("script.draft", "T1"),
 }
 
 
@@ -1068,6 +1074,31 @@ def is_serial_storyboard(board: Storyboard) -> bool:
     return channel_type_for_storyboard(board) == "OFFICE_SERIAL"
 
 
+def serial_films_due(session: Session, boards: list[Storyboard], today: str) -> list[str]:
+    """The serial storyboards the media stage may film ``today``, in the order given.
+
+    A serial episode is filmed only once the day it tells is over. The serial stage takes
+    only closed days before today and tomorrow's script builds no storyboard, but the
+    Owner's approve button builds one at once (since 2026-09-24): an episode of today he
+    approved in the afternoon would otherwise be filmed by a same-day re-run, before the day
+    it tells has ended. A storyboard no episode points to is not held.
+    """
+    ids = [board.id for board in boards]
+    told_on = {
+        storyboard_id: date
+        for storyboard_id, date in session.execute(
+            select(StoryEpisode.storyboard_id, DailyStudioLog.business_date)
+            .join(DailyStudioLog, DailyStudioLog.id == StoryEpisode.log_id)
+            .where(StoryEpisode.storyboard_id.in_(ids))
+        )
+    }
+    return [
+        board.id
+        for board in boards
+        if is_serial_storyboard(board) and (told_on.get(board.id) or "") < today
+    ]
+
+
 def _release(engine: Engine, reservation_id: str | None, reason: str, correlation: str) -> None:
     """Let a film's hold go, for every path on which the film was not made.
 
@@ -1158,7 +1189,7 @@ def _media(
             if board.id not in rendered
         ]
         factual = [board.id for board in approved if not is_serial_storyboard(board)][:1]
-        serial = [board.id for board in approved if is_serial_storyboard(board)][:1]
+        serial = serial_films_due(session, approved, business_date(settings.timezone))[:1]
         pending = factual + serial
         retry = [] if pending else stalled_storyboards(session, engine, vault)[:1]
 
@@ -1718,6 +1749,19 @@ def _publish_one(
             "held_asset": asset_id,
             "hold_message_id": hold["message_id"],
         }
+    if metadata is not None:
+        # A HOLD the Director lifted hands back the title she was shown, and for an episode
+        # that title can be the very one the computed check refused (a copy of the other
+        # channel's film, or no word of its own story). Measured on the code of 2026-09-19:
+        # it went to the upload, the upload refused it and left a BLOCKED_GATE row, and every
+        # later run did the same. The check is asked here first; a refused title is not
+        # metadata, so the Publisher is asked again below and her new answer is judged anew.
+        with Session(engine) as session:
+            refused = publication_metadata_refusals(
+                session, asset_id, channel_id, metadata["title"][:100], metadata["tags"]
+            )
+        if refused:
+            metadata = None
     if metadata is None:
         if registry is None or not _has_language_model(registry):
             return {
@@ -1890,7 +1934,17 @@ def _publish(
                 "Niciun slot de canal nu este legat de un cont YouTube conectat. Leagă-le în "
                 "Publicare → Sloturi de canale; publicarea și analytics folosesc legătura.",
             )
-        published_assets = set(session.scalars(select(PublicationRecord.media_asset_id)))
+        # A BLOCKED_GATE row is the gate's refusal kept for the audit, not a film on its way
+        # to a channel: counting it here kept an episode out for good after one refusal.
+        # The gate is asked again for the film below, so a refusal that still holds still
+        # refuses.
+        published_assets = set(
+            session.scalars(
+                select(PublicationRecord.media_asset_id).where(
+                    PublicationRecord.status != "BLOCKED_GATE"
+                )
+            )
+        )
         # A film the Director rejected stays out of the queue; the next one comes forward.
         rejected_assets = {
             review.media_asset_id
@@ -2008,6 +2062,15 @@ def _serial_queue(
     left for the Owner), and raises only for a provider or network fault.
     """
     return run_serial_stage(engine, registry, settings, vault)
+
+
+def _serial_next(
+    engine: Engine, registry: ProviderRegistry, settings: Settings, vault: Any = None
+) -> dict[str, Any]:
+    """Tomorrow's script, from today's log closed a moment before: written, read and
+    approved under the Owner's policy, never storyboarded (`run_serial_next_stage`). The
+    next run's serial stage readies it and that run's media stage films it."""
+    return run_serial_next_stage(engine, registry, settings, vault)
 
 
 # ------------------------------------------------------------------------- post_run --
@@ -2224,4 +2287,5 @@ def build_stage_runners(
         "serial_queue": keep(
             "serial_queue", lambda: _serial_queue(engine, registry, settings, vault)
         ),
+        "serial_next": keep("serial_next", lambda: _serial_next(engine, registry, settings, vault)),
     }

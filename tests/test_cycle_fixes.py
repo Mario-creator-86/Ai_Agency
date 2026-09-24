@@ -99,7 +99,9 @@ def test_a_field_longer_than_the_schema_allows_is_clipped_not_refused():
     )
     assert len(episode.beats[0].scene) == 700
 
-    # The showrunner's own habit: dialogue as a list of lines, one character as a string.
+    # The showrunner's own habit: dialogue as a list of lines, one background name as a
+    # string. Since the v3 schema (2026-09-24) each labelled row becomes a line of its
+    # speaker's; the label and the direction are taken out of the words when it is stored.
     episode = _parse_episode(
         json.dumps(
             {
@@ -112,17 +114,18 @@ def test_a_field_longer_than_the_schema_allows_is_clipped_not_refused():
                             "Dr. Aris: (râzând) nu, doar pauză.",
                         ],
                         "event_ids": ["e-1"],
-                        "characters": "Dr. Aris",
+                        "background": "Dr. Aris",
                     }
                 ],
             },
             ensure_ascii=False,
         )
     )
-    assert (
-        episode.beats[0].dialogue == "Sarah: te-ai blocat iar?\nDr. Aris: (râzând) nu, doar pauză."
-    )
-    assert episode.beats[0].characters == ["Dr. Aris"]
+    assert [(line.speaker, line.text) for line in episode.beats[0].lines] == [
+        ("Sarah", "te-ai blocat iar?"),
+        ("Dr. Aris", "(râzând) nu, doar pauză."),
+    ]
+    assert episode.beats[0].background == ["Dr. Aris"]
 
 
 # --------------------------------------------------------------------------- the line

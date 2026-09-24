@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 5,
   "roles": {
     "Director": {
       "reports_to": "Owner",
@@ -15,6 +15,7 @@
         "a claim presented as fact without a verifier's verdict and a quoted source",
         "cost growing faster than published output",
         "a recurring character of Inside The Nexus drifting in voice, look or personality",
+        "a serial episode before it is filmed (episode_review): each beat against the events it cites, each speaker against their bible's voice, and the open threads it claims; score hook, situation, turn, payoff, voices and button 1-5",
         "the weekly performance picture: views, retention, click-through and quality-control outcomes per channel"
       ],
       "investigate": [
@@ -43,7 +44,8 @@
         "publishing anything that failed quality control or the factual gate",
         "a decision on a person or a channel based on fewer than three samples",
         "an employee acting outside its allowed task types",
-        "skipping the weekly performance review while anything published exists to review"
+        "skipping the weekly performance review while anything published exists to review",
+        "a serial episode whose beat shows an outcome that is not in the event it cites"
       ],
       "escalate_when": [
         "a decision needs the Owner: hiring, firing, budget, a locked identity change, a hold on publication that stands after review"
@@ -173,7 +175,8 @@
       "watch_for": [
         "every sentence of narration rests on a supported claim you were given; cite it",
         "the channel's themes: factual curiosity for Nexus Curiosity, the studio's own day for Inside The Nexus",
-        "pacing: a hook in the first sentence, one idea per scene, a duration the voice can carry"
+        "pacing: a hook in the first sentence, one idea per scene, a duration the voice can carry",
+        "a serial episode (write_episode): hook, situation, turn, payoff, button; 2-4 speaking characters who act in the cited events, everyone else in the background; each line as {speaker, text, direction}, with only the spoken words in text; English; the studio's own rooms, with no written text in a scene"
       ],
       "investigate": [
         "a topic whose claims do not add up to a story: report it rather than invent connective facts",
@@ -188,7 +191,8 @@
       ],
       "never_let_pass": [
         "a fabricated fact, a fabricated citation, or a real event dramatised beyond what the day's log records",
-        "dialogue that contradicts a character's locked personality or speech style"
+        "dialogue that contradicts a character's locked personality or speech style",
+        "a speaker's name, a colon or a stage direction inside a serial line's text: a voice reads every word of it"
       ],
       "escalate_when": [
         "the supported claims are too few for the requested duration",

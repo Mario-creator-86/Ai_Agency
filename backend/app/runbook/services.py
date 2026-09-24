@@ -36,7 +36,12 @@ from app.models import OwnerPolicy
 from app.runbook.models import DailyRun, SafeModeRecord
 from app.runbook.preflight import run_preflight
 from app.services import append_event, utc_now
-from app.story.services import business_date, close_daily_log, close_previous_day
+from app.story.services import (
+    business_date,
+    close_daily_log,
+    close_missing_days,
+    close_previous_day,
+)
 from app.workflows.services import append_event_with_outbox, enqueue_task, list_queue_tasks
 
 logger = logging.getLogger("studio.runbook")
@@ -53,7 +58,9 @@ PENDING_STATES = ("QUEUED", "RETRYING", "CLAIMED", "RUNNING")
 #: day, whose log is closed at the start of the run, and leaves a storyboard that the same
 #: run's media stage films, quality control measures and the publish stage routes to
 #: Channel B. Last in the list it was a stage the day never rendered — the serial existed
-#: as text only. The day's own log stays the last thing the run does.
+#: as text only. The day's own log is closed after every stage of work; only tomorrow's
+#: script (``serial_next``, since 2026-09-24) comes after it, because it is written from that
+#: log: the Owner's one click films one episode and writes the next.
 STAGES = (
     "preflight",
     "performance_intake",
@@ -67,7 +74,12 @@ STAGES = (
     "publish",
     "post_run",
     "daily_log",
+    "serial_next",
 )
+
+#: The stages that read today's closed log, and so run after the close (`_close_the_day`),
+#: not merely after the ``daily_log`` entry in the order.
+AFTER_THE_CLOSE = STAGES[STAGES.index("daily_log") + 1 :]
 
 #: What each stage needs from the stages before it — the only edges along which a failure
 #: travels. A stage whose every listed prerequisite FAILED or was BLOCKED is BLOCKED itself,
@@ -92,6 +104,9 @@ STAGES = (
 #:   serial_queue. Either one is a film to make, so media is blocked only when both are lost.
 #: edit_and_qc — the files media rendered. publish — what quality control passed.
 #: post_run, daily_log — the report and the record of whatever happened: nothing.
+#: serial_next — today's log, closed by daily_log: with no closed log there is no day to
+#:   write tomorrow's episode from, and "blocked by daily_log" says so where a quiet day
+#:   would not.
 STAGE_PREREQUISITES: dict[str, tuple[str, ...]] = {
     "performance_intake": (),
     "idea_generation": (),
@@ -104,6 +119,7 @@ STAGE_PREREQUISITES: dict[str, tuple[str, ...]] = {
     "publish": ("edit_and_qc",),
     "post_run": (),
     "daily_log": (),
+    "serial_next": ("daily_log",),
 }
 
 #: The stages the day's films pass through. A failure that loses one of them loses a film,
@@ -146,6 +162,7 @@ PRODUCED_FROM: dict[str, tuple[str, ...]] = {
     "edit_and_qc": ("passed", "failed"),
     "publish": ("published",),
     "post_run": ("applied",),
+    "serial_next": ("written",),
 }
 
 COMPLETED = "COMPLETED"
@@ -630,13 +647,24 @@ def _close_previous_day(
     wait: Callable[[float], None],
     correlation: str,
 ) -> dict[str, Any]:
-    """Close the previous business date in full, retried like a stage; the log or the fault."""
+    """Close the past days no run closed, then yesterday in full, retried like a stage; the
+    log of yesterday (with the dates this call closed) or the fault.
+
+    The missing days first (`close_missing_days`, a week back): measured on the readers' copy
+    of his database on 2026-09-24, 2026-09-13..22 were never closed because only yesterday
+    was, and the serial could tell nothing but a quiet yesterday.
+    """
+
+    def close_past_days() -> dict[str, Any]:
+        closed = [log["business_date"] for log in close_missing_days(engine, settings, correlation)]
+        return {**close_previous_day(engine, settings, correlation), "days_closed": closed}
+
     outcome, error, attempts = _run_with_retries(
         engine,
         settings,
         run_id,
         "previous_day_log",
-        lambda: close_previous_day(engine, settings, correlation),
+        close_past_days,
         wait,
         correlation,
     )
@@ -655,6 +683,7 @@ def _close_previous_day(
         "total_events": outcome["total_events"],
         "event_counts": outcome["event_counts"],
         "closed_at": outcome["closed_at"],
+        "days_closed": outcome["days_closed"],
         "attempts": attempts,
     }
 
@@ -859,6 +888,117 @@ def execute_daily_run(
         correlation,
     )
 
+    def run_stage(name: str) -> None:
+        """Run one stage, or record why it did not run: the Owner's stop first, then the
+        dependency table, then the runner with its retries. Called for the stages before
+        the day's log is closed and, after the close, for those that read it."""
+        nonlocal owner_stopped, stopped_at, stop_reason
+        if owner_stopped:
+            stages.append(_stage(name, BLOCKED, OWNER_STOP_REASON))
+            return
+        # The switch is read again before every stage. It used to be read once, at the
+        # gate: an Owner who pressed STOP at stage three watched the studio spend the
+        # remaining nine anyway. It outranks the dependency table: a stage after his
+        # stop is his, whatever else happened before it.
+        if stop_requested(engine):
+            owner_stopped = True
+            stopped_at = name
+            stop_reason = OWNER_STOP_REASON
+            stages.append(_stage(name, BLOCKED, OWNER_STOP_REASON))
+            _finished(engine, run_id, name, BLOCKED, OWNER_STOP_REASON, correlation)
+            return
+        # A failure costs the stages that take their input from it, and no others. This
+        # used to be "any failure blocks everything after it": a refused statistics token
+        # at performance intake left the day with nothing filmed (rehearsal, 2026-09-18).
+        waiting = _blocked_by(name, lost)
+        if waiting is not None:
+            needs = STAGE_PREREQUISITES[name]
+            roots: list[str] = []
+            for need in needs:
+                roots.extend(r for r in lost[need]["roots"] if r not in roots)
+            lost[name] = {"status": BLOCKED, "roots": roots}
+            stages.append(_stage(name, BLOCKED, waiting))
+            _finished(engine, run_id, name, BLOCKED, waiting, correlation)
+            return
+        runner = runners.get(name)
+        _announce(
+            engine,
+            "runbook.stage_started",
+            run_id,
+            {"stage": name, "index": STAGES.index(name) + 1, "total": len(STAGES)},
+            correlation,
+        )
+        if runner is None:
+            reason = "Nicio implementare conectată pentru această etapă în această rulare."
+            stages.append(_stage(name, SKIPPED, reason))
+            _finished(engine, run_id, name, SKIPPED, reason, correlation)
+            return
+        outcome, error, attempts = _run_with_retries(
+            engine, settings, run_id, name, runner, wait, correlation
+        )
+        if error is not None:
+            reason = f"{type(error).__name__}: {error}"[:500]
+            if stop_requested(engine):
+                # A runner that polls `stop_requested` may raise to get out; a runner
+                # that does not may have been failed by the stop itself (a connection
+                # closed under it). Either way the Owner ended the day: BLOCKED, with
+                # what the stage said kept in the record, and no fault.
+                owner_stopped = True
+                stopped_at = name
+                stop_reason = OWNER_STOP_REASON
+                stages.append(
+                    _stage(name, BLOCKED, f"{OWNER_STOP_REASON} ({reason})", attempts=attempts)
+                )
+                _finished(engine, run_id, name, BLOCKED, OWNER_STOP_REASON, correlation)
+                return
+            stage_fault: str | None = classify_fault(error)
+            stages.append(_stage(name, FAILED, reason, fault_class=stage_fault, attempts=attempts))
+            _finished(engine, run_id, name, FAILED, reason, correlation)
+            errors[name] = error
+            breaks(
+                name,
+                FAILED,
+                (
+                    f"Etapa «{name}» a eșuat după {attempts} încercări, pe o eroare "
+                    f"trecătoare: {type(error).__name__}"
+                    if stage_fault == TRANSIENT
+                    else f"Etapa «{name}» a eșuat: {type(error).__name__}"
+                ),
+                stage_fault,
+            )
+            return
+        assert outcome is not None  # one of the two is always set
+        status = str(outcome.get("status", COMPLETED))
+        stage_fault = None
+        if status == FAILED:
+            # A runner that reports its own failure says which kind, or it is hard: a
+            # stage that knows the fault is passing has to say so to be retried.
+            stage_fault = str(outcome.get("fault_class") or HARD)
+        stages.append(
+            _stage(
+                name,
+                status,
+                str(outcome.get("reason", "")),
+                outcome.get("artefacts"),
+                fault_class=stage_fault,
+                attempts=attempts,
+            )
+        )
+        _finished(engine, run_id, name, status, str(outcome.get("reason", "")), correlation)
+        if status == BLOCKED and stop_requested(engine):
+            # The stage stopped itself because the Owner asked (the media loop between
+            # scenes): his decision, not a gate refusing.
+            owner_stopped = True
+            stopped_at = name
+            stop_reason = str(outcome.get("reason", "")) or OWNER_STOP_REASON
+        elif status in (BLOCKED, FAILED):
+            breaks(
+                name,
+                status,
+                str(outcome.get("reason", "")) or f"Etapa «{name}» s-a oprit.",
+                stage_fault,
+            )
+
     if preflight["status"] == "BLOCKED":
         stopped_at = "preflight"
         stop_reason = preflight["summary"]
@@ -879,114 +1019,8 @@ def execute_daily_run(
         stages[0]["artefacts"]["previous_day_log"] = _close_previous_day(
             engine, settings, run_id, wait, correlation
         )
-        for name in STAGES[1:]:
-            if owner_stopped:
-                stages.append(_stage(name, BLOCKED, OWNER_STOP_REASON))
-                continue
-            # The switch is read again before every stage. It used to be read once, at the
-            # gate: an Owner who pressed STOP at stage three watched the studio spend the
-            # remaining nine anyway. It outranks the dependency table: a stage after his
-            # stop is his, whatever else happened before it.
-            if stop_requested(engine):
-                owner_stopped = True
-                stopped_at = name
-                stop_reason = OWNER_STOP_REASON
-                stages.append(_stage(name, BLOCKED, OWNER_STOP_REASON))
-                _finished(engine, run_id, name, BLOCKED, OWNER_STOP_REASON, correlation)
-                continue
-            # A failure costs the stages that take their input from it, and no others. This
-            # used to be "any failure blocks everything after it": a refused statistics token
-            # at performance intake left the day with nothing filmed (rehearsal, 2026-09-18).
-            waiting = _blocked_by(name, lost)
-            if waiting is not None:
-                needs = STAGE_PREREQUISITES[name]
-                roots: list[str] = []
-                for need in needs:
-                    roots.extend(r for r in lost[need]["roots"] if r not in roots)
-                lost[name] = {"status": BLOCKED, "roots": roots}
-                stages.append(_stage(name, BLOCKED, waiting))
-                _finished(engine, run_id, name, BLOCKED, waiting, correlation)
-                continue
-            runner = runners.get(name)
-            _announce(
-                engine,
-                "runbook.stage_started",
-                run_id,
-                {"stage": name, "index": STAGES.index(name) + 1, "total": len(STAGES)},
-                correlation,
-            )
-            if runner is None:
-                reason = "Nicio implementare conectată pentru această etapă în această rulare."
-                stages.append(_stage(name, SKIPPED, reason))
-                _finished(engine, run_id, name, SKIPPED, reason, correlation)
-                continue
-            outcome, error, attempts = _run_with_retries(
-                engine, settings, run_id, name, runner, wait, correlation
-            )
-            if error is not None:
-                reason = f"{type(error).__name__}: {error}"[:500]
-                if stop_requested(engine):
-                    # A runner that polls `stop_requested` may raise to get out; a runner
-                    # that does not may have been failed by the stop itself (a connection
-                    # closed under it). Either way the Owner ended the day: BLOCKED, with
-                    # what the stage said kept in the record, and no fault.
-                    owner_stopped = True
-                    stopped_at = name
-                    stop_reason = OWNER_STOP_REASON
-                    stages.append(
-                        _stage(name, BLOCKED, f"{OWNER_STOP_REASON} ({reason})", attempts=attempts)
-                    )
-                    _finished(engine, run_id, name, BLOCKED, OWNER_STOP_REASON, correlation)
-                    continue
-                stage_fault: str | None = classify_fault(error)
-                stages.append(
-                    _stage(name, FAILED, reason, fault_class=stage_fault, attempts=attempts)
-                )
-                _finished(engine, run_id, name, FAILED, reason, correlation)
-                errors[name] = error
-                breaks(
-                    name,
-                    FAILED,
-                    (
-                        f"Etapa «{name}» a eșuat după {attempts} încercări, pe o eroare "
-                        f"trecătoare: {type(error).__name__}"
-                        if stage_fault == TRANSIENT
-                        else f"Etapa «{name}» a eșuat: {type(error).__name__}"
-                    ),
-                    stage_fault,
-                )
-                continue
-            assert outcome is not None  # one of the two is always set
-            status = str(outcome.get("status", COMPLETED))
-            stage_fault = None
-            if status == FAILED:
-                # A runner that reports its own failure says which kind, or it is hard: a
-                # stage that knows the fault is passing has to say so to be retried.
-                stage_fault = str(outcome.get("fault_class") or HARD)
-            stages.append(
-                _stage(
-                    name,
-                    status,
-                    str(outcome.get("reason", "")),
-                    outcome.get("artefacts"),
-                    fault_class=stage_fault,
-                    attempts=attempts,
-                )
-            )
-            _finished(engine, run_id, name, status, str(outcome.get("reason", "")), correlation)
-            if status == BLOCKED and stop_requested(engine):
-                # The stage stopped itself because the Owner asked (the media loop between
-                # scenes): his decision, not a gate refusing.
-                owner_stopped = True
-                stopped_at = name
-                stop_reason = str(outcome.get("reason", "")) or OWNER_STOP_REASON
-            elif status in (BLOCKED, FAILED):
-                breaks(
-                    name,
-                    status,
-                    str(outcome.get("reason", "")) or f"Etapa «{name}» s-a oprit.",
-                    stage_fault,
-                )
+        for name in STAGES[1 : STAGES.index("daily_log") + 1]:
+            run_stage(name)
 
     # The day is closed from the event stream whenever the studio actually worked: a partial day
     # is still a day, and the log is what tomorrow's episode is checked against. A blocked
@@ -1006,6 +1040,13 @@ def execute_daily_run(
                 f"Etapa «daily_log» a eșuat: {closing['reason'].split(':', 1)[0]}",
                 closing["fault_class"],
             )
+    if preflight["status"] != "BLOCKED":
+        # Tomorrow's script is written from the log just closed, under the same rules as
+        # every other stage: the Owner's stop, the dependency table (a failed close blocks
+        # it) and the retries. A blocked preflight has already recorded it BLOCKED.
+        for name in AFTER_THE_CLOSE:
+            run_stage(name)
+        worked = any(s["status"] == COMPLETED for s in stages[1:])
 
     for stage in stages:
         stage["produced"] = produced_by(stage)

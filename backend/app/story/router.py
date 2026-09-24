@@ -181,15 +181,26 @@ def create_story_router() -> APIRouter:
             raise HTTPException(
                 status_code=422, detail="Scrie de ce respingi episodul; motivul rămâne în istoric."
             )
+        engine = request.app.state.engine
         try:
-            return decide_episode(
-                request.app.state.engine,
-                episode_id,
-                cmd.approve,
-                cmd.notes,
-                str(cmd.command_id),
+            decided = decide_episode(
+                engine, episode_id, cmd.approve, cmd.notes, str(cmd.command_id)
             )
         except StoryError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
+        if not cmd.approve:
+            return decided
+        # His approval used to flip the status and stop there: nothing built the storyboard,
+        # and the serial stage never went back to a day that had an episode, so an episode he
+        # approved was never filmed (measured 2026-09-24). The storyboard is rows, no vendor
+        # is called; the next run's media stage films it. Should it fail, the approval
+        # stands, the reason is returned, and the next run's serial stage tries again.
+        try:
+            decided["storyboard_id"] = storyboard_from_episode(
+                engine, episode_id, str(cmd.command_id)
+            )
+        except SerialStoryboardError as exc:
+            decided["storyboard_error"] = str(exc)
+        return decided
 
     return router

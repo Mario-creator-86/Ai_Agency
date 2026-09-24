@@ -90,9 +90,14 @@ def _day(ran: list[str]) -> dict:
         "edit_and_qc": {"passed": 2, "failed": 0},
         "publish": {"published": [{"publication_id": "p-1"}, {"publication_id": "p-2"}]},
         "post_run": {"applied": ["d-1"]},
+        "serial_next": {"written": 1},
     }
     # The day's log has no runner of its own: the runbook closes it (`_close_the_day`).
-    return {name: (lambda n=name: _ok(n, ran, **produced.get(n, {}))) for name in STAGES[1:-1]}
+    return {
+        name: (lambda n=name: _ok(n, ran, **produced.get(n, {})))
+        for name in STAGES[1:]
+        if name != "daily_log"
+    }
 
 
 def _raise(exc: BaseException):
@@ -126,6 +131,9 @@ def test_the_dependency_table_names_every_stage_after_the_preflight_and_only_ear
             assert STAGES.index(need) < STAGES.index(name), (name, need)
     # The two the day reports on and records never wait for anything.
     assert STAGE_PREREQUISITES["post_run"] == () and STAGE_PREREQUISITES["daily_log"] == ()
+    # Tomorrow's script reads today's closed log, and nothing else of the day.
+    assert STAGE_PREREQUISITES["serial_next"] == ("daily_log",)
+    assert "serial_next" not in PRODUCTION_STAGES
     # Selection needs what verification writes, not today's statistics.
     assert "performance_intake" not in STAGE_PREREQUISITES["selection"]
     assert set(STAGE_PREREQUISITES["media"]) == {"script_and_storyboard", "serial_queue"}
@@ -161,7 +169,8 @@ def test_a_day_whose_performance_intake_fails_still_researches_writes_films_and_
         assert stages[name]["status"] == COMPLETED, (name, stages[name]["reason"])
     for name in ("research_and_verification", "selection", "script_and_storyboard", "media"):
         assert name in ran
-    assert ran[-2:] == ["publish", "post_run"]
+    # Tomorrow's script comes last, after the day's log is closed.
+    assert ran[-3:] == ["publish", "post_run", "serial_next"]
     # The films went out: the day is PARTIAL, not FAILED, and it is not done again today —
     # a re-attempt would choose a new subject and buy a second film.
     assert result["status"] == "PARTIAL"
@@ -476,3 +485,57 @@ def test_a_day_that_made_nothing_says_so(engine, settings, vault, studio):
     assert _by_name(result)["daily_log"]["produced"] is None
     assert "nu a produs nimic" in result["summary"]
     assert "Niciun film publicat" in result["summary"]
+
+
+# ------------------------------------------------ tomorrow's script, after today's log --
+
+
+def test_a_failed_close_blocks_tomorrows_script_and_nothing_is_asked_of_it(
+    engine, settings, vault, studio, letters, monkeypatch
+):
+    """serial_next reads today's closed log: with no log there is nothing to write from, and
+    the stage says which stage it waited for instead of reporting a quiet day."""
+    ran: list[str] = []
+    runners = _day(ran)
+
+    def no_close(*_a, **_k):
+        raise RuntimeError("the log table is gone")
+
+    monkeypatch.setattr("app.runbook.services.close_daily_log", no_close)
+
+    result = execute_daily_run(
+        engine, settings, vault, stage_runners=runners, sleep=lambda _s: None
+    )
+
+    stages = _by_name(result)
+    assert stages["daily_log"]["status"] == FAILED
+    assert stages["serial_next"]["status"] == BLOCKED
+    assert "«daily_log»" in stages["serial_next"]["reason"]
+    assert "serial_next" not in ran
+    assert result["status"] == "FAILED"
+
+
+def test_the_owners_stop_before_the_close_stops_tomorrows_script_too(
+    engine, settings, vault, studio, letters
+):
+    ran: list[str] = []
+    runners = _day(ran)
+
+    def stop_after_post_run() -> dict:
+        with Session(engine) as session, session.begin():
+            session.get(OwnerPolicy, 1).autonomy_stopped = True
+        return _ok("post_run", ran)
+
+    runners["post_run"] = stop_after_post_run
+
+    result = execute_daily_run(
+        engine, settings, vault, stage_runners=runners, sleep=lambda _s: None
+    )
+
+    stages = _by_name(result)
+    assert stages["serial_next"]["status"] == BLOCKED
+    assert stages["serial_next"]["reason"] == OWNER_STOP_REASON
+    assert "serial_next" not in ran
+    # The day worked, so its record is still closed (as before this stage existed).
+    assert stages["daily_log"]["status"] == COMPLETED
+    assert result["status"] == "PARTIAL"

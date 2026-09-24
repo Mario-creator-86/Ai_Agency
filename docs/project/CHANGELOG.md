@@ -1,5 +1,16 @@
 # Changelog
 
+## The serial in one click: today's episode and tomorrow's script — 2026-09-24
+
+- **The serial resumes instead of skipping** (`backend/app/story/serial_stage.py`): an approved episode without a storyboard is storyboarded, an unread draft is read, a draft waiting for the Owner is named; his approve button storyboards the episode at once (database rows only, no vendor).
+- **The missing days are closed and the newest real day is told** (up to 7 days back), with the day named in the stage's reason.
+- **The writer gets the day's story, not its tail**: 8-15 events chosen by narrative weight, English story keys, model names redacted, and a privacy leak closed (an answered letter's subject no longer reaches the public projection).
+- **Showrunner brief v3** (`episode-v3`): structured lines `{speaker, text, direction}` so no label is ever read aloud, 2-4 speaking characters from those who act in the cited events, the hook → situation → turn → payoff → button structure, locations from the real rooms, the characters' voice fields; new `backend/app/story/lines.py` and `locations.py`.
+- **The Director's review v2**: the cited events in her facts, a six-point rubric, computed checks for language, event concentration, words per beat and structure.
+- **Tomorrow's script in the same click**: the new stage `serial_next` after the day's log; `next_episode` planned in canon and judged by the next writer. `39_DAILY_AUTONOMOUS_RUNBOOK` §7 updated and re-hashed.
+- **The publication metadata guard** from 2026-09-19 finished: a refused title is asked again, and a gate-refused row no longer keeps a film out of every later run.
+- Tests: 355 pass across the serial, story, runbook, publishing and whole-day files; new `tests/test_serial_one_click_adversary.py` (13) and `tests/test_publication_metadata_per_film.py`. ruff and mypy (193 files) clean.
+
 ## The page amazes a first-time visitor, wave 1 — 2026-09-24
 
 - **Every live claim is true**: the live readout follows the real stream state, the fps names what it measures (Unreal's own statistics or the page's renderer), the «Acum» pulse goes quiet after an hour with nothing new, the event socket reconnects with backoff and replay, and the modules map no longer calls the serial or financing unimplemented (`frontend/src/live_claims.js`, new).
