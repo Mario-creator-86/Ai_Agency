@@ -2,8 +2,8 @@
  * THE LAST LIVE FRAME, KEPT FOR THE NEXT ENTRY (W19).
  *
  * Between the key and the stream's first picture the frame was dark for 1.0-2.5 s («Pornește
- * sediul live…»). While the stream plays, the page now keeps one real frame of it — small (960 px
- * wide, WebP), taken rarely (KEEP_FIRST_MS after the first frame, then every KEEP_EVERY_MS),
+ * sediul live…»). While the stream plays, the page now keeps one real frame of it — a WebP at
+ * the stream's own width (KEEP_WIDTH), taken rarely (KEEP_FIRST_MS after the first frame, then every KEEP_EVERY_MS),
  * never per frame — with the moment it was taken, in this browser's IndexedDB. On the next entry
  * the starting plate shows that frame, dimmed and named for what it is («ultimul cadru live · azi
  * 22:48»), until the live video's first frame arrives, and then gives way to it.
@@ -17,8 +17,12 @@
 export const KEEP_FIRST_MS = 4000;
 /** How often, while the stream plays, the kept frame is renewed. */
 export const KEEP_EVERY_MS = 60000;
-/** The kept frame's width in px (the stream is 1920 px wide; the plate shows it dimmed). */
-export const KEEP_WIDTH = 960;
+/**
+ * The kept frame's width in px: the stream's own 1920 (never enlarged). W19 kept 960 for the plate,
+ * where it is seen dimmed for a moment; since W22 the title stands on it as its key art, drawn at
+ * 1.3-1.8 CSS px per world px, where a 960 px frame read soft.
+ */
+export const KEEP_WIDTH = 1920;
 export const KEEP_TYPE = 'image/webp';
 export const KEEP_QUALITY = 0.72;
 /** A kept frame older than this is not shown: the building it shows may have been rebuilt since. */
@@ -61,13 +65,26 @@ function parts(ms, timeZone) {
  * @param {number} at when the frame was taken (ms) @param {number} now @param {string} [timeZone]
  */
 export function keptCaption(at, now, timeZone) {
-  if (!Number.isFinite(at)) return '';
+  const when = keptDay(at, now, timeZone);
+  return when ? `ultimul cadru live · ${when.day} ${when.hm}` : '';
+}
+
+/**
+ * The day and hour of a real frame, as the page names them (W22, shared by the plate's badge, the
+ * title's caption and the replay's line): «azi», «ieri», the weekday within the week, else the
+ * date (`dated`), and the hour in the studio's zone. Null for a moment that is not one.
+ * @param {number} at @param {number} now @param {string} [timeZone]
+ * @returns {{day: string, hm: string, dated: boolean}|null}
+ */
+export function keptDay(at, now, timeZone) {
+  if (!Number.isFinite(at)) return null;
   const a = parts(at, timeZone);
   const n = parts(now, timeZone);
   const days = Math.round((Date.UTC(n.y, n.m - 1, n.d) - Date.UTC(a.y, a.m - 1, a.d)) / 86400000);
   const weekday = WEEKDAYS[new Date(Date.UTC(a.y, a.m - 1, a.d)).getUTCDay()];
-  const day = days <= 0 ? 'azi' : days === 1 ? 'ieri' : days < 7 ? weekday : `${String(a.d).padStart(2, '0')}.${String(a.m).padStart(2, '0')}`;
-  return `ultimul cadru live · ${day} ${a.hm}`;
+  const dated = days >= 7;
+  const day = days <= 0 ? 'azi' : days === 1 ? 'ieri' : !dated ? weekday : `${String(a.d).padStart(2, '0')}.${String(a.m).padStart(2, '0')}`;
+  return { day, hm: a.hm, dated };
 }
 
 /**

@@ -89,13 +89,22 @@ export class Drawers {
     // The rails repeat the panels' own counts, as the panels change them.
     this._mirror('ledger-count', 'register-rail-count');
     this._mirror('approvals-count', 'side-rail-count');
-    let last = '';
-    window.addEventListener('resize', () => {
-      const key = `${window.innerWidth}x${window.innerHeight}`;
-      if (key === last) return;
-      last = key;
-      this.layout({ glide: false });
-    }, { passive: true });
+    this._windowKey = '';
+    window.addEventListener('resize', () => this.syncToWindow(), { passive: true });
+    this.layout({ glide: false });
+  }
+
+  /**
+   * Lays the frame out for the window as it is now, once per window size. The window's resize
+   * event can come a frame after the layout has already changed; the scene's camera, which plans
+   * itself in the frame the render's box changes (W21), asks for this first so that it plans with
+   * the drawers of the new size.
+   */
+  syncToWindow() {
+    if (!this.started) return;
+    const key = `${window.innerWidth}x${window.innerHeight}`;
+    if (key === this._windowKey) return;
+    this._windowKey = key;
     this.layout({ glide: false });
   }
 

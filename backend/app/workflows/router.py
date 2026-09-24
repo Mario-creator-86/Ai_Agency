@@ -19,7 +19,12 @@ from fastapi import (
     status,
 )
 
-from app.security import require_owner
+from app.security import (
+    SOCKET_AUTH_TIMEOUT_S,
+    owner_key_matches,
+    require_owner,
+    socket_first_message_auth,
+)
 from app.workflows.publisher import ConnectionManager, replay_events
 from app.workflows.schemas import (
     CreateScheduledJobCommand,
@@ -158,22 +163,39 @@ def create_scheduler_router() -> APIRouter:
     return router
 
 
-def register_websocket_gateway(app: FastAPI, manager: ConnectionManager) -> None:
-    """Register WebSocket endpoint at /api/v1/ws with authentication and replay support."""
+def register_websocket_gateway(
+    app: FastAPI,
+    manager: ConnectionManager,
+    *,
+    auth_timeout_s: float = SOCKET_AUTH_TIMEOUT_S,
+) -> None:
+    """Register WebSocket endpoint at /api/v1/ws with authentication and replay support.
+
+    The Owner's key is the socket's first message (``{"type": "auth", "token": ...}``, answered
+    ``{"type": "auth_ok"}``); until it is right the socket hears nothing and is not in the
+    broadcast. A page from before 2026-09-25 still says it in the query string.
+    """
 
     @app.websocket("/api/v1/ws")
     async def websocket_endpoint(
         websocket: WebSocket,
         token: str | None = Query(default=None),
     ) -> None:
-        # Check authentication token
         settings = app.state.settings
         expected_token = settings.owner_token.get_secret_value()
-        if token != expected_token:
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-            return
-
-        await manager.connect(websocket)
+        if token is not None:
+            if not owner_key_matches(token, expected_token):
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                return
+            await manager.connect(websocket)
+        else:
+            await websocket.accept()
+            if not await socket_first_message_auth(
+                websocket, expected_token, timeout_s=auth_timeout_s
+            ):
+                return
+            await websocket.send_text(json.dumps({"type": "auth_ok"}))
+            manager.add(websocket)
         engine = app.state.engine
 
         try:

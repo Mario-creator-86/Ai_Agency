@@ -6,13 +6,20 @@ Content-Security-Policy allows ``connect-src 'self'``), so the backend relays th
 WebSocket, message for message, to the address in configuration
 (``STUDIO_OFFICE_STREAM_SIGNALLING_URL``). Unset or unreachable, the relay closes and the page
 keeps its own renderer; nothing is shown in the stream's place.
+
+The Owner's key (2026-09-25) is the socket's first message, not its URL: the page sends
+``{"type": "auth", "token": ...}`` when GET /office/stream says ``auth: "first_message"``. Only once
+the key is right and the signalling server has answered does the relay send the page
+``{"type": "relay_ready"}``, and the page's stream client then begins, as it did when the socket
+opened. The key is never forwarded to the signalling server, never echoed and never logged. A page
+from before this change still puts the key in the query string; that form is read the old way.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
-import secrets
 from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlsplit
@@ -20,10 +27,27 @@ from urllib.parse import urlsplit
 import websockets
 from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect, status
 
+from app.security import (
+    SOCKET_AUTH,
+    SOCKET_AUTH_TIMEOUT_S,
+    owner_key_matches,
+    socket_first_message_auth,
+)
+
 logger = logging.getLogger(__name__)
 
 RELAY_PATH = "/api/v1/office/stream/signalling"
 OPEN_TIMEOUT_S = 5.0
+#: What the relay tells the page once the key is right and the signalling server has answered.
+RELAY_READY = json.dumps({"type": "relay_ready"})
+
+__all__ = [
+    "RELAY_PATH",
+    "SOCKET_AUTH_TIMEOUT_S",
+    "register_stream_gateway",
+    "signalling_target",
+    "stream_status",
+]
 
 
 def signalling_target(settings: Any) -> str | None:
@@ -36,12 +60,19 @@ def signalling_target(settings: Any) -> str | None:
 
 
 def stream_status(settings: Any) -> dict[str, Any]:
-    """Whether the page should try the live stream at all."""
-    return {"available": signalling_target(settings) is not None, "relay": RELAY_PATH}
+    """Whether the page should try the live stream at all, and how its sockets say the key."""
+    return {
+        "available": signalling_target(settings) is not None,
+        "relay": RELAY_PATH,
+        "auth": SOCKET_AUTH,
+    }
 
 
 def register_stream_gateway(
-    app: FastAPI, *, connect: Callable[..., Any] = websockets.connect
+    app: FastAPI,
+    *,
+    connect: Callable[..., Any] = websockets.connect,
+    auth_timeout_s: float = SOCKET_AUTH_TIMEOUT_S,
 ) -> None:
     """Registers the relay; ``connect`` opens the upstream connection (replaced in tests)."""
 
@@ -52,9 +83,15 @@ def register_stream_gateway(
     ) -> None:
         settings = app.state.settings
         expected = settings.owner_token.get_secret_value()
-        if token is None or not secrets.compare_digest(token.encode(), expected.encode()):
+        # a page from before 2026-09-25 says the key in the URL: refused before the handshake
+        first_message = token is None
+        if not first_message and not owner_key_matches(token, expected):
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
+        if first_message:
+            await websocket.accept()
+            if not await socket_first_message_auth(websocket, expected, timeout_s=auth_timeout_s):
+                return
         target = signalling_target(settings)
         if target is None:
             await websocket.close(code=status.WS_1013_TRY_AGAIN_LATER)
@@ -65,7 +102,11 @@ def register_stream_gateway(
             logger.info("office_stream_unreachable", extra={"error": type(err).__name__})
             await websocket.close(code=status.WS_1013_TRY_AGAIN_LATER)
             return
-        await websocket.accept()
+        if first_message:
+            # the page's stream client starts only now, as it did when the socket opened
+            await websocket.send_text(RELAY_READY)
+        else:
+            await websocket.accept()
         try:
             await _relay(websocket, upstream)
         finally:

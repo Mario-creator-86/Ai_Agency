@@ -147,7 +147,7 @@ const WEATHER_ICONS = { clear: '☀', partly_cloudy: '⛅', cloudy: '☁', fog: 
 export class OfficeEngine {
   /**
    * @param {HTMLCanvasElement} canvas
-   * @param {{onSelectAgent?: (agent:any) => void, onSelectSurface?: (id: string, room: string|null) => void, onReadout?: (target: any) => void, fetchWeather?: () => Promise<any>, infoElement?: HTMLElement|null, onFrameRate?: (fps: number) => void, seed?: number, reducedMotion?: () => boolean, dataLive?: () => boolean, parked?: boolean, onView?: (view: any) => void}} [options]
+   * @param {{onSelectAgent?: (agent:any) => void, onSelectSurface?: (id: string, room: string|null) => void, onReadout?: (target: any) => void, fetchWeather?: () => Promise<any>, infoElement?: HTMLElement|null, onFrameRate?: (fps: number) => void, seed?: number, reducedMotion?: () => boolean, dataLive?: () => boolean, parked?: boolean, onView?: (view: any) => void, beforePlan?: () => void, stillAhead?: () => boolean, onCaptions?: (boxes: any[]) => void}} [options]
    */
   constructor(canvas, options = {}) {
     this.canvas = canvas;
@@ -229,8 +229,21 @@ export class OfficeEngine {
     this.hitsOnly = false;
     /** «Reluarea zilei» (W13): the world is the record played back (setReplay). */
     this.replay = false;
+    /**
+     * W22: the still of the real Unreal building the replay plays over, while a stream is
+     * configured (setReplayStill): the engine's own copy, and the photograph's daylight.
+     * @type {{image: HTMLCanvasElement, at: number, daylight: number}|null}
+     */
+    this.replayStill = null;
+    /** W22: asked before a replay's light is composed: a replay over the Unreal still needs no plates. */
+    this.stillAhead = typeof options.stillAhead === 'function' ? options.stillAhead : null;
+    /** W22: told when the replay's captions over the still come, go or move (world px boxes). */
+    this.onCaptions = typeof options.onCaptions === 'function' ? options.onCaptions : null;
+    this._captionKey = '';
     /** Told whenever the camera or the box changes: the stream follows it (game_frame.js). */
     this.onView = typeof options.onView === 'function' ? options.onView : null;
+    /** W21: asked before the camera is planned for a new box, so the frame's drawers are the new size's. */
+    this.beforePlan = typeof options.beforePlan === 'function' ? options.beforePlan : null;
     this._viewKey = '';
     /** A camera move under way: from, to, start, duration. @type {any} */
     this.glide = null;
@@ -289,7 +302,12 @@ export class OfficeEngine {
         const key = box ? `${Math.round(box.width)}x${Math.round(box.height)}` : '';
         if (!key || key === last || !box.width) return;
         last = key;
-        if (this.parked || this._resizeQueued) return;
+        if (this.parked) return;
+        // W21: whatever follows the camera (the stream's video, its plaques) is laid for the new box
+        // in this very frame, as the layer's own size changes; before, it followed a frame or two
+        // late, up to 363 px off the video after a window resize.
+        this._emitPlannedView();
+        if (this._resizeQueued) return;
         // W15: the canvas takes its new size on the next frame, not inside the frame whose layout
         // changed (a drawer's snap under reduced motion, the fullscreen), so that frame only lays
         // the page out and the reallocation of the canvas has a frame of its own.
@@ -506,6 +524,8 @@ export class OfficeEngine {
 
   _emitView() {
     if (!this.onView) return;
+    // a resize is waiting for its frame: the camera it will stand at has already been said
+    if (this._resizeQueued) return;
     const v = this.view();
     const key = `${v.cw}|${v.ch}|${v.zoom.toFixed(5)}|${v.panX.toFixed(2)}|${v.panY.toFixed(2)}`;
     if (key === this._viewKey) return;
@@ -608,6 +628,8 @@ export class OfficeEngine {
     this.replay = Boolean(on);
     // back to live: the world is lit by the real hour and the real weather again, at once
     if (!this.replay && this.world) this.world.setReplayMoment(null);
+    // and the still the replay played over is let go (W22)
+    if (!this.replay) this.replayStill = null;
     if (!this.renderer) return;
     this.renderer.arrivals.clear();
     this.renderer.glints.reset();
@@ -669,7 +691,40 @@ export class OfficeEngine {
    */
   async prepareMoment(ms) {
     if (!this.renderer || !this.world) return false;
+    // W22: over the Unreal still the replay draws no plates; nothing to compose
+    if (this.stillAhead && this.stillAhead()) return true;
     return this.renderer.prepareLight(this.viewport.zoom, timeOfDay(new Date(ms), this.world.time.location));
+  }
+
+  /**
+   * «RELUAREA ZILEI» IN THE UNREAL BUILDING (W22, replay_still.js): the replay plays over this
+   * picture of the real building instead of the plates. The picture is copied once, here, into the
+   * engine's own canvas (the stream's still is renewed every 2 s while it plays), and the
+   * photograph's daylight is read from the sun at the moment it was taken. Null: the page's
+   * renderer, as before. Only while a replay is on.
+   * @param {(CanvasImageSource & {width: number, height: number})|null} image @param {number} [at] when it was taken
+   * @returns {boolean} whether the replay plays over it
+   */
+  setReplayStill(image, at = Date.now()) {
+    if (!this.replay || !image || !(image.width > 0) || !(image.height > 0) || typeof document === 'undefined') {
+      this.replayStill = null;
+      return false;
+    }
+    const copy = this.replayStill && this.replayStill.image.width === image.width && this.replayStill.image.height === image.height
+      ? this.replayStill.image
+      : document.createElement('canvas');
+    copy.width = image.width;
+    copy.height = image.height;
+    const context = copy.getContext('2d');
+    if (!context) {
+      this.replayStill = null;
+      return false;
+    }
+    context.drawImage(image, 0, 0);
+    const when = Number.isFinite(at) ? at : Date.now();
+    const daylight = this.world ? timeOfDay(new Date(when), this.world.time.location).daylight : timeOfDay(new Date(when)).daylight;
+    this.replayStill = { image: copy, at: when, daylight };
+    return true;
   }
 
   /** A seek in the replay: what was arriving belongs to the moment left. */
@@ -689,6 +744,62 @@ export class OfficeEngine {
   }
 
   /* ------------------------------------------------------------- layout -- */
+
+  /**
+   * THE CAMERA THE FRAME WILL STAND AT for a box of cssW x cssH CSS px, as resize() will set it,
+   * without touching the canvas (W21): the same fit, the same insets and floor, the same toolbar
+   * inset. With the room the drawers and the sky row leave, in the canvas's CSS px (frameBox).
+   * @param {number} cssW @param {number} cssH
+   */
+  plannedView(cssW, cssH) {
+    const parent = this.canvas.parentElement;
+    if (!(cssW > 0) || !(cssH > 0) || typeof window === 'undefined') return null;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const cw = Math.round(cssW * dpr);
+    const ch = Math.round(cssH * dpr);
+    const vp = new Viewport({ width: cw, height: ch });
+    vp.minZoom = this.viewport.minZoom;
+    vp.maxZoom = this.viewport.maxZoom;
+    vp.focus = this.viewport.focus;
+    const toolbar = parent ? parent.querySelector('.camera-toolbar') : null;
+    vp.bottomInset = toolbar ? (toolbar.getBoundingClientRect().height + 24) * dpr : 0;
+    const scaled = (/** @type {any} */ i) => ({
+      left: Math.max(0, (i && i.left) || 0) * dpr,
+      right: Math.max(0, (i && i.right) || 0) * dpr,
+      top: Math.max(0, (i && i.top) || 0) * dpr,
+      bottom: Math.max(0, (i && i.bottom) || 0) * dpr,
+    });
+    if (this._cssInsets) {
+      vp.insets = scaled(this._cssInsets);
+      vp.floor = scaled(this._cssFloor);
+    } else {
+      vp.insets = this.viewport.insets;
+      vp.floor = this.viewport.floor;
+    }
+    vp.fitFrame(this.worldW, this.worldH);
+    const ins = vp.insets || NO_INSETS;
+    const floor = vp.floor || NO_INSETS;
+    return {
+      cw, ch, dpr, worldW: this.worldW, worldH: this.worldH, zoom: vp.zoom, panX: vp.panX, panY: vp.panY,
+      room: {
+        left: Math.max(ins.left, floor.left) / dpr,
+        top: Math.max(ins.top, floor.top) / dpr,
+        right: (cw - Math.max(ins.right, floor.right)) / dpr,
+        bottom: (ch - Math.max(ins.bottom, floor.bottom)) / dpr,
+      },
+    };
+  }
+
+  /** Says the camera the next resize will set, now, in the frame whose layout changed. */
+  _emitPlannedView() {
+    const parent = this.canvas.parentElement;
+    if (!this.onView || !parent) return;
+    if (this.beforePlan) this.beforePlan();
+    const v = this.plannedView(parent.clientWidth, parent.clientHeight);
+    if (!v) return;
+    this._viewKey = `${v.cw}|${v.ch}|${v.zoom.toFixed(5)}|${v.panX.toFixed(2)}|${v.panY.toFixed(2)}`;
+    this.onView(v);
+  }
 
   resize() {
     const parent = this.canvas.parentElement;
@@ -1017,6 +1128,32 @@ export class OfficeEngine {
     ctx.imageSmoothingEnabled = true;
     // Plates arrive pre-composed at this scale; sprites are small, so a cheaper filter suffices.
     ctx.imageSmoothingQuality = 'medium';
+    // W22: the replay over the real Unreal building's still, where the stream's video stood
+    if (this.replay && this.replayStill) {
+      ctx.imageSmoothingQuality = 'high';
+      this.renderer.drawOverStill(ctx, {
+        agents: this.agents,
+        bubbles: this.speechBubbles,
+        tokens: [],
+        selectedId: this.selectedAgentId,
+        hoverId: this.hoverAgentId,
+        surfaceId: this.hoverSurfaceId,
+        surfaceVia: this.surfaceVia,
+        reduced: this.reducedMotion(),
+        scale: zoom,
+        skyTop,
+        replay: true,
+        still: this.replayStill,
+      });
+      const captions = this.renderer.captionKey || '';
+      if (captions !== this._captionKey) {
+        this._captionKey = captions;
+        if (this.onCaptions) this.onCaptions(this.renderer.captionBoxes || []);
+      }
+      ctx.restore();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      return;
+    }
     this.renderer.draw(ctx, {
       agents: this.agents,
       bubbles: this.speechBubbles,

@@ -37,6 +37,7 @@ import { describeEvent } from './ledger.js';
  *   onExit: (liveEvents: any[]) => void,
  *   onChange: () => void,
  *   onOffer: (offered: boolean) => void,
+ *   lookNote?: () => string,
  * }} ReplayDeps
  */
 
@@ -238,7 +239,9 @@ export class DayReplayPlayer {
     this.last = performance.now();
     this.raf = requestAnimationFrame(this._loop);
     const w = this.words();
-    if (w) this.say(`Reluarea zilei a început: rularea din ${w.chip.replace(/^RELUARE · /, '').replace(' · ', ', ora ')}. Nu este live; vremea de atunci nu e cunoscută. Registrul rămâne live. Esc iese.`);
+    // W22: over the Unreal still, what the picture is is said once too (replay_still.js stillSentence)
+    const look = this.deps.lookNote ? this.deps.lookNote() : '';
+    if (w) this.say(`Reluarea zilei a început: rularea din ${w.chip.replace(/^RELUARE · /, '').replace(' · ', ', ora ')}. Nu este live; vremea de atunci nu e cunoscută. ${look ? `${look} ` : ''}Registrul rămâne live. Esc iese.`);
     if (replayFocus({ keyboard: this.byKeyboard, inControls: false }).onStart) this.el.play.focus({ preventScroll: true });
   }
 

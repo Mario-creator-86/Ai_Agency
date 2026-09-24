@@ -1,5 +1,13 @@
 # Changelog
 
+## The key out of the socket URLs, and one building for a returning visitor — 2026-09-25
+
+- **First-message auth for both WebSockets** (`backend/app/security.py`, `office/stream.py`, `workflows/router.py`): the key is the socket's first message, compared in constant time, 5 s to arrive, 1008 otherwise, never logged; the page uses it only when `GET /office/stream` answers `auth: 'first_message'`, and the library's console no longer prints the key (`tests/test_events_socket_auth.py`, `tests/test_office_stream.py`).
+- **One building** (`frontend/src/replay_still.js`, `title_screen.js`): with the stream configured, the title stands on the kept real Unreal frame, the entry carries it onto the live video, and the replay plays over a real Unreal still with the replay's layers in the stream's measured geometry.
+- **Seven plaques** over the live video; **a dead stream is said** («Sediul live nu răspunde · se încearcă din nou…»); **plaques follow a resize in the same frame**; the Treasury plaque says «cheltuibili».
+- **The first entry no longer freezes** for ~1 s: the library's codec enumeration runs under the title.
+- Tests: frontend 485/485, tsc clean; backend 73 passed; ruff and mypy clean.
+
 ## A kept real frame at entry, and the studio's numbers on the Unreal building — 2026-09-24
 
 - **No dark entry for a returning visitor** (`frontend/src/stream_keep.js`): one real stream frame kept in IndexedDB with its time, shown dimmed and labelled until the live video's first frame, then a 480 ms fade into live; never shown as live; a first visit keeps the dark plate (the Owner's recorded decision against the old renderer).

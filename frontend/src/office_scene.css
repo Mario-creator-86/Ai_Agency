@@ -314,6 +314,10 @@
   border-radius: var(--radius-pill);
   background: var(--line-strong);
 }
+/* W21: a headquarters that has not answered for a while (hq_stream_config.js streamSilent): the
+   plate's rail and words take the page's warn ink, so the dark reads as a silence, not a start. */
+#office-scene-container .live-stream-layer.waiting.silent .live-stream-badge { color: var(--warn-ink); border-color: var(--warn-line); background: var(--warn-bg); }
+#office-scene-container .live-stream-layer.waiting.silent .live-stream-badge::before { background: var(--warn-ink); }
 #office-scene-container .live-stream-still { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; object-fit: contain; }
 /* W19: before this visit's first live frame, the last live frame an earlier visit kept in this
    browser (stream_keep.js), dimmed and named by the badge («ultimul cadru live · azi 22:48»); when
@@ -328,11 +332,14 @@
 @keyframes stream-door-out { to { opacity: 0; } }
 @keyframes stream-door-in { from { opacity: 0; } }
 
-/* W19: THE STUDIO'S NUMBERS OVER THE LIVE VIDEO (stream_plaques.js). Four small panes of the
+/* W19: THE STUDIO'S NUMBERS OVER THE LIVE VIDEO (stream_plaques.js). Small panes (four, seven since W21) of the
    drawers' glass, anchored to real objects of the streamed building, laid by the page's camera. */
 .scene-viewport .stream-plaques { position: absolute; inset: 0; z-index: 3; pointer-events: none; overflow: hidden; }
 .scene-viewport .stream-plaques[hidden] { display: none; }
-.scene-viewport[data-replay] .stream-plaques { visibility: hidden; }
+.scene-viewport[data-replay]:not([data-replay-look="unreal"]) .stream-plaques { visibility: hidden; }
+/* W22: over the replay played in the Unreal building the plaques stay, in the replay's ink */
+.scene-viewport .stream-plaques[data-replay] .stream-plaque { border-color: var(--replay-line); }
+.scene-viewport .stream-plaques[data-replay] .stream-plaque-eyebrow { color: var(--replay-ink); }
 .scene-viewport .stream-plaque {
   position: absolute;
   left: 0;

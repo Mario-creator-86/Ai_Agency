@@ -29,6 +29,11 @@ class ConnectionManager:
         await websocket.accept()
         self._active.append(websocket)
 
+    def add(self, websocket: WebSocket) -> None:
+        """Joins a socket already accepted and authenticated to the broadcast."""
+        if websocket not in self._active:
+            self._active.append(websocket)
+
     def disconnect(self, websocket: WebSocket) -> None:
         if websocket in self._active:
             self._active.remove(websocket)

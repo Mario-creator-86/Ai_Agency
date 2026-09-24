@@ -220,6 +220,10 @@ export const SOCKET_SILENT_MS = 60000;
  * from the newest sequence the page holds, in pages, so nothing recorded during the gap is lost.
  * A refusal of the key (code 1008) is final: asking again with the same key cannot succeed.
  *
+ * The key (2026-09-25): when the backend takes it as the socket's first message (`firstMessage`),
+ * the URL carries none, the key is sent as the socket opens, and the link is `open` only once the
+ * backend answers «auth_ok»; before that it says nothing live and asks nothing.
+ *
  * Everything the link touches is handed in, so the tests drive it without a browser.
  */
 export class EventsLink {
@@ -228,6 +232,7 @@ export class EventsLink {
    *   url: () => string,
    *   open: (url: string) => any,
    *   afterSequence: () => number,
+   *   firstMessage?: () => string|null,
    *   onEvent: (event: any, live: boolean) => void,
    *   onState: (state: SocketState) => void,
    *   onReconnected?: () => void,
@@ -249,6 +254,8 @@ export class EventsLink {
     this.heardAt = 0;
     this.replayPages = 0;
     this.stopped = true;
+    /** The key went out as the first message and «auth_ok» has not come back yet. */
+    this.awaitingAuth = false;
   }
 
   start() {
@@ -292,18 +299,16 @@ export class EventsLink {
       return;
     }
     this.socket = socket;
+    this.awaitingAuth = false;
     socket.onopen = () => {
       if (this.socket !== socket) return;
-      const reconnected = this.everOpened;
-      this.everOpened = true;
-      this.attempt = 0;
-      this.heardAt = this.now();
-      this.replayPages = 0;
-      this._setState('open');
-      this._replay(this.options.afterSequence());
-      this.timers.clearInterval(this.pingTimer);
-      this.pingTimer = this.timers.setInterval(() => this._ping(), SOCKET_PING_MS);
-      if (reconnected && this.options.onReconnected) this.options.onReconnected();
+      const first = this.options.firstMessage ? this.options.firstMessage() : null;
+      if (first) {
+        this.awaitingAuth = true;
+        try { socket.send(first); } catch { /* the close that follows says it */ }
+        return;
+      }
+      this._opened();
     };
     socket.onmessage = (/** @type {{data: any}} */ message) => {
       if (this.socket !== socket) return;
@@ -312,6 +317,13 @@ export class EventsLink {
       try {
         payload = JSON.parse(message.data);
       } catch {
+        return;
+      }
+      if (this.awaitingAuth) {
+        if (payload && payload.type === 'auth_ok') {
+          this.awaitingAuth = false;
+          this._opened();
+        }
         return;
       }
       if (payload && (payload.type === 'event' || payload.type === 'replay_event')) {
@@ -328,8 +340,23 @@ export class EventsLink {
     socket.onerror = () => {};
     socket.onclose = (/** @type {{code?: number}} */ event) => {
       if (this.socket !== socket) return;
+      this.awaitingAuth = false;
       this._dropped(event && event.code);
     };
+  }
+
+  /** The socket is open, and authenticated when it had to be. */
+  _opened() {
+    const reconnected = this.everOpened;
+    this.everOpened = true;
+    this.attempt = 0;
+    this.heardAt = this.now();
+    this.replayPages = 0;
+    this._setState('open');
+    this._replay(this.options.afterSequence());
+    this.timers.clearInterval(this.pingTimer);
+    this.pingTimer = this.timers.setInterval(() => this._ping(), SOCKET_PING_MS);
+    if (reconnected && this.options.onReconnected) this.options.onReconnected();
   }
 
   /** @param {number} after */

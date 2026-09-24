@@ -174,3 +174,52 @@ export function titleCaption(time) {
   const phase = { day: 'zi', dawn: 'zori', dusk: 'amurg', night: 'noapte' }[time.phase] || '';
   return `Sediul AMN-AI, București · ${time.text}${phase ? ` · ${phase}` : ''}, în lumina reală a orei`;
 }
+
+/* ---------------------------------------------------------------------------------------------
+ * ONE BUILDING FROM THE TITLE (W22). When this browser keeps a real frame of the Unreal building
+ * (stream_keep.js) and the stream is configured, the title stands on that frame instead of the
+ * plates, and the entry carries it onto the plate where the stream will show it, so the visitor
+ * meets one building from the title to live.
+ * ------------------------------------------------------------------------------------------- */
+
+/** How far the kept frame follows the pointer: as the plates' building layer does. */
+export const KEPT_DEPTH = 0.5;
+
+/**
+ * The caption over the kept frame (glossary W22): the real hour, then the frame named as the
+ * plate's badge names it. «în lumina reală a orei» is not said: the light is the frame's.
+ * @param {{text: string}} time the real hour @param {string} kept keptCaption(at, now)
+ */
+export function titleKeptCaption(time, kept) {
+  return `Sediul AMN-AI, București · acum ${time.text}${kept ? ` · ${kept}` : ''}`;
+}
+
+/**
+ * Where the kept frame stands on the title: it is the whole world (the stream's 1920x1008 frame
+ * is the world's 1600x840 px), framed as the plates are, moved by its share of the pointer.
+ * @param {ReturnType<typeof titleFrame>} frame @param {{x: number, y: number}} offset the pointer's, at depth 1
+ * @returns {{x: number, y: number, scale: number}}
+ */
+export function keptPlacement(frame, offset) {
+  return { x: frame.x + offset.x * KEPT_DEPTH, y: frame.y + offset.y * KEPT_DEPTH, scale: frame.scale };
+}
+
+/**
+ * Where the world stands on screen in the workspace the key opens: the canvas's box and the
+ * engine's camera (office_engine.js view), which the stream's video and its kept frame follow to
+ * the pixel (game_frame.js streamTransform). Null when the camera is not known.
+ * @param {{left: number, top: number, width: number, height: number}|null} box the canvas's client rect
+ * @param {{zoom: number, panX: number, panY: number, dpr: number, worldW: number}|null} view
+ * @returns {{x: number, y: number, scale: number}|null}
+ */
+export function landingPlacement(box, view) {
+  if (!box || !view || !(box.width > 0) || !(box.height > 0) || !(view.zoom > 0)) return null;
+  const dpr = view.dpr > 0 ? view.dpr : 1;
+  const scale = (view.zoom / dpr) * (view.worldW / WORLD.width);
+  return { x: box.left + view.panX / dpr, y: box.top + view.panY / dpr, scale };
+}
+
+/** @param {{x: number, y: number, scale: number}} p */
+export function placementTransform(p) {
+  return `translate3d(${p.x.toFixed(2)}px, ${p.y.toFixed(2)}px, 0) scale(${p.scale.toFixed(5)})`;
+}

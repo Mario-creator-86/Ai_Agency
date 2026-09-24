@@ -1387,3 +1387,14 @@ No provider was called, no run was queued, no credit was spent, and
 ## A kept real frame at entry, and the studio's numbers on the Unreal building (2026-09-24)
 
 - W20 next wave): [ ] title and push on the kept Unreal frame when one exists (one building from the title to live; Owner's art call); [ ] the replay in the Unreal building's look (the largest step from ALMOST to YES); [ ] plaques and stream transform laid in the same frame as a window resize (1-2 frames up to 363 px off today); [ ] take the Owner's token out of the signalling WebSocket's query string (backend stream.py, security); [ ] a dead-stream wording after N failed connects instead of «pornește sediul live…» (glossary first); [ ] «50.000 VR$ cheltuibili» on the Treasury plaque? (Owner's wording; the record holds VR_DEBT 50.000); [ ] tokens, the EP board and the film frame over the video; [ ] plaque anchors checked on a day frame.
+
+## The key out of the socket URLs, and one building for a returning visitor (2026-09-25)
+
+- W23 leaves open:
+(1) a real Unreal frame for the first visit's title, kept by the backend or committed dated, so a stranger never sees two buildings;
+(2) the Owner's backend restart, then the removal of the legacy ?token= branch in office/stream.py and workflows/router.py;
+(3) a cap on concurrent unauthenticated sockets during the 5 s first-message wait;
+(4) the replay speed wording («1×» beside «de 4 ori mai repede decât rularea»), a glossary amendment first;
+(5) replayed captions overlapping each other at 16×;
+(6) OFFICE SERIAL «EP — · Ciornă» / «—»;
+(7) the phone-width title on a kept frame and the screen-reader reading of the replay's start sentence, not yet checked.

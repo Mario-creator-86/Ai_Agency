@@ -16,6 +16,7 @@ import {
 import { surfaceRects, GlintTracker, lastTaskLine, unionRect } from './hq_readouts.js';
 import { Arrivals, arrivalAccent } from './hq_arrivals.js';
 import { runStageWord } from './hud_charts.js';
+import { STREAM_ROOMS, STREAM_SHELTER_CLOCK, glowBloom, monitorGlows, roomLevels } from './replay_still.js';
 
 /**
  * WorldSimulationManager owns every manager of the living headquarters and advances them in one
@@ -538,6 +539,8 @@ export class HQRenderer {
    */
   draw(ctx, state) {
     const w = this.world;
+    // the captions' boxes are kept only over the Unreal still (drawOverStill)
+    this.captionBoxes = null;
     const time = w.time.state;
     const fx = effectsOf(w);
     w.agentList = state.agents;
@@ -582,6 +585,101 @@ export class HQRenderer {
     this.drawBubbles(ctx, state);
     this.drawArrivals(ctx, state);
     this.drawSelection(ctx, state);
+  }
+
+  /**
+   * «RELUAREA ZILEI» IN THE UNREAL BUILDING (W22, replay_still.js). The replay drawn over a still
+   * of the real building instead of the plates: the photograph, laid where the video stands (the
+   * world's rectangle), the replayed rooms' light and monitors over the photograph's own rooms and
+   * desks, the shelter's live clock covered by the replayed hour under ATUNCI, the replay's grade
+   * over all of it, then the words clear of the grade (the rooms' chips, the captions, the tags,
+   * the pointer's marks). The employees' hit boxes stay where the photograph's figures sit.
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {any} state the draw state, with `still: {image: CanvasImageSource, daylight: number}`
+   */
+  drawOverStill(ctx, state) {
+    const w = this.world;
+    const time = w.time.state;
+    const still = state.still;
+    w.agentList = state.agents;
+    this.reduced = Boolean(state.reduced);
+    // the hit boxes (employees and faces), painting nothing: the photograph has the figures
+    this.drawAgents(null, state);
+    ctx.drawImage(still.image, 0, 0, w.worldW, w.worldH);
+    this.drawStillRooms(ctx, state.agents, still.daylight);
+    this.drawStillMonitors(ctx, state.agents, still.daylight);
+    this.drawRoomFlares(ctx, time, STILL_ROOMS);
+    this.drawRoomRims(ctx, state, 'rim', STILL_ROOMS);
+    this.drawClockFace(ctx, STREAM_SHELTER_CLOCK, 'ATUNCI', time.text);
+    this.drawReplayGrade(ctx, 0);
+    // W23: every mark the replay puts on the photograph -- the rooms' «acum: …» chips, the
+    // captions, the employees' tags -- is handed to the plaques (main.js layoutPlaques), which step
+    // aside for them; W22 handed on the captions only, and SERVERE lay over a replayed tag
+    this.captionBoxes = [];
+    this.drawRoomRims(ctx, state, 'label', STILL_ROOMS);
+    this.drawBubbles(ctx, state);
+    this.drawArrivals(ctx, state);
+    this.captionKey = this.captionBoxes.map((b) => `${b.kind}:${Math.round(b.x)},${Math.round(b.y)},${Math.round(b.w)}`).join('|');
+    this.drawSelection(ctx, state);
+  }
+
+  /**
+   * The replayed rooms' light over the photograph: a room nobody works in dims, a room where
+   * someone works takes its ceiling's warm light, each rising and falling toward the replayed
+   * occupancy over ROOM_EASE_MS (at once under reduced motion). A stage's flare lifts the shade as
+   * the renderer's own rooms do.
+   * @param {CanvasRenderingContext2D} ctx @param {any[]} agents @param {number} daylight the photograph's
+   */
+  drawStillRooms(ctx, agents, daylight) {
+    const now = nowMs();
+    const dt = this._stillAt ? Math.min(250, now - this._stillAt) : 0;
+    this._stillAt = now;
+    this.stillLevels = roomLevels(this.stillLevels || {}, agents, (a) => this.zoneOf(a), daylight, dt, this.reduced);
+    const flares = new Map((this.reduced ? [] : this.arrivals.rooms(now)).map((f) => [f.zone, f.strength]));
+    this.roomStates = {};
+    for (const [zone, level] of Object.entries(this.stillLevels)) {
+      const room = STILL_ROOMS[zone];
+      if (!room) continue;
+      const flare = flares.get(zone) || 0;
+      const shade = level.shade * (1 - flare);
+      this.roomStates[zone] = { occupancy: level.occupancy, alpha: shade, flare };
+      if (shade > 0.001) {
+        ctx.fillStyle = `rgba(4,6,14,${shade.toFixed(3)})`;
+        ctx.fillRect(room.x, room.y, room.w, room.h);
+      }
+      if (level.lift > 0.002) {
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        const g = ctx.createLinearGradient(0, room.y, 0, room.y + room.h);
+        g.addColorStop(0, `rgba(255,236,204,${level.lift.toFixed(3)})`);
+        g.addColorStop(0.45, `rgba(255,236,204,${(level.lift * 0.4).toFixed(3)})`);
+        g.addColorStop(1, `rgba(255,236,204,${(level.lift * 0.12).toFixed(3)})`);
+        ctx.fillStyle = g;
+        ctx.fillRect(room.x, room.y, room.w, room.h);
+        ctx.restore();
+      }
+    }
+  }
+
+  /**
+   * Each replayed employee's monitor, as a glow over the photograph's own monitor on that desk: its
+   * colour and strength are the employee's state then (replay_still.js monitorGlow).
+   * @param {CanvasRenderingContext2D} ctx @param {any[]} agents @param {number} daylight
+   */
+  drawStillMonitors(ctx, agents, daylight) {
+    const bloom = glowBloom(daylight);
+    const glows = monitorGlows(agents);
+    if (!glows.length) return;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (const g of glows) {
+      const sprite = flareSprite(g.rgb);
+      if (!sprite) continue;
+      const radius = 22;
+      ctx.globalAlpha = Math.min(1, g.strength * bloom * 1.6);
+      ctx.drawImage(sprite, g.x - radius, g.y - radius * 0.8, radius * 2, radius * 1.6);
+    }
+    ctx.restore();
   }
 
   /** @param {CanvasRenderingContext2D} ctx @param {string} name @param {any} time */
@@ -939,12 +1037,14 @@ export class HQRenderer {
    * ceiling light down it for ROOM_FLARE_MS (hq_arrivals.js), softer by day, when the rooms are
    * lit already. Off under reduced motion.
    * @param {CanvasRenderingContext2D} ctx @param {any} time
+   * @param {Record<string, {x: number, y: number, w: number, h: number}>|null} [over] the rooms to
+   *   light, when not the plates' own (the Unreal photograph's, W22)
    */
-  drawRoomFlares(ctx, time) {
+  drawRoomFlares(ctx, time, over = null) {
     if (this.reduced) return;
     const flares = this.arrivals.rooms(nowMs());
     if (!flares.length) return;
-    const rooms = this.m.rooms || {};
+    const rooms = over || this.m.rooms || {};
     const lift = 0.34 - 0.14 * Math.max(0, Math.min(1, time.daylight));
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
@@ -970,12 +1070,13 @@ export class HQRenderer {
    * @param {CanvasRenderingContext2D} ctx @param {any} state
    * @param {'all'|'rim'|'label'} [part] the rim, the chip, or both (the replay draws its chips
    *   after its grade, so the words are never tinted)
+   * @param {Record<string, {x: number, y: number, w: number, h: number}>|null} [over] the rooms (W22)
    */
-  drawRoomRims(ctx, state, part = 'all') {
+  drawRoomRims(ctx, state, part = 'all', over = null) {
     if (this.reduced) return;
     const flares = this.arrivals.rooms(nowMs());
     if (!flares.length) return;
-    const rooms = this.m.rooms || {};
+    const rooms = over || this.m.rooms || {};
     const zoom = state.scale && state.scale > 0 ? state.scale : 1;
     const px = (/** @type {number} */ n) => n / zoom;
     const c = scenePalette();
@@ -1017,6 +1118,7 @@ export class HQRenderer {
       // arriving employee's tag stands under the desks
       const x = room.x + room.w - tw - px(8);
       const y = room.y + room.h - th - px(6);
+      if (this.captionBoxes) this.captionBoxes.push({ kind: 'chip', x, y, w: tw, h: th });
       ctx.fillStyle = withAlpha(c.scene, 0.92);
       roundRect(ctx, x, y, tw, th, px(5));
       ctx.fill();
@@ -1052,6 +1154,8 @@ export class HQRenderer {
     const accent = c[arrivalAccent(Boolean(state.replay))];
     const zoom = state.scale && state.scale > 0 ? state.scale : 1;
     const px = (/** @type {number} */ n) => n / zoom;
+    // what a tag must not lie over: the replayed captions, then the tags already laid (W23)
+    const taken = [...(this.drawnCaptions || [])];
     for (const tag of tags) {
       const hit = this.hits.find((/** @type {any} */ h) => !h.surface && h.agent && String(h.agent.id || h.agent.agent_id) === tag.id);
       if (!hit) continue;
@@ -1090,10 +1194,15 @@ export class HQRenderer {
       const tw = bar + padX + wName + wSep + wVerb + (task ? wSep + wTask : 0) + padX;
       const th = px(28);
       const mid = (hit.x0 + hit.x1) / 2;
-      const x = Math.min(this.world.worldW - tw - px(2), Math.max(px(2), mid - tw / 2));
       // under the desk, where the pointer's own tag stands: above the head it lay over the
-      // room's boards and the render bay's screen
+      // room's boards and the render bay's screen. W23: off any replayed caption drawn this frame
+      // (the one above the head of an employee on the floor below), so its «RELUARE · hh:mm:ss»
+      // is never hidden by a tag
+      const x = tagClear(mid - tw / 2, hit.y1 + px(6), tw, th, taken, px(2), this.world.worldW - px(2), px(6));
+      taken.push({ x, y: hit.y1 + px(6), w: tw, h: th });
       const y = hit.y1 + px(6) + px(6) * (1 - k);
+      // where the tag rests, so the plaques are laid once and not on every frame of its fade
+      if (this.captionBoxes) this.captionBoxes.push({ kind: 'tag', x, y: hit.y1 + px(6), w: tw, h: th });
       ctx.fillStyle = withAlpha(c.scene, 0.94);
       roundRect(ctx, x, y, tw, th, px(5));
       ctx.fill();
@@ -1443,20 +1552,7 @@ export class HQRenderer {
    */
   drawShelter(ctx, time, replay = false) {
     const clock = this.m.street.shelter_clock?.rect;
-    if (clock) {
-      const [x, y, cw, ch] = clock;
-      ctx.fillStyle = '#071c22';
-      ctx.fillRect(x, y, cw, ch);
-      ctx.fillStyle = '#9fd8d0';
-      ctx.font = '600 5.5px "Segoe UI", system-ui, sans-serif';
-      ctx.fillText(replay ? 'ATUNCI' : 'BUCUREȘTI', x + 4, y + 8);
-      ctx.fillStyle = '#5eead4';
-      ctx.font = '600 17px "Cascadia Mono", Consolas, monospace';
-      ctx.shadowColor = 'rgba(94,234,212,0.8)';
-      ctx.shadowBlur = 6;
-      ctx.fillText(time.text, x + 5, y + ch - 5);
-      ctx.shadowBlur = 0;
-    }
+    if (clock) this.drawClockFace(ctx, clock, replay ? 'ATUNCI' : 'BUCUREȘTI', time.text);
     const adRect = this.m.street.shelter_ad?.rect;
     if (adRect) {
       const ad = SHELTER_ADS[this.world.ambient.adIndex];
@@ -1480,6 +1576,25 @@ export class HQRenderer {
       ctx.fillStyle = 'rgba(255,255,255,0.06)';
       ctx.fillRect(x, y, aw * 0.4, ah);
     }
+  }
+
+  /**
+   * The shelter clock's face: its label over the hour.
+   * @param {CanvasRenderingContext2D} ctx @param {number[]} rect @param {string} label @param {string} text
+   */
+  drawClockFace(ctx, rect, label, text) {
+    const [x, y, cw, ch] = rect;
+    ctx.fillStyle = '#071c22';
+    ctx.fillRect(x, y, cw, ch);
+    ctx.fillStyle = '#9fd8d0';
+    ctx.font = '600 5.5px "Segoe UI", system-ui, sans-serif';
+    ctx.fillText(label, x + 4, y + 8);
+    ctx.fillStyle = '#5eead4';
+    ctx.font = '600 17px "Cascadia Mono", Consolas, monospace';
+    ctx.shadowColor = 'rgba(94,234,212,0.8)';
+    ctx.shadowBlur = 6;
+    ctx.fillText(text, x + 5, y + ch - 5);
+    ctx.shadowBlur = 0;
   }
 
   /** @param {CanvasRenderingContext2D} ctx @param {any} time @param {number} [skyTop] the row of sky above the world */
@@ -1549,6 +1664,10 @@ export class HQRenderer {
     const bh = px(26) + px(16) * lines.length;
     const bx = Math.min(this.world.worldW - bw - px(2), Math.max(px(2), x - bw / 2));
     const by = y - bh - px(6);
+    // W22: where it stands, so the plaques over the Unreal still step aside for it (main.js layoutPlaques)
+    const box = { kind: 'caption', x: bx, y: by, w: bw, h: bh + px(5) };
+    if (this.captionBoxes) this.captionBoxes.push(box);
+    if (this.drawnCaptions) this.drawnCaptions.push(box);
     ctx.fillStyle = withAlpha(c.scene, 0.94);
     ctx.strokeStyle = withAlpha(c.replayInk, 0.7);
     ctx.lineWidth = px(1);
@@ -1573,6 +1692,8 @@ export class HQRenderer {
   /** @param {CanvasRenderingContext2D} ctx @param {any} state */
   drawBubbles(ctx, state) {
     const now = Date.now();
+    // the replayed captions drawn this frame, which the employees' tags step aside for (drawArrivals)
+    this.drawnCaptions = [];
     for (const bubble of state.bubbles) {
       const agent = state.agents.find((/** @type {any} */ a) => (a.id || a.agent_id) === bubble.agentId);
       const seat = agent ? this.m.seats?.[agent.desk_id] : null;
@@ -1731,6 +1852,27 @@ export class HQRenderer {
     ctx.restore();
   }
 }
+
+/** The Unreal building's rooms (replay_still.js STREAM_ROOMS), as the renderer's room objects. */
+/**
+ * W23: where a tag of width `w` stands along its row so it lies over none of `boxes`: the place
+ * nearest to `want` among `want` and the sides of each box it would meet, inside [lo, hi]; `want`
+ * (clamped) when there is no such place.
+ * @param {number} want @param {number} y @param {number} w @param {number} h
+ * @param {Array<{x:number,y:number,w:number,h:number}>} boxes @param {number} lo @param {number} hi @param {number} gap
+ */
+export function tagClear(want, y, w, h, boxes, lo, hi, gap) {
+  const clamp = (/** @type {number} */ x) => Math.min(hi - w, Math.max(lo, x));
+  const row = boxes.filter((b) => b.y < y + h && b.y + b.h > y);
+  const free = (/** @type {number} */ x) => row.every((b) => x + w <= b.x || x >= b.x + b.w);
+  const first = clamp(want);
+  if (free(first)) return first;
+  const tries = row.flatMap((b) => [b.x - gap - w, b.x + b.w + gap]).map(clamp).filter(free);
+  if (!tries.length) return first;
+  return tries.reduce((best, x) => (Math.abs(x - want) < Math.abs(best - want) ? x : best));
+}
+
+const STILL_ROOMS = Object.fromEntries(Object.entries(STREAM_ROOMS).map(([zone, [x, y, w, h]]) => [zone, { x, y, w, h }]));
 
 /** The research board's notes, as one surface. */
 const BOARD = unionRect(NOTES);

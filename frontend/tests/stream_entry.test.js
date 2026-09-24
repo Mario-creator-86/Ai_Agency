@@ -6,8 +6,8 @@ import fs from 'node:fs';
 import { KEEP_EVERY_MS, KEEP_FIRST_MS, KEEP_MAX_AGE_MS, keptCaption, keptSize, keptUsable, readKept, writeKept } from '../src/stream_keep.js';
 import { streamLayers } from '../src/hq_stream_config.js';
 import { LiveStream, DOOR_MS, HANDOFF_MS } from '../src/hq_stream.js';
-import { PLAQUES, PLAQUE_GAP, placePlaque, plaqueLevel, plaqueWords, streamOffset } from '../src/stream_plaques.js';
-import { SURFACES } from '../src/hq_readouts.js';
+import { PLAQUES, PLAQUE_GAP, placePlaque, plaqueLevel, plaqueShownAt, plaqueWords, streamOffset } from '../src/stream_plaques.js';
+import { SURFACES, surfaceReadout } from '../src/hq_readouts.js';
 import { liveScope, roomCaption, roomCaptionShort } from '../src/live_claims.js';
 import { dayTrackFromRun } from '../src/hud_charts.js';
 
@@ -20,7 +20,9 @@ const RUN = JSON.parse(fs.readFileSync(new URL('./fixtures/runbook_run.json', im
 /* ------------------------------------------------------------------ the kept frame -- */
 
 test('the kept frame is small, in the stream\'s own aspect, and never enlarged', () => {
-  assert.deepEqual(keptSize(1920, 1008), { w: 960, h: 504 });
+  // W22: at the stream's own width, since the title stands on it as key art; never enlarged
+  assert.deepEqual(keptSize(1920, 1008), { w: 1920, h: 1008 });
+  assert.deepEqual(keptSize(3840, 2016), { w: 1920, h: 1008 });
   assert.deepEqual(keptSize(640, 360), { w: 640, h: 360 });
   assert.equal(keptSize(0, 1008), null);
   assert.ok(KEEP_FIRST_MS >= 2000 && KEEP_EVERY_MS >= 30000, 'taken rarely, never per frame');
@@ -255,7 +257,7 @@ test('a frame is kept rarely while the stream plays, and only then', (t) => {
   assert.equal(kept.length, 0);
   t.mock.timers.tick(1);
   assert.equal(kept.length, 1);
-  assert.deepEqual([kept[0].w, kept[0].h], [960, 504]);
+  assert.deepEqual([kept[0].w, kept[0].h], [1920, 1008], 'W22: at the stream width');
   t.mock.timers.tick(KEEP_EVERY_MS);
   assert.equal(kept.length, 2);
   p._setStatus('offline');
@@ -264,7 +266,8 @@ test('a frame is kept rarely while the stream plays, and only then', (t) => {
 });
 
 test('the page reads the kept frame while the title is up, keeps new ones, and opens the door both ways', () => {
-  assert.match(MAIN, /const keptFrame = \(async \(\) => \{/);
+  // W22: read by one function, again after a sign-out, and first by the title
+  assert.match(MAIN, /let keptFrame = readKeptFrame\(\);/);
   assert.match(MAIN, /readKept\(browserStore\(\)\)/);
   assert.match(MAIN, /writeKept\(browserStore\(\), record\)/);
   assert.match(MAIN, /liveStream\.showKept\(kept\.image, keptCaption\(/);
@@ -304,7 +307,9 @@ test('the plaques say the faces\' own figures, from the same facts, shortened', 
   assert.equal(one.value, '1 verificată · 1 respins');
   assert.equal(plaqueWords('publish_radar', facts).value, 'PUBLICAT · 12.09');
   assert.equal(plaqueWords('publish_radar', facts, [{ desk_id: 'desk_publish', runtime_state: 'WORKING' }]).value, 'ÎN LUCRU');
-  assert.equal(plaqueWords('treasury_board', facts).value, '50.000 VR$');
+  // W21: the same record holds a VR_DEBT of 50.000; the bare number misled, the face card's phrase does not
+  assert.equal(plaqueWords('treasury_board', facts).value, '50.000 VR$ cheltuibili');
+  assert.equal(plaqueWords('treasury_board', facts).value, surfaceReadout('treasury_board', { facts }).value);
   assert.equal(plaqueWords('treasury_board', { ...facts, treasury: { spendable: { amount: '-3' }, in_deficit: true } }).tone, 'alert');
 });
 
@@ -313,8 +318,40 @@ test('a plaque the page holds no value for says «—», never an invented figur
   assert.equal(plaqueWords('run_sign', {}).eyebrow, 'RULAREA ZILEI');
 });
 
+test("W21: the serial's board, the render screen and the servers carry their faces' own words", () => {
+  const more = {
+    ...facts,
+    episodes: { episodes: [{ created_at: '2026-09-20T10:00:00Z', status: 'DRAFT', title: 'Primul pas', continuity: { episode_number: 3 } }] },
+    budget: { today: { prompt_tokens: 1000, completion_tokens: 234 } },
+  };
+  const card = (id) => surfaceReadout(id, { facts: more, agents: [] }).value;
+  const w = plaqueWords('writers_screen', more);
+  assert.equal(w.eyebrow, 'OFFICE SERIAL');
+  assert.equal(w.value, card('writers_screen'));
+  assert.match(w.value, /^EP 3 · /);
+  const r = plaqueWords('render_bay', more);
+  assert.equal(r.eyebrow, 'RANDARE');
+  assert.equal(r.value, card('render_bay'));
+  const editor = [{ desk_id: 'desk_video', runtime_state: 'WORKING', display_name: 'Leo (Editor)' }];
+  assert.equal(plaqueWords('render_bay', more, editor).value, surfaceReadout('render_bay', { facts: more, agents: editor }).value);
+  assert.equal(plaqueWords('render_bay', more, editor).tone, 'ok');
+  const i = plaqueWords('infra_plate', more);
+  assert.equal(i.eyebrow, 'SERVERE');
+  assert.equal(i.value, '1.234 de tokenuri azi');
+  assert.equal(i.value, card('infra_plate'));
+  // nothing read: «—», not the face's «tokenuri azi —»
+  assert.equal(plaqueWords('infra_plate', { ...facts, budget: null }).value, '—');
+});
+
+test('W21: the three newer plaques need their eyebrow to be read, so the small building (1280 at fit) shows only the four', () => {
+  const small = PLAQUES.filter((def) => plaqueShownAt(def, 'compact')).map((def) => def.id);
+  assert.deepEqual(small, ['run_sign', 'factcheck_board', 'publish_radar', 'treasury_board']);
+  for (const level of ['full', 'large']) assert.equal(PLAQUES.filter((def) => plaqueShownAt(def, level)).length, 7, level);
+  for (const def of PLAQUES) assert.equal(plaqueShownAt(def, 'none'), false, def.id);
+});
+
 test('each plaque is anchored to a real object of the streamed building, measured on the stream', () => {
-  assert.equal(PLAQUES.length, 4);
+  assert.equal(PLAQUES.length, 7);
   const offsets = Object.fromEntries(PLAQUES.map((def) => {
     const face = SURFACES.find((s) => s.id === def.id);
     const rect = face.rect || MANIFEST.screens[face.screen].rect;
@@ -322,7 +359,12 @@ test('each plaque is anchored to a real object of the streamed building, measure
   }));
   // the Unreal building was built from the same manifest: three objects stand on the plates' faces,
   // the Treasury's lockers 79 px left of the plate's ticker (the ticker's wall is a bookcase in Unreal)
-  assert.deepEqual(offsets, { run_sign: { dx: -5, dy: -2 }, factcheck_board: { dx: 0, dy: -1 }, publish_radar: { dx: 0, dy: 0 }, treasury_board: { dx: -79, dy: -7 } });
+  assert.deepEqual(offsets, {
+    run_sign: { dx: -5, dy: -2 }, factcheck_board: { dx: 0, dy: -1 }, publish_radar: { dx: 0, dy: 0 }, treasury_board: { dx: -79, dy: -7 },
+    // W21: the serial's empty wall screen and the servers' dark band stand on the plates' faces; the
+    // render plaque stands on the screen's light bar, 13 px below the screen's centre
+    writers_screen: { dx: 0, dy: 0 }, render_bay: { dx: 1, dy: 13 }, infra_plate: { dx: 0, dy: 0 },
+  });
   for (const def of PLAQUES) {
     const [x, y, w, h] = def.anchor;
     assert.ok(x >= 0 && y >= 0 && x + w <= 1600 && y + h <= 840 && w > 0 && h > 0, def.id);
@@ -354,7 +396,8 @@ test('a plaque never covers an employee, stays in the room, and gives up rather 
 test('the plaques are shown only while the live stream is what is seen, and step aside for their face\'s readout', () => {
   assert.match(MAIN, /viewport\.dataset\.stream === 'live' && !replaying\(\)/);
   assert.match(MAIN, /streamPlaques\.suppress\(target && target\.kind !== 'agent'/);
-  assert.match(SCENE_CSS, /\.scene-viewport\[data-replay\] \.stream-plaques \{ visibility: hidden; \}/);
+  // W22: hidden over the page's own replay; over the replay in the Unreal building they stay
+  assert.match(SCENE_CSS, /\.scene-viewport\[data-replay\]:not\(\[data-replay-look="unreal"\]\) \.stream-plaques \{ visibility: hidden; \}/);
   assert.match(SCENE_CSS, /\.stream-plaques \{ position: absolute; inset: 0; z-index: 3; pointer-events: none;/);
 });
 

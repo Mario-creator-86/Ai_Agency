@@ -35,12 +35,13 @@ import { friendlyAnswer } from './friendly_text.js';
 import { LiveWindows, eventMatchesAgent } from './live_window.js';
 import { MailThread } from './mail_thread.js';
 import { LiveStream } from './hq_stream.js';
-import { liveStreamSettings, relayUrl } from './hq_stream_config.js';
+import { authMessage, eventsUrl, liveStreamSettings, relayUrl, socketAuth, warmVideoCodecs } from './hq_stream_config.js';
 import { browserStore, keptCaption, keptUsable, readKept, writeKept } from './stream_keep.js';
 import { StreamPlaques } from './stream_plaques.js';
 import { EventsLink, connectionLabel, liveScope, roomCaption, roomCaptionShort, sceneReadout } from './live_claims.js';
 import { TitleScreen } from './title_screen.js';
-import { ENTRY, entryPlays } from './title_frame.js';
+import { ENTRY, entryPlays, landingPlacement } from './title_frame.js';
+import { stillLine, stillSentence } from './replay_still.js';
 import { KeyLight } from './key_light.js';
 import {
   APPROVALS_PATH,
@@ -161,12 +162,24 @@ function renderLiveSignals() {
   if (ownerToken) element('connection').textContent = chip;
 }
 
+/**
+ * THE KEY OUT OF THE URL (2026-09-25). GET /office/stream, read once per sign-in, says whether the
+ * backend takes the Owner's key as each socket's first message (`auth: 'first_message'`); the
+ * Owner's running studio keeps its older backend until he restarts it, and is spoken to as before.
+ * @type {Promise<any>|null}
+ */
+let streamRoute = null;
+/** How the events socket says the key: set from the route before it first connects. @type {'first_message'|'query'} */
+let eventsAuth = 'query';
+function officeStreamRoute() {
+  if (!streamRoute) streamRoute = api('/office/stream').catch(() => null);
+  return streamRoute;
+}
+
 /** The backend's events, reconnected after a drop; see EventsLink. */
 const eventsLink = new EventsLink({
-  url: () => {
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${proto}//${location.host}/api/v1/ws?token=${encodeURIComponent(ownerToken)}`;
-  },
+  url: () => eventsUrl(location, ownerToken, eventsAuth),
+  firstMessage: () => (eventsAuth === 'first_message' && ownerToken ? authMessage(ownerToken) : null),
   open: (url) => new WebSocket(url),
   // Everything after the newest event the page holds: the snapshot's cursor, or further on when
   // the register has already read past it.
@@ -207,6 +220,44 @@ function reducedMotion() {
 }
 
 /**
+ * THE LAST LIVE FRAME (W19, stream_keep.js): read from this browser while the title is up, so the
+ * starting plate can show it the moment the key enters. Null when none is kept or storage refuses.
+ * @returns {Promise<{image: ImageBitmap, at: number}|null>}
+ */
+async function readKeptFrame() {
+  try {
+    const record = await readKept(browserStore());
+    if (!keptUsable(record, Date.now()) || typeof createImageBitmap !== 'function') return null;
+    return { image: await createImageBitmap(record.blob), at: Number(record.at) };
+  } catch {
+    return null;
+  }
+}
+/** @type {Promise<{image: ImageBitmap, at: number}|null>} */
+let keptFrame = readKeptFrame();
+
+/** The scene's own settings (scene.json, a file of the page's own origin), read once; again after a failure. */
+let sceneRead = /** @type {Promise<any>|null} */ (null);
+function readScene() {
+  if (!sceneRead) {
+    sceneRead = fetch('/assets/hq/scene.json').then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    sceneRead.then((scene) => { if (!scene) sceneRead = null; });
+  }
+  return sceneRead;
+}
+
+/**
+ * W22, ONE BUILDING FROM THE TITLE: the title stands on the kept real frame of the Unreal building
+ * when this browser has one and the stream is configured (the Owner's chosen face, 2026-09-15:
+ * «Încă apare vechiul format!»); otherwise on the plates, as before.
+ * @param {Promise<{image: ImageBitmap, at: number}|null>} kept
+ */
+async function titleKept(kept) {
+  const [frame, scene] = await Promise.all([kept, readScene()]);
+  return frame && liveStreamSettings(scene).enabled ? frame : null;
+}
+
+/**
  * The title screen: the sign-in standing in the studio's own world, lit by the real sun
  * (title_screen.js). It is the first thing on screen, before any key.
  */
@@ -214,6 +265,8 @@ const titleScreen = new TitleScreen({
   stage: element('title-stage'),
   caption: element('title-caption'),
   reducedMotion,
+  kept: titleKept(keptFrame),
+  keptCaption: (at) => keptCaption(at, Date.now(), state && state.studio ? state.studio.timezone : undefined),
 });
 titleScreen.start();
 
@@ -225,20 +278,6 @@ const keyLight = new KeyLight({
   target: document.documentElement,
   source: () => (liveStream && liveStream.hasStill ? liveStream.still : officeCanvas),
 });
-/**
- * THE LAST LIVE FRAME (W19, stream_keep.js): read from this browser while the title is up, so the
- * starting plate can show it the moment the key enters. Null when none is kept or storage refuses.
- * @type {Promise<{image: ImageBitmap, at: number}|null>}
- */
-const keptFrame = (async () => {
-  try {
-    const record = await readKept(browserStore());
-    if (!keptUsable(record, Date.now()) || typeof createImageBitmap !== 'function') return null;
-    return { image: await createImageBitmap(record.blob), at: Number(record.at) };
-  } catch {
-    return null;
-  }
-})();
 /** Whether a kept frame is being written, so two are never written at once. */
 let keeping = false;
 
@@ -421,25 +460,37 @@ function pushWorldFacts() {
  * what the visitor sees (not a frozen or kept frame, not the replay), laid where the camera shows
  * their objects, off the employees' desks. From the same facts store; nothing fetched.
  */
-function layoutPlaques() {
+function layoutPlaques(planned = null) {
   if (!streamPlaques) return;
   const viewport = element('scene-viewport');
-  const on = Boolean(officeEngine && officeEngine.renderer) && viewport.dataset.stream === 'live' && !replaying();
+  // W22: also over the replay played in the Unreal building, with the replayed moment's words
+  const overStill = replaying() && Boolean(officeEngine && officeEngine.replayStill);
+  const on = Boolean(officeEngine && officeEngine.renderer) && ((viewport.dataset.stream === 'live' && !replaying()) || overStill);
   streamPlaques.setOn(on);
   if (!on || !officeEngine) return;
-  const view = officeEngine.view();
+  // W21: after a resize, the camera the engine is about to stand at, said in the frame the box changed
+  const view = planned || officeEngine.view();
   const dpr = view.dpr || 1;
   const ox = officeCanvas.offsetLeft;
   const oy = officeCanvas.offsetTop;
   const toScreen = (/** @type {number} */ x, /** @type {number} */ y) => ({ x: (x * view.zoom + view.panX) / dpr + ox, y: (y * view.zoom + view.panY) / dpr + oy });
-  const box = officeEngine.frameBox();
+  const box = planned && planned.room ? { room: planned.room } : officeEngine.frameBox();
   const room = { left: box.room.left + ox + 4, top: box.room.top + oy + 4, right: box.room.right + ox - 4, bottom: box.room.bottom + oy - 4 };
   const desks = officeEngine.renderer.hits.filter((/** @type {any} */ h) => h.desk).map((/** @type {any} */ h) => {
     const a = toScreen(h.x0, h.y0);
     const b = toScreen(h.x1, h.y1);
     return { x: a.x, y: a.y, w: b.x - a.x, h: b.y - a.y };
   });
-  streamPlaques.update({ facts: worldFacts, agents: officeState.agents, k: view.zoom / dpr, toScreen, room, desks });
+  // W22: over the replay, the employees' captions are not covered either
+  if (overStill) {
+    for (const c of officeEngine.renderer.captionBoxes || []) {
+      const a = toScreen(c.x, c.y);
+      const b = toScreen(c.x + c.w, c.y + c.h);
+      desks.push({ x: a.x, y: a.y, w: b.x - a.x, h: b.y - a.y });
+    }
+  }
+  const world = overStill && replay ? replay.world() : null;
+  streamPlaques.update({ facts: world ? world.facts : worldFacts, agents: world ? world.agents : officeState.agents, k: view.zoom / dpr, toScreen, room, desks });
 }
 
 /* ---------------------------------------------------------------------------
@@ -535,8 +586,11 @@ replay = new DayReplayPlayer({
   names: () => Object.fromEntries(officeState.agents.map((a) => [a.id || a.agent_id, a.display_name || a.role_name || ''])),
   poster: (assetId) => posters.get(assetId),
   onEnter: () => {
-    // the live picture fades into the page's graded building (W19); a cut under reduced motion
+    // the live picture fades into the replay (W19); a cut under reduced motion
     if (liveStream) liveStream.doorway('out');
+    // W22: while a stream is configured, the replay plays over the real building's still, the frame
+    // the door just copied (else the frozen or kept one), graded; without one, the page's renderer
+    enterReplayLook();
     layoutPlaques();
     renderLiveSignals();
     refreshSceneReadout();
@@ -545,6 +599,8 @@ replay = new DayReplayPlayer({
   onExit: (liveEvents) => {
     // and back: the live video fades in over the replay's last graded frame (W19)
     if (liveStream) liveStream.doorway('in');
+    leaveReplayLook();
+    layoutPlaques();
     // the world is the live one again, and a live arrival that ended the replay is still seen
     updateOfficeCanvas();
     pushWorldFacts();
@@ -556,13 +612,45 @@ replay = new DayReplayPlayer({
     renderLiveSignals();
     scheduleDayTrack();
     if (readoutTarget) refreshSceneReadout();
+    // W22: over the Unreal still, the plaques carry the replayed moment's words
+    layoutPlaques();
   },
+  lookNote: () => replayLookNote,
   onOffer: (offered) => {
     if (worldFacts.replayOffer === offered) return;
     worldFacts.replayOffer = offered;
     pushWorldFacts();
   },
 });
+
+/** The replay's weather line as the page wrote it (index.html), restored when the replay ends. */
+const REPLAY_WEATHER_WORDS = element('replay-weather').textContent || '';
+/** W22: said once when the replay starts over the Unreal still (replay_still.js stillSentence). */
+let replayLookNote = '';
+
+/**
+ * W22, THE REPLAY IN THE UNREAL BUILDING (replay_still.js): with a stream configured and a real
+ * picture of the building in hand, the engine plays the replay over it; the line under ATUNCI says
+ * what the picture is and that its light and weather are not those of then.
+ */
+function enterReplayLook() {
+  const viewport = element('scene-viewport');
+  const picture = liveStream ? liveStream.replayPicture() : null;
+  const over = Boolean(officeEngine && picture && officeEngine.setReplayStill(picture.image, picture.at));
+  viewport.dataset.replayLook = over ? 'unreal' : 'page';
+  const zone = state && state.studio ? state.studio.timezone : undefined;
+  const at = over && officeEngine && officeEngine.replayStill ? officeEngine.replayStill.at : NaN;
+  element('replay-weather').textContent = over ? stillLine(at, Date.now(), zone) || REPLAY_WEATHER_WORDS : REPLAY_WEATHER_WORDS;
+  replayLookNote = over ? stillSentence(at, Date.now(), zone) : '';
+  if (streamPlaques) streamPlaques.setReplay(over);
+}
+
+function leaveReplayLook() {
+  delete element('scene-viewport').dataset.replayLook;
+  element('replay-weather').textContent = REPLAY_WEATHER_WORDS;
+  replayLookNote = '';
+  if (streamPlaques) streamPlaques.setReplay(false);
+}
 
 /*
  * THE REPLAY OFFERED (W15, replay_invite.js): once per browser session, after the entry has
@@ -945,9 +1033,8 @@ async function startLiveStream() {
   let scene = null;
   let relay = null;
   try {
-    const response = await fetch('/assets/hq/scene.json');
-    scene = response.ok ? await response.json() : null;
-    if (liveStreamSettings(scene).enabled) relay = await api('/office/stream');
+    scene = await readScene();
+    if (liveStreamSettings(scene).enabled) relay = await officeStreamRoute();
   } catch {
     relay = null;
   }
@@ -958,9 +1045,18 @@ async function startLiveStream() {
     renderLiveSignals();
     return;
   }
-  const signallingUrl = relayUrl(window.location, String(relay.relay), ownerToken);
+  // the Owner's key goes as the signalling socket's first message when the backend takes it so
+  const auth = socketAuth(relay);
+  const relayPath = String(relay.relay);
+  const signallingUrl = relayUrl(window.location, relayPath, ownerToken, auth);
+  const firstMessage = auth === 'first_message';
   streamPlaques = new StreamPlaques(viewport);
-  liveStream = new LiveStream(viewport, { ...settings, signallingUrl }, {
+  liveStream = new LiveStream(viewport, {
+    ...settings,
+    signallingUrl,
+    authMessage: firstMessage ? () => authMessage(ownerToken) : null,
+    legacyUrl: firstMessage ? () => relayUrl(window.location, relayPath, ownerToken, 'query') : null,
+  }, {
     onStatus: (status) => {
       viewport.dataset.stream = status;
       layoutPlaques();
@@ -991,7 +1087,7 @@ async function startLiveStream() {
   keptFrame.then((kept) => {
     if (!kept || !liveStream) return;
     const zone = state && state.studio ? state.studio.timezone : undefined;
-    liveStream.showKept(kept.image, keptCaption(kept.at, Date.now(), zone));
+    liveStream.showKept(kept.image, keptCaption(kept.at, Date.now(), zone), kept.at);
   });
   if (typeof window.matchMedia === 'function') {
     window.matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', () => {
@@ -1046,6 +1142,13 @@ function buildOfficeEngine() {
       liveSignals.pageFps = fps;
       renderLiveSignals();
     },
+    // W21: the window's resize event can come a frame after the box changed; the drawers are laid
+    // out for the new size before the camera is planned for it
+    beforePlan: () => drawers.syncToWindow(),
+    // W22: a replay over the Unreal still composes no plates for the replayed hour
+    stillAhead: () => Boolean(liveStream && liveStream.replayPicture()),
+    // W22: a replayed caption over the still takes its room; a plaque in its way steps aside
+    onCaptions: () => layoutPlaques(),
     // The streamed picture follows the page's camera, so zoom and pan act on what is seen.
     onView: (view) => {
       // the visitor's zoom and drag move the building: the invitation follows it once the camera
@@ -1054,7 +1157,7 @@ function buildOfficeEngine() {
       if (!liveStream) return;
       const t = streamTransform(view);
       liveStream.setView({ k: t.k, tx: t.tx / view.dpr, ty: t.ty / view.dpr });
-      layoutPlaques();
+      layoutPlaques(view.room ? view : null);
     },
     onSelectAgent: (agent) => {
       currentSelectedAgent = agent;
@@ -1211,8 +1314,18 @@ function whenIdle(/** @type {() => void} */ run) {
   if (typeof idle === 'function') idle(run, { timeout: 1500 });
   else window.setTimeout(run, 200);
 }
+/**
+ * W23: the codecs' first enumeration (hq_stream_config.js warmVideoCodecs), about one second on a
+ * first visit, spent while the title stands idle instead of in the middle of the entry; only when
+ * the stream is configured and no key has been given yet.
+ */
+function warmStreamCodecs() {
+  readScene().then((scene) => {
+    if (!ownerToken && liveStreamSettings(scene).enabled) warmVideoCodecs(window);
+  });
+}
 // After the title has had its first frames, not in their way.
-window.addEventListener('load', () => whenIdle(() => { warmOffice().catch(() => {}); }), { once: true });
+window.addEventListener('load', () => whenIdle(() => { warmOffice().catch(() => {}).finally(() => whenIdle(warmStreamCodecs)); }), { once: true });
 
 function initOffice() {
   buildOfficeEngine();
@@ -1404,7 +1517,9 @@ function updateOfficeCanvas() {
   officeEngine.setProjectTokens(officeState.projectTokens);
 }
 
-function connectWebSocket() {
+async function connectWebSocket() {
+  eventsAuth = socketAuth(await officeStreamRoute());
+  if (!ownerToken) return;
   eventsLink.start();
 }
 
@@ -3730,7 +3845,7 @@ element('login-form').addEventListener('submit', async (event) => {
       requestAnimationFrame(() => requestAnimationFrame(() => {
         document.body.classList.remove('is-arming');
         if (!ownerToken) return;
-        titleScreen.enter().then((finished) => { if (finished && ownerToken) login.hidden = true; });
+        titleScreen.enter(titleLanding).then((finished) => { if (finished && ownerToken) login.hidden = true; });
       }));
     } else {
       login.hidden = true;
@@ -3749,13 +3864,26 @@ element('login-form').addEventListener('submit', async (event) => {
     loadWorldFigures();
     loadSerialFacts();
     await loadOfficeLayout();
-    connectWebSocket();
+    await connectWebSocket();
   } else {
     ownerToken = '';
   }
   busy = false;
   stopButton.disabled = !connected;
 });
+
+/**
+ * W22: where the workspace shows the world (and the stream's video, to the pixel), for the title's
+ * kept frame to land on. Null before the engine has a camera.
+ */
+function titleLanding() {
+  if (!officeEngine) return null;
+  try {
+    return landingPlacement(officeCanvas.getBoundingClientRect(), officeEngine.view());
+  } catch {
+    return null;
+  }
+}
 
 element('logout').addEventListener('click', () => {
   inspectorRequest++;
@@ -3771,6 +3899,9 @@ element('logout').addEventListener('click', () => {
   connected = false;
   busy = false;
   eventsLink.stop();
+  // the next key may meet another backend: it is asked again how its sockets take the key
+  streamRoute = null;
+  eventsAuth = 'query';
   liveSignals.data = 'fresh';
   keyLight.stop();
   if (officeEngine) officeEngine.park();
@@ -3778,6 +3909,9 @@ element('logout').addEventListener('click', () => {
   workspace.hidden = true;
   login.hidden = false;
   titleScreen.show();
+  // W22: the frame kept during this visit is the title's now
+  keptFrame = readKeptFrame();
+  titleKept(keptFrame).then((kept) => { if (kept && !ownerToken) titleScreen.useKept(kept); });
   input.value = '';
   notify('');
   ledger.clear();

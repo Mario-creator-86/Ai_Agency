@@ -109,7 +109,9 @@ test("a replayed arrival is drawn in the replay's violet, a live one in the regi
   // the world draws its tags and room chips through the accent, never the live green directly
   const world = fs.readFileSync(new URL('../src/hq_world.js', import.meta.url), 'utf8');
   const tags = world.slice(world.indexOf('  drawArrivals(ctx, state) {'), world.indexOf('  drawFacade(ctx, scale) {'));
-  const rims = world.slice(world.indexOf("  drawRoomRims(ctx, state, part = 'all') {"), world.indexOf('  drawArrivals(ctx, state) {'));
+  // W22: the rims also take the rooms they are drawn on (the Unreal photograph's)
+  const rims = world.slice(world.indexOf("  drawRoomRims(ctx, state, part = 'all', over = null) {"), world.indexOf('  drawArrivals(ctx, state) {'));
+  assert.ok(rims.length > 200, 'the rims are found');
   for (const body of [tags, rims]) {
     assert.match(body, /arrivalAccent\(Boolean\(state\.replay\)\)/);
     assert.doesNotMatch(body, /c\.okInk/);

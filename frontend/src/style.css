@@ -1645,6 +1645,10 @@ body:has(#workspace[hidden]) #open-settings { display: none; }
     linear-gradient(to top, var(--title-floor), transparent 24%),
     radial-gradient(130% 110% at 62% 42%, transparent 58%, var(--vignette-edge) 100%);
 }
+/* W22: the kept real frame of the Unreal building, when the title stands on it (title_screen.js
+   useKept): one canvas the size of the world (1600x840 world px), placed as the plates are. */
+.title-kept { position: absolute; left: 0; top: 0; display: block; width: 1600px; height: 840px; transform-origin: 0 0; will-change: transform; }
+.title-stage[data-kept='true'] .title-world { display: none; }
 /* A narrow, tall screen: the building stands at the foot, the words above it. */
 .title-stage[data-layout='stacked'] .title-veil {
   background:
@@ -1793,6 +1797,17 @@ body.is-entering .office-panel     { animation-delay: calc(var(--arrive-first) +
 body.is-entering .modules-panel    { animation-delay: calc(var(--arrive-first) + var(--arrive-step) * 3); }
 body.is-entering .governance-panel { animation-delay: calc(var(--arrive-first) + var(--arrive-step) * 4); }
 body.is-entering .site-footer      { animation-delay: calc(var(--arrive-first) + var(--arrive-step) * 4); }
+/* W22: standing on a kept frame, the camera does not push into a picture of the plates: the frame
+   itself is carried onto the place the workspace shows the stream (title_screen.js land, WAAPI,
+   --dur-push and --ease-push), and the veil and the sky fade around it. */
+body.is-entering .title-stage.lands { animation: none; }
+body.is-entering .title-stage.lands .title-veil,
+body.is-entering .title-stage.lands .title-sky { animation: title-fade var(--dur-push) var(--ease) both; }
+@keyframes title-fade { to { opacity: 0; } }
+/* and the render's panel does not rise under the frame in flight (two buildings, offset, for
+   ~300 ms): it appears where the frame has landed, the same picture, at the push's end */
+body.is-entering.is-landing .office-panel { animation: panel-appear var(--dur-fast) var(--ease) both; animation-delay: var(--dur-push); }
+@keyframes panel-appear { from { opacity: 0; } }
 @keyframes title-push {
   0%   { transform: scale(1); opacity: 1; }
   30%  { opacity: 1; }

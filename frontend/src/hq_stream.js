@@ -1,6 +1,10 @@
-import { Config, Flags, PixelStreaming } from '@epicgames-ps/lib-pixelstreamingfrontend-ue5.8';
-import { HELD_STILL_MS, streamLayers } from './hq_stream_config.js';
+import { Config, Flags, Logger, PixelStreaming, TextParameters, overrideLogger } from '@epicgames-ps/lib-pixelstreamingfrontend-ue5.8';
+import { HELD_STILL_MS, STREAM_SILENT_MS, authenticateTransport, plateNote, redactingLogger, streamLayers, streamSilent } from './hq_stream_config.js';
 import { KEEP_EVERY_MS, KEEP_FIRST_MS, KEEP_QUALITY, KEEP_TYPE, keptSize } from './stream_keep.js';
+
+// W23: the library prints the signalling URL on every connect; no line of it reaches the console
+// with the value of a `token=` (hq_stream_config.js redactKey)
+overrideLogger(redactingLogger(Logger));
 
 /** How often a frame of the live video is kept, to be shown frozen if the stream drops. */
 const STILL_COPY_MS = 2000;
@@ -13,10 +17,6 @@ const STILL_COPY_MS = 2000;
 const CONNECTING_RETRY_MS = 30000;
 /** Under reduced motion, how soon the first frame of a live stream is asked again when the video had none yet. */
 const HELD_FIRST_MS = 250;
-const NOTES = {
-  reconnecting: 'Se reconectează la sediul live…',
-  starting: 'Pornește sediul live…',
-};
 /**
  * How long the kept frame takes to give way to the live video once its first frame is presented
  * (W19), and how long the replay's door takes; office_scene.css runs both on --dur-slow, and
@@ -46,7 +46,11 @@ export function inboundFrameRate(aggregatedStats) {
 export class LiveStream {
   /**
    * @param {HTMLElement} viewport the element the scene is drawn in
-   * @param {{signallingUrl: string, streamerId: string, retryMs: number, connectingRetryMs?: number}} settings
+   * @param {{signallingUrl: string, streamerId: string, retryMs: number, connectingRetryMs?: number,
+   *          authMessage?: (() => string)|null, legacyUrl?: (() => string)|null}} settings
+   *   `authMessage`: the backend takes the Owner's key as the signalling socket's first message and
+   *   `signallingUrl` carries none (hq_stream_config.js socketAuth); `legacyUrl` is the URL with the
+   *   key, used only should the library's transport not take first-message auth
    * @param {{onStatus?: (status: 'connecting'|'live'|'offline') => void, onFrameRate?: (fps: number|null) => void, held?: () => boolean,
    *          onKeep?: (record: {blob: Blob, at: number, w: number, h: number}) => void, reduced?: () => boolean}} [options]
    */
@@ -86,9 +90,11 @@ export class LiveStream {
     this.still = document.createElement('canvas');
     this.still.className = 'live-stream-still';
     this.still.hidden = true;
+    /** W22: when the picture in `still` was taken (a copy of the video, or the kept frame's moment). */
+    this.stillAt = NaN;
     this.badge = document.createElement('div');
     this.badge.className = 'live-stream-badge';
-    this.badge.textContent = NOTES.reconnecting;
+    this.badge.textContent = plateNote('reconnecting', false);
     this.badge.hidden = true;
     this.layer.append(this.still, this.badge);
     viewport.appendChild(this.layer);
@@ -110,6 +116,17 @@ export class LiveStream {
       },
     });
     this.stream = new PixelStreaming(config, { videoElementParent: this.layer });
+    // THE KEY OUT OF THE URL (2026-09-25): the signalling socket says it as its first message
+    this.firstMessageAuth = false;
+    if (settings.authMessage) {
+      const controller = /** @type {any} */ (this.stream).webRtcController;
+      this.firstMessageAuth = authenticateTransport(controller && controller.transport, settings.authMessage);
+      if (!this.firstMessageAuth && settings.legacyUrl) this.stream.config.setTextSetting(TextParameters.SignallingServerUrl, settings.legacyUrl());
+    }
+    /** Connects that failed since the stream was last live, and whether STREAM_SILENT_MS has passed without a picture. */
+    this.failures = 0;
+    this.waitedLong = false;
+    this.waitTimer = 0;
     /** The page's camera, laid on the video (setView). @type {{k: number, tx: number, ty: number}|null} */
     this.view = null;
     this.stream.addEventListener('playStream', () => {
@@ -193,6 +210,8 @@ export class LiveStream {
 
   _offline() {
     if (this.status === 'live') this._copyFrame();
+    // a connect that ended before a picture is a failed one; a drop from live starts the count again
+    else this.failures = (this.failures || 0) + 1;
     this._setStatus('offline');
     this.retryTimer = window.setTimeout(() => {
       this.retryTimer = 0;
@@ -246,7 +265,19 @@ export class LiveStream {
     if (!context) return false;
     context.drawImage(video, 0, 0);
     this.hasStill = true;
+    this.stillAt = Date.now();
     return true;
+  }
+
+  /**
+   * W22: the real picture of the building the page holds now, for the replay to play over
+   * (replay_still.js): the frame copied at the replay's door, a frozen or held frame, or the frame
+   * an earlier visit kept; with the moment it was taken. Null when the page holds none.
+   * @returns {{image: HTMLCanvasElement, at: number}|null}
+   */
+  replayPicture() {
+    if (!(this.hasStill || this.keptShown) || !(this.still.width > 0) || !(this.still.height > 0)) return null;
+    return { image: this.still, at: Number.isFinite(this.stillAt) ? this.stillAt : Date.now() };
   }
 
   /**
@@ -267,16 +298,20 @@ export class LiveStream {
     const note = layers.note === 'kept' || keptLive ? 'kept' : layers.note;
     // W20: while the kept frame fades off the live video its name goes with it
     this.badge.hidden = !note || Boolean(this.door) || Boolean(this.handoffTimer);
-    this.badge.textContent = note === 'kept' ? `${this.keptCaption} · pornește sediul live…` : NOTES[note] || '';
+    // W21: a headquarters that has not answered for a while is said to be silent, not starting
+    const silent = this.status !== 'live' && streamSilent(this.failures || 0, Boolean(this.waitedLong));
+    this.layer.classList.toggle('silent', silent);
+    this.badge.textContent = plateNote(/** @type {any} */ (note), silent, this.keptCaption);
   }
 
   /**
    * THE LAST LIVE FRAME OF AN EARLIER VISIT (W19, stream_keep.js), laid on the starting plate:
    * dimmed and named, never taken for live. Refused once this visit has a frame of its own.
    * @param {CanvasImageSource & {width: number, height: number}} image @param {string} caption
+   * @param {number} [at] when it was taken (W22: the replay names the photograph's hour)
    * @returns {boolean} whether it is shown
    */
-  showKept(image, caption) {
+  showKept(image, caption, at = NaN) {
     if (this.hasStill || this.firstFrame || !image || !(image.width > 0) || !(image.height > 0)) return false;
     this.still.width = image.width;
     this.still.height = image.height;
@@ -285,6 +320,7 @@ export class LiveStream {
     context.drawImage(image, 0, 0);
     this.keptShown = true;
     this.keptCaption = caption;
+    this.stillAt = Number(at);
     this._applyLayers();
     return true;
   }
@@ -361,8 +397,9 @@ export class LiveStream {
 
   /**
    * THE REPLAY'S DOOR (W19). Into the replay: the live picture, held as a real frame of it, fades
-   * into the page's own graded building underneath. Back: the live video fades in over the replay's
-   * last graded frame. Under reduced motion both are a clean cut.
+   * into the replay underneath. Back: the live video fades in over the replay's last graded frame.
+   * Under reduced motion both are a clean cut. W22: the frame copied here is also the still the
+   * replay plays over (replayPicture), so the door fades one building into the same one, graded.
    * @param {'out'|'in'} way
    */
   doorway(way) {
@@ -400,6 +437,8 @@ export class LiveStream {
       this.retryTimer = window.setTimeout(() => {
         this.retryTimer = 0;
         if (this.status !== 'connecting') return;
+        // half a minute connecting with no picture is a failed connect too
+        this.failures = (this.failures || 0) + 1;
         this.stream.reconnect();
         this._setStatus('connecting');
       }, wait);
@@ -413,7 +452,19 @@ export class LiveStream {
     }
     if (status === 'live') {
       this.keptLive = false;
+      this.failures = 0;
+      this.waitedLong = false;
+      window.clearTimeout(this.waitTimer);
+      this.waitTimer = 0;
       this._keepFrames();
+    } else if (!this.waitTimer && !this.waitedLong) {
+      // the clock of a headquarters not answering runs from the first status that is not live
+      this.waitTimer = window.setTimeout(() => {
+        this.waitTimer = 0;
+        if (this.status === 'live') return;
+        this.waitedLong = true;
+        this._applyLayers();
+      }, STREAM_SILENT_MS);
     }
     this._applyLayers();
     // A figure measured while the video played means nothing once it has stopped.

@@ -2,7 +2,8 @@
  * THE STUDIO'S NUMBERS OVER THE LIVE VIDEO (W19).
  *
  * The page draws the studio's figures on its own building (hq_screens.js): the façade's run, the
- * fact-check board, the distribution screen, the Treasury. Over the Unreal stream those faces lie
+ * fact-check board, the distribution screen, the Treasury; since W21 also the serial's board, the
+ * render screen and the servers' tokens. Over the Unreal stream those faces lie
  * under the video, and a visitor saw the figures only by hovering. Four of them — the ones a
  * visitor reads first at fit zoom — now stand as small plaques of the drawers' glass, always
  * visible, anchored to a real object of the streamed building, following the camera with the
@@ -18,10 +19,11 @@
  * where the building is small, and is not shown at all where it would clutter.
  */
 
-import { factCheckFace, publishFace, runSignFace, treasuryFace, paneMode } from './hq_screens.js';
+import { factCheckFace, publishFace, runSignFace, treasuryFace, tokensFace, paneMode } from './hq_screens.js';
+import { surfaceReadout } from './hq_readouts.js';
 
 /**
- * @typedef {{id: string, object: string, anchor: [number, number, number, number], sides: Array<'on'|'above'|'below'|'left'|'right'>}} PlaqueDef
+ * @typedef {{id: string, object: string, anchor: [number, number, number, number], sides: Array<'on'|'above'|'below'|'left'|'right'>, from?: 'full'}} PlaqueDef
  * @typedef {{eyebrow: string, value: string, tone: 'quiet'|'ok'|'alert', key: string}} PlaqueWords
  */
 
@@ -40,6 +42,13 @@ export const PLAQUES = [
   { id: 'publish_radar', object: 'ecranul de perete din Distribuție', anchor: [1100, 318, 42, 32], sides: ['on', 'above', 'below'] },
   // the wall of lockers in the Treasury, left of the accountant's desk
   { id: 'treasury_board', object: 'peretele de casete din Trezorerie', anchor: [910, 573, 54, 64], sides: ['above', 'on', 'left'] },
+  // W21, measured 2026-09-24 22:53 on the same frame (scratchpad ui/w21: crop_content, crop_l1, crop_infra).
+  // Conținut's empty wall screen, right of the frames, above the writer's desk: the serial's board
+  { id: 'writers_screen', object: 'ecranul gol de perete din Conținut', anchor: [777, 301, 58, 28], sides: ['on', 'above'], from: 'full' },
+  // the light bar of Unreal's own «RENDER» screen in L1: the plaque lies on it, under the word
+  { id: 'render_bay', object: 'bara de lumină a ecranului RENDER', anchor: [887, 459, 46, 11], sides: ['on'], from: 'full' },
+  // the dark band above the racks of S1, right of «S1 INFRA»
+  { id: 'infra_plate', object: 'banda întunecată de deasupra rafturilor din S1', anchor: [549, 522, 84, 13], sides: ['on'], from: 'full' },
 ];
 
 /**
@@ -69,6 +78,17 @@ export function plaqueLevel(k) {
   if (!(k >= PLAQUE_HIDE_BELOW)) return 'none';
   if (k >= PLAQUE_LARGE_FROM) return 'large';
   return k >= PLAQUE_FULL_FROM ? 'full' : 'compact';
+}
+
+/**
+ * Whether a plaque is shown at a level. W21: the three newer plaques (the serial's board, the render
+ * screen, the servers) say little without their eyebrow («EP — · Ciornă»), so they are shown only
+ * from the level that carries it; the small building (1280 at fit) keeps the four.
+ * @param {PlaqueDef} def @param {'large'|'full'|'compact'|'none'} level
+ */
+export function plaqueShownAt(def, level) {
+  if (level === 'none') return false;
+  return def.from === 'full' ? level === 'full' || level === 'large' : true;
 }
 
 /** @param {string} n a figure as the face writes it @param {string} one @param {string} many */
@@ -105,9 +125,31 @@ export function plaqueWords(id, facts, agents = []) {
     return { eyebrow: 'DISTRIBUȚIE', value, tone: face.word === 'EȘUAT' ? 'alert' : 'quiet', key: `pb|${value}` };
   }
   if (id === 'treasury_board') {
-    const face = treasuryFace(f.treasury, f.budget, 'azi');
-    const value = face.balance === '—' ? '—' : `${face.balance} VR$`;
-    return { eyebrow: 'TREZORERIE', value, tone: face.deficit ? 'alert' : 'quiet', key: `tr|${value}|${face.deficit}` };
+    const face = treasuryFace(f.treasury, f.budget, f.replay ? 'atunci' : 'azi');
+    // W21: the face card's own phrase; the same record holds a VR_DEBT of 50.000, so the bare
+    // number read as the studio's whole money
+    const value = face.balance === '—' ? '—' : `${face.balance} VR$ cheltuibili`;
+    // W22: over the replay the balance is the books' as-of reading, and says so
+    const eyebrow = f.replay ? 'TREZORERIE · ATUNCI' : 'TREZORERIE';
+    return { eyebrow, value, tone: face.deficit ? 'alert' : 'quiet', key: `tr|${eyebrow}|${value}|${face.deficit}` };
+  }
+  // W21: the face card's own value, word for word (hq_readouts.js surfaceReadout)
+  if (id === 'writers_screen') {
+    const card = surfaceReadout(id, { facts: f, agents });
+    const value = card && card.value !== 'EP —' ? card.value : '—';
+    return { eyebrow: 'OFFICE SERIAL', value, tone: 'quiet', key: `ws|${value}` };
+  }
+  if (id === 'render_bay') {
+    const card = surfaceReadout(id, { facts: f, agents });
+    const value = card ? card.value : '—';
+    const tone = card && (card.tone === 'ok' || card.tone === 'alert') ? card.tone : 'quiet';
+    return { eyebrow: 'RANDARE', value, tone, key: `rb|${value}|${tone}` };
+  }
+  if (id === 'infra_plate') {
+    // not read is «—», not the face's «tokenuri azi —»
+    const face = tokensFace(f.budget, f.replay ? 'atunci' : 'azi');
+    const value = face.key.startsWith('tk|none') ? '—' : face.text;
+    return { eyebrow: 'SERVERE', value, tone: 'quiet', key: `ip|${value}` };
   }
   return null;
 }
@@ -181,6 +223,8 @@ export class StreamPlaques {
     }
     host.append(this.layer);
     this.on = false;
+    /** W22: laid over the replay in the Unreal building, with the books as they stood */
+    this.replay = false;
     /** the face whose glass readout is up: its plaque steps aside */
     this.suppressed = '';
   }
@@ -191,6 +235,19 @@ export class StreamPlaques {
     this.on = on;
     this.layer.hidden = !on;
     if (on) for (const item of this.items.values()) item.size = null;
+  }
+
+  /**
+   * W22: the plaques stand over the replay played in the Unreal building (replay_still.js), in the
+   * replay's ink, with the replayed moment's words.
+   * @param {boolean} on
+   */
+  setReplay(on) {
+    if (this.replay === Boolean(on)) return;
+    this.replay = Boolean(on);
+    if (this.replay) this.layer.dataset.replay = 'on';
+    else delete this.layer.dataset.replay;
+    for (const item of this.items.values()) item.size = null;
   }
 
   /** @param {string} id */
@@ -212,7 +269,7 @@ export class StreamPlaques {
       if (!item) continue;
       const words = plaqueWords(def.id, scene.facts, scene.agents);
       let at = null;
-      if (words && level !== 'none' && this.suppressed !== def.id) {
+      if (words && plaqueShownAt(def, level) && this.suppressed !== def.id) {
         if (words.key !== item.key) {
           item.key = words.key;
           item.eyebrow.textContent = words.eyebrow;
