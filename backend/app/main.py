@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
@@ -16,7 +17,8 @@ from sqlalchemy import Engine, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.middleware.trustedhost import TrustedHostMiddleware
-from starlette.types import ASGIApp
+from starlette.responses import Response
+from starlette.types import ASGIApp, Scope
 
 from app.agents.models import ProviderRecord
 from app.agents.router import create_agents_router, create_providers_router
@@ -93,6 +95,40 @@ from app.workforce.router import create_workforce_router
 from app.youtube.router import create_youtube_callback_router, create_youtube_router
 
 logger = logging.getLogger("studio.api")
+
+#: A file Vite built and named by its content: ``/assets/index-D49zCqy2.js``. Its bytes can never
+#: change under that name (a change is a new name, and index.html points at the new one), so a
+#: browser may keep it for a year without asking again. The art under ``/assets/hq/`` is copied
+#: from ``frontend/public`` with its own, unhashed names and is NOT matched: the depth of the path
+#: keeps it out.
+HASHED_ASSET = re.compile(r"^assets/[^/]+-[A-Za-z0-9_-]{8}\.(?:js|css|woff2?|png|webp|jpe?g|svg)$")
+#: The year a hashed file is kept, and the one header that says so.
+IMMUTABLE = "public, max-age=31536000, immutable"
+#: Everything else the page is made of (index.html, the icons, the HQ art and scene.json): kept,
+#: but asked about on every use. StaticFiles answers the question with a 304 and no body when the
+#: file is unchanged, so a return visit re-downloads nothing and a rebuilt file is seen at once.
+REVALIDATE = "no-cache"
+
+
+def static_cache_control(path: str) -> str:
+    """The Cache-Control for one file of the built page, by its path inside frontend/dist."""
+    return IMMUTABLE if HASHED_ASSET.match(path) else REVALIDATE
+
+
+class PageFiles(StaticFiles):
+    """The built page, served with the cache policy its files can bear.
+
+    Until 2026-09-24 every response of this process said ``no-store``, the page's 8.7 MB of art
+    included, so every visit downloaded all of it again before the first picture. The API keeps
+    ``no-store`` (the request middleware forces it on ``/api/*``); only a file this class served
+    with a 200 or a 304 carries a policy of its own.
+    """
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        response = await super().get_response(path, scope)
+        if response.status_code in (200, 304):
+            response.headers["Cache-Control"] = static_cache_control(path.replace("\\", "/"))
+        return response
 
 
 def _utc_now_plus(seconds: int) -> str:
@@ -384,7 +420,11 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
         response.headers["X-Correlation-ID"] = correlation_id
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
-        response.headers["Cache-Control"] = "no-store"
+        # Nothing the API answers may be kept: it carries the Owner's studio, and every answer is
+        # the state of one moment. Only a file of the built page (PageFiles) says otherwise, and
+        # only outside /api/.
+        if request.url.path.startswith("/api/") or "cache-control" not in response.headers:
+            response.headers["Cache-Control"] = "no-store"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; script-src 'self'; style-src 'self'; "
             "img-src 'self' data: https://yt3.ggpht.com https://yt3.googleusercontent.com; "
@@ -534,5 +574,5 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
     app.include_router(create_runbook_router(), prefix="/api/v1", tags=["runbook"])
 
     if (ROOT / "frontend/dist").is_dir():
-        app.mount("/", StaticFiles(directory=ROOT / "frontend/dist", html=True), name="frontend")
+        app.mount("/", PageFiles(directory=ROOT / "frontend/dist", html=True), name="frontend")
     return TrustedHostMiddleware(app, allowed_hosts=settings.allowed_hosts, www_redirect=False)

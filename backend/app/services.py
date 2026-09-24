@@ -1043,7 +1043,25 @@ def snapshot(engine: Engine) -> dict:
                     for r in rooms
                 ]
             },
-            # Implementation maturity is release metadata, not external provider health.
+            # Implementation maturity is release metadata, not external provider health. A module
+            # is IMPLEMENTED only when its path runs end to end in the code; PARTIAL when a real
+            # part of it runs and a named part does not; NOT_IMPLEMENTED when no code does its job.
+            # Read against the code on 2026-09-24:
+            #   story      PARTIAL, was NOT_IMPLEMENTED. The day closes into a counted log
+            #              (story/services.close_daily_log), the showrunner writes a grounded
+            #              episode, the Director reviews it, the Owner decides it, and the runbook's
+            #              serial stage carries an approved one to a storyboard
+            #              (story/serial_stage.py). Not end to end: an episode the Owner approves by
+            #              hand is never storyboarded, a day that already has a draft is never
+            #              returned to, and nothing writes tomorrow's episode.
+            #   financing  PARTIAL, was NOT_IMPLEMENTED. Owner funding runs: a capital
+            #              contribution or an Owner loan with its terms is recorded in the VR$
+            #              books (economy/services.record_owner_funding, POST
+            #              /economy/owner-funding, the Treasury dialog). Not built: the CEO's
+            #              financing request, the market-benchmarked terms and the interest that
+            #              accrues on its own.
+            #   procurement stays NOT_IMPLEMENTED: no VendorShop or purchase code exists
+            #              (economy/services.py says spending VR$ has no code yet).
             "modules": {
                 "agents": "IMPLEMENTED",
                 "providers": "IMPLEMENTED",
@@ -1053,10 +1071,10 @@ def snapshot(engine: Engine) -> dict:
                 "media": "PARTIAL",
                 "publishing": "PARTIAL",
                 "analytics": "PARTIAL",
-                "story": "NOT_IMPLEMENTED",
+                "story": "PARTIAL",
                 "treasury": "PARTIAL",
                 "procurement": "NOT_IMPLEMENTED",
-                "financing": "NOT_IMPLEMENTED",
+                "financing": "PARTIAL",
             },
             "events": [EventView.model_validate(e).model_dump() for e in reversed(recent)],
         }

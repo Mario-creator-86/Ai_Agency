@@ -3,8 +3,8 @@
  *
  * The sprite follows the agent's runtime state and lifecycle: WORKING types, THINKING thinks,
  * PAUSED sleeps at the desk, ERROR and BLOCKED hold their head, IDLE sits back. A speech bubble
- * from a real message makes the agent talk. A big event outside (fireworks, the UFO) turns the
- * head of an agent who is idle; an agent at work keeps working, because the work is real.
+ * from a real message makes the agent talk. Nothing outside moves them: the street's random
+ * events (fireworks, the UFO) are scenery, and an employee's pose is only ever the backend's state.
  * The employee's look comes from the Character Bible the backend serves.
  */
 
@@ -83,20 +83,11 @@ export class AgentVisualStateManager {
     this.clock = 0;
     /** @type {Map<string, number>} */
     this.phase = new Map();
-    /** @type {Map<string, number>} */
-    this.reactUntil = new Map();
   }
 
   /** @param {number} dt */
   update(dt) {
     this.clock += dt;
-  }
-
-  /** Idle agents look up for a moment; working agents do not stop. @param {any[]} agents @param {number} seconds */
-  react(agents, seconds) {
-    for (const agent of agents) {
-      if (animationFor(agent, false) === 'sit_idle') this.reactUntil.set(agent.id || agent.agent_id, this.clock + seconds);
-    }
   }
 
   /**
@@ -109,9 +100,7 @@ export class AgentVisualStateManager {
   frame(agent, atlasEntry, facing, talking) {
     const id = agent.id || agent.agent_id;
     if (!this.phase.has(id)) this.phase.set(id, this.rng() * 10);
-    let anim = animationFor(agent, talking);
-    const reacting = (this.reactUntil.get(id) ?? 0) > this.clock && anim === 'sit_idle';
-    if (reacting) anim = 'sit_talk';
+    const anim = animationFor(agent, talking);
     const key = `${anim}_${facing}`;
     const frames = atlasEntry?.animations?.[key] || atlasEntry?.animations?.[`sit_idle_${facing}`] || [];
     if (!frames.length) return null;

@@ -48,6 +48,23 @@ export function cloudLayerWeights(time) {
   return { dusk: dusk / sum, day: day / sum, night: night / sum };
 }
 
+/**
+ * How much cloud the sky shows, from the real cover the backend reads and nothing else: the
+ * painted banks and the drifting clouds both scale with it. A clear sky is clear; an unknown
+ * sky (no weather service, or it could not be reached) shows no cloud at all, because a cloud
+ * drawn there would be weather the studio made up. The banks reach full strength at 0.6 cover,
+ * where the weather says "partly cloudy" turns into "cloudy".
+ * @param {{cloudiness:number, fog:number}} fx
+ * @returns {{banks:number, drift:number}}
+ */
+export function cloudCover(fx) {
+  const cover = Math.max(0, Math.min(1, fx.cloudiness || 0));
+  return {
+    banks: Math.min(1, cover / 0.6) * (1 - Math.min(0.6, (fx.fog || 0) * 0.6)),
+    drift: cover,
+  };
+}
+
 export class SkyRenderer {
   /**
    * @param {{worldWidth:number, worldHeight:number, horizonRow:number, rng:() => number, assets?: any}} options
@@ -180,7 +197,7 @@ export class SkyRenderer {
 
   /**
    * The painted cloud banks, as in the Owner's picture: warm undersides at dusk, white by day, dim at
-   * night, crossfaded with the time of day. Live weather still adds cloud on top and greys the sky.
+   * night, crossfaded with the time of day, and only as much of them as the real cover (cloudCover).
    * @param {CanvasRenderingContext2D} ctx
    * @param {{daylight:number, dusk:number}} time
    * @param {{cloudiness:number, fog:number}} fx
@@ -188,7 +205,8 @@ export class SkyRenderer {
   drawCloudLayers(ctx, time, fx) {
     if (!this.assets) return;
     const weights = cloudLayerWeights(time);
-    const opacity = Math.min(1, 0.9 + fx.cloudiness * 0.1) * (1 - Math.min(0.6, fx.fog * 0.6));
+    const opacity = cloudCover(fx).banks;
+    if (opacity < 0.01) return;
     for (const look of /** @type {Array<'dusk'|'day'|'night'>} */ (['night', 'day', 'dusk'])) {
       const img = this.assets.sheet(`sky:${look}`);
       if (!img || weights[look] < 0.01) continue;
@@ -261,7 +279,7 @@ export class SkyRenderer {
 
   /** @param {CanvasRenderingContext2D} ctx @param {any} time @param {any} fx */
   drawClouds(ctx, time, fx) {
-    const amount = Math.min(1, 0.25 + fx.cloudiness);
+    const amount = cloudCover(fx).drift;
     const count = Math.round(this.clouds.length * amount);
     // Clouds take the colour of the light: lit pink-orange at dusk, white by day, blue-grey at night.
     const lit = mixHex(mixHex('#2a3350', '#f4f6fa', time.daylight), '#e9a48c', time.dusk * 0.55);

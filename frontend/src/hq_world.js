@@ -139,7 +139,7 @@ export class WorldSimulationManager {
     this.rng = mulberry32(options.seed ?? Date.now());
     this.worldW = m.world.width;
     this.worldH = m.world.height;
-    this.time = new TimeOfDayManager({ now: options.now, light: assets.scene?.light });
+    this.time = new TimeOfDayManager({ now: options.now });
     this.weather = new WeatherManager(options.fetchWeather);
     this.events = new RandomEventManager(assets.events, this.rng);
     const street = m.street;
@@ -179,25 +179,32 @@ export class WorldSimulationManager {
     if (id === 'bus_arrives' || id in EMERGENCY) this.traffic.spawnForEvent(id);
     else if (id === 'pedestrians_cross') this.pedestrians.startCrossing();
     else if (id === 'jogger_group') this.pedestrians.startJoggers(3);
-    if (event.def.reactionRadius >= 1000) {
-      this.agents.react(this.agentList, 6);
-      this.pedestrians.reactAll(5);
-    }
+    // Passers-by may look up at the street's own spectacle. The employees may not: what an
+    // employee does is the backend's state and nothing else, and an invented event outside is
+    // not a reason for anyone inside to be seen talking.
+    if (event.def.reactionRadius >= 1000) this.pedestrians.reactAll(5);
   }
 
-  /** @param {number} dt @param {number} nowMs */
-  step(dt, nowMs) {
+  /**
+   * @param {number} dt @param {number} nowMs
+   * @param {boolean} [still] the visitor asked for reduced motion: the clock, the sun and the
+   *   weather are still read (they are information), but nothing is moved. The street, the sky's
+   *   drift and the employees' loops hold the frame they are on; what each employee is doing
+   *   stays readable from their pose, their screen and their bubble.
+   */
+  step(dt, nowMs, still = false) {
     const time = this.time.update(dt);
     if (nowMs) this.weather.update(nowMs);
     const fx = this.weather.effects;
-    this.events.update(dt, { weather: this.weather.state.condition, phase: time.phase });
+    const move = still ? 0 : dt;
+    this.events.update(move, { weather: this.weather.state.condition, phase: time.phase });
     this.traffic.crosswalkBusy = this.pedestrians.crosswalkBusy;
     this.traffic.waitingAtShelter = this.pedestrians.waitingAtShelter;
-    this.traffic.update(dt, { hour: time.hour, day: time.day, effects: fx });
-    this.pedestrians.update(dt, { hour: time.hour, day: time.day, effects: fx, busAtShelter: this.traffic.busAtShelter });
-    this.agents.update(dt);
-    this.ambient.update(dt);
-    this.sky.update(dt, time, fx);
+    this.traffic.update(move, { hour: time.hour, day: time.day, effects: fx });
+    this.pedestrians.update(move, { hour: time.hour, day: time.day, effects: fx, busAtShelter: this.traffic.busAtShelter });
+    this.agents.update(move);
+    this.ambient.update(move);
+    this.sky.update(move, time, fx);
     if (this.time.state.daylight > 0.001) this.assets.loadVariant('day');
   }
 }
@@ -336,9 +343,8 @@ export class HQRenderer {
     const fx = w.weather.effects;
     w.agentList = state.agents;
     this.useCaches = this.ensureCaches(state.scale || 1, time);
-    // in the picture's light, live cloud cover does not grey the painted sky; rain, snow and fog still fall
-    const skyFx = w.time.light === 'reference_dusk' ? { ...fx, cloudiness: 0 } : fx;
-    w.sky.drawSky(ctx, time, skyFx);
+    // the real sun and the real cloud cover: an overcast noon is grey, a clear night is clear
+    w.sky.drawSky(ctx, time, fx);
     w.sky.drawSkyEvents(ctx, w.events, time);
     this.plate(ctx, 'back', time);
     this.drawBillboard(ctx);

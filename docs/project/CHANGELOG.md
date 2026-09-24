@@ -1,5 +1,15 @@
 # Changelog
 
+## The page amazes a first-time visitor, wave 1 — 2026-09-24
+
+- **Every live claim is true**: the live readout follows the real stream state, the fps names what it measures (Unreal's own statistics or the page's renderer), the «Acum» pulse goes quiet after an hour with nothing new, the event socket reconnects with backoff and replay, and the modules map no longer calls the serial or financing unimplemented (`frontend/src/live_claims.js`, new).
+- **The canvas follows the real sun and weather**; the «always dusk» mode is removed.
+- **A title screen and an entry into the building**: the headquarters as key art lit by the real hour, pointer parallax, the display face Oxanium (OFL, self-hosted), and a 700 ms push into the building on a real sign-in (`title_screen.js`, `title_frame.js`, `key_light.js`, new).
+- **A HUD bound to real fields**: the day tracker on the slate, the pipeline in the daily run, the budget ring in the treasury (`hud_charts.js`, new), and **moments** from live events only: the chapter card for an episode, the film toast with its real poster frame (`moments.js`, `film_poster.js`, new).
+- **Delivery**: hashed assets are immutable, the page revalidates, the API is never cached.
+- The judge removed a simulated employee reaction to random sky events, made the office canvas honour reduced motion, named every day in the register, and formatted money (`numbers.js`, new).
+- Frontend tests 236 pass (165 before); tests/test_foundation.py and tests/test_delivery_cache.py pass.
+
 ## One icon family, and the two readouts beside the render — 2026-09-23
 
 Seven icons from seven places became one family: one 24×24 grid, one stroke, round caps and

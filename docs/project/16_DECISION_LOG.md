@@ -3317,3 +3317,19 @@ holding a bare `general` now carry visible labels taken from what each control a
 the field-label pair the stylesheet already had — the decision to translate forced the decision to
 label. And the publishing gate card no longer quotes an internal architecture filename at the
 Owner: it says which checks do not exist yet, in Romanian, naming no file he does not open.
+
+## 2026-09-24 — The page amazes a first-time visitor, wave 1
+
+2026-09-24. The canvas fallback's 'reference_dusk' light mode was removed, not merely switched off. The Owner ruled on 2026-09-18/19 that the sky follows the real Bucharest sun and weather and is never 'always dusk', so the page keeps no code path that could hold it at dusk again. Clouds are weather, so they are drawn only as much as the real cover the backend reports, and not at all when the weather is unavailable. «Acum» uses the backend's worker task lease (3600 s) as its quiet threshold rather than a new constant, so the page never says 'now' for longer than the studio itself would consider a silent task alive.
+
+2026-09-24:
+- The title screen may move only for three reasons: the pointer (parallax), the real sun (the light, once a minute), and an accepted key (the entry). There is no load-time reveal, because a reveal on page load would be motion that answers nothing.
+- Before the key the title draws no weather, since the weather route requires the Owner and a sky drawn without it would be invented.
+- The display face is Oxanium: variable, 22 KB, Romanian coverage verified, and its figures are tabular. It is limited to the few big words so the measured widths of the working UI do not move.
+- The key light keeps the frame's hue but is clamped by contrast, not by taste: the faintest text on the page ground keeps 4.5:1 whatever the sky does.
+
+2026-09-24:
+- A moment is played only by an event the socket delivered as it happened and whose own timestamp is under ten minutes old. History (replay, backfill, a restart's outbox backlog) never plays one, so a celebration can never be a re-run of old news.
+- The film toast's picture is decoded from the rendered file itself with WebCodecs, not played through <video>. The page's CSP forbids blob: media, and the backend keeps no poster, so the only honest picture is a frame of that exact file, or none.
+- The pipeline is drawn as bars on one scale, not as a tapering funnel, because the studio's counts do not narrow monotonically.
+- The day tracker takes the newer of the register's events and the runbook's own run record, and «Acum» obeys the record's finish time, so the register's 400-event window can no longer make the page claim that a finished day is still running.

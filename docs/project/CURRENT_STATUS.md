@@ -13,6 +13,85 @@ database resource discovery/refresh, separate production choices, UI and regress
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
 
+## The page amazes a first-time visitor — wave 1 (2026-09-24)
+
+The Owner asked on 2026-09-24 for a premium interface «ca un joc demn de anul 2026», one that
+amazes whoever opens the page. Six readers first mapped the page and the serial read-only; four
+parts then built this wave in frontend/ (plus the modules map in backend/app/services.py and the
+delivery headers in backend/app/main.py), and a stranger judged it cold. **Verdict: ALMOST** — the
+title screen and the entry amaze; the workspace is a well-made dark dashboard, not yet a 2026
+game frame. What is left for YES is listed at the end of this section.
+
+- 2026-09-24, W1 «every live claim true» (frontend/**, backend/app/services.py modules map, backend/app/main.py cache headers). Every 'live' the page prints is now decided in one place, frontend/src/live_claims.js, from states the page actually reads: the Unreal stream's status, the events socket's status and the last snapshot read.
+- The corner readout says 'Live · Unreal Nfps' only while the Pixel Streaming video plays, and the figure is the inbound video frame rate from the library's statsReceived event.
+- Over a frozen last frame it says 'Se reconectează · cadru înghețat'. Before any frame it is hidden behind the viewport's own 'Pornește sediul live…' plate.
+- With no stream it says 'Live · randarea paginii Nfps' only while the backend's events reach the page. Otherwise it says 'Se conectează' or 'Se reconectează', 'Deconectat' on a refused key, and 'Date neactualizate' after a failed snapshot.
+- The dot pulses only in the live state, and the slate caption and the canvas label drop ', live' when it is not true.
+- The events socket reconnects (EventsLink): 1, 2, 4, 8, 16 then 30 s; a replay from the newest sequence held, in 500-event pages; the snapshot re-read after a drop; a 25 s ping with a 60 s silence limit; code 1008 is final. The masthead chip follows it.
+- The register's «Acum» pulses only while a stage is running and something was recorded in the last hour (RUN_QUIET_MS = the worker's 3600 s task lease). After that it reads 'Ultima etapă începută: … · nimic nou de N zile' on the quiet chip. A daily_run_finished newer than a stage_started now closes that stage.
+Tested: 188/188 frontend tests, tsc, build, shoot.mjs at 1920/1280/2560 with 0 missing and 0 errors, and frame sequences in scratchpad ui/shots_w1_scene.
+
+- the canvas fallback follows the real Bucharest sun and weather. The reference_dusk light mode was removed from hq_time.js and hq_world.js, and scene.json now says light 'live'. The painted and drifting clouds scale with the real cloud cover from /office/weather (hq_sky.js cloudCover): no weather service means no cloud drawn. Photographed on 2026-09-24 at 12:00, 19:15 and 23:30, and under cloudy, clear and rain answers (scratchpad ui/shots_w1_scene/montage_instants.png). The Unreal level itself is still dusk until W2. The canvas street's random traffic, pedestrians and sky events are still simulated and await the Owner's call.
+
+- delivery. backend/app/main.py serves frontend/dist through PageFiles:
+- Vite's content-hashed /assets/<name>-<hash>.<ext> files are 'public, max-age=31536000, immutable';
+- every other built file (index.html, icons, /assets/hq art, scene.json) is 'no-cache', revalidated with a 304;
+- every /api/* answer, and anything else that set no policy, stays 'no-store'.
+Tested in tests/test_delivery_cache.py. Effective after the backend restarts.
+
+- the modules map in snapshot() was read against the code. story is now PARTIAL (it was NOT_IMPLEMENTED): the day closes, a grounded episode is written, reviewed and decided, and the runbook's serial stage takes an approved episode to a storyboard. It is not end to end: an Owner-approved episode is not storyboarded, drafts are not resumed, and there is no tomorrow's script. financing is now PARTIAL (it was NOT_IMPLEMENTED): Owner capital and Owner loans are recorded end to end, while the CEO financing flow and accruing interest are not built. procurement stays NOT_IMPLEMENTED. tests/test_foundation.py asserts both corrections.
+
+- 2026-09-24, W3 «the first ten seconds» (frontend only). The sign-in is now a title screen standing in the studio's own world (frontend/src/title_screen.js, title_frame.js, index.html #title-stage):
+- The sky is the office's own SkyRenderer at the real Bucharest sun. The Blender plates form six depth layers, composed as key art: the headquarters on the right with a band of sky above its roof, the brand and the key on the left over a veil.
+- The light is the real hour. The day and night plates are crossfaded by the renderer's plateDayMix, and deep night gets its multiply grade. The sun is re-read every minute, and only the variant being shown is downloaded.
+- Before the key there is no weather (the route requires the Owner), so none is drawn.
+- What moves: mouse parallax of at most 14 px by depth, and the light. Nothing moves under reduced motion.
+- The only controls are the key and its button. The masthead and the footer arrive with the workspace.
+- A caption states the claim: 'Sediul AMN-AI, București · 19:15 · amurg, în lumina reală a orei'.
+- On a key the backend accepted, and only then, the camera pushes into the building (700 ms) and the workspace arrives staggered (masthead, register, render, modules, governance, footer). 820 ms in all.
+- A refused key moves nothing. Under reduced motion the workspace opens at once.
+Tested:
+- 208/208 frontend tests (title_frame.test.js new);
+- title_w3.mjs at 1920, 1440, 1280, 2560 and 390, at 12:00, 19:15 and 23:30, with every word at 4.71:1 or better measured from pixels;
+- the entry as scrubbed frames and as a real-time screencast (scratchpad ui/shots_w3);
+- shoot.mjs at three sizes with 0 missing and 0 errors.
+
+- W9 in part: type, texture and key light.
+- The display face Oxanium (SIL OFL 1.1, self-hosted in frontend/public/fonts/oxanium with OFL.txt; ș ț with the comma below checked in the cmap) sets the title, the panel and dialog titles, and the hero figures. It has a metric-matched Arial fallback, and figures are tabular by default.
+- The page ground has a still SVG grain (3.5%) and an edge vignette.
+- The key light (--key-cool) is sampled every 2 s from the top band of the frame being shown: the stream's kept still, otherwise the page's renderer. It is clamped so --ink-3 keeps 4.5:1 over the lit ground (key_light.js, key_light.test.js).
+- Plates and sprite sheets are now decoded off the main thread (hq_assets.js loadBitmap). The longest task after sign-in fell from 222 ms to 97 ms.
+
+- 2026-09-24, W6 «data you can read at a glance» (frontend only). Four instruments draw answers the backend already gives, and nothing else (frontend/src/hud_charts.js).
+- The render's slate carries the newest daily run: one segment per stage, placed by the index on runbook.stage_started, coloured green/warm/red/gold/faint. When the register has lost a finished day's events, the run record from /runbook/runs is used instead. Words beside it: 'Rularea din 12.09 · 12/12 · încheiată', or '12.09 · 12/12' on a narrower page.
+- The daily-run dialog's «Flux» is six bars on one scale from company-state pipeline.stages, with waiting work in gold and losses in red. It is not drawn as a tapering funnel, because the data is not one.
+- Each treasury budget has a ring: spent, then held, against the limit, with the warning tick at warn_ratio.
+- Each distribution channel has one column per published film from /analytics/performance. A measured zero is a tick; an unmeasured film has no height.
+- An empty series is said in words. Geometry is attributes and classes, never inline style (CSP). Nothing animates on arrival; a tracker segment recolours in 240 ms only when a real stage event changes it.
+- «Acum» now agrees with the run record: a stage that started before the day's recorded finish is not running. On the copy of the database it had said 'nimic nou de 4 zile' about a finished day.
+Tested: 233/233 frontend tests (hud_charts.test.js new), tsc, build, shoot.mjs at 1920/1280/2560 with 0 missing and 0 errors, and scene_w6.mjs recordings in scratchpad ui/shots_w6_scene.
+
+- W8 «moments» (frontend/src/moments.js, film_poster.js).
+- A moment plays only for an event the socket sent as it happened ({type:'event'}; EventsLink now passes the flag), whose own timestamp is under 10 minutes old, and at most once per event_id. The page-open replay, the REST backfill and a reconnect's catch-up play nothing; proven with three fresh milestones sent as replay_event.
+- An episode drafted or approved puts a chapter card in the render's lower left: 'Inside The Nexus · Ep 1', the episode's title from /story/episodes, and who decided.
+- A film rendered puts a toast in the lower right carrying a real frame of the film. The page streams the start of the +faststart MP4, finds a key frame at 20% of the film by parsing the MP4 index, stops reading, and decodes that one frame with WebCodecs; no <video> and no blob:. Measured about 250-290 ms after the event.
+- A film published puts up a toast with its title.
+- A request for the Owner re-reads the approvals, and the register's gold mark ('N cereri așteaptă decizia ta', a button to the approvals) glows once for 1.2 s. The mark itself stays up while requests wait.
+- Every moment arrives in 320 ms, leaves in 240 ms and is gone within 3 s. One is up at a time. Pointer or focus holds it; the close button and Escape dismiss it; the text goes to a polite live region.
+- Under reduced motion the same words stay up for the same time, with no movement.
+- The register also gained words for story.episode_approved/rejected and governance.approval_requested, which it had printed as raw English keys.
+
+- the workspace read as a whole at 1920. The masthead's Settings button was a filled green slab, the loudest object above the render. It is now the quiet outlined plate its neighbours wear, in the studio green (9.3:1). Letter subjects in the register drop from 600 to 500 weight so the column no longer reads as a wall of bold. The chapter card has no backdrop blur, because it would be recomputed every frame over the moving picture. Frame timing at 1920 with no screenshots: median 6.9 ms, no long tasks. One 42 ms frame when a chapter card appears, and up to 28 ms while a poster is decoded.
+
+**Measured.** 236 frontend tests pass (165 before this wave), `tsc` clean, the build succeeds; the backend files of this wave pass tests/test_foundation.py and tests/test_delivery_cache.py (29 passed). Every view was photographed at 1280, 1920 and 2560 with 0 missing fixtures and 0 console errors.
+
+**What is left for YES, from the judge.** The Unreal real-sky level on the live stream (the one
+game-grade object); the render as the full-bleed hero with the register and approvals as glass
+drawers; Unreal stills to replace the 2026-09-13 Blender plates, whose windows are lit at noon;
+portraits of the eight employees; the canvas words in Romanian; `media-src 'self' blob:` in the
+page's CSP; and the Owner's call on the canvas street's random life (traffic, pedestrians, sky
+events come from a seeded generator, not from the backend).
+
 ## One icon family, and the two readouts beside the render (2026-09-23)
 
 Active edit claim: Claude, 2026-09-23 — the product's icons, the frame-rate figure on the glass

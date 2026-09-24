@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { solarElevation, timeOfDay, skyStops, litTime, TimeOfDayManager } from '../src/hq_time.js';
+import { solarElevation, timeOfDay, skyStops, TimeOfDayManager } from '../src/hq_time.js';
 import { normalizeWeather, weatherEffects, WeatherManager } from '../src/hq_weather.js';
 import { RandomEventManager, validateEvent, RARITY_RATE } from '../src/hq_events.js';
 import { TrafficManager } from '../src/hq_traffic.js';
 import { PedestrianManager } from '../src/hq_pedestrians.js';
 import { animationFor, spriteFor, screenModeFor, AgentVisualStateManager } from '../src/hq_agents.js';
-import { mulberry32, plateDayMix, streetLight } from '../src/hq_world.js';
+import { mulberry32, plateDayMix, streetLight, WorldSimulationManager } from '../src/hq_world.js';
 import { cloudLayerWeights } from '../src/hq_sky.js';
 import fs from 'node:fs';
 
@@ -24,16 +24,28 @@ test('the sun over Bucharest: high at a June noon, far below the horizon at a De
   assert.ok(september > -3 && september < 12, `mid-September 19:00 local is near sunset (${september})`);
 });
 
-test("in the picture's light the office is always at dusk, while the clock and the street keep real time", () => {
-  const noon = timeOfDay(new Date('2026-06-21T10:00:00Z'));
-  const lit = litTime(noon, 'reference_dusk');
-  assert.equal(lit.phase, 'dusk');
-  assert.ok(lit.daylight > 0.2 && lit.daylight < 0.45 && lit.dusk > 0.5, JSON.stringify(lit));
-  assert.equal(lit.text, noon.text);
-  assert.equal(litTime(noon, 'live'), noon);
-  const manager = new TimeOfDayManager({ now: () => new Date('2026-06-21T10:00:00Z'), light: 'reference_dusk' });
-  assert.equal(manager.update(1).phase, 'day');
-  assert.equal(manager.state.phase, 'dusk');
+test('the office is lit by the real sun at every hour: noon is day, the evening is dusk, midnight is night', () => {
+  // The Owner's ruling (2026-09-18/19): the sky follows the real Bucharest sun, never "always dusk".
+  const at = (iso) => new TimeOfDayManager({ now: () => new Date(iso) });
+  const noon = at('2026-09-24T09:00:00Z').state; // 12:00 in Bucharest
+  const dusk = at('2026-09-24T16:10:00Z').state; // 19:10, the sun just under the horizon
+  const night = at('2026-09-24T21:00:00Z').state; // 00:00
+  assert.equal(noon.phase, 'day');
+  assert.ok(noon.daylight > 0.99, JSON.stringify(noon));
+  assert.equal(dusk.phase, 'dusk');
+  assert.ok(dusk.dusk > 0.5, JSON.stringify(dusk));
+  assert.equal(night.phase, 'night');
+  assert.ok(night.daylight < 0.01, JSON.stringify(night));
+  // a manager asked for the old picture light no longer has one to give
+  const legacy = new TimeOfDayManager({ now: () => new Date('2026-06-21T10:00:00Z'), light: 'reference_dusk' });
+  assert.equal(legacy.state.phase, 'day');
+  assert.equal(legacy.update(1).phase, 'day');
+});
+
+test('the shipped scene is lit live', () => {
+  const scene = JSON.parse(fs.readFileSync(new URL('../public/assets/hq/scene.json', import.meta.url), 'utf8'));
+  assert.equal(scene.light, 'live');
+  assert.doesNotMatch(JSON.stringify(scene), /reference_dusk/);
 });
 
 test('phases follow the sun, not a fixed hour table', () => {
@@ -272,12 +284,56 @@ test('each employee is drawn from their Character Bible sprite', () => {
   }
 });
 
-test('an idle employee looks up at a big event; one at work keeps working', () => {
+test('a random event outside never changes what an employee is seen doing', () => {
+  // The street's spectacle (fireworks, the UFO) is scenery; an employee's pose is backend state.
+  let employeesTouched = false;
+  let passersBy = 0;
+  const fake = {
+    traffic: { spawnForEvent() {} },
+    pedestrians: { reactAll: () => { passersBy += 1; }, startCrossing() {}, startJoggers() {} },
+    agents: new Proxy({}, { get: () => { employeesTouched = true; return () => {}; } }),
+    agentList: [{ id: 'a', runtime_state: 'IDLE' }],
+  };
+  WorldSimulationManager.prototype.onEvent.call(fake, 'start', { def: { eventId: 'ufo_flyby', reactionRadius: 5000 } });
+  assert.equal(employeesTouched, false);
+  assert.equal(passersBy, 1);
   const manager = new AgentVisualStateManager(mulberry32(2));
-  const idle = { id: 'a', runtime_state: 'IDLE' };
-  const busy = { id: 'b', runtime_state: 'WORKING' };
-  manager.react([idle, busy], 5);
+  assert.equal(typeof (/** @type {any} */ (manager)).react, 'undefined');
   const entry = CHARACTERS.characters.sarah;
-  assert.equal(manager.frame(idle, entry, 'front', false).anim, 'sit_talk');
-  assert.equal(manager.frame(busy, entry, 'front', false).anim, 'sit_type');
+  assert.equal(manager.frame({ id: 'a', runtime_state: 'IDLE' }, entry, 'front', false).anim, 'sit_idle');
+  assert.equal(manager.frame({ id: 'b', runtime_state: 'WORKING' }, entry, 'front', false).anim, 'sit_type');
+});
+
+test('the sky shows only the cloud the real weather reports', async () => {
+  const { cloudCover } = await import('../src/hq_sky.js');
+  // no weather service: no weather drawn, clouds included
+  const unknown = cloudCover(weatherEffects(normalizeWeather({ available: false, reason: 'not_configured' })));
+  assert.deepEqual(unknown, { banks: 0, drift: 0 });
+  const clear = cloudCover(weatherEffects(normalizeWeather({ available: true, condition: 'clear' })));
+  assert.ok(clear.banks < 0.1 && clear.drift < 0.1, JSON.stringify(clear));
+  const cloudy = cloudCover(weatherEffects(normalizeWeather({ available: true, condition: 'cloudy', intensity: 0.5 })));
+  assert.equal(cloudy.banks, 1);
+  assert.ok(cloudy.drift > 0.8);
+});
+
+test('reduced motion holds the scene still but keeps reading the clock and the weather', () => {
+  const seen = {};
+  const rec = (name) => ({ update: (dt) => { seen[name] = dt; return { phase: 'day', hour: 12, day: 3, daylight: 1 }; } });
+  const fake = {
+    time: { ...rec('time'), state: { daylight: 1 } },
+    weather: { update: (now) => { seen.weather = now; }, effects: { wind: 0, rain: 0, snow: 0 }, state: { condition: 'clear' } },
+    events: rec('events'),
+    traffic: rec('traffic'),
+    pedestrians: { ...rec('pedestrians'), crosswalkBusy: false, waitingAtShelter: 0 },
+    agents: rec('agents'),
+    ambient: rec('ambient'),
+    sky: rec('sky'),
+    assets: { loadVariant() {} },
+  };
+  WorldSimulationManager.prototype.step.call(fake, 0.5, 1000, true);
+  assert.equal(seen.time, 0.5, 'the clock still runs: the sun and the hour are information');
+  assert.equal(seen.weather, 1000, 'the weather is still read');
+  for (const mover of ['events', 'traffic', 'pedestrians', 'agents', 'ambient', 'sky']) assert.equal(seen[mover], 0, mover);
+  WorldSimulationManager.prototype.step.call(fake, 0.5, 1000, false);
+  for (const mover of ['events', 'traffic', 'pedestrians', 'agents', 'ambient', 'sky']) assert.equal(seen[mover], 0.5, mover);
 });

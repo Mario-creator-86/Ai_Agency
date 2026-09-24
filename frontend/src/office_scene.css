@@ -152,6 +152,19 @@
   color: var(--scene-chrome-muted);
 }
 .live-dot { width: var(--s2); height: var(--s2); border-radius: var(--radius-pill); background: var(--teal); box-shadow: var(--glow-live); flex: none; }
+/* THE LIVE READOUT SAYS WHAT IS TRUE (live_claims.js sets data-state).
+   live: the teal dot, pulsing (style.css). frozen / reconnecting: the stream's
+   last frame is up, or the events stopped arriving -- the dot is still and
+   warm, the words say "Se reconectează". stale / offline: the dot is still and
+   red. starting: the viewport's own plate already says the headquarters is
+   starting, so the corner says nothing. The dot is never the only carrier:
+   every state has its words. */
+.scene-viewport .scene-readout-live:not([data-state="live"]) .live-dot { background: var(--scene-chrome-muted); box-shadow: none; }
+.scene-viewport .scene-readout-live[data-state="frozen"] .live-dot,
+.scene-viewport .scene-readout-live[data-state="reconnecting"] .live-dot { background: var(--warn-ink); }
+.scene-viewport .scene-readout-live[data-state="stale"] .live-dot,
+.scene-viewport .scene-readout-live[data-state="offline"] .live-dot { background: var(--alert-ink); }
+.scene-viewport .scene-readout-live[data-state="starting"] { visibility: hidden; }
 
 /* --------------------------------------------------------------------------
    WHAT THE SCENE SAYS WHEN IT HAS NOTHING TO SHOW
@@ -469,4 +482,82 @@
 #office-scene-container .btn-fs:hover:not(:disabled) {
   background: var(--surface-hi);
   border-color: var(--scene-chrome-edge);
+}
+
+/* ==========================================================================
+   8 THE DAY ON THE SLATE, AND A CHAPTER OVER THE RENDER
+   ==========================================================================
+   The slate's middle carries the newest daily run as one segment per stage
+   (hud_charts.js dayTrack): lit green when the stage closed, warm when it was
+   partial, red when it failed or never finished, gold for the one the runbook
+   says is running, and a faint slot for a stage that has not begun. It is
+   drawn from the runbook's own events and changes only when one arrives; the
+   words beside it say the day, the tally and the state, so the colour never
+   carries the fact alone. Nothing on it moves by itself. */
+.scene-viewport .scene-slate #room-caption { flex: 1 1 auto; min-width: 0; }
+.scene-viewport .scene-slate #snapshot-time { flex: none; }
+.scene-viewport .scene-slate .day-track {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  color: var(--scene-chrome-ink);
+}
+.scene-viewport .day-track-bar { flex: none; display: block; overflow: visible; }
+.scene-viewport .day-track-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.scene-viewport .day-track[data-state="empty"] .day-track-bar { display: none; }
+.scene-viewport .day-track[data-state="empty"] .day-track-label { color: var(--scene-chrome-muted); }
+.track-seg { fill: var(--seg-pending); transition: fill var(--dur-seg) var(--ease); }
+.track-seg.seg-done    { fill: var(--ok-ink); }
+.track-seg.seg-partial { fill: var(--warn-ink); }
+.track-seg.seg-failed  { fill: var(--alert-ink); }
+.track-seg.seg-skipped { fill: var(--scene-chrome-muted); }
+.track-seg.seg-running { fill: var(--gold); }
+.track-seg.seg-unrun   { fill: var(--seg-unrun); }
+/* A render too narrow for the sentence keeps the segments and says only the
+   day and the tally (12.09 · 12/12); the tracker's aria-label still says all
+   of it. Measured: at a 1280 page the sentence ran into the caption and both
+   were cut. */
+.scene-viewport .day-track-short { display: none; }
+@media (max-width: 1600px) {
+  .scene-viewport .day-track-long { display: none; }
+  .scene-viewport .day-track-short { display: inline; }
+  /* The caption gives way first: the tally is a figure and is never cut. */
+  .scene-viewport .scene-slate .day-track { flex: none; }
+}
+
+/* The chapter card: set into the render's lower left, above the slate, on the
+   same glass as the instruments and with the studio's gold rule. It is up for
+   under three seconds (moments.js) and is the one place a moment covers the
+   picture. */
+.scene-viewport .moment-chapter {
+  position: absolute;
+  z-index: 7;
+  left: var(--s5);
+  bottom: calc(var(--scene-readout) + var(--s5));
+  max-width: var(--moment-w);
+  padding: var(--s4) calc(var(--s7) + var(--s4)) var(--s4) var(--s5);
+  background: var(--moment-glass);
+  border: 1px solid var(--scene-chrome-edge);
+  border-left: 2px solid var(--moment-edge);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  box-shadow: var(--lit-edge), var(--shadow-raised);
+  /* No backdrop blur: the picture under the card changes every frame, and a blur over it
+     would be recomputed every frame for a plate that is 90% opaque anyway. */
+  pointer-events: auto;
+  opacity: 0;
+  transform: translateY(var(--moment-rise));
+  transition: opacity var(--moment-in) var(--ease), transform var(--moment-in) var(--ease);
+}
+.scene-viewport .moment-chapter.is-in { opacity: 1; transform: none; }
+.scene-viewport .moment-chapter.is-out {
+  opacity: 0;
+  transform: none;
+  transition-duration: var(--moment-out);
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Under the preference the card appears and leaves in place, for the same time. */
+  #office-scene-container .scene-viewport .moment-chapter { transform: none; transition: none; }
+  #office-scene-container .track-seg { transition: none; }
 }

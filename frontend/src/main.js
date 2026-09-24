@@ -1,3 +1,4 @@
+import { amount } from './numbers.js';
 import { loadAgentDetails } from './agent_details.js';
 import { icon } from './icons.js';
 import { escapeHtml } from './html.js';
@@ -14,12 +15,19 @@ import { initSettings } from './settings.js';
 import { acceptSnapshot } from './projection.js';
 import { OfficeEngine } from './office_engine.js';
 import { OfficeState } from './office_state.js';
-import { Ledger, entryCountLabel } from './ledger.js';
+import { Ledger, entryCountLabel, productionStatus } from './ledger.js';
+import { budgetRing, budgetRingSvg, channelFilmsHtml, dayTrack, dayTrackFromRun, dayTrackGeometry, dayTrackWords, newerTrack, pipelineSvg } from './hud_charts.js';
+import { Moments } from './moments.js';
+import { filmPoster } from './film_poster.js';
 import { friendlyAnswer } from './friendly_text.js';
 import { LiveWindows, eventMatchesAgent } from './live_window.js';
 import { MailThread } from './mail_thread.js';
 import { LiveStream } from './hq_stream.js';
 import { liveStreamSettings, relayUrl } from './hq_stream_config.js';
+import { EventsLink, connectionLabel, roomCaption, sceneReadout } from './live_claims.js';
+import { TitleScreen } from './title_screen.js';
+import { entryPlays } from './title_frame.js';
+import { KeyLight } from './key_light.js';
 import {
   APPROVALS_PATH,
   APPROVAL_DECISION_PATH,
@@ -57,10 +65,98 @@ let pendingEnvironment = null;
 let epoch = 0;
 let busy = false;
 let connected = false;
-let socket = null;
+
+/**
+ * What the page knows is happening, from which every «live» it prints is decided
+ * (live_claims.js): the Unreal stream, the events socket, the last snapshot read, and the two
+ * frame rates, each under its own name.
+ * @type {import('./live_claims.js').LiveSignals}
+ */
+const liveSignals = { stream: 'pending', hasStill: false, socket: 'closed', data: 'fresh', streamFps: null, pageFps: null };
+let liveReadoutKey = '';
+
+/** Writes the corner readout, the masthead chip and the slate caption from liveSignals. */
+function renderLiveSignals() {
+  const readout = sceneReadout(liveSignals);
+  const staff = officeState.agents.length;
+  const caption = roomCaption(staff, readout.live);
+  const chip = connectionLabel(liveSignals);
+  const key = JSON.stringify([readout.state, readout.parts, caption, chip]);
+  if (key === liveReadoutKey) return;
+  liveReadoutKey = key;
+  const pill = element('office-status');
+  pill.dataset.state = readout.state;
+  pill.title = readout.title;
+  pill.setAttribute('aria-hidden', readout.hidden ? 'true' : 'false');
+  element('office-fps').replaceChildren(...readout.parts.map(([name, text]) => {
+    const span = document.createElement('span');
+    span.className = name;
+    span.textContent = text;
+    return span;
+  }));
+  element('room-caption').textContent = caption;
+  officeCanvas.setAttribute(
+    'aria-label',
+    `Sediul AMN-AI${readout.live ? ', live' : ''}. Folosește tastele-săgeți ca să treci de la un angajat la altul și Enter ca să deschizi unul.`,
+  );
+  if (ownerToken) element('connection').textContent = chip;
+}
+
+/** The backend's events, reconnected after a drop; see EventsLink. */
+const eventsLink = new EventsLink({
+  url: () => {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${proto}//${location.host}/api/v1/ws?token=${encodeURIComponent(ownerToken)}`;
+  },
+  open: (url) => new WebSocket(url),
+  // Everything after the newest event the page holds: the snapshot's cursor, or further on when
+  // the register has already read past it.
+  afterSequence: () => Math.max(state ? Number(state.cursor) || 0 : 0, ledger.cursor || 0),
+  onEvent: (eventData, live) => {
+    officeState.handleDomainEvent(eventData);
+    updateOfficeCanvas();
+    ledger.add(eventData);
+    element('ledger-count').textContent = entryCountLabel(ledger.events.size);
+    // A milestone plays only when the socket delivered it as it happened (moments.js).
+    const moment = moments.offer(eventData, live);
+    if (moment && moment.kind === 'approval') loadApprovals(true).then(() => markArrived());
+  },
+  onState: (socketState) => {
+    liveSignals.socket = socketState;
+    renderLiveSignals();
+  },
+  // Back after a drop: read the studio again, so the switches and the panels are not the ones
+  // from before the gap. The register has its replay already.
+  onReconnected: () => { if (ownerToken) refresh(); },
+});
 
 // 2D Office Engine & State
 const officeCanvas = /** @type {HTMLCanvasElement} */ (element('office-canvas'));
+
+/** Whether the visitor asked the system for less motion; read at the moment it matters. */
+function reducedMotion() {
+  return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+/**
+ * The title screen: the sign-in standing in the studio's own world, lit by the real sun
+ * (title_screen.js). It is the first thing on screen, before any key.
+ */
+const titleScreen = new TitleScreen({
+  stage: element('title-stage'),
+  caption: element('title-caption'),
+  reducedMotion,
+});
+titleScreen.start();
+
+/**
+ * The page's key light, taken from the frame the visitor is looking at: the stream's kept frame
+ * while the stream has one, the page's own renderer otherwise (key_light.js).
+ */
+const keyLight = new KeyLight({
+  target: document.documentElement,
+  source: () => (liveStream && liveStream.hasStill ? liveStream.still : officeCanvas),
+});
 const officeState = new OfficeState();
 let officeEngine = null;
 /** @type {LiveStream|null} the Unreal headquarters over the renderer, when scene.json turns it on */
@@ -147,8 +243,179 @@ const ledger = new Ledger({
   escape: escapeHtml,
   onEvents: (events) => {
     for (const event of events) noteAgentEvent(event);
+    if (events.some((event) => String(event.event_type || '').startsWith('runbook.'))) scheduleDayTrack();
+    // A day that closes is re-read from the runbook's own record.
+    if (events.some((event) => event.event_type === 'runbook.daily_run_finished')) loadDayRecord();
   },
   onThread: (threadId) => mailThread.open(threadId),
+});
+// «Acum» must go quiet when the register has been silent past RUN_QUIET_MS even if no event
+// arrives to trigger a render, so the head line is read again once a minute. It touches one
+// paragraph; the list is not redrawn. The day tracker's words follow the same clock.
+window.setInterval(() => {
+  // past midnight the day headings («Azi», «Ieri») are re-read with the list
+  if (ledger.dayTurned()) ledger.render();
+  else ledger.renderNow();
+  renderDayTrack();
+}, 60000);
+
+/* ---------------------------------------------------------------------------
+ * THE DAY TRACKER on the slate: one segment per stage of the newest daily run, from the
+ * runbook's own events in the register (hud_charts.js). The segments are kept from one render
+ * to the next, so a segment changes colour only when a real stage event changes it, and the
+ * first drawing is at rest: nothing counts up from nothing.
+ * ------------------------------------------------------------------------- */
+const dayTrackBox = element('day-track');
+const dayTrackBar = /** @type {SVGSVGElement} */ (/** @type {unknown} */ (dayTrackBox.querySelector('.day-track-bar')));
+const dayTrackLabel = /** @type {HTMLElement} */ (dayTrackBox.querySelector('.day-track-label'));
+const SVG_NS = 'http://www.w3.org/2000/svg';
+let dayTrackKey = '';
+let dayTrackQueued = false;
+/** @type {import('./hud_charts.js').DayTrack|null} the newest finished day, as the runbook recorded it */
+let dayRecord = null;
+
+/** Reads the runbook's newest recorded day; the events of a day under way stay the newer. */
+async function loadDayRecord() {
+  if (!ownerToken) return;
+  try {
+    const data = await api('/runbook/runs');
+    const newest = (data.runs || [])[0];
+    dayRecord = dayTrackFromRun(newest);
+    // «Acum» reads the same record: a stage that started before the day's recorded finish is
+    // not running, even when the register has lost the finish behind newer rows.
+    const closed = newest ? Date.parse(String(newest.finished_at || '')) : NaN;
+    ledger.closedAt = Number.isFinite(closed) ? closed : null;
+  } catch {
+    dayRecord = null;
+  }
+  ledger.renderNow();
+  renderDayTrack();
+}
+
+function scheduleDayTrack() {
+  if (dayTrackQueued) return;
+  dayTrackQueued = true;
+  requestAnimationFrame(() => {
+    dayTrackQueued = false;
+    renderDayTrack();
+  });
+}
+
+/** The studio's business date today, in its own time zone, as the runbook writes it. */
+function studioToday() {
+  const zone = state && state.studio ? state.studio.timezone : undefined;
+  try {
+    return new Date().toLocaleDateString('sv-SE', { timeZone: zone });
+  } catch {
+    return new Date().toLocaleDateString('sv-SE');
+  }
+}
+
+function renderDayTrack() {
+  const events = ledger.sorted();
+  const track = newerTrack(dayTrack(events), dayRecord);
+  const live = productionStatus(events, Date.now(), ledger.closedAt).live;
+  const words = dayTrackWords(track, { today: studioToday(), live });
+  const geometry = dayTrackGeometry(track);
+  const key = JSON.stringify([words.label, geometry.rects.map((r) => r.state)]);
+  if (key === dayTrackKey) return;
+  dayTrackKey = key;
+  dayTrackBox.setAttribute('aria-label', words.sentence);
+  dayTrackBox.dataset.state = track.empty ? 'empty' : track.finished ? 'finished' : 'running';
+  const long = document.createElement('span');
+  long.className = 'day-track-long';
+  long.textContent = words.label;
+  const brief = document.createElement('span');
+  brief.className = 'day-track-short';
+  brief.textContent = words.short;
+  dayTrackLabel.replaceChildren(long, brief);
+  // The same number of segments: recolour them in place. A new day with another count: redraw.
+  if (dayTrackBar.childElementCount !== geometry.rects.length) {
+    dayTrackBar.replaceChildren(
+      ...geometry.rects.map((r) => {
+        const rect = document.createElementNS(SVG_NS, 'rect');
+        rect.setAttribute('x', String(r.x));
+        rect.setAttribute('y', String(r.y));
+        rect.setAttribute('width', String(r.w));
+        rect.setAttribute('height', String(r.h));
+        rect.setAttribute('rx', '1');
+        return rect;
+      }),
+    );
+    dayTrackBar.setAttribute('width', String(geometry.width));
+    dayTrackBar.setAttribute('height', String(geometry.height));
+    dayTrackBar.setAttribute('viewBox', `0 0 ${geometry.width || 1} ${geometry.height}`);
+  }
+  geometry.rects.forEach((r, i) => {
+    const rect = dayTrackBar.children[i];
+    if (rect) rect.setAttribute('class', `track-seg seg-${r.state}`);
+  });
+}
+
+/* ---------------------------------------------------------------------------
+ * MOMENTS: a chapter card, a film toast, the gold mark's one glow (moments.js). Each comes
+ * from one live event and reads the rest of what it says from the backend.
+ * ------------------------------------------------------------------------- */
+const moments = new Moments({
+  chapter: element('moment-chapter'),
+  toast: element('moment-toast'),
+  announce: element('moment-announce'),
+  reducedMotion: () => reducedMotion(),
+  facts: async (moment) => {
+    if (moment.kind === 'chapter') {
+      const [episodes, channels] = await Promise.all([
+        api('/story/episodes').catch(() => null),
+        api('/publishing/channels').catch(() => null),
+      ]);
+      const episode = ((episodes && episodes.episodes) || []).find((row) => row.id === moment.episodeId) || null;
+      const serial = ((channels && channels.channels) || []).find((row) => row.channel_type === 'OFFICE_SERIAL');
+      // The number is the draft's own (story.episode_drafted carries it); an approval reads it
+      // from the draft event when the register still holds it.
+      const drafted = ledger.sorted().find((e) => e.event_type === 'story.episode_drafted' && e.aggregate_id === moment.episodeId);
+      const number = moment.episodeNumber || (drafted && drafted.payload && Number(drafted.payload.episode_number)) || null;
+      return { series: serial ? serial.youtube_connection_name || serial.youtube_channel_title || null : null, episode, number };
+    }
+    if (moment.kind === 'film' && moment.storyboardId) {
+      const storyboard = await api(`/media/storyboards/${encodeURIComponent(moment.storyboardId)}`).catch(() => null);
+      return { title: storyboard ? storyboard.title : '' };
+    }
+    return {};
+  },
+  poster: (moment) =>
+    moment.assetId
+      ? filmPoster({ url: `/api/v1/media/assets/${encodeURIComponent(moment.assetId)}/stream`, token: ownerToken })
+      : Promise.resolve(null),
+});
+// The scene script and the tests reach the moments through the page's handle.
+Object.assign(window, { __moments: moments });
+
+/** «1 cerere așteaptă decizia ta», «3 cereri…», «20 de cereri…». */
+function waitingWords(n) {
+  if (n === 1) return '1 cerere așteaptă decizia ta';
+  const rest = n % 100;
+  return `${n} ${n >= 20 && (rest === 0 || rest >= 20) ? 'de cereri' : 'cereri'} așteaptă decizia ta`;
+}
+
+const ownerMark = /** @type {HTMLButtonElement} */ (element('owner-mark'));
+/** @param {number} pending how many requests the approvals route lists as waiting */
+function renderOwnerMark(pending) {
+  ownerMark.hidden = !(pending > 0);
+  element('owner-mark-text').textContent = pending > 0 ? waitingWords(pending) : '';
+  ownerMark.title = pending > 0 ? 'Du-mă la cererile de aprobare' : '';
+}
+/** A request arrived as it happened: the mark glows once, for MOMENT_TIMING.mark. */
+function markArrived() {
+  if (ownerMark.hidden || reducedMotion()) return;
+  ownerMark.classList.remove('is-arriving');
+  void ownerMark.offsetWidth;
+  ownerMark.classList.add('is-arriving');
+}
+ownerMark.addEventListener('animationend', () => ownerMark.classList.remove('is-arriving'));
+ownerMark.addEventListener('click', () => {
+  const heading = document.querySelector('.approvals-heading');
+  if (heading) heading.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'start' });
+  const first = /** @type {HTMLButtonElement|null} */ (approvalsList.querySelector('.btn-approval'));
+  if (first) first.focus({ preventScroll: true });
 });
 
 function notify(message) {
@@ -224,11 +491,23 @@ async function startLiveStream() {
   const settings = liveStreamSettings(scene);
   if (!settings.enabled || !relay || relay.available !== true) {
     viewport.dataset.stream = 'off';
+    liveSignals.stream = 'off';
+    renderLiveSignals();
     return;
   }
   const signallingUrl = relayUrl(window.location, String(relay.relay), ownerToken);
   liveStream = new LiveStream(viewport, { ...settings, signallingUrl }, {
-    onStatus: (status) => { viewport.dataset.stream = status; },
+    onStatus: (status) => {
+      viewport.dataset.stream = status;
+      liveSignals.stream = status;
+      liveSignals.hasStill = Boolean(liveStream && liveStream.hasStill);
+      renderLiveSignals();
+    },
+    // Unreal's frames, as the page receives them: the figure beside «Live» while the stream plays.
+    onFrameRate: (fps) => {
+      liveSignals.streamFps = fps;
+      renderLiveSignals();
+    },
   });
   liveStream.start();
 }
@@ -239,7 +518,13 @@ function initOffice() {
       // The page may only call its own origin; the backend reads the live weather for the scene.
       fetchWeather: () => api('/office/weather'),
       infoElement: element('scene-info'),
-      fpsElement: element('office-fps'),
+      // Reduced motion holds the street, the sky's drift and the employees' loops still.
+      reducedMotion: () => reducedMotion(),
+      // The page's own renderer: shown under its own name, and only while it is what is seen.
+      onFrameRate: (fps) => {
+        liveSignals.pageFps = fps;
+        renderLiveSignals();
+      },
       onSelectAgent: (agent) => {
         currentSelectedAgent = agent;
         if (agent) {
@@ -428,44 +713,7 @@ function updateOfficeCanvas() {
 }
 
 function connectWebSocket() {
-  if (socket) {
-    socket.close();
-    socket = null;
-  }
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const url = `${proto}//${location.host}/api/v1/ws?token=${encodeURIComponent(ownerToken)}`;
-
-  try {
-    socket = new WebSocket(url);
-    socket.onopen = () => {
-      console.log('WebSocket connected to Studio events gateway');
-      // Request missed events replay from current snapshot cursor
-      const cursor = state ? state.cursor : 0;
-      socket.send(JSON.stringify({ type: 'replay', after_sequence: cursor, limit: 100 }));
-    };
-    socket.onmessage = (msg) => {
-      try {
-        const payload = JSON.parse(msg.data);
-        if (payload.type === 'event' || payload.type === 'replay_event') {
-          const eventData = payload.data;
-          officeState.handleDomainEvent(eventData);
-          updateOfficeCanvas();
-          ledger.add(eventData);
-          element('ledger-count').textContent = entryCountLabel(ledger.events.size);
-        }
-      } catch (e) {
-        console.error('Malformed WS message', e);
-      }
-    };
-    socket.onerror = () => {
-      console.warn('WebSocket connection error');
-    };
-    socket.onclose = () => {
-      console.log('WebSocket closed');
-    };
-  } catch (e) {
-    console.error('WS init failed', e);
-  }
+  eventsLink.start();
 }
 
 /**
@@ -2442,10 +2690,16 @@ async function loadPublishingHub() {
   const pubListEl = element('publications-list');
 
   try {
-    const [chData, pubData] = await Promise.all([
+    const [chData, pubData, performance] = await Promise.all([
       api('/publishing/channels'),
       api('/publishing/publications'),
+      // One bar per film each channel published, from what YouTube measured (hud_charts.js).
+      api('/analytics/performance').catch(() => null),
     ]);
+    const films = (channelId) =>
+      performance && Array.isArray(performance.videos)
+        ? channelFilmsHtml(performance.videos, channelId)
+        : '<p class="chart-empty">Măsurătorile filmelor nu au putut fi citite.</p>';
 
     const channels = chData.channels || [];
     const accounts = (chData.youtube_accounts || []).filter((a) => a.status === 'CONNECTED');
@@ -2477,6 +2731,7 @@ async function loadPublishingHub() {
             <div class="channel-meta">Tip: <strong>${escapeHtml(c.channel_type)}</strong> · ID extern: <code>${escapeHtml(c.remote_channel_id || 'nesetat')}</code></div>
             <div class="channel-meta">${escapeHtml(CHANNEL_STATUS_HINT[c.status] || 'Stare necunoscută.')}</div>
             <div class="channel-meta">Politica de producție: <span class="policy-tag ${c.production_policy === 'CONSISTENCY_LOCKED' ? 'policy-locked' : 'policy-flexible'}">${escapeHtml(PRODUCTION_POLICY_LABEL[c.production_policy] || 'nesetată')}</span>${c.allow_production_override === false ? ' · fără excepții pe episod' : ''}</div>
+            ${films(c.id)}
           </div>
           <div class="channel-meta channel-bind">
             <label>Cont YouTube
@@ -2629,12 +2884,8 @@ if (triggerQuickPublishBtn) {
 
 function render(data) {
   element('studio-name').textContent = data.studio.name;
-  element('connection').textContent = 'Conectat · Proprietar';
-  const staff = officeState.agents.length;
-  // «12 angajați», «1 angajat», «20 de angajați»: the `de` a Romanian speaker cannot leave out.
-  element('room-caption').textContent = staff
-    ? `${staff}${staff >= 20 ? ' de' : ''} ${staff === 1 ? 'angajat' : 'angajați'} la birourile lor · sediul AMN-AI, live`
-    : 'Sediul AMN-AI, live';
+  // The masthead chip and the slate caption say «live» only while it is (live_claims.js).
+  renderLiveSignals();
   element('snapshot-time').textContent =
     `Actualizat ${new Date(data.captured_at).toLocaleTimeString('ro-RO', { timeZone: data.studio.timezone })}`;
   renderSwitch(data.policy.autonomy_stopped);
@@ -2648,6 +2899,7 @@ function render(data) {
   liveWindows.setNames(agentNames);
   ledger.add(data.events || []);
   element('ledger-count').textContent = entryCountLabel(ledger.events.size);
+  renderDayTrack();
 
   const labels = {
     agents: 'Angajați',
@@ -2730,6 +2982,7 @@ async function refresh() {
     state = acceptSnapshot(state, incoming);
     if (!connected) notify('');
     connected = true;
+    liveSignals.data = 'fresh';
     render(state);
     stopButton.disabled = busy;
     // Everything recorded since the ledger last looked, not only the twenty in the snapshot.
@@ -2745,8 +2998,8 @@ async function refresh() {
   } catch (error) {
     if (generation !== epoch) return false;
     connected = false;
-    element('connection').textContent = 'Deconectat';
-    element('office-fps').textContent = 'Date neactualizate';
+    liveSignals.data = 'stale';
+    renderLiveSignals();
     stopButton.disabled = true;
     notify(error.message);
     return false;
@@ -2761,13 +3014,34 @@ element('login-form').addEventListener('submit', async (event) => {
   epoch++;
   state = null;
   notify('');
+  // The events socket is opened as soon as the workspace is up; until then the chip and the
+  // corner say the page is connecting, not that it is live.
+  liveSignals.socket = 'connecting';
   const success = await refresh();
   if (success) {
-    login.hidden = true;
+    // The camera goes into the building only here, on a key the backend has just accepted, and
+    // never for a visitor who asked for less motion: they get the same workspace at once.
+    const plays = entryPlays({ accepted: true, reducedMotion: reducedMotion(), titleShown: titleScreen.visible });
     workspace.hidden = false;
     element('logout').hidden = false;
     input.value = '';
+    // The key field is about to disappear; without a new home the keyboard would resume after
+    // the whole title, somewhere inside the register. It lands on the register's heading, the
+    // first thing the workspace says, and a screen reader hears where it now is.
+    const arrival = /** @type {HTMLElement|null} */ (document.querySelector('.ledger-panel h2'));
+    if (arrival) {
+      arrival.tabIndex = -1;
+      arrival.focus({ preventScroll: true });
+    }
+    if (plays) {
+      titleScreen.enter().then((finished) => { if (finished && ownerToken) login.hidden = true; });
+    } else {
+      login.hidden = true;
+      titleScreen.hide();
+    }
     initOffice();
+    keyLight.start();
+    loadDayRecord();
     await loadOfficeLayout();
     connectWebSocket();
   } else {
@@ -2790,12 +3064,12 @@ element('logout').addEventListener('click', () => {
   pendingCommand = null;
   connected = false;
   busy = false;
-  if (socket) {
-    socket.close();
-    socket = null;
-  }
+  eventsLink.stop();
+  liveSignals.data = 'fresh';
+  keyLight.stop();
   workspace.hidden = true;
   login.hidden = false;
+  titleScreen.show();
   input.value = '';
   notify('');
   ledger.clear();
@@ -2804,6 +3078,12 @@ element('logout').addEventListener('click', () => {
   approvalsLastRead = 0;
   approvalsList.replaceChildren();
   element('approvals-count').textContent = '—';
+  renderOwnerMark(0);
+  moments.reset();
+  dayRecord = null;
+  ledger.closedAt = null;
+  dayTrackKey = '';
+  renderDayTrack();
   element('autonomy-mode-tag').textContent = '—';
   element('autonomy-mode-meaning').textContent = '—';
   governanceNote('');
@@ -3007,6 +3287,7 @@ async function loadApprovals(force) {
     element('approvals-count').textContent = pending.length
       ? `${pending.length} în așteptare`
       : 'niciuna';
+    renderOwnerMark(pending.length);
     approvalsList.innerHTML = pending.length
       ? pending.map((request) => approvalCard(request, Date.now())).join('')
       : '<div class="topics-loading">Nicio cerere nu așteaptă decizia Proprietarului.</div>';
@@ -3014,6 +3295,7 @@ async function loadApprovals(force) {
     if (err.status === 404) {
       approvalsRouteMissing = true;
       element('approvals-count').textContent = '—';
+      renderOwnerMark(0);
       approvalsList.innerHTML =
         '<div class="topics-loading">Backend-ul acestui build nu răspunde încă la ' +
         '/owner/approvals. Cererile există în baza de date; ruta care le arată și le ' +
@@ -3309,7 +3591,7 @@ function treasuryTile(row, extraClass = '') {
   tile.className = `wf-stat treasury-tile ${extraClass}`.trim();
   const value = document.createElement('span');
   value.className = 'wf-stat-value';
-  value.textContent = `${row.amount} VR$`;
+  value.textContent = `${amount(row.amount)} VR$`;
   const label = document.createElement('span');
   label.className = 'wf-stat-label';
   label.textContent = MONEY_CLASS_LABEL[row.money_class] || row.money_class;
@@ -3329,9 +3611,15 @@ function treasuryTile(row, extraClass = '') {
 function budgetCard(period) {
   const label = period.period === 'DAILY' ? 'Zilnic' : 'Lunar';
   const reserved = period.reserved_usd_micros
-    ? `<div class="helper">${escapeHtml(period.reserved_usd)} USD reținuți pentru filmele în producție</div>`
+    ? `<div class="helper">${escapeHtml(amount(period.reserved_usd))} USD reținuți pentru filmele în producție</div>`
     : '';
-  return `<div class="budget-card budget-${escapeHtml(period.state)}"><span class="stat-label">${escapeHtml(label)} · ${escapeHtml(period.state)}</span><strong>${escapeHtml(period.spent_usd)} / ${escapeHtml(period.limit_usd)} USD</strong><span>rămân ${escapeHtml(period.remaining_usd)} USD · ${Math.round(period.ratio * 100)}%</span>${reserved}${period.unpriced_agent_runs ? `<div class="helper">${period.unpriced_agent_runs} rulări fără preț înregistrat</div>` : ''}</div>`;
+  // The ring draws the same row: spent, then held, against the limit, with the warning line
+  // where the Accountant escalates (hud_charts.js budgetRing).
+  const ring = budgetRing(period);
+  const ringLabel = ring.empty
+    ? ''
+    : `${label}: ${amount(period.spent_usd)} USD cheltuiți${period.reserved_usd_micros ? ` și ${amount(period.reserved_usd)} USD reținuți` : ''} din ${amount(period.limit_usd)} USD, ${ring.percent}%; linia de avertizare la ${Math.round((ring.warnFrac || 0) * 100)}%`;
+  return `<div class="budget-card budget-ring-card budget-${escapeHtml(period.state)}"><div class="budget-ring-words"><span class="stat-label">${escapeHtml(label)} · ${escapeHtml(period.state)}</span><strong>${escapeHtml(amount(period.spent_usd))} / ${escapeHtml(amount(period.limit_usd))} USD</strong><span>rămân ${escapeHtml(amount(period.remaining_usd))} USD · ${Math.round(period.ratio * 100)}%</span>${reserved}${period.unpriced_agent_runs ? `<div class="helper">${period.unpriced_agent_runs} rulări fără preț înregistrat</div>` : ''}</div>${budgetRingSvg(period, ringLabel)}</div>`;
 }
 
 async function loadBudget() {
@@ -3344,16 +3632,16 @@ async function loadBudget() {
     // rather than counted as zero.
     const today = data.today;
     const held = today.reserved_usd_micros
-      ? `<div class="helper">${escapeHtml(today.reserved_usd)} USD reținuți azi pentru filmele în producție, încă necheltuiți</div>`
+      ? `<div class="helper">${escapeHtml(amount(today.reserved_usd))} USD reținuți azi pentru filmele în producție, încă necheltuiți</div>`
       : '';
     const wasted = today.failed_render_usd_micros
-      ? `<div class="helper">${escapeHtml(today.failed_render_usd)} USD pentru randări care au picat la jumătate</div>`
+      ? `<div class="helper">${escapeHtml(amount(today.failed_render_usd))} USD pentru randări care au picat la jumătate</div>`
       : '';
     const unpriced = today.unpriced_agent_runs
       ? `<div class="helper">${today.unpriced_agent_runs} rulări azi fără preț înregistrat — totalul este mai mic decât cheltuiala reală</div>`
       : '';
-    const spend = `<div class="budget-card"><span class="stat-label">Cheltuit</span><strong>azi ${escapeHtml(today.spent_usd)} USD</strong><span>luna asta ${escapeHtml(data.month.spent_usd)} USD · ${data.month.agent_runs} rulări de angajați, ${data.month.unpriced_agent_runs} fără preț</span>${held}${wasted}${unpriced}</div>`;
-    const providers = data.month.by_provider.map((p) => `<div class="budget-card"><span class="stat-label">${escapeHtml(p.provider)}</span><strong>${escapeHtml(((p.estimated_usd_micros + p.billed_usd_micros) / 1e6).toFixed(2))} USD</strong><span>${countLabel(p.records, 'înregistrare', 'înregistrări')} · facturat ${escapeHtml((p.billed_usd_micros / 1e6).toFixed(2))}</span></div>`).join('');
+    const spend = `<div class="budget-card"><span class="stat-label">Cheltuit</span><strong>azi ${escapeHtml(amount(today.spent_usd))} USD</strong><span>luna asta ${escapeHtml(amount(data.month.spent_usd))} USD · ${data.month.agent_runs} rulări de angajați, ${data.month.unpriced_agent_runs} fără preț</span>${held}${wasted}${unpriced}</div>`;
+    const providers = data.month.by_provider.map((p) => `<div class="budget-card"><span class="stat-label">${escapeHtml(p.provider)}</span><strong>${escapeHtml(amount(((p.estimated_usd_micros + p.billed_usd_micros) / 1e6).toFixed(2)))} USD</strong><span>${countLabel(p.records, 'înregistrare', 'înregistrări')} · facturat ${escapeHtml(amount((p.billed_usd_micros / 1e6).toFixed(2)))}</span></div>`).join('');
     cards.innerHTML = spend + (data.budgets.length ? data.budgets.map(budgetCard).join('') : '<div class="budget-card"><span class="stat-label">Buget</span><strong>nesetat</strong><span>fără limită, nimic nu oprește cheltuiala</span></div>') + providers;
   } catch (error) {
     cards.innerHTML = `<div class="text-error">${escapeHtml(error instanceof Error ? error.message : 'Bugetul nu a putut fi citit.')}</div>`;
@@ -3399,8 +3687,8 @@ async function loadTreasury() {
     verdict.textContent = tb.balanced ? 'REGISTRU ECHILIBRAT' : 'REGISTRU NEECHILIBRAT';
     const detail = document.createElement('span');
     detail.textContent = tb.balanced
-      ? `Debite ${tb.total_debits} = credite ${tb.total_credits}.${treasury.in_deficit ? ' Numerarul VR$ este negativ: trezoreria este în deficit.' : ''}`
-      : `Diferență ${tb.difference}. Nicio cifră de mai sus nu poate fi crezută până nu se rezolvă.`;
+      ? `Debite ${amount(tb.total_debits)} = credite ${amount(tb.total_credits)}.${treasury.in_deficit ? ' Numerarul VR$ este negativ: trezoreria este în deficit.' : ''}`
+      : `Diferență ${amount(tb.difference)}. Nicio cifră de mai sus nu poate fi crezută până nu se rezolvă.`;
     balance.append(verdict, detail);
     summary.append(balance);
 
@@ -3423,7 +3711,7 @@ async function loadTreasury() {
       name.textContent = `${account.code} · ${account.name}`;
       const value = document.createElement('span');
       value.className = 'topic-card-novelty';
-      value.textContent = `${account.balance} VR$`;
+      value.textContent = `${amount(account.balance)} VR$`;
       head.append(name, value);
       const meta = document.createElement('div');
       meta.className = 'topic-card-meta';
@@ -3449,10 +3737,10 @@ async function loadTreasury() {
       const title = document.createElement('span');
       title.className = 'topic-card-title';
       title.textContent = LEDGER_KIND_LABEL[item.kind] || item.kind;
-      const amount = document.createElement('span');
-      amount.className = 'topic-card-novelty';
-      amount.textContent = `${item.amount} VR$`;
-      head.append(title, amount);
+      const figure = document.createElement('span');
+      figure.className = 'topic-card-novelty';
+      figure.textContent = `${amount(item.amount)} VR$`;
+      head.append(title, figure);
       const memo = document.createElement('p');
       memo.className = 'topic-card-subject';
       memo.textContent = item.memo;
@@ -3460,7 +3748,7 @@ async function loadTreasury() {
       meta.className = 'topic-card-meta';
       meta.textContent = item.lines
         .map((line) =>
-          Number(line.debit) ? `D ${line.account} ${line.debit}` : `C ${line.account} ${line.credit}`,
+          Number(line.debit) ? `D ${line.account} ${amount(line.debit)}` : `C ${line.account} ${amount(line.credit)}`,
         )
         .join(' · ');
       card.append(head, memo, meta);
@@ -4223,11 +4511,9 @@ async function loadCompanyState() {
         <div>Mediu: ${escapeHtml(state.environment)} · ${escapeHtml(maturity)}</div>
       </div>
       ${channels}
-      <div class="runbook-check">
+      <div class="runbook-check runbook-flux">
         <strong>Flux</strong>
-        <div>${stages.topics_proposed || 0} teme propuse · ${stages.topics_selected || 0} selectate ·
-          ${stages.scripts_approved || 0} scenarii aprobate · ${stages.storyboards_approved || 0} storyboard-uri ·
-          ${stages.renders_completed || 0} randate · ${stages.published || 0} publicate</div>
+        ${pipelineSvg(pipe.stages, { bottleneck: pipe.bottleneck })}
         <div>${pipe.in_flight || 0} în lucru${
           pipe.bottleneck
             ? ` · <span class="text-error">blocaj la ${escapeHtml(pipe.bottleneck.stage)}: ${pipe.bottleneck.waiting} în așteptare</span>`

@@ -16,6 +16,17 @@ const NOTES = {
 };
 
 /**
+ * Frames per second of the video Unreal is sending, as the browser's WebRTC statistics count
+ * them, or null when the statistics do not say.
+ * @param {any} aggregatedStats Pixel Streaming's AggregatedStats
+ * @returns {number|null}
+ */
+export function inboundFrameRate(aggregatedStats) {
+  const fps = aggregatedStats?.inboundVideoStats?.framesPerSecond;
+  return typeof fps === 'number' && Number.isFinite(fps) && fps >= 0 ? fps : null;
+}
+
+/**
  * Shows the Unreal headquarters, streamed live over Pixel Streaming, on top of the page's own
  * renderer. The video lets clicks through to the renderer underneath, which still knows where
  * every employee sits. When the stream drops after it has shown a frame, the last frame stays,
@@ -26,12 +37,13 @@ export class LiveStream {
   /**
    * @param {HTMLElement} viewport the element the scene is drawn in
    * @param {{signallingUrl: string, streamerId: string, retryMs: number, connectingRetryMs?: number}} settings
-   * @param {{onStatus?: (status: 'connecting'|'live'|'offline') => void}} [options]
+   * @param {{onStatus?: (status: 'connecting'|'live'|'offline') => void, onFrameRate?: (fps: number|null) => void}} [options]
    */
   constructor(viewport, settings, options = {}) {
     this.viewport = viewport;
     this.settings = settings;
     this.onStatus = options.onStatus || (() => {});
+    this.onFrameRate = options.onFrameRate || (() => {});
     this.status = 'offline';
     this.retryTimer = 0;
     this.stillTimer = 0;
@@ -73,6 +85,15 @@ export class LiveStream {
     this.stream.addEventListener('webRtcDisconnected', () => this._offline());
     this.stream.addEventListener('webRtcFailed', () => this._offline());
     this.stream.addEventListener('streamerListMessage', (event) => this._pickStreamer(event));
+    // The library reads the peer connection's statistics once a second; the inbound video's
+    // frame rate is what Unreal is delivering to this page, and it is the figure the readout shows.
+    this.stream.addEventListener('statsReceived', (event) => this._stats(event));
+  }
+
+  /** @param {any} event */
+  _stats(event) {
+    if (this.status !== 'live') return;
+    this.onFrameRate(inboundFrameRate(event?.data?.aggregatedStats));
   }
 
   start() {
@@ -151,6 +172,8 @@ export class LiveStream {
     this.still.hidden = !layers.still;
     this.badge.hidden = !layers.note;
     this.badge.textContent = NOTES[layers.note] || '';
+    // A figure measured while the video played means nothing once it has stopped.
+    if (status !== 'live') this.onFrameRate(null);
     this.onStatus(status);
   }
 }

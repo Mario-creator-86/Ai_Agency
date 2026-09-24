@@ -17,7 +17,7 @@ function fixture(t) {
   let snapshots = 0;
   Object.assign(player, {
     status: 'offline', settings: { retryMs: 15000 }, retryTimer: 0, stillTimer: 0,
-    hasStill: false, still: {}, badge: {}, onStatus() {},
+    hasStill: false, still: {}, badge: {}, onStatus() {}, onFrameRate() {},
     layer: { classList: { toggle() {} } },
     stream: { reconnect() { reconnects++; } },
     _copyFrame() { snapshots++; this.hasStill = true; },

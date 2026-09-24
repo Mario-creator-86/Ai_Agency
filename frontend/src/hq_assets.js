@@ -25,6 +25,25 @@ export function loadImage(src) {
   });
 }
 
+/**
+ * A plate, decoded off the main thread: the file is read as bytes and turned into a bitmap by the
+ * browser's decoder thread. An <img> is decoded on the main thread the first time a canvas draws
+ * it, and the nine plates cost the page a 180ms frame at sign-in, in the middle of the entry into
+ * the building. Falls back to an <img> where bitmaps are not available.
+ * @param {string} src @returns {Promise<HTMLImageElement|ImageBitmap|null>}
+ */
+export async function loadBitmap(src) {
+  if (typeof createImageBitmap === 'function' && typeof fetch === 'function') {
+    try {
+      const response = await fetch(src);
+      if (response.ok) return await createImageBitmap(await response.blob());
+    } catch {
+      // fall through to the element
+    }
+  }
+  return loadImage(src);
+}
+
 /** @param {string} path */
 async function readJson(path) {
   try {
@@ -51,9 +70,9 @@ export class HQAssets {
     this.events = null;
     /** @type {any} how the office is lit (scene.json) */
     this.scene = null;
-    /** @type {Record<string, Record<string, {img: HTMLImageElement, x:number, y:number, w:number, h:number}>>} */
+    /** @type {Record<string, Record<string, {img: HTMLImageElement|ImageBitmap, x:number, y:number, w:number, h:number}>>} */
     this.layers = { night: {}, day: {} };
-    /** @type {Map<string, HTMLImageElement>} */
+    /** @type {Map<string, HTMLImageElement|ImageBitmap>} */
     this.sheets = new Map();
     /** @type {Map<string, Promise<void>>} */
     this.variantLoads = new Map();
@@ -85,7 +104,7 @@ export class HQAssets {
 
   /** @param {string} key @param {string} path */
   async loadSheet(key, path) {
-    const img = await loadImage(`${BASE}/${path}`);
+    const img = await loadBitmap(`${BASE}/${path}`);
     if (img) this.sheets.set(key, img);
   }
 
@@ -96,7 +115,7 @@ export class HQAssets {
     const entries = Object.entries(this.plates?.variants?.[variant] || {});
     const job = Promise.all(
       entries.map(async ([layer, info]) => {
-        const img = await loadImage(`${BASE}/plates/${info.file}`);
+        const img = await loadBitmap(`${BASE}/plates/${info.file}`);
         if (img) this.layers[variant][layer] = { img, x: info.x, y: info.y, w: info.w, h: info.h };
       }),
     ).then(() => undefined);

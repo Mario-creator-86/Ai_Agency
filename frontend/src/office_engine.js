@@ -98,7 +98,7 @@ const WEATHER_ICONS = { clear: '☀', partly_cloudy: '⛅', cloudy: '☁', fog: 
 export class OfficeEngine {
   /**
    * @param {HTMLCanvasElement} canvas
-   * @param {{onSelectAgent?: (agent:any) => void, fetchWeather?: () => Promise<any>, infoElement?: HTMLElement|null, fpsElement?: HTMLElement|null, seed?: number}} [options]
+   * @param {{onSelectAgent?: (agent:any) => void, fetchWeather?: () => Promise<any>, infoElement?: HTMLElement|null, onFrameRate?: (fps: number) => void, seed?: number, reducedMotion?: () => boolean}} [options]
    */
   constructor(canvas, options = {}) {
     this.canvas = canvas;
@@ -106,7 +106,11 @@ export class OfficeEngine {
     this.onSelectAgent = options.onSelectAgent || (() => {});
     this.fetchWeather = options.fetchWeather || (async () => ({ available: false, reason: 'not_configured' }));
     this.infoElement = options.infoElement || null;
-    this.fpsElement = options.fpsElement || null;
+    // The renderer measures its own frame rate and hands it on; what the page calls it (and
+    // whether it is shown at all) is decided with the other live signals, in live_claims.js.
+    this.onFrameRate = typeof options.onFrameRate === 'function' ? options.onFrameRate : null;
+    // Asked on every frame, so a visitor who turns reduced motion on mid-visit is obeyed at once.
+    this.reducedMotion = typeof options.reducedMotion === 'function' ? options.reducedMotion : () => false;
 
     /** @type {any} */
     this.layout = null;
@@ -388,29 +392,20 @@ export class OfficeEngine {
     this.lastFrame = now;
     this.animTime += dt;
     this._updateLift(dt);
-    if (this.world) this.world.step(dt, Date.now());
+    if (this.world) this.world.step(dt, Date.now(), this.reducedMotion());
     this._draw();
     this._measure(now);
     requestAnimationFrame(this._loop);
   }
 
-  /** Frames actually drawn in the last second, and the scene's clock and weather, for the header pills. @param {number} now */
+  /** Frames this renderer actually drew in the last second, and the scene's clock and weather, for the readouts. @param {number} now */
   _measure(now) {
     this._fpsFrames += 1;
     if (now - this._fpsStart < 1000) return;
     this.fps = Math.round((this._fpsFrames * 1000) / (now - this._fpsStart));
     this._fpsFrames = 0;
     this._fpsStart = now;
-    // «Live · randare 144fps» — the same three parts and the same figure. The live state
-    // carries the weight; what it is and how fast it runs are the standing label and the
-    // telemetry. `live` is kept: it is the word the studio itself uses beside the pulsing dot.
-    if (this.fpsElement) {
-      this._setParts(this.fpsElement, [
-        ['scene-live', 'Live'],
-        ['scene-label', ' · randare '],
-        ['scene-figure', `${this.fps}fps`],
-      ]);
-    }
+    if (this.onFrameRate) this.onFrameRate(this.fps);
     if (this.infoElement && this.world) {
       const time = this.world.time.state;
       const weather = this.world.weather;

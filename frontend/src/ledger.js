@@ -474,7 +474,19 @@ export function describeEvent(event, names = {}) {
       break;
     case 'story.episode_drafted':
       label = 'episod scris';
-      text = payload.title || '';
+      text = payload.title || (payload.episode_number ? `episodul ${payload.episode_number}` : '');
+      break;
+    case 'story.episode_approved':
+      label = 'episod aprobat';
+      text = payload.reviewed_by === 'director' ? 'de Directoare' : payload.reviewed_by === 'owner' ? 'de Proprietar' : '';
+      break;
+    case 'story.episode_rejected':
+      label = 'episod respins';
+      text = payload.reviewed_by === 'owner' ? 'de Proprietar' : '';
+      break;
+    case 'governance.approval_requested':
+      label = 'cerere de aprobare pentru Proprietar';
+      text = [payload.subject, payload.risk_tier].filter(Boolean).join(' · ');
       break;
     case 'economy.provider_cost_recorded':
       label = `cost ${payload.status === 'BILLED' ? 'facturat' : 'estimat'}`;
@@ -556,24 +568,101 @@ export function describeEvent(event, names = {}) {
 }
 
 /**
+ * How long the register may go without a single new event before «Acum» stops claiming that a
+ * stage is under way: one hour, the worker's task lease (backend/app/workflows/worker.py,
+ * TASK_LEASE_SECONDS = 3600). Past it the backend itself treats a task that has said nothing as
+ * lapsed and lets the queue claim it again, so the page does not go on saying "now" for longer
+ * than the studio would.
+ */
+export const RUN_QUIET_MS = 60 * 60 * 1000;
+
+/**
+ * The calendar day an instant falls on in the studio's time zone, as YYYY-MM-DD.
+ * @param {number} ms @param {string} [timeZone]
+ */
+export function studioDay(ms, timeZone) {
+  // en-CA writes dates as YYYY-MM-DD, which sorts and compares as text
+  return new Date(ms).toLocaleDateString('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
+}
+
+/**
+ * The words over a day's rows in the register. A row's time alone would let a day twelve days
+ * old read as this morning under a heading that says «acum», so every day is named: «Azi»,
+ * «Ieri», or its date («vineri, 12 septembrie»).
+ * @param {string|number} timestamp @param {number} now @param {string} [timeZone]
+ */
+export function dayLabel(timestamp, now, timeZone) {
+  const at = typeof timestamp === 'number' ? timestamp : Date.parse(String(timestamp || ''));
+  if (!Number.isFinite(at)) return '';
+  const day = studioDay(at, timeZone);
+  if (day === studioDay(now, timeZone)) return 'Azi';
+  // noon of the studio day before, so a clock change never skips or repeats a day
+  const [y, m, d] = studioDay(now, timeZone).split('-').map(Number);
+  if (day === studioDay(Date.UTC(y, m - 1, d - 1, 12), timeZone)) return 'Ieri';
+  const sameYear = day.slice(0, 4) === studioDay(now, timeZone).slice(0, 4);
+  return new Date(at).toLocaleDateString('ro-RO', { timeZone, weekday: 'long', day: 'numeric', month: 'long', ...(sameYear ? {} : { year: 'numeric' }) });
+}
+
+/**
+ * «de o oră», «de 5 ore», «de 20 de ore», «de 3 zile»: how long the register has been quiet.
+ * @param {number} ms
+ */
+export function quietFor(ms) {
+  const count = (/** @type {number} */ n, /** @type {string} */ one, /** @type {string} */ many) => {
+    if (n === 1) return one;
+    const tail = n % 100;
+    return `${n}${n >= 20 && (tail === 0 || tail >= 20) ? ' de' : ''} ${many}`;
+  };
+  const hours = Math.max(1, Math.floor(ms / 3600000));
+  if (hours < 48) return `de ${count(hours, 'o oră', 'ore')}`;
+  return `de ${count(Math.floor(hours / 24), 'o zi', 'zile')}`;
+}
+
+/**
  * Where production stands, from the newest events that say so.
  *
- * @param {Array<{event_type: string, payload?: any, sequence?: number}>} events newest first
- * @returns {{stage: string|null, run: string|null, running: string|null, text: string}}
+ * `running` is the stage that started and has not been seen finishing — and the day's own
+ * end (`runbook.daily_run_finished`) closes any stage still open before it. `live` is whether
+ * the register may say «Acum» with a pulse: a stage is running AND something was recorded in
+ * the last RUN_QUIET_MS. Without `now` the clock is not consulted (the tests of the wording).
+ *
+ * `closedAt` is when the runbook's own record says its newest day finished (`/runbook/runs`): the
+ * register keeps only its newest 400 events, so the finish of a day can have scrolled out of it
+ * while the start of one of its stages is still there. A stage that started before the recorded
+ * finish is not running, whatever the register lost.
+ *
+ * @param {Array<{event_type: string, payload?: any, sequence?: number, timestamp?: string}>} events newest first
+ * @param {number|null} [now] epoch ms
+ * @param {number|null} [closedAt] epoch ms of the newest recorded finished day
+ * @returns {{stage: string|null, run: string|null, running: string|null, live: boolean, text: string}}
  */
-export function productionStatus(events) {
+export function productionStatus(events, now = null, closedAt = null) {
   let stage = null;
   let run = null;
   let running = null;
   /** @type {number | null} */
+  let runningSince = null;
+  /** @type {number | null} */
   let productive = null;
+  /** @type {number | null} */
+  let newest = null;
   for (const event of events) {
     const payload = event.payload || {};
     const type = String(event.event_type);
+    if (newest === null) {
+      const at = Date.parse(String(event.timestamp || ''));
+      if (Number.isFinite(at)) newest = at;
+    }
     // A stage that started and has not been seen finishing is where the day is right now;
-    // it is newer than anything the workflow can say, so it is read first and wins.
-    if (running === null && (type === 'runbook.stage_started' || type === 'runbook.stage_finished')) {
+    // it is newer than anything the workflow can say, so it is read first and wins. The end of
+    // the day, newer than the start of a stage, means that stage is not running any more.
+    if (
+      running === null &&
+      (type === 'runbook.stage_started' || type === 'runbook.stage_finished' || type === 'runbook.daily_run_finished')
+    ) {
       running = type === 'runbook.stage_started' ? payload.stage || null : false;
+      const since = Date.parse(String(event.timestamp || ''));
+      runningSince = Number.isFinite(since) ? since : null;
     }
     if (!stage && type.startsWith('workflow.') && payload.current_stage) {
       stage = payload.current_stage;
@@ -582,10 +671,20 @@ export function productionStatus(events) {
       run = payload.status || null;
       productive = typeof payload.stages_productive === 'number' ? payload.stages_productive : null;
     }
-    if (stage && run && running !== null) break;
+    if (stage && run && running !== null && newest !== null) break;
   }
+  if (running && closedAt !== null && Number.isFinite(closedAt) && runningSince !== null && runningSince < closedAt) {
+    running = false;
+  }
+  const quiet = Boolean(running) && now !== null && newest !== null && now - newest > RUN_QUIET_MS;
   const parts = [];
-  if (running) parts.push(`Acum: ${runStageLabel(running)}`);
+  if (running) {
+    parts.push(
+      quiet
+        ? `ultima etapă începută: ${runStageLabel(running)} · nimic nou ${quietFor(/** @type {number} */ (now) - /** @type {number} */ (newest))}`
+        : `Acum: ${runStageLabel(running)}`,
+    );
+  }
   if (stage) parts.push(`producție: ${stageLabel(stage)}`);
   // How many stages made something, beside the status: "completed" alone is what a day that
   // made nothing looked like. An event without the count says only its status.
@@ -594,9 +693,9 @@ export function productionStatus(events) {
       `ultima rulare a zilei ${statusLabel(run)}${productive === null ? '' : ` · ${productive} etape au produs ceva`}`,
     );
   }
-  if (!parts.length) return { stage, run, running: null, text: 'Nicio producție în lucru.' };
+  if (!parts.length) return { stage, run, running: null, live: false, text: 'Nicio producție în lucru.' };
   const text = parts.join(' · ');
-  return { stage, run, running: running || null, text: text[0].toUpperCase() + text.slice(1) };
+  return { stage, run, running: running || null, live: Boolean(running) && !quiet, text: text[0].toUpperCase() + text.slice(1) };
 }
 
 /** How many entries the ledger keeps on screen. Older ones are in the events endpoint. */
@@ -656,6 +755,10 @@ export class Ledger {
     this.backfilled = false;
     this.kind = 'all';
     this.timezone = undefined;
+    /** @type {number|null} when the runbook recorded its newest day finished (productionStatus) */
+    this.closedAt = null;
+    /** @type {string} the studio day the list was last drawn on (dayTurned) */
+    this.renderedDay = '';
     // When this column started showing history, and the ids lit on the next render.
     this.openedAt = Date.now();
     /** @type {Set<string>} */
@@ -741,9 +844,26 @@ export class Ledger {
     }
   }
 
+  /**
+   * The head line alone. The page calls it on a timer as well, so «Acum» goes quiet when the
+   * register has been silent for RUN_QUIET_MS even though no event arrives to say so.
+   * @param {any[]} [events] newest first
+   */
+  renderNow(events = this.sorted()) {
+    const status = productionStatus(events, Date.now(), this.closedAt);
+    this.now.textContent = status.text;
+    // The pulse is the stylesheet's, and it runs only on .is-live.
+    if (this.now.classList) this.now.classList.toggle('is-live', status.live);
+  }
+
+  /** True once midnight has passed since the list was drawn: «Azi» and «Ieri» must be re-read. */
+  dayTurned() {
+    return Boolean(this.renderedDay) && this.renderedDay !== studioDay(Date.now(), this.timezone);
+  }
+
   render() {
     const events = this.sorted();
-    this.now.textContent = productionStatus(events).text;
+    this.renderNow(events);
     // A letter the Owner has answered is no longer red: the answer's event names it.
     const answered = new Set(
       events
@@ -763,6 +883,9 @@ export class Ledger {
     // reworded and nothing is dropped — correspondence never folds, because every
     // letter is its own event with its own thread.
     const rows = [];
+    const now = Date.now();
+    this.renderedDay = studioDay(now, this.timezone);
+    let lastDay = '';
     for (const event of events) {
       const item = describeEvent(event, this.names);
       if (this.kind !== 'all' && item.kind !== this.kind) continue;
@@ -787,12 +910,19 @@ export class Ledger {
             const detail = withoutEcho(`${item.who} ${item.label}`, item.text);
             return detail ? `<div class="ledger-text">${this.escape(detail)}</div>` : '';
           })();
+      const at = Date.parse(String(event.timestamp || ''));
+      const day = Number.isFinite(at) ? studioDay(at, this.timezone) : lastDay;
       const last = rows[rows.length - 1];
       const key = item.thread ? null : `${item.kind}\u0000${route}\u0000${body}`;
-      if (key && last && last.key === key) {
+      // a fold never crosses midnight: each day keeps its own count
+      if (key && last && last.key === key && day === lastDay) {
         last.count += 1;
         last.oldest = time;
         continue;
+      }
+      if (day !== lastDay) {
+        rows.push({ day: dayLabel(at, now, this.timezone) });
+        lastDay = day;
       }
       rows.push({ key, kind: item.kind, mail, route, body, time, oldest: time, count: 1, id: event.event_id });
       if (rows.length >= 150) break;
@@ -800,6 +930,7 @@ export class Ledger {
     this.list.innerHTML = rows.length
       ? rows
           .map((row) => {
+            if (row.day !== undefined) return `<li class="ledger-day">${this.escape(row.day)}</li>`;
             return (
               `<li class="ledger-item ledger-${row.kind}${row.count > 1 ? ' is-repeat' : ''}${this.arrived.has(row.id) ? ' is-new' : ''}${row.mail}">` +
               `<time>${this.escape(row.time)}</time><div>` +

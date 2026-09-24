@@ -1,6 +1,52 @@
 @import "tailwindcss";
 @theme { --font-sans: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Inter", "Helvetica Neue", Arial, sans-serif; }
 
+/* THE DISPLAY FACE. Oxanium (Severin Meyer, SIL Open Font License 1.1; the licence is served
+   beside the files, /fonts/oxanium/OFL.txt), one variable file per subset, weights 200-800,
+   from this origin: the page has no network at run time. Latin-Ext carries ș ț ă â î with the
+   comma below (checked in the file's cmap, U+0218-021B). It is spent on a few big words only:
+   the studio's name on the title, the panel and dialog titles, the hero figures.
+
+   THE FALLBACK HAS ITS METRICS. Until the file arrives (font-display: swap) the same words are
+   set in the system's Arial, scaled to Oxanium's width and given its ascent and descent, so the
+   swap does not move a line: size-adjust is the measured advance of a Romanian sample at the
+   weight the page uses (Arial 104.1% at 500, Arial Bold 99.1% at 600), and the overrides are
+   Oxanium's hhea metrics (790 / 210 / 250 per 1000) divided by it. */
+@font-face {
+  font-family: "Oxanium";
+  src: url("/fonts/oxanium/oxanium-latin-wght.woff2") format("woff2");
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Oxanium";
+  src: url("/fonts/oxanium/oxanium-latin-ext-wght.woff2") format("woff2");
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Oxanium Fallback";
+  src: local("Arial"), local("ArialMT");
+  font-weight: 200 549;
+  size-adjust: 104.1%;
+  ascent-override: 75.9%;
+  descent-override: 20.2%;
+  line-gap-override: 24%;
+}
+@font-face {
+  font-family: "Oxanium Fallback";
+  src: local("Arial Bold"), local("Arial-BoldMT");
+  font-weight: 550 800;
+  size-adjust: 99.1%;
+  ascent-override: 79.7%;
+  descent-override: 21.2%;
+  line-gap-override: 25.2%;
+}
+
 /* ============================================================================
    Design tokens — one source of truth.
 
@@ -193,7 +239,12 @@
   --fs-h2:     20px;   /* a panel title, a dialog title */
   --fs-num:    22px;   /* the figure in a small tile */
   --fs-num-xl: 34px;   /* the one figure a tile exists for */
-  --fs-hero:   clamp(30px, 2.9vw, 44px); /* the login title, and nothing else */
+  --fs-hero:   clamp(56px, 6.2vw, 168px); /* the studio's name on the title screen, and nothing else */
+  --fs-tagline: clamp(17px, 1.25vw, 28px); /* the title screen's one line */
+  /* The display face, for the few big words: the title, the panel and dialog titles, the hero
+     figures. Everything else stays in the system face the page was measured in. */
+  --font-display: "Oxanium", "Oxanium Fallback", var(--font-sans);
+  --w-display: 600;
   --lh-tight: 1.2; --lh-snug: 1.4; --lh-body: 1.6;
   --w-body: 400; --w-med: 500; --w-semi: 600; --w-bold: 700;
 
@@ -261,6 +312,79 @@
   --login-sky:    rgba(5, 8, 14, .48);
   --backdrop-deep: rgba(2, 4, 8, .82);
   --shadow-knob:  0 1px 2px rgba(0, 0, 0, .6);
+
+  /* --------------------------------------------------------- title screen --
+     The sign-in stands in the studio's own world (title_screen.js). The key art is the office's
+     sky and plates; these are the films laid over it so the words read, and the measures of the
+     column the brand and the key stand in. */
+  --title-gutter:    clamp(24px, 6.2vw, 128px);  /* the column's distance from the left edge */
+  --title-col:       clamp(400px, 22vw, 560px);  /* the brand and the key; wider on a wide screen */
+  --title-eyebrow-track: .22em;                   /* the brand line's tracking; tighter where the column is narrow */
+  --title-mark:      40px;                       /* the printed brand badge beside the eyebrow */
+  --title-veil-side: rgba(3, 6, 11, .86);        /* the left of the frame, under the words */
+  --title-veil-mid:  rgba(3, 6, 11, .6);         /* just past the column */
+  --title-floor:     rgba(3, 6, 11, .72);        /* the street's foot, under the caption */
+  --title-glass:     rgba(8, 12, 21, .84);       /* the plate the key is typed on */
+  --title-glass-edge: rgba(150, 180, 230, .16);
+  --title-blur:      14px;
+  --title-ink-shadow: 0 2px 22px rgba(0, 0, 0, .55);
+
+  /* ------------------------------------------------------------- the entry --
+     A real, accepted key sends the camera into the building (title_frame.js ENTRY holds the same
+     numbers; tests/title_frame.test.js keeps the two equal). 820ms from the key to the last panel
+     at rest; none of it under prefers-reduced-motion. */
+  --dur-push:     700ms;  /* the camera's push into the headquarters */
+  --dur-leave:    240ms;  /* the brand and the key stepping aside */
+  --dur-arrive:   320ms;  /* one panel arriving */
+  --arrive-first: 260ms;  /* when the first panel starts */
+  --arrive-step:  60ms;   /* between one panel and the next */
+  --push-scale:   1.9;    /* how far into the building the camera goes */
+  --arrive-rise:  14px;   /* how far a panel travels to its place */
+  --arrive-from:  .985;   /* and from what scale */
+  --ease-push:    cubic-bezier(.55, .06, .3, 1);
+
+  /* ------------------------------------------------------------- texture --
+     A very fine, still film grain on the page ground (a 160px SVG noise tile, drawn once by the
+     browser, never animated) and a soft vignette at the edges. The grain dithers the long dark
+     gradients that banded on an 8-bit screen; at 3% it lifts the ground by about four levels,
+     which the contrast sweep re-measures. */
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 0 0 0 0 .035'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23g)'/%3E%3C/svg%3E");
+  --grain-size:   160px;
+  --vignette-edge: rgba(0, 0, 0, .34);
+
+  /* ----------------------------------------------------------------- HUD --
+     The instruments that draw numbers (hud_charts.js): the day tracker on the slate, the
+     pipeline in the daily run, the budget ring, a channel's films. Every mark is one field the
+     backend returns; the colours say what state it is in, with the page's state inks, and the
+     figures beside them are text, so no colour carries a number alone. */
+  --chart-track:   rgba(150, 180, 230, .12);  /* the empty length a bar or a ring runs along */
+  --chart-bar:     var(--forest-ink);         /* a count the studio made */
+  --chart-wait:    var(--gold);               /* work waiting for a decision */
+  --chart-lost:    var(--alert-ink);          /* work lost: failed, rejected, blocked */
+  --chart-row:     20px;                      /* one row of the pipeline */
+  --chart-bar-h:   8px;                       /* a pipeline bar's thickness */
+  --chart-label-w: 118px;                     /* the pipeline's word column */
+  --seg-pending:   rgba(150, 180, 230, .18);  /* a stage of the day that has not begun */
+  --seg-unrun:     rgba(150, 180, 230, .08);  /* a stage the finished day never reached */
+  --dur-seg:       240ms;                     /* a segment taking the colour a real event gave it */
+
+  /* ------------------------------------------------------------- moments --
+     A moment marks something the studio really did, as it happened (moments.js): a chapter of
+     the serial over the render, a toast for a film, the gold mark's one glow. It arrives in
+     --moment-in, leaves in --moment-out and is gone inside three seconds (moments.js holds the
+     same numbers; tests/moments.test.js keeps them equal). Under reduced motion it appears and
+     leaves without moving. */
+  --moment-in:     320ms;
+  --moment-out:    240ms;
+  --moment-mark:   1200ms;
+  --moment-rise:   10px;                      /* how far a moment travels to its place */
+  --moment-glass:  rgba(6, 10, 19, .9);       /* the plate a moment is set on, over the render */
+  --moment-edge:   rgba(224, 176, 98, .55);   /* its gold rule */
+  --moment-w:      min(520px, 64%);           /* the chapter card's widest */
+  --toast-w:       360px;                     /* the film toast */
+  --poster-w:      54px;                      /* the film's own frame, 9:16 */
+  --poster-h:      96px;
+  --fs-chapter:    clamp(20px, 1.5vw, 28px);  /* the episode's title on its card */
   /* --shadow-scene-warm and --edge-hairline belonged to the older scene frame
      that this sheet drew before office_scene.css owned the viewport. The render
      wears --shadow-scene and one hairline of --scene-frame; a second, warmer
@@ -354,12 +478,9 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 .events time { margin-left: auto; font-size: var(--fs-micro); color: var(--ink-3); white-space: nowrap; }
 .modules { list-style: none; margin: 8px 0 0; padding: 0; }.modules li { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; font-size: var(--fs-meta); border-top: 1px solid var(--line); }.modules span { color: var(--ink-3); font-size: var(--fs-micro); }
 .site-footer { display: flex; justify-content: space-between; padding: 20px 4vw 30px; font-size: var(--fs-micro); color: var(--ink-3); }
-.login { max-width: 520px; margin: 40px auto 70px; padding: 42px; }.login p { margin: 15px 0; }
-/* The full AMN-AI lockup introduces the agency on the only screen seen before sign-in. */
-.login-lockup { display: block; width: 200px; height: auto; margin: 0 auto 26px; }.login label { display: block; font-size: var(--fs-meta); margin: 28px 0 8px; }.login input { width: 100%; padding: 12px; border: 1px solid var(--line-strong); border-radius: 7px; margin-bottom: 15px; }
 .message { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--alert-bg); color: var(--alert-ink); padding: 16px 22px; border: 1px solid var(--alert-line); border-radius: var(--radius-sm); max-width: 90vw; box-shadow: var(--shadow-dialog); z-index: 60; }
 @media (max-width: 1050px) { .workspace-grid { grid-template-columns: 1fr; }.ledger-column { order: 2; } }
-@media (max-width: 600px) { .topbar { height: 78px; }.topbar > .text-sm { display: none; }main { padding-top: 26px; }.page-heading { align-items: start; }.quiet { font-size: var(--fs-micro); }.notice { padding: 14px; }.notice .tag { display: none; }.side-column { grid-template-columns: 1fr; }.panel { padding: 20px; }.office-panel { padding: 0; }.login { padding: 26px; }.section-heading { gap: 8px; } }
+@media (max-width: 600px) { .topbar { height: 78px; }.topbar > .text-sm { display: none; }main { padding-top: 26px; }.page-heading { align-items: start; }.quiet { font-size: var(--fs-micro); }.notice { padding: 14px; }.notice .tag { display: none; }.side-column { grid-template-columns: 1fr; }.panel { padding: 20px; }.office-panel { padding: 0; }.section-heading { gap: 8px; } }
 /* (reduced motion is handled once, at the end of this file) */
 
 /* ==========================================================================
@@ -1202,10 +1323,16 @@ body::before {
   inset: 0;
   z-index: -1;
   pointer-events: none;
+  /* The key light is the sky of the frame the visitor is looking at (key_light.js writes
+     --key-cool every 2 s, clamped so the faintest text on this ground keeps 4.5:1); the grain
+     is still, and the vignette closes the edges of the room. */
   background:
+    var(--grain),
     radial-gradient(120% 70% at 62% -6%, var(--key-cool), transparent 62%),
     radial-gradient(90% 60% at 8% 4%, var(--key-warm), transparent 58%),
-    radial-gradient(140% 120% at 50% 120%, var(--vignette), transparent 60%);
+    radial-gradient(140% 120% at 50% 120%, var(--vignette), transparent 60%),
+    radial-gradient(130% 115% at 50% 40%, transparent 62%, var(--vignette-edge) 100%);
+  background-size: var(--grain-size) var(--grain-size), auto, auto, auto, auto;
 }
 
 main {
@@ -1332,17 +1459,22 @@ code, pre, .stat-uuid, .provenance-badge, .source-url {
   justify-content: center;
   margin: 0;
 }
+/* THE MASTHEAD DOES NOT OUTSHINE THE RENDER (2026-09-24). Settings was a filled green slab,
+   the brightest and most saturated object above the headquarters; read at 1920 by a stranger it
+   was the first thing the eye went to after the picture. It keeps its place first in the
+   cluster and the studio's green as its ink, on the quiet plate the other three wear. Measured:
+   --forest-ink on --forest-deep 9.3:1. */
 #open-settings.topbar-logout {
   padding: 0 var(--s4);
   font-size: var(--fs-body);
   font-weight: 600;
   border-radius: var(--radius-sm);
-  background: var(--forest);
-  border: 1px solid var(--forest-lift);
-  color: var(--ink-on-dark);
-  box-shadow: var(--lit-edge);
+  background: transparent;
+  border: 1px solid var(--ok-line);
+  color: var(--forest-ink);
+  box-shadow: none;
 }
-#open-settings.topbar-logout:hover { background: var(--forest-lift); color: var(--ink-on-dark); }
+#open-settings.topbar-logout:hover { background: var(--ok-bg); color: var(--ink); border-color: var(--forest-lift); }
 /* Settings needs the Owner key, so before anyone has signed in it is a button that cannot
    work — and it was the brightest object on the login screen. The workspace carries the
    `hidden` attribute until the key is accepted, so that one attribute already states the
@@ -1378,105 +1510,146 @@ body:has(#workspace[hidden]) #open-settings { display: none; }
 .workspace-grid { gap: 18px; grid-template-columns: 392px minmax(0, 1fr); }
 .ledger-column, .side-column { gap: 18px; }
 
-/* ------------------------------------------------------------------ login --
-   One object on a dark stage: the plate, the promise, the key — and, behind
-   it, the studio itself.
+/* ------------------------------------------------------------ title screen --
+   THE FIRST TEN SECONDS. The sign-in used to be a 560px card over a skyline held
+   almost to black, and a correct key swapped it for the workspace in one frame.
+   It is now a title screen standing in the studio's own world, and the key is
+   an entry into the building.
 
-   THE BACKDROP. This is the first screen a stranger sees, and it was an empty
-   room. It now carries the product's own world and no invented art: the night
-   city plate the headquarters is built from (`/assets/hq/plates`, the same
-   file the 3D window composites) stands behind the card, anchored to the
-   floor of the viewport so the skyline rises out of the bottom edge. It does
-   not move, it does not parallax and it never animates: it is a held frame,
-   and the form is the only thing on the screen that answers.
+   THE FRAME (#title-stage, title_screen.js, title_frame.js). The office's own
+   sky, drawn by the office's own sky renderer at the real Bucharest sun, and
+   the office's Blender plates as six depth layers, composed as key art: the
+   headquarters in the right of the frame with its roof clear, the city running
+   off both edges, the left kept for the brand and the key. Noon is noon and
+   night is night: the day plates are crossfaded in by the same plateDayMix the
+   renderer uses, and the deep-night grade is its multiply. Before the key the
+   page has no weather (/office/weather needs the Owner), so it draws none.
 
-   It cannot cost the card its legibility. The card is `.panel`, an opaque
-   --surface, so every measured pair inside it is exactly what it was on the
-   flat ground. Outside the card only the footer sits over the plate, and the
-   --login-core film takes the middle of the screen to 95% before the plate is
-   even reached, with --login-floor carrying the bottom strip to 98%.
+   WHAT MOVES, AND WHY. The layers follow a mouse pointer by a few pixels by
+   depth and stop when it stops; the light is read again once a minute. Nothing
+   else moves until a key is accepted. Under prefers-reduced-motion the frame
+   is held still. The stage is decorative (aria-hidden): every word lives in
+   #login.
 
-   WHY IT IS NOT A NEGATIVE-z LAYER ON body. A `body::after` at z-index -1 or
-   -2 was painted and then buried by the body's own background: measured from
-   the running page, a magenta test layer at -1 and at -2 sampled (5, 8, 14) at
-   three points and only appeared at 0. The body's background has since been
-   removed so that the key light can paint (see the `body` rule), but this
-   backdrop stays a positioned layer at z-index 0 on `main` regardless: it must
-   sit ABOVE the key light, not under it, or the light would wash the plate.
-   Everything that must stay above it already outranks it — the masthead is sticky at 40,
-   the card is positioned, the toast is fixed at 60 — and the footer, which is
-   the one plain block below it, is given `position: relative` for the same
-   reason. */
-main:has(> #login:not([hidden]))::before {
-  content: '';
+   LEGIBILITY. The words never sit on the bare picture: the veil holds the left
+   of the frame at 86% across the column and 60% just past it, and the key
+   is typed on a plate of --title-glass at 84%. Measured from the pixels at
+   noon, dusk and night at four sizes (scratchpad ui/shots_w3). */
+.title-stage {
   position: fixed;
   inset: 0;
   z-index: 0;
+  overflow: hidden;
   pointer-events: none;
-  background-color: var(--bg);
-  background-image:
-    radial-gradient(52% 50% at 50% 44%, var(--login-core), transparent 82%),
-    linear-gradient(to bottom, var(--login-sky) 0%, transparent 26%, transparent 56%, var(--login-floor) 86%, var(--login-floor) 100%),
-    linear-gradient(var(--login-haze), var(--login-haze)),
-    url('/assets/hq/plates/night_city.webp');
-  background-repeat: no-repeat;
-  background-position: center, center, center, 50% 100%;
-  /* The plate is laid out to its full width and stands on the floor of the
-     viewport: `cover` would crop the two tall towers that frame the card. */
-  background-size: cover, cover, cover, 100% auto;
+  background: var(--bg);
+  contain: layout paint;
 }
-/* The one plain block that shares the screen with the backdrop. */
-.site-footer { position: relative; }
-/* The card stands in the middle of the room rather than hanging from the top
-   of it: at 1280x800 a fixed 6vh top margin put its last line 33px below the
-   fold, so the first screen a stranger saw ended mid-sentence. `safe center`
-   so a card taller than the space still starts at the top and scrolls, which
-   is what centring alone would have cost.
+.title-sky { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.title-world { position: absolute; left: 0; top: 0; }
+.title-layer { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+.title-film { position: absolute; inset: 0; }
+.title-film img { position: absolute; display: block; max-width: none; user-select: none; }
+.title-day { opacity: var(--title-day, 0); }
+.title-layer.is-graded .title-night { filter: url(#title-night-grade); }
+.title-filters { position: absolute; width: 0; height: 0; overflow: hidden; }
+.title-veil {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg,
+      var(--title-veil-side) 0,
+      var(--title-veil-side) calc(var(--title-gutter) + var(--title-col) * .75),
+      var(--title-veil-mid) calc(var(--title-gutter) + var(--title-col) + var(--s7)),
+      transparent calc(var(--title-gutter) * 2 + var(--title-col) * 1.5)),
+    linear-gradient(to top, var(--title-floor), transparent 24%),
+    radial-gradient(130% 110% at 62% 42%, transparent 58%, var(--vignette-edge) 100%);
+}
+/* A narrow, tall screen: the building stands at the foot, the words above it. */
+.title-stage[data-layout='stacked'] .title-veil {
+  background:
+    linear-gradient(to bottom, var(--title-veil-side) 0, var(--title-veil-mid) 48%, transparent 72%),
+    linear-gradient(to top, var(--title-floor), transparent 24%);
+}
 
-   The height it is centred in is the screen less the three things that are
-   not it: the masthead (--topbar-h), this element's own top and bottom
-   padding (--s5 + --s7, which is --s9 + --s3), and the footer beneath it
-   (--s9 again, its two paddings and its one line of small caps). Take less
-   than that and the footer is pushed off the bottom of the first screen. */
-main:has(> #login:not([hidden])) {
-  display: flex;
-  align-items: safe center;
-  justify-content: center;
-  min-height: calc(100vh - var(--topbar-h) - var(--s9) - var(--s3) - var(--s9));
-}
+/* The masthead and the footer belong to the workspace: before the key there is
+   nothing in them to use, and the title's only controls are the key and its
+   button. They arrive with the workspace. */
+body.is-title .topbar,
+body.is-title .site-footer { display: none; }
+
 .login {
-  position: relative;
-  width: 100%;
-  max-width: var(--login-w);
-  margin: var(--s7) auto;
-  padding: var(--s9) var(--s9) var(--s8);
-  border-radius: var(--radius);
-  border-color: var(--line-strong);
-  box-shadow: var(--shadow-dialog);
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: var(--s8) var(--title-gutter) var(--s9);
+  overflow-y: auto;
 }
-/* A printed badge, not a hole knocked in the card: the paper has its own cut
-   edge and its own shadow, and it sits flush with the words it introduces
-   rather than floating centred above left-aligned text. */
-.login-lockup {
-  width: var(--badge-w);
-  margin: 0 0 var(--s7);
-  padding: var(--s4) var(--s5) var(--s5);
+.title-block { align-self: flex-start; max-width: 100%; }
+.title-line, .title-form { width: min(var(--title-col), 100%); }
+.title-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin: 0;
+  color: var(--ink-2);
+  letter-spacing: var(--title-eyebrow-track);
+}
+/* Under 1600px the column is at its narrowest and the brand line would run past
+   the veil onto the building's lit floors: it is set tighter so it ends on the veil. */
+@media (max-width: 1600px) { :root { --title-eyebrow-track: .12em; } }
+.title-mark {
+  flex: none;
+  width: var(--title-mark);
+  height: var(--title-mark);
+  padding: 2px;
   background: var(--plate);
   border: 1px solid var(--plate-edge);
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-badge);
 }
-.login h1 { font-size: var(--fs-hero); margin: var(--s2) 0 var(--s3); }
-/* Gold is rationed to what is live or waits for the Owner. The sign-in
-   eyebrow is neither: it is a standing line of type on a screen where nothing
-   is running yet, and spending the studio's one warm accent on it taught the
-   Owner that gold can mean "decoration" before he had seen it mean anything
-   else. It joins every other eyebrow in the product at --ink-3 (6.4:1 on
-   --surface); the forest of the sign-in button is left as the only saturated
-   thing on the screen, which is the one control that acts. */
-.login .eyebrow { display: block; letter-spacing: .2em; color: var(--ink-3); }
-.login label { color: var(--ink-3); font-size: var(--fs-micro); font-weight: 700; letter-spacing: var(--track-caps); text-transform: uppercase; }
+.title-name {
+  margin: var(--s5) 0 var(--s2);
+  font-family: var(--font-display);
+  font-size: var(--fs-hero);
+  font-weight: var(--w-display);
+  line-height: .92;
+  letter-spacing: -.02em;
+  white-space: nowrap;
+  color: var(--ink);
+  text-shadow: var(--title-ink-shadow);
+}
+.title-line {
+  margin: 0;
+  font-size: var(--fs-tagline);
+  line-height: var(--lh-snug);
+  color: var(--ink);
+  text-shadow: var(--title-ink-shadow);
+}
+.title-form {
+  margin-top: var(--s8);
+  padding: var(--s6);
+  background: var(--title-glass);
+  border: 1px solid var(--title-glass-edge);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-dialog);
+  backdrop-filter: blur(var(--title-blur));
+}
+.login label {
+  display: block;
+  margin: 0 0 var(--s2);
+  color: var(--ink-3);
+  font-size: var(--fs-micro);
+  font-weight: var(--w-bold);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+}
 .login input {
+  width: 100%;
+  min-height: var(--hit-lg);
+  margin: 0 0 var(--s3);
   background: var(--surface-sunk);
   border: 1px solid var(--line-strong);
   color: var(--ink);
@@ -1486,7 +1659,74 @@ main:has(> #login:not([hidden])) {
   transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
 .login input:focus { border-color: var(--teal); outline: none; box-shadow: var(--inset-well), 0 0 0 3px var(--focus-glow); }
-.login .helper { color: var(--ink-3); }
+.login .primary { min-height: var(--hit-lg); }
+.login .helper { margin: var(--s3) 0 0; color: var(--ink-3); }
+.title-caption {
+  position: absolute;
+  left: var(--title-gutter);
+  right: var(--title-gutter);
+  bottom: var(--s5);
+  margin: 0;
+  font-size: var(--fs-micro);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+@media (max-width: 899px) {
+  .login { justify-content: flex-start; padding: var(--s7) var(--s4) var(--s9); }
+  /* the building stands at the foot of a narrow screen, so the caption is set on the glass */
+  .title-caption { left: var(--s4); right: var(--s4); bottom: var(--s3); padding: var(--s2) var(--s3); background: var(--title-glass); border-radius: var(--radius-sm); }
+}
+
+/* ------------------------------------------------------------------ entry --
+   THE ENTRY, on a key the backend accepted and never otherwise (main.js calls
+   TitleScreen.enter() inside the success branch). The camera pushes into the
+   headquarters, aimed at the middle of its floors (--title-origin-*, written by
+   title_screen.js from the frame), while the brand and the key step aside; as
+   the frame dissolves to the page ground the workspace arrives in the order it
+   is read: the masthead, the register, the render, the two panels under the
+   register, the footer. 820ms in all. Only transform and opacity animate, so
+   the compositor carries it while the office starts up on the main thread.
+   The workspace is lifted over the stage while it arrives: the render panel is
+   `position: static` in the wide spread, and would otherwise paint under it. */
+body.is-entering main { position: relative; z-index: 1; }
+body.is-entering .title-stage {
+  transform-origin: var(--title-origin-x) var(--title-origin-y);
+  animation: title-push var(--dur-push) var(--ease-push) both;
+}
+body.is-entering .login {
+  pointer-events: none;
+  animation: title-leave var(--dur-leave) var(--ease) both;
+}
+body.is-entering .topbar,
+body.is-entering .ledger-panel,
+body.is-entering .office-panel,
+body.is-entering .modules-panel,
+body.is-entering .governance-panel,
+body.is-entering .site-footer {
+  animation: panel-arrive var(--dur-arrive) var(--ease) both;
+  animation-delay: var(--arrive-first);
+}
+body.is-entering .ledger-panel     { animation-delay: calc(var(--arrive-first) + var(--arrive-step)); }
+body.is-entering .office-panel     { animation-delay: calc(var(--arrive-first) + var(--arrive-step) * 2); }
+body.is-entering .modules-panel    { animation-delay: calc(var(--arrive-first) + var(--arrive-step) * 3); }
+body.is-entering .governance-panel { animation-delay: calc(var(--arrive-first) + var(--arrive-step) * 4); }
+body.is-entering .site-footer      { animation-delay: calc(var(--arrive-first) + var(--arrive-step) * 4); }
+@keyframes title-push {
+  0%   { transform: scale(1); opacity: 1; }
+  30%  { opacity: 1; }
+  100% { transform: scale(var(--push-scale)); opacity: 0; }
+}
+@keyframes title-leave {
+  to { opacity: 0; transform: translateX(calc(-1 * var(--arrive-rise))); }
+}
+@keyframes panel-arrive {
+  from { opacity: 0; transform: translateY(var(--arrive-rise)) scale(var(--arrive-from)); }
+}
+
+/* The footer arrives with the workspace, over the dissolving frame. */
+.site-footer { position: relative; }
+
 .site-footer { padding: 18px clamp(18px, 2.5vw, 44px) 26px; color: var(--ink-3); letter-spacing: .06em; text-transform: uppercase; font-size: var(--fs-micro); }
 
 /* --------------------------------------------------------------- controls --
@@ -1526,7 +1766,13 @@ main:has(> #login:not([hidden])) {
   0%, 100% { opacity: 1; transform: scale(1); }
   50%      { opacity: .55; transform: scale(.82); }
 }
-.live-dot { animation: amn-pulse 2.4s var(--ease) infinite; }
+/* The pulse is a claim that something is happening now, so it runs only where
+   the page has checked that it is: the corner readout while its state is
+   "live" (live_claims.js), the register's «Acum» while a stage is running and
+   the register is not quiet (ledger.js, RUN_QUIET_MS). Everywhere else the dot
+   stands still. */
+.live-dot { animation: none; }
+.scene-readout-live[data-state="live"] .live-dot { animation: amn-pulse 2.4s var(--ease) infinite; }
 
 /* ------------------------------------------------------------ live ledger --
    Today this column is a wall of identical lines. It is given a scan path:
@@ -1541,7 +1787,16 @@ main:has(> #login:not([hidden])) {
   font-weight: 600;
   letter-spacing: .01em;
 }
-.ledger-now::before { background: var(--gold); box-shadow: 0 0 8px var(--gold-glow); animation: amn-pulse 2.4s var(--ease) infinite; }
+.ledger-now::before { background: var(--gold); box-shadow: 0 0 8px var(--gold-glow); }
+.ledger-now.is-live::before { animation: amn-pulse 2.4s var(--ease) infinite; }
+/* Nothing running, or a stage that has said nothing for an hour: the head line
+   is a statement, not an alarm. It steps down from the warm accent — which the
+   page spends only on what is live or needs the Owner — to the quiet chip, and
+   its dot goes still and grey. The words say the rest. */
+/* A statement can run to two lines ("…nimic nou de 4 zile"), and a two-line
+   capsule is a stadium; it takes the card corner instead. */
+#ledger-now:not(.is-live) { background: var(--surface-quiet); border-color: var(--line-strong); color: var(--ink-2); border-radius: var(--radius-sm); }
+#ledger-now:not(.is-live)::before { background: var(--ink-3); box-shadow: none; }
 /* Six filters, one line, in a 384px register. Uppercase at 13px is what forced
    them onto a second row with OWNER stranded alone — the first thing the eye
    caught in the whole column. They are drawn at 26px in sentence case and each
@@ -1578,6 +1833,28 @@ main:has(> #login:not([hidden])) {
   font-weight: 600;
 }
 .ledger-chip:focus-visible { outline-offset: 4px; }
+
+/* A scrolling column the keyboard can enter wears the page's own ring, not the
+   browser's thin grey default. */
+/* A heading given focus by the page (the arrival after the key) is a place, not a control. */
+h2[tabindex='-1']:focus { outline: none; }
+.ledger-list:focus-visible, .dialog-body:focus-visible, .dialog-pane:focus-visible, .settings-content:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
+/* Each day in the register is named above its rows («Azi», «Ieri», «sâmbătă,
+   12 septembrie»), so a day twelve days old never reads as this morning. */
+.ledger-day {
+  padding: var(--s3) 0 var(--s1) 10px;
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.ledger-day:first-child { padding-top: var(--s1); }
 
 /* The row rhythm: a tighter row on a full-width hairline, so four rows read
    where three did, with the time rail, the kind rule and the fold kept. */
@@ -1900,7 +2177,6 @@ main:has(> #login:not([hidden])) {
 }
 @media (max-width: 600px) {
   main { padding: 16px 14px 24px; }
-  .login { padding: var(--s7) var(--s6); margin: var(--s6) auto; }
   .studio-dialog { padding: 0 18px 20px; }
   .dialog-header { margin: 0 -18px 16px; padding: 18px 18px 14px; }
   /* One track at one width here too: with `auto` the longest state word pulled its
@@ -1928,7 +2204,9 @@ main:has(> #login:not([hidden])) {
 
 /* A letter's subject is the loudest line in its row, but it is still a row in a
    list: it must not outweigh the panel's own heading. */
-.ledger-subject { font-size: var(--fs-body); font-weight: 600; line-height: 1.4; }
+/* A letter's subject is the row's news, but ten letters in a row at 600 made the register a wall
+   of bold beside the render; 500 keeps it the brightest ink in the row without the weight. */
+.ledger-subject { font-size: var(--fs-body); font-weight: var(--w-med); line-height: 1.4; }
 .ledger-mail .ledger-head { font-size: var(--fs-meta); color: var(--ink-3); }
 .ledger-open { font-size: var(--fs-micro); }
 .ledger-span { margin-top: 3px; }
@@ -3110,6 +3388,23 @@ details[open] > summary::before { transform: rotate(90deg); }
   .studio-dialog, .studio-dialog[open] { translate: none; }
   /* A new row is marked by nothing moving: the highlight is skipped, not sped up. */
   .ledger-item.is-new { animation: none; }
+  /* The title holds still and the key opens the workspace at once (main.js does not play the
+     entry under the preference); should the class ever be set, nothing travels or waits. */
+  .title-layer { will-change: auto; }
+  body.is-entering .title-stage,
+  body.is-entering .login,
+  body.is-entering .topbar,
+  body.is-entering .ledger-panel,
+  body.is-entering .office-panel,
+  body.is-entering .modules-panel,
+  body.is-entering .governance-panel,
+  body.is-entering .site-footer { animation: none; }
+  /* The same moments, the same words, for the same time: nothing travels and nothing glows
+     (moments.js). A day-tracker segment takes its new colour at once. */
+  .scene-viewport .moment-chapter, .moment-chapter,
+  .moment-toast, .moment-toast.is-in, .moment-toast.is-out { transform: none; transition: none; }
+  .owner-mark.is-arriving { animation: none; }
+  .track-seg { transition: none; }
 }
 
 
@@ -3189,3 +3484,212 @@ details[open] > summary::before { transform: rotate(90deg); }
   color: var(--ink-3);
   overflow-wrap: anywhere;
 }
+
+/* ==========================================================================
+   8 THE DISPLAY FACE ON THE FEW BIG WORDS
+   ==========================================================================
+   Oxanium (see the @font-face at the top) is spent on the words a visitor
+   reads first and from furthest away: the studio's name on the title, the
+   panel titles, the eight dialog titles and the hero figures. Every sentence,
+   label and ledger row stays in the system face the page's widths were
+   measured in. Oxanium's figures are tabular by default, so a figure that
+   changes does not move the words beside it. */
+.section-heading h2,
+.modules-panel > h2,
+.dialog-title,
+.wf-stat-value,
+.budget-card > strong,
+.qc-score-num {
+  font-family: var(--font-display);
+  font-weight: var(--w-display);
+  letter-spacing: 0;
+}
+
+/* ==========================================================================
+   9 DATA YOU CAN READ AT A GLANCE (hud_charts.js)
+   ==========================================================================
+   Four instruments, each drawing one answer the backend already gives: the
+   pipeline in the daily run, the budget ring in the treasury, a channel's
+   films in distribution, and the day tracker on the slate (office_scene.css).
+   Bars and arcs are SVG attributes coloured by class; the figures beside them
+   are page text at the page's sizes. An empty series is a sentence, never an
+   empty chart. Nothing here animates on arrival: a chart is drawn at rest. */
+.chart-empty { margin: var(--s2) 0 0; font-size: var(--fs-meta); color: var(--ink-3); }
+.chart-track { fill: var(--chart-track); }
+.chart-bar { fill: var(--chart-bar); }
+.chart-bar-wait { fill: var(--chart-wait); }
+.chart-bar-lost { fill: var(--chart-lost); }
+
+/* The pipeline: word, bar, figure, six rows on one scale. */
+.chart-pipeline { display: grid; gap: 0; margin: var(--s2) 0 var(--s1); }
+.pipe-row {
+  display: grid;
+  grid-template-columns: var(--chart-label-w) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s3);
+  min-height: var(--chart-row);
+}
+.pipe-label { font-size: var(--fs-meta); color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pipe-bar { display: block; width: 100%; height: var(--chart-bar-h); border-radius: 2px; overflow: hidden; }
+.pipe-value {
+  min-width: 3ch;
+  text-align: right;
+  font-family: var(--font-display);
+  font-size: var(--fs-body);
+  font-weight: var(--w-semi);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.chart-notes { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s3); margin: 0 0 var(--s1); }
+.chart-note { font-size: var(--fs-meta); color: var(--ink-3); display: inline-flex; align-items: center; gap: var(--s1); }
+.chart-note::before { content: ""; width: var(--s2); height: var(--s2); border-radius: 2px; flex: none; }
+.chart-note.is-wait::before { background: var(--chart-wait); }
+.chart-note.is-lost::before { background: var(--chart-lost); }
+.runbook-flux { align-content: start; }
+
+/* The budget ring: the card's words on the left, the ring on the right. */
+.budget-ring-card { grid-template-columns: minmax(0, 1fr) auto; align-items: start; column-gap: var(--s4); }
+.budget-ring-words { display: grid; align-content: start; gap: var(--s2); min-width: 0; }
+.budget-ring-words > strong {
+  font-family: var(--font-display);
+  font-weight: var(--w-display);
+  font-size: var(--fs-num);
+  line-height: var(--lh-tight);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  padding-bottom: var(--s2);
+  border-bottom: 1px solid var(--line);
+}
+.budget-ring-words > .stat-label { margin: 0; }
+.budget-ring-words > span:not(.stat-label) { font-size: var(--fs-meta); color: var(--ink-2); }
+.chart-ring { display: block; flex: none; }
+.ring-track { stroke: var(--chart-track); }
+.ring-spent { stroke: var(--chart-bar); stroke-linecap: butt; }
+.ring-warning .ring-spent { stroke: var(--warn-ink); }
+.ring-exceeded .ring-spent, .chart-ring.is-over .ring-spent { stroke: var(--chart-lost); }
+.ring-reserved { stroke: var(--chart-wait); opacity: .55; }
+.ring-warn { stroke: var(--gold-ink); stroke-width: 1.5; stroke-linecap: round; }
+.ring-figure { fill: var(--ink); font-family: var(--font-display); font-size: var(--fs-body); font-weight: var(--w-semi); }
+
+/* A channel's films: one bar each, oldest to newest, over a baseline. */
+.channel-films { display: flex; align-items: flex-end; gap: var(--s3); margin-top: var(--s2); }
+.chart-films { display: block; flex: none; overflow: visible; }
+.film-base { stroke: var(--line-strong); stroke-width: 1; }
+.film-bar { fill: var(--chart-bar); }
+.film-unmeasured { fill: none; stroke: var(--ink-3); stroke-width: 1.2; }
+.channel-films-words { font-size: var(--fs-meta); color: var(--ink-3); padding-bottom: 1px; }
+
+/* ==========================================================================
+   10 MOMENTS (moments.js)
+   ==========================================================================
+   The chapter card is in office_scene.css, set into the render. The toast
+   stands in the page's lower right; the gold mark is the register's own. Each
+   is up for under three seconds, holds while the pointer or the keyboard is
+   on it, and closes on its button or on Escape. */
+.moment-announce {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.moment .moment-eyebrow {
+  margin: 0 0 var(--s1);
+  font-size: var(--fs-micro);
+  font-weight: var(--w-bold);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+  color: var(--gold-ink);
+}
+.moment .moment-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: var(--w-display);
+  font-size: var(--fs-h3);
+  line-height: var(--lh-tight);
+  color: var(--ink);
+}
+.moment-chapter .moment-title { font-size: var(--fs-chapter); }
+.moment .moment-line { margin: var(--s1) 0 0; font-size: var(--fs-meta); color: var(--ink-2); }
+.moment .moment-close {
+  position: absolute;
+  top: var(--s2);
+  right: var(--s2);
+  width: var(--hit);
+  height: var(--hit);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ink-3);
+}
+.moment .moment-close:hover { background: var(--surface-hi); color: var(--ink); border-color: var(--line-lit); }
+.moment .moment-close .ui-icon { width: var(--icon); height: var(--icon); }
+
+.moment-toast {
+  position: fixed;
+  z-index: 55;
+  right: var(--gutter);
+  bottom: var(--s6);
+  width: min(var(--toast-w), calc(100vw - 2 * var(--s4)));
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  padding: var(--s3) calc(var(--hit) + var(--s3)) var(--s3) var(--s3);
+  background: var(--moment-glass);
+  border: 1px solid var(--line-strong);
+  border-top-color: var(--moment-edge);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--lit-edge), var(--shadow-dialog);
+  backdrop-filter: blur(var(--scene-blur));
+  opacity: 0;
+  transform: translateY(var(--moment-rise));
+  transition: opacity var(--moment-in) var(--ease), transform var(--moment-in) var(--ease);
+}
+.moment-toast.is-in { opacity: 1; transform: none; }
+.moment-toast.is-out { opacity: 0; transform: none; transition-duration: var(--moment-out); }
+.moment-toast .moment-poster {
+  width: var(--poster-w);
+  height: var(--poster-h);
+  flex: none;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--line-strong);
+  background: var(--scene-deep);
+}
+.moment-toast .moment-body { min-width: 0; }
+.moment-toast .moment-title { overflow-wrap: anywhere; }
+
+/* The gold mark: requests that wait for the Owner, from the approvals route.
+   It is state, and stands still; a request that arrives as it happens makes it
+   glow once (markArrived), for --moment-mark. */
+.owner-mark {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  width: 100%;
+  min-height: var(--hit);
+  margin: var(--s1) 0 var(--s2);
+  padding: var(--s1) var(--s3);
+  font-size: var(--fs-meta);
+  font-weight: var(--w-semi);
+  text-align: left;
+  color: var(--gold-ink);
+  background: var(--gold-soft);
+  border: 1px solid var(--gold-line);
+  border-radius: var(--radius-sm);
+}
+.owner-mark:hover { background: var(--warn-bg); border-color: var(--gold); }
+.owner-mark-dot { width: var(--s2); height: var(--s2); border-radius: var(--radius-pill); background: var(--gold); box-shadow: 0 0 8px var(--gold-glow); flex: none; }
+.owner-mark-go { margin-left: auto; color: var(--gold); }
+@keyframes owner-mark-arrive {
+  0%   { box-shadow: 0 0 0 0 var(--gold-glow); }
+  35%  { box-shadow: 0 0 0 4px var(--gold-line), 0 0 18px var(--gold-glow); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.owner-mark.is-arriving { animation: owner-mark-arrive var(--moment-mark) var(--ease) 1; }
+
+/* Under reduced motion the moments are in the page's one reduced-motion block (section 7). */

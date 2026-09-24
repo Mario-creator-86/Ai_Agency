@@ -1290,3 +1290,28 @@ No provider was called, no run was queued, no credit was spent, and
   the screen is otherwise empty.
 - [ ] The thin scrollbar is unverified (the harness's browser hides scrollbars) and the interface
   has never been photographed over the live Unreal stream.
+
+## The page amazes a first-time visitor — wave 1 (2026-09-24)
+
+- W1 done (live readout, fps source, «Acum» quiet threshold, socket reconnect, modules map, canvas real sky) and W13 done (cache headers). Open from this pass:
+- the Owner decides whether the canvas street's random ambient life (traffic, pedestrians, sky events incl. the UFO) stays, goes, or is tied to real data;
+- W2 brings the Unreal level onto the real sky, then the frozen-frame and Unreal-fps readout states get photographed live;
+- recapture the shooter's snapshot fixture after the backend restart;
+- re-read the story maturity when the serial workflow's S1/S6 land;
+- consider a per-stage runbook heartbeat, so «Acum» can key on the stage rather than on any event.
+
+- W3 done, and W9 done except number formatting. Open:
+- Intl.NumberFormat('ro-RO') on figures ('50000 VR$' becomes '50.000 VR$');
+- re-run the page contrast sweep with the grain;
+- the renderer's first composite (about 97 ms at sign-in) goes with W4;
+- photograph the key light over a live Unreal stream once W2 runs;
+- decide whether the title may show real weather before the key (a public read-only weather route, backend office/router.py);
+- W5 plates will replace the title's key art automatically (plates.json).
+
+- W6 and W8 are done on the page. Open:
+- decide and add media-src 'self' blob: to the CSP in backend/app/main.py: the Media dialog's 'Redă' player uses a blob: URL, which the current policy very probably blocks on the real server (the poster does not need it);
+- a backend poster JPEG at render time, which would spare the page the decode;
+- the Unreal HQ reacting to milestones through LiveStream.send, with the Blueprint side not yet inspected;
+- re-check the moment payloads when the serial workflow's story changes land (episode_number, reviewed_by);
+- a per-stage runbook heartbeat, so the gold 'running' segment and «Acum» can key on the stage;
+- a figure for the waiting count on the pipeline's scripts row.

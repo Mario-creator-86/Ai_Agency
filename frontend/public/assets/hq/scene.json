@@ -1,6 +1,6 @@
 {
- "_about": "How the office is lit. reference_dusk: always the light of the Owner's headquarters picture (his choice, 2026-09-13); live: the real sun over Bucharest. Live weather still rains, snows and fogs over either.",
- "light": "reference_dusk",
+ "_about": "How the office is lit: by the real sun over Bucharest, computed for the real date and hour (hq_time.js), with the real weather the backend reads (/api/v1/office/weather) raining, snowing, fogging and clouding over it. The Owner ruled on 2026-09-18/19 that the sky follows the real outside conditions and is never held at dusk, so there is no other mode.",
+ "light": "live",
  "_about_live_stream": "The Unreal headquarters streamed into the page (Pixel Streaming 2), shown whenever the backend has STUDIO_OFFICE_STREAM_SIGNALLING_URL and the stream runs (art-source/unreal/live/start_live_hq.ps1). Otherwise the page shows its own renderer.",
  "live_stream": {
   "enabled": true,

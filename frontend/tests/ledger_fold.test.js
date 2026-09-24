@@ -13,7 +13,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Ledger } from '../src/ledger.js';
+import { Ledger, dayLabel } from '../src/ledger.js';
 import { escapeHtml } from '../src/html.js';
 
 /** The smallest document Ledger.render() and Ledger.renderFilters() actually use. */
@@ -57,7 +57,8 @@ const letter = (sequence, hhmmss, threadId) => ({
   payload: { intent: 'REPORT', subject: 'Raport zilnic', from_name: 'Vera (Publisher)', to_name: 'Director' },
 });
 
-const rowsOf = (html) => html.split('<li ').slice(1);
+// the day's own heading (ledger-day) is not an entry
+const rowsOf = (html) => html.split('<li ').slice(1).filter((row) => !row.startsWith('class="ledger-day"'));
 const countsIn = (html) => [...html.matchAll(/×(\d+)/g)].map((m) => Number(m[1]));
 
 test('seventeen identical runs fold into one row that carries the true count and the true span', () => {
@@ -173,4 +174,33 @@ test('a filter hides rows, it does not fold them into somebody else\'s count', (
   html = parts.list.innerHTML;
   assert.deepEqual(countsIn(html), [2, 2], 'the filter left the fold exactly as it found it');
   assert.equal(rowsOf(html).length, 3, 'two folded runs and the letter between them');
+});
+
+test('every day in the register is named, so an old day never reads as this morning', () => {
+  const now = Date.parse('2026-09-24T09:24:00+03:00');
+  assert.equal(dayLabel('2026-09-24T00:10:00+03:00', now, 'Europe/Bucharest'), 'Azi');
+  assert.equal(dayLabel('2026-09-23T23:59:00+03:00', now, 'Europe/Bucharest'), 'Ieri');
+  assert.equal(dayLabel('2026-09-12T16:43:45+03:00', now, 'Europe/Bucharest'), 'sâmbătă, 12 septembrie');
+  assert.equal(dayLabel('2025-12-31T10:00:00+02:00', now, 'Europe/Bucharest'), 'miercuri, 31 decembrie 2025');
+  // 22:30 UTC on the 23rd is already the 24th in Bucharest
+  assert.equal(dayLabel('2026-09-23T22:30:00Z', now, 'Europe/Bucharest'), 'Azi');
+  assert.equal(dayLabel('', now, 'Europe/Bucharest'), '');
+
+  const parts = stubDocument();
+  const ledger = ledgerOn(parts);
+  // the same routine at 23:50 on the 11th and 00:10 on the 12th: two days, two rows, no fold
+  ledger.add([
+    { ...watchdog(1, '23:50:00'), timestamp: '2026-09-11T23:50:00.000+00:00' },
+    { ...watchdog(2, '00:10:00'), timestamp: '2026-09-12T00:10:00.000+00:00' },
+  ]);
+  const html = parts.list.innerHTML;
+  const days = [...html.matchAll(/<li class="ledger-day">([^<]*)<\/li>/g)].map((m) => m[1]);
+  assert.equal(days.length, 2, html);
+  assert.match(days[0], /12 septembrie/);
+  assert.match(days[1], /11 septembrie/);
+  assert.equal(rowsOf(html).length, 2, 'a fold never crosses midnight');
+  assert.ok(html.indexOf('12 septembrie') < html.indexOf('<time>00:10:00</time>'), 'the heading stands above its day');
+  assert.equal(ledger.dayTurned(), false, 'drawn today, nothing to re-read');
+  ledger.renderedDay = '2000-01-01';
+  assert.equal(ledger.dayTurned(), true, 'after midnight the headings are re-read');
 });

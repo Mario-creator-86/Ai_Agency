@@ -17,31 +17,49 @@
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary" />
     <title>AMN-AI · Autonomous Machine Nexus</title>
+    <!-- The display face (Oxanium, SIL OFL 1.1, public/fonts/oxanium/OFL.txt) is served from this
+         origin; the Latin file carries the title, so it is asked for before the stylesheet finds it. -->
+    <link rel="preload" href="/fonts/oxanium/oxanium-latin-wght.woff2" as="font" type="font/woff2" crossorigin />
   </head>
-  <body>
+  <body class="is-title">
+    <!-- THE TITLE STAGE. The studio's own world behind the sign-in: the office's sky at the real
+         Bucharest sun (a canvas) and the office's Blender plates as depth layers (title_screen.js
+         builds them from /assets/hq/plates/plates.json). Decorative: every word a visitor needs is
+         in #login. -->
+    <div id="title-stage" class="title-stage" aria-hidden="true">
+      <canvas class="title-sky"></canvas>
+      <div class="title-world"></div>
+      <div class="title-veil"></div>
+      <svg class="title-filters" width="0" height="0" focusable="false"><filter id="title-night-grade" color-interpolation-filters="sRGB"><feColorMatrix type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 1 0" /></filter></svg>
+    </div>
     <header class="topbar">
       <a href="/" class="brand" title="AMN-AI — Autonomous Machine Nexus · Artificial Intelligence"><img src="/amn-ai-mark.png" alt="" width="38" height="38" class="brand-logo" /><span><strong>AMN-AI</strong><br /><span class="brand-sub">Autonomous Machine Nexus</span></span></a>
       <span class="topbar-crumb"><span id="studio-name">AMN-AI</span> <span class="separator">/</span> Spațiul Proprietarului</span>
       <span class="topbar-right"><span id="environment-banner" class="env-banner" role="status" hidden>—</span><span id="connection" class="connection" role="status">Neconectat</span><button id="logout" class="quiet topbar-logout" hidden>Ieși din studio</button></span>
     </header>
     <main>
-      <section id="login" class="login panel">
-        <img src="/amn-ai-lockup.png" alt="AMN-AI — Autonomous Machine Nexus" class="login-lockup" width="200" height="212" />
-        <p class="eyebrow">AUTONOMOUS MACHINE NEXUS · ARTIFICIAL INTELLIGENCE</p>
-        <h1>Un loc pentru<br />ideea următoare.</h1>
-        <p>Intră în spațiul privat AMN-AI.</p>
-        <form id="login-form">
-          <label for="owner-token">Cheia Proprietarului</label>
-          <input id="owner-token" type="password" required minlength="32" autocomplete="off" spellcheck="false" />
-          <button type="submit" class="primary">Intră în studio <span aria-hidden="true">↗</span></button>
-        </form>
-        <p class="helper">Cheia locală se află în fișierul .env, la STUDIO_OWNER_TOKEN. Rămâne doar în memoria acestei pagini.</p>
+      <section id="login" class="login" aria-labelledby="title-name">
+        <div class="title-block">
+          <p class="eyebrow title-eyebrow"><img src="/amn-ai-mark.png" alt="" class="title-mark" width="40" height="40" />AUTONOMOUS MACHINE NEXUS · ARTIFICIAL INTELLIGENCE</p>
+          <h1 id="title-name" class="title-name">AMN-AI</h1>
+          <p class="title-line">Un loc pentru ideea următoare.</p>
+          <form id="login-form" class="title-form">
+            <label for="owner-token">Cheia Proprietarului</label>
+            <input id="owner-token" type="password" required minlength="32" autocomplete="off" spellcheck="false" />
+            <button type="submit" class="primary">Intră în studio <span aria-hidden="true">↗</span></button>
+            <p class="helper">Cheia locală se află în fișierul .env, la STUDIO_OWNER_TOKEN. Rămâne doar în memoria acestei pagini.</p>
+          </form>
+        </div>
+        <p id="title-caption" class="title-caption">Sediul AMN-AI, București</p>
       </section>
       <section id="workspace" hidden>
         <div class="workspace-grid">
           <aside class="ledger-column" role="complementary" aria-label="Registrul viu, starea modulelor și guvernanța">
             <section class="panel ledger-panel">
               <div class="section-heading"><div><p class="eyebrow">REGISTRU VIU</p><h2>Ce se întâmplă acum</h2></div><span id="ledger-count" class="tag">—</span></div>
+              <!-- The gold mark: requests that wait for the Owner, as the approvals route lists them.
+                   It stays while they wait and takes him to them. -->
+              <button id="owner-mark" class="owner-mark" type="button" hidden><span class="owner-mark-dot" aria-hidden="true"></span><span id="owner-mark-text">—</span><span class="owner-mark-go" aria-hidden="true">↓</span></button>
               <p id="ledger-now" class="ledger-now">Se încarcă…</p>
               <div id="ledger-filters" class="ledger-filters" role="tablist" aria-label="Filtrele registrului"></div>
               <ol id="ledger-list" class="ledger-list"></ol>
@@ -70,10 +88,15 @@
                    picture or standing about on the panel outside it. The canvas takes focus so the
                    employees can be reached with the arrows as well as with a pointer. -->
               <div class="scene-viewport" id="scene-viewport">
-              <canvas id="office-canvas" class="office-canvas" tabindex="0" aria-label="Sediul AMN-AI, live. Folosește tastele-săgeți ca să treci de la un angajat la altul și Enter ca să deschizi unul."></canvas>
+              <canvas id="office-canvas" class="office-canvas" tabindex="0" aria-label="Sediul AMN-AI. Folosește tastele-săgeți ca să treci de la un angajat la altul și Enter ca să deschizi unul."></canvas>
               <div class="scene-readout scene-readout-info" title="Ora locală din București și vremea reală pe care o citește studioul. Fără un serviciu de vreme configurat, scena nu desenează vremea."><span id="scene-info">—  •  BUCUREȘTI</span></div>
-              <span id="office-status" class="tag live-pill scene-readout scene-readout-live"><span class="live-dot" aria-hidden="true"></span><span id="office-fps">Live · randare —</span></span>
-              <div class="scene-slate"><span id="room-caption">—</span><span id="snapshot-time">—</span></div>
+              <span id="office-status" class="tag live-pill scene-readout scene-readout-live" data-state="reconnecting"><span class="live-dot" aria-hidden="true"></span><span id="office-fps"><span class="scene-live">Se conectează</span></span></span>
+              <!-- The slate: what is being looked at, the day's run as one segment per stage (the
+                   runbook's own events, hud_charts.js), and when the studio was last read. -->
+              <div class="scene-slate"><span id="room-caption">—</span><span id="day-track" class="day-track" role="img" aria-label="Nicio rulare a zilei în registru."><svg class="day-track-bar" width="0" height="6" focusable="false" aria-hidden="true"></svg><span class="day-track-label">—</span></span><span id="snapshot-time">—</span></div>
+              <!-- A chapter of the serial, over the render for under three seconds, only when an
+                   episode is drafted or approved as it happens (moments.js). -->
+              <div id="moment-chapter" class="moment moment-chapter" hidden></div>
               </div>
               <div class="camera-toolbar">
                 <div class="toolbar-group toolbar-scene">
@@ -629,6 +652,9 @@
         </div>
       </dialog>
       <p id="message" role="alert" class="message" hidden></p>
+      <!-- A film rendered or published as it happens: a quiet toast for under three seconds. -->
+      <div id="moment-toast" class="moment moment-toast" hidden></div>
+      <p id="moment-announce" class="moment-announce" role="status" aria-live="polite"></p>
     </main>
     <footer class="site-footer"><span>AMN-AI · Autonomous Machine Nexus — Artificial Intelligence</span><span>Muncă reală. Stare verificată.</span></footer>
     <script type="module" src="/src/main.js"></script>
