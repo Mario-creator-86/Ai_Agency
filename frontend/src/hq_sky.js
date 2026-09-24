@@ -99,6 +99,8 @@ export class SkyRenderer {
     this.flakes = Array.from({ length: 180 }, () => ({ x: this.rng() * this.w, y: this.rng() * this.h, s: 0.5 + this.rng(), p: this.rng() * 6 }));
     this.flash = 0;
     this._nextFlash = 6;
+    /** How far above the world's top edge the canvas shows sky (world units, 0 or negative). */
+    this.top = 0;
     this.clock = 0;
     /** @type {any} */
     this._gradient = null;
@@ -123,7 +125,7 @@ export class SkyRenderer {
         d.y += 900 * d.s * dt;
         d.x += (60 + fx.wind * 220) * dt;
         if (d.y > this.h) {
-          d.y = -20;
+          d.y = this.top - 20;
           d.x = this.rng() * this.w;
         }
       }
@@ -133,7 +135,7 @@ export class SkyRenderer {
         f.y += 38 * f.s * dt;
         f.x += Math.sin(this.clock * 0.9 + f.p) * 12 * dt + fx.wind * 30 * dt;
         if (f.y > this.h) {
-          f.y = -6;
+          f.y = this.top - 6;
           f.x = this.rng() * this.w;
         }
       }
@@ -149,11 +151,18 @@ export class SkyRenderer {
   }
 
   /**
+   * The sky from `top` down to the world's floor. Above the world's top edge (a negative `top`,
+   * where the frame keeps a row of sky over the roof) the gradient runs on in its own top colour,
+   * as a canvas gradient pads past its ends, and the stars of the band under the edge repeat
+   * there, so the row is the same sky, not a strip of another colour.
    * @param {CanvasRenderingContext2D} ctx
    * @param {any} time
    * @param {any} fx
+   * @param {number} [top] the canvas's top in world units, 0 or negative
    */
-  drawSky(ctx, time, fx) {
+  drawSky(ctx, time, fx, top = 0) {
+    const above = Math.min(0, top);
+    this.top = above;
     const key = `${time.daylight.toFixed(2)}|${time.dusk.toFixed(2)}|${fx.cloudiness.toFixed(2)}|${fx.fog.toFixed(2)}`;
     if (key !== this._gradientKey) {
       const g = ctx.createLinearGradient(0, 0, 0, this.h);
@@ -162,7 +171,7 @@ export class SkyRenderer {
       this._gradientKey = key;
     }
     ctx.fillStyle = this._gradient;
-    ctx.fillRect(0, 0, this.w, this.h);
+    ctx.fillRect(0, above, this.w, this.h - above);
     if (time.dusk > 0.05) this.drawAfterglow(ctx, time, fx);
     const night = 1 - time.daylight;
     if (night > 0.05 && fx.cloudiness < 0.9) {
@@ -170,6 +179,7 @@ export class SkyRenderer {
       for (const s of this.stars) {
         ctx.globalAlpha = night * (1 - fx.cloudiness) * (0.35 + 0.35 * Math.sin(this.clock * 1.3 + s.p));
         ctx.fillRect(s.x, s.y, s.r, s.r);
+        if (s.y < -above) ctx.fillRect(s.x, s.y + above, s.r, s.r);
       }
       ctx.globalAlpha = 1;
     }
@@ -354,7 +364,8 @@ export class SkyRenderer {
   }
 
   /** @param {CanvasRenderingContext2D} ctx @param {any} time @param {any} fx */
-  drawWeather(ctx, time, fx) {
+  drawWeather(ctx, time, fx, top = 0) {
+    const above = Math.min(0, top);
     if (fx.fog > 0) {
       const g = ctx.createLinearGradient(0, this.h * 0.3, 0, this.h);
       const c = time.daylight > 0.5 ? '210,216,224' : '90,98,120';
@@ -386,7 +397,7 @@ export class SkyRenderer {
     }
     if (this.flash > 0) {
       ctx.fillStyle = `rgba(230,236,255,${0.45 * this.flash})`;
-      ctx.fillRect(0, 0, this.w, this.h);
+      ctx.fillRect(0, above, this.w, this.h - above);
     }
   }
 }

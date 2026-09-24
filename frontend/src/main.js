@@ -24,6 +24,8 @@ import { streetMoves } from './hq_events.js';
 import { budgetRing, budgetRingSvg, channelFilmsHtml, dayTrack, dayTrackFromRun, dayTrackGeometry, dayTrackWords, newerTrack, pipelineSvg } from './hud_charts.js';
 import { Moments } from './moments.js';
 import { filmPoster } from './film_poster.js';
+import { latestFilm, boardTopics } from './hq_screens.js';
+import { studioReadout } from './side_readout.js';
 import { friendlyAnswer } from './friendly_text.js';
 import { LiveWindows, eventMatchesAgent } from './live_window.js';
 import { MailThread } from './mail_thread.js';
@@ -250,6 +252,7 @@ const ledger = new Ledger({
   escape: escapeHtml,
   onEvents: (events) => {
     for (const event of events) noteAgentEvent(event);
+    noteWorldEvents(events);
     if (events.some((event) => String(event.event_type || '').startsWith('runbook.'))) scheduleDayTrack();
     // A day that closes is re-read from the runbook's own record.
     if (events.some((event) => event.event_type === 'runbook.daily_run_finished')) loadDayRecord();
@@ -281,6 +284,122 @@ let dayTrackQueued = false;
 /** @type {import('./hud_charts.js').DayTrack|null} the newest finished day, as the runbook recorded it */
 let dayRecord = null;
 
+/* ---------------------------------------------------------------------------
+ * THE BUILDING'S SCREENS (hq_screens.js): what the page already reads, handed to the renderer.
+ * Nothing is fetched per frame. The newest run comes with the day record; the treasury and the
+ * budget are read once at the key and again only when the register says money moved or a run
+ * ended (at most every 15 s); the serial once at the key and when a story event arrives; the
+ * newest film's frame once per film. A value the page does not hold stays null, and its screen
+ * says «—».
+ * ------------------------------------------------------------------------- */
+/** @type {{run: any, track: any, today: string|null, live: boolean, treasury: any, budget: any, episodes: any, topics: {titles: string[], key: string}, film: any, jobs: any[]|null}} */
+const worldFacts = { run: null, track: null, today: null, live: true, treasury: null, budget: null, episodes: null, topics: { titles: [], key: '' }, film: null, jobs: null };
+
+function pushWorldFacts() {
+  if (officeEngine) officeEngine.setFacts({ ...worldFacts });
+  renderStudioReadout();
+}
+
+/**
+ * The foot of the side drawer on a tall screen (side_readout.js): the day's run, the treasury and
+ * the next scheduled run, from the same facts the building's screens show. Written only when a
+ * line changes.
+ */
+let studioReadoutKey = '';
+function renderStudioReadout() {
+  const list = document.getElementById('studio-readout-list');
+  if (!list) return;
+  const policy = state && state.policy ? state.policy : null;
+  const readout = studioReadout({
+    track: worldFacts.track,
+    today: worldFacts.today,
+    live: worldFacts.live,
+    treasury: worldFacts.treasury,
+    budget: worldFacts.budget,
+    jobs: worldFacts.jobs,
+    stopped: policy ? Boolean(policy.autonomy_stopped) : null,
+    timeZone: state && state.studio ? state.studio.timezone : undefined,
+  });
+  if (readout.key === studioReadoutKey) return;
+  studioReadoutKey = readout.key;
+  list.innerHTML = readout.rows
+    .map((row) => `<div class="readout-row" data-tone="${escapeHtml(row.tone || 'quiet')}"><dt>${escapeHtml(row.label)}</dt><dd><span class="readout-value">${escapeHtml(row.value)}</span>${row.note ? `<span class="readout-note">${escapeHtml(row.note)}</span>` : ''}</dd></div>`)
+    .join('');
+}
+
+let filmAsset = '';
+
+function resetWorldFacts() {
+  Object.assign(worldFacts, { run: null, track: null, today: null, live: true, treasury: null, budget: null, episodes: null, topics: { titles: [], key: '' }, film: null, jobs: null });
+  filmAsset = '';
+  pushWorldFacts();
+}
+
+/**
+ * The newest rendered film's own frame, decoded once per film from the file (film_poster.js),
+ * with the Owner's key, the way the film toast decodes it.
+ * @param {{assetId: string, date: string|null}|null} film
+ */
+async function loadFilmFrame(film) {
+  if (!film || !ownerToken || film.assetId === filmAsset) return;
+  filmAsset = film.assetId;
+  const session = epoch;
+  const canvas = await filmPoster({ url: `/api/v1/media/assets/${encodeURIComponent(film.assetId)}/stream`, token: ownerToken, width: 90, height: 160, timeoutMs: 6000 }).catch(() => null);
+  if (session !== epoch || filmAsset !== film.assetId) return;
+  worldFacts.film = canvas ? { ...film, canvas } : null;
+  pushWorldFacts();
+}
+
+let figuresTimer = 0;
+async function loadWorldFigures() {
+  if (!ownerToken) return;
+  const session = epoch;
+  const [treasury, budget, jobs] = await Promise.all([api('/economy/treasury').catch(() => null), api('/economy/budget').catch(() => null), api('/scheduler/jobs').catch(() => null)]);
+  if (session !== epoch) return;
+  // A failed read keeps the last figures read; the corner already says the data is not fresh.
+  if (treasury) worldFacts.treasury = treasury;
+  if (budget) worldFacts.budget = budget;
+  if (Array.isArray(jobs)) worldFacts.jobs = jobs;
+  pushWorldFacts();
+}
+
+let serialTimer = 0;
+async function loadSerialFacts() {
+  if (!ownerToken) return;
+  const session = epoch;
+  const episodes = await api('/story/episodes').catch(() => null);
+  if (session !== epoch || !episodes) return;
+  worldFacts.episodes = episodes;
+  pushWorldFacts();
+}
+
+/** One read after a quiet 15 s, however many events asked for it. @param {'figures'|'serial'} which */
+function soon(which) {
+  if (which === 'figures') {
+    if (figuresTimer) return;
+    figuresTimer = window.setTimeout(() => { figuresTimer = 0; loadWorldFigures(); }, 15000);
+  } else {
+    if (serialTimer) return;
+    serialTimer = window.setTimeout(() => { serialTimer = 0; loadSerialFacts(); }, 15000);
+  }
+}
+
+/** What the register's new rows change on the building's screens. @param {any[]} events */
+function noteWorldEvents(events) {
+  const types = events.map((event) => String((event && event.event_type) || ''));
+  if (types.includes('factual.topic_proposed')) {
+    const topics = boardTopics(ledger.sorted());
+    if (topics.key !== worldFacts.topics.key) {
+      worldFacts.topics = topics;
+      pushWorldFacts();
+    }
+  }
+  if (!ownerToken) return;
+  // A finished run moves the scheduler's next time too (the side drawer's foot reads it).
+  if (types.some((t) => t.startsWith('economy.') || t === 'agent.run_completed' || t === 'runbook.daily_run_finished')) soon('figures');
+  if (types.some((t) => t.startsWith('story.'))) soon('serial');
+}
+
 /** Reads the runbook's newest recorded day; the events of a day under way stay the newer. */
 async function loadDayRecord() {
   if (!ownerToken) return;
@@ -288,6 +407,9 @@ async function loadDayRecord() {
     const data = await api('/runbook/runs');
     const newest = (data.runs || [])[0];
     dayRecord = dayTrackFromRun(newest);
+    worldFacts.run = newest || null;
+    pushWorldFacts();
+    loadFilmFrame(latestFilm(data.runs));
     // «Acum» reads the same record: a stage that started before the day's recorded finish is
     // not running, even when the register has lost the finish behind newer rows.
     const closed = newest ? Date.parse(String(newest.finished_at || '')) : NaN;
@@ -322,6 +444,11 @@ function renderDayTrack() {
   const events = ledger.sorted();
   const track = newerTrack(dayTrack(events), dayRecord);
   const live = productionStatus(events, Date.now(), ledger.closedAt).live;
+  // the façade sign shows the same day, in the same words (hq_screens.js runSignFace)
+  worldFacts.track = track;
+  worldFacts.today = studioToday();
+  worldFacts.live = live;
+  pushWorldFacts();
   const words = dayTrackWords(track, { today: studioToday(), live });
   const geometry = dayTrackGeometry(track);
   const key = JSON.stringify([words.label, geometry.rects.map((r) => r.state)]);
@@ -388,10 +515,17 @@ const moments = new Moments({
     }
     return {};
   },
-  poster: (moment) =>
-    moment.assetId
-      ? filmPoster({ url: `/api/v1/media/assets/${encodeURIComponent(moment.assetId)}/stream`, token: ownerToken })
-      : Promise.resolve(null),
+  poster: async (moment) => {
+    if (!moment.assetId) return null;
+    const canvas = await filmPoster({ url: `/api/v1/media/assets/${encodeURIComponent(moment.assetId)}/stream`, token: ownerToken });
+    // The film just rendered is now the newest: the render bay shows the same frame, decoded once.
+    if (canvas) {
+      filmAsset = moment.assetId;
+      worldFacts.film = { assetId: moment.assetId, date: studioToday(), canvas };
+      pushWorldFacts();
+    }
+    return canvas;
+  },
 });
 // The scene script and the tests reach the moments through the page's handle.
 Object.assign(window, { __moments: moments });
@@ -584,6 +718,7 @@ function buildOfficeEngine() {
     },
   });
   publishSceneHandle();
+  pushWorldFacts();
   return officeEngine;
 }
 
@@ -611,6 +746,95 @@ async function warmOffice() {
   engine.prewarm(box.width, box.height);
   // The drawers' widths are measured now too, so the key does not wait for that layout either.
   drawers.prime();
+  warmWorkspacePaint();
+}
+
+/**
+ * THE GPU'S FIRST SIGHT OF THE WORKSPACE, spent under the title (W8).
+ *
+ * In a fresh browser profile the first frame that paints the workspace stopped for 208-243ms,
+ * 330-390ms after the key: the GPU compiling, once per profile, the programs for what the
+ * workspace draws and the title never does -- rounded and bordered rects, the glass's blur and
+ * gradients, the icons' path fills, the rails' turned text. Here the workspace is shown for three
+ * frames while the title stands, at 1% opacity above it, with a handful of sample rows in its
+ * empty lists (the register's, the modules', the day's track) so the rows' shapes are among them.
+ * Nothing is read and nothing is said: the page is inert and hidden from assistive technology for
+ * those frames, the samples are taken out again, and the workspace is hidden as it was. An
+ * accepted key ends it at once (endWorkspacePaintWarm).
+ */
+let paintWarm = /** @type {{done: boolean, added: Element[], chrome?: HTMLElement[]}|null} */ (null);
+function warmWorkspacePaint() {
+  if (paintWarm || !workspace.hidden || ownerToken || busy) return;
+  const warm = { done: false, added: /** @type {Element[]} */ ([]), chrome: /** @type {HTMLElement[]} */ ([]) };
+  paintWarm = warm;
+  const fill = (/** @type {string} */ id, /** @type {string} */ markup) => {
+    const host = document.getElementById(id);
+    if (!host || host.children.length) return;
+    const holder = document.createElement('template');
+    holder.innerHTML = markup;
+    for (const node of Array.from(holder.content.children)) {
+      host.append(node);
+      warm.added.push(node);
+    }
+  };
+  const item = (/** @type {string} */ kind, /** @type {string} */ extra) => `<li class="ledger-item ledger-${kind}"><time>00:00:00</time><div><div class="ledger-head"><strong>Aaaa</strong> <span class="ledger-arrow">→</span> <strong>Aaaa</strong> · aaaa${extra}</div><div class="ledger-text">aaaa aaaa</div><div class="ledger-open">Aaaa ↗</div></div></li>`;
+  fill('ledger-filters', '<button type="button" class="ledger-chip is-active" tabindex="-1">Aaaa</button><button type="button" class="ledger-chip" tabindex="-1">Aaaa</button>');
+  fill('ledger-list', `<li class="ledger-day">aaaa</li>${item('system', '<span class="ledger-repeat">×2</span>')}${item('owner', '')}${item('talk', '')}<li class="ledger-item ledger-system is-repeat"><time>00:00:00</time><div><div class="ledger-head">aaaa</div><span class="ledger-span">00:00:00 – 00:00:00</span></div></li>`);
+  fill('modules', '<li data-status="IMPLEMENTED">Aaaa<span class="module-state">Aaaa</span></li><li data-status="PARTIAL">Aaaa<span class="module-state">Aaaa</span></li><li data-status="NOT_IMPLEMENTED">Aaaa<span class="module-state">Aaaa</span></li>');
+  const bar = document.querySelector('#day-track .day-track-bar');
+  if (bar && !bar.children.length) {
+    const ns = 'http://www.w3.org/2000/svg';
+    for (const [x, seg] of /** @type {Array<[number, string]>} */ ([[0, 'seg-done'], [17, 'seg-running'], [34, 'seg-pending']])) {
+      const rect = document.createElementNS(ns, 'rect');
+      for (const [k, v] of Object.entries({ x: String(x), y: '0', width: '14', height: '6', rx: '1', class: `track-seg ${seg}` })) rect.setAttribute(k, v);
+      bar.append(rect);
+      warm.added.push(rect);
+    }
+  }
+  // The masthead and the footer strip are the frame's too (the rooms' menu, the Owner's keys):
+  // they are painted with it. The drawers are laid out as the key will find them, so the rails,
+  // the menu in the masthead and the drawers' own state are among what is painted.
+  const chrome = /** @type {HTMLElement[]} */ (Array.from(document.querySelectorAll('.topbar, .site-footer')));
+  for (const el of chrome) {
+    el.inert = true;
+    el.setAttribute('aria-hidden', 'true');
+  }
+  warm.chrome = chrome;
+  workspace.inert = true;
+  workspace.setAttribute('aria-hidden', 'true');
+  workspace.classList.add('is-warming');
+  document.body.classList.add('is-paint-warm');
+  workspace.hidden = false;
+  if (!drawers.started && drawers.isFramed()) drawers.start();
+  let frames = 0;
+  const tick = () => {
+    if (warm.done) return;
+    frames += 1;
+    if (frames < 4) {
+      requestAnimationFrame(tick);
+      return;
+    }
+    endWorkspacePaintWarm({ hide: true });
+  };
+  requestAnimationFrame(tick);
+}
+
+/** Take the warm-up away: its samples, its class, and (unless a key is entering) the workspace. @param {{hide: boolean}} options */
+function endWorkspacePaintWarm(options) {
+  const warm = paintWarm;
+  if (!warm || warm.done) return;
+  warm.done = true;
+  for (const node of warm.added) node.remove();
+  warm.added = [];
+  workspace.classList.remove('is-warming');
+  document.body.classList.remove('is-paint-warm');
+  for (const el of warm.chrome || []) {
+    el.inert = false;
+    el.removeAttribute('aria-hidden');
+  }
+  workspace.inert = false;
+  workspace.removeAttribute('aria-hidden');
+  if (options.hide) workspace.hidden = true;
 }
 
 function whenIdle(/** @type {() => void} */ run) {
@@ -2961,6 +3185,7 @@ function render(data) {
     `Actualizat ${new Date(data.captured_at).toLocaleTimeString('ro-RO', { timeZone: data.studio.timezone })}`;
   renderSwitch(data.policy.autonomy_stopped);
   renderEnvironment(data.policy.environment);
+  renderStudioReadout();
   renderAutonomyMode(data.policy);
   ledger.timezone = data.studio.timezone;
   const agentNames = Object.fromEntries(officeState.agents.map((a) => [a.id || a.agent_id, a.display_name]));
@@ -3093,6 +3318,7 @@ element('login-form').addEventListener('submit', async (event) => {
     // The camera goes into the building only here, on a key the backend has just accepted, and
     // never for a visitor who asked for less motion: they get the same workspace at once.
     const plays = entryPlays({ accepted: true, reducedMotion: reducedMotion(), titleShown: titleScreen.visible });
+    endWorkspacePaintWarm({ hide: false });
     workspace.hidden = false;
     element('logout').hidden = false;
     input.value = '';
@@ -3129,6 +3355,8 @@ element('login-form').addEventListener('submit', async (event) => {
     if (plays) window.setTimeout(() => { if (ownerToken) keyLight.start(); }, ENTRY.totalMs + 80);
     else keyLight.start();
     loadDayRecord();
+    loadWorldFigures();
+    loadSerialFacts();
     await loadOfficeLayout();
     connectWebSocket();
   } else {
@@ -3172,6 +3400,11 @@ element('logout').addEventListener('click', () => {
   dayRecord = null;
   ledger.closedAt = null;
   dayTrackKey = '';
+  window.clearTimeout(figuresTimer);
+  window.clearTimeout(serialTimer);
+  figuresTimer = 0;
+  serialTimer = 0;
+  resetWorldFacts();
   renderDayTrack();
   element('autonomy-mode-tag').textContent = '—';
   element('autonomy-mode-meaning').textContent = '—';
@@ -3715,6 +3948,8 @@ async function loadBudget() {
   const cards = element('budget-cards');
   try {
     const data = await api('/economy/budget');
+    worldFacts.budget = data;
+    pushWorldFacts();
     // Money held apart from money spent, and the two figures that say the total is
     // incomplete: a render paid for that delivered nothing, and the runs whose model has no
     // stored price. An unpriced run is real usage the books cannot value, so it is named
@@ -3747,6 +3982,8 @@ async function loadTreasury() {
       api('/economy/treasury'),
       api('/economy/ledger?limit=25'),
     ]);
+    worldFacts.treasury = treasury;
+    pushWorldFacts();
 
     summary.replaceChildren();
     summary.append(treasuryTile(treasury.spendable, 'treasury-tile-primary'));
@@ -4183,6 +4420,8 @@ async function loadEpisodes() {
       api('/story/continuity').catch(() => null),
     ]);
     boardEl.innerHTML = serialBoardHtml(continuity);
+    worldFacts.episodes = data;
+    pushWorldFacts();
     const episodes = data.episodes || [];
     if (!episodes.length) {
       listEl.innerHTML = '<div class="topics-loading">Niciun episod încă.</div>';
@@ -4511,6 +4750,10 @@ async function loadRunbookSchedule() {
   const box = element('runbook-schedule');
   try {
     const [jobs, snapshot] = await Promise.all([api('/scheduler/jobs'), api('/snapshot')]);
+    if (Array.isArray(jobs)) {
+      worldFacts.jobs = jobs;
+      renderStudioReadout();
+    }
     const daily = (jobs || []).find((job) => job.workflow_type === 'DAILY_RUN');
     if (!daily) {
       box.innerHTML = `<p class="runbook-note">Nicio treabă zilnică programată. Lucrătorul de fundal o creează la pornire, când este activ.</p>`;

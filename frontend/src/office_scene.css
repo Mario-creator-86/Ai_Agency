@@ -234,7 +234,9 @@
 
 /* The streamed Unreal headquarters lies over the renderer and lets clicks through to it. */
 #office-scene-container .live-stream-layer { position: absolute; inset: 0; z-index: 2; pointer-events: none; background: var(--scene); }
-#office-scene-container .live-stream-layer video { position: absolute; inset: 0; width: 100% !important; height: 100% !important; object-fit: cover; }
+/* The video is laid in its box whole (contain), so none of its rows -- the sky over the roof, the
+   roof's railing -- is cut before the page's camera places it (game_frame.js streamTransform). */
+#office-scene-container .live-stream-layer video { position: absolute; inset: 0; width: 100% !important; height: 100% !important; object-fit: contain; }
 /* While not live the layer still covers the other renderer: the last frame, frozen, or a note. */
 #office-scene-container .live-stream-layer.paused video { visibility: hidden; }
 /* Reconnecting: a readout of the same family, seated above the slate on the
@@ -288,7 +290,7 @@
   border-radius: var(--radius-pill);
   background: var(--line-strong);
 }
-#office-scene-container .live-stream-still { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; }
+#office-scene-container .live-stream-still { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; object-fit: contain; }
 
 /* --------------------------------------------------------------------------
    THE CONSOLE -- two tiers, one plate, one alignment
@@ -364,6 +366,9 @@
 #office-scene-container .cam-btn:hover:not(:disabled) { background: var(--surface-quiet); border-color: transparent; color: var(--ink); }
 #office-scene-container .cam-btn:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
 #office-scene-container .cam-square { width: var(--hit-lg); padding: 0; justify-content: center; font-size: var(--fs-h3); }
+/* The fit and fullscreen keys carry an icon for the frame's dock; under the
+   render, on a narrow page, they say their word as they always did. */
+#office-scene-container .dock-icon { display: none; }
 /* The family's grid, stroke, caps, joins and currentColor come from .ui-icon
    in style.css, which every icon in the product wears. What is the console's
    own business is the ink and the measure: an icon here is quieter than the
@@ -572,9 +577,12 @@
    the drawers leave, --hud-l to --hud-r: the clock and the weather in the
    top-left corner of that room, the live state in its top-right, the slate
    along its bottom lip. The scene's switches and the camera are a dock of the
-   same glass above the slate, in the middle of the room; the seven rooms have
-   gone up to the masthead. When a drawer opens or closes, the instruments
-   slide with its edge and the camera re-centres the building. */
+   same glass hanging between them, in the row of sky the camera keeps over
+   the roof (--hud-top, W8): nothing of the instruments lies on the building,
+   and the street, the only thing that moves when the studio is quiet, is left
+   whole. The seven rooms have gone up to the masthead. When a drawer opens or
+   closes, the instruments slide with its edge and the camera re-centres the
+   building. */
 @media (min-width: 1051px) and (min-height: 600px) {
   .office-panel .office-heading {
     position: absolute;
@@ -610,7 +618,7 @@
   #office-scene-container .camera-toolbar {
     transition: left var(--dur-drawer) var(--ease), right var(--dur-drawer) var(--ease);
   }
-  .scene-viewport .scene-readout { max-width: calc((100% - var(--hud-l) - var(--hud-r)) / 2); }
+  .scene-viewport .scene-readout { max-width: calc((100% - var(--hud-l) - var(--hud-r) - var(--dock-room)) / 2); }
   .scene-viewport .scene-readout-info {
     left: var(--hud-l);
     border-left: 1px solid var(--scene-chrome-edge);
@@ -624,7 +632,7 @@
   #office-scene-container .live-stream-badge { right: var(--hud-r); }
   .scene-viewport .scene-note { left: calc(var(--hud-l) + (100% - var(--hud-l) - var(--hud-r)) / 2); }
   #office-scene-container .live-stream-layer.waiting .live-stream-badge { right: calc(var(--hud-r) + (100% - var(--hud-l) - var(--hud-r)) / 2); }
-  .scene-viewport .moment-chapter { left: calc(var(--hud-l) + var(--s5)); bottom: calc(var(--scene-readout) * 2 + var(--s6) + var(--s5)); }
+  .scene-viewport .moment-chapter { left: calc(var(--hud-l) + var(--s5)); bottom: calc(var(--scene-readout) + var(--s5)); }
 
   /* The slate is the room's bottom lip. It is a container, so what it says
      is chosen by the room it has, not by the page's width: with both drawers
@@ -642,21 +650,122 @@
   .scene-viewport .scene-slate > span { min-height: var(--scene-readout); line-height: var(--scene-readout); }
   .scene-viewport .scene-slate .day-track { min-height: var(--scene-readout); }
 
-  /* THE DOCK: the two switches, the camera and fullscreen, one row of the
-     scene's glass in the middle of the room, above the slate. */
+  /* THE DOCK: the two switches, the camera and fullscreen, one plate of the
+     scene's glass hanging from the masthead in the middle of the room, in the
+     row of sky (W8; it stood over the zebra crossing and the near lane). The
+     outer box spans the room and is a container, so what the dock spells out
+     is chosen by the room it has: the state words always (PORNIT, TEST are
+     the studio's state), the switches' names from 1100px of room, the fit and
+     fullscreen words from 1500px; below that each is its icon, and its word is
+     a label that appears under it on the pointer and on the keyboard, as the
+     masthead's rooms do. Every key, id and name is the one it was. */
   #office-scene-container .camera-toolbar {
     position: absolute;
     z-index: 6;
-    left: calc(var(--hud-l) + (100% - var(--hud-l) - var(--hud-r)) / 2);
-    bottom: calc(var(--scene-readout) + var(--s4));
-    width: max-content;
-    max-width: calc(100% - var(--hud-l) - var(--hud-r) - var(--s6));
-    transform: translateX(-50%);
+    top: 0;
+    left: var(--hud-l);
+    right: var(--hud-r);
+    width: auto;
+    max-width: none;
+    height: 0;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    overflow: visible;
+    background: none;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    transform: none;
+    pointer-events: none;
+    container: dock / inline-size;
+  }
+  #office-scene-container .toolbar-scene {
+    flex: none;
+    flex-wrap: nowrap;
+    gap: var(--s1);
+    padding: var(--s1) var(--s2);
+    pointer-events: auto;
+    background: var(--scene-chrome);
+    border: 1px solid var(--scene-chrome-edge);
+    border-top: 0;
+    border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+    box-shadow: var(--lit-edge);
     backdrop-filter: blur(var(--scene-blur));
   }
-  #office-scene-container .toolbar-scene { flex: none; flex-wrap: nowrap; padding: var(--s1) var(--s2); }
+  #office-scene-container .toolbar-scene .cam-btn { position: relative; height: var(--hit); font-size: var(--fs-meta); }
+  #office-scene-container .toolbar-scene .cam-switch { padding: 0 var(--s2); }
+  #office-scene-container .toolbar-scene .cam-square { width: var(--hit); }
+  /* The camera's plate lets its keys' labels out below it; its end keys take its corners. */
+  #office-scene-container .cam-group { margin-left: var(--s1); overflow: visible; }
+  #office-scene-container .cam-group .cam-btn:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+  #office-scene-container .cam-group .cam-btn:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+  #office-scene-container .btn-fs, #office-scene-container .btn-exit-fs { margin-left: var(--s1); }
+  #office-scene-container .cam-worded { gap: var(--s2); }
+  #office-scene-container .dock-icon { display: block; flex: none; width: var(--icon); height: var(--icon); color: var(--scene-chrome-ink); }
+
+  /* A word that is not spelled out is a floating label under its key. */
+  #office-scene-container .toolbar-scene :is(.switch-label, .dock-label) {
+    position: absolute;
+    top: calc(100% + var(--s2));
+    left: 50%;
+    z-index: 7;
+    translate: -50% 0;
+    padding: var(--s1) var(--s2);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-xs);
+    background: var(--surface-sunk);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: var(--fs-micro);
+    font-weight: var(--w-bold);
+    letter-spacing: var(--track-caps);
+    text-transform: uppercase;
+    white-space: nowrap;
+    box-shadow: var(--shadow-raised);
+    opacity: 0;
+    pointer-events: none;
+    clip-path: inset(50%);
+    transition: opacity var(--dur-fast) var(--ease);
+  }
+  #office-scene-container .toolbar-scene .cam-worded { width: var(--hit); padding: 0; justify-content: center; }
+  #office-scene-container .toolbar-scene .cam-btn:is(:hover, :focus-visible) :is(.switch-label, .dock-label) { opacity: 1; clip-path: none; }
+
   /* Before the menu has been lifted to the masthead, the rooms are not a second tier here. */
   #office-scene-container .toolbar-modules { display: none; }
+}
+
+/* What the dock spells out for the room it has (it is a container only in the frame). */
+@container dock (min-width: 1100px) {
+  #office-scene-container .toolbar-scene .switch-label {
+    position: static;
+    translate: none;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--scene-chrome-muted);
+    box-shadow: none;
+    opacity: 1;
+    clip-path: none;
+  }
+}
+@container dock (min-width: 1500px) {
+  #office-scene-container .toolbar-scene .dock-label {
+    position: static;
+    translate: none;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font-size: inherit;
+    font-weight: inherit;
+    letter-spacing: normal;
+    text-transform: none;
+    box-shadow: none;
+    opacity: 1;
+    clip-path: none;
+  }
+  #office-scene-container .toolbar-scene .cam-worded { width: auto; padding: 0 var(--s3); }
 }
 
 /* What the slate says for the room it has (it is a container only in the frame). */

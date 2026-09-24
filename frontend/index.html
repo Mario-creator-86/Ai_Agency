@@ -57,9 +57,12 @@
       </section>
       <section id="workspace" hidden>
         <div class="workspace-grid">
-          <aside class="ledger-column" role="complementary" aria-label="Registrul viu, starea modulelor și guvernanța">
+          <aside class="ledger-column" role="complementary" aria-label="Registrul viu">
             <!-- THE DRAWERS' RAILS. In the game frame (drawers.js) the register and the governance side
-                 are glass drawers over the render's edges; closed, each is this rail, with its count. -->
+                 are glass drawers over the render's edges; closed, each is this rail, with its count.
+                 The page's order is the order they are seen in: the register on the left, the render
+                 and its dock, then the governance side on the right, so the keyboard walks them as
+                 the eye does. -->
             <button id="register-rail" class="drawer-rail drawer-rail-register" type="button" aria-controls="register-panel" aria-expanded="false" title="Deschide registrul viu" hidden><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 6.5l5.5 5.5-5.5 5.5"/></svg><span class="drawer-rail-label">Registru viu</span><span id="register-rail-count" class="drawer-rail-count"></span></button>
             <section id="register-panel" class="panel ledger-panel">
               <div class="section-heading"><div><p class="eyebrow">REGISTRU VIU</p><h2>Ce se întâmplă acum</h2></div><span id="ledger-count" class="tag">—</span><button id="register-close" class="quiet drawer-close" type="button" aria-controls="register-panel" aria-expanded="true" aria-label="Strânge registrul viu" title="Strânge registrul viu la marginea ecranului"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6.5L9 12l5.5 5.5"/></svg></button></div>
@@ -69,21 +72,6 @@
               <p id="ledger-now" class="ledger-now">Se încarcă…</p>
               <div id="ledger-filters" class="ledger-filters" role="tablist" aria-label="Filtrele registrului"></div>
               <ol id="ledger-list" class="ledger-list"></ol>
-            </section>
-            <button id="side-rail" class="drawer-rail drawer-rail-side" type="button" aria-controls="governance-panel modules-panel" aria-expanded="false" title="Deschide guvernanța, aprobările și starea modulelor" hidden><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6.5L9 12l5.5 5.5"/></svg><span class="drawer-rail-label">Guvernanță</span><span id="side-rail-count" class="drawer-rail-count"></span></button>
-            <section id="modules-panel" class="panel modules-panel"><p class="eyebrow">CAPABILITĂȚI</p><h2>Starea modulelor</h2><ul id="modules" class="modules"></ul></section>
-            <!-- Governance: the mode the studio is really in, and what a supervised studio stopped to ask. -->
-            <section id="governance-panel" class="panel governance-panel">
-              <div class="section-heading"><div><p class="eyebrow">GUVERNANȚĂ</p><h2>Mod de autonomie</h2></div><span id="autonomy-mode-tag" class="tag">—</span><button id="side-close" class="quiet drawer-close" type="button" aria-controls="governance-panel modules-panel" aria-expanded="true" aria-label="Strânge guvernanța" title="Strânge guvernanța, aprobările și starea modulelor la marginea ecranului"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 6.5l5.5 5.5-5.5 5.5"/></svg></button></div>
-              <p id="autonomy-mode-meaning" class="ledger-now">—</p>
-              <div id="autonomy-mode-buttons" class="mode-buttons" role="group" aria-label="Mod de autonomie">
-                <button class="quiet mode-btn" data-mode="MANUAL" type="button" title="Agenții pregătesc și analizează; Proprietarul aprobă trecerile între etape.">Manual</button>
-                <button class="quiet mode-btn" data-mode="SUPERVISED" type="button" title="Etapele interne merg singure; o scriere în afară devine o cerere de aprobare.">Supravegheat</button>
-                <button class="quiet mode-btn" data-mode="AUTONOMOUS_CEO" type="button" title="Directoarea execută singură treptele T0–T3 în limitele politicii; T4 rămâne a Proprietarului.">CEO autonom</button>
-              </div>
-              <p id="autonomy-mode-note" class="helper-note" hidden></p>
-              <div class="section-heading approvals-heading"><div><p class="eyebrow">APROBĂRI</p><h2>Ce așteaptă decizia ta</h2></div><span id="approvals-count" class="tag">—</span><button id="refresh-approvals-btn" class="quiet cam-square" type="button" title="Recitește cererile de aprobare" aria-label="Recitește cererile de aprobare"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 12a7.4 7.4 0 1 1-2.17-5.23"/><path d="M19.4 5.1v4.6h-4.6"/></svg></button></div>
-              <div id="approvals-list" class="approvals-list"></div>
             </section>
           </aside>
           <section class="panel office-panel">
@@ -114,10 +102,10 @@
                 <div class="cam-group" role="group" aria-label="Cameră">
                 <button id="zoom-in" class="quiet cam-btn cam-square" title="Apropie" aria-label="Apropie"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5.2v13.6M5.2 12h13.6"/></svg></button>
                 <button id="zoom-out" class="quiet cam-btn cam-square" title="Depărtează" aria-label="Depărtează"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.2 12h13.6"/></svg></button>
-                <button id="zoom-fit" class="quiet cam-btn" title="Încadrează toată clădirea">Încadrează</button>
+                <button id="zoom-fit" class="quiet cam-btn cam-worded" title="Încadrează toată clădirea"><svg class="ui-icon dock-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.6 8.6v-4h4M15.4 4.6h4v4M19.4 15.4v4h-4M8.6 19.4h-4v-4"/><rect x="8.8" y="9.2" width="6.4" height="5.6" rx="1"/></svg><span class="dock-label">Încadrează</span></button>
                 <button id="zoom-reset" class="quiet cam-btn" title="Mărime reală">1:1</button>
                 </div>
-                <button id="fullscreen-btn" class="quiet cam-btn btn-fs" title="Ecran complet">Ecran complet</button>
+                <button id="fullscreen-btn" class="quiet cam-btn btn-fs cam-worded" title="Ecran complet"><svg class="ui-icon dock-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.2 4.6h5.2v5.2M19.4 4.6l-5.6 5.6M9.8 19.4H4.6v-5.2M4.6 19.4l5.6-5.6"/></svg><span class="dock-label">Ecran complet</span></button>
                 <button id="exit-fullscreen-btn" class="quiet cam-btn btn-exit-fs hidden" title="Ieși din ecran complet"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></svg>Ieși</button>
                 </div>
                 <!-- THE SEVEN ROOMS, ONE ICON FAMILY. Every icon in this page is drawn on the
@@ -143,6 +131,27 @@
               <div id="rooms" class="rooms" hidden></div>
             </div>
           </section>
+          <aside class="side-column" role="complementary" aria-label="Guvernanța, aprobările și starea modulelor">
+            <button id="side-rail" class="drawer-rail drawer-rail-side" type="button" aria-controls="governance-panel modules-panel studio-readout" aria-expanded="false" title="Deschide guvernanța, aprobările și starea modulelor" hidden><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6.5L9 12l5.5 5.5"/></svg><span class="drawer-rail-label">Guvernanță</span><span id="side-rail-count" class="drawer-rail-count"></span></button>
+            <!-- Governance: the mode the studio is really in, and what a supervised studio stopped to ask. -->
+            <section id="governance-panel" class="panel governance-panel">
+              <div class="section-heading"><div><p class="eyebrow">GUVERNANȚĂ</p><h2>Mod de autonomie</h2></div><span id="autonomy-mode-tag" class="tag">—</span><button id="side-close" class="quiet drawer-close" type="button" aria-controls="governance-panel modules-panel studio-readout" aria-expanded="true" aria-label="Strânge guvernanța" title="Strânge guvernanța, aprobările și starea modulelor la marginea ecranului"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 6.5l5.5 5.5-5.5 5.5"/></svg></button></div>
+              <p id="autonomy-mode-meaning" class="ledger-now">—</p>
+              <div id="autonomy-mode-buttons" class="mode-buttons" role="group" aria-label="Mod de autonomie">
+                <button class="quiet mode-btn" data-mode="MANUAL" type="button" title="Agenții pregătesc și analizează; Proprietarul aprobă trecerile între etape.">Manual</button>
+                <button class="quiet mode-btn" data-mode="SUPERVISED" type="button" title="Etapele interne merg singure; o scriere în afară devine o cerere de aprobare.">Supravegheat</button>
+                <button class="quiet mode-btn" data-mode="AUTONOMOUS_CEO" type="button" title="Directoarea execută singură treptele T0–T3 în limitele politicii; T4 rămâne a Proprietarului.">CEO autonom</button>
+              </div>
+              <p id="autonomy-mode-note" class="helper-note" hidden></p>
+              <div class="section-heading approvals-heading"><div><p class="eyebrow">APROBĂRI</p><h2>Ce așteaptă decizia ta</h2></div><span id="approvals-count" class="tag">—</span><button id="refresh-approvals-btn" class="quiet cam-square" type="button" title="Recitește cererile de aprobare" aria-label="Recitește cererile de aprobare"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 12a7.4 7.4 0 1 1-2.17-5.23"/><path d="M19.4 5.1v4.6h-4.6"/></svg></button></div>
+              <div id="approvals-list" class="approvals-list"></div>
+            </section>
+            <section id="modules-panel" class="panel modules-panel"><p class="eyebrow">CAPABILITĂȚI</p><h2>Starea modulelor</h2><ul id="modules" class="modules"></ul></section>
+            <!-- THE STUDIO AT A GLANCE (side_readout.js): the foot of the side drawer on a screen tall
+                 enough to have bare glass there. The day's run, the treasury, the next scheduled run,
+                 each from the record the page already reads, «—» where it holds nothing. -->
+            <section id="studio-readout" class="panel studio-readout" aria-labelledby="studio-readout-title"><p class="eyebrow">PE SCURT</p><h2 id="studio-readout-title">Studioul azi</h2><dl id="studio-readout-list" class="readout-list"></dl></section>
+          </aside>
         </div>
       </section>
 
@@ -297,17 +306,9 @@
           <button id="close-story-btn" class="dialog-close" aria-label="Închide"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></svg></button>
         </div>
         <div class="dialog-body">
+          <!-- The writers room comes first: it is what the Journal is opened for, and at 1080 the
+               closed days above it pushed the episodes below the fold (W8). -->
           <div class="dialog-section-bottom">
-            <div class="topics-header-row">
-              <h3 class="dialog-section-header-bright-compact">Zile închise</h3>
-              <button id="close-day-btn" class="quiet btn-media-action">Închide ziua</button>
-            </div>
-            <div id="story-status" class="dialog-status-msg" hidden></div>
-            <div id="story-logs" class="topics-container">
-              <div class="topics-loading">Se încarcă jurnalele…</div>
-            </div>
-          </div>
-          <div>
             <h3 class="dialog-section-header-bright-compact">Episoade</h3>
             <!-- THE WRITERS ROOM (serial_room.js). Where canon stands and the threads it carries,
                  above the episodes; each episode below is a script page with the Director's
@@ -315,6 +316,16 @@
             <div id="story-serial-board"></div>
             <div id="story-episodes" class="topics-container writers-room">
               <div class="topics-loading">Se încarcă episoadele…</div>
+            </div>
+          </div>
+          <div>
+            <div class="topics-header-row">
+              <h3 class="dialog-section-header-bright-compact">Zile închise</h3>
+              <button id="close-day-btn" class="quiet btn-media-action">Închide ziua</button>
+            </div>
+            <div id="story-status" class="dialog-status-msg" hidden></div>
+            <div id="story-logs" class="topics-container">
+              <div class="topics-loading">Se încarcă jurnalele…</div>
             </div>
           </div>
         </div>

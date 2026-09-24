@@ -193,6 +193,19 @@ const TASK_LABEL = {
   TEST_CONNECTIVITY: 'test de conexiune',
 };
 
+/** What a state change says in the register; IDLE and anything unlisted is «a terminat». @type {Record<string, string>} */
+const STATE_CHANGE_LABEL = {
+  WORKING: 'lucrează',
+  EXECUTING: 'lucrează',
+  RUNNING: 'lucrează',
+  THINKING: 'lucrează',
+  PLANNING: 'lucrează',
+  REVIEWING: 'verifică',
+  ERROR: 'stare: eroare',
+  FAILED: 'stare: eroare',
+  BLOCKED: 'stare: blocaj',
+};
+
 /**
  * A task type in words. It lived in main.js for the inspector's timeline; the scene needs the
  * same words, so it lives here with the register's other labels.
@@ -328,12 +341,13 @@ export function describeEvent(event, names = {}) {
     case 'agent.state_changed':
       // WORKING is production without a model — a voice being recorded, a shot generated. It
       // used to read "a terminat" (finished) while the work was only starting.
-      label = payload.runtime_state === 'THINKING' || payload.runtime_state === 'WORKING' ? 'lucrează' : 'a terminat';
-      text = payload.detail || (payload.task_type ? `sarcina ${payload.task_type}` : '');
+      // An error or a block is not a finish (W9): it says the state in the name tag's words.
+      label = STATE_CHANGE_LABEL[payload.runtime_state] || 'a terminat';
+      text = payload.detail || (payload.task_type ? `sarcina: ${taskLabel(payload.task_type)}` : '');
       break;
     case 'agent.run_completed':
       label = `sarcină ${statusLabel(payload.status)}`;
-      text = [payload.task_type, payload.model_name].filter(Boolean).join(' · ');
+      text = [payload.task_type ? taskLabel(payload.task_type) : '', payload.model_name].filter(Boolean).join(' · ');
       break;
     case 'agent.paused':
       label = 'a intrat în pauză';

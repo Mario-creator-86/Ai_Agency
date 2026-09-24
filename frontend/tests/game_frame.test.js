@@ -11,6 +11,7 @@ import {
   drawerInsets,
   easeOut,
   frameFit,
+  frameFloor,
   railCount,
   resolveDrawers,
   streamTransform,
@@ -101,11 +102,11 @@ test('the drawers take their own width when open and their rail when closed', ()
 });
 
 test('the streamed picture lands where the page\'s camera puts the world', () => {
-  // A 1920x988 box, a stream that fills it like object-fit: cover, and the camera zoomed and
+  // A 1920x988 box, a stream laid in it whole like object-fit: contain, and the camera zoomed and
   // dragged: every world point the video shows must fall where the hit boxes say it is.
   const cw = 1920;
   const ch = 988;
-  const native = Math.max(cw / 1600, ch / 840);
+  const native = Math.min(cw / 1600, ch / 840);
   const nx = (cw - 1600 * native) / 2;
   const ny = (ch - 840 * native) / 2;
   for (const view of [
@@ -152,4 +153,45 @@ test('a closed drawer\'s rail repeats the panel\'s own count and nothing else', 
   assert.equal(railCount('—'), '');
   assert.equal(railCount(null), '');
   assert.equal(railCount(' NICIUNA '), 'NICIUNA');
+});
+
+// W8: THE ROOF UNDER OPEN SKY. The frame keeps a row of sky over the roof for the instruments
+// (--hud-top) and its rails at the sides; the zoom is chosen against that floor.
+const HUD = 48;
+const FRAMES = { 1280: 706, 1440: 806, 1920: 986, 2560: 1346 };
+const railsOf = () => frameFloor({ railW: 40, hudTop: HUD });
+
+test('the world top edge stands at the sky row, so the roof is never under an instrument', () => {
+  for (const [cw, ch] of Object.entries(FRAMES)) {
+    for (const insets of [{ left: 40, right: 40, top: HUD, bottom: 0 }, { left: 360, right: 340, top: HUD, bottom: 0 }]) {
+      const fit = frameFit({ cw: Number(cw), ch, ...WORLD, focus: BUILDING, insets, floor: railsOf() });
+      assert.ok(close(at(fit, 0, 0).y, HUD, 1e-6), `${cw}: the world starts at the sky row (${at(fit, 0, 0).y})`);
+      assert.ok(at(fit, 0, 840).y >= ch - 1e-6, `${cw}: and reaches the frame's bottom`);
+      assert.ok(at(fit, 0, 0).x <= insets.left + 1e-6 && at(fit, 1600, 0).x >= Number(cw) - insets.right - 1e-6, `${cw}: nothing bare beside it but under glass`);
+    }
+  }
+});
+
+test('the near lane stays above the slate at every frame', () => {
+  const SLATE = 28;
+  for (const [cw, ch] of Object.entries(FRAMES)) {
+    const fit = frameFit({ cw: Number(cw), ch, ...WORLD, focus: BUILDING, insets: { left: 40, right: 40, top: HUD, bottom: 0 }, floor: railsOf() });
+    assert.ok(at(fit, 0, 790).y <= ch - SLATE + 1e-6, `${cw}: the road's near kerb at ${at(fit, 0, 790).y.toFixed(1)} is above the slate at ${ch - SLATE}`);
+  }
+});
+
+test('opening a drawer moves the camera and never resizes the house', () => {
+  const floor = railsOf();
+  const closed = frameFit({ cw: 1920, ch: 986, ...WORLD, focus: BUILDING, insets: { left: 40, right: 40, top: HUD, bottom: 0 }, floor });
+  const open = frameFit({ cw: 1920, ch: 986, ...WORLD, focus: BUILDING, insets: { left: 360, right: 340, top: HUD, bottom: 0 }, floor });
+  assert.equal(closed.zoom, open.zoom);
+  assert.deepEqual(frameFloor({ railW: 40, hudTop: HUD }), { left: 40, right: 40, top: HUD, bottom: 0 });
+  assert.deepEqual(frameFloor(), NO_INSETS);
+  assert.deepEqual(drawerInsets({ register: true, side: false }, { registerW: 360, sideW: 340, railW: 40, hudTop: HUD }), { left: 360, right: 40, top: HUD, bottom: 0 });
+});
+
+test('with the sky row the page still opens only the drawers the building fits beside', () => {
+  const widths = (cw) => ({ registerW: Math.min(400, Math.max(300, cw * 0.1875)), sideW: Math.min(380, Math.max(290, cw * 0.177)), railW: 40, hudTop: HUD });
+  const got = Object.fromEntries(Object.entries(FRAMES).map(([cw, ch]) => [cw, drawerDefaults({ cw: Number(cw), ch, ...WORLD, focus: BUILDING, ...widths(Number(cw)) })]));
+  assert.deepEqual(got, { 1280: { register: true, side: false }, 1440: { register: true, side: false }, 1920: { register: true, side: true }, 2560: { register: true, side: true } });
 });

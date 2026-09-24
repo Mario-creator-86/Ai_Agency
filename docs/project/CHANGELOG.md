@@ -1,5 +1,15 @@
 # Changelog
 
+## The building's screens tell the truth, and the frame is finished — 2026-09-24
+
+- **Real data inside the world** (`frontend/src/hq_screens.js`, `hq_world.js`): desk monitors by each employee's runtime state, room lights by who works there, the render bay's newest real film frame, the Treasury ticker (VR$ balance, today's spend against the budget), the façade sign with the day's run, the fact-check board, the cork board's proposed topics, the writers' screen, the publication radar, today's tokens; «—» where the page holds no value. Pure rules with tests; each face cached and redrawn only when its value changes.
+- **The roof under open sky**: a 48 px sky row above the world (`game_frame.js frameFloor`); the stream laid in whole (contain).
+- **The dock hangs in the sky row**, off the zebra crossing; **the keyboard order follows the eye** (register, render, side drawer); **the Journal opens on the episodes**.
+- **A real readout in the right drawer's empty glass** on tall screens (`frontend/src/side_readout.js`).
+- **The first visit's freeze** fell from about 220 ms to about 75 ms (the workspace painted once, invisibly, under the title).
+- Honesty fixes: the publication radar says SIMULAT / PROGRAMAT / NECONFIRMAT / EȘUAT instead of the backend's English codes; the register no longer says «a terminat» when an employee errs, and names tasks in Romanian.
+- Tests: frontend 317/317 (new `hq_screens`, `side_readout`, `frame_sky_row`), tsc clean, build green.
+
 ## The serial made well: a voice per character, one look, its own identity — 2026-09-24
 
 - **One voice per speaker** (`backend/app/media/speaker_voices.py`, `assembler.py`, `factory.py`): a beat's lines become takes in each character's voice (lock, then binding, then the proposal in `config/serial_voice_cast.json`, then the narrator), joined with a 0.3 s breath, captions per take; a broken lock silences the scene instead of borrowing another character's voice.

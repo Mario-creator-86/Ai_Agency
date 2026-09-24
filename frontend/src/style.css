@@ -298,6 +298,16 @@
   --drawer-rail:     40px;   /* a closed drawer: its handle and its count */
   --hud-l:           0px;
   --hud-r:           0px;
+  /* The row of sky over the roof. The camera keeps the world's top edge this
+     far down (game_frame.js frameFloor), the page paints its own sky above it
+     (hq_sky.js), and the clock, the dock and the live state hang in it, so no
+     instrument lies on the building. 48px holds the dock (a 32px key, its
+     padding and its edge) with a breath of sky under it. */
+  --hud-top:         48px;
+  /* What the clock and the live state leave between them for the dock: its
+     icons-only width (355px) and a gap each side. Wider rooms spell the dock
+     out (office_scene.css @container dock) and have the room for it. */
+  --dock-room:       372px;
   --dur-drawer:      300ms;
   /* The drawers' glass. Dark enough that --ink-3 keeps 4.5:1 over the noon
      sky behind it (measured from pixels, scratchpad ui/w4), clear enough that
@@ -506,7 +516,7 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 .modules { list-style: none; margin: 8px 0 0; padding: 0; }.modules li { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; font-size: var(--fs-meta); border-top: 1px solid var(--line); }.modules span { color: var(--ink-3); font-size: var(--fs-micro); }
 .site-footer { display: flex; justify-content: space-between; padding: 20px 4vw 30px; font-size: var(--fs-micro); color: var(--ink-3); }
 .message { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--alert-bg); color: var(--alert-ink); padding: 16px 22px; border: 1px solid var(--alert-line); border-radius: var(--radius-sm); max-width: 90vw; box-shadow: var(--shadow-dialog); z-index: 60; }
-@media (max-width: 1050px) { .workspace-grid { grid-template-columns: 1fr; }.ledger-column { order: 2; } }
+@media (max-width: 1050px) { .workspace-grid { grid-template-columns: 1fr; }.ledger-column { order: 2; }.side-column { order: 3; } }
 @media (max-width: 600px) { .topbar { height: 78px; }.topbar > .text-sm { display: none; }main { padding-top: 26px; }.page-heading { align-items: start; }.quiet { font-size: var(--fs-micro); }.notice { padding: 14px; }.notice .tag { display: none; }.side-column { grid-template-columns: 1fr; }.panel { padding: 20px; }.office-panel { padding: 0; }.section-heading { gap: 8px; } }
 /* (reduced motion is handled once, at the end of this file) */
 
@@ -2325,9 +2335,9 @@ main { max-width: var(--page-max); padding: var(--s5) var(--gutter) var(--s7); }
     grid-template-rows: auto auto;
     gap: var(--s6);
   }
-  /* The aside lends its three panels to the page grid and keeps its landmark
-     role, which is the only thing display:contents would otherwise leave. */
-  .ledger-column { display: contents; }
+  /* The asides lend their panels to the page grid and keep their landmark
+     roles, which is the only thing display:contents would otherwise leave. */
+  .ledger-column, .side-column { display: contents; }
   /* The register takes its height from the page, not from its own contents.
      height:0 keeps the ledger out of the row sizing — otherwise seventy events
      would set the height of the whole grid and the list would never scroll —
@@ -2352,8 +2362,8 @@ main { max-width: var(--page-max); padding: var(--s5) var(--gutter) var(--s7); }
   /* The two panels under the render are a pair and are drawn as a pair: equal
      height, so the row closes on one line instead of leaving the shorter of
      them with bare ground beneath it. */
-  .modules-panel { grid-column: 2; grid-row: 2; align-self: stretch; }
-  .governance-panel { grid-column: 3; grid-row: 2; align-self: stretch; }
+  .governance-panel { grid-column: 2; grid-row: 2; align-self: stretch; }
+  .modules-panel { grid-column: 3; grid-row: 2; align-self: stretch; }
 }
 
 /* ==========================================================================
@@ -3366,7 +3376,7 @@ details[open] > summary::before { transform: rotate(90deg); }
    column fewer: the register on the left, and the render with the two panels
    beneath it on the right. Measured at 1440x900 and 1280x800 afterwards. */
 @media (min-width: 1051px) and (max-width: 1559.98px) {
-  .ledger-column { display: contents; }
+  .ledger-column, .side-column { display: contents; }
   .workspace-grid {
     grid-template-columns: minmax(340px, 380px) minmax(0, 1fr);
     grid-template-rows: auto auto auto;
@@ -3387,8 +3397,8 @@ details[open] > summary::before { transform: rotate(90deg); }
   .ledger-panel .ledger-now { align-self: flex-start; }
   .ledger-panel .ledger-list { max-height: none; min-height: 0; }
   .office-panel { grid-column: 2; grid-row: 1; position: static; }
-  .modules-panel { grid-column: 2; grid-row: 2; }
-  .governance-panel { grid-column: 2; grid-row: 3; }
+  .governance-panel { grid-column: 2; grid-row: 2; }
+  .modules-panel { grid-column: 2; grid-row: 3; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3428,7 +3438,7 @@ details[open] > summary::before { transform: rotate(90deg); }
   body.is-entering .drawer-rail,
   body.is-entering .site-footer { animation: none; }
   /* The game frame's drawers take their place at once, and the menu's keys do not travel. */
-  .ledger-panel, .governance-panel, .modules-panel { transition: none; }
+  .ledger-panel, .governance-panel, .modules-panel, .studio-readout { transition: none; }
   .topbar-rooms .cam-btn:active { transform: none; }
   /* The same moments, the same words, for the same time: nothing travels and nothing glows
      (moments.js). A day-tracker segment takes its new colour at once. */
@@ -3774,7 +3784,7 @@ details[open] > summary::before { transform: rotate(90deg); }
     overflow: hidden;
     isolation: isolate;
   }
-  .ledger-column { display: contents; }
+  .ledger-column, .side-column { display: contents; }
 
   /* The render: every cell of the grid, under everything else. */
   .workspace-grid .office-panel {
@@ -3996,6 +4006,56 @@ details[open] > summary::before { transform: rotate(90deg); }
   }
 }
 
+/* THE STUDIO AT A GLANCE (W8, side_readout.js). At 2560x1440 the side
+   drawer ended its thirteen modules with some 350px of bare glass. On a frame
+   tall enough to have that glass (1300px of screen), the drawer closes on
+   three lines the page already reads: the day's run in the slate's words, the
+   treasury as its wall screen says it, and the next scheduled run as the
+   daily-run dialog says it. Anywhere shorter it is not laid out at all, so the
+   module list keeps the room it needs at 1080. */
+.studio-readout { display: none; }
+@media (min-width: 1051px) and (min-height: 1300px) {
+  .workspace-grid { grid-template-rows: auto minmax(0, 1fr) auto; }
+  .studio-readout {
+    display: block;
+    grid-column: 3;
+    grid-row: 3;
+    position: relative;
+    z-index: 3;
+    margin: 0;
+    padding: var(--s4) var(--s5) var(--s5);
+    border: 0;
+    border-left: 1px solid var(--drawer-edge);
+    border-top: 1px solid var(--line);
+    border-radius: 0;
+    background: var(--drawer-glass);
+    backdrop-filter: blur(var(--drawer-blur));
+    box-shadow: var(--shadow-drawer-r);
+    transition: transform var(--dur-drawer) var(--ease), visibility 0s linear 0s;
+  }
+  :root[data-side="closed"] .studio-readout {
+    transform: translateX(100%);
+    visibility: hidden;
+    transition: transform var(--dur-drawer) var(--ease), visibility 0s linear var(--dur-drawer);
+  }
+  .studio-readout > h2 { margin-bottom: var(--s3); }
+  .readout-list { display: grid; gap: var(--s3); margin: 0; }
+  .readout-row { display: grid; gap: var(--s1); padding-top: var(--s3); border-top: 1px solid var(--line); }
+  .readout-row dt {
+    color: var(--ink-3);
+    font-size: var(--fs-micro);
+    font-weight: var(--w-bold);
+    letter-spacing: var(--track-caps);
+    text-transform: uppercase;
+  }
+  .readout-row dd { display: grid; gap: var(--s1); margin: 0; }
+  .readout-value { color: var(--ink); font-size: var(--fs-body); font-weight: var(--w-semi); font-variant-numeric: tabular-nums; }
+  .readout-note { color: var(--ink-2); font-size: var(--fs-meta); font-variant-numeric: tabular-nums; }
+  .readout-row[data-tone="ok"] .readout-value { color: var(--teal); }
+  .readout-row[data-tone="warn"] .readout-value { color: var(--gold-ink); }
+  .readout-row[data-tone="alert"] .readout-value { color: var(--alert-ink); }
+}
+
 /* On a phone the register was 427px wide on a 390px screen (measured before this pass too):
    its six filters would not leave one line, and a grid item will not shrink below its content
    unless told. They wrap, and the page no longer scrolls sideways. */
@@ -4051,6 +4111,30 @@ body.is-entering .drawer-rail {
 /* The workspace laid out for one measurement while the title is up (main.js stagedSceneBox):
    it is shown and hidden again inside one task, and never painted. */
 #workspace.is-staged { visibility: hidden; }
+/* The workspace painted once under the title, for three frames, so the GPU has compiled what it
+   draws before the key (main.js warmWorkspacePaint): above the title, at 1% opacity, untouchable.
+   1% of the brightest word on the page moves a pixel of the title by at most 2 of 255. */
+#workspace.is-warming {
+  position: fixed;
+  inset: 0;
+  z-index: 3;
+  opacity: .01;
+  pointer-events: none;
+  will-change: opacity;
+}
+body.is-title.is-paint-warm .topbar,
+body.is-title.is-paint-warm .site-footer {
+  display: flex;
+  position: fixed;
+  left: 0;
+  right: 0;
+  z-index: 3;
+  opacity: .01;
+  pointer-events: none;
+}
+body.is-title.is-paint-warm .topbar { top: 0; }
+body.is-title.is-paint-warm .site-footer { bottom: 0; }
+#workspace.is-warming .drawer-rail[hidden] { display: flex; }
 /* The two frames between an accepted key and the camera's push (main.js): the workspace is laid
    out and not yet seen, so its first, heaviest frame is not a frame of the push. */
 body.is-arming #workspace { opacity: 0; }

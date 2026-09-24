@@ -39,6 +39,8 @@ export class Viewport {
     this.maxZoom = 4;
     /** What the frame's drawers cover, in canvas px (game_frame.js). @type {import('./game_frame.js').Insets} */
     this.insets = NO_INSETS;
+    /** What the frame always covers: the rails and the row of sky over the roof (game_frame.js frameFloor). @type {import('./game_frame.js').Insets} */
+    this.floor = NO_INSETS;
     /** The part of the world the camera keeps whole and centred: the building. @type {import('./game_frame.js').Rect|null} */
     this.focus = null;
   }
@@ -52,7 +54,7 @@ export class Viewport {
   frameStand(worldWidth, worldHeight) {
     const cw = this.canvas.width || 1;
     const ch = Math.max(1, (this.canvas.height || 1) - this.bottomInset);
-    const stand = frameFit({ cw, ch, worldW: worldWidth, worldH: worldHeight, focus: this.focus, insets: this.insets });
+    const stand = frameFit({ cw, ch, worldW: worldWidth, worldH: worldHeight, focus: this.focus, insets: this.insets, floor: this.floor });
     stand.zoom = clamp(stand.zoom, this.minZoom, this.maxZoom);
     return stand;
   }
@@ -97,6 +99,17 @@ export class Viewport {
     this.panX = (cw - worldWidth * this.zoom) / 2;
     this.panY = (ch - worldHeight * this.zoom) / 2;
   }
+}
+
+/**
+ * The top of the canvas in world units when it lies above the world's top edge (a negative
+ * number), else 0: how far up the page paints its own sky.
+ * @param {{zoom: number, panY: number}} vp
+ */
+export function skyTopOf(vp) {
+  const z = vp.zoom > 0 ? vp.zoom : 1;
+  const top = -vp.panY / z;
+  return top < 0 ? top : 0;
 }
 
 export const WORLD_W = 1600;
@@ -162,6 +175,8 @@ export class OfficeEngine {
     this.hoverAgentId = null;
     /** @type {any[]} */
     this.bibles = [];
+    /** @type {any} */
+    this.facts = {};
     this.worldW = WORLD_W;
     this.worldH = WORLD_H;
     this.dpr = 1;
@@ -265,6 +280,7 @@ export class OfficeEngine {
       }
       this.world = new WorldSimulationManager({ assets: this.assets, fetchWeather: this.fetchWeather, seed: options.seed });
       this.renderer = new HQRenderer(this.world);
+      this.renderer.setFacts(this.facts);
       this._applyManifest(this.assets.manifest);
       this.resize();
       if (this._warmWanted) this.prewarm(this._warmWanted.width, this._warmWanted.height);
@@ -333,28 +349,32 @@ export class OfficeEngine {
   /* --------------------------------------------------------------- camera -- */
 
   _restateInsets() {
-    const i = this._cssInsets || {};
     const dpr = this.dpr || 1;
-    this.viewport.insets = {
-      left: Math.max(0, i.left || 0) * dpr,
-      right: Math.max(0, i.right || 0) * dpr,
-      top: Math.max(0, i.top || 0) * dpr,
-      bottom: Math.max(0, i.bottom || 0) * dpr,
-    };
+    const scaled = (/** @type {any} */ i) => ({
+      left: Math.max(0, (i && i.left) || 0) * dpr,
+      right: Math.max(0, (i && i.right) || 0) * dpr,
+      top: Math.max(0, (i && i.top) || 0) * dpr,
+      bottom: Math.max(0, (i && i.bottom) || 0) * dpr,
+    });
+    this.viewport.insets = scaled(this._cssInsets);
+    this.viewport.floor = scaled(this._cssFloor);
   }
 
   /**
    * What the frame's drawers cover of the render, in CSS pixels. The camera re-centres the
    * building in the room left, gliding there unless the visitor asked for less motion.
+   * The floor is what the frame covers whatever the drawers do (the rails, the row of sky above
+   * the roof); the zoom is chosen against it, so a drawer only moves the camera.
    * @param {import('./game_frame.js').Insets} insets
-   * @param {{glide?: boolean}} [options]
+   * @param {{glide?: boolean, floor?: import('./game_frame.js').Insets}} [options]
    */
   setInsets(insets, options = {}) {
-    const before = this.viewport.insets;
+    const before = { insets: this.viewport.insets, floor: this.viewport.floor };
     this._cssInsets = { ...insets };
+    this._cssFloor = options.floor ? { ...options.floor } : null;
     this._restateInsets();
-    const after = this.viewport.insets;
-    const same = /** @type {Array<'left'|'right'|'top'|'bottom'>} */ (['left', 'right', 'top', 'bottom']).every((k) => Math.abs(before[k] - after[k]) < 0.5);
+    const keys = /** @type {Array<'left'|'right'|'top'|'bottom'>} */ (['left', 'right', 'top', 'bottom']);
+    const same = keys.every((k) => Math.abs(before.insets[k] - this.viewport.insets[k]) < 0.5 && Math.abs(before.floor[k] - this.viewport.floor[k]) < 0.5);
     if (same) return;
     this.fitView({ glide: options.glide !== false });
   }
@@ -485,6 +505,17 @@ export class OfficeEngine {
   /** @param {any[]} tokens */
   setProjectTokens(tokens) {
     this.projectTokens = tokens || [];
+  }
+
+  /**
+   * What the page knows of the studio beyond its employees, for the building's screens: the
+   * newest run and the day's track, the treasury and budget, the serial, the topics, the newest
+   * film's frame (hq_screens.js). Nothing is redrawn unless what a screen shows has changed.
+   * @param {any} facts
+   */
+  setFacts(facts) {
+    this.facts = facts || {};
+    if (this.renderer) this.renderer.setFacts(this.facts);
   }
 
   /** @param {any} agentId */
@@ -706,9 +737,12 @@ export class OfficeEngine {
     this._setNote(null);
     const { zoom, panX, panY } = this.viewport;
     ctx.setTransform(zoom, 0, 0, zoom, panX, panY);
+    // Above the world's top edge is sky: the page paints its own sky up to the canvas's top, so
+    // the roof stands under open sky rather than against the frame's edge (hq_sky.js drawSky).
+    const skyTop = skyTopOf(this.viewport);
     ctx.save();
     ctx.beginPath();
-    ctx.rect(0, 0, this.worldW, this.worldH);
+    ctx.rect(0, skyTop, this.worldW, this.worldH - skyTop);
     ctx.clip();
     ctx.imageSmoothingEnabled = true;
     // Plates arrive pre-composed at this scale; sprites are small, so a cheaper filter suffices.
@@ -723,6 +757,7 @@ export class OfficeEngine {
       hoverId: this.hoverAgentId,
       liftStops: this.liftStops,
       scale: zoom,
+      skyTop,
     });
     ctx.restore();
     ctx.setTransform(1, 0, 0, 1, 0, 0);

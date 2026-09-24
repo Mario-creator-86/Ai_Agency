@@ -6,13 +6,17 @@
  * - where the camera stands (frameFit): the world covers the viewport, and the building -- the
  *   part of the picture every figure in it belongs to -- is centred in the room the open drawers
  *   leave. The world may run short of the viewport's edge only where a drawer covers it, never in
- *   the open picture;
+ *   the open picture. Above the world's top edge is sky: the page paints its own sky there
+ *   (hq_sky.js), so the camera keeps a row of it over the roof for the instruments (the floor's
+ *   top), and the roof is never under a chip;
  * - which drawers a first visit opens (drawerDefaults): each one only if the building still fits
  *   beside it, so the render is never covered by more than it can spare;
  * - how the streamed picture follows the camera (streamTransform): the Unreal video is a fixed
- *   camera that fills its box like `object-fit: cover`; the page's zoom and pan are applied to it
- *   as a transform, so the visitor zooms and drags what they see, and the page's hit boxes, which
- *   stay under the video, keep landing on the employee the pointer is on.
+ *   camera laid in its box whole, like `object-fit: contain` (W8: with `cover` the box cut the
+ *   video's top rows, the roof's railing among them, before the camera moved it under the row of
+ *   sky); the page's zoom and pan are applied to it as a transform, so the visitor zooms and drags
+ *   what they see, and the page's hit boxes, which stay under the video, keep landing on the
+ *   employee the pointer is on.
  *
  * Every length here is in one unit, whichever the caller uses (canvas pixels in the engine).
  */
@@ -46,23 +50,40 @@ function axis(view, span, centre, lead, trail) {
 }
 
 /**
- * Where the camera stands. The zoom is the smallest that covers the viewport with the world, held
- * down only where the building would not fit the viewport at all (a tall narrow box): the
- * building is always seen whole.
- * @param {{cw: number, ch: number, worldW: number, worldH: number, focus?: Rect|null, insets?: Insets}} frame
+ * What the frame always covers, whatever the drawers do: a closed drawer's rail on each side, and
+ * the row of sky the instruments stand in above the roof. The camera's zoom is chosen against
+ * this floor, so opening or closing a drawer only moves the camera, and never resizes the house.
+ * @param {{railW?: number, hudTop?: number}} widths
+ * @returns {Insets}
+ */
+export function frameFloor({ railW = 0, hudTop = 0 } = {}) {
+  return { left: railW, right: railW, top: hudTop, bottom: 0 };
+}
+
+/**
+ * Where the camera stands. The zoom is the smallest that covers the viewport with the world,
+ * less the floor (frameFloor): the rails at the sides are glass and the top row is sky, so the
+ * world needs to reach only the rails and the bottom edge. It is held down only where the
+ * building would not fit the viewport at all (a tall narrow box): the building is always seen
+ * whole. The world's top edge comes down to the floor's top and no further, so the roof stands
+ * under the row of sky.
+ * @param {{cw: number, ch: number, worldW: number, worldH: number, focus?: Rect|null, insets?: Insets, floor?: Insets}} frame
  * @returns {{zoom: number, panX: number, panY: number}}
  */
-export function frameFit({ cw, ch, worldW, worldH, focus = null, insets = NO_INSETS }) {
+export function frameFit({ cw, ch, worldW, worldH, focus = null, insets = NO_INSETS, floor = NO_INSETS }) {
   const w = Math.max(1, cw);
   const h = Math.max(1, ch);
   const f = focus || { x: 0, y: 0, width: worldW, height: worldH };
-  const cover = Math.max(w / worldW, h / worldH);
-  const whole = Math.min(w / f.width, h / f.height);
+  const freeW = Math.max(1, w - floor.left - floor.right);
+  const freeH = Math.max(1, h - floor.top - floor.bottom);
+  const cover = Math.max(freeW / worldW, freeH / worldH);
+  const whole = Math.min(freeW / f.width, freeH / f.height);
   const zoom = Math.min(cover, whole);
+  const edge = (/** @type {'left'|'right'|'top'|'bottom'} */ k) => Math.max(insets[k] || 0, floor[k] || 0);
   return {
     zoom,
-    panX: axis(w, worldW * zoom, (f.x + f.width / 2) * zoom, insets.left, insets.right),
-    panY: axis(h, worldH * zoom, (f.y + f.height / 2) * zoom, insets.top, insets.bottom),
+    panX: axis(w, worldW * zoom, (f.x + f.width / 2) * zoom, edge('left'), edge('right')),
+    panY: axis(h, worldH * zoom, (f.y + f.height / 2) * zoom, edge('top'), edge('bottom')),
   };
 }
 
@@ -70,11 +91,11 @@ export function frameFit({ cw, ch, worldW, worldH, focus = null, insets = NO_INS
  * Which drawers a first visit opens. The register is opened when the building fits beside it and
  * the other drawer's rail; the approvals too when it fits beside both. `breathe` is the ground
  * kept on each side of the building so it never touches a drawer's edge.
- * @param {{cw: number, ch: number, worldW: number, worldH: number, focus: Rect, registerW: number, sideW: number, railW: number, breathe?: number}} frame
+ * @param {{cw: number, ch: number, worldW: number, worldH: number, focus: Rect, registerW: number, sideW: number, railW: number, hudTop?: number, breathe?: number}} frame
  * @returns {{register: boolean, side: boolean}}
  */
-export function drawerDefaults({ cw, ch, worldW, worldH, focus, registerW, sideW, railW, breathe = 24 }) {
-  const { zoom } = frameFit({ cw, ch, worldW, worldH, focus });
+export function drawerDefaults({ cw, ch, worldW, worldH, focus, registerW, sideW, railW, hudTop = 0, breathe = 24 }) {
+  const { zoom } = frameFit({ cw, ch, worldW, worldH, focus, floor: frameFloor({ railW, hudTop }) });
   const need = focus.width * zoom + 2 * breathe;
   if (need <= cw - registerW - sideW) return { register: true, side: true };
   if (need <= cw - registerW - railW) return { register: true, side: false };
@@ -82,24 +103,26 @@ export function drawerDefaults({ cw, ch, worldW, worldH, focus, registerW, sideW
 }
 
 /**
- * What the drawers take from the render's two edges, from their state and their widths.
+ * What the drawers take from the render's edges, from their state and their widths, and the row
+ * of sky the instruments stand in at the top.
  * @param {{register: boolean, side: boolean}} open
- * @param {{registerW: number, sideW: number, railW: number}} widths
+ * @param {{registerW: number, sideW: number, railW: number, hudTop?: number}} widths
  * @returns {Insets}
  */
-export function drawerInsets(open, { registerW, sideW, railW }) {
-  return { left: open.register ? registerW : railW, right: open.side ? sideW : railW, top: 0, bottom: 0 };
+export function drawerInsets(open, { registerW, sideW, railW, hudTop = 0 }) {
+  return { left: open.register ? registerW : railW, right: open.side ? sideW : railW, top: hudTop, bottom: 0 };
 }
 
 /**
  * The transform that lays the streamed picture where the page's camera says the world is. The
- * video fills its box the way `object-fit: cover` does, centred; the transform (origin at the
- * box's top-left corner) is `translate(tx, ty) scale(k)`.
+ * video is laid in its box whole, the way `object-fit: contain` does, centred, so no row of it is
+ * cut before the camera places it; the transform (origin at the box's top-left corner) is
+ * `translate(tx, ty) scale(k)`.
  * @param {{cw: number, ch: number, worldW: number, worldH: number, zoom: number, panX: number, panY: number}} view
  * @returns {{k: number, tx: number, ty: number}}
  */
 export function streamTransform({ cw, ch, worldW, worldH, zoom, panX, panY }) {
-  const native = Math.max(cw / worldW, ch / worldH);
+  const native = Math.min(cw / worldW, ch / worldH);
   const k = native > 0 ? zoom / native : 1;
   const nx = (cw - worldW * native) / 2;
   const ny = (ch - worldH * native) / 2;

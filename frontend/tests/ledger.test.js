@@ -42,6 +42,12 @@ test('production work without a model reads as work, and says what is being made
   assert.equal(working.text, 'vocea scenei 3');
   const done = describeEvent({ event_type: 'agent.state_changed', aggregate_id: 'a-3', payload: { runtime_state: 'IDLE', task_type: 'synthesize_voice' } }, { 'a-3': 'Lyra (Voice Artist)' });
   assert.equal(done.label, 'a terminat');
+  // W9: an error is not a finish, and the task is said in words, never as the backend's code
+  const fault = describeEvent({ event_type: 'agent.state_changed', aggregate_id: 'a-3', payload: { runtime_state: 'ERROR', task_type: 'reconcile_day' } }, { 'a-3': 'Nadia (Accountant)' });
+  assert.equal(fault.label, 'stare: eroare');
+  assert.equal(fault.text, 'sarcina: închiderea zilei');
+  assert.equal(describeEvent({ event_type: 'agent.state_changed', payload: { runtime_state: 'BLOCKED' } }).label, 'stare: blocaj');
+  assert.equal(describeEvent({ event_type: 'agent.run_completed', payload: { status: 'SUCCEEDED', task_type: 'gather_sources', model_name: 'm-1' } }).text, 'căutarea surselor · m-1');
 });
 
 test('an unknown event still reads as words, with its first payload fields', () => {

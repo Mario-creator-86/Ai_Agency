@@ -38,6 +38,11 @@ const FALLBACK = {
   surfaceSunk: '#111826',
   lineStrong: '#2d3b53',
   alertInk: '#ff9d8f',
+  okInk: '#6fd9ab',
+  warnInk: '#f0c887',
+  gold: '#e0b062',
+  segPending: 'rgba(150, 180, 230, .18)',
+  segUnrun: 'rgba(150, 180, 230, .08)',
 };
 
 /** Which custom property each name reads. */
@@ -55,6 +60,12 @@ const TOKENS = {
   surfaceSunk: '--surface-sunk',
   lineStrong: '--line-strong',
   alertInk: '--alert-ink',
+  // the day's segments, painted on the façade sign exactly as the slate paints them
+  okInk: '--ok-ink',
+  warnInk: '--warn-ink',
+  gold: '--gold',
+  segPending: '--seg-pending',
+  segUnrun: '--seg-unrun',
 };
 
 /** @type {Record<string, string>|null} */

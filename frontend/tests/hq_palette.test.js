@@ -39,6 +39,11 @@ test('the written-out copy of the tokens still says what style.css says', () => 
     ['surfaceSunk', 'surface-sunk'],
     ['lineStrong', 'line-strong'],
     ['alertInk', 'alert-ink'],
+    ['okInk', 'ok-ink'],
+    ['warnInk', 'warn-ink'],
+    ['gold', 'gold'],
+    ['segPending', 'seg-pending'],
+    ['segUnrun', 'seg-unrun'],
   ];
   for (const [key, token] of pairs) {
     assert.equal(

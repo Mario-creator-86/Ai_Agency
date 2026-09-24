@@ -3,11 +3,16 @@ import { WeatherManager } from './hq_weather.js';
 import { RandomEventManager, streetRule } from './hq_events.js';
 import { TrafficManager, EMERGENCY } from './hq_traffic.js';
 import { PedestrianManager } from './hq_pedestrians.js';
-import { AgentVisualStateManager, spriteFor, screenModeFor, stateOf } from './hq_agents.js';
+import { AgentVisualStateManager, spriteFor, stateOf } from './hq_agents.js';
 import { SkyRenderer } from './hq_sky.js';
 import { bubbleFrame } from './speech_bubble.js';
 import { scenePalette, withAlpha } from './hq_palette.js';
-import { stageLabel, runtimeLabel, taskLabel } from './ledger.js';
+import { stageLabel, runtimeLabel } from './ledger.js';
+import {
+  PANES, EXTRA_SCREENS, DESK_MONITOR, deskPane, WALL, NOTES, FaceCache, paneMode, roomOccupancy, roomShade, screenLight,
+  renderBayFace, treasuryFace, runSignFace, factCheckFace, writersFace, publishFace, tokensFace,
+  drawPane, paintTreasury, paintRunSign, paintFactCheck, paintNote, paintWriters, paintPublish, paintInfra, paintRenderBay,
+} from './hq_screens.js';
 
 /**
  * WorldSimulationManager owns every manager of the living headquarters and advances them in one
@@ -49,7 +54,10 @@ const HORIZON_ROW = 350;
 const PLATE_GROUPS = [
   ['back', ['city', 'street_back', 'street_ground']],
   ['building_back', ['building_back']],
-  ['building_front', ['building_front', 'building_shell']],
+  // the desks and their monitors stand in building_front, in front of the employees; the shell
+  // (floors, frame, façade) is its own group so a room's light can fall on the desks but not on it
+  ['building_front', ['building_front']],
+  ['building_shell', ['building_shell']],
   ['street_props', ['street_props']],
   ['street_kerb', ['street_kerb']],
   ['street_front', ['street_front']],
@@ -251,6 +259,14 @@ export class HQRenderer {
     this._scaleSince = 0;
     /** @type {Map<string, {tag: string, canvas: HTMLCanvasElement}>} */
     this.tints = new Map();
+    /** The screens' faces, each drawn once per value and scale (hq_screens.js). */
+    this.faces = new FaceCache();
+    /** @type {any} */
+    this.facts = {};
+    /** The screens lit on the last frame. @type {Array<{r: number[], rgb: string, strength: number, zone: string|null}>} */
+    this.lit = [];
+    /** Each seated room's occupancy and shade on the last frame, for QA. @type {Record<string, any>} */
+    this.roomStates = {};
   }
 
   /**
@@ -362,7 +378,7 @@ export class HQRenderer {
 
   /**
    * @param {CanvasRenderingContext2D} ctx
-   * @param {{agents:any[], bubbles:any[], tokens:any[], lift:any, trip:any, selectedId:any, hoverId:any, liftStops:any, scale?:number}} state
+   * @param {{agents:any[], bubbles:any[], tokens:any[], lift:any, trip:any, selectedId:any, hoverId:any, liftStops:any, scale?:number, skyTop?:number}} state
    */
   draw(ctx, state) {
     const w = this.world;
@@ -371,16 +387,22 @@ export class HQRenderer {
     w.agentList = state.agents;
     this.useCaches = this.ensureCaches(state.scale || 1, time);
     // the real sun and the real cloud cover: an overcast noon is grey, a clear night is clear
-    w.sky.drawSky(ctx, time, fx);
+    const skyTop = Math.min(0, state.skyTop || 0);
+    w.sky.drawSky(ctx, time, fx, skyTop);
     w.sky.drawSkyEvents(ctx, w.events, time);
     this.plate(ctx, 'back', time);
     this.drawBillboard(ctx);
     this.drawRoadLights(ctx, time, fx);
     this.plate(ctx, 'building_back', time);
-    this.drawScreens(ctx, state.agents);
+    this.drawScreens(ctx, state.agents, state.scale || 1);
     this.drawLift(ctx, state);
     this.drawAgents(ctx, state);
     this.plate(ctx, 'building_front', time);
+    this.drawDeskMonitors(ctx, state.agents);
+    this.drawRoomLights(ctx, state.agents, time);
+    this.drawScreenLight(ctx, time);
+    this.plate(ctx, 'building_shell', time);
+    this.drawFacade(ctx, state.scale || 1);
     w.sky.drawSkyEvents(ctx, w.events, time, 'near');
     this.drawTokens(ctx, state);
     this.plate(ctx, 'street_props', time);
@@ -389,8 +411,8 @@ export class HQRenderer {
     this.plate(ctx, 'street_kerb', time);
     this.drawVehicles(ctx, time, fx);
     this.plate(ctx, 'street_front', time);
-    w.sky.drawWeather(ctx, time, fx);
-    this.drawNightGrade(ctx, time);
+    w.sky.drawWeather(ctx, time, fx, skyTop);
+    this.drawNightGrade(ctx, time, skyTop);
     this.drawBubbles(ctx, state);
     this.drawSelection(ctx, state);
   }
@@ -490,65 +512,233 @@ export class HQRenderer {
     return agents.find((a) => a.desk_id === desk) || null;
   }
 
-  /** @param {CanvasRenderingContext2D} ctx @param {any[]} agents */
-  drawScreens(ctx, agents) {
+  /**
+   * What the page knows about the studio beyond its employees, for the screens (hq_screens.js):
+   * the newest run and its track, the treasury, the budget, the serial, the newest film's frame.
+   * @param {any} facts
+   */
+  setFacts(facts) {
+    this.facts = facts || {};
+  }
+
+  /**
+   * A cached face, laid on its surface.
+   * @param {CanvasRenderingContext2D} ctx @param {string} id @param {string} key
+   * @param {number[]} r @param {number} scale @param {(c: CanvasRenderingContext2D, w: number, h: number) => void} paint
+   */
+  blitFace(ctx, id, key, r, scale, paint) {
+    const [x, y, w, h] = r;
+    const canvas = this.faces.get(id, key, w, h, scale, paint);
+    if (canvas) ctx.drawImage(canvas, x, y, w, h);
+    else {
+      // no document (tests): draw straight into the world
+      ctx.save();
+      ctx.translate(x, y);
+      paint(ctx, w, h);
+      ctx.restore();
+    }
+  }
+
+  /**
+   * Every screen and board inside the building, bound to what the page really holds
+   * (hq_screens.js). Lit screens are remembered for the room light and the glow.
+   * @param {CanvasRenderingContext2D} ctx @param {any[]} agents @param {number} scale
+   */
+  drawScreens(ctx, agents, scale) {
     const clock = this.world.ambient.clock;
-    const screens = this.m.screens || {};
+    const facts = this.facts || {};
+    /** @type {Array<{r: number[], rgb: string, strength: number, zone: string|null}>} */
+    const lit = [];
+    const screens = { ...(this.m.screens || {}), ...EXTRA_SCREENS };
+    let seed = 0;
     for (const [name, screen] of Object.entries(screens)) {
-      const [x, y, sw, sh] = screen.rect;
+      seed += 1;
+      const r = /** @type {[number, number, number, number]} */ (screen.rect);
       if (screen.kind === 'render_status') {
-        this.drawRenderDisplay(ctx, x, y, sw, sh, this.agentAt(agents, 'desk_video'), clock);
+        this.drawRenderBay(ctx, r, this.agentAt(agents, 'desk_video'), clock, scale);
+        lit.push({ r, rgb: '120,170,255', strength: 0.4, zone: screen.zone });
         continue;
       }
-      const agent = screen.desk ? this.agentAt(agents, screen.desk) : agents.find((a) => this.zoneOf(a) === screen.zone);
-      const mode = agent ? screenModeFor(agent) : 'idle';
-      if (mode === 'off') {
-        ctx.fillStyle = 'rgba(2,4,10,0.78)';
-        ctx.fillRect(x, y, sw, sh);
-      } else if (mode === 'active' || mode === 'thinking') {
-        ctx.save();
+      if (DESK_MONITOR.test(name)) continue;
+      const agent = screen.desk ? this.agentAt(agents, screen.desk) : agents.find((a) => this.zoneOf(a) === screen.zone) || null;
+      const mode = paneMode(agent);
+      const accent = name.includes('audio') ? '192,132,252' : name.includes('radar') ? '74,222,128' : name.includes('treasury') ? '163,230,53' : '120,170,255';
+      if (name === 'publish_radar' && mode !== 'work' && mode !== 'think' && mode !== 'dark') {
+        const face = publishFace(facts.run);
+        this.blitFace(ctx, name, face.key, r, scale, (c, w, h) => paintPublish(c, w, h, face));
+        lit.push({ r, rgb: accent, strength: 0.3, zone: screen.zone });
+        continue;
+      }
+      const panes = PANES[name] || [r];
+      panes.forEach((pane, i) => drawPane(ctx, pane, mode, accent, clock, seed * 3 + i));
+      if (name === 'publish_radar' && (mode === 'work' || mode === 'think')) {
+        ctx.strokeStyle = 'rgba(74,222,128,0.8)';
+        ctx.lineWidth = 0.8;
         ctx.beginPath();
-        ctx.rect(x, y, sw, sh);
-        ctx.clip();
-        ctx.globalCompositeOperation = 'lighter';
-        const speed = mode === 'active' ? 14 : 3;
-        const accent = name.includes('audio') ? '192,132,252' : name.includes('radar') ? '74,222,128' : name.includes('treasury') ? '163,230,53' : '120,170,255';
-        for (let i = 0; i < 5; i += 1) {
-          const yy = y + (((clock * speed + i * sh * 0.23) % (sh + 4)) - 2);
-          ctx.fillStyle = `rgba(${accent},${mode === 'active' ? 0.35 : 0.18})`;
-          ctx.fillRect(x + 1 + ((i * 7) % 5), yy, sw * (0.35 + ((i * 37) % 50) / 100), 1.2);
-        }
-        ctx.fillStyle = `rgba(${accent},${0.08 + 0.05 * Math.sin(clock * 3)})`;
-        ctx.fillRect(x, y, sw, sh);
-        if (name === 'publish_radar') {
-          ctx.strokeStyle = 'rgba(74,222,128,0.8)';
-          ctx.beginPath();
-          const cx = x + sw / 2;
-          const cy = y + sh / 2;
-          const a = clock * (mode === 'active' ? 3 : 1);
-          ctx.moveTo(cx, cy);
-          ctx.lineTo(cx + Math.cos(a) * sw * 0.45, cy + Math.sin(a) * sh * 0.45);
-          ctx.stroke();
-        }
-        ctx.restore();
-      } else if (mode === 'error') {
-        ctx.fillStyle = `rgba(239,68,68,${0.25 + 0.2 * Math.sin(clock * 6)})`;
-        ctx.fillRect(x, y, sw, sh);
+        const cx = r[0] + r[2] / 2;
+        const cy = r[1] + r[3] / 2;
+        const a = clock * (mode === 'work' ? 3 : 1);
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + Math.cos(a) * r[2] * 0.45, cy + Math.sin(a) * r[3] * 0.45);
+        ctx.stroke();
+      }
+      if (mode !== 'dark') {
+        const strength = mode === 'work' ? 0.4 : mode === 'think' ? 0.28 : mode === 'error' ? 0.3 : 0.14;
+        for (const pane of panes) lit.push({ r: pane, rgb: mode === 'error' ? '239,68,68' : accent, strength, zone: screen.zone });
       }
     }
+
+    // the Treasury's wall ticker
+    const treasury = treasuryFace(facts.treasury, facts.budget);
+    this.blitFace(ctx, 'treasury_board', treasury.key, WALL.treasury_board, scale, (c, w, h) => paintTreasury(c, w, h, treasury));
+    lit.push({ r: WALL.treasury_board, rgb: '163,230,53', strength: 0.3, zone: 'accounting_office' });
+    // the fact-check whiteboard (a board, not a screen: it takes the room's light)
+    const check = factCheckFace(facts.run);
+    this.blitFace(ctx, 'factcheck_board', check.key, WALL.factcheck_board, scale, (c, w, h) => paintFactCheck(c, w, h, check));
+    // the research board's notes
+    const topics = facts.topics || { titles: [], key: '' };
+    NOTES.forEach((note, i) => {
+      const title = topics.titles[i] || '';
+      this.blitFace(ctx, `note${i}`, `n|${title}`, note, scale, (c, w, h) => paintNote(c, w, h, title));
+    });
+    // the writers' room wall screen
+    const writers = writersFace(facts.episodes);
+    this.blitFace(ctx, 'writers_screen', writers.key, WALL.writers_screen, scale, (c, w, h) => paintWriters(c, w, h, writers));
+    lit.push({ r: WALL.writers_screen, rgb: '95,212,192', strength: 0.3, zone: 'script_room' });
+    this.lit = lit;
+
+    // The server racks: their lamps blink while someone in the studio works, and hold steady
+    // while nobody does (a blinking rack in an idle building would be work nobody is doing).
     const racks = this.m.displays?.server_racks?.rects || [];
-    const working = agents.filter((a) => stateOf(a) === 'WORKING' || stateOf(a) === 'THINKING').length;
+    const working = agents.filter((a) => {
+      const m = paneMode(a);
+      return m === 'work' || m === 'think';
+    }).length;
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     racks.forEach((/** @type {number[]} */ r, ri) => {
       for (let i = 0; i < 18; i += 1) {
-        const on = Math.sin(clock * (1.5 + working * 1.2) + i * 1.7 + ri) > 0.55;
+        const on = working ? Math.sin(clock * (1.5 + working * 1.2) + i * 1.7 + ri) > 0.55 : (i * 7 + ri * 3) % 5 === 0;
         if (!on) continue;
-        ctx.fillStyle = i % 5 === 0 ? 'rgba(251,191,36,0.9)' : 'rgba(74,222,128,0.9)';
+        ctx.fillStyle = i % 5 === 0 ? 'rgba(251,191,36,0.9)' : working ? 'rgba(74,222,128,0.9)' : 'rgba(74,222,128,0.45)';
         ctx.fillRect(r[0] + 3 + ((i * 7) % Math.max(4, r[2] - 6)), r[1] + 4 + ((i * 11) % Math.max(4, r[3] - 8)), 1.5, 1.5);
       }
     });
     ctx.restore();
+  }
+
+  /**
+   * The monitor on each desk stands in the desks' plate, in front of the employee; it is drawn
+   * after that plate, on its own quad (the monitor is turned towards the employee).
+   * @param {CanvasRenderingContext2D} ctx @param {any[]} agents
+   */
+  drawDeskMonitors(ctx, agents) {
+    const clock = this.world.ambient.clock;
+    let seed = 0;
+    for (const [name, screen] of Object.entries(this.m.screens || {})) {
+      seed += 1;
+      if (!DESK_MONITOR.test(name)) continue;
+      const agent = screen.desk ? this.agentAt(agents, screen.desk) : null;
+      const mode = paneMode(agent);
+      const quad = deskPane(screen.rect);
+      const xs = quad.map((p) => p[0]);
+      const ys = quad.map((p) => p[1]);
+      const r = /** @type {[number, number, number, number]} */ ([Math.min(...xs), Math.min(...ys), Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)]);
+      ctx.save();
+      ctx.beginPath();
+      quad.forEach(([px, py], i) => (i ? ctx.lineTo(px, py) : ctx.moveTo(px, py)));
+      ctx.closePath();
+      ctx.clip();
+      drawPane(ctx, r, mode, name.includes('audio') ? '192,132,252' : name.includes('accounting') ? '163,230,53' : '120,170,255', clock, seed * 5);
+      ctx.restore();
+      if (mode !== 'dark') {
+        this.lit.push({ r, rgb: mode === 'error' ? '239,68,68' : '120,170,255', strength: mode === 'work' ? 0.3 : mode === 'think' ? 0.2 : 0.1, zone: screen.zone });
+      }
+    }
+  }
+
+  /**
+   * Each room's light follows whether anyone works there, within the building's day or night
+   * (hq_screens.js roomShade). Lit screens are cut out of the shade, so they glow in a dim room.
+   * @param {CanvasRenderingContext2D} ctx @param {any[]} agents @param {any} time
+   */
+  drawRoomLights(ctx, agents, time) {
+    const rooms = this.m.rooms || {};
+    const seats = this.m.seats || {};
+    const seated = new Set(Object.values(seats).map((/** @type {any} */ s) => s.zone));
+    this.roomStates = {};
+    for (const [zone, room] of Object.entries(rooms)) {
+      if (!seated.has(zone)) continue;
+      const inRoom = agents.filter((a) => this.zoneOf(a) === zone);
+      const occupancy = roomOccupancy(inRoom);
+      const alpha = roomShade(occupancy, time.daylight);
+      this.roomStates[zone] = { occupancy, alpha };
+      if (alpha <= 0.001) continue;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(room.x, room.y, room.w, room.h);
+      for (const s of this.lit || []) {
+        if (s.zone !== zone) continue;
+        const [x, y, w, h] = s.r;
+        // the opposite winding, so the screen is a hole in the shade
+        ctx.moveTo(x, y);
+        ctx.lineTo(x, y + h);
+        ctx.lineTo(x + w, y + h);
+        ctx.lineTo(x + w, y);
+        ctx.closePath();
+      }
+      ctx.fillStyle = `rgba(4,6,14,${alpha})`;
+      ctx.fill('evenodd');
+      ctx.restore();
+    }
+  }
+
+  /**
+   * A lit screen by day is washed by the sun and casts nothing; at night it glows onto its wall.
+   * @param {CanvasRenderingContext2D} ctx @param {any} time
+   */
+  drawScreenLight(ctx, time) {
+    const { washout, bloom } = screenLight(time.daylight);
+    const lit = this.lit || [];
+    if (washout > 0.001) {
+      ctx.fillStyle = `rgba(214,224,240,${washout})`;
+      for (const s of lit) ctx.fillRect(s.r[0], s.r[1], s.r[2], s.r[3]);
+    }
+    if (bloom <= 0.01) return;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (const s of lit) {
+      const sprite = flareSprite(s.rgb);
+      if (!sprite) continue;
+      const [x, y, w, h] = s.r;
+      const radius = Math.max(w, h) * 0.9 + 6;
+      ctx.globalAlpha = Math.min(1, bloom * s.strength);
+      ctx.drawImage(sprite, x + w / 2 - radius, y + h / 2 - radius, radius * 2, radius * 2);
+    }
+    ctx.restore();
+  }
+
+  /**
+   * The façade: the day's run on the sign, and the tokens used today on the server room's plate.
+   * @param {CanvasRenderingContext2D} ctx @param {number} scale
+   */
+  drawFacade(ctx, scale) {
+    const facts = this.facts || {};
+    const sign = runSignFace(facts.track, { today: facts.today, live: facts.live });
+    const palette = scenePalette();
+    this.blitFace(ctx, 'run_sign', `${sign.key}|${palette.okInk}`, WALL.run_sign, scale, (c, w, h) => paintRunSign(c, w, h, sign, palette));
+    if (sign.running >= 0 && sign.segments.length) {
+      // the running stage breathes, with the world's clock (still under reduced motion)
+      const [x, y, w] = WALL.run_sign;
+      const n = sign.segments.length;
+      const gap = 1.6;
+      const sw = (w - 4 - gap * (n - 1)) / n;
+      const pulse = 0.25 + 0.25 * Math.sin(this.world.ambient.clock * 3);
+      ctx.fillStyle = withAlpha('#ffffff', Math.max(0, pulse));
+      ctx.fillRect(x + 2 + sign.running * (sw + gap), y + 13.5, sw, 5);
+    }
+    const tokens = tokensFace(facts.budget);
+    this.blitFace(ctx, 'infra_plate', tokens.key, WALL.infra_plate, scale, (c, w, h) => paintInfra(c, w, h, tokens));
   }
 
   /** @param {any} agent */
@@ -558,47 +748,26 @@ export class HQRenderer {
   }
 
   /**
-   * The render bay's wall display shows what the video editor is really doing, never a number
-   * nobody measured.
-   * @param {CanvasRenderingContext2D} ctx
+   * The render bay's wall display: the render while the Video Editor works, else a frame of the
+   * newest rendered film, else his state in words. Never a number nobody measured.
+   * @param {CanvasRenderingContext2D} ctx @param {[number, number, number, number]} r
    */
-  drawRenderDisplay(ctx, x, y, dw, dh, agent, clock) {
-    const state = agent ? stateOf(agent) : 'IDLE';
-    const working = state === 'WORKING';
-    ctx.fillStyle = working ? '#071a2c' : '#050a12';
-    ctx.fillRect(x, y, dw, dh);
-    ctx.fillStyle = '#9fb4cc';
-    ctx.font = '600 6px "Segoe UI", system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('RANDARE', x + dw / 2, y + 12);
-    ctx.fillStyle = working ? '#e6f1ff' : state === 'ERROR' || state === 'BLOCKED' ? '#fca5a5' : '#56708c';
-    // The state in the page's words («în lucru», «în așteptare»): the display once read
-    // «RANDARE / IDLE», half in each language. The longer Romanian words step down a size to
-    // stay on the 61px panel rather than being squeezed.
-    const word = runtimeLabel(state).toLocaleUpperCase('ro-RO');
-    ctx.font = '700 9px "Segoe UI", system-ui, sans-serif';
-    if (ctx.measureText(word).width > dw - 6) ctx.font = '700 7px "Segoe UI", system-ui, sans-serif';
-    ctx.fillText(word, x + dw / 2, y + 27, dw - 4);
-    if (working) {
-      ctx.strokeStyle = '#38bdf8';
-      ctx.strokeRect(x + 8, y + 36, dw - 16, 6);
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(x + 9, y + 37, dw - 18, 4);
-      ctx.clip();
-      ctx.fillStyle = '#38bdf8';
-      const band = (dw - 18) * 0.35;
-      const pos = ((clock * 30) % (dw - 18 + band)) - band;
-      ctx.fillRect(x + 9 + pos, y + 37, band, 4);
-      ctx.restore();
-      const detail = String(agent.detail || (agent.task_type ? taskLabel(agent.task_type) : '')).slice(0, 22);
-      if (detail) {
-        ctx.font = '500 5px "Segoe UI", system-ui, sans-serif';
-        ctx.fillStyle = '#9fb4cc';
-        ctx.fillText(detail, x + dw / 2, y + 52);
-      }
-    }
-    ctx.textAlign = 'left';
+  drawRenderBay(ctx, r, agent, clock, scale) {
+    const film = (this.facts && this.facts.film) || null;
+    const face = renderBayFace({ agent, film });
+    const poster = film && film.canvas ? film.canvas : null;
+    this.blitFace(ctx, 'render_bay', face.key, r, scale, (c, w, h) => paintRenderBay(c, w, h, face, poster));
+    if (face.kind !== 'rendering') return;
+    const [x, y, dw] = r;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x + 8.5, y + 33.5, dw - 17, 5);
+    ctx.clip();
+    ctx.fillStyle = '#38bdf8';
+    const band = (dw - 18) * 0.35;
+    const pos = ((clock * 30) % (dw - 18 + band)) - band;
+    ctx.fillRect(x + 9 + pos, y + 34, band, 4);
+    ctx.restore();
   }
 
   /** @param {CanvasRenderingContext2D} ctx @param {any} state */
@@ -885,16 +1054,25 @@ export class HQRenderer {
     }
   }
 
-  /** @param {CanvasRenderingContext2D} ctx @param {any} time */
-  drawNightGrade(ctx, time) {
+  /** @param {CanvasRenderingContext2D} ctx @param {any} time @param {number} [skyTop] the row of sky above the world */
+  drawNightGrade(ctx, time, skyTop = 0) {
     const deep = Math.max(0, Math.min(1, (-time.elevation - 8) / 10));
     if (deep <= 0) return;
     ctx.save();
     ctx.globalCompositeOperation = 'multiply';
     ctx.fillStyle = `rgba(70,84,130,${0.45 * deep})`;
     ctx.beginPath();
-    ctx.rect(0, 0, this.world.worldW, this.world.worldH);
-    ctx.rect(1352, 0, -937, 676);
+    ctx.rect(0, skyTop, this.world.worldW, this.world.worldH - skyTop);
+    // The building keeps its own light. Its hole starts under the roof railing, so the sky seen
+    // through the railing is graded as the sky above it is, except for the lift tower's head,
+    // which reaches the world's top edge.
+    ctx.moveTo(415, 10);
+    ctx.lineTo(415, 676);
+    ctx.lineTo(1352, 676);
+    ctx.lineTo(1352, 0);
+    ctx.lineTo(1187, 0);
+    ctx.lineTo(1187, 10);
+    ctx.closePath();
     ctx.fill('evenodd');
     ctx.restore();
   }

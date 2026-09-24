@@ -1,4 +1,4 @@
-import { drawerDefaults, drawerInsets, railCount, resolveDrawers } from './game_frame.js';
+import { drawerDefaults, drawerInsets, frameFloor, railCount, resolveDrawers } from './game_frame.js';
 
 /**
  * THE TWO GLASS DRAWERS OF THE GAME FRAME.
@@ -48,7 +48,7 @@ function writeStored(value) {
 export class Drawers {
   /**
    * @param {{
-   *   onInsets?: (insets: import('./game_frame.js').Insets, options: {glide: boolean}) => void,
+   *   onInsets?: (insets: import('./game_frame.js').Insets, options: {glide: boolean, floor?: import('./game_frame.js').Insets}) => void,
    *   world?: () => {worldW: number, worldH: number, focus: import('./game_frame.js').Rect},
    * }} [options]
    */
@@ -60,6 +60,7 @@ export class Drawers {
     this.register = byId('register-panel');
     this.governance = byId('governance-panel');
     this.modules = byId('modules-panel');
+    this.readout = byId('studio-readout');
     this.registerRail = /** @type {HTMLButtonElement|null} */ (byId('register-rail'));
     this.sideRail = /** @type {HTMLButtonElement|null} */ (byId('side-rail'));
     this.registerClose = /** @type {HTMLButtonElement|null} */ (byId('register-close'));
@@ -72,7 +73,7 @@ export class Drawers {
     this.open = { register: true, side: true };
     this.framed = false;
     this.started = false;
-    /** @type {{registerW: number, sideW: number, railW: number}|null} */
+    /** @type {{registerW: number, sideW: number, railW: number, hudTop: number}|null} */
     this._widthsNow = null;
     this._widthsKey = '';
   }
@@ -114,7 +115,7 @@ export class Drawers {
     if (!this.framed) {
       delete this.root.dataset.register;
       delete this.root.dataset.side;
-      for (const panel of [this.register, this.governance, this.modules]) if (panel) panel.inert = false;
+      for (const panel of [this.register, this.governance, this.modules, this.readout]) if (panel) panel.inert = false;
       if (this.registerRail) this.registerRail.hidden = true;
       if (this.sideRail) this.sideRail.hidden = true;
       this.onInsets({ left: 0, right: 0, top: 0, bottom: 0 }, { glide: false });
@@ -162,6 +163,7 @@ export class Drawers {
     if (this.register) this.register.inert = !register;
     if (this.governance) this.governance.inert = !side;
     if (this.modules) this.modules.inert = !side;
+    if (this.readout) this.readout.inert = !side;
     if (this.registerRail) {
       this.registerRail.hidden = register;
       this.registerRail.setAttribute('aria-expanded', String(register));
@@ -172,7 +174,10 @@ export class Drawers {
     }
     this.registerClose?.setAttribute('aria-expanded', String(register));
     this.sideClose?.setAttribute('aria-expanded', String(side));
-    this.onInsets(drawerInsets(this.open, this._widths()), { glide: options.glide });
+    const widths = this._widths();
+    // The frame always keeps its rails and the row of sky over the roof where the clock, the dock
+    // and the live state stand (game_frame.js frameFloor): the camera's zoom is chosen against it.
+    this.onInsets(drawerInsets(this.open, widths), { glide: options.glide, floor: frameFloor(widths) });
   }
 
   /** The render's box in the frame. */
@@ -200,7 +205,7 @@ export class Drawers {
     return this._widthsNow;
   }
 
-  /** The drawers' widths as the stylesheet lays them out (their tokens), and the rail's. */
+  /** The drawers' widths as the stylesheet lays them out (their tokens), the rail's, and the row of sky the instruments stand in. */
   _measureWidths() {
     // A token such as clamp(300px, 18.75vw, 400px) is resolved by the browser, on a probe.
     const px = (/** @type {string} */ name, /** @type {number} */ fallback) => {
@@ -213,7 +218,7 @@ export class Drawers {
       probe.remove();
       return width > 0 ? width : fallback;
     };
-    return { registerW: px('--drawer-register', 360), sideW: px('--drawer-side', 340), railW: px('--drawer-rail', 40) };
+    return { registerW: px('--drawer-register', 360), sideW: px('--drawer-side', 340), railW: px('--drawer-rail', 40), hudTop: px('--hud-top', 0) };
   }
 
   /** The rooms: the masthead's menu in the frame, the console's second tier otherwise. */
