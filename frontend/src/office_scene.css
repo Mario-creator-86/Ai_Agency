@@ -779,10 +779,116 @@
   .scene-viewport .day-track-short { display: inline; }
   .scene-viewport .scene-slate .day-track { flex: none; }
 }
-/* Too little room for the caption beside the day: the caption takes the
-   first line whole and the day and the hour the second, rather than the
-   caption being cut («8 angajați la birourile lor · sediul AMN-…» at 1280). */
+/* Too little room for the caption beside the day. It used to take the first
+   line whole and push the day and the hour to a second, and that second line
+   covered the road's near kerb by 12-18px at 1280 and 1440 with both drawers
+   open (W9). The slate now stays one line: the caption says only the count
+   and whether it is live («8 angajați · live»); the whole sentence stays its
+   title. Only a room narrower than any the frame opens (under 620px) still
+   folds to two lines rather than cut a word. */
+.scene-viewport .room-caption-short { display: none; }
 @container slate (max-width: 879.98px) {
+  .scene-viewport .scene-slate .room-caption-long { display: none; }
+  .scene-viewport .scene-slate .room-caption-short { display: inline; }
+}
+@container slate (max-width: 619.98px) {
   .scene-viewport .scene-slate #room-caption { flex: 1 0 100%; overflow: visible; }
   .scene-viewport .scene-slate .day-track { margin-right: auto; }
+}
+
+/* --------------------------------------------------------------------------
+   THE FACES MADE LEGIBLE (W10)
+   --------------------------------------------------------------------------
+   At fit zoom the building's bound faces are 30-45px wide: true, and too
+   small to read. The card below is laid beside the face the pointer or the
+   keyboard stands on (scene_readout.js; hq_readouts.js placeReadout keeps it
+   inside the room the drawers, the sky row and the slate leave, and off the
+   face itself). It is the drawers' own glass, with the page's type scale:
+   the face's name in small caps, its value in the display face, its second
+   line, what the face is, and what a click opens. It never takes the pointer:
+   the canvas under it keeps the hover. */
+.scene-viewport .face-card {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  gap: var(--s3);
+  align-items: flex-start;
+  width: var(--card-w);
+  max-width: calc(100% - var(--s6));
+  padding: var(--s3) var(--s4);
+  background: linear-gradient(180deg, var(--sheen), transparent 60%), var(--card-glass);
+  border: 1px solid var(--drawer-edge);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--lit-edge), var(--shadow-raised);
+  backdrop-filter: blur(var(--drawer-blur));
+  color: var(--ink);
+  pointer-events: none;
+  animation: face-card-in var(--dur) var(--ease);
+}
+.scene-viewport .face-card[hidden] { display: none; }
+/* With the film's frame beside the words, the words keep the card's own measure. */
+.scene-viewport .face-card:has(.face-card-poster:not([hidden])) { width: calc(var(--card-w) + var(--card-poster-w) + var(--s3)); }
+/* Reached by the keyboard, the card wears the focus colour its face's ring wears in the world. */
+.scene-viewport .face-card[data-via="keyboard"] { border-color: var(--teal); }
+.scene-viewport .face-card-poster {
+  flex: none;
+  width: var(--card-poster-w);
+  height: var(--card-poster-h);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-xs);
+}
+.scene-viewport .face-card-poster[hidden] { display: none; }
+.scene-viewport .face-card-text { flex: 1 1 auto; min-width: 0; }
+.scene-viewport .face-card p { margin: 0; }
+.scene-viewport .face-card p[hidden] { display: none; }
+.scene-viewport .face-card-eyebrow {
+  color: var(--scene-chrome-muted);
+  font-size: var(--fs-micro);
+  font-weight: var(--w-bold);
+  letter-spacing: var(--track-caps);
+  line-height: var(--lh-tight);
+  text-transform: uppercase;
+}
+.scene-viewport .face-card-value {
+  margin-top: var(--s1);
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: var(--fs-h2);
+  font-weight: var(--w-display);
+  letter-spacing: var(--track-tight);
+  line-height: var(--lh-tight);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.scene-viewport .face-card[data-tone="ok"] .face-card-value { color: var(--ok-ink); }
+.scene-viewport .face-card[data-tone="warn"] .face-card-value { color: var(--warn-ink); }
+.scene-viewport .face-card[data-tone="alert"] .face-card-value { color: var(--alert-ink); }
+.scene-viewport .face-card-line {
+  margin-top: var(--s1);
+  color: var(--ink-2);
+  font-size: var(--fs-body);
+  line-height: var(--lh-snug);
+  overflow-wrap: anywhere;
+}
+.scene-viewport .face-card-context {
+  margin-top: var(--s2);
+  color: var(--ink-3);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-snug);
+}
+.scene-viewport .face-card-action {
+  margin-top: var(--s2);
+  padding-top: var(--s2);
+  border-top: 1px solid var(--line);
+  color: var(--scene-chrome-muted);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-snug);
+}
+@keyframes face-card-in {
+  from { opacity: 0; translate: 0 var(--s1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .scene-viewport .face-card { animation: none; }
 }

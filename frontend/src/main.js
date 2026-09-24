@@ -19,19 +19,21 @@ import { OfficeEngine, BUILDING, WORLD_W, WORLD_H } from './office_engine.js';
 import { streamTransform } from './game_frame.js';
 import { Drawers } from './drawers.js';
 import { OfficeState } from './office_state.js';
-import { Ledger, entryCountLabel, productionStatus, taskLabel } from './ledger.js';
+import { Ledger, entryCountLabel, productionStatus, runtimeLabel, taskLabel } from './ledger.js';
 import { streetMoves } from './hq_events.js';
 import { budgetRing, budgetRingSvg, channelFilmsHtml, dayTrack, dayTrackFromRun, dayTrackGeometry, dayTrackWords, newerTrack, pipelineSvg } from './hud_charts.js';
 import { Moments } from './moments.js';
-import { filmPoster } from './film_poster.js';
+import { filmPoster, POSTER_SAMPLES } from './film_poster.js';
 import { latestFilm, boardTopics } from './hq_screens.js';
+import { canvasLabel, lastTasks, lastTaskLine, nextRunSign, surfaceReadout } from './hq_readouts.js';
+import { SceneReadout } from './scene_readout.js';
 import { studioReadout } from './side_readout.js';
 import { friendlyAnswer } from './friendly_text.js';
 import { LiveWindows, eventMatchesAgent } from './live_window.js';
 import { MailThread } from './mail_thread.js';
 import { LiveStream } from './hq_stream.js';
 import { liveStreamSettings, relayUrl } from './hq_stream_config.js';
-import { EventsLink, connectionLabel, roomCaption, sceneReadout } from './live_claims.js';
+import { EventsLink, connectionLabel, roomCaption, roomCaptionShort, sceneReadout } from './live_claims.js';
 import { TitleScreen } from './title_screen.js';
 import { ENTRY, entryPlays } from './title_frame.js';
 import { KeyLight } from './key_light.js';
@@ -101,11 +103,16 @@ function renderLiveSignals() {
     span.textContent = text;
     return span;
   }));
-  element('room-caption').textContent = caption;
-  officeCanvas.setAttribute(
-    'aria-label',
-    `Sediul AMN-AI${readout.live ? ', live' : ''}. Folosește tastele-săgeți ca să treci de la un angajat la altul și Enter ca să deschizi unul.`,
-  );
+  // Two forms of the caption; the slate's own room chooses which one shows (office_scene.css).
+  const long = document.createElement('span');
+  long.className = 'room-caption-long';
+  long.textContent = caption;
+  const brief = document.createElement('span');
+  brief.className = 'room-caption-short';
+  brief.textContent = roomCaptionShort(staff, readout.live);
+  element('room-caption').replaceChildren(long, brief);
+  element('room-caption').title = caption;
+  officeCanvas.setAttribute('aria-label', canvasLabel(Boolean(readout.live)));
   if (ownerToken) element('connection').textContent = chip;
 }
 
@@ -292,12 +299,51 @@ let dayRecord = null;
  * newest film's frame once per film. A value the page does not hold stays null, and its screen
  * says «—».
  * ------------------------------------------------------------------------- */
-/** @type {{run: any, track: any, today: string|null, live: boolean, treasury: any, budget: any, episodes: any, topics: {titles: string[], key: string}, film: any, jobs: any[]|null}} */
-const worldFacts = { run: null, track: null, today: null, live: true, treasury: null, budget: null, episodes: null, topics: { titles: [], key: '' }, film: null, jobs: null };
+/** @type {{run: any, track: any, today: string|null, live: boolean, treasury: any, budget: any, episodes: any, topics: {titles: string[], key: string}, film: any, jobs: any[]|null, tasks: {tasks: Record<string, any>, key: string}, nextRun: string, stopped: boolean|null, timeZone: string|undefined}} */
+const worldFacts = { run: null, track: null, today: null, live: true, treasury: null, budget: null, episodes: null, topics: { titles: [], key: '' }, film: null, jobs: null, tasks: { tasks: {}, key: '' }, nextRun: '', stopped: null, timeZone: undefined };
 
 function pushWorldFacts() {
+  // The façade sign's next run, in the scheduler's own words, only while no run is under way
+  // (hq_readouts.js nextRunSign): the same rule the side drawer's foot follows.
+  worldFacts.stopped = state && state.policy ? Boolean(state.policy.autonomy_stopped) : null;
+  worldFacts.timeZone = state && state.studio ? state.studio.timezone : undefined;
+  worldFacts.nextRun = nextRunSign(worldFacts.jobs, { stopped: worldFacts.stopped, timeZone: worldFacts.timeZone });
   if (officeEngine) officeEngine.setFacts({ ...worldFacts });
   renderStudioReadout();
+  refreshSceneReadout();
+}
+
+/* ---------------------------------------------------------------------------
+ * THE FACES MADE LEGIBLE (W10): the glass readout beside the face the pointer or the keyboard
+ * stands on, written from the same facts the faces are drawn from (hq_readouts.js).
+ * ------------------------------------------------------------------------- */
+const faceReadout = new SceneReadout({
+  card: element('face-card'),
+  announce: element('face-card-announce'),
+  host: element('scene-viewport'),
+  canvas: element('office-canvas'),
+  slate: /** @type {HTMLElement|null} */ (document.querySelector('.scene-viewport .scene-slate')),
+  reducedMotion: () => reducedMotion(),
+});
+/** @type {any} what the engine last said the visitor stands on */
+let readoutTarget = null;
+
+function refreshSceneReadout() {
+  const target = readoutTarget;
+  if (!target) {
+    faceReadout.show(null, null);
+    return;
+  }
+  const agents = officeState ? officeState.agents : [];
+  if (target.kind === 'agent') {
+    const agent = agents.find((a) => (a.id || a.agent_id) === target.id) || target.agent;
+    const status = String(agent.lifecycle || '').toUpperCase() === 'PAUSED' ? 'PAUSED' : String(agent.runtime_state || 'IDLE');
+    const speech = `${agent.display_name || agent.role_name || 'Angajat'} · ${runtimeLabel(status)} · ${lastTaskLine(worldFacts.tasks.tasks[target.id], Date.now())}. Enter deschide fișa.`;
+    faceReadout.show(target, null, { speech });
+    return;
+  }
+  const readout = surfaceReadout(target.id, { facts: worldFacts, agents });
+  faceReadout.show(target, readout, { poster: worldFacts.film && worldFacts.film.canvas ? worldFacts.film.canvas : null });
 }
 
 /**
@@ -330,7 +376,7 @@ function renderStudioReadout() {
 let filmAsset = '';
 
 function resetWorldFacts() {
-  Object.assign(worldFacts, { run: null, track: null, today: null, live: true, treasury: null, budget: null, episodes: null, topics: { titles: [], key: '' }, film: null, jobs: null });
+  Object.assign(worldFacts, { run: null, track: null, today: null, live: true, treasury: null, budget: null, episodes: null, topics: { titles: [], key: '' }, film: null, jobs: null, tasks: { tasks: {}, key: '' }, nextRun: '' });
   filmAsset = '';
   pushWorldFacts();
 }
@@ -344,7 +390,9 @@ async function loadFilmFrame(film) {
   if (!film || !ownerToken || film.assetId === filmAsset) return;
   filmAsset = film.assetId;
   const session = epoch;
-  const canvas = await filmPoster({ url: `/api/v1/media/assets/${encodeURIComponent(film.assetId)}/stream`, token: ownerToken, width: 90, height: 160, timeoutMs: 6000 }).catch(() => null);
+  // Five key frames across the film, read once per film; the brightest that is a picture is kept
+  // (film_poster.js pickBrightest), decoded at twice the render bay's pixels (180x320).
+  const canvas = await filmPoster({ url: `/api/v1/media/assets/${encodeURIComponent(film.assetId)}/stream`, token: ownerToken, width: 90, height: 160, scale: 2, samples: POSTER_SAMPLES, timeoutMs: 8000 }).catch(() => null);
   if (session !== epoch || filmAsset !== film.assetId) return;
   worldFacts.film = canvas ? { ...film, canvas } : null;
   pushWorldFacts();
@@ -387,6 +435,14 @@ function soon(which) {
 /** What the register's new rows change on the building's screens. @param {any[]} events */
 function noteWorldEvents(events) {
   const types = events.map((event) => String((event && event.event_type) || ''));
+  // Each employee's last real task, for the faint line under a name and the desk's readout.
+  if (types.some((t) => t === 'agent.run_completed' || t === 'agent.state_changed')) {
+    const tasks = lastTasks(ledger.sorted());
+    if (tasks.key !== worldFacts.tasks.key) {
+      worldFacts.tasks = tasks;
+      pushWorldFacts();
+    }
+  }
   if (types.includes('factual.topic_proposed')) {
     const topics = boardTopics(ledger.sorted());
     if (topics.key !== worldFacts.topics.key) {
@@ -518,12 +574,9 @@ const moments = new Moments({
   poster: async (moment) => {
     if (!moment.assetId) return null;
     const canvas = await filmPoster({ url: `/api/v1/media/assets/${encodeURIComponent(moment.assetId)}/stream`, token: ownerToken });
-    // The film just rendered is now the newest: the render bay shows the same frame, decoded once.
-    if (canvas) {
-      filmAsset = moment.assetId;
-      worldFacts.film = { assetId: moment.assetId, date: studioToday(), canvas };
-      pushWorldFacts();
-    }
+    // The film just rendered is now the newest: the render bay takes its own, brighter frame of
+    // it, read once (loadFilmFrame).
+    if (canvas) loadFilmFrame({ assetId: moment.assetId, date: studioToday() });
     return canvas;
   },
 });
@@ -715,6 +768,15 @@ function buildOfficeEngine() {
       } else {
         inspector.close();
       }
+    },
+    // A face opens its room: the same dialog the masthead's menu opens.
+    onSelectSurface: (_id, room) => {
+      const opener = room ? document.getElementById(room) : null;
+      if (opener) opener.click();
+    },
+    onReadout: (target) => {
+      readoutTarget = target;
+      refreshSceneReadout();
     },
   });
   publishSceneHandle();
@@ -1022,6 +1084,7 @@ function publishSceneHandle() {
 }
 
 function updateOfficeCanvas() {
+  if (readoutTarget) refreshSceneReadout();
   if (!officeEngine) return;
   officeState.cleanupExpiredBubbles();
   officeEngine.setAgents(officeState.agents);
@@ -1236,7 +1299,9 @@ function renderInspector(agent) {
 }
 
 // A queued close event from the previous agent must not cancel a newly opened inspector.
-inspector.addEventListener('close',()=>{if(!inspector.open) inspectorRequest++; updateTypingIndicator();});
+// However it closes (the button, Escape, the backdrop), the employee is no longer chosen: the
+// teal mark and tag in the world mean «open in the inspector», not «was opened once» (W11).
+inspector.addEventListener('close',()=>{if(!inspector.open){inspectorRequest++; if(officeEngine) officeEngine.setSelectedAgent(null);} updateTypingIndicator();});
 
 // Expanded mode: the inspector fills the screen and the whole history reads as one long
 // page — nothing cropped by the inner scroll box. The choice survives closing and reopening
@@ -3185,7 +3250,7 @@ function render(data) {
     `Actualizat ${new Date(data.captured_at).toLocaleTimeString('ro-RO', { timeZone: data.studio.timezone })}`;
   renderSwitch(data.policy.autonomy_stopped);
   renderEnvironment(data.policy.environment);
-  renderStudioReadout();
+  pushWorldFacts();
   renderAutonomyMode(data.policy);
   ledger.timezone = data.studio.timezone;
   const agentNames = Object.fromEntries(officeState.agents.map((a) => [a.id || a.agent_id, a.display_name]));
@@ -3354,6 +3419,8 @@ element('login-form').addEventListener('submit', async (event) => {
     // it waits until the building has been entered, and then reads the frame the visitor sees.
     if (plays) window.setTimeout(() => { if (ownerToken) keyLight.start(); }, ENTRY.totalMs + 80);
     else keyLight.start();
+    // The faces' first values are the page arriving, not news: no glint for them (hq_readouts.js).
+    if (officeEngine) officeEngine.resetGlints();
     loadDayRecord();
     loadWorldFigures();
     loadSerialFacts();

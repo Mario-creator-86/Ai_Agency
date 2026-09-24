@@ -195,3 +195,19 @@ test('with the sky row the page still opens only the drawers the building fits b
   const got = Object.fromEntries(Object.entries(FRAMES).map(([cw, ch]) => [cw, drawerDefaults({ cw: Number(cw), ch, ...WORLD, focus: BUILDING, ...widths(Number(cw)) })]));
   assert.deepEqual(got, { 1280: { register: true, side: false }, 1440: { register: true, side: false }, 1920: { register: true, side: true }, 2560: { register: true, side: true } });
 });
+
+// W10: THE SLATE OFF THE KERB. With both drawers open at 1280 and 1440 the slate's room is 690px
+// and 850px, and its caption used to take a line of its own: a 56px slate covered the near kerb
+// by 12-18px. The slate is now one line (office_scene.css, the short caption), and the kerb clears
+// a one-line slate at every frame with both drawers open as well as closed.
+test('with both drawers open the near kerb stays above a one-line slate at 1280 and 1440', () => {
+  const SLATE = 28;
+  const widths = (cw) => ({ left: Math.min(400, Math.max(300, cw * 0.1875)), right: Math.min(380, Math.max(290, cw * 0.177)) });
+  for (const [cw, ch] of Object.entries(FRAMES)) {
+    const { left, right } = widths(Number(cw));
+    const fit = frameFit({ cw: Number(cw), ch, ...WORLD, focus: BUILDING, insets: { left, right, top: HUD, bottom: 0 }, floor: railsOf() });
+    const kerb = at(fit, 0, 790).y;
+    assert.ok(kerb <= ch - SLATE + 1e-6, `${cw}: the kerb at ${kerb.toFixed(1)} is above the one-line slate at ${ch - SLATE}`);
+    if (Number(cw) <= 1440) assert.ok(kerb > ch - 2 * SLATE, `${cw}: a two-line slate (${ch - 2 * SLATE}) would cover it (${kerb.toFixed(1)})`);
+  }
+});

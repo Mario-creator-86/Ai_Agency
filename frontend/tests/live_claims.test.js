@@ -8,6 +8,7 @@ import {
   SOCKET_SILENT_MS,
   connectionLabel,
   roomCaption,
+  roomCaptionShort,
   sceneReadout,
   socketRetryMs,
 } from '../src/live_claims.js';
@@ -289,4 +290,12 @@ test('the link tells an event that happened now from one the page asked to repla
   sockets[0].onmessage({ data: JSON.stringify({ type: 'replay_event', data: { sequence: 1 } }) });
   sockets[0].onmessage({ data: JSON.stringify({ type: 'event', data: { sequence: 2 } }) });
   assert.deepEqual(flags, [[1, false], [2, true]]);
+});
+
+test('a slate too narrow for the caption beside the day says only the count and whether it is live', () => {
+  assert.equal(roomCaptionShort(8, true), '8 angajați · live');
+  assert.equal(roomCaptionShort(8, false), '8 angajați');
+  assert.equal(roomCaptionShort(1, true), '1 angajat · live');
+  assert.equal(roomCaptionShort(20, false), '20 de angajați');
+  assert.equal(roomCaptionShort(0, true), 'Sediul AMN-AI · live');
 });

@@ -234,17 +234,27 @@ export function wholeOrCents(text) {
 }
 
 /**
- * The façade's run track: the slate's own segments and words.
+ * The façade's run track: the slate's own segments and words. While no run is under way, the
+ * state line also says what comes next, in the scheduler's own words (hq_readouts.js
+ * nextRunSign): «încheiată · următoarea rulare vin. 25.09, 05:00», or that the daily schedule is
+ * stopped. Never a countdown to a time nobody set.
  * @param {import('./hud_charts.js').DayTrack|null|undefined} track
- * @param {{today?: string|null, live?: boolean}} [context]
+ * @param {{today?: string|null, live?: boolean, next?: string}} [context]
  */
 export function runSignFace(track, context = {}) {
-  if (!track || track.empty) return { title: 'RULAREA ZILEI', tally: '—', state: 'nicio rulare în registru', segments: [], running: -1, key: 'rs|empty' };
+  const next = context.next || '';
+  if (!track || track.empty) return { title: 'RULAREA ZILEI', tally: '—', state: next || 'nicio rulare în registru', segments: [], running: -1, underWay: false, open: false, key: `rs|empty|${next}` };
   const words = dayTrackWords(track, context);
   const [title, tally, ...rest] = words.label.split(' · ');
   const segments = track.segments.map((s) => s.state);
   const running = segments.indexOf('running');
-  const face = { title: title.toLocaleUpperCase('ro-RO'), tally, state: rest.join(' · '), segments, running };
+  // Under way: a stage is running now (the page's own live rule). Open: today's run has started
+  // and not finished, even between two stages when no segment is lit; while it is open the sign
+  // says no next run (W11). An unfinished run of another day is neither.
+  const underWay = running >= 0 && context.live !== false;
+  const open = !track.finished && (underWay || Boolean(track.date && context.today && track.date === context.today));
+  const state = [rest.join(' · '), open ? '' : next].filter(Boolean).join(' · ');
+  const face = { title: title.toLocaleUpperCase('ro-RO'), tally, state, segments, running, underWay, open };
   return { ...face, key: `rs|${face.title}|${tally}|${face.state}|${segments.join(',')}` };
 }
 

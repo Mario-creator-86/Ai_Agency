@@ -1,3 +1,4 @@
+import { hitAt, screenRect } from './hq_readouts.js';
 import { HQAssets } from './hq_assets.js';
 import { WorldSimulationManager, HQRenderer } from './hq_world.js';
 import { scenePalette } from './hq_palette.js';
@@ -144,12 +145,21 @@ const WEATHER_ICONS = { clear: '☀', partly_cloudy: '⛅', cloudy: '☁', fog: 
 export class OfficeEngine {
   /**
    * @param {HTMLCanvasElement} canvas
-   * @param {{onSelectAgent?: (agent:any) => void, fetchWeather?: () => Promise<any>, infoElement?: HTMLElement|null, onFrameRate?: (fps: number) => void, seed?: number, reducedMotion?: () => boolean, dataLive?: () => boolean, parked?: boolean, onView?: (view: any) => void}} [options]
+   * @param {{onSelectAgent?: (agent:any) => void, onSelectSurface?: (id: string, room: string|null) => void, onReadout?: (target: any) => void, fetchWeather?: () => Promise<any>, infoElement?: HTMLElement|null, onFrameRate?: (fps: number) => void, seed?: number, reducedMotion?: () => boolean, dataLive?: () => boolean, parked?: boolean, onView?: (view: any) => void}} [options]
    */
   constructor(canvas, options = {}) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
     this.onSelectAgent = options.onSelectAgent || (() => {});
+    /** A click or Enter on a bound face: the page opens that face's room (its dialog). */
+    this.onSelectSurface = options.onSelectSurface || (() => {});
+    /**
+     * Told which face (or, from the keyboard, which employee) the visitor stands on, and where it
+     * is on screen, whenever that changes; null when nothing is. The page lays its glass readout
+     * from it (scene_readout.js). Nothing is fetched for it.
+     */
+    this.onReadout = typeof options.onReadout === 'function' ? options.onReadout : null;
+    this._readoutKey = '';
     this.fetchWeather = options.fetchWeather || (async () => ({ available: false, reason: 'not_configured' }));
     this.infoElement = options.infoElement || null;
     // The renderer measures its own frame rate and hands it on; what the page calls it (and
@@ -173,6 +183,12 @@ export class OfficeEngine {
     this.selectedAgentId = null;
     /** @type {any} */
     this.hoverAgentId = null;
+    /** The bound face under the pointer or the keyboard (hq_readouts.js SURFACES), or null. @type {string|null} */
+    this.hoverSurfaceId = null;
+    /** How the visitor reached it: the keyboard's mark is the page's focus ring. @type {'pointer'|'keyboard'} */
+    this.surfaceVia = 'pointer';
+    /** Whether the employee mark was set by the keyboard (the page then says who it is). */
+    this.agentViaKeyboard = false;
     /** @type {any[]} */
     this.bibles = [];
     /** @type {any} */
@@ -518,6 +534,11 @@ export class OfficeEngine {
     if (this.renderer) this.renderer.setFacts(this.facts);
   }
 
+  /** A new key: what the faces show next is the studio being read, not a live change. */
+  resetGlints() {
+    if (this.renderer) this.renderer.glints.reset();
+  }
+
   /** @param {any} agentId */
   setSelectedAgent(agentId) {
     this.selectedAgentId = agentId;
@@ -571,8 +592,16 @@ export class OfficeEngine {
     c.addEventListener('mousemove', (e) => {
       const p = localPoint(e);
       if (!dragging) {
-        const hit = this._hitAt(p.x, p.y);
-        this.hoverAgentId = hit ? hit.id || hit.agent_id : null;
+        const hit = this._hitBoxAt(p.x, p.y);
+        if (hit && hit.surface) {
+          this.hoverAgentId = null;
+          this.hoverSurfaceId = hit.surface;
+          this.surfaceVia = 'pointer';
+        } else {
+          this.hoverSurfaceId = null;
+          this.hoverAgentId = hit && hit.agent ? hit.agent.id || hit.agent.agent_id : null;
+        }
+        this.agentViaKeyboard = false;
         c.style.cursor = hit ? 'pointer' : 'grab';
         return;
       }
@@ -585,7 +614,9 @@ export class OfficeEngine {
       lastY = p.y;
     });
     c.addEventListener('mouseleave', () => {
+      if (this.agentViaKeyboard || (this.hoverSurfaceId && this.surfaceVia === 'keyboard')) return;
       this.hoverAgentId = null;
+      this.hoverSurfaceId = null;
     });
     c.addEventListener(
       'wheel',
@@ -611,16 +642,33 @@ export class OfficeEngine {
     c.addEventListener('keydown', (e) => {
       const key = e.key;
       if (key === 'ArrowRight' || key === 'ArrowDown' || key === 'ArrowLeft' || key === 'ArrowUp') {
-        const order = this._seatOrder();
-        if (!order.length) return;
+        // The employees first, as a reader takes the floors; then the building's bound faces.
+        const stops = this._stops();
+        if (!stops.length) return;
         e.preventDefault();
         const step = key === 'ArrowRight' || key === 'ArrowDown' ? 1 : -1;
-        const at = order.findIndex((a) => (a.id || a.agent_id) === this.hoverAgentId);
-        const next = at < 0 ? (step > 0 ? 0 : order.length - 1) : (at + step + order.length) % order.length;
-        this.hoverAgentId = order[next].id || order[next].agent_id;
+        const at = stops.findIndex((s) => (s.surface ? s.surface === this.hoverSurfaceId : s.id === this.hoverAgentId && !this.hoverSurfaceId));
+        const next = stops[at < 0 ? (step > 0 ? 0 : stops.length - 1) : (at + step + stops.length) % stops.length];
+        if (next.surface) {
+          this.hoverAgentId = null;
+          this.hoverSurfaceId = next.surface;
+          this.surfaceVia = 'keyboard';
+          this.agentViaKeyboard = false;
+        } else {
+          this.hoverSurfaceId = null;
+          this.hoverAgentId = next.id;
+          this.agentViaKeyboard = true;
+        }
         return;
       }
       if (key === 'Enter' || key === ' ' || key === 'Spacebar') {
+        if (this.hoverSurfaceId) {
+          const hit = this.renderer ? this.renderer.hits.find((/** @type {any} */ h) => h.surface === this.hoverSurfaceId) : null;
+          if (!hit) return;
+          e.preventDefault();
+          this.onSelectSurface(hit.surface, hit.room || null);
+          return;
+        }
         const order = this._seatOrder();
         const agent = order.find((a) => (a.id || a.agent_id) === this.hoverAgentId);
         if (!agent) return;
@@ -629,13 +677,16 @@ export class OfficeEngine {
         this.onSelectAgent(agent);
         return;
       }
-      if (key === 'Escape' && this.hoverAgentId) {
+      if (key === 'Escape' && (this.hoverAgentId || this.hoverSurfaceId)) {
         e.preventDefault();
         this.hoverAgentId = null;
+        this.hoverSurfaceId = null;
       }
     });
     c.addEventListener('blur', () => {
       this.hoverAgentId = null;
+      this.hoverSurfaceId = null;
+      this.agentViaKeyboard = false;
     });
   }
 
@@ -646,7 +697,7 @@ export class OfficeEngine {
    * @returns {any[]}
    */
   _seatOrder() {
-    const hits = this.renderer ? this.renderer.hits : [];
+    const hits = (this.renderer ? this.renderer.hits : []).filter((/** @type {any} */ h) => !h.surface);
     if (!hits || !hits.length) return this.agents.filter((a) => a && (a.id || a.agent_id));
     return hits
       .slice()
@@ -654,11 +705,27 @@ export class OfficeEngine {
       .map((h) => h.agent);
   }
 
-  /** @param {number} sx @param {number} sy */
-  _hitAt(sx, sy) {
+  /**
+   * The keyboard's walk: the employees in the reader's order, then the bound walls in theirs
+   * (hq_readouts.js SURFACES). A desk's monitor is not a stop of its own: its employee is.
+   * @returns {Array<{id?: any, surface?: string}>}
+   */
+  _stops() {
+    const people = this._seatOrder().map((a) => ({ id: a.id || a.agent_id }));
+    const walls = (this.renderer ? this.renderer.hits : []).filter((/** @type {any} */ h) => h.surface && !h.desk).map((/** @type {any} */ h) => ({ surface: String(h.surface) }));
+    return [...people, ...walls];
+  }
+
+  /** The smallest hit box under a canvas point. @param {number} sx @param {number} sy */
+  _hitBoxAt(sx, sy) {
     if (!this.renderer) return null;
     const { x, y } = this.viewport.screenToWorld(sx, sy);
-    const hit = this.renderer.hits.find((h) => x >= h.x0 && x <= h.x1 && y >= h.y0 && y <= h.y1);
+    return hitAt(this.renderer.hits, x, y);
+  }
+
+  /** @param {number} sx @param {number} sy */
+  _hitAt(sx, sy) {
+    const hit = this._hitBoxAt(sx, sy);
     return hit ? hit.agent : null;
   }
 
@@ -666,9 +733,49 @@ export class OfficeEngine {
   _handleClick(e) {
     const rect = this.canvas.getBoundingClientRect();
     const scale = this.canvas.width / rect.width;
-    const hit = this._hitAt((e.clientX - rect.left) * scale, (e.clientY - rect.top) * scale);
-    this.selectedAgentId = hit ? hit.id || hit.agent_id : null;
-    this.onSelectAgent(hit);
+    const hit = this._hitBoxAt((e.clientX - rect.left) * scale, (e.clientY - rect.top) * scale);
+    if (hit && hit.surface && !hit.desk) {
+      this.onSelectSurface(hit.surface, hit.room || null);
+      return;
+    }
+    const agent = hit ? hit.agent : null;
+    this.selectedAgentId = agent ? agent.id || agent.agent_id : null;
+    this.onSelectAgent(agent);
+  }
+
+  /**
+   * Tell the page what the visitor stands on and where it is on screen, when that changes: a
+   * face (for the glass readout), or an employee reached by the keyboard (for the words the page
+   * speaks). Called once per frame; it calls out only when the answer is different.
+   */
+  _emitReadout() {
+    if (!this.onReadout) return;
+    let target = null;
+    const hits = this.renderer ? this.renderer.hits : [];
+    if (this.hoverSurfaceId) {
+      const hit = hits.find((/** @type {any} */ h) => h.surface === this.hoverSurfaceId);
+      if (hit) {
+        const r = screenRect([hit.x0, hit.y0, hit.x1 - hit.x0, hit.y1 - hit.y0], this.viewport, this.dpr || 1);
+        const dpr = this.dpr || 1;
+        const ins = this.viewport.insets || { left: 0, right: 0, top: 0, bottom: 0 };
+        target = {
+          kind: 'surface',
+          id: hit.surface,
+          via: this.surfaceVia,
+          rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.w), h: Math.round(r.h) },
+          room: { left: ins.left / dpr, top: ins.top / dpr, right: (this.canvas.width - ins.right) / dpr, bottom: this.canvas.height / dpr },
+        };
+      }
+    } else if (this.hoverAgentId && this.agentViaKeyboard) {
+      const agent = this.agents.find((a) => (a.id || a.agent_id) === this.hoverAgentId);
+      if (agent) target = { kind: 'agent', id: String(this.hoverAgentId), via: 'keyboard', agent };
+    }
+    const key = target
+      ? `${target.kind}|${target.id}|${target.via}|${target.rect ? `${target.rect.x},${target.rect.y},${target.rect.w},${target.rect.h}` : ''}|${target.room ? `${target.room.left},${target.room.right},${target.room.bottom}` : ''}`
+      : '';
+    if (key === this._readoutKey) return;
+    this._readoutKey = key;
+    this.onReadout(target);
   }
 
   /* ---------------------------------------------------------------- loop -- */
@@ -687,6 +794,7 @@ export class OfficeEngine {
     this._advanceGlide(now);
     this._draw();
     this._emitView();
+    this._emitReadout();
     this._measure(now);
     requestAnimationFrame(this._loop);
   }
@@ -755,6 +863,9 @@ export class OfficeEngine {
       trip: this.lift.trip,
       selectedId: this.selectedAgentId,
       hoverId: this.hoverAgentId,
+      surfaceId: this.hoverSurfaceId,
+      surfaceVia: this.surfaceVia,
+      reduced: this.reducedMotion(),
       liftStops: this.liftStops,
       scale: zoom,
       skyTop,

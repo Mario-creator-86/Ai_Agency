@@ -316,6 +316,13 @@
   --drawer-glass-hi: rgba(12, 18, 31, .9);
   --drawer-edge:     rgba(150, 180, 230, .16);
   --drawer-blur:     16px;
+  /* THE GLASS READOUT (W10): the card laid beside a face of the building the pointer or the
+     keyboard stands on (office_scene.css .face-card). The drawers' glass, a shade denser,
+     because it lies over the lit picture rather than over the frame's edge. */
+  --card-w:          300px;
+  --card-glass:      rgba(7, 11, 20, .93);
+  --card-poster-w:   72px;   /* the newest film's frame, 9:16, drawn from 180x320 pixels */
+  --card-poster-h:   128px;
   --shadow-drawer-l: 18px 0 40px -24px rgba(0, 0, 0, .9);
   --shadow-drawer-r: -18px 0 40px -24px rgba(0, 0, 0, .9);
   --room-gap:        2px;    /* between two rooms of the masthead's menu */

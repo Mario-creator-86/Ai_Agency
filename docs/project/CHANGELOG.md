@@ -1,5 +1,17 @@
 # Changelog
 
+## The building's truth is legible — 2026-09-24
+
+- **Readouts on every face** (`frontend/src/hq_readouts.js`, `scene_readout.js`): a glass card on hover and keyboard focus for the eight bound walls and every occupied desk's monitor, from the same facts store (nothing fetched), placed in the free room and never over its face, announced once through a polite live region; Enter or a click opens the wall's room.
+- **The keyboard reaches the building**: the arrows walk the employees and then the walls, with a ring drawn in the world.
+- **A glint when a face's value changes live** (once, 1.4 s; never for a first value, never under reduced motion).
+- **The idle building says what is true now**: the façade's next run or «programarea zilnică este oprită», never a countdown; the name tag's «ultima sarcină: …» from the register.
+- **The render bay shows the brightest real frame** of the newest film (five key frames sampled once per film, no filter).
+- **The slate folds to one line** instead of covering the kerb.
+- **Backend** (`backend/app/runbook/services.py`): a legacy run's publish stage counts its publication (`tests/test_runbook_publish_count.py`), so the run summary no longer says no film was published for a run that published one.
+- Honesty fixes by the judge: no «programarea zilnică este oprită» between two stages of a live run; a closed inspector no longer leaves its ring; the canvas label names the screens.
+- Tests: frontend 347/347, tsc clean; runbook tests 88 passed; ruff and mypy clean.
+
 ## The live headquarters follows a real clear day — 2026-09-24
 
 - **A golden hour instead of a power cut** (`backend/app/office/scene_params.py`): the key on the sun's side carries the low sun from +10° to the twilight and warms toward amber; the building darkens in order through the evening (83.8 → 80.6 → 73.5 → 66.6 → 62.1 → 47.6).

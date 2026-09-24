@@ -83,12 +83,17 @@
                    picture or standing about on the panel outside it. The canvas takes focus so the
                    employees can be reached with the arrows as well as with a pointer. -->
               <div class="scene-viewport" id="scene-viewport">
-              <canvas id="office-canvas" class="office-canvas" tabindex="0" aria-label="Sediul AMN-AI. Folosește tastele-săgeți ca să treci de la un angajat la altul și Enter ca să deschizi unul."></canvas>
+              <canvas id="office-canvas" class="office-canvas" tabindex="0" aria-label="Sediul AMN-AI. Săgețile trec de la un angajat la altul, apoi prin ecranele clădirii; Enter deschide ce ai ales."></canvas>
               <div class="scene-readout scene-readout-info" title="Ora locală din București și vremea reală pe care o citește studioul. Fără un serviciu de vreme configurat, scena nu desenează vremea."><span id="scene-info">—  •  BUCUREȘTI</span></div>
               <span id="office-status" class="tag live-pill scene-readout scene-readout-live" data-state="reconnecting"><span class="live-dot" aria-hidden="true"></span><span id="office-fps"><span class="scene-live">Se conectează</span></span></span>
               <!-- The slate: what is being looked at, the day's run as one segment per stage (the
                    runbook's own events, hud_charts.js), and when the studio was last read. -->
               <div class="scene-slate"><span id="room-caption">—</span><span id="day-track" class="day-track" role="img" aria-label="Nicio rulare a zilei în registru."><svg class="day-track-bar" width="0" height="6" focusable="false" aria-hidden="true"></svg><span class="day-track-label">—</span></span><span id="snapshot-time">—</span></div>
+              <!-- THE FACES MADE LEGIBLE (W10): the glass readout laid beside the building's face the
+                   pointer or the keyboard stands on (scene_readout.js). It is hidden from assistive
+                   technology; its words are said once in the polite live region under it. -->
+              <div id="face-card" class="face-card" aria-hidden="true" hidden><canvas class="face-card-poster" width="180" height="320" hidden></canvas><div class="face-card-text"><p class="face-card-eyebrow"></p><p class="face-card-value"></p><p class="face-card-line"></p><p class="face-card-context"></p><p class="face-card-action"></p></div></div>
+              <p id="face-card-announce" class="moment-announce" role="status" aria-live="polite"></p>
               <!-- A chapter of the serial, over the render for under three seconds, only when an
                    episode is drafted or approved as it happens (moments.js). -->
               <div id="moment-chapter" class="moment moment-chapter" hidden></div>

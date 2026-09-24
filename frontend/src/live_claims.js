@@ -140,6 +140,17 @@ export function roomCaption(staff, live) {
   return `${staff}${staff >= 20 ? ' de' : ''} ${staff === 1 ? 'angajat' : 'angajați'} la birourile lor · ${place}`;
 }
 
+/**
+ * The caption for a slate too narrow to hold it beside the day on one line (1280 and 1440 with
+ * both drawers open): the count and whether it is live, nothing that needs the sentence. The
+ * full caption stays the slate's title, so nothing is lost to a reader who asks.
+ * @param {number} staff @param {boolean} live
+ */
+export function roomCaptionShort(staff, live) {
+  const who = staff ? `${staff}${staff >= 20 ? ' de' : ''} ${staff === 1 ? 'angajat' : 'angajați'}` : 'Sediul AMN-AI';
+  return live ? `${who} · live` : who;
+}
+
 /** How many events one replay request asks for (the backend's own cap is 500). */
 export const REPLAY_PAGE = 500;
 /** A replay that filled its page is asked to continue, up to this many pages after one drop. */

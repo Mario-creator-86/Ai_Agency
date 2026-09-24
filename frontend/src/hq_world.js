@@ -13,6 +13,7 @@ import {
   renderBayFace, treasuryFace, runSignFace, factCheckFace, writersFace, publishFace, tokensFace,
   drawPane, paintTreasury, paintRunSign, paintFactCheck, paintNote, paintWriters, paintPublish, paintInfra, paintRenderBay,
 } from './hq_screens.js';
+import { surfaceRects, GlintTracker, lastTaskLine, unionRect } from './hq_readouts.js';
 
 /**
  * WorldSimulationManager owns every manager of the living headquarters and advances them in one
@@ -250,7 +251,7 @@ export class HQRenderer {
     this.world = world;
     this.assets = world.assets;
     this.m = world.assets.manifest;
-    /** @type {Array<{agent:any, x0:number, y0:number, x1:number, y1:number}>} */
+    /** @type {Array<{agent:any, x0:number, y0:number, x1:number, y1:number, surface?: string, room?: string|null, desk?: boolean}>} */
     this.hits = [];
     /** @type {Map<string, {canvas: HTMLCanvasElement, x:number, y:number, w:number, h:number}>} */
     this.caches = new Map();
@@ -267,6 +268,12 @@ export class HQRenderer {
     this.lit = [];
     /** Each seated room's occupancy and shade on the last frame, for QA. @type {Record<string, any>} */
     this.roomStates = {};
+    /** A face whose value changed while the page watched glints once (hq_readouts.js). */
+    this.glints = new GlintTracker();
+    /** Whether the visitor asked for less motion, as of the frame being drawn. */
+    this.reduced = false;
+    /** Glints drawn so far, for QA. */
+    this.glintCount = 0;
   }
 
   /**
@@ -378,13 +385,14 @@ export class HQRenderer {
 
   /**
    * @param {CanvasRenderingContext2D} ctx
-   * @param {{agents:any[], bubbles:any[], tokens:any[], lift:any, trip:any, selectedId:any, hoverId:any, liftStops:any, scale?:number, skyTop?:number}} state
+   * @param {{agents:any[], bubbles:any[], tokens:any[], lift:any, trip:any, selectedId:any, hoverId:any, liftStops:any, scale?:number, skyTop?:number, surfaceId?: string|null, surfaceVia?: string, reduced?: boolean}} state
    */
   draw(ctx, state) {
     const w = this.world;
     const time = w.time.state;
     const fx = w.weather.effects;
     w.agentList = state.agents;
+    this.reduced = Boolean(state.reduced);
     this.useCaches = this.ensureCaches(state.scale || 1, time);
     // the real sun and the real cloud cover: an overcast noon is grey, a clear night is clear
     const skyTop = Math.min(0, state.skyTop || 0);
@@ -540,6 +548,51 @@ export class HQRenderer {
   }
 
   /**
+   * A face laid on its surface, and, when its value has just changed live, the one glint that
+   * says so (off under reduced motion). The glint is a pale band crossing the glass once and a
+   * rim that fades: an honest cue that something real arrived, not motion for its own sake.
+   * @param {CanvasRenderingContext2D} ctx @param {string} id @param {string} key
+   * @param {number[]} r @param {number} scale @param {(c: CanvasRenderingContext2D, w: number, h: number) => void} paint
+   */
+  faceBlit(ctx, id, key, r, scale, paint) {
+    this.blitFace(ctx, id, key, r, scale, paint);
+    this.glintOn(ctx, id, key, r);
+  }
+
+  /** @param {CanvasRenderingContext2D} ctx @param {string} id @param {string} key @param {number[]} r */
+  glintOn(ctx, id, key, r) {
+    const now = typeof performance !== 'undefined' ? performance.now() : 0;
+    if (this.glints.note(id, key, now)) this.glintCount += 1;
+    const t = this.reduced ? null : this.glints.progress(id, now);
+    if (t === null) return;
+    const [x, y, w, h] = r;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, y, w, h);
+    ctx.clip();
+    ctx.globalCompositeOperation = 'lighter';
+    // the band crosses in the first 70% of the glint, eased out
+    const sweep = Math.min(1, t / 0.7);
+    const eased = 1 - (1 - sweep) ** 3;
+    const band = Math.max(8, Math.min(w, h) * 0.9);
+    const along = -band + (w + h * 0.6 + band * 2) * eased;
+    const g = ctx.createLinearGradient(x + along - band, y + h * 0.6, x + along, y);
+    const peak = 0.42 * (1 - sweep * 0.5);
+    g.addColorStop(0, 'rgba(235,244,255,0)');
+    g.addColorStop(0.5, `rgba(235,244,255,${peak})`);
+    g.addColorStop(1, 'rgba(235,244,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(x, y, w, h);
+    ctx.restore();
+    // the rim: the glass catching the light, fading over the whole glint
+    ctx.save();
+    ctx.strokeStyle = `rgba(235,244,255,${0.55 * (1 - t)})`;
+    ctx.lineWidth = 0.8;
+    ctx.strokeRect(x + 0.4, y + 0.4, w - 0.8, h - 0.8);
+    ctx.restore();
+  }
+
+  /**
    * Every screen and board inside the building, bound to what the page really holds
    * (hq_screens.js). Lit screens are remembered for the room light and the glow.
    * @param {CanvasRenderingContext2D} ctx @param {any[]} agents @param {number} scale
@@ -565,7 +618,7 @@ export class HQRenderer {
       const accent = name.includes('audio') ? '192,132,252' : name.includes('radar') ? '74,222,128' : name.includes('treasury') ? '163,230,53' : '120,170,255';
       if (name === 'publish_radar' && mode !== 'work' && mode !== 'think' && mode !== 'dark') {
         const face = publishFace(facts.run);
-        this.blitFace(ctx, name, face.key, r, scale, (c, w, h) => paintPublish(c, w, h, face));
+        this.faceBlit(ctx, name, face.key, r, scale, (c, w, h) => paintPublish(c, w, h, face));
         lit.push({ r, rgb: accent, strength: 0.3, zone: screen.zone });
         continue;
       }
@@ -590,20 +643,21 @@ export class HQRenderer {
 
     // the Treasury's wall ticker
     const treasury = treasuryFace(facts.treasury, facts.budget);
-    this.blitFace(ctx, 'treasury_board', treasury.key, WALL.treasury_board, scale, (c, w, h) => paintTreasury(c, w, h, treasury));
+    this.faceBlit(ctx, 'treasury_board', treasury.key, WALL.treasury_board, scale, (c, w, h) => paintTreasury(c, w, h, treasury));
     lit.push({ r: WALL.treasury_board, rgb: '163,230,53', strength: 0.3, zone: 'accounting_office' });
     // the fact-check whiteboard (a board, not a screen: it takes the room's light)
     const check = factCheckFace(facts.run);
-    this.blitFace(ctx, 'factcheck_board', check.key, WALL.factcheck_board, scale, (c, w, h) => paintFactCheck(c, w, h, check));
+    this.faceBlit(ctx, 'factcheck_board', check.key, WALL.factcheck_board, scale, (c, w, h) => paintFactCheck(c, w, h, check));
     // the research board's notes
     const topics = facts.topics || { titles: [], key: '' };
     NOTES.forEach((note, i) => {
       const title = topics.titles[i] || '';
       this.blitFace(ctx, `note${i}`, `n|${title}`, note, scale, (c, w, h) => paintNote(c, w, h, title));
     });
+    this.glintOn(ctx, 'research_board', topics.key, BOARD);
     // the writers' room wall screen
     const writers = writersFace(facts.episodes);
-    this.blitFace(ctx, 'writers_screen', writers.key, WALL.writers_screen, scale, (c, w, h) => paintWriters(c, w, h, writers));
+    this.faceBlit(ctx, 'writers_screen', writers.key, WALL.writers_screen, scale, (c, w, h) => paintWriters(c, w, h, writers));
     lit.push({ r: WALL.writers_screen, rgb: '95,212,192', strength: 0.3, zone: 'script_room' });
     this.lit = lit;
 
@@ -724,9 +778,11 @@ export class HQRenderer {
    */
   drawFacade(ctx, scale) {
     const facts = this.facts || {};
-    const sign = runSignFace(facts.track, { today: facts.today, live: facts.live });
+    const sign = runSignFace(facts.track, { today: facts.today, live: facts.live, next: facts.nextRun || '' });
     const palette = scenePalette();
     this.blitFace(ctx, 'run_sign', `${sign.key}|${palette.okInk}`, WALL.run_sign, scale, (c, w, h) => paintRunSign(c, w, h, sign, palette));
+    // the glint follows the day's own words, not the next-run line (which follows the scheduler)
+    this.glintOn(ctx, 'run_sign', `${sign.title}|${sign.tally}|${sign.segments.join(',')}`, WALL.run_sign);
     if (sign.running >= 0 && sign.segments.length) {
       // the running stage breathes, with the world's clock (still under reduced motion)
       const [x, y, w] = WALL.run_sign;
@@ -738,7 +794,7 @@ export class HQRenderer {
       ctx.fillRect(x + 2 + sign.running * (sw + gap), y + 13.5, sw, 5);
     }
     const tokens = tokensFace(facts.budget);
-    this.blitFace(ctx, 'infra_plate', tokens.key, WALL.infra_plate, scale, (c, w, h) => paintInfra(c, w, h, tokens));
+    this.faceBlit(ctx, 'infra_plate', tokens.key, WALL.infra_plate, scale, (c, w, h) => paintInfra(c, w, h, tokens));
   }
 
   /** @param {any} agent */
@@ -756,7 +812,9 @@ export class HQRenderer {
     const film = (this.facts && this.facts.film) || null;
     const face = renderBayFace({ agent, film });
     const poster = film && film.canvas ? film.canvas : null;
-    this.blitFace(ctx, 'render_bay', face.key, r, scale, (c, w, h) => paintRenderBay(c, w, h, face, poster));
+    // Drawn at twice the display's pixels: the film's frame is the one picture in the building,
+    // and at fit zoom a face cached at the display's own scale smeared it into a dark square.
+    this.faceBlit(ctx, 'render_bay', face.key, r, scale * 2, (c, w, h) => paintRenderBay(c, w, h, face, poster));
     if (face.kind !== 'rendering') return;
     const [x, y, dw] = r;
     ctx.save();
@@ -844,6 +902,13 @@ export class HQRenderer {
       const dy = seat.y - SEATED_LIFT - frame.pivot[1] * s;
       if (ctx) ctx.drawImage(img, (f.index % cols) * sw, Math.floor(f.index / cols) * sh, sw, sh, dx, dy, frame.w * s, frame.h * s);
       this.hits.push({ agent, x0: seat.x - 16, y0: seat.y - SEATED_LIFT - 44, x1: seat.x + 16, y1: seat.y + 2 });
+    }
+    // The bound faces, after the employees (so hits[0] is still an employee): each wall, and the
+    // monitor on every occupied desk. A pointer takes the smallest box under it (hq_readouts.js
+    // hitAt), so a desk's monitor is found in front of its employee.
+    for (const s of surfaceRects(this.m, state.agents)) {
+      const [x, y, w, h] = s.rect;
+      this.hits.push({ agent: s.agent, surface: s.id, room: s.room, desk: s.desk, x0: x, y0: y, x1: x + w, y1: y + h });
     }
   }
 
@@ -1146,7 +1211,7 @@ export class HQRenderer {
       const seat = agent ? this.m.seats?.[agent.desk_id] : null;
       if (!seat) continue;
       const chosen = id === state.selectedId;
-      const hit = this.hits.find((/** @type {any} */ h) => (h.agent.id || h.agent.agent_id) === id);
+      const hit = this.hits.find((/** @type {any} */ h) => !h.surface && h.agent && (h.agent.id || h.agent.agent_id) === id);
 
       // The mark on the figure. A ring the pointer can see from across the room, drawn round the
       // same box a click is tested against, so what lights is exactly what is clickable.
@@ -1169,15 +1234,21 @@ export class HQRenderer {
         ctx.restore();
       }
 
-      // The name tag, at a size that can be read: 11 screen pixels, the page's --fs-meta.
+      // The name tag, at a size that can be read: 11 screen pixels, the page's --fs-meta. Under
+      // it, fainter, the employee's last real task in the register (hq_readouts.js lastTasks):
+      // shown only on the one under the pointer or the keyboard, never as a label on every desk.
       const name = String(agent.display_name || agent.role_name || 'Agent');
       const status = stateOf(agent);
       const text = `${name} · ${runtimeLabel(status)}`;
+      const tasks = (this.facts && this.facts.tasks && this.facts.tasks.tasks) || {};
+      const second = lastTaskLine(tasks[id], Date.now());
       ctx.save();
+      ctx.font = `500 ${px(10)}px "Segoe UI", system-ui, sans-serif`;
+      const secondW = ctx.measureText(second).width;
       ctx.font = `600 ${px(11)}px "Segoe UI", system-ui, sans-serif`;
       const padX = px(8);
-      const tw = ctx.measureText(text).width + padX * 2;
-      const th = px(20);
+      const tw = Math.max(ctx.measureText(text).width, secondW) + padX * 2;
+      const th = px(34);
       const x = Math.min(this.world.worldW - tw - px(2), Math.max(px(2), seat.x - tw / 2));
       const y = (hit ? hit.y1 : seat.y) + px(5);
       ctx.fillStyle = chosen ? c.teal : withAlpha(c.scene, 0.92);
@@ -1192,12 +1263,45 @@ export class HQRenderer {
       // fills; on the chrome plate it is the chrome's own ink.
       ctx.fillStyle = chosen ? c.sceneDeep : c.chromeInk;
       ctx.textBaseline = 'middle';
-      ctx.fillText(text, x + padX, y + th / 2);
+      ctx.fillText(text, x + padX, y + px(11));
+      ctx.font = `500 ${px(10)}px "Segoe UI", system-ui, sans-serif`;
+      ctx.fillStyle = chosen ? c.sceneDeep : c.chromeMuted;
+      ctx.fillText(second, x + padX, y + px(25));
       ctx.restore();
     }
     ctx.textBaseline = 'alphabetic';
+    this.drawSurfaceMark(ctx, state, px);
+  }
+
+  /**
+   * The mark on a face under the pointer or the keyboard: the same ring an employee wears, at a
+   * constant size on screen. Under the keyboard it is the page's focus ring (--teal over a dark
+   * ring), under the pointer the scene's chrome.
+   * @param {CanvasRenderingContext2D} ctx @param {any} state @param {(n: number) => number} px
+   */
+  drawSurfaceMark(ctx, state, px) {
+    if (!state.surfaceId) return;
+    const hit = this.hits.find((/** @type {any} */ h) => h.surface === state.surfaceId);
+    if (!hit) return;
+    const c = scenePalette();
+    const keyboard = state.surfaceVia === 'keyboard';
+    const pad = px(4);
+    ctx.save();
+    roundRect(ctx, hit.x0 - pad, hit.y0 - pad, hit.x1 - hit.x0 + pad * 2, hit.y1 - hit.y0 + pad * 2, px(4));
+    if (keyboard) {
+      ctx.lineWidth = px(4);
+      ctx.strokeStyle = withAlpha(c.sceneDeep, 0.75);
+      ctx.stroke();
+    }
+    ctx.lineWidth = px(keyboard ? 2 : 1.5);
+    ctx.strokeStyle = keyboard ? c.teal : withAlpha(c.chromeInk, 0.65);
+    ctx.stroke();
+    ctx.restore();
   }
 }
+
+/** The research board's notes, as one surface. */
+const BOARD = unionRect(NOTES);
 
 /** @param {CanvasRenderingContext2D} ctx */
 function roundRect(ctx, x, y, w, h, r) {

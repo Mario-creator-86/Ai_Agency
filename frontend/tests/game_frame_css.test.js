@@ -47,3 +47,15 @@ test('the rooms, the drawers and their rails keep one id each', () => {
     assert.ok(new RegExp(`id="${id}"[^>]*aria-controls="[^"]+"[^>]*aria-expanded="(true|false)"`).test(HTML), `${id} names what it controls`);
   }
 });
+
+test('the slate stays one line in the rooms the frame opens: a short caption below 880px of room', () => {
+  const narrow = SCENE.slice(SCENE.indexOf('@container slate (max-width: 879.98px)'));
+  const rule = narrow.slice(0, narrow.indexOf('\n}') + 2);
+  assert.match(rule, /\.room-caption-long \{ display: none; \}/);
+  assert.match(rule, /\.room-caption-short \{ display: inline; \}/);
+  assert.doesNotMatch(rule, /flex: 1 0 100%/, 'the caption no longer takes a line of its own there');
+  // only a room narrower than any the frame opens (1280 with both drawers: 690px) still folds
+  const fold = SCENE.slice(SCENE.indexOf('@container slate (max-width: 619.98px)'));
+  assert.match(fold.slice(0, 200), /#room-caption \{ flex: 1 0 100%/);
+  assert.ok(1280 - 300 - 290 > 620, 'the narrowest frame room is wider than the fold');
+});

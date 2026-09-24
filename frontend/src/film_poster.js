@@ -21,6 +21,87 @@ export const POSTER_MAX_BYTES = 24 * 1024 * 1024;
 export const POSTER_AT = 0.2;
 
 /**
+ * Where the render bay samples a film for its frame (W10): five places across it, each the key
+ * frame at or before that share. The frame at POSTER_AT alone was nearly black on the Owner's
+ * newest film (two small lights on black, luma 42 of 255), so the building's one picture read
+ * as «no signal». The film is not filtered or brightened: one of its own frames is chosen.
+ */
+export const POSTER_SAMPLES = [0.1, 0.3, 0.5, 0.7, 0.9];
+
+/**
+ * A frame reads as a picture, not a flat field, when its light varies across it at least this
+ * much: the spread of Rec. 709 luma (0-255) between the means of a 4x7 grid of blocks, so a fine
+ * texture does not count and a shape does. Measured on the Owner's newest film (ffmpeg, the six
+ * key frames): the page of notes 44, the two lights 27, the flare 38, the spiral 21, and the
+ * two closing fields of warm stripes 4.5 and 4.9 — the brightest frames in it (luma 163), and
+ * nothing to look at at the size of a wall screen.
+ */
+export const POSTER_MIN_DETAIL = 12;
+
+/**
+ * The frame to keep: the brightest one that is a picture; the brightest of all when none is.
+ * @param {Array<{mean: number, detail: number}|null>} stats one per decoded frame (null: not decoded)
+ * @param {number} [minDetail]
+ * @returns {number} the index of the frame kept, -1 when none was decoded
+ */
+export function pickBrightest(stats, minDetail = POSTER_MIN_DETAIL) {
+  let best = -1;
+  let bestAny = -1;
+  (stats || []).forEach((s, i) => {
+    if (!s || !Number.isFinite(s.mean)) return;
+    if (bestAny < 0 || s.mean > /** @type {any} */ (stats[bestAny]).mean) bestAny = i;
+    if (s.detail >= minDetail && (best < 0 || s.mean > /** @type {any} */ (stats[best]).mean)) best = i;
+  });
+  return best >= 0 ? best : bestAny;
+}
+
+/**
+ * The mean Rec. 709 luma of an RGBA image (0-255), and its detail: the spread between the means
+ * of a grid of blocks (4 across, 7 down for a 9:16 frame).
+ * @param {Uint8ClampedArray|Uint8Array|number[]} rgba @param {number} width @param {number} height
+ * @param {[number, number]} [grid]
+ */
+export function lumaStats(rgba, width, height, grid = [4, 7]) {
+  const [gx, gy] = grid;
+  const sums = new Array(gx * gy).fill(0);
+  const counts = new Array(gx * gy).fill(0);
+  let total = 0;
+  let n = 0;
+  for (let y = 0; y < height; y += 1) {
+    const by = Math.min(gy - 1, Math.floor((y * gy) / height));
+    for (let x = 0; x < width; x += 1) {
+      const i = (y * width + x) * 4;
+      if (i + 2 >= rgba.length) break;
+      const l = 0.2126 * rgba[i] + 0.7152 * rgba[i + 1] + 0.0722 * rgba[i + 2];
+      const b = by * gx + Math.min(gx - 1, Math.floor((x * gx) / width));
+      sums[b] += l;
+      counts[b] += 1;
+      total += l;
+      n += 1;
+    }
+  }
+  if (!n) return { mean: NaN, detail: NaN };
+  const means = sums.map((v, i) => (counts[i] ? v / counts[i] : NaN)).filter(Number.isFinite);
+  const m = means.reduce((a, v) => a + v, 0) / means.length;
+  const detail = Math.sqrt(means.reduce((a, v) => a + (v - m) ** 2, 0) / means.length);
+  return { mean: total / n, detail };
+}
+
+/**
+ * The distinct key frames at the given shares of a film, in the order they appear.
+ * @param {ArrayBuffer|Uint8Array} input @param {number[]} shares
+ */
+export function keyFramesAt(input, shares) {
+  /** @type {NonNullable<ReturnType<typeof keyFrame>>[]} */
+  const found = [];
+  for (const share of shares) {
+    const frame = keyFrame(input, share);
+    if (frame && !found.some((f) => f.sample === frame.sample)) found.push(frame);
+  }
+  return found.sort((a, b) => a.sample - b.sample);
+}
+
+/**
  * @param {DataView} view
  * @param {number} at
  * @returns {string}
@@ -196,9 +277,11 @@ async function readUntil(reader, enough, max = POSTER_MAX_BYTES) {
 }
 
 /**
- * Decodes one frame of a rendered film into a small canvas.
+ * Decodes one frame of a rendered film into a small canvas. With `samples`, the key frames at
+ * those shares are decoded (one read of the file, once per film) and the brightest one that is a
+ * picture is kept (pickBrightest); without, the frame at POSTER_AT.
  *
- * @param {{url: string, token: string, width?: number, height?: number, timeoutMs?: number}} options
+ * @param {{url: string, token: string, width?: number, height?: number, timeoutMs?: number, samples?: number[], scale?: number}} options
  * @returns {Promise<HTMLCanvasElement|null>}
  */
 export async function filmPoster(options) {
@@ -213,36 +296,43 @@ export async function filmPoster(options) {
     });
     if (!response.ok || !response.body) return null;
     const reader = response.body.getReader();
-    /** @type {ReturnType<typeof keyFrame>} */
+    /** @type {NonNullable<ReturnType<typeof keyFrame>>[]|null} */
     let located = null;
+    const shares = options.samples && options.samples.length ? options.samples : [POSTER_AT];
     const bytes = await readUntil(reader, (buffer) => {
       const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
       if (!located) {
         const moov = locateMoov(view);
         if (!moov.found || !moov.complete) return false;
-        located = keyFrame(buffer, POSTER_AT);
-        if (!located) return true;
+        // Only the frames inside the most the page will read of a film.
+        located = keyFramesAt(buffer, shares).filter((f) => f.offset + f.size <= POSTER_MAX_BYTES);
+        if (!located.length) return true;
       }
-      return buffer.byteLength >= located.offset + located.size;
+      return buffer.byteLength >= Math.max(...located.map((f) => f.offset + f.size));
     });
     reader.cancel().catch(() => {});
-    const frame = /** @type {ReturnType<typeof keyFrame>} */ (located);
-    if (!frame || bytes.byteLength < frame.offset + frame.size) return null;
-    const config = { codec: frame.codec, description: frame.description, codedWidth: frame.width, codedHeight: frame.height, optimizeForLatency: true };
+    const frames = (located || []).filter((f) => bytes.byteLength >= f.offset + f.size);
+    if (!frames.length) return null;
+    const first = frames[0];
+    const config = { codec: first.codec, description: first.description, codedWidth: first.width, codedHeight: first.height, optimizeForLatency: true };
     const support = await VideoDecoder.isConfigSupported(config);
     if (!support.supported) return null;
     const width = options.width ?? 54;
     const height = options.height ?? 96;
-    const scale = Math.min(2, window.devicePixelRatio || 1);
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.round(width * scale);
-    canvas.height = Math.round(height * scale);
-    canvas.setAttribute('width', String(canvas.width));
-    canvas.setAttribute('height', String(canvas.height));
-    const drawn = await new Promise((resolve) => {
+    const scale = options.scale ?? Math.min(2, window.devicePixelRatio || 1);
+    /** @type {HTMLCanvasElement[]} */
+    const canvases = [];
+    /** @type {Array<{mean: number, detail: number}|null>} */
+    const stats = [];
+    await new Promise((resolve) => {
       const decoder = new VideoDecoder({
         output: (videoFrame) => {
-          const ctx = canvas.getContext('2d');
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.round(width * scale);
+          canvas.height = Math.round(height * scale);
+          canvas.setAttribute('width', String(canvas.width));
+          canvas.setAttribute('height', String(canvas.height));
+          const ctx = canvas.getContext('2d', { willReadFrequently: frames.length > 1 });
           if (ctx) {
             // Cover: the film is 9:16, and so is the canvas.
             const ratio = Math.max(canvas.width / videoFrame.displayWidth, canvas.height / videoFrame.displayHeight);
@@ -251,15 +341,31 @@ export async function filmPoster(options) {
             ctx.drawImage(videoFrame, (canvas.width - w) / 2, (canvas.height - h) / 2, w, h);
           }
           videoFrame.close();
-          resolve(true);
+          canvases.push(canvas);
+          if (ctx && frames.length > 1) {
+            stats.push(lumaStats(ctx.getImageData(0, 0, canvas.width, canvas.height).data, canvas.width, canvas.height));
+          } else {
+            stats.push({ mean: 0, detail: 0 });
+          }
         },
         error: () => resolve(false),
       });
       decoder.configure(config);
-      decoder.decode(new EncodedVideoChunk({ type: 'key', timestamp: 0, data: bytes.subarray(frame.offset, frame.offset + frame.size) }));
-      decoder.flush().then(() => decoder.close()).catch(() => resolve(false));
+      frames.forEach((frame, i) => {
+        decoder.decode(new EncodedVideoChunk({ type: 'key', timestamp: i * 1000, data: bytes.subarray(frame.offset, frame.offset + frame.size) }));
+      });
+      decoder.flush().then(() => { decoder.close(); resolve(true); }).catch(() => resolve(false));
     });
-    return drawn ? canvas : null;
+    const keep = pickBrightest(stats);
+    const chosen = keep >= 0 ? canvases[keep] : null;
+    if (chosen) {
+      chosen.dataset.sample = String(frames[keep] ? frames[keep].sample : '');
+      chosen.dataset.luma = stats[keep] ? String(Math.round(stats[keep].mean)) : '';
+      chosen.dataset.sampled = String(frames.length);
+      chosen.dataset.detail = stats[keep] ? String(Math.round(stats[keep].detail)) : '';
+      chosen.dataset.all = stats.map((s) => (s ? `${Math.round(s.mean)}/${Math.round(s.detail)}` : '-')).join(' ');
+    }
+    return chosen;
   } catch {
     return null;
   } finally {

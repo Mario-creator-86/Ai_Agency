@@ -343,6 +343,26 @@ def _count(value: Any) -> int:
     return 1 if value else 0
 
 
+#: A publication a legacy publish artefact names is a film on the channel only in these states:
+#: out (PUBLISHED, REMOTE_CONFIRMED) or given a release time on the channel (SCHEDULED). A
+#: simulated upload, a failure or a validation that went no further is not a film published.
+LEGACY_PUBLISHED_STATES = ("PUBLISHED", "REMOTE_CONFIRMED", "SCHEDULED")
+
+
+def _legacy_publications(artefacts: dict[str, Any]) -> int:
+    """The film a publish stage recorded before its films were listed under ``published``.
+
+    Such a run carries its one publication flat, as ``publication_id`` and
+    ``publication_status`` (the 12.09 run of the Owner's studio: publication 86fe911d,
+    PUBLISHED). It is read by the keys it has; nothing is inferred from the stage's status.
+    """
+    publication = artefacts.get("publication_id")
+    status = artefacts.get("publication_status")
+    if isinstance(publication, str) and publication and status in LEGACY_PUBLISHED_STATES:
+        return 1
+    return 0
+
+
 def produced_by(stage: dict[str, Any]) -> int | None:
     """How many things a stage outcome made, from its own artefacts; None when not counted.
 
@@ -353,6 +373,8 @@ def produced_by(stage: dict[str, Any]) -> int | None:
     if keys is None:
         return None
     artefacts = stage.get("artefacts") or {}
+    if stage["stage"] == "publish" and "published" not in artefacts:
+        return _legacy_publications(artefacts)
     return sum(_count(artefacts.get(key)) for key in keys)
 
 
