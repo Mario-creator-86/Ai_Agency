@@ -428,6 +428,9 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; script-src 'self'; style-src 'self'; "
             "img-src 'self' data: https://yt3.ggpht.com https://yt3.googleusercontent.com; "
+            # The Media dialog plays a film from the bytes it fetched with the Owner's key, as a
+            # blob: URL; without media-src the default 'self' refused it on the real server.
+            "media-src 'self' blob:; "
             "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
         )
         logger.info(

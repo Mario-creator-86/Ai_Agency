@@ -120,6 +120,7 @@ const RUN_STAGE_LABEL = {
   post_run: 'raportare și închiderea zilei',
   daily_log: 'jurnalul zilei',
   serial_queue: 'episodul din serial',
+  serial_next: 'scenariul de mâine',
 };
 
 /** What each kind of letter is, as the Owner would name it. */
@@ -165,8 +166,81 @@ function runStageLabel(stage) {
   return RUN_STAGE_LABEL[stage] || String(stage || '').replace(/_/g, ' ');
 }
 
-function statusLabel(status) {
+/**
+ * A status after a feminine noun (`sarcină reușită`). Exported for the scene's speech bubble,
+ * which says a finished task in the same words as the register row beside it.
+ * @param {string} status
+ */
+export function statusLabel(status) {
   return STATUS_LABEL[status] || String(status || '').toLowerCase();
+}
+
+/** Task types as the Owner would name them. Unknown types read as their own words. */
+const TASK_LABEL = {
+  propose_topics: 'idei de subiect',
+  gather_sources: 'căutarea surselor',
+  extract_claims: 'extragerea afirmațiilor',
+  verify_claim: 'verificarea faptelor',
+  choose_topic: 'alegerea subiectului',
+  write_script: 'scenariu',
+  write_episode: 'episodul serialului',
+  review_narration: 'revizuirea narațiunii',
+  review_failed_render: 'diagnoza randării',
+  prepare_publication: 'pregătirea publicării',
+  director_review: 'revizuirea Directorului',
+  reconcile_day: 'închiderea zilei',
+  direct_task: 'sarcină directă',
+  TEST_CONNECTIVITY: 'test de conexiune',
+};
+
+/**
+ * A task type in words. It lived in main.js for the inspector's timeline; the scene needs the
+ * same words, so it lives here with the register's other labels.
+ * @param {string} type
+ */
+export function taskLabel(type) {
+  return TASK_LABEL[type] || String(type || '').replace(/_/g, ' ');
+}
+
+/**
+ * What an employee is doing, in the words the scene prints on a name tag and on the render bay's
+ * wall display. The enum stays the enum everywhere it is data (the inspector's grid, the sprite
+ * chooser); only the words drawn into the picture are Romanian. Each is invariable (a noun
+ * phrase or «în …»), because the tag follows names of either gender and the display's own
+ * heading, «RANDARE», is feminine.
+ */
+const RUNTIME_LABEL = {
+  IDLE: 'în așteptare',
+  WORKING: 'în lucru',
+  EXECUTING: 'în lucru',
+  RUNNING: 'în lucru',
+  THINKING: 'se gândește',
+  PLANNING: 'se gândește',
+  REVIEWING: 'verifică',
+  PAUSED: 'în pauză',
+  SUSPENDED: 'în pauză',
+  BLOCKED: 'blocaj',
+  ERROR: 'eroare',
+  FAILED: 'eroare',
+};
+
+/** @param {string} state a runtime state (or PAUSED from the lifecycle) */
+export function runtimeLabel(state) {
+  const key = String(state || 'IDLE').toUpperCase();
+  return RUNTIME_LABEL[/** @type {keyof typeof RUNTIME_LABEL} */ (key)] || key.replace(/_/g, ' ').toLowerCase();
+}
+
+/**
+ * The speech bubble when a run ends, from the run's own status and task type: the same words as
+ * the register row «sarcină reușită · gather_sources», set as one sentence
+ * («Sarcină reușită: căutarea surselor»). It used to say `Completed: gather_sources ✓` in
+ * English, and uppercase made it `COMPLETED: GATHER_SOURCES ✓`.
+ * @param {{status?: string, task_type?: string}} payload
+ */
+export function runDoneLine(payload) {
+  const status = statusLabel(String(payload?.status || 'SUCCEEDED'));
+  const task = payload?.task_type ? `: ${taskLabel(payload.task_type)}` : '';
+  return `Sarcină ${status}${task}`;
 }
 
 function short(text, max = 160) {

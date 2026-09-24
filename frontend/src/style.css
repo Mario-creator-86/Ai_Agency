@@ -284,6 +284,33 @@
   --page-max-wide: 2240px;
   --gutter:    clamp(18px, 2.5vw, 44px);
 
+  /* ----------------------------------------------------------- game frame --
+     On a screen at least 1051px wide and 600px tall the render is the whole
+     first viewport, edge to edge between the masthead and the footer strip,
+     and the register and the governance side are glass drawers over its two
+     edges (section 9; game_frame.js, drawers.js). A drawer closes to a rail.
+     --hud-l and --hud-r are what the drawers take from the render at this
+     moment; every instrument on the glass stands inside them. */
+  --footer-h:        30px;   /* the footer, as the frame's bottom strip */
+  --frame-h:         calc(100vh - var(--topbar-h) - var(--footer-h));
+  --drawer-register: clamp(300px, 18.75vw, 400px);  /* 360 at 1920 */
+  --drawer-side:     clamp(290px, 17.7vw, 380px);   /* 340 at 1920 */
+  --drawer-rail:     40px;   /* a closed drawer: its handle and its count */
+  --hud-l:           0px;
+  --hud-r:           0px;
+  --dur-drawer:      300ms;
+  /* The drawers' glass. Dark enough that --ink-3 keeps 4.5:1 over the noon
+     sky behind it (measured from pixels, scratchpad ui/w4), clear enough that
+     the city is still seen moving under it. */
+  --drawer-glass:    rgba(7, 11, 20, .86);
+  --drawer-glass-hi: rgba(12, 18, 31, .9);
+  --drawer-edge:     rgba(150, 180, 230, .16);
+  --drawer-blur:     16px;
+  --shadow-drawer-l: 18px 0 40px -24px rgba(0, 0, 0, .9);
+  --shadow-drawer-r: -18px 0 40px -24px rgba(0, 0, 0, .9);
+  --room-gap:        2px;    /* between two rooms of the masthead's menu */
+  --ledger-row-guess: 72px; /* a register row's height before it is first laid out */
+
   /* ---------------------------------------------------------------- washes --
      Translucent films. They are colour, so they are named here and nowhere
      else: a wash written inline is how a second colour system starts. */
@@ -3398,7 +3425,11 @@ details[open] > summary::before { transform: rotate(90deg); }
   body.is-entering .office-panel,
   body.is-entering .modules-panel,
   body.is-entering .governance-panel,
+  body.is-entering .drawer-rail,
   body.is-entering .site-footer { animation: none; }
+  /* The game frame's drawers take their place at once, and the menu's keys do not travel. */
+  .ledger-panel, .governance-panel, .modules-panel { transition: none; }
+  .topbar-rooms .cam-btn:active { transform: none; }
   /* The same moments, the same words, for the same time: nothing travels and nothing glows
      (moments.js). A day-tracker segment takes its new colour at once. */
   .scene-viewport .moment-chapter, .moment-chapter,
@@ -3693,3 +3724,333 @@ details[open] > summary::before { transform: rotate(90deg); }
 .owner-mark.is-arriving { animation: owner-mark-arrive var(--moment-mark) var(--ease) 1; }
 
 /* Under reduced motion the moments are in the page's one reduced-motion block (section 7). */
+
+/* ==========================================================================
+   9 THE GAME FRAME (W4, 2026-09-24)
+   ==========================================================================
+   The stranger's verdict on wave 1: the title amazes, and "once the
+   workspace is up it is a well-made dark dashboard ... not a 2026 game
+   frame". A dashboard sets the picture in a box among other boxes; a game
+   lets the world fill the screen and lays its instruments on the glass.
+
+   So on a screen at least 1051px wide and 600px tall the render is the whole
+   first viewport, from the masthead to the footer strip and from edge to
+   edge. The live register is a glass drawer over its left edge; governance,
+   the approvals and the module status one over its right. Each closes to a
+   rail that keeps its count, and the page opens a drawer on its own only
+   where the building still fits beside it (game_frame.js drawerDefaults), so
+   the render is never covered by more than it can spare: the drawers lie
+   over the city at the picture's two ends, the camera centres the building in
+   the room between them (frameFit), and bare ground past the world's edge can
+   only ever be under a drawer. The seven rooms go up into the masthead as the
+   studio's menu; the scene's own switches and the camera ride a small dock on
+   the glass above the slate. The page does not scroll.
+
+   Every id, every control and every word is where the page had it; below the
+   frame's size the page is the stack it was.
+   ========================================================================== */
+.topbar-rooms { display: none; }
+.drawer-close, .drawer-rail { display: none; }
+
+@media (min-width: 1051px) and (min-height: 600px) {
+  :root { --hud-l: var(--drawer-rail); --hud-r: var(--drawer-rail); }
+  :root[data-register="open"] { --hud-l: var(--drawer-register); }
+  :root[data-side="open"]     { --hud-r: var(--drawer-side); }
+
+  /* One screen: the frame is sized from the viewport, so nothing scrolls it. */
+  body:has(#workspace:not([hidden])) { overflow: hidden; }
+  main:has(> #workspace:not([hidden])) { max-width: none; margin: 0; padding: 0; }
+
+  .workspace-grid {
+    position: relative;
+    display: grid;
+    grid-template-columns: var(--drawer-register) minmax(0, 1fr) var(--drawer-side);
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 0;
+    height: var(--frame-h);
+    min-height: 0;
+    align-content: stretch;
+    align-items: stretch;
+    overflow: hidden;
+    isolation: isolate;
+  }
+  .ledger-column { display: contents; }
+
+  /* The render: every cell of the grid, under everything else. */
+  .workspace-grid .office-panel {
+    grid-column: 1 / -1;
+    grid-row: 1 / -1;
+    align-self: stretch;
+    position: relative;
+    top: auto;
+    z-index: 0;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    background: var(--scene-deep);
+  }
+
+  /* THE DRAWERS. Glass flush against the screen's edge, full height, with one
+     lit hairline where they meet the picture. They move only by transform, so
+     opening and closing is the compositor's work, not a relayout of the
+     register's seventy rows. */
+  .ledger-panel,
+  .governance-panel,
+  .modules-panel {
+    position: relative;
+    z-index: 3;
+    min-height: 0;
+    height: auto;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    background: linear-gradient(180deg, var(--sheen), transparent calc(var(--topbar-h) * 3)), var(--drawer-glass);
+    backdrop-filter: blur(var(--drawer-blur));
+    transition: transform var(--dur-drawer) var(--ease), visibility 0s linear 0s;
+  }
+  .ledger-panel {
+    grid-column: 1;
+    grid-row: 1 / -1;
+    align-self: stretch;
+    overflow: hidden;
+    border-right: 1px solid var(--drawer-edge);
+    box-shadow: var(--shadow-drawer-l);
+  }
+  .ledger-panel .ledger-now { align-self: flex-start; }
+  .ledger-panel .ledger-list { max-height: none; min-height: 0; }
+  /* Six filters want 326px; a 300px drawer at 1280 has 268. There they take a
+     second line rather than being pressed into each other (the query below). */
+  .ledger-panel { container: register / inline-size; }
+  /* Of the register's seventy rows a drawer shows a dozen. The others are not
+     laid out or painted until they scroll into view, so the workspace's first
+     layout at the key is not seventy rows long. */
+  .ledger-panel .ledger-item { content-visibility: auto; contain-intrinsic-size: auto var(--ledger-row-guess); }
+  .governance-panel {
+    grid-column: 3;
+    grid-row: 1;
+    align-self: stretch;
+    border-left: 1px solid var(--drawer-edge);
+    box-shadow: var(--shadow-drawer-r);
+  }
+  /* Module status is the side drawer's lower half and scrolls inside it when
+     the screen is short. */
+  .modules-panel {
+    grid-column: 3;
+    grid-row: 2;
+    align-self: stretch;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border-left: 1px solid var(--drawer-edge);
+    border-top: 1px solid var(--line);
+    box-shadow: var(--shadow-drawer-r);
+  }
+  :root[data-register="closed"] .ledger-panel {
+    transform: translateX(-100%);
+    visibility: hidden;
+    transition: transform var(--dur-drawer) var(--ease), visibility 0s linear var(--dur-drawer);
+  }
+  :root[data-side="closed"] .governance-panel,
+  :root[data-side="closed"] .modules-panel {
+    transform: translateX(100%);
+    visibility: hidden;
+    transition: transform var(--dur-drawer) var(--ease), visibility 0s linear var(--dur-drawer);
+  }
+
+  /* The key that closes a drawer sits at the end of its heading. */
+  .drawer-close {
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+    width: var(--hit);
+    height: var(--hit);
+    padding: 0;
+    margin-left: var(--s2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--ink-3);
+  }
+  .drawer-close:hover { background: var(--surface-hi); color: var(--ink); border-color: var(--line-strong); }
+  /* A drawer is narrower than the panel was, and its titles wrapped beside their
+     tags («Ce se întâmplă / acum»). The title now takes the heading's whole
+     width, the tag sits under it as its meta line, and the heading's one key
+     (close, or re-read the approvals) stands at the top right, level with the
+     eyebrow, which is short enough to leave it room. */
+  .ledger-panel > .section-heading,
+  .governance-panel .section-heading {
+    position: relative;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    row-gap: var(--s2);
+    column-gap: var(--s2);
+  }
+  .ledger-panel > .section-heading > div,
+  .governance-panel .section-heading > div { flex: 1 0 100%; min-width: 0; padding-right: calc(var(--hit) + var(--s2)); }
+  .ledger-panel > .section-heading > .tag,
+  .governance-panel .section-heading > .tag { margin: 0; }
+  .ledger-panel > .section-heading > button,
+  .governance-panel .section-heading > button { position: absolute; top: 0; right: 0; margin: 0; }
+  .governance-panel .approvals-heading > .tag + button { margin-left: 0; }
+  /* Thirteen modules in the lower half of the side drawer: rows a little
+     closer, so they are all seen at 1080 without scrolling. */
+  .modules-panel .modules li { padding: var(--s1) 0; min-height: calc(var(--hit) - var(--s1)); }
+  .modules-panel > h2 { margin-bottom: var(--s2); }
+
+  /* THE RAIL: a closed drawer. One key the full height of the frame, with the
+     drawer's name set up the edge and its count under it. */
+  .drawer-rail {
+    position: relative;
+    z-index: 4;
+    grid-row: 1 / -1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--s4);
+    width: var(--drawer-rail);
+    height: 100%;
+    margin: 0;
+    padding: var(--s4) 0;
+    border: 0;
+    border-radius: 0;
+    background: var(--drawer-glass);
+    backdrop-filter: blur(var(--drawer-blur));
+    color: var(--ink-2);
+    font-size: var(--fs-micro);
+    font-weight: var(--w-bold);
+    letter-spacing: var(--track-caps);
+    text-transform: uppercase;
+  }
+  .drawer-rail:hover { background: var(--drawer-glass-hi); color: var(--ink); }
+  .drawer-rail:focus-visible { outline: 2px solid var(--teal); outline-offset: -3px; border-radius: 0; }
+  .drawer-rail-register { grid-column: 1; justify-self: start; border-right: 1px solid var(--drawer-edge); box-shadow: var(--shadow-drawer-l); }
+  .drawer-rail-side { grid-column: 3; justify-self: end; border-left: 1px solid var(--drawer-edge); box-shadow: var(--shadow-drawer-r); }
+  .drawer-rail .ui-icon { color: var(--ink-3); }
+  .drawer-rail:hover .ui-icon { color: var(--ink); }
+  .drawer-rail-label,
+  .drawer-rail-count { writing-mode: vertical-rl; white-space: nowrap; }
+  .drawer-rail-register .drawer-rail-label,
+  .drawer-rail-register .drawer-rail-count { transform: rotate(180deg); }
+  .drawer-rail-count { color: var(--ink-3); font-weight: var(--w-semi); }
+  .drawer-rail-count:empty { display: none; }
+  /* Requests wait for the Owner: the closed side wears the gold the mark wears. */
+  .drawer-rail-side[data-pending="true"] { color: var(--gold-ink); border-left-color: var(--gold-line); }
+  .drawer-rail-side[data-pending="true"] .drawer-rail-count { color: var(--gold-ink); }
+  .drawer-rail-side[data-pending="true"]::before {
+    content: '';
+    width: var(--s2);
+    height: var(--s2);
+    border-radius: var(--radius-pill);
+    background: var(--gold);
+    box-shadow: 0 0 8px var(--gold-glow);
+  }
+
+  /* THE MENU. The seven rooms, in the masthead between the brand and the
+     Owner's own keys: an icon and a word each, the word a floating label on
+     a screen too narrow to set all seven. */
+  .topbar { gap: var(--s4); }
+  .topbar-crumb {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+  .topbar-rooms { display: flex; flex: 1 1 auto; justify-content: center; min-width: 0; }
+  .topbar-rooms .toolbar-modules { display: flex; align-items: center; flex-wrap: nowrap; gap: var(--room-gap); }
+  .topbar-rooms .cam-btn {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    height: var(--hit-lg);
+    padding: 0 var(--s3);
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--ink-2);
+    font-size: var(--fs-meta);
+    font-weight: var(--w-semi);
+    line-height: var(--lh-tight);
+    white-space: nowrap;
+  }
+  .topbar-rooms .cam-btn:hover { background: var(--surface-quiet); border-color: var(--line); color: var(--ink); }
+  .topbar-rooms .cam-btn:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+  .topbar-rooms .cam-btn:active { transform: translateY(1px); }
+  .topbar-rooms .cam-icon { width: var(--icon); height: var(--icon); color: var(--ink-3); transition: color var(--dur) var(--ease); }
+  .topbar-rooms .cam-btn:hover .cam-icon { color: var(--forest-ink); }
+
+  /* The footer is the frame's bottom strip. */
+  .site-footer {
+    height: var(--footer-h);
+    align-items: center;
+    padding: 0 var(--gutter);
+    border-top: 1px solid var(--line);
+    background: var(--forest-deep);
+  }
+}
+
+/* On a phone the register was 427px wide on a 390px screen (measured before this pass too):
+   its six filters would not leave one line, and a grid item will not shrink below its content
+   unless told. They wrap, and the page no longer scrolls sideways. */
+@media (max-width: 600px) {
+  .ledger-column, .ledger-panel { min-width: 0; }
+  .ledger-panel .ledger-filters { flex-wrap: wrap; justify-content: flex-start; row-gap: var(--s1); }
+}
+
+@container register (max-width: 339.98px) {
+  .ledger-panel .ledger-filters { flex-wrap: wrap; justify-content: flex-start; row-gap: var(--s1); }
+}
+
+/* Too narrow for seven words: each room is its icon, and its word is a label
+   that appears under it on the pointer and on the keyboard. */
+@media (min-width: 1051px) and (min-height: 600px) and (max-width: 1719.98px) {
+  .topbar-rooms .cam-btn { width: var(--hit-lg); padding: 0; justify-content: center; }
+  .topbar-rooms .room-label {
+    position: absolute;
+    top: calc(100% + var(--s2));
+    left: 50%;
+    z-index: 45;
+    translate: -50% 0;
+    padding: var(--s1) var(--s2);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-xs);
+    background: var(--surface-sunk);
+    color: var(--ink);
+    box-shadow: var(--shadow-raised);
+    opacity: 0;
+    pointer-events: none;
+    clip-path: inset(50%);
+    transition: opacity var(--dur-fast) var(--ease);
+  }
+  .topbar-rooms .cam-btn:is(:hover, :focus-visible) .room-label { opacity: 1; clip-path: none; }
+}
+/* On the narrowest frame the brand keeps its name and gives up its line. */
+@media (min-width: 1051px) and (min-height: 600px) and (max-width: 1279.98px) {
+  .topbar .brand-sub { display: none; }
+}
+
+/* Under reduced motion (section 7's block): the drawers open and close at once, the
+   camera stands at once (office_engine.js fitView), and no rail arrives. */
+
+/* A closed drawer does not play the arrival: it would slide in and out again. */
+:root[data-register="closed"] body.is-entering .ledger-panel,
+:root[data-side="closed"] body.is-entering .governance-panel,
+:root[data-side="closed"] body.is-entering .modules-panel { animation: none; }
+body.is-entering .drawer-rail {
+  animation: panel-arrive var(--dur-arrive) var(--ease) both;
+  animation-delay: calc(var(--arrive-first) + var(--arrive-step));
+}
+
+/* The workspace laid out for one measurement while the title is up (main.js stagedSceneBox):
+   it is shown and hidden again inside one task, and never painted. */
+#workspace.is-staged { visibility: hidden; }
+/* The two frames between an accepted key and the camera's push (main.js): the workspace is laid
+   out and not yet seen, so its first, heaviest frame is not a frame of the push. */
+body.is-arming #workspace { opacity: 0; }

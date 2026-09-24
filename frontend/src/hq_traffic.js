@@ -4,18 +4,39 @@ import { dailyRhythm, weightedChoice } from './street_schedule.js';
  * TrafficManager: vehicles that enter the street at one edge and leave at the other.
  *
  * Right-hand traffic, as in Bucharest: the lane by the headquarters flows left, the near lane
- * flows right. How many vehicles and which kinds follow the city's daily rhythm; buses stop at
- * the shelter when someone is waiting or on schedule, everyone stops for people on the
- * crosswalk, and traffic yields to a siren. Vehicles never pass through each other: a follower
- * slows to its leader and is clamped behind it if it would overlap.
+ * flows right. How many vehicles and which kinds follow the real hour and day in Bucharest and
+ * the real weather the backend reads (`trafficDensity`, `vehicleMix`); buses stop at the shelter
+ * when someone is waiting or on schedule, everyone stops for people on the crosswalk, and
+ * traffic yields to a siren. A siren only ever drives when the backend says there is an
+ * emergency (hq_events.js `eventAllowed`); today nothing does. Vehicles never pass through each
+ * other: a follower slows to its leader and is clamped behind it if it would overlap.
  */
 
 export const BUS_LIVERIES = { bus: 55, bus_amn: 25, bus_curiosity: 10, bus_nexus: 10 };
 export const EMERGENCY = { ambulance_siren: 'ambulance', police_patrol: 'police', fire_truck_siren: 'firetruck' };
 
-/** Map the schedule's vehicle weights onto the rendered catalogue. @param {any} w */
-export function vehicleMix(w) {
+/** @param {number} x */
+const clamp01 = (x) => Math.min(1, Math.max(0, x));
+
+/**
+ * How full the road is, 0..1, from the hour's rhythm and the real weather. Rain does not empty a
+ * Bucharest road: people who would have walked drive, so there are a few more cars, only slower
+ * (the `slow` factor in update). Snow and thick fog keep drivers at home.
+ * @param {{traffic:number}} rhythm dailyRhythm for the real hour and day
+ * @param {{rain?:number, snow?:number, fog?:number}} fx weatherEffects of the real weather
+ */
+export function trafficDensity(rhythm, fx) {
+  return clamp01(rhythm.traffic * (1 + (fx.rain || 0) * 0.1) * (1 - (fx.snow || 0) * 0.45) * (1 - (fx.fog || 0) * 0.2));
+}
+
+/**
+ * Map the schedule's vehicle weights onto the rendered catalogue. Two-wheelers stay home in the
+ * rain and the snow.
+ * @param {any} w @param {{rain?:number, snow?:number}} [fx]
+ */
+export function vehicleMix(w, fx = {}) {
   const g = (/** @type {string} */ k) => Number(w?.[k] || 0);
+  const dry = clamp01(1 - (fx.rain || 0) * 1.4) * clamp01(1 - (fx.snow || 0) * 1.6);
   return {
     sedan: g('sedan') + g('wagon'),
     coupe: g('coupe'),
@@ -27,9 +48,9 @@ export function vehicleMix(w) {
     delivery: g('van') * 0.45,
     truck: g('van') * 0.22,
     bus: g('bus') + g('minibus') * 0.3,
-    motorcycle: 2.5,
-    scooter: 2.5,
-    bicycle: 3,
+    motorcycle: 2.5 * dry,
+    scooter: 2.5 * dry,
+    bicycle: 3 * dry,
   };
 }
 
@@ -132,9 +153,9 @@ export class TrafficManager {
     return this.vehicles.some((v) => v.lane !== laneId && isTall(v.kind));
   }
 
-  /** Pick a kind for the hour, choosing a bus livery when a bus comes up. @param {any} rhythm */
-  pickKind(rhythm) {
-    let kind = weightedChoice(vehicleMix(rhythm.vehicles), this.rng);
+  /** Pick a kind for the hour and the weather, choosing a bus livery when a bus comes up. @param {any} rhythm @param {any} [fx] */
+  pickKind(rhythm, fx) {
+    let kind = weightedChoice(vehicleMix(rhythm.vehicles, fx), this.rng);
     if (kind === 'bus') kind = weightedChoice(BUS_LIVERIES, this.rng);
     return this.has(kind) ? kind : 'sedan';
   }
@@ -158,13 +179,13 @@ export class TrafficManager {
     this.clock += dt;
     const rhythm = dailyRhythm(context.hour, context.day);
     const fx = context.effects;
-    const density = rhythm.traffic * (1 - fx.rain * 0.2) * (1 - fx.snow * 0.45) * (1 - fx.fog * 0.2);
+    const density = trafficDensity(rhythm, fx);
     for (const lane of this.lanes) {
       const t = (this.timers.get(lane.id) ?? 0) - dt;
       if (t <= 0) {
         this.timers.set(lane.id, 2.2 + (1 - density) * 7 + this.rng() * 3);
         if (this.rng() < 0.25 + density * 0.75) {
-          const kind = this.pickKind(rhythm);
+          const kind = this.pickKind(rhythm, fx);
           this.spawn(isTall(kind) && this.tallElsewhere(lane.id) ? 'sedan' : kind, lane);
         }
       } else {

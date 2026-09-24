@@ -104,6 +104,19 @@ export class WeatherManager {
     return this.state;
   }
 
+  /**
+   * Read the weather now, and count the regular refresh from here. The street is dressed for the
+   * first reading (umbrellas, fewer walkers) before anyone sees it.
+   * @param {number} nowMs
+   */
+  first(nowMs) {
+    this._last = nowMs;
+    this._pending = true;
+    return this.refresh().finally(() => {
+      this._pending = false;
+    });
+  }
+
   /** @param {number} nowMs */
   update(nowMs) {
     if (this._pending || nowMs - this._last < this.refreshMs) return;

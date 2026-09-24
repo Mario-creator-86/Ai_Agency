@@ -1,4 +1,5 @@
 import { bubblePages, bubbleDurationMs } from './speech_bubble.js';
+import { runDoneLine } from './ledger.js';
 /**
  * Office State Manager.
  *
@@ -129,7 +130,13 @@ export class OfficeState {
     this.speechBubbles = this.speechBubbles.filter(b => b.expiresAt > now);
   }
 
-  handleDomainEvent(event) {
+  /**
+   * @param {any} event
+   * @param {boolean} [live] whether the socket delivered it as it happened. A replayed event (the
+   *   history read back on connecting, or the gap after a drop) still moves the state -- who is
+   *   working, who is paused -- but speaks no bubble: it would be told as if said just now.
+   */
+  handleDomainEvent(event, live = true) {
     const type = event.event_type;
     const payload = event.payload || {};
 
@@ -142,7 +149,10 @@ export class OfficeState {
         agent.task_type = payload.task_type || (agent.runtime_state === 'IDLE' ? '' : agent.task_type);
       }
     } else if (type === 'agent.message_sent') {
-      this.addSpeechBubble(event.aggregate_id, payload.text || payload.content || 'Working on task...');
+      // What the employee said, as the backend wrote it. A message with no text shows no
+      // bubble: the scene used to fill the gap with an English line nobody had said.
+      const said = payload.text || payload.content;
+      if (said && live) this.addSpeechBubble(event.aggregate_id, said);
     } else if (type === 'agent.paused') {
       const agent = this.agents.find(a => (a.id || a.agent_id) === event.aggregate_id);
       if (agent) {
@@ -157,8 +167,8 @@ export class OfficeState {
       const agent = this.agents.find(a => (a.id || a.agent_id) === payload.agent_id);
       if (agent) {
         agent.runtime_state = 'IDLE';
-        if (payload.status === 'SUCCEEDED') {
-          this.addSpeechBubble(agent.id, `Completed: ${payload.task_type || 'task'} ✓`, 4000);
+        if (payload.status === 'SUCCEEDED' && live) {
+          this.addSpeechBubble(agent.id, `${runDoneLine(payload)} ✓`, 4000);
         }
       }
     } else if (type.startsWith('workflow.')) {

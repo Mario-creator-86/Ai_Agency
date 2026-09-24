@@ -1,5 +1,16 @@
 # Changelog
 
+## The workspace becomes a game frame, and the serial a writers room — 2026-09-24
+
+- **The render is the hero** (`frontend/src/game_frame.js`, `drawers.js`, `office_engine.js`): full-bleed between the masthead and a footer strip; the register (left) and governance, approvals and module status (right) as glass drawers that close by transform to 40px rails with their real counts; the camera re-centres the building in the free room (420 ms glide, a jump under reduced motion); the page's zoom and pan act on the stream's video; the canvas paints nothing under a stream but keeps the hit boxes.
+- **No hitch at sign-in**: the engine is built parked and prewarmed under the title (plates decoded, vehicle tints, one GPU read-back).
+- **The scene speaks Romanian** (ledger.js labels on the canvas: «RANDARE / ÎN LUCRU», «SARCINĂ REUȘITĂ: …»); a replayed event moves the scene but no longer speaks.
+- **The street follows the real city** (`hq_events.js streetRule`, `hq_traffic.js`, `hq_pedestrians.js`): hour, weekday, Romanian holidays and weather set its density; it stops when the data is lost; the UFO, fireworks and other invented events are removed.
+- **The serial as a writers room** (`frontend/src/serial_room.js`, `serial_room.css`): slate, beat board, script page with speakers and directions, the Director's six-score rubric and computed checks, «Scenariul de mâine», what approval does next; `serial_next` on the run cards.
+- **The Media player plays on the real server**: `media-src 'self' blob:` in the CSP (`backend/app/main.py`).
+- Figures in the remaining dialogs in Romanian notation (`numbers.js`).
+- Tests: frontend 285/285 (new `game_frame`, `game_frame_css`, `hq_street`, `scene_words`, `serial_room`), tsc clean, `tests/test_foundation.py` 26 passed.
+
 ## The headquarters has a real day, and the live sky follows the real sun — 2026-09-24
 
 - **A real noon for the page's renderer** (`art-source/blender/hq/hq_day.py`, `build_hq.py --variant day`, `export_plates.py --variants day`): the city's windows off, daylight facade colours, the sun where the real one stands at 12:00, lamps and LED lines dark, a pale haze, the offices lit as by day. The nine night plates and the anchor manifest are byte-identical.

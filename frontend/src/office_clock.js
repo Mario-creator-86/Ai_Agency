@@ -7,7 +7,9 @@ export function bucharestTime(date=new Date()) {
  const parts=Object.fromEntries(formatter.formatToParts(date).map(p=>[p.type,p.value]));
  return {text:parts.hour+':'+parts.minute,
  hour:Number(parts.hour)+Number(parts.minute)/60+Number(parts.second)/3600,
- day:new Date(Date.UTC(Number(parts.year),Number(parts.month)-1,Number(parts.day))).getUTCDay()};
+ day:new Date(Date.UTC(Number(parts.year),Number(parts.month)-1,Number(parts.day))).getUTCDay(),
+ // The calendar date in Bucharest, for what depends on it (a public holiday empties the street).
+ ymd:/** @type {[number,number,number]} */ ([Number(parts.year),Number(parts.month),Number(parts.day)])};
 }
 const DIGITS=['abcedf','bc','abged','abgcd','fgbc','afgcd','afgecd','abc','abcdefg','abfgcd'];
 /** Seven-segment LED display, rasterized with whole pixels. Purely a clock, never a status badge. */

@@ -37,6 +37,7 @@ export const RUN_STAGE_WORD = {
   publish: 'publicare',
   post_run: 'raportare și închiderea zilei',
   daily_log: 'jurnalul zilei',
+  serial_next: 'scenariul de mâine',
 };
 
 /** @param {string|null|undefined} stage */

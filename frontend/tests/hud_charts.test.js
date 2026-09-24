@@ -104,6 +104,8 @@ test('a newer day replaces the older one, and a register without a run says so i
   assert.equal(none.empty, true);
   assert.equal(dayTrackWords(none).label, 'Nicio rulare a zilei în registru');
   assert.equal(runStageWord('serial_queue'), 'episodul din serial');
+  // The stage that writes tomorrow's script (runbook STAGES, since 2026-09-24).
+  assert.equal(runStageWord('serial_next'), 'scenariul de mâine');
 });
 
 // /runbook/company-state from the copy of the studio's database.

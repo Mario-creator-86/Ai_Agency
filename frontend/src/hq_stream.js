@@ -80,7 +80,13 @@ export class LiveStream {
       },
     });
     this.stream = new PixelStreaming(config, { videoElementParent: this.layer });
-    this.stream.addEventListener('playStream', () => this._setStatus('live'));
+    /** The page's camera, laid on the video (setView). @type {{k: number, tx: number, ty: number}|null} */
+    this.view = null;
+    this.stream.addEventListener('playStream', () => {
+      this._setStatus('live');
+      // the library may have made a new video element for this connection
+      this._applyView();
+    });
     this.stream.addEventListener('webRtcConnecting', () => this._setStatus('connecting'));
     this.stream.addEventListener('webRtcDisconnected', () => this._offline());
     this.stream.addEventListener('webRtcFailed', () => this._offline());
@@ -99,6 +105,29 @@ export class LiveStream {
   start() {
     this._setStatus('connecting');
     this.stream.connect();
+  }
+
+  /**
+   * THE PAGE'S CAMERA ON THE STREAMED PICTURE. Unreal's camera is fixed; the page's zoom and pan
+   * are laid on its video (and on the frozen frame) as a transform, so the visitor zooms and drags
+   * what they see, and the page's hit boxes under the video keep landing on the employee under the
+   * pointer (game_frame.js streamTransform).
+   * @param {{k: number, tx: number, ty: number}} transform in CSS pixels
+   */
+  setView(transform) {
+    this.view = transform;
+    this._applyView();
+  }
+
+  _applyView() {
+    const t = this.view;
+    if (!t) return;
+    const identity = Math.abs(t.k - 1) < 1e-4 && Math.abs(t.tx) < 0.05 && Math.abs(t.ty) < 0.05;
+    const value = identity ? '' : `translate(${t.tx.toFixed(2)}px, ${t.ty.toFixed(2)}px) scale(${t.k.toFixed(5)})`;
+    const video = /** @type {HTMLElement|null} */ (this.layer.querySelector('video'));
+    for (const el of [video, this.still]) {
+      if (el && el.style.transform !== value) el.style.transform = value;
+    }
   }
 
   /** Sends the studio's own state to the Unreal scene (its agents, their desks and activity). */

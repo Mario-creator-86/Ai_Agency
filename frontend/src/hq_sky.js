@@ -2,7 +2,11 @@ import { mixHex, skyStops } from './hq_time.js';
 
 /**
  * The sky and the weather over the headquarters: gradient, clouds, stars, sun and moon, rain,
- * snow, fog and lightning, and the sky events (aircraft, birds, balloon, fireworks, the UFO).
+ * snow, fog and lightning, and the sky events (aircraft, birds).
+ *
+ * The drawings of the balloon, the fireworks, the helicopter, the drone, the shooting star and
+ * the UFO are kept, but those events never start: hq_events.js REMOVED_EVENTS took them off
+ * the real street on 2026-09-24. Taking an id out of that set is all it takes to bring one back.
  *
  * Everything that moves is drawn from state the managers own; the only randomness is the world's
  * seeded source, used once to lay out stars and cloud shapes.

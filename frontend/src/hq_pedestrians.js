@@ -3,11 +3,50 @@ import { dailyRhythm, weightedChoice } from './street_schedule.js';
 /**
  * PedestrianManager: the people on the pavement in front of the headquarters.
  *
- * How many there are and what they do follows the city's daily rhythm and the live weather
- * (fewer and faster in rain, umbrellas up). People walk in from one edge and out at the other;
- * commuters wait at the shelter and board the bus that stops there; now and then a group crosses
- * at the zebra and the traffic waits. They are scenery: no person here stands for studio data.
+ * How many there are and what they do follows the real hour and day in Bucharest and the real
+ * weather the backend reads (`pedestrianTarget`, `umbrellaShare`, `weatherActivities`): fewer
+ * and faster in rain, umbrellas up, nobody jogging or skating on a wet pavement. People walk in
+ * from one edge and out at the other; commuters wait at the shelter and board the bus that stops
+ * there; now and then a group crosses at the zebra and the traffic waits. They are the city's
+ * ambience: no person here stands for studio data.
  */
+
+/** @param {number} x */
+const clamp01 = (x) => Math.min(1, Math.max(0, x));
+
+/**
+ * How many people are on the pavement, from the hour's rhythm and the real weather.
+ * @param {{people:number}} rhythm dailyRhythm for the real hour and day
+ * @param {{rain?:number, snow?:number, storm?:boolean}} fx weatherEffects of the real weather
+ * @param {number} [max]
+ */
+export function pedestrianTarget(rhythm, fx, max = 18) {
+  const rain = fx.rain || 0;
+  const snow = fx.snow || 0;
+  return Math.min(max, Math.round(rhythm.people * (1 - rain * 0.6) * (1 - snow * 0.4) * (fx.storm ? 0.3 : 1)));
+}
+
+/** The share of walkers under an umbrella: none when it is dry, most of them in real rain. @param {{rain?:number}} fx */
+export function umbrellaShare(fx) {
+  const rain = fx.rain || 0;
+  return rain > 0.15 ? Math.min(0.95, 0.55 + rain * 0.45) : 0;
+}
+
+/**
+ * What people are doing, weighed again for the weather: runners, skaters and cyclists stay in
+ * when it rains or snows, and fewer friends stand about.
+ * @param {Record<string, number>} activities @param {{rain?:number, snow?:number}} fx
+ */
+export function weatherActivities(activities, fx) {
+  const wet = clamp01((fx.rain || 0) * 1.4 + (fx.snow || 0) * 1.4);
+  /** @type {Record<string, number>} */
+  const out = {};
+  for (const [k, w] of Object.entries(activities)) {
+    const factor = k === 'run' || k === 'skate' || k === 'bike' ? 1 - wet : k === 'friends' || k === 'party' || k === 'cat' || k === 'smoke' ? 1 - wet * 0.7 : 1;
+    out[k] = w * factor;
+  }
+  return out;
+}
 
 const UMBRELLAS = ['#1f2937', '#b91c1c', '#1d4ed8', '#047857', '#7c3aed', '#f59e0b', '#0f766e'];
 
@@ -104,14 +143,15 @@ export class PedestrianManager {
     this.clock += dt;
     const rhythm = dailyRhythm(context.hour, context.day);
     const fx = context.effects;
-    const target = Math.min(this.maxPeople, Math.round(rhythm.people * (1 - fx.rain * 0.5) * (1 - fx.snow * 0.35) * (fx.storm ? 0.3 : 1)));
+    const target = pedestrianTarget(rhythm, fx, this.maxPeople);
     this._spawnTimer -= dt;
     if (this._spawnTimer <= 0) {
       this._spawnTimer = 1.5 + this.rng() * 3.5;
       const walking = this.people.filter((p) => p.state !== 'board').length;
       if (walking < target) {
-        const activity = weightedChoice(rhythm.activities, this.rng);
-        const umbrella = fx.rain > 0.15 && this.rng() < 0.8;
+        const activity = weightedChoice(weatherActivities(rhythm.activities, fx), this.rng);
+        const share = umbrellaShare(fx);
+        const umbrella = share > 0 && this.rng() < share;
         if (activity === 'friends') {
           const dir = this.rng() < 0.5 ? 1 : -1;
           const row = this.rows.near;

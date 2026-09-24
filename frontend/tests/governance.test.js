@@ -119,9 +119,9 @@ test('a cost the studio could not compute reads «necunoscut», and zero reads z
   assert.equal(approvalCostText(undefined), 'necunoscut');
   assert.equal(approvalCostText('1.0'), 'necunoscut');
   assert.equal(approvalCostText(Number.NaN), 'necunoscut');
-  assert.equal(approvalCostText(0), '0.00 USD');
-  assert.equal(approvalCostText(1.5), '1.50 USD');
-  assert.equal(approvalCostText(0.004), '0.004 USD');
+  assert.equal(approvalCostText(0), '0,00 USD');
+  assert.equal(approvalCostText(1.5), '1,50 USD');
+  assert.equal(approvalCostText(0.004), '0,004 USD');
 });
 
 test('the expiry is read as time left, and an aged request says it expired', () => {

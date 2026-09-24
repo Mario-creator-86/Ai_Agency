@@ -11,11 +11,16 @@ import {
 import { firstStop, runClassName, runHeadline, stageClassName, stageProducedWord } from './day_outcome.js';
 import { attachRail } from './dialog_rail.js';
 import './style.css';
+import './serial_room.css';
+import { approvalMessage, daysClosedNote, episodeHtml, serialBoardHtml, serialStageNotes } from './serial_room.js';
 import { initSettings } from './settings.js';
 import { acceptSnapshot } from './projection.js';
-import { OfficeEngine } from './office_engine.js';
+import { OfficeEngine, BUILDING, WORLD_W, WORLD_H } from './office_engine.js';
+import { streamTransform } from './game_frame.js';
+import { Drawers } from './drawers.js';
 import { OfficeState } from './office_state.js';
-import { Ledger, entryCountLabel, productionStatus } from './ledger.js';
+import { Ledger, entryCountLabel, productionStatus, taskLabel } from './ledger.js';
+import { streetMoves } from './hq_events.js';
 import { budgetRing, budgetRingSvg, channelFilmsHtml, dayTrack, dayTrackFromRun, dayTrackGeometry, dayTrackWords, newerTrack, pipelineSvg } from './hud_charts.js';
 import { Moments } from './moments.js';
 import { filmPoster } from './film_poster.js';
@@ -26,7 +31,7 @@ import { LiveStream } from './hq_stream.js';
 import { liveStreamSettings, relayUrl } from './hq_stream_config.js';
 import { EventsLink, connectionLabel, roomCaption, sceneReadout } from './live_claims.js';
 import { TitleScreen } from './title_screen.js';
-import { entryPlays } from './title_frame.js';
+import { ENTRY, entryPlays } from './title_frame.js';
 import { KeyLight } from './key_light.js';
 import {
   APPROVALS_PATH,
@@ -113,7 +118,7 @@ const eventsLink = new EventsLink({
   // the register has already read past it.
   afterSequence: () => Math.max(state ? Number(state.cursor) || 0 : 0, ledger.cursor || 0),
   onEvent: (eventData, live) => {
-    officeState.handleDomainEvent(eventData);
+    officeState.handleDomainEvent(eventData, live);
     updateOfficeCanvas();
     ledger.add(eventData);
     element('ledger-count').textContent = entryCountLabel(ledger.events.size);
@@ -159,6 +164,8 @@ const keyLight = new KeyLight({
 });
 const officeState = new OfficeState();
 let officeEngine = null;
+/** Whether the camera keys, fullscreen and the stream have been wired (once per page). */
+let officeWired = false;
 /** @type {LiveStream|null} the Unreal headquarters over the renderer, when scene.json turns it on */
 let liveStream = null;
 let currentSelectedAgent = null;
@@ -401,6 +408,7 @@ const ownerMark = /** @type {HTMLButtonElement} */ (element('owner-mark'));
 function renderOwnerMark(pending) {
   ownerMark.hidden = !(pending > 0);
   element('owner-mark-text').textContent = pending > 0 ? waitingWords(pending) : '';
+  drawers.setPending(pending);
   ownerMark.title = pending > 0 ? 'Du-mă la cererile de aprobare' : '';
 }
 /** A request arrived as it happened: the mark glows once, for MOMENT_TIMING.mark. */
@@ -412,6 +420,8 @@ function markArrived() {
 }
 ownerMark.addEventListener('animationend', () => ownerMark.classList.remove('is-arriving'));
 ownerMark.addEventListener('click', () => {
+  // In the game frame the approvals are in the side drawer: it opens first.
+  drawers.showApprovals();
   const heading = document.querySelector('.approvals-heading');
   if (heading) heading.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'start' });
   const first = /** @type {HTMLButtonElement|null} */ (approvalsList.querySelector('.btn-approval'));
@@ -499,6 +509,9 @@ async function startLiveStream() {
   liveStream = new LiveStream(viewport, { ...settings, signallingUrl }, {
     onStatus: (status) => {
       viewport.dataset.stream = status;
+      // Once a stream is configured its layer covers the canvas in every state -- the video, the
+      // frozen frame or the "starting" plate -- so the canvas keeps only its hit boxes.
+      if (officeEngine) officeEngine.setCovered(true);
       liveSignals.stream = status;
       liveSignals.hasStill = Boolean(liveStream && liveStream.hasStill);
       renderLiveSignals();
@@ -509,48 +522,125 @@ async function startLiveStream() {
       renderLiveSignals();
     },
   });
+  if (officeEngine) {
+    const view = officeEngine.view();
+    const t = streamTransform(view);
+    liveStream.setView({ k: t.k, tx: t.tx / view.dpr, ty: t.ty / view.dpr });
+  }
   liveStream.start();
 }
 
+/**
+ * THE GAME FRAME'S DRAWERS (drawers.js): the register on the left, governance on the right, each
+ * open where the building still fits beside it. Whatever they cover, the camera is told, and it
+ * centres the building in the room they leave.
+ */
+const drawers = new Drawers({
+  onInsets: (insets, options) => {
+    if (officeEngine) officeEngine.setInsets(insets, options);
+  },
+  world: () => ({
+    worldW: officeEngine ? officeEngine.worldW : WORLD_W,
+    worldH: officeEngine ? officeEngine.worldH : WORLD_H,
+    focus: officeEngine && officeEngine.building ? officeEngine.building : BUILDING,
+  }),
+});
+
+/**
+ * The office engine, built parked while the title screen is up: its art is fetched and decoded,
+ * and one frame is composed at the size the render will have, so the key's entry into the
+ * building does not stop for the first upload of the plates (office_engine.js prewarm).
+ */
+function buildOfficeEngine() {
+  if (officeEngine) return officeEngine;
+  officeEngine = new OfficeEngine(officeCanvas, {
+    parked: true,
+    // The page may only call its own origin; the backend reads the live weather for the scene.
+    fetchWeather: () => api('/office/weather'),
+    infoElement: element('scene-info'),
+    // Reduced motion holds the street, the sky's drift and the employees' loops still.
+    reducedMotion: () => reducedMotion(),
+    // So does a page that has lost the studio's data: nothing outside lives on while the corner
+    // of the render says it is reconnecting.
+    dataLive: () => streetMoves(liveSignals),
+    // The page's own renderer: shown under its own name, and only while it is what is seen.
+    onFrameRate: (fps) => {
+      liveSignals.pageFps = fps;
+      renderLiveSignals();
+    },
+    // The streamed picture follows the page's camera, so zoom and pan act on what is seen.
+    onView: (view) => {
+      if (!liveStream) return;
+      const t = streamTransform(view);
+      liveStream.setView({ k: t.k, tx: t.tx / view.dpr, ty: t.ty / view.dpr });
+    },
+    onSelectAgent: (agent) => {
+      currentSelectedAgent = agent;
+      if (agent) {
+        showInspector(agent);
+      } else {
+        inspector.close();
+      }
+    },
+  });
+  publishSceneHandle();
+  return officeEngine;
+}
+
+/**
+ * The box the render will have once the workspace is shown, read from the real layout: the
+ * workspace is laid out for one synchronous read, unseen, and hidden again before any paint.
+ */
+function stagedSceneBox() {
+  const viewport = element('scene-viewport');
+  if (!workspace.hidden) return viewport.getBoundingClientRect();
+  workspace.classList.add('is-staged');
+  workspace.hidden = false;
+  const box = viewport.getBoundingClientRect();
+  workspace.hidden = true;
+  workspace.classList.remove('is-staged');
+  return box;
+}
+
+/** While the title is up and nothing moves: build the engine and draw its first frame, unseen. */
+async function warmOffice() {
+  const engine = buildOfficeEngine();
+  const [ok] = await Promise.all([engine.ready, engine.themeReady]);
+  if (!ok || !workspace.hidden || engine.warmed) return;
+  const box = stagedSceneBox();
+  engine.prewarm(box.width, box.height);
+  // The drawers' widths are measured now too, so the key does not wait for that layout either.
+  drawers.prime();
+}
+
+function whenIdle(/** @type {() => void} */ run) {
+  const idle = /** @type {any} */ (window).requestIdleCallback;
+  if (typeof idle === 'function') idle(run, { timeout: 1500 });
+  else window.setTimeout(run, 200);
+}
+// After the title has had its first frames, not in their way.
+window.addEventListener('load', () => whenIdle(() => { warmOffice().catch(() => {}); }), { once: true });
+
 function initOffice() {
-  if (!officeEngine) {
-    officeEngine = new OfficeEngine(officeCanvas, {
-      // The page may only call its own origin; the backend reads the live weather for the scene.
-      fetchWeather: () => api('/office/weather'),
-      infoElement: element('scene-info'),
-      // Reduced motion holds the street, the sky's drift and the employees' loops still.
-      reducedMotion: () => reducedMotion(),
-      // The page's own renderer: shown under its own name, and only while it is what is seen.
-      onFrameRate: (fps) => {
-        liveSignals.pageFps = fps;
-        renderLiveSignals();
-      },
-      onSelectAgent: (agent) => {
-        currentSelectedAgent = agent;
-        if (agent) {
-          showInspector(agent);
-        } else {
-          inspector.close();
-        }
-      },
-    });
-    publishSceneHandle();
+  buildOfficeEngine();
+  officeEngine.unpark();
+  if (!officeWired) {
+    officeWired = true;
     startLiveStream();
 
-    // Wire camera zoom buttons
+    // The camera keys zoom about the middle of the room the drawers leave; «Încadrează» stands
+    // the camera where the frame puts it, with the building whole.
     element('zoom-in').addEventListener('click', () => {
-      officeEngine.viewport.setZoom(officeEngine.viewport.zoom * 1.25);
+      officeEngine.zoomBy(1.25);
     });
     element('zoom-out').addEventListener('click', () => {
-      officeEngine.viewport.setZoom(officeEngine.viewport.zoom * 0.8);
+      officeEngine.zoomBy(0.8);
     });
     element('zoom-fit').addEventListener('click', () => {
-      if (officeState.layout) {
-        officeEngine.viewport.fitToOffice(officeState.layout.width, officeState.layout.height);
-      }
+      officeEngine.fitView({ glide: true });
     });
     element('zoom-reset').addEventListener('click', () => {
-      officeEngine.viewport.setZoom(1.0);
+      officeEngine.zoomTo(1.0);
     });
 
     // Wire Fullscreen & Exit Fullscreen buttons
@@ -590,13 +680,16 @@ function initOffice() {
 
     if (fsBtn && officeContainer) {
       fsBtn.addEventListener('click', async () => {
+        // In the game frame the whole frame goes full screen -- the render with its drawers, its
+        // dock and the studio's menu -- the way a game does; on a narrow page, the render alone.
+        const target = drawers.isFramed() ? /** @type {any} */ (document.documentElement) : container;
         try {
-          if (container.requestFullscreen) {
-            await container.requestFullscreen();
-          } else if (container.webkitRequestFullscreen) {
-            await container.webkitRequestFullscreen();
-          } else if (container.msRequestFullscreen) {
-            await container.msRequestFullscreen();
+          if (target.requestFullscreen) {
+            await target.requestFullscreen();
+          } else if (target.webkitRequestFullscreen) {
+            await target.webkitRequestFullscreen();
+          } else if (target.msRequestFullscreen) {
+            await target.msRequestFullscreen();
           } else {
             officeContainer.classList.add('is-fullscreen');
             updateFullscreenUI();
@@ -763,24 +856,6 @@ const TIMELINE_LABEL = {
   STRATEGY: 'Strategie',
 };
 
-/** Task types as the Owner would name them. Unknown types read as their own words. */
-const TASK_LABEL = {
-  propose_topics: 'idei de subiect',
-  gather_sources: 'căutarea surselor',
-  extract_claims: 'extragerea afirmațiilor',
-  verify_claim: 'verificarea faptelor',
-  choose_topic: 'alegerea subiectului',
-  write_script: 'scenariu',
-  write_episode: 'episodul serialului',
-  review_narration: 'revizuirea narațiunii',
-  review_failed_render: 'diagnoza randării',
-  prepare_publication: 'pregătirea publicării',
-  director_review: 'revizuirea Directorului',
-  reconcile_day: 'închiderea zilei',
-  direct_task: 'sarcină directă',
-  TEST_CONNECTIVITY: 'test de conexiune',
-};
-
 /** What a run without an answer means, in words. */
 const RUN_STATUS = {
   EMPTY_OUTPUT: 'Modelul nu a returnat text utilizabil.',
@@ -793,10 +868,6 @@ const RUN_STATUS = {
   BLOCKED_BUDGET: 'Blocat: s-a atins plafonul de tokeni al zilei pentru angajați.',
   FAILED: 'Eșuat.',
 };
-
-function taskLabel(type) {
-  return TASK_LABEL[type] || String(type || '').replace(/_/g, ' ');
-}
 
 /**
  * A count and the noun after it, as a Romanian speaker says them.
@@ -2184,7 +2255,7 @@ function storyReviewBlock(review) {
     <div class="story-review ${state}">
       <div class="story-review-head">
         <strong>${escapeHtml(review.verdict)}</strong>
-        <span>${Number(review.estimated_seconds || 0).toFixed(1)}s de narațiune</span>
+        <span>${amount(Number(review.estimated_seconds || 0).toFixed(1))}s de narațiune</span>
       </div>
       ${failed.length ? `<div class="story-review-failed">Nu trece: ${failed.map(escapeHtml).join(', ')}</div>` : ''}
       ${curve ? `<div class="story-review-curve">Retenție estimată — ${escapeHtml(curve)}</div>` : ''}
@@ -2255,7 +2326,7 @@ function productionPackageBlock(pack) {
       ${line('Răsplata', why.payoff)}
       ${line('Îndemn', `${(pack.cta || {}).text || ''} (${(pack.cta || {}).kind || '—'})`)}
       ${line('Analiza poveștii', (pack.approval || {}).story_review)}
-      ${line('Durată estimată', `${Number(pack.expected_duration_seconds || 0).toFixed(1)}s`)}
+      ${line('Durată estimată', `${amount(Number(pack.expected_duration_seconds || 0).toFixed(1))}s`)}
       ${line('Privirea filmului', [bible.style, bible.palette, bible.lighting].filter(Boolean).join(' · '))}
       ${
         shots.length
@@ -2285,7 +2356,7 @@ function motionExplanation(motion, scenes, notes) {
     ? `<div class="motion-head"><span class="${test ? 'env-banner is-test' : 'env-banner is-production'}">${
         test ? 'TEST' : 'PRODUCTION'
       }</span> <span>${motion.clips || 0} din ${motion.scenes || 0} scene filmate · ${
-        motion.estimated_usd != null ? `${Number(motion.estimated_usd).toFixed(2)} USD` : 'cost nemăsurat'
+        motion.estimated_usd != null ? `${amount(Number(motion.estimated_usd).toFixed(2))} USD` : 'cost nemăsurat'
       }${motion.from_prompt ? ' · din text, fără cadru plătit' : ''}</span></div>`
     : '';
   const rows = (scenes || [])
@@ -2293,9 +2364,9 @@ function motionExplanation(motion, scenes, notes) {
       const decision = scene.decision || {};
       const price =
         scene.quoted_usd != null
-          ? `${Number(scene.quoted_usd).toFixed(2)} USD (cotat de vendor)`
+          ? `${amount(Number(scene.quoted_usd).toFixed(2))} USD (cotat de vendor)`
           : decision.price_usd != null
-            ? `${Number(decision.price_usd).toFixed(2)} USD (preț înregistrat)`
+            ? `${amount(Number(decision.price_usd).toFixed(2))} USD (preț înregistrat)`
             : 'preț necunoscut';
       const outcome = scene.refused
         ? `<span class="text-error">nefilmată: ${escapeHtml(String(scene.refused))}</span>`
@@ -2649,7 +2720,7 @@ if (budgetForm) {
           limit_usd: /** @type {HTMLInputElement} */ (element('budget-limit')).value.trim(),
         }),
       });
-      status.textContent = result.active === false ? 'Bugetul a fost retras.' : `Buget ${result.period === 'DAILY' ? 'zilnic' : 'lunar'} de ${result.limit_usd} USD setat.`;
+      status.textContent = result.active === false ? 'Bugetul a fost retras.' : `Buget ${result.period === 'DAILY' ? 'zilnic' : 'lunar'} de ${amount(result.limit_usd)} USD setat.`;
       await loadBudget();
     } catch (error) {
       status.className = 'dialog-status-msg text-error';
@@ -3033,14 +3104,30 @@ element('login-form').addEventListener('submit', async (event) => {
       arrival.tabIndex = -1;
       arrival.focus({ preventScroll: true });
     }
+    // The frame's drawers and the menu are laid out before anything arrives, so the entry plays
+    // into the frame as it will stay.
+    if (drawers.started) drawers.layout({ glide: false });
+    else drawers.start();
     if (plays) {
-      titleScreen.enter().then((finished) => { if (finished && ownerToken) login.hidden = true; });
+      // THE FIRST FRAME OF THE WORKSPACE IS HEAVY: its whole style and layout, about 55ms at 1920.
+      // It is spent here, under a title that is still standing and a workspace that is not yet
+      // seen, and the camera starts its push on the frame after it, so the push itself has no
+      // dropped frame at its start.
+      document.body.classList.add('is-arming');
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        document.body.classList.remove('is-arming');
+        if (!ownerToken) return;
+        titleScreen.enter().then((finished) => { if (finished && ownerToken) login.hidden = true; });
+      }));
     } else {
       login.hidden = true;
       titleScreen.hide();
     }
     initOffice();
-    keyLight.start();
+    // The key light's first reading copies a frame back from the GPU (18ms measured at the key);
+    // it waits until the building has been entered, and then reads the frame the visitor sees.
+    if (plays) window.setTimeout(() => { if (ownerToken) keyLight.start(); }, ENTRY.totalMs + 80);
+    else keyLight.start();
     loadDayRecord();
     await loadOfficeLayout();
     connectWebSocket();
@@ -3067,6 +3154,8 @@ element('logout').addEventListener('click', () => {
   eventsLink.stop();
   liveSignals.data = 'fresh';
   keyLight.stop();
+  if (officeEngine) officeEngine.park();
+  document.body.classList.remove('is-arming');
   workspace.hidden = true;
   login.hidden = false;
   titleScreen.show();
@@ -3808,16 +3897,16 @@ function microsToAmount(micros) {
  */
 function updateFundingPreview() {
   const box = element('funding-preview');
-  const amount = /** @type {HTMLInputElement} */ (element('funding-amount')).value.trim();
+  const typed = /** @type {HTMLInputElement} */ (element('funding-amount')).value.trim();
   const currency = /** @type {HTMLInputElement} */ (element('funding-currency')).value
     .trim()
     .toUpperCase();
-  if (!AMOUNT_PATTERN.test(amount)) {
+  if (!AMOUNT_PATTERN.test(typed)) {
     box.textContent = 'Scrie suma ca să vezi câți VR$ intră în registru.';
     return;
   }
   if (currency === 'USD') {
-    box.textContent = `${amount} USD verificați → ${amount} VR$ în registru (1 USD = 1 VR$).`;
+    box.textContent = `${amount(typed)} USD verificați → ${amount(typed)} VR$ în registru (1 USD = 1 VR$).`;
     return;
   }
   if (currency.length !== 3) {
@@ -3829,8 +3918,8 @@ function updateFundingPreview() {
     box.textContent = `Scrie cursul ${currency} → USD ca să vezi câți VR$ rezultă.`;
     return;
   }
-  const vr = (amountToMicros(amount) * amountToMicros(rate) + MICROS / 2n) / MICROS;
-  box.textContent = `${amount} ${currency} × ${rate} → ${microsToAmount(vr)} VR$ în registru.`;
+  const vr = (amountToMicros(typed) * amountToMicros(rate) + MICROS / 2n) / MICROS;
+  box.textContent = `${amount(typed)} ${currency} × ${amount(rate)} → ${amount(microsToAmount(vr))} VR$ în registru.`;
 }
 
 function fundingStatus(message, isError) {
@@ -3880,13 +3969,13 @@ async function loadFundingHistory() {
       title.textContent = isLoan ? 'Împrumut de la Proprietar' : 'Aport de capital';
       const value = document.createElement('span');
       value.className = 'topic-card-novelty';
-      value.textContent = `${item.vr} VR$`;
+      value.textContent = `${amount(item.vr)} VR$`;
       head.append(title, value);
       const meta = document.createElement('div');
       meta.className = 'topic-card-meta';
-      const parts = [`${item.amount} ${item.currency}`];
+      const parts = [`${amount(item.amount)} ${item.currency}`];
       if (isLoan) {
-        parts.push(`${(item.annual_rate_bps / 100).toFixed(2)}% pe an`);
+        parts.push(`${amount((item.annual_rate_bps / 100).toFixed(2))}% pe an`);
         parts.push(`scadență ${item.maturity_date}`);
       } else {
         parts.push('fără dobândă, nu se restituie');
@@ -4080,52 +4169,27 @@ async function loadStoryLogs() {
   }
 }
 
+/**
+ * The episodes as script pages, newest open, with the serial's memory above them
+ * (serial_room.js). A title map lets a rewrite and a judged plan name the episode they point
+ * at instead of printing its id.
+ */
 async function loadEpisodes() {
   const listEl = element('story-episodes');
+  const boardEl = element('story-serial-board');
   try {
-    const data = await api('/story/episodes');
+    const [data, continuity] = await Promise.all([
+      api('/story/episodes'),
+      api('/story/continuity').catch(() => null),
+    ]);
+    boardEl.innerHTML = serialBoardHtml(continuity);
     const episodes = data.episodes || [];
     if (!episodes.length) {
       listEl.innerHTML = '<div class="topics-loading">Niciun episod încă.</div>';
       return;
     }
-    listEl.innerHTML = episodes
-      .map(
-        (episode) => `
-        <div class="topic-card story-episode wf-${escapeHtml(String(episode.status).toLowerCase())}" data-id="${escapeHtml(episode.id)}">
-          <div class="topic-card-header">
-            <strong class="topic-card-title">${escapeHtml(episode.title)}</strong>
-            <span class="topic-card-novelty">${escapeHtml(episode.status)}</span>
-          </div>
-          <div class="topic-card-meta">
-            <span>${countLabel((episode.beats || []).length, 'beat', 'beat-uri')}</span>
-            · <span>${countLabel((episode.grounded_event_ids || []).length, 'eveniment real citat', 'evenimente reale citate')}</span>
-          </div>
-          <div class="story-beats">
-            ${(episode.beats || [])
-              .map(
-                (beat) => `
-              <div class="scene-row">
-                <div class="scene-narration"><strong>${escapeHtml(beat.scene || '')}</strong> — ${escapeHtml(beat.dialogue || '')}</div>
-                <div class="scene-meta">Beat ${beat.beat_number} · ${countLabel((beat.event_ids || []).length, 'eveniment citat', 'evenimente citate')}${(beat.characters || []).length ? ` · ${escapeHtml((beat.characters || []).join(', '))}` : ''}</div>
-              </div>`,
-              )
-              .join('')}
-          </div>
-          ${episode.notes ? `<div class="claim-notes">${escapeHtml(episode.notes)}</div>` : ''}
-          <div class="source-actions">
-            <button class="quiet btn-check-grounding" data-id="${escapeHtml(episode.id)}">Verifică ancorarea</button>
-            ${
-              episode.status === 'DRAFT'
-                ? `<input class="wf-notes" placeholder="Motiv (obligatoriu la respingere)" maxlength="2000" />
-                   <button class="secondary btn-decide-episode" data-id="${escapeHtml(episode.id)}" data-approve="true">Aprobă</button>
-                   <button class="quiet btn-decide-episode" data-id="${escapeHtml(episode.id)}" data-approve="false">Respinge</button>`
-                : ''
-            }
-          </div>
-        </div>`,
-      )
-      .join('');
+    const titles = new Map(episodes.map((episode) => [String(episode.id), String(episode.title || '')]));
+    listEl.innerHTML = episodes.map((episode, index) => episodeHtml(episode, { open: index === 0, titles })).join('');
     listEl.querySelectorAll('.btn-check-grounding').forEach((btn) => {
       btn.addEventListener('click', () => checkGrounding(btn));
     });
@@ -4136,6 +4200,27 @@ async function loadEpisodes() {
     listEl.innerHTML = `<div class="text-error">${escapeHtml(err.message)}</div>`;
   }
 }
+
+// A card on the beat board goes to its beat on the script page, inside the dialog: the anchor
+// would leave a fragment in the address bar, and a scripted glide ignores the CSS that zeroes
+// motion, so the preference is read here as the section rail reads it.
+element('story-episodes').addEventListener('click', (event) => {
+  const link = /** @type {HTMLElement} */ (event.target).closest('a.beat-card');
+  if (!link) return;
+  const target = document.getElementById(String(link.getAttribute('href') || '').slice(1));
+  if (!target) return;
+  event.preventDefault();
+  const still = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // Only the dialog's body scrolls. `scrollIntoView` also scrolls every ancestor that can be
+  // scrolled by script, the dialog itself included: a late beat that cannot come to the top of
+  // the body pushed the dialog's own header off and left a blank band under the body.
+  const scroller = target.closest('.dialog-body');
+  if (scroller) {
+    const top = target.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+    scroller.scrollTo({ top: Math.max(0, top - 16), behavior: still ? 'auto' : 'smooth' });
+  }
+  target.focus({ preventScroll: true });
+});
 
 async function writeEpisode(button) {
   const logId = button.getAttribute('data-log-id');
@@ -4179,7 +4264,7 @@ async function checkGrounding(button) {
 async function decideEpisode(button) {
   const id = button.getAttribute('data-id');
   const approve = button.getAttribute('data-approve') === 'true';
-  const card = button.closest('.story-episode');
+  const card = button.closest('.script-episode');
   const notes = /** @type {HTMLInputElement | null} */ (card?.querySelector('.wf-notes'));
   const reason = notes ? notes.value.trim() : '';
   if (!approve && !reason) {
@@ -4187,7 +4272,7 @@ async function decideEpisode(button) {
     return;
   }
   try {
-    await api(`/story/episodes/${id}/decide`, {
+    const decided = await api(`/story/episodes/${id}/decide`, {
       method: 'POST',
       body: JSON.stringify({
         command_id: crypto.randomUUID(),
@@ -4195,8 +4280,21 @@ async function decideEpisode(button) {
         notes: reason,
       }),
     });
-    storyStatus(approve ? 'Episod aprobat.' : 'Episod respins; motivul a fost înregistrat.', false);
+    // His approval builds the storyboard at once (rows, no vendor); the answer says whether it
+    // did, and what the next run will do with it (serial_room.js approvalMessage).
+    const said = approve ? approvalMessage(decided) : { text: 'Episod respins; motivul a fost înregistrat.', error: false };
+    storyStatus(said.text, said.error);
     await loadEpisodes();
+    // The status line sits at the dialog's top, a screen above the button he pressed: the same
+    // sentence is also written under the episode's own actions, where his eyes are.
+    const actions = document.querySelector(`#ep-${CSS.escape(String(id))} .episode-actions`);
+    if (actions) {
+      const note = document.createElement('p');
+      note.className = `decide-result${said.error ? ' is-error' : ''}`;
+      note.setAttribute('role', 'status');
+      note.textContent = said.text;
+      actions.append(note);
+    }
   } catch (err) {
     storyStatus(err.message, true);
   }
@@ -4255,6 +4353,7 @@ const RUNBOOK_STAGE_LABELS = {
   post_run: 'Raportare și închiderea zilei',
   daily_log: 'Jurnalul zilei',
   serial_queue: 'Episodul din serial',
+  serial_next: 'Scenariul de mâine',
 };
 
 function runbookStatus(message, isError) {
@@ -4338,6 +4437,14 @@ async function loadSafeMode() {
   }
 }
 
+/** The serial's facts and the days closed before the run, under a stage's own reason. */
+function stageNotesHtml(stage) {
+  const notes = [daysClosedNote(stage), ...serialStageNotes(stage)].filter(Boolean);
+  return notes.length
+    ? `<span class="runbook-stage-notes">${notes.map((note) => `<span class="runbook-stage-note">${escapeHtml(note)}</span>`).join('')}</span>`
+    : '';
+}
+
 function renderRunCard(run) {
   const stages = run.stages || [];
   // What the day made, not only how far it got: the backend's sentence under the header and,
@@ -4363,7 +4470,7 @@ function renderRunCard(run) {
           <div class="${escapeHtml(stageClassName(stage))}">
             <span class="runbook-stage-name">${escapeHtml(stageLabel(stage.stage))}</span>
             <span class="runbook-stage-status">${escapeHtml(stage.status)}${stageProducedWord(stage) ? `<span class="runbook-stage-produced">${escapeHtml(stageProducedWord(stage))}</span>` : ''}</span>
-            <span class="runbook-stage-reason">${escapeHtml(stage.reason || '')}</span>
+            <span class="runbook-stage-reason">${escapeHtml(stage.reason || '')}${stageNotesHtml(stage)}</span>
           </div>`,
           )
           .join('')}

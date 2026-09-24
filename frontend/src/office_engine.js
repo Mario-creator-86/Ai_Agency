@@ -1,6 +1,7 @@
 import { HQAssets } from './hq_assets.js';
 import { WorldSimulationManager, HQRenderer } from './hq_world.js';
 import { scenePalette } from './hq_palette.js';
+import { NO_INSETS, between, easeOut, frameFit } from './game_frame.js';
 
 /**
  * AMN-AI headquarters — the living office.
@@ -36,6 +37,33 @@ export class Viewport {
     this.minZoom = 0.1;
     this.bottomInset = 0;
     this.maxZoom = 4;
+    /** What the frame's drawers cover, in canvas px (game_frame.js). @type {import('./game_frame.js').Insets} */
+    this.insets = NO_INSETS;
+    /** The part of the world the camera keeps whole and centred: the building. @type {import('./game_frame.js').Rect|null} */
+    this.focus = null;
+  }
+
+  /**
+   * The camera of the game frame: the world covers the viewport and the focus is centred in the
+   * room the drawers leave (game_frame.js frameFit).
+   * @param {number} worldWidth @param {number} worldHeight
+   * @returns {{zoom: number, panX: number, panY: number}}
+   */
+  frameStand(worldWidth, worldHeight) {
+    const cw = this.canvas.width || 1;
+    const ch = Math.max(1, (this.canvas.height || 1) - this.bottomInset);
+    const stand = frameFit({ cw, ch, worldW: worldWidth, worldH: worldHeight, focus: this.focus, insets: this.insets });
+    stand.zoom = clamp(stand.zoom, this.minZoom, this.maxZoom);
+    return stand;
+  }
+
+  /** The frame's camera once the building is known; before it, the whole-world fit. @param {number} worldWidth @param {number} worldHeight */
+  fitFrame(worldWidth, worldHeight) {
+    if (!this.focus) {
+      this.fitToOffice(worldWidth, worldHeight);
+      return;
+    }
+    Object.assign(this, this.frameStand(worldWidth, worldHeight));
   }
 
   /** @param {number} next @param {number} [anchorX] @param {number} [anchorY] */
@@ -73,6 +101,8 @@ export class Viewport {
 
 export const WORLD_W = 1600;
 export const WORLD_H = 840;
+/** The building in the world, from the Blender camera: what the frame's camera keeps whole. */
+export const BUILDING = Object.freeze({ x: 415, y: 10, width: 937, height: 665 });
 
 /** Where a floor's cab top and walk line sit when no manifest has been loaded (tests, early frames). */
 const LEGACY_CAB_OFFSET = 66;
@@ -93,12 +123,15 @@ const SCENE_NOTES = {
   error: 'Grafica sediului nu a putut fi încărcată.',
 };
 
+/** How long the camera takes to re-centre when a drawer opens or closes. */
+const GLIDE_MS = 420;
+
 const WEATHER_ICONS = { clear: '☀', partly_cloudy: '⛅', cloudy: '☁', fog: '🌫', drizzle: '🌦', rain: '🌧', snow: '❄', storm: '⛈', unknown: '' };
 
 export class OfficeEngine {
   /**
    * @param {HTMLCanvasElement} canvas
-   * @param {{onSelectAgent?: (agent:any) => void, fetchWeather?: () => Promise<any>, infoElement?: HTMLElement|null, onFrameRate?: (fps: number) => void, seed?: number, reducedMotion?: () => boolean}} [options]
+   * @param {{onSelectAgent?: (agent:any) => void, fetchWeather?: () => Promise<any>, infoElement?: HTMLElement|null, onFrameRate?: (fps: number) => void, seed?: number, reducedMotion?: () => boolean, dataLive?: () => boolean, parked?: boolean, onView?: (view: any) => void}} [options]
    */
   constructor(canvas, options = {}) {
     this.canvas = canvas;
@@ -111,6 +144,9 @@ export class OfficeEngine {
     this.onFrameRate = typeof options.onFrameRate === 'function' ? options.onFrameRate : null;
     // Asked on every frame, so a visitor who turns reduced motion on mid-visit is obeyed at once.
     this.reducedMotion = typeof options.reducedMotion === 'function' ? options.reducedMotion : () => false;
+    // Whether the page still has the studio's data; asked on every frame like reduced motion.
+    // Without it the street and the employees' loops hold their frame (hq_events.js streetMoves).
+    this.dataLive = typeof options.dataLive === 'function' ? options.dataLive : () => true;
 
     /** @type {any} */
     this.layout = null;
@@ -146,6 +182,31 @@ export class OfficeEngine {
     this.liftStops = null;
 
     this.viewport = new Viewport(canvas);
+    /**
+     * PARKED: built, its art loaded and one frame drawn, but not running. The page builds the
+     * engine while the title screen is up, so the plates are composed and on the GPU before the
+     * key is given, and the entry into the building does not wait for them (prewarm).
+     */
+    this.parked = options.parked === true;
+    /**
+     * HITS ONLY: while the Unreal stream (or its frozen frame, or its "starting" plate) lies over
+     * the canvas, nothing the canvas paints can be seen. It then keeps only the employees' hit
+     * boxes, so a click on the video still finds who sits there, and paints nothing.
+     */
+    this.hitsOnly = false;
+    /** Told whenever the camera or the box changes: the stream follows it (game_frame.js). */
+    this.onView = typeof options.onView === 'function' ? options.onView : null;
+    this._viewKey = '';
+    /** A camera move under way: from, to, start, duration. @type {any} */
+    this.glide = null;
+    /** The drawers' cover in CSS px, kept so a resize can restate it in canvas px. @type {any} */
+    this._cssInsets = null;
+    /** A prewarm asked for before the art arrived. @type {{width:number, height:number}|null} */
+    this._warmWanted = null;
+    this.warmed = false;
+    this._looping = false;
+    /** @type {ResizeObserver|null} */
+    this._sizeWatch = null;
     this.animTime = 0;
     this.lastFrame = typeof performance !== 'undefined' ? performance.now() : 0;
     this.running = true;
@@ -163,11 +224,17 @@ export class OfficeEngine {
     /** @type {'loading'|'error'|null|undefined} */
     this._noteKind = undefined;
 
+    /** Settles once the scene's stylesheet has loaded (or could not be). @type {Promise<void>} */
+    this.themeReady = Promise.resolve();
     if (typeof document !== 'undefined' && !document.getElementById('office-scene-theme')) {
       const theme = document.createElement('link');
       theme.id = 'office-scene-theme';
       theme.rel = 'stylesheet';
       theme.href = new URL('./office_scene.css?no-inline', import.meta.url).href;
+      this.themeReady = new Promise((settle) => {
+        theme.addEventListener('load', () => settle(), { once: true });
+        theme.addEventListener('error', () => settle(), { once: true });
+      });
       theme.addEventListener('load', () => this.resize());
       document.head.append(theme);
     }
@@ -175,18 +242,205 @@ export class OfficeEngine {
     this._bindInput();
     this.resize();
     this._loop = this._loop.bind(this);
-    requestAnimationFrame(this._loop);
-    this.assets.load().then((ok) => {
-      if (!this.running) return;
+    if (!this.parked) this._startLoop();
+    // The box the canvas fills changes with the window, the fullscreen and the frame; the canvas
+    // follows it so it is never stretched.
+    if (typeof ResizeObserver === 'function' && canvas.parentElement) {
+      let last = '';
+      this._sizeWatch = new ResizeObserver((entries) => {
+        const box = entries[0] && entries[0].contentRect;
+        const key = box ? `${Math.round(box.width)}x${Math.round(box.height)}` : '';
+        if (!key || key === last || !box.width) return;
+        last = key;
+        if (!this.parked) this.resize();
+      });
+      this._sizeWatch.observe(canvas.parentElement);
+    }
+    /** Settles true once the art is loaded and the world is built, false when it could not be. @type {Promise<boolean>} */
+    this.ready = this.assets.load().then((ok) => {
+      if (!this.running) return false;
       if (!ok) {
         this.assetsFailed = true;
-        return;
+        return false;
       }
       this.world = new WorldSimulationManager({ assets: this.assets, fetchWeather: this.fetchWeather, seed: options.seed });
       this.renderer = new HQRenderer(this.world);
       this._applyManifest(this.assets.manifest);
       this.resize();
+      if (this._warmWanted) this.prewarm(this._warmWanted.width, this._warmWanted.height);
+      return true;
     });
+  }
+
+  /* -------------------------------------------------------------- parking -- */
+
+  _startLoop() {
+    if (this._looping || !this.running) return;
+    this._looping = true;
+    this.lastFrame = typeof performance !== 'undefined' ? performance.now() : 0;
+    this._fpsStart = this.lastFrame;
+    this._fpsFrames = 0;
+    requestAnimationFrame(this._loop);
+  }
+
+  /** Stop drawing (the workspace is hidden); the art and the caches stay. */
+  park() {
+    this.parked = true;
+  }
+
+  /** Start drawing into the canvas as it is laid out now. */
+  unpark() {
+    this.parked = false;
+    this.resize();
+    this._startLoop();
+  }
+
+  /**
+   * Draw one frame, now, at the size the canvas will have once the workspace is shown, while the
+   * visitor is still on the title screen. The frame composes the plate groups at the scale the
+   * entry will use, lays the street's sprite sheets under the hour's light and puts all of it on
+   * the GPU. Measured before this: a 90-146ms frame at the key, the first upload of the plates
+   * and the first vehicle tints, in the middle of the entry into the building.
+   * @param {number} cssWidth @param {number} cssHeight the scene viewport's box once shown
+   */
+  prewarm(cssWidth, cssHeight) {
+    if (!this.renderer || !this.world) {
+      this._warmWanted = { width: cssWidth, height: cssHeight };
+      return false;
+    }
+    this._warmWanted = null;
+    if (!(cssWidth > 0 && cssHeight > 0) || typeof window === 'undefined') return false;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    this.canvas.width = Math.round(cssWidth * dpr);
+    this.canvas.height = Math.round(cssHeight * dpr);
+    this.dpr = dpr;
+    this.viewport.bottomInset = 0;
+    if (this._cssInsets) this._restateInsets();
+    this.viewport.fitFrame(this.worldW, this.worldH);
+    this.renderer.warmTints(this.world.time.state, this.world.weather.effects);
+    this._draw(true);
+    // Reading one pixel back makes the browser carry out the queued drawing now, while nothing
+    // is moving, rather than at the first frame after the key.
+    try {
+      if (this.ctx) this.ctx.getImageData(0, 0, 1, 1);
+    } catch {
+      // a lost canvas: the frame is simply drawn on the first real one
+    }
+    this.warmed = true;
+    return true;
+  }
+
+  /* --------------------------------------------------------------- camera -- */
+
+  _restateInsets() {
+    const i = this._cssInsets || {};
+    const dpr = this.dpr || 1;
+    this.viewport.insets = {
+      left: Math.max(0, i.left || 0) * dpr,
+      right: Math.max(0, i.right || 0) * dpr,
+      top: Math.max(0, i.top || 0) * dpr,
+      bottom: Math.max(0, i.bottom || 0) * dpr,
+    };
+  }
+
+  /**
+   * What the frame's drawers cover of the render, in CSS pixels. The camera re-centres the
+   * building in the room left, gliding there unless the visitor asked for less motion.
+   * @param {import('./game_frame.js').Insets} insets
+   * @param {{glide?: boolean}} [options]
+   */
+  setInsets(insets, options = {}) {
+    const before = this.viewport.insets;
+    this._cssInsets = { ...insets };
+    this._restateInsets();
+    const after = this.viewport.insets;
+    const same = /** @type {Array<'left'|'right'|'top'|'bottom'>} */ (['left', 'right', 'top', 'bottom']).every((k) => Math.abs(before[k] - after[k]) < 0.5);
+    if (same) return;
+    this.fitView({ glide: options.glide !== false });
+  }
+
+  /**
+   * Stand the camera where the frame puts it (the «Încadrează» key, a drawer opening or closing).
+   * @param {{glide?: boolean}} [options]
+   */
+  fitView(options = {}) {
+    const vp = this.viewport;
+    if (!vp.focus) {
+      vp.fitToOffice(this.worldW, this.worldH);
+      return;
+    }
+    const to = vp.frameStand(this.worldW, this.worldH);
+    const glide = Boolean(options.glide) && !this.reducedMotion() && !this.parked;
+    if (!glide) {
+      this.glide = null;
+      Object.assign(vp, to);
+      return;
+    }
+    const now = typeof performance !== 'undefined' ? performance.now() : 0;
+    this.glide = { from: { zoom: vp.zoom, panX: vp.panX, panY: vp.panY }, to, start: now, ms: GLIDE_MS };
+  }
+
+  /** The middle of the room the drawers leave, in canvas px: where the zoom keys zoom about. */
+  focusPoint() {
+    const vp = this.viewport;
+    const w = this.canvas.width;
+    return { x: vp.insets.left + (w - vp.insets.left - vp.insets.right) / 2, y: this.canvas.height / 2 };
+  }
+
+  /** @param {number} factor */
+  zoomBy(factor) {
+    this.glide = null;
+    const p = this.focusPoint();
+    this.viewport.setZoom(this.viewport.zoom * factor, p.x, p.y);
+  }
+
+  /** @param {number} zoom */
+  zoomTo(zoom) {
+    this.glide = null;
+    const p = this.focusPoint();
+    this.viewport.setZoom(zoom, p.x, p.y);
+  }
+
+  /**
+   * While the stream (its video, its frozen frame or its "starting" plate) covers the canvas, the
+   * canvas keeps only its hit boxes.
+   * @param {boolean} covered
+   */
+  setCovered(covered) {
+    this.hitsOnly = Boolean(covered);
+  }
+
+  /** The camera and the box, for whatever follows them (the stream). */
+  view() {
+    const vp = this.viewport;
+    return {
+      cw: this.canvas.width,
+      ch: this.canvas.height,
+      dpr: this.dpr || 1,
+      worldW: this.worldW,
+      worldH: this.worldH,
+      zoom: vp.zoom,
+      panX: vp.panX,
+      panY: vp.panY,
+    };
+  }
+
+  _emitView() {
+    if (!this.onView) return;
+    const v = this.view();
+    const key = `${v.cw}|${v.ch}|${v.zoom.toFixed(5)}|${v.panX.toFixed(2)}|${v.panY.toFixed(2)}`;
+    if (key === this._viewKey) return;
+    this._viewKey = key;
+    this.onView(v);
+  }
+
+  /** @param {number} now */
+  _advanceGlide(now) {
+    const g = this.glide;
+    if (!g) return;
+    const t = (now - g.start) / g.ms;
+    Object.assign(this.viewport, between(g.from, g.to, easeOut(t)));
+    if (t >= 1) this.glide = null;
   }
 
   /** @param {any} m */
@@ -194,7 +448,8 @@ export class OfficeEngine {
     this.worldW = m.world.width;
     this.worldH = m.world.height;
     this.shaft = { ex: m.lift.shaft.x, ew: m.lift.shaft.w };
-    this.building = { x: 415, y: 10, width: 937, height: 665 };
+    this.building = { ...BUILDING };
+    this.viewport.focus = this.building;
     this.liftStops = m.lift.stops;
     const home = Number(m.lift.stops['0']);
     if (!this.lift.moving && !this.lift.trip) {
@@ -252,7 +507,9 @@ export class OfficeEngine {
     // The control bar sits below the scene; only an older layout that overlays it needs an inset.
     const toolbar = parent.querySelector('.camera-toolbar');
     this.viewport.bottomInset = toolbar ? (toolbar.getBoundingClientRect().height + 24) * dpr : 0;
-    this.viewport.fitToOffice(this.worldW, this.worldH);
+    if (this._cssInsets) this._restateInsets();
+    this.glide = null;
+    this.viewport.fitFrame(this.worldW, this.worldH);
   }
 
   /* --------------------------------------------------------------- input -- */
@@ -387,13 +644,18 @@ export class OfficeEngine {
 
   /** @param {number} now */
   _loop(now) {
-    if (!this.running) return;
+    if (!this.running || this.parked) {
+      this._looping = false;
+      return;
+    }
     const dt = Math.min(0.05, Math.max(0, (now - this.lastFrame) / 1000));
     this.lastFrame = now;
     this.animTime += dt;
     this._updateLift(dt);
-    if (this.world) this.world.step(dt, Date.now(), this.reducedMotion());
+    if (this.world) this.world.step(dt, Date.now(), this.reducedMotion(), this.dataLive());
+    this._advanceGlide(now);
     this._draw();
+    this._emitView();
     this._measure(now);
     requestAnimationFrame(this._loop);
   }
@@ -421,9 +683,15 @@ export class OfficeEngine {
     }
   }
 
-  _draw() {
+  /** @param {boolean} [force] draw even while the stream covers the canvas (the prewarm) */
+  _draw(force = false) {
     const ctx = this.ctx;
     if (!ctx) return;
+    if (this.hitsOnly && !force && this.renderer) {
+      this._setNote(null);
+      this.renderer.keepHits(this.agents);
+      return;
+    }
     const w = this.canvas.width;
     const h = this.canvas.height;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -639,5 +907,6 @@ export class OfficeEngine {
 
   destroy() {
     this.running = false;
+    if (this._sizeWatch) this._sizeWatch.disconnect();
   }
 }

@@ -3,8 +3,8 @@
  *
  * The sprite follows the agent's runtime state and lifecycle: WORKING types, THINKING thinks,
  * PAUSED sleeps at the desk, ERROR and BLOCKED hold their head, IDLE sits back. A speech bubble
- * from a real message makes the agent talk. Nothing outside moves them: the street's random
- * events (fireworks, the UFO) are scenery, and an employee's pose is only ever the backend's state.
+ * from a real message makes the agent talk. Nothing outside moves them: the street is ambience,
+ * and an employee's pose is only ever the backend's state.
  * The employee's look comes from the Character Bible the backend serves.
  */
 

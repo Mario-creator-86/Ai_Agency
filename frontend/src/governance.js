@@ -1,3 +1,4 @@
+import { amount } from './numbers.js';
 /**
  * What the Owner's panel has to say about the studio's own authority.
  *
@@ -191,9 +192,9 @@ function normaliseApproval(row) {
 export function approvalCostText(cost) {
   if (typeof cost !== 'number' || !Number.isFinite(cost)) return 'necunoscut';
   if (cost !== 0 && Math.abs(cost) < 0.01) {
-    return `${cost.toFixed(6).replace(/0+$/, '').replace(/\.$/, '')} USD`;
+    return `${amount(cost.toFixed(6).replace(/0+$/, '').replace(/\.$/, ''))} USD`;
   }
-  return `${cost.toFixed(2)} USD`;
+  return `${amount(cost.toFixed(2))} USD`;
 }
 
 /**

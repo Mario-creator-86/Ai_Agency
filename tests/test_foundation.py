@@ -61,6 +61,9 @@ def test_built_frontend_and_security_headers(client):
     }
     assert directives["script-src"] == ["'self'"]
     assert directives["connect-src"] == ["'self'"]
+    # The Media dialog's player is a <video> on a blob: URL of bytes fetched with the Owner's
+    # key; the page's own files stay allowed, and nothing from another origin.
+    assert set(directives["media-src"]) == {"'self'", "blob:"}
     # The brand assets the page actually references must be served, not a stale icon.
     for asset in ("/favicon.ico", "/favicon-32.png", "/apple-touch-icon.png", "/amn-ai-mark.png"):
         assert client.get(asset).status_code == 200, asset

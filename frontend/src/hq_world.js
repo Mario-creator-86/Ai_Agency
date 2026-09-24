@@ -1,20 +1,22 @@
 import { TimeOfDayManager } from './hq_time.js';
 import { WeatherManager } from './hq_weather.js';
-import { RandomEventManager } from './hq_events.js';
+import { RandomEventManager, streetRule } from './hq_events.js';
 import { TrafficManager, EMERGENCY } from './hq_traffic.js';
 import { PedestrianManager } from './hq_pedestrians.js';
 import { AgentVisualStateManager, spriteFor, screenModeFor, stateOf } from './hq_agents.js';
 import { SkyRenderer } from './hq_sky.js';
 import { bubbleFrame } from './speech_bubble.js';
 import { scenePalette, withAlpha } from './hq_palette.js';
-import { stageLabel } from './ledger.js';
+import { stageLabel, runtimeLabel, taskLabel } from './ledger.js';
 
 /**
  * WorldSimulationManager owns every manager of the living headquarters and advances them in one
  * place; HQRenderer paints the plates and the live actors in the order the Blender build defined.
  *
  * Randomness comes from one seeded source (mulberry32), so a seed reproduces a street exactly.
- * What the studio is doing comes only from backend state handed in by the engine.
+ * What the studio is doing comes only from backend state handed in by the engine. How full the
+ * street is, and what may happen on it, is hq_events.js `streetRule`: the real hour, day and
+ * weather in Bucharest, and whether the page still has the studio's data.
  */
 
 /** @param {number} seed */
@@ -167,8 +169,23 @@ export class WorldSimulationManager {
     this.sky = new SkyRenderer({ worldWidth: this.worldW, worldHeight: this.worldH, horizonRow: HORIZON_ROW, rng: this.rng, assets });
     /** @type {any[]} */
     this.agentList = [];
+    /** What streetRule said on the last step: for the readouts and for QA. @type {any} */
+    this.rule = null;
     this.events.on((kind, event) => this.onEvent(kind, event));
-    // a street is never empty on arrival: warm the simulation up for a minute of city time
+    // A street is never empty on arrival: the simulation is warmed up for a minute of city time.
+    // It waits for the first weather reading, so on a rainy afternoon the minute is a rainy one
+    // (fewer walkers, umbrellas up) rather than a dry one that the rain then has to thin out.
+    // The engine is built while the title screen is up, so this happens before anyone looks.
+    this.warm = false;
+    this._unwarmed = 0;
+    const warmUp = () => this.warmUp();
+    this.weather.first(this.time.now().getTime()).then(warmUp, warmUp);
+  }
+
+  /** The minute of city time the street is warmed up with, once. */
+  warmUp() {
+    if (this.warm) return;
+    this.warm = true;
     for (let i = 0; i < 240; i += 1) this.step(0.25, 0);
   }
 
@@ -191,17 +208,27 @@ export class WorldSimulationManager {
    *   weather are still read (they are information), but nothing is moved. The street, the sky's
    *   drift and the employees' loops hold the frame they are on; what each employee is doing
    *   stays readable from their pose, their screen and their bubble.
+   * @param {boolean} [live] the page still has the studio's data (hq_events.js `streetMoves`).
+   *   When it has lost it the picture holds exactly as it does under reduced motion, so nothing
+   *   outside goes on living while the corner of the render says it is reconnecting.
    */
-  step(dt, nowMs, still = false) {
+  step(dt, nowMs, still = false, live = true) {
+    // A weather service that never answers does not keep the street empty: after three seconds
+    // of frames the street is warmed up with what is known.
+    if (!this.warm && (this._unwarmed += dt) > 3) this.warmUp();
     const time = this.time.update(dt);
     if (nowMs) this.weather.update(nowMs);
     const fx = this.weather.effects;
-    const move = still ? 0 : dt;
-    this.events.update(move, { weather: this.weather.state.condition, phase: time.phase });
+    // No backend state says there is an emergency, so `emergency` is not passed and no siren
+    // drives. Wire it here the day the backend has one.
+    const rule = streetRule({ hour: time.hour, day: time.day, ymd: time.ymd, effects: fx, live, still });
+    this.rule = rule;
+    const move = rule.moving ? dt : 0;
+    this.events.update(move, { weather: this.weather.state.condition, phase: time.phase, emergency: rule.sirens, buses: rule.buses });
     this.traffic.crosswalkBusy = this.pedestrians.crosswalkBusy;
     this.traffic.waitingAtShelter = this.pedestrians.waitingAtShelter;
-    this.traffic.update(move, { hour: time.hour, day: time.day, effects: fx });
-    this.pedestrians.update(move, { hour: time.hour, day: time.day, effects: fx, busAtShelter: this.traffic.busAtShelter });
+    this.traffic.update(move, { hour: time.hour, day: rule.day, effects: fx });
+    this.pedestrians.update(move, { hour: time.hour, day: rule.day, effects: fx, busAtShelter: this.traffic.busAtShelter });
     this.agents.update(move);
     this.ambient.update(move);
     this.sky.update(move, time, fx);
@@ -544,9 +571,14 @@ export class HQRenderer {
     ctx.font = '600 6px "Segoe UI", system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('RANDARE', x + dw / 2, y + 12);
-    ctx.font = '700 9px "Segoe UI", system-ui, sans-serif';
     ctx.fillStyle = working ? '#e6f1ff' : state === 'ERROR' || state === 'BLOCKED' ? '#fca5a5' : '#56708c';
-    ctx.fillText(working ? 'WORKING' : state, x + dw / 2, y + 27);
+    // The state in the page's words («în lucru», «în așteptare»): the display once read
+    // «RANDARE / IDLE», half in each language. The longer Romanian words step down a size to
+    // stay on the 61px panel rather than being squeezed.
+    const word = runtimeLabel(state).toLocaleUpperCase('ro-RO');
+    ctx.font = '700 9px "Segoe UI", system-ui, sans-serif';
+    if (ctx.measureText(word).width > dw - 6) ctx.font = '700 7px "Segoe UI", system-ui, sans-serif';
+    ctx.fillText(word, x + dw / 2, y + 27, dw - 4);
     if (working) {
       ctx.strokeStyle = '#38bdf8';
       ctx.strokeRect(x + 8, y + 36, dw - 16, 6);
@@ -559,7 +591,7 @@ export class HQRenderer {
       const pos = ((clock * 30) % (dw - 18 + band)) - band;
       ctx.fillRect(x + 9 + pos, y + 37, band, 4);
       ctx.restore();
-      const detail = String(agent.detail || agent.task_type || '').slice(0, 22);
+      const detail = String(agent.detail || (agent.task_type ? taskLabel(agent.task_type) : '')).slice(0, 22);
       if (detail) {
         ctx.font = '500 5px "Segoe UI", system-ui, sans-serif';
         ctx.fillStyle = '#9fb4cc';
@@ -591,7 +623,34 @@ export class HQRenderer {
     if (trip && trip.phase === 'travel') this.drawWalker(ctx, 'ped03', x + cw / 2, floorRow - 2, 1, 0, true);
   }
 
-  /** @param {CanvasRenderingContext2D} ctx @param {any} state */
+  /**
+   * The employees' hit boxes without painting them: while the Unreal stream covers the canvas, a
+   * click on the video still finds who sits at the desk under the pointer.
+   * @param {any[]} agents
+   */
+  keepHits(agents) {
+    this.drawAgents(null, { agents, bubbles: [] });
+  }
+
+  /**
+   * Every street sprite sheet laid under the hour's light now (litSheet), rather than each one the
+   * first time its vehicle or passer-by appears: that first tint is a canvas the size of a sheet,
+   * and at the entry into the building it cost a frame.
+   * @param {any} time @param {any} fx
+   */
+  warmTints(time, fx) {
+    const outdoor = streetLight(time, fx);
+    for (const kind of Object.keys(this.assets.vehicles?.vehicles || {})) {
+      const img = this.assets.sheet(`veh:${kind}`);
+      if (img) this.litSheet(`veh:${kind}`, img, outdoor);
+    }
+    for (const key of Object.keys(this.assets.pedestrians?.characters || {})) {
+      const img = this.assets.sheet(`ped:${key}`);
+      if (img) this.litSheet(`ped:${key}`, img, outdoor);
+    }
+  }
+
+  /** @param {CanvasRenderingContext2D|null} ctx null keeps the hit boxes and paints nothing @param {any} state */
   drawAgents(ctx, state) {
     this.hits = [];
     const atlas = this.assets.characters;
@@ -614,7 +673,7 @@ export class HQRenderer {
       const sh = frame.h * frame.scale;
       const dx = seat.x - frame.pivot[0] * s;
       const dy = seat.y - SEATED_LIFT - frame.pivot[1] * s;
-      ctx.drawImage(img, (f.index % cols) * sw, Math.floor(f.index / cols) * sh, sw, sh, dx, dy, frame.w * s, frame.h * s);
+      if (ctx) ctx.drawImage(img, (f.index % cols) * sw, Math.floor(f.index / cols) * sh, sw, sh, dx, dy, frame.w * s, frame.h * s);
       this.hits.push({ agent, x0: seat.x - 16, y0: seat.y - SEATED_LIFT - 44, x1: seat.x + 16, y1: seat.y + 2 });
     }
   }
@@ -935,7 +994,7 @@ export class HQRenderer {
       // The name tag, at a size that can be read: 11 screen pixels, the page's --fs-meta.
       const name = String(agent.display_name || agent.role_name || 'Agent');
       const status = stateOf(agent);
-      const text = `${name} · ${status}`;
+      const text = `${name} · ${runtimeLabel(status)}`;
       ctx.save();
       ctx.font = `600 ${px(11)}px "Segoe UI", system-ui, sans-serif`;
       const padX = px(8);

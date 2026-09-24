@@ -88,22 +88,20 @@ test('a weather service that fails leaves the scene without weather, labelled as
 
 /* ------------------------------------------------------------------ random events */
 
-test('every configured event is valid and the UFO is the rarest thing in the sky', () => {
+test('every configured event is valid and the rarity ladder holds', () => {
   for (const raw of EVENTS.events) assert.ok(validateEvent(raw), raw.eventId);
-  const ufo = EVENTS.events.find((e) => e.eventId === 'ufo_flyover');
-  assert.equal(ufo.rarity, 'very_rare');
   assert.ok(RARITY_RATE.very_rare < RARITY_RATE.rare / 10);
 });
 
-test('the UFO never appears by day, in rain, or twice within its cooldown', () => {
+test('a flock of birds never flies at night, in rain, or twice within its cooldown', () => {
   const manager = new RandomEventManager(EVENTS, mulberry32(1));
-  const ufo = manager.definitions.find((d) => d.eventId === 'ufo_flyover');
-  assert.equal(manager.eligible(ufo, { weather: 'clear', phase: 'day' }), false);
-  assert.equal(manager.eligible(ufo, { weather: 'rain', phase: 'night' }), false);
-  assert.equal(manager.eligible(ufo, { weather: 'clear', phase: 'night' }), true);
-  manager.start(ufo);
-  manager.update(ufo.duration[1] + 1, { weather: 'clear', phase: 'night' });
-  assert.equal(manager.eligible(ufo, { weather: 'clear', phase: 'night' }), false, 'still cooling down');
+  const birds = manager.definitions.find((d) => d.eventId === 'bird_flock');
+  assert.equal(manager.eligible(birds, { weather: 'clear', phase: 'night' }), false);
+  assert.equal(manager.eligible(birds, { weather: 'rain', phase: 'day' }), false);
+  assert.equal(manager.eligible(birds, { weather: 'clear', phase: 'day' }), true);
+  manager.start(birds);
+  manager.update(birds.duration[1] + 1, { weather: 'clear', phase: 'day' });
+  assert.equal(manager.eligible(birds, { weather: 'clear', phase: 'day' }), false, 'still cooling down');
 });
 
 test('the same seed replays the same day of events', () => {
@@ -127,7 +125,11 @@ test('common events are common and very rare events are very rare over a simulat
   });
   for (let i = 0; i < 86400; i += 1) manager.update(1, { weather: 'clear', phase: i % 86400 < 50000 ? 'day' : 'night' });
   assert.ok((counts.pedestrians_cross || 0) > 50);
-  assert.ok((counts.ufo_flyover || 0) <= 2);
+  // A clear day and night on a real Bucharest street: no UFO, no fireworks, no balloon, no drone,
+  // and no siren, because no backend state said there was an emergency.
+  for (const id of ['ufo_flyover', 'fireworks', 'hot_air_balloon', 'delivery_drone', 'helicopter_pass', 'shooting_star', 'ambulance_siren', 'police_patrol', 'fire_truck_siren']) {
+    assert.equal(counts[id] || 0, 0, id);
+  }
 });
 
 /* ------------------------------------------------------------------ traffic */
@@ -285,7 +287,7 @@ test('each employee is drawn from their Character Bible sprite', () => {
 });
 
 test('a random event outside never changes what an employee is seen doing', () => {
-  // The street's spectacle (fireworks, the UFO) is scenery; an employee's pose is backend state.
+  // Whatever happens outside is scenery; an employee's pose is backend state.
   let employeesTouched = false;
   let passersBy = 0;
   const fake = {

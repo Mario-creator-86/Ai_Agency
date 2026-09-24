@@ -54,7 +54,7 @@ export function timeOfDay(date, location = BUCHAREST) {
   let phase = 'day';
   if (elevation < -8) phase = 'night';
   else if (elevation < 7) phase = clock.hour < 12 ? 'dawn' : 'dusk';
-  return { date, text: clock.text, hour: clock.hour, day: clock.day, elevation, daylight, dusk, phase, night: phase === 'night' };
+  return { date, text: clock.text, hour: clock.hour, day: clock.day, ymd: clock.ymd, elevation, daylight, dusk, phase, night: phase === 'night' };
 }
 
 export class TimeOfDayManager {
