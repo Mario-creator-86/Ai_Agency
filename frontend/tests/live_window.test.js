@@ -34,8 +34,8 @@ test('events that belong to someone else — or to no one — do not match', () 
 });
 
 test('the now-line reads the state a person would name', () => {
-  assert.equal(nowLine('THINKING', 'research_and_verification'), 'working on the task research and verification');
-  assert.equal(nowLine('THINKING', null), 'working');
-  assert.equal(nowLine('IDLE', null), 'no task right now');
-  assert.equal(nowLine('PAUSED', null), 'paused');
+  assert.equal(nowLine('THINKING', 'research_and_verification'), 'lucrează la sarcina research and verification');
+  assert.equal(nowLine('THINKING', null), 'lucrează');
+  assert.equal(nowLine('IDLE', null), 'nicio sarcină în lucru');
+  assert.equal(nowLine('PAUSED', null), 'în pauză');
 });

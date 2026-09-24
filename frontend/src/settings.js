@@ -1,13 +1,14 @@
 import { renderYouTubeConnections } from './youtube_connections.js';
+import { icon } from './icons.js';
 import { renderProviderProduction } from './provider_production.js';
 
 import './settings.css';
 
-const sections = [['llm', 'AI providers'], ['agents', 'Agents'], ['media', 'Video and sound'], ['social', 'Accounts and e-mail']];
+const sections = [['llm', 'Furnizori AI'], ['agents', 'Angajați'], ['media', 'Video și sunet'], ['social', 'Conturi și e-mail']];
 // No 'youtube' purpose: a YouTube channel is chosen by connecting it, not by picking a saved
 // credential row out of a list. The backend refuses that purpose for the same reason.
-const purposes = { image: 'Images', video: 'Video', voice: 'Voice / TTS', music: 'Music / sound', tiktok: 'TikTok', instagram: 'Instagram', facebook: 'Facebook', email: 'E-mail' };
-const statuses = { SAVED: 'Saved · not verified', VERIFIED: 'Connection verified', ACCESS_VERIFIED: 'Access verified · pipeline pending', FAILED: 'Verification failed' };
+const purposes = { image: 'Imagini', video: 'Video', voice: 'Voce / TTS', music: 'Muzică / sunet', tiktok: 'TikTok', instagram: 'Instagram', facebook: 'Facebook', email: 'E-mail' };
+const statuses = { SAVED: 'Salvat · neverificat', VERIFIED: 'Conexiune verificată', ACCESS_VERIFIED: 'Acces verificat · flux în așteptare', FAILED: 'Verificare eșuată' };
 
 /** @param {string} tag @param {string} [text] @param {string} [className] @returns {HTMLElement} */
 function node(tag, text = '', className = '') {
@@ -34,7 +35,7 @@ function option(select, value, text) {
 export function initSettings(api, hooks = {}) {
   // The page heading is gone; the Settings button lives in the top bar with the session.
   const heading = document.querySelector('.topbar-right') || document.querySelector('#workspace');
-  const open = node('button', 'Settings', 'secondary');
+  const open = node('button', 'Setări', 'secondary');
   open.id = 'open-settings';
   open.classList.add('topbar-logout');
   heading.prepend(open);
@@ -108,16 +109,18 @@ export function initSettings(api, hooks = {}) {
     dialog.replaceChildren();
 
     const header = node('div', '', 'dialog-header');
-    const title = node('h2', 'Settings');
+    const title = node('h2', 'Setări');
     title.id = 'settings-title';
-    const close = node('button', '✕', 'dialog-close');
-    close.setAttribute('aria-label', 'Close');
-    close.title = 'Close';
+    const close = node('button', '', 'dialog-close');
+  close.innerHTML = icon('close');
+  close.setAttribute('aria-label', 'Închide');
+    close.setAttribute('aria-label', 'Închide');
+    close.title = 'Închide';
     close.addEventListener('click', reset);
     header.append(title, close);
-    dialog.append(header, node('p', 'Connect only the services you want the studio to use.', 'settings-intro'));
+    dialog.append(header, node('p', 'Conectează doar serviciile pe care vrei să le folosească studioul.', 'settings-intro'));
     const nav = node('nav', '', 'settings-tabs');
-    nav.setAttribute('aria-label', 'Settings sections');
+    nav.setAttribute('aria-label', 'Secțiunile setărilor');
     for (const [key, label] of sections) {
       const button = node('button', label, key === active ? 'primary' : 'quiet');
       button.setAttribute('aria-current', key === active ? 'page' : 'false');
@@ -130,7 +133,7 @@ export function initSettings(api, hooks = {}) {
     dialog.append(output);
     const content = node('section', '', 'settings-content');
     dialog.append(content);
-    if (!data) { content.append(node('p', 'Loading settings…')); return; }
+    if (!data) { content.append(node('p', 'Se încarcă setările…')); return; }
     if (active === 'agents') { renderAgents(content); return; }
     // YouTube channels are not a generic catalog entry: they carry an OAuth grant, a channel
     // identity read back from Google, and their own connect/reconnect/disconnect lifecycle.
@@ -138,19 +141,19 @@ export function initSettings(api, hooks = {}) {
     // read as one list.
     if (active === 'social') {
       renderYouTubeConnections(content, { api, notify: message });
-      content.append(node('h3', 'Other accounts and e-mail'));
+      content.append(node('h3', 'Alte conturi și e-mail'));
     }
     const row = node('div', '', 'settings-add');
     const picker = /** @type {HTMLSelectElement} */ (node('select'));
-    picker.setAttribute('aria-label', 'Service to add');
-    option(picker, '', 'Choose a service…');
+    picker.setAttribute('aria-label', 'Serviciu de adăugat');
+    option(picker, '', 'Alege un serviciu…');
     for (const [kind, spec] of Object.entries(data.catalog)) {
       if (spec.group === active) option(picker, kind, spec.label);
     }
-    const add = node('button', 'Add connection', 'secondary');
+    const add = node('button', 'Adaugă conexiunea', 'secondary');
     add.addEventListener('click', () => {
       if (picker.value) edit(content, picker.value, null);
-      else message('Choose a service first.', true);
+      else message('Alege întâi un serviciu.', true);
     });
     row.append(picker, add);
     content.append(row);
@@ -172,30 +175,30 @@ export function initSettings(api, hooks = {}) {
         card.append(line);
       }
       card.append(node('p', `${spec.label} · ${statuses[item.status] || item.status}`, 'helper'));
-      if (item.checked_at) card.append(node('p', `Verified: ${new Date(item.checked_at).toLocaleString('en-GB')}`, 'helper'));
+      if (item.checked_at) card.append(node('p', `Verificat: ${new Date(item.checked_at).toLocaleString('ro-RO')}`, 'helper'));
       // Three different truths, and the card says which one applies. "stored" means the
       // credentials are kept but nothing in the pipeline calls this vendor yet; "media" means
       // it will be called, but only once it is verified and selected for a purpose.
       if (spec.runtime === 'stored') {
-        card.append(node('p', 'Details saved. Use in the pipeline is not available yet.', 'settings-limitation'));
+        card.append(node('p', 'Detaliile sunt salvate. Folosirea în flux nu este încă disponibilă.', 'settings-limitation'));
       } else if (spec.runtime === 'media' && item.status !== 'ACCESS_VERIFIED' && item.status !== 'VERIFIED') {
-        card.append(node('p', 'Verify access, then select the service below for the purpose you want. Until then renders use substitutes, and QC blocks them from publishing.', 'settings-limitation'));
+        card.append(node('p', 'Verifică accesul, apoi alege mai jos serviciul pentru scopul dorit. Până atunci randările folosesc substitute, iar QC le blochează de la publicare.', 'settings-limitation'));
       }
       const actions = node('div', '', 'settings-actions');
-      const modify = node('button', 'Edit', 'quiet');
+      const modify = node('button', 'Modifică', 'quiet');
       modify.addEventListener('click', () => edit(content, item.kind, item));
       actions.append(modify);
-      const check = node('button', spec.runtime === 'llm' ? 'Verify and load models' : 'Verify access', 'secondary');
-      check.addEventListener('click', () => run(() => api(`/settings/integrations/${item.id}/check`, { method: 'POST' }), 'Verification finished.'));
+      const check = node('button', spec.runtime === 'llm' ? 'Verifică și încarcă modelele' : 'Verifică accesul', 'secondary');
+      check.addEventListener('click', () => run(() => api(`/settings/integrations/${item.id}/check`, { method: 'POST' }), 'Verificarea s-a încheiat.'));
       actions.append(check);
-      const remove = node('button', 'Delete connection', 'quiet');
+      const remove = node('button', 'Șterge conexiunea', 'quiet');
       remove.addEventListener('click', () => {
         if (remove.dataset.armed !== 'yes') {
           remove.dataset.armed = 'yes';
-          remove.textContent = 'Confirm deletion';
+          remove.textContent = 'Confirmă ștergerea';
           return;
         }
-        run(() => api(`/settings/integrations/${item.id}?expected_version=${item.version}`, { method: 'DELETE' }), 'Connection deleted.');
+        run(() => api(`/settings/integrations/${item.id}?expected_version=${item.version}`, { method: 'DELETE' }), 'Conexiune ștearsă.');
       });
       actions.append(remove);
       card.append(actions);
@@ -209,10 +212,10 @@ export function initSettings(api, hooks = {}) {
     content.append(list);
     // The sentence is about the catalogue, so it follows the cards rather than
     // standing above the providers that predate the catalogue entirely.
-    if (!items.length) content.append(node('p', 'You have not added any connection from the catalogue in this section yet.', 'helper'));
+    if (!items.length) content.append(node('p', 'Nu ai adăugat încă nicio conexiune din catalog în această secțiune.', 'helper'));
     if (active === 'media') renderAutoConfigure(content);
     if (active === 'media' || active === 'social') renderSelections(content, items);
-    if (active === 'social' && data.legacy_youtube_configured) content.append(node('p', 'There is also a YouTube configuration in the server environment. A YouTube selection saved here takes priority.', 'helper'));
+    if (active === 'social' && data.legacy_youtube_configured) content.append(node('p', 'Există și o configurație YouTube în mediul serverului. O selecție YouTube salvată aici are prioritate.', 'helper'));
   }
 
   /**
@@ -241,21 +244,21 @@ export function initSettings(api, hooks = {}) {
 
     const spec = data.catalog[kind];
     const form = /** @type {HTMLFormElement} */ (node('form', '', 'settings-editor'));
-    form.append(node('h3', `${existing ? 'Edit' : 'Add'} · ${spec.label}`));
+    form.append(node('h3', `${existing ? 'Modifică' : 'Adaugă'} · ${spec.label}`));
     const hint = node('p', spec.help, 'helper');
-    const docs = /** @type {HTMLAnchorElement} */ (node('a', 'Open the service documentation'));
+    const docs = /** @type {HTMLAnchorElement} */ (node('a', 'Deschide documentația serviciului'));
     docs.href = spec.docs;
     docs.target = '_blank';
     docs.rel = 'noopener noreferrer';
     form.append(hint, docs);
     const grid = node('div', '', 'settings-fields');
-    const fields = [{ key: 'name', label: 'Connection name', kind: 'text', required: true, secret: false, choices: [] }, ...spec.fields];
+    const fields = [{ key: 'name', label: 'Numele conexiunii', kind: 'text', required: true, secret: false, choices: [] }, ...spec.fields];
     for (const field of fields) {
       const label = node('label', field.label);
       let input;
       if (field.choices.length) {
         input = /** @type {HTMLSelectElement} */ (node('select'));
-        option(input, '', 'Choose…');
+        option(input, '', 'Alege…');
         for (const choice of field.choices) option(input, choice, choice);
       } else {
         input = /** @type {HTMLInputElement} */ (node('input'));
@@ -269,13 +272,13 @@ export function initSettings(api, hooks = {}) {
       input.required = field.required && !(field.secret && existing?.secret_fields.includes(field.key));
       input.value = field.secret ? '' : field.key === 'name' ? existing?.name || '' : existing?.config[field.key] || '';
       label.append(input);
-      if (field.secret && existing?.secret_fields.includes(field.key)) label.append(node('small', 'Saved. Leave empty to keep the key.', 'helper'));
+      if (field.secret && existing?.secret_fields.includes(field.key)) label.append(node('small', 'Salvată. Lasă gol ca să păstrezi cheia.', 'helper'));
       grid.append(label);
     }
-    form.append(grid, node('p', 'Keys are encrypted on the server. They are never shown again after saving.', 'helper'));
-    const save = /** @type {HTMLButtonElement} */ (node('button', 'Save connection', 'primary'));
+    form.append(grid, node('p', 'Cheile sunt criptate pe server. După salvare nu mai sunt arătate niciodată.', 'helper'));
+    const save = /** @type {HTMLButtonElement} */ (node('button', 'Salvează conexiunea', 'primary'));
     save.type = 'submit';
-    const cancel = /** @type {HTMLButtonElement} */ (node('button', 'Cancel', 'quiet'));
+    const cancel = /** @type {HTMLButtonElement} */ (node('button', 'Renunță', 'quiet'));
     cancel.type = 'button';
     cancel.addEventListener('click', () => { form.reset(); form.remove(); });
     form.append(save, cancel);
@@ -292,7 +295,7 @@ export function initSettings(api, hooks = {}) {
       run(async () => {
         try { return await api(`/settings/integrations/${identifier}`, { method: 'PUT', body: JSON.stringify(payload) }); }
         finally { form.querySelectorAll('input[type=password]').forEach(input => { /** @type {HTMLInputElement} */ (input).value = ''; }); }
-      }, 'Connection saved. Verify access before use.');
+      }, 'Conexiune salvată. Verifică accesul înainte de folosire.');
     });
     container.prepend(form);
     form.querySelector('input')?.focus();
@@ -308,26 +311,26 @@ export function initSettings(api, hooks = {}) {
     const box = node('div', '', 'settings-autoconfig');
     // The stewards read their vendors' pages and choose; the lines they report join the
     // same list the auto-configure report uses, so both show after the reload.
-    const research = node('button', 'Model research now (Kael and Lyra read the documentation)', 'secondary');
-    research.title = 'The stewards read the pages of the connected providers, note prices and capabilities, and choose the default model wherever you have not locked it. It takes a few minutes.';
+    const research = node('button', 'Cercetare de modele acum (Kael și Lyra citesc documentația)', 'secondary');
+    research.title = 'Responsabilii citesc paginile furnizorilor conectați, notează prețuri și capabilități și aleg modelul implicit acolo unde nu l-ai blocat. Durează câteva minute.';
     research.addEventListener('click', () => run(async () => {
       const result = await api('/settings/model-research', { method: 'POST' });
       autoConfigReport = Object.values(result).map((r) => r.status === 'COMPLETED'
-        ? `${r.purpose}: ${r.steward} recommends ${r.recommended || '—'}${r.changed ? ' (set as default)' : ''}${r.reason ? ` — ${r.reason}` : ''}`
+        ? `${r.purpose}: ${r.steward} recomandă ${r.recommended || '—'}${r.changed ? ' (setat ca implicit)' : ''}${r.reason ? ` — ${r.reason}` : ''}`
         : `${r.purpose}: ${r.reason}`);
-      return { message: 'Model research finished.' };
-    }, 'Model research finished.'));
-    const button = node('button', 'Configure services and defaults automatically', 'secondary');
+      return { message: 'Cercetarea de modele s-a încheiat.' };
+    }, 'Cercetarea de modele s-a încheiat.'));
+    const button = node('button', 'Configurează automat serviciile și valorile implicite', 'secondary');
     button.addEventListener('click', () => run(async () => {
       const result = await api('/settings/auto-configure', { method: 'POST' });
       autoConfigReport = [
         ...(result.applied || []).map(item => `${item.purpose}: ${item.connection} — ${item.why}`),
         ...(result.ambiguous || []).map(item => `${item.purpose}: ${item.why} (${(item.candidates || []).join(', ')})`),
       ];
-      return { message: autoConfigReport.length ? `${(result.applied || []).length} filled in.` : 'Nothing to fill in: everything was already chosen.' };
-    }, 'Configuration applied.'));
+      return { message: autoConfigReport.length ? `${(result.applied || []).length} completate.` : 'Nimic de completat: totul era deja ales.' };
+    }, 'Configurația a fost aplicată.'));
     box.append(
-      node('p', 'You connected the providers, but production also needs a choice per purpose (Images, Video, Voice) and default values. The button chooses only where there is a single candidate and fills in only what is empty; you can change anything on the connection card. Model research goes further: the stewards read the provider documentation and choose on evidence.', 'helper'),
+      node('p', 'Ai conectat furnizorii, dar producția are nevoie și de o alegere pe fiecare scop (Imagini, Video, Voce) și de valori implicite. Butonul alege numai unde există un singur candidat și completează numai ce este gol; poți schimba orice pe cardul conexiunii. Cercetarea de modele merge mai departe: responsabilii citesc documentația furnizorului și aleg pe bază de dovezi.', 'helper'),
       node('div', '', 'settings-autoconfig-actions'),
     );
     box.querySelector('.settings-autoconfig-actions').append(button, research);
@@ -342,17 +345,17 @@ export function initSettings(api, hooks = {}) {
   function renderSelections(container, items) {
     const available = Object.entries(purposes).filter(([purpose]) => items.some(item => [...data.catalog[item.kind].purposes, item.kind].includes(purpose)));
     if (!available.length) return;
-    container.append(node('h3', active === 'media' ? 'Services chosen for production' : 'Chosen accounts'));
+    container.append(node('h3', active === 'media' ? 'Servicii alese pentru producție' : 'Conturi alese'));
     for (const [purpose, label] of available) {
       const row = node('div', '', 'settings-routing');
       const select = /** @type {HTMLSelectElement} */ (node('select'));
       select.setAttribute('aria-label', label);
-      option(select, '', 'No selection');
+      option(select, '', 'Nicio selecție');
       for (const item of items) if ([...data.catalog[item.kind].purposes, item.kind].includes(purpose)) option(select, item.id, item.name);
       select.value = data.selections[purpose]?.integration_id || '';
-      const save = node('button', 'Apply', 'secondary');
+      const save = node('button', 'Aplică', 'secondary');
       save.addEventListener('click', () => {
-        run(() => api(`/settings/selections/${purpose}`, { method: 'PUT', body: JSON.stringify({ integration_id: select.value || null, expected_version: data.selections[purpose]?.version || 0 }) }), 'Selection saved.');
+        run(() => api(`/settings/selections/${purpose}`, { method: 'PUT', body: JSON.stringify({ integration_id: select.value || null, expected_version: data.selections[purpose]?.version || 0 }) }), 'Selecție salvată.');
       });
       row.append(node('span', label), select, save);
       container.append(row);
@@ -380,21 +383,21 @@ export function initSettings(api, hooks = {}) {
         node(
           'p',
           verified
-            ? `Verified: ${new Date(provider.last_health_check).toLocaleString('en-GB')}`
-            : 'Added automatically at installation. It has never been contacted, so its models cannot be assigned yet.',
+            ? `Verificat: ${new Date(provider.last_health_check).toLocaleString('ro-RO')}`
+            : 'Adăugat automat la instalare. Nu a fost contactat niciodată, deci modelele lui nu pot fi încă alocate.',
           verified ? 'helper' : 'settings-limitation',
         ),
       );
       const actions = node('div', '', 'settings-actions');
-      const check = node('button', 'Verify and load models', 'secondary');
+      const check = node('button', 'Verifică și încarcă modelele', 'secondary');
       check.addEventListener('click', () => {
         run(async () => {
           const result = await api(`/providers/${provider.id}/sync-models`, { method: 'POST' });
           const available = (result.models || []).filter(model => model.is_available).length;
           return {
             message: available
-              ? `${provider.name} answered: ${available} models available.`
-              : `${provider.name} answered, but offers no model.`,
+              ? `${provider.name} a răspuns: ${available} modele disponibile.`
+              : `${provider.name} a răspuns, dar nu oferă niciun model.`,
           };
         }, '');
       });
@@ -405,8 +408,8 @@ export function initSettings(api, hooks = {}) {
   }
 
   function renderAgents(container) {
-    container.append(node('p', 'Add and verify an AI provider, then assign a model to each agent. The test runs one real request through the assigned model.', 'helper'));
-    if (!data.agents.length) container.append(node('p', 'There are no agents in the studio yet.'));
+    container.append(node('p', 'Adaugă și verifică un furnizor AI, apoi alocă un model fiecărui angajat. Testul trimite o cerere reală prin modelul alocat.', 'helper'));
+    if (!data.agents.length) container.append(node('p', 'Nu există încă angajați în studio.'));
     // An agent's card carries four pickers, so its grid takes a wider track than
     // the connection cards' — two columns on a 1000px dialog, never four cramped ones.
     const grid = node('div', '', 'settings-connections settings-agent-grid');
@@ -415,17 +418,17 @@ export function initSettings(api, hooks = {}) {
     for (const agent of data.agents) {
       const card = node('article', '', 'settings-card');
       const role = data.roles.find(role => role.id === agent.role_id);
-      card.append(node('h3', agent.display_name), node('p', role?.name || 'Unidentified role', 'helper'));
+      card.append(node('h3', agent.display_name), node('p', role?.name || 'Rol neidentificat', 'helper'));
       const named = id => data.models.find(model => model.id === id)?.model_name;
       const current = data.models.find(model => model.id === agent.model_id);
-      card.append(node('p', `Current model: ${current?.model_name || 'Unknown'}`, 'helper'));
+      card.append(node('p', `Model curent: ${current?.model_name || 'necunoscut'}`, 'helper'));
       const extra = [named(agent.secondary_model_id), named(agent.tertiary_model_id)].filter(Boolean);
       card.append(
         node(
           'p',
           extra.length
-            ? `${agent.multi_llm_strategy} with ${extra.join(' and ')} · ${agent.additional_llm_policy}`
-            : 'A single model (SINGLE)',
+            ? `${agent.multi_llm_strategy} cu ${extra.join(' și ')} · ${agent.additional_llm_policy}`
+            : 'Un singur model (SINGLE)',
           'helper',
         ),
       );
@@ -439,62 +442,62 @@ export function initSettings(api, hooks = {}) {
       );
       const modelSelect = (label, value, withNone) => {
         const select = /** @type {HTMLSelectElement} */ (node('select'));
-        select.setAttribute('aria-label', `${label} for ${agent.display_name}`);
-        option(select, '', withNone ? 'None' : 'Choose an available model…');
+        select.setAttribute('aria-label', `${label} pentru ${agent.display_name}`);
+        option(select, '', withNone ? 'Niciunul' : 'Alege un model disponibil…');
         for (const model of usable) {
           const connection = data.integrations.find(item => item.id === model.provider_id);
-          option(select, model.id, `${connection?.name || 'Existing provider'} · ${model.model_name}`);
+          option(select, model.id, `${connection?.name || 'Furnizor existent'} · ${model.model_name}`);
         }
         select.value = value || '';
         return select;
       };
-      const select = modelSelect('Primary model', agent.model_id, false);
-      const secondary = modelSelect('Secondary model', agent.secondary_model_id, true);
-      const tertiary = modelSelect('Tertiary model', agent.tertiary_model_id, true);
+      const select = modelSelect('Model principal', agent.model_id, false);
+      const secondary = modelSelect('Model secundar', agent.secondary_model_id, true);
+      const tertiary = modelSelect('Model terțiar', agent.tertiary_model_id, true);
       const strategy = /** @type {HTMLSelectElement} */ (node('select'));
-      strategy.setAttribute('aria-label', `Strategy for ${agent.display_name}`);
+      strategy.setAttribute('aria-label', `Strategie pentru ${agent.display_name}`);
       for (const [value, text] of [
-        ['SINGLE', 'Single — the primary model only'],
-        ['FALLBACK', 'Fallback — the second takes over if the first does not answer'],
-        ['REVIEW', 'Review — the second critiques, the first decides'],
-        ['DEBATE', 'Debate — they answer independently, the agent reconciles'],
-        ['PARALLEL', 'Parallel — they work in parallel, the agent synthesises'],
+        ['SINGLE', 'SINGLE — numai modelul principal'],
+        ['FALLBACK', 'FALLBACK — al doilea preia dacă primul nu răspunde'],
+        ['REVIEW', 'REVIEW — al doilea critică, primul decide'],
+        ['DEBATE', 'DEBATE — răspund independent, angajatul împacă'],
+        ['PARALLEL', 'PARALLEL — lucrează în paralel, angajatul sintetizează'],
       ]) option(strategy, value, text);
       strategy.value = agent.multi_llm_strategy || 'SINGLE';
       const policy = /** @type {HTMLSelectElement} */ (node('select'));
-      policy.setAttribute('aria-label', `When the extra models are used for ${agent.display_name}`);
+      policy.setAttribute('aria-label', `Când se folosesc modelele suplimentare pentru ${agent.display_name}`);
       for (const [value, text] of [
-        ['IMPORTANT_ONLY', 'Only for important tasks'],
-        ['LOW_CONFIDENCE', 'When confidence is low'],
-        ['ALWAYS', 'Always'],
-        ['MANUAL', 'Only on explicit request'],
+        ['IMPORTANT_ONLY', 'Numai pentru sarcini importante'],
+        ['LOW_CONFIDENCE', 'Când încrederea este scăzută'],
+        ['ALWAYS', 'Întotdeauna'],
+        ['MANUAL', 'Numai la cerere explicită'],
       ]) option(policy, value, text);
       policy.value = agent.additional_llm_policy || 'IMPORTANT_ONLY';
       const importance = /** @type {HTMLSelectElement} */ (node('select'));
-      importance.setAttribute('aria-label', `Importance threshold for ${agent.display_name}`);
+      importance.setAttribute('aria-label', `Pragul de importanță pentru ${agent.display_name}`);
       for (const [value, text] of [
-        ['ROUTINE', 'Threshold: any task'],
-        ['NOTABLE', 'Threshold: notable tasks'],
-        ['STRATEGIC', 'Threshold: strategic decisions only'],
+        ['ROUTINE', 'Prag: orice sarcină'],
+        ['NOTABLE', 'Prag: sarcini notabile'],
+        ['STRATEGIC', 'Prag: numai decizii strategice'],
       ]) option(importance, value, text);
       importance.value = agent.min_importance || 'STRATEGIC';
       card.append(
-        node('p', 'Primary model', 'helper'), select,
-        node('p', 'Secondary model (critic, fallback or peer)', 'helper'), secondary,
-        node('p', 'Tertiary model (arbiter)', 'helper'), tertiary,
-        node('p', 'How they work together', 'helper'), strategy,
-        node('p', 'When the extra models are worth it', 'helper'), policy,
+        node('p', 'Model principal', 'helper'), select,
+        node('p', 'Model secundar (critic, rezervă sau egal)', 'helper'), secondary,
+        node('p', 'Model terțiar (arbitru)', 'helper'), tertiary,
+        node('p', 'Cum lucrează împreună', 'helper'), strategy,
+        node('p', 'Când merită modelele suplimentare', 'helper'), policy,
         importance,
       );
-      const save = node('button', 'Save assignment', 'secondary');
+      const save = node('button', 'Salvează alocarea', 'secondary');
       save.addEventListener('click', () => {
-        if (!select.value) { message('Choose a model that is available and fits the role.', true); return; }
+        if (!select.value) { message('Alege un model disponibil și potrivit rolului.', true); return; }
         if (strategy.value !== 'SINGLE' && !secondary.value) {
-          message('The chosen strategy needs a second model.', true);
+          message('Strategia aleasă are nevoie de un al doilea model.', true);
           return;
         }
         if (tertiary.value && !secondary.value) {
-          message('A third model without a second has no one to critique.', true);
+          message('Un al treilea model fără al doilea nu are pe cine să critice.', true);
           return;
         }
         run(() => api(`/settings/agents/${agent.id}/model`, {
@@ -508,19 +511,19 @@ export function initSettings(api, hooks = {}) {
             additional_llm_policy: policy.value,
             min_importance: importance.value,
           }),
-        }), 'Assignment saved.');
+        }), 'Alocare salvată.');
       });
-      const test = node('button', 'Test the answer', 'secondary');
+      const test = node('button', 'Testează răspunsul', 'secondary');
       test.addEventListener('click', () => {
         run(async () => {
           const result = await api(`/settings/agents/${agent.id}/test`, { method: 'POST' });
           const text = String(result.output_text || '').replace(/\s+/g, ' ').trim();
           if (result.status === 'SUCCEEDED') {
             return text
-              ? { message: `${result.model_name} answered: “${text.slice(0, 140)}”` }
-              : { message: 'The model ran (tokens counted) but produced no visible text — raise the budget or try another model.' };
+              ? { message: `${result.model_name} a răspuns: „${text.slice(0, 140)}”` }
+              : { message: 'Modelul a rulat (tokenii au fost numărați), dar nu a produs text vizibil — mărește bugetul sau încearcă alt model.' };
           }
-          throw new Error(`The test did not run: ${result.status}${result.error_detail ? ` — ${result.error_detail}` : ''}`);
+          throw new Error(`Testul nu a rulat: ${result.status}${result.error_detail ? ` — ${result.error_detail}` : ''}`);
         }, '');
       });
       const controls = node('div', '', 'settings-actions');

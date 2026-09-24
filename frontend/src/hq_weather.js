@@ -68,15 +68,15 @@ export function weatherEffects(w) {
 }
 
 export const WEATHER_LABELS = {
-  clear: 'Clear',
-  partly_cloudy: 'Partly cloudy',
-  cloudy: 'Cloudy',
-  fog: 'Fog',
-  drizzle: 'Drizzle',
-  rain: 'Rain',
-  snow: 'Snow',
-  storm: 'Thunderstorm',
-  unknown: 'Weather unavailable',
+  clear: 'Senin',
+  partly_cloudy: 'Parțial înnorat',
+  cloudy: 'Înnorat',
+  fog: 'Ceață',
+  drizzle: 'Burniță',
+  rain: 'Ploaie',
+  snow: 'Ninsoare',
+  storm: 'Furtună',
+  unknown: 'Vremea indisponibilă',
 };
 
 export class WeatherManager {

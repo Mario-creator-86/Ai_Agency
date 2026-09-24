@@ -105,6 +105,13 @@
   --scene-blur:    10px;   /* the glass the readouts are frosted on */
   --scene-note:    380px;  /* the widest the scene's own empty/loading/error plate runs */
   --scene-icon:    15px;   /* a room's icon in the console's second tier */
+  /* THE ICON FAMILY. One stroke for every icon in the product, stated once.
+     It is a unitless number because it is read in the 24x24 user space every
+     icon is drawn in, not in screen pixels: at --scene-icon it lands at
+     1.06 device px, at --icon at 1.13, which is the same hairline the page's
+     rules are drawn with. */
+  --icon-stroke: 1.7;
+  --icon:        16px;     /* an icon anywhere but the scene's console */
   --glow-live:     0 0 9px var(--focus-glow);  /* the live indicator's own halo */
 
   /* --------------------------------------------------------------- shape --- */
@@ -2103,6 +2110,9 @@ main { max-width: var(--page-max); padding: var(--s5) var(--gutter) var(--s7); }
   text-wrap: pretty;
 }
 .dialog-close { min-width: var(--hit); min-height: var(--hit); padding: 0; flex: none; }
+/* The play control is the one member of that pair that also says a word, so
+   it keeps a button's side padding while the close buttons stay square. */
+.video-play { padding: 0 var(--s3); }
 
 .dialog-body {
   min-height: 0;
@@ -2645,11 +2655,42 @@ input:disabled, select:disabled, textarea:disabled {
 .quiet { background: var(--surface-quiet); border: 1px solid var(--line); color: var(--ink-2); font-weight: var(--w-med); }
 .quiet:hover:not(:disabled) { background: var(--surface-hi); border-color: var(--line-strong); color: var(--ink); }
 
-/* ICON-ONLY — square at the hit size, the glyph at --fs-h3 in currentColor. */
+/* ICON-ONLY — square at the hit size, carrying an icon of the family in
+   currentColor. --fs-h3 stays because .video-play still says a word beside
+   its mark; the close buttons have nothing left for it to size. */
 .dialog-close, .video-play {
   min-width: var(--hit);
   padding: 0;
   font-size: var(--fs-h3);
+}
+
+
+/* ==========================================================================
+   ONE ICON FAMILY
+   ==========================================================================
+   Before this there was no family: a two-stroke magnifier beside a filled
+   badge beside a classical bank with seven strokes, and everywhere else a
+   typographic glyph doing an icon's work -- a font's multiplication sign for
+   close, a font's arrow for refresh, a plus and a minus set at --fs-h3. Three
+   drawing systems on one page, at three weights, on three baselines.
+
+   Now there is one. EVERY icon in the product is drawn on a 24x24 grid, inside
+   4..20 of it, at --icon-stroke, with round caps and round joins, with no fill
+   but the one dot a shape needs, and with stroke: currentColor -- so an icon
+   never states an ink of its own and always takes the ink of the control it
+   sits in, including that control's hover, its disabled state and its focus.
+   The seven room icons are inline in index.html; the four a script draws are
+   in src/icons.js; both are the same grid and the same stroke.
+   ========================================================================== */
+.ui-icon {
+  width: var(--icon);
+  height: var(--icon);
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: var(--icon-stroke);
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 /* CHIP — one language for the ledger filters, the media rail's two tabs, the

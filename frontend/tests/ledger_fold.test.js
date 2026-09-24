@@ -74,7 +74,7 @@ test('seventeen identical runs fold into one row that carries the true count and
   assert.deepEqual(countsIn(html), [17], 'the pill says exactly how many were folded');
   assert.match(html, /<time>16:34:15<\/time>/, 'the row keeps the newest time');
   assert.match(html, /13:54:10 – 16:34:15/, 'the span runs from the oldest to the newest');
-  assert.match(html, /routine job started/);
+  assert.match(html, /sarcină de rutină pornită/);
   assert.match(html, /watchdog/);
 });
 
@@ -110,7 +110,7 @@ test('correspondence never folds: two identical letters stay two letters', () =>
   const html = parts.list.innerHTML;
   assert.equal(rowsOf(html).length, 3, 'every letter keeps its own row');
   assert.equal(countsIn(html).length, 0, 'no letter is ever carried by a count');
-  assert.equal([...html.matchAll(/Open the thread/g)].length, 3, 'every letter keeps its way into the thread');
+  assert.equal([...html.matchAll(/>Deschide firul/g)].length, 3, 'every letter keeps its way into the thread');
 });
 
 test('a fold is a fold of the same words, never of two different ones', () => {

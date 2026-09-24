@@ -1,5 +1,33 @@
 # Architectural / Product Decision Log v5
 
+## ADR-UI-ICONS-001 — One icon family, drawn once
+**Status:** Implemented, 2026-09-23
+
+The interface had no icon family. The seven room links under the render carried seven icons of
+different construction and density, and every other icon in the product was a typographic
+character borrowed from the UI font — `✕` for close, `↻` for refresh, `+` and `−` for the camera
+keys, `▶` for play — at a different weight, a different measure and a different baseline from
+the drawn ones.
+
+Decided: every icon in the product is drawn on one 24×24 grid inside 4..20 of it, at one stroke
+(`--icon-stroke`, stated once in the token block and read in the SVG's own user space), with
+round caps and round joins, with no fill but the one dot a shape needs, and with
+`stroke: currentColor` so an icon never states an ink and always inherits the control's — which
+is what makes the hover, the disabled state and the alert triple work without a rule per icon.
+The base is `.ui-icon` in `frontend/src/style.css`; the room icons stay inline in `index.html`
+as they were; the four an ordinary script draws live in `frontend/src/icons.js`.
+
+Two icons were replaced because they said the wrong thing rather than because they looked wrong:
+the daily run was a house and is now the sun over a horizon (rejected: a play triangle — the
+mark already means «a film» in the same row, and this dialog starts nothing), and distribution
+was a circle crossed by a diagonal, which reads as a prohibition, and is now an upload.
+
+Rejected: an icon font, and a sprite sheet. Both put the product's drawing outside the sheet
+that states its measures, and neither can be checked by reading the markup.
+
+Rollback is reverting `index.html`, `src/icons.js`, `src/style.css` and `src/office_scene.css`.
+No behaviour, no id, class, `aria` role or test hook changed; 164 frontend tests pass unchanged.
+
 ## ADR-YOUTUBE-AVATARS-001 — API thumbnail identity and narrow image CSP
 **Status:** Implemented and live verified, 2026-09-11
 
@@ -3264,3 +3292,28 @@ eleven views at any width. Every claim in this work — no overflow at four widt
 pairs, focus on every stop, zero console errors — is a measurement taken that way. What could not
 be measured is named: the scrollbar (this browser hides it) and the interface over the live Unreal
 stream (never photographed).
+
+## 2026-09-23 — The interface speaks Romanian
+
+**Decision, taken by the Owner's own convention: every user-facing string the frontend owns is
+Romanian, in the studio's own voice.** The studio already spoke Romanian everywhere it computed
+a sentence — the preflight's reasons, the day's summary, the approvals, the refusals — while the
+interface's older static text was still English, so one row read «Automatizare» above «Fact
+research» and the treasury labelled six tiles in two languages. A stranger does not read that as
+a bilingual product; they read it as a product where nobody decided.
+
+What this decision does *not* cover, and why: a value is not a label. The brand, the employees'
+names and role names as the data gives them, units and codes (`VR$`, `fps`, `9:16`, `QC`, `API`,
+`OAuth`), enum values, Google's own field names, and every sentence that arrives from the backend
+stay exactly as they are — the backend's sentences are already Romanian and are not the
+interface's to reword. Loanwords Romanian technical speech actually uses are kept (`live`,
+`storyboard`, `prompt`, `token`, `slot`, `analytics`); the pairs, the ones kept and the places the
+translator hesitated are written down in the session's glossary and were followed rather than
+improvised, including the measurement that decided «Discuții» over the shorter «Vorbe» and
+«Reîncarcă» over «Reîmprospătează».
+
+Two consequences worth naming. The research form's three unlabelled inputs and its fourth box
+holding a bare `general` now carry visible labels taken from what each control already said, using
+the field-label pair the stylesheet already had — the decision to translate forced the decision to
+label. And the publishing gate card no longer quotes an internal architecture filename at the
+Owner: it says which checks do not exist yet, in Romanian, naming no file he does not open.

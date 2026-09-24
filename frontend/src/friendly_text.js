@@ -47,11 +47,11 @@ export function extractJson(text) {
 }
 
 const VERDICT_LABEL = {
-  SUPPORTED: 'supported by the source',
-  REFUTED: 'refuted by the source',
-  UNCERTAIN: 'the source does not say',
-  DISPUTED: 'disputed',
-  UNVERIFIED: 'unverified',
+  SUPPORTED: 'susținută de sursă',
+  REFUTED: 'infirmată de sursă',
+  UNCERTAIN: 'sursa nu spune',
+  DISPUTED: 'disputată',
+  UNVERIFIED: 'neverificată',
 };
 
 /**
@@ -149,7 +149,7 @@ function urlsBlock(pages) {
     (page) =>
       `<li>${link(page && page.url)}${page && page.why ? `<div class="friendly-why">${escapeHtml(page.why)}</div>` : ''}</li>`,
   );
-  return `<div class="friendly-head">I suggest ${shown.length} ${shown.length === 1 ? 'page to read' : 'pages to read'}:</div>${list(items)}`;
+  return `<div class="friendly-head">Propun ${shown.length} ${shown.length === 1 ? 'pagină de citit' : 'pagini de citit'}:</div>${list(items)}`;
 }
 
 /** Atomic claims, as numbered sentences: [{"claim_text", ...}] — or salvaged ones. */
@@ -157,13 +157,14 @@ function claimsBlock(claims) {
   const items = claims.slice(0, 20).map((one) => {
     const meta = [
       one.importance ? String(one.importance).toLowerCase() : '',
-      typeof one.confidence === 'number' ? `confidence ${Math.round(one.confidence * 100)}%` : '',
+      typeof one.confidence === 'number' ? `încredere ${Math.round(one.confidence * 100)}%` : '',
     ]
       .filter(Boolean)
       .join(' · ');
     return `<li>${escapeHtml(one.claim_text || one.text)}${meta ? `<div class="friendly-why">${escapeHtml(meta)}</div>` : ''}</li>`;
   });
-  return `<div class="friendly-head">I extracted ${claims.length} ${claims.length === 1 ? 'claim' : 'claims'}:</div>${list(items)}`;
+  const noun = claims.length === 1 ? 'afirmație' : claims.length >= 20 ? 'de afirmații' : 'afirmații';
+  return `<div class="friendly-head">Am extras ${claims.length} ${noun}:</div>${list(items)}`;
 }
 
 /** Salvaged items that match no known shape still read as labelled rows, never as braces. */
@@ -175,7 +176,7 @@ function itemsBlock(items) {
  *  always carries the whole thing. */
 function renderValue(value, depth = 0) {
   if (Array.isArray(value)) {
-    if (!value.length) return '<p class="friendly-empty">The list received is empty.</p>';
+    if (!value.length) return '<p class="friendly-empty">Lista primită este goală.</p>';
     if (value.every((one) => typeof one === 'string' || typeof one === 'number')) {
       return list(value.map((one) => `<li>${escapeHtml(String(one))}</li>`));
     }
@@ -202,7 +203,7 @@ function renderValue(value, depth = 0) {
       const detail = [one && one.topic, one && one.angle].filter(Boolean).map(escapeHtml).join(' — ');
       return `<li><strong>${escapeHtml((one && one.title) || '')}</strong>${detail ? `<div class="friendly-why">${detail}</div>` : ''}</li>`;
     });
-    return `<div class="friendly-head">I suggest ${topics.length} ${topics.length === 1 ? 'topic' : 'topics'}:</div>${list(items)}`;
+    return `<div class="friendly-head">Propun ${topics.length} ${topics.length === 1 ? 'subiect' : 'subiecte'}:</div>${list(items)}`;
   }
 
   // A script draft: {"title", "scenes": [{"narration", ...}]}
@@ -210,18 +211,18 @@ function renderValue(value, depth = 0) {
     const scenes = value.scenes.slice(0, 30);
     const items = scenes.map((scene) =>
       `<li><div>${escapeHtml((scene && scene.narration) || '')}</div>${
-        scene && scene.visual ? `<div class="friendly-why">Picture: ${escapeHtml(scene.visual)}</div>` : ''
+        scene && scene.visual ? `<div class="friendly-why">Imagine: ${escapeHtml(scene.visual)}</div>` : ''
       }</li>`,
     );
-    const title = value.title ? `"${escapeHtml(value.title)}" — ` : '';
-    return `<div class="friendly-head">${title}${scenes.length} ${scenes.length === 1 ? 'scene' : 'scenes'}:</div>${list(items)}`;
+    const title = value.title ? `«${escapeHtml(value.title)}» — ` : '';
+    return `<div class="friendly-head">${title}${scenes.length} ${scenes.length === 1 ? 'scenă' : 'scene'}:</div>${list(items)}`;
   }
 
   // A claim verdict: {"status", "confidence", "evidence_quote", "verifier_notes"}
   if (value.status && VERDICT_LABEL[String(value.status).toUpperCase()]) {
     const status = String(value.status).toUpperCase();
     const confidence =
-      typeof value.confidence === 'number' ? ` · confidence ${Math.round(value.confidence * 100)}%` : '';
+      typeof value.confidence === 'number' ? ` · încredere ${Math.round(value.confidence * 100)}%` : '';
     const quote = value.evidence_quote
       ? `<blockquote class="friendly-quote">"${escapeHtml(value.evidence_quote)}"</blockquote>`
       : '';
@@ -248,7 +249,7 @@ export function friendlyAnswer(raw) {
   if (value) {
     const body = renderValue(value);
     if (body) {
-      return `${body}<details class="chat-raw"><summary>The model's exact answer</summary><pre>${escapeHtml(text)}</pre></details>`;
+      return `${body}<details class="chat-raw"><summary>Răspunsul exact al modelului</summary><pre>${escapeHtml(text)}</pre></details>`;
     }
   } else {
     const startsStructured = /^[{[]/.test(text.trim());
@@ -262,15 +263,15 @@ export function friendlyAnswer(raw) {
             : itemsBlock(salvaged)
         : '';
       const note = salvaged
-        ? '<p class="friendly-note">The list from the model was cut off at the token limit; only the complete items are shown.</p>'
-        : '<p class="friendly-note">The answer was cut off at the token limit, before the first complete item.</p>';
-      const empty = salvaged ? '' : '<p class="friendly-empty">No complete item to show.</p>';
-      return `${note}${empty}${shaped}<details class="chat-raw"><summary>The model's exact answer</summary><pre>${escapeHtml(text)}</pre></details>`;
+        ? '<p class="friendly-note">Lista modelului s-a întrerupt la limita de tokenuri; se arată doar elementele complete.</p>'
+        : '<p class="friendly-note">Răspunsul s-a întrerupt la limita de tokenuri, înainte de primul element complet.</p>';
+      const empty = salvaged ? '' : '<p class="friendly-empty">Niciun element complet de arătat.</p>';
+      return `${note}${empty}${shaped}<details class="chat-raw"><summary>Răspunsul exact al modelului</summary><pre>${escapeHtml(text)}</pre></details>`;
     }
   }
   if (value) {
-    return '<p class="friendly-empty">Structured answer with no displayable content.</p>' +
-      `<details class="chat-raw"><summary>The model's exact answer</summary><pre>${escapeHtml(text)}</pre></details>`;
+    return '<p class="friendly-empty">Răspuns structurat fără conținut de afișat.</p>' +
+      `<details class="chat-raw"><summary>Răspunsul exact al modelului</summary><pre>${escapeHtml(text)}</pre></details>`;
   }
   return escapeHtml(text);
 }

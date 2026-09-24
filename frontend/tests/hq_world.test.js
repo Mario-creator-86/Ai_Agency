@@ -71,7 +71,7 @@ test('a weather service that fails leaves the scene without weather, labelled as
   });
   await manager.refresh();
   assert.equal(manager.state.available, false);
-  assert.equal(manager.label(), 'Weather unavailable');
+  assert.equal(manager.label(), 'Vremea indisponibilă');
 });
 
 /* ------------------------------------------------------------------ random events */

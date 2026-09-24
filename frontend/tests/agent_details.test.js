@@ -16,7 +16,7 @@ test('unverified assignments remain assigned and only explicit empty assignments
  assert.equal((await loadAgentDetails(fake(null),'a')).model_name,null);
 });
 test('missing fields, missing catalog model and failed requests never mean no model assigned',async()=>{
- await assert.rejects(loadAgentDetails(async()=>({id:'a'}),'a'),/does not include/);
- await assert.rejects(loadAgentDetails(fake('absent'),'a'),/was not found/);
+ await assert.rejects(loadAgentDetails(async()=>({id:'a'}),'a'),/nu includ alocarea/);
+ await assert.rejects(loadAgentDetails(fake('absent'),'a'),/nu a fost găsit/);
  await assert.rejects(loadAgentDetails(async()=>{throw new Error('Offline');},'a'),/Offline/);
 });

@@ -34,11 +34,24 @@
 /* The sheen falls off over the heading band, so the stop is that band's own
    height and not a number of its own. */
 .office-panel { background: linear-gradient(180deg, var(--sheen), transparent calc(var(--topbar-h) * 2)), var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius); color: var(--ink); }
-.office-panel .office-heading { padding: var(--s5) var(--s6) var(--s3); align-items: center; }
-/* The eyebrow takes the page's own tracking and size; only its margin is the
-   heading's business. */
-.office-panel .office-heading .eyebrow { color: var(--ink-3); margin: 0 0 var(--s1); }
-.office-panel .office-heading h2 { color: var(--ink); font-size: var(--fs-h2); font-weight: var(--w-semi); letter-spacing: var(--track-tight); margin: 0; }
+/* THE BAND ABOVE THE RENDER. It carried the live badge at its right end until
+   the badge was let into the glass, and what was left was a heading alone in
+   an 83px band 1422px wide. Nothing was brought back to fill it: every readout
+   this panel owns is already on the bezel -- the clock, the weather, the live
+   state, and on the slate the employee count and the moment it was read -- and
+   a second copy up here would be the page saying the same sentence twice.
+   So the band was tightened to what the heading needs. Its two lines were
+   leaded for running prose: --lh-body gave the 10px eyebrow a 16px line and
+   the 20px title a 30px one, inside 32px of padding. Both now take --lh-tight,
+   the token the type scale already names for titles and figures, and the
+   padding comes to the page's own rhythm. Measured at 1920x1080: 83px -> 64px,
+   which is the height the register's heading and the approvals heading have
+   always had, so the page now has one section-heading band instead of two. */
+.office-panel .office-heading { padding: var(--s3) var(--s6) var(--s3); align-items: center; }
+/* The eyebrow takes the page's own tracking and size; only its leading and its
+   margin are the heading's business. */
+.office-panel .office-heading .eyebrow { color: var(--ink-3); line-height: var(--lh-tight); margin: 0 0 var(--s1); }
+.office-panel .office-heading h2 { color: var(--ink); font-size: var(--fs-h2); font-weight: var(--w-semi); letter-spacing: var(--track-tight); line-height: var(--lh-tight); margin: 0; }
 
 /* --------------------------------------------------------------------------
    THE INSTRUMENT FAMILY
@@ -122,6 +135,22 @@
    the live state is the brightest thing in the readout, and what is running
    and how fast it runs step back to a label and a figure behind it. */
 .scene-viewport .scene-live { color: var(--ink); font-weight: var(--w-bold); }
+/* THE FRAME RATE IS NOT A HEADING. The Owner watches his renderer, so the
+   number stays -- but it was set at --fs-meta in --scene-chrome-ink, the same
+   size and the same ink as the word Live beside it, and a figure that ticks
+   every second was leading a readout whose subject is that the render is
+   live. It takes the quiet meta treatment the rest of the chrome uses: the
+   smallest size, the muted ink, still mono and still tabular so a change from
+   9 to 144 never shoves the pill. This is scoped to the live readout: the
+   clock in the opposite corner is the same .scene-figure and is the whole
+   point of its own readout, so it keeps its size. --scene-chrome-muted and
+   not --ink-3: they are the same grey to a tenth of a step, and the label
+   three pixels to the left of this figure is already the scene's own. */
+.scene-viewport .scene-readout-live .scene-figure {
+  font-size: var(--fs-micro);
+  font-weight: var(--w-med);
+  color: var(--scene-chrome-muted);
+}
 .live-dot { width: var(--s2); height: var(--s2); border-radius: var(--radius-pill); background: var(--teal); box-shadow: var(--glow-live); flex: none; }
 
 /* --------------------------------------------------------------------------
@@ -322,9 +351,14 @@
 #office-scene-container .cam-btn:hover:not(:disabled) { background: var(--surface-quiet); border-color: transparent; color: var(--ink); }
 #office-scene-container .cam-btn:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
 #office-scene-container .cam-square { width: var(--hit-lg); padding: 0; justify-content: center; font-size: var(--fs-h3); }
-#office-scene-container .cam-icon { width: var(--s4); height: var(--s4); fill: none; stroke: var(--scene-chrome-muted); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex: none; transition: stroke var(--dur) var(--ease); }
+/* The family's grid, stroke, caps, joins and currentColor come from .ui-icon
+   in style.css, which every icon in the product wears. What is the console's
+   own business is the ink and the measure: an icon here is quieter than the
+   word beside it, so the svg carries the muted colour and .ui-icon's
+   stroke: currentColor reads it. */
+#office-scene-container .cam-icon { color: var(--scene-chrome-muted); transition: color var(--dur) var(--ease); }
 /* The module buttons are what the Owner presses all day; their icon lights with them. */
-#office-scene-container .toolbar-modules .cam-btn:hover .cam-icon { stroke: var(--forest-ink); }
+#office-scene-container .toolbar-modules .cam-btn:hover .cam-icon { color: var(--forest-ink); }
 /* An icon and its label are one word, so they sit at the tighter gap; and at
    1280 the render's column is only 774px wide while the page is not narrow
    enough for the 900px rule below, so those two measures are what keep the
@@ -332,6 +366,9 @@
    Measured at 1280x800: tier 2 ended 17px past the plate before this. */
 #office-scene-container .toolbar-modules .cam-btn { flex: 0 1 auto; min-width: 0; gap: var(--s1); }
 #office-scene-container .toolbar-modules .cam-icon { width: var(--scene-icon); height: var(--scene-icon); }
+/* The camera's keys carry the same family: the plus and the minus were a
+   font's characters set at --fs-h3 and sat 1px off the row's optical centre. */
+#office-scene-container .cam-group .ui-icon { color: var(--scene-chrome-ink); }
 
 /* THE CAMERA -- one instrument. Four keys, one plate, hairlines between. */
 #office-scene-container .cam-group {
@@ -363,7 +400,7 @@
    colour, and its icon lights with it. Same reason as above for the scope. */
 #office-scene-container .cam-btn.cam-btn-active { background: var(--forest); border-color: var(--forest-ink); color: var(--ink-on-dark); }
 #office-scene-container .cam-btn.cam-btn-active:hover:not(:disabled) { background: var(--forest-lift); color: var(--ink-on-dark); }
-#office-scene-container .cam-btn.cam-btn-active .cam-icon { stroke: var(--ink-on-dark); }
+#office-scene-container .cam-btn.cam-btn-active .cam-icon { color: var(--ink-on-dark); }
 
 /* THE TWO STATE READOUTS in the console. They are the studio's own state, not
    camera controls, so they are set as readouts: a small-caps label, then the

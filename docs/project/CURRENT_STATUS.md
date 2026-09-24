@@ -13,6 +13,156 @@ database resource discovery/refresh, separate production choices, UI and regress
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
 
+## One icon family, and the two readouts beside the render (2026-09-23)
+
+Active edit claim: Claude, 2026-09-23 — the product's icons, the frame-rate figure on the glass
+and the heading band above the render. Done and tested.
+
+**Why.** The seven room links under the render carried seven icons from seven places: a
+two-stroke magnifier whose handle floated clear of its lens, a filled badge with a solid play
+triangle, a circle crossed by a diagonal that read as *forbidden*, a person, a page, a **house**
+for the daily run and a classical bank with seven strokes — twice the ink of anything beside it.
+Everywhere else an icon's work was being done by a typographic character: a font's multiplication
+sign for every close button, a font's arrow for refresh, a plus and a minus set at `--fs-h3`,
+a filled ▶ on the play control. Three drawing systems on one page, at three weights.
+
+**One family.** Every icon in the product is now drawn on one 24×24 grid, inside 4..20 of it, at
+`--icon-stroke` (1.7 user units — 1.06 device px at the console's `--scene-icon`, 1.13 at
+`--icon`), with round caps and round joins, no fill but the one dot a shape needs, and
+`stroke: currentColor`, so an icon never states an ink of its own and always takes the ink of the
+control it sits in — its hover, its disabled state, the alert triple on «Ieși din ecran complet».
+The family is `.ui-icon` in `style.css`; the seven rooms are inline in `index.html`, the four a
+script draws are in `src/icons.js` (new). Twenty-two icons, one grid.
+
+**Two of the seven said the wrong thing.**
+- **Rularea zilei** was a *house*. A daily run is a day of work, so it is the sun over the
+  horizon. Not the play-in-a-circle the brief offered as the alternative: a play mark already
+  means «a film» two buttons to its left, and on a dialog that only *reports* what each run did
+  it would read as a Start the Owner must never press by accident.
+- **Distribuție** was a compass rose inside a circle, which at 15px reads as a prohibition sign.
+  It is now the film leaving the studio: the arrow rising out of the tray. The share glyph was
+  built and photographed first; its three nodes turn to mush at the size it is actually drawn.
+
+**Beside the render, two measured changes.**
+1. *The frame rate is not a heading.* It was set at `--fs-meta` in `--scene-chrome-ink` — the
+   same size and the same ink as the word **Live** next to it — so a figure that ticks every
+   second was leading a readout whose subject is that the render is live. It keeps every word and
+   takes the chrome's quiet meta treatment: `--fs-micro`, `--scene-chrome-muted`, still mono and
+   still tabular. Scoped to the live readout, so the clock in the opposite corner is untouched.
+   Measured at 1920×1080: the figure 11.5px/600/`#dfe7f5` → 10px/500/`#8496b8`, 40.4px wide →
+   35.2px, and the readout 169px → 163.7px.
+2. *The band above the render.* It carried the live badge at its right end until the badge was
+   let into the glass, and what was left was a heading alone in an 83px band 1422px wide. Nothing
+   was brought back to fill it: every readout this panel owns is already on the bezel — the
+   clock, the weather, the live state, and on the slate the employee count and the moment it was
+   read — and a second copy up here would be the page saying the same sentence twice. So the band
+   was tightened instead. Its two lines were leaded for running prose (`--lh-body` gave the 10px
+   eyebrow a 16px line and the 20px title a 30px one) inside 32px of padding; both now take
+   `--lh-tight`, the token the type scale already names for titles and figures, and the padding
+   comes to the page's own rhythm. Measured at 1920×1080: **83px → 65px**, which is where the
+   register's heading and the approvals heading have always been (62px), so the page has one
+   section-heading band instead of two; the render begins 18px higher.
+
+**Nothing else changed**: no word, no behaviour, no data flow, no API call, no gate, no test
+contract, no id, class, data attribute, `aria` role or test hook. The only literal added to
+`style.css` is `--icon: 16px`, inside the `:root` block; a literal was *removed* from
+`office_scene.css` (`stroke-width: 1.7` became the token).
+
+**Tested.** `npm test --prefix frontend`: **164 tests, 164 pass, 0 fail** — the same 164, none
+added, none changed, because no test named a glyph. `npm run check --prefix frontend`: clean.
+`npm run build --prefix frontend`: succeeds. Photographed at 1920×1080 and 1280×800 against the
+254 captured answers — login, workspace, the eight dialogs, the inspector, the mail window and
+the seventeen deeper dialog states — **0 missing fixtures, 0 console errors** in every run, and
+every icon was read at 4× and 8×. At 1280 the seven rooms still use 767.6px of a 791.6px row, to
+the pixel what they used before.
+
+**One glyph deliberately left.** The five publishing gates keep their `✓`: it is a status mark
+inside a sentence, in `--ok-ink` like every other verdict on the page, not a control's icon, and
+a 16px family icon set inline in 13px running text would need a third measure and a baseline
+shim to sit on. Five lines to change if the Owner disagrees. The trailing `↗`, `↻` and `↓` after
+a label («Deschide firul ↗», «Citește tendințele ↻», «Preia sursa ↓») are punctuation in the
+studio's own voice, not icons, and were left as they are.
+
+## The interface speaks Romanian (2026-09-23)
+
+Active edit claim: Claude, 2026-09-23 — the frontend's user-facing strings, in two parts
+(the page and the scene; then the eight dialogs, the agent inspector and the mail window).
+Both parts are done and tested.
+
+**Why.** The studio already spoke Romanian everywhere it computed a sentence: the preflight's
+reasons, the day's summary, the approvals, the governance panel, the refusals. The interface's
+older static text was still English, so one row read «Automatizare» above «Fact research», a
+button «Randare 9:16» sat beside «Check QC», and the treasury labelled six tiles in two
+languages. An independent critic called it the loudest unfinished signal on the screen: a
+stranger does not read that as a bilingual product, they read it as a product where nobody
+decided. The Owner's own convention decided it: **the interface speaks Romanian.**
+
+**What changed.** Every user-facing string the frontend owns is Romanian, with full diacritics
+(ă â î ș ț, comma-below), in the studio's own voice — plain, exact, short, matching the words
+the backend already writes. `<html lang>` went from `en` to `ro`; the meta and og descriptions
+follow. A glossary was written before the work and followed throughout
+(`<scratchpad>/ui/GLOSSARY.md`): the pairs, the loanwords kept and why, and every place the
+translator hesitated, with the measurement rather than the guess.
+
+- **The page**: masthead, sign-in, the live register (including the ~90 sentences
+  `describeEvent` writes and the ledger's gender-invariable verbs), the module panel, the scene
+  panel and its readouts, both toolbars, the footer, the separate per-agent live window, the
+  model's answer as a person reads it, and the signage the canvas draws.
+- **The dialogs**: every header, one-line purpose, section heading, rail link, field label,
+  placeholder, button, tab, table header and `title`/`aria-label` inside the eight dialogs, plus
+  every status, intent, empty line, confirmation and error fallback that `main.js`,
+  `settings.js`, `youtube_connections.js`, `mail_thread.js`, `agent_details.js` and
+  `provider_production.js` write themselves.
+
+**Two things the critic named, both now answered.**
+1. The research form had three inputs described only by a placeholder — which disappears the
+   moment a word is typed — and a fourth box holding the word `general` with nothing above it.
+   The four controls now carry visible Romanian labels taken from what each control already
+   said: **Titlul episodului · Subiectul factual · Unghiul · Publicul**. The markup reuses
+   `.yt-field` / `.yt-field-label`, the field-label pair the stylesheet already defines for the
+   YouTube form, so no rule and no literal was added.
+2. The publishing gate card quoted an internal architecture filename. It now says the same
+   thing without naming a file the Owner does not open: «Aceste verificări nu sunt încă
+   implementate: drepturile pe pachetul final, politica platformei, …».
+
+**What was deliberately left alone.** Values are not labels: the brand, the employees' names and
+role names as the data gives them, units and codes (`VR$`, `USD`, `fps`, `9:16`, `QC`, `UUID`,
+`API`, `OAuth`), enum values (`IDLE`, `SUPPORTED`, `PASSED`, `SINGLE`, `PRODUCTION`), Google's own
+field names on the YouTube form, and every sentence that arrives from the backend — those are
+already Romanian and are not the interface's to reword. Loanwords Romanian technical speech
+actually uses were kept and are listed in the glossary (`live`, `storyboard`, `prompt`, `token`,
+`slot`, `watchdog`, `showrunner`, `analytics`).
+
+**A defect found by reading the photographs, not the code.** The panels printed the plural
+against every figure, so the closed day of 2026-09-12 read «1 evenimente de povestit» beside
+«92 evenimente». `main.js` now has `countLabel(count, one, many)`: one is singular, and a
+numeral takes «de» when its last two digits are 00 or 20 and above — «19 evenimente», «92 de
+evenimente», «101 evenimente». It is applied to the day's counts, the episode's beats and cited
+events, a script's claims and scenes, an employee's runs and a provider's ledger records.
+
+**Nothing else changed**: no behaviour, no data flow, no API call, no gate, no test contract,
+and `style.css` was not touched — no colour, size, radius, shadow or duration literal was added
+anywhere.
+
+**Tested.** `npm test --prefix frontend`: **164 tests, 164 pass, 0 fail** — the same 164 as
+before; no test was added or removed, and forty-four assertions that named an English word were
+updated in the same breath (`ledger`, `ledger_fold`, `live_window`, `friendly_text`,
+`day_outcome`, `hq_world`, `hq_stream_lifecycle`, `mail_thread`, `agent_details`).
+`npm run check --prefix frontend`: clean. `npm run build --prefix frontend`: succeeds.
+Every view was photographed at 1920×1080 and 1280×800 against the 254 captured answers and read
+back — login, workspace, the eight dialogs, the agent inspector, the mail window, and the dialog
+states the plain shooter cannot reach (the second tab of Settings and of Media, every rail
+section of Research, the daily run and the Treasury): **0 missing fixtures, 0 console errors**
+in every run, and no Romanian word overflowed the button, tab row or table header it was put in.
+
+**Still English, and not the frontend's to fix.** The rendered city backdrop and the HQ building
+plate carry baked-in signage (`BUCHAREST AI DISTRICT`, the floor plates `L4 EXECUTIVE` … `S3 AI
+SPACE`): pixels in the art, an `art-source/blender/hq` job and a re-bake, not started. The
+bus-shelter posters in `hq_world.js` were kept in English as the studio's own brand and channel
+advertising inside the depicted world — one line each to change if the Owner wants them
+Romanian. And the backend's own Romanian sentences still point at «Settings» by its English
+name while the page's button now says «Setări»; that is one line in the backend's own pass.
+
 ## The interface, brought to a finish (2026-09-22/23)
 
 The Owner asked for the interface to be finished «la un nivel extrem de bun cu detalii și

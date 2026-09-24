@@ -7,6 +7,7 @@ import { AgentVisualStateManager, spriteFor, screenModeFor, stateOf } from './hq
 import { SkyRenderer } from './hq_sky.js';
 import { bubbleFrame } from './speech_bubble.js';
 import { scenePalette, withAlpha } from './hq_palette.js';
+import { stageLabel } from './ledger.js';
 
 /**
  * WorldSimulationManager owns every manager of the living headquarters and advances them in one
@@ -536,7 +537,7 @@ export class HQRenderer {
     ctx.fillStyle = '#9fb4cc';
     ctx.font = '600 6px "Segoe UI", system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('RENDER BAY', x + dw / 2, y + 12);
+    ctx.fillText('RANDARE', x + dw / 2, y + 12);
     ctx.font = '700 9px "Segoe UI", system-ui, sans-serif';
     ctx.fillStyle = working ? '#e6f1ff' : state === 'ERROR' || state === 'BLOCKED' ? '#fca5a5' : '#56708c';
     ctx.fillText(working ? 'WORKING' : state, x + dw / 2, y + 27);
@@ -632,7 +633,7 @@ export class HQRenderer {
       ctx.font = '600 5px "Segoe UI", system-ui, sans-serif';
       ctx.textAlign = 'center';
       ctx.fillStyle = 'rgba(230,240,255,0.9)';
-      ctx.fillText(String(token.stage || '').replace(/_/g, ' '), x, y - 3);
+      ctx.fillText(stageLabel(String(token.stage || '')), x, y - 3);
       ctx.textAlign = 'left';
     }
     const trip = state.trip;
@@ -786,7 +787,7 @@ export class HQRenderer {
       ctx.fillRect(x, y, cw, ch);
       ctx.fillStyle = '#9fd8d0';
       ctx.font = '600 5.5px "Segoe UI", system-ui, sans-serif';
-      ctx.fillText('BUCHAREST', x + 4, y + 8);
+      ctx.fillText('BUCUREȘTI', x + 4, y + 8);
       ctx.fillStyle = '#5eead4';
       ctx.font = '600 17px "Cascadia Mono", Consolas, monospace';
       ctx.shadowColor = 'rgba(94,234,212,0.8)';

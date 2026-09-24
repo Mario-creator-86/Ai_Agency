@@ -19,9 +19,9 @@ test('a thread renders as letters, oldest first, with both ends, the date and th
   );
   assert.ok(html.indexOf('data-message="m-1"') < html.indexOf('data-message="m-2"'));
   assert.ok(html.includes('<strong>Sarah (Director)</strong> <span class="mail-arrow">→</span> <strong>Elena (Fact Checker)</strong>'));
-  assert.ok(html.includes('Question'));
+  assert.ok(html.includes('Întrebare'));
   assert.ok(html.includes('Elena, pe ce stă 40%?\nSarah'));
-  assert.ok(html.includes('answered by Elena (Fact Checker) — Raportul IEA.'));
+  assert.ok(html.includes('răspuns de Elena (Fact Checker) — Raportul IEA.'));
   assert.ok(html.includes('2026'));
 });
 
@@ -44,7 +44,7 @@ test('text written by a model is escaped before it reaches the window', () => {
 });
 
 test('an empty thread says so', () => {
-  assert.ok(renderThread({ thread_id: 't', subject: '', messages: [] }, options).includes('The thread is empty'));
+  assert.ok(renderThread({ thread_id: 't', subject: '', messages: [] }, options).includes('Firul este gol'));
 });
 
 test('a letter to the Owner is marked as waiting for the Owner while it is open', () => {
@@ -53,5 +53,5 @@ test('a letter to the Owner is marked as waiting for the Owner while it is open'
     options,
   );
   assert.ok(html.includes('is-owner'));
-  assert.ok(html.includes('awaiting your reply'));
+  assert.ok(html.includes('așteaptă răspunsul tău'));
 });

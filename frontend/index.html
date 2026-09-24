@@ -1,18 +1,18 @@
 <!doctype html>
-<html lang="en">
+<html lang="ro">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#172927" />
     <meta
       name="description"
-      content="AMN-AI — Autonomous Machine Nexus · Artificial Intelligence. The Owner's private workspace: agents, media production and distribution, with verified state."
+      content="AMN-AI — Autonomous Machine Nexus · Artificial Intelligence. Spațiul privat al Proprietarului: angajați, producție media și distribuție, cu stare verificată."
     />
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta property="og:title" content="AMN-AI · Autonomous Machine Nexus" />
-    <meta property="og:description" content="Autonomous Machine Nexus — Artificial Intelligence. Real work. Verified state." />
+    <meta property="og:description" content="Autonomous Machine Nexus — Artificial Intelligence. Muncă reală. Stare verificată." />
     <meta property="og:image" content="/amn-ai-logo.png" />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary" />
@@ -21,32 +21,32 @@
   <body>
     <header class="topbar">
       <a href="/" class="brand" title="AMN-AI — Autonomous Machine Nexus · Artificial Intelligence"><img src="/amn-ai-mark.png" alt="" width="38" height="38" class="brand-logo" /><span><strong>AMN-AI</strong><br /><span class="brand-sub">Autonomous Machine Nexus</span></span></a>
-      <span class="topbar-crumb"><span id="studio-name">AMN-AI</span> <span class="separator">/</span> Owner workspace</span>
-      <span class="topbar-right"><span id="environment-banner" class="env-banner" role="status" hidden>—</span><span id="connection" class="connection" role="status">Not connected</span><button id="logout" class="quiet topbar-logout" hidden>Sign out</button></span>
+      <span class="topbar-crumb"><span id="studio-name">AMN-AI</span> <span class="separator">/</span> Spațiul Proprietarului</span>
+      <span class="topbar-right"><span id="environment-banner" class="env-banner" role="status" hidden>—</span><span id="connection" class="connection" role="status">Neconectat</span><button id="logout" class="quiet topbar-logout" hidden>Ieși din studio</button></span>
     </header>
     <main>
       <section id="login" class="login panel">
         <img src="/amn-ai-lockup.png" alt="AMN-AI — Autonomous Machine Nexus" class="login-lockup" width="200" height="212" />
         <p class="eyebrow">AUTONOMOUS MACHINE NEXUS · ARTIFICIAL INTELLIGENCE</p>
-        <h1>A place for<br />the next idea.</h1>
-        <p>Sign in to the private AMN-AI workspace.</p>
+        <h1>Un loc pentru<br />ideea următoare.</h1>
+        <p>Intră în spațiul privat AMN-AI.</p>
         <form id="login-form">
-          <label for="owner-token">Owner key</label>
+          <label for="owner-token">Cheia Proprietarului</label>
           <input id="owner-token" type="password" required minlength="32" autocomplete="off" spellcheck="false" />
-          <button type="submit" class="primary">Open the studio <span aria-hidden="true">↗</span></button>
+          <button type="submit" class="primary">Intră în studio <span aria-hidden="true">↗</span></button>
         </form>
-        <p class="helper">The local key is in the .env file, under STUDIO_OWNER_TOKEN. It stays only in this page's memory.</p>
+        <p class="helper">Cheia locală se află în fișierul .env, la STUDIO_OWNER_TOKEN. Rămâne doar în memoria acestei pagini.</p>
       </section>
       <section id="workspace" hidden>
         <div class="workspace-grid">
-          <aside class="ledger-column" role="complementary" aria-label="Live ledger, module status and governance">
+          <aside class="ledger-column" role="complementary" aria-label="Registrul viu, starea modulelor și guvernanța">
             <section class="panel ledger-panel">
-              <div class="section-heading"><div><p class="eyebrow">LIVE LEDGER</p><h2>What is happening now</h2></div><span id="ledger-count" class="tag">—</span></div>
-              <p id="ledger-now" class="ledger-now">Loading…</p>
-              <div id="ledger-filters" class="ledger-filters" role="tablist" aria-label="Ledger filters"></div>
+              <div class="section-heading"><div><p class="eyebrow">REGISTRU VIU</p><h2>Ce se întâmplă acum</h2></div><span id="ledger-count" class="tag">—</span></div>
+              <p id="ledger-now" class="ledger-now">Se încarcă…</p>
+              <div id="ledger-filters" class="ledger-filters" role="tablist" aria-label="Filtrele registrului"></div>
               <ol id="ledger-list" class="ledger-list"></ol>
             </section>
-            <section class="panel modules-panel"><p class="eyebrow">CAPABILITIES</p><h2>Module status</h2><ul id="modules" class="modules"></ul></section>
+            <section class="panel modules-panel"><p class="eyebrow">CAPABILITĂȚI</p><h2>Starea modulelor</h2><ul id="modules" class="modules"></ul></section>
             <!-- Governance: the mode the studio is really in, and what a supervised studio stopped to ask. -->
             <section class="panel governance-panel">
               <div class="section-heading"><div><p class="eyebrow">GUVERNANȚĂ</p><h2>Mod de autonomie</h2></div><span id="autonomy-mode-tag" class="tag">—</span></div>
@@ -57,12 +57,12 @@
                 <button class="quiet mode-btn" data-mode="AUTONOMOUS_CEO" type="button" title="Directoarea execută singură treptele T0–T3 în limitele politicii; T4 rămâne a Proprietarului.">CEO autonom</button>
               </div>
               <p id="autonomy-mode-note" class="helper-note" hidden></p>
-              <div class="section-heading approvals-heading"><div><p class="eyebrow">APROBĂRI</p><h2>Ce așteaptă decizia ta</h2></div><span id="approvals-count" class="tag">—</span><button id="refresh-approvals-btn" class="quiet cam-square" type="button" title="Recitește cererile de aprobare">↻</button></div>
+              <div class="section-heading approvals-heading"><div><p class="eyebrow">APROBĂRI</p><h2>Ce așteaptă decizia ta</h2></div><span id="approvals-count" class="tag">—</span><button id="refresh-approvals-btn" class="quiet cam-square" type="button" title="Recitește cererile de aprobare" aria-label="Recitește cererile de aprobare"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 12a7.4 7.4 0 1 1-2.17-5.23"/><path d="M19.4 5.1v4.6h-4.6"/></svg></button></div>
               <div id="approvals-list" class="approvals-list"></div>
             </section>
           </aside>
           <section class="panel office-panel">
-            <div class="section-heading office-heading"><div><p class="eyebrow">WORKSPACE</p><h2>Studio Office</h2></div></div>
+            <div class="section-heading office-heading"><div><p class="eyebrow">SPAȚIU DE LUCRU</p><h2>Biroul studioului</h2></div></div>
             <div class="office-scene office-scene-container" id="office-scene-container">
               <!-- THE RENDER AND ITS INSTRUMENTS. The three readouts are let into the bezel of the
                    viewport itself — the clock and the weather in the top-left corner, the live state
@@ -70,34 +70,44 @@
                    picture or standing about on the panel outside it. The canvas takes focus so the
                    employees can be reached with the arrows as well as with a pointer. -->
               <div class="scene-viewport" id="scene-viewport">
-              <canvas id="office-canvas" class="office-canvas" tabindex="0" aria-label="The AMN-AI headquarters, live. Use the arrow keys to move between employees and Enter to open one."></canvas>
-              <div class="scene-readout scene-readout-info" title="Local time in Bucharest and the live weather the studio reads. With no weather service configured the scene draws no weather."><span id="scene-info">—  •  BUCHAREST</span></div>
-              <span id="office-status" class="tag live-pill scene-readout scene-readout-live"><span class="live-dot" aria-hidden="true"></span><span id="office-fps">Live Renderer —</span></span>
+              <canvas id="office-canvas" class="office-canvas" tabindex="0" aria-label="Sediul AMN-AI, live. Folosește tastele-săgeți ca să treci de la un angajat la altul și Enter ca să deschizi unul."></canvas>
+              <div class="scene-readout scene-readout-info" title="Ora locală din București și vremea reală pe care o citește studioul. Fără un serviciu de vreme configurat, scena nu desenează vremea."><span id="scene-info">—  •  BUCUREȘTI</span></div>
+              <span id="office-status" class="tag live-pill scene-readout scene-readout-live"><span class="live-dot" aria-hidden="true"></span><span id="office-fps">Live · randare —</span></span>
               <div class="scene-slate"><span id="room-caption">—</span><span id="snapshot-time">—</span></div>
               </div>
               <div class="camera-toolbar">
                 <div class="toolbar-group toolbar-scene">
-                <button id="stop-toggle" class="cam-btn cam-switch" disabled title="Studio autonomy: on or off. Stopping persists and never starts agents or publishing."><span class="switch-label">AUTONOMY</span><span class="switch-track"><span class="switch-knob"></span></span><span id="switch-state" class="switch-state">—</span></button>
-                <button id="environment-toggle" class="cam-btn cam-switch" disabled title="Studio environment. TEST: the minimum is generated on the cheapest compatible model. PRODUCTION: the cheapest model that reaches the quality each scene needs."><span class="switch-label">ENVIRONMENT</span><span id="environment-state" class="switch-state">—</span></button>
+                <button id="stop-toggle" class="cam-btn cam-switch" disabled title="Autonomia studioului: pornită sau oprită. Oprirea rămâne în vigoare și nu pornește niciodată angajați sau publicări."><span class="switch-label">AUTONOMIE</span><span class="switch-track"><span class="switch-knob"></span></span><span id="switch-state" class="switch-state">—</span></button>
+                <button id="environment-toggle" class="cam-btn cam-switch" disabled title="Mediul studioului. TEST: se generează minimul, pe cel mai ieftin model compatibil. PRODUCTION: cel mai ieftin model care atinge calitatea de care are nevoie fiecare scenă."><span class="switch-label">MEDIU</span><span id="environment-state" class="switch-state">—</span></button>
                 <!-- The camera is one instrument, not four loose boxes: the four controls that
                      move the same eye share one plate and are divided by hairlines. -->
-                <div class="cam-group" role="group" aria-label="Camera">
-                <button id="zoom-in" class="quiet cam-btn cam-square" title="Zoom in">+</button>
-                <button id="zoom-out" class="quiet cam-btn cam-square" title="Zoom out">−</button>
-                <button id="zoom-fit" class="quiet cam-btn" title="Fit the whole building">Fit</button>
-                <button id="zoom-reset" class="quiet cam-btn" title="Actual size">1:1</button>
+                <div class="cam-group" role="group" aria-label="Cameră">
+                <button id="zoom-in" class="quiet cam-btn cam-square" title="Apropie" aria-label="Apropie"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5.2v13.6M5.2 12h13.6"/></svg></button>
+                <button id="zoom-out" class="quiet cam-btn cam-square" title="Depărtează" aria-label="Depărtează"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.2 12h13.6"/></svg></button>
+                <button id="zoom-fit" class="quiet cam-btn" title="Încadrează toată clădirea">Încadrează</button>
+                <button id="zoom-reset" class="quiet cam-btn" title="Mărime reală">1:1</button>
                 </div>
-                <button id="fullscreen-btn" class="quiet cam-btn btn-fs" title="Fullscreen">Fullscreen</button>
-                <button id="exit-fullscreen-btn" class="quiet cam-btn btn-exit-fs hidden" title="Exit fullscreen">✕ Exit</button>
+                <button id="fullscreen-btn" class="quiet cam-btn btn-fs" title="Ecran complet">Ecran complet</button>
+                <button id="exit-fullscreen-btn" class="quiet cam-btn btn-exit-fs hidden" title="Ieși din ecran complet"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></svg>Ieși</button>
                 </div>
+                <!-- THE SEVEN ROOMS, ONE ICON FAMILY. Every icon in this page is drawn on the
+                     same 24x24 grid at --icon-stroke, round caps and joins, no fill but the
+                     dot a shape needs, and stroke: currentColor so the ink is the control's
+                     (style.css, .ui-icon). Two of the seven said the wrong thing and were
+                     replaced: the daily run was a HOUSE and is now the sun over the horizon --
+                     a day of work, and not the play triangle the other candidate offered,
+                     because a play mark already means "a film" two buttons to the left and
+                     because it would read as a Start this dialog does not carry; and
+                     distribution was a circle with a diagonal that read as "forbidden" and is
+                     now the film leaving the studio. -->
                 <div class="toolbar-group toolbar-modules">
-                <button id="open-research-btn" class="quiet cam-btn" title="Topics, sources and claim verification"><svg class="cam-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>Research</button>
-                <button id="open-media-btn" class="quiet cam-btn cam-btn-media" title="Storyboards, video rendering and quality control"><svg class="cam-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M10 9.5l5 2.5-5 2.5z"/></svg>Media Production</button>
-                <button id="open-publishing-btn" class="quiet cam-btn cam-btn-pub" title="Channels, pre-publication checks and history"><svg class="cam-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/></svg>Distribution</button>
-                <button id="open-workforce-btn" class="quiet cam-btn" title="How the agents work and which staffing changes the measurements support"><svg class="cam-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c1.2-4 4-6 7-6s5.8 2 7 6"/></svg>Staff</button>
-                <button id="open-story-btn" class="quiet cam-btn" title="The day's journal and the Office Serial episode built from it"><svg class="cam-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5.5" y="3.5" width="13" height="17" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/></svg>Journal</button>
-                <button id="open-runbook-btn" class="quiet cam-btn" title="What the studio can do now and what each daily run did"><svg class="cam-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11l8-6 8 6v8.5H4z"/><path d="M10 19.5v-5h4v5"/></svg>Daily Run</button>
-                <button id="open-treasury-btn" class="quiet cam-btn" title="The VR$ ledger: real evidence, what was issued from it and what cannot be spent"><svg class="cam-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9l8-5 8 5z"/><path d="M6 10v7M10 10v7M14 10v7M18 10v7M4 19.5h16"/></svg>Treasury</button>
+                <button id="open-research-btn" class="quiet cam-btn" title="Subiecte, surse și verificarea afirmațiilor"><svg class="ui-icon cam-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.7" cy="10.7" r="5.9"/><path d="M14.9 14.9l5.1 5.1"/></svg>Cercetare</button>
+                <button id="open-media-btn" class="quiet cam-btn cam-btn-media" title="Storyboarduri, randare video și controlul calității"><svg class="ui-icon cam-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="6" width="17" height="12" rx="2.6"/><path d="M10.3 9.2l4.9 2.8-4.9 2.8z"/></svg>Producție media</button>
+                <button id="open-publishing-btn" class="quiet cam-btn cam-btn-pub" title="Canale, verificări înainte de publicare și istoric"><svg class="ui-icon cam-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.6V5"/><path d="M7.9 9.1L12 5l4.1 4.1"/><path d="M4.6 14.6v3.1a1.8 1.8 0 0 0 1.8 1.8h11.2a1.8 1.8 0 0 0 1.8-1.8v-3.1"/></svg>Distribuție</button>
+                <button id="open-workforce-btn" class="quiet cam-btn" title="Cum lucrează angajații și ce schimbări de personal susțin măsurătorile"><svg class="ui-icon cam-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8.6" r="3.5"/><path d="M5.2 19.6c.9-3.6 3.5-5.6 6.8-5.6s5.9 2 6.8 5.6"/></svg>Angajați</button>
+                <button id="open-story-btn" class="quiet cam-btn" title="Jurnalul zilei și episodul din Office Serial construit din el"><svg class="ui-icon cam-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3.6" width="14" height="16.8" rx="2.4"/><path d="M8.4 8.4h7.2M8.4 12h7.2M8.4 15.6h4.6"/></svg>Jurnal</button>
+                <button id="open-runbook-btn" class="quiet cam-btn" title="Ce poate face studioul acum și ce a făcut fiecare rulare a zilei"><svg class="ui-icon cam-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.6 18.9h16.8"/><path d="M7 18.9a5 5 0 0 1 10 0"/><path d="M12 6.1V3.9"/><path d="M7.05 8.25L5.5 6.7"/><path d="M16.95 8.25L18.5 6.7"/></svg>Rularea zilei</button>
+                <button id="open-treasury-btn" class="quiet cam-btn" title="Registrul VR$: dovezile reale, ce s-a emis din ele și ce nu poate fi cheltuit"><svg class="ui-icon cam-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="18" height="10" rx="2.2"/><circle cx="12" cy="12" r="2.3"/><path d="M6.6 12h.8M16.6 12h.8"/></svg>Trezorerie</button>
                 </div>
               </div>
               <div id="rooms" class="rooms" hidden></div>
@@ -110,48 +120,48 @@
       <dialog id="agent-inspector" class="studio-dialog">
         <div class="dialog-header">
           <div>
-            <span class="eyebrow eyebrow-accent" id="inspector-role">ROLE</span>
+            <span class="eyebrow eyebrow-accent" id="inspector-role">ROL</span>
             <h2 id="inspector-name" class="dialog-title">Agent</h2>
           </div>
           <div class="dialog-header-actions">
-            <button id="inspector-expand" class="dialog-close dialog-expand" title="Expand: the whole chat and history, top to bottom" aria-label="Expand the window">⛶</button>
-            <button id="inspector-close" class="dialog-close">✕</button>
+            <button id="inspector-expand" class="dialog-close dialog-expand" title="Extinde: toată discuția și istoricul, de sus până jos" aria-label="Extinde fereastra"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.6 9.4V4.6h4.8M14.6 4.6h4.8v4.8M19.4 14.6v4.8h-4.8M9.4 19.4H4.6v-4.8"/></svg></button>
+            <button id="inspector-close" class="dialog-close" aria-label="Închide"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></svg></button>
           </div>
         </div>
         <div class="dialog-body">
           <div class="agent-stats-grid">
-            <div><span class="stat-label">Runtime state</span><strong id="inspector-state" class="stat-value text-accent">IDLE</strong></div>
-            <div><span class="stat-label">Lifecycle</span><strong id="inspector-lifecycle" class="stat-value text-success">ACTIVE</strong></div>
-            <div><span class="stat-label">Assigned model</span><strong id="inspector-model" class="stat-value">—</strong></div>
+            <div><span class="stat-label">Stare de lucru</span><strong id="inspector-state" class="stat-value text-accent">IDLE</strong></div>
+            <div><span class="stat-label">Statut în companie</span><strong id="inspector-lifecycle" class="stat-value text-success">ACTIVE</strong></div>
+            <div><span class="stat-label">Model alocat</span><strong id="inspector-model" class="stat-value">—</strong></div>
             <div><span class="stat-label">Identificator</span><small id="inspector-id" class="stat-uuid">uuid</small></div>
           </div>
           <div class="dialog-btn-row">
-            <button id="agent-pause-btn" class="secondary btn-pause">Pause agent</button>
-            <button id="agent-resume-btn" class="secondary btn-resume">Resume agent</button>
-            <button id="agent-live-btn" class="quiet btn-live" title="Open a separate live window: what the agent is doing, saying and finishing">Live window ↗</button>
+            <button id="agent-pause-btn" class="secondary btn-pause">Pune în pauză</button>
+            <button id="agent-resume-btn" class="secondary btn-resume">Reia lucrul</button>
+            <button id="agent-live-btn" class="quiet btn-live" title="Deschide o fereastră live separată: ce face, ce spune și ce termină angajatul">Fereastră live ↗</button>
           </div>
           <div class="dialog-section" id="inspector-identity">
-            <h3 class="dialog-section-header">Identity and role contract</h3>
-            <p id="inspector-mission" class="helper">Loading identity…</p>
+            <h3 class="dialog-section-header">Identitate și contract de rol</h3>
+            <p id="inspector-mission" class="helper">Se încarcă identitatea…</p>
             <div id="inspector-contract" class="identity-grid"></div>
             <details class="identity-prompt">
-              <summary>The system prompt, exactly as the model receives it</summary>
+              <summary>Promptul de sistem, exact cum îl primește modelul</summary>
               <pre id="inspector-system-prompt" class="dialog-output"></pre>
             </details>
           </div>
           <div class="dialog-section" id="inspector-memory-section">
-            <h3 class="dialog-section-header">Memory and messages</h3>
+            <h3 class="dialog-section-header">Memorie și mesaje</h3>
             <ul id="inspector-memory" class="identity-list"></ul>
             <ul id="inspector-messages" class="identity-list"></ul>
           </div>
           <div class="dialog-section" id="inspector-chat-section">
-            <h3 class="dialog-section-header">Conversation and history</h3>
-            <p class="helper">Everything asked, answered and decided, and why, in order. Write to the agent directly: it answers with its own identity and memory, and the exchange stays in the history.</p>
-            <div id="agent-history" class="chat-history"><div class="helper">Loading history…</div></div>
+            <h3 class="dialog-section-header">Discuție și istoric</h3>
+            <p class="helper">Tot ce s-a întrebat, s-a răspuns și s-a decis, și de ce, în ordine. Scrie-i direct angajatului: răspunde cu identitatea și memoria lui, iar schimbul rămâne în istoric.</p>
+            <div id="agent-history" class="chat-history"><div class="helper">Se încarcă istoricul…</div></div>
             <div id="agent-typing" class="chat-typing" hidden></div>
             <form id="agent-run-form" class="dialog-form chat-form">
-              <input id="agent-run-objective" placeholder="Ask something (e.g. What did you decide today and why?)…" required class="dialog-input" />
-              <button type="submit" class="primary dialog-submit-btn">Send ↗</button>
+              <input id="agent-run-objective" placeholder="Întreabă ceva (ex: Ce ai decis azi și de ce?)…" required class="dialog-input" />
+              <button type="submit" class="primary dialog-submit-btn">Trimite ↗</button>
             </form>
             <div id="agent-run-output" class="dialog-output" hidden></div>
           </div>
@@ -162,86 +172,86 @@
       <dialog id="research-modal" class="studio-dialog research-dialog">
         <div class="dialog-header">
           <div>
-            <h2 class="dialog-title">Research and fact verification</h2>
-            <p class="dialog-desc">Propose topics, analyse sources and verify claims before scripting.</p>
+            <h2 class="dialog-title">Cercetare și verificarea faptelor</h2>
+            <p class="dialog-desc">Propune subiecte, analizează surse și verifică afirmațiile înainte de scenariu.</p>
           </div>
-          <button id="close-research-btn" class="dialog-close">✕</button>
+          <button id="close-research-btn" class="dialog-close" aria-label="Închide"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></svg></button>
         </div>
         <div class="dialog-body dialog-body-railed">
-          <nav class="dialog-rail" aria-label="Research sections">
-            <a href="#rs-trends">What people are searching for now</a>
+          <nav class="dialog-rail" aria-label="Secțiunile cercetării">
+            <a href="#rs-trends">Ce se caută acum</a>
             <a href="#rs-propose">Propune un subiect</a>
-            <a href="#rs-topics">Recent topics and novelty score</a>
-            <a href="#rs-sources">Sources and claims</a>
-            <a href="#rs-scripts">Scripts</a>
+            <a href="#rs-topics">Subiecte recente și scorul de noutate</a>
+            <a href="#rs-sources">Surse și afirmații</a>
+            <a href="#rs-scripts">Scenarii</a>
           </nav>
           <div class="dialog-pane">
           <div class="dialog-section-bottom" id="rs-trends">
             <div class="trends-head">
-              <h3 class="dialog-section-header-bright">What people are searching for now</h3>
-              <button id="trends-refresh" class="quiet" type="button">Read trends ↻</button>
+              <h3 class="dialog-section-header-bright">Ce se caută acum</h3>
+              <button id="trends-refresh" class="quiet" type="button">Citește tendințele ↻</button>
             </div>
-            <p class="helper">Google Trends for the studio's country, read daily. A trend is a hook, not a source: the researcher uses it only where authorised sites can prove it.</p>
-            <ul id="trends-list" class="trends-list"><li class="helper">Loading…</li></ul>
+            <p class="helper">Google Trends pentru țara studioului, citit zilnic. O tendință este o deschidere, nu o sursă: cercetătorul o folosește doar unde site-urile autorizate o pot dovedi.</p>
+            <ul id="trends-list" class="trends-list"><li class="helper">Se încarcă…</li></ul>
           </div>
           <div class="dialog-section-bottom" id="rs-propose">
             <h3 class="dialog-section-header-bright">Propune un subiect</h3>
             <form id="topic-propose-form" class="dialog-form">
-              <input id="topic-title" placeholder="Episode title (e.g. James Webb finds the oldest galaxy yet)" required class="dialog-input" />
-              <input id="topic-subject" placeholder="Subiect factual (ex: Descoperirea galaxiei GLASS-z12 la redshift 12.1)" required class="dialog-input" />
+              <label class="yt-field"><span class="yt-field-label">Titlul episodului</span><input id="topic-title" placeholder="ex: James Webb găsește cea mai veche galaxie" required class="dialog-input" /></label>
+              <label class="yt-field"><span class="yt-field-label">Subiectul factual</span><input id="topic-subject" placeholder="ex: Descoperirea galaxiei GLASS-z12 la redshift 12.1" required class="dialog-input" /></label>
               <div class="topic-input-grid">
-                <input id="topic-angle" placeholder="Angle (e.g. A breakthrough discovery)" required class="dialog-input" />
-                <input id="topic-audience" placeholder="Public (ex: science)" value="general" class="dialog-input" />
+                <label class="yt-field"><span class="yt-field-label">Unghiul</span><input id="topic-angle" placeholder="ex: O descoperire de referință" required class="dialog-input" /></label>
+                <label class="yt-field"><span class="yt-field-label">Publicul</span><input id="topic-audience" placeholder="ex: science" value="general" class="dialog-input" /></label>
               </div>
-              <button type="submit" class="primary dialog-submit-btn">Send topic to research ↗</button>
+              <button type="submit" class="primary dialog-submit-btn">Trimite subiectul la cercetare ↗</button>
             </form>
             <div id="topic-propose-status" class="dialog-status-msg" hidden></div>
           </div>
           <div id="rs-topics">
             <div class="topics-header-row">
-              <h3 class="dialog-section-header-bright-compact">Recent topics and novelty score</h3>
-              <button id="refresh-topics-btn" class="quiet btn-refresh">Refresh</button>
+              <h3 class="dialog-section-header-bright-compact">Subiecte recente și scorul de noutate</h3>
+              <button id="refresh-topics-btn" class="quiet btn-refresh">Reîncarcă</button>
             </div>
             <div id="topics-list" class="topics-container">
-              <div class="topics-loading">Loading topics...</div>
+              <div class="topics-loading">Se încarcă subiectele…</div>
             </div>
           </div>
 
           <div class="dialog-section-top" id="rs-sources">
             <div class="topics-header-row">
-              <h3 class="dialog-section-header-bright-compact">Sources and claims</h3>
-              <button id="retest-hosts-btn" class="quiet btn-refresh">Test the sites</button>
-              <button id="refresh-sources-btn" class="quiet btn-refresh">Refresh</button>
+              <h3 class="dialog-section-header-bright-compact">Surse și afirmații</h3>
+              <button id="retest-hosts-btn" class="quiet btn-refresh">Testează site-urile</button>
+              <button id="refresh-sources-btn" class="quiet btn-refresh">Reîncarcă</button>
             </div>
-            <p id="sources-allowlist" class="helper-note">Checking authorised sites…</p>
+            <p id="sources-allowlist" class="helper-note">Se verifică site-urile autorizate…</p>
             <div id="allowed-hosts" class="allowed-hosts"></div>
             <form id="allowed-host-form" class="dialog-form source-form">
-              <input id="allowed-host-input" placeholder="Add an authorised site (e.g. www.nasa.gov)" required class="dialog-input" autocomplete="off" spellcheck="false" />
-              <button type="submit" class="secondary dialog-submit-btn">Authorise and test ↗</button>
+              <input id="allowed-host-input" placeholder="Adaugă un site autorizat (ex: www.nasa.gov)" required class="dialog-input" autocomplete="off" spellcheck="false" />
+              <button type="submit" class="secondary dialog-submit-btn">Autorizează și testează ↗</button>
             </form>
             <form id="source-retrieve-form" class="dialog-form source-form">
-              <input id="source-url" type="url" placeholder="https://… a page on an authorised site" required class="dialog-input" />
-              <button type="submit" class="primary dialog-submit-btn">Fetch source ↓</button>
+              <input id="source-url" type="url" placeholder="https://… o pagină de pe un site autorizat" required class="dialog-input" />
+              <button type="submit" class="primary dialog-submit-btn">Preia sursa ↓</button>
             </form>
             <div id="source-retrieve-status" class="dialog-status-msg" hidden></div>
             <div id="sources-list" class="topics-container">
-              <div class="topics-loading">Loading sources…</div>
+              <div class="topics-loading">Se încarcă sursele…</div>
             </div>
           </div>
 
           <div class="dialog-section-top" id="rs-scripts">
             <div class="topics-header-row">
-              <h3 class="dialog-section-header-bright-compact">Scripts</h3>
-              <button id="refresh-scripts-btn" class="quiet btn-refresh">Refresh</button>
+              <h3 class="dialog-section-header-bright-compact">Scenarii</h3>
+              <button id="refresh-scripts-btn" class="quiet btn-refresh">Reîncarcă</button>
             </div>
-            <p class="helper-note">The script writer writes only from the topic's SUPPORTED claims. Every scene cites the claims it rests on; an invented citation rejects the whole script.</p>
+            <p class="helper-note">Scenaristul scrie numai din afirmațiile SUPPORTED ale subiectului. Fiecare scenă citează afirmațiile pe care se sprijină; o citare inventată respinge tot scenariul.</p>
             <form id="script-write-form" class="dialog-form source-form">
               <select id="script-topic" aria-label="Subiect" class="dialog-input" required></select>
-              <button type="submit" class="primary dialog-submit-btn">Write the script ↗</button>
+              <button type="submit" class="primary dialog-submit-btn">Scrie scenariul ↗</button>
             </form>
             <div id="script-status" class="dialog-status-msg" hidden></div>
             <div id="scripts-list" class="topics-container">
-              <div class="topics-loading">Loading scripts…</div>
+              <div class="topics-loading">Se încarcă scenariile…</div>
             </div>
           </div>
           </div>
@@ -251,26 +261,26 @@
       <dialog id="story-modal" class="studio-dialog research-dialog">
         <div class="dialog-header">
           <div>
-            <h2 class="dialog-title">Daily journal and Office Serial</h2>
-            <p class="dialog-desc">The day, counted from the event stream. The episode is written only from what happened: every beat cites the real events it dramatises.</p>
+            <h2 class="dialog-title">Jurnalul zilei și Office Serial</h2>
+            <p class="dialog-desc">Ziua, numărată din fluxul de evenimente. Episodul se scrie doar din ce s-a întâmplat: fiecare beat citează evenimentele reale pe care le dramatizează.</p>
           </div>
-          <button id="close-story-btn" class="dialog-close">✕</button>
+          <button id="close-story-btn" class="dialog-close" aria-label="Închide"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></svg></button>
         </div>
         <div class="dialog-body">
           <div class="dialog-section-bottom">
             <div class="topics-header-row">
-              <h3 class="dialog-section-header-bright-compact">Closed days</h3>
-              <button id="close-day-btn" class="quiet btn-media-action">Close today</button>
+              <h3 class="dialog-section-header-bright-compact">Zile închise</h3>
+              <button id="close-day-btn" class="quiet btn-media-action">Închide ziua</button>
             </div>
             <div id="story-status" class="dialog-status-msg" hidden></div>
             <div id="story-logs" class="topics-container">
-              <div class="topics-loading">Loading journals…</div>
+              <div class="topics-loading">Se încarcă jurnalele…</div>
             </div>
           </div>
           <div>
             <h3 class="dialog-section-header-bright-compact">Episoade</h3>
             <div id="story-episodes" class="topics-container">
-              <div class="topics-loading">Loading episodes…</div>
+              <div class="topics-loading">Se încarcă episoadele…</div>
             </div>
           </div>
         </div>
@@ -280,17 +290,17 @@
       <dialog id="runbook-modal" class="studio-dialog research-dialog">
         <div class="dialog-header">
           <div>
-            <h2 class="dialog-title">Daily Run</h2>
-            <p class="dialog-desc">The preflight says what the studio can do now, without contacting anything. The run records what every stage did — including skipped stages and why.</p>
+            <h2 class="dialog-title">Rularea zilei</h2>
+            <p class="dialog-desc">Verificarea preliminară spune ce poate face studioul acum, fără să contacteze nimic. Rularea înregistrează ce a făcut fiecare etapă — inclusiv etapele sărite și de ce.</p>
           </div>
-          <button id="close-runbook-btn" class="dialog-close">✕</button>
+          <button id="close-runbook-btn" class="dialog-close" aria-label="Închide"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></svg></button>
         </div>
         <div class="dialog-body dialog-body-railed">
-          <nav class="dialog-rail" aria-label="Daily Run sections">
-            <a href="#rb-company">The company now</a>
-            <a href="#rb-preflight">Preflight</a>
+          <nav class="dialog-rail" aria-label="Secțiunile rulării zilei">
+            <a href="#rb-company">Compania acum</a>
+            <a href="#rb-preflight">Verificare preliminară</a>
             <a href="#rb-schedule">Programare</a>
-            <a href="#rb-runs">Runs</a>
+            <a href="#rb-runs">Rulări</a>
           </nav>
           <div class="dialog-pane">
 
@@ -300,32 +310,32 @@
               <span id="runbook-safe-since">—</span>
             </div>
             <p id="runbook-safe-reason" class="runbook-safe-reason">—</p>
-            <p class="runbook-note">Clearing safe mode does not restart autonomy; that stays a separate decision.</p>
-            <label class="runbook-label" for="runbook-safe-notes">What you checked</label>
-            <textarea id="runbook-safe-notes" class="runbook-textarea" rows="2" placeholder="Write what you checked; the note stays in the history."></textarea>
-            <button id="clear-safe-mode-btn" class="quiet btn-media-action">Clear safe mode</button>
+            <p class="runbook-note">Ieșirea din modul sigur nu repornește autonomia; asta rămâne o decizie separată.</p>
+            <label class="runbook-label" for="runbook-safe-notes">Ce ai verificat</label>
+            <textarea id="runbook-safe-notes" class="runbook-textarea" rows="2" placeholder="Scrie ce ai verificat; nota rămâne în istoric."></textarea>
+            <button id="clear-safe-mode-btn" class="quiet btn-media-action">Ieși din modul sigur</button>
           </div>
 
           <div class="dialog-section-bottom" id="rb-company">
             <div class="topics-header-row">
-              <h3 class="dialog-section-header-bright-compact">The company now</h3>
+              <h3 class="dialog-section-header-bright-compact">Compania acum</h3>
               <div class="media-actions-bar">
-                <button id="direct-company-btn" class="quiet btn-media-action" title="The Director reads the company's state and assigns work to the departments that can act">Run the company now</button>
+                <button id="direct-company-btn" class="quiet btn-media-action" title="Directorul citește starea companiei și repartizează munca departamentelor care pot acționa">Condu compania acum</button>
               </div>
             </div>
             <div id="company-state" class="runbook-summary">
-              <div class="topics-loading">Loading company state…</div>
+              <div class="topics-loading">Se încarcă starea companiei…</div>
             </div>
             <div id="company-decisions" class="topics-container"></div>
           </div>
 
           <div class="dialog-section-bottom" id="rb-preflight">
             <div class="topics-header-row">
-              <h3 class="dialog-section-header-bright-compact">Preflight</h3>
-              <button id="refresh-preflight-btn" class="quiet btn-refresh">Refresh</button>
+              <h3 class="dialog-section-header-bright-compact">Verificare preliminară</h3>
+              <button id="refresh-preflight-btn" class="quiet btn-refresh">Reîncarcă</button>
             </div>
             <div id="runbook-preflight-summary" class="runbook-summary">
-              <div class="topics-loading">Loading preflight…</div>
+              <div class="topics-loading">Se încarcă verificarea preliminară…</div>
             </div>
             <div id="runbook-checks" class="topics-container"></div>
           </div>
@@ -335,21 +345,21 @@
               <h3 class="dialog-section-header-bright-compact">Programare</h3>
             </div>
             <div id="runbook-schedule" class="runbook-summary">
-              <div class="topics-loading">Loading schedule…</div>
+              <div class="topics-loading">Se încarcă programarea…</div>
             </div>
           </div>
 
           <div id="rb-runs">
             <div class="topics-header-row">
-              <h3 class="dialog-section-header-bright-compact">Runs</h3>
+              <h3 class="dialog-section-header-bright-compact">Rulări</h3>
               <div class="media-actions-bar">
-                <button id="start-run-btn" class="quiet btn-media-action">Start today's run</button>
-                <button id="start-weekly-review-btn" class="quiet btn-media-action" title="The Director reads measured performance and sends guidance to sound and video">Weekly review now</button>
+                <button id="start-run-btn" class="quiet btn-media-action">Pornește rularea de azi</button>
+                <button id="start-weekly-review-btn" class="quiet btn-media-action" title="Directorul citește performanța măsurată și trimite îndrumări către sunet și video">Analiza săptămânală acum</button>
               </div>
             </div>
             <div id="runbook-status" class="dialog-status-msg" hidden></div>
             <div id="runbook-runs" class="topics-container">
-              <div class="topics-loading">Loading runs…</div>
+              <div class="topics-loading">Se încarcă rulările…</div>
             </div>
           </div>
           </div>
@@ -361,89 +371,89 @@
         <div class="dialog-header">
           <div>
             <h2 class="dialog-title">Trezorerie VR$</h2>
-            <p class="dialog-desc">One verified dollar becomes one VR$, once. Estimates and uncollected income are visible but cannot be spent. The ledger is double-entry and nothing is deleted: a correction is a reversing entry.</p>
+            <p class="dialog-desc">Un dolar verificat devine un VR$, o singură dată. Estimările și încasările nedecontate se văd, dar nu pot fi cheltuite. Registrul este în partidă dublă și nimic nu se șterge: o corecție este o stornare.</p>
           </div>
-          <button id="close-treasury-btn" class="dialog-close">✕</button>
+          <button id="close-treasury-btn" class="dialog-close" aria-label="Închide"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></svg></button>
         </div>
         <div class="dialog-body dialog-body-railed">
-          <nav class="dialog-rail" aria-label="Trezorerie sections">
-            <a href="#tr-positions">Positions</a>
-            <a href="#tr-budget">Budget and spending</a>
-            <a href="#tr-funding">Inject capital</a>
-            <a href="#tr-accounts">Accounts with a balance</a>
-            <a href="#tr-entries">Recent entries</a>
+          <nav class="dialog-rail" aria-label="Secțiunile trezoreriei">
+            <a href="#tr-positions">Poziții</a>
+            <a href="#tr-budget">Buget și cheltuieli</a>
+            <a href="#tr-funding">Aport de capital</a>
+            <a href="#tr-accounts">Conturi cu saldo</a>
+            <a href="#tr-entries">Înregistrări recente</a>
           </nav>
           <div class="dialog-pane">
 
           <div class="dialog-section-bottom" id="tr-positions">
             <div class="topics-header-row">
-              <h3 class="dialog-section-header-bright-compact">Positions</h3>
-              <button id="refresh-treasury-btn" class="quiet btn-refresh">Refresh</button>
+              <h3 class="dialog-section-header-bright-compact">Poziții</h3>
+              <button id="refresh-treasury-btn" class="quiet btn-refresh">Reîncarcă</button>
             </div>
             <div id="treasury-summary" class="treasury-summary">
-              <div class="topics-loading">Loading treasury…</div>
+              <div class="topics-loading">Se încarcă trezoreria…</div>
             </div>
             <p id="treasury-disclaimer" class="helper-note"></p>
           </div>
 
           <div class="dialog-section-bottom" id="tr-budget">
-            <h3 class="dialog-section-header-bright-compact">Budget and spending</h3>
-            <p class="helper-note">Spending comes from the ledger: estimates (a render at the model's price) and invoices. The budget is the limit you set; past the warning line Nadia (Accountant) escalates, and past the limit the studio stops rendering.</p>
-            <div id="budget-cards" class="budget-grid"><div class="topics-loading">Loading budget…</div></div>
+            <h3 class="dialog-section-header-bright-compact">Buget și cheltuieli</h3>
+            <p class="helper-note">Cheltuielile vin din registru: estimări (o randare la prețul modelului) și facturi. Bugetul este limita pe care o pui; peste linia de avertizare Nadia (Accountant) escaladează, iar peste limită studioul nu mai randează.</p>
+            <div id="budget-cards" class="budget-grid"><div class="topics-loading">Se încarcă bugetul…</div></div>
             <form id="budget-form" class="dialog-form">
               <div class="topic-input-grid">
                 <select id="budget-period" class="dialog-input" aria-label="Perioada bugetului">
-                  <option value="DAILY">Daily budget</option>
-                  <option value="MONTHLY">Monthly budget</option>
+                  <option value="DAILY">Buget zilnic</option>
+                  <option value="MONTHLY">Buget lunar</option>
                 </select>
-                <input id="budget-limit" class="dialog-input" maxlength="20" placeholder="Limit in USD, e.g. 25 (0 = no budget)" />
+                <input id="budget-limit" class="dialog-input" maxlength="20" placeholder="Limită în USD, ex: 25 (0 = fără buget)" />
               </div>
-              <button type="submit" class="secondary dialog-submit-btn">Set budget</button>
+              <button type="submit" class="secondary dialog-submit-btn">Salvează bugetul</button>
             </form>
             <div id="budget-status" class="dialog-status-msg" hidden></div>
-            <button id="close-books-btn" class="quiet btn-refresh">Ask the Accountant to close the day</button>
+            <button id="close-books-btn" class="quiet btn-refresh">Cere Contabilului să închidă ziua</button>
           </div>
 
           <div class="dialog-section-bottom" id="tr-funding">
-            <h3 class="dialog-section-header-bright-compact">Inject capital</h3>
-            <p class="helper-note">The ledger is kept only in VR$. The currency below is that of the real money you put in, because a VR$ is born from a verified dollar: <strong>1 USD = 1 VR$</strong>. If you use another currency, state the rate and where you took it from; the ledger still receives VR$.</p>
-            <p class="helper-note">A contribution goes into equity and is not repaid. A loan creates a debt, with the rate and maturity you set. Neither moves real money: it only records that you put it in. Interest is recorded but does not yet accrue on its own.</p>
+            <h3 class="dialog-section-header-bright-compact">Aport de capital</h3>
+            <p class="helper-note">Registrul este ținut numai în VR$. Moneda de mai jos este a banilor reali pe care îi pui, pentru că un VR$ se naște dintr-un dolar verificat: <strong>1 USD = 1 VR$</strong>. Dacă folosești altă monedă, spune cursul și de unde l-ai luat; registrul primește tot VR$.</p>
+            <p class="helper-note">Un aport intră în capital și nu se restituie. Un împrumut creează o datorie, cu dobânda și scadența pe care le pui. Niciunul nu mișcă bani reali: doar înregistrează că i-ai pus. Dobânda este înregistrată, dar încă nu se acumulează singură.</p>
             <form id="funding-form" class="dialog-form">
               <div class="topic-input-grid">
-                <select id="funding-type" class="dialog-input" aria-label="Funding type">
-                  <option value="CAPITAL_CONTRIBUTION">Capital contribution · no interest</option>
-                  <option value="OWNER_LOAN">Owner loan · with interest</option>
+                <select id="funding-type" class="dialog-input" aria-label="Tipul aportului">
+                  <option value="CAPITAL_CONTRIBUTION">Aport de capital · fără dobândă</option>
+                  <option value="OWNER_LOAN">Împrumut de la Proprietar · cu dobândă</option>
                 </select>
-                <input id="funding-amount" class="dialog-input" required maxlength="20" placeholder="Real amount deposited, e.g. 5000" />
+                <input id="funding-amount" class="dialog-input" required maxlength="20" placeholder="Suma reală depusă, ex: 5000" />
               </div>
               <div class="topic-input-grid">
-                <input id="funding-currency" class="dialog-input" value="USD" maxlength="3" aria-label="Currency of the real money" placeholder="Real currency, e.g. USD" />
-                <input id="funding-note" class="dialog-input" maxlength="2000" placeholder="Note (optional)" />
+                <input id="funding-currency" class="dialog-input" value="USD" maxlength="3" aria-label="Moneda banilor reali" placeholder="Moneda reală, ex: USD" />
+                <input id="funding-note" class="dialog-input" maxlength="2000" placeholder="Notă (opțional)" />
               </div>
               <div id="funding-fx-fields" class="topic-input-grid" hidden>
-                <input id="funding-fx-rate" class="dialog-input" maxlength="20" placeholder="Rate to USD, e.g. 1.08" />
-                <input id="funding-fx-source" class="dialog-input" maxlength="120" placeholder="Rate source, e.g. BNR 10.09.2026" />
+                <input id="funding-fx-rate" class="dialog-input" maxlength="20" placeholder="Curs față de USD, ex: 1.08" />
+                <input id="funding-fx-source" class="dialog-input" maxlength="120" placeholder="Sursa cursului, ex: BNR 10.09.2026" />
               </div>
               <div id="funding-loan-fields" class="topic-input-grid" hidden>
-                <input id="funding-rate" class="dialog-input" maxlength="8" placeholder="Annual interest %, e.g. 7 or 7.25" />
-                <input id="funding-maturity" class="dialog-input" type="date" aria-label="Maturity" />
+                <input id="funding-rate" class="dialog-input" maxlength="8" placeholder="Dobândă anuală %, ex: 7 sau 7.25" />
+                <input id="funding-maturity" class="dialog-input" type="date" aria-label="Scadență" />
               </div>
-              <p id="funding-preview" class="funding-preview">Enter the amount to see how many VR$ enter the ledger.</p>
-              <button type="submit" class="primary dialog-submit-btn">Record funding ↗</button>
+              <p id="funding-preview" class="funding-preview">Scrie suma ca să vezi câți VR$ intră în registru.</p>
+              <button type="submit" class="primary dialog-submit-btn">Înregistrează aportul ↗</button>
             </form>
             <div id="funding-status" class="dialog-status-msg" hidden></div>
             <div id="funding-history" class="topics-container"></div>
           </div>
 
           <div class="dialog-section-bottom" id="tr-accounts">
-            <h3 class="dialog-section-header-bright-compact">Accounts with a balance</h3>
+            <h3 class="dialog-section-header-bright-compact">Conturi cu saldo</h3>
             <div id="treasury-accounts" class="topics-container"></div>
           </div>
 
           <div id="tr-entries">
-            <h3 class="dialog-section-header-bright-compact">Recent entries</h3>
+            <h3 class="dialog-section-header-bright-compact">Înregistrări recente</h3>
             <div id="treasury-ledger" class="topics-container">
-              <div class="topics-loading">Loading ledger…</div>
+              <div class="topics-loading">Se încarcă registrul…</div>
             </div>
           </div>
           </div>
@@ -454,30 +464,30 @@
       <dialog id="workforce-modal" class="studio-dialog research-dialog">
         <div class="dialog-header">
           <div>
-            <h2 class="dialog-title">Staff and capacity</h2>
-            <p class="dialog-desc">How the agents work, measured from their own runs, and which changes the numbers support. Hiring and firing are your decision.</p>
+            <h2 class="dialog-title">Angajați și capacitate</h2>
+            <p class="dialog-desc">Cum lucrează angajații, măsurat din rulările lor, și ce schimbări susțin cifrele. Angajarea și concedierea sunt decizia ta.</p>
           </div>
-          <button id="close-workforce-btn" class="dialog-close">✕</button>
+          <button id="close-workforce-btn" class="dialog-close" aria-label="Închide"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></svg></button>
         </div>
         <div class="dialog-body">
           <div class="dialog-section-bottom">
             <div class="topics-header-row">
-              <h3 class="dialog-section-header-bright-compact">Measurements</h3>
-              <button id="refresh-workforce-btn" class="quiet btn-refresh">Refresh</button>
+              <h3 class="dialog-section-header-bright-compact">Măsurători</h3>
+              <button id="refresh-workforce-btn" class="quiet btn-refresh">Reîncarcă</button>
             </div>
             <div id="workforce-summary" class="workforce-summary">
-              <div class="topics-loading">Loading measurements…</div>
+              <div class="topics-loading">Se încarcă măsurătorile…</div>
             </div>
             <div id="workforce-agents" class="topics-container"></div>
           </div>
           <div>
             <div class="topics-header-row">
               <h3 class="dialog-section-header-bright-compact">Propuneri</h3>
-              <button id="generate-proposals-btn" class="quiet btn-media-action">Recalculate proposals</button>
+              <button id="generate-proposals-btn" class="quiet btn-media-action">Recalculează propunerile</button>
             </div>
             <div id="workforce-status" class="dialog-status-msg" hidden></div>
             <div id="workforce-proposals" class="topics-container">
-              <div class="topics-loading">Loading proposals…</div>
+              <div class="topics-loading">Se încarcă propunerile…</div>
             </div>
           </div>
         </div>
@@ -487,18 +497,18 @@
       <dialog id="mail-modal" class="studio-dialog mail-dialog has-footer">
         <div class="dialog-header">
           <div>
-            <span class="eyebrow eyebrow-accent">CORRESPONDENCE</span>
-            <h2 id="mail-title" class="dialog-title">Correspondence thread</h2>
-            <p class="dialog-desc">Who wrote to whom, when and why — the whole exchange, in order. Your reply goes to whoever wrote last, in the same thread.</p>
+            <span class="eyebrow eyebrow-accent">CORESPONDENȚĂ</span>
+            <h2 id="mail-title" class="dialog-title">Fir de corespondență</h2>
+            <p class="dialog-desc">Cine a scris cui, când și de ce — tot schimbul, în ordine. Răspunsul tău merge la cel care a scris ultimul, în același fir.</p>
           </div>
-          <button id="mail-close" class="dialog-close" aria-label="Close">✕</button>
+          <button id="mail-close" class="dialog-close" aria-label="Închide"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></svg></button>
         </div>
         <div id="mail-thread" class="mail-thread dialog-body"></div>
         <form id="mail-reply-form" class="mail-reply dialog-footer">
-          <textarea id="mail-reply-text" class="dialog-input" rows="3" placeholder="Write back… (e.g. I want the source on my desk by tonight.)" required></textarea>
+          <textarea id="mail-reply-text" class="dialog-input" rows="3" placeholder="Scrie un răspuns… (ex: Vreau sursa pe birou până seara.)" required></textarea>
           <div class="mail-reply-row">
             <span id="mail-status" class="helper" hidden></span>
-            <button type="submit" class="primary dialog-submit-btn">Send ↗</button>
+            <button type="submit" class="primary dialog-submit-btn">Trimite ↗</button>
           </div>
         </form>
       </dialog>
@@ -507,14 +517,14 @@
       <dialog id="media-modal" class="studio-dialog media-dialog">
         <div class="dialog-header">
           <div>
-            <h2 class="dialog-title">Media production and video assembly</h2>
-            <p class="dialog-desc">Turns verified scripts into vertical 9:16 video: storyboard, audio-video synthesis and quality control.</p>
+            <h2 class="dialog-title">Producție media și asamblare video</h2>
+            <p class="dialog-desc">Transformă scenariile verificate în video vertical 9:16: storyboard, sinteză audio-video și controlul calității.</p>
           </div>
-          <button id="close-media-btn" class="dialog-close">✕</button>
+          <button id="close-media-btn" class="dialog-close" aria-label="Închide"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></svg></button>
         </div>
         <div class="dialog-body dialog-body-railed">
-          <nav class="dialog-rail media-tabs-bar" aria-label="Media sections">
-            <button id="tab-storyboards-btn" class="media-tab media-tab-active">Storyboards and renders</button>
+          <nav class="dialog-rail media-tabs-bar" aria-label="Secțiunile producției media">
+            <button id="tab-storyboards-btn" class="media-tab media-tab-active">Storyboarduri și randări</button>
             <button id="tab-characters-btn" class="media-tab">Character Bible</button>
           </nav>
           <div class="dialog-pane">
@@ -523,30 +533,30 @@
             <!-- Storyboard View -->
             <div id="media-storyboards-section">
               <div class="topics-header-row">
-                <h3 class="dialog-section-header-bright-compact">Active pipeline: script · storyboard · video · QC</h3>
+                <h3 class="dialog-section-header-bright-compact">Fluxul activ: scenariu · storyboard · video · QC</h3>
                 <div class="media-actions-bar">
-                  <button id="generate-demo-storyboard-btn" class="quiet btn-media-action" title="Creates a topic, a script and an UNVERIFIED claim to test the factual pipeline">Create demo fixture</button>
-                  <button id="refresh-media-btn" class="quiet btn-refresh">Refresh</button>
+                  <button id="generate-demo-storyboard-btn" class="quiet btn-media-action" title="Creează un subiect, un scenariu și o afirmație UNVERIFIED, ca să testezi fluxul factual">Creează un caz demo</button>
+                  <button id="refresh-media-btn" class="quiet btn-refresh">Reîncarcă</button>
                 </div>
               </div>
               <div id="media-status-msg" class="dialog-status-msg" hidden></div>
-              <p id="media-provider-note" class="helper-note">Checking media providers…</p>
+              <p id="media-provider-note" class="helper-note">Se verifică furnizorii media…</p>
               <div id="awaiting-storyboard" class="awaiting-block" hidden>
-                <h4 class="awaiting-title">Approved scripts awaiting production</h4>
+                <h4 class="awaiting-title">Scenarii aprobate în așteptarea producției</h4>
                 <div id="awaiting-list" class="topics-container"></div>
               </div>
               <div id="storyboards-list" class="storyboard-container">
-                <div class="topics-loading">Loading media production...</div>
+                <div class="topics-loading">Se încarcă producția media…</div>
               </div>
             </div>
 
             <!-- Character Bible View -->
             <div id="media-characters-section" class="hidden">
               <div class="topics-header-row">
-                <h3 class="dialog-section-header-bright-compact">Canonical characters</h3>
+                <h3 class="dialog-section-header-bright-compact">Personaje canonice</h3>
               </div>
               <div id="characters-list" class="characters-grid">
-                <div class="topics-loading">Loading characters...</div>
+                <div class="topics-loading">Se încarcă personajele…</div>
               </div>
             </div>
           </div>
@@ -557,10 +567,10 @@
       <dialog id="publishing-modal" class="studio-dialog publishing-dialog">
         <div class="dialog-header">
           <div>
-            <h2 class="dialog-title">Distribution and YouTube Shorts publishing</h2>
-            <p class="dialog-desc">Private publishing to official YouTube channels. Without real credentials nothing is published — the studio never simulates uploads.</p>
+            <h2 class="dialog-title">Distribuție și publicare pe YouTube Shorts</h2>
+            <p class="dialog-desc">Publicare privată pe canalele YouTube oficiale. Fără credențiale reale nu se publică nimic — studioul nu simulează niciodată încărcări.</p>
           </div>
-          <button id="close-publishing-btn" class="dialog-close">✕</button>
+          <button id="close-publishing-btn" class="dialog-close" aria-label="Închide"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></svg></button>
         </div>
         <div class="dialog-body">
 
@@ -569,38 +579,38 @@
             <div class="pub-overview-grid">
               <div class="pub-card pub-channels-card">
                 <div class="pub-card-header">
-                  <h3>Channel slots</h3>
+                  <h3>Sloturi de canal</h3>
                   <span class="privacy-badge privacy-badge-private">Privat implicit</span>
                 </div>
                 <div id="channels-list" class="channels-container">
-                  <div class="topics-loading">Loading channels...</div>
+                  <div class="topics-loading">Se încarcă canalele…</div>
                 </div>
               </div>
 
               <div class="pub-card pub-gate-card">
                 <div class="pub-card-header">
-                  <h3>Pre-publication checks</h3>
-                  <span class="tag">SUBSET</span>
+                  <h3>Verificări înainte de publicare</h3>
+                  <span class="tag">PARȚIAL</span>
                 </div>
                 <ul class="pub-gate-list">
-                  <li><span class="gate-icon">✓</span> <strong>1. Autonomy on:</strong> the Owner's emergency stop is not engaged.</li>
-                  <li><span class="gate-icon">✓</span> <strong>2. File on disk:</strong> it exists and its size is &gt; 0.</li>
-                  <li><span class="gate-icon">✓</span> <strong>3. QC report PASSED:</strong> resolution, duration and provenance <em>measured</em> from the file with ffprobe.</li>
-                  <li><span class="gate-icon">✓</span> <strong>4. Factuality:</strong> every cited claim is SUPPORTED.</li>
-                  <li><span class="gate-icon">✓</span> <strong>5. Duplicate protection:</strong> idempotent per channel.</li>
+                  <li><span class="gate-icon">✓</span> <strong>1. Autonomia pornită:</strong> oprirea de urgență a Proprietarului nu este activă.</li>
+                  <li><span class="gate-icon">✓</span> <strong>2. Fișierul pe disc:</strong> există și are dimensiune &gt; 0.</li>
+                  <li><span class="gate-icon">✓</span> <strong>3. Raport QC PASSED:</strong> rezoluția, durata și proveniența <em>măsurate</em> din fișier cu ffprobe.</li>
+                  <li><span class="gate-icon">✓</span> <strong>4. Factualitate:</strong> fiecare afirmație citată este SUPPORTED.</li>
+                  <li><span class="gate-icon">✓</span> <strong>5. Protecție la dubluri:</strong> idempotent pe fiecare canal.</li>
                 </ul>
-                <p class="pub-gate-note">Not yet implemented from <code>50_CONTENT_GATE_MATRIX.md</code>: rights on the final package, platform policy, novelty on final metadata, brand, budget, continuity and narrative confidentiality for Channel B.</p>
+                <p class="pub-gate-note">Aceste verificări nu sunt încă implementate: drepturile pe pachetul final, politica platformei, noutatea pe metadatele finale, brandul, bugetul, continuitatea și confidențialitatea narativă pentru Canalul B.</p>
               </div>
             </div>
 
             <!-- Quick Action & Notification -->
             <div class="pub-actions-row">
               <div class="pub-quick-info">
-                <strong>1-Click publish:</strong> sends the latest QC PASSED video to Channel A, privately. Needs an AUTHENTICATED channel and real YouTube credentials.
+                <strong>Publicare într-un clic:</strong> trimite privat cel mai recent video cu QC PASSED către Canalul A. Are nevoie de un canal AUTENTIFICAT și de credențiale YouTube reale.
               </div>
               <div class="media-actions-bar">
-                <button id="trigger-quick-publish-btn" class="quiet btn-media-action btn-pub-action">Publish privately</button>
-                <button id="refresh-publishing-btn" class="quiet btn-refresh">Refresh</button>
+                <button id="trigger-quick-publish-btn" class="quiet btn-media-action btn-pub-action">Publică privat</button>
+                <button id="refresh-publishing-btn" class="quiet btn-refresh">Reîncarcă</button>
               </div>
             </div>
             <div id="publisher-config-banner" class="dialog-status-msg" hidden></div>
@@ -609,10 +619,10 @@
             <!-- Publications History Table -->
             <div class="pub-history-section">
               <div class="topics-header-row">
-                <h3 class="dialog-section-header-bright-compact">Publishing history</h3>
+                <h3 class="dialog-section-header-bright-compact">Istoricul publicărilor</h3>
               </div>
               <div id="publications-list" class="publications-container">
-                <div class="topics-loading">Loading publications...</div>
+                <div class="topics-loading">Se încarcă publicările…</div>
               </div>
             </div>
           </div>
@@ -620,7 +630,7 @@
       </dialog>
       <p id="message" role="alert" class="message" hidden></p>
     </main>
-    <footer class="site-footer"><span>AMN-AI · Autonomous Machine Nexus — Artificial Intelligence</span><span>Real work. Verified state.</span></footer>
+    <footer class="site-footer"><span>AMN-AI · Autonomous Machine Nexus — Artificial Intelligence</span><span>Muncă reală. Stare verificată.</span></footer>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

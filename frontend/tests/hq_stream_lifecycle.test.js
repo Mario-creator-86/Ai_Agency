@@ -60,7 +60,7 @@ test('a short live interval keeps a frame instead of flashing the empty viewport
   t.mock.timers.tick(1000);
   f.player._offline();
   assert.equal(f.player.still.hidden, false);
-  assert.equal(f.player.badge.textContent, 'Reconnecting to the live headquarters…');
+  assert.equal(f.player.badge.textContent, 'Se reconectează la sediul live…');
 });
 
 test('a page that connected before Unreal joined keeps asking until the stream is live', (t) => {

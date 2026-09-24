@@ -89,8 +89,8 @@ const LEGACY_FLOOR_OFFSET = 12;
  * canvas can never be.
  */
 const SCENE_NOTES = {
-  loading: 'Loading the AMN-AI headquarters…',
-  error: 'The headquarters art could not be loaded.',
+  loading: 'Se încarcă sediul AMN-AI…',
+  error: 'Grafica sediului nu a putut fi încărcată.',
 };
 
 const WEATHER_ICONS = { clear: '☀', partly_cloudy: '⛅', cloudy: '☁', fog: '🌫', drizzle: '🌦', rain: '🌧', snow: '❄', storm: '⛈', unknown: '' };
@@ -401,12 +401,13 @@ export class OfficeEngine {
     this.fps = Math.round((this._fpsFrames * 1000) / (now - this._fpsStart));
     this._fpsFrames = 0;
     this._fpsStart = now;
-    // "Live Renderer 144fps" — the same four words and the same figure. The live state carries
-    // the weight; what it is and how fast it runs are the standing label and the telemetry.
+    // «Live · randare 144fps» — the same three parts and the same figure. The live state
+    // carries the weight; what it is and how fast it runs are the standing label and the
+    // telemetry. `live` is kept: it is the word the studio itself uses beside the pulsing dot.
     if (this.fpsElement) {
       this._setParts(this.fpsElement, [
         ['scene-live', 'Live'],
-        ['scene-label', ' Renderer '],
+        ['scene-label', ' · randare '],
         ['scene-figure', `${this.fps}fps`],
       ]);
     }
@@ -418,7 +419,7 @@ export class OfficeEngine {
       this._setParts(this.infoElement, [
         ['scene-figure', time.text],
         ['scene-sep', separator],
-        ['scene-label', 'BUCHAREST'],
+        ['scene-label', 'BUCUREȘTI'],
         ['scene-sep', separator],
         ['scene-weather', `${icon ? `${icon} ` : ''}${weather.label()}`],
       ]);

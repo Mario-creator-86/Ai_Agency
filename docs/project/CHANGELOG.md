@@ -1,5 +1,24 @@
 # Changelog
 
+## One icon family, and the two readouts beside the render — 2026-09-23
+
+Seven icons from seven places became one family: one 24×24 grid, one stroke, round caps and
+joins, `stroke: currentColor`, no fill but a dot. Twenty-two icons, including every close button,
+the refresh, the camera's plus and minus and the play control, which had been typographic
+characters borrowed from the UI font. Two icons that said the wrong thing were replaced: the
+daily run was a house and is now a sunrise; distribution was a circle crossed by a diagonal that
+read as *forbidden* and is now an upload.
+
+The frame rate beside the render keeps every word and stops being a heading: `--fs-micro` in the
+chrome's muted ink, still mono and tabular, so **Live** leads and the figure follows. The heading
+band above the render, empty since the live badge was let into the glass, was tightened from 83px
+to 65px — the height the page's other section headings have always had — rather than refilled
+with a readout the glass already carries.
+
+Presentation only: no word, no behaviour, no data flow, no API call, no gate and no test contract
+changed. 164 frontend tests pass unchanged; `tsc` clean; every view photographed at 1920×1080 and
+1280×800 with 0 missing fixtures and 0 console errors, and every icon read at 4× and 8×.
+
 ## The interface is finished to the level he asked for — 2026-09-22/23
 
 *Polishing pass, the same day:* the «Live window» popup on the new palette (with a test that
@@ -3819,3 +3838,26 @@ Fixed false “Niciun model alocat” when an older office projection omits mode
 ## Prevent stale HQ reconnect retries — 2026-09-18, Codex
 
 Cancel old timers when the SDK starts/recoveries a connection and guard callbacks against reconnecting a non-offline player. Keep a still immediately when live and at disconnection. Added four lifecycle regressions and a reproducible manual browser viewer. 115 frontend tests, TypeScript/build passed; controlled real-video recovery stayed live to second 86. See STREAM_STABILITY_2026-09-18.md.
+
+## The interface speaks Romanian — 2026-09-23, Claude
+
+Every user-facing string the frontend owns is now Romanian, with full diacritics, in the studio's
+own voice: the page and the scene in the first part, and in this one the eight dialogs, the agent
+inspector and the mail window — headers, one-line purposes, section headings, rail links, field
+labels, placeholders, buttons, tabs, `title` and `aria-label` attributes, and every status, intent,
+empty line, confirmation and error fallback that `main.js`, `settings.js`,
+`youtube_connections.js`, `mail_thread.js`, `agent_details.js` and `provider_production.js` write
+themselves. Values stay values: the brand, names and role names, units and codes, enum values,
+Google's own field names, and every sentence that arrives from the backend.
+
+Also: the research form's three unlabelled inputs and its fourth box holding a bare `general` got
+visible labels taken from what each control already said; the publishing gate card stopped quoting
+an internal architecture filename; and `countLabel` gives a figure the agreement Romanian
+requires, so «1 evenimente de povestit» is now «1 eveniment de povestit» and «92 evenimente» is
+«92 de evenimente».
+
+No behaviour, data flow, API call, gate or test contract changed, and `style.css` was not touched.
+164 frontend tests pass (the same 164; forty-four assertions naming an English word were updated
+in the same breath), TypeScript and the build are clean, and every view plus every dialog state
+was photographed at 1920×1080 and 1280×800 against the 254 captured answers with 0 missing
+fixtures and 0 console errors. See `CURRENT_STATUS.md`.

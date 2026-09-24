@@ -118,20 +118,20 @@ test('the ledger line of a finished day carries its summary', () => {
     event_type: 'runbook.daily_run_finished',
     payload: { status: 'COMPLETED', preflight: 'READY' },
   });
-  assert.equal(old.text, 'preflight READY');
+  assert.equal(old.text, 'verificare preliminară READY');
 });
 
 test('the head line does not call a day that produced nothing simply completed', () => {
   const status = productionStatus([
     { event_type: 'runbook.daily_run_finished', payload: { status: 'COMPLETED', stages_productive: 0 } },
   ]);
-  assert.equal(status.text, 'Last daily run completed · 0 etape au produs ceva');
+  assert.equal(status.text, 'Ultima rulare a zilei încheiată · 0 etape au produs ceva');
   const busy = productionStatus([
     { event_type: 'runbook.daily_run_finished', payload: { status: 'COMPLETED', stages_productive: 6 } },
   ]);
-  assert.equal(busy.text, 'Last daily run completed · 6 etape au produs ceva');
+  assert.equal(busy.text, 'Ultima rulare a zilei încheiată · 6 etape au produs ceva');
   const old = productionStatus([
     { event_type: 'runbook.daily_run_finished', payload: { status: 'COMPLETED' } },
   ]);
-  assert.equal(old.text, 'Last daily run completed');
+  assert.equal(old.text, 'Ultima rulare a zilei încheiată');
 });

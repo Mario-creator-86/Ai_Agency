@@ -11,8 +11,8 @@ const STILL_COPY_MS = 2000;
  */
 const CONNECTING_RETRY_MS = 30000;
 const NOTES = {
-  reconnecting: 'Reconnecting to the live headquarters…',
-  starting: 'Starting the live headquarters…',
+  reconnecting: 'Se reconectează la sediul live…',
+  starting: 'Pornește sediul live…',
 };
 
 /**
@@ -46,7 +46,7 @@ export class LiveStream {
     this.still.hidden = true;
     this.badge = document.createElement('div');
     this.badge.className = 'live-stream-badge';
-    this.badge.textContent = 'Reconnecting to the live headquarters…';
+    this.badge.textContent = NOTES.reconnecting;
     this.badge.hidden = true;
     this.layer.append(this.still, this.badge);
     viewport.appendChild(this.layer);

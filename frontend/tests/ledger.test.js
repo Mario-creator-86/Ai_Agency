@@ -9,7 +9,7 @@ test('what an employee said is shown with its name and text, as speech', () => {
     { event_type: 'agent.message_sent', aggregate_id: 'a-1', payload: { text: 'Am citit patru pagini.' } },
     names,
   );
-  assert.deepEqual(item, { who: 'Dr. Aris (Researcher)', label: 'said', text: 'Am citit patru pagini.', kind: 'speech' });
+  assert.deepEqual(item, { who: 'Dr. Aris (Researcher)', label: 'a spus', text: 'Am citit patru pagini.', kind: 'speech' });
 });
 
 test('a typed message shows its intent and subject, and the sender by name', () => {
@@ -18,17 +18,17 @@ test('a typed message shows its intent and subject, and the sender by name', () 
     names,
   );
   assert.equal(item.who, 'Vera (Publisher)');
-  assert.equal(item.label, 'writes · escalation');
+  assert.equal(item.label, 'scrie · escaladare');
   assert.equal(item.text, 'Publication HOLD');
   assert.equal(item.to, 'Director');
   assert.equal(item.thread, 'm-1');
 });
 
 test('work, production, money and owner events get plain labels and the right kind', () => {
-  assert.equal(describeEvent({ event_type: 'agent.state_changed', aggregate_id: 'a-2', payload: { runtime_state: 'THINKING', task_type: 'director_review' } }, names).label, 'working');
+  assert.equal(describeEvent({ event_type: 'agent.state_changed', aggregate_id: 'a-2', payload: { runtime_state: 'THINKING', task_type: 'director_review' } }, names).label, 'lucrează');
   const stage = describeEvent({ event_type: 'workflow.created', payload: { current_stage: 'SCRIPTING' } });
   assert.equal(stage.kind, 'production');
-  assert.equal(stage.text, 'stage: Script');
+  assert.equal(stage.text, 'etapa: Scenariu');
   const cost = describeEvent({ event_type: 'economy.provider_cost_recorded', payload: { provider: 'elevenlabs', status: 'ESTIMATED', vr: '0.45' } });
   assert.equal(cost.kind, 'money');
   assert.equal(cost.text, 'elevenlabs · 0.45 VR$');
@@ -38,10 +38,10 @@ test('work, production, money and owner events get plain labels and the right ki
 test('production work without a model reads as work, and says what is being made', () => {
   const working = describeEvent({ event_type: 'agent.state_changed', aggregate_id: 'a-3', payload: { runtime_state: 'WORKING', task_type: 'synthesize_voice', detail: 'vocea scenei 3' } }, { 'a-3': 'Lyra (Voice Artist)' });
   assert.equal(working.who, 'Lyra (Voice Artist)');
-  assert.equal(working.label, 'working');
+  assert.equal(working.label, 'lucrează');
   assert.equal(working.text, 'vocea scenei 3');
   const done = describeEvent({ event_type: 'agent.state_changed', aggregate_id: 'a-3', payload: { runtime_state: 'IDLE', task_type: 'synthesize_voice' } }, { 'a-3': 'Lyra (Voice Artist)' });
-  assert.equal(done.label, 'finished');
+  assert.equal(done.label, 'a terminat');
 });
 
 test('an unknown event still reads as words, with its first payload fields', () => {
@@ -66,8 +66,8 @@ test('production status reads the newest stage and the last daily run', () => {
   ];
   const status = productionStatus(events);
   assert.equal(status.stage, 'QUALITY_CONTROL');
-  assert.equal(status.text, 'Production: Quality control · last daily run partial');
-  assert.equal(productionStatus([]).text, 'No production in progress.');
+  assert.equal(status.text, 'Producție: Controlul calității · ultima rulare a zilei parțială');
+  assert.equal(productionStatus([]).text, 'Nicio producție în lucru.');
 });
 
 test('a stage of the daily run is named in words, with its place in the day', () => {
@@ -75,16 +75,16 @@ test('a stage of the daily run is named in words, with its place in the day', ()
     event_type: 'runbook.stage_started',
     payload: { stage: 'script_and_storyboard', index: 6, total: 12 },
   });
-  assert.equal(started.label, 'stage started');
-  assert.equal(started.text, 'script and storyboard (6/12)');
+  assert.equal(started.label, 'etapă începută');
+  assert.equal(started.text, 'scenariu și storyboard (6/12)');
   assert.equal(started.kind, 'production');
 
   const finished = describeEvent({
     event_type: 'runbook.stage_finished',
     payload: { stage: 'publish', status: 'SKIPPED', reason: 'Niciun canal legat.' },
   });
-  assert.equal(finished.label, 'stage skipped');
-  assert.equal(finished.text, 'publishing — Niciun canal legat.');
+  assert.equal(finished.label, 'etapă sărită');
+  assert.equal(finished.text, 'publicare — Niciun canal legat.');
 });
 
 test('the head line says which stage the day is in while it is in it', () => {
@@ -94,7 +94,7 @@ test('the head line says which stage the day is in while it is in it', () => {
     { event_type: 'runbook.daily_run_finished', payload: { status: 'PARTIAL' } },
   ]);
   assert.equal(running.running, 'media');
-  assert.equal(running.text, 'Now: media production · last daily run partial');
+  assert.equal(running.text, 'Acum: producție media · ultima rulare a zilei parțială');
 
   // A stage that has finished is not where the day is; only the run's own outcome remains.
   const between = productionStatus([
@@ -103,7 +103,7 @@ test('the head line says which stage the day is in while it is in it', () => {
     { event_type: 'runbook.daily_run_finished', payload: { status: 'COMPLETED' } },
   ]);
   assert.equal(between.running, null);
-  assert.equal(between.text, 'Last daily run completed');
+  assert.equal(between.text, 'Ultima rulare a zilei încheiată');
 });
 
 test('a letter names both ends, says what kind it is, and carries its thread', () => {
@@ -125,7 +125,7 @@ test('a letter names both ends, says what kind it is, and carries its thread', (
   );
   assert.equal(item.who, 'Sarah (Director)');
   assert.equal(item.to, 'Elena (Fact Checker)');
-  assert.equal(item.label, 'writes · question');
+  assert.equal(item.label, 'scrie · întrebare');
   assert.equal(item.text, 'Sursa cifrei de 40% — Elena, pe ce stă 40%?');
   assert.equal(item.thread, 't-1');
   const reply = describeEvent({
@@ -133,8 +133,8 @@ test('a letter names both ends, says what kind it is, and carries its thread', (
     aggregate_id: 'm-10',
     payload: { intent: 'STATUS', subject: 'Re: Sursa', in_reply_to: 'm-9', thread_id: 't-1' },
   });
-  assert.equal(reply.label, 'replies · report');
-  assert.equal(reply.who, 'Owner');
+  assert.equal(reply.label, 'răspunde · raport');
+  assert.equal(reply.who, 'Proprietar');
 });
 
 test('a letter to the Owner files under the Owner chip and says so', () => {
@@ -146,7 +146,7 @@ test('a letter to the Owner files under the Owner chip and says so', () => {
   assert.equal(item.kind, 'owner');
   assert.equal(item.to, 'Owner');
   assert.equal(item.forOwner, true);
-  assert.equal(item.label, 'writes · escalation · TO YOU');
+  assert.equal(item.label, 'scrie · escaladare · PENTRU TINE');
 });
 
 test('a routine job that starts is not called production', () => {
@@ -154,17 +154,17 @@ test('a routine job that starts is not called production', () => {
   // Director's loop and the watchdog in one second, and the ledger said "production started"
   // three times while nothing was being made - he read it as films starting on their own.
   const watchdog = describeEvent({ event_type: 'workflow.created', payload: { job_name: 'watchdog', workflow_type: 'WATCHDOG' } });
-  assert.equal(watchdog.label, 'routine job started');
+  assert.equal(watchdog.label, 'sarcină de rutină pornită');
   assert.equal(watchdog.text, 'watchdog');
   assert.equal(watchdog.kind, 'system');
   const review = describeEvent({ event_type: 'workflow.created', payload: { job_name: 'model_review_daily', workflow_type: 'MODEL_REVIEW' } });
-  assert.equal(review.label, 'routine job started');
-  assert.equal(review.text, 'model review');
+  assert.equal(review.label, 'sarcină de rutină pornită');
+  assert.equal(review.text, 'revizuirea modelelor');
   const loop = describeEvent({ event_type: 'workflow.created', payload: { job_name: 'director_loop', workflow_type: 'DIRECTOR_LOOP' } });
-  assert.equal(loop.text, "the Director's loop");
+  assert.equal(loop.text, 'bucla Directoarei');
   // The day itself, and a workflow that carries a stage, are still production.
   const day = describeEvent({ event_type: 'workflow.created', payload: { job_name: 'daily_main', workflow_type: 'DAILY_RUN' } });
-  assert.equal(day.label, 'production started');
+  assert.equal(day.label, 'a început o producție');
   assert.equal(day.kind, 'production');
 });
 
@@ -189,4 +189,17 @@ test('an event with no id is never lit, and nothing is lit from nothing', () => 
   const late = 1_000_000 + LEDGER_SETTLE_MS + 1;
   assert.equal(arrivingIds([{}, { event_id: '' }], 1_000_000, late).size, 0);
   assert.equal(arrivingIds(undefined, 1_000_000, late).size, 0);
+});
+
+test('the entry count follows the Romanian rule for «de»', async () => {
+  const { entryCountLabel } = await import('../src/ledger.js');
+  assert.equal(entryCountLabel(1), '1 intrare');
+  assert.equal(entryCountLabel(7), '7 intrări');
+  assert.equal(entryCountLabel(19), '19 intrări');
+  assert.equal(entryCountLabel(20), '20 de intrări');
+  assert.equal(entryCountLabel(70), '70 de intrări');
+  assert.equal(entryCountLabel(101), '101 intrări');
+  assert.equal(entryCountLabel(119), '119 intrări');
+  assert.equal(entryCountLabel(120), '120 de intrări');
+  assert.equal(entryCountLabel(200), '200 de intrări');
 });
