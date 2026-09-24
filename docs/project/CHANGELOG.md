@@ -1,5 +1,13 @@
 # Changelog
 
+## A kept real frame at entry, and the studio's numbers on the Unreal building — 2026-09-24
+
+- **No dark entry for a returning visitor** (`frontend/src/stream_keep.js`): one real stream frame kept in IndexedDB with its time, shown dimmed and labelled until the live video's first frame, then a 480 ms fade into live; never shown as live; a first visit keeps the dark plate (the Owner's recorded decision against the old renderer).
+- **Plaques on the building** (`frontend/src/stream_plaques.js`): the façade run, the fact-check counts, the publication state and the Treasury as always-visible glass over the live video, anchored to real objects, following the camera within 0.9 px; hidden over a kept or frozen frame and in the replay; «—» where the page holds no value.
+- **The replay's door**: a fade from the live frame into the replay and back (a cut under reduced motion).
+- **«live» only when it is**: «doar imaginea e live» / «doar datele sunt live» on the slate otherwise.
+- Tests: frontend 432/432, tsc clean.
+
 ## The real stream in the game frame — 2026-09-24
 
 - **Clicks reach the building through the live video** (`frontend/src/office_scene.css`): Pixel Streaming set `pointer-events: all` on its `<video>`, which swallowed every click, hover and drag on the Owner's live page; figures seen in the video now open the right employee (12 of 12), readouts stand over the video's faces, and panning works.

@@ -139,13 +139,49 @@ export function connectionLabel(signals) {
 }
 
 /**
+ * WHAT IS LIVE, for the words that name the whole building (the slate's caption, the canvas's name).
+ * W19: with the stream on, the picture and the studio's data are two things, and either can drop
+ * while the other goes on (W18: the events socket dropped while Unreal kept playing, and the slate
+ * still said «live»). «live» alone only while both are; otherwise the caption says which one is.
+ *   - 'all': the picture and the data are live (without a stream the page's drawing is the data);
+ *   - 'stream': the Unreal picture plays, the studio's events or snapshot are not current;
+ *   - 'data': the events reach the page, the picture is starting, reconnecting or frozen;
+ *   - 'none': neither.
+ * @param {LiveSignals} signals
+ * @returns {'all'|'stream'|'data'|'none'}
+ */
+export function liveScope(signals) {
+  const data = signals.socket === 'open' && signals.data !== 'stale';
+  const stream = signals.stream;
+  if (stream === 'off' || stream === 'pending') return data ? 'all' : 'none';
+  if (stream === 'live') return data ? 'all' : 'stream';
+  return data ? 'data' : 'none';
+}
+
+/** @param {boolean|'all'|'stream'|'data'|'none'} live */
+function scopeOf(live) {
+  if (live === true) return 'all';
+  if (live === false) return 'none';
+  return live;
+}
+
+/**
  * The caption on the slate under the render: how many employees, and «live» only while it is.
  * «12 angajați», «1 angajat», «20 de angajați»: the `de` a Romanian speaker cannot leave out.
+ * W19: `live` may be liveScope's answer; when only one of the picture and the data is live the
+ * caption says which («doar imaginea e live», «doar datele sunt live»).
  * @param {number} staff
- * @param {boolean} live
+ * @param {boolean|'all'|'stream'|'data'|'none'} live
  */
 export function roomCaption(staff, live) {
-  const place = live ? 'sediul AMN-AI, live' : 'sediul AMN-AI';
+  const scope = scopeOf(live);
+  const place = scope === 'all'
+    ? 'sediul AMN-AI, live'
+    : scope === 'stream'
+      ? 'sediul AMN-AI · doar imaginea e live'
+      : scope === 'data'
+        ? 'sediul AMN-AI · doar datele sunt live'
+        : 'sediul AMN-AI';
   if (!staff) return place[0].toUpperCase() + place.slice(1);
   return `${staff}${staff >= 20 ? ' de' : ''} ${staff === 1 ? 'angajat' : 'angajați'} la birourile lor · ${place}`;
 }
@@ -154,11 +190,15 @@ export function roomCaption(staff, live) {
  * The caption for a slate too narrow to hold it beside the day on one line (1280 and 1440 with
  * both drawers open): the count and whether it is live, nothing that needs the sentence. The
  * full caption stays the slate's title, so nothing is lost to a reader who asks.
- * @param {number} staff @param {boolean} live
+ * @param {number} staff @param {boolean|'all'|'stream'|'data'|'none'} live
  */
 export function roomCaptionShort(staff, live) {
+  const scope = scopeOf(live);
   const who = staff ? `${staff}${staff >= 20 ? ' de' : ''} ${staff === 1 ? 'angajat' : 'angajați'}` : 'Sediul AMN-AI';
-  return live ? `${who} · live` : who;
+  if (scope === 'all') return `${who} · live`;
+  if (scope === 'stream') return `${who} · imagine live`;
+  if (scope === 'data') return `${who} · date live`;
+  return who;
 }
 
 /** How many events one replay request asks for (the backend's own cap is 500). */

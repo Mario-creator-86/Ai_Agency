@@ -40,18 +40,22 @@ export const HELD_STILL_MS = 10000;
  * video, or, when the visitor's system asks for reduced motion (`held`), a real frame of it kept
  * and renewed every HELD_STILL_MS. Otherwise never the page's own renderer, whose older picture of
  * the headquarters the Owner does not want to see ("Încă apare vechiul format!"): after a frame has
- * been kept, that frame, frozen, with a note that the page is reconnecting; before any frame
- * (Unreal not started yet, or being rebuilt), a dark viewport saying the live headquarters is
+ * been kept, that frame, frozen, with a note that the page is reconnecting. Before this visit's
+ * first frame (W19): the last live frame an earlier visit kept in this browser (`kept`, stream_keep.js),
+ * dimmed and named «ultimul cadru live · <zi> <ora>», until the live video's first frame; with none
+ * kept (a first visit, or storage refused), a dark viewport saying the live headquarters is
  * starting. The renderer keeps running underneath, so clicks still find the employees.
  * @param {'connecting'|'live'|'offline'} status
- * @param {boolean} hasStill whether a frame of the stream has been kept
+ * @param {boolean} hasStill whether a frame of this visit's stream has been kept
  * @param {boolean} [held] whether the visitor's system asks for reduced motion
- * @returns {{still: boolean, waiting: boolean, note: '' | 'reconnecting' | 'starting', held: boolean}}
+ * @param {boolean} [kept] whether an earlier visit's last live frame is on the plate
+ * @returns {{still: boolean, waiting: boolean, note: '' | 'reconnecting' | 'starting' | 'kept', held: boolean, kept: boolean}}
  */
-export function streamLayers(status, hasStill, held = false) {
-  if (status === 'live') return held ? { still: true, waiting: false, note: '', held: true } : { still: false, waiting: false, note: '', held: false };
-  if (hasStill) return { still: true, waiting: false, note: 'reconnecting', held: false };
-  return { still: false, waiting: true, note: 'starting', held: false };
+export function streamLayers(status, hasStill, held = false, kept = false) {
+  if (status === 'live') return held ? { still: true, waiting: false, note: '', held: true, kept: false } : { still: false, waiting: false, note: '', held: false, kept: false };
+  if (hasStill) return { still: true, waiting: false, note: 'reconnecting', held: false, kept: false };
+  if (kept) return { still: true, waiting: false, note: 'kept', held: false, kept: true };
+  return { still: false, waiting: true, note: 'starting', held: false, kept: false };
 }
 
 /**

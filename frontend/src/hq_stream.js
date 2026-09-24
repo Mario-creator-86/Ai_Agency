@@ -1,5 +1,6 @@
 import { Config, Flags, PixelStreaming } from '@epicgames-ps/lib-pixelstreamingfrontend-ue5.8';
 import { HELD_STILL_MS, streamLayers } from './hq_stream_config.js';
+import { KEEP_EVERY_MS, KEEP_FIRST_MS, KEEP_QUALITY, KEEP_TYPE, keptSize } from './stream_keep.js';
 
 /** How often a frame of the live video is kept, to be shown frozen if the stream drops. */
 const STILL_COPY_MS = 2000;
@@ -16,6 +17,13 @@ const NOTES = {
   reconnecting: 'Se reconectează la sediul live…',
   starting: 'Pornește sediul live…',
 };
+/**
+ * How long the kept frame takes to give way to the live video once its first frame is presented
+ * (W19), and how long the replay's door takes; office_scene.css runs both on --dur-slow, and
+ * reduced motion makes both a cut.
+ */
+export const HANDOFF_MS = 480;
+export const DOOR_MS = 620;
 
 /**
  * Frames per second of the video Unreal is sending, as the browser's WebRTC statistics count
@@ -39,13 +47,29 @@ export class LiveStream {
   /**
    * @param {HTMLElement} viewport the element the scene is drawn in
    * @param {{signallingUrl: string, streamerId: string, retryMs: number, connectingRetryMs?: number}} settings
-   * @param {{onStatus?: (status: 'connecting'|'live'|'offline') => void, onFrameRate?: (fps: number|null) => void, held?: () => boolean}} [options]
+   * @param {{onStatus?: (status: 'connecting'|'live'|'offline') => void, onFrameRate?: (fps: number|null) => void, held?: () => boolean,
+   *          onKeep?: (record: {blob: Blob, at: number, w: number, h: number}) => void, reduced?: () => boolean}} [options]
    */
   constructor(viewport, settings, options = {}) {
     this.viewport = viewport;
     this.settings = settings;
     this.onStatus = options.onStatus || (() => {});
     this.onFrameRate = options.onFrameRate || (() => {});
+    /** A real frame of the live video, handed out rarely to be kept for the next entry (stream_keep.js). */
+    this.onKeep = options.onKeep || null;
+    this.reduced = options.reduced || (() => false);
+    this.keepTimer = 0;
+    this.handoffTimer = 0;
+    this.doorTimer = 0;
+    /** @type {HTMLCanvasElement|null} */
+    this.keepCanvas = null;
+    /** The replay's door (W19): '' or which way the layer is fading. */
+    this.door = '';
+    /** An earlier visit's last live frame is on the plate (showKept), named by `keptCaption`. */
+    this.keptShown = false;
+    this.keptCaption = '';
+    /** Whether the live video has presented a frame since it last went live. */
+    this.firstFrame = false;
     this.status = 'offline';
     this.retryTimer = 0;
     this.stillTimer = 0;
@@ -92,6 +116,7 @@ export class LiveStream {
       this._setStatus('live');
       // the library may have made a new video element for this connection
       this._applyView();
+      this._watchFirstFrame();
     });
     this.stream.addEventListener('webRtcConnecting', () => this._setStatus('connecting'));
     this.stream.addEventListener('webRtcDisconnected', () => this._offline());
@@ -183,7 +208,25 @@ export class LiveStream {
     window.clearTimeout(this.stillTimer);
     this.stillTimer = 0;
     if (this.status !== 'live') return;
-    if (this._copyFrame()) this.keptLive = true;
+    // W20: an earlier visit's kept frame on the plate waits for the first presented frame and fades
+    // off it (_firstFrame); a copy now would cut it at once and paint this visit's frame under the
+    // old frame's name. Held (reduced motion), this visit's own first frame replaces it.
+    if (this.keptShown && !this.held) {
+      // should the first-frame callback never come, a video that has presented frames hands off
+      const video = /** @type {HTMLVideoElement|null} */ (this.layer.querySelector('video'));
+      const shown = video && typeof video.getVideoPlaybackQuality === 'function' ? video.getVideoPlaybackQuality().totalVideoFrames : 0;
+      if (!this.firstFrame && shown > 0) this._firstFrame();
+      if (this.keptShown) this.stillTimer = window.setTimeout(() => this._keepFrames(), STILL_COPY_MS);
+      return;
+    }
+    if (this._copyFrame()) {
+      this.keptLive = true;
+      // held: the plate now shows this visit's own frame, not an earlier one's
+      if (this.keptShown) {
+        this.keptShown = false;
+        this._applyLayers();
+      }
+    }
     const wait = !this.held ? STILL_COPY_MS : this.keptLive ? HELD_STILL_MS : HELD_FIRST_MS;
     this.stillTimer = window.setTimeout(() => this._keepFrames(), wait);
   }
@@ -206,6 +249,144 @@ export class LiveStream {
     return true;
   }
 
+  /**
+   * What the layer shows, from the status and what is kept (hq_stream_config.js streamLayers).
+   * Live but before the video's first frame, an earlier visit's kept frame stays on the plate.
+   */
+  _applyLayers() {
+    const layers = streamLayers(/** @type {'connecting'|'live'|'offline'} */ (this.status), this.hasStill, this.held, this.keptShown);
+    const keptLive = this.status === 'live' && !this.held && this.keptShown;
+    // the layer always covers the page's own renderer while a stream is configured
+    this.layer.hidden = false;
+    // the library's video is hidden by a class, not touched: the frozen copy or the note shows
+    this.layer.classList.toggle('paused', this.status !== 'live');
+    this.layer.classList.toggle('held', layers.held);
+    this.layer.classList.toggle('waiting', layers.waiting);
+    this.layer.classList.toggle('kept', layers.kept || keptLive);
+    this.still.hidden = !(layers.still || keptLive || this.door === 'out');
+    const note = layers.note === 'kept' || keptLive ? 'kept' : layers.note;
+    // W20: while the kept frame fades off the live video its name goes with it
+    this.badge.hidden = !note || Boolean(this.door) || Boolean(this.handoffTimer);
+    this.badge.textContent = note === 'kept' ? `${this.keptCaption} · pornește sediul live…` : NOTES[note] || '';
+  }
+
+  /**
+   * THE LAST LIVE FRAME OF AN EARLIER VISIT (W19, stream_keep.js), laid on the starting plate:
+   * dimmed and named, never taken for live. Refused once this visit has a frame of its own.
+   * @param {CanvasImageSource & {width: number, height: number}} image @param {string} caption
+   * @returns {boolean} whether it is shown
+   */
+  showKept(image, caption) {
+    if (this.hasStill || this.firstFrame || !image || !(image.width > 0) || !(image.height > 0)) return false;
+    this.still.width = image.width;
+    this.still.height = image.height;
+    const context = this.still.getContext('2d');
+    if (!context) return false;
+    context.drawImage(image, 0, 0);
+    this.keptShown = true;
+    this.keptCaption = caption;
+    this._applyLayers();
+    return true;
+  }
+
+  /** Waits for the live video to present its first frame (the library may replace the element). */
+  _watchFirstFrame() {
+    const video = /** @type {HTMLVideoElement|null} */ (this.layer.querySelector('video'));
+    if (!video || this.firstFrame) return;
+    const seen = () => {
+      if (this.status !== 'live' || this.firstFrame) return;
+      this._firstFrame();
+    };
+    if (typeof video.requestVideoFrameCallback === 'function') video.requestVideoFrameCallback(() => seen());
+    else video.addEventListener('playing', seen, { once: true });
+  }
+
+  /** The live video's first frame is on screen: the kept frame gives way, and keeping begins. */
+  _firstFrame() {
+    this.firstFrame = true;
+    if (this.keptShown && !this.held) {
+      const done = () => {
+        this.handoffTimer = 0;
+        this.layer.classList.remove('handoff');
+        this.keptShown = false;
+        this._applyLayers();
+        // this visit's own frozen frame, kept from now on (W20)
+        this._keepFrames();
+      };
+      window.clearTimeout(this.handoffTimer);
+      if (this.reduced()) done();
+      else {
+        this.layer.classList.add('handoff');
+        this.badge.hidden = true;
+        this.handoffTimer = window.setTimeout(done, HANDOFF_MS + 40);
+      }
+    }
+    this._scheduleKeep(KEEP_FIRST_MS);
+  }
+
+  /** @param {number} wait */
+  _scheduleKeep(wait) {
+    window.clearTimeout(this.keepTimer);
+    this.keepTimer = 0;
+    if (!this.onKeep) return;
+    this.keepTimer = window.setTimeout(() => this._keepForNext(), wait);
+  }
+
+  /**
+   * Hands out one small real frame of the live video to be kept for the next entry. Rare: once
+   * KEEP_FIRST_MS after the first frame, then every KEEP_EVERY_MS; never while the page is hidden.
+   */
+  _keepForNext() {
+    this.keepTimer = 0;
+    if (this.status !== 'live' || !this.onKeep) return;
+    const video = /** @type {HTMLVideoElement|null} */ (this.layer.querySelector('video'));
+    const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+    const size = video && video.readyState >= 2 ? keptSize(video.videoWidth, video.videoHeight) : null;
+    if (video && size && !hidden) {
+      const canvas = this.keepCanvas || (this.keepCanvas = document.createElement('canvas'));
+      canvas.width = size.w;
+      canvas.height = size.h;
+      const context = canvas.getContext('2d');
+      if (context) {
+        context.drawImage(video, 0, 0, size.w, size.h);
+        const at = Date.now();
+        const hand = this.onKeep;
+        try {
+          canvas.toBlob((blob) => { if (blob) hand({ blob, at, w: size.w, h: size.h }); }, KEEP_TYPE, KEEP_QUALITY);
+        } catch { /* a canvas the browser will not encode keeps nothing */ }
+      }
+    }
+    this._scheduleKeep(KEEP_EVERY_MS);
+  }
+
+  /**
+   * THE REPLAY'S DOOR (W19). Into the replay: the live picture, held as a real frame of it, fades
+   * into the page's own graded building underneath. Back: the live video fades in over the replay's
+   * last graded frame. Under reduced motion both are a clean cut.
+   * @param {'out'|'in'} way
+   */
+  doorway(way) {
+    window.clearTimeout(this.doorTimer);
+    this.doorTimer = 0;
+    this.layer.classList.remove('door-out', 'door-in');
+    this.door = '';
+    const showing = this.status === 'live' || this.hasStill || this.keptShown;
+    if (this.reduced() || !showing) {
+      this._applyLayers();
+      return;
+    }
+    if (way === 'out' && this.status === 'live' && !this.held) this._copyFrame();
+    this.door = way;
+    this.layer.classList.add(way === 'out' ? 'door-out' : 'door-in');
+    this._applyLayers();
+    this.doorTimer = window.setTimeout(() => {
+      this.doorTimer = 0;
+      this.door = '';
+      this.layer.classList.remove('door-out', 'door-in');
+      this._applyLayers();
+    }, DOOR_MS + 40);
+  }
+
   _setStatus(status) {
     // The SDK can recover first. An old fallback retry must not tear down its
     // negotiation or a live connection after the original outage has ended.
@@ -225,20 +406,16 @@ export class LiveStream {
     }
     window.clearTimeout(this.stillTimer);
     this.stillTimer = 0;
+    if (status !== 'live') {
+      window.clearTimeout(this.keepTimer);
+      this.keepTimer = 0;
+      this.firstFrame = false;
+    }
     if (status === 'live') {
       this.keptLive = false;
       this._keepFrames();
     }
-    const layers = streamLayers(status, this.hasStill, this.held);
-    // the layer always covers the page's own renderer while a stream is configured
-    this.layer.hidden = false;
-    // the library's video is hidden by a class, not touched: the frozen copy or the note shows
-    this.layer.classList.toggle('paused', status !== 'live');
-    this.layer.classList.toggle('held', layers.held);
-    this.layer.classList.toggle('waiting', layers.waiting);
-    this.still.hidden = !layers.still;
-    this.badge.hidden = !layers.note;
-    this.badge.textContent = NOTES[layers.note] || '';
+    this._applyLayers();
     // A figure measured while the video played means nothing once it has stopped.
     if (status !== 'live' || this.held) this.onFrameRate(null);
     this.onStatus(status);

@@ -1383,3 +1383,7 @@ No provider was called, no run was queued, no credit was spent, and
 4. The Owner's decision on the encoder commands and quality-control request sent to the shared encoder.
 5. Unreal-side alignment of the run-sign board, right tower and lamp with the plates' face positions.
 6. «live» on the slate only while both the stream and the studio's events are live.
+
+## A kept real frame at entry, and the studio's numbers on the Unreal building (2026-09-24)
+
+- W20 next wave): [ ] title and push on the kept Unreal frame when one exists (one building from the title to live; Owner's art call); [ ] the replay in the Unreal building's look (the largest step from ALMOST to YES); [ ] plaques and stream transform laid in the same frame as a window resize (1-2 frames up to 363 px off today); [ ] take the Owner's token out of the signalling WebSocket's query string (backend stream.py, security); [ ] a dead-stream wording after N failed connects instead of «pornește sediul live…» (glossary first); [ ] «50.000 VR$ cheltuibili» on the Treasury plaque? (Owner's wording; the record holds VR_DEBT 50.000); [ ] tokens, the EP board and the film frame over the video; [ ] plaque anchors checked on a day frame.

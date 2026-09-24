@@ -455,6 +455,12 @@
   --replay-tick:   rgba(201, 184, 255, .55);  /* a stage's start on the scrubber */
   --replay-on-fill: #0e0a22;                  /* the ink on --replay-fill (the invitation's «Vezi reluarea»): 5.5:1 measured */
   --dur-invite:    420ms;                     /* the invitation rises once into the free room (W15) */
+  --dur-handoff:   480ms;                     /* an earlier visit's last live frame giving way to the live video (W19) */
+  --dur-door:      620ms;                     /* the replay's door: the live picture fading into the graded building, and back (W19) */
+  --kept-dim:      brightness(.56) saturate(.72); /* that last live frame, dimmed so it is never taken for live (W19) */
+  --plaque-glass:  var(--card-glass);         /* the studio's numbers over the live video: the drawers' glass (W19) */
+  --plaque-edge:   var(--drawer-edge);
+  --plaque-stem:   var(--gold-line);          /* the hairline from a plaque to the object it names */
   /* --shadow-scene-warm and --edge-hairline belonged to the older scene frame
      that this sheet drew before office_scene.css owned the viewport. The render
      wears --shadow-scene and one hairline of --scene-frame; a second, warmer

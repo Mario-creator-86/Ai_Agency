@@ -45,8 +45,8 @@ test('reduced motion: the stream is one real frame at a time, and the corner say
   const { HELD_STILL_MS, streamLayers } = await import('../src/hq_stream_config.js');
   const { sceneReadout } = await import('../src/live_claims.js');
   assert.equal(HELD_STILL_MS, 10000);
-  assert.deepEqual(streamLayers('live', false, true), { still: true, waiting: false, note: '', held: true });
-  assert.deepEqual(streamLayers('live', true, true), { still: true, waiting: false, note: '', held: true });
+  assert.deepEqual(streamLayers('live', false, true), { still: true, waiting: false, note: '', held: true, kept: false });
+  assert.deepEqual(streamLayers('live', true, true), { still: true, waiting: false, note: '', held: true, kept: false });
   // an outage still says it is frozen, held or not
   assert.equal(streamLayers('offline', true, true).note, 'reconnecting');
   assert.equal(streamLayers('offline', true, true).held, false);

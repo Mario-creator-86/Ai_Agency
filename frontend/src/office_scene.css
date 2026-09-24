@@ -315,6 +315,77 @@
   background: var(--line-strong);
 }
 #office-scene-container .live-stream-still { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; object-fit: contain; }
+/* W19: before this visit's first live frame, the last live frame an earlier visit kept in this
+   browser (stream_keep.js), dimmed and named by the badge («ultimul cadru live · azi 22:48»); when
+   the live video presents its first frame, the kept one fades off it. */
+#office-scene-container .live-stream-layer.kept .live-stream-still { filter: var(--kept-dim); }
+#office-scene-container .live-stream-layer.handoff .live-stream-still { opacity: 0; transition: opacity var(--dur-handoff) var(--ease); }
+/* W19, the replay's door: into the replay the live picture, held as one real frame of it, fades into
+   the page's own graded building; back, the live video fades in over the replay's last frame. */
+.scene-viewport[data-replay] .live-stream-layer.door-out { visibility: visible; animation: stream-door-out var(--dur-door) var(--ease) both; }
+#office-scene-container .live-stream-layer.door-out video { visibility: hidden; }
+#office-scene-container .live-stream-layer.door-in { animation: stream-door-in var(--dur-door) var(--ease) both; }
+@keyframes stream-door-out { to { opacity: 0; } }
+@keyframes stream-door-in { from { opacity: 0; } }
+
+/* W19: THE STUDIO'S NUMBERS OVER THE LIVE VIDEO (stream_plaques.js). Four small panes of the
+   drawers' glass, anchored to real objects of the streamed building, laid by the page's camera. */
+.scene-viewport .stream-plaques { position: absolute; inset: 0; z-index: 3; pointer-events: none; overflow: hidden; }
+.scene-viewport .stream-plaques[hidden] { display: none; }
+.scene-viewport[data-replay] .stream-plaques { visibility: hidden; }
+.scene-viewport .stream-plaque {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 3px var(--s2) var(--s1);
+  background: linear-gradient(180deg, var(--sheen), transparent 70%), var(--plaque-glass);
+  border: 1px solid var(--plaque-edge);
+  border-radius: var(--radius-xs);
+  box-shadow: var(--lit-edge);
+  color: var(--ink);
+  white-space: nowrap;
+  opacity: 1;
+  transition: opacity var(--dur-slow) var(--ease);
+}
+.scene-viewport .stream-plaque[data-shown="false"] { opacity: 0; }
+.scene-viewport .stream-plaque-eyebrow {
+  color: var(--scene-chrome-muted);
+  font-size: var(--fs-micro);
+  font-weight: var(--w-bold);
+  letter-spacing: var(--track-caps);
+  line-height: var(--lh-tight);
+}
+.scene-viewport .stream-plaque-value {
+  color: var(--ink);
+  font-size: var(--fs-meta);
+  font-weight: var(--w-semi);
+  line-height: var(--lh-tight);
+  font-variant-numeric: tabular-nums;
+}
+.scene-viewport .stream-plaque[data-level="compact"] .stream-plaque-eyebrow { display: none; }
+.scene-viewport .stream-plaque[data-level="compact"] .stream-plaque-value { font-size: var(--fs-meta); }
+.scene-viewport .stream-plaque[data-level="full"] .stream-plaque-value { font-size: var(--fs-body); }
+.scene-viewport .stream-plaque[data-level="large"] { padding: var(--s1) var(--s3); }
+.scene-viewport .stream-plaque[data-level="large"] .stream-plaque-eyebrow { font-size: var(--fs-meta); }
+.scene-viewport .stream-plaque[data-level="large"] .stream-plaque-value { font-size: var(--fs-h3); }
+.scene-viewport .stream-plaque[data-tone="ok"] .stream-plaque-value { color: var(--ok-ink); }
+.scene-viewport .stream-plaque[data-tone="alert"] .stream-plaque-value { color: var(--alert-ink); }
+/* a hairline from the pane to the object it names */
+.scene-viewport .stream-plaque::after { content: ''; position: absolute; background: var(--plaque-stem); }
+.scene-viewport .stream-plaque[data-side="on"]::after { display: none; }
+.scene-viewport .stream-plaque[data-side="above"]::after { left: 50%; top: 100%; width: 1px; height: 6px; }
+.scene-viewport .stream-plaque[data-side="below"]::after { left: 50%; bottom: 100%; width: 1px; height: 6px; }
+.scene-viewport .stream-plaque[data-side="right"]::after { right: 100%; top: 50%; width: 6px; height: 1px; }
+.scene-viewport .stream-plaque[data-side="left"]::after { left: 100%; top: 50%; width: 6px; height: 1px; }
+@media (prefers-reduced-motion: reduce) {
+  .scene-viewport .stream-plaque,
+  #office-scene-container .live-stream-layer.handoff .live-stream-still { transition: none; }
+  .scene-viewport[data-replay] .live-stream-layer.door-out,
+  #office-scene-container .live-stream-layer.door-in { animation: none; }
+}
 
 /* --------------------------------------------------------------------------
    THE CONSOLE -- two tiers, one plate, one alignment

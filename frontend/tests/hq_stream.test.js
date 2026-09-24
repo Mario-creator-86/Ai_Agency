@@ -24,13 +24,13 @@ test('a retry faster than a second falls back to the default pause', () => {
 });
 
 test('with a stream configured the old renderer is never shown: live video, a frozen frame or a note', () => {
-  const live = { still: false, waiting: false, note: '', held: false };
+  const live = { still: false, waiting: false, note: '', held: false, kept: false };
   assert.deepEqual(streamLayers('live', false), live);
   assert.deepEqual(streamLayers('live', true), live);
   for (const status of ['offline', 'connecting']) {
-    assert.deepEqual(streamLayers(status, true), { still: true, waiting: false, note: 'reconnecting', held: false }, status);
+    assert.deepEqual(streamLayers(status, true), { still: true, waiting: false, note: 'reconnecting', held: false, kept: false }, status);
     // before any frame (Unreal starting or being rebuilt) a dark viewport says so
-    assert.deepEqual(streamLayers(status, false), { still: false, waiting: true, note: 'starting', held: false }, status);
+    assert.deepEqual(streamLayers(status, false), { still: false, waiting: true, note: 'starting', held: false, kept: false }, status);
   }
 });
 

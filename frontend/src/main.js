@@ -36,7 +36,9 @@ import { LiveWindows, eventMatchesAgent } from './live_window.js';
 import { MailThread } from './mail_thread.js';
 import { LiveStream } from './hq_stream.js';
 import { liveStreamSettings, relayUrl } from './hq_stream_config.js';
-import { EventsLink, connectionLabel, roomCaption, roomCaptionShort, sceneReadout } from './live_claims.js';
+import { browserStore, keptCaption, keptUsable, readKept, writeKept } from './stream_keep.js';
+import { StreamPlaques } from './stream_plaques.js';
+import { EventsLink, connectionLabel, liveScope, roomCaption, roomCaptionShort, sceneReadout } from './live_claims.js';
 import { TitleScreen } from './title_screen.js';
 import { ENTRY, entryPlays } from './title_frame.js';
 import { KeyLight } from './key_light.js';
@@ -129,7 +131,9 @@ function renderLiveSignals() {
   }
   const readout = sceneReadout(liveSignals);
   const staff = officeState.agents.length;
-  const caption = roomCaption(staff, readout.live);
+  // «live» on the slate only while the picture and the data both are; otherwise which one is (W19)
+  const scope = liveScope(liveSignals);
+  const caption = roomCaption(staff, scope);
   const chip = connectionLabel(liveSignals);
   const key = JSON.stringify([readout.state, readout.parts, caption, chip]);
   if (key === liveReadoutKey) return;
@@ -150,10 +154,10 @@ function renderLiveSignals() {
   long.textContent = caption;
   const brief = document.createElement('span');
   brief.className = 'room-caption-short';
-  brief.textContent = roomCaptionShort(staff, readout.live);
+  brief.textContent = roomCaptionShort(staff, scope);
   element('room-caption').replaceChildren(long, brief);
   element('room-caption').title = caption;
-  officeCanvas.setAttribute('aria-label', canvasLabel(Boolean(readout.live)));
+  officeCanvas.setAttribute('aria-label', canvasLabel(scope === 'all'));
   if (ownerToken) element('connection').textContent = chip;
 }
 
@@ -221,12 +225,31 @@ const keyLight = new KeyLight({
   target: document.documentElement,
   source: () => (liveStream && liveStream.hasStill ? liveStream.still : officeCanvas),
 });
+/**
+ * THE LAST LIVE FRAME (W19, stream_keep.js): read from this browser while the title is up, so the
+ * starting plate can show it the moment the key enters. Null when none is kept or storage refuses.
+ * @type {Promise<{image: ImageBitmap, at: number}|null>}
+ */
+const keptFrame = (async () => {
+  try {
+    const record = await readKept(browserStore());
+    if (!keptUsable(record, Date.now()) || typeof createImageBitmap !== 'function') return null;
+    return { image: await createImageBitmap(record.blob), at: Number(record.at) };
+  } catch {
+    return null;
+  }
+})();
+/** Whether a kept frame is being written, so two are never written at once. */
+let keeping = false;
+
 const officeState = new OfficeState();
 let officeEngine = null;
 /** Whether the camera keys, fullscreen and the stream have been wired (once per page). */
 let officeWired = false;
 /** @type {LiveStream|null} the Unreal headquarters over the renderer, when scene.json turns it on */
 let liveStream = null;
+/** @type {StreamPlaques|null} the studio's numbers over the live video (W19) */
+let streamPlaques = null;
 let currentSelectedAgent = null;
 let inspectorRequest = 0;
 
@@ -390,6 +413,33 @@ function pushWorldFacts() {
   renderStudioReadout();
   refreshSceneReadout();
   considerInvite();
+  layoutPlaques();
+}
+
+/**
+ * THE STUDIO'S NUMBERS OVER THE LIVE VIDEO (W19, stream_plaques.js): shown while the live stream is
+ * what the visitor sees (not a frozen or kept frame, not the replay), laid where the camera shows
+ * their objects, off the employees' desks. From the same facts store; nothing fetched.
+ */
+function layoutPlaques() {
+  if (!streamPlaques) return;
+  const viewport = element('scene-viewport');
+  const on = Boolean(officeEngine && officeEngine.renderer) && viewport.dataset.stream === 'live' && !replaying();
+  streamPlaques.setOn(on);
+  if (!on || !officeEngine) return;
+  const view = officeEngine.view();
+  const dpr = view.dpr || 1;
+  const ox = officeCanvas.offsetLeft;
+  const oy = officeCanvas.offsetTop;
+  const toScreen = (/** @type {number} */ x, /** @type {number} */ y) => ({ x: (x * view.zoom + view.panX) / dpr + ox, y: (y * view.zoom + view.panY) / dpr + oy });
+  const box = officeEngine.frameBox();
+  const room = { left: box.room.left + ox + 4, top: box.room.top + oy + 4, right: box.room.right + ox - 4, bottom: box.room.bottom + oy - 4 };
+  const desks = officeEngine.renderer.hits.filter((/** @type {any} */ h) => h.desk).map((/** @type {any} */ h) => {
+    const a = toScreen(h.x0, h.y0);
+    const b = toScreen(h.x1, h.y1);
+    return { x: a.x, y: a.y, w: b.x - a.x, h: b.y - a.y };
+  });
+  streamPlaques.update({ facts: worldFacts, agents: officeState.agents, k: view.zoom / dpr, toScreen, room, desks });
 }
 
 /* ---------------------------------------------------------------------------
@@ -485,11 +535,16 @@ replay = new DayReplayPlayer({
   names: () => Object.fromEntries(officeState.agents.map((a) => [a.id || a.agent_id, a.display_name || a.role_name || ''])),
   poster: (assetId) => posters.get(assetId),
   onEnter: () => {
+    // the live picture fades into the page's graded building (W19); a cut under reduced motion
+    if (liveStream) liveStream.doorway('out');
+    layoutPlaques();
     renderLiveSignals();
     refreshSceneReadout();
     scheduleDayTrack();
   },
   onExit: (liveEvents) => {
+    // and back: the live video fades in over the replay's last graded frame (W19)
+    if (liveStream) liveStream.doorway('in');
     // the world is the live one again, and a live arrival that ended the replay is still seen
     updateOfficeCanvas();
     pushWorldFacts();
@@ -904,9 +959,11 @@ async function startLiveStream() {
     return;
   }
   const signallingUrl = relayUrl(window.location, String(relay.relay), ownerToken);
+  streamPlaques = new StreamPlaques(viewport);
   liveStream = new LiveStream(viewport, { ...settings, signallingUrl }, {
     onStatus: (status) => {
       viewport.dataset.stream = status;
+      layoutPlaques();
       // Once a stream is configured its layer covers the canvas in every state -- the video, the
       // frozen frame or the "starting" plate -- so the canvas keeps only its hit boxes.
       if (officeEngine) officeEngine.setCovered(true);
@@ -922,6 +979,19 @@ async function startLiveStream() {
     },
     // Reduced motion: the street's traffic does not drive past; one real frame at a time (W18).
     held: () => reducedMotion(),
+    reduced: () => reducedMotion(),
+    // one small real frame, now and then, kept in this browser for the next entry (W19)
+    onKeep: (record) => {
+      if (keeping) return;
+      keeping = true;
+      writeKept(browserStore(), record).finally(() => { keeping = false; });
+    },
+  });
+  // the starting plate shows the last live frame an earlier visit kept, dimmed and named (W19)
+  keptFrame.then((kept) => {
+    if (!kept || !liveStream) return;
+    const zone = state && state.studio ? state.studio.timezone : undefined;
+    liveStream.showKept(kept.image, keptCaption(kept.at, Date.now(), zone));
   });
   if (typeof window.matchMedia === 'function') {
     window.matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', () => {
@@ -984,6 +1054,7 @@ function buildOfficeEngine() {
       if (!liveStream) return;
       const t = streamTransform(view);
       liveStream.setView({ k: t.k, tx: t.tx / view.dpr, ty: t.ty / view.dpr });
+      layoutPlaques();
     },
     onSelectAgent: (agent) => {
       currentSelectedAgent = agent;
@@ -1009,6 +1080,10 @@ function buildOfficeEngine() {
     onReadout: (target) => {
       readoutTarget = target;
       refreshSceneReadout();
+      if (streamPlaques) {
+        streamPlaques.suppress(target && target.kind !== 'agent' ? String(target.id || '') : '');
+        layoutPlaques();
+      }
     },
   });
   publishSceneHandle();
@@ -1324,6 +1399,7 @@ function updateOfficeCanvas() {
   if (replaying()) return;
   considerInvite();
   officeEngine.setAgents(officeState.agents);
+  layoutPlaques();
   officeEngine.setSpeechBubbles(officeState.speechBubbles);
   officeEngine.setProjectTokens(officeState.projectTokens);
 }
