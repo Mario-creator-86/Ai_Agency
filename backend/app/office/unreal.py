@@ -288,8 +288,10 @@ SINGLE_ROLES = {
     "clock_display": "clock_display",
     "shelter_light": "light:shelter",
     "street_fill": "light:fills",
-    "walk_wash": "light:fills",
-    "facade_light": "light:fills",
+    # the shopfronts' spill on the front pavement: with the fills, never above its build level
+    "walk_wash": "light:walk_wash",
+    # the facade keeps the evening's light while StreetFill holds the ground on the noon's budget
+    "facade_light": "light:facade",
 }
 GROUP_ROLES = {
     "lamps": "light:lamps",
@@ -527,6 +529,17 @@ def environment_calls(plan: Mapping[str, Any], report: EnvReport) -> list[EnvCal
         calls.append(
             EnvCall("LightComponent", light.path, "SetIntensity", "light", light.intensity * factor)
         )
+    fill_colours = plan.get("fill_colors") or {}
+    for light in (
+        report.of("light:fills") + report.of("light:walk_wash") + report.of("light:facade")
+    ):
+        # the fills' colour by their label (scene_params.FILL_BUILT_SRGB8): as built, warmed in the
+        # golden hour; a fill the plan has no colour for keeps the level's own
+        colour = fill_colours.get(light.label)
+        if colour is not None:
+            calls.append(
+                EnvCall("LightComponent", light.path, "SetLightColor", "fill", tuple(colour))
+            )
     scalar, vector = "SetScalarParameterValueOnMaterials", "SetVectorParameterValueOnMaterials"
     for backdrop in report.of("sky_backdrop")[:1]:
         for name in ("PlateA", "PlateB", "PlateBlend", "Mirror", "Gain"):

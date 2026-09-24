@@ -1,5 +1,14 @@
 # Changelog
 
+## The live headquarters follows a real clear day — 2026-09-24
+
+- **A golden hour instead of a power cut** (`backend/app/office/scene_params.py`): the key on the sun's side carries the low sun from +10° to the twilight and warms toward amber; the building darkens in order through the evening (83.8 → 80.6 → 73.5 → 66.6 → 62.1 → 47.6).
+- **The front ground on the noon's budget**: the street's fill has its own measured curve, the facade light its own factor (`unreal.py` role `light:facade`); the fills are warmed by hue with their measured built colours (`FILL_BUILT_SRGB8`, read over Remote Control) and are as built again by −1°.
+- **Morning is not evening**: a cooler, bluer dawn sky and key, fewer lit windows at dawn.
+- **The night sky carries the city's glow** instead of a black void.
+- **The weather's look is held** (`WEATHER_LOOK = False`): the deck and rain rules are written and tested but not shipped until the sky atlas has grey deck cells; the road still follows the real rain as before.
+- Noon unchanged; 19:19 pixel-identical to the committed code (6.8 against the reference). Tests: 155 passed across the scene, environment bridge, routing, env report and Unreal bridge files; ruff and mypy clean.
+
 ## The building's screens tell the truth, and the frame is finished — 2026-09-24
 
 - **Real data inside the world** (`frontend/src/hq_screens.js`, `hq_world.js`): desk monitors by each employee's runtime state, room lights by who works there, the render bay's newest real film frame, the Treasury ticker (VR$ balance, today's spend against the budget), the façade sign with the day's run, the fact-check board, the cork board's proposed topics, the writers' screen, the publication radar, today's tokens; «—» where the page holds no value. Pure rules with tests; each face cached and redrawn only when its value changes.

@@ -362,6 +362,42 @@ def test_the_reference_dusk_sends_todays_values(tmp_path):
         assert view["parameters"]["ParameterValue"] == 0.0, name
 
 
+def test_the_fills_take_their_colour_and_walkwash_its_own_factor(tmp_path):
+    """The fills' colour goes by label (as built at the reference, warm in the golden hour), and
+    WalkWash (the shopfronts' spill) is scaled by its own factor, never above its build level.
+    FacadeLight has its own factor too (wave 3, round 3): the facade keeps the evening's light
+    while StreetFill holds the front ground on the noon's budget."""
+    rep = report(tmp_path)
+
+    def fill_calls(elevation, azimuth):
+        plan = scene_params(world(elevation, azimuth), rep.frame(180.0))
+        calls = {(c.path.split(".")[-2], c.function): c for c in environment_calls(plan, rep)}
+        return plan, calls
+
+    plan, calls = fill_calls(-2.5, 274.3)
+    for actor, label in (
+        ("RectLight_9", "StreetFill"),
+        ("RectLight_10", "WalkWash"),
+        ("RectLight_11", "FacadeLight"),
+    ):
+        colour = calls[(actor, "SetLightColor")]
+        assert colour.value == tuple(plan["fill_colors"][label]), label
+        assert colour.body()["parameters"]["bSRGB"] is True
+    assert calls[("RectLight_10", "SetIntensity")].value == 150.0
+    assert calls[("RectLight_9", "SetIntensity")].value == 3300.0
+    assert calls[("RectLight_11", "SetIntensity")].value == 800.0
+    golden, calls = fill_calls(2.7, 266.0)
+    street = calls[("RectLight_9", "SetLightColor")].value
+    assert street[2] / street[0] < 0.7 * (0.88 / 0.7)  # warmer than as built
+    assert calls[("RectLight_10", "SetIntensity")].value == 150.0 * golden["lights"]["walk_wash"]
+    assert calls[("RectLight_9", "SetIntensity")].value == 3300.0 * golden["lights"]["fills"]
+    assert golden["lights"]["walk_wash"] <= golden["lights"]["fills"]
+    assert calls[("RectLight_11", "SetIntensity")].value == 800.0 * golden["lights"]["facade"]
+    assert golden["lights"]["fills"] < golden["lights"]["facade"]
+    facade = calls[("RectLight_11", "SetLightColor")].value
+    assert facade[2] / facade[0] < 1.0 / 0.72  # warmer than as built (0.72, 0.78, 1.0)
+
+
 # ---------------------------------------------------------------- the twilight keys
 def test_the_twilight_keys_are_never_turned(tmp_path):
     """SunDusk and SunDawn are Stationary: the game refuses to rotate them, and their direction is
@@ -830,7 +866,10 @@ def test_the_report_the_rebuild_writes_is_the_report_the_bridge_reads(tmp_path):
     assert rep.of("skyline")[0].emissive_uniform is True
     assert len(rep.of("haze")) == 4
     assert len(rep.of("light:lamps")) == 3 and len(rep.of("light:uplights")) == 2
-    assert len(rep.of("light:car_lights")) == 3 and len(rep.of("light:fills")) == 3
+    assert len(rep.of("light:car_lights")) == 3
+    assert [o.label for o in rep.of("light:fills")] == ["StreetFill"]
+    assert [o.label for o in rep.of("light:walk_wash")] == ["WalkWash"]
+    assert [o.label for o in rep.of("light:facade")] == ["FacadeLight"]
     plan = scene_params(world(), rep.frame(180.0), game_time_s=10.0)
     for call in environment_calls(plan, rep):
         assert (call.cls, call.function) in ENVIRONMENT_CALLS
