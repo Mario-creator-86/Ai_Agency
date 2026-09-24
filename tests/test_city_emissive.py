@@ -255,6 +255,20 @@ def test_the_look_pass_folds_both_components_and_lifts_the_near_blocks_after():
     assert main.index("tune_materials(actors)") < main.index("near_blocks_day(actors)")
 
 
+def test_every_plain_slot_of_both_components_leaves_the_glowing_master():
+    # measured 2026-09-24: a texture-less glTF slot at factor 1 glows white whatever its strength,
+    # so the folded dark slots (skyline and near blocks alike) must not stay where the backend's
+    # one factor reaches them, and AMN_LOOK_NEAR_DAY_ALBEDO=0 only stops the day lift, not the move
+    code = look_code()
+    body = code[code.index("def near_blocks_day(") : code.index("def tune_materials(")]
+    assert 'city_plain_slots(actors, "near_blocks", NEAR_DAY_FLOOR, None)' in body
+    assert 'city_plain_slots(actors, "skyline", 0.0, master)' in body
+    assert "NEAR_DAY_FLOOR <= 0" not in body
+    after_left = body[body.index("left.append(name)") :].splitlines()[1].strip()
+    assert after_left != "continue"  # a slot already light enough still moves
+    assert body.count("city_day_master()") == 1  # one master under both components' instances
+
+
 def test_the_near_blocks_day_material_blends_by_the_real_sun_from_the_dusk(city):
     code = look_code()
     body = code[code.index("def city_day_master():") : code.index("def near_blocks_day(")]

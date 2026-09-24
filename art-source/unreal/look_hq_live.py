@@ -457,21 +457,41 @@ def city_day_master():
 
 
 def near_blocks_day(actors):
-    """The near blocks' plain slots (a glTF instance painting with factors alone, emitting nothing)
-    darker than NEAR_DAY_FLOOR get their own instance of M_HQ_CityDay: the same colour at
-    Daylight 0, their own hue at a facade's albedo at Daylight 1. Every other slot - the facades
-    with their window pictures, the shop fronts, the glowing dashes, anything already as light as
-    the floor - stays on its glTF instance, untouched."""
-    if NEAR_DAY_FLOOR <= 0:
-        log("near blocks by day: off (AMN_LOOK_NEAR_DAY_ALBEDO 0)")
-        return
-    actor = actors.get("near_blocks")
+    """The city's plain slots (a glTF instance painting with factors alone, emitting nothing) leave
+    the glTF master for their own instance of M_HQ_CityDay, which has no emission at all.
+
+    Why every such slot moves, not only the dark ones (measured in the rebuild window of
+    2026-09-24): the fold (tune_materials) turns a slot at EmissiveFactor 0 into factor 1 with
+    EmissiveStrength 0, on the belief that the glTF master multiplies emission by the strength.
+    In the game it does not for these texture-less slots: at factor 1 the Bucharest sign's frame
+    and bridge, the CREATE panel, the SAME CITY block and the right block's bands all glowed flat
+    white (build frame 7.3 and 12.9 against 6.4); written EmissiveFactor 0 over them over Remote
+    Control, they went dark again. So a plain slot that must not glow may not stay on a master the
+    backend's one city factor reaches. On M_HQ_CityDay it keeps its colour (BaseColorFactor) and
+    no factor reaches it (the environment report excuses exactly that master).
+
+    The near blocks' slots darker than NEAR_DAY_FLOOR also get a day colour: the same colour at
+    Daylight 0, their own hue at a facade's albedo at Daylight 1 (the backend sets Daylight on the
+    near_blocks component). The skyline's slots, and near-block slots already that light, keep
+    their colour by day. Every other slot - the facades with their window pictures, the shop
+    fronts, the glowing dashes - stays on its glTF instance, untouched."""
+    # the master is built once: rebuilding it for the second component would renew its
+    # expressions under the first component's instances
+    master = city_plain_slots(actors, "near_blocks", NEAR_DAY_FLOOR, None)
+    city_plain_slots(actors, "skyline", 0.0, master)
+
+
+def city_plain_slots(actors, label, floor, master):
+    """One city component's plain, non-glowing slots onto M_HQ_CityDay (near_blocks_day says why);
+    floor > 0 lifts the darker ones to that albedo by day, 0 keeps every colour by day. master is
+    M_HQ_CityDay when an earlier call built it; returns it (None when nothing needed it)."""
+    actor = actors.get(label)
     if not isinstance(actor, unreal.StaticMeshActor):
-        log("near blocks by day: NO near_blocks actor")
-        return
+        log(f"{label} plain slots: NO {label} actor")
+        return master
     mel = unreal.MaterialEditingLibrary
     comp = actor.static_mesh_component
-    master, lifted, left = None, [], []
+    lifted, left = [], []
     for i in range(comp.get_num_materials()):
         mat = comp.get_material(i)
         if not isinstance(mat, unreal.MaterialInstanceConstant):
@@ -494,12 +514,10 @@ def near_blocks_day(actors):
                 if max(f.r, f.g, f.b) * s > _city.EPS:
                     continue  # it glows: its glow belongs to the city factor, on its glTF instance
         dusk = mel.get_material_instance_vector_parameter_value(mat, "BaseColorFactor")
-        day = _city.day_albedo((dusk.r, dusk.g, dusk.b), NEAR_DAY_FLOOR)
-        if day is None and not ours:
-            left.append(name)
-            continue
-        if day is None:  # ours from an earlier run, now above a lowered floor: the same by day
+        day = _city.day_albedo((dusk.r, dusk.g, dusk.b), floor)
+        if day is None:  # already that light, or no lift asked for: the same colour by day
             day = (dusk.r, dusk.g, dusk.b)
+            left.append(name)
         if master is None:
             master = city_day_master()
         if ours:
@@ -524,8 +542,10 @@ def near_blocks_day(actors):
         unreal.EditorAssetLibrary.save_loaded_asset(mi)
         comp.set_material(i, mi)
         lifted.append(f"{name}[{i}] {_city.luminance((dusk.r, dusk.g, dusk.b)):.3f}->{_city.luminance(day):.3f}")
-    log(f"near blocks by day: {_city.DAY_PARAMETER} 0 = dusk as built, 1 = own colour at albedo >= {NEAR_DAY_FLOOR:g}; "
-        f"lifted {lifted or 'none'}; left on glTF (already that light) {left or 'none'}")
+    log(f"{label} plain slots on {_city.DAY_MASTER.rsplit('/', 1)[-1]} (no glow for the city factor to light): "
+        f"{_city.DAY_PARAMETER} 0 = dusk as built, 1 = own colour at albedo >= {floor:g}; "
+        f"moved {lifted or 'none'}; of them the same colour by day {left or 'none'}")
+    return master
 
 
 def tune_materials(actors):

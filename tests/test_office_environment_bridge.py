@@ -864,3 +864,37 @@ def test_the_rebuild_fails_without_both_twilight_keys(tmp_path):
         level.full_level() + [dawn, fake], level.AXES, 180.0, expected_counts={"tree_uplights": 2}
     )
     assert writer.missing_twilight_keys(written) == ["twilight_evening: SunDusk"]
+
+
+def test_a_light_whose_target_moves_every_tick_follows_it_and_does_not_freeze():
+    # Measured 2026-09-24 on the live stream: the sun's intensity sat at its first value for
+    # 85 minutes while its target rose, because every change of target restarted the ease
+    # with t0 = now, so t was 0 at every tick. A value that moves all evening (the sun, the
+    # twilight keys, the city's emission) must reach the screen, a little behind.
+    clock = Clock()
+    env = EnvironmentPass(Recorder(), clock=clock, ease_s=30.0)
+    shown = []
+    for tick in range(0, 85 * 60 // 5):
+        clock.now = tick * 5.0
+        target = 5.0 + tick * 0.01  # rises 0.01 every 5 s
+        call = unreal.EnvCall("cls", "Sun", "SetIntensity", "intensity", target)
+        shown.append(env._eased(call, clock.now))
+    assert shown[-1] > shown[0] + 9.0  # it moved with the target, it did not freeze
+    last_target = 5.0 + (len(shown) - 1) * 0.01
+    assert last_target - shown[-1] <= 30.0 / 5.0 * 0.01 + 1e-9  # at most one ease behind
+    assert all(b >= a for a, b in zip(shown, shown[1:], strict=False))  # never backwards
+
+
+def test_a_step_of_light_still_takes_the_whole_ease_from_what_is_on_screen():
+    clock = Clock()
+    env = EnvironmentPass(Recorder(), clock=clock, ease_s=30.0)
+
+    def at(now, value):
+        clock.now = now
+        return env._eased(unreal.EnvCall("cls", "Lamp", "SetIntensity", "i", value), now)
+
+    assert at(0.0, 0.0) == 0.0
+    assert at(5.0, 100.0) == 0.0  # the step is seen; the ease starts from what is shown
+    assert at(20.0, 100.0) == pytest.approx(50.0)
+    assert at(35.0, 100.0) == pytest.approx(100.0)
+    assert at(40.0, 100.0) == pytest.approx(100.0)

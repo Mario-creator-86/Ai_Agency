@@ -1,5 +1,12 @@
 # Changelog
 
+## The headquarters has a real day, and the live sky follows the real sun — 2026-09-24
+
+- **A real noon for the page's renderer** (`art-source/blender/hq/hq_day.py`, `build_hq.py --variant day`, `export_plates.py --variants day`): the city's windows off, daylight facade colours, the sun where the real one stands at 12:00, lamps and LED lines dark, a pale haze, the offices lit as by day. The nine night plates and the anchor manifest are byte-identical.
+- **The real-sky Unreal level streams** (build 3): `look_hq_live.py` moves every plain, non-glowing city slot onto `M_HQ_CityDay`, which ends the white texture-less slots that failed builds 1 and 2; `tests/test_city_emissive.py` +1. Gates: build frame 6.4, p95 15.19 ms, evening −2.5° 6.8, the clock right at every instant.
+- **A moving light is followed, not frozen** (`backend/app/office/unreal.py` `EnvironmentPass._eased`): a target that moves during an ease re-aims it instead of restarting it; `tests/test_office_environment_bridge.py` +2. Takes effect when the studio restarts.
+- The rejected environment reports are ignored (`.gitignore`).
+
 ## The serial in one click: today's episode and tomorrow's script — 2026-09-24
 
 - **The serial resumes instead of skipping** (`backend/app/story/serial_stage.py`): an approved episode without a storyboard is storyboarded, an unread draft is read, a draft waiting for the Owner is named; his approve button storyboards the episode at once (database rows only, no vendor).

@@ -16,6 +16,9 @@ Layers (drawn by the canvas in this order, live actors in between):
   street_front    near planters
 Every layer is rendered with the other layers present but invisible to the camera, so light,
 shadow and reflections are those of the whole scene.
+
+--variant day is the same building on a clear Bucharest noon: hq_day.py sets its world and sun and
+turns the built night scene into the day one. The night path does not call it.
 """
 
 import argparse
@@ -32,6 +35,7 @@ sys.path.insert(0, HERE)
 
 import hq_building  # noqa: E402
 import hq_city  # noqa: E402
+import hq_day  # noqa: E402  (the day variant only: world, sun and the noon pass)
 from hq_lib import CX, CY, PPM, SIN, COS, THETA, WORLD_H, WORLD_W, ZC, collection, lin  # noqa: E402
 
 LAYERS = [
@@ -115,6 +119,9 @@ def setup_camera(scene):
 
 
 def setup_world(scene, variant, preview):
+    if variant == "day":
+        hq_day.world(scene, preview)
+        return
     w = bpy.data.worlds.new("hq_world")
     w.use_nodes = True
     nt = w.node_tree
@@ -122,12 +129,8 @@ def setup_world(scene, variant, preview):
         nt.nodes.remove(n)
     out = nt.nodes.new("ShaderNodeOutputWorld")
     ambient = nt.nodes.new("ShaderNodeBackground")
-    if variant == "night":
-        ambient.inputs["Color"].default_value = lin("#3b4c80")
-        ambient.inputs["Strength"].default_value = 1.1
-    else:
-        ambient.inputs["Color"].default_value = lin("#8fb0e0")
-        ambient.inputs["Strength"].default_value = 0.9
+    ambient.inputs["Color"].default_value = lin("#3b4c80")
+    ambient.inputs["Strength"].default_value = 1.1
     if preview:
         sky = nt.nodes.new("ShaderNodeBackground")
         tc = nt.nodes.new("ShaderNodeTexCoord")
@@ -164,41 +167,11 @@ def setup_sun(colls, variant):
         ob = bpy.data.objects.new(name, ld)
         ob.rotation_euler = rot
         coll.objects.link(ob)
-    if variant == "night":
-        sun("dusk_glow", "#ff9f86", 1.2, (math.radians(80), 0, math.radians(-35)), angle=10)
-        sun("moon", "#9fb2ff", 0.6, (math.radians(35), 0, math.radians(25)), angle=3)
-    else:
-        sun("sun", "#ffe6c4", 3.2, (math.radians(50), 0, math.radians(-30)), angle=1.5)
-
-
-NIGHT_GLOW = ("tower_", "city_", "classic", "lamp_glass", "terrace_led", "edge_led", "bridge_", "beacon", "billboard", "shelter_ad", "tower_strip", "teal_dash", "same_city_text", "slogan")
-
-
-def daytime(colls):
-    """Daylight: street and skyline lamps off, windows reflect the sky, the haze turns pale."""
-    from hq_lib import TEXTURES
-
-    for ob in colls["lights_interior"].objects:
-        ob.data.energy *= 0.85
-    for ob in colls["lights_exterior"].objects:
-        if ob.data.type != "SUN":
-            ob.data.energy = 0.0
-    day_view = bpy.data.images.load(os.path.join(TEXTURES, "window_city_day.png"), check_existing=True)
-    for mat in bpy.data.materials:
-        nt = mat.node_tree
-        if nt is None:
-            continue
-        for node in nt.nodes:
-            if mat.name.startswith(NIGHT_GLOW):
-                if node.type == "BSDF_PRINCIPLED":
-                    node.inputs["Emission Strength"].default_value *= 0.06
-                elif node.type == "EMISSION":
-                    node.inputs["Strength"].default_value *= 0.08
-            if mat.name.startswith("window_view") and node.type == "TEX_IMAGE":
-                node.image = day_view
-            if mat.name.startswith("haze") and node.type == "EMISSION":
-                node.inputs["Color"].default_value = lin("#a9c0e2")
-                node.inputs["Strength"].default_value = 0.7
+    if variant == "day":
+        hq_day.sun(colls)
+        return
+    sun("dusk_glow", "#ff9f86", 1.2, (math.radians(80), 0, math.radians(-35)), angle=10)
+    sun("moon", "#9fb2ff", 0.6, (math.radians(35), 0, math.radians(25)), angle=3)
 
 
 def main():
@@ -216,7 +189,7 @@ def main():
     for ob in colls["lights_interior"].objects:
         ob.data.energy *= 3.15
     if a.variant == "day":
-        daytime(colls)
+        hq_day.apply(colls)
     print(f"AMN_BUILD seconds={time.time() - t0:.1f} objects={len(bpy.data.objects)}")
     os.makedirs(a.out, exist_ok=True)
     manifest = {

@@ -95,15 +95,15 @@
    "building_back": {
     "file": "day_building_back.webp",
     "x": 429.5,
-    "y": 18.5,
+    "y": 26.0,
     "w": 880.0,
-    "h": 641.0
+    "h": 633.5
    },
    "building_front": {
     "file": "day_building_front.webp",
-    "x": 645.0,
+    "x": 643.0,
     "y": 136.0,
-    "w": 399.5,
+    "w": 404.0,
     "h": 519.5
    },
    "building_shell": {
@@ -111,14 +111,14 @@
     "x": 412.5,
     "y": 0.0,
     "w": 943.0,
-    "h": 669.5
+    "h": 669.0
    },
    "street_props": {
     "file": "day_street_props.webp",
-    "x": 76.0,
-    "y": 396.0,
-    "w": 1524.0,
-    "h": 322.0
+    "x": 82.5,
+    "y": 398.0,
+    "w": 1517.5,
+    "h": 320.0
    },
    "street_kerb": {
     "file": "day_street_kerb.webp",

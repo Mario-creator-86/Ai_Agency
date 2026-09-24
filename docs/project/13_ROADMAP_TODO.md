@@ -1315,3 +1315,9 @@ No provider was called, no run was queued, no credit was spent, and
 - re-check the moment payloads when the serial workflow's story changes land (episode_number, reviewed_by);
 - a per-stage runbook heartbeat, so the gold 'running' segment and «Acum» can key on the stage;
 - a figure for the waiting count on the pipeline's scripts row.
+
+## The headquarters has a real day, and the live sky follows the real sun (2026-09-24)
+
+- The art director's verdict on 2026-09-24 is ALMOST (the building and the 19:19 dusk are close to the reference; by day the world around it still reads as a game). Next, in order of visible effect: (1) the Unreal towers by day - sunlit glass and concrete, no warm windows while the sun is up, a lighter haze, the torn BUCHAREST AI DISTRICT sign; (2) a real golden hour from +10 to 0 deg, so 18:50 is never darker than 19:19, checked live under the studio's own pass; (3) sun shadows on the street and lit tree crowns instead of black cards; (4) one world for stream and canvas - the room palette, the frame material and the skyline's day/night window states from one manifest; (5) dressed pedestrians who walk, by time of day, and a real bench; (6) a city sky glow at night and a wet road with reflections; (7) rain, overcast and snow into the sky and the light (today painted clouds show while Open-Meteo says clear); (8) a slow camera drift and event-driven push-ins; (9) a cooler dawn with fewer lit windows than dusk; (10) faces, last.
+
+- check_report should know the twilight model (SunDusk 2.5, movable Sun 0) and stop printing FAIL on a good build; the vehicle sprites keep their headlights on at noon; one static day plate keeps the shadows of 12:00 all day.

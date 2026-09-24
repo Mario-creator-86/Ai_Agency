@@ -47,3 +47,6 @@ art-source/unreal/axis_map.json
 art-source/unreal/env_report.json
 art-source/unreal/env_report.failed.json
 art-source/unreal/clock_digits_atlas.png
+
+# Environment reports a rebuild window rejected (evidence, kept locally)
+art-source/unreal/env_report.rejected_*.json

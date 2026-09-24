@@ -619,10 +619,10 @@ def _moved(old: Value, new: Value, kind: str) -> bool:
 
 @dataclass
 class _Ease:
-    start: tuple[float, ...]
     target: tuple[float, ...]
-    t0: float
+    t0: float  # when the ease under way began
     shown: tuple[float, ...] = field(default_factory=tuple)
+    last: float = 0.0  # the tick that computed ``shown``
 
 
 class EnvironmentPass:
@@ -651,16 +651,31 @@ class EnvironmentPass:
             logger.info(message, extra=extra or None)
 
     def _eased(self, call: EnvCall, now: float) -> Value:
-        """A real change of light reaches the screen over ``ease_s``, from what is shown now."""
+        """A real change of light reaches the screen over ``ease_s``, from what is shown now.
+
+        A change that finds the light at rest starts a new ease from what is on screen. A target
+        that moves while an ease is under way (the sun, the twilight keys, the city's emission
+        all move on every tick) re-aims that ease, so it still lands ``ease_s`` after it began;
+        restarting it would hold the light at its first value for as long as the target moves.
+        """
         target = _as_tuple(call.value)
         ease = self._eases.get(call.key)
         if ease is None or len(ease.target) != len(target) or self._ease_s <= 0:
-            self._eases[call.key] = _Ease(target, target, now, target)
+            self._eases[call.key] = _Ease(target, now, target, now)
             return call.value
         if ease.target != target:
-            ease.start, ease.target, ease.t0 = ease.shown, target, now
-        t = min(1.0, (now - ease.t0) / self._ease_s)
-        ease.shown = tuple(s + (g - s) * t for s, g in zip(ease.start, ease.target, strict=True))
+            if ease.shown == ease.target or now - ease.t0 >= self._ease_s:
+                ease.t0 = ease.last = now
+            ease.target = target
+        remaining = self._ease_s - (ease.last - ease.t0)
+        step = 1.0 if remaining <= 0 else min(1.0, (now - ease.last) / remaining)
+        if step >= 1.0:
+            ease.shown = ease.target
+        else:
+            ease.shown = tuple(
+                s + (g - s) * step for s, g in zip(ease.shown, ease.target, strict=True)
+            )
+        ease.last = now
         return ease.shown if isinstance(call.value, tuple) else ease.shown[0]
 
     def sync(

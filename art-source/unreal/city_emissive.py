@@ -21,6 +21,13 @@ dusk has always had (1) the frame is today's frame. A tinted factor (a colour, n
 move into a scalar; none is in these two components today, and one that appears is left alone and
 named, so the report stays honest (not uniform) rather than flattened.
 
+Measured in the game on 2026-09-24, that last belief is false for the slots it was written for: a
+texture-less glTF instance at factor 1 glowed flat white with its EmissiveStrength at 0 (the Bucharest
+sign's frame and bridge, the CREATE panel, the SAME CITY block), and went dark again when factor 0
+was written over it. The fold still makes the report uniform, but look_hq_live.near_blocks_day now
+moves every plain slot that must not glow, of both components, onto M_HQ_CityDay (no emission), so
+no factor the backend writes can light it.
+
 The near blocks by day: the low "SAME CITY" block is painted #24242e (a linear albedo of 0.018,
 darker than fresh asphalt) because at dusk it is a silhouette, and at noon it read as dark
 cardboard. Its daytime colour is its own hue at a real facade's albedo: a slot whose luminance is
