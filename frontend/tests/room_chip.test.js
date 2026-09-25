@@ -32,3 +32,27 @@ test('the renderer labels only the chip stage', () => {
   assert.match(rims, /const now = chipStage\(flares\);/);
   assert.match(rims, /f\.stage !== now/);
 });
+
+// W26: the last «acum: …» chip stood up to 3.2 s (ROOM_FLARE_MS) after the bar said «rularea s-a
+// încheiat». At the replay's end nothing is «now»: the rooms keep their fading light, without words.
+import { Arrivals } from '../src/hq_arrivals.js';
+
+test('a room lit before the end keeps its light and loses its «acum» once the run has ended', () => {
+  const arrivals = new Arrivals();
+  const at = '2026-09-12T23:59:00Z';
+  arrivals.offer({ event_type: 'runbook.stage_started', timestamp: at, payload: { stage: 'post_run' } }, { live: false, replay: true, now: 1000 });
+  assert.equal(chipStage(arrivals.rooms(1200)), 'post_run', 'while the run plays, the newest room says it');
+  arrivals.quietChips();
+  const lit = arrivals.rooms(1300);
+  assert.ok(lit.length > 0, 'the light stays and fades as before');
+  assert.equal(chipStage(lit), null, 'no «acum» after the end');
+  arrivals.offer({ event_type: 'runbook.stage_started', timestamp: at, payload: { stage: 'publish' } }, { live: false, replay: true, now: 1400 });
+  assert.equal(chipStage(arrivals.rooms(1500)), 'publish', 'played again, a new stage speaks again');
+});
+
+test('the replay tells the engine when its clock reaches the end', () => {
+  const PLAYER = fs.readFileSync(new URL('../src/replay_player.js', import.meta.url), 'utf8');
+  const ENGINE = fs.readFileSync(new URL('../src/office_engine.js', import.meta.url), 'utf8');
+  assert.match(PLAYER, /quietRoomChips\(\)/);
+  assert.match(ENGINE, /quietRoomChips\(\) \{/);
+});

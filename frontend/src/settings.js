@@ -1,6 +1,7 @@
 import { renderYouTubeConnections } from './youtube_connections.js';
 import { icon } from './icons.js';
 import { renderProviderProduction } from './provider_production.js';
+import { policyWord, providerName } from './dialog_words.js';
 
 import './settings.css';
 
@@ -109,15 +110,18 @@ export function initSettings(api, hooks = {}) {
     dialog.replaceChildren();
 
     const header = node('div', '', 'dialog-header');
-    const title = node('h2', 'Setări');
+    const title = node('h2', 'Setări', 'dialog-title');
     title.id = 'settings-title';
+    // The room's eyebrow, as the other seven doors carry theirs (glossary W26).
+    const heading = node('div');
+    heading.append(node('p', 'STUDIO · CONEXIUNI', 'eyebrow dialog-eyebrow'), title);
     const close = node('button', '', 'dialog-close');
   close.innerHTML = icon('close');
   close.setAttribute('aria-label', 'Închide');
     close.setAttribute('aria-label', 'Închide');
     close.title = 'Închide';
     close.addEventListener('click', reset);
-    header.append(title, close);
+    header.append(heading, close);
     dialog.append(header, node('p', 'Conectează doar serviciile pe care vrei să le folosească studioul.', 'settings-intro'));
     const nav = node('nav', '', 'settings-tabs');
     nav.setAttribute('aria-label', 'Secțiunile setărilor');
@@ -378,7 +382,8 @@ export function initSettings(api, hooks = {}) {
         line.title = provider.name;
         card.append(line);
       }
-      card.append(node('p', `${provider.provider_type} · ${provider.base_url}`, 'helper'));
+      // W27: the seed wrote the type as «OLLAMA» on one card and «ollama» on the next; both are Ollama
+      card.append(node('p', `${providerName(provider.provider_type)} · ${provider.base_url}`, 'helper'));
       card.append(
         node(
           'p',
@@ -427,7 +432,7 @@ export function initSettings(api, hooks = {}) {
         node(
           'p',
           extra.length
-            ? `${agent.multi_llm_strategy} cu ${extra.join(' și ')} · ${agent.additional_llm_policy}`
+            ? `${agent.multi_llm_strategy} cu ${extra.join(' și ')} · ${policyWord(agent.additional_llm_policy)}`
             : 'Un singur model (SINGLE)',
           'helper',
         ),

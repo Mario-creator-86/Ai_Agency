@@ -634,7 +634,7 @@ export function episodeHtml(episode, context = {}) {
   const by = episode.reviewed_by === 'owner' ? 'de tine' : episode.reviewed_by === 'director' ? 'de Director' : '';
   const kicker = [
     number !== null ? (status === 'APPROVED' ? `Episodul ${number}` : `ciorna episodului ${number}`) : 'Episod fără număr în serial',
-    date ? `ziua ${date}` : '',
+    date ? `ziua ${dayWords(date)}` : '',
   ].filter(Boolean);
   const rewrite = episode.rewrite_of_id ? titles.get(String(episode.rewrite_of_id)) : '';
   const meta = [

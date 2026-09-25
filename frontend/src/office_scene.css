@@ -224,6 +224,9 @@
   border: 1px solid var(--scene-frame);
   border-radius: var(--radius);
   overflow: hidden;
+  /* W27: the stream's <video> stands 28 px past the frame's foot; `clip` shows the same picture and,
+     unlike `hidden`, is no scroll container, so no focus, find-in-page or hover can lift the building. */
+  overflow: clip;
   background: var(--scene-deep);
   box-shadow: var(--shadow-scene), inset 0 1px 0 var(--scene-frame-top);
 }
@@ -334,7 +337,7 @@
 
 /* W19: THE STUDIO'S NUMBERS OVER THE LIVE VIDEO (stream_plaques.js). Small panes (four, seven since W21) of the
    drawers' glass, anchored to real objects of the streamed building, laid by the page's camera. */
-.scene-viewport .stream-plaques { position: absolute; inset: 0; z-index: 3; pointer-events: none; overflow: hidden; }
+.scene-viewport .stream-plaques { position: absolute; inset: 0; z-index: 3; pointer-events: none; overflow: hidden; overflow: clip; }
 .scene-viewport .stream-plaques[hidden] { display: none; }
 .scene-viewport[data-replay]:not([data-replay-look="unreal"]) .stream-plaques { visibility: hidden; }
 /* W22: over the replay played in the Unreal building the plaques stay, in the replay's ink */

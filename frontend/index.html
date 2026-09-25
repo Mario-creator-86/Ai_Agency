@@ -213,7 +213,7 @@
       <dialog id="agent-inspector" class="studio-dialog">
         <div class="dialog-header">
           <div>
-            <span class="eyebrow eyebrow-accent" id="inspector-role">ROL</span>
+            <span class="eyebrow dialog-eyebrow" id="inspector-role">ROL</span>
             <h2 id="inspector-name" class="dialog-title">Agent</h2>
           </div>
           <div class="dialog-header-actions">
@@ -265,6 +265,7 @@
       <dialog id="research-modal" class="studio-dialog research-dialog">
         <div class="dialog-header">
           <div>
+            <p class="eyebrow dialog-eyebrow">CERCETARE · L3</p>
             <h2 class="dialog-title">Cercetare și verificarea faptelor</h2>
             <p class="dialog-desc">Propune subiecte, analizează surse și verifică afirmațiile înainte de scenariu.</p>
           </div>
@@ -337,7 +338,7 @@
               <h3 class="dialog-section-header-bright-compact">Scenarii</h3>
               <button id="refresh-scripts-btn" class="quiet btn-refresh">Reîncarcă</button>
             </div>
-            <p class="helper-note">Scenaristul scrie numai din afirmațiile SUPPORTED ale subiectului. Fiecare scenă citează afirmațiile pe care se sprijină; o citare inventată respinge tot scenariul.</p>
+            <p class="helper-note">Scenaristul scrie numai din afirmațiile subiectului susținute de sursă. Fiecare scenă citează afirmațiile pe care se sprijină; o citare inventată respinge tot scenariul.</p>
             <form id="script-write-form" class="dialog-form source-form">
               <select id="script-topic" aria-label="Subiect" class="dialog-input" required></select>
               <button type="submit" class="primary dialog-submit-btn">Scrie scenariul ↗</button>
@@ -354,7 +355,7 @@
       <dialog id="story-modal" class="studio-dialog research-dialog journal-dialog">
         <div class="dialog-header">
           <div>
-            <p class="eyebrow">JURNAL · OFFICE SERIAL</p>
+            <p class="eyebrow dialog-eyebrow">JURNAL · OFFICE SERIAL</p>
             <h2 class="dialog-title">Jurnalul zilei și Office Serial</h2>
             <p class="dialog-desc">Ziua, numărată din fluxul de evenimente. Episodul se scrie doar din ce s-a întâmplat: fiecare beat citează evenimentele reale pe care le dramatizează.</p>
           </div>
@@ -393,6 +394,7 @@
       <dialog id="runbook-modal" class="studio-dialog research-dialog">
         <div class="dialog-header">
           <div>
+            <p class="eyebrow dialog-eyebrow">FAȚADA · RULAREA ZILEI</p>
             <h2 class="dialog-title">Rularea zilei</h2>
             <p class="dialog-desc">Verificarea preliminară spune ce poate face studioul acum, fără să contacteze nimic. Rularea înregistrează ce a făcut fiecare etapă — inclusiv etapele sărite și de ce.</p>
           </div>
@@ -473,6 +475,7 @@
       <dialog id="treasury-modal" class="studio-dialog research-dialog">
         <div class="dialog-header">
           <div>
+            <p class="eyebrow dialog-eyebrow">TREZORERIE · S2</p>
             <h2 class="dialog-title">Trezorerie VR$</h2>
             <p class="dialog-desc">Un dolar verificat devine un VR$, o singură dată. Estimările și încasările nedecontate se văd, dar nu pot fi cheltuite. Registrul este în partidă dublă și nimic nu se șterge: o corecție este o stornare.</p>
           </div>
@@ -567,6 +570,7 @@
       <dialog id="workforce-modal" class="studio-dialog research-dialog">
         <div class="dialog-header">
           <div>
+            <p class="eyebrow dialog-eyebrow">SEDIUL · ANGAJAȚI</p>
             <h2 class="dialog-title">Angajați și capacitate</h2>
             <p class="dialog-desc">Cum lucrează angajații, măsurat din rulările lor, și ce schimbări susțin cifrele. Angajarea și concedierea sunt decizia ta.</p>
           </div>
@@ -600,7 +604,7 @@
       <dialog id="mail-modal" class="studio-dialog mail-dialog has-footer">
         <div class="dialog-header">
           <div>
-            <span class="eyebrow eyebrow-accent">CORESPONDENȚĂ</span>
+            <span class="eyebrow dialog-eyebrow">CORESPONDENȚĂ</span>
             <h2 id="mail-title" class="dialog-title">Fir de corespondență</h2>
             <p class="dialog-desc">Cine a scris cui, când și de ce — tot schimbul, în ordine. Răspunsul tău merge la cel care a scris ultimul, în același fir.</p>
           </div>
@@ -620,6 +624,7 @@
       <dialog id="media-modal" class="studio-dialog media-dialog">
         <div class="dialog-header">
           <div>
+            <p class="eyebrow dialog-eyebrow">RANDARE · L1</p>
             <h2 class="dialog-title">Producție media și asamblare video</h2>
             <p class="dialog-desc">Transformă scenariile verificate în video vertical 9:16: storyboard, sinteză audio-video și controlul calității.</p>
           </div>
@@ -638,7 +643,7 @@
               <div class="topics-header-row">
                 <h3 class="dialog-section-header-bright-compact">Fluxul activ: scenariu · storyboard · video · QC</h3>
                 <div class="media-actions-bar">
-                  <button id="generate-demo-storyboard-btn" class="quiet btn-media-action" title="Creează un subiect, un scenariu și o afirmație UNVERIFIED, ca să testezi fluxul factual">Creează un caz demo</button>
+                  <button id="generate-demo-storyboard-btn" class="quiet btn-media-action" title="Creează un subiect, un scenariu și o afirmație neverificată, ca să testezi fluxul factual">Creează un caz demo</button>
                   <button id="refresh-media-btn" class="quiet btn-refresh">Reîncarcă</button>
                 </div>
               </div>
@@ -670,6 +675,7 @@
       <dialog id="publishing-modal" class="studio-dialog publishing-dialog">
         <div class="dialog-header">
           <div>
+            <p class="eyebrow dialog-eyebrow">DISTRIBUȚIE · L2</p>
             <h2 class="dialog-title">Distribuție și publicare pe YouTube Shorts</h2>
             <p class="dialog-desc">Publicare privată pe canalele YouTube oficiale. Fără credențiale reale nu se publică nimic — studioul nu simulează niciodată încărcări.</p>
           </div>
@@ -696,11 +702,11 @@
                   <span class="tag">PARȚIAL</span>
                 </div>
                 <ul class="pub-gate-list">
-                  <li><span class="gate-icon">✓</span> <strong>1. Autonomia pornită:</strong> oprirea de urgență a Proprietarului nu este activă.</li>
-                  <li><span class="gate-icon">✓</span> <strong>2. Fișierul pe disc:</strong> există și are dimensiune &gt; 0.</li>
-                  <li><span class="gate-icon">✓</span> <strong>3. Raport QC PASSED:</strong> rezoluția, durata și proveniența <em>măsurate</em> din fișier cu ffprobe.</li>
-                  <li><span class="gate-icon">✓</span> <strong>4. Factualitate:</strong> fiecare afirmație citată este SUPPORTED.</li>
-                  <li><span class="gate-icon">✓</span> <strong>5. Protecție la dubluri:</strong> idempotent pe fiecare canal.</li>
+                  <li><strong>1. Autonomia pornită:</strong> oprirea de urgență a Proprietarului nu este activă.</li>
+                  <li><strong>2. Fișierul pe disc:</strong> există și are dimensiune &gt; 0.</li>
+                  <li><strong>3. Raportul QC a trecut:</strong> rezoluția, durata și proveniența <em>măsurate</em> din fișier cu ffprobe.</li>
+                  <li><strong>4. Factualitate:</strong> fiecare afirmație citată este susținută de sursă.</li>
+                  <li><strong>5. Protecție la dubluri:</strong> idempotent pe fiecare canal.</li>
                 </ul>
                 <p class="pub-gate-note">Aceste verificări nu sunt încă implementate: drepturile pe pachetul final, politica platformei, noutatea pe metadatele finale, brandul, bugetul, continuitatea și confidențialitatea narativă pentru Canalul B.</p>
               </div>
@@ -709,7 +715,7 @@
             <!-- Quick Action & Notification -->
             <div class="pub-actions-row">
               <div class="pub-quick-info">
-                <strong>Publicare într-un clic:</strong> trimite privat cel mai recent video cu QC PASSED către Canalul A. Are nevoie de un canal AUTENTIFICAT și de credențiale YouTube reale.
+                <strong>Publicare într-un clic:</strong> trimite privat cel mai recent video care a trecut QC către Canalul A. Are nevoie de un canal autentificat și de credențiale YouTube reale.
               </div>
               <div class="media-actions-bar">
                 <button id="trigger-quick-publish-btn" class="quiet btn-media-action btn-pub-action">Publică privat</button>

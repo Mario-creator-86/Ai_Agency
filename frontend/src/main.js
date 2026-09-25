@@ -19,7 +19,7 @@ import { OfficeEngine, BUILDING, WORLD_W, WORLD_H } from './office_engine.js';
 import { streamTransform } from './game_frame.js';
 import { Drawers } from './drawers.js';
 import { OfficeState } from './office_state.js';
-import { Ledger, entryCountLabel, productionStatus, runtimeLabel, taskLabel } from './ledger.js';
+import { Ledger, entryCountLabel, mailIntentLabel, productionStatus, runtimeLabel, taskLabel } from './ledger.js';
 import { streetMoves } from './hq_events.js';
 import { budgetRing, budgetRingSvg, channelFilmsHtml, dayTrack, dayTrackFromRun, dayTrackGeometry, dayTrackWords, newerTrack, pipelineSvg } from './hud_charts.js';
 import { Moments } from './moments.js';
@@ -32,6 +32,11 @@ import { INVITE_RELAYOUT_MS, ReplayInvite, invitePlacement, inviteWords, resting
 import { SceneReadout } from './scene_readout.js';
 import { studioReadout } from './side_readout.js';
 import { friendlyAnswer } from './friendly_text.js';
+import {
+  accountTypeWord, budgetStateWord, channelTypeWord, confidenceWord, consistencyWord, constraintWord, decisionStateWord,
+  accountLine, decisionWord, frameSize, isoDay, providerName, letterStateWord, lifecycleWord, lifecycleActs, matterWords, moneyTagWord, ownerName, pipelineStageWord,
+  preflightWord, publicationStatus, qcWord, runStatusWord, seconds, shotWords, storyboardStatus, storyboardTone, topicStatus, workWord,
+} from './dialog_words.js';
 import { LiveWindows, eventMatchesAgent } from './live_window.js';
 import { MailThread } from './mail_thread.js';
 import { LiveStream } from './hq_stream.js';
@@ -1680,9 +1685,9 @@ function timelineItem(item) {
     return `<div class="chat-item chat-run${isChat ? ' is-chat' : ''}"><div class="chat-meta"><span class="policy-tag policy-flexible">${escapeHtml(label)}</span> <small>${escapeHtml(timelineTime(item.at))}${meta ? ` · ${escapeHtml(meta)}` : ''}</small></div>${line ? `<div class="chat-asked">${escapeHtml(line)}</div>` : ''}${answer}${prompt}</div>`;
   }
   if (item.kind === 'message') {
-    const direction = item.from_name ? `de la ${item.from_name}` : '';
-    const to = item.to_name ? `către ${item.to_name}` : '';
-    return `<div class="chat-item chat-message"><div class="chat-meta"><span class="policy-tag policy-locked">${escapeHtml(item.intent)}</span> <small>${escapeHtml(timelineTime(item.at))} ${escapeHtml([direction, to].filter(Boolean).join(' '))} · ${escapeHtml(item.status)}</small></div><div>${escapeHtml(item.subject)}</div>${item.resolution ? `<div class="helper">${escapeHtml(item.resolution)}</div>` : ''}</div>`;
+    const direction = item.from_name ? `de la ${ownerName(item.from_name)}` : '';
+    const to = item.to_name ? `către ${ownerName(item.to_name)}` : '';
+    return `<div class="chat-item chat-message"><div class="chat-meta"><span class="policy-tag policy-locked" title="${escapeHtml(item.intent)}">${escapeHtml(mailIntentLabel(item.intent))}</span> <small>${escapeHtml(timelineTime(item.at))} ${escapeHtml([direction, to].filter(Boolean).join(' '))} · ${escapeHtml(letterStateWord(item.status))}</small></div><div>${escapeHtml(item.subject)}</div>${item.resolution ? `<div class="helper">${escapeHtml(item.resolution)}</div>` : ''}</div>`;
   }
   return `<div class="chat-item chat-memory"><div class="chat-meta"><span class="policy-tag">${escapeHtml(TIMELINE_LABEL[item.memory_class] || item.memory_class)}</span> <small>${escapeHtml(timelineTime(item.at))}</small></div><div>${escapeHtml(item.content)}</div></div>`;
 }
@@ -1706,7 +1711,7 @@ function renderIdentity(identity) {
   const contract = identity.contract || {};
   const work = contract.work_contract_json || {};
   const who = identity.character ? `${identity.display_name} este ${identity.character.canonical_name}.` : identity.display_name;
-  element('inspector-mission').textContent = `${who} Misiune: ${contract.mission || 'nedefinită'}. Raportează către ${work.reports_to || '—'}.`;
+  element('inspector-mission').textContent = `${who} Misiune: ${contract.mission || 'nedefinită'}. Raportează către ${ownerName(work.reports_to) || '—'}.`;
   const sections = [['watch_for', 'Urmărește'], ['investigate', 'Investighează'], ['correct', 'Corectează'], ['let_pass', 'Lasă să treacă'], ['never_let_pass', 'Nu lasă să treacă niciodată'], ['escalate_when', 'Escaladează când'], ['deliverables', 'Livrabile']];
   element('inspector-contract').innerHTML = sections
     .filter(([key]) => Array.isArray(work[key]) && work[key].length)
@@ -1715,19 +1720,41 @@ function renderIdentity(identity) {
   element('inspector-system-prompt').textContent = identity.system_prompt || '';
   const memory = identity.memory || [];
   element('inspector-memory').innerHTML = memory.length
-    ? memory.map((m) => `<li><span class="policy-tag policy-flexible">${escapeHtml(m.memory_class)}</span> ${escapeHtml(m.content)}</li>`).join('')
+    ? memory.map((m) => `<li><span class="policy-tag policy-flexible" title="${escapeHtml(m.memory_class)}">${escapeHtml(TIMELINE_LABEL[m.memory_class] || m.memory_class)}</span> ${escapeHtml(m.content)}</li>`).join('')
     : '<li class="helper">Nu ține minte nimic încă: nicio verificare, decizie sau publicare înregistrată.</li>';
   const messages = (identity.messages || []).filter((m) => m.status !== 'RESOLVED').slice(0, 8);
   element('inspector-messages').innerHTML = messages.length
-    ? messages.map((m) => `<li class="inspector-mail" data-thread="${escapeHtml(m.thread_id || m.id)}" title="Deschide firul de corespondență"><span class="policy-tag policy-locked">${escapeHtml(m.intent)}</span> ${escapeHtml(m.subject)}${m.from_name ? ` <small>· de la ${escapeHtml(m.from_name)}</small>` : ''} <small class="ledger-open">fir ↗</small></li>`).join('')
+    ? messages.map((m) => `<li class="inspector-mail" data-thread="${escapeHtml(m.thread_id || m.id)}" title="Deschide firul de corespondență"><span class="policy-tag policy-locked" title="${escapeHtml(m.intent)}">${escapeHtml(mailIntentLabel(m.intent))}</span> ${escapeHtml(m.subject)}${m.from_name ? ` <small>· de la ${escapeHtml(m.from_name)}</small>` : ''} <small class="ledger-open">fir ↗</small></li>`).join('')
     : '<li class="helper">Niciun mesaj deschis.</li>';
+}
+
+/**
+ * The inspector's two state cells, in the words the name tag and the register use (glossary W26);
+ * the enum stays in the cell's data-state and title. Null leaves a cell as it is.
+ * @param {string|null} work @param {string|null} standing
+ */
+function showInspectorStates(work, standing) {
+  /** @param {string} id @param {string|null} raw @param {string} words */
+  const set = (id, raw, words) => {
+    if (raw === null) return;
+    const cell = element(id);
+    cell.textContent = words;
+    cell.dataset.state = raw;
+    cell.title = raw;
+  };
+  set('inspector-state', work, work === null ? '' : workWord(work));
+  set('inspector-lifecycle', standing, standing === null ? '' : lifecycleWord(standing));
+  if (standing !== null) {
+    const acts = lifecycleActs(standing);
+    /** @type {HTMLButtonElement} */ (element('agent-pause-btn')).disabled = !acts.pause;
+    /** @type {HTMLButtonElement} */ (element('agent-resume-btn')).disabled = !acts.resume;
+  }
 }
 
 function renderInspector(agent) {
   element('inspector-name').textContent = agent.display_name || 'Agent';
   element('inspector-role').textContent = (agent.role_name || 'Agent').toUpperCase();
-  element('inspector-state').textContent = agent.runtime_state || 'IDLE';
-  element('inspector-lifecycle').textContent = agent.lifecycle || 'ACTIVE';
+  showInspectorStates(agent.runtime_state || 'IDLE', agent.lifecycle || 'ACTIVE');
   element('inspector-id').textContent = agent.id || agent.agent_id || '—';
 
   const modelEl = element('inspector-model');
@@ -1819,7 +1846,7 @@ element('agent-pause-btn').addEventListener('click', async () => {
   try {
     const updated = await api(`/agents/${agentId}/pause`, { method: 'POST' });
     currentSelectedAgent.lifecycle = updated.lifecycle;
-    element('inspector-lifecycle').textContent = updated.lifecycle;
+    showInspectorStates(null, updated.lifecycle);
     updateOfficeCanvas();
   } catch (err) {
     alert(err.message);
@@ -1832,7 +1859,7 @@ element('agent-resume-btn').addEventListener('click', async () => {
   try {
     const updated = await api(`/agents/${agentId}/resume`, { method: 'POST' });
     currentSelectedAgent.lifecycle = updated.lifecycle;
-    element('inspector-lifecycle').textContent = updated.lifecycle;
+    showInspectorStates(null, updated.lifecycle);
     updateOfficeCanvas();
   } catch (err) {
     alert(err.message);
@@ -2013,7 +2040,7 @@ async function loadTopics() {
           </div>
           <p class="topic-card-subject">${escapeHtml(t.topic)}</p>
           <div class="topic-card-meta">
-            <span>Public: ${escapeHtml(t.target_audience)}</span> · <span>Stare: <strong class="topic-card-status">${escapeHtml(t.status)}</strong></span>
+            <span>Public: ${escapeHtml(t.target_audience)}</span> · <span>Stare: <strong class="topic-card-status" data-status="${escapeHtml(t.status)}" title="${escapeHtml(t.status)}">${escapeHtml(topicStatus(t.status))}</strong></span>
           </div>
         </div>
       `;
@@ -2279,7 +2306,7 @@ async function loadSources() {
           <p class="topic-card-subject source-url">${escapeHtml(src.url)}</p>
           <div class="topic-card-meta">
             <span>${src.characters} caractere</span>
-            · <span>fingerprint ${escapeHtml(shortHash(src.content_hash))}</span>
+            · <span title="${escapeHtml(src.content_hash || '')}">amprentă ${escapeHtml(shortHash(src.content_hash))}</span>
             · <span>${escapeHtml(new Date(src.fetched_at).toLocaleString('ro-RO'))}</span>
           </div>
           <div class="topic-card-meta">${escapeHtml(claimCountsSummary(src.claim_counts))}</div>
@@ -2400,7 +2427,7 @@ async function extractClaims(sourceId, button) {
     });
     const n = (result.claims || []).length;
     claimStatusBox(
-      `${countLabel(n, 'afirmație extrasă', 'afirmații extrase')}, toate UNVERIFIED — un al doilea angajat trebuie să le confirme din sursă înainte de scenariu.`,
+      `${countLabel(n, 'afirmație extrasă', 'afirmații extrase')}, toate neverificate — un al doilea angajat trebuie să le confirme din sursă înainte de scenariu.`,
       false,
     );
     // The source cards are re-rendered first: reopening the claims before that would fill a
@@ -2584,7 +2611,7 @@ function renderScript(script) {
         <span class="topic-card-novelty">v${script.version} · ${escapeHtml(SCRIPT_STATUS_LABEL[status] || status)}</span>
       </div>
       <div class="topic-card-meta">
-        <span>${script.target_duration_seconds}s</span>
+        <span>${escapeHtml(seconds(script.target_duration_seconds))}</span>
         · <span>${countLabel((script.claim_ids_json || []).length, 'afirmație', 'afirmații')}</span>
         · <span>${countLabel((script.scenes_json || []).length, 'scenă', 'scene')}</span>
       </div>
@@ -2875,7 +2902,7 @@ function identityLine(c) {
   const parts = [];
   if (binding.voice_id) parts.push(`Voce alocată: ${escapeHtml(binding.voice_id)}${binding.model_id ? ` · model ${escapeHtml(binding.model_id)}` : ''}`);
   if (lockedFields.length) parts.push(`Blocate: ${escapeHtml(lockedFields.join(', '))}`);
-  if (c.consistency_status) parts.push(`Consistență: ${escapeHtml(c.consistency_status)}`);
+  if (c.consistency_status) parts.push(`Consistență: ${escapeHtml(consistencyWord(c.consistency_status))}`);
   if ((c.approved_fallbacks_json || []).length) parts.push(`${c.approved_fallbacks_json.length} modele aprobate`);
   return parts.length ? `<div class="char-voice">${parts.join(' · ')}</div>` : '';
 }
@@ -2968,7 +2995,7 @@ async function loadAwaitingStoryboard() {
             <span class="topic-card-novelty">v${script.version}</span>
           </div>
           <div class="topic-card-meta">
-            <span>${script.target_duration_seconds}s</span>
+            <span>${escapeHtml(seconds(script.target_duration_seconds))}</span>
             · <span>${countLabel(script.scene_count, 'scenă', 'scene')}</span>
             · <span>${countLabel(script.claim_count, 'afirmație verificată', 'afirmații verificate')}</span>
           </div>
@@ -3156,7 +3183,7 @@ async function loadMediaStoryboards() {
       listEl.innerHTML = `
         <div class="topics-loading">
           Niciun storyboard în flux.
-          <br>Apasă «Creează un caz demo» ca să se genereze automat un scenariu verificat 9:16.
+          <br>Apasă «Creează un caz demo» pentru un caz de test: un subiect, un scenariu și o afirmație neverificată, de verificat în Cercetare.
         </div>
       `;
       return;
@@ -3193,9 +3220,9 @@ async function loadMediaStoryboards() {
         <div class="scene-card">
           <div class="scene-card-header">
             <span class="scene-badge">Scena #${s.scene_index}</span>
-            <span class="scene-duration">${s.duration_seconds}s</span>
+            <span class="scene-duration">${escapeHtml(seconds(s.duration_seconds))}</span>
           </div>
-          <div class="scene-shot">${escapeHtml(s.shot_type)} · ${escapeHtml(s.visual_type)}</div>
+          <div class="scene-shot" title="${escapeHtml(`${s.shot_type} · ${s.visual_type}`)}">${escapeHtml(shotWords(s.shot_type, s.visual_type))}</div>
           <p class="scene-prompt">${escapeHtml(s.visual_prompt)}</p>
           <p class="scene-audio">" ${escapeHtml(s.voiceover_segment)} "</p>
         </div>
@@ -3207,7 +3234,7 @@ async function loadMediaStoryboards() {
         if (sb.status === 'RENDERED') {
           const qcPassed = qcReport && qcReport.status === 'PASSED';
           const qcBadge = qcReport
-            ? `<span class="${qcPassed ? 'qc-badge-pass' : 'qc-badge-fail'}">QC: ${escapeHtml(qcReport.status)}</span>`
+            ? `<span class="${qcPassed ? 'qc-badge-pass' : 'qc-badge-fail'}">QC: ${escapeHtml(qcWord(qcReport.status))}</span>`
             : '<span class="tag">QC: Neefectuat</span>';
 
           const checks = qcReport ? qcReport.checks_json || {} : {};
@@ -3254,7 +3281,7 @@ async function loadMediaStoryboards() {
               }
               <div><strong>Format măsurat:</strong> ${
                 tech.measured_width
-                  ? `${tech.measured_width}x${tech.measured_height} · ${tech.measured_duration_seconds}s · ${escapeHtml(String(tech.video_codec || '—'))}`
+                  ? `${frameSize(tech.measured_width, tech.measured_height)} · ${escapeHtml(seconds(tech.measured_duration_seconds))} · ${escapeHtml(String(tech.video_codec || '—'))}`
                   : 'nemăsurat'
               }</div>
               <div>${qcBadge}</div>
@@ -3275,7 +3302,7 @@ async function loadMediaStoryboards() {
               <div class="storyboard-meta">
                 <span>Aspect: <strong>9:16</strong></span>
                 <span>Scene: <strong>${scenes.length}</strong></span>
-                <span>Stare: <strong class="text-accent">${escapeHtml(sb.status)}</strong></span>
+                <span>Stare: <strong class="${storyboardTone(sb.status)}" data-status="${escapeHtml(sb.status)}" title="${escapeHtml(sb.status)}">${escapeHtml(storyboardStatus(sb.status))}</strong></span>
               </div>
             </div>
             <div class="storyboard-actions">
@@ -3407,7 +3434,7 @@ if (generateDemoStoryboardBtn) {
     mediaStatusMsg.hidden = false;
     mediaStatusMsg.className = 'dialog-status-msg';
     mediaStatusMsg.textContent =
-      'Se creează cazul demo (subiect, scenariu și afirmație UNVERIFIED)…';
+      'Se creează cazul demo (subiect, scenariu și o afirmație neverificată)…';
     try {
       const fixture = await api('/media/storyboards/demo-fixture', {
         method: 'POST',
@@ -3556,7 +3583,7 @@ async function loadPublishingHub() {
         <div class="channel-item">
           <div class="channel-info">
             <h4>${escapeHtml(c.channel_name)}</h4>
-            <div class="channel-meta">Tip: <strong>${escapeHtml(c.channel_type)}</strong> · ID extern: <code>${escapeHtml(c.remote_channel_id || 'nesetat')}</code></div>
+            <div class="channel-meta">Tip: <strong title="${escapeHtml(c.channel_type)}">${escapeHtml(channelTypeWord(c.channel_type))}</strong> · ID extern: <code>${escapeHtml(c.remote_channel_id || 'nesetat')}</code></div>
             <div class="channel-meta">${escapeHtml(CHANNEL_STATUS_HINT[c.status] || 'Stare necunoscută.')}</div>
             <div class="channel-meta">Politica de producție: <span class="policy-tag ${c.production_policy === 'CONSISTENCY_LOCKED' ? 'policy-locked' : 'policy-flexible'}">${escapeHtml(PRODUCTION_POLICY_LABEL[c.production_policy] || 'nesetată')}</span>${c.allow_production_override === false ? ' · fără excepții pe episod' : ''}</div>
             ${films(c.id)}
@@ -3634,7 +3661,7 @@ async function loadPublishingHub() {
             <div class="pub-item-details">
               <h4>${escapeHtml(p.title)}</h4>
               <div class="pub-item-meta">
-                <span>Stare: <strong class="pub-status-badge ${isSimulated ? 'pub-status-simulated' : badgeClass}">${escapeHtml(isSimulated ? 'SIMULAT (nepublicat)' : p.status)}</strong></span>
+                <span>Stare: <strong class="pub-status-badge ${isSimulated ? 'pub-status-simulated' : badgeClass}">${escapeHtml(isSimulated ? 'SIMULAT (nepublicat)' : publicationStatus(p.status))}</strong></span>
                 ${privacyBadge}
                 <span>ID extern: <code>${escapeHtml(p.remote_video_id || '—')}</code></span>
                 <span>Data: ${new Date(p.created_at).toLocaleString('ro-RO')}</span>
@@ -3681,7 +3708,7 @@ if (triggerQuickPublishBtn) {
       if (!targetAssetId) {
         publishingStatusMsg.className = 'dialog-status-msg text-error';
         publishingStatusMsg.textContent =
-          'Nu s-a găsit niciun film cu raport QC PASSED. Creează întâi un storyboard și o randare 9:16 în Producție media.';
+          'Nu s-a găsit niciun film care să fi trecut QC. Creează întâi un storyboard și o randare 9:16 în Producție media.';
         return;
       }
 
@@ -4309,7 +4336,7 @@ async function loadWorkforce() {
         <div class="topic-card wf-agent-card">
           <div class="topic-card-header">
             <strong class="topic-card-title">${escapeHtml(agent.display_name)}</strong>
-            <span class="topic-card-novelty">${escapeHtml(agent.lifecycle)}</span>
+            <span class="topic-card-novelty" data-lifecycle="${escapeHtml(agent.lifecycle)}">${escapeHtml(lifecycleWord(agent.lifecycle))}</span>
           </div>
           <div class="topic-card-meta">
             <span>${escapeHtml(agent.role_name)}</span> · <span>${escapeHtml(rateLabel(agent))}</span>
@@ -4494,7 +4521,8 @@ function treasuryTile(row, extraClass = '') {
   label.textContent = MONEY_CLASS_LABEL[row.money_class] || row.money_class;
   const badge = document.createElement('span');
   badge.className = row.spendable ? 'tag live-badge' : 'tag';
-  badge.textContent = row.spendable ? `${row.label} · CHELTUIBIL` : `${row.label} · NECHELTUIBIL`;
+  badge.textContent = row.spendable ? `${moneyTagWord(row.label)} · CHELTUIBIL` : `${moneyTagWord(row.label)} · NECHELTUIBIL`;
+  badge.title = String(row.label || '');
   tile.append(value, label, badge);
   return tile;
 }
@@ -4516,7 +4544,7 @@ function budgetCard(period) {
   const ringLabel = ring.empty
     ? ''
     : `${label}: ${amount(period.spent_usd)} USD cheltuiți${period.reserved_usd_micros ? ` și ${amount(period.reserved_usd)} USD reținuți` : ''} din ${amount(period.limit_usd)} USD, ${ring.percent}%; linia de avertizare la ${Math.round((ring.warnFrac || 0) * 100)}%`;
-  return `<div class="budget-card budget-ring-card budget-${escapeHtml(period.state)}"><div class="budget-ring-words"><span class="stat-label">${escapeHtml(label)} · ${escapeHtml(period.state)}</span><strong>${escapeHtml(amount(period.spent_usd))} / ${escapeHtml(amount(period.limit_usd))} USD</strong><span>rămân ${escapeHtml(amount(period.remaining_usd))} USD · ${Math.round(period.ratio * 100)}%</span>${reserved}${period.unpriced_agent_runs ? `<div class="helper">${period.unpriced_agent_runs} rulări fără preț înregistrat</div>` : ''}</div>${budgetRingSvg(period, ringLabel)}</div>`;
+  return `<div class="budget-card budget-ring-card budget-${escapeHtml(period.state)}"><div class="budget-ring-words"><span class="stat-label" title="${escapeHtml(period.state)}">${escapeHtml(label)} · ${escapeHtml(budgetStateWord(period.state))}</span><strong>${escapeHtml(amount(period.spent_usd))} / ${escapeHtml(amount(period.limit_usd))} USD</strong><span>rămân ${escapeHtml(amount(period.remaining_usd))} USD · ${Math.round(period.ratio * 100)}%</span>${reserved}${period.unpriced_agent_runs ? `<div class="helper">${period.unpriced_agent_runs} rulări fără preț înregistrat</div>` : ''}</div>${budgetRingSvg(period, ringLabel)}</div>`;
 }
 
 async function loadBudget() {
@@ -4540,7 +4568,7 @@ async function loadBudget() {
       ? `<div class="helper">${today.unpriced_agent_runs} rulări azi fără preț înregistrat — totalul este mai mic decât cheltuiala reală</div>`
       : '';
     const spend = `<div class="budget-card"><span class="stat-label">Cheltuit</span><strong>azi ${escapeHtml(amount(today.spent_usd))} USD</strong><span>luna asta ${escapeHtml(amount(data.month.spent_usd))} USD · ${data.month.agent_runs} rulări de angajați, ${data.month.unpriced_agent_runs} fără preț</span>${held}${wasted}${unpriced}</div>`;
-    const providers = data.month.by_provider.map((p) => `<div class="budget-card"><span class="stat-label">${escapeHtml(p.provider)}</span><strong>${escapeHtml(amount(((p.estimated_usd_micros + p.billed_usd_micros) / 1e6).toFixed(2)))} USD</strong><span>${countLabel(p.records, 'înregistrare', 'înregistrări')} · facturat ${escapeHtml(amount((p.billed_usd_micros / 1e6).toFixed(2)))}</span></div>`).join('');
+    const providers = data.month.by_provider.map((p) => `<div class="budget-card"><span class="stat-label">${escapeHtml(providerName(p.provider))}</span><strong>${escapeHtml(amount(((p.estimated_usd_micros + p.billed_usd_micros) / 1e6).toFixed(2)))} USD</strong><span>${countLabel(p.records, 'înregistrare', 'înregistrări')} · facturat ${escapeHtml(amount((p.billed_usd_micros / 1e6).toFixed(2)))}</span></div>`).join('');
     cards.innerHTML = spend + (data.budgets.length ? data.budgets.map(budgetCard).join('') : '<div class="budget-card"><span class="stat-label">Buget</span><strong>nesetat</strong><span>fără limită, nimic nu oprește cheltuiala</span></div>') + providers;
   } catch (error) {
     cards.innerHTML = `<div class="text-error">${escapeHtml(error instanceof Error ? error.message : 'Bugetul nu a putut fi citit.')}</div>`;
@@ -4617,8 +4645,8 @@ async function loadTreasury() {
       const meta = document.createElement('div');
       meta.className = 'topic-card-meta';
       meta.textContent = account.money_class
-        ? `${account.type} · ${MONEY_CLASS_LABEL[account.money_class] || account.money_class}`
-        : account.type;
+        ? accountLine(account.type, MONEY_CLASS_LABEL[account.money_class] || account.money_class)
+        : accountTypeWord(account.type);
       row.append(head, meta);
       accountsBox.append(row);
     }
@@ -4788,7 +4816,7 @@ async function loadFundingHistory() {
       const parts = [`${amount(item.amount)} ${item.currency}`];
       if (isLoan) {
         parts.push(`${amount((item.annual_rate_bps / 100).toFixed(2))}% pe an`);
-        parts.push(`scadență ${item.maturity_date}`);
+        parts.push(`scadență ${isoDay(item.maturity_date)}`);
       } else {
         parts.push('fără dobândă, nu se restituie');
       }
@@ -5215,7 +5243,7 @@ async function loadPreflight() {
     const status = String(data.status || '');
     summaryEl.innerHTML = `
       <div class="runbook-verdict rb-${escapeHtml(status.toLowerCase())}">
-        <strong>${escapeHtml(status)}</strong>
+        <strong title="${escapeHtml(status)}">${escapeHtml(preflightWord(status))}</strong>
         <span>${escapeHtml(data.summary || '')}</span>
       </div>`;
     // Every check is shown, passing ones included: the value of a preflight is that the Owner
@@ -5293,12 +5321,12 @@ function renderRunCard(run) {
   return `
     <div class="${escapeHtml(runClassName(run))}">
       <div class="topic-card-header">
-        <strong class="topic-card-title">${escapeHtml(run.business_date || '')}</strong>
-        <span class="topic-card-novelty">${escapeHtml(run.status)}</span>
+        <strong class="topic-card-title">${escapeHtml(isoDay(run.business_date))}</strong>
+        <span class="topic-card-novelty" title="${escapeHtml(run.status)}">${escapeHtml(runStatusWord(run.status))}</span>
       </div>
       <div class="topic-card-meta">
         <span>${run.stages_completed}/${run.stages_total} etape încheiate</span>
-        · <span>verificare preliminară ${escapeHtml(run.preflight_status || '—')}</span>
+        · <span>verificare preliminară: ${escapeHtml(run.preflight_status ? preflightWord(run.preflight_status) : '—')}</span>
         ${run.stopped_at_stage ? ` · <span>oprită la «${escapeHtml(stageLabel(run.stopped_at_stage))}»</span>` : ''}
       </div>
       ${headline.text ? `<div class="runbook-run-summary${headline.empty ? ' rb-empty' : ''}">${escapeHtml(headline.text)}</div>` : ''}
@@ -5309,7 +5337,7 @@ function renderRunCard(run) {
             (stage) => `
           <div class="${escapeHtml(stageClassName(stage))}">
             <span class="runbook-stage-name">${escapeHtml(stageLabel(stage.stage))}</span>
-            <span class="runbook-stage-status">${escapeHtml(stage.status)}${stageProducedWord(stage) ? `<span class="runbook-stage-produced">${escapeHtml(stageProducedWord(stage))}</span>` : ''}</span>
+            <span class="runbook-stage-status" title="${escapeHtml(stage.status)}">${escapeHtml(runStatusWord(stage.status))}${stageProducedWord(stage) ? `<span class="runbook-stage-produced">${escapeHtml(stageProducedWord(stage))}</span>` : ''}</span>
             <span class="runbook-stage-reason">${escapeHtml(stage.reason || '')}${stageNotesHtml(stage)}</span>
           </div>`,
           )
@@ -5414,6 +5442,12 @@ element('open-runbook-btn').addEventListener('click', () => {
 // Where the company stands, and what the Director decided about it. A channel with nothing
 // measured says so: a zero here would read as a measurement, and the studio has published
 // nothing yet. Numbers come with their change, because a total on its own decides nothing.
+/** Who holds a role, by the role's code: the employee's own name, or the code when nobody does. @param {string} role */
+function roleHolder(role) {
+  const holder = officeState.agents.find((a) => a.role_name === role);
+  return holder && holder.display_name ? holder.display_name : role;
+}
+
 async function loadCompanyState() {
   const box = element('company-state');
   const list = element('company-decisions');
@@ -5450,7 +5484,7 @@ async function loadCompanyState() {
     const growth = (state.growth || [])
       .map(
         (item) =>
-          `<div class="motion-reason"><strong>${escapeHtml(item.constraint)}</strong> (${escapeHtml(item.confidence)}): ${escapeHtml(item.reason)}</div>`,
+          `<div class="motion-reason"><strong title="${escapeHtml(item.constraint)}">${escapeHtml(constraintWord(item.constraint))}</strong> (încredere ${escapeHtml(confidenceWord(item.confidence))}): ${escapeHtml(item.reason)}</div>`,
       )
       .join('');
     const anomalyList = (state.anomalies || [])
@@ -5467,7 +5501,7 @@ async function loadCompanyState() {
         ${pipelineSvg(pipe.stages, { bottleneck: pipe.bottleneck })}
         <div>${pipe.in_flight || 0} în lucru${
           pipe.bottleneck
-            ? ` · <span class="text-error">blocaj la ${escapeHtml(pipe.bottleneck.stage)}: ${pipe.bottleneck.waiting} în așteptare</span>`
+            ? ` · <span class="text-error">blocaj la ${escapeHtml(pipelineStageWord(pipe.bottleneck.stage))}: ${pipe.bottleneck.waiting} în așteptare</span>`
             : ''
         }</div>
       </div>
@@ -5479,6 +5513,8 @@ async function loadCompanyState() {
       ${growth ? `<div class="runbook-check"><strong>Ce limitează creșterea</strong>${growth}</div>` : ''}
       ${anomalyList ? `<div class="runbook-check"><strong>Anomalii</strong>${anomalyList}</div>` : ''}`;
 
+    // The decision's matter names a channel by the first 8 of its id; the state names them all.
+    const channelNames = new Map((state.channels || []).map((c) => [String(c.channel_id || '').slice(0, 8), String(c.channel_name || '')]));
     const rows = (decisions.decisions || []).slice(0, 8);
     list.innerHTML = rows.length
       ? rows
@@ -5486,12 +5522,12 @@ async function loadCompanyState() {
             (row) => `
         <div class="topic-card">
           <div class="topic-card-header">
-            <strong class="topic-card-title">${escapeHtml(row.decision)} — ${escapeHtml(row.matter_key)}</strong>
-            <span class="topic-card-novelty">${escapeHtml(row.state)}</span>
+            <strong class="topic-card-title" title="${escapeHtml(`${row.decision} — ${row.matter_key}`)}">${escapeHtml(decisionWord(row.decision))} — ${escapeHtml(matterWords(row.matter_key, channelNames))}</strong>
+            <span class="topic-card-novelty" title="${escapeHtml(row.state)}">${escapeHtml(decisionStateWord(row.state))}</span>
           </div>
           <div class="motion-reason">${escapeHtml(row.observation)}</div>
-          <div class="motion-reason">Interpretare (${escapeHtml(row.confidence)}): ${escapeHtml(row.interpretation)}</div>
-          <div><strong>De făcut:</strong> ${escapeHtml(row.action)}${row.owner_role ? ` — ${escapeHtml(row.owner_role)}` : ''}</div>
+          <div class="motion-reason">Interpretare (încredere ${escapeHtml(confidenceWord(row.confidence))}): ${escapeHtml(row.interpretation)}</div>
+          <div><strong>De făcut:</strong> ${escapeHtml(row.action)}${row.owner_role ? ` — ${escapeHtml(roleHolder(row.owner_role))}` : ''}</div>
           ${row.review_after_videos ? `<div class="motion-reason">Revizuire după ${row.review_after_videos} filme.</div>` : ''}
           ${row.outcome ? `<div class="motion-reason">Rezultat: ${escapeHtml(row.outcome)}</div>` : ''}
         </div>`,

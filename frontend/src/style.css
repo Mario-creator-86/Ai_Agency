@@ -316,6 +316,17 @@
   --drawer-glass-hi: rgba(12, 18, 31, .9);
   --drawer-edge:     rgba(150, 180, 230, .16);
   --drawer-blur:     16px;
+  /* THE DIALOGS' GLASS (W26): the eight doors, the inspector and the mail are the drawers' glass
+     lifted over the building, not sheets of paper laid on a black page. The pane is a shade
+     denser than a drawer, because paragraphs are read on it; the page behind is dimmed less
+     and blurred, so the lit building still glows around the pane instead of going black. Every
+     ink on it re-measured from pixels (scratchpad ui/w26). */
+  --dialog-glass:      rgba(9, 14, 24, .9);
+  --dialog-glass-head: rgba(12, 18, 31, .55);
+  --dialog-backdrop:   rgba(2, 4, 8, .62);
+  --dialog-backdrop-blur: 6px;
+  --dialog-rule:       rgba(224, 176, 98, .55);   /* the gold hairline under a door's eyebrow */
+  --dialog-rule-w:     28px;
   /* THE GLASS READOUT (W10): the card laid beside a face of the building the pointer or the
      keyboard stands on (office_scene.css .face-card). The drawers' glass, a shade denser,
      because it lies over the lit picture rather than over the frame's edge. */
@@ -826,7 +837,6 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 
 .pub-gate-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 9px; font-size: var(--fs-body); line-height: 1.5; color: var(--ink-2); }
 .pub-gate-list strong { color: var(--ink); }
-.gate-icon { color: var(--ok-ink); font-weight: 700; margin-right: 5px; }
 .pub-gate-note { margin: 12px 0 0; font-size: var(--fs-meta); line-height: 1.5; color: var(--ink-3); border-top: 1px solid var(--line); padding-top: 10px; }
 .pub-gate-note code { color: var(--ink-2); font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }
 
@@ -2239,7 +2249,6 @@ h2[tabindex='-1']:focus { outline: none; }
   border-radius: var(--radius-xs);
   font-variant-numeric: tabular-nums;
 }
-.gate-icon { color: var(--ok-ink); }
 .pub-remote-link { background: var(--surface-quiet); border-color: var(--line-strong); color: var(--forest-ink); padding: 0 12px; }
 .pub-remote-link:hover { background: var(--surface-hi); border-color: var(--forest-ink); }
 .text-accent { color: var(--forest-ink); }
@@ -4205,3 +4214,85 @@ body.is-title.is-paint-warm .site-footer { bottom: 0; }
 /* The two frames between an accepted key and the camera's push (main.js): the workspace is laid
    out and not yet seen, so its first, heaviest frame is not a frame of the push. */
 body.is-arming #workspace { opacity: 0; }
+
+/* ==========================================================================
+   W26 — THE DOORS AT THE FRAME'S LEVEL
+   ==========================================================================
+   The frame, the building and the replay had eleven passes; the eight dialogs, the inspector
+   and the mail still opened as flat paper on a black page. They are now the drawers' glass:
+   a pane over the lit building, which glows dimmed and blurred around it; a lit top edge; the
+   room's place in the building in gold small caps over the title, with a short gold hairline,
+   the same mark the face cards carry. Nothing moves that did not move before. */
+.studio-dialog,
+.studio-dialog[open] {
+  background:
+    linear-gradient(180deg, var(--sheen), transparent 220px),
+    var(--dialog-glass);
+  border: 1px solid var(--drawer-edge);
+  backdrop-filter: blur(var(--drawer-blur)) saturate(1.1);
+}
+.studio-dialog::backdrop {
+  background: var(--dialog-backdrop);
+  backdrop-filter: blur(var(--dialog-backdrop-blur)) saturate(.8);
+}
+.dialog-header,
+.settings-dialog > .dialog-header {
+  background: linear-gradient(180deg, var(--sheen), transparent), var(--dialog-glass-head);
+  border-bottom-color: var(--drawer-edge);
+}
+/* Settings builds its sentence after the head: it stands on the same glass, not on a band. */
+.settings-intro { background: var(--dialog-glass-head); }
+.dialog-eyebrow,
+.dialog-header .eyebrow.dialog-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin: 0 0 var(--s2);
+  color: var(--gold-ink);
+  font-size: var(--fs-micro);
+  font-weight: var(--w-bold);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+}
+.dialog-eyebrow::before {
+  content: '';
+  flex: none;
+  width: var(--dialog-rule-w);
+  height: 1px;
+  background: var(--dialog-rule);
+}
+.dialog-header .dialog-title { font-family: var(--font-display); font-weight: var(--w-display); }
+
+/* A failed site test is a line in its row, not a red card per site: thirty-six sites made the
+   research sources a wall of alarms. The words are the backend's own, in the alert ink. */
+.allowed-host-row .host-test-detail.text-error {
+  display: block;
+  padding: 0 0 0 var(--s2);
+  background: none;
+  border: 0;
+  border-left: 2px solid var(--alert-line);
+  border-radius: 0;
+  font-size: var(--fs-meta);
+}
+
+/* The Treasury's two forms: two equal fields and the key under their right edge, not a field
+   that clips its own example and a key at the far side of the dialog. */
+#budget-form,
+#funding-form { max-width: var(--measure); }
+#budget-form .topic-input-grid,
+#funding-form .topic-input-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: none; }
+@media (max-width: 720px) {
+  #budget-form .topic-input-grid,
+  #funding-form .topic-input-grid { grid-template-columns: 1fr; }
+}
+
+/* W26 keyboard walk: the scrolling lists inside the doors (the topics, the checks, the runs, the
+   decisions, the employees, a scene's long prompt) are Tab stops of their own in Chrome, and they
+   drew no ring; the settings' fields drew only a 1px border. They wear the page's ring. */
+.topics-container:focus-visible,
+.scene-prompt:focus-visible,
+.settings-dialog input:focus-visible,
+.settings-dialog select:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+}

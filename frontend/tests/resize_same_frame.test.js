@@ -91,3 +91,45 @@ test('the drawers of the new size are laid out before the camera is planned (the
     restore();
   }
 });
+
+// W26: the adversary's probe, which reads the page inside requestAnimationFrame, still saw the façade
+// plaque 252-363 px off its sign for one frame after a window resize: the ResizeObserver that said the
+// planned camera runs after the frame's rAF callbacks. The engine now reads its box first in its own
+// frame and says the planned camera there; the observer then says the same camera again, unchanged.
+test('the engine reads its box first in its frame and says the planned camera when it changed', () => {
+  const { e, parent, restore } = engineAt(1920, 1008);
+  try {
+    const said = [];
+    e.onView = (v) => said.push(v);
+    e.parked = false;
+    const queued = [];
+    const previousRaf = globalThis.requestAnimationFrame;
+    globalThis.requestAnimationFrame = (fn) => { queued.push(fn); return queued.length; };
+    e._watchBox();
+    assert.equal(said.length, 0, 'the first reading only learns the box');
+    e._watchBox();
+    assert.equal(said.length, 0, 'an unchanged box says nothing');
+    parent.clientWidth = 1536;
+    parent.clientHeight = 856;
+    e._watchBox();
+    assert.equal(said.length, 1);
+    assert.equal(said[0].cw, 1536);
+    assert.equal(e._resizeQueued, true, 'the resize waits for its own frame');
+    e._emitView();
+    assert.equal(said.length, 1, 'the loop does not say the old canvas over the planned camera');
+    e._watchBox();
+    assert.equal(said.length, 1, 'once per change');
+    globalThis.requestAnimationFrame = previousRaf;
+    e.parked = true;
+    parent.clientWidth = 1280;
+    e._watchBox();
+    assert.equal(said.length, 1, 'a parked engine (the title) says nothing');
+  } finally {
+    restore();
+  }
+});
+
+test('the loop reads the box before it draws', () => {
+  const src = OfficeEngine.prototype._loop.toString();
+  assert.ok(src.indexOf('this._watchBox()') > -1 && src.indexOf('this._watchBox()') < src.indexOf('this._draw()'));
+});

@@ -137,6 +137,16 @@ const MAIL_INTENT = {
 };
 
 /**
+ * A letter's kind as a tag, capitalised as the mail window sets it («Raport»), for the
+ * inspector's history and open letters (glossary W26). Unknown intents read as their own words.
+ * @param {string} intent
+ */
+export function mailIntentLabel(intent) {
+  const word = MAIL_INTENT[/** @type {keyof typeof MAIL_INTENT} */ (String(intent || ''))] || String(intent || 'mesaj').replace(/_/g, ' ').toLowerCase();
+  return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+/**
  * A status as it is read after a feminine noun — `sarcină`, `etapă`, `rularea zilei` — because
  * that is where every one of them is used. The one masculine host, `controlul calității`,
  * takes a colon instead of an agreement, so nothing here has to be said twice.

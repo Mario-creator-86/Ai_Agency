@@ -35,12 +35,13 @@ export const ROOM_FLARE_MS = 3200;
  * The stage whose room chip says «acum: …» (W25): the newest lit room's. A run's stages follow one
  * another, so of the rooms still fading only one is now; at 16× the end of the replay showed five
  * «acum:» chips at once beside «rularea s-a încheiat». The older rooms keep their light, without words.
- * @param {Array<{stage: string, age: number}>|null|undefined} flares
+ * @param {Array<{stage: string, age: number, quiet?: boolean}>|null|undefined} flares
  * @returns {string|null}
  */
 export function chipStage(flares) {
   let best = null;
-  for (const f of flares || []) if (!best || f.age < best.age) best = f;
+  // W26: a room lit before the replay's end keeps its light without words (Arrivals.quietChips)
+  for (const f of flares || []) if (!f.quiet && (!best || f.age < best.age)) best = f;
   return best ? best.stage : null;
 }
 /** An event older (or further in the future) than this is history, not an arrival. */
@@ -121,7 +122,7 @@ export class Arrivals {
   constructor() {
     /** @type {Map<string, {id: string, words: string, start: number, end: number}>} */
     this.tagsById = new Map();
-    /** @type {Map<string, {zone: string, stage: string, start: number, end: number}>} */
+    /** @type {Map<string, {zone: string, stage: string, start: number, end: number, quiet?: boolean}>} */
     this.roomsByZone = new Map();
     /** A stage started live, for the façade's one glint: the id of the last one. */
     this.signBeat = 0;
@@ -217,7 +218,7 @@ export class Arrivals {
   /**
    * The rooms at full light at `now`, each with its strength.
    * @param {number} now
-   * @returns {Array<{zone: string, stage: string, strength: number, age: number}>}
+   * @returns {Array<{zone: string, stage: string, strength: number, age: number, quiet: boolean}>}
    */
   rooms(now) {
     const out = [];
@@ -226,7 +227,7 @@ export class Arrivals {
         this.roomsByZone.delete(zone);
         continue;
       }
-      out.push({ zone, stage: room.stage, strength: envelope(now - room.start, ROOM_FLARE_MS, 320, 1100), age: now - room.start });
+      out.push({ zone, stage: room.stage, strength: envelope(now - room.start, ROOM_FLARE_MS, 320, 1100), age: now - room.start, quiet: Boolean(room.quiet) });
     }
     return out;
   }
@@ -234,6 +235,15 @@ export class Arrivals {
   /** Whether anything is on, so the renderer can skip the pass. @param {number} now */
   active(now) {
     return this.tags(now).length > 0 || this.rooms(now).length > 0;
+  }
+
+  /**
+   * The replay reached its end (W26): nothing is «now» any more. The rooms still lit keep their
+   * fading light, and none of them says «acum: …» beside «rularea s-a încheiat». A stage offered
+   * after this (the replay played again) speaks as before.
+   */
+  quietChips() {
+    for (const room of this.roomsByZone.values()) room.quiet = true;
   }
 
   /** Sign-out, or reduced motion turned on mid-flourish: nothing stays up. */

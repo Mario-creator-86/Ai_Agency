@@ -343,6 +343,9 @@ export class DayReplayPlayer {
         if (engine) engine.offerReplayArrival(event);
         this._caption(event);
       }
+      // W26: the run has ended in this frame; the bar says «rularea s-a încheiat» in the same
+      // render, so no room may go on saying «acum: …» for the flare's last 3.2 s
+      if (engine && clock.ended && from < to) engine.quietRoomChips();
     }
     this._render(false);
     this.raf = requestAnimationFrame(this._loop);

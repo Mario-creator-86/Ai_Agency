@@ -1,5 +1,14 @@
 # Changelog
 
+## The release candidate: the dialogs in the frame's words and glass — 2026-09-25
+
+- **The page's own codes in Romanian** (`frontend/src/dialog_words.js`): states, types, channels, publications, decisions, budgets, accounts, durations («4,8 s»), frame sizes («1080×1920») and dates («12.09.2026»); the backend's sentences stay as written.
+- **Dialogs in the drawers' glass** with the building visible around them and an eyebrow naming their place in the headquarters; the research sources' failures as one line each; the Treasury forms in two columns; focus rings on every scrolling list and field.
+- **Honesty fixes**: no green ✓ beside publication rules; no «Reia lucrul» for an active employee; the demo case says it makes an unverified claim; «Ollama» written one way.
+- **The viewport can no longer scroll** under the stream's taller video (the building jumped 28 px after a visit).
+- **Rests**: no «acum:» at the replay's end; the façade plaque holds through a resize.
+- Tests: frontend 535/535, tsc clean.
+
 ## A stranger's first visit in the real building — 2026-09-25
 
 - **A studio-kept Unreal frame for the title** (`backend/app/office/kept_frame.py`, `frontend/src/studio_frame.js`): the signed-in page sends its newest kept frame at most every 5 minutes; one frame is kept outside the database, a whole still WebP only, capped, the key only in a header; a public read-only `GET /api/v1/office/kept-frame` (204 when none); the title uses it only when its light matches the real hour and it is under a day old.

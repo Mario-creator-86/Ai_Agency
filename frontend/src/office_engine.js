@@ -306,18 +306,11 @@ export class OfficeEngine {
         // in this very frame, as the layer's own size changes; before, it followed a frame or two
         // late, up to 363 px off the video after a window resize.
         this._emitPlannedView();
-        if (this._resizeQueued) return;
-        // W15: the canvas takes its new size on the next frame, not inside the frame whose layout
-        // changed (a drawer's snap under reduced motion, the fullscreen), so that frame only lays
-        // the page out and the reallocation of the canvas has a frame of its own.
-        this._resizeQueued = true;
-        requestAnimationFrame(() => {
-          this._resizeQueued = false;
-          if (!this.parked) this.resize();
-        });
+        this._queueResize();
       });
       this._sizeWatch.observe(canvas.parentElement);
     }
+
     /** Settles true once the art is loaded and the world is built, false when it could not be. @type {Promise<boolean>} */
     this.ready = this.assets.load().then((ok) => {
       if (!this.running) return false;
@@ -731,6 +724,11 @@ export class OfficeEngine {
     if (this.renderer) this.renderer.arrivals.clear();
   }
 
+  /** W26: the replay reached its end; the lit rooms keep their light and stop saying «acum: …». */
+  quietRoomChips() {
+    if (this.renderer) this.renderer.arrivals.quietChips();
+  }
+
   /** A new key: what the faces show next is the studio being read, not a live change. */
   resetGlints() {
     if (this.renderer) this.renderer.glints.reset();
@@ -787,6 +785,46 @@ export class OfficeEngine {
         bottom: (ch - Math.max(ins.bottom, floor.bottom)) / dpr,
       },
     };
+  }
+
+  /**
+   * W26: the box the canvas fills, read at the start of each frame. The ResizeObserver above says
+   * the planned camera after the frame's animation callbacks, and the window's resize event can come
+   * a frame late; anything that read the page inside the frame the box changed (the adversary's
+   * rAF probe) found the video and its plaques on the old camera, the façade plaque 252-363 px off
+   * its sign. Read here, first in the frame, the camera is said before any other callback reads it.
+   * The box is normally already laid out at this point, so the read costs no layout of its own.
+   */
+  _watchBox() {
+    if (this.parked) return;
+    const parent = this.canvas.parentElement;
+    if (!parent) return;
+    const w = parent.clientWidth;
+    const h = parent.clientHeight;
+    if (!(w > 0) || !(h > 0)) return;
+    const key = `${w}x${h}`;
+    if (key === this._boxKey) return;
+    const first = !this._boxKey;
+    this._boxKey = key;
+    if (first) return;
+    this._emitPlannedView();
+    // and the loop's own view at the end of this frame is not the old canvas's (the resize waits)
+    this._queueResize();
+  }
+
+  /**
+   * W15: the canvas takes its new size on the next frame, not inside the frame whose layout
+   * changed (a drawer's snap under reduced motion, the fullscreen), so that frame only lays the
+   * page out and the reallocation of the canvas has a frame of its own. Until then the camera said
+   * is the planned one (_emitView stays quiet while this waits).
+   */
+  _queueResize() {
+    if (this._resizeQueued) return;
+    this._resizeQueued = true;
+    requestAnimationFrame(() => {
+      this._resizeQueued = false;
+      if (!this.parked) this.resize();
+    });
   }
 
   /** Says the camera the next resize will set, now, in the frame whose layout changed. */
@@ -1054,6 +1092,7 @@ export class OfficeEngine {
       this._looping = false;
       return;
     }
+    this._watchBox();
     const dt = Math.min(0.05, Math.max(0, (now - this.lastFrame) / 1000));
     this.lastFrame = now;
     this.animTime += dt;
