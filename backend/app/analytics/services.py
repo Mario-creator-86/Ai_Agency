@@ -246,8 +246,8 @@ def analytics_provider_for_channel(
         if connection is None:
             return None, (
                 f"Slotul „{channel.channel_name}” nu este legat de un cont YouTube; fără "
-                "legătură nu se știe ale cui sunt cifrele. Leagă-l în Publicare → Sloturi de "
-                "canale."
+                "legătură nu se știe ale cui sunt cifrele. Leagă-l în Distribuție → Sloturi de "
+                "canal."
             )
         if connection.status != "CONNECTED":
             return None, (

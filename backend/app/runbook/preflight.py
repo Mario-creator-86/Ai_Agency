@@ -36,7 +36,7 @@ from app.media.toolchain import find_ffprobe
 from app.models import DomainEvent, OwnerPolicy
 from app.publishing.models import ChannelRecord
 from app.publishing.services import bound_connection_id, channel_bindings
-from app.research.service import research_health
+from app.research.service import MIN_CLAIMS_AVAILABLE, research_health
 from app.services import studio_environment, utc_now
 from app.wording import (
     MEDIA_KEY_UNUSABLE,
@@ -46,6 +46,7 @@ from app.wording import (
     host_test_reason,
     provider_name,
     search_engine,
+    youtube_scope,
 )
 from app.wording import autonomy_mode as mode_words
 from app.wording import environment as environment_words
@@ -96,6 +97,91 @@ CONNECTED_ACCOUNTS = ("cont YouTube conectat", "conturi YouTube conectate")
 TOKEN_UNITS = ("per_1m_input_tokens", "per_1m_output_tokens")
 
 
+# ----------------------------------------------------------------- the page's places, as data
+#
+# W31 (2026-09-25) judged the Rularea zilei door NO: the preflight told the Owner to «PUT
+# /economy/budget», to «POST /media/characters/{id}/reference-set», and named STUDIO_*
+# variables and OAuth scopes in the sentences he reads. Each line now says the fix in the
+# page's own places and words, and carries beside it, as data the page reads without parsing:
+#
+# ``code``           ``<name>.<condition>``, stable: what exactly this line found.
+# ``impact``         ``blocks`` | ``degrades`` | ``informs`` | ``ok`` — what the line does to
+#                    the day. ``informs`` is a failing INFORMATIONAL line: the Owner's own
+#                    choice (no serial slot, a budget that fits TEST and not PRODUCTION),
+#                    never counted in the verdict. ``ok`` for every passing line.
+# ``place``          where the Owner fixes it, from `PLACES`; None when the line passes.
+# ``place_label``    the place in the page's words, as the sentence names it.
+# ``place_section``  the element of `frontend/index.html` the fix sits in, or None.
+# ``technical``      {routes, settings, scopes, fields, answers, paths}: the API routes, the
+#                    ``STUDIO_*`` settings, the OAuth scopes, the record's field names, the
+#                    vendor's raw answers and the files on the studio's computer that used to
+#                    be in the sentence — for a tooltip. Always all six keys, each a list.
+
+#: Where a fix is made. The doors are the masthead's rooms (`open-<id>-btn` in index.html,
+#: their `room-label` as the name); the settings tabs are `settings.js`'s sections; the
+#: switch is the dock's AUTONOMIE; ``machine`` is the computer the studio runs on (nothing
+#: on the page installs FFmpeg); ``not_on_page`` is a fix the studio's API accepts and the
+#: page has no control for yet — said so in the sentence, never dressed as a place.
+PLACES: dict[str, str] = {
+    "research": "Cercetare",
+    "media": "Producție media",
+    "publishing": "Distribuție",
+    "workforce": "Angajați",
+    "story": "Jurnal",
+    "runbook": "Rularea zilei",
+    "treasury": "Trezorerie",
+    "settings:llm": "Setări → Furnizori AI",
+    "settings:agents": "Setări → Angajați",
+    "settings:media": "Setări → Video și sunet",
+    "settings:social": "Setări → Conturi și e-mail",
+    "autonomy_switch": "comutatorul AUTONOMIE",
+    "machine": "calculatorul studioului",
+    "not_on_page": "API-ul studioului",
+}
+
+IMPACTS = ("blocks", "degrades", "informs", "ok")
+TECHNICAL_KEYS = ("routes", "settings", "scopes", "fields", "answers", "paths")
+
+_IMPACT = {"BLOCKING": "blocks", "DEGRADING": "degrades", "INFORMATIONAL": "informs"}
+
+#: The places with a section, and the words the sentences use for them.
+BUDGET_PLACE = ("treasury", "tr-budget", "Trezorerie → Buget și cheltuieli")
+SOURCES_PLACE = ("research", "rs-sources", "Cercetare → Surse și afirmații")
+CHARACTERS_PLACE = ("media", "media-characters-section", "Producție media → Character Bible")
+SLOTS_PLACE = ("publishing", "channels-list", "Distribuție → Sloturi de canal")
+
+#: The routes and settings the sentences used to name, now said in ``technical`` only.
+BUDGET_ROUTE = "PUT /economy/budget"
+PRICES_ROUTE = "PUT /economy/prices"
+SEED_CHANNELS_ROUTE = "POST /publishing/channels/seed"
+FFMPEG_SETTING = "STUDIO_FFMPEG_PATH"
+FFPROBE_SETTING = "STUDIO_FFPROBE_PATH"
+
+
+def _usd(micros: int) -> str:
+    """An amount in a sentence, as Romanian writes it: «1,2 USD», «7,5 USD». The line's
+    ``value`` keeps the plain decimal (`format_micros`) for whoever reads it as a number."""
+    return format_micros(micros).replace(".", ",")
+
+
+def _technical(
+    routes: list[str] | None = None,
+    settings: list[str] | None = None,
+    scopes: list[str] | None = None,
+    fields: list[str] | None = None,
+    answers: list[str] | None = None,
+    paths: list[str] | None = None,
+) -> dict[str, list[str]]:
+    return {
+        "routes": list(routes or []),
+        "settings": list(settings or []),
+        "scopes": list(scopes or []),
+        "fields": list(fields or []),
+        "answers": list(answers or []),
+        "paths": list(paths or []),
+    }
+
+
 def _check(
     name: str,
     ok: bool,
@@ -104,11 +190,25 @@ def _check(
     absent: str,
     detail: str = "",
     value: Any = None,
+    *,
+    passed: str = "ok",
+    failed: str = "missing",
+    place: str | tuple[str, str | None, str] | None = None,
+    technical: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     """One line of the preflight. ``message`` and ``detail`` are what the Owner reads (the
-    page prints them side by side), so both are Romanian with the codes said as words;
-    ``value`` is the same fact as data — the mode, the budget's period and state, the
-    environment — for a page or a test that needs the code itself."""
+    page prints them side by side), so both are Romanian with the codes said as words and
+    the fix said as a place on the page; ``value`` is the same fact as data — the mode, the
+    budget's period and state, the environment — for a page or a test that needs the code
+    itself. ``passed``/``failed`` name the condition in ``code``; ``place`` is a `PLACES` id
+    or (id, section, words); ``technical`` what the sentence no longer says."""
+    where: str | None = None
+    section: str | None = None
+    if isinstance(place, tuple):
+        place, section, where = place
+    if place is not None:
+        assert place in PLACES, place
+        where = where or PLACES[place]
     return {
         "name": name,
         "ok": ok,
@@ -116,6 +216,12 @@ def _check(
         "message": present if ok else absent,
         "detail": detail,
         "value": value,
+        "code": f"{name}.{passed if ok else failed}",
+        "impact": "ok" if ok else _IMPACT[severity],
+        "place": None if ok else place,
+        "place_label": None if ok else where,
+        "place_section": None if ok else section,
+        "technical": technical or _technical(),
     }
 
 
@@ -141,7 +247,8 @@ def _budget_check(engine: Engine) -> dict[str, Any]:
     """
     budgets = budget_status(engine)["budgets"]
     said = ", ".join(
-        f"{budget_period(b['period'])} {b['limit_usd']} USD ({budget_state(b['state'])})"
+        f"{budget_period(b['period'])} {str(b['limit_usd']).replace('.', ',')} USD "
+        f"({budget_state(b['state'])})"
         for b in budgets
     )
     return _check(
@@ -150,11 +257,15 @@ def _budget_check(engine: Engine) -> dict[str, Any]:
         DEGRADING,
         f"{count(len(budgets), 'buget activ', 'bugete active')}: {said}.",
         "Niciun buget activ: rezervarea ține banii filmului, dar nu are de ce să îl refuze. "
-        "Pune-l cu PUT /economy/budget (biroul Contabilitate); nimeni altcineva nu îl poate pune.",
+        f"Setează bugetul zilnic în {BUDGET_PLACE[2]}; nimeni altcineva nu îl poate pune.",
         value=[
             {"period": b["period"], "limit_usd": b["limit_usd"], "state": b["state"]}
             for b in budgets
         ],
+        passed="set",
+        failed="none",
+        place=BUDGET_PLACE,
+        technical=_technical(routes=[BUDGET_ROUTE]),
     )
 
 
@@ -197,18 +308,25 @@ def _price_check(session: Session) -> dict[str, Any]:
             DEGRADING,
             "Niciun angajat cu model alocat, deci nu este nimic de prețuit.",
             "",
+            passed="nothing_runs",
         )
     return _check(
         "model_prices",
         not unpriced,
         DEGRADING,
         f"{count(len(wanted), 'model', 'modele')} pe care rulează angajații "
-        f"{'are' if len(wanted) == 1 else 'au'} preț pe jetoane.",
-        f"Modele fără preț pe jetoane la: {', '.join(kinds)}. Până când îl tastezi "
-        "(PUT /economy/prices, pe model sau «*» pentru tot felul), fiecare rulare a unui "
-        "angajat se înregistrează fără cost, iar cărțile văd o fracțiune din zi. Studioul nu "
-        "inventează un preț.",
+        f"{'are' if len(wanted) == 1 else 'au'} preț pe tokenuri.",
+        f"Modele fără preț pe tokenuri la: {', '.join(kinds)}. Până când le pui un preț, "
+        "fiecare rulare a unui angajat se înregistrează fără cost, iar cărțile văd o fracțiune "
+        "din zi. Studioul nu inventează un preț. Prețul se pune deocamdată doar prin API-ul "
+        "studioului: pagina nu are încă un loc pentru el.",
         detail=models or f"{count(len(wanted), 'model prețuit', 'modele, toate prețuite')}",
+        failed="unpriced",
+        place="not_on_page",
+        technical=_technical(
+            routes=[PRICES_ROUTE],
+            fields=["provider_kind", "resource (un model sau «*» pentru tot felul)", *TOKEN_UNITS],
+        ),
     )
 
 
@@ -228,9 +346,11 @@ def _vision_check(session: Session) -> dict[str, Any]:
         f"{seer[1]} poate privi imaginile." if seer else "",
         "Niciun angajat activ nu are un model care declară vedere: verificarea imaginilor și "
         "cea a personajelor stau deoparte la fiecare film, deci un film de câmpuri goale ar "
-        "trece toate verificările automate. Alocă un model cu vedere unui angajat "
-        "(Angajați → Model).",
-        detail=f"{seer[0]} {seer[1]}" if seer else "",
+        f"trece toate verificările automate. Alocă un model cu vedere unui angajat în "
+        f"{PLACES['settings:agents']}.",
+        value={"agent_id": seer[0], "agent_name": seer[1]} if seer else None,
+        failed="nobody_sees",
+        place="settings:agents",
     )
 
 
@@ -277,6 +397,9 @@ def _character_reference_check(session: Session) -> dict[str, Any]:
     names = ", ".join(c.canonical_name for c in locked) or ", ".join(
         c.canonical_name for c in unlocked
     )
+    # The button on each character's card, and the route it calls, one per character named.
+    button = f"cu «Produ setul de referință» din {CHARACTERS_PLACE[2]}"
+    routes = [f"POST /media/characters/{c.id}/reference-set" for c in (locked or unlocked)]
     return _check(
         "character_references",
         not missing,
@@ -287,15 +410,18 @@ def _character_reference_check(session: Session) -> dict[str, Any]:
         (
             f"Personaje cu înfățișarea blocată și fără imagine de referință citibilă: {names}. "
             "Filmul lor se refuză înainte de prima scenă, în loc să li se inventeze o față. "
-            "Produ setul cu POST /media/characters/{id}/reference-set (consumă credite de "
-            "imagine, deci este actul tău)."
+            f"Produ setul {button} (consumă credite de imagine, deci este actul tău)."
             if locked
             else f"{count(len(unlocked), 'personaj', 'personaje')} fără imagine de referință: "
             f"{names}. Fiecare imagine "
             "a lor este o invenție nouă, iar verificarea personajelor nu are cu ce compara. "
-            "POST /media/characters/{id}/reference-set le produce."
+            f"Setul se produce {button}."
         ),
         detail=names,
+        passed="ok" if characters else "no_characters",
+        failed="locked_missing" if locked else "unlocked_missing",
+        place=CHARACTERS_PLACE,
+        technical=_technical(routes=routes),
     )
 
 
@@ -316,25 +442,34 @@ def _serial_channel_check(session: Session, bindings: dict[str, dict]) -> dict[s
             False,
             INFORMATIONAL,
             "",
-            "Niciun canal pentru Office Serial: serialul nu are unde ajunge. Creează slotul "
-            "în Publicare → Canale.",
+            "Niciun slot de canal pentru Office Serial: serialul nu are unde ajunge. Sloturile "
+            "de canal se creează deocamdată doar prin API-ul studioului: pagina nu are încă un "
+            "buton pentru ele.",
             value={"channel_type": "OFFICE_SERIAL", "exists": False},
+            failed="missing",
+            place="not_on_page",
+            technical=_technical(routes=[SEED_CHANNELS_ROUTE]),
         )
     bound = bool(bindings.get(channel.id, {}).get("publisher_ready"))
     may_approve = bool(channel.director_may_approve_episodes)
     policy_route = f"POST /publishing/channels/{channel.id}/publish-policy"
+    fix: tuple[str, str | None, str] | str
     if not bound:
         absent = (
             f"Canalul serialului ({channel.channel_name}) nu este legat de un cont YouTube "
-            "conectat: episoadele se produc, dar nu au unde urca. Leagă-l în Publicare → "
-            "Sloturi de canale."
+            "conectat: episoadele se produc, dar nu au unde urca. Leagă-l în "
+            f"{SLOTS_PLACE[2]}."
         )
+        failed, fix = "unbound", SLOTS_PLACE
+        technical = _technical()
     else:
         absent = (
             "Canalul serialului este legat, dar Directoarea nu are dreptul să aprobe episoade: "
-            f"fiecare episod rămâne ciornă și te așteaptă pe tine. Dreptul se dă cu "
-            f"{policy_route} (director_may_approve_episodes)."
+            "fiecare episod rămâne ciornă și te așteaptă pe tine. Dreptul i-l dai deocamdată "
+            "doar prin API-ul studioului: pagina nu are încă un comutator pentru el."
         )
+        failed, fix = "director_may_not_approve", "not_on_page"
+        technical = _technical(routes=[policy_route], fields=["director_may_approve_episodes"])
     return _check(
         "serial_channel",
         bound and may_approve,
@@ -351,6 +486,9 @@ def _serial_channel_check(session: Session, bindings: dict[str, dict]) -> dict[s
             "bound": bound,
             "director_may_approve_episodes": may_approve,
         },
+        failed=failed,
+        place=fix,
+        technical=technical,
     )
 
 
@@ -493,20 +631,23 @@ def _youtube_slots(session: Session, now: datetime) -> list[dict[str, Any]]:
                 "account": connection.name,
                 "scopes": granted_scope_set(connection),
                 "age_days": (now - granted_at).days if granted_at else None,
-                "granted_on": granted_at.date().isoformat() if granted_at else None,
+                "granted_on": f"{granted_at:%d.%m.%Y}" if granted_at else None,
+                # Said in words with the moment; Google's own answer («400 invalid_grant»)
+                # is the line's technical record, not the Owner's sentence.
                 "token_refusal": (
-                    f"Google a refuzat tokenul pe {token_at:%Y-%m-%d %H:%M} UTC ({_answer(token)})"
+                    f"Google a refuzat tokenul pe {token_at:%d.%m.%Y, %H:%M} UTC"
                     if token is not None and token_at is not None
                     else ""
                 ),
+                "token_answer": _answer(token) if token is not None else "",
                 "report_refusal": (
-                    f"Google a refuzat citirea statisticilor pe {report_at:%Y-%m-%d %H:%M} UTC "
-                    f"({_answer(report)})"
+                    f"Google a refuzat citirea statisticilor pe {report_at:%d.%m.%Y, %H:%M} UTC"
                     if report is not None and report_at is not None
                     else ""
                 ),
+                "report_answer": _answer(report) if report is not None else "",
                 "silence": (
-                    f"{silent_at:%Y-%m-%d %H:%M} UTC, fără răspuns de la Google (rețea); nu "
+                    f"{silent_at:%d.%m.%Y, %H:%M} UTC, fără răspuns de la Google (rețea); nu "
                     "spune nimic despre token"
                     if silence is not None and silent_at is not None
                     else ""
@@ -516,12 +657,20 @@ def _youtube_slots(session: Session, now: datetime) -> list[dict[str, Any]]:
     return slots
 
 
+def _answers(slots: list[dict[str, Any]], *keys: str) -> list[str]:
+    """Google's raw answers, per slot, for the line's technical record."""
+    return [f"{slot['label']}: {slot[key]}" for slot in slots for key in keys if slot.get(key)]
+
+
+def _scopes_said(scopes: set[str] | frozenset[str] | list[str]) -> str:
+    """The grants as what they let the studio do: «citirea canalului, încărcarea filmelor»."""
+    return ", ".join(sorted(youtube_scope(scope_label(scope)) for scope in scopes))
+
+
 def _slot_detail(slot: dict[str, Any]) -> str:
     scopes = slot["scopes"]
     granted = (
-        ", ".join(sorted(scope_label(scope) for scope in scopes))
-        if scopes is not None
-        else "necunoscute (neînregistrate la conectare)"
+        _scopes_said(scopes) if scopes is not None else "necunoscute (neînregistrate la conectare)"
     )
     age = (
         f"acordat pe {slot['granted_on']}, de {count(slot['age_days'], 'zi', 'zile')}"
@@ -535,7 +684,7 @@ def _slot_detail(slot: dict[str, Any]) -> str:
         or "niciuna înregistrată după acordare"
     )
     return (
-        f"{slot['channel']} → {slot['account']}: drepturi {granted}; {age}; "
+        f"{slot['channel']} → {slot['account']}: drepturi: {granted}; {age}; "
         f"ultima reîmprospătare eșuată: {last}"
     )
 
@@ -572,6 +721,10 @@ def _grant_age_caveat(slots: list[dict[str, Any]]) -> str:
     )
 
 
+#: Where a grant is renewed: the reconnect button on the account's card.
+ACCOUNTS_PLACE = "settings:social"
+
+
 def _youtube_upload_check(slots: list[dict[str, Any]]) -> dict[str, Any]:
     """Whether the films can go out: the upload scope, and no standing refusal of the token.
 
@@ -586,15 +739,17 @@ def _youtube_upload_check(slots: list[dict[str, Any]]) -> dict[str, Any]:
             "Niciun slot legat de un cont YouTube conectat, deci niciun token de judecat aici; "
             "legarea sloturilor este linia ei.",
             "",
+            passed="no_slots",
         )
     problems = []
+    failed = ""
     for slot in slots:
         if slot["scopes"] is not None and UPLOAD_SCOPE not in slot["scopes"]:
-            problems.append(
-                f"{slot['label']}: Google nu a acordat dreptul de încărcare (youtube.upload)"
-            )
+            problems.append(f"{slot['label']}: Google nu a acordat dreptul de încărcare")
+            failed = failed or "upload_not_granted"
         elif slot["token_refusal"]:
             problems.append(f"{slot['label']}: {slot['token_refusal']}")
+            failed = failed or "token_refused"
     caveat = _grant_age_caveat(slots)
     return _check(
         "youtube_upload_access",
@@ -604,8 +759,14 @@ def _youtube_upload_check(slots: list[dict[str, Any]]) -> dict[str, Any]:
         f"{'nu arată' if len(slots) == 1 else 'niciunul nu arată'} dreptul de încărcare lipsă "
         f"sau un refuz al tokenului după acordare. {caveat}",
         f"Filmele nu pot urca pe YouTube: {'; '.join(problems)}. Reconectează canalul din "
-        "Setări (Conturi și e-mail → Reconectează) și acordă dreptul de încărcare. " + caveat,
+        f"{PLACES[ACCOUNTS_PLACE]} și acordă dreptul de încărcare. " + caveat,
         detail=" | ".join(_slot_detail(slot) for slot in slots),
+        failed=failed or "missing",
+        place=ACCOUNTS_PLACE,
+        technical=_technical(
+            scopes=[scope_label(UPLOAD_SCOPE)],
+            answers=_answers(slots, "token_answer"),
+        ),
     )
 
 
@@ -622,36 +783,61 @@ def _youtube_statistics_check(slots: list[dict[str, Any]]) -> dict[str, Any]:
             DEGRADING,
             "Niciun slot legat de un cont YouTube conectat, deci nicio statistică de citit.",
             "",
+            passed="no_slots",
         )
     problems = []
+    failed = ""
     for slot in slots:
         if slot["token_refusal"] or slot["report_refusal"]:
             refusal = slot["token_refusal"] or slot["report_refusal"]
             problems.append(f"{slot['label']}: {refusal}")
+            failed = failed or ("token_refused" if slot["token_refusal"] else "report_refused")
         elif slot["scopes"] is not None and STATISTICS_SCOPE not in slot["scopes"]:
-            granted = ", ".join(sorted(scope_label(scope) for scope in slot["scopes"]))
-            problems.append(f"{slot['label']}: acordate doar {granted}, fără yt-analytics.readonly")
+            granted = _scopes_said(slot["scopes"]) or "nimic"
+            problems.append(f"{slot['label']}: Google a acordat doar {granted}, fără statistici")
+            failed = failed or "statistics_not_granted"
     return _check(
         "youtube_statistics_access",
         not problems,
         DEGRADING,
         f"{count(len(slots), 'slot legat', 'sloturi legate')}: "
         f"{'nu arată' if len(slots) == 1 else 'niciunul nu arată'} lipsa accesului la "
-        "statistici (yt-analytics.readonly) sau un refuz al tokenului după acordare.",
+        "statistici sau un refuz al tokenului după acordare.",
         f"Statisticile YouTube nu pot fi citite pentru {'; '.join(problems)}. Filmele nu depind "
         "de ele: ziua le face și le publică, dar cifrele de ieri nu ajung la studio. "
-        "Reconectează canalul din Setări, acordând accesul la statistici (yt-analytics.readonly).",
+        f"Reconectează canalul din {PLACES[ACCOUNTS_PLACE]}, acordând accesul la statistici.",
         detail=" | ".join(_slot_detail(slot) for slot in slots),
+        failed=failed or "missing",
+        place=ACCOUNTS_PLACE,
+        technical=_technical(
+            scopes=[scope_label(STATISTICS_SCOPE)],
+            answers=_answers(slots, "token_answer", "report_answer"),
+        ),
     )
 
 
-def _motion_knob(environment: str) -> str:
+def _motion_knob(environment: str) -> tuple[str, list[str], list[str]]:
+    """The per-film motion ceiling in words, and the settings and fields that hold it.
+
+    Nothing on the page changes it: it is the studio's configuration on its computer, and
+    the sentence says so; the names are the line's technical record.
+    """
     if environment == "PRODUCTION":
-        return "plafonul de mișcare pe film (motion_budget_usd, STUDIO_MOTION_BUDGET_USD)"
+        return (
+            "plafonul de mișcare pe film (în configurația studioului, nu din pagină)",
+            ["STUDIO_MOTION_BUDGET_USD"],
+            ["motion_budget_usd"],
+        )
     return (
-        "plafonul de mișcare al unui film de test (test_max_cost_per_generation_usd × "
-        "test_motion_scenes, STUDIO_TEST_MAX_COST_PER_GENERATION_USD și STUDIO_TEST_MOTION_SCENES)"
+        "plafonul de mișcare al unui film de test (în configurația studioului, nu din pagină)",
+        ["STUDIO_TEST_MAX_COST_PER_GENERATION_USD", "STUDIO_TEST_MOTION_SCENES"],
+        ["test_max_cost_per_generation_usd", "test_motion_scenes"],
     )
+
+
+def _budget_films_technical(environment: str) -> dict[str, list[str]]:
+    _, knob_settings, knob_fields = _motion_knob(environment)
+    return _technical(routes=[BUDGET_ROUTE], settings=knob_settings, fields=knob_fields)
 
 
 def _daily_budget_films_check(
@@ -684,6 +870,7 @@ def _daily_budget_films_check(
             "Niciun buget zilnic activ: nimic din buget nu refuză un film al zilei (linia "
             "bugetului spune ce înseamnă lipsa lui).",
             "",
+            passed="no_daily_budget",
         )
     limit = min(int(b["limit_usd_micros"]) for b in daily)
 
@@ -698,32 +885,34 @@ def _daily_budget_films_check(
         spare = limit - per_film
         if spare < 0:
             said = (
-                f"În {environment_words(env)} fiecare film ține {format_micros(per_film)} USD "
+                f"În {environment_words(env)} fiecare film ține {_usd(per_film)} USD "
                 "pentru mișcare, peste "
-                f"bugetul zilnic de {format_micros(limit)} USD. Niciun film nu încape: scurtul "
+                f"bugetul zilnic de {_usd(limit)} USD. Niciun film nu încape: scurtul "
                 "factual este refuzat înainte de prima scenă"
                 + (", iar episodul serialului la fel." if films == 2 else ".")
             )
         else:
             said = (
-                f"În {environment_words(env)} fiecare film ține {format_micros(per_film)} USD "
-                f"pentru mișcare, iar bugetul zilnic este de {format_micros(limit)} USD: "
+                f"În {environment_words(env)} fiecare film ține {_usd(per_film)} USD "
+                f"pentru mișcare, iar bugetul zilnic este de {_usd(limit)} USD: "
                 f"{count(films, 'film', 'filme')} ar cere "
-                f"{format_micros(films * per_film)} USD, deci episodul serialului, al doilea film "
+                f"{_usd(films * per_film)} USD, deci episodul serialului, al doilea film "
                 "al zilei, este refuzat de buget dacă scurtul factual a costat mai mult de "
-                f"{format_micros(spare)} USD (narațiunea se adaugă la fiecare film)."
+                f"{_usd(spare)} USD (narațiunea se adaugă la fiecare film)."
             )
         return (
-            f"{said} Cele două numere pe care le poți schimba: bugetul zilnic (PUT "
-            f"/economy/budget, biroul Contabilitate), la cel puțin "
-            f"{format_micros(films * per_film)} USD, sau {_motion_knob(env)}, la cel mult "
-            f"{format_micros(limit // films)} USD."
+            f"{said} Cele două numere pe care le poți schimba: bugetul zilnic, în "
+            f"{BUDGET_PLACE[2]}, la cel puțin {_usd(films * per_film)} USD, sau "
+            f"{_motion_knob(env)[0]}, la cel mult {_usd(limit // films)} USD."
         )
+
+    def refusal(per_film: int) -> str:
+        return "no_film_fits" if limit < per_film else "second_film_refused"
 
     here = hold(environment)
     detail = (
-        f"{environment_words(environment)}: {format_micros(here)} USD pe film × "
-        f"{count(films, 'film', 'filme')}; zilnic {format_micros(limit)} USD"
+        f"{environment_words(environment)}: {_usd(here)} USD pe film × "
+        f"{count(films, 'film', 'filme')}; zilnic {_usd(limit)} USD"
     )
     value: dict[str, Any] = {
         "environment": environment,
@@ -740,15 +929,18 @@ def _daily_budget_films_check(
             refused(environment, here),
             detail=detail,
             value=value,
+            failed=refusal(here),
+            place=BUDGET_PLACE,
+            technical=_budget_films_technical(environment),
         )
     fits = (
-        f"Bugetul zilnic de {format_micros(limit)} USD ține {count(films, 'film', 'filme')} la "
-        f"plafonul de mișcare din {environment_words(environment)} ({format_micros(here)} USD "
+        f"Bugetul zilnic de {_usd(limit)} USD ține {count(films, 'film', 'filme')} la "
+        f"plafonul de mișcare din {environment_words(environment)} ({_usd(here)} USD "
         "pe film)."
     )
     if environment == "TEST":
         production = hold("PRODUCTION")
-        detail += f"; producție: {format_micros(production)} USD pe film"
+        detail += f"; producție: {_usd(production)} USD pe film"
         value["production_per_film_usd"] = format_micros(production)
         if films * production > limit:
             # His answer about TEST is fine; the one about PRODUCTION is a line he reads now,
@@ -759,16 +951,21 @@ def _daily_budget_films_check(
                 INFORMATIONAL,
                 "",
                 f"Acum ești în mediul de test, iar ziua încape: {count(films, 'film', 'filme')} "
-                f"la {format_micros(here)} USD pe film, în {format_micros(limit)} USD. La "
+                f"la {_usd(here)} USD pe film, în {_usd(limit)} USD. La "
                 "trecerea în producție nu mai încape. " + refused("PRODUCTION", production),
                 detail=detail,
                 value=value,
+                failed="production_would_refuse",
+                place=BUDGET_PLACE,
+                technical=_budget_films_technical("PRODUCTION"),
             )
         fits += (
-            f" Și în producție ({format_micros(production)} USD pe film) "
+            f" Și în producție ({_usd(production)} USD pe film) "
             f"{'încape' if films == 1 else 'încap'}."
         )
-    return _check("daily_budget_films", True, DEGRADING, fits, "", detail=detail, value=value)
+    return _check(
+        "daily_budget_films", True, DEGRADING, fits, "", detail=detail, value=value, passed="fits"
+    )
 
 
 def run_preflight(
@@ -790,7 +987,12 @@ def run_preflight(
                 not stopped,
                 BLOCKING,
                 "Autonomia este pornită.",
-                "STOP autonomie este activ; nu se pornește nicio rulare.",
+                "Autonomia studioului este oprită: nu pornește nicio rulare până nu o repornești "
+                "de la comutatorul AUTONOMIE.",
+                passed="on",
+                failed="stopped",
+                place="autonomy_switch",
+                technical=_technical(fields=["autonomy_stopped"]),
             )
         )
 
@@ -809,6 +1011,7 @@ def run_preflight(
                 ),
                 "",
                 value=autonomy_mode,
+                passed=autonomy_mode.lower(),
             )
         )
 
@@ -822,8 +1025,10 @@ def run_preflight(
                 BLOCKING,
                 f"{count(len(assignable), 'model verificat', 'modele verificate')} și "
                 f"{'disponibil' if len(assignable) == 1 else 'disponibile'}.",
-                "Niciun model verificat. Verifică un furnizor în Setări; fără el angajații "
-                "nu pot rula.",
+                "Niciun model verificat: fără el angajații nu pot rula. Verifică un furnizor în "
+                f"{PLACES['settings:llm']}.",
+                failed="no_verified_model",
+                place="settings:llm",
             )
         )
 
@@ -844,8 +1049,11 @@ def run_preflight(
                 f"{count(len(runnable_agents), 'angajat activ', 'angajați activi')} cu model "
                 "alocat.",
                 "Sunt necesari cel puțin doi angajați activi: verificarea afirmațiilor trebuie "
-                "făcută de altcineva decât cel care le-a extras.",
-                detail=f"{len(runnable_agents)} activi",
+                "făcută de altcineva decât cel care le-a extras. Alocă un model încă unui angajat "
+                f"în {PLACES['settings:agents']}.",
+                detail=f"{count(len(runnable_agents), 'activ', 'activi')}",
+                failed="too_few",
+                place="settings:agents",
             )
         )
 
@@ -865,8 +1073,12 @@ def run_preflight(
             bool(ffmpeg),
             BLOCKING,
             "FFmpeg disponibil.",
-            "FFmpeg nu a fost găsit; randarea nu poate rula deloc.",
-            detail=str(ffmpeg or ""),
+            "FFmpeg nu a fost găsit pe calculatorul studioului: randarea nu poate rula deloc. "
+            "Se instalează pe calculator, nu din pagină.",
+            failed="ffmpeg_missing",
+            place="machine",
+            # Where it was found is a file on his computer: the tooltip's, not the sentence's.
+            technical=_technical(settings=[FFMPEG_SETTING], paths=[str(ffmpeg)] if ffmpeg else []),
         )
     )
     ffprobe = find_ffprobe(settings.ffmpeg_path)
@@ -876,7 +1088,13 @@ def run_preflight(
             bool(ffprobe),
             DEGRADING,
             "FFprobe disponibil pentru controlul calității.",
-            "FFprobe lipsește; QC nu poate măsura randarea, deci va eșua întotdeauna.",
+            "FFprobe lipsește de pe calculatorul studioului: controlul calității nu poate măsura "
+            "randarea, deci va eșua întotdeauna. Se instalează pe calculator, lângă FFmpeg.",
+            failed="ffprobe_missing",
+            place="machine",
+            technical=_technical(
+                settings=[FFPROBE_SETTING], paths=[str(ffprobe)] if ffprobe else []
+            ),
         )
     )
 
@@ -898,15 +1116,17 @@ def run_preflight(
                 f"{count(len(connected_accounts), *CONNECTED_ACCOUNTS)}, dar niciun slot de "
                 "canal nu este legat de "
                 f"{'el' if len(connected_accounts) == 1 else 'vreunul'}. Leagă-le în "
-                "Publicare → Sloturi de canale: publicarea și analytics folosesc legătura."
+                f"{SLOTS_PLACE[2]}: publicarea și statisticile folosesc legătura."
                 if connected_accounts
-                else "Niciun cont YouTube conectat; publicarea și analytics nu au unde citi "
-                "sau scrie. Conectează un cont în Setări → Conturi și e-mail."
+                else "Niciun cont YouTube conectat: publicarea și statisticile nu au unde citi "
+                f"sau scrie. Conectează un cont în {PLACES['settings:social']}."
             ),
             detail=", ".join(
                 f"{b['youtube_connection_name']} → {b['youtube_channel_title'] or '—'}"
                 for b in bound
             ),
+            failed="unbound" if connected_accounts else "no_account",
+            place=SLOTS_PLACE if connected_accounts else "settings:social",
         )
     )
 
@@ -929,6 +1149,21 @@ def run_preflight(
         f"{count(report['claims_available'], 'afirmație verificată', 'afirmații verificate')} "
         f"{'disponibilă' if report['claims_available'] == 1 else 'disponibile'}."
     )
+    # The same four conditions `research_health` words its reasons from, as codes: the
+    # first that holds is the line's code, all that hold are in its value.
+    research_codes = [
+        code
+        for code, holds in (
+            ("no_hosts", report["hosts_total"] == 0),
+            ("none_passed", report["hosts_total"] > 0 and report["hosts_tested_ok"] == 0),
+            (
+                "cannot_find_pages",
+                report["hosts_with_template"] == 0 and report["search_provider"] == "NONE",
+            ),
+            ("few_claims", report["claims_available"] < MIN_CLAIMS_AVAILABLE),
+        )
+        if holds
+    ]
     checks.append(
         _check(
             "research_sources",
@@ -936,7 +1171,7 @@ def run_preflight(
             DEGRADING,
             counted,
             " ".join(report["degraded_reasons"])
-            or "Cercetarea nu poate găsi pagini; vezi Cercetare → Surse.",
+            + f" Site-urile, testul lor și adresele de căutare sunt în {SOURCES_PLACE[2]}.",
             detail=counted + (f" Nu pot fi citite: {failing}." if failing else ""),
             value={
                 "status": report["status"],
@@ -944,7 +1179,13 @@ def run_preflight(
                 "hosts_failing": [
                     {"host": h["host"], "reason": h["reason"]} for h in report["hosts_failing"]
                 ],
+                "reason_codes": research_codes,
             },
+            failed=(research_codes or ["degraded"])[0],
+            place=SOURCES_PLACE,
+            technical=_technical(
+                answers=[f"{h['host']}: {h['reason']}" for h in report["hosts_failing"]]
+            ),
         )
     )
 
@@ -962,6 +1203,11 @@ def run_preflight(
             purpose=MEDIA_PURPOSE_LABEL[purpose],
         )
 
+    def _media_code(purpose: str) -> str:
+        """Readiness's own status as the condition; READY with no generator is a bad key."""
+        status = str(readiness[purpose]["status"] or "")
+        return "key_unusable" if status == "READY" else status.lower() or "missing"
+
     checks.append(
         _check(
             "image_provider",
@@ -971,6 +1217,9 @@ def run_preflight(
             _media_missing("image")
             + " Până atunci randările folosesc substitute, iar QC le blochează de la publicare.",
             value=readiness["image"]["status"],
+            passed="ready",
+            failed=_media_code("image"),
+            place="settings:media",
         )
     )
     checks.append(
@@ -981,6 +1230,9 @@ def run_preflight(
             f"Voce: {provider_name(media['voice_provider'])}.",
             _media_missing("voice") + " Până atunci narațiunea folosește un substitut.",
             value=readiness["voice"]["status"],
+            passed="ready",
+            failed=_media_code("voice"),
+            place="settings:media",
         )
     )
 
@@ -992,20 +1244,27 @@ def run_preflight(
         publishing_ready = (
             "Canal YouTube conectat prin OAuth (starea stocată, nu o încercare a tokenului)."
         )
+        publishing_how = "oauth"
     elif settings.youtube_credentials_present:
         publishing_detail = "Credențiale din mediul serverului, neverificate prin OAuth."
         publishing_ready = "Credențiale YouTube prezente în mediul serverului."
+        publishing_how = "server_credentials"
     else:
         publishing_detail = ""
         publishing_ready = "Canal YouTube conectat prin OAuth."
+        publishing_how = "oauth"
     checks.append(
         _check(
             "publishing",
             youtube_connected is not None or settings.youtube_credentials_present,
             DEGRADING,
             publishing_ready,
-            "Niciun canal YouTube conectat; publicarea este oprită.",
+            "Niciun canal YouTube conectat: publicarea este oprită. Conectează un cont în "
+            f"{PLACES['settings:social']}.",
             detail=publishing_detail,
+            passed=publishing_how,
+            failed="none",
+            place="settings:social",
         )
     )
 

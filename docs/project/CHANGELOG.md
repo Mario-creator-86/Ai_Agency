@@ -1,5 +1,14 @@
 # Changelog
 
+## The preflight as a checklist, and real faces over the stream — 2026-09-25
+
+- **A game's checklist** (`frontend/src/readiness.js`): «De rezolvat · De știut · În regulă», one row per failing check with its state in words, colour and shape, and a key that opens the place that fixes it.
+- **The preflight in the page's places** (`backend/app/runbook/preflight.py`): each line carries code, severity and place; routes, settings names and scopes only in a technical field for the tooltip.
+- **One Romanian reason per failed research site** with its code; no reason said twice or contradicting itself.
+- **Faces**: the inspector wears the employee's portrait; over the stream every portrait is cut from the real Unreal frame; the raw id is a copy key.
+- **Rests**: the seeded connection named «Ollama · ollama.com», vendors in their own case, phone rails aligned, wider doors at 2560, Media and Distribution laid out in steps.
+- Tests: frontend 588/588, tsc clean; backend 194 passed across the touched files; ruff and mypy clean.
+
 ## The employees as people, and the publishing gate in Romanian — 2026-09-25
 
 - **A roster of people** (`frontend/src/roster.js`): portraits from the scene's own sprites at each desk in the pose of the real state, place, state, last task, 30-day runs; a card opens the inspector from the desk.

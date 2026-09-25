@@ -736,8 +736,14 @@ def test_the_health_report_is_computed_from_the_record(engine, settings):
     report = research_health(engine, env)
     assert report["hosts_total"] == 3 and report["hosts_tested_ok"] == 1
     assert report["hosts_with_template"] == 1
+    # The retriever's English, stored as it was, is read back in Romanian (W31).
     assert report["hosts_failing"] == [
-        {"host": "www.walled.test", "reason": "HTTP_403", "detail": "Source returned HTTP 403"}
+        {
+            "host": "www.walled.test",
+            "reason": "HTTP_403",
+            "detail": "Site-ul a refuzat cererea studioului (HTTP 403); cât timp o refuză, nu "
+            "poate fi sursă.",
+        }
     ]
     assert report["search_provider"] == SEARCH_PROVIDER_NONE
     assert report["claims_available"] == 10

@@ -317,7 +317,8 @@ def test_owner_reads_the_health_report_and_forces_a_retest(client, headers, engi
         {
             "host": "www.iana.org",
             "reason": "HTTP_403",
-            "detail": "Source returned HTTP 403",
+            "detail": "Site-ul a refuzat cererea studioului (HTTP 403); cât timp o refuză, nu "
+            "poate fi sursă.",
         }
     ]
 
@@ -449,9 +450,11 @@ def test_a_studio_shaped_like_the_owners_copy_reads_what_the_rehearsal_audit_fou
     assert statistics["ok"] is False and statistics["severity"] == "DEGRADING"
     for name in ("Nexus Curiosity", "Inside The Nexus"):
         assert name in statistics["message"]
-    assert "yt-analytics.readonly" in statistics["message"]
+    assert "fără statistici" in statistics["message"]
+    assert statistics["technical"]["scopes"] == ["yt-analytics.readonly"]
     assert (
-        "Reconectează canalul din Setări, acordând accesul la statistici" in (statistics["message"])
+        "Reconectează canalul din Setări → Conturi și e-mail, acordând accesul la statistici"
+        in statistics["message"]
     )
 
     # Upload: granted, no refusal recorded — and seven days old, which he is told.

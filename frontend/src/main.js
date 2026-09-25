@@ -4,14 +4,12 @@ import { icon } from './icons.js';
 import { escapeHtml } from './html.js';
 import {
   approvalCaveat,
-  checkClassName,
-  checkLabel,
-  checkVerdictWord,
-  checkLine,
+  checklistHtml,
+  preflightChecklist,
   scheduleNextRun,
   SCHEDULE_TITLE,
 } from './readiness.js';
-import { firstStop, runClassName, runHeadline, stageClassName, stageProducedWord } from './day_outcome.js';
+import { runClassName, runHeadline, stageClassName, stageProducedWord } from './day_outcome.js';
 import { attachRail } from './dialog_rail.js';
 import './style.css';
 import './serial_room.css';
@@ -39,7 +37,7 @@ import {
   accountTypeWord, budgetStateWord, channelTypeWord, confidenceWord, consistencyWord, constraintWord, decisionStateWord,
   accountLine, decisionWord, frameSize, isoDay, providerName, letterStateWord, lifecycleWord, lifecycleActs, matterWords, moneyTagWord, ownerName, pipelineStageWord,
   preflightWord, publicationStatus, qcWord, runStatusWord, seconds, shotWords, storyboardStatus, storyboardTone, topicStatus, workWord,
-  deskPlace, sharedTail,
+  deskPlace, sharedTail, hostFailureWords,
 } from './dialog_words.js';
 import { LiveWindows, eventMatchesAgent } from './live_window.js';
 import { MailThread } from './mail_thread.js';
@@ -53,7 +51,7 @@ import { TitleScreen } from './title_screen.js';
 import { ENTRY, entryPlays, landingPlacement } from './title_frame.js';
 import { STREAM_ROOMS, stillLine, stillSentence } from './replay_still.js';
 import { attachDoor, doorLanded, doorNeedsRead, doorTiming, doorWorldRect, revealInSteps, roomOnScreen } from './dialog_doors.js';
-import { applyMeters, portraitWindow, requesterPerson, rosterCards, rosterHtml, rosterKey, stillFrame } from './roster.js';
+import { applyMeters, portraitWindow, requesterPerson, rosterCards, rosterHtml, rosterKey, stillFrame, streamPortraitSource } from './roster.js';
 import { KeyLight } from './key_light.js';
 import {
   APPROVALS_PATH,
@@ -1644,6 +1642,8 @@ const INSPECTOR_HEAVY = ['inspector-identity', 'inspector-memory-section', 'insp
 
 /** The inspector's heavy parts, emptied to their loading words (a new opening). */
 function clearInspectorBody() {
+  // W32: a fresh opening paints the portrait again (the stream's frame may be newer)
+  delete element('inspector-copy-id').dataset.agent;
   element('inspector-mission').textContent = 'Se încarcă identitatea…';
   element('inspector-contract').replaceChildren();
   element('inspector-system-prompt').textContent = '';
@@ -1797,12 +1797,37 @@ function showInspectorStates(work, standing) {
   };
   set('inspector-state', work, work === null ? '' : workWord(work));
   set('inspector-lifecycle', standing, standing === null ? '' : lifecycleWord(standing));
+  // W32: and worn on the header's portrait, as the roster's card wears it
+  const head = element('inspector-head');
+  if (work !== null) {
+    head.dataset.state = String(work).toUpperCase();
+    element('inspector-state-chip').textContent = workWord(work);
+  }
+  if (standing !== null) head.dataset.standing = String(standing).toUpperCase();
   if (standing !== null) {
     const acts = lifecycleActs(standing);
     /** @type {HTMLButtonElement} */ (element('agent-pause-btn')).disabled = !acts.pause;
     /** @type {HTMLButtonElement} */ (element('agent-resume-btn')).disabled = !acts.resume;
   }
 }
+
+/** W32: the employee's id, copied for him; the key says what happened, then its name again. */
+let copyIdReset = 0;
+element('inspector-copy-id').addEventListener('click', async (event) => {
+  const key = /** @type {HTMLButtonElement} */ (event.currentTarget);
+  const id = key.dataset.agent || '';
+  if (!id) return;
+  let copied = false;
+  try {
+    await navigator.clipboard.writeText(id);
+    copied = true;
+  } catch {
+    copied = false;
+  }
+  key.textContent = copied ? 'Identificator copiat' : 'Nu s-a putut copia';
+  clearTimeout(copyIdReset);
+  copyIdReset = window.setTimeout(() => { key.textContent = 'Copiază identificatorul'; }, 2000);
+});
 
 function renderInspector(agent) {
   element('inspector-name').textContent = agent.display_name || 'Agent';
@@ -1812,7 +1837,17 @@ function renderInspector(agent) {
   roleEl.textContent = deskPlace(officeEngine && officeEngine.assets ? officeEngine.assets.manifest : null, agent.desk_id);
   roleEl.title = agent.role_name || '';
   showInspectorStates(agent.runtime_state || 'IDLE', agent.lifecycle || 'ACTIVE');
-  element('inspector-id').textContent = agent.id || agent.agent_id || '—';
+  // W32: the header wears the roster's portrait of this employee and the state now; the raw id is a
+  // copy key's tooltip, no longer a headline fact
+  const id = String(agent.id || agent.agent_id || '');
+  const copyKey = /** @type {HTMLButtonElement} */ (element('inspector-copy-id'));
+  copyKey.title = id;
+  copyKey.hidden = !id;
+  if (copyKey.dataset.agent !== id) {
+    copyKey.dataset.agent = id;
+    copyKey.textContent = 'Copiază identificatorul';
+    paintPortrait(element('inspector-portrait'), officeState.agents.find((a) => (a.id || a.agent_id) === id) || agent);
+  }
 
   const modelEl = element('inspector-model');
   const runBtn = /** @type {HTMLButtonElement} */ (
@@ -2201,12 +2236,17 @@ function renderAllowedHosts(rows, health) {
       const tryIt = r.search_template_origin
         ? `<button class="quiet btn-host-search-try" data-host="${escapeHtml(r.host)}">Încearcă</button>`
         : '';
-      const search = r.source === 'owner'
-        ? `<div class="host-search">
+      const editor = `<div class="host-search">
             <input class="host-search-template" data-host="${escapeHtml(r.host)}" value="${escapeHtml(r.search_template || '')}" placeholder="adresa de căutare a site-ului, cu {query} unde intră cuvintele (OpenSearch JSON)" title="De exemplu, pentru o enciclopedie MediaWiki: https://${escapeHtml(r.host)}/w/api.php?action=opensearch&search={query}&limit=5&namespace=0&format=json">
             <button class="quiet btn-host-search-save" data-host="${escapeHtml(r.host)}">Salvează căutarea</button>
             ${tryIt}
-          </div>`
+          </div>`;
+      // W33: an empty search field on each of the 36 rows read as a form nobody filled. A row
+      // with an address shows it to edit; a row without one keeps the field behind a key.
+      const search = r.source === 'owner'
+        ? (r.search_template
+          ? editor
+          : `<details class="host-search-edit"><summary class="host-search-key">Adaugă adresa de căutare</summary>${editor}</details>`)
         : tryIt ? `<div class="host-search">${tryIt}</div>` : '';
       // The address the studio found on the site itself, when a test read one. It is shown
       // even where the Owner typed his own, which supersedes it: the point is that he can
@@ -2217,10 +2257,10 @@ function renderAllowedHosts(rows, health) {
       const badge = r.search_template_origin
         ? ` <span class="host-search-badge" title="${escapeHtml(r.search_template || r.discovered_search_template || '')}">${escapeHtml(TEMPLATE_ORIGIN_LABEL[r.search_template_origin] || r.search_template_origin)}</span>`
         : '';
-      // The reason code first, then the site's own words for it: the code is the same on
-      // every host and can be compared, the detail is what actually came back.
+      // W33: said once. The backend's sentence when it wrote one (it names the reason itself),
+      // the reason's label otherwise; the label stays the line's tooltip, to compare hosts.
       const why = r.last_test_status === 'FAILED'
-        ? `<div class="host-test-detail text-error">${escapeHtml(HOST_REASON_LABEL[r.last_test_reason] || r.last_test_reason || 'nu poate fi citit')}${r.last_test_detail ? ` · ${escapeHtml(r.last_test_detail)}` : ''}</div>`
+        ? `<div class="host-test-detail text-error" title="${escapeHtml(HOST_REASON_LABEL[r.last_test_reason] || r.last_test_reason || '')}">${escapeHtml(hostFailureWords(r.last_test_reason, r.last_test_detail, HOST_REASON_LABEL))}</div>`
         : '';
       return `
         <div class="allowed-host-row" data-host="${escapeHtml(r.host)}">
@@ -2850,7 +2890,7 @@ function characterCard(c) {
     <div class="character-card">
       <div class="char-header">
         <span class="char-name">${escapeHtml(c.canonical_name)}</span>
-        ${c.role_symbols ? `<span class="char-archetype">${escapeHtml(String(c.role_symbols).split(',')[0])}</span>` : ''}
+        ${c.role_symbols ? `<span class="char-archetype" title="${escapeHtml(String(c.role_symbols).split(',')[0])}">${escapeHtml(String(c.role_symbols).split(',')[0])}</span>` : ''}
       </div>
       <p class="char-desc">${escapeHtml([c.face_hair_desc, c.outfit_desc].filter(Boolean).join(' '))}</p>
       ${charRow('Personalitate', personality.traits)}
@@ -3350,7 +3390,7 @@ async function loadMediaStoryboards() {
         }
 
         return `
-        <div class="storyboard-card" data-id="${sb.id}">
+        <div class="storyboard-card" data-id="${sb.id}" data-door-steps>
           <div class="storyboard-header">
             <div>
               <h4 class="storyboard-title">${escapeHtml(sb.title)}</h4>
@@ -4397,21 +4437,51 @@ function renderRoster(force) {
 
 /** Each portrait, from the scene's own plates and figure (hq_world.js drawPortrait); dark when none. @param {ParentNode} root */
 function drawPortraits(root) {
-  const renderer = officeEngine && officeEngine.renderer;
   for (const slot of /** @type {HTMLElement[]} */ (Array.from(root.querySelectorAll('[data-portrait]')))) {
     const id = slot.dataset.portrait;
-    const agent = officeState.agents.find((a) => (a.id || a.agent_id) === id);
-    const canvas = /** @type {HTMLCanvasElement|null} */ (slot.querySelector('canvas'));
-    const win = renderer && agent ? portraitWindow(renderer.m && renderer.m.seats ? renderer.m.seats[agent.desk_id] : null) : null;
-    let drawn = false;
-    if (renderer && agent && win && canvas) {
-      canvas.width = PORTRAIT_PX.w;
-      canvas.height = PORTRAIT_PX.h;
-      const ctx = canvas.getContext('2d');
-      drawn = Boolean(ctx && renderer.drawPortrait(ctx, agent, win, stillFrame));
-    }
-    slot.classList.toggle('is-empty', !drawn);
+    paintPortrait(slot, officeState.agents.find((a) => (a.id || a.agent_id) === id) || null);
   }
+}
+
+/**
+ * W32: the real picture of the Unreal building the page holds while the stream is what is seen
+ * (the video's frame copied every 2 s, a frozen or held frame, or an earlier visit's kept frame on
+ * the starting plate); null while the page's own renderer is what is seen.
+ * @returns {{image: HTMLCanvasElement, at: number}|null}
+ */
+function streamPortraitPicture() {
+  if (!liveStream || !officeEngine || !officeEngine.hitsOnly) return null;
+  return liveStream.replayPicture();
+}
+
+/**
+ * One employee's portrait in a slot (.person-portrait with its canvas): over the stream, the real
+ * Unreal frame cut at their desk (roster.js streamPortraitSource), so the roster and the building are
+ * one picture; otherwise the page renderer's plates and figure. Dark with «—» when neither has them.
+ * @param {HTMLElement} slot @param {any} agent the office record
+ */
+function paintPortrait(slot, agent) {
+  const renderer = officeEngine && officeEngine.renderer;
+  const canvas = /** @type {HTMLCanvasElement|null} */ (slot.querySelector('canvas'));
+  const win = renderer && agent ? portraitWindow(renderer.m && renderer.m.seats ? renderer.m.seats[agent.desk_id] : null) : null;
+  let drawn = '';
+  if (renderer && agent && win && canvas) {
+    canvas.width = PORTRAIT_PX.w;
+    canvas.height = PORTRAIT_PX.h;
+    const ctx = canvas.getContext('2d');
+    const picture = streamPortraitPicture();
+    const src = picture && officeEngine ? streamPortraitSource(win, picture.image, { w: officeEngine.worldW, h: officeEngine.worldH }) : null;
+    if (ctx && picture && src) {
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(picture.image, src.sx, src.sy, src.sw, src.sh, 0, 0, canvas.width, canvas.height);
+      drawn = 'stream';
+    } else if (ctx && renderer.drawPortrait(ctx, agent, win, stillFrame)) {
+      drawn = 'page';
+    }
+  }
+  slot.classList.toggle('is-empty', !drawn);
+  slot.dataset.source = drawn;
 }
 
 /** The roster follows the office's record while its door is open. */
@@ -4689,7 +4759,7 @@ async function loadBudget() {
       ? `<div class="helper">${today.unpriced_agent_runs} rulări azi fără preț înregistrat — totalul este mai mic decât cheltuiala reală</div>`
       : '';
     const spend = `<div class="budget-card"><span class="stat-label">Cheltuit</span><strong>azi ${escapeHtml(amount(today.spent_usd))} USD</strong><span>luna asta ${escapeHtml(amount(data.month.spent_usd))} USD · ${data.month.agent_runs} rulări de angajați, ${data.month.unpriced_agent_runs} fără preț</span>${held}${wasted}${unpriced}</div>`;
-    const providers = data.month.by_provider.map((p) => `<div class="budget-card"><span class="stat-label">${escapeHtml(providerName(p.provider))}</span><strong>${escapeHtml(amount(((p.estimated_usd_micros + p.billed_usd_micros) / 1e6).toFixed(2)))} USD</strong><span>${countLabel(p.records, 'înregistrare', 'înregistrări')} · facturat ${escapeHtml(amount((p.billed_usd_micros / 1e6).toFixed(2)))}</span></div>`).join('');
+    const providers = data.month.by_provider.map((p) => `<div class="budget-card"><span class="stat-label budget-vendor">${escapeHtml(providerName(p.provider))}</span><strong>${escapeHtml(amount(((p.estimated_usd_micros + p.billed_usd_micros) / 1e6).toFixed(2)))} USD</strong><span>${countLabel(p.records, 'înregistrare', 'înregistrări')} · facturat ${escapeHtml(amount((p.billed_usd_micros / 1e6).toFixed(2)))}</span></div>`).join('');
     cards.innerHTML = spend + (data.budgets.length ? data.budgets.map(budgetCard).join('') : '<div class="budget-card"><span class="stat-label">Buget</span><strong>nesetat</strong><span>fără limită, nimic nu oprește cheltuiala</span></div>') + providers;
   } catch (error) {
     cards.innerHTML = `<div class="text-error">${escapeHtml(error instanceof Error ? error.message : 'Bugetul nu a putut fi citit.')}</div>`;
@@ -5364,33 +5434,12 @@ async function loadPreflight() {
         <span>${escapeHtml(data.summary || '')}</span>
       </div>`;
     // Every check is shown, passing ones included: the value of a preflight is that the Owner
-    // can see what it actually looked at, not only what it complained about. The word and the
-    // colour come from `readiness.js`, because a failing check is not always a fault: an
-    // INFORMATIONAL one — a serial channel he has not created, a character he has not locked —
-    // used to print as a red "DEGRADES" about a day it does not degrade.
-    // The first check that stops or empties the day, above the list: on the rehearsal's copy
-    // «Studioul poate rula» stood above the one line that foresaw the day losing its film, and
-    // it was the ninth of nineteen. The words are the check's own message.
-    const stop = firstStop(data);
-    const stopLine = stop
-      ? `<div class="runbook-first-stop ${stop.blocking ? 'rb-blocking' : 'rb-degrading'}">
-          <span class="runbook-label">${stop.blocking ? 'Primul punct blocant' : 'Ziua nu ajunge întreagă'}</span>
-          <strong>${escapeHtml(stop.label)}</strong>
-          ${stop.message ? `<span>${escapeHtml(stop.message)}</span>` : ''}
-        </div>`
-      : '';
-    checksEl.innerHTML = stopLine + (data.checks || [])
-      .map(
-        (check) => `
-        <div class="${escapeHtml(checkClassName(check))}${stop && check.name === stop.name ? ' rb-first-stop' : ''}">
-          <div class="topic-card-header">
-            <strong class="topic-card-title">${escapeHtml(checkLabel(check.name))}</strong>
-            <span class="topic-card-novelty">${escapeHtml(checkVerdictWord(check))}</span>
-          </div>
-          <div class="topic-card-meta">${escapeHtml(checkLine(check))}</div>
-        </div>`,
-      )
-      .join('');
+    // can see what it actually looked at, not only what it complained about. W32: as a game's
+    // checklist (readiness.js preflightChecklist): the lines that fail first, the backend's first
+    // stop at their head, each with its state in words, colour and shape and a key to the place
+    // that fixes it; the passing lines one quiet row each; every detail behind «Detalii». The
+    // order, state and place come from each check's code and severity, never from its sentence.
+    checksEl.innerHTML = checklistHtml(preflightChecklist(data), escapeHtml);
     // The button says what will happen rather than letting the Owner discover the refusal.
     const startBtn = /** @type {HTMLButtonElement} */ (element('start-run-btn'));
     startBtn.disabled = status === 'BLOCKED';
@@ -5672,6 +5721,66 @@ if (directCompanyBtn) {
 }
 element('close-runbook-btn').addEventListener('click', () => runbookModal.close());
 element('refresh-preflight-btn').addEventListener('click', () => loadPreflight());
+
+/**
+ * W32: a checklist line's key opens the place that fixes it, through that place's own door: the
+ * daily run's door goes back into the façade and the other grows out of its room (Settings from the
+ * servers on S1, the Treasury from S2 …), opened at the tab or brought to the section that fixes it.
+ * The dock's AUTONOMIE switch is not a door: it is brought into view and given the focus.
+ * @param {{door?: string, tab?: string, section?: string}} place (readiness.js fixPlaceOf, as the key's data)
+ */
+function openFixPlace(place) {
+  if (!place.door) return;
+  runbookModal.close();
+  if (place.door === 'settings') {
+    settingsUI.open(place.tab || 'llm');
+    return;
+  }
+  if (place.door === 'autonomy_switch') {
+    const toggle = /** @type {HTMLButtonElement|null} */ (document.getElementById('stop-toggle'));
+    if (toggle) {
+      toggle.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'nearest' });
+      toggle.focus({ preventScroll: true });
+    }
+    return;
+  }
+  const opener = /** @type {Record<string, string>} */ ({
+    'research-modal': 'open-research-btn',
+    'media-modal': 'open-media-btn',
+    'publishing-modal': 'open-publishing-btn',
+    'workforce-modal': 'open-workforce-btn',
+    'story-modal': 'open-story-btn',
+    'treasury-modal': 'open-treasury-btn',
+  })[place.door];
+  const button = opener ? document.getElementById(opener) : null;
+  const dialog = /** @type {HTMLDialogElement|null} */ (document.getElementById(place.door));
+  if (!button || !dialog) return;
+  button.click();
+  if (place.tab === 'characters') tabCharactersBtn.click();
+  const section = place.section ? document.getElementById(place.section) : null;
+  if (section && place.tab !== 'characters') {
+    // the door reads its content once the pane has landed, and what arrives above the section moves
+    // it: it is brought to the top once it has stood still for a moment (at most about 2 s)
+    const timing = doorTiming(reducedMotion(), (name) => getComputedStyle(document.documentElement).getPropertyValue(name));
+    let last = NaN;
+    let tries = 0;
+    const settle = () => {
+      if (!dialog.open) return;
+      const top = section.getBoundingClientRect().top;
+      if (Math.abs(top - last) < 1 || ++tries > 16) {
+        section.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'start' });
+        return;
+      }
+      last = top;
+      window.setTimeout(settle, 120);
+    };
+    window.setTimeout(settle, timing.open + 60);
+  }
+}
+element('runbook-checks').addEventListener('click', (event) => {
+  const key = /** @type {HTMLElement} */ (event.target).closest('.pf-fix');
+  if (key instanceof HTMLElement) openFixPlace({ door: key.dataset.door, tab: key.dataset.tab, section: key.dataset.section });
+});
 
 /**
  * A day takes minutes — agents think, a render is waited on, quality control reads the file.

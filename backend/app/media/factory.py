@@ -450,8 +450,8 @@ def describe(engine: Engine, vault: CredentialVault) -> dict[str, str | None]:
 READINESS_MESSAGES = {
     "READY": "",
     "NO_SELECTION": (
-        "Niciun serviciu ales pentru {purpose}. Alege conexiunea în Settings → Video și sunet → "
-        "Serviciile alese pentru producție."
+        "Niciun serviciu ales pentru {purpose}. Alege conexiunea în Setări → Video și sunet → "
+        "Servicii alese pentru producție."
     ),
     "NOT_VERIFIED": (
         "{name} este ales pentru {purpose}, dar cheia nu este verificată. Apasă «Verifică "
@@ -459,7 +459,7 @@ READINESS_MESSAGES = {
     ),
     "NO_DEFAULT": (
         "{name} este verificat și ales pentru {purpose}, dar nu are {needs}. Alege-le pe cardul "
-        "conexiunii (Settings → Video și sunet), sau setează-le per canal în politica de producție."
+        "conexiunii (Setări → Video și sunet), sau setează-le per canal în politica de producție."
     ),
     "NO_ADAPTER": (
         "{name} este ales pentru {purpose}, dar studioul nu are încă un adaptor de generare "

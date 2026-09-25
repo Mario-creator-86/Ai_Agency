@@ -184,7 +184,7 @@ def _default_publisher_for(engine: Engine, settings: Any) -> PublisherResolver:
         if not binding.get("publisher_ready"):
             raise NoPublisher(
                 "Canalul nu este legat de un cont YouTube conectat; publicarea nu poate fi "
-                "verificată până nu îl legi în Publicare → Sloturi de canale."
+                "verificată până nu îl legi în Distribuție → Sloturi de canal."
             )
         try:
             provider = selected_youtube(engine, vault, binding["youtube_connection_id"])

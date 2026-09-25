@@ -164,6 +164,45 @@ export function accountLine(type, classLabel) {
 export const providerName = (/** @type {unknown} */ key) =>
   ({ runway: 'Runway', elevenlabs: 'ElevenLabs', ollama: 'Ollama', youtube: 'YouTube', ffmpeg: 'FFmpeg' })[String(key ?? '').toLowerCase()] || String(key ?? '');
 
+/**
+ * Why a site cannot be read, said once (W33). The backend writes a whole Romanian sentence for a
+ * failed test (`last_test_detail`); the page's label for the reason code said the same thing
+ * before it («a refuzat studioul (403) · Site-ul a refuzat cererea…»), and where the code was
+ * derived from an older row the two disagreed. The sentence, when there is one, is the answer;
+ * the label is for a row that has only its code.
+ * @param {unknown} reason the record's reason code
+ * @param {unknown} detail the backend's sentence, printed as written
+ * @param {Record<string, string>} labels the page's words for the codes
+ */
+export function hostFailureWords(reason, detail, labels) {
+  const said = String(detail ?? '').trim();
+  if (said) return said;
+  const code = String(reason ?? '').trim();
+  if (!code) return 'nu poate fi citit';
+  return labels[code.toUpperCase()] ?? codeWords(code);
+}
+
+const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
+/**
+ * A connection's title (W32/W33). A stored name that carries a machine identifier is titled by
+ * what comes before it when that is a name a person gave; a bare identifier, or one after a
+ * machine word such as «settings:» (what the studio's own seed wrote), is titled by the service
+ * itself (`fallback`). The whole stored name stays in `identifier`, for the tooltip.
+ * @param {unknown} name the stored name
+ * @param {string} fallback the service's own name
+ * @returns {{title: string, identifier: string}}
+ */
+export function connectionTitle(name, fallback) {
+  const whole = String(name ?? '').trim();
+  if (!whole) return { title: fallback, identifier: '' };
+  const found = whole.match(UUID);
+  if (!found || found.index === undefined) return { title: whole, identifier: '' };
+  const before = whole.slice(0, found.index).replace(/[\s:·\-_/]+$/, '').trim();
+  const machineWord = /^[a-z][a-z0-9_]*$/.test(before);
+  return { title: before && !machineWord ? before : fallback, identifier: whole };
+}
+
 /** A letter (mesaj, masculine), part two. */
 export const letterStateWord = lookup({ OPEN: 'deschis', ANSWERED: 'răspuns', RESOLVED: 'rezolvat' });
 

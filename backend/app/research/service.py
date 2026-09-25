@@ -48,6 +48,7 @@ from app.research.retrieval import (
     validate_url,
 )
 from app.services import append_event, utc_now
+from app.wording import count, host_test_detail, written_for_the_owner
 
 logger = logging.getLogger("amn.research")
 
@@ -231,9 +232,16 @@ def remove_allowed_host(engine: Engine, host: str, correlation_id: str = "") -> 
 
 
 def _failure_reason(detail: str) -> str:
-    """A closed-vocabulary reason from what the retriever said, for the preflight."""
+    """A closed-vocabulary reason from what the retriever said, for the preflight.
+
+    Also reads a detail stored before ``last_test_reason`` existed (migration 0040): the
+    Owner's studio holds sixteen «Source returned HTTP 403» rows and one Romanian «Site-ul
+    limitează cererile (HTTP 429).» from 2026-09-11, each with the reason NULL.
+    """
     if "HTTP 403" in detail:
         return REASON_HTTP_403
+    if "HTTP 429" in detail:
+        return REASON_RATE_LIMITED
     if "returned HTTP" in detail:
         return REASON_HTTP_ERROR
     if "network, TLS" in detail or "deadline" in detail:
@@ -249,6 +257,23 @@ SCRIPT_ONLY_DETAIL = (
     "Pagina se afișează doar cu JavaScript: HTML-ul servit nu conține text, ci un pachet de "
     "scripturi și o notă care cere activarea lor. Studioul citește HTML-ul servit."
 )
+
+
+def _test_words(status: str | None, reason: str | None, detail: str | None) -> tuple:
+    """A FAILED row's reason and detail as the Owner reads them, whenever it was stored.
+
+    A row tested before the reason column existed carries the retriever's English and no
+    code; the code is derived from that text (`_failure_reason`) and the text said in
+    Romanian (`app.wording.host_test_detail`), so the Research door and the preflight name
+    the same reason. Read only: the record keeps what it had.
+    """
+    if status != "FAILED":
+        return reason, detail
+    raw = detail or ""
+    code = reason or _failure_reason(raw)
+    if raw and written_for_the_owner(raw):
+        return code, raw
+    return code, host_test_detail(code, raw)
 
 
 def test_allowed_host(
@@ -275,6 +300,9 @@ def test_allowed_host(
         raise HostError("Site-ul nu este autorizat; adaugă-l întâi")
     fetcher = retriever or SourceRetriever(RetrievalPolicy((clean,)))
     status, detail, reason, summary = "PASSED", "", None, {}
+    # The retriever's own words, kept for whoever diagnoses the test (the event), never
+    # shown to the Owner as the detail.
+    raw_error: str | None = None
     discovered: str | None = None
     discovery_ran = False
     try:
@@ -291,17 +319,20 @@ def test_allowed_host(
             detail = f"Răspunde; titlu «{source.title[:80]}», {len(source.text)} caractere de text."
             discovered, discovery_ran = discover_search_template(clean, source, fetcher)
     except RateLimited as exc:
-        status, reason = "FAILED", REASON_RATE_LIMITED
-        detail = "Site-ul limitează cererile (HTTP 429)."
-        if exc.retry_after:
-            detail += f" Retry-After: {exc.retry_after}."
+        status, reason, raw_error = "FAILED", REASON_RATE_LIMITED, str(exc)
+        detail = host_test_detail(reason, raw_error, exc.retry_after)
     except RetrievalError as exc:
-        status, detail, reason = "FAILED", str(exc), _failure_reason(str(exc))
-        if reason == REASON_SCRIPT_ONLY:
-            detail = f"{SCRIPT_ONLY_DETAIL} ({exc})"
+        status, raw_error = "FAILED", str(exc)
+        reason = _failure_reason(raw_error)
+        detail = (
+            SCRIPT_ONLY_DETAIL
+            if reason == REASON_SCRIPT_ONLY
+            else host_test_detail(reason, raw_error)
+        )
     except OSError as exc:
         status, reason = "FAILED", REASON_NETWORK
-        detail = f"Conexiunea a eșuat: {type(exc).__name__}"
+        raw_error = f"{type(exc).__name__}: {exc}".rstrip(": ")
+        detail = host_test_detail(reason, "network, TLS")
     tested_at = utc_now()
     with Session(engine) as session, session.begin():
         row = session.get(ResearchAllowedHost, clean)
@@ -330,6 +361,7 @@ def test_allowed_host(
                 "status": status,
                 "reason": reason,
                 "discovered_search_template": discovered is not None,
+                **({"error_detail": raw_error[:500]} if raw_error else {}),
             },
             correlation_id or str(uuid4()),
         )
@@ -370,14 +402,15 @@ def retest_stale_hosts(
 
 def _host_view(row: ResearchAllowedHost) -> dict[str, Any]:
     _, origin = effective_search_template(row)
+    reason, detail = _test_words(row.last_test_status, row.last_test_reason, row.last_test_detail)
     return {
         "host": row.host,
         "source": row.added_by if row.added_by == ADDED_BY_ENV else "owner",
         "added_at": row.added_at,
         "last_test_at": row.last_test_at,
         "last_test_status": row.last_test_status,
-        "last_test_detail": row.last_test_detail,
-        "last_test_reason": row.last_test_reason,
+        "last_test_detail": detail,
+        "last_test_reason": reason,
         "search_template": row.search_template,
         "discovered_search_template": row.discovered_search_template,
         "discovered_at": row.discovered_at,
@@ -764,11 +797,13 @@ def research_health(engine: Engine, settings: Settings) -> dict[str, Any]:
     if not with_template and search_status == SEARCH_PROVIDER_NONE:
         reasons.append(
             "Studioul nu are cum să găsească pagini: niciun site nu are adresă de căutare "
-            "(a Owner-ului sau descoperită) și niciun motor de căutare nu este verificat."
+            "(a ta sau descoperită) și niciun motor de căutare nu este verificat."
         )
     if claims < MIN_CLAIMS_AVAILABLE:
         reasons.append(
-            f"Doar {claims} afirmații verificate disponibile (minim {MIN_CLAIMS_AVAILABLE})."
+            "Doar "
+            + count(claims, "afirmație verificată disponibilă", "afirmații verificate disponibile")
+            + f" (minim {MIN_CLAIMS_AVAILABLE})."
         )
     return {
         "hosts_total": len(rows),

@@ -409,7 +409,7 @@ def _performance_intake(engine: Engine, vault: Any) -> dict[str, Any]:
         return _outcome(
             SKIPPED,
             "Niciun cont YouTube legat de un slot de canal pentru analytics. Leagă contul în "
-            "Publicare → Sloturi de canale; fără legătură nu se știe ale cui sunt cifrele."
+            "Distribuție → Sloturi de canal; fără legătură nu se știe ale cui sunt cifrele."
             + (f" ({detail})" if detail else ""),
             skipped=skipped,
         )
@@ -2017,7 +2017,7 @@ def _publish(
             return _outcome(
                 SKIPPED,
                 "Niciun slot de canal nu este legat de un cont YouTube conectat. Leagă-le în "
-                "Publicare → Sloturi de canale; publicarea și analytics folosesc legătura.",
+                "Distribuție → Sloturi de canal; publicarea și analytics folosesc legătura.",
             )
         # A BLOCKED_GATE row is the gate's refusal kept for the audit, not a film on its way
         # to a channel: counting it here kept an episode out for good after one refusal.

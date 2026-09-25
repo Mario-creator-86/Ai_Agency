@@ -34,6 +34,31 @@ export function portraitWindow(seat) {
 }
 
 /**
+ * W32, A PORTRAIT OVER THE STREAM: while the Unreal building is what the visitor sees, the portrait
+ * is cut from the real frame the page holds (hq_stream.js replayPicture), at the same world window.
+ * The stream's frame is laid exactly over the world (game_frame.js streamTransform; replay_still.js
+ * measured 1920x1008 over 1600x840, and the Unreal figures sit on the manifest's seats: each head
+ * 34-36 world px above its seat, the portrait window's 12th px). The window in the frame's pixels,
+ * clamped to the frame; null when nothing of it is in the frame or there is no frame.
+ * @param {number[]|null|undefined} win world [x, y, w, h]
+ * @param {{width: number, height: number}|null|undefined} image the frame
+ * @param {{w: number, h: number}} world
+ * @returns {{sx: number, sy: number, sw: number, sh: number}|null}
+ */
+export function streamPortraitSource(win, image, world) {
+  if (!win || !image || !(image.width > 0) || !(image.height > 0) || !(world.w > 0) || !(world.h > 0)) return null;
+  const kx = image.width / world.w;
+  const ky = image.height / world.h;
+  const round = (/** @type {number} */ v) => Math.round(v * 1000) / 1000;
+  const x0 = Math.max(0, win[0] * kx);
+  const y0 = Math.max(0, win[1] * ky);
+  const x1 = Math.min(image.width, (win[0] + win[2]) * kx);
+  const y1 = Math.min(image.height, (win[1] + win[3]) * ky);
+  if (!(x1 > x0) || !(y1 > y0)) return null;
+  return { sx: round(x0), sy: round(y0), sw: round(x1 - x0), sh: round(y1 - y0) };
+}
+
+/**
  * The figure's still in a portrait: the first frame of the animation the scene plays for the
  * employee's state now (typing when working, asleep when paused, the head held on an error;
  * idle with the eyes open), at the seat's facing. -1 when the atlas has none.

@@ -213,8 +213,11 @@
 
       <!-- Agent Inspector Modal / Drawer -->
       <dialog id="agent-inspector" class="studio-dialog">
-        <div class="dialog-header">
-          <div>
+        <div class="dialog-header inspector-head" id="inspector-head">
+          <!-- W32: the roster's portrait of the employee (the real Unreal frame at the desk while the
+               stream is seen, else the page's figure), the state worn on it; the place and the name -->
+          <span class="person-portrait inspector-portrait is-empty" id="inspector-portrait" aria-hidden="true"><canvas class="person-canvas" width="0" height="0"></canvas><span class="person-portrait-none">—</span><span class="person-state"><span class="person-dot"></span><span class="person-state-word" id="inspector-state-chip">—</span></span></span>
+          <div class="inspector-heading">
             <span class="eyebrow dialog-eyebrow" id="inspector-role">ROL</span>
             <h2 id="inspector-name" class="dialog-title">Agent</h2>
           </div>
@@ -228,12 +231,12 @@
             <div><span class="stat-label">Stare de lucru</span><strong id="inspector-state" class="stat-value text-accent">IDLE</strong></div>
             <div><span class="stat-label">Statut în companie</span><strong id="inspector-lifecycle" class="stat-value text-success">ACTIVE</strong></div>
             <div><span class="stat-label">Model alocat</span><strong id="inspector-model" class="stat-value">—</strong></div>
-            <div><span class="stat-label">Identificator</span><small id="inspector-id" class="stat-uuid">uuid</small></div>
           </div>
           <div class="dialog-btn-row">
             <button id="agent-pause-btn" class="secondary btn-pause">Pune în pauză</button>
             <button id="agent-resume-btn" class="secondary btn-resume">Reia lucrul</button>
             <button id="agent-live-btn" class="quiet btn-live" title="Deschide o fereastră live separată: ce face, ce spune și ce termină angajatul">Fereastră live ↗</button>
+            <button id="inspector-copy-id" class="quiet btn-copy-id" type="button">Copiază identificatorul</button>
           </div>
           <div class="dialog-section" id="inspector-identity">
             <h3 class="dialog-section-header">Identitate și contract de rol</h3>
@@ -443,7 +446,7 @@
             <div id="company-decisions" class="topics-container"></div>
           </div>
 
-          <div class="dialog-section-bottom" id="rb-preflight">
+          <div class="dialog-section-bottom" id="rb-preflight" data-door-steps>
             <div class="topics-header-row">
               <h3 class="dialog-section-header-bright-compact">Verificare preliminară</h3>
               <button id="refresh-preflight-btn" class="quiet btn-refresh">Reîncarcă</button>
@@ -451,7 +454,7 @@
             <div id="runbook-preflight-summary" class="runbook-summary">
               <div class="topics-loading">Se încarcă verificarea preliminară…</div>
             </div>
-            <div id="runbook-checks" class="topics-container"></div>
+            <div id="runbook-checks" class="topics-container" data-door-steps></div>
           </div>
 
           <div id="rb-schedule">
@@ -654,9 +657,9 @@
           </nav>
           <div class="dialog-pane">
 
-          <div id="media-content-area">
+          <div id="media-content-area" data-door-steps>
             <!-- Storyboard View -->
-            <div id="media-storyboards-section">
+            <div id="media-storyboards-section" data-door-steps>
               <div class="topics-header-row">
                 <h3 class="dialog-section-header-bright-compact">Fluxul activ: scenariu · storyboard · video · QC</h3>
                 <div class="media-actions-bar">
@@ -670,7 +673,7 @@
                 <h4 class="awaiting-title">Scenarii aprobate în așteptarea producției</h4>
                 <div id="awaiting-list" class="topics-container"></div>
               </div>
-              <div id="storyboards-list" class="storyboard-container">
+              <div id="storyboards-list" class="storyboard-container" data-door-steps>
                 <div class="topics-loading">Se încarcă producția media…</div>
               </div>
             </div>
@@ -700,7 +703,7 @@
         </div>
         <div class="dialog-body">
 
-          <div class="publishing-content-area">
+          <div class="publishing-content-area" data-door-steps>
             <!-- Gate & Channel Overview -->
             <div class="pub-overview-grid">
               <div class="pub-card pub-channels-card">
@@ -743,7 +746,7 @@
             <div id="publishing-status-msg" class="dialog-status-msg" hidden></div>
 
             <!-- Publications History Table -->
-            <div class="pub-history-section">
+            <div class="pub-history-section" data-door-steps>
               <div class="topics-header-row">
                 <h3 class="dialog-section-header-bright-compact">Istoricul publicărilor</h3>
               </div>

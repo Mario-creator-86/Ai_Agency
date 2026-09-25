@@ -511,6 +511,12 @@
   --side-pad: 18px;                          /* W31: the side drawer's inset, which its «more below» fade reaches past */
   --approval-portrait-w: 48px;                /* who asked for an approval, at their desk */
   --approval-portrait-h: 36px;
+  /* W32: the inspector's header portrait, the checklist's state column, the wide doors at 2560 */
+  --inspector-portrait-w: 136px;
+  --inspector-portrait-h: 102px;
+  --pf-mark-w:          128px;                /* the state's word and shape, one column for every row */
+  --pf-measure:         96ch;                 /* the longest a checklist sentence runs */
+  --dialog-w-wide:      1840px;               /* the roster and the daily run's door at 2560 */
   --kept-dim:      brightness(.56) saturate(.72); /* that last live frame, dimmed so it is never taken for live (W19) */
   --plaque-glass:  var(--card-glass);         /* the studio's numbers over the live video: the drawers' glass (W19) */
   --plaque-edge:   var(--drawer-edge);
@@ -3645,18 +3651,9 @@ details[open] > summary::before { transform: rotate(90deg); }
 /* ==========================================================================
    7 A CARD TITLED WITH A MACHINE IDENTIFIER
    ==========================================================================
-   The identifier keeps every character it had; it is printed as the card's meta
-   line rather than in the largest type on the card, in the mono face every
-   other identifier in the product wears, with the whole string on hover.
+   W32: the card is titled by the word before the identifier; the whole stored
+   name («settings:<uuid>») is the title's tooltip, no longer a printed line.
    ========================================================================== */
-.settings-card-id {
-  margin: calc(-1 * var(--s1)) 0 var(--s2);
-  font-family: var(--font-mono);
-  font-size: var(--fs-meta);
-  letter-spacing: -.02em;
-  color: var(--ink-3);
-  overflow-wrap: anywhere;
-}
 
 /* ==========================================================================
    8 THE DISPLAY FACE ON THE FEW BIG WORDS
@@ -4834,17 +4831,17 @@ body.is-arming #workspace { opacity: 0; }
   border-radius: var(--radius-pill);
   background: var(--ink-3);
 }
-.person-card[data-state="WORKING"] .person-dot,
-.person-card[data-state="EXECUTING"] .person-dot,
-.person-card[data-state="RUNNING"] .person-dot,
-.person-card[data-state="THINKING"] .person-dot,
-.person-card[data-state="PLANNING"] .person-dot,
-.person-card[data-state="REVIEWING"] .person-dot { background: var(--ok-ink); }
-.person-card[data-state="ERROR"] .person-dot,
-.person-card[data-state="FAILED"] .person-dot,
-.person-card[data-state="BLOCKED"] .person-dot { background: var(--alert-ink); }
-.person-card[data-standing="PAUSED"] .person-dot,
-.person-card[data-standing="SUSPENDED"] .person-dot { background: var(--warn-ink); }
+:is(.person-card, .inspector-head)[data-state="WORKING"] .person-dot,
+:is(.person-card, .inspector-head)[data-state="EXECUTING"] .person-dot,
+:is(.person-card, .inspector-head)[data-state="RUNNING"] .person-dot,
+:is(.person-card, .inspector-head)[data-state="THINKING"] .person-dot,
+:is(.person-card, .inspector-head)[data-state="PLANNING"] .person-dot,
+:is(.person-card, .inspector-head)[data-state="REVIEWING"] .person-dot { background: var(--ok-ink); }
+:is(.person-card, .inspector-head)[data-state="ERROR"] .person-dot,
+:is(.person-card, .inspector-head)[data-state="FAILED"] .person-dot,
+:is(.person-card, .inspector-head)[data-state="BLOCKED"] .person-dot { background: var(--alert-ink); }
+:is(.person-card, .inspector-head)[data-standing="PAUSED"] .person-dot,
+:is(.person-card, .inspector-head)[data-standing="SUSPENDED"] .person-dot { background: var(--warn-ink); }
 /* no office record: no state to wear; the dark portrait says «—» once */
 .person-card[data-state="UNKNOWN"] .person-state { display: none; }
 .person-standing {
@@ -4999,3 +4996,244 @@ body.is-arming #workspace { opacity: 0; }
     }
   }
 }
+
+
+/* ==========================================================================
+   W32 — THE PREFLIGHT AS A GAME'S CHECKLIST (readiness.js checklistHtml)
+   ==========================================================================
+   Judged NO as nineteen cards of paragraphs. Now: the lines that fail first, each one row — the
+   state in words, colour and shape in one column, the name and the backend's sentence, the key to
+   the place that fixes it; the passing lines one quiet row each; every detail behind «Detalii». */
+.pf-group { display: grid; gap: var(--s2); }
+.pf-group + .pf-group { margin-top: var(--s5); }
+.pf-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  margin: 0;
+  font-size: var(--fs-micro);
+  font-weight: var(--w-bold);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.pf-group[data-group="attention"] .pf-group-head { color: var(--gold-ink); }
+.pf-count { font-variant-numeric: tabular-nums; color: var(--ink-2); }
+.pf-rows { display: grid; gap: var(--s2); }
+
+.pf-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: var(--fs-micro);
+  font-weight: var(--w-bold);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--ink-3);
+}
+.pf-shape { font-size: var(--fs-meta); line-height: 1; letter-spacing: 0; }
+.pf-mark[data-tone="blocking"] { color: var(--alert-ink); }
+.pf-mark[data-tone="degrading"] { color: var(--warn-ink); }
+.pf-mark[data-tone="info"], .pf-mark[data-tone="unknown"] { color: var(--info-ink); }
+.pf-mark[data-tone="ok"] { color: var(--ok-ink); }
+
+/* a failing line: mark | name, sentence, details | key */
+.pf-row.pf-fail {
+  display: grid;
+  grid-template-columns: var(--pf-mark-w) minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: var(--s4);
+  padding: var(--s3) var(--s4);
+  background: var(--surface-sunk);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+}
+.pf-row.pf-fail > .pf-mark { padding-top: 3px; }
+.pf-row.pf-fail[data-tone="blocking"] { background: var(--alert-bg); border-color: var(--alert-line); border-left-color: var(--alert-ink); }
+.pf-row.pf-fail[data-tone="degrading"] { background: var(--warn-bg); border-color: var(--warn-line); border-left-color: var(--warn-ink); }
+.pf-row.pf-fail[data-tone="info"],
+.pf-row.pf-fail[data-tone="unknown"] { border-left-color: var(--info-line); }
+.pf-body { display: grid; gap: var(--s1); min-width: 0; }
+.pf-first {
+  font-size: var(--fs-micro);
+  font-weight: var(--w-bold);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+  color: var(--gold-ink);
+}
+.pf-row .pf-name { margin: 0; font-size: var(--fs-lead); font-weight: var(--w-semi); color: var(--ink); }
+.pf-row.pf-fail .pf-message { margin: 0; max-width: var(--pf-measure); font-size: var(--fs-body); line-height: var(--lh-snug); color: var(--ink-2); }
+.pf-row .pf-fix {
+  align-self: center;
+  min-height: var(--hit);
+  padding: 0 var(--s3);
+  white-space: nowrap;
+  font-size: var(--fs-meta);
+}
+.pf-more { margin-top: var(--s1); }
+.pf-more-key {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--hit);
+  cursor: pointer;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+  list-style: none;
+}
+.pf-more-key:hover { color: var(--ink); }
+/* a passing line's own fold: its marker turns at the end of the row, beside «Detalii» */
+.pf-ok-line .pf-more-key::after { content: "▸"; margin-left: var(--s2); transition: transform var(--dur-fast) var(--ease); }
+details[open] > .pf-ok-line .pf-more-key::after { transform: rotate(90deg); }
+.pf-detail {
+  margin: var(--s1) 0 0;
+  max-width: var(--pf-measure);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-snug);
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+}
+
+/* a passing line: one quiet row — ✓ OK, its name, its sentence on one line; more behind «Detalii» */
+.pf-row.pf-ok { border-bottom: 1px solid var(--line); }
+.pf-ok-line {
+  display: grid;
+  grid-template-columns: var(--pf-mark-w) minmax(0, max-content) minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--s4);
+  min-height: var(--hit);
+  padding: var(--s1) var(--s4);
+  list-style: none;
+}
+.dialog-body details.pf-ok > summary.pf-ok-line { display: grid; column-gap: var(--s4); cursor: pointer; }
+.dialog-body details.pf-ok > summary.pf-ok-line::before { content: none; }
+summary.pf-ok-line:hover .pf-name,
+summary.pf-ok-line:hover .pf-more-key { color: var(--ink); }
+.pf-ok-line .pf-name { font-size: var(--fs-body); font-weight: var(--w-med); color: var(--ink-2); white-space: nowrap; }
+.pf-ok-line .pf-message {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+}
+details[open].pf-ok .pf-ok-line .pf-message { white-space: normal; overflow: visible; }
+.pf-row.pf-ok > .pf-detail { margin: 0 0 var(--s3) calc(var(--pf-mark-w) + var(--s4) * 2); }
+
+/* where the door is narrower than 1440, the key stands under the sentence, not beside it */
+@media (max-width: 1400px) {
+  .pf-row.pf-fail { grid-template-columns: var(--pf-mark-w) minmax(0, 1fr); }
+  .pf-row .pf-fix { grid-column: 2; justify-self: start; margin-top: var(--s2); }
+}
+@media (max-width: 760px) {
+  .pf-row.pf-fail { grid-template-columns: minmax(0, 1fr); row-gap: var(--s2); }
+  .pf-row .pf-fix { grid-column: 1; margin-top: 0; }
+  .pf-row.pf-fail > .pf-mark { padding-top: 0; }
+  .pf-row .pf-fix { justify-self: start; white-space: normal; text-align: left; }
+  .pf-ok-line,
+  .dialog-body details.pf-ok > summary.pf-ok-line { grid-template-columns: auto minmax(0, 1fr) auto; column-gap: var(--s3); padding-inline: var(--s2); }
+  .pf-ok-line .pf-word { display: none; }
+  .pf-ok-line .pf-message { grid-column: 2 / -1; grid-row: 2; }
+  .pf-row.pf-ok > .pf-detail { margin-left: var(--s2); }
+}
+
+/* ==========================================================================
+   W32 — THE INSPECTOR'S FACE, THE VENDOR'S NAME, THE PHONE RAILS, THE WIDE DOORS
+   ========================================================================== */
+.inspector-head { align-items: center; gap: var(--s5); }
+.inspector-head > .inspector-heading { flex: 1 1 auto; min-width: 0; }
+.person-portrait.inspector-portrait {
+  flex: none;
+  width: var(--inspector-portrait-w);
+  height: var(--inspector-portrait-h);
+}
+.inspector-portrait .person-state { font-size: var(--fs-micro); }
+.btn-copy-id { margin-left: auto; }
+/* the id left the facts: three of them, three columns */
+@media (min-width: 761px) { #agent-inspector .agent-stats-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+/* a vendor is a name, not a label: «Runway», as the vendor writes it */
+.budget-card .stat-label.budget-vendor {
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: var(--fs-body);
+  font-weight: var(--w-semi);
+  color: var(--ink-2);
+}
+
+/* the phone's section rail: as wide as the content under it, faded at the edge it scrolls past */
+@media (max-width: 600px) {
+  .dialog-rail { margin: var(--s4) var(--s4) var(--s2); padding: var(--s2); }
+  .inspector-head { gap: var(--s3); }
+  /* an 88 px portrait has no room for the chip; the state is the first fact under the header */
+  .inspector-portrait .person-state { display: none; }
+  :root { --inspector-portrait-w: 88px; --inspector-portrait-h: 66px; }
+  .btn-copy-id { margin-left: 0; }
+}
+@supports (animation-timeline: scroll(self inline)) {
+  @property --rail-cut-start {
+    syntax: "<length>";
+    inherits: false;
+    initial-value: 0px;
+  }
+  @property --rail-cut-end {
+    syntax: "<length>";
+    inherits: false;
+    initial-value: 0px;
+  }
+  @keyframes rail-cut-fade {
+    0%       { --rail-cut-start: 0px; --rail-cut-end: calc(var(--edge-fade) * 2); }
+    8%, 92%  { --rail-cut-start: calc(var(--edge-fade) * 2); --rail-cut-end: calc(var(--edge-fade) * 2); }
+    100%     { --rail-cut-start: calc(var(--edge-fade) * 2); --rail-cut-end: 0px; }
+  }
+  @media (max-width: 1100px) {
+    .dialog-rail {
+      mask-image: linear-gradient(to right, transparent 0, var(--mask-solid) var(--rail-cut-start),
+        var(--mask-solid) calc(100% - var(--rail-cut-end)), transparent 100%);
+      animation: rail-cut-fade linear both;
+      animation-timeline: scroll(self inline);
+    }
+  }
+}
+
+/* Media's and Distribuție's pane is one wrapper, so the W28 rule above never kept their parts
+   below the fold out of layout: Media laid out every storyboard, scene and prompt in its first frame
+   (42.6 ms of layout, 18.5 of it shaping text, trace at 1920). A storyboard and a scene are now laid
+   out as they come near the view, as the topics are; while the door opens they come in one per frame
+   (data-door-steps). */
+.studio-dialog .storyboard-card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 720px;
+}
+.studio-dialog .scene-card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 180px;
+}
+/* the Journal's newest episode is a 5800 px room laid out in one step (646 objects, 21-22 ms of
+   layout at 1920): its script's beats are laid out as they come near the view */
+.studio-dialog .script-beat {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 150px;
+}
+
+/* at 2560 the roster and the daily run take a wider measure: a place stays on one line */
+@media (min-width: 2400px) {
+  #workforce-modal, #workforce-modal[open],
+  #runbook-modal, #runbook-modal[open] { width: min(var(--dialog-w-wide), 94vw); }
+  #workforce-modal { --person-card-min: 380px; --person-portrait-w: 168px; --person-portrait-h: 126px; }
+}
+
+/* W33 — the release judge's small fixes. A Character Bible place chip («Research & Fact-Check
+   Lab») was cut mid-word at the card's edge: the header now lets it stand under the name when
+   the two do not share a line, and a name longer than the card ends in an ellipsis, the whole
+   place in the chip's title. */
+.char-header { flex-wrap: wrap; justify-content: space-between; row-gap: 6px; }
+.char-archetype { display: block; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Research: a site without a search address keeps the empty field behind «Adaugă adresa de
+   căutare»; the key is the row's quiet last line. */
+.host-search-edit { flex-basis: 100%; }
+.host-search-edit > .host-search-key { font-size: var(--fs-meta); color: var(--ink-2); cursor: pointer; width: max-content; }
+.host-search-edit > .host-search-key:hover { color: var(--ink); }
+.host-search-edit[open] > .host-search { margin-top: var(--s1); max-width: none; }

@@ -667,7 +667,7 @@ export function episodeHtml(episode, context = {}) {
         ${episode.storyboard_id ? '<span class="film-chip">pregătit de filmare</span>' : ''}
       </span>
     </summary>
-    <div class="episode-room">
+    <div class="episode-room" data-door-steps>
       <div class="episode-script">
         ${beatBoardHtml(id, beats)}
         <article class="script-page" aria-label="Scenariul episodului">

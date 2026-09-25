@@ -1416,3 +1416,17 @@ No provider was called, no run was queued, no credit was spent, and
 ## The employees as people, and the publishing gate in Romanian (2026-09-25)
 
 - W31 (release judge, 2026-09-25): [done] fresh-copy fixtures judged; stale next-run promise, daily_main title, doubled preflight line, subjectless media key line (backend, TDD), the drawer's «more below» fade, the register's gate_failed/failed rows, the OTHER negation and the publish status words fixed. [owner] restart start.py (new words, stream light); decide on the stored history, the models' English, the identity contracts and channel names, the «settings» connection, the Director's title, the gold edge, the ollama prices and the analytics scope. [next] a preflight in the page's words (no routes, env names or scopes in sentences; decimal comma; sizes in MB); research retrieval details in Romanian with a reason code; the preflight as a folded checklist; the inspector's portrait and hidden id; no integration key line in Setări; vendor names in their own case; the phone rails; Media's frame over the stream; wider doors at 2560; portraits from the Unreal render.
+
+## The preflight as a checklist, and real faces over the stream (2026-09-25)
+
+- CHANGELOG — Preflight: structured code / impact / place / technical on every line; sentences in the page's places («Trezorerie → Buget și cheltuieli», «Producție media → Character Bible», «Distribuție → Sloturi de canal», «Setări → Conturi și e-mail»); scopes said as what they allow; Romanian dates and decimal comma in sentences; the vision line's agent id moved to value. Research: failed site tests are Romanian with a reason code, and pre-0040 rows are read the same way on the Research door and in the preflight. Open: page controls for token prices, the Director's right to approve episodes and channel slot creation; the remaining «Settings» words in analytics, factual and media messages; the frontend reading the new fields (readiness.js).
+
+- W33 release judge: amazed YES, premium ALMOST, the preflight checklist YES. Done: the page and backend agree on the place fields; Research failures are said once, and never blame the Owner's entry for a redirect; empty search fields sit behind a key; Character Bible chips are no longer cut; the seeded connection has a real title. Next:
+  (1) page controls for token prices (Trezorerie), the Director's right to approve episodes and slot creation (Distribuție), switching the backend's not_on_page places when they land;
+  (2) fold «Starea modulelor»;
+  (3) remove the kept-frame seam on the returning title;
+  (4) stagger the Research door's first open;
+  (5) the register's routine entries in the studio's words;
+  (6) raw channel and voice ids to tooltips; the backend prompt builder's repeated subject;
+  (7) the remaining «Settings» words in analytics, factual and media messages; the microsoft.com block page counted as readable.
+  Owner: restart, prices, the Director's approval right, YouTube statistics grant, budget before PRODUCTION, reference sets, the Director's title, stored English history.

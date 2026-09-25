@@ -574,7 +574,7 @@ def select_channel_for(
             return skipped(
                 f"Slotul „{channel.channel_name}” ({channel.channel_type}) nu este legat de "
                 "un cont YouTube conectat; filmul nu pleacă pe alt canal. Leagă-l în "
-                "Publicare → Sloturi de canale.",
+                "Distribuție → Sloturi de canal.",
                 channel,
                 channel_type,
             )

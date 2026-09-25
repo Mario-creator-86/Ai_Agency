@@ -155,3 +155,235 @@ export function scheduleNextRun(job) {
   if (!job.is_active) return null;
   return job.next_run_at || null;
 }
+
+/* ==========================================================================================
+ * W32 — THE PREFLIGHT AS A GAME'S CHECKLIST
+ * ==========================================================================================
+ * The release judge read the preflight as a console: nineteen cards of the backend's paragraphs,
+ * a passing line at the weight of the one that costs the day, API routes and scope lists printed
+ * whole. It is now a checklist. The lines that fail stand first (the backend's first stop, then
+ * blocking, then degrading, then a severity the page does not know), each one row: its state in
+ * words, colour and shape, its name, the backend's message, and a key to the place in the page
+ * that fixes it. The informational lines that fail follow; the passing lines are one quiet row
+ * each. Every detail is behind «Detalii». Order, state and place come from the check's code,
+ * `ok` and `severity`; no sentence is parsed, and every sentence is printed as it came.
+ */
+
+/**
+ * The places in the page that fix a line: a door (and a section or tab of it), a Settings tab, or
+ * the dock's AUTONOMIE switch. Each label is the place's own heading.
+ * @type {Record<string, {label: string, door: string, tab?: string, section?: string}>}
+ */
+export const FIX_PLACES = {
+  autonomy_switch: { label: 'comutatorul AUTONOMIE', door: 'autonomy_switch' },
+  'settings:llm': { label: 'Setări · Furnizori AI', door: 'settings', tab: 'llm' },
+  'settings:agents': { label: 'Setări · Angajați', door: 'settings', tab: 'agents' },
+  'settings:media': { label: 'Setări · Video și sunet', door: 'settings', tab: 'media' },
+  'settings:social': { label: 'Setări · Conturi și e-mail', door: 'settings', tab: 'social' },
+  research: { label: 'Cercetare · Surse și afirmații', door: 'research-modal', section: 'rs-sources' },
+  publishing: { label: 'Distribuție · Sloturi de canal', door: 'publishing-modal', section: 'channels-list' },
+  treasury: { label: 'Trezorerie · Buget și cheltuieli', door: 'treasury-modal', section: 'tr-budget' },
+  characters: { label: 'Media · Character Bible', door: 'media-modal', tab: 'characters', section: 'media-characters-section' },
+};
+
+/**
+ * Which place fixes each check, by its code (`backend/app/runbook/preflight.py`). A check with no
+ * entry has no place in the page: FFmpeg and FFprobe are installed on the studio's machine, the
+ * token prices and the serial's right to approve episodes are set through the API only.
+ * @type {Record<string, string>}
+ */
+export const CHECK_FIX = {
+  stop_autonomy: 'autonomy_switch',
+  llm_provider: 'settings:llm',
+  agents: 'settings:agents',
+  vision_capability: 'settings:agents',
+  research_sources: 'research',
+  image_provider: 'settings:media',
+  voice_provider: 'settings:media',
+  publishing: 'settings:social',
+  youtube_upload_access: 'settings:social',
+  youtube_statistics_access: 'settings:social',
+  youtube_channel_binding: 'publishing',
+  spending_budget: 'treasury',
+  daily_budget_films: 'treasury',
+  character_references: 'characters',
+};
+
+/**
+ * The backend's places (`backend/app/runbook/preflight.py` PLACES, W32): a door by its masthead
+ * room, a Settings tab, the dock's AUTONOMIE switch. `machine` (the studio's computer) and
+ * `not_on_page` (the API only) are no place in the page, so they get no key.
+ * @type {Record<string, string>}
+ */
+export const BACKEND_DOORS = {
+  research: 'research-modal',
+  media: 'media-modal',
+  publishing: 'publishing-modal',
+  workforce: 'workforce-modal',
+  story: 'story-modal',
+  treasury: 'treasury-modal',
+  autonomy_switch: 'autonomy_switch',
+};
+
+/**
+ * @typedef {{label: string, door: string, tab?: string, section?: string}} FixPlace
+ */
+
+/**
+ * The place that fixes a failing line, or null: a passing line needs no key, and a line nothing in
+ * the page can fix gets none rather than a key to a place that cannot help. The backend's own
+ * `place`, `place_label` and `place_section` are read first (W32; the label is its words, as its
+ * sentence names the place); a backend that does not send them yet (the Owner's running studio
+ * before a restart) is read by the check's code (CHECK_FIX).
+ * @param {{name?: string, ok?: boolean, place?: string|null, place_label?: string|null, place_section?: string|null}} check
+ * @returns {FixPlace|null}
+ */
+export function fixPlaceOf(check) {
+  if (!check || check.ok) return null;
+  if (Object.prototype.hasOwnProperty.call(check, 'place')) {
+    const place = String(check.place || '');
+    const label = String(check.place_label || '').trim();
+    const section = check.place_section ? String(check.place_section) : undefined;
+    if (place.startsWith('settings:')) {
+      const tab = place.slice('settings:'.length);
+      return { label: label || FIX_PLACES[place]?.label || 'Setări', door: 'settings', tab };
+    }
+    const door = BACKEND_DOORS[place];
+    if (!door || !label) return null;
+    return {
+      label,
+      door,
+      ...(section === 'media-characters-section' ? { tab: 'characters' } : {}),
+      ...(section ? { section } : {}),
+    };
+  }
+  const key = CHECK_FIX[String(check.name || '')];
+  return key ? FIX_PLACES[key] || null : null;
+}
+
+/**
+ * What the sentence no longer says (the backend's `technical`: routes, settings, scopes, fields,
+ * answers, paths), for the line's tooltip. "" when it sends none.
+ * @param {{technical?: Record<string, unknown>}} check
+ */
+export function technicalNote(check) {
+  const t = check && check.technical && typeof check.technical === 'object' ? check.technical : null;
+  if (!t) return '';
+  return Object.values(t).flatMap((v) => (Array.isArray(v) ? v.map(String) : [])).filter(Boolean).join(' · ');
+}
+
+/**
+ * What a check's detail adds to its message (W31's rule): a detail that begins with the whole
+ * message keeps only what follows it; both stay the backend's words.
+ * @param {{message?: string | null, detail?: string | null}} check
+ */
+export function checkDetailAdds(check) {
+  const message = String(check.message || '').trim();
+  const detail = String(check.detail || '').trim();
+  if (message && detail.startsWith(message)) {
+    const rest = detail.slice(message.length);
+    if (rest === '' || /^\s/.test(rest)) return rest.trim();
+  }
+  return detail;
+}
+
+/**
+ * @typedef {{name: string, label: string, word: string, tone: 'blocking'|'degrading'|'info'|'ok'|'unknown',
+ *   message: string, detail: string, fix: FixPlace|null, technical: string, first: string}} ChecklistRow
+ */
+
+/**
+ * The checklist's three groups, from the checks' codes, `ok` and `severity`.
+ * @param {{checks?: any[], first_stop?: string | null}} preflight
+ * @returns {{attention: ChecklistRow[], notes: ChecklistRow[], ok: ChecklistRow[]}}
+ */
+export function preflightChecklist(preflight) {
+  const checks = Array.isArray(preflight && preflight.checks) ? preflight.checks : [];
+  const firstStop = preflight && preflight.first_stop ? String(preflight.first_stop) : '';
+  /** @param {any} check @returns {ChecklistRow} */
+  const row = (check) => {
+    const severity = String(check.severity || '').toUpperCase();
+    /** @type {ChecklistRow['tone']} */
+    const tone = check.ok ? 'ok'
+      : severity === 'BLOCKING' ? 'blocking'
+        : severity === 'DEGRADING' ? 'degrading'
+          : severity === 'INFORMATIONAL' ? 'info' : 'unknown';
+    const place = fixPlaceOf(check);
+    const name = String(check.name || '');
+    return {
+      name,
+      label: checkLabel(name),
+      word: checkVerdictWord(check),
+      tone,
+      message: String(check.message || '').trim(),
+      detail: checkDetailAdds(check),
+      fix: place,
+      technical: technicalNote(check),
+      first: !check.ok && firstStop && name === firstStop
+        ? (severity === 'BLOCKING' ? 'Primul punct blocant' : 'Ziua nu ajunge întreagă')
+        : '',
+    };
+  };
+  /** @param {ChecklistRow} r */
+  const rank = (r) => (r.first ? -1 : r.tone === 'blocking' ? 0 : r.tone === 'degrading' ? 1 : 2);
+  const rows = checks.map((c, i) => ({ i, r: row(c) }));
+  const attention = rows
+    .filter(({ r }) => r.tone === 'blocking' || r.tone === 'degrading' || r.tone === 'unknown' || Boolean(r.first))
+    .sort((a, b) => rank(a.r) - rank(b.r) || a.i - b.i)
+    .map(({ r }) => r);
+  return {
+    attention,
+    notes: rows.filter(({ r }) => r.tone === 'info' && !r.first).map(({ r }) => r),
+    ok: rows.filter(({ r }) => r.tone === 'ok').map(({ r }) => r),
+  };
+}
+
+/** The shape beside a state's word, so the state is never said by colour alone. */
+const TONE_SHAPE = { blocking: '■', degrading: '▲', info: '●', unknown: '●', ok: '✓' };
+
+/**
+ * The checklist's markup. A failing line: its mark, its name and the backend's message, a key to
+ * the place that fixes it, and «Detalii» when the detail adds something. A passing line: one quiet
+ * row, a disclosure of its own when it has more to say.
+ * @param {{attention: ChecklistRow[], notes: ChecklistRow[], ok: ChecklistRow[]}} list
+ * @param {(s: unknown) => string} escape
+ */
+export function checklistHtml(list, escape) {
+  const mark = (/** @type {ChecklistRow} */ r) =>
+    `<span class="pf-mark" data-tone="${r.tone}"><span class="pf-shape" aria-hidden="true">${TONE_SHAPE[r.tone]}</span><span class="pf-word">${escape(r.word)}</span></span>`;
+  const more = (/** @type {ChecklistRow} */ r) => r.detail
+    ? `<details class="pf-more"><summary class="pf-more-key">Detalii</summary>
+          <p class="pf-detail">${escape(r.detail)}</p></details>`
+    : '';
+  const failing = (/** @type {ChecklistRow} */ r) => `
+      <article class="pf-row pf-fail" data-tone="${r.tone}" data-check="${escape(r.name)}">
+        ${mark(r)}
+        <div class="pf-body">
+          ${r.first ? `<span class="pf-first">${escape(r.first)}</span>` : ''}
+          <h4 class="pf-name"${r.technical ? ` title="${escape(r.technical)}"` : ''}>${escape(r.label)}</h4>
+          ${r.message ? `<p class="pf-message">${escape(r.message)}</p>` : ''}
+          ${more(r)}
+        </div>
+        ${r.fix ? `<button type="button" class="secondary pf-fix" data-door="${escape(r.fix.door)}"${r.fix.tab ? ` data-tab="${escape(r.fix.tab)}"` : ''}${r.fix.section ? ` data-section="${escape(r.fix.section)}"` : ''}>${r.fix.door === 'autonomy_switch' ? 'Arată' : 'Deschide'} ${escape(r.fix.label)}</button>` : ''}
+      </article>`;
+  const passing = (/** @type {ChecklistRow} */ r) => r.detail
+    ? `
+      <details class="pf-row pf-ok" data-tone="ok" data-check="${escape(r.name)}">
+        <summary class="pf-ok-line">${mark(r)}<span class="pf-name">${escape(r.label)}</span><span class="pf-message">${escape(r.message)}</span><span class="pf-more-key">Detalii</span></summary>
+        <p class="pf-detail">${escape(r.detail)}</p>
+      </details>`
+    : `
+      <div class="pf-row pf-ok" data-tone="ok" data-check="${escape(r.name)}">
+        <div class="pf-ok-line">${mark(r)}<span class="pf-name">${escape(r.label)}</span><span class="pf-message">${escape(r.message)}</span></div>
+      </div>`;
+  const group = (/** @type {string} */ title, /** @type {string} */ kind, /** @type {ChecklistRow[]} */ rows, /** @type {(r: ChecklistRow) => string} */ one) => rows.length
+    ? `<section class="pf-group" data-group="${kind}">
+        <h4 class="pf-group-head"><span class="pf-group-title">${title}</span>
+          <span class="pf-count">${rows.length}</span></h4>
+        <div class="pf-rows">${rows.map(one).join('')}</div>
+      </section>`
+    : '';
+  return group('De rezolvat', 'attention', list.attention, failing)
+    + group('De știut', 'notes', list.notes, failing)
+    + group('În regulă', 'ok', list.ok, passing);
+}

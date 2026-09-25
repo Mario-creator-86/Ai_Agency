@@ -167,7 +167,8 @@ def test_the_preflight_names_the_binding_as_the_missing_step(engine, settings, s
         for c in run_preflight(engine, settings, vault)["checks"]
         if c["name"] == "youtube_channel_binding"
     )
-    assert check["ok"] is False and "Leagă-le în Publicare" in check["message"]
+    assert check["ok"] is False and "Leagă-le în Distribuție → Sloturi de canal" in check["message"]
+    assert check["place"] == "publishing" and check["place_section"] == "channels-list"
 
 
 def test_publishing_refuses_to_guess_which_account_an_unbound_slot_belongs_to(

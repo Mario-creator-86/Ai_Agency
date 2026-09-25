@@ -285,6 +285,99 @@ def host_test_reason(code: object) -> str:
     return _words(HOST_TEST_REASON, code)
 
 
+_HTTP_STATUS_IN_TEXT = re.compile(r"\bHTTP (\d{3})\b")
+
+#: What the retriever's own English says (`app.research.retrieval`), as a sentence for the
+#: Owner. Tried in order; the first fragment found in the retriever's text wins. W31: sixteen
+#: sites of the Owner's list read «Source returned HTTP 403» on the Research door.
+_HOST_FAILURE_WORDS = (
+    ("deadline", "Site-ul nu a răspuns la timp."),
+    ("network, TLS", "Conexiunea la site a eșuat (rețea, TLS sau decodare)."),
+    (
+        "DNS must resolve",
+        "Numele site-ului duce și la adrese care nu sunt publice, deci studioul nu îl citește.",
+    ),
+    # W33: an allowed host is tested at https://<host>/, which passes these rules, so each of
+    # the three below is an address the site sent the studio on to — not the Owner's entry.
+    (
+        "disallowed source URL",
+        "Site-ul duce la o adresă scrisă într-o formă pe care studioul nu o citește.",
+    ),
+    ("URL contains", "Site-ul duce la o adresă cu caractere nepermise sau prea lungă."),
+    (
+        "HTTPS hosts",
+        "Site-ul trimite mai departe la o adresă din afara listei tale sau care nu este HTTPS "
+        "public, pe portul 443.",
+    ),
+    ("redirect", "Site-ul trimite mai departe fără adresă sau de prea multe ori."),
+    ("not supported HTML", "Site-ul nu răspunde cu o pagină HTML sau text."),
+    ("Compressed", "Site-ul trimite doar răspunsuri comprimate, pe care studioul nu le citește."),
+    ("ended before", "Răspunsul site-ului s-a oprit înainte de sfârșit."),
+    ("size limit", "Pagina depășește mărimea pe care studioul o citește."),
+    ("empty, too short", "Pagina nu are text de citit sau are mai mult decât citește studioul."),
+    ("did not produce", "Site-ul nu a dat nicio pagină."),
+)
+
+
+def host_test_detail(reason: object, raw: str = "", retry_after: str | None = None) -> str:
+    """Why a site's reading test failed, as a full Romanian sentence for the Research door.
+
+    ``reason`` is the closed code the record keeps (`HOST_TEST_REASON`), ``raw`` the
+    retriever's own text — never printed, only read for the status and the kind of fault.
+    """
+    code = str(reason or "").strip().upper()
+    text = raw or ""
+    found = _HTTP_STATUS_IN_TEXT.search(text)
+    status = found.group(1) if found else None
+    if code == "HTTP_403":
+        return (
+            "Site-ul a refuzat cererea studioului (HTTP 403); cât timp o refuză, nu poate fi sursă."
+        )
+    if code == "RATE_LIMITED":
+        said = "Site-ul limitează cererile (HTTP 429)."
+        wait = (retry_after or "").strip()
+        if wait:
+            said += (
+                f" Cere o pauză de {count(int(wait), 'secundă', 'secunde')}."
+                if wait.isdigit()
+                else f" Cere o pauză până la {wait}."
+            )
+        return said
+    if code == "HTTP_ERROR":
+        return (
+            f"Site-ul a răspuns cu eroarea HTTP {status}."
+            if status
+            else "Site-ul a răspuns cu o eroare."
+        )
+    for fragment, said in _HOST_FAILURE_WORDS:
+        if fragment in text:
+            return said
+    if code == "NETWORK":
+        return "Conexiunea la site a eșuat (rețea, TLS sau decodare)."
+    if code == "SCRIPT_ONLY":
+        return "Pagina se afișează doar cu JavaScript, iar studioul citește HTML-ul servit."
+    return "Site-ul nu a dat o pagină pe care studioul o poate citi."
+
+
+# ----------------------------------------------------------------------------- YouTube
+
+#: What a Google grant lets the studio do, by the scope's last part (`scope_label`). The
+#: scope itself stays in the preflight line's ``technical`` record, for a tooltip.
+YOUTUBE_SCOPE = {
+    "youtube.readonly": "citirea canalului",
+    "youtube.upload": "încărcarea filmelor",
+    "yt-analytics.readonly": "statisticile",
+    "youtube": "administrarea canalului",
+    "youtube.force-ssl": "administrarea canalului",
+}
+
+
+def youtube_scope(label: object) -> str:
+    """A scope said as what it lets the studio do; a scope nobody named passes through."""
+    text = str(label or "").strip()
+    return YOUTUBE_SCOPE.get(text, text or "—")
+
+
 #: Whether a web search engine is verified, as a fact in a list: «…, niciun motor de căutare
 #: verificat, …».
 SEARCH_ENGINE = {

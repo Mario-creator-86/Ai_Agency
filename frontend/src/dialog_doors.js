@@ -308,7 +308,8 @@ export function attachDoor(dialog, o) {
    */
   const stagger = () => {
     const parts = /** @type {HTMLElement[]} */ (Array.from(dialog.querySelectorAll(':scope > .dialog-body > .dialog-pane > *, :scope > .dialog-body:not(.dialog-body-railed) > *')));
-    if (parts.length < 2) return;
+    // W32: a door whose pane is one wrapper (Media, Distribuție) is stepped through its heavy parts
+    if (doorSteps(parts).length < 2) return;
     // W30: none before the words begin to show; then one step per frame, heavy parts in pieces
     revealInSteps(parts, doorRevealAt(doorTiming(o.reduced(), token)));
   };

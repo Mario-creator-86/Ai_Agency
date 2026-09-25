@@ -1,7 +1,7 @@
 import { renderYouTubeConnections } from './youtube_connections.js';
 import { icon } from './icons.js';
 import { renderProviderProduction } from './provider_production.js';
-import { policyWord, providerName } from './dialog_words.js';
+import { connectionTitle, policyWord, providerName } from './dialog_words.js';
 
 import './settings.css';
 
@@ -174,13 +174,12 @@ export function initSettings(api, hooks = {}) {
     for (const item of items) {
       const spec = data.catalog[item.kind];
       const card = node('article', '', 'settings-card');
-      const named = splitIdentifier(item.name);
-      card.append(node('h3', named.title));
-      if (named.identifier) {
-        const line = node('p', named.identifier, 'settings-card-id');
-        line.title = item.name;
-        card.append(line);
-      }
+      // W32: a stored name that is a machine identifier («settings:<uuid>») is its title only; the
+      // whole name stays in the title's tooltip, not printed as a line of its own
+      const named = connectionTitle(item.name, spec.label);
+      const heading = node('h3', named.title);
+      if (named.identifier) heading.title = item.name;
+      card.append(heading);
       card.append(node('p', `${spec.label} · ${statuses[item.status] || item.status}`, 'helper'));
       if (item.checked_at) card.append(node('p', `Verificat: ${new Date(item.checked_at).toLocaleString('ro-RO')}`, 'helper'));
       // Three different truths, and the card says which one applies. "stored" means the
@@ -230,20 +229,15 @@ export function initSettings(api, hooks = {}) {
    *
    * The installer writes connections named "<what made it>:<uuid>". Printed whole at
    * heading weight that is the loudest thing on the screen and it says nothing. The
-   * word before the identifier is the title; the identifier is returned separately so
-   * the card can print it small, in mono, with the whole string on hover. A name with
+   * word before the identifier is the title; the whole name is kept for the title's tooltip
+   * (W32: no longer printed as a line of its own under the title). A name with
    * no identifier in it comes back unchanged and nothing below it is drawn.
    *
    * @param {string} name @returns {{title: string, identifier: string}}
    */
-  function splitIdentifier(name) {
-    const whole = String(name || '').trim();
-    const found = whole.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
-    if (!found) return { title: whole, identifier: '' };
-    const before = whole.slice(0, found.index).replace(/[\s:·\-_/]+$/, '').trim();
-    return before
-      ? { title: before, identifier: whole }
-      : { title: found[0].split('-')[0], identifier: whole };
+  /** @param {unknown} url the host of a provider's address, or the address as written */
+  function hostOf(url) {
+    try { return new URL(String(url)).host || String(url); } catch { return String(url ?? ''); }
   }
 
   function edit(container, kind, existing) {
@@ -378,13 +372,11 @@ export function initSettings(api, hooks = {}) {
     for (const provider of data.legacy_providers || []) {
       const card = node('article', '', 'settings-card');
       const verified = Boolean(provider.last_health_check);
-      const named = splitIdentifier(provider.name);
-      card.append(node('h3', named.title));
-      if (named.identifier) {
-        const line = node('p', named.identifier, 'settings-card-id');
-        line.title = provider.name;
-        card.append(line);
-      }
+      // W33: the seed's «settings:<uuid>» is titled by the service and its host, not «settings»
+      const named = connectionTitle(provider.name, `${providerName(provider.provider_type)} · ${hostOf(provider.base_url)}`);
+      const heading = node('h3', named.title);
+      if (named.identifier) heading.title = provider.name;
+      card.append(heading);
       // W27: the seed wrote the type as «OLLAMA» on one card and «ollama» on the next; both are Ollama
       card.append(node('p', `${providerName(provider.provider_type)} · ${provider.base_url}`, 'helper'));
       card.append(
@@ -541,12 +533,16 @@ export function initSettings(api, hooks = {}) {
     }
   }
 
-  open.addEventListener('click', async () => {
+  /** Open the door at a tab (W32: a preflight line's key opens the tab that fixes it). @param {string} [tab] */
+  async function openAt(tab) {
+    if (tab && sections.some(([key]) => key === tab)) active = tab;
     generation++;
-    dialog.showModal();
+    if (!dialog.open) dialog.showModal();
     render();
     try { await refresh(); } catch (error) { message(error.message, true); }
-  });
+  }
+
+  open.addEventListener('click', () => { void openAt(); });
   dialog.addEventListener('cancel', event => { event.preventDefault(); reset(); });
-  return { reset };
+  return { reset, open: openAt };
 }

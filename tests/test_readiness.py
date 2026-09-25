@@ -85,8 +85,11 @@ def test_the_preflight_says_when_no_budget_has_been_set(engine, settings, vault,
 
     assert empty["ok"] is False and empty["severity"] == DEGRADING
     assert "Niciun buget activ" in empty["message"]
-    # The message names the one route that sets one; nobody else can.
-    assert "PUT /economy/budget" in empty["message"]
+    # The message names the one place that sets one, in the page's words; the route is the
+    # line's technical record (W31: «PUT /economy/budget» read as a console).
+    assert "Trezorerie → Buget și cheltuieli" in empty["message"]
+    assert "PUT /economy/budget" not in empty["message"]
+    assert empty["technical"]["routes"] == ["PUT /economy/budget"]
 
     set_budget(engine, BudgetCommand(period="DAILY", limit_usd="25"))
 
@@ -130,7 +133,9 @@ def test_the_preflight_says_which_kinds_of_model_have_no_price(engine, settings,
     assert unpriced["ok"] is False and unpriced["severity"] == DEGRADING
     for kind in kinds:
         assert kind in unpriced["message"]
-    assert "PUT /economy/prices" in unpriced["message"]
+    # No page control sets a price yet, and the line says so rather than naming the route.
+    assert "API-ul studioului" in unpriced["message"]
+    assert unpriced["technical"]["routes"] == ["PUT /economy/prices"]
     assert "0 USD" not in unpriced["message"] and "0 USD" not in unpriced["detail"]
 
     for kind in kinds:
@@ -191,7 +196,9 @@ def test_the_preflight_says_when_nobody_in_the_studio_can_see(engine, settings, 
 
     seeing = check(engine, settings, vault, "vision_capability")
     assert seeing["ok"] is True
-    assert seeing["detail"], "the line should name who can look"
+    # The line names who can look; the employee's id is data, never the sentence's.
+    assert seeing["value"]["agent_name"] in seeing["message"]
+    assert seeing["value"]["agent_id"] not in seeing["message"] + seeing["detail"]
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +252,10 @@ def test_a_locked_character_without_a_reference_is_a_blocked_day_he_can_prevent(
     missing = check(engine, settings, vault, "character_references")
     assert missing["ok"] is False and missing["severity"] == DEGRADING
     assert name in missing["message"]
-    assert "/reference-set" in missing["message"]
+    # The button on the character's card, where it is; the route it calls is data.
+    assert "«Produ setul de referință»" in missing["message"]
+    assert "Producție media → Character Bible" in missing["message"]
+    assert missing["technical"]["routes"][0].endswith("/reference-set")
 
     lock_one_character(engine, locked=True, portrait=stored_reference(engine, tmp_path))
 
@@ -335,8 +345,13 @@ def test_the_preflight_says_whether_the_serial_can_reach_its_channel(
 
     waiting = check(engine, settings, vault, "serial_channel")
     assert waiting["ok"] is False and waiting["severity"] == INFORMATIONAL
-    assert "director_may_approve_episodes" in waiting["message"]
-    assert f"/publishing/channels/{channel_id}/publish-policy" in waiting["message"]
+    # No switch for the leave exists on the page yet: the line says so, and the command and
+    # its field are the technical record.
+    assert "pagina nu are încă un comutator" in waiting["message"]
+    assert waiting["technical"]["fields"] == ["director_may_approve_episodes"]
+    assert waiting["technical"]["routes"] == [
+        f"POST /publishing/channels/{channel_id}/publish-policy"
+    ]
 
     with Session(engine) as session, session.begin():
         session.get(ChannelRecord, channel_id).director_may_approve_episodes = True
@@ -548,8 +563,11 @@ def test_a_slot_without_the_statistics_scope_degrades_and_says_how_to_grant_it(
     statistics = named(result, "youtube_statistics_access")
     assert statistics["ok"] is False and statistics["severity"] == DEGRADING
     assert "Nexus Curiosity" in statistics["message"]
-    assert "yt-analytics.readonly" in statistics["message"]
-    assert "Reconectează canalul din Setări" in statistics["message"]
+    # The scope is said as what it gives; its name is the tooltip's.
+    assert "fără statistici" in statistics["message"]
+    assert "yt-analytics.readonly" not in statistics["message"]
+    assert statistics["technical"]["scopes"] == ["yt-analytics.readonly"]
+    assert "Reconectează canalul din Setări → Conturi și e-mail" in statistics["message"]
     assert "accesul la statistici" in statistics["message"]
     # Statistics do not decide whether a film goes out, so they never block the day.
     assert "youtube_statistics_access" in result["degrading_failures"]
@@ -617,7 +635,9 @@ def test_a_refused_token_on_the_upload_connection_blocks_and_a_reconnect_clears_
     upload = named(result, "youtube_upload_access")
     assert upload["ok"] is False and upload["severity"] == "BLOCKING"
     assert "Nexus Curiosity" in upload["message"]
-    assert "invalid_grant" in upload["message"]
+    # Google's own answer is kept whole, as the line's technical record.
+    assert "invalid_grant" not in upload["message"]
+    assert any("400 invalid_grant" in a for a in upload["technical"]["answers"])
     assert "Reconectează canalul din Setări" in upload["message"]
     assert result["status"] == "BLOCKED"
     assert "youtube_upload_access" in result["blocking_failures"]
@@ -663,7 +683,8 @@ def test_a_statistics_only_refusal_degrades_and_a_network_failure_says_nothing_o
     assert named(result, "youtube_upload_access")["ok"] is True
     statistics = named(result, "youtube_statistics_access")
     assert statistics["ok"] is False and statistics["severity"] == DEGRADING
-    assert "citirea statisticilor" in statistics["message"] and "403" in statistics["message"]
+    assert "citirea statisticilor" in statistics["message"]
+    assert any(a.endswith(": 403") for a in statistics["technical"]["answers"])
     assert result["status"] != "BLOCKED"
 
     # A network failure on its own does not answer a refusal: the 403 still stands.
@@ -716,7 +737,8 @@ def test_an_upload_scope_google_did_not_grant_blocks_and_unrecorded_scopes_are_u
     result = preflight_at(engine, settings, vault)
     upload = named(result, "youtube_upload_access")
     assert upload["ok"] is False and upload["severity"] == "BLOCKING"
-    assert "youtube.upload" in upload["message"]
+    assert "dreptul de încărcare" in upload["message"]
+    assert upload["technical"]["scopes"] == ["youtube.upload"]
 
     with Session(engine) as session, session.begin():
         session.scalars(select(YouTubeConnection)).one().granted_scopes = None
@@ -749,8 +771,10 @@ def test_in_production_the_daily_budget_that_cannot_hold_two_films_is_said_befor
     assert "episodul serialului" in films["message"]
     assert "12 USD" in films["message"] and "15 USD" in films["message"]
     assert "3 USD" in films["message"]
-    assert "PUT /economy/budget" in films["message"]
-    assert "STUDIO_MOTION_BUDGET_USD" in films["message"]
+    assert "Trezorerie → Buget și cheltuieli" in films["message"]
+    assert "plafonul de mișcare pe film" in films["message"]
+    assert films["technical"]["routes"] == ["PUT /economy/budget"]
+    assert films["technical"]["settings"] == ["STUDIO_MOTION_BUDGET_USD"]
     # The summary no longer says the studio can run above a check that foresees a film lost.
     assert "Studioul poate rula" not in result["summary"]
     assert result["first_stop"] == "daily_budget_films"
@@ -785,7 +809,7 @@ def test_in_test_the_production_budget_is_said_as_information_only(engine, setti
     assert "mediul de test" in films["message"] and "producție" in films["message"]
     assert films["value"]["environment"] == "TEST"
     assert films["value"]["production_per_film_usd"]
-    assert "1.2 USD" in films["message"]
+    assert "1,2 USD" in films["message"]
     assert "episodul serialului" in films["message"]
     assert "daily_budget_films" not in result["degrading_failures"]
     assert result["first_stop"] is None
