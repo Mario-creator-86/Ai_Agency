@@ -183,7 +183,7 @@ def test_a_day_whose_performance_intake_fails_still_researches_writes_films_and_
     # The Owner is told, once, in words that do not say the day stopped.
     (subject, body) = letters[0]
     assert len(letters) == 1
-    assert "performance_intake" in subject and "s-a oprit" not in subject
+    assert "«preluarea performanței»" in subject and "s-a oprit" not in subject
     assert "filmele" in body.lower()
 
 
@@ -203,19 +203,22 @@ def test_a_failed_media_blocks_quality_control_and_publishing_but_not_the_report
     for name in ("edit_and_qc", "publish"):
         assert stages[name]["status"] == BLOCKED, name
         assert name not in ran
-    assert "«media»" in stages["edit_and_qc"]["reason"]
+    assert "«producție media»" in stages["edit_and_qc"]["reason"]
     # Publish is blocked by quality control, which was blocked by media: the reason names the
     # stage it waited for and the fault behind it.
-    assert "«edit_and_qc»" in stages["publish"]["reason"]
-    assert "«media»" in stages["publish"]["reason"]
+    assert "«montaj și controlul calității»" in stages["publish"]["reason"]
+    assert "«producție media»" in stages["publish"]["reason"]
     assert stages["post_run"]["status"] == COMPLETED and "post_run" in ran
     assert stages["daily_log"]["status"] == COMPLETED
     assert result["status"] == "FAILED"
     assert result["stopped_at_stage"] == "media"
     # A HARD fault where the money is spent is the P0 safe mode exists for.
     assert safe_mode_state(engine)["active"] is True
-    assert letters and letters[0][0] == "Ziua s-a oprit la etapa «media»"
-    assert "edit_and_qc" in letters[0][1] and "publish" in letters[0][1]
+    assert letters and letters[0][0] == "Ziua s-a oprit la etapa «producție media»"
+    assert "«montaj și controlul calității»" in letters[0][1] and "«publicare»" in letters[0][1]
+    # The fault is said in Romanian; its class is in the stage's record, not in the letter.
+    assert "RuntimeError" not in letters[0][1]
+    assert stages["media"]["error_class"] == "RuntimeError"
 
 
 def test_a_failed_selection_blocks_the_factual_script_but_the_serial_is_still_filmed(
@@ -232,7 +235,7 @@ def test_a_failed_selection_blocks_the_factual_script_but_the_serial_is_still_fi
     stages = _by_name(result)
     assert stages["selection"]["status"] == FAILED
     assert stages["script_and_storyboard"]["status"] == BLOCKED
-    assert "«selection»" in stages["script_and_storyboard"]["reason"]
+    assert "«alegerea subiectului»" in stages["script_and_storyboard"]["reason"]
     assert "script_and_storyboard" not in ran
     for name in ("serial_queue", "media", "edit_and_qc", "publish", "post_run"):
         assert stages[name]["status"] == COMPLETED, (name, stages[name]["reason"])
@@ -243,7 +246,7 @@ def test_a_failed_selection_blocks_the_factual_script_but_the_serial_is_still_fi
     assert result["status"] == "FAILED" and result["fault_class"] == "HARD"
     assert result["retryable"] is False
     assert safe_mode_state(engine)["active"] is False
-    assert letters and "selection" in letters[0][0]
+    assert letters and "«alegerea subiectului»" in letters[0][0]
 
 
 def test_media_is_blocked_only_when_neither_the_factual_nor_the_serial_storyboard_came(
@@ -260,8 +263,8 @@ def test_media_is_blocked_only_when_neither_the_factual_nor_the_serial_storyboar
 
     stages = _by_name(result)
     assert stages["media"]["status"] == BLOCKED
-    assert "«script_and_storyboard»" in stages["media"]["reason"]
-    assert "«serial_queue»" in stages["media"]["reason"]
+    assert "«scenariu și storyboard»" in stages["media"]["reason"]
+    assert "«episodul din serial»" in stages["media"]["reason"]
     assert "media" not in ran and "publish" not in ran
     assert stages["post_run"]["status"] == COMPLETED
 
@@ -359,7 +362,7 @@ def test_a_transient_failure_that_cost_no_film_is_not_re_attempted(
     assert result["fault_class"] == "TRANSIENT"
     assert result["retryable"] is False
     # Nothing follows today, so the Owner hears about it now, not after a third attempt.
-    assert len(letters) == 1 and "idea_generation" in letters[0][0]
+    assert len(letters) == 1 and "«generarea de idei»" in letters[0][0]
 
 
 def test_a_transient_failure_upstream_of_the_films_is_re_attemptable(
@@ -388,7 +391,7 @@ def test_a_transient_failure_upstream_of_the_films_is_re_attemptable(
     stages = _by_name(result)
     assert stages["selection"]["status"] == BLOCKED
     assert stages["script_and_storyboard"]["status"] == BLOCKED
-    assert "«research_and_verification»" in stages["script_and_storyboard"]["reason"]
+    assert "«documentare și verificare»" in stages["script_and_storyboard"]["reason"]
     assert stages["serial_queue"]["status"] == COMPLETED
     assert result["stopped_at_stage"] == "research_and_verification"
     assert result["retryable"] is True
@@ -460,8 +463,9 @@ def test_the_summary_counts_the_stages_that_produced_something_not_the_ones_that
     summary = result["summary"]
     assert f"{worked} din {worked} etape au rulat" in summary
     assert f"{worked - 3} au produs ceva" in summary
-    for name in ("idea_generation", "research_and_verification", "post_run"):
-        assert name in summary
+    for name in ("generarea de idei", "documentare și verificare", "raportare și închiderea"):
+        assert f"«{name}" in summary
+    assert "idea_generation" not in summary and "post_run" not in summary
     with Session(engine) as session:
         finished = session.scalars(
             select(DomainEvent).where(DomainEvent.event_type == "runbook.daily_run_finished")
@@ -510,7 +514,7 @@ def test_a_failed_close_blocks_tomorrows_script_and_nothing_is_asked_of_it(
     stages = _by_name(result)
     assert stages["daily_log"]["status"] == FAILED
     assert stages["serial_next"]["status"] == BLOCKED
-    assert "«daily_log»" in stages["serial_next"]["reason"]
+    assert "«jurnalul zilei»" in stages["serial_next"]["reason"]
     assert "serial_next" not in ran
     assert result["status"] == "FAILED"
 

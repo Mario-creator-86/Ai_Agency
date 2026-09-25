@@ -1212,7 +1212,7 @@ def test_the_director_approves_what_she_passed(engine, studio):
         # The record says whose decision it was: "approved" with nobody behind it is not a
         # decision anyone can question later.
         assert event.payload["approved_by"] == (director.id if director else None)
-        assert "Recenzia Directorului: PASS" in event.payload["reason"]
+        assert "Recenzia Directorului: trecută" in event.payload["reason"]
 
 
 def test_a_story_she_sent_back_is_not_approved(engine, studio):
@@ -1451,7 +1451,7 @@ def test_the_writers_room_stays_open_until_the_story_passes(engine, studio):
     # the number of drafts; what matters is how many drafts the stage was willing to work.)
     assert written["count"] >= 5
     assert "5 scenarii scrise în 5 schimburi" in outcome["reason"]
-    assert "1 aprobate de Director" in outcome["reason"]
+    assert "1 aprobat de Director" in outcome["reason"]
     with Session(engine) as session:
         approved = session.scalars(
             select(ScriptDraft).where(

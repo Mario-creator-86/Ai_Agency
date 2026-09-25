@@ -52,6 +52,10 @@ from app.factual.sanitizer import wrap_in_inert_boundary
 from app.media.models import MediaAsset, QualityControlReport, Storyboard, VideoRenderJob
 from app.publishing.models import ChannelRecord, PublicationRecord
 from app.services import append_event, utc_now
+from app.wording import anomaly as anomaly_words
+from app.wording import confidence as confidence_words
+from app.wording import count, pipeline_stage
+from app.wording import decision as decision_words
 from app.workflows.models import TaskQueueItem
 
 logger = logging.getLogger("studio.command")
@@ -513,7 +517,12 @@ def findings(engine: Engine, settings: Settings, state: dict[str, Any]) -> list[
         add(
             "publications_failed",
             "PRODUCTION",
-            f"{pipe['stages']['publications_failed']} publicări au eșuat și stau neterminate.",
+            (
+                "1 publicare a eșuat și stă neterminată."
+                if pipe["stages"]["publications_failed"] == 1
+                else f"{count(pipe['stages']['publications_failed'], 'publicare', 'publicări')} "
+                "au eșuat și stau neterminate."
+            ),
             {"failed": pipe["stages"]["publications_failed"]},
             "ITERATE",
             "check the publishing queue and the metadata of what is waiting",
@@ -524,7 +533,11 @@ def findings(engine: Engine, settings: Settings, state: dict[str, Any]) -> list[
         add(
             "renders_failed",
             "PRODUCTION",
-            f"{pipe['stages']['renders_failed']} randări au eșuat.",
+            (
+                "1 randare a eșuat."
+                if pipe["stages"]["renders_failed"] == 1
+                else f"{count(pipe['stages']['renders_failed'], 'randare', 'randări')} au eșuat."
+            ),
             {"failed": pipe["stages"]["renders_failed"]},
             "ITERATE",
             "review the shot prompts against what the film actually looked like",
@@ -535,7 +548,12 @@ def findings(engine: Engine, settings: Settings, state: dict[str, Any]) -> list[
         add(
             "dead_letters",
             "AGENT",
-            f"{state['agents']['dead_letter_tasks']} sarcini au murit în coadă.",
+            (
+                "1 sarcină a murit în coadă."
+                if state["agents"]["dead_letter_tasks"] == 1
+                else f"{count(state['agents']['dead_letter_tasks'], 'sarcină', 'sarcini')} au "
+                "murit în coadă."
+            ),
             {"dead_letters": state["agents"]["dead_letter_tasks"]},
             "HOLD",
             "report why a publication failed",
@@ -547,7 +565,12 @@ def findings(engine: Engine, settings: Settings, state: dict[str, Any]) -> list[
         add(
             "scripts_blocked",
             "CONTENT",
-            f"{pipe['stages']['scripts_blocked']} scenarii sunt blocate de afirmații neverificate.",
+            (
+                "1 scenariu este blocat de afirmații neverificate."
+                if pipe["stages"]["scripts_blocked"] == 1
+                else f"{count(pipe['stages']['scripts_blocked'], 'scenariu', 'scenarii')} sunt "
+                "blocate de afirmații neverificate."
+            ),
             {"blocked": pipe["stages"]["scripts_blocked"]},
             "ITERATE",
             "verify the claims behind a topic waiting for production",
@@ -575,8 +598,9 @@ def findings(engine: Engine, settings: Settings, state: dict[str, Any]) -> list[
         add(
             f"bottleneck_{stage.lower()}",
             "PRODUCTION",
-            f"Gâtuire la {stage}: {pipe['bottleneck']['waiting']} în așteptare, "
-            f"{pipe['bottleneck']['passed_on']} trecute mai departe.",
+            f"Gâtuire la {pipeline_stage(stage)}: {pipe['bottleneck']['waiting']} în "
+            "așteptare, "
+            f"{count(pipe['bottleneck']['passed_on'], 'trecut', 'trecute')} mai departe.",
             dict(pipe["bottleneck"]),
             "ITERATE" if role else "HOLD",
             action,
@@ -625,7 +649,7 @@ def findings(engine: Engine, settings: Settings, state: dict[str, Any]) -> list[
         add(
             f"anomaly_{item['kind'].lower()}_{item['channel_id'][:8]}",
             "CHANNEL",
-            f"{item['kind'].replace('_', ' ').title()}: {item['detail']}.",
+            f"{anomaly_words(item['kind'])}: {item['detail']}.",
             dict(item),
             "NEEDS_MORE_DATA" if item["kind"] == "VIEW_SPIKE" else "ITERATE",
             {
@@ -665,8 +689,8 @@ def findings(engine: Engine, settings: Settings, state: dict[str, Any]) -> list[
         add(
             f"review_{due['matter_key']}",
             "COMPANY",
-            f"Decizia «{due['matter_key']}» trebuia revăzută: "
-            f"{due['published_since']} filme publicate de atunci.",
+            f"Decizia «{matter_words(due['matter_key'])}» trebuia revăzută: "
+            f"{count(due['published_since'], 'film publicat', 'filme publicate')} de atunci.",
             due,
             "NEEDS_MORE_DATA" if due["published_since"] == 0 else "CONTINUE",
             "report what a film cost against what it returned",
@@ -675,6 +699,38 @@ def findings(engine: Engine, settings: Settings, state: dict[str, Any]) -> list[
             review_after_videos=None,
         )
     return matters
+
+
+#: What a decision is about, from its matter key, in the words the page uses
+#: (`dialog_words.js` matterWords): the key itself stays in the record.
+MATTER_WORDS = {
+    "publications_failed": "publicări eșuate",
+    "renders_failed": "randări eșuate",
+    "dead_letters": "sarcini moarte în coadă",
+    "scripts_blocked": "scenarii blocate",
+}
+
+
+def matter_words(key: str) -> str:
+    """A matter key said as what it is about: ``bottleneck_approval`` → «gâtuire la
+    aprobare», ``cold_start_1a2b3c4d`` → «pornire la rece». A key nobody named reads with
+    spaces rather than being guessed into another."""
+    text = str(key or "")
+    if text in MATTER_WORDS:
+        return MATTER_WORDS[text]
+    if text.startswith("review_"):
+        return matter_words(text.removeprefix("review_"))
+    if text.startswith("bottleneck_"):
+        return f"gâtuire la {pipeline_stage(text.removeprefix('bottleneck_'))}"
+    if text.startswith("cold_start_"):
+        return "pornire la rece"
+    if text.startswith("growth_"):
+        return "creșterea unui canal"
+    if text.startswith("anomaly_"):
+        return "o anomalie"
+    if text.startswith("idle_"):
+        return "un departament fără lucru"
+    return text.replace("_", " ")
 
 
 def _roles_of(session: Session, agent_ids: list[str]) -> set[str]:
@@ -777,7 +833,12 @@ def direct_company(
     if not fresh:
         return {
             "status": "COMPLETED",
-            "reason": f"{len(matters)} chestiuni, toate deja în lucru cu o decizie deschisă.",
+            "reason": (
+                "O chestiune, deja în lucru cu o decizie deschisă."
+                if len(matters) == 1
+                else f"{count(len(matters), 'chestiune', 'chestiuni')}, toate deja în lucru cu "
+                "o decizie deschisă."
+            ),
             "assignments": [],
             "state": state,
         }
@@ -814,8 +875,9 @@ def direct_company(
     return {
         "status": "COMPLETED",
         "reason": (
-            f"{len(assignments)} repartizări, {len(escalated)} escaladate la Owner, "
-            f"din {len(fresh)} chestiuni."
+            f"{count(len(assignments), 'repartizare', 'repartizări')}, "
+            f"{len(escalated)} {'escaladată' if len(escalated) == 1 else 'escaladate'} la "
+            f"Proprietar, din {count(len(fresh), 'chestiune', 'chestiuni')}."
         ),
         "assignments": assignments,
         "escalated": escalated,
@@ -925,7 +987,7 @@ def _choose(
                 "first, and what is the cost if the decision is wrong?"
             ),
             evidence=payload[:8000],
-            summary=f"Conduc compania: {len(matters)} chestiuni pe masă.",
+            summary=f"Conduc compania: {count(len(matters), 'chestiune', 'chestiuni')} pe masă.",
             max_tokens=3000,
             temperature=0.2,
             emit_message=False,
@@ -979,7 +1041,7 @@ def _assign(
         letter = post_message(
             session,
             intent="HANDOFF",
-            subject=f"{choice.decision}: {matter['observation'][:120]}",
+            subject=f"{decision_words(choice.decision)}: {matter['observation'][:120]}",
             body={
                 "kind": "direction",
                 "matter_key": matter["matter_key"],
@@ -989,11 +1051,11 @@ def _assign(
             body_text=(
                 f"OBSERVAȚIE: {matter['observation']}\n"
                 f"INTERPRETARE: {choice.interpretation or matter['observation']}\n"
-                f"ÎNCREDERE: {choice.confidence}\n"
-                f"DECIZIE: {choice.decision}\n"
+                f"ÎNCREDERE: {confidence_words(choice.confidence)}\n"
+                f"DECIZIE: {decision_words(choice.decision)}\n"
                 f"DE FĂCUT: {action}\n"
                 + (
-                    f"REVIZUIRE: după {review_videos} filme publicate."
+                    f"REVIZUIRE: după {count(review_videos, 'film publicat', 'filme publicate')}."
                     if review_videos
                     else "REVIZUIRE: la următoarea trecere."
                 )
@@ -1090,8 +1152,9 @@ def _escalate(
             body_text=(
                 f"OBSERVAȚIE: {matter['observation']}\n"
                 f"INTERPRETARE: {choice.interpretation or matter['observation']}\n"
-                f"ÎNCREDERE: {choice.confidence}\n"
-                f"PROPUNERE: {choice.decision} — {choice.action or matter['action']}\n"
+                f"ÎNCREDERE: {confidence_words(choice.confidence)}\n"
+                f"PROPUNERE: {decision_words(choice.decision)} — "
+                f"{choice.action or matter['action']}\n"
                 + (
                     "Chestiunea a fost repartizată de trei ori fără rezultat, deci nu o mai "
                     "trimit a patra oară."
@@ -1112,7 +1175,7 @@ def review_decision(engine: Engine, decision_id: str, outcome: str) -> dict[str,
     with Session(engine) as session, session.begin():
         row = session.get(DirectorDecision, decision_id)
         if row is None:
-            raise CommandError(f"Decision {decision_id} not found")
+            raise CommandError(f"Decizia {decision_id} nu există")
         row.state = "REVIEWED"
         row.outcome = outcome[:4000]
         row.reviewed_at = utc_now()

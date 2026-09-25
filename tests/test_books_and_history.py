@@ -340,12 +340,14 @@ def test_the_books_report_in_the_evening_inbox_is_filed_by_the_accountant(engine
     with Session(engine) as session:
         report = session.scalar(
             select(AgentMessage)
-            .where(AgentMessage.subject.like("books:%"))
+            .where(AgentMessage.subject.like("Închiderea contabilă:%"))
             .order_by(AgentMessage.created_at.desc())
         )
         assert report is not None and report.from_agent_id == nadia.id
         assert report.from_agent_id != sarah.id
-        assert report.subject.startswith("books: STATUS — Azi 0 USD")
+        assert report.subject.startswith("Închiderea contabilă: raportată — Azi 0 USD")
+        # The stage and the intent keep their codes in the report's body.
+        assert report.body_json["stage"] == "books" and report.body_json["status"] == "STATUS"
 
 
 def test_without_an_accountant_the_close_says_so(engine, staffed):

@@ -24,8 +24,8 @@ import { streetMoves } from './hq_events.js';
 import { budgetRing, budgetRingSvg, channelFilmsHtml, dayTrack, dayTrackFromRun, dayTrackGeometry, dayTrackWords, newerTrack, pipelineSvg } from './hud_charts.js';
 import { Moments } from './moments.js';
 import { copyCanvas, filmPoster, PosterCache, POSTER_SAMPLES } from './film_poster.js';
-import { latestFilm, boardTopics } from './hq_screens.js';
-import { REPLAY_ACTION, agentReadout, canvasLabel, lastTasks, lastTaskLine, newerTasks, nextRunSign, surfaceReadout, tasksFromRecord } from './hq_readouts.js';
+import { WALL, latestFilm, boardTopics } from './hq_screens.js';
+import { REPLAY_ACTION, agentReadout, canvasLabel, lastTasks, lastTaskLine, newerTasks, nextRunSign, SURFACES, surfaceReadout, tasksFromRecord } from './hq_readouts.js';
 import { interruptsReplay } from './day_replay.js';
 import { DayReplayPlayer } from './replay_player.js';
 import { INVITE_RELAYOUT_MS, ReplayInvite, invitePlacement, inviteWords, restingNow } from './replay_invite.js';
@@ -36,6 +36,7 @@ import {
   accountTypeWord, budgetStateWord, channelTypeWord, confidenceWord, consistencyWord, constraintWord, decisionStateWord,
   accountLine, decisionWord, frameSize, isoDay, providerName, letterStateWord, lifecycleWord, lifecycleActs, matterWords, moneyTagWord, ownerName, pipelineStageWord,
   preflightWord, publicationStatus, qcWord, runStatusWord, seconds, shotWords, storyboardStatus, storyboardTone, topicStatus, workWord,
+  deskPlace, sharedTail,
 } from './dialog_words.js';
 import { LiveWindows, eventMatchesAgent } from './live_window.js';
 import { MailThread } from './mail_thread.js';
@@ -47,7 +48,8 @@ import { StreamPlaques } from './stream_plaques.js';
 import { EventsLink, connectionLabel, liveScope, roomCaption, roomCaptionShort, sceneReadout } from './live_claims.js';
 import { TitleScreen } from './title_screen.js';
 import { ENTRY, entryPlays, landingPlacement } from './title_frame.js';
-import { stillLine, stillSentence } from './replay_still.js';
+import { STREAM_ROOMS, stillLine, stillSentence } from './replay_still.js';
+import { attachDoor, doorNeedsRead, doorTiming, doorWorldRect, roomOnScreen } from './dialog_doors.js';
 import { KeyLight } from './key_light.js';
 import {
   APPROVALS_PATH,
@@ -219,6 +221,17 @@ const eventsLink = new EventsLink({
 
 // 2D Office Engine & State
 const officeCanvas = /** @type {HTMLCanvasElement} */ (element('office-canvas'));
+/**
+ * W28, THE DOORS' READS: what each door reads from the studio when it opens (dialog id → reader),
+ * and when it last read. The reader runs on the menu's hover or focus, so the door opens on its
+ * content; else once its pane has landed, so no answer is laid out while the pane moves.
+ * @type {Map<string, () => void>}
+ */
+const doorReads = new Map();
+/** @type {Map<string, number>} */
+const doorReadAt = new Map();
+/** How long a door's content counts as just read (ms): a hover and then a click reads once. */
+const DOOR_FRESH_MS = 10000;
 
 /** Whether the visitor asked the system for less motion; read at the moment it matters. */
 function reducedMotion() {
@@ -1228,6 +1241,12 @@ function buildOfficeEngine() {
     },
     onReadout: (target) => {
       readoutTarget = target;
+      // W28: a face of the building under the pointer or the keyboard reads its door ahead
+      if (target && target.kind === 'surface') {
+        const face = SURFACES.find((f) => f.id === target.id);
+        const door = face ? DOOR_KEYS[/** @type {keyof typeof DOOR_KEYS} */ (face.room)] : undefined;
+        if (door) readDoorAhead(door);
+      }
       refreshSceneReadout();
       if (streamPlaques) {
         streamPlaques.suppress(target && target.kind !== 'agent' ? String(target.id || '') : '');
@@ -1753,7 +1772,11 @@ function showInspectorStates(work, standing) {
 
 function renderInspector(agent) {
   element('inspector-name').textContent = agent.display_name || 'Agent';
-  element('inspector-role').textContent = (agent.role_name || 'Agent').toUpperCase();
+  // W28: the eyebrow names the employee's place in the building; the name already says the role,
+  // whose code stays in the tooltip (glossary W28)
+  const roleEl = element('inspector-role');
+  roleEl.textContent = deskPlace(officeEngine && officeEngine.assets ? officeEngine.assets.manifest : null, agent.desk_id);
+  roleEl.title = agent.role_name || '';
   showInspectorStates(agent.runtime_state || 'IDLE', agent.lifecycle || 'ACTIVE');
   element('inspector-id').textContent = agent.id || agent.agent_id || '—';
 
@@ -1927,12 +1950,10 @@ function bindPanelToggle(buttonId, dialog) {
   sync();
 }
 
+doorReads.set('research-modal', () => { loadTopics(); loadSources(); loadScripts(); });
 if (openResearchBtn) {
   openResearchBtn.addEventListener('click', () => {
-    researchModal.showModal();
-    loadTopics();
-    loadSources();
-    loadScripts();
+    openDoor(researchModal);
   });
 }
 
@@ -2038,7 +2059,7 @@ async function loadTopics() {
             <strong class="topic-card-title">${escapeHtml(t.title)}</strong>
             <span class="topic-card-novelty">Noutate: ${pct}%</span>
           </div>
-          <p class="topic-card-subject">${escapeHtml(t.topic)}</p>
+          <p class="topic-card-subject" lang="en">${escapeHtml(t.topic)}</p>
           <div class="topic-card-meta">
             <span>Public: ${escapeHtml(t.target_audience)}</span> · <span>Stare: <strong class="topic-card-status" data-status="${escapeHtml(t.status)}" title="${escapeHtml(t.status)}">${escapeHtml(topicStatus(t.status))}</strong></span>
           </div>
@@ -2728,12 +2749,10 @@ const generateDemoStoryboardBtn = element('generate-demo-storyboard-btn');
 const refreshMediaBtn = element('refresh-media-btn');
 const mediaStatusMsg = element('media-status-msg');
 
+doorReads.set('media-modal', () => { loadMediaProviderNote(); loadAwaitingStoryboard(); loadMediaStoryboards(); });
 if (openMediaBtn) {
   openMediaBtn.addEventListener('click', () => {
-    mediaModal.showModal();
-    loadMediaProviderNote();
-    loadAwaitingStoryboard();
-    loadMediaStoryboards();
+    openDoor(mediaModal);
   });
 }
 
@@ -3214,17 +3233,19 @@ async function loadMediaStoryboards() {
           } catch (_) {}
         }
 
+        // W28: the directions every scene's prompt ends with are said once, under the scenes
+        const shared = sharedTail(scenes.map((s) => s.visual_prompt));
         const scenesHtml = scenes
           .map(
-            (s) => `
+            (s, i) => `
         <div class="scene-card">
           <div class="scene-card-header">
             <span class="scene-badge">Scena #${s.scene_index}</span>
             <span class="scene-duration">${escapeHtml(seconds(s.duration_seconds))}</span>
           </div>
           <div class="scene-shot" title="${escapeHtml(`${s.shot_type} · ${s.visual_type}`)}">${escapeHtml(shotWords(s.shot_type, s.visual_type))}</div>
-          <p class="scene-prompt">${escapeHtml(s.visual_prompt)}</p>
-          <p class="scene-audio">" ${escapeHtml(s.voiceover_segment)} "</p>
+          <p class="scene-prompt" lang="en">${escapeHtml(shared.heads[i])}</p>
+          <p class="scene-audio"><q lang="en">${escapeHtml(s.voiceover_segment)}</q></p>
         </div>
       `,
           )
@@ -3316,6 +3337,7 @@ async function loadMediaStoryboards() {
           <div class="storyboard-scenes-grid">
             ${scenesHtml}
           </div>
+          ${shared.tail ? `<div class="scene-common"><p class="scene-common-label">Aceleași indicații, la sfârșitul fiecărei scene</p><p class="scene-prompt scene-common-text" lang="en">${escapeHtml(shared.tail)}</p></div>` : ''}
 
           ${renderHtml}
         </div>
@@ -3476,10 +3498,10 @@ const CHANNEL_STATUS_HINT = {
   AUTHENTICATED: 'ID de canal și credențiale prezente.',
 };
 
+doorReads.set('publishing-modal', () => { loadPublishingHub(); });
 if (openPublishingBtn) {
   openPublishingBtn.addEventListener('click', () => {
-    publishingModal.showModal();
-    loadPublishingHub();
+    openDoor(publishingModal);
   });
 }
 
@@ -4335,11 +4357,11 @@ async function loadWorkforce() {
         (agent) => `
         <div class="topic-card wf-agent-card">
           <div class="topic-card-header">
-            <strong class="topic-card-title">${escapeHtml(agent.display_name)}</strong>
+            <strong class="topic-card-title" title="${escapeHtml(agent.role_name || '')}">${escapeHtml(agent.display_name)}</strong>
             <span class="topic-card-novelty" data-lifecycle="${escapeHtml(agent.lifecycle)}">${escapeHtml(lifecycleWord(agent.lifecycle))}</span>
           </div>
           <div class="topic-card-meta">
-            <span>${escapeHtml(agent.role_name)}</span> · <span>${escapeHtml(rateLabel(agent))}</span>
+            <span data-role="${escapeHtml(agent.role_name || '')}">${escapeHtml(rateLabel(agent))}</span>
           </div>
         </div>`,
       )
@@ -4438,11 +4460,10 @@ async function decideProposal(button) {
   }
 }
 
+doorReads.set('workforce-modal', () => { loadWorkforce(); loadProposals(); });
 if (openWorkforceBtn) {
   openWorkforceBtn.addEventListener('click', () => {
-    workforceModal.showModal();
-    loadWorkforce();
-    loadProposals();
+    openDoor(workforceModal);
   });
 }
 element('close-workforce-btn').addEventListener('click', () => workforceModal.close());
@@ -4944,13 +4965,12 @@ element('funding-form').addEventListener('submit', async (event) => {
   }
 });
 
+doorReads.set('treasury-modal', () => { loadTreasury(); loadFundingHistory(); });
 if (openTreasuryBtn) {
   openTreasuryBtn.addEventListener('click', () => {
-    treasuryModal.showModal();
     syncFundingFields();
     updateFundingPreview();
-    loadTreasury();
-    loadFundingHistory();
+    openDoor(treasuryModal);
   });
 }
 element('close-treasury-btn').addEventListener('click', () => treasuryModal.close());
@@ -5168,11 +5188,8 @@ async function decideEpisode(button) {
   }
 }
 
-element('open-story-btn').addEventListener('click', () => {
-  storyModal.showModal();
-  loadStoryLogs();
-  loadEpisodes();
-});
+doorReads.set('story-modal', () => { loadStoryLogs(); loadEpisodes(); });
+element('open-story-btn').addEventListener('click', () => openDoor(storyModal));
 element('close-story-btn').addEventListener('click', () => storyModal.close());
 element('close-day-btn').addEventListener('click', async () => {
   storyStatus('Se numără evenimentele zilei…', false);
@@ -5429,15 +5446,10 @@ async function loadRunbookSchedule() {
 attachRail(runbookModal.querySelector('.dialog-body'));
 attachRail(treasuryModal.querySelector('.dialog-body'));
 attachRail(researchModal.querySelector('.dialog-body'));
+attachRail(storyModal.querySelector('.dialog-body'));
 
-element('open-runbook-btn').addEventListener('click', () => {
-  runbookModal.showModal();
-  loadCompanyState();
-  loadPreflight();
-  loadSafeMode();
-  loadRuns();
-  loadRunbookSchedule();
-});
+doorReads.set('runbook-modal', () => { loadCompanyState(); loadPreflight(); loadSafeMode(); loadRuns(); loadRunbookSchedule(); });
+element('open-runbook-btn').addEventListener('click', () => openDoor(runbookModal));
 
 // Where the company stands, and what the Director decided about it. A channel with nothing
 // measured says so: a zero here would read as a measurement, and the studio has published
@@ -5650,3 +5662,136 @@ element('clear-safe-mode-btn').addEventListener('click', async () => {
 });
 
 bindPanelToggle('open-runbook-btn', runbookModal);
+
+/* ==========================================================================================
+ * W28 — THE DOORS OPEN FROM THEIR ROOMS (dialog_doors.js)
+ * ======================================================================================== */
+
+/** The masthead's key for each door: its hover or focus reads the door's content ahead. */
+const DOOR_KEYS = {
+  'open-research-btn': 'research-modal',
+  'open-media-btn': 'media-modal',
+  'open-publishing-btn': 'publishing-modal',
+  'open-workforce-btn': 'workforce-modal',
+  'open-story-btn': 'story-modal',
+  'open-runbook-btn': 'runbook-modal',
+  'open-treasury-btn': 'treasury-modal',
+};
+
+/** Read a door's content now (the studio's own API), and remember when. @param {string} id */
+function readDoor(id) {
+  const read = doorReads.get(id);
+  if (!read) return;
+  doorReadAt.set(id, Date.now());
+  read();
+}
+
+/** Read ahead on the menu's hover or focus, unless the content is fresh or the door is open. @param {string} id */
+function readDoorAhead(id) {
+  const dialog = document.getElementById(id);
+  if (!dialog || /** @type {HTMLDialogElement} */ (dialog).open) return;
+  if (doorNeedsRead(doorReadAt.get(id), Date.now(), DOOR_FRESH_MS)) readDoor(id);
+}
+
+/**
+ * Open a door. Its content was read on the hover or the focus that led here, or it is read once
+ * the pane has landed.
+ * @param {HTMLDialogElement} dialog
+ */
+function openDoor(dialog) {
+  if (!dialog.open) dialog.showModal();
+  if (!doorNeedsRead(doorReadAt.get(dialog.id), Date.now(), DOOR_FRESH_MS)) return;
+  const timing = doorTiming(reducedMotion(), (name) => getComputedStyle(document.documentElement).getPropertyValue(name));
+  doorReadAt.set(dialog.id, Date.now());
+  window.setTimeout(() => { if (dialog.open) readDoor(dialog.id); }, timing.open);
+}
+
+/** The part of the scene a visitor sees, page px: the viewport between the drawers, on screen. */
+function sceneClip() {
+  const vp = element('scene-viewport').getBoundingClientRect();
+  const box = officeCanvas.getBoundingClientRect();
+  const engine = officeEngine;
+  const dpr = (engine && engine.dpr) || 1;
+  const ins = (engine && engine.viewport && engine.viewport.insets) || { left: 0, right: 0, top: 0, bottom: 0 };
+  return {
+    left: Math.max(vp.left, box.left + (ins.left || 0) / dpr, 0),
+    top: Math.max(vp.top, box.top + (ins.top || 0) / dpr, 0),
+    right: Math.min(vp.right, box.right - (ins.right || 0) / dpr, window.innerWidth),
+    bottom: Math.min(vp.bottom, window.innerHeight),
+  };
+}
+
+/** A world rectangle on the page now, through the engine's camera (the stream follows it). @param {number[]|null} world */
+function worldOnPage(world) {
+  if (!world || !officeEngine || workspace.hidden) return null;
+  const box = officeCanvas.getBoundingClientRect();
+  if (!(box.width > 0)) return null;
+  return roomOnScreen(world, officeEngine.viewport, officeEngine.dpr || 1, box, sceneClip());
+}
+
+/** A door's room on the page: the stream's measured rooms while it covers the renderer. @param {string} id */
+function doorRoomOnPage(id) {
+  if (!officeEngine) return null;
+  const manifest = officeEngine.assets && officeEngine.assets.manifest;
+  return worldOnPage(doorWorldRect(id, {
+    rooms: manifest ? manifest.rooms : undefined,
+    streamRooms: STREAM_ROOMS,
+    faces: WALL,
+    stream: Boolean(officeEngine.hitsOnly),
+  }));
+}
+
+/** The chosen employee's place on the page: the desk, the chair and the figure (the hit box). */
+function inspectorDoorOnPage() {
+  if (!officeEngine || !officeEngine.renderer || !currentSelectedAgent) return null;
+  const id = currentSelectedAgent.id || currentSelectedAgent.agent_id;
+  const hit = (officeEngine.renderer.hits || []).find((/** @type {any} */ h) => !h.surface && h.agent && (h.agent.id || h.agent.agent_id) === id);
+  return hit ? worldOnPage([hit.x0, hit.y0, hit.x1 - hit.x0, hit.y1 - hit.y0]) : null;
+}
+
+const doorLight = document.getElementById('door-light');
+let doorLightHide = 0;
+/**
+ * The room lit while its door is open: the page's mark of what he opened, laid over the room's
+ * rectangle in the scene (under the stream's plaques' words and the readouts).
+ * @param {{x: number, y: number, w: number, h: number}|null} rect page px
+ * @param {boolean} on
+ * @param {number} ms
+ */
+function lightDoor(rect, on, ms) {
+  if (!doorLight) return;
+  clearTimeout(doorLightHide);
+  doorLight.style.setProperty('--door-light-ms', `${Math.round(ms)}ms`);
+  if (!on || !rect) {
+    doorLight.classList.remove('is-on');
+    doorLightHide = window.setTimeout(() => { doorLight.hidden = true; }, ms + 40);
+    return;
+  }
+  const vp = element('scene-viewport').getBoundingClientRect();
+  doorLight.style.left = `${Math.round(rect.x - vp.left)}px`;
+  doorLight.style.top = `${Math.round(rect.y - vp.top)}px`;
+  doorLight.style.width = `${Math.round(rect.w)}px`;
+  doorLight.style.height = `${Math.round(rect.h)}px`;
+  if (doorLight.hidden) {
+    doorLight.hidden = false;
+    void doorLight.offsetWidth;
+  }
+  doorLight.classList.add('is-on');
+}
+
+for (const id of [...Object.values(DOOR_KEYS), 'settings-dialog']) {
+  const dialog = /** @type {HTMLDialogElement|null} */ (document.getElementById(id));
+  if (dialog) attachDoor(dialog, { roomRect: () => doorRoomOnPage(id), light: lightDoor, reduced: reducedMotion });
+}
+attachDoor(inspector, { roomRect: inspectorDoorOnPage, light: lightDoor, reduced: reducedMotion });
+attachDoor(mailThread.dialog, { roomRect: () => null, reduced: reducedMotion });
+
+for (const [key, id] of Object.entries(DOOR_KEYS)) {
+  const button = document.getElementById(key);
+  if (!button) continue;
+  let rest = 0;
+  // a pointer resting on the key for a moment, not one passing over it on its way elsewhere
+  button.addEventListener('pointerenter', () => { clearTimeout(rest); rest = window.setTimeout(() => readDoorAhead(id), 120); });
+  button.addEventListener('pointerleave', () => clearTimeout(rest));
+  button.addEventListener('focus', () => readDoorAhead(id));
+}

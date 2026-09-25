@@ -295,7 +295,8 @@ def test_a_rejected_script_does_not_take_the_day_down_with_it(engine, settings, 
     assert outcome["status"] == "COMPLETED"
     assert outcome["artefacts"]["scripts"] == 0
     assert len(outcome["artefacts"]["rejected"]) == 1
-    assert "respinse" in outcome["reason"]
+    # One rejected script: «1 respins» — the count agrees with «scenariu».
+    assert "1 respins:" in outcome["reason"]
 
 
 def test_quality_control_selects_files_by_what_they_are_not_by_their_label(
@@ -785,7 +786,7 @@ def test_a_render_that_was_refused_lets_its_hold_go(engine, settings, monkeypatc
     outcome = stages._media(engine, settings, None, None)
 
     assert outcome["status"] == "COMPLETED", outcome
-    assert "refuzate de furnizor" in outcome["reason"]
+    assert "refuzată de furnizor" in outcome["reason"]
     (hold,) = _reservations(engine)
     assert hold.status == "RELEASED"
     assert "refuzat" in (hold.settled_reference or "")
@@ -1126,9 +1127,10 @@ def test_a_manual_studio_films_nothing_and_publishes_nothing_on_its_own(
     publish = runners["publish"]()
 
     assert media["status"] == "SKIPPED", media
-    assert "MANUAL" in media["reason"]
+    # The mode in words; the code is the preflight artefact's.
+    assert "este manual" in media["reason"]
     assert publish["status"] == "SKIPPED", publish
-    assert "MANUAL" in publish["reason"]
+    assert "este manual" in publish["reason"]
     assert _reservations(engine) == [], "a film the mode forbids must not hold money"
     with Session(engine) as session:
         assert session.scalars(select(PublicationRecord)).all() == []
@@ -1156,7 +1158,7 @@ def test_a_supervised_studio_asks_the_owner_instead_of_publishing(
     outcome = runners["publish"]()
 
     assert outcome["status"] == "SKIPPED", outcome
-    assert "SUPERVISED" in outcome["reason"]
+    assert "este supravegheat" in outcome["reason"]
     assert publisher.uploads == []
     (request,) = _approvals(engine)
     assert (request.action, request.risk_tier, request.result) == (

@@ -74,6 +74,7 @@ from app.story.services import (
     ensure_projection,
     voice_of,
 )
+from app.wording import work_status
 
 logger = logging.getLogger("studio.story.review")
 
@@ -749,7 +750,7 @@ def review_episode(
         if episode is None:
             raise ReviewError("Episodul nu există")
         if episode.status != "DRAFT":
-            raise ReviewError(f"Episodul este deja {episode.status.lower()}")
+            raise ReviewError(f"Episodul este deja {work_status(episode.status)}")
         if episode.review_json:
             raise ReviewError("Episodul a fost deja citit de Director")
         director = agent_for_role(session, REVIEWER_ROLE)

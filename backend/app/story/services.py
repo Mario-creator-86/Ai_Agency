@@ -78,6 +78,7 @@ from app.story.projection import (
     select_story,
     story_weight,
 )
+from app.wording import work_status
 
 MAX_BEATS = 8
 #: The showrunner's brief and answer schema. v3 (2026-09-24): lines ``{speaker, text,
@@ -1587,7 +1588,7 @@ def decide_episode(
         if episode is None:
             raise StoryError("Episodul nu există")
         if episode.status != "DRAFT":
-            raise StoryError(f"Episodul este deja {episode.status.lower()}")
+            raise StoryError(f"Episodul este deja {work_status(episode.status)}")
         episode.status = "APPROVED" if approve else "REJECTED"
         episode.notes = notes.strip()[:2000] or None
         episode.reviewed_by = "owner"

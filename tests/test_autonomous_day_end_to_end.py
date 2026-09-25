@@ -1051,7 +1051,8 @@ def test_a_manual_day_prepares_and_stops_there(engine, settings, studio):
     assert by_name["preflight"]["artefacts"]["autonomy_mode"] == "MANUAL"
     for stage in ("research_and_verification", "media", "publish"):
         assert by_name[stage]["status"] == "SKIPPED", (stage, by_name[stage]["reason"])
-        assert "MANUAL" in by_name[stage]["reason"], by_name[stage]["reason"]
+        # The mode is named in words in the reason; its code is the preflight's artefact.
+        assert "este manual" in by_name[stage]["reason"], by_name[stage]["reason"]
     # The internal work of the day still happened: the serial's episode is drafting, which is
     # T1 and reversible, and nothing about it leaves the studio.
     assert by_name["serial_queue"]["status"] == "COMPLETED", by_name["serial_queue"]["reason"]
@@ -1085,7 +1086,7 @@ def test_a_supervised_day_films_the_work_and_asks_before_it_uploads(engine, sett
     assert by_name["media"]["status"] == "COMPLETED", by_name["media"]["reason"]
     assert by_name["media"]["artefacts"]["assets"], by_name["media"]["reason"]
     assert by_name["publish"]["status"] == "SKIPPED", by_name["publish"]["reason"]
-    assert "SUPERVISED" in by_name["publish"]["reason"]
+    assert "supravegheat" in by_name["publish"]["reason"]
     requests = _approval_requests(engine)
     assert len(requests) == 2, [(r.action, r.subject) for r in requests]
     assert {(r.action, r.risk_tier, r.result) for r in requests} == {

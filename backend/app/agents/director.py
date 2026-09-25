@@ -30,7 +30,27 @@ from app.agents.services import run_agent_task
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.providers.registry import ProviderRegistry
 from app.services import append_event
+from app.wording import stage_name, stage_status
 from app.workforce.services import measure_workforce
+
+#: How a letter asking an employee to investigate is titled. The English prefix it had until
+#: 2026-09-25 is still recognised, so a thread written before then is not investigated twice.
+INVESTIGATE_PREFIX = "De investigat: "
+INVESTIGATE_PREFIXES = (INVESTIGATE_PREFIX, "Investigate: ")
+
+#: What the Director did with a letter, said in the resolution the mail window prints.
+ACTION_WORDS = {
+    "APPROVE": "Aprobat",
+    "REJECT": "Respins",
+    "ACKNOWLEDGE": "Luat la cunoștință",
+}
+
+
+def _model_status(result: dict[str, Any]) -> str:
+    """A run that gave nothing usable, said for the Owner: its state and why, no codes."""
+    detail = result.get("error_detail") or "fără text vizibil"
+    return f"rularea {stage_status(result.get('status'))}: {detail}"
+
 
 REVIEW_TEMPLATE_VERSION = "director-review-v1"
 #: How many inbox messages one review reads. A review is a decision per message; a model
@@ -105,11 +125,11 @@ def choose_topic(
     """
     correlation = correlation_id or str(uuid4())
     if not candidates:
-        raise DirectorError("No candidate to choose from")
+        raise DirectorError("Nicio propunere dintre care să aleagă")
     with Session(engine) as session:
         director = agent_for_role(session, "Director")
         if director is None:
-            raise DirectorError("No active Director")
+            raise DirectorError("Niciun Director activ")
         director_id = director.id
     payload = json.dumps({"candidates": candidates}, ensure_ascii=False, default=str)[:12000]
     prompt = _CHOOSE_INSTRUCTIONS + wrap_in_inert_boundary(payload, "production-candidates")
@@ -128,14 +148,11 @@ def choose_topic(
     )
     text = result.get("output_text") or ""
     if result["status"] != "SUCCEEDED" or not text.strip():
-        raise DirectorError(
-            f"The Director did not choose ({result['status']}: "
-            f"{result.get('error_detail') or 'no visible text'})"
-        )
+        raise DirectorError(f"Directorul nu a ales ({_model_status(result)})")
     choice = parse_structured(text, TopicChoice)
     allowed = {c["id"] for c in candidates}
     if not isinstance(choice, TopicChoice) or choice.topic_id not in allowed:
-        raise DirectorError("The Director's choice did not name one of the candidates")
+        raise DirectorError("Alegerea Directorului nu numește niciuna dintre propuneri")
     with Session(engine) as session, session.begin():
         remember(
             session,
@@ -190,7 +207,10 @@ def file_stage_reports(
             message = post_message(
                 session,
                 intent="STATUS",
-                subject=f"{stage}: {status} — {reason}"[:200],
+                subject=(
+                    f"{stage_name(stage)[:1].upper()}{stage_name(stage)[1:]}: "
+                    f"{stage_status(status)} — {reason}"
+                )[:200],
                 body={"stage": stage, **outcome},
                 body_text=str(outcome.get("reason", ""))[:2000] or None,
                 from_agent_id=reporter,
@@ -237,7 +257,9 @@ def _apply_decisions(
         # An answer to her own investigation is not investigated again. "Investigate: Re:
         # Investigate: …" was a conversation feeding itself; after one round what she owes
         # is a decision, and the answer is read as read.
-        if decision.action == "REQUEST_INVESTIGATION" and "Investigate:" in message.subject:
+        if decision.action == "REQUEST_INVESTIGATION" and any(
+            prefix.strip() in message.subject for prefix in INVESTIGATE_PREFIXES
+        ):
             decision = decision.model_copy(update={"action": "ACKNOWLEDGE"})
         if decision.action == "REQUEST_INVESTIGATION":
             target = roles.get(decision.assign_to_role or "")
@@ -249,7 +271,7 @@ def _apply_decisions(
             request = post_message(
                 session,
                 intent="REQUEST_INFO",
-                subject=f"Investigate: {message.subject}"[:200],
+                subject=f"{INVESTIGATE_PREFIX}{message.subject}"[:200],
                 body={
                     "about_message_id": message.id,
                     "note": decision.note,
@@ -265,7 +287,7 @@ def _apply_decisions(
             resolve_message(
                 session,
                 message.id,
-                resolution=f"Investigation requested from {target.display_name}: {decision.note}",
+                resolution=f"Investigație cerută de la {target.display_name}: {decision.note}",
                 resolved_by=who,
                 status="ANSWERED",
                 correlation_id=correlation,
@@ -298,7 +320,7 @@ def _apply_decisions(
             resolve_message(
                 session,
                 message.id,
-                resolution=f"Escalated to the Owner: {decision.note}"[:1000],
+                resolution=f"Trimis Proprietarului: {decision.note}"[:1000],
                 resolved_by=who,
                 status="ANSWERED",
                 correlation_id=correlation,
@@ -308,9 +330,11 @@ def _apply_decisions(
             resolve_message(
                 session,
                 message.id,
-                resolution=f"{decision.action}: {decision.note}"
-                if decision.note
-                else decision.action,
+                resolution=(
+                    f"{ACTION_WORDS.get(decision.action, decision.action)}: {decision.note}"
+                    if decision.note
+                    else ACTION_WORDS.get(decision.action, decision.action)
+                ),
                 resolved_by=who,
                 status="RESOLVED",
                 correlation_id=correlation,
@@ -354,7 +378,7 @@ def director_review(
     with Session(engine) as session:
         director = agent_for_role(session, "Director")
         if director is None:
-            raise DirectorError("No active Director")
+            raise DirectorError("Niciun Director activ")
         director_id = director.id
         names = {a.id: a.display_name for a in session.scalars(select(Agent))}
         # Twelve at a time. Given sixty messages in one prompt the Director on her model
@@ -407,8 +431,7 @@ def director_review(
     text = (formatted or result).get("output_text") or ""
     if result["status"] != "SUCCEEDED" or not text.strip():
         raise DirectorError(
-            f"The Director produced no usable review ({result['status']}: "
-            f"{result.get('error_detail') or 'no visible text'})"
+            f"Directorul nu a dat o revizuire utilizabilă ({_model_status(result)})"
         )
     if review is None and blocker_of(text) is None:
         # Say what the model did, so the Owner can decide about the model, not the prompt.
@@ -434,7 +457,7 @@ def director_review(
             post_message(
                 session,
                 intent="ESCALATE",
-                subject=f"Director review blocked: {blocker.reason[:150]}",
+                subject=f"Revizuirea Directorului, blocată: {blocker.reason[:150]}",
                 body={"reason": blocker.reason, "needs": blocker.needs, "owner_attention": True},
                 from_agent_id=director_id,
                 run_id=result["id"],
@@ -447,7 +470,7 @@ def director_review(
             "blocked": blocker.reason,
         }
     if not isinstance(review, DirectorReview):
-        raise DirectorError("The Director's review did not match the schema; nothing was decided")
+        raise DirectorError("Revizuirea Directorului nu respectă forma cerută; nu s-a decis nimic")
     with Session(engine) as session, session.begin():
         director = session.get(Agent, director_id)
         assert director is not None

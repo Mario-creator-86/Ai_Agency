@@ -199,3 +199,67 @@ export function isoDay(value) {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value ?? ''));
   return m ? `${m[3]}.${m[2]}.${m[1]}` : String(value ?? '') || '—';
 }
+
+/**
+ * W28: an employee's place in the building, in the dialogs' and face cards' own words (glossary
+ * W28): the inspector's eyebrow, where the role code stood. The manifest's zone of the desk.
+ */
+export const ZONE_PLACE = {
+  director_suite: 'DIRECȚIUNE · L4',
+  research_lab: 'CERCETARE · L3',
+  factcheck_room: 'VERIFICAREA FAPTELOR · L3',
+  script_room: 'CONȚINUT · L2',
+  publish_desk: 'DISTRIBUȚIE · L2',
+  audio_booth: 'PRODUCȚIE AUDIO · L1',
+  video_studio: 'RANDARE · L1',
+  server_corner: 'SERVERE · S1',
+  lobby: 'RECEPȚIE',
+  accounting_office: 'TREZORERIE · S2',
+  ad_shop: 'AI SPACE · S3',
+};
+
+/**
+ * The place of a desk: its seat's zone in the manifest; a desk the manifest does not seat, or no
+ * desk at all, is the headquarters itself.
+ * @param {any} manifest @param {string|null|undefined} deskId
+ */
+export function deskPlace(manifest, deskId) {
+  const seat = manifest && manifest.seats && deskId ? manifest.seats[deskId] : null;
+  const zone = seat && typeof seat.zone === 'string' ? seat.zone : '';
+  return /** @type {Record<string, string>} */ (ZONE_PLACE)[zone] || 'SEDIUL · ANGAJAȚI';
+}
+
+/**
+ * W28: what every scene's picture prompt ends with, word for word, said once. The backend writes
+ * each scene's prompt as its own picture and then the same directions (composition, motion, style,
+ * what to avoid) for all of them; five boxes repeated the same eighty words. The shared end is the
+ * longest common ending that starts a sentence («Composition: …»); nothing is reworded, and a
+ * scene's own words are never cut (at least one character of its own must remain).
+ * @param {string[]} texts
+ * @returns {{heads: string[], tail: string}} each prompt without the shared end, and the end ('' when none)
+ */
+export function sharedTail(texts) {
+  const list = (texts || []).map((t) => String(t ?? ''));
+  const none = { heads: list, tail: '' };
+  if (list.length < 2) return none;
+  let n = 0;
+  const shortest = Math.min(...list.map((t) => t.length));
+  while (n < shortest && list.every((t) => t[t.length - 1 - n] === list[0][list[0].length - 1 - n])) n++;
+  if (n < 40) return none;
+  const candidate = list[0].slice(list[0].length - n);
+  // start the shared end at a sentence: a capital letter after «. », or the very start of the
+  // common part when every prompt has a sentence end just before it
+  const endsBefore = list.every((t) => /\.\s*$/.test(t.slice(0, t.length - n)));
+  let start = -1;
+  for (let i = 0; i < candidate.length; i++) {
+    if (!/[A-Z]/.test(candidate[i])) continue;
+    const before = i === 0 ? '' : candidate.slice(0, i);
+    if ((i === 0 && endsBefore) || (i > 0 && /\.\s+$/.test(before))) { start = i; break; }
+  }
+  if (start < 0) return none;
+  const tail = candidate.slice(start).trim();
+  if (tail.length < 40) return none;
+  const heads = list.map((t) => t.slice(0, t.length - candidate.length + start).trimEnd());
+  if (heads.some((h) => !h)) return none;
+  return { heads, tail };
+}

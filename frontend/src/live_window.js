@@ -290,7 +290,9 @@ export class LiveWindows {
     doc.title = `${agent.display_name || 'Agent'} · activitate live`;
     const head = doc.createElement('header');
     const title = doc.createElement('h1');
-    title.textContent = `${agent.display_name || 'Agent'}${agent.role_name ? ` — ${agent.role_name}` : ''}`;
+    // W28: the name already says the role («Dr. Aris (Researcher)»); the code is its tooltip
+    title.textContent = agent.display_name || 'Agent';
+    if (agent.role_name) title.title = agent.role_name;
     const pill = doc.createElement('span');
     pill.className = 'pill';
     this._setPill(pill, runtimeState);

@@ -51,6 +51,7 @@ from app.publishing.serial_identity import (
     series_title,
 )
 from app.publishing.services import publication_metadata_refusals
+from app.wording import publication_verdict, stage_status
 
 REVIEW_TEMPLATE_VERSION = "review-v1"
 
@@ -105,8 +106,9 @@ def _run(
     )
     if result["status"] != "SUCCEEDED" or not (result.get("output_text") or "").strip():
         raise ReviewError(
-            f"{task_type}: the model produced no usable answer ({result['status']}: "
-            f"{result.get('error_detail') or 'no visible text'})"
+            "Modelul nu a dat un răspuns utilizabil (rularea "
+            f"{stage_status(result['status'])}: "
+            f"{result.get('error_detail') or 'fără text vizibil'})"
         )
     return result
 
@@ -170,10 +172,10 @@ def review_narration(
     with Session(engine) as session:
         board = session.get(Storyboard, storyboard_id)
         if board is None:
-            raise ReviewError("Storyboard not found")
+            raise ReviewError("Storyboardul nu există")
         reviewer = agent_for_role(session, "VoiceArtist")
         if reviewer is None:
-            raise NoReviewer("No active VoiceArtist")
+            raise NoReviewer("Niciun VoiceArtist activ")
         reviewer_id, title = reviewer.id, board.title
         scenes = _scene_lines(session, storyboard_id)
     payload = json.dumps({"title": title, "scenes": scenes}, ensure_ascii=False)
@@ -186,14 +188,17 @@ def review_narration(
         prompt,
         correlation,
         max_tokens=4500,
-        summary=f"Citesc naratiunea storyboardului «{title}» ({len(scenes)} scene).",
+        summary=(
+            f"Citesc narațiunea storyboardului «{title}» "
+            f"({len(scenes)} {'scenă' if len(scenes) == 1 else 'scene'})."
+        ),
     )
     text = result["output_text"]
     blocked = _escalate_blocker(
         engine,
         reviewer_id,
         result["id"],
-        f"Narration review blocked: {title[:80]}",
+        f"Recenzia narațiunii, blocată: {title[:80]}",
         text,
         correlation,
     )
@@ -201,7 +206,7 @@ def review_narration(
         return {"storyboard_id": storyboard_id, "verdict": "BLOCKED", **blocked}
     review = parse_structured(text, NarrationReview)
     if not isinstance(review, NarrationReview):
-        raise ReviewError("Narration review did not match the schema; nothing was stored")
+        raise ReviewError("Recenzia narațiunii nu respectă forma cerută; nimic nu a fost salvat")
     with Session(engine) as session, session.begin():
         summary = f"Narration review of “{title[:80]}”: {review.verdict}"
         if review.notes:
@@ -269,12 +274,12 @@ def review_failed_render(
     with Session(engine) as session:
         report = session.get(QualityControlReport, report_id)
         if report is None:
-            raise ReviewError("Quality control report not found")
+            raise ReviewError("Raportul de control al calității nu există")
         if report.status == "PASSED":
-            raise ReviewError("The report passed; there is nothing to diagnose")
+            raise ReviewError("Raportul a trecut; nu este nimic de diagnosticat")
         reviewer = agent_for_role(session, "VideoEditor")
         if reviewer is None:
-            raise NoReviewer("No active VideoEditor")
+            raise NoReviewer("Niciun VideoEditor activ")
         reviewer_id = reviewer.id
         asset = session.get(MediaAsset, report.media_asset_id)
         job = session.scalar(
@@ -312,7 +317,7 @@ def review_failed_render(
         return {"report_id": report_id, "verdict": "BLOCKED", **blocked}
     diagnosis = parse_structured(text, RenderDiagnosis)
     if not isinstance(diagnosis, RenderDiagnosis):
-        raise ReviewError("Render diagnosis did not match the schema; nothing was stored")
+        raise ReviewError("Diagnosticul randării nu respectă forma cerută; nimic nu a fost salvat")
     with Session(engine) as session, session.begin():
         remember(
             session,
@@ -328,7 +333,7 @@ def review_failed_render(
         message = post_message(
             session,
             intent="ESCALATE",
-            subject=f"Render failed QC: {diagnosis.diagnosis[:150]}",
+            subject=f"Randarea nu a trecut QC: {diagnosis.diagnosis[:150]}",
             body={
                 "report_id": report_id,
                 "media_asset_id": report.media_asset_id,
@@ -395,17 +400,17 @@ def prepare_publication(
     with Session(engine) as session:
         publisher = agent_for_role(session, "Publisher")
         if publisher is None:
-            raise NoReviewer("No active Publisher")
+            raise NoReviewer("Niciun Publisher activ")
         publisher_id = publisher.id
         channel = session.get(ChannelRecord, channel_id)
         if channel is None:
-            raise ReviewError("Channel not found")
+            raise ReviewError("Canalul nu există")
         job = session.scalar(
             select(VideoRenderJob).where(VideoRenderJob.output_asset_id == media_asset_id)
         )
         board = session.get(Storyboard, job.storyboard_id) if job else None
         if board is None:
-            raise ReviewError("The candidate has no storyboard; nothing to describe")
+            raise ReviewError("Materialul nu are storyboard; nu este nimic de descris")
         script = session.get(ScriptDraft, board.script_draft_id) if board.script_draft_id else None
         # The script's own title: the storyboard's carries the label "Storyboard: ", which
         # the Publisher was handed as the film's title until S10.
@@ -446,7 +451,7 @@ def prepare_publication(
         engine,
         publisher_id,
         result["id"],
-        f"Publication blocked: {script_title[:80]}",
+        f"Publicarea, blocată: {script_title[:80]}",
         text,
         correlation,
     )
@@ -454,7 +459,7 @@ def prepare_publication(
         return {"media_asset_id": media_asset_id, "verdict": "BLOCKED", **blocked}
     metadata = parse_structured(text, PublicationMetadata)
     if not isinstance(metadata, PublicationMetadata):
-        raise ReviewError("Publication metadata did not match the schema; nothing was stored")
+        raise ReviewError("Metadatele publicării nu respectă forma cerută; nimic nu a fost salvat")
     # The rule on the way out: what the audience reads is in the audience's language, or it
     # does not go out. A hold here reaches the Director like any other.
     language_hold = publication_language_hold(metadata.title, metadata.description, language)
@@ -538,7 +543,7 @@ def prepare_publication(
         message = post_message(
             session,
             intent="ESCALATE" if metadata.verdict == "HOLD" else "STATUS",
-            subject=(f"Publication {metadata.verdict}: {metadata.title[:120]}"),
+            subject=(f"Publicare {publication_verdict(metadata.verdict)}: {metadata.title[:120]}"),
             body={
                 "media_asset_id": media_asset_id,
                 "channel_id": channel_id,

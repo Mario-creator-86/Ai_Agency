@@ -438,8 +438,8 @@ def test_a_source_whose_claims_cannot_be_read_does_not_stop_the_day(
     outcome = stages._research_and_verification(engine, ProviderRegistry(), settings)
     assert outcome["status"] == "COMPLETED" and len(calls) == 2
     assert (
-        "1 surse citite" in outcome["reason"]
-        and "1 surse fără afirmații citibile" in (outcome["reason"])
+        "1 sursă citită" in outcome["reason"]
+        and "1 sursă fără afirmații citibile" in (outcome["reason"])
     )
 
 
@@ -583,7 +583,13 @@ def test_a_providers_refusal_fails_the_render_not_the_day(engine, settings, stud
     )
     outcome = stages._media(engine, settings, None, None)
     assert outcome["status"] == "COMPLETED"
-    assert "1 randări refuzate de furnizor: api.dev.runwayml.com refused" in outcome["reason"]
+    # Said in Romanian with the vendor's answer as its HTTP status; the vendor's own text is
+    # kept as data beside the refused render.
+    assert (
+        "1 randare refuzată de furnizor: furnizorul a refuzat cererea (HTTP 400)"
+        in (outcome["reason"])
+    )
+    assert "api.dev.runwayml.com refused" in outcome["artefacts"]["refused"][0]["error"]
     with Session(engine) as session:
         from app.media.models import Storyboard
 

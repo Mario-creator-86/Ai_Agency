@@ -477,7 +477,7 @@ def test_10_retention_is_read_against_the_channels_own_median(engine, studio):
     verdict = diagnose(film, baseline)
     assert verdict["kind"] == "HOOK_OR_RETENTION_FAILURE"
     assert verdict["assign_to"] == "ScriptWriter"
-    assert "not in the available analytics" in verdict["reason"]
+    assert "nu apare în analytics-ul disponibil" in verdict["reason"]
 
 
 # --------------------------------------------------------------- 11-14: judgement
@@ -492,7 +492,7 @@ def test_11_one_failed_video_does_not_condemn_a_category(engine, studio, setting
     baseline = channel_baselines(engine, studio["channel_id"])
     verdict = classify(film, baseline)
     assert verdict["verdict"] == "INSUFFICIENT_DATA"
-    assert "baseline" in verdict["reason"]
+    assert "bază de comparație" in verdict["reason"]
     assert diagnose(film, baseline)["kind"] == "INSUFFICIENT_DATA"
 
     # With a baseline, the film is judged and the category is not: the diagnosis names one

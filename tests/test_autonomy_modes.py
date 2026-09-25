@@ -156,7 +156,7 @@ def test_a_promotion_is_refused_in_safe_mode(engine):
     enter_safe_mode(engine)
     with pytest.raises(AutonomyRefused) as refused:
         change_autonomy_mode(engine, mode_command(version, "SUPERVISED"))
-    assert "SAFE_MODE" in str(refused.value)
+    assert "modul sigur" in str(refused.value)
 
 
 def test_lowering_the_mode_is_always_allowed(engine):
@@ -245,7 +245,9 @@ def test_manual_refuses_an_external_write_without_promising_an_approval(engine):
         verdict = may_act(session, "publishing.public_publish")
     assert verdict["allowed"] is False
     assert verdict["status"] == "BLOCKED_MODE"
-    assert "MANUAL" in verdict["reason"]
+    # The mode is said in words; its code stays in the verdict's own field.
+    assert "manual" in verdict["reason"] and "MANUAL" not in verdict["reason"]
+    assert verdict["mode"] == "MANUAL"
     assert verdict["approval_id"] is None
 
 

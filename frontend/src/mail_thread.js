@@ -28,11 +28,12 @@ const STATUS_LABEL = {
  * @param {string|undefined} iso
  * @param {string|undefined} timezone
  */
-function when(iso, timezone) {
+export function when(iso, timezone) {
   if (!iso) return '';
   try {
+    // W28: the page's date style, «12.09.2026, 10:37» (the chat's and the dialogs'), not «12 sept. 2026»
     return new Date(iso).toLocaleString('ro-RO', {
-      dateStyle: 'medium',
+      dateStyle: 'short',
       timeStyle: 'short',
       timeZone: timezone,
     });

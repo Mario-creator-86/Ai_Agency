@@ -38,6 +38,11 @@ from app.analytics.models import AnalyticsSnapshot
 from app.economy.models import ProviderCostRecord
 from app.media.models import VideoRenderJob
 from app.publishing.models import ChannelRecord, PublicationRecord
+from app.wording import count, decimal
+from app.wording import diagnosis as diagnosis_words
+
+#: A measured film, counted in the Owner's words: «1 film măsurat», «3 filme măsurate».
+MEASURED_FILMS = ("film măsurat", "filme măsurate")
 
 logger = logging.getLogger("studio.performance")
 
@@ -247,9 +252,10 @@ def channel_baselines(engine: Engine, channel_id: str) -> dict[str, Any]:
         "median_cost_usd": med("cost_usd"),
         "median_production_minutes": med("production_minutes"),
         "note": (
-            f"{len(films)} measured films; a baseline needs {MINIMUM_BASELINE}"
+            f"{count(len(films), 'film măsurat', 'filme măsurate')}; o bază de comparație "
+            f"cere {MINIMUM_BASELINE}"
             if len(films) < MINIMUM_BASELINE
-            else f"rolling medians over {len(films)} measured films"
+            else f"mediane mobile pe {count(len(films), 'film măsurat', 'filme măsurate')}"
         ),
     }
 
@@ -273,22 +279,26 @@ def classify(film: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]:
     """
     age = film.get("age_hours")
     if not film.get("measured"):
-        return _verdict("INSUFFICIENT_DATA", "LOW", "Nothing measured for this film yet.", {})
+        return _verdict("INSUFFICIENT_DATA", "LOW", "Nimic măsurat încă pentru acest film.", {})
     if not baseline.get("has_baseline"):
         return _verdict(
             "INSUFFICIENT_DATA",
             "LOW",
-            f"The channel has {baseline.get('sample_size', 0)} measured films; a baseline "
-            f"needs {MINIMUM_BASELINE}. Until then a film is judged on editorial grounds, "
-            "not against a median that does not exist.",
+            f"Canalul are {count(baseline.get('sample_size', 0), *MEASURED_FILMS)}; o bază "
+            f"de comparație cere {MINIMUM_BASELINE}. Până atunci un film se judecă "
+            "editorial, nu față de o mediană care nu există.",
             {"sample_size": baseline.get("sample_size", 0)},
         )
     if age is None or age < MINIMUM_JUDGEMENT_HOURS:
         return _verdict(
             "INSUFFICIENT_DATA",
             "LOW",
-            f"Published {age if age is not None else 'an unknown time'} hours ago; a verdict "
-            f"waits for {MINIMUM_JUDGEMENT_HOURS:.0f}.",
+            (
+                f"Publicat acum {count(round(age), 'oră', 'ore')}"
+                if age is not None
+                else "Publicat de un timp necunoscut"
+            )
+            + f"; un verdict așteaptă {MINIMUM_JUDGEMENT_HOURS:.0f} de ore.",
             {"age_hours": age},
         )
 
@@ -298,7 +308,7 @@ def classify(film: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]:
     )
     if ratio is None:
         return _verdict(
-            "INSUFFICIENT_DATA", "LOW", "No comparable rate for this film.", {"ratio": None}
+            "INSUFFICIENT_DATA", "LOW", "Nicio rată comparabilă pentru acest film.", {"ratio": None}
         )
 
     retention = film.get("average_view_percentage")
@@ -318,29 +328,35 @@ def classify(film: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]:
         return _verdict(
             "FAILED_EXPERIMENT",
             confidence,
-            f"{ratio:.2f}x the channel's own view rate and {retention_ratio:.2f}x its "
-            "retention: the film reached fewer people and held them less well.",
+            f"{decimal(ratio)}× ritmul de vizionări al canalului și {decimal(retention_ratio)}× "
+            "retenția lui: filmul a ajuns la mai puțini oameni și i-a ținut mai puțin.",
             evidence,
         )
     if ratio < UNDERPERFORMER_RATIO:
         return _verdict(
             "UNDERPERFORMER",
             confidence,
-            f"{ratio:.2f}x the channel's own view rate.",
+            f"{decimal(ratio)}× ritmul de vizionări al canalului.",
             evidence,
         )
     if ratio >= WINNER_RATIO and (retention_ratio is None or retention_ratio >= 1.0):
         return _verdict(
             "STRONG_WINNER",
             confidence,
-            f"{ratio:.2f}x the channel's own view rate at or above its retention.",
+            f"{decimal(ratio)}× ritmul de vizionări al canalului, cu retenția la nivelul "
+            "canalului sau peste.",
             evidence,
         )
     if ratio >= PROMISING_RATIO:
         return _verdict(
-            "PROMISING", confidence, f"{ratio:.2f}x the channel's own view rate.", evidence
+            "PROMISING",
+            confidence,
+            f"{decimal(ratio)}× ritmul de vizionări al canalului.",
+            evidence,
         )
-    return _verdict("NORMAL", confidence, f"{ratio:.2f}x the channel's own view rate.", evidence)
+    return _verdict(
+        "NORMAL", confidence, f"{decimal(ratio)}× ritmul de vizionări al canalului.", evidence
+    )
 
 
 def _verdict(
@@ -365,7 +381,7 @@ def diagnose(film: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]:
     if not film.get("measured") or not baseline.get("has_baseline"):
         return {
             "kind": "INSUFFICIENT_DATA",
-            "reason": "Not enough measured history to diagnose anything.",
+            "reason": "Prea puțin istoric măsurat pentru un diagnostic.",
             "assign_to": None,
             "evidence": {},
         }
@@ -393,8 +409,8 @@ def diagnose(film: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]:
         return {
             "kind": "REACH_FAILURE",
             "reason": (
-                "The film was served but not chosen: click-through is below the channel's "
-                "own median. The opening frame and the title are what a viewer chooses from."
+                "Filmul a fost arătat, dar nu a fost ales: rata de click este sub mediana "
+                "canalului. Primul cadru și titlul sunt ce alege un spectator."
             ),
             "assign_to": "VideoEditor",
             "evidence": evidence,
@@ -403,9 +419,9 @@ def diagnose(film: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]:
         return {
             "kind": "HOOK_OR_RETENTION_FAILURE",
             "reason": (
-                "People were shown it and did not stay: retention is below the channel's own "
-                "median. Where inside the film they left is not in the available analytics, "
-                "so the opening and the pacing are what to test first."
+                "Oamenii l-au văzut și nu au rămas: retenția este sub mediana canalului. "
+                "Unde anume au plecat nu apare în analytics-ul disponibil, deci deschiderea și "
+                "ritmul sunt primele de testat."
             ),
             "assign_to": "ScriptWriter",
             "evidence": evidence,
@@ -418,8 +434,8 @@ def diagnose(film: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]:
         return {
             "kind": "CONVERSION_FAILURE",
             "reason": (
-                "They watched and did not subscribe: the film worked and the channel's "
-                "promise did not land. The ending and the closing question are where that is."
+                "Au privit și nu s-au abonat: filmul a mers, promisiunea canalului nu a "
+                "ajuns. Finalul și întrebarea de încheiere sunt locul unde se vede asta."
             ),
             "assign_to": "ScriptWriter",
             "evidence": evidence,
@@ -428,16 +444,16 @@ def diagnose(film: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]:
         return {
             "kind": "TOPIC_FAILURE",
             "reason": (
-                "Reach and retention are ordinary but the film found fewer people: the "
-                "subject drew less interest than this channel's usual. One film is not a "
-                "verdict on the category."
+                "Acoperirea și retenția sunt obișnuite, dar filmul a găsit mai puțini "
+                "oameni: subiectul a atras mai puțin interes decât de obicei pe acest canal. "
+                "Un film nu este un verdict asupra categoriei."
             ),
             "assign_to": "LeadResearcher",
             "evidence": evidence,
         }
     return {
         "kind": "INSUFFICIENT_DATA",
-        "reason": "Nothing in the available numbers stands out as the cause.",
+        "reason": "Nimic din cifrele disponibile nu iese în evidență drept cauză.",
         "assign_to": None,
         "evidence": evidence,
     }
@@ -488,10 +504,10 @@ def channel_health(engine: Engine, channel_id: str) -> dict[str, Any]:
         "cost_last_7_days": total(recent, "cost_usd"),
         "baseline": baseline,
         "note": (
-            "nothing measured on this channel yet"
+            "nimic măsurat încă pe acest canal"
             if not measured
-            else f"{len(measured)} measured films; deltas compare the last seven days with "
-            "the seven before them"
+            else f"{count(len(measured), 'film măsurat', 'filme măsurate')}; diferențele "
+            "compară ultimele șapte zile cu cele șapte dinaintea lor"
         ),
     }
 
@@ -513,9 +529,9 @@ def growth_diagnosis(engine: Engine, channel_id: str) -> dict[str, Any]:
             "constraint": "NO_DATA",
             "confidence": "LOW",
             "reason": (
-                f"{len(films)} measured films. Nothing about this audience is known yet, so "
-                "growth is a matter of publishing good work and measuring it, not of "
-                "optimising a number that does not exist."
+                f"{count(len(films), 'film măsurat', 'filme măsurate')}. Despre acest public "
+                "nu se știe încă nimic, deci creșterea înseamnă să publici lucru bun și să-l "
+                "măsori, nu să optimizezi un număr care nu există."
             ),
             "assign_to": "LeadResearcher",
             "evidence": {"measured": len(films)},
@@ -535,7 +551,7 @@ def growth_diagnosis(engine: Engine, channel_id: str) -> dict[str, Any]:
             "channel_id": channel_id,
             "constraint": "NONE_VISIBLE",
             "confidence": "MEDIUM",
-            "reason": "No single cause repeats across the recent films.",
+            "reason": "Nicio cauză nu se repetă în filmele recente.",
             "assign_to": None,
             "evidence": {"kinds": counts, "sample": len(judged)},
         }
@@ -551,8 +567,9 @@ def growth_diagnosis(engine: Engine, channel_id: str) -> dict[str, Any]:
         "constraint": constraint,
         "confidence": "HIGH" if counts[worst] >= 3 else "MEDIUM",
         "reason": (
-            f"{counts[worst]} of the last {len(judged)} measured films point at the same "
-            f"cause: {worst.replace('_', ' ').lower()}."
+            f"{counts[worst]} din ultimele {count(len(judged), 'film măsurat', 'filme măsurate')} "
+            f"arată aceeași cauză: "
+            f"{diagnosis_words(worst)}."
         ),
         "assign_to": role,
         "evidence": {"kinds": counts, "sample": len(judged), "health": health["note"]},
@@ -590,8 +607,9 @@ def anomalies(engine: Engine) -> list[dict[str, Any]]:
                         "kind": "RETENTION_DROP",
                         "channel_id": channel_id,
                         "detail": (
-                            f"the last three films averaged {mean_recent:.1f}% viewed against "
-                            f"a median of {baseline['median_view_percentage']:.1f}%"
+                            f"ultimele trei filme au fost privite în medie "
+                            f"{decimal(mean_recent, 1)}%, față de o mediană de "
+                            f"{decimal(baseline['median_view_percentage'], 1)}%"
                         ),
                         "assign_to": "ScriptWriter",
                     }
@@ -603,7 +621,10 @@ def anomalies(engine: Engine) -> list[dict[str, Any]]:
                     {
                         "kind": "VIEW_SPIKE",
                         "channel_id": channel_id,
-                        "detail": f"«{film['title'][:60]}» is at {ratio:.1f}x the view rate",
+                        "detail": (
+                            f"«{film['title'][:60]}» are {decimal(ratio, 1)}× ritmul obișnuit "
+                            "de vizionări"
+                        ),
                         "assign_to": "LeadResearcher",
                     }
                 )
@@ -617,8 +638,8 @@ def anomalies(engine: Engine) -> list[dict[str, Any]]:
                         "kind": "COST_SPIKE",
                         "channel_id": channel_id,
                         "detail": (
-                            f"«{film['title'][:60]}» cost {film['cost_usd']:.2f} USD against a "
-                            f"median of {baseline['median_cost_usd']:.2f}"
+                            f"«{film['title'][:60]}» a costat {decimal(film['cost_usd'])} USD, "
+                            f"față de o mediană de {decimal(baseline['median_cost_usd'])}"
                         ),
                         "assign_to": "VideoEditor",
                     }

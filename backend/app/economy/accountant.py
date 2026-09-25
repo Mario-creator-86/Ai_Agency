@@ -66,6 +66,7 @@ from app.media.models import VideoRenderJob
 from app.media.production_policy import credit_usd, estimate_cost_usd, record_measured_price
 from app.providers.registry import ProviderRegistry
 from app.services import pending_approvals
+from app.wording import budget_period, budget_state, count
 
 ACCOUNTANT_ROLE = "Accountant"
 TEMPLATE_VERSION = "accountant-v1"
@@ -773,7 +774,7 @@ def reconcile_day(
         summary=(
             f"Închid ziua: {figures['today']['spent_usd']} USD azi, "
             f"{figures['month']['spent_usd']} USD luna aceasta, "
-            f"{len(figures['budgets'])} bugete active."
+            f"{count(len(figures['budgets']), 'buget activ', 'bugete active')}."
         ),
         max_tokens=6000,
         temperature=0.1,
@@ -797,7 +798,8 @@ def reconcile_day(
     headline = f"Azi {spent_today} USD, luna aceasta {spent_month} USD"
     if figures["budgets"]:
         headline += "; " + ", ".join(
-            f"{b['period'].lower()} {b['spent_usd']}/{b['limit_usd']} USD ({b['state']})"
+            f"{budget_period(b['period'])} {b['spent_usd']}/{b['limit_usd']} USD "
+            f"({budget_state(b['state'])})"
             for b in figures["budgets"]
         )
     # The escalation is decided by the books, not by the model: an exceeded budget escalates.
@@ -885,8 +887,8 @@ def reconcile_day(
             request.status = "RESOLVED"
             request.resolved_by = "Nadia (Accountant)"
             request.resolution = (
-                "Înscrisă în închiderea zilei și transmisă Owner-ului cu cifrele cărții: "
-                f"{headline}. Numai Owner-ul stabilește bugetul."
+                "Înscrisă în închiderea zilei și transmisă Proprietarului cu cifrele cărții: "
+                f"{headline}. Numai Proprietarul stabilește bugetul."
             )
         message_id = message.id
     return {

@@ -92,7 +92,9 @@ def test_the_preflight_says_when_no_budget_has_been_set(engine, settings, vault,
 
     now_set = check(engine, settings, vault, "spending_budget")
     assert now_set["ok"] is True and now_set["severity"] == DEGRADING
-    assert "DAILY" in now_set["detail"] and "25" in now_set["detail"]
+    # The period and the state are said in words; the codes are the line's value.
+    assert "zilnic 25" in now_set["message"] and "DAILY" not in now_set["message"]
+    assert now_set["value"][0]["period"] == "DAILY" and "25" in now_set["value"][0]["limit_usd"]
 
 
 # ---------------------------------------------------------------------------
@@ -352,7 +354,9 @@ def test_a_studio_with_no_serial_channel_at_all_is_told_so_and_not_refused(
     line = check(engine, settings, vault, "serial_channel")
 
     assert line["ok"] is False and line["severity"] == INFORMATIONAL
-    assert "OFFICE_SERIAL" in line["message"]
+    # The channel type is said by its product name; the code stays in the detail.
+    assert "Office Serial" in line["message"] and "OFFICE_SERIAL" not in line["message"]
+    assert line["value"] == {"channel_type": "OFFICE_SERIAL", "exists": False}
 
 
 # ---------------------------------------------------------------------------
@@ -778,7 +782,9 @@ def test_in_test_the_production_budget_is_said_as_information_only(engine, setti
     films = named(result, "daily_budget_films")
     # TEST holds two shots at the test ceiling, 1.2 USD a film: both fit today.
     assert films["ok"] is False and films["severity"] == INFORMATIONAL
-    assert "TEST" in films["message"] and "PRODUCTION" in films["message"]
+    assert "mediul de test" in films["message"] and "producție" in films["message"]
+    assert films["value"]["environment"] == "TEST"
+    assert films["value"]["production_per_film_usd"]
     assert "1.2 USD" in films["message"]
     assert "episodul serialului" in films["message"]
     assert "daily_budget_films" not in result["degrading_failures"]

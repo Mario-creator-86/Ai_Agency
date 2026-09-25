@@ -603,7 +603,7 @@ def test_a_day_that_stops_writes_to_the_owner_where_and_why(engine, settings, st
     )
     assert result["stopped_at_stage"] == "media"
     letters = letters_for_owner(engine)
-    assert letters and letters[0]["subject"] == "Ziua s-a oprit la etapa «media»"
+    assert letters and letters[0]["subject"] == "Ziua s-a oprit la etapa «producție media»"
     assert "cheia Runway" in letters[0]["body_text"]
 
 
@@ -854,13 +854,13 @@ def test_an_answer_to_an_investigation_is_read_not_investigated_again(engine, st
     director_review(engine, registry, str(uuid4()))
     with Session(engine) as session:
         row = session.get(AgentMessage, answer)
-        assert row.status == "RESOLVED" and row.resolution.startswith("ACKNOWLEDGE")
-        assert (
-            session.scalar(
-                select(AgentMessage).where(AgentMessage.subject.like("Investigate: Re:%"))
+        assert row.status == "RESOLVED" and row.resolution.startswith("Luat la cunoștință")
+        # An answer titled with the old English prefix is still recognised as one.
+        for prefix in ("Investigate: Re:%", "De investigat: Re:%"):
+            assert (
+                session.scalar(select(AgentMessage).where(AgentMessage.subject.like(prefix)))
+                is None
             )
-            is None
-        )
 
 
 def test_reviews_are_rationed_by_the_hour(engine, staffed):

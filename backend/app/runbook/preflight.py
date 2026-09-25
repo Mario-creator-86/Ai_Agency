@@ -37,6 +37,9 @@ from app.publishing.models import ChannelRecord
 from app.publishing.services import bound_connection_id, channel_bindings
 from app.research.service import research_health
 from app.services import studio_environment, utc_now
+from app.wording import autonomy_mode as mode_words
+from app.wording import budget_period, budget_state, count, provider_name
+from app.wording import environment as environment_words
 from app.youtube.models import YouTubeConnection
 from app.youtube.services import (
     ANALYTICS_REFUSED,
@@ -57,22 +60,26 @@ DEGRADING = "DEGRADING"
 #: and not by the check happening to pass.
 INFORMATIONAL = "INFORMATIONAL"
 
-#: What each mode means for the day about to run, in the Owner's language.
+#: What each mode means for the day about to run, in the Owner's language. The mode is said
+#: as the governance panel names it; its code stays in the line's ``value``.
 MODE_MEANS = {
     "MANUAL": (
-        "Modul de autonomie este MANUAL: etapele care doar pregătesc merg singure, iar "
+        "Modul de autonomie este manual: etapele care doar pregătesc merg singure, iar "
         "randarea plătită și publicarea rămân deciziile tale."
     ),
     "SUPERVISED": (
-        "Modul de autonomie este SUPERVISED: etapele interne de rutină merg singure, iar "
+        "Modul de autonomie este supravegheat: etapele interne de rutină merg singure, iar "
         "publicarea îți cere mai întâi aprobarea."
     ),
     "AUTONOMOUS_CEO": (
-        "Modul de autonomie este AUTONOMOUS_CEO: ziua merge singură în limitele politicii; "
+        "Modul de autonomie este CEO autonom: ziua merge singură în limitele politicii; "
         "porțile dure rămân la fel de închise."
     ),
 }
 
+
+#: A connected YouTube account, counted in the Owner's words.
+CONNECTED_ACCOUNTS = ("cont YouTube conectat", "conturi YouTube conectate")
 
 #: The two units an agent run is costed in (`app.economy.prices.llm_cost_vr`). Both sides must
 #: be priced or the cost is None, so half a price is no price here either: a run priced on one
@@ -81,14 +88,25 @@ TOKEN_UNITS = ("per_1m_input_tokens", "per_1m_output_tokens")
 
 
 def _check(
-    name: str, ok: bool, severity: str, present: str, absent: str, detail: str = ""
+    name: str,
+    ok: bool,
+    severity: str,
+    present: str,
+    absent: str,
+    detail: str = "",
+    value: Any = None,
 ) -> dict[str, Any]:
+    """One line of the preflight. ``message`` and ``detail`` are what the Owner reads (the
+    page prints them side by side), so both are Romanian with the codes said as words;
+    ``value`` is the same fact as data — the mode, the budget's period and state, the
+    environment — for a page or a test that needs the code itself."""
     return {
         "name": name,
         "ok": ok,
         "severity": severity,
         "message": present if ok else absent,
         "detail": detail,
+        "value": value,
     }
 
 
@@ -113,15 +131,21 @@ def _budget_check(engine: Engine) -> dict[str, Any]:
     not approve.
     """
     budgets = budget_status(engine)["budgets"]
-    named = ", ".join(f"{b['period']} {b['limit_usd']} USD ({b['state']})" for b in budgets)
+    said = ", ".join(
+        f"{budget_period(b['period'])} {b['limit_usd']} USD ({budget_state(b['state'])})"
+        for b in budgets
+    )
     return _check(
         "spending_budget",
         bool(budgets),
         DEGRADING,
-        f"{len(budgets)} bugete active: {named}.",
+        f"{count(len(budgets), 'buget activ', 'bugete active')}: {said}.",
         "Niciun buget activ: rezervarea ține banii filmului, dar nu are de ce să îl refuze. "
         "Pune-l cu PUT /economy/budget (biroul Contabilitate); nimeni altcineva nu îl poate pune.",
-        detail=named,
+        value=[
+            {"period": b["period"], "limit_usd": b["limit_usd"], "state": b["state"]}
+            for b in budgets
+        ],
     )
 
 
@@ -169,12 +193,13 @@ def _price_check(session: Session) -> dict[str, Any]:
         "model_prices",
         not unpriced,
         DEGRADING,
-        f"{len(wanted)} modele pe care rulează angajații au preț pe jetoane.",
+        f"{count(len(wanted), 'model', 'modele')} pe care rulează angajații "
+        f"{'are' if len(wanted) == 1 else 'au'} preț pe jetoane.",
         f"Modele fără preț pe jetoane la: {', '.join(kinds)}. Până când îl tastezi "
         "(PUT /economy/prices, pe model sau «*» pentru tot felul), fiecare rulare a unui "
         "angajat se înregistrează fără cost, iar cărțile văd o fracțiune din zi. Studioul nu "
         "inventează un preț.",
-        detail=models or f"{len(wanted)} modele, toate prețuite",
+        detail=models or f"{count(len(wanted), 'model prețuit', 'modele, toate prețuite')}",
     )
 
 
@@ -247,7 +272,7 @@ def _character_reference_check(session: Session) -> dict[str, Any]:
         "character_references",
         not missing,
         DEGRADING if locked else INFORMATIONAL,
-        f"{len(characters)} personaje cu imagine de referință citibilă."
+        f"{count(len(characters), 'personaj', 'personaje')} cu imagine de referință citibilă."
         if characters
         else "Niciun personaj în Character Bible; nu se cere nicio referință.",
         (
@@ -256,7 +281,8 @@ def _character_reference_check(session: Session) -> dict[str, Any]:
             "Produ setul cu POST /media/characters/{id}/reference-set (consumă credite de "
             "imagine, deci este actul tău)."
             if locked
-            else f"{len(unlocked)} personaje fără imagine de referință: {names}. Fiecare imagine "
+            else f"{count(len(unlocked), 'personaj', 'personaje')} fără imagine de referință: "
+            f"{names}. Fiecare imagine "
             "a lor este o invenție nouă, iar verificarea personajelor nu are cu ce compara. "
             "POST /media/characters/{id}/reference-set le produce."
         ),
@@ -281,8 +307,9 @@ def _serial_channel_check(session: Session, bindings: dict[str, dict]) -> dict[s
             False,
             INFORMATIONAL,
             "",
-            "Niciun canal OFFICE_SERIAL: serialul nu are unde ajunge. Creează slotul în "
-            "Publicare → Canale.",
+            "Niciun canal pentru Office Serial: serialul nu are unde ajunge. Creează slotul "
+            "în Publicare → Canale.",
+            value={"channel_type": "OFFICE_SERIAL", "exists": False},
         )
     bound = bool(bindings.get(channel.id, {}).get("publisher_ready"))
     may_approve = bool(channel.director_may_approve_episodes)
@@ -296,7 +323,7 @@ def _serial_channel_check(session: Session, bindings: dict[str, dict]) -> dict[s
     else:
         absent = (
             "Canalul serialului este legat, dar Directoarea nu are dreptul să aprobe episoade: "
-            f"fiecare episod rămâne DRAFT și te așteaptă pe tine. Dreptul se dă cu "
+            f"fiecare episod rămâne ciornă și te așteaptă pe tine. Dreptul se dă cu "
             f"{policy_route} (director_may_approve_episodes)."
         )
     return _check(
@@ -305,7 +332,16 @@ def _serial_channel_check(session: Session, bindings: dict[str, dict]) -> dict[s
         INFORMATIONAL,
         "Serialul are canal legat, iar Directoarea poate aproba episoade.",
         absent,
-        detail=f"{channel.channel_name}: legat={bound}, aprobă Directoarea={may_approve}",
+        detail=(
+            f"{channel.channel_name}: {'legat' if bound else 'nelegat'}, "
+            f"Directoarea {'poate' if may_approve else 'nu poate'} aproba episoade"
+        ),
+        value={
+            "channel_type": "OFFICE_SERIAL",
+            "exists": True,
+            "bound": bound,
+            "director_may_approve_episodes": may_approve,
+        },
     )
 
 
@@ -479,7 +515,7 @@ def _slot_detail(slot: dict[str, Any]) -> str:
         else "necunoscute (neînregistrate la conectare)"
     )
     age = (
-        f"acordat pe {slot['granted_on']}, de {slot['age_days']} zile"
+        f"acordat pe {slot['granted_on']}, de {count(slot['age_days'], 'zi', 'zile')}"
         if slot["age_days"] is not None
         else "data acordării necunoscută"
     )
@@ -498,7 +534,7 @@ def _slot_detail(slot: dict[str, Any]) -> str:
 def _grant_age_caveat(slots: list[dict[str, Any]]) -> str:
     """The age of each grant, and what seven days mean if his Google app is in Testing."""
     ages = ", ".join(
-        f"{slot['account']} {slot['age_days']} zile"
+        f"{slot['account']} {count(slot['age_days'], 'zi', 'zile')}"
         if slot["age_days"] is not None
         else f"{slot['account']} vârstă necunoscută"
         for slot in slots
@@ -514,7 +550,7 @@ def _grant_age_caveat(slots: list[dict[str, Any]]) -> str:
         tail = (
             f"Dacă aplicația Google OAuth este în modul Testing, tokenul expiră la "
             f"{TESTING_REFRESH_TOKEN_DAYS} zile după acordare, adică peste "
-            f"{TESTING_REFRESH_TOKEN_DAYS - oldest} zile."
+            f"{count(TESTING_REFRESH_TOKEN_DAYS - oldest, 'zi', 'zile')}."
         )
     else:
         tail = (
@@ -555,8 +591,9 @@ def _youtube_upload_check(slots: list[dict[str, Any]]) -> dict[str, Any]:
         "youtube_upload_access",
         not problems,
         BLOCKING,
-        f"{len(slots)} sloturi legate: niciunul nu arată dreptul de încărcare lipsă sau un refuz "
-        f"al tokenului după acordare. {caveat}",
+        f"{count(len(slots), 'slot legat', 'sloturi legate')}: "
+        f"{'nu arată' if len(slots) == 1 else 'niciunul nu arată'} dreptul de încărcare lipsă "
+        f"sau un refuz al tokenului după acordare. {caveat}",
         f"Filmele nu pot urca pe YouTube: {'; '.join(problems)}. Reconectează canalul din "
         "Setări (Conturi și e-mail → Reconectează) și acordă dreptul de încărcare. " + caveat,
         detail=" | ".join(_slot_detail(slot) for slot in slots),
@@ -589,8 +626,9 @@ def _youtube_statistics_check(slots: list[dict[str, Any]]) -> dict[str, Any]:
         "youtube_statistics_access",
         not problems,
         DEGRADING,
-        f"{len(slots)} sloturi legate: niciunul nu arată lipsa accesului la statistici "
-        "(yt-analytics.readonly) sau un refuz al tokenului după acordare.",
+        f"{count(len(slots), 'slot legat', 'sloturi legate')}: "
+        f"{'nu arată' if len(slots) == 1 else 'niciunul nu arată'} lipsa accesului la "
+        "statistici (yt-analytics.readonly) sau un refuz al tokenului după acordare.",
         f"Statisticile YouTube nu pot fi citite pentru {'; '.join(problems)}. Filmele nu depind "
         "de ele: ziua le face și le publică, dar cifrele de ieri nu ajung la studio. "
         "Reconectează canalul din Setări, acordând accesul la statistici (yt-analytics.readonly).",
@@ -651,15 +689,17 @@ def _daily_budget_films_check(
         spare = limit - per_film
         if spare < 0:
             said = (
-                f"În {env} fiecare film ține {format_micros(per_film)} USD pentru mișcare, peste "
+                f"În {environment_words(env)} fiecare film ține {format_micros(per_film)} USD "
+                "pentru mișcare, peste "
                 f"bugetul zilnic de {format_micros(limit)} USD. Niciun film nu încape: scurtul "
                 "factual este refuzat înainte de prima scenă"
                 + (", iar episodul serialului la fel." if films == 2 else ".")
             )
         else:
             said = (
-                f"În {env} fiecare film ține {format_micros(per_film)} USD pentru mișcare, iar "
-                f"bugetul zilnic este de {format_micros(limit)} USD: {films} filme ar cere "
+                f"În {environment_words(env)} fiecare film ține {format_micros(per_film)} USD "
+                f"pentru mișcare, iar bugetul zilnic este de {format_micros(limit)} USD: "
+                f"{count(films, 'film', 'filme')} ar cere "
                 f"{format_micros(films * per_film)} USD, deci episodul serialului, al doilea film "
                 "al zilei, este refuzat de buget dacă scurtul factual a costat mai mult de "
                 f"{format_micros(spare)} USD (narațiunea se adaugă la fiecare film)."
@@ -673,20 +713,34 @@ def _daily_budget_films_check(
 
     here = hold(environment)
     detail = (
-        f"{environment}: {format_micros(here)} USD pe film × {films} filme; "
-        f"zilnic {format_micros(limit)} USD"
+        f"{environment_words(environment)}: {format_micros(here)} USD pe film × "
+        f"{count(films, 'film', 'filme')}; zilnic {format_micros(limit)} USD"
     )
+    value: dict[str, Any] = {
+        "environment": environment,
+        "films": films,
+        "per_film_usd": format_micros(here),
+        "daily_limit_usd": format_micros(limit),
+    }
     if films * here > limit:
         return _check(
-            "daily_budget_films", False, DEGRADING, "", refused(environment, here), detail=detail
+            "daily_budget_films",
+            False,
+            DEGRADING,
+            "",
+            refused(environment, here),
+            detail=detail,
+            value=value,
         )
     fits = (
-        f"Bugetul zilnic de {format_micros(limit)} USD ține {films} filme la plafonul de mișcare "
-        f"din {environment} ({format_micros(here)} USD pe film)."
+        f"Bugetul zilnic de {format_micros(limit)} USD ține {count(films, 'film', 'filme')} la "
+        f"plafonul de mișcare din {environment_words(environment)} ({format_micros(here)} USD "
+        "pe film)."
     )
     if environment == "TEST":
         production = hold("PRODUCTION")
-        detail += f"; PRODUCTION: {format_micros(production)} USD pe film"
+        detail += f"; producție: {format_micros(production)} USD pe film"
+        value["production_per_film_usd"] = format_micros(production)
         if films * production > limit:
             # His answer about TEST is fine; the one about PRODUCTION is a line he reads now,
             # while switching is still a decision rather than a lost film.
@@ -695,13 +749,17 @@ def _daily_budget_films_check(
                 False,
                 INFORMATIONAL,
                 "",
-                f"Acum ești în TEST, iar ziua încape: {films} filme la "
-                f"{format_micros(here)} USD pe film, în {format_micros(limit)} USD. La trecerea "
-                "în PRODUCTION nu mai încape. " + refused("PRODUCTION", production),
+                f"Acum ești în mediul de test, iar ziua încape: {count(films, 'film', 'filme')} "
+                f"la {format_micros(here)} USD pe film, în {format_micros(limit)} USD. La "
+                "trecerea în producție nu mai încape. " + refused("PRODUCTION", production),
                 detail=detail,
+                value=value,
             )
-        fits += f" Și în PRODUCTION ({format_micros(production)} USD pe film) încap."
-    return _check("daily_budget_films", True, DEGRADING, fits, "", detail=detail)
+        fits += (
+            f" Și în producție ({format_micros(production)} USD pe film) "
+            f"{'încape' if films == 1 else 'încap'}."
+        )
+    return _check("daily_budget_films", True, DEGRADING, fits, "", detail=detail, value=value)
 
 
 def run_preflight(
@@ -737,9 +795,11 @@ def run_preflight(
                 "autonomy_mode",
                 True,
                 INFORMATIONAL,
-                MODE_MEANS.get(autonomy_mode, f"Modul de autonomie este {autonomy_mode}."),
+                MODE_MEANS.get(
+                    autonomy_mode, f"Modul de autonomie este {mode_words(autonomy_mode)}."
+                ),
                 "",
-                detail=autonomy_mode,
+                value=autonomy_mode,
             )
         )
 
@@ -751,8 +811,9 @@ def run_preflight(
                 "llm_provider",
                 bool(assignable),
                 BLOCKING,
-                f"{len(assignable)} modele verificate și disponibile.",
-                "Niciun model verificat. Verifică un furnizor în Settings; fără el agenții "
+                f"{count(len(assignable), 'model verificat', 'modele verificate')} și "
+                f"{'disponibil' if len(assignable) == 1 else 'disponibile'}.",
+                "Niciun model verificat. Verifică un furnizor în Setări; fără el angajații "
                 "nu pot rula.",
             )
         )
@@ -771,8 +832,9 @@ def run_preflight(
                 "agents",
                 len(runnable_agents) >= 2,
                 DEGRADING,
-                f"{len(runnable_agents)} agenți activi cu model alocat.",
-                "Sunt necesari cel puțin doi agenți activi: verificarea afirmațiilor trebuie "
+                f"{count(len(runnable_agents), 'angajat activ', 'angajați activi')} cu model "
+                "alocat.",
+                "Sunt necesari cel puțin doi angajați activi: verificarea afirmațiilor trebuie "
                 "făcută de altcineva decât cel care le-a extras.",
                 detail=f"{len(runnable_agents)} activi",
             )
@@ -820,15 +882,17 @@ def run_preflight(
             DEGRADING,
             # "Connected" is the stored status, not a tried token: what the grant may do and
             # whether Google refused it are the two lines that follow, and this one says so.
-            f"{len(bound)} sloturi de canal legate de conturi YouTube marcate conectate (starea "
-            "stocată; ce poate face tokenul spun liniile despre încărcare și statistici).",
+            f"{count(len(bound), 'slot de canal legat', 'sloturi de canal legate')} de conturi "
+            "YouTube marcate conectate (starea stocată; ce poate face tokenul spun liniile "
+            "despre încărcare și statistici).",
             (
-                f"{len(connected_accounts)} conturi YouTube conectate, dar niciun slot de canal "
-                "nu este legat de vreunul. Leagă-le în Publicare → Sloturi de canale: "
-                "publicarea și analytics folosesc legătura."
+                f"{count(len(connected_accounts), *CONNECTED_ACCOUNTS)}, dar niciun slot de "
+                "canal nu este legat de "
+                f"{'el' if len(connected_accounts) == 1 else 'vreunul'}. Leagă-le în "
+                "Publicare → Sloturi de canale: publicarea și analytics folosesc legătura."
                 if connected_accounts
                 else "Niciun cont YouTube conectat; publicarea și analytics nu au unde citi "
-                "sau scrie. Conectează un cont în Settings → Conturi și e-mail."
+                "sau scrie. Conectează un cont în Setări → Conturi și e-mail."
             ),
             detail=", ".join(
                 f"{b['youtube_connection_name']} → {b['youtube_channel_title'] or '—'}"
@@ -847,10 +911,11 @@ def run_preflight(
     # The counts go in the detail, not only in the message a passing check shows: the run
     # the Owner needs them for is the one where the check failed.
     counted = (
-        f"{report['hosts_total']} site-uri autorizate, {report['hosts_tested_ok']} testate cu "
-        f"succes, {report['hosts_with_template']} cu adresă de căutare, motor de căutare: "
-        f"{report['search_provider']}, {report['claims_available']} afirmații verificate "
-        "disponibile."
+        f"{count(report['hosts_total'], 'site autorizat', 'site-uri autorizate')}, "
+        f"{report['hosts_tested_ok']} testate cu succes, {report['hosts_with_template']} cu "
+        f"adresă de căutare, motor de căutare: {report['search_provider']}, "
+        f"{count(report['claims_available'], 'afirmație verificată', 'afirmații verificate')} "
+        f"{'disponibilă' if report['claims_available'] == 1 else 'disponibile'}."
     )
     checks.append(
         _check(
@@ -871,10 +936,10 @@ def run_preflight(
             "image_provider",
             bool(media["image_provider"]),
             DEGRADING,
-            f"Imagini: {media['image_provider']}.",
+            f"Imagini: {provider_name(media['image_provider'])}.",
             readiness["image"]["message"]
             + " Până atunci randările folosesc substitute, iar QC le blochează de la publicare.",
-            detail=readiness["image"]["status"],
+            value=readiness["image"]["status"],
         )
     )
     checks.append(
@@ -882,9 +947,9 @@ def run_preflight(
             "voice_provider",
             bool(media["voice_provider"]),
             DEGRADING,
-            f"Voce: {media['voice_provider']}.",
+            f"Voce: {provider_name(media['voice_provider'])}.",
             readiness["voice"]["message"] + " Până atunci narațiunea folosește un substitut.",
-            detail=readiness["voice"]["status"],
+            value=readiness["voice"]["status"],
         )
     )
 

@@ -23,6 +23,7 @@ from app.schemas import (
     PolicyResult,
     PolicyView,
 )
+from app.wording import autonomy_mode as mode_words
 
 
 class CommandConflict(Exception):
@@ -446,6 +447,13 @@ APPROVAL_ACTION_LABELS: dict[str, str] = {
     "story.public_world_change": "O schimbare publică în lumea serialului",
 }
 
+
+def action_words(action: str) -> str:
+    """An action as the Owner calls it (`APPROVAL_ACTION_LABELS`), for a sentence; an action
+    with no entry keeps its code name rather than an invented translation."""
+    return APPROVAL_ACTION_LABELS.get(action, action)
+
+
 #: A cost the studio cannot compute is None, never zero — and the page must be able to say
 #: so without inventing "0 USD" for a question nobody can price.
 COST_UNKNOWN = "necunoscut"
@@ -822,7 +830,8 @@ def may_act(
     if tier is None:
         return verdict(
             "BLOCKED_UNCLASSIFIED",
-            f"Acțiunea «{action}» nu are o treaptă de risc; fără treaptă nu se acordă permisiune.",
+            f"Acțiunea «{action_words(action)}» nu are o treaptă de risc; fără treaptă nu se "
+            "acordă permisiune.",
         )
 
     if policy is None or policy.autonomy_stopped:
@@ -834,15 +843,16 @@ def may_act(
     if tier == "T4":
         return verdict(
             "BLOCKED_OWNER_ONLY",
-            f"Nicio autonomie nu deschide treapta T4: acțiunea «{action}» rămâne exclusiv a "
+            f"Nicio autonomie nu deschide treapta T4: acțiunea «{action_words(action)}» rămâne "
+            "exclusiv a "
             "Proprietarului.",
         )
 
     if _safe_mode_is_open(session) and tier > SAFE_MODE_ALLOWS:
         return verdict(
             "BLOCKED_SAFE_MODE",
-            f"Studioul este în SAFE_MODE: doar citiri și reparații interne, nu «{action}» "
-            f"({tier}).",
+            "Studioul este în modul sigur: doar citiri și reparații interne, nu "
+            f"«{action_words(action)}» ({tier}).",
         )
 
     if tier <= MODE_ALLOWS.get(mode, "T1"):
@@ -856,8 +866,8 @@ def may_act(
             # name the film asks it properly.
             return verdict(
                 "NEEDS_APPROVAL",
-                f"Modul de autonomie este SUPERVISED: acțiunea «{action}» ({tier}) cere "
-                "aprobarea Proprietarului.",
+                f"Modul de autonomie este supravegheat: acțiunea «{action_words(action)}» "
+                f"({tier}) cere aprobarea Proprietarului.",
             )
         # His answer is read only here, and only under the mode that asks. A yes given while
         # the studio was SUPERVISED is not a way past MANUAL, which he chose afterwards
@@ -881,15 +891,15 @@ def may_act(
         )
         return verdict(
             "NEEDS_APPROVAL",
-            f"Modul de autonomie este SUPERVISED: acțiunea «{action}» ({tier}) așteaptă "
-            "aprobarea Proprietarului.",
+            f"Modul de autonomie este supravegheat: acțiunea «{action_words(action)}» "
+            f"({tier}) așteaptă aprobarea Proprietarului.",
             request.id,
         )
 
     return verdict(
         "BLOCKED_MODE",
-        f"Modul de autonomie este {mode}: acțiunea «{action}» ({tier}) cere decizia "
-        "Proprietarului.",
+        f"Modul de autonomie este {mode_words(mode)}: acțiunea «{action_words(action)}» "
+        f"({tier}) cere decizia Proprietarului.",
     )
 
 
@@ -937,13 +947,14 @@ def change_autonomy_mode(engine: Engine, command: AutonomyModeCommand) -> Policy
             if policy.autonomy_stopped:
                 raise AutonomyRefused(
                     "AUTONOMIA ESTE OPRITĂ: modul nu poate fi ridicat la "
-                    f"{command.autonomy_mode} până când Proprietarul nu ridică oprirea. "
-                    + unmeasured
+                    f"{mode_words(command.autonomy_mode)} până când Proprietarul nu ridică "
+                    "oprirea. " + unmeasured
                 )
             if _safe_mode_is_open(session):
                 raise AutonomyRefused(
-                    "Studioul este în SAFE_MODE: un incident P0 este încă deschis, așa că "
-                    f"modul nu poate fi ridicat la {command.autonomy_mode}. " + unmeasured
+                    "Studioul este în modul sigur: un incident P0 este încă deschis, așa că "
+                    f"modul nu poate fi ridicat la {mode_words(command.autonomy_mode)}. "
+                    + unmeasured
                 )
 
         event_id = None
@@ -997,15 +1008,15 @@ def change_autonomy_mode(engine: Engine, command: AutonomyModeCommand) -> Policy
 #: What every agent is told when the mode moves, in the Owner's language.
 MODE_MEMORY = {
     "MANUAL": (
-        "Modul de autonomie este MANUAL: agenții pot pregăti și analiza, dar Proprietarul "
+        "Modul de autonomie este manual: angajații pot pregăti și analiza, dar Proprietarul "
         "aprobă trecerile între etape; nimic nu iese în afara studioului."
     ),
     "SUPERVISED": (
-        "Modul de autonomie este SUPERVISED: etapele interne de rutină merg singure, iar o "
+        "Modul de autonomie este supravegheat: etapele interne de rutină merg singure, iar o "
         "scriere în afară cere mai întâi aprobarea Proprietarului."
     ),
     "AUTONOMOUS_CEO": (
-        "Modul de autonomie este AUTONOMOUS_CEO: Directoarea execută singură treptele T0-T3 "
+        "Modul de autonomie este CEO autonom: Directoarea execută singură treptele T0-T3 "
         "în limitele politicii; treapta T4 rămâne a Proprietarului, iar porțile dure rămân "
         "la fel de închise."
     ),

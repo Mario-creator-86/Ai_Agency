@@ -56,7 +56,10 @@ export function initSettings(api, hooks = {}) {
     pending = false;
 
     dialog.close();
-    dialog.replaceChildren();
+    // W28: the door goes back into its room with its words fading, not as an empty pane; what
+    // it held is cleared once it has left (a new opening builds it again in render()).
+    const gen = generation;
+    window.setTimeout(() => { if (!dialog.open && gen === generation) dialog.replaceChildren(); }, 400);
   }
 
   dialog.addEventListener('close', () => {

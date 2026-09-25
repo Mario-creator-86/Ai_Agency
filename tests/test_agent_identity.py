@@ -407,7 +407,8 @@ def test_stage_reports_are_filed_by_their_owners_and_the_director_decides(
     with Session(engine) as session:
         lifted = session.get(AgentMessage, hold_id)
         assert lifted.status == "RESOLVED" and lifted.resolved_by == "Sarah (Director)"
-        assert lifted.resolution == "APPROVE: Title now matches."
+        # What the Director did is said in words; the action's code is in the decision.
+        assert lifted.resolution == "Aprobat: Title now matches."
         assert publication_hold(session, "asset-1") is None
         assert approved_metadata(session, "asset-1")["title"] == "An honest title"
         answered = session.get(AgentMessage, qc_report_id)
@@ -430,14 +431,15 @@ def test_stage_reports_are_filed_by_their_owners_and_the_director_decides(
         # prompt.
         kael_row = session.get(Agent, kael.id)
         kael_identity = compose_identity(session, kael_row).system
-        assert "Investigate: edit_and_qc" in kael_identity
+        assert "De investigat: Montaj și controlul calității: încheiată" in kael_identity
         assert "WHAT IS ASKED OF YOU RIGHT NOW (1 open messages addressed to you" in kael_identity
     listed = client.get("/api/v1/agents/messages?status=OPEN", headers=headers).json()["messages"]
     assert {m["intent"] for m in listed} == {"STATUS", "REQUEST_INFO"}
     # The Owner may ask for a review at any time; the app's own registry has no model here,
     # so the Director cannot run and the API says so instead of pretending.
     on_demand = client.post("/api/v1/agents/director/review", headers=headers)
-    assert on_demand.status_code == 422 and "no usable review" in on_demand.json()["detail"]
+    assert on_demand.status_code == 422
+    assert "revizuire utilizabilă" in on_demand.json()["detail"]
 
 
 def test_a_malformed_review_decides_nothing(engine, staffed):

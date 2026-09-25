@@ -179,7 +179,7 @@ def test_an_incident_after_the_owners_yes_leaves_the_film_and_the_answer_where_t
 
     assert publisher.uploads == []
     assert halted["status"] == "SKIPPED", halted
-    assert "SAFE_MODE" in halted["reason"]
+    assert "modul sigur" in halted["reason"]
     assert _unspent(engine, request.id)
 
 

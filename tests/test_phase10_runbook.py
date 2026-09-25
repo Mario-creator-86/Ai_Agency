@@ -146,7 +146,9 @@ def test_the_preflight_says_which_autonomy_mode_the_day_will_run_under_and_refus
         assert result["autonomy_mode"] == mode
         (line,) = [c for c in result["checks"] if c["name"] == "autonomy_mode"]
         assert line["ok"] is True and line["severity"] == INFORMATIONAL
-        assert line["detail"] == mode and mode in line["message"]
+        # The mode is said in the governance panel's words; its code is the detail.
+        assert line["value"] == mode and mode not in line["message"]
+        assert "Modul de autonomie este " in line["message"]
         assert "autonomy_mode" not in result["blocking_failures"]
         assert "autonomy_mode" not in result["degrading_failures"]
         verdicts.add(result["status"])
@@ -188,7 +190,7 @@ def test_the_preflight_asks_whether_the_studio_can_find_pages_not_whether_a_row_
     walled = check("research_sources")
     assert walled["ok"] is False
     assert "www.example.org (HTTP_403)" in walled["detail"]
-    assert "1 site-uri autorizate, 0 testate cu succes" in walled["detail"]
+    assert "1 site autorizat, 0 testate cu succes" in walled["detail"]
 
     with Session(engine) as session, session.begin():
         row = session.get(ResearchAllowedHost, "www.example.org")
@@ -314,7 +316,12 @@ def test_a_failing_stage_stops_the_run_and_the_rest_is_marked_blocked(
     assert result["stopped_at_stage"] == "media"
     stages = {s["stage"]: s for s in result["stages"]}
     assert stages["media"]["status"] == FAILED
-    assert "provider timeout" in stages["media"]["reason"]
+    # The Owner reads a Romanian reason, never the exception's own English; the class and
+    # the text stay in the record for whoever diagnoses it.
+    assert "provider timeout" not in stages["media"]["reason"]
+    assert stages["media"]["reason"] == "O eroare neașteptată în codul studioului."
+    assert stages["media"]["error_class"] == "RuntimeError"
+    assert stages["media"]["error_detail"] == "provider timeout"
     assert stages["publish"]["status"] == BLOCKED, "later stages did not run and must not claim to"
 
 
@@ -1042,7 +1049,7 @@ def test_the_letter_about_a_stopped_day_is_sent_only_after_the_last_attempt(
     # ...and the last one writes.
     last = execute_daily_run(engine, settings, vault, attempt=3, attempts_allowed=3)
     assert last["retryable"] is True
-    assert len(letters) == 1 and "preflight" in letters[0]
+    assert len(letters) == 1 and "«verificarea preliminară»" in letters[0]
     # The default — one attempt, as the Owner's button runs it — writes at once.
     execute_daily_run(engine, settings, vault)
     assert len(letters) == 2

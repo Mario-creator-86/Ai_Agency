@@ -41,6 +41,7 @@ from app.factual.grounding import grounding_check, script_grounding
 from app.factual.models import ScriptDraft, StoryReview
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.services import append_event, utc_now
+from app.wording import review_verdict
 
 logger = logging.getLogger("studio.story_review")
 
@@ -389,11 +390,11 @@ def review_story(
             post_message(
                 session,
                 intent="CHALLENGE" if verdict == "REJECT" else "REQUEST_REVIEW",
-                subject=f"Povestea «{facts['title'][:60]}»: {verdict}",
+                subject=f"Povestea «{facts['title'][:60]}»: {review_verdict(verdict)}",
                 body={"kind": "story_review", "verdict": verdict, "failed": broken[:6]},
                 body_text=(
-                    f"Scenariul nu poate intra în producție așa cum e ({verdict}). "
-                    + " ".join(notes[:6])
+                    "Scenariul nu poate intra în producție așa cum e "
+                    f"({review_verdict(verdict)}). " + " ".join(notes[:6])
                 ),
                 from_agent_id=reviewer_id,
                 to_agent_id=None,

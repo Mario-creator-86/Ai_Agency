@@ -183,14 +183,63 @@ def get_agent(engine: Engine, agent_id: str) -> dict | None:
         return AgentView.model_validate(agent).model_dump()
 
 
+class AgentLifecycleRefused(Exception):
+    """A pause or a resume that would change nothing, or that no longer can: the API's 409.
+
+    Until 2026-09-25 both accepted any state but TERMINATED and always wrote their event, so
+    resuming an employee already at work recorded an «agent.resumed» that never happened and
+    the register said «a reluat lucrul» about someone who had never stopped. ``code`` is the
+    structured reason; the message is the Romanian sentence the Owner reads.
+    """
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+#: The states from which a pause is a real change, and those from which a resume is.
+PAUSABLE = frozenset({"ACTIVE", "HIRED"})
+RESUMABLE = frozenset({"PAUSED", "SUSPENDED"})
+
+
+def _refuse_lifecycle(agent: Agent, wanted: str) -> None:
+    """Refuse a lifecycle change that changes nothing, in words that fit every employee.
+
+    The employees' genders differ, so the sentences use invariable forms («în pauză», «nu mai
+    face parte din companie») rather than a participle that would agree with only some.
+    """
+    name = agent.display_name
+    state = str(agent.lifecycle or "")
+    if state == "TERMINATED":
+        raise AgentLifecycleRefused(
+            "TERMINATED",
+            f"{name} nu mai face parte din companie; o concediere nu se pune pe pauză și nu "
+            "se reia.",
+        )
+    if wanted == "PAUSED" and state not in PAUSABLE:
+        if state == "PAUSED":
+            raise AgentLifecycleRefused(
+                "ALREADY_PAUSED", f"{name} este deja în pauză; pauza nu ar schimba nimic."
+            )
+        raise AgentLifecycleRefused(
+            "NOT_WORKING",
+            f"{name} nu lucrează acum (suspendare hotărâtă de companie); pauza nu ar schimba "
+            "nimic.",
+        )
+    if wanted == "ACTIVE" and state not in RESUMABLE:
+        raise AgentLifecycleRefused(
+            "ALREADY_ACTIVE", f"{name} lucrează deja; reluarea nu ar schimba nimic."
+        )
+
+
 def pause_agent(engine: Engine, agent_id: str) -> dict:
-    """Pause an active agent, preventing autonomous tasks."""
+    """Pause an active agent, preventing autonomous tasks. A pause of someone who is not at
+    work is refused (`AgentLifecycleRefused`) and records nothing."""
     with Session(engine) as session, session.begin():
         agent = session.get(Agent, agent_id)
         if agent is None:
-            raise ValueError(f"Agent {agent_id} not found")
-        if agent.lifecycle == "TERMINATED":
-            raise ValueError("Cannot pause a TERMINATED agent")
+            raise ValueError(f"Angajatul {agent_id} nu există.")
+        _refuse_lifecycle(agent, "PAUSED")
 
         agent.lifecycle = "PAUSED"
         agent.version += 1
@@ -209,13 +258,13 @@ def pause_agent(engine: Engine, agent_id: str) -> dict:
 
 
 def resume_agent(engine: Engine, agent_id: str) -> dict:
-    """Resume a paused agent to ACTIVE lifecycle."""
+    """Resume a paused or suspended agent to ACTIVE. A resume of someone already at work is
+    refused (`AgentLifecycleRefused`) and records nothing."""
     with Session(engine) as session, session.begin():
         agent = session.get(Agent, agent_id)
         if agent is None:
-            raise ValueError(f"Agent {agent_id} not found")
-        if agent.lifecycle == "TERMINATED":
-            raise ValueError("Cannot resume a TERMINATED agent")
+            raise ValueError(f"Angajatul {agent_id} nu există.")
+        _refuse_lifecycle(agent, "ACTIVE")
 
         agent.lifecycle = "ACTIVE"
         agent.version += 1

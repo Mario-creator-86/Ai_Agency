@@ -409,7 +409,7 @@ def propose_topics(
             post_message(
                 session,
                 intent="ESCALATE",
-                subject=f"Idea generation blocked: {blocker.reason[:150]}",
+                subject=f"Generarea de idei, blocată: {blocker.reason[:150]}",
                 body={"reason": blocker.reason, "needs": blocker.needs},
                 from_agent_id=researcher_id,
                 run_id=result["id"],

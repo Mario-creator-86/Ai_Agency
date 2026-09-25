@@ -280,6 +280,20 @@
   --rail-w:    208px;  /* a long dialog's section rail */
   --measure:   104ch;  /* the widest a paragraph of running prose may run */
   --measure-lead: 72ch;/* a dialog's one-line purpose, under its title */
+  --measure-quote: 70ch;/* a model's or the backend's English, set as quoted material (W28) */
+  --quote-rule: var(--line-field); /* the hairline at its left */
+  /* W28, THE DOORS' TYPE. At 1920 most of a door was 11.5 px on a 1440 px pane. From 1900 px the
+     doors take their own step of the scale (the same names, a step up, style.css W28); below it
+     they keep the page's. */
+  --dialog-fs-micro: 11.5px;
+  --dialog-fs-meta:  13.5px;
+  --dialog-fs-body:  15px;
+  --dialog-fs-lead:  16.5px;
+  --dialog-fs-h3:    17.5px;
+  --dialog-fs-h2:    24px;
+  --dialog-fs-num:   26px;
+  --dialog-fs-num-xl: 40px;
+  --dialog-rail-w:   236px; /* the section rail, for its links at the door's larger type */
   --page-max:  1880px; /* the widest the workspace runs */
   --page-max-wide: 2240px;
   --gutter:    clamp(18px, 2.5vw, 44px);
@@ -468,6 +482,14 @@
   --dur-invite:    420ms;                     /* the invitation rises once into the free room (W15) */
   --dur-handoff:   480ms;                     /* an earlier visit's last live frame giving way to the live video (W19) */
   --dur-door:      620ms;                     /* the replay's door: the live picture fading into the graded building, and back (W19) */
+  /* W28, THE DOORS FROM THEIR ROOMS (dialog_doors.js): a dialog grows out of its room's rectangle
+     and goes back into it; the room is lit while its door is open. */
+  --dur-room-open:  340ms;                    /* the pane out of its room */
+  --dur-room-close: 300ms;                    /* and back into it */
+  --dur-room-fade:  180ms;                    /* under reduced motion: a fade, nothing travels */
+  --door-light-line: rgba(240, 200, 135, .85);/* the lit room's edge */
+  --door-light-glow: rgba(224, 176, 98, .30); /* its light, laid over the room with `screen` */
+  --door-light-halo: rgba(224, 176, 98, .34); /* and around it, and the pane's edge as it leaves the room */
   --kept-dim:      brightness(.56) saturate(.72); /* that last live frame, dimmed so it is never taken for live (W19) */
   --plaque-glass:  var(--card-glass);         /* the studio's numbers over the live video: the drawers' glass (W19) */
   --plaque-edge:   var(--drawer-edge);
@@ -3518,6 +3540,21 @@ details[open] > summary::before { transform: rotate(90deg); }
   .moment-toast, .moment-toast.is-in, .moment-toast.is-out { transform: none; transition: none; }
   .owner-mark.is-arriving { animation: none; }
   .track-seg { transition: none; }
+  /* W28: a door fades; it does not travel from its room (:root outranks the W28 block below). */
+  :root .studio-dialog.has-door,
+  :root .studio-dialog.has-door[open] {
+    translate: none;
+    scale: none;
+    transition:
+      opacity var(--dur-room-fade) var(--ease),
+      overlay var(--dur-room-fade) var(--ease) allow-discrete,
+      display var(--dur-room-fade) var(--ease) allow-discrete;
+  }
+  /* a fade is not motion: the page's blanket .001ms above would make the leaving a cut */
+  :root .studio-dialog.has-door { transition-duration: var(--dur-room-fade) !important; }
+  :root .studio-dialog.has-door > *,
+  :root .studio-dialog.has-door:not([open]) > * { opacity: 1; transition: none; }
+  :root .studio-dialog.has-door::backdrop { transition-duration: var(--dur-room-fade) !important; }
 }
 
 
@@ -4137,11 +4174,13 @@ details[open] > summary::before { transform: rotate(90deg); }
    unless told. They wrap, and the page no longer scrolls sideways. */
 @media (max-width: 600px) {
   .ledger-column, .ledger-panel { min-width: 0; }
-  .ledger-panel .ledger-filters { flex-wrap: wrap; justify-content: flex-start; row-gap: var(--s1); }
+  .ledger-panel .ledger-filters { flex-wrap: wrap; justify-content: flex-start; row-gap: var(--s2); }
 }
 
+/* W29: the rows 8 px apart, so each chip's 34 px hit area (its ::after, 4 px above and below)
+   is its own: at 4 px the first row's lower 4 px were the second row's (measured: «Toate» 30 px). */
 @container register (max-width: 339.98px) {
-  .ledger-panel .ledger-filters { flex-wrap: wrap; justify-content: flex-start; row-gap: var(--s1); }
+  .ledger-panel .ledger-filters { flex-wrap: wrap; justify-content: flex-start; row-gap: var(--s2); }
 }
 
 /* Too narrow for seven words: each room is its icon, and its word is a label
@@ -4295,4 +4334,328 @@ body.is-arming #workspace { opacity: 0; }
 .settings-dialog select:focus-visible {
   outline: 2px solid var(--teal);
   outline-offset: 2px;
+}
+
+
+/* ==========================================================================
+   W28 — THE DOORS OPEN FROM THEIR ROOMS
+   ==========================================================================
+   A door grows out of its room on the building and goes back into it (dialog_doors.js): on the
+   way in a WAAPI animation from the room's rectangle; on the way out the transition below, to
+   the rectangle the script wrote into --door-*. The glass moves first and the words come up as it
+   lands (and go first as it leaves), so nothing is read squeezed. Focus, the backdrop and every
+   way of closing are the dialog's own, as before. */
+.studio-dialog.has-door {
+  transform-origin: 50% 50%;
+  opacity: 0;
+  translate: var(--door-tx, 0px) var(--door-ty, 8px);
+  scale: var(--door-sx, .96) var(--door-sy, .96);
+  transition:
+    opacity calc(var(--dur-room-close) * .4) var(--ease-push) calc(var(--dur-room-close) * .6),
+    translate var(--dur-room-close) var(--ease),
+    scale var(--dur-room-close) var(--ease),
+    overlay var(--dur-room-close) var(--ease) allow-discrete,
+    display var(--dur-room-close) var(--ease) allow-discrete;
+}
+.studio-dialog.has-door[open] { opacity: 1; translate: 0 0; scale: 1 1; }
+/* while the pane moves, its own blur is off (dialog_doors.js): the compositor re-blurred a moving,
+   scaling pane every frame; the pane is 90 % opaque and nothing is read through it in motion */
+.studio-dialog.has-door.is-moving,
+.studio-dialog.has-door:not([open]),
+#story-modal.journal-dialog.has-door.is-moving,
+#story-modal.journal-dialog.has-door:not([open]) { backdrop-filter: none; }
+/* the opening is the script's animation, from the room: no stylesheet transition under it */
+@starting-style { .studio-dialog.has-door[open] { opacity: 1; translate: 0 0; scale: 1 1; } }
+.studio-dialog.has-door > * { transition: opacity calc(var(--dur-room-close) * .4) var(--ease); }
+.studio-dialog.has-door:not([open]) > * { opacity: 0; }
+.studio-dialog.has-door::backdrop { transition-duration: var(--dur-room-open); transition-timing-function: var(--ease-push); }
+
+/* The pane's warm edge as it leaves its room: shown only by the opening's animation (opacity). */
+.studio-dialog.has-door::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border: 1px solid var(--door-light-line);
+  border-radius: inherit;
+  box-shadow: 0 0 36px 6px var(--door-light-halo), inset 0 0 48px var(--door-light-halo);
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* THE FIRST FRAME (W28). A door's first frame laid out the whole of its content, 6000 px of it in
+   Research, 42 ms before anything moved. The parts of a door that start below its fold are laid
+   out when they come near the view; their place is kept by their last measured height. */
+.studio-dialog .dialog-pane > *,
+.studio-dialog .dialog-body:not(.dialog-body-railed) > * {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 320px;
+}
+.studio-dialog .topic-card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 112px;
+}
+/* ...and while a door opens, its parts are laid out one per frame (dialog_doors.js stagger) */
+.studio-dialog [data-door-wait] {
+  content-visibility: hidden;
+  contain-intrinsic-size: auto 320px;
+}
+
+/* The lit room: an edge of warm light and its glow over the room's rectangle, above the picture
+   (the renderer's or the stream's) and the plaques' layer, under the readouts. */
+.scene-viewport .door-light {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+  border: 1px solid var(--door-light-line);
+  border-radius: var(--radius-sm);
+  background: radial-gradient(120% 90% at 50% 0%, var(--door-light-glow), transparent 72%);
+  box-shadow: 0 0 22px 2px var(--door-light-halo), inset 0 0 28px var(--door-light-halo);
+  mix-blend-mode: screen;
+  opacity: 0;
+  transition: opacity var(--door-light-ms, var(--dur-room-close)) var(--ease);
+}
+/* it comes on at once, ahead of the pane; it goes out as the pane has gone back in */
+.scene-viewport .door-light.is-on { opacity: 1; transition-duration: var(--dur-fast); }
+
+
+/* ==========================================================================
+   W28 — THE DOORS' TYPE AND READING
+   ==========================================================================
+   From 1900 px a door sets its words a step up the scale (the same token names, redefined on the
+   door: nothing outside a door changes), and from 2400 px a step larger again. One scroll per door: the lists that scrolled inside it (the topics, the scripts, the
+   checks, the runs, the decisions, the employees, a scene's prompt) are laid out whole, and the
+   long doors carry their section rail. A model's English is quoted material, in a measure. */
+@media (min-width: 1900px) {
+  .studio-dialog {
+    --fs-micro: var(--dialog-fs-micro);
+    --fs-meta: var(--dialog-fs-meta);
+    --fs-body: var(--dialog-fs-body);
+    --fs-lead: var(--dialog-fs-lead);
+    --fs-h3: var(--dialog-fs-h3);
+    --fs-h2: var(--dialog-fs-h2);
+    --fs-num: var(--dialog-fs-num);
+    --fs-num-xl: var(--dialog-fs-num-xl);
+    --rail-w: var(--dialog-rail-w);
+  }
+}
+@media (min-width: 2400px) {
+  :root {
+    --dialog-fs-micro: 12.5px;
+    --dialog-fs-meta:  15px;
+    --dialog-fs-body:  16.5px;
+    --dialog-fs-lead:  18px;
+    --dialog-fs-h3:    19.5px;
+    --dialog-fs-h2:    27px;
+    --dialog-fs-num:   29px;
+    --dialog-fs-num-xl: 46px;
+    --dialog-rail-w:   264px;
+  }
+}
+
+/* One scroll: the door's body. */
+.studio-dialog .topics-container {
+  max-height: none;
+  overflow: visible;
+}
+
+/* Quoted material: the words as the model or the backend wrote them. */
+.studio-dialog .topic-card-subject,
+.studio-dialog .scene-card .scene-prompt,
+.studio-dialog .scene-card .scene-audio {
+  max-width: var(--measure-quote);
+  margin: 0;
+  padding: 0 0 0 var(--s3);
+  border: 0;
+  border-left: 2px solid var(--quote-rule);
+  background: none;
+  box-shadow: none;
+  color: var(--ink-2);
+  font-size: var(--fs-body);
+  font-style: normal;
+  line-height: 1.6;
+}
+.studio-dialog .scene-card .scene-audio q { quotes: '„' '”'; }
+.studio-dialog .scene-card .scene-audio { color: var(--ink); }
+
+/* A storyboard's scenes as rows: the scene, its length and its shot; the picture's prompt, whole;
+   what is said over it. Nothing scrolls inside a scene any more, and nothing is cut. */
+.studio-dialog .storyboard-scenes-grid { grid-template-columns: minmax(0, 1fr); gap: var(--s3); }
+.studio-dialog .scene-card {
+  display: grid;
+  grid-template-columns: minmax(150px, 13rem) minmax(0, 1.25fr) minmax(0, 1fr);
+  grid-template-rows: auto 1fr;
+  column-gap: var(--s5);
+  row-gap: var(--s2);
+  padding: var(--s4);
+  overflow: visible;
+}
+.studio-dialog .scene-card .scene-card-header {
+  grid-column: 1;
+  grid-row: 1;
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  justify-content: flex-start;
+  gap: var(--s3);
+}
+.studio-dialog .scene-card .scene-shot { grid-column: 1; grid-row: 2; margin: 0; }
+.studio-dialog .scene-card .scene-prompt {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  height: auto;
+  max-height: none;
+  overflow: visible;
+  box-sizing: border-box;
+}
+.studio-dialog .scene-card .scene-audio { grid-column: 3; grid-row: 1 / span 2; align-self: start; }
+@media (max-width: 1050px) {
+  .studio-dialog .scene-card { grid-template-columns: minmax(0, 1fr); }
+  .studio-dialog .scene-card .scene-card-header,
+  .studio-dialog .scene-card .scene-shot,
+  .studio-dialog .scene-card .scene-prompt,
+  .studio-dialog .scene-card .scene-audio { grid-column: 1; grid-row: auto; }
+}
+
+/* The directions all the scenes share, said once under them (dialog_words.js sharedTail). */
+.studio-dialog .scene-common {
+  display: grid;
+  grid-template-columns: minmax(150px, 13rem) minmax(0, 1fr);
+  column-gap: var(--s5);
+  margin-top: var(--s3);
+  padding: var(--s4);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-sm);
+}
+.studio-dialog .scene-common-label {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: var(--fs-micro);
+  font-weight: var(--w-bold);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+}
+.studio-dialog .scene-common .scene-common-text {
+  max-width: var(--measure-quote);
+  margin: 0;
+  padding: 0 0 0 var(--s3);
+  border-left: 2px solid var(--quote-rule);
+  color: var(--ink-2);
+  font-size: var(--fs-body);
+  line-height: 1.6;
+}
+@media (max-width: 1050px) {
+  .studio-dialog .scene-common { grid-template-columns: minmax(0, 1fr); row-gap: var(--s2); }
+}
+
+
+/* ==========================================================================
+   W28 — THE PHONE (up to 600 px)
+   ==========================================================================
+   At 390 px the render was a 336x176 postcard inside a card inside the page, its glass readouts
+   cut mid-word, the dock a box of wrapped keys. Now the render runs the phone's full width and
+   is taller (6:5, so the frame's camera stands the building across it), its readouts say their
+   short form, the dock is a two-row instrument and a menu of rooms, and the drawers below are
+   full-width sheets with the page's 16 px gutter. (:root outranks office_scene.css, which loads
+   after this sheet.) */
+@media (max-width: 600px) {
+  :root main { padding: 0 0 var(--s6); }
+  :root .topbar { height: auto; padding: var(--s2) var(--s4); row-gap: var(--s2); }
+  :root .topbar-crumb { display: none; }
+  :root .topbar-right { flex-wrap: wrap; gap: var(--s2); }
+  :root .topbar-right > * { min-height: var(--hit); }
+  :root .topbar-right .connection { display: none; }
+
+  :root .office-panel { border: 0; border-radius: 0; background: none; box-shadow: none; }
+  :root .office-panel .office-heading { padding: var(--s4) var(--s4) var(--s2); margin: 0; }
+  :root #office-scene-container { margin: 0; }
+  :root #office-scene-container .scene-viewport {
+    aspect-ratio: 6 / 5;
+    border-left: 0;
+    border-right: 0;
+    border-radius: 0;
+  }
+
+  /* the readouts' short form: the hour and the city; «Live»; who is in and the day's run */
+  :root .scene-viewport #scene-info .scene-weather,
+  :root .scene-viewport #scene-info .scene-sep:nth-of-type(4) { display: none; }
+  :root .scene-viewport #office-fps .scene-label,
+  :root .scene-viewport #office-fps .scene-figure { display: none; }
+  :root .scene-viewport .scene-slate #snapshot-time { display: none; }
+  :root .scene-viewport .scene-slate .room-caption-long,
+  :root .scene-viewport .scene-slate .day-track-long { display: none; }
+  :root .scene-viewport .scene-slate .room-caption-short,
+  :root .scene-viewport .scene-slate .day-track-short { display: inline; }
+  :root .scene-viewport .scene-slate { justify-content: space-between; gap: var(--s3); }
+  :root .scene-viewport .scene-slate #room-caption { flex: none; }
+  :root .scene-viewport .scene-slate .day-track-bar { display: none; }
+
+  /* the dock: the studio's two switches, the camera, then the rooms as a menu of equal keys */
+  :root #office-scene-container .camera-toolbar {
+    margin: 0;
+    border-left: 0;
+    border-right: 0;
+    border-radius: 0;
+  }
+  :root #office-scene-container .toolbar-scene {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s2);
+    padding: var(--s3) var(--s4);
+  }
+  :root #office-scene-container .toolbar-scene .cam-group { grid-column: 1 / -1; display: flex; width: 100%; margin: 0; }
+  :root #office-scene-container .toolbar-scene .replay-toggle {
+    background: var(--surface-sunk);
+    border: 1px solid var(--scene-chrome-edge);
+    box-shadow: var(--lit-edge);
+  }
+  :root #office-scene-container .toolbar-scene .cam-group > .cam-btn { flex: 1 1 0; }
+  :root #office-scene-container .toolbar-scene .cam-switch,
+  :root #office-scene-container .toolbar-scene .replay-toggle,
+  :root #office-scene-container .toolbar-scene .btn-fs { width: 100%; justify-content: center; }
+  :root #office-scene-container .toolbar-modules {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s2);
+    padding: var(--s3) var(--s4) var(--s4);
+  }
+  :root #office-scene-container .toolbar-modules .cam-btn {
+    justify-content: flex-start;
+    width: 100%;
+    height: calc(var(--hit) + var(--s2));
+    padding: 0 var(--s3);
+    background: var(--surface-sunk);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+  }
+  :root #office-scene-container .toolbar-modules .cam-btn:last-child:nth-child(odd) { grid-column: 1 / -1; }
+
+  /* the drawers, stacked: full-width sheets divided by a hairline, the 16 px gutter inside */
+  :root #workspace .ledger-panel,
+  :root #workspace > .panel,
+  :root .side-column > .panel {
+    margin: 0;
+    border-left: 0;
+    border-right: 0;
+    border-radius: 0;
+    padding: var(--s5) var(--s4);
+  }
+  :root .side-column { gap: 0; }
+  :root .ledger-panel .ledger-list { max-height: 70vh; min-height: 0; }
+
+  /* the doors at phone width: a section's head wraps above its keys instead of squeezing its
+     title into a column; a channel's account field takes its own line; long tags wrap */
+  :root .studio-dialog .topics-header-row { flex-wrap: wrap; row-gap: var(--s2); }
+  :root .studio-dialog .topics-header-row > h3 { flex: 1 1 100%; }
+  :root .studio-dialog .channel-item { display: flex; flex-direction: column; align-items: stretch; }
+  :root .studio-dialog .channel-bind { flex-direction: column; align-items: stretch; }
+  :root .studio-dialog .channel-bind label { flex-direction: column; align-items: stretch; }
+  :root .studio-dialog .channel-bind select { max-width: none; width: 100%; }
+  :root .studio-dialog .policy-tag { white-space: normal; overflow-wrap: anywhere; max-width: 100%; }
+  :root .studio-dialog .topic-card-header { flex-wrap: wrap; row-gap: var(--s1); min-width: 0; }
+  :root .studio-dialog .topic-card-meta { flex-wrap: wrap; min-width: 0; overflow-wrap: anywhere; }
+  :root .studio-dialog .storyboard-header { flex-wrap: wrap; }
+  :root .studio-dialog .video-preview-card { display: flex; flex-direction: column; align-items: stretch; }
+  :root .studio-dialog .video-preview-card .video-container-9-16 { align-self: center; }
+  :root .studio-dialog .video-details { min-width: 0; }
 }

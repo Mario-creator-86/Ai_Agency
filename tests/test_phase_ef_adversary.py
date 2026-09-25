@@ -709,7 +709,8 @@ def test_the_media_stage_charges_the_day_for_the_render_the_vendor_stopped(
     outcome = stages._media(engine, settings, None, None)
 
     assert outcome["status"] == "COMPLETED", outcome
-    assert "refuzate de furnizor" in outcome["reason"], outcome["reason"]
+    # One render: «1 randare refuzată de furnizor» (the count agrees with its noun).
+    assert "refuzată de furnizor" in outcome["reason"], outcome["reason"]
     assert outcome["artefacts"]["costs_recorded"] >= 1, outcome["artefacts"]
     with Session(engine) as session:
         job = session.scalars(select(VideoRenderJob)).one()

@@ -58,6 +58,7 @@ from app.media.prompt_agent import record_prompt_lesson
 from app.media.toolchain import find_ffmpeg
 from app.providers.registry import ProviderRegistry
 from app.services import append_event, utc_now
+from app.wording import viewing_verdict
 
 logger = logging.getLogger("studio.editorial")
 
@@ -462,7 +463,10 @@ def editorial_review(
             correlation,
             EditorialVerdict,
             '{"verdict": "APPROVE|REJECT", "story": "...", "reasons": [...], "notes_for": {}}',
-            summary=f"Vizionez «{facts['title']}» înainte de publicare ({len(frames)} cadre).",
+            summary=(
+                f"Vizionez «{facts['title']}» înainte de publicare "
+                f"({len(frames)} {'cadru' if len(frames) == 1 else 'cadre'})."
+            ),
             max_tokens=6000,
             temperature=0.1,
             extra={"images": frames} if frames else None,
@@ -523,7 +527,7 @@ def editorial_review(
                 .where(Agent.lifecycle == "ACTIVE")
             ).all()
         }
-        subject = f"Vizionare: {verdict.verdict} — {facts['title'][:120]}"
+        subject = f"Vizionare: {viewing_verdict(verdict.verdict)} — {facts['title'][:120]}"
         summary_text = (
             f"{'Aprobat' if verdict.verdict == 'APPROVE' else 'Respins'}: {facts['title']}. "
             + (f"Despre: {verdict.story} " if verdict.story else "")

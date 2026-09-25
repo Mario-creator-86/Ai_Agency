@@ -151,8 +151,28 @@ from app.services import may_act, studio_environment, utc_now
 from app.story.models import DailyStudioLog, StoryEpisode
 from app.story.serial_stage import run_serial_next_stage, run_serial_stage
 from app.story.services import business_date
+from app.wording import (
+    count,
+    error_fields,
+    error_words,
+    privacy,
+    publication_status,
+    review_verdict,
+    sentence,
+)
 
 logger = logging.getLogger("studio.runbook.stages")
+
+#: Two counted phrases whose verb agrees with the number (`app.wording.count`).
+STALLED_TOPICS = (
+    "subiect selectat mai demult stă",
+    "subiecte selectate mai demult stau",
+)
+REFUSED_RENDERS = ("randare refuzată de furnizor", "randări refuzate de furnizor")
+ORPHAN_CLAIMS = (
+    "afirmație verificată nu aparține",
+    "afirmații verificate nu aparțin",
+)
 
 COMPLETED = "COMPLETED"
 SKIPPED = "SKIPPED"
@@ -304,7 +324,8 @@ def _idea_generation(
     if pool >= IDEA_POOL_TARGET:
         return _outcome(
             COMPLETED,
-            f"{pool} teme candidate sunt deja în așteptare; nu s-au propus altele.",
+            f"{count(pool, 'temă candidată este', 'teme candidate sunt')} deja în "
+            "așteptare; nu s-au propus altele.",
             pool=pool,
         )
     # Today's trends before today's ideas; a feed that does not answer is recorded, not fatal.
@@ -315,19 +336,26 @@ def _idea_generation(
             engine, registry, settings, str(uuid4()), wanted=IDEA_POOL_TARGET - pool
         )
     except NoAuthorisedHosts as exc:
-        return _outcome(SKIPPED, str(exc))
+        return _outcome(SKIPPED, sentence(error_words(exc)), **error_fields(exc))
     except (ResearchAgentError, NoResearcher, ValueError) as exc:
         # A refused proposal is the validation working; it must not take the day with it.
-        return _outcome(COMPLETED, f"Propunerile au fost respinse: {exc}"[:300], proposed=0)
+        return _outcome(
+            COMPLETED,
+            f"Propunerile au fost respinse: {error_words(exc)}."[:300],
+            proposed=0,
+            **error_fields(exc),
+        )
     if proposal.get("blocked"):
         return _outcome(
             COMPLETED, f"Cercetătorul a escaladat: {proposal['blocked']}"[:300], proposed=0
         )
     stored = proposal.get("proposed", [])
     rejected = proposal.get("rejected", [])
-    reason = f"{len(stored)} teme propuse de cercetător."
+    reason = f"{count(len(stored), 'temă propusă', 'teme propuse')} de cercetător."
     if rejected:
-        reason += f" {len(rejected)} respinse (duplicat sau site neautorizat)."
+        reason += (
+            f" {count(len(rejected), 'respinsă', 'respinse')} (duplicat sau site neautorizat)."
+        )
     return _outcome(COMPLETED, reason, proposed=[t["title"] for t in stored], rejected=rejected)
 
 
@@ -393,11 +421,16 @@ def _performance_intake(engine: Engine, vault: Any) -> dict[str, Any]:
             channels=channels,
             skipped=skipped,
         )
-    reason = f"{measured} publicări măsurate pe {len(channels)} canale."
+    reason = (
+        f"{count(measured, 'publicare măsurată', 'publicări măsurate')} pe "
+        f"{count(len(channels), 'canal', 'canale')}."
+    )
     if unavailable:
         reason += f" {len(unavailable)} fără date."
     if skipped:
-        reason += f" {len(skipped)} sloturi nemăsurate (fără cont legat)."
+        reason += (
+            f" {count(len(skipped), 'slot nemăsurat', 'sloturi nemăsurate')} (fără cont legat)."
+        )
     return _outcome(
         COMPLETED,
         reason,
@@ -561,7 +594,10 @@ def _research_and_verification(
     retest_line = ""
     if retested:
         passed = len([r for r in retested if r["status"] == "PASSED"])
-        retest_line = f" {len(retested)} site-uri retestate ({passed} citibile)."
+        retest_line = (
+            f" {count(len(retested), 'site retestat', 'site-uri retestate')} "
+            f"({passed} {'citibil' if passed == 1 else 'citibile'})."
+        )
     if may_fetch is not None:
         # Said in the stage's own line, because a day that verified what it held and fetched
         # nothing new looks the same from the outside as a day that found nothing to read.
@@ -574,9 +610,11 @@ def _research_and_verification(
             hosts_retested=len(retested),
         )
     reason = (
-        f"{pages} pagini preluate, {extracted} surse citite, {verified} afirmații verificate, "
-        f"{refused} verdicte respinse."
-        + (f" {unreadable} surse fără afirmații citibile." if unreadable else "")
+        f"{count(pages, 'pagină preluată', 'pagini preluate')}, "
+        f"{count(extracted, 'sursă citită', 'surse citite')}, "
+        f"{count(verified, 'afirmație verificată', 'afirmații verificate')}, "
+        f"{count(refused, 'verdict respins', 'verdicte respinse')}."
+        + (f" {count(unreadable, 'sursă', 'surse')} fără afirmații citibile." if unreadable else "")
         + retest_line
     )
     return _outcome(
@@ -684,7 +722,7 @@ def _selection(engine: Engine, registry: ProviderRegistry | None = None) -> dict
                 COMPLETED,
                 "Un subiect este deja în producție."
                 + (
-                    f" ({len(stalled)} selectate mai demult stau cu randări picate la QC.)"
+                    f" ({count(len(stalled), *STALLED_TOPICS)} cu randări picate la QC.)"
                     if stalled
                     else ""
                 ),
@@ -760,8 +798,8 @@ def _selection(engine: Engine, registry: ProviderRegistry | None = None) -> dict
     reason = "Niciun subiect cu afirmații verificate; nu există nimic adevărat de produs azi."
     if orphan_supported:
         reason += (
-            f" {orphan_supported} afirmații verificate nu aparțin niciunui subiect: "
-            "sursele au fost ingerate fără subiect."
+            f" {count(orphan_supported, *ORPHAN_CLAIMS)} niciunui subiect: sursele au fost "
+            "ingerate fără subiect."
         )
     return _outcome(
         COMPLETED,
@@ -849,7 +887,9 @@ def _director_approves(engine: Engine, script_id: str, review: dict[str, Any]) -
             # A PASS means no check was broken, so there is nothing to enumerate here: what the
             # record needs is who decided and on what reading, and the review itself holds the
             # scores and the notes behind that reading.
-            reason="Recenzia Directorului: PASS. Povestea a trecut toate verificările editoriale.",
+            reason=(
+                "Recenzia Directorului: trecută. Povestea a trecut toate verificările editoriale."
+            ),
         )
     except (FactualGateError, ValueError) as exc:
         # The gate refused at approval time — a claim was refuted after the script was written.
@@ -931,7 +971,7 @@ def _script_and_storyboard(
                 # the day's log and every stage after it, over an outcome the studio handled
                 # correctly. The room closes for this topic; the day goes on.
                 logger.info("script_rejected", extra={"topic_id": topic_id, "reason": str(exc)})
-                rejected.append(str(exc))
+                rejected.append(error_words(exc))
                 break
         else:
             logger.info(
@@ -990,15 +1030,19 @@ def _script_and_storyboard(
         )
 
     reason = (
-        f"{drafted} scenarii scrise în {len(reviews)} schimburi, "
-        f"{len(approvals)} aprobate de Director, {boards} storyboard-uri generate."
+        f"{count(drafted, 'scenariu scris', 'scenarii scrise')} în "
+        f"{count(len(reviews), 'schimb', 'schimburi')}, "
+        f"{len(approvals)} {'aprobat' if len(approvals) == 1 else 'aprobate'} de Director, "
+        f"{count(boards, 'storyboard generat', 'storyboarduri generate')}."
     )
     if prompted:
-        reason += f" {prompted} cadre descrise complet."
+        reason += f" {count(prompted, 'cadru descris', 'cadre descrise')} complet."
     if reviews:
-        reason += " Recenzia poveștii: " + ", ".join(r["verdict"] for r in reviews) + "."
+        reason += (
+            " Recenzia poveștii: " + ", ".join(review_verdict(r["verdict"]) for r in reviews) + "."
+        )
     if rejected:
-        reason += f" {len(rejected)} respinse: {rejected[0][:120]}"
+        reason += f" {count(len(rejected), 'respins', 'respinse')}: {rejected[0][:120]}"
     if awaiting:
         reason += " Un scenariu așteaptă aprobarea ta înainte de storyboard."
     return _outcome(
@@ -1440,18 +1484,25 @@ def _media(
             costs_recorded += failed_cost
             # The hold goes with the film: money pledged to a film that was not made must
             # not sit against the day's budget until the watchdog's six hours are up.
-            _release(engine, reservation_id, f"randare oprită: {exc}", correlation)
+            _release(engine, reservation_id, f"randare oprită: {error_words(exc)}", correlation)
             return _outcome(
                 BLOCKED,
-                f"{OWNER_STOP_REASON} {exc}"[:500],
+                f"{OWNER_STOP_REASON} {sentence(error_words(exc))}"[:500],
                 assets=produced,
                 serial_assets=serial_assets,
                 stopped_storyboard=storyboard_id,
                 costs_recorded=costs_recorded,
             )
         except RenderEngineUnavailable as exc:
-            _release(engine, reservation_id, f"randarea nu poate rula: {exc}", correlation)
-            return _outcome(SKIPPED, f"Randarea nu poate rula: {exc}", assets=produced)
+            _release(
+                engine, reservation_id, f"randarea nu poate rula: {error_words(exc)}", correlation
+            )
+            return _outcome(
+                SKIPPED,
+                f"Randarea nu poate rula: {error_words(exc)}.",
+                assets=produced,
+                **error_fields(exc),
+            )
         except ReferenceRequired as exc:
             # Not a vendor's refusal and not a fault: the studio refusing to invent the face
             # of a character whose look the Owner locked. The film is not made, so what was
@@ -1459,11 +1510,15 @@ def _media(
             # the same order as a vendor refusal, for the same reason. Tomorrow's run tries
             # the film again; producing the character's reference set is the Owner's act.
             failed_cost = _record_failed_attempt(engine, storyboard_id, correlation)
-            _release(engine, reservation_id, f"referință lipsă: {exc}"[:120], correlation)
+            _release(
+                engine, reservation_id, f"referință lipsă: {error_words(exc)}"[:120], correlation
+            )
             refused.append(
                 {
                     "storyboard_id": storyboard_id,
                     "error": str(exc)[:200],
+                    "error_class": type(exc).__name__,
+                    "said": error_words(exc),
                     "costs_recorded": failed_cost,
                 }
             )
@@ -1482,11 +1537,15 @@ def _media(
             # charged, and the count says so), and only then is the hold let go: the
             # estimate stops counting, the real cost of the attempt starts.
             failed_cost = _record_failed_attempt(engine, storyboard_id, correlation)
-            _release(engine, reservation_id, f"randare refuzată: {exc}"[:120], correlation)
+            _release(
+                engine, reservation_id, f"randare refuzată: {error_words(exc)}"[:120], correlation
+            )
             refused.append(
                 {
                     "storyboard_id": storyboard_id,
                     "error": str(exc)[:200],
+                    "error_class": type(exc).__name__,
+                    "said": error_words(exc),
                     "costs_recorded": failed_cost,
                 }
             )
@@ -1545,9 +1604,11 @@ def _media(
         )
 
     substitutes = images is None or voice is None
-    reason = f"{len(produced)} videoclipuri randate."
+    reason = f"{count(len(produced), 'videoclip randat', 'videoclipuri randate')}."
     if awaiting_owner:
-        reason += f" {len(awaiting_owner)} nefilmate: {awaiting_owner[0]['reason']}"
+        reason += (
+            f" {count(len(awaiting_owner), 'nefilmat', 'nefilmate')}: {awaiting_owner[0]['reason']}"
+        )
     if serial_assets:
         reason += " Episodul serialului a fost filmat."
     if skipped_for_budget:
@@ -1559,7 +1620,7 @@ def _media(
     if credit_lines:
         reason += " Credite măsurate la furnizor: " + " | ".join(credit_lines) + "."
     if refused:
-        reason += f" {len(refused)} randări refuzate de furnizor: {refused[0]['error']}."
+        reason += f" {count(len(refused), *REFUSED_RENDERS)}: {refused[0]['said']}."
     if retry:
         reason += (
             " (o randare reluată: cea veche picase la QC cu substitute, acum sunt imagini reale.)"
@@ -1577,6 +1638,9 @@ def _media(
         used_substitutes=substitutes,
         narration_reviews=narration_reviews,
         costs_recorded=costs_recorded,
+        # Each refused render with the vendor's own text and the exception's class: the
+        # reason above says it in Romanian, and this is what a person diagnosing it reads.
+        refused=refused,
     )
 
 
@@ -1647,10 +1711,17 @@ def _edit_and_qc(
                     {"report_id": report["id"], "correction": diagnosis.get("correction")}
                 )
             except (ReviewError, NoReviewer, ValueError) as exc:
-                diagnoses.append({"report_id": report["id"], "error": str(exc)[:200]})
+                diagnoses.append(
+                    {
+                        "report_id": report["id"],
+                        "error": str(exc)[:200],
+                        "error_class": type(exc).__name__,
+                    }
+                )
     return _outcome(
         COMPLETED,
-        f"{passed} au trecut QC, {failed} au picat.",
+        f"{passed} {'a trecut' if passed == 1 else 'au trecut'} QC, "
+        f"{failed} {'a picat' if failed == 1 else 'au picat'}.",
         passed=passed,
         failed=failed,
         diagnoses=diagnoses,
@@ -1682,7 +1753,7 @@ def _publish_one(
     try:
         provider = selected_youtube(engine, vault, route["youtube_connection_id"])
     except ValueError as exc:
-        return {"status": SKIPPED, "reason": str(exc)}
+        return {"status": SKIPPED, "reason": sentence(error_words(exc)), **error_fields(exc)}
     if provider is None:
         return {
             "status": SKIPPED,
@@ -1712,7 +1783,8 @@ def _publish_one(
         except (EditorialError, ValueError) as exc:
             return {
                 "status": SKIPPED,
-                "reason": f"Directorul nu a putut viziona materialul: {exc}"[:300],
+                "reason": f"Directorul nu a putut viziona materialul: {error_words(exc)}."[:300],
+                **error_fields(exc),
             }
         editorial_verdict, editorial_reasons = watched["verdict"], watched["reasons"]
     else:
@@ -1788,7 +1860,8 @@ def _publish_one(
         except (ReviewError, NoReviewer, ValueError) as exc:
             return {
                 "status": SKIPPED,
-                "reason": f"Publisher-ul nu a pregătit publicarea: {exc}"[:300],
+                "reason": f"Publisher-ul nu a pregătit publicarea: {error_words(exc)}."[:300],
+                **error_fields(exc),
             }
         if prepared["verdict"] != "READY":
             return {
@@ -1868,7 +1941,7 @@ def _publish_one(
             scheduled_publish_time=resolved["publish_at"],
         )
     except (PublishingGateError, PublisherNotConfigured) as exc:
-        return {"status": SKIPPED, "reason": str(exc)}
+        return {"status": SKIPPED, "reason": sentence(error_words(exc)), **error_fields(exc)}
 
     with Session(engine) as session, session.begin():
         publisher = agent_for_role(session, "Publisher")
@@ -2024,14 +2097,17 @@ def _publish(
 
     if published:
         reason = " ".join(
-            f"Publicat pe {p['channel_name']}: {p['publication_status']} "
-            f"({p['release_privacy']}"
+            f"Pe {p['channel_name']}: {publication_status(p['publication_status'])} "
+            f"({privacy(p['release_privacy'])}"
             + (f", programat {p['publish_at']}" if p["publish_at"] else "")
             + ")."
             for p in published
         )
         if not_published:
-            reason += f" {len(not_published)} nepublicate: {not_published[0]['reason']}"
+            reason += (
+                f" {count(len(not_published), 'nepublicat', 'nepublicate')}: "
+                f"{not_published[0]['reason']}"
+            )
         first = published[0]
         return _outcome(
             COMPLETED,
@@ -2128,7 +2204,7 @@ def _post_run(
             close = reconcile_day(engine, registry, str(uuid4()))
         except (AccountantError, ValueError) as exc:
             logger.info("daily_close_refused", extra={"reason": str(exc)[:200]})
-            close = {"error": str(exc)[:200]}
+            close = {"error": sentence(error_words(exc))[:200], **error_fields(exc)}
     if close and "headline" in close:
         books = {
             "status": close["intent"],
@@ -2143,8 +2219,8 @@ def _post_run(
     if not _has_language_model(registry):
         return _outcome(
             SKIPPED,
-            f"{len(filed)} rapoarte depuse; Directorul nu le poate revizui fără un model "
-            "de limbaj.",
+            f"{count(len(filed), 'raport depus', 'rapoarte depuse')}; Directorul nu "
+            f"{'îl' if len(filed) == 1 else 'le'} poate revizui fără un model de limbaj.",
             reports=len(filed),
         )
     archived = archive_stale_reports(engine)
@@ -2172,29 +2248,37 @@ def _post_run(
         letter_to_owner(
             engine,
             "Nu am putut revizui ziua",
-            f"Revizuirea de seară nu a putut rula: {str(exc)[:300]}. Rapoartele "
-            f"({len(filed)}) sunt în inbox, nedecise. Verifică modelul meu în Settings sau "
+            f"Revizuirea de seară nu a putut rula: {error_words(exc)[:300]}. Rapoartele "
+            f"({len(filed)}) sunt în inbox, nedecise. Verifică modelul meu în Setări sau "
             "spune-mi ce să fac cu ele. — Sarah",
             str(uuid4()),
         )
         return _outcome(
             COMPLETED,
-            f"{len(filed)} rapoarte depuse; revizuirea Directorului a fost respinsă: {exc}"[:300],
+            f"{count(len(filed), 'raport depus', 'rapoarte depuse')}; revizuirea "
+            f"Directorului a fost respinsă: {error_words(exc)}."[:300],
             reports=len(filed),
             review_rejected=str(exc)[:200],
+            **error_fields(exc),
         )
     if review.get("blocked"):
         return _outcome(
             COMPLETED,
-            f"{len(filed)} rapoarte depuse; Directorul a escaladat: {review['blocked']}"[:300],
+            f"{count(len(filed), 'raport depus', 'rapoarte depuse')}; Directorul a "
+            f"escaladat: {review['blocked']}"[:300],
             reports=len(filed),
             blocked=review["blocked"],
         )
     return _outcome(
         COMPLETED,
-        f"{len(filed)} rapoarte depuse; Directorul a revizuit {review.get('reviewed', 0)} mesaje, "
-        f"{len(review.get('applied', []))} decizii."
-        + (f" {archived} rapoarte vechi arhivate." if archived else ""),
+        f"{count(len(filed), 'raport depus', 'rapoarte depuse')}; Directorul a revizuit "
+        f"{count(review.get('reviewed', 0), 'mesaj', 'mesaje')}, "
+        f"{count(len(review.get('applied', [])), 'decizie', 'decizii')}."
+        + (
+            f" {count(archived, 'raport vechi arhivat', 'rapoarte vechi arhivate')}."
+            if archived
+            else ""
+        ),
         reports=len(filed),
         reviewed=review.get("reviewed", 0),
         applied=review.get("applied", []),

@@ -303,7 +303,7 @@ def test_the_director_watches_and_approves_and_the_verdict_is_a_record(engine, s
         assert review.verdict == "APPROVE" and review.story.startswith("A rocky world")
         assert session.get(Storyboard, ids["board"]).status == "RENDERED"
         assert session.scalar(
-            select(AgentMessage).where(AgentMessage.subject.like("Vizionare: APPROVE%"))
+            select(AgentMessage).where(AgentMessage.subject.like("Vizionare: aprobat%"))
         )
 
 

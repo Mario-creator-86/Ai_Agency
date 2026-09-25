@@ -42,6 +42,15 @@ from app.story.services import (
     close_missing_days,
     close_previous_day,
 )
+from app.wording import (
+    clause,
+    count,
+    error_fields,
+    error_words,
+    sentence,
+    stage_list,
+    stage_name,
+)
 from app.workflows.services import append_event_with_outbox, enqueue_task, list_queue_tasks
 
 logger = logging.getLogger("studio.runbook")
@@ -391,18 +400,25 @@ def run_summary(stages: list[dict[str, Any]]) -> tuple[str, int]:
     idle = [s["stage"] for s in ran if not (s.get("produced") or 0)]
     failed = [s["stage"] for s in work if s["status"] == FAILED]
     blocked = [s["stage"] for s in work if s["status"] == BLOCKED]
+    made = (
+        "niciuna nu a produs ceva"
+        if not productive
+        else f"{len(productive)} {'a' if len(productive) == 1 else 'au'} produs ceva"
+    )
     parts = [
-        f"{len(ran)} din {len(work)} etape au rulat până la capăt; "
-        f"{len(productive)} au produs ceva."
+        f"{len(ran)} din {len(work)} etape {'a' if len(ran) == 1 else 'au'} rulat până la "
+        f"capăt; {made}."
     ]
     if not productive:
         parts.append("Ziua nu a produs nimic.")
     elif idle:
-        parts.append("Fără rezultat: " + ", ".join(f"«{name}»" for name in idle) + ".")
+        parts.append("Fără rezultat: " + stage_list(idle) + ".")
     if failed:
-        parts.append("Eșuate: " + ", ".join(f"«{name}»" for name in failed) + ".")
+        parts.append(("Eșuată: " if len(failed) == 1 else "Eșuate: ") + stage_list(failed) + ".")
     if blocked:
-        parts.append("Blocate: " + ", ".join(f"«{name}»" for name in blocked) + ".")
+        parts.append(
+            ("Blocată: " if len(blocked) == 1 else "Blocate: ") + stage_list(blocked) + "."
+        )
     published = next((s.get("produced") or 0 for s in work if s["stage"] == "publish"), 0)
     parts.append(f"Filme publicate: {published}." if published else "Niciun film publicat azi.")
     return " ".join(parts), len(productive)
@@ -420,14 +436,14 @@ def _blocked_by(name: str, lost: dict[str, dict[str, Any]]) -> str | None:
                 causes.append(root)
     if len(needs) == 1:
         how = "a eșuat" if lost[needs[0]]["status"] == FAILED else "a fost blocată"
-        reason = f"Nu a fost încercată: etapa de care depinde, «{needs[0]}», {how}."
+        reason = f"Nu a fost încercată: etapa de care depinde, «{stage_name(needs[0])}», {how}."
     else:
-        waited = ", ".join(f"«{need}»" for need in needs)
         reason = (
-            f"Nu a fost încercată: niciuna dintre etapele de care depinde ({waited}) nu a livrat."
+            "Nu a fost încercată: niciuna dintre etapele de care depinde "
+            f"({stage_list(needs)}) nu a livrat."
         )
     if causes != list(needs):
-        reason += " Cauza: " + ", ".join(f"«{root}»" for root in causes) + "."
+        reason += " Cauza: " + stage_list(causes) + "."
     return reason
 
 
@@ -459,9 +475,9 @@ def _run_with_retries(
                 return None, exc, attempts
             backoff = settings.stage_retry_backoff_seconds * (2 ** (attempts - 1))
             reason = (
-                f"Etapa «{name}» a dat o eroare trecătoare ({type(exc).__name__}); "
-                f"reîncerc în {backoff}s (încercarea {attempts + 1} din "
-                f"{settings.stage_retry_attempts + 1})."
+                f"Etapa «{stage_name(name)}» a întâlnit o eroare trecătoare "
+                f"({error_words(exc)}); reîncerc în {backoff} s (încercarea {attempts + 1} "
+                f"din {settings.stage_retry_attempts + 1})."
             )
             logger.warning(
                 "stage_retrying",
@@ -471,7 +487,13 @@ def _run_with_retries(
                 engine,
                 "runbook.stage_retrying",
                 run_id,
-                {"stage": name, "attempt": attempts, "wait_seconds": backoff, "reason": reason},
+                {
+                    "stage": name,
+                    "attempt": attempts,
+                    "wait_seconds": backoff,
+                    "reason": reason,
+                    "error_class": type(exc).__name__,
+                },
                 correlation,
             )
             wait(backoff)
@@ -592,7 +614,11 @@ def _stage(
     *,
     fault_class: str | None = None,
     attempts: int | None = None,
+    error: BaseException | None = None,
 ) -> dict[str, Any]:
+    """One stage's record. A stage that raised keeps the exception's class and its own text
+    in ``error_class`` and ``error_detail``; its ``reason`` is the Romanian sentence the Owner
+    reads (`app.wording.error_words`), never the library's text."""
     record: dict[str, Any] = {
         "stage": name,
         "status": status,
@@ -603,6 +629,8 @@ def _stage(
     }
     if attempts is not None:
         record["attempts"] = attempts
+    if error is not None:
+        record.update(error_fields(error))
     return record
 
 
@@ -646,9 +674,10 @@ def _close_the_day(
         closed = _stage(
             "daily_log",
             FAILED,
-            f"{type(error).__name__}: {error}"[:500],
+            sentence(error_words(error)),
             fault_class=classify_fault(error),
             attempts=attempts,
+            error=error,
         )
     else:
         assert outcome is not None  # one of the two is always set
@@ -691,12 +720,16 @@ def _close_previous_day(
         correlation,
     )
     if error is not None:
-        reason = f"{type(error).__name__}: {error}"[:500]
         logger.warning(
             "previous_day_not_closed",
             extra={"run_id": run_id, "attempts": attempts, "fault_class": classify_fault(error)},
         )
-        return {"error": reason, "fault_class": classify_fault(error), "attempts": attempts}
+        return {
+            "error": f"Jurnalul zilei de ieri nu s-a închis: {error_words(error)}.",
+            "fault_class": classify_fault(error),
+            "attempts": attempts,
+            **error_fields(error),
+        }
     assert outcome is not None  # one of the two is always set
     return {
         "id": outcome["id"],
@@ -959,7 +992,7 @@ def execute_daily_run(
             engine, settings, run_id, name, runner, wait, correlation
         )
         if error is not None:
-            reason = f"{type(error).__name__}: {error}"[:500]
+            reason = sentence(error_words(error))
             if stop_requested(engine):
                 # A runner that polls `stop_requested` may raise to get out; a runner
                 # that does not may have been failed by the stop itself (a connection
@@ -969,22 +1002,33 @@ def execute_daily_run(
                 stopped_at = name
                 stop_reason = OWNER_STOP_REASON
                 stages.append(
-                    _stage(name, BLOCKED, f"{OWNER_STOP_REASON} ({reason})", attempts=attempts)
+                    _stage(
+                        name,
+                        BLOCKED,
+                        f"{OWNER_STOP_REASON} ({error_words(error)})",
+                        attempts=attempts,
+                        error=error,
+                    )
                 )
                 _finished(engine, run_id, name, BLOCKED, OWNER_STOP_REASON, correlation)
                 return
             stage_fault: str | None = classify_fault(error)
-            stages.append(_stage(name, FAILED, reason, fault_class=stage_fault, attempts=attempts))
+            stages.append(
+                _stage(
+                    name, FAILED, reason, fault_class=stage_fault, attempts=attempts, error=error
+                )
+            )
             _finished(engine, run_id, name, FAILED, reason, correlation)
             errors[name] = error
             breaks(
                 name,
                 FAILED,
                 (
-                    f"Etapa «{name}» a eșuat după {attempts} încercări, pe o eroare "
-                    f"trecătoare: {type(error).__name__}"
+                    f"Etapa «{stage_name(name)}» a eșuat după "
+                    f"{count(attempts, 'încercare', 'încercări')}, pe o eroare trecătoare: "
+                    f"{error_words(error)}"
                     if stage_fault == TRANSIENT
-                    else f"Etapa «{name}» a eșuat: {type(error).__name__}"
+                    else f"Etapa «{stage_name(name)}» a eșuat: {error_words(error)}"
                 ),
                 stage_fault,
             )
@@ -1017,7 +1061,7 @@ def execute_daily_run(
             breaks(
                 name,
                 status,
-                str(outcome.get("reason", "")) or f"Etapa «{name}» s-a oprit.",
+                str(outcome.get("reason", "")) or f"Etapa «{stage_name(name)}» s-a oprit.",
                 stage_fault,
             )
 
@@ -1025,7 +1069,13 @@ def execute_daily_run(
         stopped_at = "preflight"
         stop_reason = preflight["summary"]
         for name in STAGES[1:]:
-            stages.append(_stage(name, BLOCKED, "Preflight blocant; etapa nu a fost încercată."))
+            stages.append(
+                _stage(
+                    name,
+                    BLOCKED,
+                    "Verificarea preliminară a oprit ziua; etapa nu a fost încercată.",
+                )
+            )
     else:
         # Yesterday is closed first, with every event of its date. Measured live: the day's
         # log was frozen at the run's own hour (the morning of its date, 92 events, one of
@@ -1059,7 +1109,7 @@ def execute_daily_run(
             breaks(
                 "daily_log",
                 FAILED,
-                f"Etapa «daily_log» a eșuat: {closing['reason'].split(':', 1)[0]}",
+                f"Etapa «{stage_name('daily_log')}» a eșuat: {clause(closing['reason'])}",
                 closing["fault_class"],
             )
     if preflight["status"] != "BLOCKED":
@@ -1133,26 +1183,32 @@ def execute_daily_run(
         if stopped_at == "preflight":
             consequence = " Etapele de după ea nu au rulat."
         elif caused:
-            consequence = " Din cauza ei nu au rulat: " + ", ".join(f"«{c}»" for c in caused) + "."
+            consequence = " Din cauza ei nu au rulat: " + stage_list(caused) + "."
         else:
             consequence = ""
         others = [name for name in broken if name != stopped_at]
         if others:
-            consequence += " Au mai eșuat: " + ", ".join(f"«{o}»" for o in others) + "."
+            consequence += (
+                (" A mai eșuat: " if len(others) == 1 else " Au mai eșuat: ")
+                + stage_list(others)
+                + "."
+            )
         if p0 is not None:
             consequence += " Studioul a intrat în modul sigur până verifici."
         if production_lost:
-            subject = f"Ziua s-a oprit la etapa «{stopped_at}»"
+            subject = f"Ziua s-a oprit la etapa «{stage_name(stopped_at)}»"
             body = (
-                f"Rularea din {date_iso} s-a oprit la etapa «{stopped_at}»: {stop_reason}."
+                f"Rularea din {date_iso} s-a oprit la etapa «{stage_name(stopped_at)}»: "
+                f"{clause(stop_reason or '')}."
                 f"{consequence}{tried} Spune-mi ce ai reparat și pornesc din nou. — Sarah"
             )
         else:
             # Not "the day stopped": it did not, and a letter that says so is the rehearsal's
             # headline over again. Nor is the day tried again — that would buy a second film.
-            subject = f"Etapa «{stopped_at}» a eșuat; filmele zilei nu depind de ea"
+            subject = f"Etapa «{stage_name(stopped_at)}» a eșuat; filmele zilei nu depind de ea"
             body = (
-                f"Rularea din {date_iso}: {stop_reason}.{consequence} Filmele zilei nu depind "
+                f"Rularea din {date_iso}: {clause(stop_reason or '')}.{consequence} Filmele zilei "
+                "nu depind "
                 "de ea, așa că restul zilei a rulat și nu o reiau azi. Spune-mi ce ai reparat. "
                 "— Sarah"
             )

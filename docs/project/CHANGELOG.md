@@ -1,5 +1,13 @@
 # Changelog
 
+## Doors from their rooms, and the studio's sentences in Romanian — 2026-09-25
+
+- **Dialogs as doors** (`frontend/src/dialog_doors.js`): each opens from its room on the building (compositor-only, 340 ms), the room lit while it is open, and closes back into it; content read ahead on hover or focus; a fade under reduced motion.
+- **Reading**: larger type from 1900 px, one scroll per dialog (11 nested scroll areas removed), English model text set as quoted material, role codes as tooltips, the mail in the page's date style; a phone layout with the building across the full width.
+- **The backend speaks Romanian to the Owner** (`backend/app/wording.py`): the preflight, stage reasons and run summaries, company bottlenecks, growth reasons, letter subjects and autonomy reasons, with correct agreement; never raw exception text as a reason.
+- **No change recorded that changed nothing**: a pause of a paused employee or a resume of an active one is refused (409, no event, no version bump).
+- Tests: frontend 549/549, tsc clean; backend 389 passed across the touched files (`tests/test_owner_words.py` new); ruff and mypy clean.
+
 ## The release candidate: the dialogs in the frame's words and glass — 2026-09-25
 
 - **The page's own codes in Romanian** (`frontend/src/dialog_words.js`): states, types, channels, publications, decisions, budgets, accounts, durations («4,8 s»), frame sizes («1080×1920») and dates («12.09.2026»); the backend's sentences stay as written.

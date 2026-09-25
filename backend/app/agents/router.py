@@ -27,6 +27,7 @@ from app.agents.messages import (
 )
 from app.agents.schemas import AgentRunView, RunAgentCommand
 from app.agents.services import (
+    AgentLifecycleRefused,
     get_agent,
     list_agents,
     list_provider_models,
@@ -310,6 +311,8 @@ def create_agents_router(registry: ProviderRegistry) -> APIRouter:
     ) -> dict:
         try:
             return pause_agent(request.app.state.engine, agent_id)
+        except AgentLifecycleRefused as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -320,6 +323,8 @@ def create_agents_router(registry: ProviderRegistry) -> APIRouter:
     ) -> dict:
         try:
             return resume_agent(request.app.state.engine, agent_id)
+        except AgentLifecycleRefused as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 

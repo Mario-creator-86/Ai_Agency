@@ -6,7 +6,12 @@ from uuid import uuid4
 
 import pytest
 from app.agents.models import Agent, Capability, ModelRecord, ProviderRecord, Role
-from app.agents.services import pause_agent, resume_agent, seed_initial_workforce
+from app.agents.services import (
+    AgentLifecycleRefused,
+    pause_agent,
+    resume_agent,
+    seed_initial_workforce,
+)
 from app.db import create_db_engine, migrate
 from app.models import DomainEvent
 from app.office.services import get_office_layout_with_assignments
@@ -256,10 +261,13 @@ def test_cannot_pause_terminated_agent(phase3_engine):
         session.add(agent)
         session.flush()
 
-    with pytest.raises(ValueError, match="Cannot pause a TERMINATED agent"):
+    # A terminated employee is a conflict (409), not a missing one: the refusal says why in
+    # the Owner's words and keeps the code for the page.
+    with pytest.raises(AgentLifecycleRefused, match="nu mai face parte din companie") as paused:
         pause_agent(engine, agent_id)
+    assert paused.value.code == "TERMINATED"
 
-    with pytest.raises(ValueError, match="Cannot resume a TERMINATED agent"):
+    with pytest.raises(AgentLifecycleRefused, match="nu mai face parte din companie"):
         resume_agent(engine, agent_id)
 
 

@@ -109,9 +109,9 @@ def test_preflight_names_the_missing_step_not_a_missing_provider(
     assert "model și o voce implicită" in ready["voice"]["message"]
     preflight = run_preflight(engine, settings, vault)
     voice_check = check(preflight, "voice_provider")
-    assert not voice_check["ok"] and voice_check["detail"] == "NO_DEFAULT"
+    assert not voice_check["ok"] and voice_check["value"] == "NO_DEFAULT"
     assert "Voice account este verificat" in voice_check["message"]
-    assert check(preflight, "image_provider")["detail"] == "NO_SELECTION"
+    assert check(preflight, "image_provider")["value"] == "NO_SELECTION"
 
     client.put(
         f"/api/v1/settings/integrations/{voice}/production",
@@ -463,7 +463,8 @@ def test_a_studio_shaped_like_the_owners_copy_reads_what_the_rehearsal_audit_fou
     # The budget: two TEST films fit today; PRODUCTION would refuse the serial.
     films = check(preflight, "daily_budget_films")
     assert films["ok"] is False and films["severity"] == "INFORMATIONAL"
-    assert "PRODUCTION" in films["message"] and "episodul serialului" in films["message"]
+    assert "producție" in films["message"] and "episodul serialului" in films["message"]
+    assert "producție" in films["detail"] and films["value"]["production_per_film_usd"]
 
     # The morning Google refuses his token, the preflight says the day stops, and where.
     with Session(engine) as session, session.begin():

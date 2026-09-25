@@ -89,6 +89,8 @@
               <!-- «RELUAREA ZILEI» (W13): while the newest finished day is played back from its record,
                    a letterbox closes over the sky row and the street, so no one takes it for live. -->
               <div class="replay-letterbox" aria-hidden="true"></div>
+              <!-- W28: the room whose door is open, lit (dialog_doors.js): the page's mark of what he opened. -->
+              <div id="door-light" class="door-light" aria-hidden="true" hidden></div>
               <div class="scene-readout scene-readout-info" title="Ora locală din București și vremea reală pe care o citește studioul. Fără un serviciu de vreme configurat, scena nu desenează vremea."><span class="scene-label replay-now-label">ACUM</span><span id="scene-info">—  •  BUCUREȘTI</span><span id="replay-then" class="replay-then" title="Ora din registru a momentului reluat" hidden><span class="replay-then-label">ATUNCI</span><span id="replay-then-time" class="scene-figure">—</span></span></div>
               <!-- The replayed world is lit by its own hour's sun and draws no weather: the page does
                    not know the weather of that night, and says so under the ATUNCI clock (W15). -->
@@ -361,10 +363,16 @@
           </div>
           <button id="close-story-btn" class="dialog-close" aria-label="Închide"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></svg></button>
         </div>
-        <div class="dialog-body">
+        <div class="dialog-body dialog-body-railed">
+          <!-- W28: one scroll with its section rail, as the other long doors. -->
+          <nav class="dialog-rail" aria-label="Secțiunile jurnalului">
+            <a href="#st-episodes">Episoade</a>
+            <a href="#st-days">Zile închise</a>
+          </nav>
+          <div class="dialog-pane">
           <!-- The writers room comes first: it is what the Journal is opened for, and at 1080 the
                closed days above it pushed the episodes below the fold (W8). -->
-          <div class="dialog-section-bottom">
+          <div class="dialog-section-bottom" id="st-episodes">
             <!-- THE COVER (W12, serial_room.js journalCoverHtml): the newest episode as a poster,
                  its number, title, the day it tells and the Director's verdict. -->
             <div id="story-cover" class="journal-cover-slot"></div>
@@ -377,7 +385,7 @@
               <div class="topics-loading">Se încarcă episoadele…</div>
             </div>
           </div>
-          <div>
+          <div id="st-days">
             <div class="topics-header-row">
               <h3 class="dialog-section-header-bright-compact journal-heading">Zile închise</h3>
               <button id="close-day-btn" class="quiet btn-media-action">Închide ziua</button>
@@ -386,6 +394,7 @@
             <div id="story-logs" class="topics-container">
               <div class="topics-loading">Se încarcă jurnalele…</div>
             </div>
+          </div>
           </div>
         </div>
       </dialog>
