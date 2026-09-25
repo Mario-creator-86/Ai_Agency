@@ -9,6 +9,24 @@
 
 export const CONDITIONS = ['clear', 'partly_cloudy', 'cloudy', 'fog', 'drizzle', 'rain', 'snow', 'storm'];
 
+/** The weather's sign on the glass, by day and by night (glossary W25: no sun in a night's sign). */
+const SIGNS = {
+  day: { clear: '☀', partly_cloudy: '⛅', cloudy: '☁', fog: '🌫', drizzle: '🌦', rain: '🌧', snow: '❄', storm: '⛈' },
+  night: { clear: '☾', partly_cloudy: '☁', cloudy: '☁', fog: '🌫', drizzle: '🌧', rain: '🌧', snow: '❄', storm: '⛈' },
+};
+
+/**
+ * The sign before the weather's name (W25): the observation's own day or night (`is_day`), and when
+ * the studio does not say, the real sun (above -0.833 deg, the horizon with refraction). At 03:00
+ * the glass read «☀ Senin», a sun over a night with none. '' for an unknown weather.
+ * @param {string} condition @param {boolean|null|undefined} isDay @param {number} elevation degrees
+ */
+export function weatherSign(condition, isDay, elevation) {
+  const day = typeof isDay === 'boolean' ? isDay : !(Number.isFinite(elevation) && elevation < -0.833);
+  const signs = /** @type {Record<string, string>} */ (day ? SIGNS.day : SIGNS.night);
+  return Object.prototype.hasOwnProperty.call(signs, condition) ? signs[condition] : '';
+}
+
 /** @param {any} data */
 export function normalizeWeather(data) {
   if (!data || data.available !== true || !CONDITIONS.includes(data.condition)) {

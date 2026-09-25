@@ -14,7 +14,7 @@ import {
   drawPane, paintTreasury, paintRunSign, paintFactCheck, paintNote, paintWriters, paintPublish, paintInfra, paintRenderBay,
 } from './hq_screens.js';
 import { surfaceRects, GlintTracker, lastTaskLine, unionRect } from './hq_readouts.js';
-import { Arrivals, arrivalAccent } from './hq_arrivals.js';
+import { Arrivals, arrivalAccent, chipStage } from './hq_arrivals.js';
 import { runStageWord } from './hud_charts.js';
 import { STREAM_ROOMS, STREAM_SHELTER_CLOCK, glowBloom, monitorGlows, roomLevels } from './replay_still.js';
 
@@ -535,7 +535,7 @@ export class HQRenderer {
 
   /**
    * @param {CanvasRenderingContext2D} ctx
-   * @param {{agents:any[], bubbles:any[], tokens:any[], lift:any, trip:any, selectedId:any, hoverId:any, liftStops:any, scale?:number, skyTop?:number, surfaceId?: string|null, surfaceVia?: string, reduced?: boolean, replay?: boolean}} state
+   * @param {{agents:any[], bubbles:any[], tokens:any[], lift:any, trip:any, selectedId:any, hoverId:any, liftStops:any, scale?:number, span?: number[], skyTop?:number, surfaceId?: string|null, surfaceVia?: string, reduced?: boolean, replay?: boolean}} state
    */
   draw(ctx, state) {
     const w = this.world;
@@ -1083,6 +1083,8 @@ export class HQRenderer {
     // the replay's violet in «Reluarea zilei», the register's green live (hq_arrivals.js arrivalAccent)
     const accent = c[arrivalAccent(Boolean(state.replay))];
     const labelled = new Set();
+    // W25: only the newest lit room says «acum: …» (hq_arrivals.js chipStage)
+    const now = chipStage(flares);
     for (const f of flares) {
       const room = rooms[f.zone];
       if (!room) continue;
@@ -1098,7 +1100,7 @@ export class HQRenderer {
         }
         ctx.restore();
       }
-      if (part === 'rim' || labelled.has(f.stage)) continue;
+      if (part === 'rim' || labelled.has(f.stage) || f.stage !== now) continue;
       labelled.add(f.stage);
       const text = `acum: ${runStageWord(f.stage)}`;
       ctx.save();
@@ -1198,7 +1200,10 @@ export class HQRenderer {
       // room's boards and the render bay's screen. W23: off any replayed caption drawn this frame
       // (the one above the head of an employee on the floor below), so its «RELUARE · hh:mm:ss»
       // is never hidden by a tag
-      const x = tagClear(mid - tw / 2, hit.y1 + px(6), tw, th, taken, px(2), this.world.worldW - px(2), px(6));
+      // W25: inside the part of the world the frame shows (the world runs on under the drawers)
+      const [lo, hi] = visibleSpan(state.span, this.world.worldW, px(2));
+      // and never farther from its speaker than its own width (W25: it read as a neighbour's)
+      const x = tagClear(mid - tw / 2, hit.y1 + px(6), tw, th, taken, lo, hi, px(6), tw);
       taken.push({ x, y: hit.y1 + px(6), w: tw, h: th });
       const y = hit.y1 + px(6) + px(6) * (1 - k);
       // where the tag rests, so the plaques are laid once and not on every frame of its fade
@@ -1648,22 +1653,21 @@ export class HQRenderer {
    * now.
    * @param {CanvasRenderingContext2D} ctx @param {any} state @param {any} bubble @param {number} x @param {number} y
    */
-  drawReplayCaption(ctx, state, bubble, x, y) {
+  drawReplayCaption(ctx, state, bubble, x, y, place = null) {
     const c = scenePalette();
     const zoom = state.scale && state.scale > 0 ? state.scale : 1;
     const px = (/** @type {number} */ n) => n / zoom;
     const lines = Array.isArray(bubble.lines) ? bubble.lines : [];
     if (!lines.length) return;
     ctx.save();
-    ctx.font = `600 ${px(12)}px "Segoe UI", system-ui, sans-serif`;
-    const tw = Math.max(...lines.map((l) => ctx.measureText(l).width));
-    ctx.font = `700 ${px(9.5)}px "Segoe UI", system-ui, sans-serif`;
-    const lw = ctx.measureText(bubble.label).width;
+    const size = place || this.replayCaptionBox(ctx, state, bubble, x, y);
+    if (!size) { ctx.restore(); return; }
     const padX = px(9);
-    const bw = Math.max(tw, lw) + padX * 2;
-    const bh = px(26) + px(16) * lines.length;
-    const bx = Math.min(this.world.worldW - bw - px(2), Math.max(px(2), x - bw / 2));
-    const by = y - bh - px(6);
+    const bw = size.w;
+    const bh = size.h - px(5);
+    const bx = size.x;
+    const by = size.y;
+    const tail = Number.isFinite(size.tail) ? size.tail : x;
     // W22: where it stands, so the plaques over the Unreal still step aside for it (main.js layoutPlaques)
     const box = { kind: 'caption', x: bx, y: by, w: bw, h: bh + px(5) };
     if (this.captionBoxes) this.captionBoxes.push(box);
@@ -1671,16 +1675,27 @@ export class HQRenderer {
     ctx.fillStyle = withAlpha(c.scene, 0.94);
     ctx.strokeStyle = withAlpha(c.replayInk, 0.7);
     ctx.lineWidth = px(1);
+    // W24: a caption lifted above a neighbour's keeps a stalk down to its speaker, drawn before the
+    // lower captions so it passes behind them
+    const tip = y - px(1);
+    if (by + bh + px(5) < tip - px(0.5)) {
+      ctx.beginPath();
+      ctx.moveTo(tail, by + bh);
+      ctx.lineTo(x, tip);
+      ctx.stroke();
+    }
     roundRect(ctx, bx, by, bw, bh, px(5));
     ctx.fill();
     ctx.stroke();
     ctx.beginPath();
-    ctx.moveTo(x - px(4), by + bh);
-    ctx.lineTo(x, by + bh + px(5));
-    ctx.lineTo(x + px(4), by + bh);
+    ctx.moveTo(tail - px(4), by + bh);
+    ctx.lineTo(tail, by + bh + px(5));
+    ctx.lineTo(tail + px(4), by + bh);
     ctx.fill();
     ctx.textBaseline = 'middle';
     ctx.fillStyle = c.replayInk;
+    // W24: measured apart (replayCaptionBox), so the label's type is set where it is drawn
+    ctx.font = `700 ${px(9.5)}px "Segoe UI", system-ui, sans-serif`;
     ctx.fillText(bubble.label, bx + padX, by + px(12));
     ctx.font = `600 ${px(12)}px "Segoe UI", system-ui, sans-serif`;
     ctx.fillStyle = c.chromeInk;
@@ -1689,18 +1704,40 @@ export class HQRenderer {
     ctx.textBaseline = 'alphabetic';
   }
 
+  /**
+   * Where a replayed caption would stand, centred over its speaker: its box (the tail's 5 px
+   * included, as the plaques and tags read it). Null for a caption with no line.
+   * @param {CanvasRenderingContext2D} ctx @param {any} state @param {any} bubble @param {number} x @param {number} y
+   */
+  replayCaptionBox(ctx, state, bubble, x, y) {
+    const lines = Array.isArray(bubble.lines) ? bubble.lines : [];
+    if (!lines.length) return null;
+    const zoom = state.scale && state.scale > 0 ? state.scale : 1;
+    const px = (/** @type {number} */ n) => n / zoom;
+    ctx.font = `600 ${px(12)}px "Segoe UI", system-ui, sans-serif`;
+    const tw = Math.max(...lines.map((/** @type {string} */ l) => ctx.measureText(l).width));
+    ctx.font = `700 ${px(9.5)}px "Segoe UI", system-ui, sans-serif`;
+    const lw = ctx.measureText(bubble.label).width;
+    const bw = Math.max(tw, lw) + px(9) * 2;
+    const bh = px(26) + px(16) * lines.length;
+    const bx = Math.min(this.world.worldW - bw - px(2), Math.max(px(2), x - bw / 2));
+    return { x: bx, y: y - bh - px(6), w: bw, h: bh + px(5), tail: x };
+  }
+
   /** @param {CanvasRenderingContext2D} ctx @param {any} state */
   drawBubbles(ctx, state) {
     const now = Date.now();
     // the replayed captions drawn this frame, which the employees' tags step aside for (drawArrivals)
     this.drawnCaptions = [];
+    /** @type {Array<{bubble: any, x: number, y: number, place: any}>} */
+    const replayed = [];
     for (const bubble of state.bubbles) {
       const agent = state.agents.find((/** @type {any} */ a) => (a.id || a.agent_id) === bubble.agentId);
       const seat = agent ? this.m.seats?.[agent.desk_id] : null;
       const x = seat ? seat.x : bubble.x;
       const y = seat ? seat.y - 42 : bubble.y;
       if (bubble.label) {
-        this.drawReplayCaption(ctx, state, bubble, x, y);
+        replayed.push({ bubble, x, y, place: null });
         continue;
       }
       const frame = bubbleFrame(bubble.pages || [], (now - bubble.createdAt) / 1000);
@@ -1733,6 +1770,34 @@ export class HQRenderer {
         ctx.fillText(`${frame.pageIndex + 1}/${frame.pageCount}`, bx + bw - 14, by + bh - 3);
       }
     }
+    if (replayed.length) this.drawReplayCaptions(ctx, state, replayed);
+  }
+
+  /**
+   * W24: the replayed captions of one frame, laid so none lies over another. At 16× two neighbours
+   * spoke in the same second and their captions were drawn one over the other. Each is placed in
+   * turn (captionPlace): where it wants to be, else along its row while its speaker stays under it,
+   * else lifted above the one in its way with a stalk down to its speaker. The highest are drawn
+   * first, so a stalk passes behind the captions under it.
+   * @param {CanvasRenderingContext2D} ctx @param {any} state
+   * @param {Array<{bubble: any, x: number, y: number, place: any}>} list
+   */
+  drawReplayCaptions(ctx, state, list) {
+    const zoom = state.scale && state.scale > 0 ? state.scale : 1;
+    const px = (/** @type {number} */ n) => n / zoom;
+    /** @type {Array<{x: number, y: number, w: number, h: number}>} */
+    const laid = [];
+    const [lo, hi] = visibleSpan(state.span, this.world.worldW, px(2));
+    ctx.save();
+    for (const item of list) {
+      const want = this.replayCaptionBox(ctx, state, item.bubble, item.x, item.y);
+      if (!want) continue;
+      item.place = captionPlace(want, item.x, laid, lo, hi, px(6), px(12));
+      laid.push(item.place);
+    }
+    ctx.restore();
+    const order = list.filter((item) => item.place).sort((a, b) => a.place.y - b.place.y);
+    for (const item of order) this.drawReplayCaption(ctx, state, item.bubble, item.x, item.y, item.place);
   }
 
   /**
@@ -1802,7 +1867,8 @@ export class HQRenderer {
       const padX = px(8);
       const tw = Math.max(ctx.measureText(text).width, secondW) + padX * 2;
       const th = px(34);
-      const x = Math.min(this.world.worldW - tw - px(2), Math.max(px(2), seat.x - tw / 2));
+      const [loTag, hiTag] = visibleSpan(state.span, this.world.worldW, px(2));
+      const x = Math.min(hiTag - tw, Math.max(loTag, seat.x - tw / 2));
       const y = (hit ? hit.y1 : seat.y) + px(5);
       ctx.fillStyle = chosen ? c.teal : withAlpha(c.scene, 0.92);
       roundRect(ctx, x, y, tw, th, px(4));
@@ -1855,21 +1921,71 @@ export class HQRenderer {
 
 /** The Unreal building's rooms (replay_still.js STREAM_ROOMS), as the renderer's room objects. */
 /**
+ * W25: the part of the world a tag or a caption may stand in: the span the frame shows between the
+ * drawers (`span`, world units, from the engine), inside the world's own edges, less `pad`. The
+ * world alone when no span is said or it is too narrow to be a real frame.
+ * @param {[number, number]|null|undefined} span @param {number} worldW @param {number} pad
+ * @returns {[number, number]}
+ */
+export function visibleSpan(span, worldW, pad) {
+  const world = /** @type {[number, number]} */ ([pad, worldW - pad]);
+  if (!span || !Number.isFinite(span[0]) || !Number.isFinite(span[1])) return world;
+  const lo = Math.max(pad, span[0] + pad);
+  const hi = Math.min(worldW - pad, span[1] - pad);
+  return hi - lo < 200 ? world : [lo, hi];
+}
+
+/**
  * W23: where a tag of width `w` stands along its row so it lies over none of `boxes`: the place
  * nearest to `want` among `want` and the sides of each box it would meet, inside [lo, hi]; `want`
  * (clamped) when there is no such place.
  * @param {number} want @param {number} y @param {number} w @param {number} h
  * @param {Array<{x:number,y:number,w:number,h:number}>} boxes @param {number} lo @param {number} hi @param {number} gap
+ * @param {number} [maxShift] W25: no free place farther than this from `want` is taken (a tag stays by its speaker)
  */
-export function tagClear(want, y, w, h, boxes, lo, hi, gap) {
+export function tagClear(want, y, w, h, boxes, lo, hi, gap, maxShift = Infinity) {
   const clamp = (/** @type {number} */ x) => Math.min(hi - w, Math.max(lo, x));
   const row = boxes.filter((b) => b.y < y + h && b.y + b.h > y);
   const free = (/** @type {number} */ x) => row.every((b) => x + w <= b.x || x >= b.x + b.w);
   const first = clamp(want);
   if (free(first)) return first;
-  const tries = row.flatMap((b) => [b.x - gap - w, b.x + b.w + gap]).map(clamp).filter(free);
+  const tries = row.flatMap((b) => [b.x - gap - w, b.x + b.w + gap]).map(clamp).filter(free).filter((x) => Math.abs(x - want) <= maxShift);
   if (!tries.length) return first;
   return tries.reduce((best, x) => (Math.abs(x - want) < Math.abs(best - want) ? x : best));
+}
+
+/**
+ * W24: where a replayed caption stands among those already laid this frame (the tagClear approach,
+ * for captions). `want` is the caption centred over its speaker at `seatX`. First where it wants to
+ * be; else the nearest place along its row that keeps the speaker under the caption (so its tail
+ * still points straight down), off every caption laid; else lifted above the captions in its way,
+ * and tried again. `tail` is where its tail leaves the box, over the speaker when it can be.
+ * @param {{x: number, y: number, w: number, h: number}} want @param {number} seatX
+ * @param {Array<{x:number,y:number,w:number,h:number}>} boxes @param {number} lo @param {number} hi
+ * @param {number} gap @param {number} [inset] how far from the box's corners the tail may leave
+ * @returns {{x: number, y: number, w: number, h: number, tail: number}}
+ */
+export function captionPlace(want, seatX, boxes, lo, hi, gap, inset = gap * 1.5) {
+  const { w, h } = want;
+  const hits = (/** @type {{x:number,y:number,w:number,h:number}} */ a) => boxes.some((b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h);
+  const tailAt = (/** @type {number} */ x) => Math.min(x + w - inset, Math.max(x + inset, seatX));
+  const minX = Math.max(lo, seatX - w + inset);
+  const maxX = Math.min(hi - w, seatX - inset);
+  const clampX = (/** @type {number} */ x) => Math.min(maxX, Math.max(minX, x));
+  const home = Math.min(hi - w, Math.max(lo, want.x));
+  let y = want.y;
+  for (let tries = 0; tries < 8; tries += 1) {
+    if (!hits({ x: home, y, w, h })) return { x: home, y, w, h, tail: tailAt(home) };
+    const row = boxes.filter((b) => b.y < y + h && b.y + b.h > y);
+    const places = row.flatMap((b) => [b.x - gap - w, b.x + b.w + gap]).map(clampX).filter((x) => !hits({ x, y, w, h }));
+    if (places.length) {
+      const x = places.reduce((best, p) => (Math.abs(p - want.x) < Math.abs(best - want.x) ? p : best));
+      return { x, y, w, h, tail: tailAt(x) };
+    }
+    const inWay = row.filter((b) => home < b.x + b.w && b.x < home + w);
+    y = Math.min(...(inWay.length ? inWay : row).map((b) => b.y)) - gap - h;
+  }
+  return { x: home, y, w, h, tail: tailAt(home) };
 }
 
 const STILL_ROOMS = Object.fromEntries(Object.entries(STREAM_ROOMS).map(([zone, [x, y, w, h]]) => [zone, { x, y, w, h }]));

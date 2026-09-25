@@ -222,8 +222,9 @@ test('the page plays the replay over the door\'s own frame, and gives the plaque
 });
 
 test('the title stands on the kept frame only with the stream configured, waits for it briefly, and loads no plates then', () => {
-  assert.match(MAIN, /return frame && liveStreamSettings\(scene\)\.enabled \? frame : null;/);
-  assert.match(MAIN, /kept: titleKept\(keptFrame\),/);
+  // W24: this browser's frame or the studio's, by the hour's light (studio_frame.test.js)
+  assert.match(MAIN, /if \(!liveStreamSettings\(scene\)\.enabled\) return null;\r?\n  return chooseTitleFrame\(\[browser, studio\], Date\.now\(\)\);/);
+  assert.match(MAIN, /kept: titleChoice,/);
   assert.match(TITLE, /export const KEPT_WAIT_MS = (\d+);/);
   assert.ok(Number(TITLE.match(/export const KEPT_WAIT_MS = (\d+);/)[1]) <= 800, 'the title never waits long for it');
   const relight = TITLE.slice(TITLE.indexOf('  relight() {'), TITLE.indexOf('  /** @param {HTMLElement} film */'));

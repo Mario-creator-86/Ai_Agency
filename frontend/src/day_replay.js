@@ -721,10 +721,48 @@ export function rateWords(rate) {
 }
 
 /**
+ * W24: the pace keys, each saying the replay's pace against the run at that key, the same number
+ * the line beside them says (rateWords): the busy record's factor times 1, 4 and 16, rounded. The
+ * keys were «1× · 4× · 16×» of the replay's own pace, and «1×» pressed beside «de 4 ori mai repede
+ * decât rularea» read as a contradiction.
+ * @param {number} factor the busy record's rate at 1× (ReplayClock.factor)
+ * @returns {Array<{speed: number, label: string, name: string}>}
+ */
+export function paceKeys(factor) {
+  const f = Number(factor) > 0 ? Number(factor) : 1;
+  return REPLAY_SPEEDS.map((speed) => {
+    const n = Math.max(1, Math.round(f * speed));
+    return { speed, label: `${n}×`, name: rateWords(n) };
+  });
+}
+
+/**
+ * W24: how long a quiet stretch of the record is on the page at this key: «trece în 2 s», «trece
+ * în 0,5 s» (the decimal comma), never under a tenth.
+ * @param {{p0: number, p1: number}} segment @param {number} [speed]
+ */
+export function quietSpan(segment, speed = 1) {
+  const s = Math.max(0.1, (Number(segment.p1) - Number(segment.p0)) / (Number(speed) > 0 ? Number(speed) : 1) / 1000);
+  const text = String(Math.round(s * 10) / 10).replace('.', ',');
+  return `trece în ${text} s`;
+}
+
+/**
+ * W24: what the bar shows of a moment, as one key: the bar is rewritten when it changes. Keyed on
+ * the clock's second alone, the run's own «11:38 din 11:39» stayed beside «rularea s-a încheiat»
+ * when the run's start was not on a whole second.
+ * @param {{clock: string, progress: string}} words
+ */
+export function barTick(words) {
+  return `${words.clock}|${words.progress}`;
+}
+
+/**
  * Everything the replay says of a moment, in the studio's own time zone. In a quiet stretch
- * (`quiet`, a schedule segment) the rate says so, with the stretch's real times.
+ * (`quiet`, a schedule segment) the line says so, with the stretch's real times, and how long it is
+ * on the page at this key (`speed`, W24).
  * @param {Timeline} timeline @param {number} t
- * @param {{timeZone?: string, stage?: string|null, rate?: number, staff?: number, quiet?: {t0: number, t1: number}|null}} [context]
+ * @param {{timeZone?: string, stage?: string|null, rate?: number, staff?: number, speed?: number, quiet?: {t0: number, t1: number, p0?: number, p1?: number}|null}} [context]
  */
 export function replayWords(timeline, t, context = {}) {
   const tz = context.timeZone;
@@ -743,7 +781,7 @@ export function replayWords(timeline, t, context = {}) {
     stage,
     progress,
     rate: context.quiet
-      ? `nicio schimbare în registru ${clockText(context.quiet.t0, tz, true)}–${clockText(context.quiet.t1, tz, true)} · ${rateWords(context.rate || 1).replace(' decât rularea', '')}`
+      ? `nicio schimbare în registru ${clockText(context.quiet.t0, tz, true)}–${clockText(context.quiet.t1, tz, true)} · ${quietSpan({ p0: Number(context.quiet.p0) || 0, p1: Number(context.quiet.p1) || QUIET_PAGE_MS }, context.speed || 1)}`
       : rateWords(context.rate || 1),
     caption: `${who} · reluarea rulării din ${day || 'registru'}, ${startHour}`,
     captionShort: `${who} · reluare`,

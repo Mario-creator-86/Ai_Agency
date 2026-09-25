@@ -5,6 +5,7 @@ import { scenePalette } from './hq_palette.js';
 import { NO_INSETS, between, easeOut, frameFit } from './game_frame.js';
 import { bucharestTime } from './office_clock.js';
 import { timeOfDay } from './hq_time.js';
+import { weatherSign } from './hq_weather.js';
 
 /**
  * AMN-AI headquarters — the living office.
@@ -141,8 +142,6 @@ const SCENE_NOTES = {
 
 /** How long the camera takes to re-centre when a drawer opens or closes. */
 const GLIDE_MS = 420;
-
-const WEATHER_ICONS = { clear: '☀', partly_cloudy: '⛅', cloudy: '☁', fog: '🌫', drizzle: '🌦', rain: '🌧', snow: '❄', storm: '⛈', unknown: '' };
 
 export class OfficeEngine {
   /**
@@ -1081,7 +1080,8 @@ export class OfficeEngine {
       // replayed moment's, and that one stands beside it under ATUNCI (replay_player.js).
       const text = this.world.replayAt != null ? bucharestTime(new Date()).text : this.world.time.state.text;
       const weather = this.world.weather;
-      const icon = /** @type {Record<string,string>} */ (WEATHER_ICONS)[weather.state.condition] || '';
+      // W25: the sign follows the observed day or night (a clear night is «☾ Senin», not «☀ Senin»)
+      const icon = weatherSign(weather.state.condition, weather.state.isDay, timeOfDay(new Date()).elevation);
       const separator = '  •  ';
       this._setParts(this.infoElement, [
         ['scene-figure', text],
@@ -1117,6 +1117,9 @@ export class OfficeEngine {
     }
     this._setNote(null);
     const { zoom, panX, panY } = this.viewport;
+    // W25: the part of the world the frame shows between the drawers, so tags stay inside it
+    const ins = this.viewport.insets || NO_INSETS;
+    const span = [(ins.left - panX) / zoom, (w - ins.right - panX) / zoom];
     ctx.setTransform(zoom, 0, 0, zoom, panX, panY);
     // Above the world's top edge is sky: the page paints its own sky up to the canvas's top, so
     // the roof stands under open sky rather than against the frame's edge (hq_sky.js drawSky).
@@ -1141,6 +1144,7 @@ export class OfficeEngine {
         surfaceVia: this.surfaceVia,
         reduced: this.reducedMotion(),
         scale: zoom,
+        span,
         skyTop,
         replay: true,
         still: this.replayStill,
@@ -1167,6 +1171,7 @@ export class OfficeEngine {
       reduced: this.reducedMotion(),
       liftStops: this.liftStops,
       scale: zoom,
+      span,
       skyTop,
       replay: this.replay,
     });

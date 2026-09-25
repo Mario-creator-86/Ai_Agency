@@ -13,9 +13,9 @@
  */
 
 import {
-  LIVE_WINS_MS, REPLAY_BUBBLE_MS, REPLAY_SPEEDS, REPLAY_STEP_MS, ReplayClock, acceptFigures, agentsAt, buildTimeline, crossed, figuresQuery,
+  LIVE_WINS_MS, REPLAY_BUBBLE_MS, REPLAY_SPEEDS, REPLAY_STEP_MS, ReplayClock, acceptFigures, agentsAt, barTick, buildTimeline, crossed, figuresQuery,
   figuresAt, frameAt, captionLines, indexAt, nextStageTime, prevStageTime, quietSpans, readRecord, replayBubble, replayWords, replayableRun,
-  stageTicks,
+  paceKeys, stageTicks,
 } from './day_replay.js';
 import { latestFilm } from './hq_screens.js';
 import { fromKeyboard, replayFocus } from './replay_invite.js';
@@ -71,7 +71,7 @@ export class DayReplayPlayer {
     this.last = 0;
     this.stepWait = 0;
     this.lastIndex = -1;
-    this.lastSecond = -1;
+    this.lastTick = '';
     this.lastStage = '';
     this.lastPermille = '';
     this.lastRate = '';
@@ -159,7 +159,7 @@ export class DayReplayPlayer {
   words() {
     if (!this.active || !this.timeline || !this.clock) return null;
     const segment = this.clock.segment;
-    return replayWords(this.timeline, this.clock.t, { timeZone: this.deps.timeZone(), stage: this.frame ? this.frame.stage : null, rate: this.clock.rate, staff: this.deps.agents().length, quiet: segment && segment.quiet ? segment : null });
+    return replayWords(this.timeline, this.clock.t, { timeZone: this.deps.timeZone(), stage: this.frame ? this.frame.stage : null, rate: this.clock.rate, staff: this.deps.agents().length, speed: this.clock.speed, quiet: segment && segment.quiet ? segment : null });
   }
 
   /** The people and the facts of the world at the replay's moment, for the glass readout. */
@@ -218,7 +218,7 @@ export class DayReplayPlayer {
     this.clock.play();
     this.stepWait = 0;
     this.lastIndex = -1;
-    this.lastSecond = -1;
+    this.lastTick = '';
     this.lastStage = '';
     this.bubbles = [];
     this.liveEvents = [];
@@ -234,6 +234,7 @@ export class DayReplayPlayer {
     this.el.note.hidden = false;
     this.el.toggle.setAttribute('aria-pressed', 'true');
     this.el.toggle.title = 'Ieși din reluare (Esc)';
+    this._paceKeys();
     this._speed(1);
     this._render(true);
     this.last = performance.now();
@@ -468,9 +469,11 @@ export class DayReplayPlayer {
     }
     const w = this.words();
     if (!w) return;
-    const second = Math.floor(clock.t / 1000);
-    if (force || second !== this.lastSecond) {
-      this.lastSecond = second;
+    // W24: rewritten whenever the clock's words or the run's span change, so the end never keeps
+    // «11:38 din 11:39» beside «rularea s-a încheiat» (a run's start is not on a whole second)
+    const tick = barTick(w);
+    if (force || tick !== this.lastTick) {
+      this.lastTick = tick;
       this.el.time.textContent = w.clock;
       this.el.thenTime.textContent = w.clock;
       this.el.progress.textContent = w.progress;
@@ -554,6 +557,22 @@ export class DayReplayPlayer {
     this.stepWait = 0;
     this._render(true);
     if (this.frame) this.say(/** @type {any} */ (this.words()).sentence);
+  }
+
+  /**
+   * W24: the keys say the replay's pace against the run for this run (paceKeys), the number the
+   * line beside them says.
+   */
+  _paceKeys() {
+    if (!this.clock) return;
+    const keys = paceKeys(this.clock.factor);
+    for (const b of this.el.speeds) {
+      const key = keys.find((k) => k.speed === Number(b.dataset.speed));
+      if (!key) continue;
+      b.textContent = key.label;
+      b.setAttribute('aria-label', key.name);
+      b.title = key.name;
+    }
   }
 
   /** @param {number} speed */

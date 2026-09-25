@@ -1,5 +1,13 @@
 # Changelog
 
+## A stranger's first visit in the real building — 2026-09-25
+
+- **A studio-kept Unreal frame for the title** (`backend/app/office/kept_frame.py`, `frontend/src/studio_frame.js`): the signed-in page sends its newest kept frame at most every 5 minutes; one frame is kept outside the database, a whole still WebP only, capped, the key only in a header; a public read-only `GET /api/v1/office/kept-frame` (204 when none); the title uses it only when its light matches the real hour and it is under a day old.
+- **The replay's pace in words that agree** («4× · 17× · 70×» against the run), a bar that never contradicts itself at the end, captions that never overlap, one «acum:» at a time.
+- **Sockets waiting for the key are capped** (16 per process, 1013 past it).
+- **The weather sign follows day and night** («☾ Senin» at night); name tags stay whole beside the drawers; the serial plaque only for a numbered episode.
+- Tests: frontend 517/517, tsc clean; backend 106 passed across the touched files; ruff and mypy clean.
+
 ## The key out of the socket URLs, and one building for a returning visitor — 2026-09-25
 
 - **First-message auth for both WebSockets** (`backend/app/security.py`, `office/stream.py`, `workflows/router.py`): the key is the socket's first message, compared in constant time, 5 s to arrive, 1008 otherwise, never logged; the page uses it only when `GET /office/stream` answers `auth: 'first_message'`, and the library's console no longer prints the key (`tests/test_events_socket_auth.py`, `tests/test_office_stream.py`).

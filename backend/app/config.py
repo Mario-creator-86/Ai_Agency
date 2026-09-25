@@ -102,6 +102,10 @@ class Settings(BaseSettings):
     #: this address (STUDIO_OFFICE_STREAM_SIGNALLING_URL, the player port of Epic's signalling
     #: server, e.g. ws://127.0.0.1:8890). Unset, the page shows its own renderer.
     office_stream_signalling_url: str | None = None
+    #: Where the studio keeps the newest real frame of that stream, for a first visit's title
+    #: (backend/app/office/kept_frame.py; STUDIO_OFFICE_KEPT_FRAME_DIR). Unset, an ``office``
+    #: folder beside the database file. It holds one small WebP, never the database.
+    office_kept_frame_dir: Path | None = None
     #: The same running level answers Unreal's Remote Control HTTP API
     #: (STUDIO_OFFICE_UNREAL_REMOTE_URL, e.g. http://127.0.0.1:30010). Set, the backend shows and
     #: animates the seated employees from the studio's state; the seats are the ones

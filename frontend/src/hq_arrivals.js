@@ -30,6 +30,19 @@ import { taskLabel } from './ledger.js';
 export const ARRIVAL_TAG_MS = 4000;
 /** How long a room stays at full light after the live start of a stage it works. */
 export const ROOM_FLARE_MS = 3200;
+
+/**
+ * The stage whose room chip says «acum: …» (W25): the newest lit room's. A run's stages follow one
+ * another, so of the rooms still fading only one is now; at 16× the end of the replay showed five
+ * «acum:» chips at once beside «rularea s-a încheiat». The older rooms keep their light, without words.
+ * @param {Array<{stage: string, age: number}>|null|undefined} flares
+ * @returns {string|null}
+ */
+export function chipStage(flares) {
+  let best = null;
+  for (const f of flares || []) if (!best || f.age < best.age) best = f;
+  return best ? best.stage : null;
+}
 /** An event older (or further in the future) than this is history, not an arrival. */
 export const ARRIVAL_FRESH_MS = 2 * 60 * 1000;
 

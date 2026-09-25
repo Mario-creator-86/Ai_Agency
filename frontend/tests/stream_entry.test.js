@@ -314,7 +314,11 @@ test('the plaques say the faces\' own figures, from the same facts, shortened', 
 });
 
 test('a plaque the page holds no value for says «—», never an invented figure', () => {
-  for (const def of PLAQUES) assert.equal(plaqueWords(def.id, {}).value, '—', def.id);
+  // W24: OFFICE SERIAL stands only over an episode with a number; with nothing read it is not stood
+  for (const def of PLAQUES) {
+    if (def.id === 'writers_screen') assert.equal(plaqueWords(def.id, {}), null, def.id);
+    else assert.equal(plaqueWords(def.id, {}).value, '—', def.id);
+  }
   assert.equal(plaqueWords('run_sign', {}).eyebrow, 'RULAREA ZILEI');
 });
 

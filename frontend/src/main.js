@@ -37,6 +37,7 @@ import { MailThread } from './mail_thread.js';
 import { LiveStream } from './hq_stream.js';
 import { authMessage, eventsUrl, liveStreamSettings, relayUrl, socketAuth, warmVideoCodecs } from './hq_stream_config.js';
 import { browserStore, keptCaption, keptUsable, readKept, writeKept } from './stream_keep.js';
+import { chooseTitleFrame, lightMatches, readStudioFrame, sendStudioFrame, studioSendDue } from './studio_frame.js';
 import { StreamPlaques } from './stream_plaques.js';
 import { EventsLink, connectionLabel, liveScope, roomCaption, roomCaptionShort, sceneReadout } from './live_claims.js';
 import { TitleScreen } from './title_screen.js';
@@ -247,15 +248,39 @@ function readScene() {
 }
 
 /**
- * W22, ONE BUILDING FROM THE TITLE: the title stands on the kept real frame of the Unreal building
- * when this browser has one and the stream is configured (the Owner's chosen face, 2026-09-15:
- * «Încă apare vechiul format!»); otherwise on the plates, as before.
- * @param {Promise<{image: ImageBitmap, at: number}|null>} kept
+ * W24, THE STUDIO'S KEPT FRAME (studio_frame.js): the newest real frame of the Unreal building the
+ * Owner's page sent the studio, read before any key (a public, read-only GET of the page's own
+ * origin), only when scene.json configures the stream. Null when nothing is kept, or the studio does
+ * not have the route (his running backend before a restart answers 404; a new one with nothing kept, 204).
+ * @returns {Promise<{image: ImageBitmap, at: number}|null>}
  */
-async function titleKept(kept) {
-  const [frame, scene] = await Promise.all([kept, readScene()]);
-  return frame && liveStreamSettings(scene).enabled ? frame : null;
+async function readStudioKept() {
+  try {
+    if (!liveStreamSettings(await readScene()).enabled || typeof createImageBitmap !== 'function') return null;
+    const record = await readStudioFrame((url, init) => fetch(url, init));
+    return record ? { image: await createImageBitmap(record.blob), at: record.at } : null;
+  } catch {
+    return null;
+  }
 }
+/** @type {Promise<{image: ImageBitmap, at: number}|null>} */
+let studioKept = readStudioKept();
+
+/**
+ * W22, ONE BUILDING FROM THE TITLE: the title stands on a kept real frame of the Unreal building
+ * when the stream is configured (the Owner's chosen face, 2026-09-15: «Încă apare vechiul
+ * format!»); otherwise on the plates, as before. W24: of this browser's frame and the studio's,
+ * the newest whose light is the light outside now (the same solar state over Bucharest, not older
+ * than a day), so a stranger's first visit opens on the Unreal building too, and no visit's title
+ * shows a noon frame at midnight.
+ */
+async function titleKept() {
+  const [browser, studio, scene] = await Promise.all([keptFrame, studioKept, readScene()]);
+  if (!liveStreamSettings(scene).enabled) return null;
+  return chooseTitleFrame([browser, studio], Date.now());
+}
+/** The frame the title stands on, if any: the plate shows the same one after the key (W24). */
+let titleChoice = titleKept();
 
 /**
  * The title screen: the sign-in standing in the studio's own world, lit by the real sun
@@ -265,8 +290,10 @@ const titleScreen = new TitleScreen({
   stage: element('title-stage'),
   caption: element('title-caption'),
   reducedMotion,
-  kept: titleKept(keptFrame),
+  kept: titleChoice,
   keptCaption: (at) => keptCaption(at, Date.now(), state && state.studio ? state.studio.timezone : undefined),
+  // W24: read again with the light each minute; a frame whose light is no longer the hour's gives way
+  keptStillTrue: (at) => lightMatches(at, Date.now()),
 });
 titleScreen.start();
 
@@ -280,6 +307,11 @@ const keyLight = new KeyLight({
 });
 /** Whether a kept frame is being written, so two are never written at once. */
 let keeping = false;
+/**
+ * W24: the kept frame sent to the studio for a stranger's title, at most every five minutes, while
+ * the backend has the route (`supported` falls on a 404 or 405 and rises again at the next key).
+ */
+const studioSend = { supported: true, lastSent: 0 };
 
 const officeState = new OfficeState();
 let officeEngine = null;
@@ -1078,13 +1110,22 @@ async function startLiveStream() {
     reduced: () => reducedMotion(),
     // one small real frame, now and then, kept in this browser for the next entry (W19)
     onKeep: (record) => {
-      if (keeping) return;
-      keeping = true;
-      writeKept(browserStore(), record).finally(() => { keeping = false; });
+      if (!keeping) {
+        keeping = true;
+        writeKept(browserStore(), record).finally(() => { keeping = false; });
+      }
+      // W24: and, rarely, to the studio, so a stranger's title stands on the same building
+      const now = Date.now();
+      if (ownerToken && studioSendDue(studioSend, now)) {
+        studioSend.lastSent = now;
+        sendStudioFrame((url, init) => fetch(url, init), ownerToken, record)
+          .then((outcome) => { if (outcome === 'unsupported') studioSend.supported = false; });
+      }
     },
   });
-  // the starting plate shows the last live frame an earlier visit kept, dimmed and named (W19)
-  keptFrame.then((kept) => {
+  // the starting plate shows the last live frame an earlier visit kept, dimmed and named (W19); W24:
+  // the frame the title stood on, when it stood on one (a first visit's is the studio's)
+  Promise.all([titleChoice, keptFrame]).then(([titled, browserKept]) => titled || browserKept).then((kept) => {
     if (!kept || !liveStream) return;
     const zone = state && state.studio ? state.studio.timezone : undefined;
     liveStream.showKept(kept.image, keptCaption(kept.at, Date.now(), zone), kept.at);
@@ -3909,9 +3950,16 @@ element('logout').addEventListener('click', () => {
   workspace.hidden = true;
   login.hidden = false;
   titleScreen.show();
-  // W22: the frame kept during this visit is the title's now
+  // W22: the frame kept during this visit is the title's now; W24: or the studio's, by the hour's light
   keptFrame = readKeptFrame();
-  titleKept(keptFrame).then((kept) => { if (kept && !ownerToken) titleScreen.useKept(kept); });
+  studioKept = readStudioKept();
+  titleChoice = titleKept();
+  studioSend.supported = true;
+  titleChoice.then((kept) => {
+    if (ownerToken) return;
+    if (kept) titleScreen.useKept(kept);
+    else titleScreen.dropKept();
+  });
   input.value = '';
   notify('');
   ledger.clear();

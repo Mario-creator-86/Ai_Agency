@@ -49,7 +49,7 @@ export class TitleScreen {
   /**
    * @param {{stage: HTMLElement, caption?: HTMLElement|null, now?: () => Date, reducedMotion?: () => boolean,
    *          kept?: Promise<{image: CanvasImageSource & {width: number, height: number}, at: number}|null>|null,
-   *          keptCaption?: (at: number) => string}} options
+   *          keptCaption?: (at: number) => string, keptStillTrue?: (at: number) => boolean}} options
    */
   constructor(options) {
     this.stage = options.stage;
@@ -80,6 +80,8 @@ export class TitleScreen {
     /** W22: the kept real frame the title stands on, or null for the plates. */
     this.keptPromise = options.kept || null;
     this.keptCaptionOf = options.keptCaption || (() => '');
+    /** W24: whether the kept frame's light is still the hour's (studio_frame.js lightMatches) */
+    this.keptStillTrue = options.keptStillTrue || (() => true);
     /** @type {{image: CanvasImageSource & {width: number, height: number}, at: number}|null} */
     this.kept = null;
     /** @type {HTMLCanvasElement|null} */
@@ -138,6 +140,21 @@ export class TitleScreen {
     this.drawSky();
     this.relight();
     return true;
+  }
+
+  /**
+   * W24: the title leaves a kept frame whose light is no longer the hour's (or none is offered on
+   * a return to the title) and stands on the plates again, lit by the real sun.
+   */
+  dropKept() {
+    if (!this.kept || this.entering) return;
+    this.kept = null;
+    this.keptTop = '';
+    if (this.keptEl) this.keptEl.remove();
+    this.keptEl = null;
+    delete this.stage.dataset.kept;
+    this.place();
+    this.relight();
   }
 
   async start() {
@@ -244,6 +261,11 @@ export class TitleScreen {
   /** The real sun, read again: the day plates' share, the deep-night grade, the sky, the caption. */
   relight() {
     this.light = titleLight(this.now());
+    // W24: a kept frame stands only in its own light; the plates take over once the sun has moved on
+    if (this.kept && !this.entering && !this.keptStillTrue(this.kept.at)) {
+      this.dropKept();
+      return;
+    }
     const { dayMix, grade, multiply, needsNight, needsDay } = this.light;
     this.stage.style.setProperty('--title-day', dayMix.toFixed(3));
     this.stage.dataset.phase = this.light.time.phase;

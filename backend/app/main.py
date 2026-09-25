@@ -34,6 +34,7 @@ from app.integrations.services import load_registry
 from app.integrations.vault import CredentialVault
 from app.logging import configure_logging
 from app.media.router import create_media_router
+from app.office.kept_frame import create_kept_frame_router
 from app.office.router import create_office_router
 from app.office.stream import register_stream_gateway
 from app.office.unreal import remote_control_target, run_unreal_bridge
@@ -573,6 +574,9 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
     register_stream_gateway(app)
     # Phase 3: 2D office layout router
     app.include_router(create_office_router(), prefix="/api/v1", tags=["office"])
+    # W24: the newest real frame of the live headquarters; read publicly by the title, written
+    # only with the Owner's key
+    app.include_router(create_kept_frame_router(), prefix="/api/v1", tags=["office"])
     # Phase 4: Factual Intelligence & Verification Engine router
     app.include_router(create_factual_router(), prefix="/api/v1", tags=["factual"])
     # Phase 5: Media Production & Assembly router

@@ -212,9 +212,9 @@ test('time compression: the busy record at one rate, about a minute at 1×; a qu
   clock.seek(Date.parse('2026-09-12T20:55:00Z'));
   assert.equal(clock.segment.quiet, true);
   assert.ok(clock.rate > 100, `${clock.rate}`);
-  const w = replayWords(tl, clock.t, { timeZone: TZ, stage: 'media', rate: clock.rate, quiet: clock.segment });
-  // «de 207 ori»: no «de» when the last two digits are under twenty
-  assert.match(w.rate, /^nicio schimbare în registru 23:51:30–23:58:24 · de \d+ ori mai repede$/);
+  const w = replayWords(tl, clock.t, { timeZone: TZ, stage: 'media', rate: clock.rate, quiet: clock.segment, speed: 1 });
+  // W24: a quiet stretch says how long it is on the page, not a rate other than the pressed key's
+  assert.equal(w.rate, 'nicio schimbare în registru 23:51:30–23:58:24 · trece în 2 s');
   clock.seekFraction(0.5);
   assert.ok(Math.abs(clock.fraction - 0.5) < 1e-9);
 });

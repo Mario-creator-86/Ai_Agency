@@ -262,3 +262,21 @@ def test_the_key_is_never_logged_nor_echoed(caplog):
     for record in caplog.records:
         assert TOKEN not in record.getMessage()
         assert TOKEN not in repr(record.__dict__)
+
+
+def test_a_relay_past_the_waiting_limit_is_told_to_try_later_without_reaching_out(monkeypatch):
+    """W24: the relay and the events socket share one small count of sockets awaiting the key."""
+    import app.security as security
+
+    monkeypatch.setattr(security, "SOCKET_AUTH_MAX_PENDING", 1)
+    client = quick_client(settings(), never_connect, timeout=2.0)
+    with client.websocket_connect(RELAY_PATH) as waiting:
+        assert security.pending_socket_auths() == 1
+        with pytest.raises(WebSocketDisconnect) as busy:
+            with client.websocket_connect(RELAY_PATH) as ws:
+                ws.receive_text()
+        assert busy.value.code == 1013
+        waiting.send_text(json.dumps({"type": "auth", "token": "wrong"}))
+        with pytest.raises(WebSocketDisconnect):
+            waiting.receive_text()
+    assert security.pending_socket_auths() == 0

@@ -19,7 +19,7 @@
  * where the building is small, and is not shown at all where it would clutter.
  */
 
-import { factCheckFace, publishFace, runSignFace, treasuryFace, tokensFace, paneMode } from './hq_screens.js';
+import { factCheckFace, publishFace, runSignFace, treasuryFace, tokensFace, paneMode, writersFace } from './hq_screens.js';
 import { surfaceReadout } from './hq_readouts.js';
 
 /**
@@ -135,8 +135,10 @@ export function plaqueWords(id, facts, agents = []) {
   }
   // W21: the face card's own value, word for word (hq_readouts.js surfaceReadout)
   if (id === 'writers_screen') {
+    // W24: only over an episode with a number; «EP — · Ciornă» over the video said nothing
+    if (!/^EP \d/.test(writersFace(f.episodes).number)) return null;
     const card = surfaceReadout(id, { facts: f, agents });
-    const value = card && card.value !== 'EP —' ? card.value : '—';
+    const value = card ? card.value : '—';
     return { eyebrow: 'OFFICE SERIAL', value, tone: 'quiet', key: `ws|${value}` };
   }
   if (id === 'render_bay') {

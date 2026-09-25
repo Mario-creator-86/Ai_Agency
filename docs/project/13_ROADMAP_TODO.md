@@ -1398,3 +1398,7 @@ No provider was called, no run was queued, no credit was spent, and
 (5) replayed captions overlapping each other at 16×;
 (6) OFFICE SERIAL «EP — · Ciornă» / «—»;
 (7) the phone-width title on a kept frame and the screen-reader reading of the replay's start sentence, not yet checked.
+
+## A stranger's first visit in the real building (2026-09-25)
+
+- The Owner restarts the studio on :8000 (the W24/W25 backend: kept-frame route, socket limit, the WebP check), then plays the stream once while signed in, so a stranger's first visit opens on the Unreal building in the real studio, not only in the harness. [ ] Re-measure a real cold visit against :8000 afterwards. [ ] Drop the room chip when the replay reaches its end (up to 3.2 s of «acum: …» beside «rularea s-a încheiat»). [ ] Plaques after a window resize (run_sign 252-363 px off for about 6 checks, carried over from W23). [ ] A per-peer share of SOCKET_AUTH_MAX_PENDING before the studio is ever bound beyond localhost. [ ] Pictures still missing: phone width on a studio frame, golden-hour and twilight titles, the night icons for partly cloudy and drizzle.
