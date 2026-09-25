@@ -32,6 +32,16 @@ from app.publishing.schemas import (
 )
 from app.publishing.serial_identity import hook_of
 from app.services import CommandConflict, append_event, utc_now
+from app.wording import (
+    AUTONOMY_STOPPED,
+    count,
+    decimal,
+    error_words,
+    qc_status,
+    sentence,
+)
+from app.wording import environment as environment_word
+from app.wording import privacy as privacy_word
 
 
 class PublishingGateError(Exception):
@@ -447,7 +457,8 @@ def resolve_publish_visibility(
 
     if privacy not in PRIVACY_LEVELS:
         return _result(
-            "private", f"Politica canalului cere o vizibilitate necunoscută ({privacy!r}); privat."
+            "private",
+            f"Politica canalului cere o vizibilitate necunoscută („{privacy}”); încărcare privată.",
         )
     if privacy == "private":
         return _result("private", "Politica canalului: încărcare privată.")
@@ -455,19 +466,21 @@ def resolve_publish_visibility(
         if environment != "PRODUCTION":
             return _result(
                 "private",
-                f"Studioul este în {environment}: nimic nu pleacă vizibil. Încărcare privată.",
+                f"Studioul este în {environment_word(environment)}: nimic nu pleacă vizibil. "
+                "Încărcare privată.",
             )
-        return _result("unlisted", "Politica canalului: nelistat, studioul în PRODUCTION.")
+        return _result("unlisted", "Politica canalului: nelistat, studioul în producție.")
     if not enabled:
         return _result(
             "private",
-            "Politica canalului cere „public”, dar public_publish_enabled este dezactivat; "
-            "încărcarea rămâne privată.",
+            "Politica canalului cere „public”, dar filmele publice nu sunt permise pe "
+            "canal; încărcarea rămâne privată.",
         )
     if environment != "PRODUCTION":
         return _result(
             "private",
-            f"Studioul este în {environment}: nimic nu pleacă public. Încărcare privată.",
+            f"Studioul este în {environment_word(environment)}: nimic nu pleacă public. "
+            "Încărcare privată.",
         )
     if delay > 0:
         moment = now if now is not None else datetime.now(UTC)
@@ -478,11 +491,11 @@ def resolve_publish_visibility(
             "release_privacy": "public",
             "policy_version": version,
             "reason": (
-                f"Lansare publică programată peste {delay} de minute ({publish_at}): YouTube "
-                "cere încărcare privată cu publishAt."
+                f"Lansare publică programată peste {count(delay, 'minut', 'minute')} "
+                f"({publish_at}): YouTube o primește ca încărcare privată cu data lansării."
             ),
         }
-    return _result("public", "Politica canalului: public, studioul în PRODUCTION.")
+    return _result("public", "Politica canalului: public, studioul în producție.")
 
 
 def channel_type_for_storyboard(storyboard: Storyboard) -> str:
@@ -722,57 +735,62 @@ def evaluate_publishing_gate(
     """
     checks: list[dict] = []
     reasons: list[str] = []
+    # One code per reason, in the same order: the sentence is the Owner's, the code is the
+    # record's (a page, a test or a person diagnosing reads it without parsing the sentence).
+    reason_codes: list[str] = []
+
+    def check(name: str, passed: bool, detail: str, **data: Any) -> None:
+        checks.append({"check_name": name, "passed": passed, "detail": detail, "data": data})
+
+    def refuse(code: str, reason: str) -> None:
+        reason_codes.append(code)
+        reasons.append(reason)
 
     with Session(engine) as session:
         # Gate 1: Global Autonomy Stop check
         policy = session.get(OwnerPolicy, 1)
         if policy and policy.autonomy_stopped:
-            checks.append(
-                {
-                    "check_name": "AUTONOMY_GATE",
-                    "passed": False,
-                    "detail": "Global autonomy stop is active; Owner must clear it first.",
-                }
-            )
-            reasons.append("Global autonomy stop is active")
+            check("AUTONOMY_GATE", False, AUTONOMY_STOPPED, autonomy_stopped=True)
+            refuse("AUTONOMY_STOPPED", "Autonomia studioului este oprită")
         else:
-            checks.append(
-                {
-                    "check_name": "AUTONOMY_GATE",
-                    "passed": True,
-                    "detail": "Autonomy stop is cleared.",
-                }
+            check(
+                "AUTONOMY_GATE",
+                True,
+                "Autonomia studioului este pornită.",
+                autonomy_stopped=False,
             )
 
         # Gate 2: Media Asset valid on disk
         asset = session.get(MediaAsset, media_asset_id)
         if not asset:
-            checks.append(
-                {
-                    "check_name": "MEDIA_ASSET_EXISTS",
-                    "passed": False,
-                    "detail": f"MediaAsset {media_asset_id} not found.",
-                }
+            check(
+                "MEDIA_ASSET_EXISTS",
+                False,
+                "Materialul cerut nu există în evidența studioului.",
+                media_asset_id=media_asset_id,
             )
-            reasons.append("MediaAsset does not exist")
+            refuse("MEDIA_ASSET_MISSING", "Materialul nu există în evidența studioului")
         else:
             p = Path(asset.uri_or_path)
             if not p.is_file() or p.stat().st_size == 0:
-                checks.append(
-                    {
-                        "check_name": "MEDIA_ASSET_ON_DISK",
-                        "passed": False,
-                        "detail": f"File {asset.uri_or_path} missing or empty.",
-                    }
+                check(
+                    "MEDIA_ASSET_ON_DISK",
+                    False,
+                    f"Fișierul materialului lipsește de pe disc sau este gol: {asset.uri_or_path}.",
+                    path=asset.uri_or_path,
                 )
-                reasons.append("Media file is missing or 0 bytes on disk")
+                refuse(
+                    "MEDIA_FILE_MISSING",
+                    "Fișierul materialului lipsește de pe disc sau are 0 octeți",
+                )
             else:
-                checks.append(
-                    {
-                        "check_name": "MEDIA_ASSET_ON_DISK",
-                        "passed": True,
-                        "detail": f"Valid file ({p.stat().st_size} bytes).",
-                    }
+                size = p.stat().st_size
+                check(
+                    "MEDIA_ASSET_ON_DISK",
+                    True,
+                    f"Fișierul este pe disc ({count(size, 'octet', 'octeți')}).",
+                    path=asset.uri_or_path,
+                    bytes=size,
                 )
 
         # Gate 3: Technical & Quality Control (QC) Passed
@@ -781,31 +799,42 @@ def evaluate_publishing_gate(
             .where(QualityControlReport.media_asset_id == media_asset_id)
             .order_by(QualityControlReport.verified_at.desc())
         ).first()
+        qc_code = qc.status if qc else "MISSING"
         if not qc or qc.status != "PASSED":
-            checks.append(
-                {
-                    "check_name": "QC_GATE",
-                    "passed": False,
-                    "detail": f"QC Report is {qc.status if qc else 'MISSING'}; must be PASSED.",
-                }
+            said = qc_status(qc_code)
+            check(
+                "QC_GATE",
+                False,
+                f"Controlul calității: {said}"
+                + ("" if qc else " (niciun raport pentru acest material)")
+                + "; publicarea cere un control trecut.",
+                qc_status=qc_code,
+                qc_score=qc.score if qc else None,
+                qc_minimum=QC_MINIMUM_SCORE,
             )
-            reasons.append(f"QC status is {qc.status if qc else 'MISSING'}")
+            refuse("QC_NOT_PASSED", f"Controlul calității: {said}")
         elif (qc.score or 0.0) < QC_MINIMUM_SCORE:
-            checks.append(
-                {
-                    "check_name": "QC_GATE",
-                    "passed": False,
-                    "detail": f"QC score {qc.score} is below the {QC_MINIMUM_SCORE} minimum.",
-                }
+            scored = (
+                f"Scorul controlului calității, {decimal(qc.score or 0.0)}, este sub minimul "
+                f"de {decimal(QC_MINIMUM_SCORE)}"
             )
-            reasons.append(f"QC score {qc.score} below minimum {QC_MINIMUM_SCORE}")
+            check(
+                "QC_GATE",
+                False,
+                f"{scored}.",
+                qc_status=qc_code,
+                qc_score=qc.score,
+                qc_minimum=QC_MINIMUM_SCORE,
+            )
+            refuse("QC_SCORE_BELOW_MINIMUM", scored)
         else:
-            checks.append(
-                {
-                    "check_name": "QC_GATE",
-                    "passed": True,
-                    "detail": f"QC PASSED with score {qc.score}.",
-                }
+            check(
+                "QC_GATE",
+                True,
+                f"Controlul calității a trecut, cu scorul {decimal(qc.score or 0.0)}.",
+                qc_status=qc_code,
+                qc_score=qc.score,
+                qc_minimum=QC_MINIMUM_SCORE,
             )
 
         # Gate 4: Factual Claim Integrity Check
@@ -822,22 +851,23 @@ def evaluate_publishing_gate(
         script = session.get(ScriptDraft, script_id) if script_id else None
 
         if script is None:
-            missing = (
-                "no render job records this asset"
+            missing_code, missing = (
+                ("NO_RENDER_JOB", "nicio randare nu a produs acest material")
                 if storyboard_id is None
-                else "the storyboard has no script"
+                else ("NO_SCRIPT", "storyboardul nu are un scenariu în spate")
             )
-            checks.append(
-                {
-                    "check_name": "FACTUAL_INTEGRITY_GATE",
-                    "passed": False,
-                    "detail": (
-                        f"Provenance could not be established: {missing}. The claims this video "
-                        f"makes cannot be checked against anything."
-                    ),
-                }
+            check(
+                "FACTUAL_INTEGRITY_GATE",
+                False,
+                f"Proveniența nu poate fi stabilită: {missing}. Afirmațiile filmului nu pot "
+                "fi verificate față de nimic.",
+                missing=missing_code,
+                storyboard_id=storyboard_id,
             )
-            reasons.append(f"Factual provenance unverifiable: {missing}")
+            refuse(
+                "FACTUAL_PROVENANCE_UNKNOWN",
+                f"Proveniența factuală nu poate fi verificată: {missing}",
+            )
         else:
             referenced = list(script.claim_ids_json or [])
             claims = session.scalars(
@@ -851,34 +881,54 @@ def evaluate_publishing_gate(
             if dangling or unverified_claims:
                 trouble = []
                 if unverified_claims:
-                    trouble.append(f"unverified or refuted: {unverified_claims}")
+                    trouble.append(
+                        count(
+                            len(unverified_claims),
+                            "afirmație neverificată sau infirmată",
+                            "afirmații neverificate sau infirmate",
+                        )
+                    )
                 if dangling:
-                    trouble.append(f"referenced but missing: {dangling}")
-                checks.append(
-                    {
-                        "check_name": "FACTUAL_INTEGRITY_GATE",
-                        "passed": False,
-                        "detail": "Script contains claims " + "; ".join(trouble) + ".",
-                    }
+                    trouble.append(
+                        count(
+                            len(dangling),
+                            "afirmație citată care nu există în evidență",
+                            "afirmații citate care nu există în evidență",
+                        )
+                    )
+                check(
+                    "FACTUAL_INTEGRITY_GATE",
+                    False,
+                    "Scenariul are " + " și ".join(trouble) + ".",
+                    script_id=script.id,
+                    claim_ids=referenced,
+                    unverified_claim_ids=unverified_claims,
+                    missing_claim_ids=dangling,
                 )
-                reasons.append("Claims in script are not all supported: " + "; ".join(trouble))
+                refuse(
+                    "CLAIMS_NOT_SUPPORTED",
+                    "Nu toate afirmațiile scenariului sunt verificate: " + " și ".join(trouble),
+                )
             elif referenced:
-                checks.append(
-                    {
-                        "check_name": "FACTUAL_INTEGRITY_GATE",
-                        "passed": True,
-                        "detail": f"All {len(claims)} referenced claims are SUPPORTED.",
-                    }
+                check(
+                    "FACTUAL_INTEGRITY_GATE",
+                    True,
+                    "Afirmația citată de scenariu este verificată."
+                    if len(claims) == 1
+                    else f"Toate cele {count(len(claims), 'afirmație citată', 'afirmații citate')}"
+                    " de scenariu sunt verificate.",
+                    script_id=script.id,
+                    claim_ids=referenced,
                 )
             else:
                 # A script that asserts nothing factual has nothing to verify. Said plainly,
                 # rather than dressed up as a verification that happened.
-                checks.append(
-                    {
-                        "check_name": "FACTUAL_INTEGRITY_GATE",
-                        "passed": True,
-                        "detail": "The script references no factual claims; none to verify.",
-                    }
+                check(
+                    "FACTUAL_INTEGRITY_GATE",
+                    True,
+                    "Scenariul nu citează nicio afirmație factuală; nu este nimic de verificat.",
+                    script_id=script.id,
+                    claim_ids=[],
                 )
 
         # Gate 5: Idempotency & Duplicate Publishing Check
@@ -906,42 +956,40 @@ def evaluate_publishing_gate(
                     same_film = carried[key]
                     break
         if existing_pub:
-            checks.append(
-                {
-                    "check_name": "DUPLICATE_PROTECTION_GATE",
-                    "passed": False,
-                    "detail": (
-                        f"Asset already published/in-flight on channel "
-                        f"(remote_id: {existing_pub.remote_video_id})."
-                    ),
-                }
+            check(
+                "DUPLICATE_PROTECTION_GATE",
+                False,
+                "Materialul este deja publicat sau în curs de publicare pe acest canal "
+                f"(ID YouTube: {existing_pub.remote_video_id or '—'}).",
+                publication_id=existing_pub.id,
+                publication_status=existing_pub.status,
+                remote_video_id=existing_pub.remote_video_id,
             )
-            reasons.append(
-                "Duplicate publishing prevented; asset already published to this channel"
+            refuse(
+                "DUPLICATE_ASSET",
+                "Publicare dublă oprită: materialul este deja pe acest canal",
             )
         elif same_film is not None:
-            checks.append(
-                {
-                    "check_name": "DUPLICATE_PROTECTION_GATE",
-                    "passed": False,
-                    "detail": (
-                        f"This film is already on the channel as “{same_film.title}” "
-                        f"(remote_id: {same_film.remote_video_id}); this asset is another "
-                        f"render of the same script."
-                    ),
-                }
+            check(
+                "DUPLICATE_PROTECTION_GATE",
+                False,
+                f"Filmul este deja pe canal ca „{same_film.title}” (ID YouTube: "
+                f"{same_film.remote_video_id or '—'}); acest material este o altă randare a "
+                "aceluiași scenariu.",
+                publication_id=same_film.id,
+                publication_status=same_film.status,
+                remote_video_id=same_film.remote_video_id,
             )
-            reasons.append(
-                "Duplicate publishing prevented; the same film is already on this channel "
-                f"as {same_film.remote_video_id or same_film.id}"
+            refuse(
+                "DUPLICATE_FILM",
+                "Publicare dublă oprită: același film este deja pe acest canal ca "
+                f"{same_film.remote_video_id or same_film.id}",
             )
         else:
-            checks.append(
-                {
-                    "check_name": "DUPLICATE_PROTECTION_GATE",
-                    "passed": True,
-                    "detail": "No duplicate publication found.",
-                }
+            check(
+                "DUPLICATE_PROTECTION_GATE",
+                True,
+                "Filmul nu este deja pe acest canal.",
             )
 
         # Gate 6: Policy authorisation, only for a publication that would be seen.
@@ -955,60 +1003,68 @@ def evaluate_publishing_gate(
         if requested != "private":
             channel = session.get(ChannelRecord, channel_id)
             current = int(channel.policy_version or 1) if channel else None
-            environment = str(policy.environment or "TEST") if policy else "TEST"
-            resolved = resolve_publish_visibility(channel, environment) if channel else None
+            env = str(policy.environment or "TEST") if policy else "TEST"
+            resolved = resolve_publish_visibility(channel, env) if channel else None
             if resolved is None:
                 authorised = "private"
             elif resolved["publish_at"]:
                 authorised = resolved["release_privacy"]
             else:
                 authorised = resolved["privacy_status"]
+            wanted, allowed = privacy_word(requested), privacy_word(authorised)
+            where = environment_word(env)
+            facts = {
+                "requested": requested,
+                "authorised": authorised,
+                "policy_version": policy_version,
+                "current_policy_version": current,
+                "environment": env,
+            }
+            code: str | None
             if channel is None:
-                detail = f"Channel {channel_id} not found; no policy can authorise {requested}."
-                reason = f"No channel policy authorises a {requested} publication"
-            elif policy_version is None:
+                code = "POLICY_NO_CHANNEL"
                 detail = (
-                    f"A {requested} publication carries no channel policy version; only a "
-                    "publish policy the Owner set may make a film visible."
+                    f"Canalul cerut nu există; nicio politică nu poate autoriza un film {wanted}."
                 )
-                reason = f"No publish policy version authorises a {requested} publication"
-            elif int(policy_version) != current:
+                reason = f"Nicio politică de canal nu autorizează un film {wanted}"
+            elif policy_version is None:
+                code = "POLICY_NO_VERSION"
                 detail = (
-                    f"Policy version {policy_version} stamped on this publication is not the "
-                    f"channel's current policy (version {current}); the Owner changed the "
-                    "policy since the visibility was resolved."
+                    f"Un film {wanted} nu poartă versiunea politicii canalului; doar o "
+                    "politică de publicare stabilită de Proprietar poate face un film vizibil."
+                )
+                reason = f"Nicio versiune a politicii de publicare nu autorizează un film {wanted}"
+            elif int(policy_version) != current:
+                code = "POLICY_VERSION_STALE"
+                detail = (
+                    f"Publicarea poartă versiunea {policy_version} a politicii, dar canalul "
+                    f"este la versiunea {current}; Proprietarul a schimbat politica după ce "
+                    "vizibilitatea a fost stabilită."
                 )
                 reason = (
-                    f"Publish policy changed since version {policy_version}; the channel is "
-                    f"at version {current}"
+                    f"Politica de publicare s-a schimbat de la versiunea {policy_version}; "
+                    f"canalul este la versiunea {current}"
                 )
             elif PRIVACY_RANK.get(requested, 99) > PRIVACY_RANK.get(authorised, -1):
+                code = "POLICY_VISIBILITY_EXCEEDED"
                 detail = (
-                    f"The channel policy (version {current}) resolves to {authorised} in "
-                    f"{environment}, not {requested}: {resolved['reason'] if resolved else ''}"
-                ).rstrip()
+                    f"Politica canalului (versiunea {current}) permite un film {allowed} în "
+                    f"{where}, nu {wanted}: {resolved['reason'] if resolved else ''}"
+                ).rstrip(": ")
                 reason = (
-                    f"Channel policy version {current} authorises {authorised}, not {requested}"
+                    f"Versiunea {current} a politicii canalului autorizează un film {allowed}, "
+                    f"nu {wanted}"
                 )
             else:
-                detail = None
+                code = None
+                detail = (
+                    f"Versiunea {current} a politicii canalului autorizează un film {wanted} "
+                    f"în {where}."
+                )
                 reason = None
-            if reason is None:
-                checks.append(
-                    {
-                        "check_name": "POLICY_AUTHORISATION_GATE",
-                        "passed": True,
-                        "detail": (
-                            f"Channel policy version {current} authorises a {requested} "
-                            f"publication in {environment}."
-                        ),
-                    }
-                )
-            else:
-                checks.append(
-                    {"check_name": "POLICY_AUTHORISATION_GATE", "passed": False, "detail": detail}
-                )
-                reasons.append(reason)
+            check("POLICY_AUTHORISATION_GATE", code is None, detail, **facts)
+            if code is not None and reason is not None:
+                refuse(code, reason)
 
     eligible = len(reasons) == 0
     return {
@@ -1017,6 +1073,7 @@ def evaluate_publishing_gate(
         "eligible": eligible,
         "checks": checks,
         "reasons": reasons,
+        "reason_codes": reason_codes,
     }
 
 
@@ -1236,13 +1293,13 @@ def create_publication_intent(
     with Session(engine) as session:
         if session.get(MediaAsset, media_asset_id) is None:
             raise PublishingAssetNotFound(
-                f"MediaAsset {media_asset_id} does not exist",
-                [f"MediaAsset {media_asset_id} not found"],
+                f"Materialul {media_asset_id} nu există în evidența studioului.",
+                ["Materialul nu există în evidența studioului"],
             )
         if session.get(ChannelRecord, channel_id) is None:
             raise PublishingAssetNotFound(
-                f"Channel {channel_id} does not exist",
-                [f"Channel {channel_id} not found"],
+                f"Canalul {channel_id} nu există.",
+                ["Canalul nu există în studio"],
             )
 
     gate_result = evaluate_publishing_gate(
@@ -1265,6 +1322,10 @@ def create_publication_intent(
             **gate_result,
             "eligible": False,
             "reasons": [*gate_result["reasons"], *metadata_reasons],
+            "reason_codes": [
+                *gate_result["reason_codes"],
+                *["EPISODE_METADATA"] * len(metadata_reasons),
+            ],
         }
     pub_id = str(uuid4())
     now = utc_now()
@@ -1294,6 +1355,7 @@ def create_publication_intent(
                 "publish_at": scheduled_publish_time,
                 "policy_version": policy_version,
                 "gate_reasons": gate_result["reasons"],
+                "gate_reason_codes": gate_result["reason_codes"],
             },
             correlation_id,
         )
@@ -1323,7 +1385,7 @@ def create_publication_intent(
 
     if not gate_result["eligible"]:
         raise PublishingGateError(
-            f"Publishing gate rejected publication: {view['error_detail']}",
+            f"Poarta de publicare a refuzat filmul: {view['error_detail']}.",
             gate_result["reasons"],
         )
 
@@ -1389,7 +1451,8 @@ def execute_publication(
                     raise ValueError("Publication record lost during reconciliation") from None
                 pub.status = "FAILED_RETRYABLE"
                 pub.error_detail = (
-                    f"Retry stopped before uploading: {exc} A duplicate cannot be ruled out."
+                    "Reîncercarea s-a oprit înainte de încărcare: "
+                    f"{error_words(exc)}. Un duplicat nu poate fi exclus."
                 )
                 event = append_event(
                     session,
@@ -1413,9 +1476,7 @@ def execute_publication(
                 pub.remote_video_id = reconciled.remote_video_id
                 pub.remote_url = reconciled.remote_url or None
                 pub.published_at = utc_now()
-                pub.error_detail = (
-                    "Simulated upload: no video exists on any platform." if simulated else None
-                )
+                pub.error_detail = SIMULATED_UPLOAD if simulated else None
                 event = append_event(
                     session,
                     "publishing.retry_reconciled",
@@ -1424,7 +1485,8 @@ def execute_publication(
                     1,
                     {
                         "remote_video_id": reconciled.remote_video_id,
-                        "detail": "Previous attempt already exists remotely; retry suppressed.",
+                        "detail": "Încercarea anterioară există deja pe platformă; "
+                        "reîncercarea nu a mai încărcat nimic.",
                         "simulated": simulated,
                     },
                     correlation_id,
@@ -1463,9 +1525,7 @@ def execute_publication(
             pub.remote_video_id = upload_res.remote_video_id
             pub.remote_url = upload_res.remote_url or None
             pub.published_at = utc_now()
-            pub.error_detail = (
-                "Simulated upload: no video exists on any platform." if simulated else None
-            )
+            pub.error_detail = SIMULATED_UPLOAD if simulated else None
 
             event = append_event(
                 session,
@@ -1517,6 +1577,21 @@ def execute_publication(
         return PublicationView.model_validate(pub).model_dump()
 
 
+#: What a simulated upload is, in the record the Owner reads: nothing is on any platform.
+SIMULATED_UPLOAD = "Încărcare simulată: niciun video nu există pe vreo platformă."
+
+_REMOTE_UNREAD = "starea de pe platformă nu a putut fi citită"
+
+
+def _remote_state_unread(exc: BaseException) -> str:
+    """Why the platform's state is unknown, said once: the class's own words already say it,
+    so a cause is added only when there is one to add (an HTTP answer, a timeout)."""
+    words = error_words(exc)
+    if words == _REMOTE_UNREAD:
+        return sentence(f"{_REMOTE_UNREAD}; publicarea rămâne necunoscută, nu absentă")
+    return sentence(f"{_REMOTE_UNREAD}: {words}; publicarea rămâne necunoscută, nu absentă")
+
+
 def list_publications(engine: Engine, channel_id: str | None = None) -> list[dict]:
     with Session(engine) as session:
         query = select(PublicationRecord).order_by(PublicationRecord.created_at.desc())
@@ -1564,7 +1639,7 @@ def reconcile_publication(
             if not pub:
                 raise ValueError(f"Publication {publication_id} not found") from None
             pub.status = "REMOTE_UNKNOWN"
-            pub.error_detail = f"Remote state could not be read: {exc}"
+            pub.error_detail = _remote_state_unread(exc)
             event = append_event(
                 session,
                 "publishing.reconcile_unavailable",
@@ -1588,9 +1663,7 @@ def reconcile_publication(
             pub.status = "PUBLISHED_SIMULATED" if simulated else "PUBLISHED"
             pub.published_at = utc_now()
             # Keep whatever URL the provider actually returned; never synthesise one.
-            pub.error_detail = (
-                "Simulated upload: no video exists on any platform." if simulated else None
-            )
+            pub.error_detail = SIMULATED_UPLOAD if simulated else None
             append_event(
                 session,
                 "publishing.reconciled_published",
@@ -1602,7 +1675,10 @@ def reconcile_publication(
             )
         else:
             pub.status = "FAILED_RETRYABLE"
-            pub.error_detail = "Video not found on remote channel after timeout; safe to retry."
+            pub.error_detail = (
+                "Filmul nu a fost găsit pe canal după așteptare; poate fi reîncercat fără "
+                "risc de dublură."
+            )
             append_event(
                 session,
                 "publishing.reconciled_not_found",
@@ -1647,9 +1723,9 @@ def publish_media_asset(
     # DRAFT_INTENT row would only suggest an attempt that could never happen.
     if provider is None:
         raise PublisherNotConfigured(
-            "No publishing provider supplied. Configure STUDIO_YOUTUBE_CLIENT_ID, "
-            "STUDIO_YOUTUBE_CLIENT_SECRET and STUDIO_YOUTUBE_REFRESH_TOKEN; the studio does "
-            "not substitute a simulated publisher."
+            "Niciun furnizor de publicare nu este configurat. Setează "
+            "STUDIO_YOUTUBE_CLIENT_ID, STUDIO_YOUTUBE_CLIENT_SECRET și "
+            "STUDIO_YOUTUBE_REFRESH_TOKEN; studioul nu înlocuiește publicarea cu una simulată."
         )
 
     intent = create_publication_intent(

@@ -148,7 +148,8 @@ def test_a_stop_after_the_owners_yes_still_refuses_the_upload_in_the_stage(
     assert publisher.uploads == []
     assert stopped["status"] == "COMPLETED", stopped
     assert "Poarta de publicare" in stopped["reason"]
-    assert "autonomy stop" in stopped["reason"].lower()
+    assert "Autonomia studioului este oprită" in stopped["reason"]
+    assert "AUTONOMY_STOPPED" in stopped["artefacts"]["reason_codes"]
     # The stop pauses the studio; it does not retract what the Owner decided.
     assert _unspent(engine, request.id)
 

@@ -28,6 +28,7 @@ from app.config import Settings
 from app.economy.budget import budget_status, estimate_film_cost_micros
 from app.economy.prices import price_for
 from app.economy.services import format_micros
+from app.media.factory import PURPOSE_LABEL as MEDIA_PURPOSE_LABEL
 from app.media.factory import describe as describe_media
 from app.media.factory import media_readiness
 from app.media.models import CharacterBible, MediaAsset
@@ -37,8 +38,16 @@ from app.publishing.models import ChannelRecord
 from app.publishing.services import bound_connection_id, channel_bindings
 from app.research.service import research_health
 from app.services import studio_environment, utc_now
+from app.wording import (
+    MEDIA_KEY_UNUSABLE,
+    budget_period,
+    budget_state,
+    count,
+    host_test_reason,
+    provider_name,
+    search_engine,
+)
 from app.wording import autonomy_mode as mode_words
-from app.wording import budget_period, budget_state, count, provider_name
 from app.wording import environment as environment_words
 from app.youtube.models import YouTubeConnection
 from app.youtube.services import (
@@ -907,13 +916,16 @@ def run_preflight(
     # READY preflight followed by a day that fetched nothing. `research_health` reads the
     # record — it probes nothing, so it is safe on every run — and names what is missing.
     report = research_health(engine, settings)
-    failing = ", ".join(f"{h['host']} ({h['reason']})" for h in report["hosts_failing"])
+    # Each failing site with why, in the sources list's words; the codes stay in `value`.
+    failing = "; ".join(
+        f"{h['host']} — {host_test_reason(h['reason'])}" for h in report["hosts_failing"]
+    )
     # The counts go in the detail, not only in the message a passing check shows: the run
     # the Owner needs them for is the one where the check failed.
     counted = (
         f"{count(report['hosts_total'], 'site autorizat', 'site-uri autorizate')}, "
         f"{report['hosts_tested_ok']} testate cu succes, {report['hosts_with_template']} cu "
-        f"adresă de căutare, motor de căutare: {report['search_provider']}, "
+        f"adresă de căutare, {search_engine(report['search_provider'])}, "
         f"{count(report['claims_available'], 'afirmație verificată', 'afirmații verificate')} "
         f"{'disponibilă' if report['claims_available'] == 1 else 'disponibile'}."
     )
@@ -925,19 +937,38 @@ def run_preflight(
             counted,
             " ".join(report["degraded_reasons"])
             or "Cercetarea nu poate găsi pagini; vezi Cercetare → Surse.",
-            detail=counted + (f" Picate: {failing}" if failing else ""),
+            detail=counted + (f" Nu pot fi citite: {failing}." if failing else ""),
+            value={
+                "status": report["status"],
+                "search_provider": report["search_provider"],
+                "hosts_failing": [
+                    {"host": h["host"], "reason": h["reason"]} for h in report["hosts_failing"]
+                ],
+            },
         )
     )
 
     media = describe_media(engine, vault)
     readiness = media_readiness(engine, vault)
+
+    def _media_missing(purpose: str) -> str:
+        """Why no generator, in words: readiness's own sentence, or, when readiness calls the
+        choice ready and still no adapter came of it, the key that cannot be used."""
+        state = readiness[purpose]
+        if state["message"]:
+            return state["message"]
+        return MEDIA_KEY_UNUSABLE.format(
+            name=state.get("connection") or "Conexiunea aleasă",
+            purpose=MEDIA_PURPOSE_LABEL[purpose],
+        )
+
     checks.append(
         _check(
             "image_provider",
             bool(media["image_provider"]),
             DEGRADING,
             f"Imagini: {provider_name(media['image_provider'])}.",
-            readiness["image"]["message"]
+            _media_missing("image")
             + " Până atunci randările folosesc substitute, iar QC le blochează de la publicare.",
             value=readiness["image"]["status"],
         )
@@ -948,7 +979,7 @@ def run_preflight(
             bool(media["voice_provider"]),
             DEGRADING,
             f"Voce: {provider_name(media['voice_provider'])}.",
-            readiness["voice"]["message"] + " Până atunci narațiunea folosește un substitut.",
+            _media_missing("voice") + " Până atunci narațiunea folosește un substitut.",
             value=readiness["voice"]["status"],
         )
     )

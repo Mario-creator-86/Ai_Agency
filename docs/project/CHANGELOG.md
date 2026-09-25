@@ -1,5 +1,14 @@
 # Changelog
 
+## The employees as people, and the publishing gate in Romanian — 2026-09-25
+
+- **A roster of people** (`frontend/src/roster.js`): portraits from the scene's own sprites at each desk in the pose of the real state, place, state, last task, 30-day runs; a card opens the inspector from the desk.
+- **Doors at 60 fps**: content laid out in steps after the pane lands; no blurred shadows in the door edge or the lit room; the glass warmed under the title; the key light reads its pixels asynchronously.
+- **Approvals as cards** with the asker's portrait; the drawer no longer pushes the modules out or jumps the frame.
+- **The publishing gate in Romanian** (`backend/app/publishing/services.py` through `app.wording`), shown in the register when a gate refuses; empty failure rows fixed.
+- **Truth fixes by the judge**: a stopped schedule no longer promises a next run; the preflight's site line once; image and voice lines name what is missing.
+- Tests: frontend 571/571, tsc clean; backend 246 passed across the touched files; ruff and mypy clean.
+
 ## Doors from their rooms, and the studio's sentences in Romanian — 2026-09-25
 
 - **Dialogs as doors** (`frontend/src/dialog_doors.js`): each opens from its room on the building (compositor-only, 340 ms), the room lit while it is open, and closes back into it; content read ahead on hover or focus; a fade under reduced motion.

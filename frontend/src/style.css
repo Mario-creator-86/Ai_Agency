@@ -490,6 +490,27 @@
   --door-light-line: rgba(240, 200, 135, .85);/* the lit room's edge */
   --door-light-glow: rgba(224, 176, 98, .30); /* its light, laid over the room with `screen` */
   --door-light-halo: rgba(224, 176, 98, .34); /* and around it, and the pane's edge as it leaves the room */
+  --mail-reply-max: 12lh;                     /* the mail's reply grows with its words to this, then scrolls */
+  --door-edge-depth: 18%;                     /* W30: how far the pane's warm edge reaches in, as it leaves the room */
+  /* W30, THE EMPLOYEES AS PEOPLE (roster.js): a card per employee, a portrait cut from the scene. */
+  --person-card-min:    300px;                /* the narrowest a card stands in the roster's grid */
+  --person-portrait-w:  160px;                /* the portrait, 4:3, the world window around the desk */
+  --person-portrait-h:  120px;
+  --person-portrait-well: var(--bg-lift);     /* a portrait with nothing real to show stays dark */
+  --person-portrait-edge: var(--line-strong);
+  --person-card-bg:     var(--surface-sunk);
+  --person-card-hover:  var(--surface-hi);
+  --person-card-edge:   var(--line);
+  --person-card-lit:    var(--gold-line);     /* the edge under the pointer or the keyboard */
+  --person-meter-h:     4px;
+  --person-meter-ok:    var(--ok-line);       /* the runs that succeeded */
+  --person-meter-fail:  var(--alert-ink);     /* the share that failed */
+  --person-dot:         8px;
+  --person-state-glass: var(--dialog-glass);  /* the state's chip over the portrait */
+  --side-modules-min: 168px;                  /* the least the module status keeps under a long approvals list */
+  --side-pad: 18px;                          /* W31: the side drawer's inset, which its «more below» fade reaches past */
+  --approval-portrait-w: 48px;                /* who asked for an approval, at their desk */
+  --approval-portrait-h: 36px;
   --kept-dim:      brightness(.56) saturate(.72); /* that last live frame, dimmed so it is never taken for live (W19) */
   --plaque-glass:  var(--card-glass);         /* the studio's numbers over the live video: the drawers' glass (W19) */
   --plaque-edge:   var(--drawer-edge);
@@ -1159,7 +1180,9 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 .mail-empty { color: var(--ink-3); font-style: italic; }
 .mail-footer { margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--line); font-size: var(--fs-meta); color: var(--ink-3); }
 .mail-reply { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
-.mail-reply textarea { width: 100%; resize: vertical; font: inherit; }
+/* W30: no resize grip: its first paint cost the mail's opening a 56 ms frame of GPU raster
+   (measured, once per visit); the field grows with what he writes instead, to a measure */
+.mail-reply textarea { width: 100%; resize: none; field-sizing: content; max-block-size: var(--mail-reply-max); font: inherit; }
 .mail-reply-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 
 /* What people search for now: one line per trend, the strongest first. */
@@ -2073,7 +2096,7 @@ h2[tabindex='-1']:focus { outline: none; }
 .modules li[data-status="PARTIAL"] .module-state { color: var(--gold-ink); }
 
 /* ------------------------------------------------------------- governance -- */
-.governance-panel { padding: 18px; gap: 12px; }
+.governance-panel { padding: var(--side-pad); gap: 12px; }
 .governance-panel .ledger-now { background: var(--surface-sunk); border-color: var(--line); color: var(--ink-2); font-weight: 400; border-radius: var(--radius-sm); padding: 10px 12px; display: block; }
 .governance-panel .ledger-now::before { display: none; }
 .mode-buttons { gap: 6px; }
@@ -3888,13 +3911,17 @@ details[open] > summary::before { transform: rotate(90deg); }
     position: relative;
     display: grid;
     grid-template-columns: var(--drawer-register) minmax(0, 1fr) var(--drawer-side);
-    grid-template-rows: auto minmax(0, 1fr);
+    /* W30: the side drawer's upper half (the mode and the approvals) takes what it needs, never
+       more than leaves the modules their least; a filled approvals list pushed the modules out of
+       the frame and the frame itself scrolled 84 px when the mark brought the requests into view */
+    grid-template-rows: minmax(0, max-content) minmax(var(--side-modules-min), 1fr);
     gap: 0;
     height: var(--frame-h);
     min-height: 0;
     align-content: stretch;
     align-items: stretch;
     overflow: hidden;
+    overflow: clip;
     isolation: isolate;
   }
   .ledger-column, .side-column { display: contents; }
@@ -3955,6 +3982,9 @@ details[open] > summary::before { transform: rotate(90deg); }
     grid-column: 3;
     grid-row: 1;
     align-self: stretch;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
     border-left: 1px solid var(--drawer-edge);
     box-shadow: var(--shadow-drawer-r);
   }
@@ -4250,6 +4280,23 @@ body.is-title.is-paint-warm .site-footer {
 body.is-title.is-paint-warm .topbar { top: 0; }
 body.is-title.is-paint-warm .site-footer { bottom: 0; }
 #workspace.is-warming .drawer-rail[hidden] { display: flex; }
+/* W30: the doors' glass among what is painted then: the dim and blur behind an open door and the
+   pane's own frosted glass. The first door of a visit paid for compiling them in its opening
+   (a 41-55 ms frame, measured with Research first; opened second it had none). Two squares at 1%,
+   in the corner, for the same three frames. */
+.glass-warm { display: none; }
+body.is-title.is-paint-warm .glass-warm {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  display: flex;
+  opacity: .01;
+  pointer-events: none;
+}
+.glass-warm > i { display: block; width: var(--s9); height: var(--s9); }
+.glass-warm > i:first-child { background: var(--dialog-backdrop); backdrop-filter: blur(var(--dialog-backdrop-blur)) saturate(.8); }
+.glass-warm > i:last-child { background: var(--dialog-glass); backdrop-filter: blur(var(--drawer-blur)) saturate(1.1); }
 /* The two frames between an accepted key and the camera's push (main.js): the workspace is laid
    out and not yet seen, so its first, heaviest frame is not a frame of the push. */
 body.is-arming #workspace { opacity: 0; }
@@ -4371,13 +4418,20 @@ body.is-arming #workspace { opacity: 0; }
 .studio-dialog.has-door::backdrop { transition-duration: var(--dur-room-open); transition-timing-function: var(--ease-push); }
 
 /* The pane's warm edge as it leaves its room: shown only by the opening's animation (opacity). */
+/* W30: the edge's light is a gradient, not two blurred shadows: the pane's first frame rasterised
+   a 36 px halo and a 48 px inset blur the size of the whole pane (16 ms of GPU raster, measured). */
 .studio-dialog.has-door::after {
   content: '';
   position: absolute;
   inset: -1px;
   border: 1px solid var(--door-light-line);
   border-radius: inherit;
-  box-shadow: 0 0 36px 6px var(--door-light-halo), inset 0 0 48px var(--door-light-halo);
+  background:
+    linear-gradient(var(--door-light-halo), transparent var(--door-edge-depth)),
+    linear-gradient(to top, var(--door-light-halo), transparent var(--door-edge-depth)),
+    linear-gradient(to right, var(--door-light-halo), transparent calc(var(--door-edge-depth) * .6)),
+    linear-gradient(to left, var(--door-light-halo), transparent calc(var(--door-edge-depth) * .6));
+  box-shadow: 0 0 0 1px var(--door-light-halo);
   opacity: 0;
   pointer-events: none;
 }
@@ -4394,6 +4448,11 @@ body.is-arming #workspace { opacity: 0; }
   content-visibility: auto;
   contain-intrinsic-size: auto 112px;
 }
+/* W30: an employee's history is laid out as it comes near the view, as the topics are */
+.studio-dialog .chat-item {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 96px;
+}
 /* ...and while a door opens, its parts are laid out one per frame (dialog_doors.js stagger) */
 .studio-dialog [data-door-wait] {
   content-visibility: hidden;
@@ -4408,8 +4467,15 @@ body.is-arming #workspace { opacity: 0; }
   pointer-events: none;
   border: 1px solid var(--door-light-line);
   border-radius: var(--radius-sm);
-  background: radial-gradient(120% 90% at 50% 0%, var(--door-light-glow), transparent 72%);
-  box-shadow: 0 0 22px 2px var(--door-light-halo), inset 0 0 28px var(--door-light-halo);
+  /* W30: the glow is gradients and an unblurred ring: the two blurred shadows it had cost every
+     door's opening 28 ms of GPU raster (measured by removing them, trace, Research at 1920) */
+  background:
+    radial-gradient(120% 90% at 50% 0%, var(--door-light-glow), transparent 72%),
+    linear-gradient(var(--door-light-halo), transparent 30%),
+    linear-gradient(to top, var(--door-light-halo), transparent 30%),
+    linear-gradient(to right, var(--door-light-halo), transparent 14%),
+    linear-gradient(to left, var(--door-light-halo), transparent 14%);
+  box-shadow: 0 0 0 2px var(--door-light-halo);
   mix-blend-mode: screen;
   opacity: 0;
   transition: opacity var(--door-light-ms, var(--dur-room-close)) var(--ease);
@@ -4658,4 +4724,278 @@ body.is-arming #workspace { opacity: 0; }
   :root .studio-dialog .video-preview-card { display: flex; flex-direction: column; align-items: stretch; }
   :root .studio-dialog .video-preview-card .video-container-9-16 { align-self: center; }
   :root .studio-dialog .video-details { min-width: 0; }
+}
+
+
+/* ==========================================================================
+   W30 — THE EMPLOYEES AS PEOPLE (roster.js)
+   ==========================================================================
+   The employees' door is a roster of people: a card each, the portrait the scene draws of them at
+   their own desk (the page's plates and figure, in the pose of the state now), the name and the
+   role, the place in the building, the state now, the last real task and the measured runs. The
+   whole card is one key: it opens the inspector from the desk. */
+.studio-dialog .topics-container.roster {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--person-card-min)), 1fr));
+  grid-auto-rows: auto;
+  gap: var(--s3);
+}
+.roster > .topics-loading { grid-column: 1 / -1; }
+.person-card {
+  display: grid;
+  grid-template-columns: var(--person-portrait-w) minmax(0, 1fr);
+  grid-template-areas:
+    "portrait head"
+    "task     task"
+    "runs     runs";
+  /* the three rows of a card line up with its neighbours' (a place that wraps moves all of them) */
+  grid-row: span 3;
+  grid-template-rows: subgrid;
+  column-gap: var(--s4);
+  row-gap: var(--s3);
+  align-items: start;
+  min-width: 0;
+  padding: var(--s4);
+  text-align: left;
+  color: var(--ink);
+  background: var(--person-card-bg);
+  border: 1px solid var(--person-card-edge);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-raised);
+}
+.person-card:hover { background: var(--person-card-hover); border-color: var(--person-card-lit); }
+.person-card:focus-visible { border-color: var(--person-card-lit); }
+
+.person-portrait {
+  grid-area: portrait;
+  position: relative;
+  display: block;
+  width: var(--person-portrait-w);
+  height: var(--person-portrait-h);
+  overflow: hidden;
+  background: var(--person-portrait-well);
+  border: 1px solid var(--person-portrait-edge);
+  border-radius: var(--radius-sm);
+}
+.person-canvas { display: block; width: 100%; height: 100%; }
+.person-portrait-none {
+  position: absolute;
+  inset: 0;
+  display: none;
+  place-items: center;
+  color: var(--ink-3);
+  font-size: var(--fs-h3);
+}
+.person-portrait.is-empty .person-canvas { display: none; }
+.person-portrait.is-empty .person-portrait-none { display: grid; }
+
+.person-head { grid-area: head; display: grid; gap: var(--s1); min-width: 0; }
+.person-place {
+  color: var(--gold-ink);
+  font-size: var(--fs-micro);
+  font-weight: var(--w-bold);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+}
+.person-name {
+  font-family: var(--font-display);
+  font-weight: var(--w-display);
+  font-size: var(--fs-h2);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--track-tight);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.person-role { font-size: var(--fs-body); color: var(--ink-2); }
+/* the state now, on the portrait, as a game's character card wears it: a chip of the drawers' glass */
+.person-state {
+  position: absolute;
+  left: var(--s1);
+  bottom: var(--s1);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  max-width: calc(100% - var(--s2));
+  padding: 0 var(--s2);
+  min-height: var(--chip-h);
+  background: var(--person-state-glass);
+  border: 1px solid var(--person-portrait-edge);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-meta);
+  line-height: 1.2;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.person-state-word { overflow: hidden; text-overflow: ellipsis; }
+.person-dot {
+  flex: none;
+  width: var(--person-dot);
+  height: var(--person-dot);
+  border-radius: var(--radius-pill);
+  background: var(--ink-3);
+}
+.person-card[data-state="WORKING"] .person-dot,
+.person-card[data-state="EXECUTING"] .person-dot,
+.person-card[data-state="RUNNING"] .person-dot,
+.person-card[data-state="THINKING"] .person-dot,
+.person-card[data-state="PLANNING"] .person-dot,
+.person-card[data-state="REVIEWING"] .person-dot { background: var(--ok-ink); }
+.person-card[data-state="ERROR"] .person-dot,
+.person-card[data-state="FAILED"] .person-dot,
+.person-card[data-state="BLOCKED"] .person-dot { background: var(--alert-ink); }
+.person-card[data-standing="PAUSED"] .person-dot,
+.person-card[data-standing="SUSPENDED"] .person-dot { background: var(--warn-ink); }
+/* no office record: no state to wear; the dark portrait says «—» once */
+.person-card[data-state="UNKNOWN"] .person-state { display: none; }
+.person-standing {
+  justify-self: start;
+  margin-top: var(--s1);
+  padding: 0 var(--s2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-meta);
+  color: var(--ink-2);
+}
+.person-card[data-standing="PAUSED"] .person-standing,
+.person-card[data-standing="SUSPENDED"] .person-standing { color: var(--warn-ink); border-color: var(--warn-line); }
+.person-card[data-standing="TERMINATED"] .person-standing { color: var(--alert-ink); border-color: var(--alert-line); }
+
+.person-row {
+  display: grid;
+  gap: var(--s1);
+  min-width: 0;
+  padding-top: var(--s3);
+  border-top: 1px solid var(--line);
+}
+.person-task { grid-area: task; }
+.person-runs { grid-area: runs; }
+.person-label {
+  color: var(--ink-3);
+  font-size: var(--fs-micro);
+  font-weight: var(--w-bold);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+}
+.person-value { font-size: var(--fs-body); color: var(--ink); overflow-wrap: anywhere; }
+.person-when { font-size: var(--fs-meta); color: var(--ink-3); }
+.person-failed { color: var(--alert-ink); }
+.person-figures { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--s2); }
+.person-fail-share { font-size: var(--fs-meta); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.person-meter {
+  position: relative;
+  display: block;
+  height: var(--person-meter-h);
+  margin-top: var(--s1);
+  overflow: hidden;
+  background: var(--person-meter-ok);
+  border-radius: var(--radius-pill);
+}
+.person-meter-fail {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: var(--fail, 0%);
+  background: var(--person-meter-fail);
+}
+
+/* at 2560 the doors stay 1440 px wide: four people to a row as at 1920 (three left an empty place) */
+@media (max-width: 600px) {
+  :root { --person-portrait-w: 112px; --person-portrait-h: 84px; }
+  :root .person-card { column-gap: var(--s3); padding: var(--s3); }
+}
+
+/* ==========================================================================
+   W30 — A FILLED APPROVALS PANEL, AT THE DRAWERS' LEVEL (governance.js approvalCardHtml)
+   ==========================================================================
+   Judged with two labelled fixture requests at 1280, 1920 and 2560: each request read as a stack
+   of grey sentences («Cost: necunoscut · expiră în 37 h 8 min · ireversibilă»). A request is now a
+   card of the drawers: the action and its tier, what it is about, three facts set as the plaques
+   set theirs, who asked (their portrait at the desk), the backend's evidence and the two keys. The
+   note on what an approval does is said once under the requests. */
+.governance-panel .approval-card {
+  gap: var(--s3);
+  padding: var(--s4);
+  background: var(--card-glass);
+  border: 1px solid var(--drawer-edge);
+  border-left: 2px solid var(--gold);
+  border-radius: var(--radius);
+}
+.approval-card[data-tier="T4"] .approval-tier { color: var(--gold-ink); border-color: var(--gold-line); }
+.approval-subject { margin: 0; font-size: var(--fs-meta); line-height: var(--lh-snug); color: var(--ink-2); }
+.approval-label,
+.approval-facts dt {
+  font-size: var(--fs-micro);
+  font-weight: var(--w-bold);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.approval-label { margin-right: var(--s1); }
+.approval-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s2);
+  margin: 0;
+  padding: var(--s2) 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.approval-facts > div { display: grid; gap: var(--s1); min-width: 0; }
+.approval-facts dd {
+  margin: 0;
+  font-size: var(--fs-meta);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.approval-facts dd.is-final { color: var(--warn-ink); }
+.approval-by { display: flex; align-items: center; gap: var(--s2); font-size: var(--fs-meta); color: var(--ink-2); }
+.approval-by strong { color: var(--ink); font-weight: var(--w-semi); }
+.person-portrait.approval-portrait {
+  flex: none;
+  width: var(--approval-portrait-w);
+  height: var(--approval-portrait-h);
+}
+.approval-portrait .person-portrait-none { font-size: var(--fs-meta); }
+.governance-panel .approval-footnote { margin: var(--s1) 0 0; }
+
+/* ==========================================================================
+   W31 — THE SIDE DRAWER SAYS THERE IS MORE BELOW
+   ==========================================================================
+   Judged with the W30 fixture at 1280: the second request's title was cut in half by the module
+   status, with nothing to say the drawer scrolls. Its lower edge now fades into the drawer's own
+   glass while there is more below, and not at the end or when everything fits (the scroll
+   timeline is then inactive and the fade's registered value stays 0). Where the browser has no
+   scroll timeline nothing is drawn, as with the lists' edge fade. */
+@supports (animation-timeline: scroll()) {
+  @property --more-below {
+    syntax: "<number>";
+    inherits: false;
+    initial-value: 0;
+  }
+  @keyframes more-below-fade {
+    0%, 92% { --more-below: 1; }
+    100%    { --more-below: 0; }
+  }
+  @media (min-width: 1051px) and (min-height: 600px) {
+    /* a key reached by Tab is brought above the fade, never under it */
+    .governance-panel { scroll-padding-bottom: calc(var(--edge-fade) * 3); }
+    .governance-panel::after {
+      content: "";
+      position: sticky;
+      /* sticky stops at the panel's padding; the fade belongs on the drawer's visible edge */
+      bottom: calc(-1 * var(--side-pad));
+      flex: none;
+      display: block;
+      height: calc(var(--edge-fade) * 3);
+      margin-top: calc(var(--edge-fade) * -3);
+      /* two layers of the drawer's glass: one alone (86%) left the cut line still legible */
+      background:
+        linear-gradient(to bottom, transparent, var(--drawer-glass)),
+        linear-gradient(to bottom, transparent 45%, var(--drawer-glass));
+      pointer-events: none;
+      opacity: var(--more-below);
+      animation: more-below-fade linear both;
+      animation-timeline: scroll(nearest);
+    }
+  }
 }

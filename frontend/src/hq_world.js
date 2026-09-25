@@ -1332,6 +1332,71 @@ export class HQRenderer {
   }
 
   /**
+   * W30, AN EMPLOYEE'S PORTRAIT (roster.js): the scene's own picture of them at their desk, cut
+   * to a window of the world around the seat. The room behind (building_back, at the hour's real
+   * light), the figure's still in the pose of the state now (stillFrame), the desk and its
+   * monitors in front (building_front): the same plates and sprite the building draws. Drawn once
+   * when the roster is laid out, never per frame. False when there is nothing real to draw (no
+   * seat, no sprite, the plates not read): the portrait then stays dark.
+   * @param {CanvasRenderingContext2D} ctx a canvas of the portrait's size in device px
+   * @param {any} agent the office record
+   * @param {number[]} win the world window [x, y, w, h] (roster.js portraitWindow)
+   * @param {(agent: any, entry: any, facing: string) => number} still the still's frame index
+   */
+  drawPortrait(ctx, agent, win, still) {
+    const atlas = this.assets.characters;
+    const seat = this.m?.seats?.[agent?.desk_id];
+    const key = atlas ? spriteFor(agent, atlas) : null;
+    const entry = key ? atlas.characters[key] : null;
+    const img = key ? this.assets.sheet(`char:${key}`) : null;
+    const time = this.world.time.state;
+    if (!seat || !entry || !img || !this.assets.layer('night', 'building_back') || !win) return false;
+    const index = still(agent, entry, seat.facing || 'front');
+    if (index < 0) return false;
+    const { width, height } = ctx.canvas;
+    ctx.save();
+    ctx.setTransform(width / win[2], 0, 0, height / win[3], -win[0] * (width / win[2]), -win[1] * (height / win[3]));
+    ctx.imageSmoothingQuality = 'high';
+    this.layerPart(ctx, 'building_back', time, win);
+    const frame = atlas.frame;
+    const sw = frame.w * frame.scale;
+    const sh = frame.h * frame.scale;
+    const s = SPRITE_SCALE;
+    ctx.drawImage(img, (index % entry.columns) * sw, Math.floor(index / entry.columns) * sh, sw, sh,
+      seat.x - frame.pivot[0] * s, seat.y - SEATED_LIFT - frame.pivot[1] * s, frame.w * s, frame.h * s);
+    this.layerPart(ctx, 'building_front', time, win);
+    ctx.restore();
+    return true;
+  }
+
+  /**
+   * One plate's part under a world window, night and day mixed as layer() mixes them: only the
+   * window's pixels are read from the plate, not the whole plate scaled down.
+   * @param {CanvasRenderingContext2D} ctx @param {string} name @param {any} time @param {number[]} win
+   */
+  layerPart(ctx, name, time, win) {
+    const night = this.assets.layer('night', name);
+    const day = this.assets.layer('day', name);
+    const d = plateDayMix(time.daylight);
+    const part = (/** @type {any} */ l) => {
+      const x0 = Math.max(win[0], l.x);
+      const y0 = Math.max(win[1], l.y);
+      const x1 = Math.min(win[0] + win[2], l.x + l.w);
+      const y1 = Math.min(win[1] + win[3], l.y + l.h);
+      if (x1 <= x0 || y1 <= y0) return;
+      const kx = l.img.width / l.w;
+      const ky = l.img.height / l.h;
+      ctx.drawImage(l.img, (x0 - l.x) * kx, (y0 - l.y) * ky, (x1 - x0) * kx, (y1 - y0) * ky, x0, y0, x1 - x0, y1 - y0);
+    };
+    if (night && (d < 0.999 || !day)) part(night);
+    if (day && d > 0.001) {
+      ctx.globalAlpha = night ? d : 1;
+      part(day);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  /**
    * Every street sprite sheet laid under the hour's light now (litSheet), rather than each one the
    * first time its vehicle or passer-by appears: that first tint is a canvas the size of a sheet,
    * and at the entry into the building it cost a frame.

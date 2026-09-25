@@ -87,7 +87,10 @@ def test_a_retry_does_not_upload_when_duplicates_cannot_be_ruled_out(engine, tmp
     # The whole point: no second upload was attempted.
     assert platform.uploads == 0
     assert result["status"] == "FAILED_RETRYABLE"
-    assert "duplicate cannot be ruled out" in result["error_detail"].lower()
+    assert result["error_detail"] == (
+        "Reîncercarea s-a oprit înainte de încărcare: starea de pe platformă nu a putut fi "
+        "citită. Un duplicat nu poate fi exclus."
+    )
 
 
 def test_unreadable_remote_state_stays_unknown_instead_of_becoming_not_found(engine, tmp_path):
@@ -104,8 +107,10 @@ def test_unreadable_remote_state_stays_unknown_instead_of_becoming_not_found(eng
 
     assert result["status"] == "REMOTE_UNKNOWN"
     # The old behaviour said "Video not found on remote channel"; nobody had established that.
-    assert "not found" not in (result["error_detail"] or "").lower()
-    assert "could not be read" in result["error_detail"].lower()
+    assert "nu a fost găsit" not in (result["error_detail"] or "")
+    assert result["error_detail"] == (
+        "Starea de pe platformă nu a putut fi citită; publicarea rămâne necunoscută, nu absentă."
+    )
 
 
 @pytest.mark.parametrize(

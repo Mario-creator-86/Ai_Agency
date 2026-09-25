@@ -655,7 +655,7 @@ export function episodeHtml(episode, context = {}) {
       ? `La aprobare, episodul primește numărul ${number} în serial și storyboardul; rularea următoare îl filmează.`
       : 'La aprobare, episodul primește storyboardul; rularea următoare îl filmează.';
   return `
-  <details class="script-episode status-${escapeHtml(status.toLowerCase())}" id="ep-${escapeHtml(id)}" data-id="${escapeHtml(id)}"${context.open ? ' open' : ''}>
+  <details class="script-episode status-${escapeHtml(status.toLowerCase())}" id="ep-${escapeHtml(id)}" data-id="${escapeHtml(id)}"${context.open ? ' data-door-steps open' : ''}>
     <summary class="episode-slate">
       <span class="slate-number" aria-hidden="true"><span class="slate-ep">EP.</span>${number !== null ? String(number).padStart(2, '0') : '—'}</span>
       <span class="slate-kicker">${escapeHtml(kicker.join(' · '))}</span>

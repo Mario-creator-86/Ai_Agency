@@ -465,7 +465,13 @@ export function describeEvent(event, names = {}) {
       break;
     case 'publishing.failed':
       label = 'publicare eșuată';
-      text = payload.reason || payload.error || '';
+      // W31: the event carries `error_detail`; the row read only fields it never has
+      text = payload.reason || payload.error_detail || payload.error || '';
+      break;
+    case 'publishing.gate_failed':
+      // W31: the gate's own Romanian reasons, as it wrote them; the codes stay in the payload
+      label = 'poarta de publicare a refuzat';
+      text = Array.isArray(payload.gate_reasons) ? payload.gate_reasons.filter(Boolean).join('; ') : '';
       break;
     case 'provider.model_discovered':
       label = 'model găsit la furnizor';

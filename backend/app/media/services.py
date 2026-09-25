@@ -34,6 +34,7 @@ from app.media.schemas import (
 from app.models import OwnerPolicy
 from app.providers.media_http import MediaProviderError
 from app.services import append_event, utc_now
+from app.wording import AUTONOMY_STOPPED
 
 logger = logging.getLogger("studio.media")
 
@@ -812,7 +813,7 @@ def generate_storyboard_from_script(
         # Check Owner Policy
         policy = session.get(OwnerPolicy, 1)
         if policy and policy.autonomy_stopped:
-            raise FactualGateError("Global autonomy stop is active; Owner must clear it first.", [])
+            raise FactualGateError(AUTONOMY_STOPPED, [])
 
         script = session.get(ScriptDraft, script_draft_id)
         if not script:

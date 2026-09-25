@@ -115,6 +115,30 @@ export function keyLightCss(light) {
 }
 
 /**
+ * W30: a small bitmap's RGBA bytes, copied out asynchronously through a VideoFrame (WebCodecs), so
+ * the main thread never waits on the GPU for them. Null where the browser cannot (no VideoFrame,
+ * or it refuses the conversion): the caller then reads them through a canvas, as before.
+ * @param {ImageBitmap} bitmap
+ * @returns {Promise<Uint8Array|null>}
+ */
+export async function readAsync(bitmap) {
+  const Frame = /** @type {any} */ (globalThis).VideoFrame;
+  if (typeof Frame !== 'function') return null;
+  let frame = null;
+  try {
+    frame = new Frame(bitmap, { timestamp: 0 });
+    const options = { format: 'RGBA' };
+    const bytes = new Uint8Array(frame.allocationSize(options));
+    await frame.copyTo(bytes, options);
+    return bytes;
+  } catch {
+    return null;
+  } finally {
+    if (frame) frame.close();
+  }
+}
+
+/**
  * Reads the frame every KEY_SAMPLE_MS and writes the light. The reduction happens off the main
  * thread (createImageBitmap resizes the band to 8x2); only 64 bytes are read back.
  */
@@ -161,6 +185,16 @@ export class KeyLight {
     try {
       const band = Math.max(1, Math.round(frame.height * KEY_BAND));
       const bitmap = await createImageBitmap(frame, 0, 0, frame.width, band, { resizeWidth: 8, resizeHeight: 2, resizeQuality: 'medium' });
+      // W30: the 64 bytes are read back without the main thread waiting for the GPU. Drawing the
+      // bitmap into a canvas and asking it for its pixels made the page wait 22-33 ms for the GPU
+      // every two seconds (measured at rest, 1920x1080); a VideoFrame's copy is asynchronous.
+      const pixels = await readAsync(bitmap);
+      if (pixels) {
+        bitmap.close();
+        if (!this.timer) return;
+        this.write(keyLightCss(keyLight(meanColour(pixels))));
+        return;
+      }
       if (!this.small) {
         this.small = document.createElement('canvas');
         this.small.width = 8;

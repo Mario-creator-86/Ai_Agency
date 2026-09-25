@@ -7,6 +7,9 @@ import {
   checkClassName,
   checkLabel,
   checkVerdictWord,
+  checkLine,
+  scheduleNextRun,
+  SCHEDULE_TITLE,
 } from './readiness.js';
 import { firstStop, runClassName, runHeadline, stageClassName, stageProducedWord } from './day_outcome.js';
 import { attachRail } from './dialog_rail.js';
@@ -49,15 +52,17 @@ import { EventsLink, connectionLabel, liveScope, roomCaption, roomCaptionShort, 
 import { TitleScreen } from './title_screen.js';
 import { ENTRY, entryPlays, landingPlacement } from './title_frame.js';
 import { STREAM_ROOMS, stillLine, stillSentence } from './replay_still.js';
-import { attachDoor, doorNeedsRead, doorTiming, doorWorldRect, roomOnScreen } from './dialog_doors.js';
+import { attachDoor, doorLanded, doorNeedsRead, doorTiming, doorWorldRect, revealInSteps, roomOnScreen } from './dialog_doors.js';
+import { applyMeters, portraitWindow, requesterPerson, rosterCards, rosterHtml, rosterKey, stillFrame } from './roster.js';
 import { KeyLight } from './key_light.js';
 import {
   APPROVALS_PATH,
   APPROVAL_DECISION_PATH,
   REFERENCE_CREDIT_WARNING,
+  APPROVAL_FOOTNOTE,
+  approvalCardHtml,
   approvalCostText,
   approvalDecisionCommand,
-  approvalExpiryText,
   autonomyModeCommand,
   autonomyModeLabel,
   autonomyModeMeaning,
@@ -410,6 +415,8 @@ const mailThread = new MailThread({
   status: element('mail-status'),
   api: (path, options) => api(path, options),
   escape: escapeHtml,
+  // W30: the letters are laid out once the window has landed, not while it grows
+  landed: () => doorLanded(/** @type {HTMLDialogElement} */ (element('mail-modal'))),
 });
 element('mail-close').addEventListener('click', () => mailThread.dialog.close());
 
@@ -488,6 +495,7 @@ function refreshLastTasks() {
   if (tasks.key === worldFacts.tasks.key) return;
   worldFacts.tasks = tasks;
   pushWorldFacts();
+  rosterMayChange();
 }
 
 function pushWorldFacts() {
@@ -1530,6 +1538,8 @@ async function loadOfficeLayout() {
   try {
     const layout = await api('/office/layout');
     officeState.initFromLayout(layout);
+    // a request's asker becomes a person of the building once the office is known (W30)
+    if (approvalsShown.length) renderApprovals();
     if (officeEngine) {
       officeEngine.setLayout(layout);
       updateOfficeCanvas();
@@ -1577,6 +1587,7 @@ function updateOfficeCanvas() {
   if (replaying()) return;
   considerInvite();
   officeEngine.setAgents(officeState.agents);
+  rosterMayChange();
   layoutPlaques();
   officeEngine.setSpeechBubbles(officeState.speechBubbles);
   officeEngine.setProjectTokens(officeState.projectTokens);
@@ -1600,6 +1611,9 @@ async function connectWebSocket() {
 async function showInspector(agent) {
   const request=++inspectorRequest, session=epoch;
   const id=agent.id||agent.agent_id;
+  // W30: a fresh opening shows no one else's contract or history while it grows: the heavy parts
+  // wait, empty, and are laid out once the pane has landed (below)
+  if (!inspector.open) clearInspectorBody();
   renderInspector({...agent,model_loading:true,model_is_available:false});
   try {
     const details=await loadAgentDetails(api,id);
@@ -1613,13 +1627,33 @@ async function showInspector(agent) {
   }
   try {
     const identity = await api(`/agents/${encodeURIComponent(id)}/identity`);
+    await doorLanded(inspector);
     if(request!==inspectorRequest||session!==epoch||!inspector.open) return;
+    // the contract, the memory and the history come in over a few frames, not in one
+    revealInSteps(INSPECTOR_HEAVY.map((part) => element(part)));
     renderIdentity(identity);
     await loadAgentHistory(id);
   } catch(error) {
     if(request!==inspectorRequest||session!==epoch||!inspector.open) return;
     element('inspector-mission').textContent = error instanceof Error ? error.message : 'Identitatea nu a putut fi încărcată.';
   }
+}
+
+/** W30: the inspector's heavy parts: laid out after the pane has landed, one per frame. */
+const INSPECTOR_HEAVY = ['inspector-identity', 'inspector-memory-section', 'inspector-chat-section'];
+
+/** The inspector's heavy parts, emptied to their loading words (a new opening). */
+function clearInspectorBody() {
+  element('inspector-mission').textContent = 'Se încarcă identitatea…';
+  element('inspector-contract').replaceChildren();
+  element('inspector-system-prompt').textContent = '';
+  element('inspector-memory').replaceChildren();
+  element('inspector-messages').replaceChildren();
+  const history = element('agent-history');
+  const loading = document.createElement('div');
+  loading.className = 'helper';
+  loading.textContent = 'Se încarcă istoricul…';
+  history.replaceChildren(loading);
 }
 
 const TIMELINE_LABEL = {
@@ -2113,7 +2147,7 @@ const HOST_REASON_LABEL = {
   RATE_LIMITED: 'limitează cererile',
   SCRIPT_ONLY: 'nu arată nimic fără JavaScript',
   NETWORK: 'nu a răspuns',
-  OTHER: 'a răspuns cu nimic utilizabil',
+  OTHER: 'nu a răspuns cu nimic utilizabil',
 };
 
 /** Whose search address is in force: the Owner's is a decision, a discovered one a finding. */
@@ -3734,7 +3768,7 @@ if (triggerQuickPublishBtn) {
         return;
       }
 
-      publishingStatusMsg.textContent = `Verificarea porții de conținut și încărcare privată pentru MediaAsset ${targetAssetId}…`;
+      publishingStatusMsg.textContent = 'Verificarea porții de publicare și încărcarea privată a celui mai recent film care a trecut QC…';
       const pubRes = await api(`/publishing/publish-asset/${targetAssetId}`, {
         method: 'POST',
       });
@@ -3748,7 +3782,7 @@ if (triggerQuickPublishBtn) {
           'Încărcare SIMULATĂ: nu există niciun video pe YouTube. Configurează credențiale reale.';
       } else {
         publishingStatusMsg.className = 'dialog-status-msg text-error';
-        publishingStatusMsg.textContent = `Publicarea nu s-a încheiat. Stare: ${pubRes.status}. ${pubRes.error_detail || ''}`;
+        publishingStatusMsg.textContent = `Publicarea nu s-a încheiat. Stare: ${publicationStatus(pubRes.status)}. ${pubRes.error_detail || ''}`;
       }
       await loadPublishingHub();
       await refresh();
@@ -4197,26 +4231,25 @@ let approvalsRouteMissing = false;
 
 /** @param {ReturnType<typeof readApprovals>[number]} request @param {number} now */
 function approvalCard(request, now) {
-  const tier = request.risk_tier || '—';
   // Beside the figure and not under it in the evidence line: the Owner answers the number, so
   // a figure that priced only part of the film has to say so where the number is read.
-  const caveat = approvalCaveat(request.evidence);
-  return `
-    <article class="approval-card">
-      <div class="approval-head">
-        <span class="approval-action" title="${escapeHtml(request.action)}">${escapeHtml(request.action_label || 'acțiune nenumită')}</span>
-        <span class="tag approval-tier" title="${escapeHtml(riskTierMeaning(tier))}">${escapeHtml(tier)}</span>
-      </div>
-      ${request.subject ? `<div class="approval-meta">Despre: ${escapeHtml(request.subject)}</div>` : ''}
-      <div class="approval-meta">Cost: ${escapeHtml(request.cost_label)}${caveat ? ` <span class="approval-caveat">(${escapeHtml(caveat)})</span>` : ''} · ${escapeHtml(approvalExpiryText(request.expires_at, now))} · ${request.reversible ? 'reversibilă' : 'ireversibilă'}</div>
-      ${request.requester ? `<div class="approval-meta">Cerută de ${escapeHtml(request.requester)}</div>` : ''}
-      ${request.evidence ? `<p class="approval-evidence">${escapeHtml(request.evidence)}</p>` : ''}
-      <div class="source-actions">
-        <button class="secondary btn-approval" data-id="${escapeHtml(request.id)}" data-decision="APPROVED">Aprobă</button>
-        <button class="quiet btn-approval" data-id="${escapeHtml(request.id)}" data-decision="REFUSED">Refuză</button>
-      </div>
-      <p class="approval-footnote">Aprobarea lasă o acțiune permisă să se întâmple; nu transformă refuzul unei porți dure în trecere.</p>
-    </article>`;
+  return approvalCardHtml(request, {
+    now,
+    escape: escapeHtml,
+    caveat: approvalCaveat(request.evidence),
+    tierMeaning: riskTierMeaning(request.risk_tier || '—'),
+    person: requesterPerson(request.requester, officeState.agents),
+  });
+}
+
+/** The pending requests last read, drawn again when the office's record arrives (who asked). @type {ReturnType<typeof readApprovals>} */
+let approvalsShown = [];
+function renderApprovals() {
+  approvalsList.innerHTML = approvalsShown.length
+    ? `${approvalsShown.map((request) => approvalCard(request, Date.now())).join('')}<p class="approval-footnote">${escapeHtml(APPROVAL_FOOTNOTE)}</p>`
+    : '<div class="topics-loading">Nicio cerere nu așteaptă decizia Proprietarului.</div>';
+  // who asked, at their desk: the scene's own portrait (roster.js)
+  if (approvalsShown.length) drawPortraits(approvalsList);
 }
 
 /** @param {boolean} [force] read now, whatever the interval says */
@@ -4234,9 +4267,8 @@ async function loadApprovals(force) {
       ? `${pending.length} în așteptare`
       : 'niciuna';
     renderOwnerMark(pending.length);
-    approvalsList.innerHTML = pending.length
-      ? pending.map((request) => approvalCard(request, Date.now())).join('')
-      : '<div class="topics-loading">Nicio cerere nu așteaptă decizia Proprietarului.</div>';
+    approvalsShown = pending;
+    renderApprovals();
   } catch (err) {
     if (err.status === 404) {
       approvalsRouteMissing = true;
@@ -4331,15 +4363,85 @@ function workforceStatus(message, isError) {
   box.textContent = message;
 }
 
-/** A failure rate over no runs is unknown, not zero — and the panel has to say so. */
-function rateLabel(agent) {
-  if (agent.runs === 0) return 'nicio rulare în perioadă';
-  return `${countLabel(agent.runs, 'rulare', 'rulări')} · ${Math.round(agent.failure_rate * 100)}% eșecuri`;
+/**
+ * W30, THE EMPLOYEES AS PEOPLE (roster.js). The last measurements read, and the key of the cards
+ * shown: the roster is laid out again only when a card would say something else (a state, a
+ * standing, a task), from the socket's events, never per frame.
+ * @type {any}
+ */
+let rosterMeasured = null;
+let rosterShownKey = '';
+/** The size of a portrait's canvas, device px: the world window at six px per world px (three per
+ * plate px), so the largest portrait (192 CSS px at 2560) is drawn down, never up. */
+const PORTRAIT_PX = { w: 264, h: 198 };
+
+/** @param {boolean} [force] */
+function renderRoster(force) {
+  if (!rosterMeasured) return;
+  const box = element('workforce-agents');
+  const cards = rosterCards({
+    measurements: rosterMeasured,
+    office: officeState.agents,
+    tasks: worldFacts.tasks.tasks,
+    manifest: officeEngine && officeEngine.assets ? officeEngine.assets.manifest : null,
+    now: Date.now(),
+  });
+  const key = rosterKey(cards);
+  if (!force && key === rosterShownKey) return;
+  rosterShownKey = key;
+  box.classList.add('roster');
+  box.innerHTML = rosterHtml(cards, escapeHtml);
+  applyMeters(box);
+  drawPortraits(box);
 }
+
+/** Each portrait, from the scene's own plates and figure (hq_world.js drawPortrait); dark when none. @param {ParentNode} root */
+function drawPortraits(root) {
+  const renderer = officeEngine && officeEngine.renderer;
+  for (const slot of /** @type {HTMLElement[]} */ (Array.from(root.querySelectorAll('[data-portrait]')))) {
+    const id = slot.dataset.portrait;
+    const agent = officeState.agents.find((a) => (a.id || a.agent_id) === id);
+    const canvas = /** @type {HTMLCanvasElement|null} */ (slot.querySelector('canvas'));
+    const win = renderer && agent ? portraitWindow(renderer.m && renderer.m.seats ? renderer.m.seats[agent.desk_id] : null) : null;
+    let drawn = false;
+    if (renderer && agent && win && canvas) {
+      canvas.width = PORTRAIT_PX.w;
+      canvas.height = PORTRAIT_PX.h;
+      const ctx = canvas.getContext('2d');
+      drawn = Boolean(ctx && renderer.drawPortrait(ctx, agent, win, stillFrame));
+    }
+    slot.classList.toggle('is-empty', !drawn);
+  }
+}
+
+/** The roster follows the office's record while its door is open. */
+function rosterMayChange() {
+  // by id: the socket's first events can arrive before this part of the module has run
+  const door = /** @type {HTMLDialogElement|null} */ (document.getElementById('workforce-modal'));
+  if (door && door.open) renderRoster(false);
+}
+
+/**
+ * A card opens that employee's inspector through its own door: the roster goes back into the
+ * lobby, and the inspector grows out of the desk, the employee chosen in the building as a click
+ * on the desk would choose them. An employee with no desk opens the inspector from the card.
+ * @param {string} id
+ */
+function openPerson(id) {
+  const seated = officeState.agents.find((a) => (a.id || a.agent_id) === id);
+  const measured = rosterMeasured && Array.isArray(rosterMeasured.agents) ? rosterMeasured.agents.find((/** @type {any} */ a) => a.agent_id === id) : null;
+  const agent = seated || (measured ? { ...measured, id } : null);
+  if (!agent) return;
+  if (seated) workforceModal.close();
+  currentSelectedAgent = agent;
+  inspectorFromRoster = true;
+  if (officeEngine) officeEngine.setSelectedAgent(id);
+  showInspector(agent);
+}
+let inspectorFromRoster = false;
 
 async function loadWorkforce() {
   const summaryEl = element('workforce-summary');
-  const agentsEl = element('workforce-agents');
   try {
     const data = await api('/workforce/measurements');
     summaryEl.innerHTML = `
@@ -4352,20 +4454,8 @@ async function loadWorkforce() {
       `<p class="helper-note wf-window">Măsurat pe ultimele ${data.window_days} zile, din rulările înregistrate.</p>`,
     );
 
-    agentsEl.innerHTML = (data.agents || [])
-      .map(
-        (agent) => `
-        <div class="topic-card wf-agent-card">
-          <div class="topic-card-header">
-            <strong class="topic-card-title" title="${escapeHtml(agent.role_name || '')}">${escapeHtml(agent.display_name)}</strong>
-            <span class="topic-card-novelty" data-lifecycle="${escapeHtml(agent.lifecycle)}">${escapeHtml(lifecycleWord(agent.lifecycle))}</span>
-          </div>
-          <div class="topic-card-meta">
-            <span data-role="${escapeHtml(agent.role_name || '')}">${escapeHtml(rateLabel(agent))}</span>
-          </div>
-        </div>`,
-      )
-      .join('');
+    rosterMeasured = data;
+    renderRoster(true);
   } catch (err) {
     summaryEl.innerHTML = `<div class="text-error">${escapeHtml(err.message)}</div>`;
   }
@@ -4461,6 +4551,16 @@ async function decideProposal(button) {
 }
 
 doorReads.set('workforce-modal', () => { loadWorkforce(); loadProposals(); });
+element('workforce-agents').addEventListener('click', (event) => {
+  const card = event.target instanceof Element ? event.target.closest('.person-card') : null;
+  if (card instanceof HTMLElement && card.dataset.agent) openPerson(card.dataset.agent);
+});
+// back from an employee opened from the roster, the keyboard stands on the door he came by
+inspector.addEventListener('close', () => {
+  if (!inspectorFromRoster || inspector.open) return;
+  inspectorFromRoster = false;
+  if (openWorkforceBtn && document.activeElement === document.body) openWorkforceBtn.focus({ preventScroll: true });
+});
 if (openWorkforceBtn) {
   openWorkforceBtn.addEventListener('click', () => {
     openDoor(workforceModal);
@@ -5287,7 +5387,7 @@ async function loadPreflight() {
             <strong class="topic-card-title">${escapeHtml(checkLabel(check.name))}</strong>
             <span class="topic-card-novelty">${escapeHtml(checkVerdictWord(check))}</span>
           </div>
-          <div class="topic-card-meta">${escapeHtml(check.message || '')}${check.detail ? ` · ${escapeHtml(check.detail)}` : ''}</div>
+          <div class="topic-card-meta">${escapeHtml(checkLine(check))}</div>
         </div>`,
       )
       .join('');
@@ -5410,10 +5510,10 @@ async function loadRunbookSchedule() {
     box.innerHTML = `
       <div class="runbook-check ${stopped ? 'rb-fail rb-degrading' : 'rb-ok'}">
         <div class="topic-card-header">
-          <strong class="topic-card-title">${escapeHtml(daily.name)}</strong>
+          <strong class="topic-card-title" title="${escapeHtml(daily.name)}">${escapeHtml(SCHEDULE_TITLE)}</strong>
           <span class="topic-card-novelty">${daily.is_active ? 'ACTIV' : 'INACTIV'}</span>
         </div>
-        <div class="topic-card-meta">Următoarea rulare: ${escapeHtml(when(daily.next_run_at))} · ultima: ${escapeHtml(when(daily.last_run_at))} · la ${escapeHtml(String(Math.round(daily.interval_seconds / 3600)))} ore · rulări ratate: ${escapeHtml(daily.missed_policy === 'CATCH_UP' ? 'o singură recuperare, apoi cadența inițială' : 'sărite')}</div>
+        <div class="topic-card-meta">Următoarea rulare: ${escapeHtml(when(scheduleNextRun(daily)))} · ultima: ${escapeHtml(when(daily.last_run_at))} · la ${escapeHtml(String(Math.round(daily.interval_seconds / 3600)))} ore · rulări ratate: ${escapeHtml(daily.missed_policy === 'CATCH_UP' ? 'o singură recuperare, apoi cadența inițială' : 'sărite')}</div>
         ${stopped ? `<p class="runbook-note">Autonomia este oprită: treaba nu va porni nimic până nu o repornești.</p>` : ''}
         ${daily.is_active ? '' : `<p class="runbook-note">Programarea este oprită: studioul nu pornește nicio zi de la sine. Pornirea este decizia ta și rămâne în istoric.</p>`}
         <div class="settings-actions">

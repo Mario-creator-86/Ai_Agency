@@ -312,7 +312,8 @@ def test_no_mode_opens_a_hard_gate(engine):
             privacy_status="public",
         )
         assert result["eligible"] is False, mode
-        assert any("policy" in reason.lower() for reason in result["reasons"]), mode
+        assert "POLICY_NO_CHANNEL" in result["reason_codes"], mode
+        assert any("politic" in reason.lower() for reason in result["reasons"]), mode
         refused = {check["check_name"] for check in result["checks"] if not check["passed"]}
         assert "POLICY_AUTHORISATION_GATE" in refused, mode
 
@@ -326,7 +327,7 @@ def test_the_policy_kernel_still_refuses_every_run_under_the_stop(engine):
     set_mode(engine, "AUTONOMOUS_CEO")
     agent = SimpleNamespace(id=str(uuid4()), lifecycle="ACTIVE", runtime_state="IDLE")
     with Session(engine) as session:
-        with pytest.raises(PolicyKernelError, match="autonomy stop"):
+        with pytest.raises(PolicyKernelError, match="Autonomia studioului este oprită"):
             _assert_policy_allows_run(session, agent, None)
 
 

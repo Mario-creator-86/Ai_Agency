@@ -218,6 +218,56 @@ export function approvalExpiryText(expiresAt, now) {
 }
 
 /**
+ * W30: the deadline as a value under the label «Expiră»: «în 37 h 8 min»; a request that has aged
+ * out or has no deadline keeps its whole sentence («a expirat», «termen necunoscut»).
+ * @param {string} text approvalExpiryText's
+ */
+export function expiryValue(text) {
+  const t = String(text || '');
+  return t.startsWith('expiră ') ? t.slice('expiră '.length) : t;
+}
+
+/**
+ * W30, ONE REQUEST AS A CARD OF THE DRAWERS: the action as the backend names it and its tier; what
+ * it is about; three facts as the plaques set them (cost, deadline, whether it can be undone); who
+ * asked, as a person of the building when the page knows them (their portrait at the desk, drawn
+ * after, main.js drawPortraits); the backend's evidence; the two keys. Every sentence inside is the
+ * backend's (action_label, subject, cost_label, evidence) or the page's own labels; nothing is
+ * reworded.
+ * @param {ReturnType<typeof readApprovals>[number]} request
+ * @param {{now: number, escape: (s: unknown) => string, caveat: string, tierMeaning: string, person?: {id: string, name: string, seated: boolean}|null}} o
+ */
+export function approvalCardHtml(request, o) {
+  const e = o.escape;
+  const tier = request.risk_tier || '—';
+  const by = o.person
+    ? `<div class="approval-by">${o.person.seated ? `<span class="person-portrait approval-portrait" data-portrait="${e(o.person.id)}" aria-hidden="true"><canvas class="person-canvas" width="0" height="0"></canvas><span class="person-portrait-none">—</span></span>` : ''}<span>Cerută de <strong title="${e(request.requester)}">${e(o.person.name)}</strong></span></div>`
+    : request.requester ? `<div class="approval-by"><span>Cerută de <strong>${e(request.requester)}</strong></span></div>` : '';
+  return `
+    <article class="approval-card" data-tier="${e(tier)}" data-reversible="${request.reversible ? 'true' : 'false'}">
+      <div class="approval-head">
+        <span class="approval-action" title="${e(request.action)}">${e(request.action_label || 'acțiune nenumită')}</span>
+        <span class="tag approval-tier" title="${e(o.tierMeaning)}">${e(tier)}</span>
+      </div>
+      ${request.subject ? `<p class="approval-subject"><span class="approval-label">Despre</span> ${e(request.subject)}</p>` : ''}
+      <dl class="approval-facts">
+        <div><dt>Cost</dt><dd>${e(request.cost_label)}${o.caveat ? ` <span class="approval-caveat">(${e(o.caveat)})</span>` : ''}</dd></div>
+        <div><dt>Expiră</dt><dd>${e(expiryValue(approvalExpiryText(request.expires_at, o.now)))}</dd></div>
+        <div><dt>Acțiunea</dt><dd class="${request.reversible ? '' : 'is-final'}">${request.reversible ? 'reversibilă' : 'ireversibilă'}</dd></div>
+      </dl>
+      ${by}
+      ${request.evidence ? `<p class="approval-evidence">${e(request.evidence)}</p>` : ''}
+      <div class="source-actions">
+        <button class="secondary btn-approval" data-id="${e(request.id)}" data-decision="APPROVED">Aprobă</button>
+        <button class="quiet btn-approval" data-id="${e(request.id)}" data-decision="REFUSED">Refuză</button>
+      </div>
+    </article>`;
+}
+
+/** Said once under the requests, not under each one. */
+export const APPROVAL_FOOTNOTE = 'Aprobarea lasă o acțiune permisă să se întâmple; nu transformă refuzul unei porți dure în trecere.';
+
+/**
  * Where the requests are read and where an answer is sent.
  *
  * Both written against the routes the governance agent is adding in this same run: the list

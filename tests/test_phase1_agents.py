@@ -268,7 +268,7 @@ def test_autonomy_stop_blocks_run(seeded):
         str(uuid4()),
     )
     assert result["status"] == "BLOCKED_POLICY"
-    assert "autonomy stop" in result["error_detail"].lower()
+    assert "Autonomia studioului este oprită" in result["error_detail"]
 
 
 # ---------------------------------------------------------------------------

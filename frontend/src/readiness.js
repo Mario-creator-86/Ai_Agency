@@ -117,3 +117,41 @@ export function approvalCaveat(evidence) {
     .slice(start)
     .replace(/[)\s]+$/, '');
 }
+
+/**
+ * A check's line: its message, then what its detail adds.
+ *
+ * W31: the research check's detail begins with its own message and then names the sites that
+ * cannot be read; printed whole, the Owner read the same sentence twice. The repeat is dropped
+ * and only what follows it is kept; both sentences stay exactly as the backend wrote them.
+ *
+ * @param {{message?: string | null, detail?: string | null}} check
+ */
+export function checkLine(check) {
+  const message = String(check.message || '').trim();
+  let detail = String(check.detail || '').trim();
+  if (message && detail.startsWith(message)) {
+    const rest = detail.slice(message.length);
+    // only a whole repeat: «8 activi» is not repeated inside «8 activii»
+    if (rest === '' || /^\s/.test(rest)) detail = rest.trim();
+  }
+  if (!message) return detail;
+  return detail ? `${message} · ${detail}` : message;
+}
+
+/** The daily job's name on the page; its code (`daily_main`) stays in the title. */
+export const SCHEDULE_TITLE = 'Ziua programată';
+
+/**
+ * When the daily job will next fire, or null when it will not.
+ *
+ * W31: a stopped job keeps the next time it had when it was stopped, and the panel printed
+ * «Următoarea rulare: 18.09.2026» on 25.09 beside «Programarea este oprită». A stopped job
+ * fires nothing, so it has no next run.
+ *
+ * @param {{is_active?: boolean, next_run_at?: string | null}} job
+ */
+export function scheduleNextRun(job) {
+  if (!job.is_active) return null;
+  return job.next_run_at || null;
+}

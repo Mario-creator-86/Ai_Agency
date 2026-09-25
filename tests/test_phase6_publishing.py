@@ -222,13 +222,17 @@ def test_publishing_gate_evaluations(engine, tmp_path):
     # 1. Rejection when MediaAsset does not exist
     eval_missing = evaluate_publishing_gate(engine, "non-existent-asset", ch_id)
     assert eval_missing["eligible"] is False
-    assert any("not found" in c["detail"] for c in eval_missing["checks"])
+    assert any("nu există" in c["detail"] for c in eval_missing["checks"])
 
     # 2. Rejection when QC Report is FAILED
     bundle_qc_failed = _create_verified_asset_bundle(engine, tmp_path, qc_passed=False)
     eval_qc_fail = evaluate_publishing_gate(engine, bundle_qc_failed["asset_id"], ch_id)
     assert eval_qc_fail["eligible"] is False
-    assert any("QC Report is FAILED" in c["detail"] for c in eval_qc_fail["checks"])
+    assert any(
+        c["check_name"] == "QC_GATE" and c["data"]["qc_status"] == "FAILED"
+        for c in eval_qc_fail["checks"]
+    )
+    assert "Controlul calității: nu a trecut" in eval_qc_fail["reasons"]
 
     # 3. Rejection when Factual Claim is REFUTED
     bundle_refuted = _create_verified_asset_bundle(
@@ -240,7 +244,7 @@ def test_publishing_gate_evaluations(engine, tmp_path):
         c for c in eval_refuted["checks"] if c["check_name"] == "FACTUAL_INTEGRITY_GATE"
     )
     assert refuted_check["passed"] is False
-    assert bundle_refuted["claim_id"] in refuted_check["detail"]
+    assert refuted_check["data"]["unverified_claim_ids"] == [bundle_refuted["claim_id"]]
 
     # 4. Rejection when Global Autonomy Stop is Active
     bundle_valid = _create_verified_asset_bundle(engine, tmp_path, qc_passed=True)
@@ -333,7 +337,7 @@ def test_end_to_end_publishing_flow(engine, tmp_path):
     assert pub["privacy_status"] == "private"
     assert pub["remote_video_id"].startswith("sim:")
     assert pub["remote_url"] is None
-    assert "Simulated upload" in (pub["error_detail"] or "")
+    assert "Încărcare simulată" in (pub["error_detail"] or "")
     assert pub["published_at"] is not None
 
     # Gate duplicate check: attempting to publish again must fail gate
@@ -349,7 +353,7 @@ def test_end_to_end_publishing_flow(engine, tmp_path):
             correlation_id=str(uuid4()),
             provider=adapter,
         )
-    assert "Duplicate publishing prevented" in str(exc_info.value)
+    assert "Publicare dublă oprită" in str(exc_info.value)
 
 
 def test_reconciliation_from_remote_unknown(engine, tmp_path):
@@ -623,8 +627,9 @@ def test_a_second_render_of_a_published_film_is_refused_by_the_gate(engine, tmp_
     assert duplicate["passed"] is False
     # The refusal names the video already on the channel, so the Owner can go and look at it.
     assert published["remote_video_id"] in duplicate["detail"]
-    assert "another render of the same script" in duplicate["detail"]
-    assert any("same film is already on this channel" in r for r in verdict["reasons"])
+    assert "o altă randare a aceluiași scenariu" in duplicate["detail"]
+    assert any("același film este deja pe acest canal" in r for r in verdict["reasons"])
+    assert verdict["reason_codes"] == ["DUPLICATE_FILM"]
 
 
 def test_a_second_storyboard_from_one_script_is_still_the_same_film(engine, tmp_path):

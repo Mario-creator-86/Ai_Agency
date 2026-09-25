@@ -1819,6 +1819,7 @@ def _publish_one(
             "reason": "Poarta de publicare a refuzat: " + "; ".join(verdict["reasons"]),
             "blocked_asset": asset_id,
             "reasons": verdict["reasons"],
+            "reason_codes": verdict["reason_codes"],
         }
 
     with Session(engine) as session:

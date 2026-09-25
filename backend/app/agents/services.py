@@ -44,6 +44,7 @@ from app.economy.accountant import may_run_agent
 from app.models import DomainEvent, OwnerPolicy
 from app.providers.registry import ProviderRegistry
 from app.services import append_event, may_act, utc_now
+from app.wording import AUTONOMY_STOPPED
 from app.workflows.services import append_event_with_outbox
 
 logger = logging.getLogger("studio.agents")
@@ -608,10 +609,7 @@ def _assert_policy_allows_run(session: Session, agent: Agent, registry: Provider
     # 1. Autonomy stop
     policy = session.get(OwnerPolicy, 1)
     if policy and policy.autonomy_stopped:
-        raise PolicyKernelError(
-            "Global autonomy stop is active; Owner must clear it first.",
-            "BLOCKED_POLICY",
-        )
+        raise PolicyKernelError(AUTONOMY_STOPPED, "BLOCKED_POLICY")
 
     # 1b. Autonomy mode. A run is an employee thinking: a reversible internal write (T1,
     # 31's "create draft"), which every mode allows. Asking anyway is what makes the mode

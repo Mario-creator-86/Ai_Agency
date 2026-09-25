@@ -241,7 +241,7 @@ def test_simulated_upload_is_never_recorded_as_a_real_publication(engine, tmp_pa
     assert result["status"] != "PUBLISHED"
     assert result["remote_video_id"].startswith("sim:")
     assert result["remote_url"] is None
-    assert "Simulated" in (result["error_detail"] or "")
+    assert "Încărcare simulată" in (result["error_detail"] or "")
 
     with Session(engine) as session:
         types = [e.event_type for e in session.scalars(select(DomainEvent)).all()]
@@ -284,7 +284,7 @@ def test_gate_refusal_is_persisted_and_auditable(engine, tmp_path):
         records = session.scalars(select(PublicationRecord)).all()
         assert len(records) == 1
         assert records[0].status == "BLOCKED_GATE"
-        assert "autonomy stop" in (records[0].error_detail or "").lower()
+        assert "Autonomia studioului este oprită" in (records[0].error_detail or "")
         types = [e.event_type for e in session.scalars(select(DomainEvent)).all()]
     assert "publishing.gate_failed" in types
 
@@ -505,7 +505,8 @@ def test_an_asset_with_no_provenance_is_refused_rather_than_declared_verified(en
 
     assert verdict["eligible"] is False
     assert gate["passed"] is False
-    assert "no render job records this asset" in gate["detail"]
+    assert "nicio randare nu a produs acest material" in gate["detail"]
+    assert gate["data"]["missing"] == "NO_RENDER_JOB"
     # The old wording is the thing being forbidden: it asserted a verification never performed.
     assert "verified factual provenance" not in gate["detail"]
 
@@ -537,4 +538,5 @@ def test_a_claim_referenced_but_absent_is_not_treated_as_supported(engine, tmp_p
 
     assert verdict["eligible"] is False
     assert gate["passed"] is False
-    assert invented in gate["detail"]
+    assert gate["data"]["missing_claim_ids"] == [invented]
+    assert "1 afirmație citată care nu există în evidență" in gate["detail"]

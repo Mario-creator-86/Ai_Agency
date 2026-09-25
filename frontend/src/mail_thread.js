@@ -127,7 +127,8 @@ export class MailThread {
   /**
    * @param {{dialog: HTMLDialogElement, title: HTMLElement, body: HTMLElement,
    *          form: HTMLFormElement, input: HTMLTextAreaElement, status: HTMLElement,
-   *          api: (path: string, options?: any) => Promise<any>, escape: (s: any) => string}} parts
+   *          api: (path: string, options?: any) => Promise<any>, escape: (s: any) => string,
+   *          landed?: () => Promise<void>}} parts
    */
   constructor(parts) {
     this.dialog = parts.dialog;
@@ -138,6 +139,8 @@ export class MailThread {
     this.status = parts.status;
     this.api = parts.api;
     this.escape = parts.escape;
+    /** W30: resolves once the window's pane has landed; the letters are laid out then. */
+    this.landed = parts.landed || (() => Promise.resolve());
     this.timezone = undefined;
     /** @type {{thread_id: string, subject: string, messages: any[]}|null} */
     this.thread = null;
@@ -154,14 +157,18 @@ export class MailThread {
     this.status.textContent = '';
     this.status.hidden = true;
     if (!this.dialog.open) this.dialog.showModal();
-    await this.load(threadId);
+    await this.load(threadId, true);
   }
 
-  async load(threadId) {
+  /** @param {string} threadId @param {boolean} [opening] the window is opening: lay out once it has landed */
+  async load(threadId, opening = false) {
     try {
       this.thread = await this.api(`/agents/messages/threads/${encodeURIComponent(threadId)}`);
-      const count = this.thread.messages.length;
+      // the heading at once (a line); the letters once the pane has landed
       this.title.textContent = this.thread.subject || 'Fir de corespondență';
+      if (opening) await this.landed();
+      if (!this.thread) return;
+      const count = this.thread.messages.length;
       this.body.innerHTML = renderThread(this.thread, {
         escape: this.escape,
         timezone: this.timezone,

@@ -204,7 +204,7 @@ def test_the_run_uploads_private_to_both_channels_and_a_visible_policy_needs_pro
     assert {u["privacy_status"] for u in publisher.uploads} == {"private"}
     for record in published.values():
         assert record["release_privacy"] == "private" and record["publish_at"] is None
-        assert "TEST" in record["visibility_reason"]
+        assert "în mediul de test" in record["visibility_reason"]
     assert published[main]["policy_version"] == 2 and published[serial]["policy_version"] == 2
 
 
@@ -224,7 +224,7 @@ def test_unlisted_is_a_visible_release_and_needs_production_like_public(environm
     assert resolved["release_privacy"] == expected
     assert resolved["publish_at"] is None and resolved["policy_version"] == 4
     if environment == "TEST":
-        assert "TEST" in resolved["reason"]
+        assert "în mediul de test" in resolved["reason"]
 
 
 # --------------------------------------------------------------- (2) the command's limits --

@@ -237,6 +237,66 @@ def provider_name(code: object) -> str:
     return PROVIDER_PRODUCT.get(text.upper(), text or "—")
 
 
+# ----------------------------------------------------------------------------- the publishing gate
+
+#: The quality-control verdict, said after a colon as the glossary says it: «controlul
+#: calității: a trecut». ``MISSING`` is the gate's own word for a film nobody checked.
+QC_STATUS = {
+    "PASSED": "a trecut",
+    "FAILED": "nu a trecut",
+    "PENDING": "în așteptare",
+    "MISSING": "lipsește",
+}
+
+
+def qc_status(code: object) -> str:
+    return _words(QC_STATUS, code)
+
+
+#: The Owner's global stop, said once for every door that refuses under it: the publishing
+#: gate, the media gate and the policy kernel an employee's run passes through.
+AUTONOMY_STOPPED = "Autonomia studioului este oprită; numai Proprietarul o poate reporni."
+
+#: A media connection that is chosen and verified, yet gives no generator: its stored key is
+#: empty or cannot be used. The readiness check reads rows and calls it ready; the adapter is
+#: what refuses. W31: the preflight printed only its tail («Până atunci …»), a sentence with no
+#: subject. The purpose is the readiness label («Imagini», «Voce / TTS»).
+MEDIA_KEY_UNUSABLE = (
+    "{name} este ales și verificat pentru {purpose}, dar cheia lui lipsește sau nu poate fi "
+    "folosită. Salveaz-o din nou în Setări → Video și sunet."
+)
+
+# ----------------------------------------------------------------------------- research
+
+#: Why a site's last reading test failed, as the sources list says it (`main.js`
+#: HOST_REASON_LABEL; «OTHER» there reads «a răspuns cu nimic utilizabil», said here with its
+#: negation).
+HOST_TEST_REASON = {
+    "HTTP_403": "a refuzat studioul (403)",
+    "HTTP_ERROR": "a răspuns cu o eroare",
+    "RATE_LIMITED": "limitează cererile",
+    "SCRIPT_ONLY": "nu arată nimic fără JavaScript",
+    "NETWORK": "nu a răspuns",
+    "OTHER": "nu a răspuns cu nimic utilizabil",
+}
+
+
+def host_test_reason(code: object) -> str:
+    return _words(HOST_TEST_REASON, code)
+
+
+#: Whether a web search engine is verified, as a fact in a list: «…, niciun motor de căutare
+#: verificat, …».
+SEARCH_ENGINE = {
+    "VERIFIED": "un motor de căutare verificat",
+    "NONE": "niciun motor de căutare verificat",
+}
+
+
+def search_engine(code: object) -> str:
+    return _words(SEARCH_ENGINE, code)
+
+
 # ----------------------------------------------------------------------------- the company
 
 #: A Director's decision, as an imperative to whoever acts (`dialog_words.js` decisionWord).

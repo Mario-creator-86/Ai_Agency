@@ -160,6 +160,76 @@ export function doorNeedsRead(readAt, now, freshMs) {
 }
 
 /**
+ * W30: when a door's parts start to be laid out, ms after it starts to open. Its words are
+ * invisible for the first half of the opening (doorKeyframes: the content fades in from 50 %), so
+ * nothing needs laying out before they begin to show; the first frames then only move the glass.
+ * Under reduced motion the words fade in from the start, and the parts come at once.
+ * @param {{open: number, move: boolean}} timing doorTiming's
+ */
+export function doorRevealAt(timing) {
+  return timing.move ? Math.round(timing.open * DOOR_REVEAL_SHARE) : 0;
+}
+/** The share of the opening before the parts are laid out (a little ahead of the words' fade). */
+export const DOOR_REVEAL_SHARE = 0.4;
+
+/**
+ * The steps a door's body is laid out in, one per frame: its parts, and inside a part that says
+ * `data-door-steps` (a heavy one: the Journal's episodes, the newest episode's slate and room)
+ * its children instead, so no single frame lays out a whole heavy part.
+ * @param {Element[]} parts
+ * @returns {Element[]}
+ */
+export function doorSteps(parts) {
+  /** @type {Element[]} */
+  const out = [];
+  const walk = (/** @type {Element} */ el, /** @type {number} */ depth) => {
+    const kids = Array.from(el.children);
+    if (depth < 4 && el.hasAttribute('data-door-steps') && kids.length) for (const k of kids) walk(k, depth + 1);
+    else out.push(el);
+  };
+  for (const p of parts) walk(p, 0);
+  return out;
+}
+
+/** Each door's running opening, so the page can wait for its landing (doorLanded). @type {WeakMap<HTMLDialogElement, Animation>} */
+const landing = new WeakMap();
+/** The door whose room is lit now: a door that closes turns the light off only if it is still its own. @type {HTMLDialogElement|null} */
+let lightOwner = null;
+
+/**
+ * W30: resolves once the door's pane has landed (its opening is over, or cancelled), at once when
+ * it is not moving. The mail and the inspector lay out their content then, not while the pane
+ * grows.
+ * @param {HTMLDialogElement} dialog
+ * @returns {Promise<void>}
+ */
+export function doorLanded(dialog) {
+  const a = landing.get(dialog);
+  if (!a || a.playState === 'finished' || a.playState === 'idle') return Promise.resolve();
+  return a.finished.then(() => undefined, () => undefined);
+}
+
+/**
+ * Lay out a set of a door's parts one per frame (content-visibility, style.css [data-door-wait]):
+ * content that arrives after the pane has landed comes in over a few frames, not in one.
+ * @param {Element[]} parts
+ * @param {number} [delayMs] wait before the first
+ */
+export function revealInSteps(parts, delayMs = 0) {
+  const steps = doorSteps(parts);
+  if (!steps.length) return;
+  for (const p of steps) p.setAttribute('data-door-wait', '');
+  let i = 0;
+  const step = () => {
+    if (i >= steps.length) return;
+    steps[i++].removeAttribute('data-door-wait');
+    requestAnimationFrame(step);
+  };
+  if (delayMs > 0) setTimeout(() => requestAnimationFrame(step), delayMs);
+  else requestAnimationFrame(step);
+}
+
+/**
  * Bind one dialog to its room.
  * @param {HTMLDialogElement} dialog
  * @param {{roomRect: () => ({x: number, y: number, w: number, h: number}|null), light?: (rect: any, on: boolean, ms: number) => void, reduced: () => boolean}} o
@@ -213,6 +283,7 @@ export function attachDoor(dialog, o) {
     const frames = doorKeyframes(move, reduced);
     const pane = dialog.animate(frames.pane, { duration: timing.open, easing: timing.ease });
     running.push(pane);
+    landing.set(dialog, pane);
     // the pane's own blur is taken off while it moves (it is 90 % opaque: the blur is a finish, and
     // re-blurring a moving, scaling pane every frame cost the compositor its frame); on at rest
     dialog.classList.add('is-moving');
@@ -223,7 +294,10 @@ export function attachDoor(dialog, o) {
     }
     setExit();
     clearTimeout(lightOff);
-    if (o.light && from && from.room) o.light(from.rect, true, timing.open);
+    if (o.light && from && from.room) {
+      lightOwner = dialog;
+      o.light(from.rect, true, timing.open);
+    }
   };
 
   /**
@@ -235,14 +309,8 @@ export function attachDoor(dialog, o) {
   const stagger = () => {
     const parts = /** @type {HTMLElement[]} */ (Array.from(dialog.querySelectorAll(':scope > .dialog-body > .dialog-pane > *, :scope > .dialog-body:not(.dialog-body-railed) > *')));
     if (parts.length < 2) return;
-    for (const p of parts) p.setAttribute('data-door-wait', '');
-    let i = 0;
-    const step = () => {
-      if (i >= parts.length) return;
-      parts[i++].removeAttribute('data-door-wait');
-      requestAnimationFrame(step);
-    };
-    requestAnimationFrame(step);
+    // W30: none before the words begin to show; then one step per frame, heavy parts in pieces
+    revealInSteps(parts, doorRevealAt(doorTiming(o.reduced(), token)));
   };
 
   dialog.showModal = function showModal() {
@@ -262,11 +330,18 @@ export function attachDoor(dialog, o) {
     for (const a of running) a.cancel();
     running = [];
     const timing = doorTiming(o.reduced(), token);
-    if (o.light) {
+    // another door has lit its own room since (a card of the roster opens the inspector at the
+    // desk as the roster goes back into the lobby): the light is that door's now
+    if (o.light && lightOwner === dialog) {
       const rect = (from && from.room) ? (o.roomRect() || from.rect) : null;
       if (rect) o.light(rect, true, 0);
       clearTimeout(lightOff);
-      lightOff = window.setTimeout(() => { if (!dialog.open && o.light) o.light(null, false, timing.close); }, timing.close);
+      lightOff = window.setTimeout(() => {
+        if (!dialog.open && o.light && lightOwner === dialog) {
+          lightOwner = null;
+          o.light(null, false, timing.close);
+        }
+      }, timing.close);
     }
   });
 }

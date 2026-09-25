@@ -282,13 +282,13 @@
             <a href="#rs-scripts">Scenarii</a>
           </nav>
           <div class="dialog-pane">
-          <div class="dialog-section-bottom" id="rs-trends">
+          <div class="dialog-section-bottom" id="rs-trends" data-door-steps>
             <div class="trends-head">
               <h3 class="dialog-section-header-bright">Ce se caută acum</h3>
               <button id="trends-refresh" class="quiet" type="button">Citește tendințele ↻</button>
             </div>
             <p class="helper">Google Trends pentru țara studioului, citit zilnic. O tendință este o deschidere, nu o sursă: cercetătorul o folosește doar unde site-urile autorizate o pot dovedi.</p>
-            <ul id="trends-list" class="trends-list"><li class="helper">Se încarcă…</li></ul>
+            <ul id="trends-list" class="trends-list" data-door-steps><li class="helper">Se încarcă…</li></ul>
           </div>
           <div class="dialog-section-bottom" id="rs-propose">
             <h3 class="dialog-section-header-bright">Propune un subiect</h3>
@@ -372,7 +372,7 @@
           <div class="dialog-pane">
           <!-- The writers room comes first: it is what the Journal is opened for, and at 1080 the
                closed days above it pushed the episodes below the fold (W8). -->
-          <div class="dialog-section-bottom" id="st-episodes">
+          <div class="dialog-section-bottom" id="st-episodes" data-door-steps>
             <!-- THE COVER (W12, serial_room.js journalCoverHtml): the newest episode as a poster,
                  its number, title, the day it tells and the Director's verdict. -->
             <div id="story-cover" class="journal-cover-slot"></div>
@@ -381,7 +381,7 @@
                  (folded away when there are none); each episode below is a script page with the
                  Director's reading and tomorrow's plan beside it. -->
             <div id="story-serial-board"></div>
-            <div id="story-episodes" class="topics-container writers-room">
+            <div id="story-episodes" class="topics-container writers-room" data-door-steps>
               <div class="topics-loading">Se încarcă episoadele…</div>
             </div>
           </div>
@@ -586,15 +586,23 @@
           <button id="close-workforce-btn" class="dialog-close" aria-label="Închide"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></svg></button>
         </div>
         <div class="dialog-body">
+          <!-- W30: the employees as people (roster.js): a card each, with their portrait at the desk -->
+          <div class="dialog-section-bottom">
+            <div class="topics-header-row">
+              <h3 class="dialog-section-header-bright-compact">Oamenii studioului</h3>
+              <button id="refresh-workforce-btn" class="quiet btn-refresh">Reîncarcă</button>
+            </div>
+            <div id="workforce-agents" class="topics-container roster">
+              <div class="topics-loading">Se încarcă angajații…</div>
+            </div>
+          </div>
           <div class="dialog-section-bottom">
             <div class="topics-header-row">
               <h3 class="dialog-section-header-bright-compact">Măsurători</h3>
-              <button id="refresh-workforce-btn" class="quiet btn-refresh">Reîncarcă</button>
             </div>
             <div id="workforce-summary" class="workforce-summary">
               <div class="topics-loading">Se încarcă măsurătorile…</div>
             </div>
-            <div id="workforce-agents" class="topics-container"></div>
           </div>
           <div>
             <div class="topics-header-row">
@@ -751,6 +759,8 @@
       <div id="moment-toast" class="moment moment-toast" hidden></div>
       <p id="moment-announce" class="moment-announce" role="status" aria-live="polite"></p>
     </main>
+    <!-- W30: the doors' glass, painted with the workspace's warm-up under the title (style.css .glass-warm) -->
+    <div class="glass-warm" aria-hidden="true"><i></i><i></i></div>
     <footer class="site-footer"><span>AMN-AI · Autonomous Machine Nexus — Artificial Intelligence</span><span>Muncă reală. Stare verificată.</span></footer>
     <script type="module" src="/src/main.js"></script>
   </body>

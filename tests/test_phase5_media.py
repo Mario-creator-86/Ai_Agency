@@ -290,7 +290,7 @@ def test_storyboard_blocked_when_autonomy_stopped(engine):
         )
         session.add(script)
 
-    with pytest.raises(FactualGateError, match="Global autonomy stop is active"):
+    with pytest.raises(FactualGateError, match="Autonomia studioului este oprită"):
         generate_storyboard_from_script(engine, script_id, "MOTION_GRAPHIC", "9:16", corr_id)
 
 

@@ -189,8 +189,15 @@ def test_the_preflight_asks_whether_the_studio_can_find_pages_not_whether_a_row_
         )
     walled = check("research_sources")
     assert walled["ok"] is False
-    assert "www.example.org (HTTP_403)" in walled["detail"]
+    # The reason in the sources list's words; the code stays in the check's value.
+    assert "Nu pot fi citite: www.example.org — a refuzat studioul (403)." in walled["detail"]
+    assert "HTTP_403" not in walled["detail"] and "Picate" not in walled["detail"]
+    assert walled["value"]["hosts_failing"] == [{"host": "www.example.org", "reason": "HTTP_403"}]
     assert "1 site autorizat, 0 testate cu succes" in walled["detail"]
+    # The engine as a fact, not «motor de căutare: NONE»; NONE is the value's.
+    assert "niciun motor de căutare verificat" in walled["detail"]
+    assert "NONE" not in walled["detail"] and "NONE" not in walled["message"]
+    assert walled["value"]["search_provider"] == "NONE"
 
     with Session(engine) as session, session.begin():
         row = session.get(ResearchAllowedHost, "www.example.org")

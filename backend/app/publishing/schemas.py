@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -143,7 +143,10 @@ class PublicationView(BaseModel):
 class GateCheckItem(BaseModel):
     check_name: str
     passed: bool
+    #: What the Owner reads, in Romanian.
     detail: str
+    #: The same fact as data: the codes, ids, numbers and paths the sentence says in words.
+    data: dict[str, Any] = Field(default_factory=dict)
 
 
 class PublishingGateEvaluationView(BaseModel):
@@ -152,3 +155,5 @@ class PublishingGateEvaluationView(BaseModel):
     eligible: bool
     checks: list[GateCheckItem]
     reasons: list[str]
+    #: One code per reason, in the same order (``AUTONOMY_STOPPED``, ``QC_NOT_PASSED`` …).
+    reason_codes: list[str] = Field(default_factory=list)

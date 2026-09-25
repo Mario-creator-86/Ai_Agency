@@ -659,6 +659,7 @@ def test_an_unlisted_publication_carries_the_policy_version_that_authorised_it(e
         engine, bundle["asset_id"], channel["id"], privacy_status="unlisted", policy_version=1
     )
     assert not stale["eligible"] and "1" in stale["reasons"][0]
+    assert stale["reason_codes"] == ["POLICY_VERSION_STALE"]
 
     publisher = RecordingPublisher()
     with pytest.raises(PublishingGateError):
@@ -709,7 +710,9 @@ def test_a_visibility_the_policy_does_not_allow_is_refused_even_with_the_stamp(e
     assert not verdict["eligible"]
     sixth = verdict["checks"][5]
     assert sixth["check_name"] == "POLICY_AUTHORISATION_GATE" and not sixth["passed"]
-    assert "private" in verdict["reasons"][0] and "unlisted" in verdict["reasons"][0]
+    assert "privat" in verdict["reasons"][0] and "nelistat" in verdict["reasons"][0]
+    assert verdict["reason_codes"] == ["POLICY_VISIBILITY_EXCEEDED"]
+    assert (sixth["data"]["requested"], sixth["data"]["authorised"]) == ("unlisted", "private")
 
     # A scheduled release is judged as the public film it becomes, and refused the same way.
     scheduled = evaluate_publishing_gate(
@@ -721,6 +724,7 @@ def test_a_visibility_the_policy_does_not_allow_is_refused_even_with_the_stamp(e
         scheduled_publish_time="2026-09-17T05:45:00Z",
     )
     assert not scheduled["eligible"] and "public" in scheduled["reasons"][0]
+    assert scheduled["checks"][5]["data"]["requested"] == "public"
 
 
 def test_a_scheduled_release_is_sent_as_private_with_publish_at(engine, tmp_path):
