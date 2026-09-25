@@ -184,12 +184,48 @@ export const FIX_PLACES = {
   publishing: { label: 'Distribuție · Sloturi de canal', door: 'publishing-modal', section: 'channels-list' },
   treasury: { label: 'Trezorerie · Buget și cheltuieli', door: 'treasury-modal', section: 'tr-budget' },
   characters: { label: 'Media · Character Bible', door: 'media-modal', tab: 'characters', section: 'media-characters-section' },
+  // W34: the two decisions that were «only through the API»
+  'settings:channels': { label: 'Setări · Canale', door: 'settings', tab: 'channels' },
+  prices: { label: 'Trezorerie · Prețurile modelelor', door: 'treasury-modal', section: 'tr-prices' },
 };
 
 /**
+ * W34: the places a line's code names, whatever the backend says its place is: the Director's right
+ * and the token prices were `not_on_page` until this page had a control for them.
+ * @type {Record<string, string>}
+ */
+export const CODE_FIX = {
+  'model_prices.unpriced': 'prices',
+  'serial_channel.director_may_not_approve': 'settings:channels',
+  'serial_channel.unbound': 'publishing',
+};
+
+/** The sections of index.html a key can bring into view (W34: a backend's other name stands in for none). */
+export const PAGE_SECTIONS = ['rs-sources', 'tr-budget', 'tr-prices', 'media-characters-section', 'channels-list'];
+
+/**
+ * A line's code: the backend's own (`<name>.<condition>`, W32), or, from a backend that does not
+ * send one (the Owner's running studio before a restart), derived from its name, `ok` and `value`
+ * for the two lines that have more than one condition.
+ * @param {{name?: string, ok?: boolean, code?: string|null, value?: any}} check
+ */
+export function checkCode(check) {
+  if (check.code) return String(check.code);
+  const name = String(check.name || '');
+  const v = check.value && typeof check.value === 'object' ? check.value : null;
+  if (name === 'serial_channel' && !check.ok && v) {
+    if (v.exists === false) return 'serial_channel.missing';
+    if (v.bound === false) return 'serial_channel.unbound';
+    if (v.director_may_approve_episodes === false) return 'serial_channel.director_may_not_approve';
+  }
+  if (name === 'model_prices' && !check.ok) return 'model_prices.unpriced';
+  return '';
+}
+
+/**
  * Which place fixes each check, by its code (`backend/app/runbook/preflight.py`). A check with no
- * entry has no place in the page: FFmpeg and FFprobe are installed on the studio's machine, the
- * token prices and the serial's right to approve episodes are set through the API only.
+ * entry has no place in the page: FFmpeg and FFprobe are installed on the studio's machine (W34: the
+ * token prices and the serial's right to approve episodes have their places now, CODE_FIX above).
  * @type {Record<string, string>}
  */
 export const CHECK_FIX = {
@@ -240,16 +276,20 @@ export const BACKEND_DOORS = {
  */
 export function fixPlaceOf(check) {
   if (!check || check.ok) return null;
+  const byCode = FIX_PLACES[CODE_FIX[checkCode(check)] || ''] || null;
   if (Object.prototype.hasOwnProperty.call(check, 'place')) {
     const place = String(check.place || '');
     const label = String(check.place_label || '').trim();
-    const section = check.place_section ? String(check.place_section) : undefined;
+    let section = check.place_section ? String(check.place_section) : undefined;
+    // W34: a place the page now has, though the backend still says «API-ul studioului»
+    if (place === 'not_on_page') return byCode;
     if (place.startsWith('settings:')) {
       const tab = place.slice('settings:'.length);
       return { label: label || FIX_PLACES[place]?.label || 'Setări', door: 'settings', tab };
     }
     const door = BACKEND_DOORS[place];
     if (!door || !label) return null;
+    if (section && !PAGE_SECTIONS.includes(section)) section = byCode && byCode.door === door ? byCode.section : undefined;
     return {
       label,
       door,
@@ -257,6 +297,7 @@ export function fixPlaceOf(check) {
       ...(section ? { section } : {}),
     };
   }
+  if (byCode) return byCode;
   const key = CHECK_FIX[String(check.name || '')];
   return key ? FIX_PLACES[key] || null : null;
 }

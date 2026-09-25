@@ -34,6 +34,7 @@ from app.publishing.serial_identity import hook_of
 from app.services import CommandConflict, append_event, utc_now
 from app.wording import (
     AUTONOMY_STOPPED,
+    COMMAND_REUSED,
     count,
     decimal,
     error_words,
@@ -63,6 +64,20 @@ class PublisherNotConfigured(Exception):
     The studio must refuse to publish rather than fall back to a simulator (AGENTS.md:
     never mark a provider integration working based on mocks).
     """
+
+
+#: The publish policy's two refusals of «public», in the page's words. W34: they named the
+#: command's field (``public_publish_enabled=true``) and sent the Owner to «pagina Owner», a
+#: page the studio does not have; the environment is the dock's MEDIU switch, and the flag is
+#: the channel's own «publicul permis» in the same change.
+PUBLIC_NEEDS_PRODUCTION = (
+    "Studioul este în {environment}: publicarea autonomă nu poate fi setată pe „public”. "
+    "Treci studioul în PRODUCTION cu comutatorul MEDIU, apoi permite publicul pe canal."
+)
+PUBLIC_NEEDS_ITS_FLAG = (
+    "„public” se acceptă doar dacă în aceeași schimbare permiți și publicul pe canal; fără "
+    "această permisiune încărcările rămân private."
+)
 
 
 class PublishPolicyError(ValueError):
@@ -314,7 +329,7 @@ def change_publish_policy(engine: Engine, channel_id: str, command: PublishPolic
         previous = session.get(CommandRecord, command_id)
         if previous:
             if previous.payload_hash != payload_hash:
-                raise CommandConflict("Command ID already used with different input")
+                raise CommandConflict(COMMAND_REUSED)
             return dict(previous.response)
         channel = session.get(ChannelRecord, channel_id)
         if channel is None:
@@ -341,16 +356,9 @@ def change_publish_policy(engine: Engine, channel_id: str, command: PublishPolic
 
         if command.autonomous_privacy == "public":
             if environment != "PRODUCTION":
-                raise PublishPolicyError(
-                    f"Studioul este în {environment}: publicarea autonomă nu poate fi setată "
-                    "pe „public”. Treci studioul în PRODUCTION din pagina Owner, apoi "
-                    "permite publicul pe canal."
-                )
+                raise PublishPolicyError(PUBLIC_NEEDS_PRODUCTION.format(environment=environment))
             if command.public_publish_enabled is not True:
-                raise PublishPolicyError(
-                    "„public” se acceptă doar împreună cu public_publish_enabled=true în "
-                    "aceeași comandă; fără el încărcările rămân private."
-                )
+                raise PublishPolicyError(PUBLIC_NEEDS_ITS_FLAG)
 
         # The word "public" is not the only way to a public policy. With the privacy already
         # reading "public" from a PRODUCTION day and the flag switched off, the flag alone
@@ -363,11 +371,7 @@ def change_publish_policy(engine: Engine, channel_id: str, command: PublishPolic
             )
 
         if _public(new) and not _public(old) and environment != "PRODUCTION":
-            raise PublishPolicyError(
-                f"Studioul este în {environment}: publicarea autonomă nu poate fi setată "
-                "pe „public”. Treci studioul în PRODUCTION din pagina Owner, apoi "
-                "permite publicul pe canal."
-            )
+            raise PublishPolicyError(PUBLIC_NEEDS_PRODUCTION.format(environment=environment))
 
         changed = sorted(key for key in old if key != "policy_version" and old[key] != new[key])
         event_id = None

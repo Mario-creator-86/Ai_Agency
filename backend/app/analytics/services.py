@@ -33,6 +33,7 @@ from app.providers.youtube_analytics import MetricsUnavailable, YouTubeAnalytics
 from app.publishing.models import ChannelRecord, PublicationRecord
 from app.publishing.services import bound_connection_id
 from app.services import append_event, utc_now
+from app.wording import settings_place
 from app.youtube.models import YouTubeConnection
 
 logger = logging.getLogger("studio.analytics")
@@ -292,8 +293,8 @@ def _record_account_refusal(
             detail += f", {exc.oauth_error}"
         reason = (
             f"Google a refuzat {account} legat de slotul „{channel_name}” ({detail}): legătura "
-            "canalului cu YouTube trebuie refăcută — apasă Reconectează în Settings → Conturi "
-            "și e-mail. Până atunci statisticile acestui canal rămân fără date."
+            f"canalului cu YouTube trebuie refăcută — apasă Reconectează în "
+            f"{settings_place('social')}. Până atunci statisticile acestui canal rămân fără date."
         )
     else:
         reason = (

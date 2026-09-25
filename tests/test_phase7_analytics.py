@@ -630,6 +630,7 @@ def test_measuring_a_channel_whose_token_google_refuses_records_no_data_and_tell
     assert len(result["unavailable"]) == 2
     for line in result["unavailable"]:
         assert "Nexus Curiosity" in line and "Reconectează" in line, line
+        assert "Setări → Conturi și e-mail" in line and "Settings" not in line, line
         assert "the-refresh-token" not in line
     assert calls == ["https://oauth2.googleapis.com/token"], "one refusal is the channel's answer"
     with Session(engine) as session:

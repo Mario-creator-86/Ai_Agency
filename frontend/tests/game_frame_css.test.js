@@ -27,6 +27,8 @@ test('the frame\'s measures are tokens, declared once in the token block', () =>
 test('a drawer opens and closes by transform only, and under reduced motion at once', () => {
   assert.ok(/:root\[data-register="closed"\] \.ledger-panel \{[^}]*transform: translateX\(-100%\)/s.test(STYLE));
   assert.ok(/:root\[data-side="closed"\] \.governance-panel,\s*:root\[data-side="closed"\] \.modules-panel \{[^}]*transform: translateX\(100%\)/s.test(STYLE));
+  // W34: the drawer's lower half is the studio at a glance, and it closes the same way
+  assert.ok(/:root\[data-side="closed"\] \.studio-readout \{[^}]*transform: translateX\(100%\)/s.test(STYLE));
   const reduced = STYLE.slice(STYLE.lastIndexOf('@media (prefers-reduced-motion: reduce)'));
   assert.ok(reduced.includes('body.is-entering .drawer-rail'), 'no rail arrives under the preference');
 });
@@ -39,8 +41,8 @@ test('every instrument on the glass stands inside the room the drawers leave', (
 
 test('the rooms, the drawers and their rails keep one id each', () => {
   const ids = ['open-research-btn', 'open-media-btn', 'open-publishing-btn', 'open-workforce-btn', 'open-story-btn', 'open-runbook-btn', 'open-treasury-btn',
-    'register-panel', 'governance-panel', 'modules-panel', 'register-rail', 'side-rail', 'register-close', 'side-close', 'topbar-rooms',
-    'ledger-count', 'approvals-count', 'modules', 'office-canvas', 'scene-viewport'];
+    'register-panel', 'governance-panel', 'studio-readout', 'register-rail', 'side-rail', 'register-close', 'side-close', 'topbar-rooms',
+    'ledger-count', 'approvals-count', 'studio-about-btn', 'office-canvas', 'scene-viewport'];
   for (const id of ids) assert.equal((HTML.match(new RegExp(`id="${id}"`, 'g')) || []).length, 1, id);
   // the rails and the close keys say what they control and whether it is open
   for (const id of ['register-rail', 'side-rail', 'register-close', 'side-close']) {

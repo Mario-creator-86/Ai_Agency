@@ -335,7 +335,10 @@ def test_public_is_refused_in_test_and_without_its_own_flag(client, headers, eng
         headers=headers,
     )
     assert no_flag.status_code == 422
-    assert "public_publish_enabled" in no_flag.json()["detail"]
+    # W34: the refusal says what to do on the page, not the field name (the page's switch
+    # for the public release is the same command's second field).
+    assert "public_publish_enabled" not in no_flag.json()["detail"]
+    assert "public" in no_flag.json()["detail"]
 
     # Nothing above changed the channel.
     with Session(engine) as session:

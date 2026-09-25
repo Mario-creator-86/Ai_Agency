@@ -461,7 +461,7 @@ def test_the_summary_counts_the_stages_that_produced_something_not_the_ones_that
     worked = len(STAGES) - 2
     assert result["stages_productive"] == worked - 3
     summary = result["summary"]
-    assert f"{worked} din {worked} etape au rulat" in summary
+    assert f"{worked} din {worked} etape de lucru au rulat" in summary
     assert f"{worked - 3} au produs ceva" in summary
     for name in ("generarea de idei", "documentare și verificare", "raportare și închiderea"):
         assert f"«{name}" in summary
@@ -476,6 +476,7 @@ def test_the_summary_counts_the_stages_that_produced_something_not_the_ones_that
 
     (listed,) = list_runs(engine)
     assert listed["summary"] == summary and listed["stages_productive"] == worked - 3
+    assert listed["summary_code"] == "counted" and result["summary_code"] == "counted"
 
 
 def test_a_day_that_made_nothing_says_so(engine, settings, vault, studio):

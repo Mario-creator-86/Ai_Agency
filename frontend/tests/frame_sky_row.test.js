@@ -57,7 +57,7 @@ test('the dock hangs in the sky row, spans the free room as a container, and kee
 });
 
 test('the keyboard walks the frame as the eye reads it: register, render and dock, side drawer', () => {
-  const order = ['id="register-panel"', 'id="office-canvas"', 'id="stop-toggle"', 'id="fullscreen-btn"', 'id="side-rail"', 'id="governance-panel"', 'id="modules-panel"', 'id="studio-readout"'];
+  const order = ['id="register-panel"', 'id="office-canvas"', 'id="stop-toggle"', 'id="fullscreen-btn"', 'id="side-rail"', 'id="governance-panel"', 'id="studio-readout"', 'id="studio-about-btn"'];
   const at = order.map((needle) => HTML.indexOf(needle));
   assert.ok(at.every((i) => i > 0), 'every landmark is on the page');
   assert.deepEqual([...at].sort((a, b) => a - b), at, 'in that order in the document');

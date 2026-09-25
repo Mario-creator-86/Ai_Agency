@@ -406,8 +406,10 @@ def run_summary(stages: list[dict[str, Any]]) -> tuple[str, int]:
         else f"{len(productive)} {'a' if len(productive) == 1 else 'au'} produs ceva"
     )
     parts = [
-        f"{len(ran)} din {len(work)} etape {'a' if len(ran) == 1 else 'au'} rulat până la "
-        f"capăt; {made}."
+        # «etape de lucru»: the stages that make something; the page counts every stage beside
+        # this sentence («12/12 etape încheiate», the preflight and the day's log included).
+        f"{len(ran)} din {len(work)} etape de lucru {'a' if len(ran) == 1 else 'au'} rulat până "
+        f"la capăt; {made}."
     ]
     if not productive:
         parts.append("Ziua nu a produs nimic.")
@@ -1277,6 +1279,7 @@ def execute_daily_run(
         "stages_completed": sum(1 for s in stages if s["status"] == COMPLETED),
         "stages_productive": productive,
         "summary": summary,
+        "summary_code": SUMMARY_COUNTED,
         "stopped_at_stage": stopped_at,
         "stop_reason": stop_reason,
         "fault_class": fault_class,
@@ -1290,11 +1293,66 @@ def execute_daily_run(
     }
 
 
-def _summarised(stages: list[dict[str, Any]]) -> tuple[str, int]:
-    """The headline of a stored run; a run recorded before counts existed is counted now,
-    from the same artefacts, so the list never mixes two ways of reading a day."""
-    counted = [{**stage, "produced": stage.get("produced", produced_by(stage))} for stage in stages]
-    return run_summary(counted)
+#: How a stored run's headline was read: from the counts it was run with, or — a run stored
+#: before the counts existed — from what its record holds, and said so.
+SUMMARY_COUNTED = "counted"
+SUMMARY_BEFORE_COUNTS = "before_counts"
+
+
+def _before_counts_summary(stages: list[dict[str, Any]]) -> str:
+    """The headline of a run stored before counts existed, from what its record does hold.
+
+    Measured on a copy of the Owner's studio (2026-09-25): all 18 stored runs are of 12.09 and
+    none carries ``produced``. They were recounted from today's artefact keys, which they never
+    wrote — their media stage returned ``rendered``, not ``assets`` — so the headline called
+    idle a stage that rendered, and empty a day the page's own rows called «nenumărat». What an
+    old record holds truthfully is each stage's status and the film its publish artefact names
+    by id (`_legacy_publications`); nothing else is said, and «azi» is not: it is not the day
+    it is read on.
+    """
+    work = [s for s in stages if s["stage"] in PRODUCED_FROM]
+    ran = [s for s in work if s["status"] == COMPLETED]
+    failed = [s["stage"] for s in work if s["status"] == FAILED]
+    blocked = [s["stage"] for s in work if s["status"] == BLOCKED]
+    parts = [
+        f"Rulare dinainte de numărătoare: {len(ran)} din {len(work)} etape de lucru "
+        f"{'a' if len(ran) == 1 else 'au'} rulat până la capăt; ce a produs fiecare etapă nu "
+        "s-a numărat atunci."
+    ]
+    if failed:
+        parts.append(("Eșuată: " if len(failed) == 1 else "Eșuate: ") + stage_list(failed) + ".")
+    if blocked:
+        parts.append(
+            ("Blocată: " if len(blocked) == 1 else "Blocate: ") + stage_list(blocked) + "."
+        )
+    published = sum(produced_by(s) or 0 for s in work if s["stage"] == "publish")
+    if published:
+        parts.append(f"Filme publicate: {published}.")
+    return " ".join(parts)
+
+
+def stored_summary(stages: list[dict[str, Any]]) -> dict[str, Any]:
+    """The headline of a stored run, and how it was read.
+
+    ``counted`` when every stage carries the count it was run with (`execute_daily_run`
+    writes ``produced`` on each, None for the two it does not count): the headline is the one
+    the run wrote, read back. ``before_counts`` otherwise: the headline opens with «Rulare
+    dinainte de numărătoare» and ``stages_productive`` is None — never 0, which would call a
+    day empty that nobody counted. Half a count is no count: one stage without it and the rest
+    would be called idle beside it.
+    """
+    if all("produced" in stage for stage in stages):
+        summary, productive = run_summary(stages)
+        return {
+            "summary": summary,
+            "stages_productive": productive,
+            "summary_code": SUMMARY_COUNTED,
+        }
+    return {
+        "summary": _before_counts_summary(stages),
+        "stages_productive": None,
+        "summary_code": SUMMARY_BEFORE_COUNTS,
+    }
 
 
 def list_runs(engine: Engine, limit: int = 20) -> list[dict[str, Any]]:
@@ -1304,7 +1362,7 @@ def list_runs(engine: Engine, limit: int = 20) -> list[dict[str, Any]]:
             select(DailyRun).order_by(DailyRun.started_at.desc()).limit(limit)
         ):
             stages = list(run.stages_json or [])
-            summary, productive = _summarised(stages)
+            told = stored_summary(stages)
             runs.append(
                 {
                     "id": run.id,
@@ -1313,8 +1371,9 @@ def list_runs(engine: Engine, limit: int = 20) -> list[dict[str, Any]]:
                     "status": run.status,
                     "stages_total": run.stages_total,
                     "stages_completed": run.stages_completed,
-                    "stages_productive": productive,
-                    "summary": summary,
+                    "stages_productive": told["stages_productive"],
+                    "summary": told["summary"],
+                    "summary_code": told["summary_code"],
                     "stopped_at_stage": run.stopped_at_stage,
                     "stop_reason": run.stop_reason,
                     "fault_class": run.fault_class,

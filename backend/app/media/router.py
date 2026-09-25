@@ -62,6 +62,7 @@ from app.media.services import (
 from app.providers.media_http import MediaProviderError
 from app.security import require_owner
 from app.services import append_event, studio_environment, utc_now
+from app.wording import settings_place
 
 
 def create_media_router() -> APIRouter:
@@ -428,7 +429,7 @@ def create_media_router() -> APIRouter:
                     "error": "MediaProviderFailed",
                     "message": (
                         "Furnizorul media nu a livrat conținutul, deci randarea nu s-a produs. "
-                        "Verifică conexiunea în Settings și încearcă din nou."
+                        f"Verifică conexiunea în {settings_place('media')} și încearcă din nou."
                     ),
                     "detail": str(exc),
                 },

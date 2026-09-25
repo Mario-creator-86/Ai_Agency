@@ -2,10 +2,23 @@ import { renderYouTubeConnections } from './youtube_connections.js';
 import { icon } from './icons.js';
 import { renderProviderProduction } from './provider_production.js';
 import { connectionTitle, policyWord, providerName } from './dialog_words.js';
+import {
+  DIRECTOR_RIGHT_LABEL, DIRECTOR_RIGHT_MEANING, MODULE_STATE, channelFacts, directorRightAnswer, directorRightCommand,
+  directorRightConfirmKey, directorRightQuestion, modulesSummary, SERIAL_CHANNEL_TYPE,
+} from './owner_controls.js';
 
 import './settings.css';
 
-const sections = [['llm', 'Furnizori AI'], ['agents', 'Angajați'], ['media', 'Video și sunet'], ['social', 'Conturi și e-mail']];
+// W34: «Canale» holds the Owner's decisions about each channel (the Director's right to approve the
+// serial's episodes); «Despre studio» the module list that left the main screen
+const sections = [['llm', 'Furnizori AI'], ['agents', 'Angajați'], ['media', 'Video și sunet'], ['social', 'Conturi și e-mail'], ['channels', 'Canale'], ['about', 'Despre studio']];
+
+/** The module names the drawer gave them (main.js), for Setări → Despre studio. */
+const MODULE_LABEL = {
+  agents: 'Angajați', providers: 'Furnizori AI', workflows: 'Automatizare', research: 'Cercetare factuală',
+  media: 'Producție media', publishing: 'Publicare', story: 'Office Serial', treasury: 'Trezorerie VR$',
+  procurement: 'VendorShop', financing: 'Finanțare', settings: 'Setări', analytics: 'Analitice',
+};
 // No 'youtube' purpose: a YouTube channel is chosen by connecting it, not by picking a saved
 // credential row out of a list. The backend refuses that purpose for the same reason.
 const purposes = { image: 'Imagini', video: 'Video', voice: 'Voce / TTS', music: 'Muzică / sunet', tiktok: 'TikTok', instagram: 'Instagram', facebook: 'Facebook', email: 'E-mail' };
@@ -27,7 +40,7 @@ function option(select, value, text) {
 
 /**
  * @param {(path: string, options?: any) => Promise<any>} api
- * @param {{ onChange?: () => Promise<void> | void }} [hooks]
+ * @param {{ onChange?: () => Promise<void> | void, modules?: () => Record<string, string> | null }} [hooks]
  *   `onChange` runs after every successful change here. Assigning a model, verifying a
  *   provider or binding a channel all alter what the rest of the app should be showing —
  *   the office inspector in particular — and without this the app kept displaying the state
@@ -54,6 +67,10 @@ export function initSettings(api, hooks = {}) {
     generation++;
     data = null;
     pending = false;
+    channels = null;
+    channelsError = '';
+    asking = null;
+    answer = null;
 
     dialog.close();
     // W28: the door goes back into its room with its words fading, not as an empty pane; what
@@ -140,6 +157,8 @@ export function initSettings(api, hooks = {}) {
     dialog.append(output);
     const content = node('section', '', 'settings-content');
     dialog.append(content);
+    if (active === 'about') { renderAbout(content); return; }
+    if (active === 'channels') { renderChannels(content); return; }
     if (!data) { content.append(node('p', 'Se încarcă setările…')); return; }
     if (active === 'agents') { renderAgents(content); return; }
     // YouTube channels are not a generic catalog entry: they carry an OAuth grant, a channel
@@ -531,6 +550,165 @@ export function initSettings(api, hooks = {}) {
       card.append(controls);
       container.append(card);
     }
+  }
+
+  /**
+   * W34, Setări → Despre studio: the module list the side drawer carried at full weight, as the
+   * server reports it, with the drawer's three words.
+   * @param {HTMLElement} container
+   */
+  function renderAbout(container) {
+    const modules = hooks.modules?.() || null;
+    container.append(node('h3', 'Starea modulelor'));
+    container.append(node('p', 'Cât din fiecare parte a studioului este construit, așa cum o raportează serverul studioului.', 'helper'));
+    if (!modules || !Object.keys(modules).length) { container.append(node('p', '—', 'helper')); return; }
+    container.append(node('p', modulesSummary(modules), 'settings-about-summary'));
+    const list = node('ul', '', 'modules settings-modules');
+    for (const [name, status] of Object.entries(modules)) {
+      const item = node('li', MODULE_LABEL[name] || name);
+      item.dataset.status = String(status);
+      const badge = node('span', MODULE_STATE[String(status)] || String(status), 'module-state');
+      item.append(badge);
+      list.append(item);
+    }
+    container.append(list);
+  }
+
+  /** What Setări → Canale read last, with the one confirmation open, if any. */
+  let channels = /** @type {any[]|null} */ (null);
+  let channelsError = '';
+  let asking = /** @type {{id: string, on: boolean}|null} */ (null);
+  let answer = /** @type {{text: string, error: boolean}|null} */ (null);
+
+  async function loadChannels() {
+    const current = generation;
+    try {
+      const result = await api('/publishing/channels');
+      if (current !== generation || !dialog.open) return;
+      channels = Array.isArray(result?.channels) ? result.channels : [];
+      channelsError = '';
+    } catch (error) {
+      if (current !== generation) return;
+      channels = null;
+      channelsError = error instanceof Error ? error.message : String(error);
+    }
+    if (active === 'channels') render();
+  }
+
+  /**
+   * W34, Setări → Canale: each channel with its facts in the page's words, and on the serial's
+   * channel the Director's right as a switch. The switch never changes anything by itself: it asks,
+   * and only the Owner's «Da» sends the versioned command. The answer is shown as the backend gave
+   * it, a refusal in the backend's own sentence.
+   * @param {HTMLElement} container
+   */
+  function renderChannels(container) {
+    container.append(node('p', 'Canalele pe care publică studioul și deciziile despre ele care sunt numai ale tale.', 'helper'));
+    if (channels === null && !channelsError) {
+      container.append(node('p', 'Se încarcă canalele…', 'helper'));
+      void loadChannels();
+      return;
+    }
+    if (channelsError) { container.append(node('p', channelsError, 'settings-error')); return; }
+    if (!channels || !channels.length) { container.append(node('p', 'Niciun canal de distribuție configurat.', 'helper')); return; }
+    const grid = node('div', '', 'settings-connections settings-channels');
+    for (const channel of channels) {
+      const facts = channelFacts(channel);
+      const card = node('article', '', 'settings-card settings-channel');
+      card.append(node('h3', String(channel.channel_name || '—')));
+      const type = node('p', `Tip: ${facts.type}`, 'helper');
+      type.title = String(channel.channel_type || '');
+      const account = node('p', 'Cont YouTube: ', 'helper');
+      const accountName = node('span', facts.account);
+      if (facts.accountTitle) accountName.title = facts.accountTitle;
+      account.append(accountName);
+      card.append(type, account, node('p', `Politica canalului: versiunea ${facts.version}`, 'helper'));
+      if (channel.channel_type === SERIAL_CHANNEL_TYPE) {
+        card.classList.add('is-serial');
+        card.append(directorSwitch(channel));
+      }
+      grid.append(card);
+    }
+    container.append(grid);
+  }
+
+  /** @param {any} channel */
+  function directorSwitch(channel) {
+    const on = Boolean(channel.director_may_approve_episodes);
+    const box = node('div', '', 'owner-decision');
+    const toggle = /** @type {HTMLButtonElement} */ (node('button', '', `owner-switch${on ? ' is-on' : ''}`));
+    toggle.type = 'button';
+    toggle.setAttribute('role', 'switch');
+    toggle.setAttribute('aria-checked', on ? 'true' : 'false');
+    toggle.id = 'director-right-switch';
+    const label = node('span', DIRECTOR_RIGHT_LABEL, 'owner-switch-label');
+    const track = node('span', '', 'switch-track');
+    track.append(node('span', '', 'switch-knob'));
+    const state = node('span', on ? 'PORNIT' : 'OPRIT', 'owner-switch-state');
+    toggle.append(label, track, state);
+    const meaning = node('p', DIRECTOR_RIGHT_MEANING, 'owner-decision-meaning');
+    meaning.id = 'director-right-meaning';
+    toggle.setAttribute('aria-describedby', meaning.id);
+    toggle.addEventListener('click', () => {
+      asking = { id: channel.id, on: !on };
+      answer = null;
+      render();
+      /** @type {HTMLElement|null} */ (dialog.querySelector('.owner-confirm-yes'))?.focus();
+    });
+    box.append(toggle, meaning);
+    if (asking && asking.id === channel.id) {
+      const ask = node('div', '', 'owner-confirm');
+      ask.setAttribute('role', 'group');
+      ask.setAttribute('aria-label', directorRightQuestion(asking.on));
+      ask.append(node('p', directorRightQuestion(asking.on), 'owner-confirm-question'));
+      const keys = node('div', '', 'owner-confirm-keys');
+      const yes = /** @type {HTMLButtonElement} */ (node('button', directorRightConfirmKey(asking.on), 'primary owner-confirm-yes'));
+      yes.type = 'button';
+      const no = /** @type {HTMLButtonElement} */ (node('button', 'Renunță', 'quiet'));
+      no.type = 'button';
+      const want = asking.on;
+      no.addEventListener('click', () => {
+        asking = null;
+        render();
+        /** @type {HTMLElement|null} */ (dialog.querySelector('#director-right-switch'))?.focus();
+      });
+      yes.addEventListener('click', async () => {
+        yes.disabled = true;
+        no.disabled = true;
+        const current = generation;
+        try {
+          const result = await api(`/publishing/channels/${encodeURIComponent(channel.id)}/publish-policy`, {
+            method: 'POST',
+            body: JSON.stringify(directorRightCommand(channel, want, crypto.randomUUID())),
+          });
+          if (current !== generation) return;
+          const words = directorRightAnswer(result);
+          answer = words
+            ? { text: words, error: false }
+            : { text: 'Studioul nu a trimis un răspuns pe care pagina să-l poată citi. Reîncarcă și verifică starea.', error: true };
+          if (result && result.channel) channels = (channels || []).map((c) => (c.id === channel.id ? { ...c, ...result.channel } : c));
+        } catch (error) {
+          if (current !== generation) return;
+          answer = { text: error instanceof Error ? error.message : String(error), error: true };
+          // a stale version is the backend's 409: the channels are read again, so the next try is current
+          channels = null;
+          void loadChannels();
+        }
+        asking = null;
+        render();
+        void hooks.onChange?.();
+        /** @type {HTMLElement|null} */ (dialog.querySelector('#director-right-switch'))?.focus();
+      });
+      keys.append(yes, no);
+      ask.append(keys);
+      box.append(ask);
+    }
+    if (answer) {
+      const said = node('p', answer.text, answer.error ? 'owner-answer settings-error' : 'owner-answer');
+      said.setAttribute('role', 'status');
+      box.append(said);
+    }
+    return box;
   }
 
   /** Open the door at a tab (W32: a preflight line's key opens the tab that fixes it). @param {string} [tab] */

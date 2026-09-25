@@ -77,7 +77,9 @@ export function entryCountLabel(count) {
  * the daily run above all - still reads as production.
  */
 const ROUTINE_JOB = {
-  WATCHDOG: 'watchdog',
+  // W34: the backend's own word for it (workflows/worker.py «Supraveghetorul …»); the code stays
+  // the routine row's data
+  WATCHDOG: 'supraveghetorul',
   MODEL_REVIEW: 'revizuirea modelelor',
   MODEL_RESEARCH: 'cercetare de modele',
   DIRECTOR_LOOP: 'bucla Directoarei',
@@ -320,7 +322,7 @@ export function withoutEcho(headline, detail) {
  *
  * @param {{event_type: string, aggregate_id?: string, payload?: any}} event
  * @param {Record<string, string>} [names] agent id → display name
- * @returns {{who: string, label: string, text: string, kind: string, to?: string, thread?: string|null, forOwner?: boolean, subject?: string, excerpt?: string}}
+ * @returns {{who: string, label: string, text: string, kind: string, to?: string, thread?: string|null, forOwner?: boolean, subject?: string, excerpt?: string, routine?: string}}
  */
 export function describeEvent(event, names = {}) {
   const type = String(event.event_type || '');
@@ -331,6 +333,8 @@ export function describeEvent(event, names = {}) {
   let label = '';
   let text = '';
   let kind = FAMILY_KIND[family] || 'system';
+  /** W34: a job the studio's clock starts on its own (ROUTINE_JOB), folded by the hour */
+  let routine = '';
 
   switch (type) {
     case 'agent.message_sent':
@@ -400,6 +404,7 @@ export function describeEvent(event, names = {}) {
         label = 'sarcină de rutină pornită';
         text = ROUTINE_JOB[payload.workflow_type];
         kind = 'system';
+        routine = String(payload.workflow_type);
         break;
       }
       label = type === 'workflow.created' ? 'a început o producție' : 'producție programată';
@@ -701,7 +706,24 @@ export function describeEvent(event, names = {}) {
       text = bits.join(' · ');
     }
   }
-  return { who, label, text: short(text), kind };
+  return routine ? { who, label, text: short(text), kind, routine } : { who, label, text: short(text), kind };
+}
+
+/** W34: the routine row's tooltip (glossary W34). */
+export const ROUTINE_TITLE = 'Sarcini pe care ceasul studioului le pornește singur; nu fac filme.';
+
+/**
+ * W34: the jobs one hour's routine row folds, in the studio's words, each with its count when it ran
+ * more than once: the most frequent first, then in the order they first appear (newest first).
+ * @param {Map<string, number>} jobs code -> count
+ */
+export function routineWords(jobs) {
+  // one job alone: the row's count already says how many times it ran
+  const alone = jobs.size === 1;
+  return [...jobs.entries()]
+    .sort((x, y) => y[1] - x[1])
+    .map(([code, n]) => `${ROUTINE_JOB[code] || code.toLowerCase()}${n > 1 && !alone ? ` ×${n}` : ''}`)
+    .join(' · ');
 }
 
 /**
@@ -1019,7 +1041,11 @@ export class Ledger {
     // drawn: the newest time, the count, and the span the run covers. Nothing is
     // reworded and nothing is dropped — correspondence never folds, because every
     // letter is its own event with its own thread.
+    /** @type {any[]} */
     const rows = [];
+    /** W34: the routine row now open, and whether an act has been drawn since it opened. */
+    let routineRow = /** @type {any} */ (null);
+    let actSince = false;
     const now = Date.now();
     this.renderedDay = studioDay(now, this.timezone);
     let lastDay = '';
@@ -1049,6 +1075,31 @@ export class Ledger {
           })();
       const at = Date.parse(String(event.timestamp || ''));
       const day = Number.isFinite(at) ? studioDay(at, this.timezone) : lastDay;
+      // W34: the studio's routine is one quiet row: a stretch of routine with no act between is one
+      // row, however many hours it covers, and within an hour the routine on either side of an act is
+      // one row too, standing where its newest entry stands. Every act (the Owner's, an employee's)
+      // keeps its own row; a row never crosses midnight.
+      if (item.routine) {
+        const hour = time.slice(0, 2);
+        const held = routineRow && routineRow.rday === day && (!actSince || routineRow.rhour === hour) ? routineRow : null;
+        if (held) {
+          held.count += 1;
+          held.oldest = time;
+          held.rhour = hour;
+          held.jobs.set(item.routine, (held.jobs.get(item.routine) || 0) + 1);
+          continue;
+        }
+        if (day !== lastDay) {
+          rows.push({ day: dayLabel(at, now, this.timezone) });
+          lastDay = day;
+        }
+        const row = { key: null, kind: 'routine', routine: true, mail: '', route: '', body: '', time, oldest: time, count: 1, id: event.event_id, jobs: new Map([[item.routine, 1]]), rday: day, rhour: hour };
+        routineRow = row;
+        actSince = false;
+        rows.push(row);
+        if (rows.length >= 150) break;
+        continue;
+      }
       const last = rows[rows.length - 1];
       const key = item.thread ? null : `${item.kind}\u0000${route}\u0000${body}`;
       // a fold never crosses midnight: each day keeps its own count
@@ -1062,12 +1113,23 @@ export class Ledger {
         lastDay = day;
       }
       rows.push({ key, kind: item.kind, mail, route, body, time, oldest: time, count: 1, id: event.event_id });
+      actSince = true;
       if (rows.length >= 150) break;
     }
     this.list.innerHTML = rows.length
       ? rows
           .map((row) => {
             if (row.day !== undefined) return `<li class="ledger-day">${this.escape(row.day)}</li>`;
+            if (row.routine) {
+              return (
+                `<li class="ledger-item ledger-routine${row.count > 1 ? ' is-repeat' : ''}${this.arrived.has(row.id) ? ' is-new' : ''}" title="${this.escape(ROUTINE_TITLE)}">` +
+                `<time>${this.escape(row.time)}</time><div>` +
+                `<div class="ledger-head">Rutina studioului${row.count > 1 ? `<span class="ledger-repeat">×${row.count}</span>` : ''}</div>` +
+                `<div class="ledger-text">${this.escape(routineWords(row.jobs))}</div>` +
+                (row.count > 1 ? `<span class="ledger-span">${this.escape(row.oldest)} – ${this.escape(row.time)}</span>` : '') +
+                `</div></li>`
+              );
+            }
             return (
               `<li class="ledger-item ledger-${row.kind}${row.count > 1 ? ' is-repeat' : ''}${this.arrived.has(row.id) ? ' is-new' : ''}${row.mail}">` +
               `<time>${this.escape(row.time)}</time><div>` +

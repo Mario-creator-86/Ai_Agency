@@ -50,6 +50,37 @@ def _words(table: Mapping[str, str], code: object) -> str:
     return table.get(text.upper(), text.replace("_", " ").lower())
 
 
+# ----------------------------------------------------------------------------- the page's places
+
+#: The Settings dialog's tabs as the page names them (`frontend/src/settings.js` sections),
+#: said the way a sentence sends the Owner there. W34: six Romanian sentences still said
+#: «în Settings», the English name of a dialog the page calls «Setări», and named no tab of it.
+#: ``channels`` is the tab W34 adds for each channel's policy (the Director's leave). The
+#: preflight's `PLACES` reads its settings labels from here, so the two never drift.
+SETTINGS_TABS: dict[str, str] = {
+    "llm": "Setări → Furnizori AI",
+    "agents": "Setări → Angajați",
+    "media": "Setări → Video și sunet",
+    "social": "Setări → Conturi și e-mail",
+    "channels": "Setări → Canale",
+}
+
+
+def settings_place(tab: str) -> str:
+    """A Settings tab in a sentence: ``media`` → «Setări → Video și sunet». A tab the page does
+    not have is a KeyError, not a guess: a sentence must never send the Owner nowhere."""
+    return SETTINGS_TABS[tab]
+
+
+#: A command id sent twice with different data (two clicks from two screens, a page that
+#: reused its id): the studio refuses rather than guess which was meant. Every Owner command
+#: says it the same way (`app.services.recall_command` and the publish policy's own check).
+COMMAND_REUSED = (
+    "Aceeași comandă a fost trimisă deja cu alte valori; studioul nu ghicește care era cea "
+    "dorită. Reîncarcă și trimite din nou."
+)
+
+
 # ----------------------------------------------------------------------------- the day's run
 
 #: The daily run's stages, named as the register names them (`ledger.js` RUN_STAGE_LABEL).
@@ -263,7 +294,7 @@ AUTONOMY_STOPPED = "Autonomia studioului este oprită; numai Proprietarul o poat
 #: subject. The purpose is the readiness label («Imagini», «Voce / TTS»).
 MEDIA_KEY_UNUSABLE = (
     "{name} este ales și verificat pentru {purpose}, dar cheia lui lipsește sau nu poate fi "
-    "folosită. Salveaz-o din nou în Setări → Video și sunet."
+    f"folosită. Salveaz-o din nou în {SETTINGS_TABS['media']}."
 )
 
 # ----------------------------------------------------------------------------- research

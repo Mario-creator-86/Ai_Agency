@@ -7,8 +7,10 @@ import {
   WORLD,
   entryOrigin,
   followPointer,
+  keptEdges,
   keptPlacement,
   parallaxOffset,
+  skyRow,
   placementTransform,
   titleCaption,
   titleFrame,
@@ -87,6 +89,9 @@ export class TitleScreen {
     /** @type {HTMLCanvasElement|null} */
     this.keptEl = null;
     this.keptTop = '';
+    this.keptTopClear = '';
+    /** @type {HTMLCanvasElement|null} */
+    this.keptTopRow = null;
     /** @type {Animation|null} the entry's landing (W22) */
     this.landing = null;
   }
@@ -119,16 +124,27 @@ export class TitleScreen {
     if (!context) return false;
     context.drawImage(kept.image, 0, 0);
     try {
-      // the frame's top rows, averaged: the sky continues above the world in its own colour
-      const row = context.getImageData(0, 0, el.width, Math.min(4, el.height)).data;
+      // W34: the frame's top row as sky only (the building that touches the edge is filled from the
+      // sky beside it), kept as a one-row canvas the band above the world is drawn from; averaged,
+      // it is the sky's own colour far above the roof
+      const row = skyRow(context.getImageData(0, 0, el.width, 1).data, el.width);
+      const strip = document.createElement('canvas');
+      strip.width = el.width;
+      strip.height = 1;
+      const img = new ImageData(el.width, 1);
+      img.data.set(row);
+      strip.getContext('2d')?.putImageData(img, 0, 0);
+      this.keptTopRow = strip;
       let r = 0;
       let g = 0;
       let b = 0;
       const n = row.length / 4;
       for (let i = 0; i < row.length; i += 4) { r += row[i]; g += row[i + 1]; b += row[i + 2]; }
       this.keptTop = `rgb(${Math.round(r / n)}, ${Math.round(g / n)}, ${Math.round(b / n)})`;
+      this.keptTopClear = `rgba(${Math.round(r / n)}, ${Math.round(g / n)}, ${Math.round(b / n)}, 0)`;
     } catch {
       this.keptTop = '';
+      this.keptTopClear = '';
     }
     if (!this.keptEl) {
       this.keptEl = el;
@@ -150,6 +166,8 @@ export class TitleScreen {
     if (!this.kept || this.entering) return;
     this.kept = null;
     this.keptTop = '';
+    this.keptTopClear = '';
+    this.keptTopRow = null;
     if (this.keptEl) this.keptEl.remove();
     this.keptEl = null;
     delete this.stage.dataset.kept;
@@ -319,6 +337,7 @@ export class TitleScreen {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.fillStyle = this.keptTop || String(skyStops(this.light.time, NO_WEATHER)[0][1]);
       ctx.fillRect(0, 0, w, h);
+      this.drawKeptEdges(ctx, k, vw, vh);
       return;
     }
     const { scale, x, y } = this.frame;
@@ -330,6 +349,50 @@ export class TitleScreen {
     ctx.setTransform(k * scale, 0, 0, k * scale, k * x, k * y);
     this.skyRenderer.drawSky(ctx, time, NO_WEATHER);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+
+  /**
+   * W34: the returning title's sky continues the kept frame's own edge rows, so no flat colour meets
+   * the frame in a seam. Each strip the frame leaves (keptEdges: in practice the band above the roof)
+   * is the frame's outermost rows stretched across it, a little under the frame too so the pointer's
+   * parallax never opens a gap, softened, and fading into the rows' average colour away from the
+   * frame. Drawn with the sky, once per light reading or resize; nothing per frame.
+   * @param {CanvasRenderingContext2D} ctx @param {number} k the sky canvas's scale @param {number} vw @param {number} vh
+   */
+  drawKeptEdges(ctx, k, vw, vh) {
+    const src = this.keptEl;
+    if (!src || !this.frame || !(src.width > 0) || !(src.height > 0)) return;
+    const place = keptPlacement(this.frame, { x: 0, y: 0 });
+    const edges = keptEdges(place, vw, vh);
+    const W = src.width;
+    const H = src.height;
+    const under = 24; // px under the frame: more than the parallax moves it
+    const rows = Math.max(1, Math.round(H / 336)); // three frame rows at 1008 px
+    ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    ctx.filter = 'blur(6px)';
+    if (edges.top) {
+      const e = edges.top;
+      const top = this.keptTopRow;
+      if (top) ctx.drawImage(top, 0, 0, top.width, 1, k * e.x, -k * 12, k * e.w, k * (e.h + under + 12));
+      else ctx.drawImage(src, 0, 0, W, rows, k * e.x, -k * 12, k * e.w, k * (e.h + under + 12));
+    }
+    if (edges.bottom) {
+      const e = edges.bottom;
+      ctx.drawImage(src, 0, H - rows, W, rows, k * e.x, k * (e.y - under), k * e.w, k * (e.h + under + 12));
+    }
+    ctx.filter = 'none';
+    if (edges.top && this.keptTop && this.keptTopClear) {
+      // away from the frame, the rows' own average: the sky reads as one sky above the roof
+      const e = edges.top;
+      const g = ctx.createLinearGradient(0, 0, 0, k * e.h);
+      g.addColorStop(0, this.keptTop);
+      g.addColorStop(0.35, this.keptTop);
+      g.addColorStop(1, this.keptTopClear);
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, k * vw, k * e.h);
+    }
+    ctx.restore();
   }
 
   /** @param {PointerEvent} event */

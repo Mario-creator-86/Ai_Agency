@@ -1,6 +1,6 @@
 """The day's headline counts the film a legacy run published.
 
-The runbook recounts a stored run from its artefacts (`app.runbook.services._summarised`). The
+The runbook reads a stored run back (`app.runbook.services.stored_summary`). The
 publish stage has returned its films under a nested ``published`` list since Phase B/C; a run
 recorded before that carries the one publication flat, as ``publication_id`` and
 ``publication_status``. The 12.09 run of the Owner's studio is one of those: its publication
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.runbook.services import _summarised, produced_by, run_summary
+from app.runbook.services import produced_by, run_summary, stored_summary
 
 
 def _publish(artefacts: dict[str, Any], status: str = "COMPLETED") -> dict[str, Any]:
@@ -62,15 +62,22 @@ def test_a_day_that_published_nothing_still_says_so() -> None:
 
 
 def test_the_stored_12_09_run_now_reads_true() -> None:
-    """The captured newest run, as `/runbook/runs` recounts it (no stored counts)."""
+    """The captured newest run, as `/runbook/runs` reads it back (no stored counts).
+
+    W34: a run stored before the counts is no longer recounted from today's artefact keys,
+    which it never wrote; it says it was not counted, and keeps the one film its legacy
+    publish artefact names (`tests/test_run_before_counts.py`)."""
     stages = [
         {"stage": "preflight", "status": "COMPLETED", "artefacts": {"status": "READY"}},
         {"stage": "idea_generation", "status": "COMPLETED", "artefacts": {"pool": 6}},
         {"stage": "media", "status": "COMPLETED", "artefacts": {"assets": ["ed53bac1"]}},
         _publish(LEGACY_PUBLISHED),
     ]
-    summary, productive = _summarised(stages)
+    told = stored_summary(stages)
+    summary = told["summary"]
     assert "Filme publicate: 1." in summary
     assert "Niciun film publicat azi." not in summary
     assert "«publish»" not in summary
-    assert productive == 2
+    assert summary.startswith("Rulare dinainte de numărătoare: ")
+    assert told["summary_code"] == "before_counts"
+    assert told["stages_productive"] is None

@@ -40,6 +40,7 @@ from app.research.service import MIN_CLAIMS_AVAILABLE, research_health
 from app.services import studio_environment, utc_now
 from app.wording import (
     MEDIA_KEY_UNUSABLE,
+    SETTINGS_TABS,
     budget_period,
     budget_state,
     count,
@@ -118,10 +119,22 @@ TOKEN_UNITS = ("per_1m_input_tokens", "per_1m_output_tokens")
 #                    be in the sentence — for a tooltip. Always all six keys, each a list.
 
 #: Where a fix is made. The doors are the masthead's rooms (`open-<id>-btn` in index.html,
-#: their `room-label` as the name); the settings tabs are `settings.js`'s sections; the
-#: switch is the dock's AUTONOMIE; ``machine`` is the computer the studio runs on (nothing
-#: on the page installs FFmpeg); ``not_on_page`` is a fix the studio's API accepts and the
-#: page has no control for yet — said so in the sentence, never dressed as a place.
+#: their `room-label` as the name); the settings tabs are `settings.js`'s sections, named as
+#: `app.wording.SETTINGS_TABS` names them; the switch is the dock's AUTONOMIE; ``machine`` is
+#: the computer the studio runs on (nothing on the page installs FFmpeg); ``not_on_page`` is a
+#: fix the studio's API accepts and the page has no control for yet — said so in the sentence,
+#: never dressed as a place.
+#:
+#: A part of a door is not a place of its own: it is the door's id with a ``place_section``
+#: (the element's id in index.html) and the words for it — the tuples below. So the treasury's
+#: price form is ``treasury`` + ``tr-prices``, as its budget is ``treasury`` + ``tr-budget``,
+#: and a page that knows the door already opens it at the section.
+#:
+#: W34 gave two lines their places. The Director's leave to approve episodes
+#: (``serial_channel.director_may_not_approve``) is the switch in ``settings:channels``,
+#: «Setări → Canale»; the token prices (``model_prices.unpriced``) are the form in
+#: `PRICES_PLACE`, «Trezorerie → Prețurile modelelor». Only the serial's missing slot
+#: (``serial_channel.missing``, `POST /publishing/channels/seed`) is still ``not_on_page``.
 PLACES: dict[str, str] = {
     "research": "Cercetare",
     "media": "Producție media",
@@ -130,10 +143,7 @@ PLACES: dict[str, str] = {
     "story": "Jurnal",
     "runbook": "Rularea zilei",
     "treasury": "Trezorerie",
-    "settings:llm": "Setări → Furnizori AI",
-    "settings:agents": "Setări → Angajați",
-    "settings:media": "Setări → Video și sunet",
-    "settings:social": "Setări → Conturi și e-mail",
+    **{f"settings:{tab}": label for tab, label in SETTINGS_TABS.items()},
     "autonomy_switch": "comutatorul AUTONOMIE",
     "machine": "calculatorul studioului",
     "not_on_page": "API-ul studioului",
@@ -149,6 +159,7 @@ BUDGET_PLACE = ("treasury", "tr-budget", "Trezorerie → Buget și cheltuieli")
 SOURCES_PLACE = ("research", "rs-sources", "Cercetare → Surse și afirmații")
 CHARACTERS_PLACE = ("media", "media-characters-section", "Producție media → Character Bible")
 SLOTS_PLACE = ("publishing", "channels-list", "Distribuție → Sloturi de canal")
+PRICES_PLACE = ("treasury", "tr-prices", "Trezorerie → Prețurile modelelor")
 
 #: The routes and settings the sentences used to name, now said in ``technical`` only.
 BUDGET_ROUTE = "PUT /economy/budget"
@@ -299,6 +310,21 @@ def _price_check(session: Session) -> dict[str, Any]:
     }
     kinds = sorted({kind for kind, _ in unpriced})
     models = ", ".join(f"{kind}:{model}" for kind, model in sorted(unpriced))
+    # What the price form reads: each model still unpriced, and which of its two token prices
+    # it lacks, in the order the form lists them. The kind is the table's key, lower case.
+    value = {
+        "models": len(wanted),
+        "unpriced": [
+            {
+                "provider_kind": kind,
+                "resource": model,
+                "missing_units": [
+                    unit for unit in TOKEN_UNITS if price_for(session, kind, model, unit) is None
+                ],
+            }
+            for kind, model in sorted(unpriced)
+        ],
+    }
     if not wanted:
         # Nothing runs, so nothing is unpriced. The `agents` check above is where a studio
         # with no runnable employee is reported; saying it twice would read as two faults.
@@ -308,6 +334,7 @@ def _price_check(session: Session) -> dict[str, Any]:
             DEGRADING,
             "Niciun angajat cu model alocat, deci nu este nimic de prețuit.",
             "",
+            value=value,
             passed="nothing_runs",
         )
     return _check(
@@ -318,11 +345,11 @@ def _price_check(session: Session) -> dict[str, Any]:
         f"{'are' if len(wanted) == 1 else 'au'} preț pe tokenuri.",
         f"Modele fără preț pe tokenuri la: {', '.join(kinds)}. Până când le pui un preț, "
         "fiecare rulare a unui angajat se înregistrează fără cost, iar cărțile văd o fracțiune "
-        "din zi. Studioul nu inventează un preț. Prețul se pune deocamdată doar prin API-ul "
-        "studioului: pagina nu are încă un loc pentru el.",
+        f"din zi. Studioul nu inventează un preț: pune-l tu în {PRICES_PLACE[2]}.",
         detail=models or f"{count(len(wanted), 'model prețuit', 'modele, toate prețuite')}",
+        value=value,
         failed="unpriced",
-        place="not_on_page",
+        place=PRICES_PLACE,
         technical=_technical(
             routes=[PRICES_ROUTE],
             fields=["provider_kind", "resource (un model sau «*» pentru tot felul)", *TOKEN_UNITS],
@@ -430,8 +457,8 @@ def _serial_channel_check(session: Session, bindings: dict[str, dict]) -> dict[s
 
     Both halves are his. A studio with no OFFICE_SERIAL row makes no serial, and a Director
     without the leave leaves every episode DRAFT waiting for his hand — which is his right,
-    and is not autonomy. So the line says which of the two is missing and names the command,
-    and it never fails the day.
+    and is not autonomy. So the line says which of the two is missing and where he fixes it
+    (the slot in Distribuție, the leave in Setări → Canale), and it never fails the day.
     """
     channel = session.scalar(
         select(ChannelRecord).where(ChannelRecord.channel_type == "OFFICE_SERIAL")
@@ -465,10 +492,10 @@ def _serial_channel_check(session: Session, bindings: dict[str, dict]) -> dict[s
     else:
         absent = (
             "Canalul serialului este legat, dar Directoarea nu are dreptul să aprobe episoade: "
-            "fiecare episod rămâne ciornă și te așteaptă pe tine. Dreptul i-l dai deocamdată "
-            "doar prin API-ul studioului: pagina nu are încă un comutator pentru el."
+            "fiecare episod rămâne ciornă și te așteaptă pe tine. Dreptul i-l dai în "
+            f"{PLACES['settings:channels']}."
         )
-        failed, fix = "director_may_not_approve", "not_on_page"
+        failed, fix = "director_may_not_approve", "settings:channels"
         technical = _technical(routes=[policy_route], fields=["director_may_approve_episodes"])
     return _check(
         "serial_channel",
@@ -485,6 +512,9 @@ def _serial_channel_check(session: Session, bindings: dict[str, dict]) -> dict[s
             "exists": True,
             "bound": bound,
             "director_may_approve_episodes": may_approve,
+            # What the switch writes with: the channel, and the policy version it replaces.
+            "channel_id": channel.id,
+            "policy_version": int(channel.policy_version or 1),
         },
         failed=failed,
         place=fix,

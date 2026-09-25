@@ -1849,6 +1849,7 @@ body.is-entering .ledger-panel,
 body.is-entering .office-panel,
 body.is-entering .modules-panel,
 body.is-entering .governance-panel,
+body.is-entering .studio-readout,
 body.is-entering .site-footer {
   animation: panel-arrive var(--dur-arrive) var(--ease) both;
   animation-delay: var(--arrive-first);
@@ -1857,6 +1858,10 @@ body.is-entering .ledger-panel     { animation-delay: calc(var(--arrive-first) +
 body.is-entering .office-panel     { animation-delay: calc(var(--arrive-first) + var(--arrive-step) * 2); }
 body.is-entering .modules-panel    { animation-delay: calc(var(--arrive-first) + var(--arrive-step) * 3); }
 body.is-entering .governance-panel { animation-delay: calc(var(--arrive-first) + var(--arrive-step) * 4); }
+/* W35: «Studioul azi», the drawer's lower half, arrives with the governance panel above it. It
+   replaced .modules-panel, which this list named, and was never named itself: at 400 ms it stood
+   opaque beside a frame still arriving. */
+body.is-entering .studio-readout   { animation-delay: calc(var(--arrive-first) + var(--arrive-step) * 4); }
 body.is-entering .site-footer      { animation-delay: calc(var(--arrive-first) + var(--arrive-step) * 4); }
 /* W22: standing on a kept frame, the camera does not push into a picture of the plates: the frame
    itself is carried onto the place the workspace shows the stream (title_screen.js land, WAAPI,
@@ -3558,6 +3563,7 @@ details[open] > summary::before { transform: rotate(90deg); }
   body.is-entering .office-panel,
   body.is-entering .modules-panel,
   body.is-entering .governance-panel,
+  body.is-entering .studio-readout,
   body.is-entering .drawer-rail,
   body.is-entering .site-footer { animation: none; }
   /* The game frame's drawers take their place at once, and the menu's keys do not travel. */
@@ -4244,7 +4250,8 @@ details[open] > summary::before { transform: rotate(90deg); }
 /* A closed drawer does not play the arrival: it would slide in and out again. */
 :root[data-register="closed"] body.is-entering .ledger-panel,
 :root[data-side="closed"] body.is-entering .governance-panel,
-:root[data-side="closed"] body.is-entering .modules-panel { animation: none; }
+:root[data-side="closed"] body.is-entering .modules-panel,
+:root[data-side="closed"] body.is-entering .studio-readout { animation: none; }
 body.is-entering .drawer-rail {
   animation: panel-arrive var(--dur-arrive) var(--ease) both;
   animation-delay: calc(var(--arrive-first) + var(--arrive-step));
@@ -5237,3 +5244,199 @@ details[open].pf-ok .pf-ok-line .pf-message { white-space: normal; overflow: vis
 .host-search-edit > .host-search-key { font-size: var(--fs-meta); color: var(--ink-2); cursor: pointer; width: max-content; }
 .host-search-edit > .host-search-key:hover { color: var(--ink); }
 .host-search-edit[open] > .host-search { margin-top: var(--s1); max-width: none; }
+
+/* ==========================================================================
+   W34 — THE OWNER'S OWN DECISIONS, THE DRAWER'S FOOT, THE REGISTER'S ROUTINE
+   ==========================================================================
+   «Starea modulelor» (a developer's checklist at full weight) left the side drawer for Setări →
+   Despre studio. The drawer's lower half is now the studio at a glance at every height: the day's
+   run, the treasury and the next run, the values the building's screens show, and a quiet key to
+   «Despre studio» at its foot. */
+@media (min-width: 1051px) and (min-height: 600px) {
+  .workspace-grid { grid-template-rows: minmax(0, max-content) minmax(var(--side-modules-min), 1fr); }
+  .studio-readout {
+    display: flex;
+    flex-direction: column;
+    grid-column: 3;
+    grid-row: 2;
+    align-self: stretch;
+    position: relative;
+    z-index: 3;
+    min-height: 0;
+    margin: 0;
+    padding: var(--s4) var(--s5) var(--s4);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border: 0;
+    border-left: 1px solid var(--drawer-edge);
+    border-top: 1px solid var(--line);
+    border-radius: 0;
+    background: linear-gradient(180deg, var(--sheen), transparent calc(var(--topbar-h) * 3)), var(--drawer-glass);
+    backdrop-filter: blur(var(--drawer-blur));
+    box-shadow: var(--shadow-drawer-r);
+    transition: transform var(--dur-drawer) var(--ease), visibility 0s linear 0s;
+  }
+  :root[data-side="closed"] .studio-readout {
+    transform: translateX(100%);
+    visibility: hidden;
+    transition: transform var(--dur-drawer) var(--ease), visibility 0s linear var(--dur-drawer);
+  }
+  .studio-readout > h2 { margin-bottom: var(--s3); }
+  .readout-list { display: grid; gap: var(--s3); margin: 0; }
+  .readout-row { display: grid; gap: var(--s1); padding-top: var(--s3); border-top: 1px solid var(--line); }
+  .readout-row dt {
+    color: var(--ink-3);
+    font-size: var(--fs-micro);
+    font-weight: var(--w-bold);
+    letter-spacing: var(--track-caps);
+    text-transform: uppercase;
+  }
+  .readout-row dd { display: grid; gap: var(--s1); margin: 0; }
+  .readout-value { color: var(--ink); font-size: var(--fs-body); font-weight: var(--w-semi); font-variant-numeric: tabular-nums; }
+  .readout-note { color: var(--ink-2); font-size: var(--fs-meta); font-variant-numeric: tabular-nums; }
+  .readout-row[data-tone="ok"] .readout-value { color: var(--teal); }
+  .readout-row[data-tone="warn"] .readout-value { color: var(--gold-ink); }
+  .readout-row[data-tone="alert"] .readout-value { color: var(--alert-ink); }
+  /* the key to Setări → Despre studio: the readout's quiet last line, at the drawer's foot */
+  .studio-about-key {
+    align-self: flex-start;
+    margin-top: auto;
+    min-height: var(--hit);
+    padding: 0 var(--s2);
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--ink-2);
+    font-size: var(--fs-meta);
+    letter-spacing: 0;
+  }
+  .studio-about-key:hover { color: var(--ink); border-color: var(--line); background: var(--surface-quiet); }
+}
+/* the tall screen's rule set three rows for the readout under the modules; there are two now */
+@media (min-width: 1051px) and (min-height: 1300px) {
+  .workspace-grid { grid-template-rows: minmax(0, max-content) minmax(var(--side-modules-min), 1fr); }
+  .studio-readout { grid-row: 2; }
+}
+/* (under reduced motion the readout snaps with the drawers: the W15 rule names .studio-readout) */
+/* narrower than the frame, the readout keeps the place the module list had under governance */
+@media (max-width: 1050.98px) {
+  .studio-readout { display: none; }
+}
+
+/* THE REGISTER'S ROUTINE: one quiet row per hour («Rutina studioului ×18»), in the studio's words,
+   under the weight of every act around it. */
+.ledger-item.ledger-routine {
+  border-left-color: transparent;
+  background: none;
+}
+.ledger-item.ledger-routine .ledger-head {
+  color: var(--ink-3);
+  font-size: var(--fs-meta);
+  font-weight: var(--w-body);
+}
+.ledger-item.ledger-routine .ledger-text { color: var(--ink-3); font-size: var(--fs-micro); }
+.ledger-item.ledger-routine time { color: var(--ink-3); }
+
+/* A raw id is a tooltip: the word it hides behind is marked as one. */
+.distribution-account,
+.char-voice-bound,
+.char-voice[title] { text-decoration: underline dotted var(--ink-3); text-underline-offset: 3px; cursor: help; }
+
+/* A long scene prompt: its first sentence, the rest one disclosure away. */
+.studio-dialog .scene-card .scene-prompt-wrap { grid-column: 2; grid-row: 1 / span 2; min-width: 0; }
+.studio-dialog .scene-card .scene-prompt-wrap > .scene-prompt { grid-column: auto; grid-row: auto; }
+.scene-prompt-more { margin-top: var(--s2); max-width: var(--measure-quote); }
+.scene-prompt-more > summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--hit);
+  padding-left: var(--s3);
+  color: var(--ink-2);
+  font-size: var(--fs-meta);
+  cursor: pointer;
+}
+.scene-prompt-more > summary:hover { color: var(--ink); }
+.scene-prompt-more[open] > .scene-prompt { margin-top: var(--s1); color: var(--ink-3); }
+@media (max-width: 1050px) {
+  .studio-dialog .scene-card .scene-prompt-wrap { grid-column: 1; grid-row: auto; }
+}
+.studio-dialog .scene-card .scene-audio.scene-audio-none { color: var(--ink-3); }
+
+/* TREZORERIE → PREȚURILE MODELELOR: one row per model, its state, the two prices, its key. */
+.prices-list { display: grid; gap: var(--s3); margin: var(--s3) 0; }
+.prices-source { margin: 0; }
+.price-row {
+  display: grid;
+  grid-template-columns: minmax(200px, 1.2fr) minmax(150px, 1fr) minmax(150px, 1fr) auto;
+  gap: var(--s2) var(--s4);
+  align-items: end;
+  padding: var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-quiet);
+}
+.price-model { display: grid; gap: var(--s1); align-self: center; min-width: 0; }
+.price-model strong { color: var(--ink); font-size: var(--fs-body); overflow-wrap: anywhere; }
+.price-state { font-size: var(--fs-micro); font-weight: var(--w-bold); letter-spacing: var(--track-caps); text-transform: uppercase; }
+.price-state[data-tone="warn"] { color: var(--gold-ink); }
+.price-state[data-tone="ok"] { color: var(--ok-ink); }
+.price-field { display: grid; gap: var(--s1); min-width: 0; }
+.price-field-label { color: var(--ink-2); font-size: var(--fs-meta); }
+.price-field .dialog-input { font-variant-numeric: tabular-nums; }
+.price-field .dialog-input[aria-invalid="true"] { border-color: var(--alert-ink); }
+.price-save { min-height: var(--hit); }
+.price-error { grid-column: 1 / -1; margin: 0; color: var(--alert-ink); font-size: var(--fs-meta); }
+.prices-currency strong { color: var(--ink); }
+.price-answer { grid-column: 1 / -1; margin: 0; color: var(--ok-ink); font-size: var(--fs-meta); }
+.price-answer.is-error { color: var(--alert-ink); }
+@media (max-width: 900px) {
+  .price-row { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* SETĂRI → CANALE: each channel a card; on the serial's, the Director's right as a switch that
+   asks before it changes anything, what it does and spends said under it, and the answer. */
+.settings-channels { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+.settings-channel.is-serial { border-color: var(--gold-line); }
+.owner-decision { display: grid; gap: var(--s3); margin-top: var(--s3); padding-top: var(--s3); border-top: 1px solid var(--line); }
+.owner-switch {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--s3);
+  width: 100%;
+  min-height: var(--hit);
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunk);
+  color: var(--ink);
+  text-align: left;
+  font-size: var(--fs-body);
+}
+.owner-switch:hover { border-color: var(--line-lit); background: var(--surface-hi); }
+.owner-switch-label { font-weight: var(--w-semi); }
+.owner-switch-state { min-width: 6ch; font-family: var(--font-mono, ui-monospace, monospace); font-size: var(--fs-meta); letter-spacing: .08em; color: var(--alert-ink); }
+.owner-switch.is-on .switch-track { background: var(--ok-bg); border-color: var(--ok-ink); }
+.owner-switch.is-on .switch-knob { left: calc(var(--switch-w) - var(--switch-knob) - var(--switch-inset) - 2px); background: var(--teal); }
+.owner-switch.is-on .owner-switch-state { color: var(--teal); }
+.owner-decision-meaning { color: var(--ink-2); }
+.owner-confirm {
+  display: grid;
+  gap: var(--s3);
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--gold-line);
+  border-radius: var(--radius-sm);
+  background: var(--warn-bg);
+}
+.owner-confirm-question { color: var(--ink); font-weight: var(--w-semi); }
+.owner-confirm-keys { display: flex; flex-wrap: wrap; gap: var(--s2); }
+.owner-confirm-keys > button { width: auto; flex: 0 0 auto; min-height: var(--hit); font-size: var(--fs-body); }
+.owner-answer { color: var(--ok-ink); }
+.owner-answer.settings-error { color: var(--alert-ink); }
+
+/* SETĂRI → DESPRE STUDIO: the module list with the meters it had in the drawer. */
+.settings-about-summary { color: var(--ink); font-size: var(--fs-body); font-weight: var(--w-semi); }
+.settings-modules { max-width: 560px; }
+/* W34: the trends key's refresh icon sits in the line of its words */
+.trends-refresh { display: inline-flex; align-items: center; gap: var(--s1); }
+.trends-refresh .ui-icon { width: 1.05em; height: 1.05em; }
+

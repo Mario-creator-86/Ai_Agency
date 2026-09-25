@@ -1430,3 +1430,15 @@ No provider was called, no run was queued, no credit was spent, and
   (6) raw channel and voice ids to tooltips; the backend prompt builder's repeated subject;
   (7) the remaining «Settings» words in analytics, factual and media messages; the microsoft.com block page counted as readable.
   Owner: restart, prices, the Director's approval right, YouTube statistics grant, budget before PRODUCTION, reference sets, the Director's title, stored English history.
+
+## Controls for the Owner's decisions: the interface premium apart from his items (2026-09-25)
+
+- W35 (release judge) done. The two Owner controls were proven on the real backend on a fresh studio; price rows keep one order; the drawer says «Ultima rulare» for a run of another day; «Studioul azi» arrives with its drawer; run headlines say «etape de lucru». Next:
+  - (1) Distribuție's first open under reduced motion, in steps.
+  - (2) Game-grade treatment for Setări → Canale and Prețurile modelelor.
+  - (3) No double exposure during the title's push on a cold entry.
+  - (4) After the Owner's restart, the FIX_PLACES fallback labels in the «→» form.
+  - (5) Prices for a model the preflight does not name, and a provider-wide «*».
+  - (6) The stream harness replays enough events to reach a letter.
+  - (7) A night frame of the returning title.
+  Owner: restart; the Director's right; the six models' token prices; the daily budget against production; YouTube statistics scope; the reference set.

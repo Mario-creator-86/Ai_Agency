@@ -252,7 +252,8 @@ def test_a_hire_proposal_is_approved_but_left_for_the_owner_to_carry_out(engine,
     with pytest.raises(WorkforceError) as excinfo:
         decide_proposal(engine, hire["id"], True, "De acord.")
 
-    assert "Settings" in str(excinfo.value)
+    assert "Setări → Angajați" in str(excinfo.value)
+    assert "Settings" not in str(excinfo.value)
 
 
 # ---------------------------------------------------------------------------

@@ -42,13 +42,14 @@ from app.publishing.services import (
 )
 from app.security import require_owner
 from app.services import CommandConflict
+from app.wording import settings_place
 from app.youtube.models import YouTubeConnection
 
 PUBLISHER_NOT_CONFIGURED_DETAIL = {
     "error": "PublisherNotConfigured",
     "message": (
-        "No YouTube credentials are configured, so nothing can be published. "
-        "Configure and verify a YouTube connection in Settings."
+        "Nu este configurată nicio conexiune YouTube, deci nu se poate publica nimic. "
+        f"Adaugă și verifică o conexiune YouTube în {settings_place('social')}."
     ),
     "required_settings": [
         "STUDIO_YOUTUBE_CLIENT_ID",
@@ -103,7 +104,9 @@ def get_active_publisher(request: Request) -> PublishingProvider:
         raise HTTPException(status_code=503, detail=PUBLISHER_NOT_CONFIGURED_DETAIL)
     if channel and channel["status"] != "AUTHENTICATED":
         raise HTTPException(
-            409, "Verify and bind the channel identity in Settings before publishing"
+            409,
+            "Leagă canalul de un cont YouTube conectat în Distribuție → Sloturi de canal "
+            "înainte de publicare.",
         )
     return yt
 

@@ -25,6 +25,7 @@ from app.agents.memory import remember
 from app.agents.models import Agent, AgentRun, Role
 from app.models import OwnerPolicy
 from app.services import append_event, utc_now
+from app.wording import settings_place
 from app.workflows.models import TaskQueueItem
 from app.workforce.models import EmploymentRecord, WorkforceProposal
 
@@ -393,8 +394,8 @@ def _apply(session: Session, row: WorkforceProposal, correlation: str, now: str)
     # cannot make for the Owner: which role, and on which model. They are recorded as approved
     # and left for the Owner to carry out in Settings rather than guessed at here.
     raise WorkforceError(
-        "Această propunere se aplică din Settings: alege rolul și modelul, apoi angajează sau "
-        "realocă agentul. Aprobarea a fost înregistrată."
+        f"Această propunere se aplică din {settings_place('agents')}: alege rolul și modelul, "
+        "apoi angajează sau realocă agentul. Aprobarea a fost înregistrată."
     )
 
 

@@ -187,11 +187,11 @@
               <div id="rooms" class="rooms" hidden></div>
             </div>
           </section>
-          <aside class="side-column" role="complementary" aria-label="Guvernanța, aprobările și starea modulelor">
-            <button id="side-rail" class="drawer-rail drawer-rail-side" type="button" aria-controls="governance-panel modules-panel studio-readout" aria-expanded="false" title="Deschide guvernanța, aprobările și starea modulelor" hidden><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6.5L9 12l5.5 5.5"/></svg><span class="drawer-rail-label">Guvernanță</span><span id="side-rail-count" class="drawer-rail-count"></span></button>
+          <aside class="side-column" role="complementary" aria-label="Guvernanța, aprobările și studioul pe scurt">
+            <button id="side-rail" class="drawer-rail drawer-rail-side" type="button" aria-controls="governance-panel studio-readout" aria-expanded="false" title="Deschide guvernanța, aprobările și studioul pe scurt" hidden><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6.5L9 12l5.5 5.5"/></svg><span class="drawer-rail-label">Guvernanță</span><span id="side-rail-count" class="drawer-rail-count"></span></button>
             <!-- Governance: the mode the studio is really in, and what a supervised studio stopped to ask. -->
             <section id="governance-panel" class="panel governance-panel">
-              <div class="section-heading"><div><p class="eyebrow">GUVERNANȚĂ</p><h2>Mod de autonomie</h2></div><span id="autonomy-mode-tag" class="tag">—</span><button id="side-close" class="quiet drawer-close" type="button" aria-controls="governance-panel modules-panel studio-readout" aria-expanded="true" aria-label="Strânge guvernanța" title="Strânge guvernanța, aprobările și starea modulelor la marginea ecranului"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 6.5l5.5 5.5-5.5 5.5"/></svg></button></div>
+              <div class="section-heading"><div><p class="eyebrow">GUVERNANȚĂ</p><h2>Mod de autonomie</h2></div><span id="autonomy-mode-tag" class="tag">—</span><button id="side-close" class="quiet drawer-close" type="button" aria-controls="governance-panel studio-readout" aria-expanded="true" aria-label="Strânge guvernanța" title="Strânge guvernanța, aprobările și studioul pe scurt la marginea ecranului"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 6.5l5.5 5.5-5.5 5.5"/></svg></button></div>
               <p id="autonomy-mode-meaning" class="ledger-now">—</p>
               <div id="autonomy-mode-buttons" class="mode-buttons" role="group" aria-label="Mod de autonomie">
                 <button class="quiet mode-btn" data-mode="MANUAL" type="button" title="Agenții pregătesc și analizează; Proprietarul aprobă trecerile între etape.">Manual</button>
@@ -202,11 +202,12 @@
               <div class="section-heading approvals-heading"><div><p class="eyebrow">APROBĂRI</p><h2>Ce așteaptă decizia ta</h2></div><span id="approvals-count" class="tag">—</span><button id="refresh-approvals-btn" class="quiet cam-square" type="button" title="Recitește cererile de aprobare" aria-label="Recitește cererile de aprobare"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 12a7.4 7.4 0 1 1-2.17-5.23"/><path d="M19.4 5.1v4.6h-4.6"/></svg></button></div>
               <div id="approvals-list" class="approvals-list"></div>
             </section>
-            <section id="modules-panel" class="panel modules-panel"><p class="eyebrow">CAPABILITĂȚI</p><h2>Starea modulelor</h2><ul id="modules" class="modules"></ul></section>
-            <!-- THE STUDIO AT A GLANCE (side_readout.js): the foot of the side drawer on a screen tall
-                 enough to have bare glass there. The day's run, the treasury, the next scheduled run,
-                 each from the record the page already reads, «—» where it holds nothing. -->
-            <section id="studio-readout" class="panel studio-readout" aria-labelledby="studio-readout-title"><p class="eyebrow">PE SCURT</p><h2 id="studio-readout-title">Studioul azi</h2><dl id="studio-readout-list" class="readout-list"></dl></section>
+            <!-- THE STUDIO AT A GLANCE (side_readout.js): the side drawer's lower half. The day's run,
+                 the treasury, the next scheduled run, each from the record the page already reads, «—»
+                 where it holds nothing. W34: at every height; the module list («Starea modulelor», a
+                 developer's checklist) left the main screen for Setări → Despre studio, and its key is
+                 the readout's foot. -->
+            <section id="studio-readout" class="panel studio-readout" aria-labelledby="studio-readout-title"><p class="eyebrow">PE SCURT</p><h2 id="studio-readout-title">Studioul azi</h2><dl id="studio-readout-list" class="readout-list"></dl><button id="studio-about-btn" class="quiet studio-about-key" type="button" title="Starea modulelor, în Setări → Despre studio">Despre studio</button></section>
           </aside>
         </div>
       </section>
@@ -288,7 +289,8 @@
           <div class="dialog-section-bottom" id="rs-trends" data-door-steps>
             <div class="trends-head">
               <h3 class="dialog-section-header-bright">Ce se caută acum</h3>
-              <button id="trends-refresh" class="quiet" type="button">Citește tendințele ↻</button>
+              <!-- W34: the page's own refresh icon, not the «↻» glyph: no font on the page has it, and its first use sent the text shaper to the system fonts for 11 ms of Research's first frame -->
+              <button id="trends-refresh" class="quiet trends-refresh" type="button">Citește tendințele <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 12a7.4 7.4 0 1 1-2.17-5.23"/><path d="M19.4 5.1v4.6h-4.6"/></svg></button>
             </div>
             <p class="helper">Google Trends pentru țara studioului, citit zilnic. O tendință este o deschidere, nu o sursă: cercetătorul o folosește doar unde site-urile autorizate o pot dovedi.</p>
             <ul id="trends-list" class="trends-list" data-door-steps><li class="helper">Se încarcă…</li></ul>
@@ -306,7 +308,7 @@
             </form>
             <div id="topic-propose-status" class="dialog-status-msg" hidden></div>
           </div>
-          <div id="rs-topics">
+          <div id="rs-topics" data-door-steps>
             <div class="topics-header-row">
               <h3 class="dialog-section-header-bright-compact">Subiecte recente și scorul de noutate</h3>
               <button id="refresh-topics-btn" class="quiet btn-refresh">Reîncarcă</button>
@@ -316,14 +318,14 @@
             </div>
           </div>
 
-          <div class="dialog-section-top" id="rs-sources">
+          <div class="dialog-section-top" id="rs-sources" data-door-steps>
             <div class="topics-header-row">
               <h3 class="dialog-section-header-bright-compact">Surse și afirmații</h3>
               <button id="retest-hosts-btn" class="quiet btn-refresh">Testează site-urile</button>
               <button id="refresh-sources-btn" class="quiet btn-refresh">Reîncarcă</button>
             </div>
             <p id="sources-allowlist" class="helper-note">Se verifică site-urile autorizate…</p>
-            <div id="allowed-hosts" class="allowed-hosts"></div>
+            <div id="allowed-hosts" class="allowed-hosts" data-door-steps></div>
             <form id="allowed-host-form" class="dialog-form source-form">
               <input id="allowed-host-input" placeholder="Adaugă un site autorizat (ex: www.nasa.gov)" required class="dialog-input" autocomplete="off" spellcheck="false" />
               <button type="submit" class="secondary dialog-submit-btn">Autorizează și testează ↗</button>
@@ -333,12 +335,12 @@
               <button type="submit" class="primary dialog-submit-btn">Preia sursa ↓</button>
             </form>
             <div id="source-retrieve-status" class="dialog-status-msg" hidden></div>
-            <div id="sources-list" class="topics-container">
+            <div id="sources-list" class="topics-container" data-door-steps>
               <div class="topics-loading">Se încarcă sursele…</div>
             </div>
           </div>
 
-          <div class="dialog-section-top" id="rs-scripts">
+          <div class="dialog-section-top" id="rs-scripts" data-door-steps>
             <div class="topics-header-row">
               <h3 class="dialog-section-header-bright-compact">Scenarii</h3>
               <button id="refresh-scripts-btn" class="quiet btn-refresh">Reîncarcă</button>
@@ -497,6 +499,7 @@
           <nav class="dialog-rail" aria-label="Secțiunile trezoreriei">
             <a href="#tr-positions">Poziții</a>
             <a href="#tr-budget">Buget și cheltuieli</a>
+            <a href="#tr-prices">Prețurile modelelor</a>
             <a href="#tr-funding">Aport de capital</a>
             <a href="#tr-accounts">Conturi cu saldo</a>
             <a href="#tr-entries">Înregistrări recente</a>
@@ -530,6 +533,16 @@
             </form>
             <div id="budget-status" class="dialog-status-msg" hidden></div>
             <button id="close-books-btn" class="quiet btn-refresh">Cere Contabilului să închidă ziua</button>
+          </div>
+
+          <!-- W34: the token prices, the Owner's to type (PUT /economy/prices, owner_controls.js). The
+               preflight's model_prices line opens here. -->
+          <div class="dialog-section-bottom" id="tr-prices">
+            <h3 class="dialog-section-header-bright-compact">Prețurile modelelor</h3>
+            <p class="helper-note" id="prices-meaning"></p>
+            <p class="helper-note prices-currency">Prețurile se scriu în <strong>USD</strong>, moneda în care studioul ține prețurile.</p>
+            <div id="prices-list" class="prices-list"><div class="topics-loading">Se încarcă prețurile…</div></div>
+            <div id="prices-status" class="dialog-status-msg" role="status" hidden></div>
           </div>
 
           <div class="dialog-section-bottom" id="tr-funding">

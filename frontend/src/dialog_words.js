@@ -302,3 +302,36 @@ export function sharedTail(texts) {
   if (heads.some((h) => !h)) return none;
   return { heads, tail };
 }
+
+/**
+ * W34: a long scene prompt is shown by its first sentence; the rest waits behind «Tot promptul»,
+ * word for word. A prompt is the model's text: nothing is reworded, and a short one (or one with no
+ * sentence end followed by another sentence) is shown whole.
+ * @param {unknown} text
+ * @returns {{first: string, rest: string}}
+ */
+export function promptFirstSentence(text) {
+  const t = String(text ?? '').trim();
+  if (t.length <= 160) return { first: t, rest: '' };
+  const m = /[.!?](\s+)(?=["'„A-Z0-9])/.exec(t);
+  if (!m || m.index < 20) return { first: t, rest: '' };
+  const end = m.index + 1;
+  return { first: t.slice(0, end), rest: t.slice(end + m[1].length) };
+}
+
+/**
+ * W34: a Character Bible voice in words: its style and pace; the voice's id is the tooltip.
+ * @param {{voice_id?: string, style?: string, speed?: number|string}|null|undefined} voice
+ * @returns {{text: string, title: string}}
+ */
+export function voiceWords(voice) {
+  const v = voice || {};
+  const speed = Number(v.speed);
+  const pace = v.speed !== undefined && v.speed !== null && v.speed !== '' && Number.isFinite(speed)
+    ? `×${speed.toLocaleString('ro-RO', { maximumFractionDigits: 2 })}`
+    : '';
+  const words = [v.style ? String(v.style) : '', pace].filter(Boolean).join(' · ');
+  const title = v.voice_id ? `Identificatorul vocii: ${v.voice_id}` : '';
+  if (!words && !title) return { text: '', title: '' };
+  return { text: words || '—', title };
+}

@@ -33,6 +33,7 @@ from app.factual.sanitizer import wrap_in_inert_boundary
 from app.factual.schemas import ExtractClaimItem
 from app.factual.services import extract_claims, generate_script_draft, verify_claim
 from app.providers.registry import ProviderRegistry
+from app.wording import settings_place
 from app.workflows.services import append_event_with_outbox
 
 MAX_CLAIMS = 12
@@ -92,13 +93,18 @@ def _resolve_agent(
         if agent is None or agent.lifecycle != "ACTIVE":
             raise ValueError("Agentul dat nu există sau nu este activ")
         if not agent.provider_id or not agent.model_id:
-            raise ValueError("Agentul dat nu are un model alocat; alocă-i unul în Settings")
+            raise ValueError(
+                f"Agentul dat nu are un model alocat; alocă-i unul în {settings_place('agents')}"
+            )
         return agent
     agents = session.scalars(stmt.order_by(Role.name.desc())).all()
     preferred = [a for a in agents if a.role_id in _role_ids(session, preferred_role)]
     chosen = (preferred or list(agents))[0] if agents else None
     if chosen is None:
-        raise ValueError("Niciun agent activ cu model alocat; adaugă și alocă un model în Settings")
+        raise ValueError(
+            "Niciun agent activ cu model alocat; alocă un model unui angajat în "
+            f"{settings_place('agents')}"
+        )
     return chosen
 
 

@@ -46,11 +46,12 @@ from app.analytics.services import (
 from app.providers.analytics_base import AnalyticsProvider
 from app.providers.youtube_analytics import YouTubeAnalyticsProvider
 from app.security import require_owner
+from app.wording import settings_place
 
 ANALYTICS_NOT_CONFIGURED_DETAIL = (
     "Analiza performanței nu este disponibilă: nu există nicio conexiune YouTube verificată. "
-    "Adaugă și verifică o conexiune YouTube în Settings. Studioul nu estimează și nu simulează "
-    "cifre de audiență."
+    f"Adaugă și verifică o conexiune YouTube în {settings_place('social')}. Studioul nu "
+    "estimează și nu simulează cifre de audiență."
 )
 
 

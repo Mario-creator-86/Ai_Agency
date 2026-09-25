@@ -29,6 +29,7 @@ from app.providers.media_http import (
     request,
     retrying,
 )
+from app.wording import settings_place
 
 HOST = "api.elevenlabs.io"
 
@@ -169,10 +170,13 @@ class ElevenLabsTTSAdapter(TTSProvider):
         voice = voice_id or self.voice_id
         if not voice:
             raise MediaProviderNotConfigured(
-                "No ElevenLabs voice is selected; set a voice id in Settings"
+                f"Nicio voce ElevenLabs aleasă; alege una în {settings_place('media')}"
             )
         if not self.model:
-            raise MediaProviderNotConfigured("Select an ElevenLabs production model in Settings")
+            raise MediaProviderNotConfigured(
+                "Niciun model ElevenLabs de producție ales; alege unul în "
+                f"{settings_place('media')}"
+            )
 
         payload = json.dumps(
             {

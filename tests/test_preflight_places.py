@@ -28,6 +28,7 @@ from uuid import uuid4
 import pytest
 from app.agents.services import seed_initial_workforce
 from app.economy.budget import BudgetCommand, set_budget
+from app.economy.prices import PriceCommand, set_price
 from app.integrations.vault import CredentialVault
 from app.media.models import CharacterBible
 from app.media.services import seed_default_character_bibles
@@ -37,9 +38,11 @@ from app.publishing.services import seed_default_channels
 from app.runbook.preflight import (
     IMPACTS,
     PLACES,
+    PRICES_PLACE,
     TECHNICAL_KEYS,
     run_preflight,
 )
+from app.wording import SETTINGS_TABS
 from app.youtube.models import YouTubeConnection
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -326,9 +329,9 @@ def test_a_locked_character_is_fixed_at_its_card_in_the_character_bible(
     assert refs["technical"]["routes"] == [f"POST /media/characters/{character.id}/reference-set"]
 
 
-def test_the_directors_leave_is_said_honestly_as_not_yet_on_the_page(
-    engine, settings, vault, studio
-):
+def test_the_directors_leave_is_given_in_settings_channels(engine, settings, vault, studio):
+    """W34: the page has a switch for the Director's leave in Setări → Canale, so the line
+    names it there; until W33 it said «pagina nu are încă un comutator» and had no place."""
     seed_default_channels(engine)
     missing = line(run_preflight(engine, settings, vault), "serial_channel")
     assert missing["code"] == "serial_channel.unbound" and missing["place"] == "publishing"
@@ -339,10 +342,12 @@ def test_the_directors_leave_is_said_honestly_as_not_yet_on_the_page(
     waiting = line(run_preflight(engine, settings, vault), "serial_channel")
     assert waiting["code"] == "serial_channel.director_may_not_approve"
     assert waiting["impact"] == "informs"
-    # No switch for it exists on the page; the line says so rather than naming a place that
-    # has nothing to press.
-    assert waiting["place"] == "not_on_page"
-    assert "pagina nu are încă" in waiting["message"]
+    assert waiting["place"] == "settings:channels"
+    assert waiting["place_label"] == "Setări → Canale"
+    assert waiting["place_section"] is None
+    assert "Setări → Canale" in waiting["message"]
+    assert "pagina nu are" not in waiting["message"]
+    assert "API" not in waiting["message"]
     with Session(engine) as session:
         serial_id = session.scalar(
             select(ChannelRecord.id).where(ChannelRecord.channel_type == "OFFICE_SERIAL")
@@ -351,6 +356,10 @@ def test_the_directors_leave_is_said_honestly_as_not_yet_on_the_page(
         f"POST /publishing/channels/{serial_id}/publish-policy"
     ]
     assert waiting["technical"]["fields"] == ["director_may_approve_episodes"]
+    # The switch writes this channel's policy: the page reads which channel and at which
+    # version from the line itself, never by parsing a route.
+    assert waiting["value"]["channel_id"] == serial_id
+    assert waiting["value"]["policy_version"] == 1
 
 
 def test_a_studio_with_no_serial_slot_is_told_where_slots_come_from(
@@ -383,14 +392,80 @@ def test_a_refused_token_keeps_googles_answer_and_the_scopes_as_data(
     assert "yt-analytics.readonly" in statistics["technical"]["scopes"]
 
 
-def test_the_price_line_says_there_is_no_place_for_prices_on_the_page_yet(
+def test_the_price_line_sends_the_owner_to_the_treasurys_price_form(
     engine, settings, vault, studio
 ):
+    """W34: the prices are typed in Trezorerie → Prețurile modelelor (section ``tr-prices``);
+    until W33 the line said the page had no place for them. The models still unpriced, and
+    which of their two token prices each lacks, are data the form reads."""
     prices = line(run_preflight(engine, settings, vault), "model_prices")
     assert prices["code"] == "model_prices.unpriced"
-    assert prices["place"] == "not_on_page"
+    assert prices["place"] == "treasury"
+    assert prices["place_section"] == "tr-prices"
+    assert prices["place_label"] == "Trezorerie → Prețurile modelelor"
+    assert "Trezorerie → Prețurile modelelor" in prices["message"]
+    assert "pagina nu are" not in prices["message"] and "API" not in prices["message"]
     assert "tokenuri" in prices["message"]
     assert prices["technical"]["routes"] == ["PUT /economy/prices"]
+    unpriced = prices["value"]["unpriced"]
+    assert unpriced, prices["value"]
+    for model in unpriced:
+        assert set(model) == {"provider_kind", "resource", "missing_units"}
+        assert model["provider_kind"] == model["provider_kind"].lower()
+        assert model["missing_units"] == ["per_1m_input_tokens", "per_1m_output_tokens"]
+    assert prices["value"]["models"] >= len(unpriced)
+    assert unpriced == sorted(unpriced, key=lambda m: (m["provider_kind"], m["resource"]))
+
+
+def test_a_model_priced_on_one_side_is_listed_with_the_side_it_lacks(
+    engine, settings, vault, studio
+):
+    first = line(run_preflight(engine, settings, vault), "model_prices")["value"]["unpriced"][0]
+    set_price(
+        engine,
+        PriceCommand(
+            command_id=uuid4(),
+            provider_kind=first["provider_kind"],
+            resource=first["resource"],
+            unit="per_1m_input_tokens",
+            usd="0.15",
+        ),
+    )
+    after = line(run_preflight(engine, settings, vault), "model_prices")["value"]["unpriced"]
+    same = next(
+        m
+        for m in after
+        if (m["provider_kind"], m["resource"]) == (first["provider_kind"], first["resource"])
+    )
+    assert same["missing_units"] == ["per_1m_output_tokens"]
+
+
+def test_every_model_priced_leaves_the_line_passing_with_no_place(engine, settings, vault, studio):
+    for model in line(run_preflight(engine, settings, vault), "model_prices")["value"]["unpriced"]:
+        for unit in model["missing_units"]:
+            set_price(
+                engine,
+                PriceCommand(
+                    command_id=uuid4(),
+                    provider_kind=model["provider_kind"],
+                    resource=model["resource"],
+                    unit=unit,
+                    usd="0.1",
+                ),
+            )
+    prices = line(run_preflight(engine, settings, vault), "model_prices")
+    assert prices["ok"] is True and prices["code"] == "model_prices.ok"
+    assert prices["place"] is None and prices["place_section"] is None
+    assert prices["value"]["unpriced"] == []
+
+
+def test_the_two_new_places_are_in_the_vocabulary():
+    assert PLACES["settings:channels"] == "Setări → Canale"
+    assert PRICES_PLACE == ("treasury", "tr-prices", "Trezorerie → Prețurile modelelor")
+    # The Settings tabs are said the way `app.wording` says them for every other sentence.
+    for place, label in PLACES.items():
+        if place.startswith("settings:"):
+            assert label == SETTINGS_TABS[place.split(":", 1)[1]]
 
 
 def test_the_machine_lines_and_the_settings_lines(engine, settings, vault, monkeypatch):

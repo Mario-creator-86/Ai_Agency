@@ -54,7 +54,10 @@ class PriceCommand(BaseModel):
 
     command_id: UUID
     provider_kind: str = Field(min_length=1, max_length=40, pattern=r"^[a-z][a-z0-9_-]*$")
-    resource: str = Field(min_length=1, max_length=200)
+    #: A model id, a family ending in «*», or «*». Something besides blanks: a resource of
+    #: spaces was a 409 conflict with an English sentence until W34, and is a field the price
+    #: form marks, like every other malformed field (422, ``loc`` = ["body", "resource"]).
+    resource: str = Field(min_length=1, max_length=200, pattern=r"\S")
     unit: str = Field(pattern="^(" + "|".join(PRICE_UNITS) + ")$")
     #: The price in USD for one unit, as a decimal string; "0" records that a unit is free
     #: (a local model), which is a fact, unlike a missing row.
@@ -99,7 +102,7 @@ def set_price(
     correlation = correlation_id or str(uuid4())
     resource = command.resource.strip()
     if not resource:
-        raise EconomyError("Name the resource the price is for.")
+        raise EconomyError("Numește modelul (sau familia de modele) pentru care este prețul.")
     usd_micros = to_micros(command.usd)
     fingerprint = command_hash(
         {

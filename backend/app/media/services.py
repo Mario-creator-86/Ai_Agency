@@ -34,7 +34,7 @@ from app.media.schemas import (
 from app.models import OwnerPolicy
 from app.providers.media_http import MediaProviderError
 from app.services import append_event, utc_now
-from app.wording import AUTONOMY_STOPPED
+from app.wording import AUTONOMY_STOPPED, settings_place
 
 logger = logging.getLogger("studio.media")
 
@@ -1212,7 +1212,7 @@ def generate_character_reference_set(
     if adapter is None:
         raise ReferenceSetError(
             "Niciun furnizor de imagini verificat. Alege și verifică o conexiune în "
-            "Settings → Video și sunet înainte de a produce referințele.",
+            f"{settings_place('media')} înainte de a produce referințele.",
             reason="NO_IMAGE_PROVIDER",
         )
     integration_id = getattr(adapter, "integration_id", None)

@@ -161,7 +161,8 @@ test('a routine job that starts is not called production', () => {
   // three times while nothing was being made - he read it as films starting on their own.
   const watchdog = describeEvent({ event_type: 'workflow.created', payload: { job_name: 'watchdog', workflow_type: 'WATCHDOG' } });
   assert.equal(watchdog.label, 'sarcină de rutină pornită');
-  assert.equal(watchdog.text, 'watchdog');
+  // W34 (updated on purpose): the backend's own word for it
+  assert.equal(watchdog.text, 'supraveghetorul');
   assert.equal(watchdog.kind, 'system');
   const review = describeEvent({ event_type: 'workflow.created', payload: { job_name: 'model_review_daily', workflow_type: 'MODEL_REVIEW' } });
   assert.equal(review.label, 'sarcină de rutină pornită');

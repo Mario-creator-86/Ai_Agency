@@ -1,5 +1,14 @@
 # Changelog
 
+## Controls for the Owner's decisions — the interface premium apart from his items — 2026-09-25
+
+- **The Director's leave as a switch** (`frontend/src/owner_controls.js`, Setări → Canale): what it does and spends, a confirmation, the versioned publish-policy command only on «Da», the versioned answer shown; OFF until the Owner turns it on.
+- **Model prices in the Treasury**: USD per million input/output tokens per model, validated, versioned price commands, a stable row order.
+- **The preflight's keys lead there**, and the backend names those places (`backend/app/runbook/preflight.py`).
+- **The main screen**: «Starea modulelor» moved to Setări → Despre studio; «Studioul azi» says «Ultima rulare» for an older run; the register folds routine, never an act; no seam on the returning title.
+- **Backend words**: the remaining «Settings» sentences name the page's place; runs stored before counts say so; the runs list counts work stages consistently.
+- Tests: frontend 602/602, tsc clean; backend 160 passed across the touched files; ruff and mypy clean.
+
 ## The preflight as a checklist, and real faces over the stream — 2026-09-25
 
 - **A game's checklist** (`frontend/src/readiness.js`): «De rezolvat · De știut · În regulă», one row per failing check with its state in words, colour and shape, and a key that opens the place that fixes it.

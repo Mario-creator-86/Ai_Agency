@@ -37,8 +37,9 @@ import {
   accountTypeWord, budgetStateWord, channelTypeWord, confidenceWord, consistencyWord, constraintWord, decisionStateWord,
   accountLine, decisionWord, frameSize, isoDay, providerName, letterStateWord, lifecycleWord, lifecycleActs, matterWords, moneyTagWord, ownerName, pipelineStageWord,
   preflightWord, publicationStatus, qcWord, runStatusWord, seconds, shotWords, storyboardStatus, storyboardTone, topicStatus, workWord,
-  deskPlace, sharedTail, hostFailureWords,
+  deskPlace, sharedTail, hostFailureWords, promptFirstSentence, voiceWords,
 } from './dialog_words.js';
+import { PRICES_MEANING, PRICE_BOTH, channelFacts, priceAnswer, priceCommands, priceInput, tokenPriceRows, usdWords } from './owner_controls.js';
 import { LiveWindows, eventMatchesAgent } from './live_window.js';
 import { MailThread } from './mail_thread.js';
 import { LiveStream } from './hq_stream.js';
@@ -1074,10 +1075,16 @@ async function api(path, options = {}) {
 
 // A model assignment or a provider check changes what the office should be showing, so the
 // layout is reloaded whenever Settings changes something.
-const settingsUI = initSettings(api, { onChange: async () => {
-  await loadOfficeLayout();
-  if(inspector.open && currentSelectedAgent) await showInspector(currentSelectedAgent);
-} });
+/** W34: the module list the server reports, shown in Setări → Despre studio (not on the main screen). */
+let latestModules = /** @type {Record<string, string>|null} */ (null);
+const settingsUI = initSettings(api, {
+  onChange: async () => {
+    await loadOfficeLayout();
+    if (inspector.open && currentSelectedAgent) await showInspector(currentSelectedAgent);
+  },
+  modules: () => latestModules,
+});
+document.getElementById('studio-about-btn')?.addEventListener('click', () => { void settingsUI.open('about'); });
 
 /**
  * The Unreal headquarters, streamed over the page's own renderer while it runs. The viewport's
@@ -1323,7 +1330,7 @@ function warmWorkspacePaint() {
   const item = (/** @type {string} */ kind, /** @type {string} */ extra) => `<li class="ledger-item ledger-${kind}"><time>00:00:00</time><div><div class="ledger-head"><strong>Aaaa</strong> <span class="ledger-arrow">→</span> <strong>Aaaa</strong> · aaaa${extra}</div><div class="ledger-text">aaaa aaaa</div><div class="ledger-open">Aaaa ↗</div></div></li>`;
   fill('ledger-filters', '<button type="button" class="ledger-chip is-active" tabindex="-1">Aaaa</button><button type="button" class="ledger-chip" tabindex="-1">Aaaa</button>');
   fill('ledger-list', `<li class="ledger-day">aaaa</li>${item('system', '<span class="ledger-repeat">×2</span>')}${item('owner', '')}${item('talk', '')}<li class="ledger-item ledger-system is-repeat"><time>00:00:00</time><div><div class="ledger-head">aaaa</div><span class="ledger-span">00:00:00 – 00:00:00</span></div></li>`);
-  fill('modules', '<li data-status="IMPLEMENTED">Aaaa<span class="module-state">Aaaa</span></li><li data-status="PARTIAL">Aaaa<span class="module-state">Aaaa</span></li><li data-status="NOT_IMPLEMENTED">Aaaa<span class="module-state">Aaaa</span></li>');
+  fill('studio-readout-list', '<div class="readout-row" data-tone="ok"><dt>Aaaa</dt><dd><span class="readout-value">Aaaa</span><span class="readout-note">aaaa</span></dd></div><div class="readout-row" data-tone="warn"><dt>Aaaa</dt><dd><span class="readout-value">Aaaa</span></dd></div>');
   const bar = document.querySelector('#day-track .day-track-bar');
   if (bar && !bar.children.length) {
     const ns = 'http://www.w3.org/2000/svg';
@@ -2876,15 +2883,25 @@ function charRow(label, value) {
  * has not been given is left out rather than filled with a plausible default, because the
  * bible is what the office renderer and the story engine read as canon.
  */
+/**
+ * W34: a scene's picture prompt by its first sentence; the rest behind «Tot promptul», word for word
+ * (dialog_words.js promptFirstSentence). A short prompt is shown whole.
+ * @param {string} text
+ */
+function scenePrompt(text) {
+  const { first, rest } = promptFirstSentence(text);
+  if (!rest) return `<p class="scene-prompt" lang="en">${escapeHtml(first)}</p>`;
+  return `<div class="scene-prompt-wrap"><p class="scene-prompt" lang="en">${escapeHtml(first)}</p><details class="scene-prompt-more"><summary>Tot promptul</summary><p class="scene-prompt" lang="en">${escapeHtml(rest)}</p></details></div>`;
+}
+
 function characterCard(c) {
   const voice = c.voice_profile_json || {};
   const personality = c.personality_json || {};
   const speech = c.speech_style_json || {};
   const expressions = c.expressions_json || {};
   const behavior = c.behavior_json || {};
-  const voiceLine = [voice.voice_id, voice.style, voice.speed ? `x${voice.speed}` : '']
-    .filter(Boolean)
-    .join(' · ');
+  // W34: the voice's style and pace; its id is the tooltip (glossary W34)
+  const voiceLine = voiceWords(voice);
   const greeting = expressions.greeting || expressions.agreement;
   return `
     <div class="character-card">
@@ -2898,7 +2915,7 @@ function characterCard(c) {
       ${greeting ? `<div class="char-row"><span class="char-label">Expresie</span><em>„${escapeHtml(greeting)}”</em></div>` : ''}
       ${charRow('Comportament', behavior.work_rituals)}
       ${charRow('Nu devia', c.forbidden_deviations)}
-      ${voiceLine ? `<div class="char-voice">Voce: ${escapeHtml(voiceLine)}</div>` : ''}
+      ${voiceLine.text ? `<div class="char-voice"${voiceLine.title ? ` title="${escapeHtml(voiceLine.title)}"` : ''}>Voce: ${escapeHtml(voiceLine.text)}</div>` : ''}
       ${identityLine(c)}
       ${referenceBlock(c)}
     </div>
@@ -2993,7 +3010,8 @@ function identityLine(c) {
   const locks = c.identity_locks_json || {};
   const lockedFields = Object.keys(locks).filter((k) => locks[k]);
   const parts = [];
-  if (binding.voice_id) parts.push(`Voce alocată: ${escapeHtml(binding.voice_id)}${binding.model_id ? ` · model ${escapeHtml(binding.model_id)}` : ''}`);
+  // W34: «Voce alocată», the voice's id its tooltip
+  if (binding.voice_id) parts.push(`<span class="char-voice-bound" title="${escapeHtml(`Identificatorul vocii: ${binding.voice_id}`)}">Voce alocată</span>${binding.model_id ? ` · model ${escapeHtml(binding.model_id)}` : ''}`);
   if (lockedFields.length) parts.push(`Blocate: ${escapeHtml(lockedFields.join(', '))}`);
   if (c.consistency_status) parts.push(`Consistență: ${escapeHtml(consistencyWord(c.consistency_status))}`);
   if ((c.approved_fallbacks_json || []).length) parts.push(`${c.approved_fallbacks_json.length} modele aprobate`);
@@ -3318,8 +3336,8 @@ async function loadMediaStoryboards() {
             <span class="scene-duration">${escapeHtml(seconds(s.duration_seconds))}</span>
           </div>
           <div class="scene-shot" title="${escapeHtml(`${s.shot_type} · ${s.visual_type}`)}">${escapeHtml(shotWords(s.shot_type, s.visual_type))}</div>
-          <p class="scene-prompt" lang="en">${escapeHtml(shared.heads[i])}</p>
-          <p class="scene-audio"><q lang="en">${escapeHtml(s.voiceover_segment)}</q></p>
+          ${scenePrompt(shared.heads[i])}
+          ${String(s.voiceover_segment || '').trim() ? `<p class="scene-audio"><q lang="en">${escapeHtml(s.voiceover_segment)}</q></p>` : '<p class="scene-audio scene-audio-none" title="Scena nu are narațiune">—</p>'}
         </div>
       `,
           )
@@ -3679,7 +3697,7 @@ async function loadPublishingHub() {
         <div class="channel-item">
           <div class="channel-info">
             <h4>${escapeHtml(c.channel_name)}</h4>
-            <div class="channel-meta">Tip: <strong title="${escapeHtml(c.channel_type)}">${escapeHtml(channelTypeWord(c.channel_type))}</strong> · ID extern: <code>${escapeHtml(c.remote_channel_id || 'nesetat')}</code></div>
+            <div class="channel-meta">Tip: <strong title="${escapeHtml(c.channel_type)}">${escapeHtml(channelTypeWord(c.channel_type))}</strong> · Canal YouTube: <span class="distribution-account" title="${escapeHtml(channelFacts(c).accountTitle)}">${escapeHtml(c.remote_channel_id ? (c.youtube_channel_title || 'nelegat') : 'nesetat')}</span></div>
             <div class="channel-meta">${escapeHtml(CHANNEL_STATUS_HINT[c.status] || 'Stare necunoscută.')}</div>
             <div class="channel-meta">Politica de producție: <span class="policy-tag ${c.production_policy === 'CONSISTENCY_LOCKED' ? 'policy-locked' : 'policy-flexible'}">${escapeHtml(PRODUCTION_POLICY_LABEL[c.production_policy] || 'nesetată')}</span>${c.allow_production_override === false ? ' · fără excepții pe episod' : ''}</div>
             ${films(c.id)}
@@ -3743,7 +3761,7 @@ async function loadPublishingHub() {
             /^https:\/\/(www\.)?youtube\.com\//.test(p.remote_url);
           const remoteLink =
             !isSimulated && isRealYoutubeUrl
-              ? `<a href="${escapeHtml(p.remote_url)}" target="_blank" rel="noopener" class="pub-remote-link">Vezi pe YouTube</a>`
+              ? `<a href="${escapeHtml(p.remote_url)}" target="_blank" rel="noopener" class="pub-remote-link"${p.remote_video_id ? ` title="${escapeHtml(`ID extern: ${p.remote_video_id}`)}"` : ''}>Vezi pe YouTube</a>`
               : isSimulated
                 ? '<span class="pub-sim-note">Simulare locală — niciun video pe YouTube</span>'
                 : '';
@@ -3759,7 +3777,6 @@ async function loadPublishingHub() {
               <div class="pub-item-meta">
                 <span>Stare: <strong class="pub-status-badge ${isSimulated ? 'pub-status-simulated' : badgeClass}">${escapeHtml(isSimulated ? 'SIMULAT (nepublicat)' : publicationStatus(p.status))}</strong></span>
                 ${privacyBadge}
-                <span>ID extern: <code>${escapeHtml(p.remote_video_id || '—')}</code></span>
                 <span>Data: ${new Date(p.created_at).toLocaleString('ro-RO')}</span>
               </div>
             </div>
@@ -3853,39 +3870,9 @@ function render(data) {
   element('ledger-count').textContent = entryCountLabel(ledger.events.size);
   renderDayTrack();
 
-  const labels = {
-    agents: 'Angajați',
-    providers: 'Furnizori AI',
-    workflows: 'Automatizare',
-    research: 'Cercetare factuală',
-    media: 'Producție media',
-    publishing: 'Publicare',
-    story: 'Office Serial',
-    treasury: 'Trezorerie VR$',
-    procurement: 'VendorShop',
-    financing: 'Finanțare',
-    settings: 'Setări',
-    analytics: 'Analitice',
-  };
-  // The three readings this panel has ever shown, in the Owner's language. `NOT_IMPLEMENTED`
-  // was already said in Romanian and the other two were not, so one column read in two
-  // languages. A reading this page has never heard of is still shown, exactly as it came.
-  const moduleState = { IMPLEMENTED: 'Implementat', PARTIAL: 'Parțial', NOT_IMPLEMENTED: 'Neimplementat' };
-  const modules = element('modules');
-  modules.replaceChildren();
-  for (const [name, status] of Object.entries(data.modules)) {
-    const item = document.createElement('li');
-    item.textContent = labels[name] || name;
-    // The status the stylesheet reads stays exactly as it was; the data attribute only lets
-    // the stylesheet draw a three-step meter beside it, so a column of words reads
-    // as a reading of the studio rather than as a list.
-    item.dataset.status = String(status);
-    const badge = document.createElement('span');
-    badge.className = 'module-state';
-    badge.textContent = moduleState[String(status)] || String(status);
-    item.append(badge);
-    modules.append(item);
-  }
+  // W34: the module list (a developer's checklist, judged NO at full weight on the main screen) is
+  // kept for Setări → Despre studio, with the words and meters it had (settings.js renderAbout)
+  latestModules = data.modules && typeof data.modules === 'object' ? data.modules : null;
 }
 
 /**
@@ -4107,7 +4094,7 @@ element('logout').addEventListener('click', () => {
   element('autonomy-mode-tag').textContent = '—';
   element('autonomy-mode-meaning').textContent = '—';
   governanceNote('');
-  element('modules').replaceChildren();
+  latestModules = null;
   element('studio-name').textContent = 'AMN-AI';
   element('connection').textContent = 'Neconectat';
   element('logout').hidden = true;
@@ -4766,6 +4753,103 @@ async function loadBudget() {
   }
 }
 
+/**
+ * W34, Trezorerie → Prețurile modelelor: a price per million tokens, read and written, for each
+ * model the preflight found without one and each the books price per token (owner_controls.js).
+ * The Owner types it; the page never proposes a figure.
+ */
+let priceRows = /** @type {import('./owner_controls.js').PriceRow[]} */ ([]);
+/** The last answer, said in the row it answers (the list is drawn again after a save). */
+let priceSaid = /** @type {{key: string, text: string, error: boolean}|null} */ (null);
+async function loadPrices() {
+  const list = element('prices-list');
+  element('prices-meaning').textContent = PRICES_MEANING;
+  const [preflight, prices] = await Promise.allSettled([api('/runbook/preflight'), api('/economy/prices')]);
+  if (prices.status === 'rejected') {
+    list.innerHTML = `<div class="text-error">${escapeHtml(prices.reason instanceof Error ? prices.reason.message : 'Prețurile nu au putut fi citite.')}</div>`;
+    return;
+  }
+  const read = preflight.status === 'fulfilled' ? preflight.value : null;
+  priceRows = tokenPriceRows(read, prices.value && prices.value.prices);
+  const line = read && Array.isArray(read.checks) ? read.checks.find((/** @type {any} */ c) => c && c.name === 'model_prices') : null;
+  const source = !read
+    ? '<p class="helper-note prices-source">—<br>Verificarea preliminară nu a putut fi citită.</p>'
+    : line && line.ok
+      ? '<p class="helper-note prices-source">Toate modelele pe care rulează angajații au preț pe tokenuri.</p>'
+      : '<p class="helper-note prices-source">Modelele fără preț sunt cele pe care verificarea preliminară a zilei le-a găsit fără preț.</p>';
+  const field = (/** @type {number} */ i, /** @type {'input'|'output'} */ side, /** @type {any} */ now) => `
+      <label class="price-field"><span class="price-field-label">${side === 'input' ? 'Intrare' : 'Ieșire'} · USD / 1M tokenuri</span>
+        <input class="dialog-input" name="${side}" inputmode="decimal" autocomplete="off" spellcheck="false" maxlength="20" value="${now ? escapeHtml(usdWords(now.usd_micros)) : ''}" aria-describedby="price-error-${i}" /></label>`;
+  list.innerHTML = source + (priceRows.length
+    ? priceRows.map((row, i) => {
+      const version = Math.max(row.input ? row.input.version : 0, row.output ? row.output.version : 0);
+      return `
+    <form class="price-row" data-row="${i}" novalidate>
+      <div class="price-model"><strong lang="en">${escapeHtml(row.kind)} · ${escapeHtml(row.model)}</strong>
+        <span class="price-state" data-tone="${row.priced ? 'ok' : 'warn'}">${row.priced ? `preț pus · versiunea ${version}` : 'fără preț'}</span></div>
+      ${field(i, 'input', row.input)}
+      ${field(i, 'output', row.output)}
+      <button type="submit" class="secondary price-save">Salvează prețul</button>
+      <p class="price-error" id="price-error-${i}" role="alert" hidden></p>
+      ${priceSaid && priceSaid.key === `${row.kind}\u0000${row.model}` ? `<p class="price-answer${priceSaid.error ? ' is-error' : ''}" role="status">${escapeHtml(priceSaid.text)}</p>` : ''}
+    </form>`;
+    }).join('')
+    : '');
+}
+element('prices-list').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = /** @type {HTMLFormElement} */ (/** @type {HTMLElement} */ (event.target).closest('form.price-row'));
+  if (!form) return;
+  const row = priceRows[Number(form.dataset.row)];
+  if (!row) return;
+  const status = element('prices-status');
+  const error = /** @type {HTMLElement} */ (form.querySelector('.price-error'));
+  const inputs = /** @type {HTMLInputElement[]} */ (Array.from(form.querySelectorAll('input')));
+  const [inEl, outEl] = inputs;
+  for (const el of inputs) el.removeAttribute('aria-invalid');
+  error.hidden = true;
+  const refuse = (/** @type {string} */ words, /** @type {HTMLInputElement[]} */ bad) => {
+    error.textContent = words;
+    error.hidden = false;
+    for (const el of bad) el.setAttribute('aria-invalid', 'true');
+    bad[0]?.focus();
+  };
+  const empty = inputs.filter((el) => !el.value.trim());
+  if (empty.length) { refuse(PRICE_BOTH, empty); return; }
+  const a = priceInput(inEl.value);
+  const b = priceInput(outEl.value);
+  if (!a.ok || !b.ok) {
+    refuse(/** @type {any} */ (!a.ok ? a : b).error, [!a.ok ? inEl : null, !b.ok ? outEl : null].filter(/** @returns {el is HTMLInputElement} */ (el) => Boolean(el)));
+    return;
+  }
+  const save = /** @type {HTMLButtonElement} */ (form.querySelector('.price-save'));
+  save.disabled = true;
+  status.hidden = true;
+  const key = `${row.kind}\u0000${row.model}`;
+  save.textContent = 'Se salvează…';
+  const [cin, cout] = priceCommands(row, a.usd, b.usd, [crypto.randomUUID(), crypto.randomUUID()]);
+  const said = (/** @type {any} */ e) => (e && e.status === 422 ? 'Studioul a refuzat valorile trimise; verifică prețurile și încearcă din nou.' : e instanceof Error ? e.message : String(e));
+  let first;
+  try {
+    first = await api('/economy/prices', { method: 'PUT', body: JSON.stringify(cin) });
+  } catch (e) {
+    priceSaid = { key, text: said(e), error: true };
+    await loadPrices();
+    return;
+  }
+  try {
+    const second = await api('/economy/prices', { method: 'PUT', body: JSON.stringify(cout) });
+    const readable = first && second && Number.isFinite(Number(first.usd_micros)) && Number.isFinite(Number(second.usd_micros));
+    priceSaid = readable
+      ? { key, text: priceAnswer(row, first, second), error: false }
+      : { key, text: 'Studioul nu a trimis un răspuns pe care pagina să-l poată citi. Reîncarcă și verifică prețurile.', error: true };
+  } catch (e) {
+    priceSaid = { key, text: `Prețul de intrare s-a salvat (versiunea ${Number(first && first.version) || 1}); cel de ieșire nu: ${said(e)}`, error: true };
+  }
+  await loadPrices();
+  /** @type {HTMLElement|null} */ (element('prices-list').querySelector('.price-answer'))?.scrollIntoView({ block: 'nearest' });
+});
+
 async function loadTreasury() {
   loadBudget();
   const summary = element('treasury-summary');
@@ -5135,7 +5219,7 @@ element('funding-form').addEventListener('submit', async (event) => {
   }
 });
 
-doorReads.set('treasury-modal', () => { loadTreasury(); loadFundingHistory(); });
+doorReads.set('treasury-modal', () => { loadTreasury(); loadFundingHistory(); loadPrices(); });
 if (openTreasuryBtn) {
   openTreasuryBtn.addEventListener('click', () => {
     syncFundingFields();
@@ -5147,6 +5231,7 @@ element('close-treasury-btn').addEventListener('click', () => treasuryModal.clos
 element('refresh-treasury-btn').addEventListener('click', () => {
   loadTreasury();
   loadFundingHistory();
+  loadPrices();
 });
 bindPanelToggle('open-treasury-btn', treasuryModal);
 

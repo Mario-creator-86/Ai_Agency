@@ -64,10 +64,12 @@ test('the place that fixes a line is read from its code, and only a failing line
   assert.equal(fixPlaceOf({ name: 'llm_provider', ok: false }).label, 'Setări · Furnizori AI');
   assert.equal(fixPlaceOf({ name: 'spending_budget', ok: false }).door, 'treasury-modal');
   assert.equal(fixPlaceOf({ name: 'image_provider', ok: true }), null);
-  // nothing in the page fixes FFmpeg, FFprobe, the model prices or the serial's right to publish
-  for (const name of ['render_engine', 'media_inspection', 'model_prices', 'serial_channel']) {
+  // nothing in the page fixes FFmpeg or FFprobe, nor a serial line whose condition is unknown
+  for (const name of ['render_engine', 'media_inspection', 'serial_channel']) {
     assert.equal(fixPlaceOf({ name, ok: false }), null, name);
   }
+  // W34 (updated on purpose): the model prices have their place in the Treasury now
+  assert.equal(fixPlaceOf({ name: 'model_prices', ok: false })?.section, 'tr-prices');
   // every place named is one the page has
   for (const key of Object.values(CHECK_FIX)) assert.ok(FIX_PLACES[key], key);
   for (const place of Object.values(FIX_PLACES)) {
@@ -84,7 +86,9 @@ test("the backend's own place is read first; the computer and the API alone are 
   assert.deepEqual(fixPlaceOf({ name: 'image_provider', ok: false, place: 'settings:media', place_label: 'Setări → Video și sunet', place_section: null }), { label: 'Setări → Video și sunet', door: 'settings', tab: 'media' });
   assert.deepEqual(fixPlaceOf({ name: 'character_references', ok: false, place: 'media', place_label: 'Producție media → Character Bible', place_section: 'media-characters-section' }), { label: 'Producție media → Character Bible', door: 'media-modal', tab: 'characters', section: 'media-characters-section' });
   assert.equal(fixPlaceOf({ name: 'render_engine', ok: false, place: 'machine', place_label: 'calculatorul studioului' }), null);
-  assert.equal(fixPlaceOf({ name: 'model_prices', ok: false, place: 'not_on_page', place_label: 'API-ul studioului' }), null);
+  // W34 (updated on purpose): a line the W32 backend still calls `not_on_page` opens the page's new control
+  assert.equal(fixPlaceOf({ name: 'model_prices', ok: false, place: 'not_on_page', place_label: 'API-ul studioului' })?.door, 'treasury-modal');
+  assert.equal(fixPlaceOf({ name: 'serial_channel', ok: false, code: 'serial_channel.missing', place: 'not_on_page', place_label: 'API-ul studioului' }), null);
   // a line the backend gives no place, even one the page would have guessed a place for
   assert.equal(fixPlaceOf({ name: 'image_provider', ok: false, place: null }), null);
   const html = checklistHtml(preflightChecklist({ checks: [
@@ -110,7 +114,8 @@ test('the checklist\'s markup: groups with counts, a key per fixable failing lin
   assert.match(html, /De rezolvat<\/span>\s*<span class="pf-count">4</);
   assert.match(html, /De știut<\/span>\s*<span class="pf-count">2</);
   assert.match(html, /În regulă<\/span>\s*<span class="pf-count">5</);
-  assert.equal((html.match(/class="secondary pf-fix"/g) || []).length, 3); // llm_provider, image_provider, daily_budget_films
+  // W34 (updated on purpose): model_prices has a key now
+  assert.equal((html.match(/class="secondary pf-fix"/g) || []).length, 4); // llm_provider, image_provider, model_prices, daily_budget_films
   assert.match(html, /data-door="settings" data-tab="media">Deschide Setări · Video și sunet</);
   // a passing line is one quiet row; with a detail, a disclosure of its own; a failing line's detail
   // is behind «Detalii»

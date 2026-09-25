@@ -133,8 +133,9 @@ def test_the_preflight_says_which_kinds_of_model_have_no_price(engine, settings,
     assert unpriced["ok"] is False and unpriced["severity"] == DEGRADING
     for kind in kinds:
         assert kind in unpriced["message"]
-    # No page control sets a price yet, and the line says so rather than naming the route.
-    assert "API-ul studioului" in unpriced["message"]
+    # W34: the price form is in the treasury; the line names it rather than the route.
+    assert "Trezorerie → Prețurile modelelor" in unpriced["message"]
+    assert "API" not in unpriced["message"]
     assert unpriced["technical"]["routes"] == ["PUT /economy/prices"]
     assert "0 USD" not in unpriced["message"] and "0 USD" not in unpriced["detail"]
 
@@ -345,9 +346,10 @@ def test_the_preflight_says_whether_the_serial_can_reach_its_channel(
 
     waiting = check(engine, settings, vault, "serial_channel")
     assert waiting["ok"] is False and waiting["severity"] == INFORMATIONAL
-    # No switch for the leave exists on the page yet: the line says so, and the command and
-    # its field are the technical record.
-    assert "pagina nu are încă un comutator" in waiting["message"]
+    # The switch for the leave is in Setări → Canale (W34): the line names it there, and the
+    # command and its field are the technical record.
+    assert "Setări → Canale" in waiting["message"]
+    assert waiting["place"] == "settings:channels"
     assert waiting["technical"]["fields"] == ["director_may_approve_episodes"]
     assert waiting["technical"]["routes"] == [
         f"POST /publishing/channels/{channel_id}/publish-policy"

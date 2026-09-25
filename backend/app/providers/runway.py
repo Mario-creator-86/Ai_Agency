@@ -39,6 +39,7 @@ from app.providers.media_http import (
     request,
     retrying,
 )
+from app.wording import settings_place
 
 HOST = "api.dev.runwayml.com"
 DOCS_HOST = "docs.dev.runwayml.com"
@@ -284,7 +285,9 @@ class _RunwayClient:
 
     def _require_task(self, task: str) -> None:
         if not self.model:
-            raise MediaProviderNotConfigured("Select a Runway model in Settings")
+            raise MediaProviderNotConfigured(
+                f"Niciun model Runway ales; alege unul în {settings_place('media')}"
+            )
         tasks = self.model_metadata.get("tasks")
         if isinstance(tasks, list) and task not in tasks:
             raise MediaProviderError(
@@ -446,8 +449,9 @@ class RunwayImageAdapter(_RunwayClient, ImageProvider):
             # catalog still keeps such a model out of the "image" purpose, so nothing in the
             # studio chooses one for a storyboard whose scenes may have nobody in them.
             raise MediaProviderError(
-                f"{self.model} needs reference images and cannot generate a still from a "
-                "prompt alone; choose a text-to-image model in Settings",
+                f"{self.model} are nevoie de imagini de referință și nu poate desena o imagine "
+                "doar din text; alege un model care desenează din text în "
+                f"{settings_place('media')}",
                 code="reference_images_required",
             )
         described = " ".join(f"{prompt} {style or ''}".split())[:1000]
@@ -591,7 +595,9 @@ class RunwayVideoAdapter(_RunwayClient, VideoProvider):
     ) -> str:
         text = " ".join(str(prompt).split())[:1000]
         if not self.model:
-            raise MediaProviderNotConfigured("Select a Runway video model in Settings")
+            raise MediaProviderNotConfigured(
+                f"Niciun model video Runway ales; alege unul în {settings_place('media')}"
+            )
         task = "image_to_video" if image_ref else "text_to_video"
         self._require_task(task)
         durations = self.model_metadata.get("durations", {})

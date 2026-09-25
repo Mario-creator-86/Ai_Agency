@@ -223,3 +223,62 @@ export function landingPlacement(box, view) {
 export function placementTransform(p) {
   return `translate3d(${p.x.toFixed(2)}px, ${p.y.toFixed(2)}px, 0) scale(${p.scale.toFixed(5)})`;
 }
+
+/**
+ * W34: the strips of the screen the kept frame does not cover, in screen px (null for none): the
+ * returning title's sky continues the frame's own edge rows across them, so no flat colour meets the
+ * frame in a seam. The frame is the world (WORLD.width x WORLD.height) placed at `placement`.
+ * @param {{x: number, y: number, scale: number}} placement
+ * @param {number} vw @param {number} vh
+ */
+export function keptEdges(placement, vw, vh) {
+  const { x, y, scale } = placement;
+  const w = WORLD.width * scale;
+  const h = WORLD.height * scale;
+  const r = (/** @type {number} */ rx, /** @type {number} */ ry, /** @type {number} */ rw, /** @type {number} */ rh) =>
+    (rw > 0 && rh > 0 ? { x: rx, y: ry, w: rw, h: rh } : null);
+  return {
+    top: y > 0 ? r(x, 0, w, y) : null,
+    bottom: y + h < vh ? r(x, y + h, w, vh - (y + h)) : null,
+    left: x > 0 ? r(0, 0, x, vh) : null,
+    right: x + w < vw ? r(x + w, 0, vw - (x + w), vh) : null,
+  };
+}
+
+/**
+ * W34: the kept frame's top row as sky only. Where the building touches the frame's top edge (the
+ * lift tower's cap), stretching the row upward drew the tower on into the sky as a dark smear; a
+ * column much darker than the row's bright sky is taken for the building, and its run is filled
+ * from the sky on either side. A row with no bright sky (the night) is returned as it is.
+ * @param {Uint8ClampedArray} rgba one row, RGBA
+ * @param {number} width
+ * @returns {Uint8ClampedArray}
+ */
+export function skyRow(rgba, width) {
+  const out = new Uint8ClampedArray(rgba);
+  const lum = new Float32Array(width);
+  for (let x = 0; x < width; x++) lum[x] = 0.2126 * rgba[x * 4] + 0.7152 * rgba[x * 4 + 1] + 0.0722 * rgba[x * 4 + 2];
+  const sorted = Array.from(lum).sort((a, b) => a - b);
+  const bright = sorted[Math.floor(width * 0.75)] || 0;
+  if (bright < 48) return out;
+  const isSky = (/** @type {number} */ x) => lum[x] >= bright * 0.55;
+  let x = 0;
+  while (x < width) {
+    if (isSky(x)) { x++; continue; }
+    let end = x;
+    while (end < width && !isSky(end)) end++;
+    const left = x - 1;
+    const right = end < width ? end : -1;
+    for (let i = x; i < end; i++) {
+      const t = left >= 0 && right >= 0 ? (i - left) / (right - left) : 0;
+      for (let c = 0; c < 3; c++) {
+        const a = left >= 0 ? rgba[left * 4 + c] : rgba[right * 4 + c];
+        const b = right >= 0 ? rgba[right * 4 + c] : rgba[left * 4 + c];
+        out[i * 4 + c] = Math.round(a + (b - a) * t);
+      }
+      out[i * 4 + 3] = 255;
+    }
+    x = end;
+  }
+  return out;
+}

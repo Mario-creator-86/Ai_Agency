@@ -75,8 +75,9 @@ test('seventeen identical runs fold into one row that carries the true count and
   assert.deepEqual(countsIn(html), [17], 'the pill says exactly how many were folded');
   assert.match(html, /<time>16:34:15<\/time>/, 'the row keeps the newest time');
   assert.match(html, /13:54:10 – 16:34:15/, 'the span runs from the oldest to the newest');
-  assert.match(html, /sarcină de rutină pornită/);
-  assert.match(html, /watchdog/);
+  // W34 (updated on purpose): the routine is said as the studio's, in its words
+  assert.match(html, /Rutina studioului/);
+  assert.match(html, /<div class="ledger-text">supraveghetorul<\/div>/, 'one job alone: the count is the row\'s');
 });
 
 test('nothing is dropped: every event is either its own row or inside a count', () => {
@@ -92,11 +93,13 @@ test('nothing is dropped: every event is either its own row or inside a count', 
 
   const html = parts.list.innerHTML;
   const rows = rowsOf(html);
-  const folded = countsIn(html).reduce((a, b) => a + b, 0);
-  const single = rows.length - countsIn(html).length;
+  const chips = [...html.matchAll(/×(\d+)<\/span>/g)].map((m) => Number(m[1]));
+  const folded = chips.reduce((a, b) => a + b, 0);
+  const single = rows.length - chips.length;
   assert.equal(single + folded, events.length, 'the rows and the counts account for every event');
-  // And the run that is interrupted by a letter is not welded across it.
-  assert.deepEqual(countsIn(html).sort(), [2, 3], 'a run stops at the row that interrupts it');
+  // W34 (updated on purpose): the routine is one row per hour, and the letters between keep theirs
+  assert.deepEqual(chips, [5], 'the hour\'s five routine starts are one row');
+  assert.equal(rows.filter((r) => r.includes('ledger-mail')).length, 2, 'both letters keep their rows');
 });
 
 test('correspondence never folds: two identical letters stay two letters', () => {
@@ -124,8 +127,11 @@ test('a fold is a fold of the same words, never of two different ones', () => {
   ]);
 
   const html = parts.list.innerHTML;
-  assert.equal(rowsOf(html).length, 3, 'three different sentences are three rows');
-  assert.equal(countsIn(html).length, 0, 'nothing is folded that does not say the same thing');
+  // W34 (updated on purpose): the two routine starts of the hour are one row; the job that is not
+  // routine keeps its own sentence and its own row
+  assert.equal(rowsOf(html).length, 2, 'the routine row and the other job');
+  assert.match(html, /a început o producție/);
+  assert.match(html, /×2<\/span>/);
 });
 
 /* The same stub closes a hole the finishing pass left open: arrivingIds() was proved pure,
@@ -168,12 +174,13 @@ test('a filter hides rows, it does not fold them into somebody else\'s count', (
   assert.equal(rowsOf(html).length, 1, 'only the letter is shown');
   assert.equal(countsIn(html).length, 0, 'and it carries no count');
 
-  // Back to everything: the two runs are still two runs of two, not one of four.
+  // Back to everything: the filter left the fold as it found it. W34 (updated on purpose): the
+  // hour's four routine starts are one row, and the letter keeps its own.
   ledger.kind = 'all';
   ledger.render();
   html = parts.list.innerHTML;
-  assert.deepEqual(countsIn(html), [2, 2], 'the filter left the fold exactly as it found it');
-  assert.equal(rowsOf(html).length, 3, 'two folded runs and the letter between them');
+  assert.deepEqual([...html.matchAll(/×(\d+)<\/span>/g)].map((m) => Number(m[1])), [4], 'the filter left the fold exactly as it found it');
+  assert.equal(rowsOf(html).length, 2, 'the hour\'s routine and the letter');
 });
 
 test('every day in the register is named, so an old day never reads as this morning', () => {

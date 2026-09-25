@@ -393,7 +393,9 @@ def test_a_model_that_needs_reference_images_is_neither_chosen_nor_called(engine
     with pytest.raises(MediaProviderError) as excinfo:
         asyncio.run(adapter.generate_image("a starry sky"))
     assert excinfo.value.code == "reference_images_required"
-    assert "needs reference images" in str(excinfo.value)
+    # W34: said in Romanian, naming the tab where another model is chosen.
+    assert "are nevoie de imagini de referință" in str(excinfo.value)
+    assert "Setări → Video și sunet" in str(excinfo.value)
 
 
 def test_auto_configure_replaces_a_default_the_api_no_longer_supports(engine, monkeypatch):

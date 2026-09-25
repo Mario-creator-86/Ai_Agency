@@ -23,6 +23,7 @@ from app.schemas import (
     PolicyResult,
     PolicyView,
 )
+from app.wording import COMMAND_REUSED
 from app.wording import autonomy_mode as mode_words
 
 
@@ -140,7 +141,7 @@ def recall_command(session: Session, command_id: str, payload_hash: str) -> dict
     if previous is None:
         return None
     if previous.payload_hash != payload_hash:
-        raise CommandConflict("Command ID already used with different input")
+        raise CommandConflict(COMMAND_REUSED)
     return dict(previous.response)
 
 
@@ -215,7 +216,7 @@ def change_environment(engine: Engine, command: EnvironmentCommand) -> PolicyRes
         previous = session.get(CommandRecord, command_id)
         if previous:
             if previous.payload_hash != payload_hash:
-                raise CommandConflict("Command ID already used with different input")
+                raise CommandConflict(COMMAND_REUSED)
             return PolicyResult.model_validate(previous.response)
         policy = session.get(OwnerPolicy, 1)
         if policy is None:
@@ -284,7 +285,7 @@ def change_stop(engine: Engine, command: PolicyCommand) -> PolicyResult:
         previous = session.get(CommandRecord, command_id)
         if previous:
             if previous.payload_hash != payload_hash:
-                raise CommandConflict("Command ID already used with different input")
+                raise CommandConflict(COMMAND_REUSED)
             return PolicyResult.model_validate(previous.response)
         policy = session.get(OwnerPolicy, 1)
         if policy is None:
@@ -929,7 +930,7 @@ def change_autonomy_mode(engine: Engine, command: AutonomyModeCommand) -> Policy
         previous = session.get(CommandRecord, command_id)
         if previous:
             if previous.payload_hash != payload_hash:
-                raise CommandConflict("Command ID already used with different input")
+                raise CommandConflict(COMMAND_REUSED)
             return PolicyResult.model_validate(previous.response)
         policy = session.get(OwnerPolicy, 1)
         if policy is None:

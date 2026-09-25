@@ -55,7 +55,10 @@ export function studioReadout(facts) {
   if (track && !track.empty) {
     const words = dayTrackWords(track, { today: facts.today ?? null, live: facts.live });
     const [title, ...rest] = words.label.split(' · ');
-    rows.push({ label: 'Rularea zilei', value: rest.join(' · ') || '—', note: title, tone: track.running && facts.live !== false ? 'ok' : 'quiet' });
+    // W35: under «Studioul azi», a run of another day is the last run, not the day's (the judge
+    // read «RULAREA ZILEI 12/12 · încheiată» on 25.09 for the run of 12.09)
+    const todays = Boolean(track.date && facts.today && track.date === facts.today);
+    rows.push({ label: todays ? 'Rularea zilei' : 'Ultima rulare', value: rest.join(' · ') || '—', note: title, tone: track.running && facts.live !== false ? 'ok' : 'quiet' });
   } else {
     rows.push({ label: 'Rularea zilei', value: listWords(facts.reads && facts.reads.runs, 'nicio rulare în registru'), tone: 'quiet' });
   }
