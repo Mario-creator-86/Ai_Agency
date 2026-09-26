@@ -50,3 +50,6 @@ art-source/unreal/clock_digits_atlas.png
 
 # Environment reports a rebuild window rejected (evidence, kept locally)
 art-source/unreal/env_report.rejected_*.json
+
+# The env report before day_state was merged (kept beside the live one for rollback)
+art-source/unreal/env_report.before_day_state.json

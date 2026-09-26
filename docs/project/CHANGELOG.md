@@ -1,5 +1,12 @@
 # Changelog
 
+## The Unreal skyline has a real day — 2026-09-26
+
+- **The towers-by-day pass is live** (art-source/unreal/towers_day, run on the saved level, backup kept): glass facades by day, no lit windows in the glare, green trees, the sign whole; the approved dusk pixel-identical.
+- **The backend drives it from the real sun** (`backend/app/office/scene_params.py`, `unreal.py`): day_state from env_report.json; TowerDaylight, WindowsOn per label (skyline / near blocks), LeafDaylight, skyline Daylight; windows off only above +15°, most lit by +2.5°, all at dusk, fewer at dawn, the near blocks never black.
+- Gates on the stream: noon facades 83 → 145, trees 39 → 69, 19:19 = 6.8 unchanged, p95 15.37 ms; three windows, two rollbacks, the third kept; an art director's ALMOST, ship it.
+- The window's game check knows League of Legends; sign_baseline.json kept so the sign pass stays absolute; env_report.before_day_state.json ignored.
+
 ## The Owner's controls as plates of the building — premium — 2026-09-26
 
 - **Setări → Canale as a decision plate** (`frontend/src/settings.js`, `owner_controls.js`): a large switch, steel when OFF, lit when ON, each state's meaning beside it, a glass confirmation step; nothing written before «Da».
