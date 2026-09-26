@@ -16,7 +16,12 @@ from types import SimpleNamespace
 
 import pytest
 from app.office import unreal
-from app.office.scene_params import scene_params
+from app.office.scene_params import (
+    DAWN_CITY_WINDOWS,
+    NEAR_WINDOWS_FLOOR,
+    scene_params,
+    windows_on,
+)
 from app.office.unreal import (
     CLOCK_TIME_READ,
     ENVIRONMENT_CALLS,
@@ -1040,9 +1045,15 @@ def test_the_day_state_reaches_the_towers_the_trees_and_the_skyline(tmp_path):
         assert noon[(actor, "Daylight")] == 1.0
     assert noon[("StaticMeshActor_30", "LeafDaylight")] == 1.0
 
-    golden = day_values(rep, 2.7, 266.0)  # 18:50: a few windows, the facades half in day
-    assert 0.0 < golden[("StaticMeshActor_10", "WindowsOn")] < 0.25
-    assert 0.0 < golden[("StaticMeshActor_10", "TowerDaylight")] < 1.0
+    golden = day_values(rep, 2.7, 266.0)  # 18:50: most windows lit, the facades half in day
+    skyline, near = ("StaticMeshActor_10", "StaticMeshActor_11")
+    assert windows_on(0.6) < golden[(skyline, "WindowsOn")] < windows_on(0.8)
+    assert golden[(near, "WindowsOn")] == golden[(skyline, "WindowsOn")]
+    assert 0.0 < golden[(skyline, "TowerDaylight")] < 1.0
+    assert golden[(near, "TowerDaylight")] == golden[(skyline, "TowerDaylight")]
+    afternoon = day_values(rep, 11.9, 250.0)  # 17:58: the first few windows
+    assert 0.0 < afternoon[("StaticMeshActor_10", "WindowsOn")] < windows_on(0.15)
+    assert day_values(rep, 20.0, 240.0)[("StaticMeshActor_10", "WindowsOn")] == 0.0
 
     for e in (-30.0, -2.5, 2.7, 46.97):
         plan = scene_params(world(e, 200.0), rep.frame(180.0), game_time_s=12.0)
@@ -1063,6 +1074,14 @@ def test_the_dawn_counts_the_towers_windows_instead_of_dimming_their_glow(tmp_pa
     assert dawn_today[("StaticMeshActor_10", "EmissiveFactor")]["X"] == pytest.approx(0.45)
     assert dawn[("StaticMeshActor_10", "EmissiveFactor")] == {"X": 1.0, "Y": 1.0, "Z": 1.0}
     assert 0.4 < dawn[("StaticMeshActor_10", "WindowsOn")] < 0.5
+    # the near blocks stand on their own floor, above the city's dawn ceiling
+    skyline, near = ("StaticMeshActor_10", "StaticMeshActor_11")
+    assert dawn[(near, "WindowsOn")] == pytest.approx(windows_on(NEAR_WINDOWS_FLOOR))
+    assert dawn[(near, "WindowsOn")] > dawn[(skyline, "WindowsOn")]
+    # 07:25 (the sun at +2.8): the skyline is never windowless, the near block never black
+    sunrise = day_values(rep, 2.8, 96.0)
+    assert sunrise[(skyline, "WindowsOn")] == pytest.approx(windows_on(DAWN_CITY_WINDOWS))
+    assert sunrise[(near, "WindowsOn")] == pytest.approx(windows_on(NEAR_WINDOWS_FLOOR))
     evening = day_values(rep, -6.0, 265.0)
     assert (
         evening[("StaticMeshActor_10", "EmissiveFactor")]

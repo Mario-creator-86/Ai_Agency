@@ -30,6 +30,8 @@ from app.office.scene_params import (
     FILL_WARM_RISE,
     GOLDEN_HANDOVER,
     GOLDEN_KEY_INTENSITY,
+    NEAR_WINDOWS_FLOOR,
+    NEAR_WINDOWS_FLOOR_FADE,
     OVERCAST_CLEAR_FROM,
     OVERCAST_PLATES,
     RAIN_ROAD_ROUGHNESS,
@@ -38,7 +40,8 @@ from app.office.scene_params import (
     TWILIGHT_END_ELEVATION,
     WALK_WASH_MAX,
     WET_ROAD_ROUGHNESS,
-    WINDOWS_FEW,
+    WINDOWS_MOST,
+    WINDOWS_MOST_AT,
     WINDOWS_OFF_ABOVE,
     SceneFrame,
     clear_facade,
@@ -53,6 +56,7 @@ from app.office.scene_params import (
     fill_factor,
     key_colour,
     key_intensity,
+    near_windows_share,
     overcast_weight,
     precipitating,
     scene_params,
@@ -270,18 +274,21 @@ def test_the_reference_dusk_is_todays_build_exactly():
     }
     # the day state (art-source/unreal/towers_day): every new value at the default the in-place
     # passes build into their materials, so the approved dusk cannot move when the backend sends
-    # them. M_HQ_TowerDay: TowerDaylight 0 and WindowsOn 1 (towers_day_hq_live.py ADDED_SCALARS);
-    # M_HQ_TreeLeaves: LeafDaylight 0 (trees_day_hq_live.py); the skyline's M_HQ_CityDay slots:
-    # Daylight 0 (look_hq_live.py, as the near blocks' above); the counted glow is today's.
+    # them. M_HQ_TowerDay: TowerDaylight 0 and WindowsOn 1 (towers_day_hq_live.py ADDED_SCALARS)
+    # on the skyline and on the near blocks alike; M_HQ_TreeLeaves: LeafDaylight 0
+    # (trees_day_hq_live.py); the skyline's M_HQ_CityDay slots: Daylight 0 (look_hq_live.py, as
+    # the near blocks' above); the counted glow is today's.
     towers_pass = (UNREAL / "towers_day" / "towers_day_hq_live.py").read_text(encoding="utf-8")
     added = re.search(r"^ADDED_SCALARS = (\{.*?\})\n", towers_pass, re.MULTILINE | re.DOTALL)
     assert added, "ADDED_SCALARS not found in towers_day_hq_live.py"
     scalars = ast.literal_eval(added.group(1))
-    assert p["towers"] == {
-        "TowerDaylight": scalars["TowerDaylight"],
-        "WindowsOn": scalars["WindowsOn"],
-    }
-    assert p["towers"] == {"TowerDaylight": 0.0, "WindowsOn": 1.0}
+    assert set(p["towers"]) == {"skyline", "near_blocks"}
+    for label in ("skyline", "near_blocks"):
+        assert p["towers"][label] == {
+            "TowerDaylight": scalars["TowerDaylight"],
+            "WindowsOn": scalars["WindowsOn"],
+        }
+        assert p["towers"][label] == {"TowerDaylight": 0.0, "WindowsOn": 1.0}
     trees_pass = (UNREAL / "towers_day" / "trees_day_hq_live.py").read_text(encoding="utf-8")
     assert re.search(
         r'"parameter_name", "LeafDaylight"\)\s*\n\s*daylight\.set_editor_property\('
@@ -1010,51 +1017,122 @@ def test_the_weathers_look_is_held_so_a_grey_or_rainy_day_is_the_clear_skys_ligh
 
 
 # ---------------------------------------------------------------- the towers, the trees by day
-def towers(elevation: float, azimuth: float) -> dict[str, float]:
-    return scene_params(world(elevation=elevation, azimuth=azimuth), FRAME)["towers"]
+def towers(elevation: float, azimuth: float, label: str = "skyline") -> dict[str, float]:
+    return scene_params(world(elevation=elevation, azimuth=azimuth), FRAME)["towers"][label]
 
 
-def test_the_towers_light_no_window_by_day_a_few_below_five_degrees_all_at_dusk():
-    """The art director's reading of 2026-09-24: no lit window while the sun is up, only a few once
-    it drops below about +5 deg, the dusk's every window from the reference down; the facades in
+def no_jump(values: list[float], step: float = 0.015) -> bool:
+    """Neighbouring shares (a tenth of a degree apart) never differ by more than ``step``: the
+    steepest rule is the city's dawn rise, 0.55 over 6 deg (0.014 a tenth). (The WindowsOn
+    parameter itself steps by TOWER_RANK_MIN at the "none" end, lighting nothing.)"""
+    return all(abs(b - a) <= step for a, b in zip(values[:-1], values[1:], strict=True))
+
+
+def test_the_towers_light_no_window_in_the_glare_most_by_three_degrees_all_at_dusk():
+    """The art director's reading of 2026-09-26 (run 2 of the towers window, refused: at 18:50,
+    the sun at +2.7 deg, a tenth of the windows left the towers "muddy mauve slabs"): no lit
+    window only while the sun stands high, where the day's glare hides one (above about +15 deg);
+    still clearly present at +6; most of them (0.6-0.8 of the dusk's) at +2 to +3, so they hold
+    against the dimming sky; the dusk's every window from the reference down. The facades in
     their day colours by the same day weight as the rest of the city."""
     assert towers(46.97, 180.0) == {"TowerDaylight": 1.0, "WindowsOn": 0.0}  # a September noon
-    assert towers(11.9, 250.0)["WindowsOn"] == 0.0  # 17:58
-    assert towers(WINDOWS_OFF_ABOVE, 262.0)["WindowsOn"] == 0.0
-    assert 0.0 < windows_share(2.7) < WINDOWS_FEW  # 18:50: a few
-    assert 0.0 < towers(2.7, 266.0)["WindowsOn"] < windows_on(WINDOWS_FEW)
-    assert windows_share(0.0) == WINDOWS_FEW
+    assert towers(20.0, 240.0)["WindowsOn"] == 0.0
+    assert towers(WINDOWS_OFF_ABOVE, 245.0)["WindowsOn"] == 0.0
+    assert 0.0 < windows_share(11.9) < 0.15  # 17:58: the first few
+    assert 0.35 < windows_share(6.0) < 0.65  # still clearly present
+    assert 0.6 < windows_share(3.0) < 0.8
+    assert 0.6 < windows_share(2.7) < 0.8  # 18:50: most of them
+    assert windows_on(0.6) < towers(2.7, 266.0)["WindowsOn"] < windows_on(0.8)
+    assert 0.6 < windows_share(2.0) < 0.8
+    assert windows_share(WINDOWS_MOST_AT) == WINDOWS_MOST
+    assert WINDOWS_MOST < windows_share(0.0) < 1.0
     assert towers(-2.5, 274.9) == {"TowerDaylight": 0.0, "WindowsOn": 1.0}  # the approved dusk
+    assert towers(-6.0, 285.0)["WindowsOn"] == 1.0
     assert towers(-30.0, 330.0) == {"TowerDaylight": 0.0, "WindowsOn": 1.0}
     assert towers(6.0, 260.0)["TowerDaylight"] == 1.0
     assert 0.0 < towers(2.7, 266.0)["TowerDaylight"] < 1.0
-    # the evening only darkens: as the sun sinks the facades lose the day and windows come on
+    # the evening only darkens, and never jumps: as the sun sinks the facades lose the day and
+    # the windows come on
     evening = [towers(tenth / 10.0, 265.0) for tenth in range(500, -300, -1)]
     daylight = [t["TowerDaylight"] for t in evening]
     windows = [t["WindowsOn"] for t in evening]
     assert daylight == sorted(daylight, reverse=True)
     assert windows == sorted(windows)
+    assert no_jump([windows_share(tenth / 10.0) for tenth in range(500, -300, -1)])
 
 
-def test_fewer_tower_windows_are_lit_at_dawn_than_at_dusk():
-    """The city's dawn rule (DAWN_CITY_WINDOWS: offices empty, homes waking) counts the towers'
-    windows once they can be counted: at the same elevation the morning lights fewer of them."""
-    for tenth in range(-110, 50):
+def test_a_lit_near_block_never_goes_black():
+    """Run 2's 18:50 left the right near block a black box (WindowsOn 0.10 on it too). The near
+    blocks (homes and shops over the street) keep their own floor: at least NEAR_WINDOWS_FLOOR of
+    their dusk windows while the sun is low, on both sides of the day; by day the floor is gone
+    and they are the skyline's, with the same day colour at every hour."""
+    for e in (5.9, 2.8, 2.7, 0.0, -2.5, -6.0, -12.0):
+        for az in (95.0, 265.0):
+            assert near_windows_share(Sun(elevation_deg=e, azimuth_deg=az)) >= NEAR_WINDOWS_FLOOR
+            near = towers(e, az, "near_blocks")
+            assert near["WindowsOn"] >= windows_on(NEAR_WINDOWS_FLOOR), (e, az)
+            assert near["WindowsOn"] >= towers(e, az)["WindowsOn"], (e, az)
+            assert near["TowerDaylight"] == towers(e, az)["TowerDaylight"]
+    for e, az in ((46.97, 180.0), (NEAR_WINDOWS_FLOOR_FADE[0], 250.0), (20.0, 110.0)):
+        assert towers(e, az, "near_blocks") == towers(e, az)
+    # 07:25: the dawn's near blocks stand on their floor, above the city's dawn ceiling
+    assert towers(2.8, 96.0, "near_blocks")["WindowsOn"] == pytest.approx(
+        windows_on(NEAR_WINDOWS_FLOOR)
+    )
+    assert towers(2.8, 96.0, "near_blocks")["WindowsOn"] > towers(2.8, 96.0)["WindowsOn"]
+    # 18:50: the skyline lights more than the floor, so the near blocks are the skyline's
+    assert towers(2.7, 266.0, "near_blocks") == towers(2.7, 266.0)
+    assert towers(-2.5, 274.9, "near_blocks") == {"TowerDaylight": 0.0, "WindowsOn": 1.0}
+    # on both sides the near blocks only follow the sun, and never jump
+    evening = [
+        near_windows_share(Sun(elevation_deg=tenth / 10.0, azimuth_deg=265.0))
+        for tenth in range(500, -300, -1)
+    ]
+    morning = [
+        near_windows_share(Sun(elevation_deg=tenth / 10.0, azimuth_deg=95.0))
+        for tenth in range(-300, 500)
+    ]
+    assert evening == sorted(evening) and no_jump(evening)
+    assert morning == sorted(morning, reverse=True) and no_jump(morning)
+    sent = [towers(tenth / 10.0, 95.0, "near_blocks")["WindowsOn"] for tenth in range(-300, 500)]
+    assert sent == sorted(sent, reverse=True)
+
+
+def test_fewer_tower_windows_are_lit_at_dawn_than_at_dusk_but_never_none():
+    """The city's dawn rule (DAWN_CITY_WINDOWS: offices empty, homes waking) is the dawn's ceiling
+    on the towers' windows, not a second dimming on top of the curve (run 2 multiplied the two and
+    left 07:25's skyline windowless): at the same low elevation the morning lights fewer of them,
+    never fewer than the ceiling while the curve stands above it, and the curve's own once it
+    drops below."""
+    for tenth in range(-110, 76):
         e = tenth / 10.0
         dawn = tower_windows_share(Sun(elevation_deg=e, azimuth_deg=95.0))
         dusk = tower_windows_share(Sun(elevation_deg=e, azimuth_deg=265.0))
         assert dawn < dusk, e
+        assert dawn >= min(dusk, DAWN_CITY_WINDOWS) - 1e-12, e
     at_reference = tower_windows_share(Sun(elevation_deg=-2.5, azimuth_deg=88.1))
     assert at_reference == pytest.approx(DAWN_CITY_WINDOWS)
     assert towers(-2.5, 88.1)["WindowsOn"] == pytest.approx(windows_on(DAWN_CITY_WINDOWS))
+    # 07:25 (the sun at +2.8): the ceiling, not the ceiling times the curve
+    at_dawn = tower_windows_share(Sun(elevation_deg=2.8, azimuth_deg=96.0))
+    assert at_dawn == pytest.approx(DAWN_CITY_WINDOWS)
+    assert at_dawn > windows_share(2.8) * DAWN_CITY_WINDOWS
+    assert towers(2.8, 96.0)["WindowsOn"] == pytest.approx(windows_on(DAWN_CITY_WINDOWS))
+    # higher, where the curve lights fewer than the ceiling, the dawn is the evening's curve
+    for e in (8.0, 12.0, 15.0):
+        assert towers(e, 110.0) == towers(e, 250.0), e
     # the deep night and the day are the same on both sides; continuous at solar midnight
     assert towers(-44.0, 359.9) == towers(-44.0, 0.1) == {"TowerDaylight": 0.0, "WindowsOn": 1.0}
     assert towers(20.0, 110.0) == towers(20.0, 250.0)
-    # the morning only brightens: windows go off and the facades come to day as the sun rises
-    morning = [towers(tenth / 10.0, 95.0) for tenth in range(-300, 500)]
-    assert [t["WindowsOn"] for t in morning] == sorted(
-        (t["WindowsOn"] for t in morning), reverse=True
-    )
+    # the morning only brightens, without a jump: windows go off and the facades come to day as
+    # the sun rises
+    morning = [towers(tenth / 10.0, 95.0)["WindowsOn"] for tenth in range(-300, 500)]
+    assert morning == sorted(morning, reverse=True)
+    shares = [
+        tower_windows_share(Sun(elevation_deg=tenth / 10.0, azimuth_deg=95.0))
+        for tenth in range(-300, 500)
+    ]
+    assert no_jump(shares)
 
 
 def test_once_the_windows_are_counted_the_dawn_is_not_dimmed_twice():
@@ -1084,7 +1162,8 @@ def test_the_trees_and_the_skylines_plain_slots_take_the_day_with_the_facades():
         assert p["trees"] == {"LeafDaylight": day}
         assert p["skyline_day"] == {"Daylight": day}
         assert p["near_blocks_day"] == {"Daylight": day}
-        assert p["towers"]["TowerDaylight"] == day
+        assert p["towers"]["skyline"]["TowerDaylight"] == day
+        assert p["towers"]["near_blocks"]["TowerDaylight"] == day
     assert scene_params(world(elevation=46.97, azimuth=180.0), FRAME)["trees"] == {
         "LeafDaylight": 1.0
     }

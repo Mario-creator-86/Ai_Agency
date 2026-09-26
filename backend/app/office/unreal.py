@@ -340,7 +340,8 @@ def _object(role: str, entry: Any) -> EnvObject | None:
 #: parameters its components may take. towers_day_hq_live.py gives the skyline's and the near
 #: blocks' facades M_HQ_TowerDay (TowerDaylight, WindowsOn), trees_day_hq_live.py the leaves
 #: M_HQ_TreeLeaves (LeafDaylight); day_state.py merges the components they report into
-#: env_report.json. A component drives only the parameters its entry names from this list.
+#: env_report.json. A component drives only the parameters its entry names from this list, and a
+#: tower takes its label's values (plan["towers"]["skyline"] or ["near_blocks"]).
 DAY_STATE_PARAMETERS: dict[str, tuple[str, ...]] = {
     "towers": ("TowerDaylight", "WindowsOn"),
     "trees": ("LeafDaylight",),
@@ -648,13 +649,20 @@ def environment_calls(plan: Mapping[str, Any], report: EnvReport) -> list[EnvCal
             )
         )
     # the day state: only on the components the report's "day_state" names, only the parameters
-    # each names; a report without it (today's level) sends none of these
-    for group, values in (("towers", plan["towers"]), ("trees", plan["trees"])):
-        for component in report.of(group):
-            for name in component.parameters:
-                calls.append(
-                    EnvCall("MeshComponent", component.path, scalar, name, float(values[name]))
-                )
+    # each names; a report without it (today's level) sends none of these. A tower's values are
+    # its label's (the skyline's, the near blocks' with their own window floor): _day_state keeps
+    # only the components the report scales under those two labels
+    for component in report.of("towers"):
+        values = plan["towers"][component.label]
+        for name in component.parameters:
+            calls.append(
+                EnvCall("MeshComponent", component.path, scalar, name, float(values[name]))
+            )
+    for component in report.of("trees"):
+        for name in component.parameters:
+            calls.append(
+                EnvCall("MeshComponent", component.path, scalar, name, float(plan["trees"][name]))
+            )
     for component in report.of("skyline_daylight")[:1]:
         # Daylight exists on the skyline only on its M_HQ_CityDay slots (the towers pass's
         # SURFACES): one call on the component reaches those and nothing else

@@ -7,7 +7,9 @@ defaults paint exactly today's dusk: TowerDaylight 0 and WindowsOn 1 on the faca
 LeafDaylight 0 on the leaves (M_HQ_TreeLeaves), Daylight 0 on the skyline's plain slots
 (M_HQ_CityDay). The backend sets them from the real sun only. These tests hold the backend to the
 pass's own numbers, read from its source: the window ranks' range and the gate's sharpness, the
-art director's window curve, and the defaults the materials are built with.
+day weight, and the defaults the materials are built with. The window curve itself is the
+backend's (scene_params WINDOWS_*, the art director's reading of 2026-09-26, test_scene_params):
+the pass's own windows_share is the reading of 09-24 the refused run 2 drove with.
 """
 
 from __future__ import annotations
@@ -46,20 +48,23 @@ def pass_scalars() -> dict[str, float]:
 
 
 # ---------------------------------------------------------------- the pass's own numbers
-def test_the_backend_uses_the_passs_ranks_gate_and_window_curve(td):
+def test_the_backend_uses_the_passs_ranks_gate_and_day_weight(td):
     assert sp.TOWER_RANK_MIN == td.RANK_MIN
     assert sp.TOWER_RANK_MAX == td.RANK_MAX
     assert sp.TOWER_GATE_SHARPNESS == td.GATE_SHARPNESS
-    assert sp.WINDOWS_OFF_ABOVE == td.WINDOWS_OFF_ABOVE
-    assert sp.WINDOWS_FEW_AT == td.WINDOWS_FEW_AT
-    assert sp.WINDOWS_FEW == td.WINDOWS_FEW
     assert td.REFERENCE_DUSK_ELEVATION == REFERENCE_DUSK_ELEVATION
     assert td.DAY_FULL_ELEVATION == sp.DAY_FULL_ELEVATION
     for tenth in range(-300, 500):
         e = tenth / 10.0
-        # the evening's share of lit windows is the prepared curve, and the day weight the same
-        assert sp.windows_share(e) == pytest.approx(td.windows_share(e), abs=1e-12), e
         assert sp.day_weight(e) == pytest.approx(td.day_weight(e), abs=1e-12), e
+    # the window curve is the backend's now: where the pass's 09-24 reading switched the windows
+    # off (+5 deg) the backend still lights more than half of them, and at 18:50 most of them
+    assert td.windows_share(td.WINDOWS_OFF_ABOVE) == 0.0
+    assert sp.windows_share(td.WINDOWS_OFF_ABOVE) > 0.5
+    assert sp.windows_share(2.7) > 0.6 > td.WINDOWS_FEW > td.windows_share(2.7)
+    # both agree where the art director kept the level pass: the dusk and the night are today's
+    for e in (-2.5, -6.0, -30.0):
+        assert sp.windows_share(e) == td.windows_share(e) == 1.0
 
 
 def test_the_materials_defaults_are_the_dusk_the_backend_sends_at_the_reference():
@@ -73,6 +78,7 @@ def test_the_materials_defaults_are_the_dusk_the_backend_sends_at_the_reference(
     )
     evening = Sun(elevation_deg=REFERENCE_DUSK_ELEVATION, azimuth_deg=274.9)
     assert sp.windows_on(sp.tower_windows_share(evening)) == scalars["WindowsOn"]
+    assert sp.windows_on(sp.near_windows_share(evening)) == scalars["WindowsOn"]
     assert sp.day_weight(REFERENCE_DUSK_ELEVATION) == scalars["TowerDaylight"]
 
 

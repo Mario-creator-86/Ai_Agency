@@ -46,9 +46,11 @@ Two rules shape it:
   grey deck and the dome's lift washed the sign. Until a rebuild adds grey deck cells the scene is
   the clear sky's at the real hour, and only the road follows the real rain, as before.
 * The towers, the trees and the skyline by day (the day state, 2026-09-26): the facades take their
-  day colours and switch their windows off by the real sun (TowerDaylight, WindowsOn), the leaves
-  and the skyline's plain slots take the day (LeafDaylight, Daylight). Every value is its
-  material's default at the reference, and none is sent to a level whose report has no day state.
+  day colours and switch their windows off by the real sun (TowerDaylight, WindowsOn: off only in
+  the day's glare, most of them lit by +2.5 deg, the near blocks never below their own floor, the
+  dawn capped by the city's dawn rule), the leaves and the skyline's plain slots take the day
+  (LeafDaylight, Daylight). Every value is its material's default at the reference, and none is
+  sent to a level whose report has no day state.
 
 Owner decisions taken as proposed (2026-09-18, he did not object); each lives in one place:
 D1 the viewer looks north and the facade faces south (``office_facade_heading_deg``, config);
@@ -302,13 +304,24 @@ DAWN_CITY_RISE = (-12.0, -6.0)
 #: M_HQ_CityDay slots (the bridge), as on the near blocks'. Nothing moves until the backend writes
 #: them, and only where the report's "day_state" names the components (unreal.py).
 #:
-#: The towers' lit windows, the art director's reading of 2026-09-24 (towers_day.py, whose curve
-#: this is): none while the sun stands above WINDOWS_OFF_ABOVE, a few (up to WINDOWS_FEW of the
-#: dusk's) as it sinks to WINDOWS_FEW_AT, from those to all of them at the reference dusk, all of
-#: them below it. WINDOWS_FEW is a judgement to be made by eye in the window (0.1-0.3).
-WINDOWS_OFF_ABOVE = 5.0
-WINDOWS_FEW_AT = 0.0
-WINDOWS_FEW = 0.2
+#: The towers' lit windows, the art director's reading of 2026-09-26 (run 2 of the towers window,
+#: refused: at 18:50, the sun at +2.7 deg, a tenth of the windows left the towers "muddy mauve
+#: slabs" and the right near block a black box, and 07:25 an empty skyline; the 09-24 reading in
+#: towers_day.py switched them off from +5 deg): none only while the sun stands above
+#: WINDOWS_OFF_ABOVE, where the day's glare hides a lit window; as it sinks they come on, most of
+#: them (WINDOWS_MOST of the dusk's) by WINDOWS_MOST_AT, so they hold against the dimming sky;
+#: from those to all of them at the reference dusk, all of them below it. Smoothsteps between the
+#: knots, so the curve never jumps or turns back (windows_share).
+WINDOWS_OFF_ABOVE = 15.0
+WINDOWS_MOST_AT = 2.5
+WINDOWS_MOST = 0.7
+#: The near blocks (homes and shops over the street, the frame's right) keep their own floor: at
+#: least NEAR_WINDOWS_FLOOR of their dusk windows while the sun is low, on both sides of the day,
+#: so a lit near block never goes black; the floor fades out as the sun climbs over
+#: NEAR_WINDOWS_FLOOR_FADE (whole at and below its second value, gone at and above its first).
+#: At dawn it stands above the city's ceiling (DAWN_CITY_WINDOWS): homes wake before offices.
+NEAR_WINDOWS_FLOOR = 0.5
+NEAR_WINDOWS_FLOOR_FADE = (10.0, 6.0)
 #: towers_day.py's window ranks: every lit window of the dusk carries a rank spread evenly over
 #: (TOWER_RANK_MIN, TOWER_RANK_MAX] (stored as 8-bit floors), and M_HQ_TowerDay multiplies its
 #: emission by saturate((WindowsOn - rank) x TOWER_GATE_SHARPNESS). WindowsOn 1 lights every rank,
@@ -894,24 +907,39 @@ def city_windows(sun: Sun) -> float:
 
 def windows_share(elevation: float) -> float:
     """The share of the dusk's lit tower windows lit at this real elevation, on the evening side
-    (WINDOWS_* above; towers_day.windows_share): 0 from WINDOWS_OFF_ABOVE up, WINDOWS_FEW at
-    WINDOWS_FEW_AT, 1 at and below the reference. Smoothsteps between, so it never jumps."""
+    (WINDOWS_* above): 0 from WINDOWS_OFF_ABOVE up (the glare), WINDOWS_MOST at WINDOWS_MOST_AT,
+    1 at and below the reference dusk. Smoothsteps between, so it never jumps."""
     if elevation >= WINDOWS_OFF_ABOVE:
         return 0.0
-    if elevation >= WINDOWS_FEW_AT:
-        return WINDOWS_FEW * smoothstep(WINDOWS_OFF_ABOVE, WINDOWS_FEW_AT, elevation)
+    if elevation >= WINDOWS_MOST_AT:
+        return WINDOWS_MOST * smoothstep(WINDOWS_OFF_ABOVE, WINDOWS_MOST_AT, elevation)
     if elevation > REFERENCE_DUSK_ELEVATION:
         return mix(
-            WINDOWS_FEW, 1.0, smoothstep(WINDOWS_FEW_AT, REFERENCE_DUSK_ELEVATION, elevation)
+            WINDOWS_MOST, 1.0, smoothstep(WINDOWS_MOST_AT, REFERENCE_DUSK_ELEVATION, elevation)
         )
     return 1.0
 
 
 def tower_windows_share(sun: Sun) -> float:
-    """The share lit for the real sun: the evening's curve, times the city's dawn rule on the
-    morning side (city_windows: DAWN_CITY_WINDOWS from -6 deg), so the dawn lights fewer windows
-    than the dusk at the same elevation. Continuous at solar midnight, where both are 1."""
-    return windows_share(sun.elevation_deg) * city_windows(sun)
+    """The skyline's share lit for the real sun: the evening's curve, capped on the morning side
+    by the city's dawn rule (city_windows: DAWN_CITY_WINDOWS from -6 deg up), so the dawn lights
+    fewer windows than the dusk at the same low elevation, and the curve's own once it lights
+    fewer than the cap. A ceiling, not a second dimming: the two multiplied left 07:25's skyline
+    windowless (run 2). Continuous at solar midnight, where both are 1."""
+    return min(windows_share(sun.elevation_deg), city_windows(sun))
+
+
+def near_windows_floor(elevation: float) -> float:
+    """The fewest of their dusk windows the near blocks light: NEAR_WINDOWS_FLOOR while the sun
+    is low, fading out over NEAR_WINDOWS_FLOOR_FADE as it climbs, 0 by day."""
+    return NEAR_WINDOWS_FLOOR * smoothstep(*NEAR_WINDOWS_FLOOR_FADE, elevation)
+
+
+def near_windows_share(sun: Sun) -> float:
+    """The near blocks' share lit for the real sun: the skyline's (tower_windows_share), never
+    below their own floor, so a lit near block never goes black. Monotone on both sides, since
+    both parts are."""
+    return max(tower_windows_share(sun), near_windows_floor(sun.elevation_deg))
 
 
 def windows_on(share: float) -> float:
@@ -1200,12 +1228,20 @@ def scene_params(
         "near_blocks_day": {"Daylight": day},
         # the day state (sent only where the report's "day_state" names the components): the
         # facades' day colours by the same day weight and their lit windows by the real sun
-        # (M_HQ_TowerDay), the leaves' own albedo by day (M_HQ_TreeLeaves), the skyline's plain
-        # slots' day colour (M_HQ_CityDay, as the near blocks'); at the reference every value is
-        # the material's default, TowerDaylight 0, WindowsOn 1, LeafDaylight 0, Daylight 0
+        # (M_HQ_TowerDay), one value per tower component by its label (the skyline's curve, the
+        # near blocks' with their own floor), the leaves' own albedo by day (M_HQ_TreeLeaves),
+        # the skyline's plain slots' day colour (M_HQ_CityDay, as the near blocks'); at the
+        # reference every value is the material's default, TowerDaylight 0, WindowsOn 1,
+        # LeafDaylight 0, Daylight 0
         "towers": {
-            "TowerDaylight": day,
-            "WindowsOn": windows_on(tower_windows_share(sun)),
+            "skyline": {
+                "TowerDaylight": day,
+                "WindowsOn": windows_on(tower_windows_share(sun)),
+            },
+            "near_blocks": {
+                "TowerDaylight": day,
+                "WindowsOn": windows_on(near_windows_share(sun)),
+            },
         },
         "trees": {"LeafDaylight": day},
         "skyline_day": {"Daylight": day},
