@@ -184,7 +184,9 @@ export function doorSteps(parts) {
   const out = [];
   const walk = (/** @type {Element} */ el, /** @type {number} */ depth) => {
     const kids = Array.from(el.children);
-    if (depth < 4 && el.hasAttribute('data-door-steps') && kids.length) for (const k of kids) walk(k, depth + 1);
+    // W36: six levels, so Distribuție's channel slot (area → overview → card → list → slot) is itself
+    // stepped through: its first layout (the chart, the account picker) cost 12 ms in one frame
+    if (depth < 6 && el.hasAttribute('data-door-steps') && kids.length) for (const k of kids) walk(k, depth + 1);
     else out.push(el);
   };
   for (const p of parts) walk(p, 0);

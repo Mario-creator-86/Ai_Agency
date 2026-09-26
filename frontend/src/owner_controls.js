@@ -1,4 +1,4 @@
-import { channelTypeWord } from './dialog_words.js';
+import { channelTypeWord, providerName } from './dialog_words.js';
 
 /**
  * W34 — THE OWNER'S OWN DECISIONS, ON THE PAGE.
@@ -60,6 +60,20 @@ export function channelFacts(channel) {
  */
 export function directorRightCommand(channel, on, commandId) {
   return { command_id: commandId, expected_version: channelFacts(channel).version, director_may_approve_episodes: Boolean(on) };
+}
+
+/**
+ * W36: the switch's sentence set as its two states, word for word (split at «Oprit:»), the line of
+ * the state it is in now marked, so the plate says what ON does and what OFF does beside the switch.
+ * @param {boolean} on the state now
+ * @returns {{state: 'on'|'off', text: string, now: boolean}[]}
+ */
+export function directorRightLines(on) {
+  const at = DIRECTOR_RIGHT_MEANING.indexOf(' Oprit: ');
+  return [
+    { state: 'on', text: DIRECTOR_RIGHT_MEANING.slice(0, at), now: Boolean(on) },
+    { state: 'off', text: DIRECTOR_RIGHT_MEANING.slice(at + 1), now: !on },
+  ];
 }
 
 /** The confirmation's question. @param {boolean} on the state asked for */
@@ -140,17 +154,126 @@ export function unpricedModels(check) {
 
 /**
  * @typedef {{usd: string, usd_micros: number, version: number}} SidePrice
- * @typedef {{kind: string, model: string, input: SidePrice|null, output: SidePrice|null, priced: boolean}} PriceRow
+ * @typedef {{kind: string, model: string, input: SidePrice|null, output: SidePrice|null, priced: boolean, wide?: boolean}} PriceRow
  */
+
+/**
+ * W36: the resource that prices every model of a provider that has no price of its own
+ * (backend economy/prices.py ANY_RESOURCE; PriceCommand takes it as `resource`).
+ */
+export const ANY_MODEL = '*';
+
+/** The tones a provider's mark is drawn in: the page's cool inks, never a state's warning or alarm. */
+const MARK_TONES = /** @type {const} */ (['info', 'forest', 'teal']);
+
+/**
+ * W36: a provider's mark, from its name alone (no logo): its first letter, set on the page's hexagon
+ * (style.css .provider-mark), in one tone the name always gets.
+ * @param {unknown} kind the price table's key («ollama»)
+ * @returns {{letter: string, name: string, tone: typeof MARK_TONES[number]}}
+ */
+export function providerMark(kind) {
+  const key = String(kind ?? '').trim().toLowerCase();
+  const name = providerName(key);
+  const letter = (name.match(/[\p{L}\p{N}]/u) || ['—'])[0].toUpperCase();
+  let h = 0;
+  for (const ch of key) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return { letter, name, tone: MARK_TONES[h % MARK_TONES.length] };
+}
+
+/** The price table's key: lower case, as the backend's PriceCommand pattern takes it. */
+const KIND = /^[a-z][a-z0-9_-]*$/;
+
+/**
+ * W36: the models the studio knows (GET /settings: each model with its connection, which is an
+ * integration or an older provider record), by the kind the price table is keyed by (lower case;
+ * backend preflight _price_check). Unique, by provider then model.
+ * @param {any} settings /settings
+ * @returns {{kind: string, model: string, available: boolean}[]}
+ */
+export function knownModels(settings) {
+  if (!settings || typeof settings !== 'object') return [];
+  /** @type {Map<string, string>} */
+  const kinds = new Map();
+  for (const i of Array.isArray(settings.integrations) ? settings.integrations : []) if (i && i.id) kinds.set(String(i.id), String(i.kind || '').toLowerCase());
+  for (const p of Array.isArray(settings.legacy_providers) ? settings.legacy_providers : []) if (p && p.id && !kinds.has(String(p.id))) kinds.set(String(p.id), String(p.provider_type || '').toLowerCase());
+  /** @type {Map<string, {kind: string, model: string, available: boolean}>} */
+  const out = new Map();
+  for (const m of Array.isArray(settings.models) ? settings.models : []) {
+    const kind = kinds.get(String(m && m.provider_id)) || '';
+    const model = String((m && m.model_name) || '').trim();
+    if (!KIND.test(kind) || !model) continue;
+    const key = `${kind}\u0000${model}`;
+    const was = out.get(key);
+    out.set(key, { kind, model, available: Boolean(m.is_available) || Boolean(was && was.available) });
+  }
+  const by = (/** @type {string} */ a, /** @type {string} */ b) => a.localeCompare(b, 'en', { numeric: true });
+  return [...out.values()].sort((a, b) => by(a.kind, b.kind) || by(a.model, b.model));
+}
+
+/**
+ * W36: whether a model the Owner names can join the price list: one the studio knows at that
+ * provider, not already listed. Nothing is sent; the price is saved by the row's own key.
+ * @param {string} kind @param {unknown} name
+ * @param {{kind: string, model: string}[]} known knownModels
+ * @param {{kind: string, model: string}[]} rows the rows listed now
+ * @returns {{ok: true, row: {kind: string, model: string}} | {ok: false, error: string}}
+ */
+export function checkNewModel(kind, name, known, rows) {
+  const model = String(name ?? '').trim();
+  const provider = providerName(kind);
+  if (!model) return { ok: false, error: 'Scrie numele modelului, așa cum îl știe studioul.' };
+  if (model.includes(ANY_MODEL)) return { ok: false, error: `Pentru toate modelele unui furnizor folosește rândul „Toate modelele ${provider}”.` };
+  if (!known.some((k) => k.kind === kind && k.model === model)) {
+    return { ok: false, error: `Studioul nu cunoaște modelul „${model}” la ${provider}. Alege unul din lista lui.` };
+  }
+  if (rows.some((r) => r.kind === kind && r.model === model)) return { ok: false, error: 'Modelul este deja în listă.' };
+  return { ok: true, row: { kind, model } };
+}
+
+/**
+ * One side of a price, from the books' row.
+ * @param {any} p
+ * @returns {SidePrice}
+ */
+function sideOf(p) {
+  return { usd: String(p.usd ?? ''), usd_micros: Number(p.usd_micros), version: Number(p.version) || 1 };
+}
+
+/**
+ * W36: one provider-wide row per provider (the backend's «*»): the kinds given (the providers the
+ * studio's models run on) and every kind the books already price that way.
+ * @param {any[]|null|undefined} prices /economy/prices .prices (active)
+ * @param {string[]} kinds
+ * @returns {PriceRow[]}
+ */
+export function providerWideRows(prices, kinds) {
+  /** @type {Map<string, PriceRow>} */
+  const rows = new Map();
+  const row = (/** @type {string} */ kind) => {
+    if (!rows.has(kind)) rows.set(kind, { kind, model: ANY_MODEL, input: null, output: null, priced: false, wide: true });
+    return /** @type {PriceRow} */ (rows.get(kind));
+  };
+  for (const k of kinds) if (KIND.test(String(k))) row(String(k));
+  for (const p of Array.isArray(prices) ? prices : []) {
+    if (!p || p.active === false || !TOKEN_UNITS.includes(p.unit) || String(p.resource) !== ANY_MODEL) continue;
+    const r = row(String(p.provider_kind || ''));
+    if (p.unit === 'per_1m_input_tokens') r.input = sideOf(p);
+    else r.output = sideOf(p);
+  }
+  for (const r of rows.values()) r.priced = Boolean(r.input && r.output);
+  return [...rows.values()].sort((a, b) => a.kind.localeCompare(b.kind, 'en'));
+}
 
 /**
  * One row per model: the ones the preflight found unpriced, then every model the books price per
  * token, each with what each side costs now and its version.
  * @param {any} preflight /runbook/preflight
  * @param {any[]|null|undefined} prices /economy/prices .prices (active)
+ * @param {{kind: string, model: string}[]} [added] W36: models the Owner put in the list (checkNewModel)
  * @returns {PriceRow[]}
  */
-export function tokenPriceRows(preflight, prices) {
+export function tokenPriceRows(preflight, prices, added = []) {
   const checks = preflight && Array.isArray(preflight.checks) ? preflight.checks : [];
   const line = checks.find((c) => c && c.name === 'model_prices');
   /** @type {Map<string, PriceRow>} */
@@ -161,12 +284,14 @@ export function tokenPriceRows(preflight, prices) {
     return /** @type {PriceRow} */ (rows.get(key));
   };
   for (const u of unpricedModels(line)) row(u.kind, u.model);
+  // W36: a model the Owner added from the studio's own list (checkNewModel), until it is priced
+  for (const a of Array.isArray(added) ? added : []) if (a && a.kind && a.model) row(String(a.kind), String(a.model));
   for (const p of Array.isArray(prices) ? prices : []) {
-    if (!p || p.active === false || !TOKEN_UNITS.includes(p.unit)) continue;
+    // W36: the provider-wide price («*») is its own row (providerWideRows), not a model's
+    if (!p || p.active === false || !TOKEN_UNITS.includes(p.unit) || String(p.resource) === ANY_MODEL) continue;
     const r = row(String(p.provider_kind || ''), String(p.resource || ''));
-    const side = { usd: String(p.usd ?? ''), usd_micros: Number(p.usd_micros), version: Number(p.version) || 1 };
-    if (p.unit === 'per_1m_input_tokens') r.input = side;
-    else r.output = side;
+    if (p.unit === 'per_1m_input_tokens') r.input = sideOf(p);
+    else r.output = sideOf(p);
   }
   for (const r of rows.values()) r.priced = Boolean(r.input && r.output);
   // W35: one fixed order, by provider then model. The preflight is recomputed after every save, so
@@ -205,7 +330,7 @@ export function usdWords(micros) {
  * @param {PriceRow} row @param {any} input @param {any} output
  */
 export function priceAnswer(row, input, output) {
-  return `Salvat: ${row.kind} · ${row.model} — intrare ${usdWords(input.usd_micros)} USD, ieșire ${usdWords(output.usd_micros)} USD pe milion de tokenuri (versiunea ${Math.max(Number(input.version) || 1, Number(output.version) || 1)}).`;
+  return `Salvat: ${row.kind} · ${row.model === ANY_MODEL ? 'toate modelele' : row.model} — intrare ${usdWords(input.usd_micros)} USD, ieșire ${usdWords(output.usd_micros)} USD pe milion de tokenuri (versiunea ${Math.max(Number(input.version) || 1, Number(output.version) || 1)}).`;
 }
 
 /* ------------------------------------------------------------------------- about the studio */

@@ -3,8 +3,8 @@ import { icon } from './icons.js';
 import { renderProviderProduction } from './provider_production.js';
 import { connectionTitle, policyWord, providerName } from './dialog_words.js';
 import {
-  DIRECTOR_RIGHT_LABEL, DIRECTOR_RIGHT_MEANING, MODULE_STATE, channelFacts, directorRightAnswer, directorRightCommand,
-  directorRightConfirmKey, directorRightQuestion, modulesSummary, SERIAL_CHANNEL_TYPE,
+  DIRECTOR_RIGHT_LABEL, MODULE_STATE, channelFacts, directorRightAnswer, directorRightCommand,
+  directorRightConfirmKey, directorRightLines, directorRightQuestion, modulesSummary, SERIAL_CHANNEL_TYPE,
 } from './owner_controls.js';
 
 import './settings.css';
@@ -611,56 +611,100 @@ export function initSettings(api, hooks = {}) {
     }
     if (channelsError) { container.append(node('p', channelsError, 'settings-error')); return; }
     if (!channels || !channels.length) { container.append(node('p', 'Niciun canal de distribuție configurat.', 'helper')); return; }
-    const grid = node('div', '', 'settings-connections settings-channels');
+    // W36: the decision first, as its own lit plate; then each channel as a plate of its facts, laid
+    // side by side at their own height (a card is never stretched to its neighbour's).
+    const serial = channels.find((c) => c && c.channel_type === SERIAL_CHANNEL_TYPE);
+    if (serial) container.append(directorSwitch(serial));
+    const grid = node('div', '', 'channel-plates');
     for (const channel of channels) {
       const facts = channelFacts(channel);
-      const card = node('article', '', 'settings-card settings-channel');
-      card.append(node('h3', String(channel.channel_name || '—')));
-      const type = node('p', `Tip: ${facts.type}`, 'helper');
-      type.title = String(channel.channel_type || '');
-      const account = node('p', 'Cont YouTube: ', 'helper');
-      const accountName = node('span', facts.account);
-      if (facts.accountTitle) accountName.title = facts.accountTitle;
-      account.append(accountName);
-      card.append(type, account, node('p', `Politica canalului: versiunea ${facts.version}`, 'helper'));
-      if (channel.channel_type === SERIAL_CHANNEL_TYPE) {
-        card.classList.add('is-serial');
-        card.append(directorSwitch(channel));
-      }
+      const isSerial = channel.channel_type === SERIAL_CHANNEL_TYPE;
+      const card = node('article', '', `channel-plate${isSerial ? ' is-serial' : ''}`);
+      const head = node('div', '', 'channel-plate-head');
+      const mark = node('span', '', 'channel-plate-mark');
+      mark.setAttribute('aria-hidden', 'true');
+      mark.innerHTML = icon(isSerial ? 'clapper' : 'shortform');
+      head.append(mark, node('h3', String(channel.channel_name || '—'), 'channel-plate-name'));
+      const facts_ = node('dl', '', 'channel-plate-facts');
+      const fact = (/** @type {string} */ label, /** @type {string} */ value, /** @type {string} */ title = '') => {
+        const row = node('div', '', 'channel-plate-fact');
+        const dd = node('dd', value);
+        if (title) { dd.title = title; dd.classList.add('has-title'); }
+        row.append(node('dt', label), dd);
+        facts_.append(row);
+      };
+      fact('Tip', facts.type, String(channel.channel_type || ''));
+      fact('Cont YouTube', facts.account, facts.accountTitle);
+      fact('Politica canalului', `versiunea ${facts.version}`);
+      card.append(head, facts_);
       grid.append(card);
     }
     container.append(grid);
   }
 
-  /** @param {any} channel */
+  /**
+   * W36: the Director's right as an illuminated plate: its mark, its name, a large switch that is
+   * calm when OFF and lit in the page's accent when ON, what each state does and spends beside it
+   * (the W34 sentence, as its two states), and the confirmation as a glass step. The switch never
+   * changes anything by itself: only «Da» sends the channel's versioned command.
+   * @param {any} channel
+   */
   function directorSwitch(channel) {
     const on = Boolean(channel.director_may_approve_episodes);
-    const box = node('div', '', 'owner-decision');
-    const toggle = /** @type {HTMLButtonElement} */ (node('button', '', `owner-switch${on ? ' is-on' : ''}`));
+    const facts = channelFacts(channel);
+    const box = node('section', '', `decision-plate ${on ? 'is-on' : 'is-off'}${asking && asking.id === channel.id ? ' is-asking' : ''}`);
+    box.setAttribute('aria-labelledby', 'director-right-title');
+    const head = node('div', '', 'decision-head');
+    const mark = node('span', '', 'decision-mark');
+    mark.setAttribute('aria-hidden', 'true');
+    mark.innerHTML = icon('seal');
+    const words = node('div', '', 'decision-words');
+    const eyebrow = node('p', `Decizia ta · ${String(channel.channel_name || '—')}`, 'decision-eyebrow');
+    const title = node('h3', DIRECTOR_RIGHT_LABEL, 'decision-title');
+    title.id = 'director-right-title';
+    const version = node('p', `Politica canalului: versiunea ${facts.version}`, 'decision-version');
+    words.append(eyebrow, title, version);
+    const toggle = /** @type {HTMLButtonElement} */ (node('button', '', `decision-switch${on ? ' is-on' : ''}`));
     toggle.type = 'button';
     toggle.setAttribute('role', 'switch');
     toggle.setAttribute('aria-checked', on ? 'true' : 'false');
+    toggle.setAttribute('aria-labelledby', 'director-right-title');
     toggle.id = 'director-right-switch';
-    const label = node('span', DIRECTOR_RIGHT_LABEL, 'owner-switch-label');
-    const track = node('span', '', 'switch-track');
-    track.append(node('span', '', 'switch-knob'));
-    const state = node('span', on ? 'PORNIT' : 'OPRIT', 'owner-switch-state');
-    toggle.append(label, track, state);
-    const meaning = node('p', DIRECTOR_RIGHT_MEANING, 'owner-decision-meaning');
-    meaning.id = 'director-right-meaning';
-    toggle.setAttribute('aria-describedby', meaning.id);
+    const track = node('span', '', 'decision-track');
+    track.setAttribute('aria-hidden', 'true');
+    track.append(node('span', '', 'decision-knob'));
+    const state = node('span', on ? 'PORNIT' : 'OPRIT', 'decision-state');
+    toggle.append(track, state);
+    const lines = node('ul', '', 'decision-lines');
+    lines.id = 'director-right-meaning';
+    for (const line of directorRightLines(on)) {
+      const li = node('li', '', `decision-line${line.now ? ' is-now' : ''}`);
+      li.dataset.state = line.state;
+      if (line.now) li.append(node('span', 'acum', 'decision-now'));
+      li.append(document.createTextNode(line.text));
+      lines.append(li);
+    }
+    toggle.setAttribute('aria-describedby', lines.id);
     toggle.addEventListener('click', () => {
       asking = { id: channel.id, on: !on };
       answer = null;
       render();
       /** @type {HTMLElement|null} */ (dialog.querySelector('.owner-confirm-yes'))?.focus();
     });
-    box.append(toggle, meaning);
+    head.append(mark, words, toggle);
+    box.append(head, lines);
     if (asking && asking.id === channel.id) {
-      const ask = node('div', '', 'owner-confirm');
+      const ask = node('div', '', 'owner-confirm decision-confirm');
       ask.setAttribute('role', 'group');
       ask.setAttribute('aria-label', directorRightQuestion(asking.on));
-      ask.append(node('p', directorRightQuestion(asking.on), 'owner-confirm-question'));
+      const change = node('p', '', 'decision-change');
+      change.append(
+        node('span', 'Confirmă', 'decision-confirm-eyebrow'),
+        node('span', on ? 'PORNIT' : 'OPRIT', `decision-chip ${on ? 'is-on' : 'is-off'}`),
+        node('span', '→', 'decision-arrow'),
+        node('span', asking.on ? 'PORNIT' : 'OPRIT', `decision-chip ${asking.on ? 'is-on' : 'is-off'}`),
+      );
+      ask.append(change, node('p', directorRightQuestion(asking.on), 'owner-confirm-question'));
       const keys = node('div', '', 'owner-confirm-keys');
       const yes = /** @type {HTMLButtonElement} */ (node('button', directorRightConfirmKey(asking.on), 'primary owner-confirm-yes'));
       yes.type = 'button';
@@ -700,7 +744,7 @@ export function initSettings(api, hooks = {}) {
         /** @type {HTMLElement|null} */ (dialog.querySelector('#director-right-switch'))?.focus();
       });
       keys.append(yes, no);
-      ask.append(keys);
+      ask.append(keys, node('p', 'Până nu apeși Da, nu se schimbă nimic.', 'decision-confirm-note'));
       box.append(ask);
     }
     if (answer) {

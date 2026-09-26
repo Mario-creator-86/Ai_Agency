@@ -39,7 +39,10 @@ import {
   preflightWord, publicationStatus, qcWord, runStatusWord, seconds, shotWords, storyboardStatus, storyboardTone, topicStatus, workWord,
   deskPlace, sharedTail, hostFailureWords, promptFirstSentence, voiceWords,
 } from './dialog_words.js';
-import { PRICES_MEANING, PRICE_BOTH, channelFacts, priceAnswer, priceCommands, priceInput, tokenPriceRows, usdWords } from './owner_controls.js';
+import {
+  PRICES_MEANING, PRICE_BOTH, channelFacts, checkNewModel, knownModels, priceAnswer, priceCommands, priceInput, providerMark, providerWideRows,
+  tokenPriceRows, usdWords,
+} from './owner_controls.js';
 import { LiveWindows, eventMatchesAgent } from './live_window.js';
 import { MailThread } from './mail_thread.js';
 import { LiveStream } from './hq_stream.js';
@@ -3694,8 +3697,8 @@ async function loadPublishingHub() {
       channelsEl.innerHTML = channels
         .map(
           (c) => `
-        <div class="channel-item">
-          <div class="channel-info">
+        <div class="channel-item" data-door-steps>
+          <div class="channel-info" data-door-steps>
             <h4>${escapeHtml(c.channel_name)}</h4>
             <div class="channel-meta">Tip: <strong title="${escapeHtml(c.channel_type)}">${escapeHtml(channelTypeWord(c.channel_type))}</strong> · Canal YouTube: <span class="distribution-account" title="${escapeHtml(channelFacts(c).accountTitle)}">${escapeHtml(c.remote_channel_id ? (c.youtube_channel_title || 'nelegat') : 'nesetat')}</span></div>
             <div class="channel-meta">${escapeHtml(CHANNEL_STATUS_HINT[c.status] || 'Stare necunoscută.')}</div>
@@ -4757,20 +4760,50 @@ async function loadBudget() {
  * W34, Trezorerie → Prețurile modelelor: a price per million tokens, read and written, for each
  * model the preflight found without one and each the books price per token (owner_controls.js).
  * The Owner types it; the page never proposes a figure.
+ * W36: one plate per model, with its provider's mark, its state, the two fields and its key; a plate
+ * per provider for the backend's «*» (every model of it without a price of its own); and a model the
+ * preflight does not name can be put in the list, if the studio knows it (GET /settings).
  */
 let priceRows = /** @type {import('./owner_controls.js').PriceRow[]} */ ([]);
 /** The last answer, said in the row it answers (the list is drawn again after a save). */
 let priceSaid = /** @type {{key: string, text: string, error: boolean}|null} */ (null);
+/**
+ * W36: the models listed this visit: the ones the Owner put in the list (checkNewModel) and the ones
+ * the preflight named. A model stays where it was when a provider's price then covers it and the
+ * recomputed preflight stops naming it (the W35 rule: nothing moves under his hand).
+ */
+const priceAdded = /** @type {{kind: string, model: string}[]} */ ([]);
+/** W36: the models the studio knows, from the last read of /settings; null when it could not be read. */
+let priceKnown = /** @type {{kind: string, model: string, available: boolean}[]|null} */ (null);
+/** W36: what the add form last said, kept across the list's redraw. */
+let priceAddSaid = /** @type {{text: string, error: boolean}|null} */ (null);
+const priceKey = (/** @type {{kind: string, model: string}} */ r) => `${r.kind}\u0000${r.model}`;
+/** The same key as an attribute can carry it (no NUL: a kind never holds a colon, so the first one splits it). */
+const priceDomKey = (/** @type {{kind: string, model: string}} */ r) => `${r.kind}:${r.model}`;
+
+/** A provider's mark: its first letter on the page's hexagon (owner_controls.js providerMark). @param {string} kind */
+function providerMarkHtml(kind) {
+  const m = providerMark(kind);
+  return `<span class="provider-mark" data-tone="${m.tone}" aria-hidden="true">${icon('hexagon')}<span class="provider-mark-letter">${escapeHtml(m.letter)}</span></span>`;
+}
+
 async function loadPrices() {
   const list = element('prices-list');
   element('prices-meaning').textContent = PRICES_MEANING;
-  const [preflight, prices] = await Promise.allSettled([api('/runbook/preflight'), api('/economy/prices')]);
+  const [preflight, prices, settings] = await Promise.allSettled([api('/runbook/preflight'), api('/economy/prices'), api('/settings')]);
   if (prices.status === 'rejected') {
     list.innerHTML = `<div class="text-error">${escapeHtml(prices.reason instanceof Error ? prices.reason.message : 'Prețurile nu au putut fi citite.')}</div>`;
     return;
   }
   const read = preflight.status === 'fulfilled' ? preflight.value : null;
-  priceRows = tokenPriceRows(read, prices.value && prices.value.prices);
+  priceKnown = settings.status === 'fulfilled' ? knownModels(settings.value) : null;
+  const books = prices.value && prices.value.prices;
+  const models = tokenPriceRows(read, books, priceAdded);
+  for (const r of models) if (!priceAdded.some((a) => a.kind === r.kind && a.model === r.model)) priceAdded.push({ kind: r.kind, model: r.model });
+  const kinds = [...new Set([...(priceKnown || []).map((k) => k.kind), ...models.map((r) => r.kind)])];
+  const wide = providerWideRows(books, kinds);
+  priceRows = [...wide, ...models];
+  const wideOf = new Map(wide.map((r) => [r.kind, r]));
   const line = read && Array.isArray(read.checks) ? read.checks.find((/** @type {any} */ c) => c && c.name === 'model_prices') : null;
   const source = !read
     ? '<p class="helper-note prices-source">—<br>Verificarea preliminară nu a putut fi citită.</p>'
@@ -4779,25 +4812,100 @@ async function loadPrices() {
       : '<p class="helper-note prices-source">Modelele fără preț sunt cele pe care verificarea preliminară a zilei le-a găsit fără preț.</p>';
   const field = (/** @type {number} */ i, /** @type {'input'|'output'} */ side, /** @type {any} */ now) => `
       <label class="price-field"><span class="price-field-label">${side === 'input' ? 'Intrare' : 'Ieșire'} · USD / 1M tokenuri</span>
-        <input class="dialog-input" name="${side}" inputmode="decimal" autocomplete="off" spellcheck="false" maxlength="20" value="${now ? escapeHtml(usdWords(now.usd_micros)) : ''}" aria-describedby="price-error-${i}" /></label>`;
-  list.innerHTML = source + (priceRows.length
-    ? priceRows.map((row, i) => {
-      const version = Math.max(row.input ? row.input.version : 0, row.output ? row.output.version : 0);
-      return `
-    <form class="price-row" data-row="${i}" novalidate>
-      <div class="price-model"><strong lang="en">${escapeHtml(row.kind)} · ${escapeHtml(row.model)}</strong>
-        <span class="price-state" data-tone="${row.priced ? 'ok' : 'warn'}">${row.priced ? `preț pus · versiunea ${version}` : 'fără preț'}</span></div>
+        <span class="price-well"><span class="price-unit" aria-hidden="true">USD</span><input class="dialog-input" name="${side}" inputmode="decimal" autocomplete="off" spellcheck="false" maxlength="20" value="${now ? escapeHtml(usdWords(now.usd_micros)) : ''}" aria-describedby="price-error-${i}" /></span></label>`;
+  const plate = (/** @type {import('./owner_controls.js').PriceRow} */ row, /** @type {number} */ i) => {
+    const version = Math.max(row.input ? row.input.version : 0, row.output ? row.output.version : 0);
+    const provider = providerName(row.kind);
+    const name = row.wide
+      ? `<strong class="price-name">Toate modelele ${escapeHtml(provider)}</strong>`
+      : `<strong class="price-name" lang="en">${escapeHtml(row.model)}</strong>`;
+    const note = row.wide ? `<span class="price-note">Îl ia orice model ${escapeHtml(provider)} fără un preț al lui; un model cu prețul lui îl păstrează pe al lui.</span>` : '';
+    // a model with no price of its own, costed by its provider's «*» (backend prices.price_row)
+    const covered = !row.wide && !row.priced && Boolean(wideOf.get(row.kind)?.priced);
+    const state = row.priced
+      ? `<span class="price-state" data-tone="ok">preț pus · versiunea ${version}</span>`
+      : covered
+        ? '<span class="price-state" data-tone="info">ia prețul furnizorului</span>'
+        : '<span class="price-state" data-tone="warn">fără preț</span>';
+    return `
+    <form class="price-row price-plate${row.wide ? ' is-wide' : ''}${row.priced ? ' is-priced' : ''}${covered ? ' is-covered' : ''}" data-row="${i}" data-key="${escapeHtml(priceDomKey(row))}"${row.wide ? ' title="Prețul cu resursa «*» pentru tot furnizorul"' : ''} novalidate>
+      ${providerMarkHtml(row.kind)}
+      <div class="price-model"><span class="price-provider" lang="en">${escapeHtml(provider)}</span>${name}
+        ${state}${note}</div>
       ${field(i, 'input', row.input)}
       ${field(i, 'output', row.output)}
       <button type="submit" class="secondary price-save">Salvează prețul</button>
       <p class="price-error" id="price-error-${i}" role="alert" hidden></p>
-      ${priceSaid && priceSaid.key === `${row.kind}\u0000${row.model}` ? `<p class="price-answer${priceSaid.error ? ' is-error' : ''}" role="status">${escapeHtml(priceSaid.text)}</p>` : ''}
+      ${priceSaid && priceSaid.key === priceKey(row) ? `<p class="price-answer${priceSaid.error ? ' is-error' : ''}" role="status">${escapeHtml(priceSaid.text)}</p>` : ''}
     </form>`;
-    }).join('')
-    : '');
+  };
+  const groups = [];
+  if (wide.length) groups.push(`<h4 class="prices-group">Pentru tot furnizorul</h4>${wide.map((r, i) => plate(r, i)).join('')}`);
+  if (models.length) groups.push(`<h4 class="prices-group">Pe model</h4>${models.map((r, i) => plate(r, wide.length + i)).join('')}`);
+  // the add form keeps what was being typed across the redraw that a save makes
+  const was = /** @type {HTMLFormElement|null} */ (list.querySelector('form.price-add'));
+  const wasKind = was ? /** @type {HTMLSelectElement} */ (was.elements.namedItem('kind')).value : '';
+  const wasModel = was ? /** @type {HTMLInputElement} */ (was.elements.namedItem('model')).value : '';
+  let add = '';
+  if (!priceKnown) {
+    add = '<p class="helper-note prices-known-missing">Lista modelelor studioului nu a putut fi citită; poți pune prețuri doar modelelor de mai sus.</p>';
+  } else if (priceKnown.length) {
+    const addKinds = [...new Set(priceKnown.map((k) => k.kind))];
+    const kindNow = addKinds.includes(wasKind) ? wasKind : addKinds[0];
+    const listed = new Set(models.map(priceKey));
+    add = `
+    <form class="price-add" novalidate>
+      <h4 class="prices-group">Adaugă un model</h4>
+      <p class="helper-note">Pune în listă un model pe care studioul îl cunoaște. Prețul se salvează abia când apeși Salvează prețul.</p>
+      <div class="price-add-row">
+        <label class="price-field"><span class="price-field-label">Furnizor</span>
+          <select class="dialog-input" name="kind">${addKinds.map((k) => `<option value="${escapeHtml(k)}"${k === kindNow ? ' selected' : ''}>${escapeHtml(providerName(k))}</option>`).join('')}</select></label>
+        <label class="price-field price-add-model"><span class="price-field-label">Model</span>
+          <input class="dialog-input" name="model" list="price-known-models" autocomplete="off" spellcheck="false" maxlength="200" value="${escapeHtml(wasModel)}" aria-describedby="price-add-said" /></label>
+        <button type="submit" class="secondary price-add-key">Adaugă în listă</button>
+      </div>
+      <datalist id="price-known-models">${priceKnown.filter((k) => k.kind === kindNow && !listed.has(priceKey(k))).map((k) => `<option value="${escapeHtml(k.model)}"></option>`).join('')}</datalist>
+      <p class="price-add-said${priceAddSaid && priceAddSaid.error ? ' is-error' : ''}" id="price-add-said" role="status"${priceAddSaid ? '' : ' hidden'}>${priceAddSaid ? escapeHtml(priceAddSaid.text) : ''}</p>
+    </form>`;
+  }
+  list.innerHTML = source + groups.join('') + add;
 }
+element('prices-list').addEventListener('change', (event) => {
+  // the provider picked in the add form: its own models are the ones suggested
+  const select = /** @type {HTMLElement} */ (event.target);
+  if (!(select instanceof HTMLSelectElement) || select.name !== 'kind' || !priceKnown) return;
+  const listed = new Set(priceRows.filter((r) => !r.wide).map(priceKey));
+  const options = priceKnown.filter((k) => k.kind === select.value && !listed.has(priceKey(k)));
+  const datalist = element('price-known-models');
+  datalist.replaceChildren(...options.map((k) => new Option('', k.model)));
+});
 element('prices-list').addEventListener('submit', async (event) => {
   event.preventDefault();
+  const adding = /** @type {HTMLFormElement|null} */ (/** @type {HTMLElement} */ (event.target).closest('form.price-add'));
+  if (adding) {
+    const kind = /** @type {HTMLSelectElement} */ (adding.elements.namedItem('kind')).value;
+    const input = /** @type {HTMLInputElement} */ (adding.elements.namedItem('model'));
+    const checked = checkNewModel(kind, input.value, priceKnown || [], priceRows.filter((r) => !r.wide));
+    if (!checked.ok) {
+      const said = element('price-add-said');
+      priceAddSaid = { text: /** @type {any} */ (checked).error, error: true };
+      said.textContent = priceAddSaid.text;
+      said.classList.add('is-error');
+      said.hidden = false;
+      input.setAttribute('aria-invalid', 'true');
+      input.focus();
+      return;
+    }
+    priceAdded.push(/** @type {any} */ (checked).row);
+    priceAddSaid = null;
+    input.value = '';
+    await loadPrices();
+    const key = priceDomKey(/** @type {any} */ (checked).row);
+    const row = /** @type {HTMLElement|null} */ (Array.from(element('prices-list').querySelectorAll('form.price-row')).find((f) => /** @type {HTMLElement} */ (f).dataset.key === key) || null);
+    row?.scrollIntoView({ block: 'nearest' });
+    /** @type {HTMLInputElement|null} */ (row?.querySelector('input[name="input"]') || null)?.focus();
+    return;
+  }
   const form = /** @type {HTMLFormElement} */ (/** @type {HTMLElement} */ (event.target).closest('form.price-row'));
   if (!form) return;
   const row = priceRows[Number(form.dataset.row)];
@@ -4825,7 +4933,7 @@ element('prices-list').addEventListener('submit', async (event) => {
   const save = /** @type {HTMLButtonElement} */ (form.querySelector('.price-save'));
   save.disabled = true;
   status.hidden = true;
-  const key = `${row.kind}\u0000${row.model}`;
+  const key = priceKey(row);
   save.textContent = 'Se salvează…';
   const [cin, cout] = priceCommands(row, a.usd, b.usd, [crypto.randomUUID(), crypto.randomUUID()]);
   const said = (/** @type {any} */ e) => (e && e.status === 422 ? 'Studioul a refuzat valorile trimise; verifică prețurile și încearcă din nou.' : e instanceof Error ? e.message : String(e));

@@ -184,9 +184,10 @@ export const FIX_PLACES = {
   publishing: { label: 'Distribuție · Sloturi de canal', door: 'publishing-modal', section: 'channels-list' },
   treasury: { label: 'Trezorerie · Buget și cheltuieli', door: 'treasury-modal', section: 'tr-budget' },
   characters: { label: 'Media · Character Bible', door: 'media-modal', tab: 'characters', section: 'media-characters-section' },
-  // W34: the two decisions that were «only through the API»
-  'settings:channels': { label: 'Setări · Canale', door: 'settings', tab: 'channels' },
-  prices: { label: 'Trezorerie · Prețurile modelelor', door: 'treasury-modal', section: 'tr-prices' },
+  // W34: the two decisions that were «only through the API». W36: named as the backend names them
+  // (preflight PLACES, «→»), so an older backend's key reads as the others do
+  'settings:channels': { label: 'Setări → Canale', door: 'settings', tab: 'channels' },
+  prices: { label: 'Trezorerie → Prețurile modelelor', door: 'treasury-modal', section: 'tr-prices' },
 };
 
 /**

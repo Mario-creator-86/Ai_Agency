@@ -273,6 +273,18 @@
   --switch-knob:  12px;
   --switch-inset: 2px;
   --switch-r:     3px;   /* the knob's corner, inside --radius-xs */
+  /* W36: the Director's right on its plate (Setări → Canale), the same toggle drawn larger: the knob
+     sits --decision-inset inside the track, so its travel is arithmetic as the small one's is. */
+  --decision-switch-w:   64px;
+  --decision-switch-h:   32px;
+  --decision-knob:       24px;   /* --decision-switch-h - 2 x --decision-inset - the 2px border */
+  --decision-inset:      3px;
+  --decision-switch-hit: 48px;   /* the pill the switch and its word stand in */
+  --decision-mark:       56px;   /* the plate's seal */
+  --decision-halo:       24px;   /* how far the accent's light spreads when ON */
+  --channel-plate-min:   320px;  /* the narrowest a channel's plate stands in its row */
+  --provider-mark:       40px;   /* a price plate's hexagon */
+  --mark-stroke:         1.2;    /* the family's stroke, thinner where an icon is drawn large */
   --time-rail: 54px;   /* the ledger's mono time column */
   --badge-w:   172px;  /* the printed brand badge on the sign-in card */
   --login-w:   560px;  /* the sign-in card */
@@ -886,6 +898,9 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 
 .pub-gate-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 9px; font-size: var(--fs-body); line-height: 1.5; color: var(--ink-2); }
 .pub-gate-list strong { color: var(--ink); }
+/* W36: «măsurate» is stressed in the page's ink, not in italics. The italic face is used nowhere else
+   on the page: its first use cost 8-10 ms of one frame as Distribuție opened (ui/w36 steps36.mjs). */
+.pub-gate-list em { font-style: normal; color: var(--ink); font-weight: var(--w-semi); }
 .pub-gate-note { margin: 12px 0 0; font-size: var(--fs-meta); line-height: 1.5; color: var(--ink-3); border-top: 1px solid var(--line); padding-top: 10px; }
 .pub-gate-note code { color: var(--ink-2); font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }
 
@@ -1874,6 +1889,17 @@ body.is-entering .title-stage.lands .title-sky { animation: title-fade var(--dur
    ~300 ms): it appears where the frame has landed, the same picture, at the push's end */
 body.is-entering.is-landing .office-panel { animation: panel-appear var(--dur-fast) var(--ease) both; animation-delay: var(--dur-push); }
 @keyframes panel-appear { from { opacity: 0; } }
+/* W36: a cold entry pushes into the plates, and the live stream's picture came up with the render's
+   panel under the push: the plates and the stream, offset, at once for ~300 ms (ui/w36 entry36.mjs,
+   a stand-in stream frame). The picture waits until the plates are all but gone (title_screen.js
+   is-pushing, ENTRY.streamMs: 640 of the 700 ms push, the plates under 2 %) and then fades in over
+   --dur-fast, full 60 ms after the push's end, as the returning entry's panel appears only where its
+   kept frame has landed. The layer's own ground stays, so nothing older shows through it. */
+body.is-pushing #office-scene-container .live-stream-layer video,
+body.is-pushing #office-scene-container .live-stream-layer .live-stream-still { opacity: 0; }
+/* it goes at once when the push begins (the render's panel is not seen yet), and fades in at its end */
+body.is-cold-entry:not(.is-pushing) #office-scene-container .live-stream-layer video,
+body.is-cold-entry:not(.is-pushing) #office-scene-container .live-stream-layer .live-stream-still { transition: opacity var(--dur-fast) var(--ease); }
 @keyframes title-push {
   0%   { transform: scale(1); opacity: 1; }
   30%  { opacity: 1; }
@@ -3526,6 +3552,10 @@ details[open] > summary::before { transform: rotate(90deg); }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  /* W36: the decision's glass step appears, and its switch changes, without moving. W37: named
+     from its plate, so this outranks the step's own animation rule, which is written later. */
+  .decision-plate .decision-confirm { animation: none; }
+  .decision-plate, .decision-mark, .decision-track, .decision-knob { transition: none; }
   /* W15: under reduced motion a drawer snaps, with no glide to spread its cost over. A closed
      register's list is then not restyled at all (content-visibility: hidden skips its two
      hundred rows); with motion the list stays drawn while it slides out. */
@@ -5392,41 +5422,7 @@ details[open].pf-ok .pf-ok-line .pf-message { white-space: normal; overflow: vis
   .price-row { grid-template-columns: minmax(0, 1fr); }
 }
 
-/* SETĂRI → CANALE: each channel a card; on the serial's, the Director's right as a switch that
-   asks before it changes anything, what it does and spends said under it, and the answer. */
-.settings-channels { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
-.settings-channel.is-serial { border-color: var(--gold-line); }
-.owner-decision { display: grid; gap: var(--s3); margin-top: var(--s3); padding-top: var(--s3); border-top: 1px solid var(--line); }
-.owner-switch {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: var(--s3);
-  width: 100%;
-  min-height: var(--hit);
-  padding: var(--s2) var(--s3);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface-sunk);
-  color: var(--ink);
-  text-align: left;
-  font-size: var(--fs-body);
-}
-.owner-switch:hover { border-color: var(--line-lit); background: var(--surface-hi); }
-.owner-switch-label { font-weight: var(--w-semi); }
-.owner-switch-state { min-width: 6ch; font-family: var(--font-mono, ui-monospace, monospace); font-size: var(--fs-meta); letter-spacing: .08em; color: var(--alert-ink); }
-.owner-switch.is-on .switch-track { background: var(--ok-bg); border-color: var(--ok-ink); }
-.owner-switch.is-on .switch-knob { left: calc(var(--switch-w) - var(--switch-knob) - var(--switch-inset) - 2px); background: var(--teal); }
-.owner-switch.is-on .owner-switch-state { color: var(--teal); }
-.owner-decision-meaning { color: var(--ink-2); }
-.owner-confirm {
-  display: grid;
-  gap: var(--s3);
-  padding: var(--s3) var(--s4);
-  border: 1px solid var(--gold-line);
-  border-radius: var(--radius-sm);
-  background: var(--warn-bg);
-}
+/* SETĂRI → CANALE (W34): the confirmation's words and keys; the plates are W36's, below. */
 .owner-confirm-question { color: var(--ink); font-weight: var(--w-semi); }
 .owner-confirm-keys { display: flex; flex-wrap: wrap; gap: var(--s2); }
 .owner-confirm-keys > button { width: auto; flex: 0 0 auto; min-height: var(--hit); font-size: var(--fs-body); }
@@ -5440,3 +5436,405 @@ details[open].pf-ok .pf-ok-line .pf-message { white-space: normal; overflow: vis
 .trends-refresh { display: inline-flex; align-items: center; gap: var(--s1); }
 .trends-refresh .ui-icon { width: 1.05em; height: 1.05em; }
 
+/* W36 — THE LAST PLAIN SURFACES, AS PLATES OF THE BUILDING. The release judge (W35) read Setări →
+   Canale and Trezorerie → Prețurile modelelor as clean forms beside a game frame, and the red
+   «OPRIT» as an alarm. The Director's right is now an illuminated plate: a large switch, calm and
+   steel when OFF, lit in the page's accent when ON; what each state does and spends beside it; the
+   confirmation a glass step that says the change. The channels are plates of their facts at their
+   own height, and each price a plate with its provider's mark, its state, its two wells and its key. */
+
+/* SETĂRI → CANALE: the decision's plate */
+.decision-plate {
+  position: relative;
+  display: grid;
+  gap: var(--s4);
+  padding: var(--s5) var(--s6);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, var(--surface-quiet), var(--surface-sunk));
+  box-shadow: var(--lit-edge), var(--shadow-raised);
+  /* no overflow clip: in Settings' scrolling grid a clipped item may be squeezed below its content
+     (measured at 390: the plate shrank to its eyebrow); the rail fades out before the corners */
+  transition: border-color var(--dur-slow) var(--ease), box-shadow var(--dur-slow) var(--ease);
+}
+/* the plate's rail of light along its top: steel while OFF, the accent while ON */
+.decision-plate::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--line-field), transparent);
+  pointer-events: none;
+}
+.decision-plate.is-on {
+  border-color: var(--ok-line);
+  background:
+    radial-gradient(90% 160% at 100% 0%, var(--focus-glow), transparent 58%),
+    linear-gradient(180deg, var(--surface-quiet), var(--surface-sunk));
+  box-shadow: var(--lit-edge), var(--shadow-raised), 0 0 var(--decision-halo) calc(var(--decision-halo) / -3) var(--teal);
+}
+.decision-plate.is-on::before { background: linear-gradient(90deg, transparent, var(--teal), transparent); }
+.decision-head {
+  display: grid;
+  grid-template-columns: var(--decision-mark) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s5);
+}
+.decision-mark {
+  display: grid;
+  place-items: center;
+  width: var(--decision-mark);
+  height: var(--decision-mark);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--bg-lift);
+  box-shadow: var(--inset-well);
+  color: var(--ink-3);
+  transition: color var(--dur-slow) var(--ease), border-color var(--dur-slow) var(--ease), box-shadow var(--dur-slow) var(--ease);
+}
+.decision-mark .ui-icon { width: calc(var(--decision-mark) * .56); height: calc(var(--decision-mark) * .56); stroke-width: var(--mark-stroke); }
+.decision-plate.is-on .decision-mark { color: var(--teal); border-color: var(--ok-line); box-shadow: var(--inset-well), 0 0 var(--decision-halo) calc(var(--decision-halo) / -3) var(--teal); }
+.decision-words { display: grid; gap: var(--s1); min-width: 0; }
+.decision-eyebrow {
+  margin: 0;
+  color: var(--gold-ink);
+  font-size: var(--fs-micro);
+  font-weight: var(--w-bold);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
+}
+.settings-dialog .decision-title {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: var(--fs-h2);
+  font-weight: var(--w-display);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--track-tight);
+}
+.settings-dialog .decision-version { margin: 0; color: var(--ink-3); font-size: var(--fs-meta); }
+
+/* the switch: a larger drawing of the studio's one toggle, its knob a lit bead */
+.settings-dialog .decision-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s3);
+  width: auto;
+  min-height: var(--decision-switch-hit);
+  padding: var(--s2) var(--s4) var(--s2) var(--s2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  background: var(--surface-sunk);
+  color: var(--ink);
+  white-space: nowrap;
+}
+.settings-dialog .decision-switch:hover { border-color: var(--line-field); background: var(--surface-hi); }
+.settings-dialog .decision-switch:focus-visible { outline-offset: 4px; border-radius: var(--radius-pill); }
+.decision-track {
+  position: relative;
+  flex: none;
+  width: var(--decision-switch-w);
+  height: var(--decision-switch-h);
+  border: 1px solid var(--line-field);
+  border-radius: var(--radius-pill);
+  background: var(--bg-lift);
+  box-shadow: var(--inset-well);
+  transition: background var(--dur-slow) var(--ease), border-color var(--dur-slow) var(--ease), box-shadow var(--dur-slow) var(--ease);
+}
+.decision-knob {
+  position: absolute;
+  top: var(--decision-inset);
+  left: var(--decision-inset);
+  width: var(--decision-knob);
+  height: var(--decision-knob);
+  border-radius: var(--radius-pill);
+  background: linear-gradient(180deg, var(--ink-2), var(--ink-3));
+  box-shadow: var(--shadow-knob), var(--lit-edge);
+  transition: transform var(--dur-slow) var(--ease), background var(--dur-slow) var(--ease), box-shadow var(--dur-slow) var(--ease);
+}
+.decision-switch.is-on .decision-track {
+  border-color: var(--teal);
+  background: var(--forest);
+  box-shadow: var(--inset-well), 0 0 var(--decision-halo) calc(var(--decision-halo) / -3) var(--teal);
+}
+.decision-switch.is-on .decision-knob {
+  transform: translateX(calc(var(--decision-switch-w) - var(--decision-knob) - var(--decision-inset) * 2 - 2px));
+  background: linear-gradient(180deg, var(--ink), var(--ink-2));
+  box-shadow: var(--shadow-knob), 0 0 calc(var(--decision-halo) / 2) var(--teal);
+}
+/* OFF is a calm word in the page's body ink, never the alarm colour */
+.decision-state {
+  min-width: 7ch;
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-body);
+  font-weight: var(--w-bold);
+  letter-spacing: var(--track-caps);
+}
+.decision-switch.is-on .decision-state { color: var(--teal); }
+
+/* what each state does and spends, beside the switch; the state it is in now is marked */
+.settings-dialog .decision-lines {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.decision-line {
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunk);
+  color: var(--ink-2);
+  font-size: var(--fs-body);
+  line-height: var(--lh-snug);
+}
+.decision-line.is-now { border-color: var(--line-field); color: var(--ink); }
+.decision-plate.is-on .decision-line.is-now { border-color: var(--ok-line); background: var(--ok-bg); }
+.decision-now {
+  display: inline-block;
+  margin-right: var(--s2);
+  padding: 1px var(--s2);
+  border: 1px solid var(--line-field);
+  border-radius: var(--radius-pill);
+  color: var(--ink);
+  font-size: var(--fs-micro);
+  font-weight: var(--w-bold);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+  vertical-align: 1px;
+}
+.decision-plate.is-on .decision-now { border-color: var(--teal); color: var(--teal); }
+
+/* the confirmation: a glass step laid on the plate, saying the change before it asks */
+.decision-confirm {
+  display: grid;
+  gap: var(--s3);
+  padding: var(--s4) var(--s5);
+  border: 1px solid var(--gold-line);
+  border-radius: var(--radius-sm);
+  background: var(--card-glass);
+  box-shadow: var(--lit-edge), var(--shadow-raised);
+  animation: decision-step var(--dur-slow) var(--ease) both;
+}
+@keyframes decision-step { from { opacity: 0; transform: translateY(var(--s2)); } }
+.settings-dialog .decision-change { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); margin: 0; }
+.decision-confirm-eyebrow {
+  margin-right: var(--s2);
+  color: var(--gold-ink);
+  font-size: var(--fs-micro);
+  font-weight: var(--w-bold);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+}
+.decision-chip {
+  padding: var(--s1) var(--s2);
+  border: 1px solid var(--line-field);
+  border-radius: var(--radius-xs);
+  background: var(--surface-sunk);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  font-weight: var(--w-bold);
+  letter-spacing: var(--track-caps);
+}
+.decision-chip.is-on { border-color: var(--ok-line); background: var(--ok-bg); color: var(--teal); }
+.decision-arrow { color: var(--ink-3); }
+.settings-dialog .decision-confirm-note { margin: 0; color: var(--ink-3); font-size: var(--fs-meta); }
+
+/* the channels: a plate of facts each, side by side at their own height */
+.channel-plates {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--channel-plate-min)), 1fr));
+  align-items: start;
+  gap: var(--s3);
+}
+.channel-plate {
+  display: grid;
+  gap: var(--s3);
+  padding: var(--s4) var(--s5);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, var(--surface-quiet), var(--surface-sunk));
+  box-shadow: var(--lit-edge);
+}
+.channel-plate.is-serial { border-color: var(--gold-line); }
+.channel-plate-head { display: flex; align-items: center; gap: var(--s3); min-width: 0; }
+.channel-plate-mark {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: var(--hit-lg);
+  height: var(--hit-lg);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-lift);
+  color: var(--info-ink);
+}
+.channel-plate.is-serial .channel-plate-mark { color: var(--gold-ink); }
+.channel-plate-mark .ui-icon { width: calc(var(--hit-lg) * .6); height: calc(var(--hit-lg) * .6); }
+.settings-dialog .channel-plate-name {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: var(--fs-h3);
+  font-weight: var(--w-display);
+  overflow-wrap: anywhere;
+}
+.channel-plate-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2) var(--s6);
+  margin: 0;
+}
+.channel-plate-fact dt {
+  color: var(--ink-3);
+  font-size: var(--fs-micro);
+  font-weight: var(--w-bold);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+}
+.channel-plate-fact dd { margin: var(--s1) 0 0; color: var(--ink); font-size: var(--fs-body); }
+.channel-plate-fact dd.has-title { text-decoration: underline dotted var(--ink-3); text-underline-offset: 3px; cursor: help; }
+
+/* TREZORERIE → PREȚURILE MODELELOR: a plate per model, and per provider for «*» */
+.prices-group {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin: var(--s3) 0 0;
+  color: var(--ink-3);
+  font-size: var(--fs-micro);
+  font-weight: var(--w-bold);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+}
+.prices-group::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+.price-row.price-plate {
+  position: relative;
+  grid-template-columns: var(--provider-mark) minmax(180px, 1.25fr) minmax(150px, 1fr) minmax(150px, 1fr) auto;
+  gap: var(--s2) var(--s4);
+  padding: var(--s4) var(--s5) var(--s4) var(--s4);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--warn-line);
+  background: linear-gradient(90deg, var(--surface-quiet), var(--surface-sunk) 70%);
+  box-shadow: var(--lit-edge), var(--shadow-raised);
+}
+.price-row.price-plate.is-priced { border-left-color: var(--ok-line); }
+.price-row.price-plate.is-wide {
+  border-color: var(--line-strong);
+  background:
+    radial-gradient(60% 180% at 0% 50%, var(--sheen), transparent 70%),
+    linear-gradient(90deg, var(--surface-hi), var(--surface-sunk) 70%);
+}
+.provider-mark {
+  position: relative;
+  display: grid;
+  place-items: center;
+  align-self: center;
+  width: var(--provider-mark);
+  height: var(--provider-mark);
+  color: var(--info-ink);
+}
+.provider-mark[data-tone="forest"] { color: var(--forest-ink); }
+.provider-mark[data-tone="teal"] { color: var(--teal); }
+.provider-mark .ui-icon { position: absolute; inset: 0; width: 100%; height: 100%; stroke-width: var(--mark-stroke); }
+.provider-mark-letter { position: relative; color: var(--ink); font-family: var(--font-display); font-size: var(--fs-h3); font-weight: var(--w-display); line-height: 1; }
+.price-model { gap: var(--s1); }
+/* --ink-2, not --ink-3: on the provider plate's lifted ground --ink-3 measured 4.36:1 (w36 contrast, 2560) */
+.price-provider { color: var(--ink-2); font-size: var(--fs-micro); font-weight: var(--w-bold); letter-spacing: var(--track-caps); text-transform: uppercase; }
+.price-model .price-name { font-family: var(--font-mono); font-size: var(--fs-body); }
+.price-plate.is-wide .price-model .price-name { font-family: var(--font-display); font-size: var(--fs-h3); font-weight: var(--w-display); }
+.price-note { color: var(--ink-2); font-size: var(--fs-meta); line-height: var(--lh-snug); }
+.price-plate .price-state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  width: fit-content;
+  padding: var(--s1) var(--s2);
+  border: 1px solid var(--warn-line);
+  border-radius: var(--radius-pill);
+  background: var(--warn-bg);
+}
+.price-plate .price-state::before { content: ''; width: 6px; height: 6px; background: currentColor; transform: rotate(45deg); }
+.price-plate .price-state[data-tone="ok"] { border-color: var(--ok-line); background: var(--ok-bg); }
+.price-plate .price-state[data-tone="ok"]::before { border-radius: var(--radius-pill); transform: none; }
+.price-plate .price-state[data-tone="info"] { border-color: var(--info-line); background: var(--info-bg); color: var(--info-ink); }
+.price-plate .price-state[data-tone="info"]::before { border-radius: var(--radius-pill); transform: none; background: transparent; box-shadow: inset 0 0 0 1.5px currentColor; }
+.price-row.price-plate.is-covered { border-left-color: var(--info-line); }
+/* a field is a well with its unit let into it; the ring is the well's */
+.price-well {
+  display: flex;
+  align-items: stretch;
+  min-height: var(--hit-lg);
+  border: 1px solid var(--line-field);
+  border-radius: var(--radius-sm);
+  background: var(--bg-lift);
+  box-shadow: var(--inset-well);
+  overflow: hidden;
+  transition: border-color var(--dur) var(--ease);
+}
+.price-well:focus-within { border-color: var(--teal); outline: 2px solid var(--teal); outline-offset: 3px; }
+.price-well:has(> [aria-invalid="true"]) { border-color: var(--alert-ink); }
+.price-unit {
+  display: grid;
+  place-items: center;
+  padding: 0 var(--s3);
+  border-right: 1px solid var(--line-strong);
+  background: var(--surface-sunk);
+  color: var(--ink-2);
+  font-size: var(--fs-micro);
+  font-weight: var(--w-bold);
+  letter-spacing: var(--track-caps);
+}
+.price-well > .dialog-input,
+.dialog-body .price-well > input:not([type='checkbox']):not([type='radio']) {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-family: var(--font-display);
+  font-size: var(--fs-h3);
+  font-variant-numeric: tabular-nums;
+}
+.price-well > .dialog-input:focus,
+.price-well > .dialog-input:focus-visible { outline: none; box-shadow: none; }
+.price-plate .price-save { min-height: var(--hit-lg); }
+
+/* add a model the studio knows */
+.price-add {
+  display: grid;
+  gap: var(--s2);
+  padding: var(--s4) var(--s5);
+  border: 1px dashed var(--line-field);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunk);
+}
+.price-add .prices-group { margin: 0; }
+.price-add .helper-note { margin: 0; }
+.price-add-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 220px) minmax(220px, 1fr) auto;
+  align-items: end;
+  gap: var(--s3);
+}
+.price-add-row .dialog-input { min-height: var(--hit-lg); }
+.price-add-key { min-height: var(--hit-lg); }
+.price-add-said { margin: 0; color: var(--ok-ink); font-size: var(--fs-meta); }
+.price-add-said.is-error { color: var(--alert-ink); }
+.prices-known-missing { margin: 0; }
+
+@media (max-width: 900px) {
+  .decision-head { grid-template-columns: var(--decision-mark) minmax(0, 1fr); }
+  .settings-dialog .decision-switch { grid-column: 1 / -1; justify-self: start; }
+  .settings-dialog .decision-lines { grid-template-columns: minmax(0, 1fr); }
+  .decision-plate { padding: var(--s4); }
+  .price-row.price-plate { grid-template-columns: var(--provider-mark) minmax(0, 1fr); }
+  .price-row.price-plate > :not(.provider-mark):not(.price-model) { grid-column: 1 / -1; }
+  .price-add-row { grid-template-columns: minmax(0, 1fr); }
+}

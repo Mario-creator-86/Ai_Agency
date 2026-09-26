@@ -1442,3 +1442,7 @@ No provider was called, no run was queued, no credit was spent, and
   - (6) The stream harness replays enough events to reach a letter.
   - (7) A night frame of the returning title.
   Owner: restart; the Director's right; the six models' token prices; the daily budget against production; YouTube statistics scope; the reference set.
+
+## The Owner's controls as plates of the building: premium (2026-09-26)
+
+- W38 candidates from the W37 judge: (1) Distribuție's channel slots as plates of the Setări → Canale family, the two-bar «filme · măsurat» chart a real meter; (2) Research's open and Treasury's close stepped through data-door-steps (one 20.8–20.9 ms frame each under reduced motion); (3) the price plates folded when priced, with the group header carrying the count of unpriced models; (4) «ia prețul furnizorului» per side; (5) the cold entry's hold tied to the plates' animation rather than a timer; (6) with the stream on, film the real hand-over and the returning entry's landing over the kept frame once, as entry36 did with the stand-in.

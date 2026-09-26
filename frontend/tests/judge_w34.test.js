@@ -38,8 +38,8 @@ const DIRECTOR_NOT_ON_PAGE = {
 };
 
 test('the two places that were «only through the API» now open the page\'s own controls', () => {
-  assert.deepEqual(fixPlaceOf(PRICES_NOT_ON_PAGE), { label: 'Trezorerie · Prețurile modelelor', door: 'treasury-modal', section: 'tr-prices' });
-  assert.deepEqual(fixPlaceOf(DIRECTOR_NOT_ON_PAGE), { label: 'Setări · Canale', door: 'settings', tab: 'channels' });
+  assert.deepEqual(fixPlaceOf(PRICES_NOT_ON_PAGE), { label: 'Trezorerie → Prețurile modelelor', door: 'treasury-modal', section: 'tr-prices' });
+  assert.deepEqual(fixPlaceOf(DIRECTOR_NOT_ON_PAGE), { label: 'Setări → Canale', door: 'settings', tab: 'channels' });
   // the Owner's running studio (no place, no code): read by the check's name and its value
   const { place, place_label, place_section, code, ...old } = DIRECTOR_NOT_ON_PAGE;
   assert.equal(fixPlaceOf(old)?.tab, 'channels');
@@ -56,8 +56,8 @@ test('the two places that were «only through the API» now open the page\'s own
   // FFmpeg stays on the machine: no key
   assert.equal(fixPlaceOf({ name: 'ffmpeg', ok: false, code: 'ffmpeg.missing', place: 'machine', place_label: 'calculatorul studioului' }), null);
   const html = checklistHtml(preflightChecklist({ checks: [PRICES_NOT_ON_PAGE, DIRECTOR_NOT_ON_PAGE] }), escapeHtml);
-  assert.match(html, /data-door="treasury-modal" data-section="tr-prices">Deschide Trezorerie · Prețurile modelelor</);
-  assert.match(html, /data-door="settings" data-tab="channels">Deschide Setări · Canale</);
+  assert.match(html, /data-door="treasury-modal" data-section="tr-prices">Deschide Trezorerie → Prețurile modelelor</);
+  assert.match(html, /data-door="settings" data-tab="channels">Deschide Setări → Canale</);
   assert.ok(html.includes(PRICES_NOT_ON_PAGE.message), 'the backend\'s sentence is printed as it came');
 });
 

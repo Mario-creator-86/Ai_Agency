@@ -94,6 +94,8 @@ export class TitleScreen {
     this.keptTopRow = null;
     /** @type {Animation|null} the entry's landing (W22) */
     this.landing = null;
+    /** W36: the end of a cold entry's push, when the stream's picture may show (is-pushing). */
+    this.pushTimer = 0;
   }
 
   /** The kept frame, if it is known within KEPT_WAIT_MS; the title does not wait longer for it. */
@@ -440,6 +442,18 @@ export class TitleScreen {
     if (lands) document.body.classList.add('is-landing');
     document.body.classList.add('is-entering');
     this.land(lands && landing ? landing() : null);
+    // W36: a cold entry pushes into the plates. The live stream's picture, which comes up in the
+    // render's panel as it arrives, waited for nothing: the plates and the stream showed at once,
+    // offset, for ~300 ms of the push (w36 entry36.mjs, a stand-in stream frame). Its picture is
+    // held until the plates have all but gone and then fades in (style.css is-pushing), as the
+    // returning entry's panel appears only once its kept frame has landed. W37: the hold ends at
+    // ENTRY.streamMs, not at the push's end: held to the end, the panel showed its own ground for
+    // ~60 ms between the plates' last frame and the picture's first (a dark beat).
+    window.clearTimeout(this.pushTimer);
+    if (!lands) {
+      document.body.classList.add('is-pushing', 'is-cold-entry');
+      this.pushTimer = window.setTimeout(() => { this.pushTimer = 0; document.body.classList.remove('is-pushing'); }, ENTRY.streamMs);
+    }
     return new Promise((resolve) => {
       window.setTimeout(() => {
         if (generation !== this.generation) {
@@ -482,6 +496,9 @@ export class TitleScreen {
   hide() {
     this.stage.classList.remove('lands');
     document.body.classList.remove('is-landing');
+    window.clearTimeout(this.pushTimer);
+    this.pushTimer = 0;
+    document.body.classList.remove('is-pushing', 'is-cold-entry');
     if (this.landing) this.landing.cancel();
     this.landing = null;
     this.visible = false;
@@ -498,7 +515,9 @@ export class TitleScreen {
     this.entering = false;
     this.current = { x: 0, y: 0 };
     this.target = { x: 0, y: 0 };
-    document.body.classList.remove('is-entering');
+    window.clearTimeout(this.pushTimer);
+    this.pushTimer = 0;
+    document.body.classList.remove('is-entering', 'is-pushing', 'is-cold-entry');
     document.body.classList.add('is-title');
     this.stage.hidden = false;
     this.layout();

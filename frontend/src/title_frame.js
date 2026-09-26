@@ -137,6 +137,15 @@ export const ENTRY = {
   totalMs: 820,
   /** the camera's push into the headquarters (--dur-push) */
   pushMs: 700,
+  /**
+   * W37: when a cold push lets the live stream's picture begin to show. The plates are under 2 %
+   * by then (title-push fades them from 30 % of the push along --ease-push: 1.2 % at 640 ms, and
+   * 3 % where the push's first frame came 40 ms after the mark, as it did at 1280×800) and the
+   * picture, fading over --dur-fast, is full at 760 ms, 60 ms after the push and 60 before the
+   * entry's end, so neither a double exposure nor a dark beat sits between the plates and the
+   * stream (ui/w37 entry_after_*).
+   */
+  streamMs: 640,
   /** when the first panel starts to arrive (--arrive-first) */
   firstPanelMs: 260,
   /** between one panel and the next (--arrive-step) */

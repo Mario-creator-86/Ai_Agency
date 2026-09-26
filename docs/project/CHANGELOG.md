@@ -1,5 +1,13 @@
 # Changelog
 
+## The Owner's controls as plates of the building — premium — 2026-09-26
+
+- **Setări → Canale as a decision plate** (`frontend/src/settings.js`, `owner_controls.js`): a large switch, steel when OFF, lit when ON, each state's meaning beside it, a glass confirmation step; nothing written before «Da».
+- **Prețurile modelelor as plates**: a provider mark from the page's icon family, per-provider «*» prices the backend really accepts, a validated «Adaugă un model».
+- **The cold entry** without double exposure or a dark beat: the stream's picture rises as the plates fade.
+- **Distribuție under reduced motion** opens in 14 ms (was 34.7); the preflight's fallback labels use the backend's arrow.
+- Tests: frontend 613/613, tsc clean.
+
 ## Controls for the Owner's decisions — the interface premium apart from his items — 2026-09-25
 
 - **The Director's leave as a switch** (`frontend/src/owner_controls.js`, Setări → Canale): what it does and spends, a confirmation, the versioned publish-policy command only on «Da», the versioned answer shown; OFF until the Owner turns it on.
