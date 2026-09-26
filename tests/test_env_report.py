@@ -338,3 +338,13 @@ def test_the_report_carries_its_version_level_and_the_contracts(env):
     assert report["clock"]["parameter"] == "ClockOffsetS"
     assert report["clock"]["unsynced_default"] < -1e9
     assert report["sky"]["parameters"] == ["PlateA", "PlateB", "PlateBlend", "Mirror", "Gain"]
+
+
+def test_a_rebuilds_report_carries_no_day_state(env):
+    """The day state is merged after the towers pass (art-source/unreal/towers_day/day_state.py),
+    never written by the rebuild: a rebuilt level has not had that pass, and its fresh report
+    leaves TowerDaylight, WindowsOn and LeafDaylight alone until the pass runs and the merge adds
+    them. The backend reads the key only when it is there."""
+    report, missing = build(env)
+    assert missing == []
+    assert "day_state" not in report

@@ -13,6 +13,7 @@ separate Movable light that carries direct light only above the horizon.
 
 from __future__ import annotations
 
+import ast
 import math
 import re
 from datetime import UTC, datetime
@@ -21,6 +22,7 @@ from pathlib import Path
 import pytest
 from app.office.scene_params import (
     ATLAS_ELEVATIONS,
+    CITY_DAY_EMISSION,
     DAWN_CITY_WINDOWS,
     DRY_ROAD_ROUGHNESS,
     FILL_BUILT_SRGB8,
@@ -36,12 +38,15 @@ from app.office.scene_params import (
     TWILIGHT_END_ELEVATION,
     WALK_WASH_MAX,
     WET_ROAD_ROUGHNESS,
+    WINDOWS_FEW,
+    WINDOWS_OFF_ABOVE,
     SceneFrame,
     clear_facade,
     clear_fill,
     clock_offset_s,
     cloudiness,
     dawn_plate_elevation,
+    day_weight,
     deck_fill,
     facade_factor,
     fill_colours,
@@ -55,8 +60,11 @@ from app.office.scene_params import (
     sun_ground_share,
     sun_intensity,
     sun_rotation,
+    tower_windows_share,
     twilight_colour,
     twilight_intensity,
+    windows_on,
+    windows_share,
 )
 from app.office.world import Sun, Weather, WorldState
 
@@ -249,6 +257,10 @@ def test_the_reference_dusk_is_todays_build_exactly():
         "emissive_factor",
         "window_view",
         "near_blocks_day",
+        "towers",
+        "trees",
+        "skyline_day",
+        "emissive_factor_counted",
         "haze",
         "fog",
         "road",
@@ -256,6 +268,29 @@ def test_the_reference_dusk_is_todays_build_exactly():
         "clock",
         "weather_note",
     }
+    # the day state (art-source/unreal/towers_day): every new value at the default the in-place
+    # passes build into their materials, so the approved dusk cannot move when the backend sends
+    # them. M_HQ_TowerDay: TowerDaylight 0 and WindowsOn 1 (towers_day_hq_live.py ADDED_SCALARS);
+    # M_HQ_TreeLeaves: LeafDaylight 0 (trees_day_hq_live.py); the skyline's M_HQ_CityDay slots:
+    # Daylight 0 (look_hq_live.py, as the near blocks' above); the counted glow is today's.
+    towers_pass = (UNREAL / "towers_day" / "towers_day_hq_live.py").read_text(encoding="utf-8")
+    added = re.search(r"^ADDED_SCALARS = (\{.*?\})\n", towers_pass, re.MULTILINE | re.DOTALL)
+    assert added, "ADDED_SCALARS not found in towers_day_hq_live.py"
+    scalars = ast.literal_eval(added.group(1))
+    assert p["towers"] == {
+        "TowerDaylight": scalars["TowerDaylight"],
+        "WindowsOn": scalars["WindowsOn"],
+    }
+    assert p["towers"] == {"TowerDaylight": 0.0, "WindowsOn": 1.0}
+    trees_pass = (UNREAL / "towers_day" / "trees_day_hq_live.py").read_text(encoding="utf-8")
+    assert re.search(
+        r'"parameter_name", "LeafDaylight"\)\s*\n\s*daylight\.set_editor_property\('
+        r'"default_value", 0\.0\)',
+        trees_pass,
+    )
+    assert p["trees"] == {"LeafDaylight": 0.0}
+    assert p["skyline_day"] == {"Daylight": 0.0}
+    assert p["emissive_factor_counted"] == p["emissive_factor"]
 
     # the sky light and the fog as the running level has them
     assert p["sky_light"]["intensity"] == float(default("build_hq_scene.py", "AMN_SKYLIGHT"))
@@ -972,3 +1007,94 @@ def test_the_weathers_look_is_held_so_a_grey_or_rainy_day_is_the_clear_skys_ligh
             }, (e, grey.condition)
         wet = scene_params(world(elevation=e, azimuth=az, weather_value=rain), FRAME)["road"]
         assert (wet["Roughness Min"], wet["Roughness Max"]) == WET_ROAD_ROUGHNESS
+
+
+# ---------------------------------------------------------------- the towers, the trees by day
+def towers(elevation: float, azimuth: float) -> dict[str, float]:
+    return scene_params(world(elevation=elevation, azimuth=azimuth), FRAME)["towers"]
+
+
+def test_the_towers_light_no_window_by_day_a_few_below_five_degrees_all_at_dusk():
+    """The art director's reading of 2026-09-24: no lit window while the sun is up, only a few once
+    it drops below about +5 deg, the dusk's every window from the reference down; the facades in
+    their day colours by the same day weight as the rest of the city."""
+    assert towers(46.97, 180.0) == {"TowerDaylight": 1.0, "WindowsOn": 0.0}  # a September noon
+    assert towers(11.9, 250.0)["WindowsOn"] == 0.0  # 17:58
+    assert towers(WINDOWS_OFF_ABOVE, 262.0)["WindowsOn"] == 0.0
+    assert 0.0 < windows_share(2.7) < WINDOWS_FEW  # 18:50: a few
+    assert 0.0 < towers(2.7, 266.0)["WindowsOn"] < windows_on(WINDOWS_FEW)
+    assert windows_share(0.0) == WINDOWS_FEW
+    assert towers(-2.5, 274.9) == {"TowerDaylight": 0.0, "WindowsOn": 1.0}  # the approved dusk
+    assert towers(-30.0, 330.0) == {"TowerDaylight": 0.0, "WindowsOn": 1.0}
+    assert towers(6.0, 260.0)["TowerDaylight"] == 1.0
+    assert 0.0 < towers(2.7, 266.0)["TowerDaylight"] < 1.0
+    # the evening only darkens: as the sun sinks the facades lose the day and windows come on
+    evening = [towers(tenth / 10.0, 265.0) for tenth in range(500, -300, -1)]
+    daylight = [t["TowerDaylight"] for t in evening]
+    windows = [t["WindowsOn"] for t in evening]
+    assert daylight == sorted(daylight, reverse=True)
+    assert windows == sorted(windows)
+
+
+def test_fewer_tower_windows_are_lit_at_dawn_than_at_dusk():
+    """The city's dawn rule (DAWN_CITY_WINDOWS: offices empty, homes waking) counts the towers'
+    windows once they can be counted: at the same elevation the morning lights fewer of them."""
+    for tenth in range(-110, 50):
+        e = tenth / 10.0
+        dawn = tower_windows_share(Sun(elevation_deg=e, azimuth_deg=95.0))
+        dusk = tower_windows_share(Sun(elevation_deg=e, azimuth_deg=265.0))
+        assert dawn < dusk, e
+    at_reference = tower_windows_share(Sun(elevation_deg=-2.5, azimuth_deg=88.1))
+    assert at_reference == pytest.approx(DAWN_CITY_WINDOWS)
+    assert towers(-2.5, 88.1)["WindowsOn"] == pytest.approx(windows_on(DAWN_CITY_WINDOWS))
+    # the deep night and the day are the same on both sides; continuous at solar midnight
+    assert towers(-44.0, 359.9) == towers(-44.0, 0.1) == {"TowerDaylight": 0.0, "WindowsOn": 1.0}
+    assert towers(20.0, 110.0) == towers(20.0, 250.0)
+    # the morning only brightens: windows go off and the facades come to day as the sun rises
+    morning = [towers(tenth / 10.0, 95.0) for tenth in range(-300, 500)]
+    assert [t["WindowsOn"] for t in morning] == sorted(
+        (t["WindowsOn"] for t in morning), reverse=True
+    )
+
+
+def test_once_the_windows_are_counted_the_dawn_is_not_dimmed_twice():
+    """Today the whole skyline's glow falls to DAWN_CITY_WINDOWS at dawn (EmissiveFactor), since no
+    window could be switched off. Where the day state counts the windows (WindowsOn), the glow
+    keeps only the day's dimming, so the dawn city is DAWN_CITY_WINDOWS of the dusk's, not its
+    square. On the evening side the two are the same."""
+    for e, az in ((-2.5, 274.9), (2.7, 266.0), (46.97, 180.0), (-30.0, 330.0), (-8.0, 290.0)):
+        p = scene_params(world(elevation=e, azimuth=az), FRAME)
+        assert p["emissive_factor_counted"] == p["emissive_factor"], e
+    for e in (-10.0, -6.0, -2.5, 0.0, 3.0):
+        p = scene_params(world(elevation=e, azimuth=95.0), FRAME)
+        today = p["emissive_factor"]["skyline"]
+        counted = p["emissive_factor_counted"]["skyline"]
+        assert counted > today, e
+        assert counted == pytest.approx(1.0 + (CITY_DAY_EMISSION - 1.0) * day_weight(e))
+        assert p["emissive_factor_counted"]["near_blocks"] == counted
+    p = scene_params(world(elevation=-6.0, azimuth=95.0), FRAME)
+    assert p["emissive_factor"]["skyline"] == pytest.approx(DAWN_CITY_WINDOWS)
+    assert p["emissive_factor_counted"]["skyline"] == 1.0
+
+
+def test_the_trees_and_the_skylines_plain_slots_take_the_day_with_the_facades():
+    for e, az in ((-30.0, 330.0), (-2.5, 274.9), (0.0, 268.0), (2.7, 266.0), (46.97, 180.0)):
+        p = scene_params(world(elevation=e, azimuth=az), FRAME)
+        day = day_weight(e)
+        assert p["trees"] == {"LeafDaylight": day}
+        assert p["skyline_day"] == {"Daylight": day}
+        assert p["near_blocks_day"] == {"Daylight": day}
+        assert p["towers"]["TowerDaylight"] == day
+    assert scene_params(world(elevation=46.97, azimuth=180.0), FRAME)["trees"] == {
+        "LeafDaylight": 1.0
+    }
+
+
+def test_the_day_state_follows_the_sun_only_while_the_weathers_look_is_held():
+    clear = weather(cloud_cover=0.0, precip_last_3h_mm=0.0)
+    rain = weather(condition="rain", cloud_cover=100.0, rain_mm=1.5, precip_last_3h_mm=2.0)
+    for e, az in ((46.97, 180.0), (2.7, 266.0), (-2.5, 274.9)):
+        a = scene_params(world(elevation=e, azimuth=az, weather_value=clear), FRAME)
+        b = scene_params(world(elevation=e, azimuth=az, weather_value=rain), FRAME)
+        for key in ("towers", "trees", "skyline_day", "emissive_factor_counted"):
+            assert a[key] == b[key], (e, key)

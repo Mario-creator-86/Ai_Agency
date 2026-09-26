@@ -45,6 +45,10 @@ Two rules shape it:
   deck and rain rules above are written and tested but not shipped, because no atlas cell is a
   grey deck and the dome's lift washed the sign. Until a rebuild adds grey deck cells the scene is
   the clear sky's at the real hour, and only the road follows the real rain, as before.
+* The towers, the trees and the skyline by day (the day state, 2026-09-26): the facades take their
+  day colours and switch their windows off by the real sun (TowerDaylight, WindowsOn), the leaves
+  and the skyline's plain slots take the day (LeafDaylight, Daylight). Every value is its
+  material's default at the reference, and none is sent to a level whose report has no day state.
 
 Owner decisions taken as proposed (2026-09-18, he did not object); each lives in one place:
 D1 the viewer looks north and the facade faces south (``office_facade_heading_deg``, config);
@@ -286,6 +290,32 @@ DAWN_PLATE_SHIFT_FADE = (-1.0, 3.0)
 #: that deep), so the city never jumps.
 DAWN_CITY_WINDOWS = 0.45
 DAWN_CITY_RISE = (-12.0, -6.0)
+
+# ---------------------------------------------------------------- the towers by day (day state)
+#: The skyline's and the near blocks' facades bake their navy and their lit windows into the
+#: export's window textures, so at noon they were "blue cardboard" with lit windows, and the street
+#: trees' crowns (darkened for the dusk) black cards. The in-place passes of
+#: art-source/unreal/towers_day give those materials parameters whose defaults paint exactly
+#: today's dusk: M_HQ_TowerDay's TowerDaylight (0 = the dusk facade, 1 = hq_day.py's day facade)
+#: and WindowsOn (1 = every window the dusk lights, 0 = none), M_HQ_TreeLeaves' LeafDaylight
+#: (0 = the dusk crowns, 1 = the pack's own leaf albedo), and Daylight on the skyline's
+#: M_HQ_CityDay slots (the bridge), as on the near blocks'. Nothing moves until the backend writes
+#: them, and only where the report's "day_state" names the components (unreal.py).
+#:
+#: The towers' lit windows, the art director's reading of 2026-09-24 (towers_day.py, whose curve
+#: this is): none while the sun stands above WINDOWS_OFF_ABOVE, a few (up to WINDOWS_FEW of the
+#: dusk's) as it sinks to WINDOWS_FEW_AT, from those to all of them at the reference dusk, all of
+#: them below it. WINDOWS_FEW is a judgement to be made by eye in the window (0.1-0.3).
+WINDOWS_OFF_ABOVE = 5.0
+WINDOWS_FEW_AT = 0.0
+WINDOWS_FEW = 0.2
+#: towers_day.py's window ranks: every lit window of the dusk carries a rank spread evenly over
+#: (TOWER_RANK_MIN, TOWER_RANK_MAX] (stored as 8-bit floors), and M_HQ_TowerDay multiplies its
+#: emission by saturate((WindowsOn - rank) x TOWER_GATE_SHARPNESS). WindowsOn 1 lights every rank,
+#: since (1 - 0.95) x 50 >= 1: the dusk to the bit.
+TOWER_RANK_MIN = 0.02
+TOWER_RANK_MAX = 0.95
+TOWER_GATE_SHARPNESS = 50.0
 
 # ---------------------------------------------------------------- the night over a lit city
 #: A city's night sky is never the astronomical black: its lights glow on the low air. The
@@ -862,6 +892,42 @@ def city_windows(sun: Sun) -> float:
     return mix(1.0, DAWN_CITY_WINDOWS, smoothstep(*DAWN_CITY_RISE, sun.elevation_deg))
 
 
+def windows_share(elevation: float) -> float:
+    """The share of the dusk's lit tower windows lit at this real elevation, on the evening side
+    (WINDOWS_* above; towers_day.windows_share): 0 from WINDOWS_OFF_ABOVE up, WINDOWS_FEW at
+    WINDOWS_FEW_AT, 1 at and below the reference. Smoothsteps between, so it never jumps."""
+    if elevation >= WINDOWS_OFF_ABOVE:
+        return 0.0
+    if elevation >= WINDOWS_FEW_AT:
+        return WINDOWS_FEW * smoothstep(WINDOWS_OFF_ABOVE, WINDOWS_FEW_AT, elevation)
+    if elevation > REFERENCE_DUSK_ELEVATION:
+        return mix(
+            WINDOWS_FEW, 1.0, smoothstep(WINDOWS_FEW_AT, REFERENCE_DUSK_ELEVATION, elevation)
+        )
+    return 1.0
+
+
+def tower_windows_share(sun: Sun) -> float:
+    """The share lit for the real sun: the evening's curve, times the city's dawn rule on the
+    morning side (city_windows: DAWN_CITY_WINDOWS from -6 deg), so the dawn lights fewer windows
+    than the dusk at the same elevation. Continuous at solar midnight, where both are 1."""
+    return windows_share(sun.elevation_deg) * city_windows(sun)
+
+
+def windows_on(share: float) -> float:
+    """M_HQ_TowerDay's WindowsOn that lights ``share`` of the dusk's lit windows: 0 (none) at 0,
+    exactly 1 (every window, the material's default, the dusk) at 1. Between them the gate's
+    half-lit rank sweeps the ranks' range, widened by one gate width so the ends meet: just above
+    0 no window is lit, just below 1 every one is fully lit, so neither end jumps. (towers_day.py's
+    RANK_MIN + span x share lit about 1 % fewer than asked and stepped the top windows at 1.)"""
+    if share <= 0.0:
+        return 0.0
+    if share >= 1.0:
+        return 1.0
+    span = TOWER_RANK_MAX - TOWER_RANK_MIN + 1.0 / TOWER_GATE_SHARPNESS
+    return TOWER_RANK_MIN + span * share
+
+
 def sun_rotation(sun: Sun, frame: SceneFrame) -> dict[str, float]:
     """The directional light's world rotation (degrees) for the real sun, through the level's
     measured axes and the facade's heading (D1). The light travels away from the sun."""
@@ -1083,6 +1149,9 @@ def scene_params(
         note = None
 
     city = mix(city_windows(sun), CITY_DAY_EMISSION, day)
+    # where WindowsOn counts the towers' windows the dawn's fewer windows are fewer windows, not a
+    # dimmer city: the glow keeps only the day's dimming (the evening side is the same as city)
+    counted = mix(1.0, CITY_DAY_EMISSION, day)
     sun_light = sun_intensity(e)
     if overcast > 0.0:
         sun_light *= 1.0 - OVERCAST_SUN_LOSS * overcast
@@ -1129,6 +1198,20 @@ def scene_params(
         # dusk colour at 0, their own hue at a facade's albedo by day, by the same day weight; the
         # rejected rebuild showed them as black cardboard at noon
         "near_blocks_day": {"Daylight": day},
+        # the day state (sent only where the report's "day_state" names the components): the
+        # facades' day colours by the same day weight and their lit windows by the real sun
+        # (M_HQ_TowerDay), the leaves' own albedo by day (M_HQ_TreeLeaves), the skyline's plain
+        # slots' day colour (M_HQ_CityDay, as the near blocks'); at the reference every value is
+        # the material's default, TowerDaylight 0, WindowsOn 1, LeafDaylight 0, Daylight 0
+        "towers": {
+            "TowerDaylight": day,
+            "WindowsOn": windows_on(tower_windows_share(sun)),
+        },
+        "trees": {"LeafDaylight": day},
+        "skyline_day": {"Daylight": day},
+        # the towers' glow where WindowsOn counts their windows (the day state): today's by day
+        # and in the evening, without the dawn's dimming, which WindowsOn carries instead
+        "emissive_factor_counted": {"skyline": counted, "near_blocks": counted},
         "haze": haze,
         "fog": {"inscattering": fog, "density": fog_density},
         "road": road(weather),

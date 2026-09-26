@@ -25,7 +25,9 @@ $py = 'py.exe'
 
 function Log($line) { Add-Content -Path "$out\commands_log.txt" -Value ('{0:HH:mm:ss} {1}' -f (Get-Date), $line) -Encoding utf8; $line }
 function FreeCommit { [math]::Round((Get-CimInstance Win32_OperatingSystem).FreeVirtualMemory / 1MB, 1) }
-function Games { @(Get-Process PathOfExile* -ErrorAction SilentlyContinue) }
+# Every game the Owner plays on this machine (2026-09-26 he moved from Path of Exile to League of
+# Legends mid-window; a check that knew only one of them would have kept the GPU busy under him).
+function Games { @(Get-Process PathOfExile*, 'League of Legends', LeagueClient* -ErrorAction SilentlyContinue) }
 function StreamProcs {
     Get-CimInstance Win32_Process | Where-Object {
         ($_.Name -eq 'UnrealEditor.exe' -and $_.CommandLine -match 'PixelStreamingConnectionURL') -or

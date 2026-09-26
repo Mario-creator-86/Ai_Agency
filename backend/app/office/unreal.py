@@ -29,7 +29,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -257,6 +257,7 @@ class EnvObject:
     path: str  # the component's object path: the calls act on components
     intensity: float | None = None  # a light's own intensity in the saved level
     emissive_uniform: bool = False  # every slot's EmissiveFactor (1,1,1), multiplied by the parent
+    parameters: tuple[str, ...] = ()  # a day-state component's parameters (_day_state)
 
 
 @dataclass(frozen=True)
@@ -335,14 +336,67 @@ def _object(role: str, entry: Any) -> EnvObject | None:
     )
 
 
+#: The day state (art-source/unreal/towers_day): the report's "day_state" group -> the material
+#: parameters its components may take. towers_day_hq_live.py gives the skyline's and the near
+#: blocks' facades M_HQ_TowerDay (TowerDaylight, WindowsOn), trees_day_hq_live.py the leaves
+#: M_HQ_TreeLeaves (LeafDaylight); day_state.py merges the components they report into
+#: env_report.json. A component drives only the parameters its entry names from this list.
+DAY_STATE_PARAMETERS: dict[str, tuple[str, ...]] = {
+    "towers": ("TowerDaylight", "WindowsOn"),
+    "trees": ("LeafDaylight",),
+}
+
+
+def _world_of(path: str) -> str:
+    return path.split(":", 1)[0] if ":" in path else ""
+
+
+def _day_state(report: Mapping[str, Any], world: str, scaled: Mapping[str, str]) -> list[EnvObject]:
+    """The components the report's optional ``day_state`` names, with the refusals day_state.py's
+    merge makes repeated here: a tower is the component the report scales for its label (the
+    skyline or the near blocks), ``skyline_daylight`` is the skyline's, every component lives in
+    the report's one world, and each drives only the known parameters its entry lists. Anything
+    else is left alone; without the key (today's level) there is nothing."""
+    state = report.get("day_state")
+    if not isinstance(state, Mapping) or not world:
+        return []
+    found: list[EnvObject] = []
+    seen: set[tuple[str, str]] = set()
+    for role, known in DAY_STATE_PARAMETERS.items():
+        entries = state.get(role)
+        for entry in entries if isinstance(entries, list) else ():
+            item = _object(role, entry)
+            if item is None or _world_of(item.path) != world or (role, item.path) in seen:
+                continue
+            if role == "towers" and scaled.get(item.label) != item.path:
+                continue  # not the component env_report scales as the skyline or near blocks
+            listed = entry.get("parameters")
+            names = tuple(n for n in known if isinstance(listed, list) and n in listed)
+            if not names:
+                continue
+            seen.add((role, item.path))
+            found.append(replace(item, parameters=names))
+    skyline = state.get("skyline_daylight")
+    if isinstance(skyline, str) and skyline and skyline == scaled.get("skyline"):
+        # M_HQ_CityDay's Daylight on the skyline's plain slots, as on the near blocks'
+        found.append(
+            EnvObject(
+                role="skyline_daylight", label="skyline", path=skyline, parameters=("Daylight",)
+            )
+        )
+    return found
+
+
 def load_env_report(path: Path) -> EnvReport | None:
     """The report env_report_hq_live.py writes, or None when it is missing or not one.
 
     Read from it: ``labels`` (each entry's ``component`` path; groups as a dict or a list of
     entries; a light's ``intensity`` when its entry carries one), ``axes`` (``scene_x``,
     ``scene_y``, ``scene_z``), ``compass.facade_heading_deg``, ``emissive_scaling`` (``uniform``
-    and ``component`` per mesh), ``road.component`` and ``window_view`` (``component``,
-    ``slots``). Nothing is guessed: what the report does not name is not driven.
+    and ``component`` per mesh), ``road.component``, ``window_view`` (``component``,
+    ``slots``) and, when the towers pass has run, ``day_state`` (``towers``, ``trees``,
+    ``skyline_daylight``; _day_state). Nothing is guessed: what the report does not name is not
+    driven.
     """
     try:
         report = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -404,6 +458,8 @@ def load_env_report(path: Path) -> EnvReport | None:
         return None
     heads = {o.path.split(":", 1)[0] for o in objects if ":" in o.path}
     world = heads.pop() if len(heads) == 1 else ""
+    scaled = {o.role: o.path for o in objects if o.role in ("skyline", "near_blocks")}
+    objects.extend(_day_state(report, world, scaled))
     compass = report.get("compass")
     heading = _number(compass.get("facade_heading_deg")) if isinstance(compass, Mapping) else None
     return EnvReport(world=world, axes=(x, y, z), heading_deg=heading, objects=tuple(objects))
@@ -567,12 +623,15 @@ def environment_calls(plan: Mapping[str, Any], report: EnvReport) -> list[EnvCal
                     kind="clock",
                 )
             )
+    # the components whose facades count their lit windows (the day state's WindowsOn)
+    counted = {t.path for t in report.of("towers") if "WindowsOn" in t.parameters}
     for key in ("skyline", "near_blocks"):
         # one call writes every slot: only where every slot's factor is (1,1,1) and its parent
         # multiplies by it is that a scaling (critic, hole 2); otherwise it would flatten
         for component in report.of(key)[:1]:
             if component.emissive_uniform:
-                f = float(plan["emissive_factor"][key])
+                glow = "emissive_factor_counted" if component.path in counted else "emissive_factor"
+                f = float(plan[glow][key])
                 calls.append(
                     EnvCall("MeshComponent", component.path, vector, "EmissiveFactor", (f, f, f))
                 )
@@ -586,6 +645,26 @@ def environment_calls(plan: Mapping[str, Any], report: EnvReport) -> list[EnvCal
                 scalar,
                 "Daylight",
                 float(plan["near_blocks_day"]["Daylight"]),
+            )
+        )
+    # the day state: only on the components the report's "day_state" names, only the parameters
+    # each names; a report without it (today's level) sends none of these
+    for group, values in (("towers", plan["towers"]), ("trees", plan["trees"])):
+        for component in report.of(group):
+            for name in component.parameters:
+                calls.append(
+                    EnvCall("MeshComponent", component.path, scalar, name, float(values[name]))
+                )
+    for component in report.of("skyline_daylight")[:1]:
+        # Daylight exists on the skyline only on its M_HQ_CityDay slots (the towers pass's
+        # SURFACES): one call on the component reaches those and nothing else
+        calls.append(
+            EnvCall(
+                "MeshComponent",
+                component.path,
+                scalar,
+                "Daylight",
+                float(plan["skyline_day"]["Daylight"]),
             )
         )
     for props in report.of("window_view")[:1]:

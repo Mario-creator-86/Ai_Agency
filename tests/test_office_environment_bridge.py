@@ -937,3 +937,201 @@ def test_a_step_of_light_still_takes_the_whole_ease_from_what_is_on_screen():
     assert at(20.0, 100.0) == pytest.approx(50.0)
     assert at(35.0, 100.0) == pytest.approx(100.0)
     assert at(40.0, 100.0) == pytest.approx(100.0)
+
+
+# ---------------------------------------------------------------- the day state
+# art-source/unreal/towers_day: towers_day_hq_live.py and trees_day_hq_live.py give the facades,
+# the leaves and the skyline's plain slots new material parameters (their defaults paint today's
+# dusk) and write towers_report.json; day_state.py merges it into env_report.json as "day_state".
+DAY_PARAMETERS = {"TowerDaylight", "WindowsOn", "LeafDaylight"}
+SKYLINE = f"{LEVEL}.StaticMeshActor_10.StaticMeshComponent0"
+NEAR_BLOCKS = f"{LEVEL}.StaticMeshActor_11.StaticMeshComponent0"
+TREE = f"{LEVEL}.StaticMeshActor_30.StaticMeshComponent0"
+TOWERS_REPORT = {
+    "level": "/Game/HQ/HQ_Dusk",
+    "written_at": "2026-09-26T14:00:00+03:00",
+    "towers": [
+        {"label": "skyline", "component": SKYLINE, "slots": ["0:city_dense", "3:tower_a"]},
+        {"label": "near_blocks", "component": NEAR_BLOCKS, "slots": ["5:classic"]},
+    ],
+    "trees": [{"label": "tree_0", "component": TREE, "parameters": ["LeafDaylight"]}],
+    "skyline_daylight": SKYLINE,
+}
+
+
+def day_state_module():
+    """day_state.py, the window's merge tool: the report the backend reads is the one it writes."""
+    import importlib.util
+    from pathlib import Path
+
+    script = (
+        Path(__file__).resolve().parents[1]
+        / "art-source"
+        / "unreal"
+        / "towers_day"
+        / "day_state.py"
+    )
+    spec = importlib.util.spec_from_file_location("day_state_under_test", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def merged_report(towers_report=TOWERS_REPORT):
+    return day_state_module().merged(json.loads(json.dumps(REPORT)), towers_report)
+
+
+def day_values(rep, elevation, azimuth):
+    """(actor, parameter) -> value of the day-state parameters and Daylight one pass sends."""
+    sender = Recorder()
+    EnvironmentPass(sender, clock=Clock()).sync(world(elevation, azimuth), rep, 180.0)
+    out = {}
+    for b in sender.calls:
+        name = b["parameters"].get("ParameterName")
+        if name in DAY_PARAMETERS | {"Daylight", "EmissiveFactor"}:
+            actor = b["objectPath"].rsplit(".", 2)[-2]
+            assert (actor, name) not in out, (actor, name)  # one call per parameter and component
+            out[(actor, name)] = b["parameters"]["ParameterValue"]
+    return out
+
+
+def test_without_a_day_state_nothing_new_is_sent(tmp_path):
+    """Today's level has no day state: its report drives exactly what it drove before, whatever the
+    hour, and a report whose day state is empty or malformed is today's report."""
+    rep = report(tmp_path)
+    assert rep.of("towers") == rep.of("trees") == rep.of("skyline_daylight") == []
+    for e, az in ((-2.5, 274.9), (-2.5, 88.1), (-8.0, 95.0), (2.7, 266.0), (46.97, 180.0)):
+        plan = scene_params(world(e, az), rep.frame(180.0))
+        calls = environment_calls(plan, rep)
+        assert not {c.name for c in calls} & DAY_PARAMETERS, e
+        assert [c.path for c in calls if c.name == "Daylight"] == [NEAR_BLOCKS]
+        glow = [c for c in calls if c.name == "EmissiveFactor"]
+        assert [c.path for c in glow] == [SKYLINE]  # the near blocks are not uniform here
+        f = plan["emissive_factor"]["skyline"]
+        assert glow[0].value == (f, f, f), e  # today's glow, the dawn's dimming included
+    for broken in ({}, None, [], "day", {"towers": "x", "trees": [None, 3], "skyline_daylight": 5}):
+        odd = json.loads(json.dumps(REPORT))
+        odd["day_state"] = broken
+        assert load_env_report(write_report(tmp_path, odd)) == rep, broken
+
+
+def test_the_day_state_reaches_the_towers_the_trees_and_the_skyline(tmp_path):
+    rep = load_env_report(write_report(tmp_path, merged_report()))
+    assert [(o.label, o.path, o.parameters) for o in rep.of("towers")] == [
+        ("skyline", SKYLINE, ("TowerDaylight", "WindowsOn")),
+        ("near_blocks", NEAR_BLOCKS, ("TowerDaylight", "WindowsOn")),
+    ]
+    assert [(o.path, o.parameters) for o in rep.of("trees")] == [(TREE, ("LeafDaylight",))]
+    assert [o.path for o in rep.of("skyline_daylight")] == [SKYLINE]
+    assert rep.world == "/Game/HQ/HQ_Dusk.HQ_Dusk"  # the clock still reads the game time
+
+    dusk = day_values(rep, -2.5, 274.9)  # the approved dusk: every material at its default
+    for actor in ("StaticMeshActor_10", "StaticMeshActor_11"):
+        assert dusk[(actor, "TowerDaylight")] == 0.0
+        assert dusk[(actor, "WindowsOn")] == 1.0
+        assert dusk[(actor, "Daylight")] == 0.0  # the near blocks as before, the skyline now too
+    assert dusk[("StaticMeshActor_30", "LeafDaylight")] == 0.0
+    assert dusk[("StaticMeshActor_10", "EmissiveFactor")] == {"X": 1.0, "Y": 1.0, "Z": 1.0}
+
+    noon = day_values(rep, 46.97, 180.0)
+    for actor in ("StaticMeshActor_10", "StaticMeshActor_11"):
+        assert noon[(actor, "TowerDaylight")] == 1.0
+        assert noon[(actor, "WindowsOn")] == 0.0
+        assert noon[(actor, "Daylight")] == 1.0
+    assert noon[("StaticMeshActor_30", "LeafDaylight")] == 1.0
+
+    golden = day_values(rep, 2.7, 266.0)  # 18:50: a few windows, the facades half in day
+    assert 0.0 < golden[("StaticMeshActor_10", "WindowsOn")] < 0.25
+    assert 0.0 < golden[("StaticMeshActor_10", "TowerDaylight")] < 1.0
+
+    for e in (-30.0, -2.5, 2.7, 46.97):
+        plan = scene_params(world(e, 200.0), rep.frame(180.0), game_time_s=12.0)
+        for call in environment_calls(plan, rep):
+            assert (call.cls, call.function) in ENVIRONMENT_CALLS
+            if call.name in DAY_PARAMETERS:
+                assert call.function == "SetScalarParameterValueOnMaterials"
+                assert call.cls == "MeshComponent" and call.kind == "value"
+
+
+def test_the_dawn_counts_the_towers_windows_instead_of_dimming_their_glow(tmp_path):
+    """Where WindowsOn counts the towers' windows, the dawn's fewer windows are fewer windows: the
+    skyline's glow keeps only the day's dimming. The evening is the same either way."""
+    plain = report(tmp_path)
+    rep = load_env_report(write_report(tmp_path, merged_report()))
+    dawn_today = day_values(plain, -6.0, 95.0)
+    dawn = day_values(rep, -6.0, 95.0)
+    assert dawn_today[("StaticMeshActor_10", "EmissiveFactor")]["X"] == pytest.approx(0.45)
+    assert dawn[("StaticMeshActor_10", "EmissiveFactor")] == {"X": 1.0, "Y": 1.0, "Z": 1.0}
+    assert 0.4 < dawn[("StaticMeshActor_10", "WindowsOn")] < 0.5
+    evening = day_values(rep, -6.0, 265.0)
+    assert (
+        evening[("StaticMeshActor_10", "EmissiveFactor")]
+        == day_values(plain, -6.0, 265.0)[("StaticMeshActor_10", "EmissiveFactor")]
+    )
+    assert evening[("StaticMeshActor_10", "WindowsOn")] == 1.0
+
+
+def test_the_day_state_drives_only_what_this_level_names(tmp_path):
+    """The backend repeats day_state.py's own refusals: the towers are the report's skyline and
+    near blocks, the skyline's Daylight is the skyline's, every tree lives in this level, and a
+    component drives only the parameters its entry names."""
+    odd = merged_report()
+    odd["day_state"]["towers"].append(
+        {
+            "label": "skyline",
+            "component": f"{LEVEL}.StaticMeshActor_99.StaticMeshComponent0",
+            "parameters": ["TowerDaylight", "WindowsOn"],
+        }
+    )
+    odd["day_state"]["towers"][1]["parameters"] = ["WindowsOn", "Opacity"]
+    odd["day_state"]["trees"].append(
+        {
+            "label": "tree_x",
+            "component": "/Game/Other.Other:PersistentLevel.A_1.C0",
+            "parameters": ["LeafDaylight"],
+        }
+    )
+    odd["day_state"]["trees"].append({"label": "tree_1", "component": TREE.replace("_30", "_31")})
+    odd["day_state"]["skyline_daylight"] = NEAR_BLOCKS
+    rep = load_env_report(write_report(tmp_path, odd))
+    assert [(o.path, o.parameters) for o in rep.of("towers")] == [
+        (SKYLINE, ("TowerDaylight", "WindowsOn")),
+        (NEAR_BLOCKS, ("WindowsOn",)),
+    ]
+    assert [o.path for o in rep.of("trees")] == [TREE]
+    assert rep.of("skyline_daylight") == []
+    assert rep.world == "/Game/HQ/HQ_Dusk.HQ_Dusk"
+    sent = day_values(rep, 20.0, 250.0)
+    assert ("StaticMeshActor_99", "TowerDaylight") not in sent
+    assert ("StaticMeshActor_11", "TowerDaylight") not in sent
+    assert ("StaticMeshActor_10", "Daylight") not in sent
+    assert ("StaticMeshActor_31", "LeafDaylight") not in sent
+
+
+def test_the_day_state_is_eased_like_every_other_light(tmp_path):
+    rep, sender, clock = (
+        load_env_report(write_report(tmp_path, merged_report())),
+        Recorder(),
+        Clock(),
+    )
+    env = EnvironmentPass(sender, clock=clock, ease_s=30.0)
+
+    def windows():
+        found = sender.last(
+            "StaticMeshActor_10.StaticMeshComponent0",
+            "SetScalarParameterValueOnMaterials",
+            "WindowsOn",
+        )
+        return found["parameters"]["ParameterValue"]
+
+    env.sync(world(-2.5, 274.9), rep, 180.0)
+    assert windows() == 1.0
+    clock.now = 5.0
+    env.sync(world(46.97, 180.0), rep, 180.0)  # a step to noon: the ease starts from the screen
+    assert windows() == 1.0
+    clock.now = 20.0
+    env.sync(world(46.97, 180.0), rep, 180.0)
+    assert windows() == pytest.approx(0.5)
+    clock.now = 40.0
+    env.sync(world(46.97, 180.0), rep, 180.0)
+    assert windows() == 0.0
