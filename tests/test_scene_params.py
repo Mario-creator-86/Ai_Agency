@@ -30,6 +30,8 @@ from app.office.scene_params import (
     FILL_WARM_RISE,
     GOLDEN_HANDOVER,
     GOLDEN_KEY_INTENSITY,
+    NEAR_WINDOWS_EVENING,
+    NEAR_WINDOWS_EVENING_FADE,
     NEAR_WINDOWS_FLOOR,
     NEAR_WINDOWS_FLOOR_FADE,
     OVERCAST_CLEAR_FROM,
@@ -1080,10 +1082,13 @@ def test_a_lit_near_block_never_goes_black():
         windows_on(NEAR_WINDOWS_FLOOR)
     )
     assert towers(2.8, 96.0, "near_blocks")["WindowsOn"] > towers(2.8, 96.0)["WindowsOn"]
-    # 18:50: the skyline lights more than the floor, so the near blocks are the skyline's
-    assert towers(2.7, 266.0, "near_blocks") == towers(2.7, 266.0)
+    # 18:50: the near blocks stand on their own evening curve, above the skyline's
+    assert towers(2.7, 266.0, "near_blocks")["WindowsOn"] > towers(2.7, 266.0)["WindowsOn"]
+    assert towers(2.7, 266.0, "near_blocks")["TowerDaylight"] == towers(2.7, 266.0)["TowerDaylight"]
     assert towers(-2.5, 274.9, "near_blocks") == {"TowerDaylight": 0.0, "WindowsOn": 1.0}
-    # on both sides the near blocks only follow the sun, and never jump
+    # on both sides the near blocks only follow the sun, and never jump: the evening's lift from
+    # the skyline's share to NEAR_WINDOWS_EVENING over NEAR_WINDOWS_EVENING_FADE (0.57 over
+    # 5 deg) is the steepest rule of the scene, 0.017 a tenth of a degree at its middle
     evening = [
         near_windows_share(Sun(elevation_deg=tenth / 10.0, azimuth_deg=265.0))
         for tenth in range(500, -300, -1)
@@ -1092,10 +1097,81 @@ def test_a_lit_near_block_never_goes_black():
         near_windows_share(Sun(elevation_deg=tenth / 10.0, azimuth_deg=95.0))
         for tenth in range(-300, 500)
     ]
-    assert evening == sorted(evening) and no_jump(evening)
+    assert evening == sorted(evening) and no_jump(evening, step=0.018)
     assert morning == sorted(morning, reverse=True) and no_jump(morning)
     sent = [towers(tenth / 10.0, 95.0, "near_blocks")["WindowsOn"] for tenth in range(-300, 500)]
     assert sent == sorted(sent, reverse=True)
+
+
+def near(elevation: float, azimuth: float = 265.0) -> float:
+    return near_windows_share(Sun(elevation_deg=elevation, azimuth_deg=azimuth))
+
+
+def skyline(elevation: float, azimuth: float = 265.0) -> float:
+    return tower_windows_share(Sun(elevation_deg=elevation, azimuth_deg=azimuth))
+
+
+def test_the_near_block_lights_nearly_every_window_from_three_degrees_down():
+    """The art director's one note on run 3 (2026-09-26): at 18:50 the near block was thin, the
+    skyline's 0.68 lit about 3 of the 9 windows the dusk lights on its visible patch, and his
+    probes read 9 at WindowsOn 0.85 and the dusk's 18 at 1.0. Homes and shops over the street
+    light early: the near blocks light NEAR_WINDOWS_EVENING of their dusk windows from about
+    +3 deg down (WindowsOn 0.95-1.0), rising with the skyline to every window at the reference,
+    exactly 1 there and below (the approved dusk); above +3 they fade to the skyline's curve by
+    +8, and follow it in the glare, off where it is off. The morning is as before: the dawn's
+    floor, above the city's ceiling, never black."""
+    assert NEAR_WINDOWS_EVENING_FADE[0] > NEAR_WINDOWS_EVENING_FADE[1] > WINDOWS_MOST_AT
+    assert 0.95 <= windows_on(NEAR_WINDOWS_EVENING) < 1.0
+    # from +3 down the floor stands until the skyline passes it, then the skyline's to the dusk
+    for e in (3.0, 2.7, 2.0, 1.0, 0.0, -1.0):
+        assert near(e) == pytest.approx(NEAR_WINDOWS_EVENING), e
+        assert near(e) > skyline(e), e
+        assert towers(e, 265.0, "near_blocks")["WindowsOn"] >= 0.95, e
+    assert towers(2.7, 266.0, "near_blocks")["WindowsOn"] == pytest.approx(
+        windows_on(NEAR_WINDOWS_EVENING)
+    )
+    assert skyline(-2.0) > NEAR_WINDOWS_EVENING
+    assert near(-2.0) == pytest.approx(skyline(-2.0))
+    assert towers(-2.5, 274.9, "near_blocks")["WindowsOn"] == 1.0
+    assert towers(-6.0, 285.0, "near_blocks")["WindowsOn"] == 1.0
+    assert towers(-30.0, 330.0, "near_blocks")["WindowsOn"] == 1.0
+    # between +3 and +8 the lift fades: strictly between the floor and the skyline's curve
+    for e in (4.0, 5.0, 6.0, 7.0):
+        assert skyline(e) < near(e) < NEAR_WINDOWS_EVENING, e
+    assert 0.65 < near(6.0) < 0.75  # about half way at the middle of the fade
+    # from +8 up the near blocks are the skyline's: the same few, none in the glare
+    for e, az in ((8.0, 258.0), (10.0, 255.0), (12.0, 250.0), (WINDOWS_OFF_ABOVE, 245.0)):
+        assert towers(e, az, "near_blocks") == towers(e, az), e
+    assert towers(46.97, 180.0, "near_blocks") == {"TowerDaylight": 1.0, "WindowsOn": 0.0}
+    # the morning side is as before: the dawn's floor (NEAR_WINDOWS_FLOOR), above the city's
+    # ceiling, the skyline's once the floor is gone
+    for e in (2.8, 0.0, -2.5, -6.0):
+        assert near(e, 95.0) == pytest.approx(NEAR_WINDOWS_FLOOR), e
+        assert near(e, 95.0) < near(e, 265.0), e
+    assert towers(2.8, 96.0, "near_blocks")["WindowsOn"] == pytest.approx(
+        windows_on(NEAR_WINDOWS_FLOOR)
+    )
+    for e, az in ((8.0, 110.0), (12.0, 115.0), (20.0, 120.0)):
+        assert towers(e, az, "near_blocks") == towers(e, az), e
+    # continuous at solar midnight and at noon, where the two sides meet
+    assert near(-44.0, 359.9) == near(-44.0, 0.1) == 1.0
+    assert near(46.97, 179.9) == near(46.97, 180.1) == 0.0
+
+
+def test_the_skyline_curve_is_the_art_directors_approved_one():
+    """Run 3's skyline curve passed the art director; the near blocks' own curve must not move
+    it. Its knots and its values at the instants he judged, 18:50 (+2.7), +6, +12 and a
+    September noon, pinned to the run 3 record (windows_curve.json)."""
+    assert (WINDOWS_OFF_ABOVE, WINDOWS_MOST_AT, WINDOWS_MOST) == (15.0, 2.5, 0.7)
+    assert skyline(2.7, 266.0) == pytest.approx(0.6994681344, abs=1e-9)
+    assert towers(2.7, 266.0)["WindowsOn"] == pytest.approx(0.68449472768, abs=1e-9)
+    assert skyline(6.0, 260.0) == pytest.approx(0.5660928, abs=1e-9)
+    assert towers(6.0, 260.0)["WindowsOn"] == pytest.approx(0.55778816, abs=1e-9)
+    assert skyline(12.0, 250.0) == pytest.approx(0.1016064, abs=1e-9)
+    assert towers(12.0, 250.0)["WindowsOn"] == pytest.approx(0.11652608, abs=1e-9)
+    assert towers(46.97, 180.0) == {"TowerDaylight": 1.0, "WindowsOn": 0.0}
+    assert towers(-2.5, 274.9) == {"TowerDaylight": 0.0, "WindowsOn": 1.0}
+    assert towers(2.8, 96.0)["WindowsOn"] == pytest.approx(windows_on(DAWN_CITY_WINDOWS))
 
 
 def test_fewer_tower_windows_are_lit_at_dawn_than_at_dusk_but_never_none():

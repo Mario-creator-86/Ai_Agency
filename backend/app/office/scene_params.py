@@ -322,6 +322,18 @@ WINDOWS_MOST = 0.7
 #: At dawn it stands above the city's ceiling (DAWN_CITY_WINDOWS): homes wake before offices.
 NEAR_WINDOWS_FLOOR = 0.5
 NEAR_WINDOWS_FLOOR_FADE = (10.0, 6.0)
+#: The near blocks' own evening curve, the art director's one note on run 3 (2026-09-26, the
+#: skyline curve approved): at 18:50 the skyline's 0.68 lit about 3 of the 9 windows the dusk
+#: lights on the near block's visible patch (his probes: WindowsOn 0.85 lit 9, 1.0 the dusk's
+#: 18). Homes and shops over the street light early: on the evening side the near blocks light
+#: NEAR_WINDOWS_EVENING of their dusk windows from the second value of NEAR_WINDOWS_EVENING_FADE
+#: down (WindowsOn 0.95, rising with the skyline's curve to every window at the reference, 1 there
+#: and below), and lift toward it from the skyline's share over the fade (whole at and below its
+#: second value, none at and above its first): a smoothstep, so it never jumps or turns back. In
+#: the glare the near blocks are the skyline's, off where it is off. The morning keeps the dawn's
+#: floor above (near_windows_share).
+NEAR_WINDOWS_EVENING = 0.98
+NEAR_WINDOWS_EVENING_FADE = (8.0, 3.0)
 #: towers_day.py's window ranks: every lit window of the dusk carries a rank spread evenly over
 #: (TOWER_RANK_MIN, TOWER_RANK_MAX] (stored as 8-bit floors), and M_HQ_TowerDay multiplies its
 #: emission by saturate((WindowsOn - rank) x TOWER_GATE_SHARPNESS). WindowsOn 1 lights every rank,
@@ -935,11 +947,24 @@ def near_windows_floor(elevation: float) -> float:
     return NEAR_WINDOWS_FLOOR * smoothstep(*NEAR_WINDOWS_FLOOR_FADE, elevation)
 
 
+def near_windows_lift(elevation: float) -> float:
+    """How far the near blocks stand toward their evening share (NEAR_WINDOWS_EVENING) from the
+    skyline's: 1 at and below NEAR_WINDOWS_EVENING_FADE's second value, 0 at and above its first,
+    a smoothstep between."""
+    return smoothstep(*NEAR_WINDOWS_EVENING_FADE, elevation)
+
+
 def near_windows_share(sun: Sun) -> float:
     """The near blocks' share lit for the real sun: the skyline's (tower_windows_share), never
-    below their own floor, so a lit near block never goes black. Monotone on both sides, since
-    both parts are."""
-    return max(tower_windows_share(sun), near_windows_floor(sun.elevation_deg))
+    below their own floor, so a lit near block never goes black; on the evening side lifted from
+    that toward NEAR_WINDOWS_EVENING by near_windows_lift (whole from +3 deg down), and the
+    skyline's own once it lights more (from about -2 deg to the reference's every window).
+    Monotone on both sides: every part is, and the lift mixes toward a share the base never
+    exceeds where it applies. Continuous at solar midnight (both 1) and at noon (both 0)."""
+    base = max(tower_windows_share(sun), near_windows_floor(sun.elevation_deg))
+    if sunrise_side(sun):
+        return base
+    return base + max(0.0, NEAR_WINDOWS_EVENING - base) * near_windows_lift(sun.elevation_deg)
 
 
 def windows_on(share: float) -> float:

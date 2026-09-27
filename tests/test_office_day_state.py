@@ -102,3 +102,23 @@ def test_windows_on_lights_the_share_it_is_asked_for(td):
     values = [sp.windows_on(k / 1000.0) for k in range(1001)]
     assert values == sorted(values)
     assert values[0] == 0.0 and values[-1] == 1.0
+
+
+def test_the_near_blocks_gate_lights_nearly_every_window_at_18_50(td):
+    """The art director's note on run 3: the near block at 18:50 lit about 3 of its 9 visible
+    windows on the skyline's curve. On its own curve the gate the material builds lights at least
+    95 % of its dusk windows over the pass's ranks from +3 deg down, every one at the reference,
+    while the skyline keeps its approved 0.6-0.8 at +3 and +2.7."""
+    stored = [math.floor(r * 255.0) / 255.0 for r in td.lit_ranks(137, seed=7)]
+
+    def lit(share: float) -> float:
+        return sum(td.gate(sp.windows_on(share), r) for r in stored) / len(stored)
+
+    for e in (3.0, 2.7, 0.0, -1.0):
+        sun = Sun(elevation_deg=e, azimuth_deg=266.0)
+        assert lit(sp.near_windows_share(sun)) >= 0.95, e
+        assert lit(sp.near_windows_share(sun)) > lit(sp.tower_windows_share(sun)), e
+    for e in (3.0, 2.7):
+        assert 0.6 < lit(sp.tower_windows_share(Sun(elevation_deg=e, azimuth_deg=266.0))) < 0.8, e
+    dusk = Sun(elevation_deg=REFERENCE_DUSK_ELEVATION, azimuth_deg=274.9)
+    assert all(td.gate(sp.windows_on(sp.near_windows_share(dusk)), r) == 1.0 for r in stored)

@@ -18,6 +18,7 @@ import pytest
 from app.office import unreal
 from app.office.scene_params import (
     DAWN_CITY_WINDOWS,
+    NEAR_WINDOWS_EVENING,
     NEAR_WINDOWS_FLOOR,
     scene_params,
     windows_on,
@@ -1048,7 +1049,10 @@ def test_the_day_state_reaches_the_towers_the_trees_and_the_skyline(tmp_path):
     golden = day_values(rep, 2.7, 266.0)  # 18:50: most windows lit, the facades half in day
     skyline, near = ("StaticMeshActor_10", "StaticMeshActor_11")
     assert windows_on(0.6) < golden[(skyline, "WindowsOn")] < windows_on(0.8)
-    assert golden[(near, "WindowsOn")] == golden[(skyline, "WindowsOn")]
+    # the near blocks on their own evening curve: nearly every window, above the skyline's
+    assert golden[(near, "WindowsOn")] == pytest.approx(windows_on(NEAR_WINDOWS_EVENING))
+    assert 0.95 <= golden[(near, "WindowsOn")] < 1.0
+    assert golden[(near, "WindowsOn")] > golden[(skyline, "WindowsOn")]
     assert 0.0 < golden[(skyline, "TowerDaylight")] < 1.0
     assert golden[(near, "TowerDaylight")] == golden[(skyline, "TowerDaylight")]
     afternoon = day_values(rep, 11.9, 250.0)  # 17:58: the first few windows
