@@ -27,18 +27,22 @@ workflow.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, fields
 from datetime import date
-from typing import Any
+from functools import lru_cache
+from pathlib import Path
+from typing import Any, TypeGuard
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
+from app.config import ROOT
 from app.integrations.discovery import (
     DISCOVERED_KINDS,
     production_resource,
@@ -645,7 +649,127 @@ def scene_role(scene_index: int, total_scenes: int) -> str:
 
 
 def required_quality(tier: str) -> float:
-    return QUALITY_TIERS.get(str(tier).upper(), QUALITY_TIERS["STANDARD"])
+    """The quality a scene of this tier must reach; HERO is the Owner's threshold when his
+    catalogue (config/film_models.json) states one."""
+    name = str(tier).upper()
+    if name == "HERO":
+        threshold = load_film_models().hero_threshold
+        if threshold is not None:
+            return threshold
+    return QUALITY_TIERS.get(name, QUALITY_TIERS["STANDARD"])
+
+
+# ------------------------------------------------- the documented catalogue of motion models
+
+#: What the vendors document and the public silent boards measured about every motion model
+#: the connection lists, with sources; plus the Owner's allowed set, HERO threshold and
+#: premium reference. Read when used, so his edit applies without a restart; a malformed
+#: file is refused, never read as empty (the Nepal film lost its shot plan to a silent
+#: discard).
+FILM_MODELS_FILE = ROOT / "config" / "film_models.json"
+
+#: The basis a catalogue row's research may state. "measured" is the studio's own judged
+#: results; "steward" and "documented" are research that names its sources. A row that
+#: states none of these and cites no source is a guess: it loses to the documented file.
+MEASURED_BASIS = "measured"
+SOURCED_BASES = (MEASURED_BASIS, "steward", "documented")
+
+
+@dataclass(frozen=True)
+class FilmModelCatalogue:
+    """config/film_models.json, checked."""
+
+    models: Mapping[str, Mapping[str, Any]]
+    #: None: no file, so no restriction beyond the planner's own ``allowed`` argument.
+    allowed: frozenset[str] | None
+    hero_threshold: float | None
+    premium_reference: tuple[str, str]
+    read_on: str | None = None
+
+    def allows(self, model_id: str) -> bool:
+        return self.allowed is None or model_id in self.allowed
+
+
+def _score(value: Any) -> TypeGuard[float]:
+    return isinstance(value, int | float) and not isinstance(value, bool) and 0 <= value <= 1
+
+
+def _check_model(where: str, model_id: str, entry: Any) -> dict[str, Any]:
+    if not isinstance(entry, Mapping):
+        raise ValueError(f"{where}: modelul {model_id} nu este un obiect")
+    quality = entry.get("quality_score")
+    if quality is not None and not _score(quality):
+        raise ValueError(f"{where}: {model_id}.quality_score trebuie să fie între 0 și 1")
+    needs = entry.get("need_quality") or {}
+    if not isinstance(needs, Mapping) or any(
+        name not in SCENE_NEEDS or not _score(value) for name, value in needs.items()
+    ):
+        raise ValueError(
+            f"{where}: {model_id}.need_quality acceptă doar {', '.join(SCENE_NEEDS)}, între 0 și 1"
+        )
+    moves = entry.get("camera_moves")
+    if moves is not None and (
+        not isinstance(moves, list) or not all(isinstance(m, str) for m in moves)
+    ):
+        raise ValueError(f"{where}: {model_id}.camera_moves trebuie să fie o listă sau null")
+    return dict(entry)
+
+
+@lru_cache(maxsize=8)
+def _read_film_models(path: str, _mtime_ns: int, _size: int) -> FilmModelCatalogue:
+    where = Path(path).name
+    try:
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"{where}: nu poate fi citit ({exc})") from exc
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"{where}: trebuie să fie un obiect JSON")
+    listed = raw.get("models") or {}
+    if not isinstance(listed, Mapping):
+        raise ValueError(f"{where}: «models» trebuie să fie un obiect")
+    models = {str(k): _check_model(where, str(k), v) for k, v in listed.items()}
+    allowed_raw = raw.get("allowed", sorted(models))
+    if not isinstance(allowed_raw, list) or not all(isinstance(m, str) for m in allowed_raw):
+        raise ValueError(f"{where}: «allowed» trebuie să fie o listă de modele")
+    threshold = raw.get("hero_threshold")
+    if threshold is not None and (not _score(threshold) or threshold == 0):
+        raise ValueError(f"{where}: «hero_threshold» trebuie să fie între 0 și 1")
+    reference = raw.get("premium_reference")
+    premium = cost_plan.PREMIUM_REFERENCE
+    if reference is not None:
+        if not isinstance(reference, Mapping) or not all(
+            isinstance(reference.get(k), str) and reference.get(k)
+            for k in ("model_id", "resolution")
+        ):
+            raise ValueError(f"{where}: «premium_reference» trebuie să aibă model_id și resolution")
+        premium = (str(reference["model_id"]), str(reference["resolution"]))
+    read_on = raw.get("read_on")
+    return FilmModelCatalogue(
+        models=models,
+        allowed=frozenset(allowed_raw),
+        hero_threshold=None if threshold is None else float(threshold),
+        premium_reference=premium,
+        read_on=str(read_on) if read_on else None,
+    )
+
+
+def load_film_models(path: Path | None = None) -> FilmModelCatalogue:
+    """The documented motion-model catalogue and the Owner's three choices in it.
+
+    No file: nothing documented, no restriction, the studio's own HERO tier and premium
+    reference. A file that cannot be read or checked raises ValueError.
+    """
+    target = Path(path or FILM_MODELS_FILE)
+    try:
+        stat = target.stat()
+    except FileNotFoundError:
+        return FilmModelCatalogue(
+            models={},
+            allowed=None,
+            hero_threshold=None,
+            premium_reference=cost_plan.PREMIUM_REFERENCE,
+        )
+    return _read_film_models(str(target), stat.st_mtime_ns, stat.st_size)
 
 
 # ----------------------------------------------------------------- what a model has done
@@ -1947,10 +2071,18 @@ _PEOPLE_WORDS = re.compile(
 )
 _WATER_WORDS = re.compile(
     r"\b(river|rivers|water|waters|waterfall|lake|lakes|sea|ocean|wave|waves|flood|floods|"
-    r"flooded|flooding|rain|rainfall|stream|streams|torrent|glacial lake|râu|râuri|apă|ape|"
-    r"ploaie|inundație|inundații|inundat|lac|cascadă)\b",
+    r"flooded|flooding|floodwater|floodwaters|rainwater|meltwater|rain|rainfall|stream|"
+    r"streams|torrent|glacial lake|râu|râuri|apă|ape|ploaie|inundație|inundații|inundat|"
+    r"lac|cascadă)\b",
     re.IGNORECASE,
 )
+#: What the prompt asks NOT to show is not in frame: the compiled "Avoid: ... extra hands
+#: and fingers ..." clause made every Nepal scene a scene with people. A list after "Avoid:"
+#: runs to the sentence's end; "no ..." / "without ..." to the next comma.
+_AVOID_CLAUSE = re.compile(
+    r"\b(?:avoid|negative(?:\s+prompt)?|do\s+not\s+show|evită)\b\s*:?[^.]*", re.IGNORECASE
+)
+_NO_CLAUSE = re.compile(r"\b(?:no|without|fără)\s+[^.,;]*", re.IGNORECASE)
 _FAST_WORDS = re.compile(
     r"\b(running|runs|rushing|racing|fast|rapid|rapidly|storm|explosion|avalanche|traffic|"
     r"stampede|collapsing|collapse|galloping|landslide|fleeing|aleargă|rapid|furtună|"
@@ -2005,8 +2137,12 @@ class ModelCapability:
     failures: Mapping[str, tuple[int, int]] = field(default_factory=dict)
     #: In the production lifecycle's admitted stations.
     admitted: bool = True
-    #: "documentat" (research) or "măsurat" (the studio's own judged results).
+    #: "măsurat" (the studio's own judged results), "documentat" (sourced research) or
+    #: "estimat" (an unsourced guess, or nothing known).
     quality_source: str = "documentat"
+    #: In the Owner's allowed set (config/film_models.json). The planner never buys a model
+    #: outside it; his own per-scene choice on the sheet still may.
+    owner_allowed: bool = True
 
     def as_dict(self) -> dict[str, Any]:
         return {item.name: getattr(self, item.name) for item in fields(self)}
@@ -2222,6 +2358,7 @@ def need_from_scene(scene: Mapping[str, Any], total_scenes: int) -> SceneNeed:
         )
         if isinstance(value, str)
     )
+    words = _NO_CLAUSE.sub(" ", _AVOID_CLAUSE.sub(" ", words))
     return SceneNeed(
         scene_index=index,
         kind=kind,
@@ -2273,32 +2410,35 @@ def _shortfalls(
     *,
     allowed: frozenset[str] | None,
     refused_here: Mapping[str, str],
-) -> tuple[list[str], float]:
-    """Why this model does NOT cover the need (empty: it does), and its effective quality."""
-    why: list[str] = []
+) -> tuple[list[str], float, bool]:
+    """Why this model does NOT cover the need (empty: it does), its effective quality, and
+    whether quality is the ONLY thing it lacks (a candidate to show the Owner as the best
+    available when nothing reaches the tier)."""
+    blocking: list[str] = []
+    below: list[str] = []
     model = capability.model_id
-    if allowed is not None and model not in allowed:
-        why.append("nu e în setul aprobat de Proprietar")
+    if (allowed is not None and model not in allowed) or not capability.owner_allowed:
+        blocking.append("nu e în setul aprobat de Proprietar")
     if not capability.admitted:
-        why.append("nu e admis în producție")
+        blocking.append("nu e admis în producție")
     if model in refused_here:
-        why.append(f"a refuzat deja această scenă ({refused_here[model]})")
+        blocking.append(f"a refuzat deja această scenă ({refused_here[model]})")
     if need.first_frame and capability.tasks is not None:
         if "image_to_video" not in capability.tasks:
-            why.append("nu pornește dintr-o imagine aprobată")
+            blocking.append("nu pornește dintr-o imagine aprobată")
     frame = FRAME_FOR_RESOLUTION.get(resolution)
     if frame and capability.ratios is not None:
         if frame not in capability.ratios and f"auto_{resolution}" not in capability.ratios:
-            why.append(f"nu livrează {frame.replace(':', '×')}")
+            blocking.append(f"nu livrează {frame.replace(':', '×')}")
     move = need.camera_move or "static"
     if capability.camera_moves is not None and move != "static":
         if move not in capability.camera_moves:
-            why.append(f"nu face mișcarea «{move}»")
+            blocking.append(f"nu face mișcarea «{move}»")
     needed = required_quality(need.tier)
     tier = str(need.tier).upper()
     effective = float(capability.quality)
     if capability.quality < needed:
-        why.append(
+        below.append(
             f"calitate {_ro_decimal(capability.quality)} sub {_ro_decimal(needed)} "
             f"cerut pentru {tier}"
         )
@@ -2306,7 +2446,7 @@ def _shortfalls(
         score = capability.quality_for(name)
         effective = min(effective, score)
         if score < needed and score != capability.quality:
-            why.append(
+            below.append(
                 f"calitate pe {NEED_LABELS_RO[name]} {_ro_decimal(score)} sub "
                 f"{_ro_decimal(needed)} cerut pentru {tier}"
             )
@@ -2318,8 +2458,8 @@ def _shortfalls(
                 if category == "general"
                 else f"scene cu {NEED_LABELS_RO.get(category, category)}"
             )
-            why.append(f"a eșuat de {failed} din {judged} ori pe {where}")
-    return why, round(effective, 4)
+            blocking.append(f"a eșuat de {failed} din {judged} ori pe {where}")
+    return blocking + below, round(effective, 4), bool(below) and not blocking
 
 
 def _history(
@@ -2427,7 +2567,7 @@ def _choose_scene(
     candidates: list[dict[str, Any]] = []
     for capability in capabilities.values():
         credits, billed, unpriced, row = _price(capability, need, resolution, table)
-        why, quality = _shortfalls(
+        why, quality, only_quality = _shortfalls(
             capability, need, resolution, allowed=allowed, refused_here=refused_here
         )
         candidates.append(
@@ -2440,6 +2580,8 @@ def _choose_scene(
                 "quality_source": capability.quality_source,
                 "why": ([unpriced] if unpriced else []) + why,
                 "priced": credits is not None,
+                # Buyable in every way but its quality for this scene's tier.
+                "near": only_quality and credits is not None,
             }
         )
     by_id = {c["model_id"]: c for c in candidates}
@@ -2564,6 +2706,29 @@ def _choose_scene(
         )
         take(chosen, "policy", reason)
     else:
+        near = sorted(
+            (c for c in candidates if c["near"]),
+            key=lambda c: (-c["quality"], c["credits"], c["model_id"]),
+        )
+        if near:
+            # Nothing reaches the tier, but these lack only quality: the Owner sees the best
+            # of them, its price and why, and decides (never a silent downgrade).
+            best = near[0]
+            entry["best_available"] = {
+                **_option(best, table),
+                "billed_seconds": best["billed_seconds"],
+            }
+            tier = str(need.tier).upper()
+            hold(
+                "NEEDS_OWNER",
+                f"Niciun model din setul aprobat nu atinge calitatea cerută pentru {tier} "
+                f"({_ro_decimal(required_quality(need.tier))}). Cel mai bun disponibil: "
+                f"{best['model_id']}, calitate {_ro_decimal(best['quality'])}, "
+                f"{_ro_seconds(best['billed_seconds'])}, {_ro_credits(best['credits'])}. "
+                "Decide Proprietarul: îl alege pe foaia de filmare, alege alt model sau "
+                "mișcare locală.",
+            )
+            return entry
         hold(
             "NEEDS_OWNER",
             "Niciun model din setul aprobat nu poate filma această scenă: "
@@ -2596,8 +2761,10 @@ def _choose_scene(
     return entry
 
 
-def _premium_credits(needs: Sequence[SceneNeed], table: cost_plan.PriceTable) -> int:
-    model, resolution = cost_plan.PREMIUM_REFERENCE
+def _premium_credits(
+    needs: Sequence[SceneNeed], table: cost_plan.PriceTable, reference: tuple[str, str]
+) -> int:
+    model, resolution = reference
     total = 0
     for need in needs:
         if need.kind != cost_plan.LIVE:
@@ -2626,11 +2793,16 @@ def plan_scene_models(
     resolution: str = "1080p",
     table: cost_plan.PriceTable | None = None,
     today: date | None = None,
+    premium_reference: tuple[str, str] | None = None,
 ) -> dict[str, Any]:
     """Price a film scene by scene on the cheapest model that covers each scene's need.
 
-    ``allowed`` is the Owner's allowed set (None: every admitted model the capabilities
-    list). ``overrides`` are his choices on the sheet, per scene: a model id or LOCAL_MOVE;
+    ``allowed`` narrows the Owner's allowed set further (None: every admitted model the
+    capabilities list that his catalogue allows, ModelCapability.owner_allowed). A scene no
+    allowed model reaches the tier for waits for him with ``best_available``, the best model
+    that lacks only quality. ``premium_reference`` (model, resolution) is what the saving is
+    measured against: his catalogue's when not given. ``overrides`` are his choices on the
+    sheet, per scene: a model id or LOCAL_MOVE;
     they win. ``failures`` is each scene's history: a SAFETY or CONTRACT failure excludes
     that model for THAT scene only. ``keep`` pins scenes to the model an approved sheet gave
     them, and ``bought`` scenes are frozen and never in ``to_buy`` again.
@@ -2679,7 +2851,8 @@ def plan_scene_models(
     hero_credits = int(hero["credits"]) if hero else 0
     dearest = max((int(s["credits"]) for s in motion), default=0)
     cap = int(cap_credits) if cap_credits is not None else (total + dearest + stills if live else 0)
-    premium = _premium_credits(needs, prices) + stills
+    reference = premium_reference or load_film_models().premium_reference
+    premium = _premium_credits(needs, prices, reference) + stills
     saved = max(0, premium - total)
     to_buy = [s["scene_index"] for s in motion if s["status"] == "PLANNED"]
     remaining = sum(int(s["credits"]) for s in motion if s["status"] == "PLANNED") + (
@@ -2720,7 +2893,7 @@ def plan_scene_models(
         to_buy = []
 
     models = sorted({str(s["model_id"]) for s in motion})
-    premium_name = " la ".join(cost_plan.PREMIUM_REFERENCE)
+    premium_name = " la ".join(reference)
     summary = (
         f"Filmul costă {_ro_credits(total)} ({_ro_usd(usd(total))}): {_ro_credits(stills)} "
         f"pe imagini și {_ro_credits(motion_credits)} pe mișcare, "
@@ -2776,6 +2949,7 @@ def plan_scene_models(
         "total_credits": total,
         "cap_credits": cap,
         "premium_credits": premium,
+        "premium_reference": {"model_id": reference[0], "resolution": reference[1]},
         "saved_credits": saved,
         "stills_usd_micros": usd(stills),
         "hero_usd_micros": usd(hero_credits),
@@ -2893,22 +3067,75 @@ def replan_after_failure(
 # ------------------------------------------------------------- what the catalogue records
 
 
+@dataclass(frozen=True)
+class _Research:
+    quality: float | None
+    need_quality: dict[str, float]
+    camera_moves: tuple[str, ...] | None
+    #: "măsurat" | "documentat" | "estimat": where the quality figure came from.
+    source: str
+
+
+def _needs_of(value: Any) -> dict[str, float]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {str(k): float(v) for k, v in value.items() if _score(v)}
+
+
+def model_research(row_capabilities: Any, documented: Mapping[str, Any] | None) -> _Research:
+    """One model's research: its catalogue row's, then the documented file's.
+
+    Field by field (overall quality, quality per need, camera moves): a row whose research is
+    MEASURED or names its sources (a steward's) outranks the documented file; the file
+    outranks a row's unsourced guess; a guess is kept only where the file says nothing.
+    """
+    caps = row_capabilities if isinstance(row_capabilities, Mapping) else {}
+    basis = str(caps.get("basis") or "").strip().lower()
+    sourced = basis in SOURCED_BASES or bool(caps.get("sources"))
+    label_of_row = "măsurat" if basis == MEASURED_BASIS else "documentat" if sourced else "estimat"
+    # Lowest priority first.
+    layers: list[tuple[Mapping[str, Any], str]] = []
+    if caps and not sourced:
+        layers.append((caps, "estimat"))
+    if documented:
+        layers.append((documented, "documentat"))
+    if caps and sourced:
+        layers.append((caps, label_of_row))
+
+    quality: float | None = None
+    source = "estimat"
+    needs: dict[str, float] = {}
+    moves: tuple[str, ...] | None = None
+    for layer, label in layers:
+        score = layer.get("quality_score")
+        if _score(score):
+            quality, source = float(score), label
+        needs.update(_needs_of(layer.get("need_quality")))
+        listed = layer.get("camera_moves")
+        if isinstance(listed, list):
+            moves = tuple(str(m) for m in listed)
+    return _Research(quality=quality, need_quality=needs, camera_moves=moves, source=source)
+
+
 def scene_model_capabilities(
     session: Session, integration_id: str, purpose: str = "video"
 ) -> list[ModelCapability]:
     """The capability of every model on one connection, from its contract and its results.
 
     The contract gives tasks, the image_to_video ratios and the duration bounds; research
-    (`capabilities`) gives the documented quality, per-content quality and camera moves; the
-    studio's own judged generations turn the documented quality into a measured one and
-    count failures per kind of scene. A retired (DEPRECATED) or unavailable model is left
-    out; a model outside the admitted stations is listed but never bought.
+    gives the quality, per-content quality and camera moves (`model_research`: the row's
+    measured or sourced research, else config/film_models.json, else the row's guess); the
+    studio's own judged generations turn that quality into a measured one and count failures
+    per kind of scene. A retired (DEPRECATED) or unavailable model is left out; a model
+    outside the admitted stations, or outside the Owner's allowed set, is listed but never
+    chosen by the planner.
     """
     from app.integrations.discovery import usable_purposes  # noqa: PLC0415
     from app.integrations.models import ModelOutcome  # noqa: PLC0415
 
     integration = session.get(Integration, integration_id)
     kind = integration.kind if integration else ""
+    catalogue = load_film_models()
     outcomes: dict[str, dict[str, list[int]]] = {}
     for outcome in session.scalars(
         select(ModelOutcome).where(
@@ -2951,34 +3178,30 @@ def scene_model_capabilities(
             seconds = {"values": [int(v) for v in contract]}
         elif isinstance(contract, dict) and contract:
             seconds = {k: contract[k] for k in ("min", "max") if k in contract}
-        need_quality = caps.get("need_quality")
-        moves = caps.get("camera_moves")
-        record = model_record(session, integration_id, purpose, str(row.remote_id))
-        annotated = _number(caps.get("quality_score"), 0.5)
+        remote_id = str(row.remote_id)
+        research = model_research(caps, catalogue.models.get(remote_id))
+        record = model_record(session, integration_id, purpose, remote_id)
+        # Nothing known: 0.5, below every tier, so the planner never trusts it unasked.
+        annotated = research.quality if research.quality is not None else 0.5
         judged = int(record.get("judged") or 0)
         found.append(
             ModelCapability(
-                model_id=str(row.remote_id),
+                model_id=remote_id,
                 quality=_observed_quality(record, annotated),
                 seconds=seconds,
                 ratios=tuple(str(r) for r in listed_ratios)
                 if isinstance(listed_ratios, list)
                 else None,
                 tasks=tuple(str(t) for t in tasks) if isinstance(tasks, list) else None,
-                need_quality={
-                    str(k): float(v)
-                    for k, v in (need_quality or {}).items()
-                    if isinstance(v, int | float)
-                }
-                if isinstance(need_quality, dict)
-                else {},
-                camera_moves=tuple(str(m) for m in moves) if isinstance(moves, list) else None,
+                need_quality=research.need_quality,
+                camera_moves=research.camera_moves,
                 failures={
                     category: (counts[0], counts[1])
-                    for category, counts in outcomes.get(str(row.remote_id), {}).items()
+                    for category, counts in outcomes.get(remote_id, {}).items()
                 },
                 admitted=str(row.production_status or "PRODUCTION") in PRODUCTION_READY,
-                quality_source="măsurat" if judged >= 3 else "documentat",
+                quality_source="măsurat" if judged >= 3 else research.source,
+                owner_allowed=catalogue.allows(remote_id),
             )
         )
     return found

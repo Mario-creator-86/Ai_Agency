@@ -16,7 +16,8 @@ What this step does, in order, and what stops it:
    and costs 0. Its sha256 is the plan_hash the Owner's yes is bound to.
 2. Refusals before anything is asked or bought (`StillsStageRefused`, a 409 for the route):
    a plan_hash that is not the current plan's (STALE_PLAN); in PRODUCTION a LIVE scene whose
-   prompt was not written by the model (NEEDS_SHOT_PLAN); an open lint BLOCK (LINT_BLOCKED);
+   prompt was not written by the model, or for the office serial composed from its fixed
+   series look (NEEDS_SHOT_PLAN); an open lint BLOCK (LINT_BLOCKED);
    a Runway balance below the cap x 1.15, or one that could not be read (LOW_BALANCE).
 3. The Owner's gate: `may_act('media.stills_purchase', context={plan_hash, cap_credits})`.
    With no answer it is one ApprovalRequest (NEEDS_APPROVAL, a 202); his yes is spent there,
@@ -69,6 +70,7 @@ from app.media.assembler import (
     failure_detail_of,
     record_take,
     scene_kind_of,
+    shot_plan_sources,
     still_fields,
     take_hash,
     usable_take,
@@ -490,7 +492,10 @@ def run_stills_stage(
     live = [scene for scene in scenes if scene.kind == LIVE_KIND]
 
     if environment == "PRODUCTION":
-        unwritten = [scene.index for scene in live if scene.source != "model"]
+        # The model's shot plan; for an episode of the office serial also the scenes composed
+        # from the Owner-approved series look (S8), which are linted and gated like any other.
+        sources = shot_plan_sources(engine, storyboard_id)
+        unwritten = [scene.index for scene in live if scene.source not in sources]
         if unwritten:
             raise StillsStageRefused(
                 "NEEDS_SHOT_PLAN",

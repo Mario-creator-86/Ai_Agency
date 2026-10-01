@@ -4,7 +4,9 @@ The Nepal film went out at 2.6 Mbps, tagged full range (``setrange=pc``) so ever
 its blacks grey, and every shot had already been through a lossy veryfast encode before the
 final one. None of that cost a credit to get wrong, and none of it costs one to get right:
 
-- shots are lossless intermediates (x264 ``-qp 0``), so only the final encode is lossy;
+- shots are compact, visually lossless intermediates (x264 High, CRF 4, measured on the Nepal
+  stills and clips on 2026-10-01: half the size of ``-qp 0``, the final film within 0.6 dB of
+  one made from lossless shots), so the film is encoded lossily once, at full quality;
 - the final is H.264 High 4.2, CRF 17 on the slow preset, capped at 14 Mbps, a keyframe every
   half second, 4:2:0, tagged BT.709 limited range, with the index at the front;
 - the audio is mastered once and copied into the film, never encoded twice.
@@ -167,17 +169,176 @@ def test_the_final_encode_is_named_in_full():
     assert "veryfast" not in joined
 
 
-def test_a_shot_is_a_lossless_limited_range_intermediate():
-    from app.media.assembler import _shot_command
+def test_a_shot_is_a_compact_limited_range_intermediate():
+    """2026-10-01 (DISK_AND_BREATHS): a lossless (-qp 0) shot was about 16 MB a second at
+    1080x1920, 1.1 GB a film. A shot is now x264 High at CRF 4: visually lossless for the one
+    final encode, half the size, and a repeated frame still reads as one (qc)."""
+    from app.media.assembler import INTERMEDIATE_VIDEO_ARGS, _shot_command
 
     for clip in (None, Path("motion_01.mp4")):
         args = _shot_command("ffmpeg", Path("scene_01.png"), clip, 4.4, Path("shot_01.mp4"))
         joined = " ".join(args)
         assert "setrange=pc" not in joined and "setrange" not in joined
-        assert args[args.index("-qp") + 1] == "0"
-        assert "-crf" not in args
+        assert "-qp" not in args
+        assert args[args.index("-crf") + 1] == "4"
+        assert args[args.index("-profile:v") + 1] == "high"
+        assert args[args.index("-preset") + 1] == "veryfast"
+        assert args[args.index("-pix_fmt") + 1] == "yuv420p"
         assert "out_range=tv" in joined and "out_color_matrix=bt709" in joined
         assert args[args.index("-color_range") + 1] == "tv"
+        assert tuple(args[-1 - len(INTERMEDIATE_VIDEO_ARGS) : -1]) == INTERMEDIATE_VIDEO_ARGS
+
+
+def _x264_settings(path: Path) -> str:
+    """The settings x264 wrote into the stream's SEI ("crf=4.0", "qp=0", ...)."""
+    data = path.read_bytes()
+    start = data.find(b"x264 - core")
+    assert start >= 0, "not an x264 stream"
+    return data[start : data.find(b"\x00", start)].decode("latin-1")
+
+
+@requires_toolchain
+def test_a_composed_card_is_the_same_compact_intermediate(tmp_path: Path):
+    from app.media.cards import card_spec_from_json, compose_card
+
+    card = compose_card(
+        card_spec_from_json("TITLE_CARD", {"title": "Ploi în Nepal"}),
+        tmp_path / "card_01.mp4",
+        duration=1.5,
+        ffmpeg=FFMPEG,
+    )
+    settings = _x264_settings(card.path)
+    assert " crf=4.0 " in settings and " qp=0 " not in settings, settings
+    video = _stream(_probe(card.path), "video")
+    assert video["profile"] == "High" and video["pix_fmt"] == "yuv420p"
+    assert video["color_range"] == "tv" and video["color_space"] == "bt709"
+
+
+@requires_toolchain
+def test_a_compact_shot_is_half_a_lossless_one_and_visually_the_same(tmp_path: Path):
+    """The Nepal still with the local push-in, measured 2026-10-01 at 8.6 s: 139 MB lossless,
+    66 MB at CRF 4, 51.6 dB against the lossless shot. The fixture is a Nepal still too."""
+    import app.media.assembler as assembler
+    from test_scene_takes import FIXTURES
+
+    assert FFMPEG is not None
+    still = FIXTURES / "scene_01.jpg"
+    compact = tmp_path / "compact.mp4"
+    _run(assembler._shot_command(FFMPEG, still, None, 3.0, compact))
+    lossless = tmp_path / "lossless.mp4"
+    codec = ["-c:v", "libx264", "-qp", "0", "-preset", "veryfast", "-pix_fmt", "yuv420p"]
+    command = assembler._shot_command(FFMPEG, still, None, 3.0, lossless)
+    cut = len(assembler.INTERMEDIATE_VIDEO_ARGS) + 1
+    _run([*command[:-cut], *codec, str(lossless)])
+
+    assert compact.stat().st_size <= 0.6 * lossless.stat().st_size, (
+        compact.stat().st_size,
+        lossless.stat().st_size,
+    )
+    compared = _run(
+        [
+            FFMPEG,
+            "-nostdin",
+            "-i",
+            str(compact),
+            "-i",
+            str(lossless),
+            "-lavfi",
+            "[0:v][1:v]psnr",
+            "-f",
+            "null",
+            "-",
+        ]
+    ).stderr
+    found = re.search(r"PSNR .*?average:([0-9.]+)", compared)
+    assert found is not None, compared[-400:]
+    assert float(found.group(1)) >= 48.0, found.group(1)
+
+
+def _shot_duplicates(shot: Path, span: float) -> float | None:
+    """Quality control's own reading of one moving scene's shot: the share of repeated frames
+    away from its edges (qc.shot_duplicate_share)."""
+    from app.media.qc import shot_duplicate_share
+
+    return shot_duplicate_share(
+        FFMPEG,
+        {"shots": [{"scene_index": 1, "file": shot.name}]},
+        shot.parent,
+        [(1, 0.0, span)],
+    )
+
+
+@requires_toolchain
+def test_on_a_compact_shot_a_repeated_frame_still_counts_and_slow_motion_does_not(
+    tmp_path: Path,
+):
+    """Measured 2026-10-01: in CRF 4 shots a repeated frame reads at most 0.013 (the Nepal
+    motion_04 at 12 fps with a held end; 0 lossless), the slowest real Nepal clip 0.097 (0.104
+    lossless). qc.LOSSLESS_DUPLICATE_YDIF sits between them, at 0.03."""
+    from app.media.assembler import _shot_command
+    from app.media.qc import LOSSLESS_DUPLICATE_YDIF
+
+    assert LOSSLESS_DUPLICATE_YDIF == 0.03
+    assert FFMPEG is not None
+    # A grained vendor clip at 12 fps, held half a second past its end: on the 24 fps timeline
+    # every other frame repeats, and so does every held one.
+    twelve = tmp_path / "motion_12.mp4"
+    _run(
+        [
+            FFMPEG,
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=1080x1920:rate=12:duration=3",
+            "-vf",
+            "format=rgb24,noise=alls=28:allf=t+u,"
+            "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p",
+            "-c:v",
+            "libx264",
+            "-crf",
+            "8",
+            "-preset",
+            "ultrafast",
+            str(twelve),
+        ]
+    )
+    repeated = tmp_path / "shot_01.mp4"
+    _run(_shot_command(FFMPEG, tmp_path / "unused.png", twelve, 3.5, repeated, hold=0.5))
+    # 60 frames inside the edges, 30 of them a repeat of the frame before (12 fps doubled).
+    share = _shot_duplicates(repeated, 3.5)
+    assert share == pytest.approx(0.5, abs=0.02), share
+
+    # A slow real picture: a detailed frame under faint grain, 0.13-0.17 a frame.
+    slow = tmp_path / "motion_slow.mp4"
+    _run(
+        [
+            FFMPEG,
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=1080x1920:rate=1:duration=1,noise=alls=28:allf=u",
+            "-vf",
+            "loop=72:1:0,fps=24,noise=c0s=2:c0f=t,format=yuv420p",
+            "-frames:v",
+            "72",
+            "-c:v",
+            "libx264",
+            "-crf",
+            "8",
+            "-preset",
+            "ultrafast",
+            str(slow),
+        ]
+    )
+    moving = tmp_path / "shot_02.mp4"
+    _run(_shot_command(FFMPEG, tmp_path / "unused.png", slow, 3.0, moving))
+    assert _shot_duplicates(moving, 3.0) == 0.0
 
 
 def test_the_film_copies_a_mastered_track_and_never_encodes_audio_twice():
@@ -247,11 +408,11 @@ def test_a_film_from_a_detailed_source_probes_as_the_premium_master(tmp_path: Pa
         _run(_shot_command(FFMPEG, still, source_clip, span, target))
         shots.append(target)
 
-    # The intermediates are lossless: x264's lossless mode is the High 4:4:4 Predictive
-    # profile, and they are already limited range BT.709.
+    # The intermediates are compact (High, CRF 4), and already limited range BT.709.
     for shot in shots:
         video = _stream(_probe(shot), "video")
-        assert video["profile"] == "High 4:4:4 Predictive", video
+        assert video["profile"] == "High", video
+        assert " crf=4.0 " in _x264_settings(shot)
         assert video["color_range"] == "tv" and video["color_space"] == "bt709"
 
     voice = tmp_path / "voice.wav"

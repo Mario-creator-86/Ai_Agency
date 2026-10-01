@@ -13,6 +13,47 @@ database resource discovery/refresh, separate production choices, UI and regress
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
 
+## The film staircase closed — ready for the Owner's next paid film (2026-10-01)
+
+The adversary's NEEDS_WORK list from the first run is closed (workflow wf_a3747233-fd7, eight
+agents, every provider faked, 0 credits); its second verdict is **READY**.
+- **Clip QC runs between the motion step and assembly**: every paid shot (hero test shot, motion,
+  motion redo) is checked (motion floor per camera move, YuNet on the first/middle/last frames,
+  cut spikes, the vision judge); at most one retry with seed+1 and a firmer prompt, only inside
+  the approved cap; a failed clip is REJECTED and never assembled; an unchecked clip waits for the
+  Owner's look. Assembly refuses a LIVE scene without an accepted clip unless he chose LOCAL_MOVE.
+- **The assemble step** (POST /media/storyboards/{id}/steps/assemble) and its drawer button; the
+  film's measured spend is booked once; step costs are booked once whichever path buys them; a
+  newer plan withdraws the older pending questions.
+- **The money hole is closed**: the legacy whole-film render refuses in every environment whenever
+  it would reach a real paid vendor adapter (default-deny by the adapter's module); real films go
+  only through the shooting sheet.
+- **Per-scene model choice works on the real catalogue**: config/film_models.json holds documented,
+  sourced capabilities for 16 models, the Owner's allowed set, the hero threshold (0.93) and the
+  premium reference; unsourced catalogue guesses no longer outrank sourced research.
+- **Captions on the voice's clock**: ElevenLabs /with-timestamps, never a second request once audio
+  has arrived.
+- **QC truths**: silent cards have a maximum (BLACK 2.0 s, TITLE 2.5 s, DATA 4.0 s), breaths count,
+  three frames per filmed scene at 1080 px.
+- **Disk**: intermediates are x264 CRF 4 (not lossless) and are deleted as soon as the film's QC
+  report is recorded; a redo re-derives them at 0 credits; a film test writes at most ~150 MB.
+- **The drawer**: redo buttons per scene with their prices and plan hashes, the assemble button,
+  the Owner's paid-media rule as a real control.
+
+Verified 2026-10-01: ruff, ruff format, mypy (211 files), check_docs clean; the touched test files
+and their neighbours green (736 in the verify agent's two batches, plus the re-run after the
+release-after-QC wiring); npm test 638/638 and tsc. Zero-credit Nepal rehearsal on a copy: held in
+PRODUCTION by design (scene 1's old clip unchecked, scenes 2-4 without clips); on a TEST copy a
+27.9 s film, -14.0 LUFS / -2.25 dBTP, full breaths, 19 caption cues, QC FAILED only for the faces
+YuNet found in scenes 3 and 4.
+
+Next paid film (Nepal-shaped, documented catalogue): stills 72 credits + wan3 on the four filmed
+scenes (80 + 120 + 80 + 120) = 472 credits (4.72 USD) + ~0.10 USD narration; worst case under the
+caps 672 credits; premium everywhere would be 1,432. Owner first: restart his studio with
+scripts/bootstrap.py and npm run build --prefix frontend; a Runway balance of at least ~750
+credits; his decisions (allowed set, hero threshold, narration as a paid step, unchecked clips,
+silent card maximums, the 321 GB of old test films in backend/storage/media).
+
 ## The film staircase — after the Nepal film (2026-09-26 → 2026-10-01)
 
 The Nepal film (storyboard 1d530880, 26.09) cost over 1,000 Runway credits and failed QC. Root

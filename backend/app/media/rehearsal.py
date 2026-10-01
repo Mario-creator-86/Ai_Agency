@@ -50,13 +50,17 @@ from app.factual.models import FactualClaim, ScriptDraft
 from app.media.assembler import (
     LIVE_KIND,
     TAKES_VISUAL_SOURCE,
-    TRANSITION_SECONDS,
     TakesMissing,
     assemble_from_takes,
     motion_fields,
+    scene_joins,
+    scene_kind_of,
+    scene_spans,
     scene_view,
+    shot_spans,
     still_fields,
     take_hash,
+    whole_frames,
 )
 from app.media.cards import CARD_KINDS
 from app.media.cost_plan import (
@@ -627,13 +631,39 @@ def _motion_verdict(
     }
 
 
+def foreseen_spans(
+    views: list[Mapping[str, Any]], spoken: list[float | None]
+) -> tuple[list[float], list[float]]:
+    """How long each scene will last on the film's timeline, and the shot each clip must
+    fill, before a render: the assembler's own formulas, not a second guess at them.
+
+    With every scene's narration recorded, a scene lasts its words plus a breath, never past
+    its plan and never cutting a word (assembler.scene_spans); otherwise the render keeps the
+    plan on whole frames, and so does this. A shot is its scene plus the dissolve the next
+    scene asks for (assembler.shot_spans), which is what the render requires a reused clip to
+    cover. It used to be max(plan, words) + 0.4 s, the timeline from before 2026-10-01, so the
+    sheet could call a paid clip too short that the render would use.
+    """
+    planned = [float(view.get("duration_seconds") or 0.0) for view in views]
+    if views and all(isinstance(seconds, int | float) for seconds in spoken):
+        lengths = scene_spans(planned, spoken, kinds=[scene_kind_of(dict(view)) for view in views])
+    else:
+        lengths = [whole_frames(plan) for plan in planned]
+    scenes = [
+        {**dict(view), "duration_seconds": length}
+        for view, length in zip(views, lengths, strict=True)
+    ]
+    return lengths, shot_spans(scenes, scene_joins(scenes))
+
+
 def _motion_take(
     context: _Context,
     scene: _Scene,
     clip: Path,
     still: Path | None,
     flagged: list[CheckResult],
-    spoken: float,
+    scene_seconds: float,
+    shot_seconds: float,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """The take of one paid clip, and its row on the sheet (whether the film can use it)."""
     measured = _probe(context.ffprobe, clip)
@@ -660,16 +690,18 @@ def _motion_take(
         "approved_by": None,
         **_motion_verdict(scene, similarity, flagged),
     }
-    # What the assembler asks of a clip: the scene's span, as long as the narration recorded
-    # and one transition more. A shorter clip is not used (a frozen tail is not motion).
-    planned = float(scene.view.get("duration_seconds") or 0.0)
-    span = round(max(planned, spoken) + TRANSITION_SECONDS, 3)
+    # What the render asks of a reused clip: that it covers its shot, the scene's span on the
+    # timeline plus any dissolve into the next scene (foreseen_spans). A shorter clip is not
+    # used (a frozen tail is not motion). ``span`` is the shot, as the sheet reads it after a
+    # render (_lines_from_film).
+    span = round(shot_seconds, 3)
     row = {
         "status": take["status"],
         "model_id": origin["model"],
         "from_render": origin["job_id"],
         "file": clip.name,
         "seconds": seconds,
+        "scene_seconds": round(scene_seconds, 3),
         "span": span,
         "used": take["status"] == "PAID" and seconds is not None and seconds >= span,
         "first_frame_similarity": similarity,
@@ -756,19 +788,29 @@ def _adopt(
     plans: list[dict[str, Any]] = []
     voices: dict[int, ReusedVoice] = {}
     rows_out: list[dict[str, Any]] = []
+    voice_rows: dict[int, dict[str, Any]] = {}
     for scene in scenes:
+        voice_rows[scene.index], reused = _voice_row(
+            context, scene, copies["voice"].get(scene.index)
+        )
+        if reused is not None:
+            voices[scene.index] = reused
+    # Every scene's words are measured first: a scene's length on the timeline depends on
+    # all of them (the breaths are shared out across the film).
+    scene_seconds, shot_seconds = foreseen_spans(
+        [scene.view for scene in scenes],
+        [voices[scene.index].seconds if scene.index in voices else None for scene in scenes],
+    )
+    for position, scene in enumerate(scenes):
         row: dict[str, Any] = {
             "scene_index": scene.index,
             "kind": scene.kind,
             "kind_forced_by": scene.forced_by,
             "still": None,
             "motion": None,
-            "voice": None,
+            "voice": voice_rows[scene.index],
             "credits_needed": 0,
         }
-        row["voice"], reused = _voice_row(context, scene, copies["voice"].get(scene.index))
-        if reused is not None:
-            voices[scene.index] = reused
         still = copies["still"].get(scene.index)
         flagged: list[CheckResult] = []
         if still is not None:
@@ -776,8 +818,15 @@ def _adopt(
             plans.append(take)
         clip = copies["motion"].get(scene.index)
         if clip is not None:
-            spoken = reused.seconds if reused is not None else 0.0
-            take, row["motion"] = _motion_take(context, scene, clip, still, flagged, spoken)
+            take, row["motion"] = _motion_take(
+                context,
+                scene,
+                clip,
+                still,
+                flagged,
+                scene_seconds[position],
+                shot_seconds[position],
+            )
             plans.append(take)
         rows_out.append(row)
 

@@ -347,7 +347,7 @@ def test_voice_pagination_refuses_repeated_tokens(monkeypatch):
 def test_synthesis_requires_an_explicit_model_without_calling_vendor(elevenlabs_api):
     from app.providers.media_http import MediaProviderNotConfigured
 
-    with pytest.raises(MediaProviderNotConfigured, match="production model"):
+    with pytest.raises(MediaProviderNotConfigured, match="model ElevenLabs de producție"):
         asyncio.run(ElevenLabsTTSAdapter("test-key", voice_id="test-voice").synthesize("Narration"))
     assert elevenlabs_api.calls == []
 

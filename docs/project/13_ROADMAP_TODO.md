@@ -1474,3 +1474,17 @@ No provider was called, no run was queued, no credit was spent, and
 - Owner: scripts/bootstrap.py before his next restart, then npm run build --prefix frontend; the
   zero-credit Nepal rehearsal; his decisions (allowed models, hero threshold, budget per film, the
   paid-media rule, a Runway top-up).
+
+## The film staircase closed — ready for the Owner's next paid film (2026-10-01)
+
+- Done: clip QC wired, assemble step, legacy money hole closed, model catalogue, voice timestamps,
+  QC spans, compact intermediates released after QC, the drawer completed.
+- Owner decisions open: narration as a paid step (`media.narration_purchase`, needs 51); unchecked
+  clips (wait for his look, or reject); the allowed set / hero threshold / premium reference in
+  config/film_models.json; silent card maximums; fail-closed when YuNet cannot run; the older
+  one-frame film-wide look beside the new three-frame look; the ~1,080 old test films (321 GB) in
+  backend/storage/media; his real ElevenLabs plan price.
+- Follow-ups: retire the legacy assemble_video_job's inline motion buying; a re-QC of a released
+  film keeps its first duplicate reading; a second render of a storyboard must not overwrite the
+  first film's final_short_9_16.mp4 (provenance); a repo home for the drawer fixture generator;
+  base_asset_id on the redo view; Romanian frame names in clip-QC messages.

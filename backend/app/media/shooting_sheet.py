@@ -63,10 +63,18 @@ from app.media.assembler import (
     MOTION_STEP_ACTIONS,
     TEST_SHOT_STEP,
     MotionStepRefused,
+    SceneRedoRefused,
+    _scene_clip_refusal,
+    _shot_take,
+    clip_accepted,
+    clip_qc_of,
     decide_take,
     film_seed,
+    motion_fields,
     motion_plan,
     motion_seconds,
+    redo_plan,
+    release_after_qc,
     run_motion_step,
     scene_kind_of,
     scene_view,
@@ -92,6 +100,7 @@ from app.media.production_policy import (
     COMPOSED_LABELS_RO,
     LOCAL_MOVE,
     ModelCapability,
+    load_film_models,
     need_from_scene,
     plan_scene_models,
 )
@@ -111,12 +120,19 @@ from app.media.stills_stage import (
     stills_plan,
 )
 from app.media.toolchain import find_ffmpeg
+from app.wording import count as count_ro
 
 logger = logging.getLogger("studio.media.sheet")
 
 __all__ = [
+    "ASSEMBLE_STEP",
     "LOCAL_MOVE",
     "SHEET_STEPS",
+    "book_step_cost",
+    "may_spend_step",
+    "narration_gate",
+    "run_assemble_step",
+    "withdraw_stale_questions",
     "connection_account",
     "connection_capabilities",
     "connection_video_adapters",
@@ -137,8 +153,25 @@ __all__ = [
 
 #: The paid steps of the staircase, in order.
 SHEET_STEPS: tuple[str, ...] = (STILLS_STEP, TEST_SHOT_STEP, MOTION_STEP)
+#: The last step: the film assembled from its takes, its narration voiced, its QC and letter.
+ASSEMBLE_STEP = "assemble"
+#: The narration's question in the Policy Kernel: a paid generation, over the Owner's
+#: threshold or within it (the actions the day's narration was already asked under).
+NARRATION_ACTION = "media.paid_generation"
+NARRATION_ACTION_OVER = "media.paid_generation_over_threshold"
+#: The event that says an older sheet's question was withdrawn by a newer one.
+WITHDRAWN_EVENT = "governance.approval_withdrawn"
+#: The event of a film assembled from the sheet.
+ASSEMBLED_EVENT = "media.sheet_assembled"
 #: Each step's action in the Policy Kernel (and so its tier and its Owner's question).
 SHEET_STEP_ACTIONS: dict[str, str] = {STILLS_STEP: STILLS_ACTION, **MOTION_STEP_ACTIONS}
+#: The Owner's words for each step of the sheet.
+STEP_WORDS_RO: dict[str, str] = {
+    STILLS_STEP: "imaginile",
+    TEST_SHOT_STEP: "cadrul de probă",
+    MOTION_STEP: "restul mișcării",
+    ASSEMBLE_STEP: "narațiunea și asamblarea",
+}
 #: The account must hold this much more than a step's cap before the step is asked or bought.
 BALANCE_MARGIN = 1.15
 #: The film's resolution unless the Owner's settings name another.
@@ -188,6 +221,8 @@ class SheetStepRefused(RuntimeError):
         cost_usd: float | None = None,
         cap_credits: int | None = None,
         findings: Sequence[Any] = (),
+        scenes: Sequence[dict[str, Any]] = (),
+        withdrawn: Sequence[str] = (),
     ) -> None:
         super().__init__(reason_ro)
         self.status = status
@@ -196,6 +231,10 @@ class SheetStepRefused(RuntimeError):
         self.cost_usd = cost_usd
         self.cap_credits = cap_credits
         self.findings = list(findings)
+        #: The scenes that keep the step from running, each with its Romanian reason.
+        self.scenes = list(scenes)
+        #: The older questions this one withdrew (a newer sheet asked for the same step).
+        self.withdrawn = list(withdrawn)
 
     @property
     def http_status(self) -> int:
@@ -208,7 +247,10 @@ class SheetStepRefused(RuntimeError):
                 approval_id=self.approval_id,
                 cost_usd=self.cost_usd,
                 cap_credits=self.cap_credits,
+                withdrawn=self.withdrawn,
             )
+        if self.scenes:
+            body["scenes"] = self.scenes
         if self.findings:
             body["findings"] = [
                 finding.as_dict() if hasattr(finding, "as_dict") else finding
@@ -563,7 +605,9 @@ def _scene_takes(session: Session, storyboard_id: str) -> dict[int, list[SceneTa
     return found
 
 
-def _take_view(take: SceneTake, *, current: bool) -> dict[str, Any]:
+def _take_view(
+    take: SceneTake, *, current: bool, clip_qc: dict[str, Any] | None = None
+) -> dict[str, Any]:
     return {
         "take_id": take.id,
         "kind": take.kind,
@@ -580,6 +624,9 @@ def _take_view(take: SceneTake, *, current: bool) -> dict[str, Any]:
         "approved_by": take.approved_by,
         "for_current_prompt": current,
         "file_url": _file_url(take.id) if take.path else None,
+        # A shot's clip-QC report as it was kept on its take (None for a still, or a shot
+        # nobody checked yet): what the Owner's look on the contact sheet is about.
+        "clip_qc": clip_qc,
     }
 
 
@@ -656,6 +703,239 @@ def _price_line(kind: str, motion: dict[str, Any], credit_usd: float) -> str:
     return line
 
 
+def _narration(session: Session, scenes: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """The narration's price: its characters at the dearest active ElevenLabs price per
+    thousand (the figure the day's estimate holds, `economy.budget.estimate_film_cost_micros`).
+
+    It is its own line on the sheet and part of the hashed plan: a new price, or new words,
+    is a new sheet. With words and no price it is unpriced, never 0: the step then asks.
+    """
+    from sqlalchemy import func  # noqa: PLC0415
+
+    from app.economy.models import ProviderPrice  # noqa: PLC0415 - economy imports media
+
+    characters = sum(
+        len(" ".join(str(scene.get("voiceover_segment") or "").split())) for scene in scenes
+    )
+    per_1k = session.scalar(
+        select(func.max(ProviderPrice.usd_micros)).where(
+            ProviderPrice.provider_kind == "elevenlabs",
+            ProviderPrice.unit == "per_1k_characters",
+            ProviderPrice.active.is_(True),
+        )
+    )
+    micros = (characters * int(per_1k) + 500) // 1000 if per_1k else 0
+    priced = bool(per_1k) or characters == 0
+    said = count_ro(characters, "caracter", "caractere")
+    if characters == 0:
+        line = "Narațiune: niciun cuvânt de citit · 0 USD"
+    elif priced:
+        line = (
+            f"Narațiune: {said} · {_ro_usd(micros)} · tarif ElevenLabs "
+            f"{_ro_usd(int(per_1k or 0))} la 1.000 de caractere"
+        )
+    else:
+        line = (
+            f"Narațiune: {said} · preț necunoscut (niciun tarif ElevenLabs activ); "
+            "nu se cumpără fără întrebarea Proprietarului"
+        )
+    return {
+        "characters": characters,
+        "per_1k_usd_micros": int(per_1k) if per_1k else None,
+        "usd_micros": int(micros),
+        "usd": round(micros / 1_000_000, 6),
+        "priced": priced,
+        "line_ro": line,
+    }
+
+
+def _safety_moves(session: Session, storyboard_id: str) -> dict[int, dict[str, Any]]:
+    """Per scene, the model the motion step suggested after a SAFETY refusal (the latest one),
+    for the Owner to choose on the sheet: nothing is bought on a suggestion."""
+    from app.models import DomainEvent  # noqa: PLC0415
+
+    moves: dict[int, dict[str, Any]] = {}
+    for event in session.scalars(
+        select(DomainEvent)
+        .where(
+            DomainEvent.event_type == "media.motion_needs_owner",
+            DomainEvent.aggregate_id == storyboard_id,
+        )
+        .order_by(DomainEvent.sequence)
+    ):
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        index = payload.get("scene_number")
+        if not isinstance(index, int):
+            continue
+        suggested = payload.get("suggested")
+        if payload.get("failure_kind") != "SAFETY" or not isinstance(suggested, dict):
+            moves.pop(index, None)
+            continue
+        moves[index] = {
+            "model_id": suggested.get("model_id"),
+            "credits": suggested.get("credits"),
+            "status": suggested.get("status"),
+            "reason_ro": suggested.get("reason_ro") or payload.get("reason"),
+            "failure_kind": "SAFETY",
+            "refused": payload.get("reason"),
+        }
+    return moves
+
+
+def _scene_readiness(
+    session: Session,
+    storyboard_id: str,
+    scene: dict[str, Any],
+    still: SceneTake | None,
+    *,
+    environment: str,
+    local_moves: set[int],
+) -> dict[str, Any]:
+    """Whether a LIVE scene can go into the film assembled from takes, and why not.
+
+    The same reading `assemble_from_takes` makes before anything is spoken or encoded: an
+    approved still for the prompt as it is now, then an accepted shot (the Owner's APPROVED
+    or a passing clip QC) or, in PRODUCTION, his own LOCAL_MOVE for the scene.
+    """
+    index = int(scene["scene_index"])
+    if still is None:
+        return {
+            "scene_index": index,
+            "ok": False,
+            "how": None,
+            "reason_ro": (
+                f"Scena {index} nu are o imagine aprobată pentru promptul de acum; "
+                "cumpărați sau aprobați imaginea ei pe foaia de filmare."
+            ),
+        }
+    shot = _shot_take(
+        session,
+        storyboard_id,
+        index,
+        motion_fields(scene, str(still.sha256 or ""), from_prompt=False),
+        0.0,
+    )
+    why = ""
+    if shot is not None:
+        accepted, why = clip_accepted(session, shot, environment)
+        if accepted:
+            return {"scene_index": index, "ok": True, "how": "shot", "reason_ro": ""}
+    else:
+        refusal, _record = _scene_clip_refusal(session, storyboard_id, index)
+        why = refusal or ""
+    if index in local_moves:
+        return {
+            "scene_index": index,
+            "ok": True,
+            "how": "local_move",
+            "reason_ro": f"Scena {index}: imagine fixă animată local, aleasă de Proprietar.",
+        }
+    if environment != "PRODUCTION":
+        return {
+            "scene_index": index,
+            "ok": True,
+            "how": "still",
+            "reason_ro": f"Scena {index}: fără cadru acceptat, rămâne imagine fixă (TEST).",
+        }
+    return {
+        "scene_index": index,
+        "ok": False,
+        "how": None,
+        "reason_ro": (
+            (f"{why} " if why else "")
+            + f"Scena {index} nu are un cadru acceptat, iar Proprietarul nu a ales "
+            "„imagine fixă animată local” pentru ea pe foaia de filmare."
+        ),
+    }
+
+
+#: What a redo plan shows on the sheet beside a scene's «Refă» button.
+_REDO_FIELDS = (
+    "plan_hash",
+    "free",
+    "buyable",
+    "credits",
+    "cap_credits",
+    "cost_usd",
+    "cap_usd",
+    "model_id",
+    "resolution",
+    "price_source",
+    "reason_ro",
+    "replaces",
+    "invalidates",
+)
+
+
+def _redo_view(plan: dict[str, Any]) -> dict[str, Any]:
+    view = {name: plan.get(name) for name in _REDO_FIELDS}
+    view["available"] = True
+    return view
+
+
+def _redo_plans(
+    engine: Engine,
+    storyboard_id: str,
+    ctx: _Context,
+    overrides: dict[int, str | None],
+    kinds: dict[int, str],
+) -> tuple[dict[int, dict[str, dict[str, Any]]], dict[str, Any]]:
+    """Each scene's redo plans (still and motion for a filmed scene, card for a card) and
+    the film's sound, each with the plan_hash his «Refă» answer is bound to.
+
+    Computed exactly as the redo routes compute them (`redo_plan` with the same wiring), so
+    the hash the drawer sends is the one `redo_scene` checks. 0 credits, no network.
+    """
+
+    def plan(kind: str, index: int | None) -> dict[str, Any]:
+        try:
+            return _redo_view(
+                redo_plan(
+                    engine,
+                    storyboard_id,
+                    kind,
+                    index,
+                    capabilities=list(ctx.capabilities),
+                    integration_id=ctx.integration_id,
+                    overrides=overrides,
+                    resolution=ctx.resolution,
+                    stills_model=ctx.stills_model,
+                )
+            )
+        except SceneRedoRefused as exc:
+            return {"available": False, "plan_hash": None, "reason_ro": exc.reason_ro}
+        except (UnpricedError, ValueError) as exc:
+            return {"available": False, "plan_hash": None, "reason_ro": str(exc)[:300]}
+
+    per_scene: dict[int, dict[str, dict[str, Any]]] = {}
+    for index, kind in kinds.items():
+        names = ("card",) if kind in CARD_KINDS else ("still", "motion")
+        per_scene[index] = {name: plan(name, index) for name in names}
+    return per_scene, plan("audio", None)
+
+
+def _catalogue_view(policy: dict[str, Any]) -> dict[str, Any]:
+    """The Owner's three choices in config/film_models.json, as the planner read them."""
+    try:
+        catalogue = load_film_models()
+    except ValueError as exc:
+        return {
+            "premium_model_id": None,
+            "premium_resolution": None,
+            "allowed_models": None,
+            "hero_threshold": None,
+            "catalogue_problem_ro": str(exc)[:300],
+        }
+    reference = policy.get("premium_reference") or {}
+    return {
+        "premium_model_id": reference.get("model_id") or catalogue.premium_reference[0],
+        "premium_resolution": reference.get("resolution") or catalogue.premium_reference[1],
+        "allowed_models": sorted(catalogue.allowed) if catalogue.allowed is not None else None,
+        "hero_threshold": catalogue.hero_threshold,
+        "catalogue_problem_ro": None,
+    }
+
+
 def _sheet(
     engine: Engine,
     storyboard_id: str,
@@ -664,13 +944,18 @@ def _sheet(
     account: Any = None,
     read_live: bool = True,
     face_counter: Callable[..., Any] | None = None,
+    environment: str | None = None,
 ) -> dict[str, Any]:
     from app.media.prompt_agent import motion_prompt_for, shot_plan_gaps  # noqa: PLC0415
+    from app.media.qc import owner_local_moves  # noqa: PLC0415 - qc reads the sheet's events
     from app.models import OwnerPolicy  # noqa: PLC0415
     from app.services import (  # noqa: PLC0415 - services imports media
         ACTION_RISK_TIERS,
         paid_media_policy,
+        studio_environment,
     )
+
+    environment = environment or studio_environment(engine)
 
     with Session(engine) as session:
         board = session.get(Storyboard, storyboard_id)
@@ -706,6 +991,29 @@ def _sheet(
             if found is not None:
                 stills[index] = found
         rule, threshold = paid_media_policy(session.get(OwnerPolicy, 1))
+        # What the assemble step will find: per filmed scene, a shot it may cut in or the
+        # Owner's own LOCAL_MOVE; and each shot's clip-QC report, for his look.
+        local_moves = owner_local_moves(session, storyboard_id)
+        readiness = [
+            _scene_readiness(
+                session,
+                storyboard_id,
+                scene,
+                stills.get(int(scene["scene_index"])),
+                environment=environment,
+                local_moves=local_moves,
+            )
+            for scene in scenes
+            if scene_kind_of(scene) == "LIVE"
+        ]
+        clip_reports = {
+            take.id: clip_qc_of(session, take.id)
+            for rows_ in takes.values()
+            for take in rows_
+            if take.kind in ("test_shot", "motion")
+        }
+        safety = _safety_moves(session, storyboard_id)
+        narration = _narration(session, scenes)
         session.expunge_all()
 
     overrides = sheet_overrides(engine, storyboard_id)
@@ -844,10 +1152,13 @@ def _sheet(
             if take.kind == "still" and (still is None or take.id != still.id)
         ]
         shots = [
-            _take_view(take, current=True)
+            _take_view(take, current=True, clip_qc=clip_reports.get(take.id))
             for take in takes.get(index, [])
             if take.kind in ("test_shot", "motion")
         ]
+        motion["safety_suggested"] = (
+            safety.get(index) if kind == "LIVE" and view.get("status") != "BOUGHT" else None
+        )
         sheet_scenes.append(
             {
                 "scene_index": index,
@@ -857,6 +1168,7 @@ def _sheet(
                 "planned_seconds": float(scene.get("duration_seconds") or 0.0),
                 "shot_seconds": motion_seconds(scene) if kind == "LIVE" else 0.0,
                 "prompt_source": package.get("source"),
+                "shot_size": package.get("shot_size"),
                 "still_prompt": still_text,
                 "motion_prompt": motion_text,
                 "negative_prompt": negative,
@@ -881,6 +1193,7 @@ def _sheet(
                 "price_line_ro": _price_line(kind, motion, ctx.table.credit_usd),
                 "lint": [],
                 "badges": [],
+                "redo": {},
                 "_still_path": still.path if still is not None else None,
                 "_look": str(package.get("look_block") or ""),
             }
@@ -969,6 +1282,25 @@ def _sheet(
             "aprobat cadrul de probă.",
         ),
     }
+    blocked = [item for item in readiness if not item["ok"]]
+    paid_left = [name for name in SHEET_STEPS if steps[name]["to_buy"]]
+    steps[ASSEMBLE_STEP] = {
+        "step": ASSEMBLE_STEP,
+        "action": NARRATION_ACTION,
+        "tier": ACTION_RISK_TIERS.get(NARRATION_ACTION),
+        "environment": environment,
+        "ready": not blocked,
+        "blocked": [
+            {"scene_index": item["scene_index"], "reason_ro": item["reason_ro"]} for item in blocked
+        ],
+        "scenes": readiness,
+        "paid_steps_left": paid_left,
+        "narration": narration,
+        "cost_usd": narration["usd"],
+        "cost_credits": 0,
+        "cap_credits": 0,
+        "waiting_ro": " ".join(item["reason_ro"] for item in blocked),
+    }
 
     hashed = {
         "storyboard_id": storyboard_id,
@@ -987,8 +1319,16 @@ def _sheet(
                 "cap": step["cap_credits"],
             }
             for name, step in steps.items()
+            if name in SHEET_STEPS
         },
         "hero_scene": policy.get("hero_scene"),
+        # The narration is a paid line of the plan the Owner approves: new words or a new
+        # price is a new sheet.
+        "narration": {
+            "characters": narration["characters"],
+            "usd_micros": narration["usd_micros"],
+            "priced": narration["priced"],
+        },
     }
     digest = hashlib.sha256(_canonical(hashed).encode("utf-8")).hexdigest()
 
@@ -1059,11 +1399,27 @@ def _sheet(
         "alternatives": _alternatives(policy, ctx, stills_row),
         "balance": balance,
         "balance_needed_credits": {
-            name: math.ceil(step["cap_credits"] * BALANCE_MARGIN) for name, step in steps.items()
+            name: math.ceil(steps[name]["cap_credits"] * BALANCE_MARGIN) for name in SHEET_STEPS
         },
         "daily_budget": _daily_budget(engine) if read_live else None,
+        "narration": narration,
+        **_catalogue_view(policy),
+        "audio_redo": None,
         "sheet_hash": digest,
     }
+    if read_live:
+        # The «Refă» buttons' plans, each with its own hash: only on the page the Owner
+        # reads (a step's own check of the sheet's hash does not need them).
+        redo_by_scene, audio = _redo_plans(
+            engine,
+            storyboard_id,
+            ctx,
+            overrides,
+            {int(item["scene_index"]): str(item["kind"]) for item in sheet_scenes},
+        )
+        for item in sheet_scenes:
+            item["redo"] = redo_by_scene.get(int(item["scene_index"]), {})
+        footer["audio_redo"] = audio
     return {
         "storyboard_id": storyboard_id,
         "title": title,
@@ -1108,12 +1464,15 @@ def build_sheet(
     today: date | None = None,
     face_counter: Callable[..., Any] | None = None,
     read_live: bool = True,
+    environment: str | None = None,
 ) -> dict[str, Any]:
     """The shooting sheet of one film. 0 credits; the only live call is ``account``'s free
     balance read (and the local face count of each approved still, with ``face_counter``).
 
     ``capabilities`` are the motion models the per-scene choice draws from; the price table
     is the published one with ``integration_id``'s MEASURED prices laid over it.
+    ``environment`` (default: the studio's) decides what the assemble step accepts.
+    ``read_live`` also adds each scene's redo plans (the «Refă» buttons) to the page.
     """
     ctx = _context(
         engine,
@@ -1132,6 +1491,7 @@ def build_sheet(
         account=account,
         read_live=read_live,
         face_counter=face_counter,
+        environment=environment,
     )
 
 
@@ -1147,8 +1507,10 @@ def sheet_hash(engine: Engine, storyboard_id: str, **context: Any) -> str:
 # ------------------------------------------------------------------------- the steps
 
 
-def _budget_refusal(engine: Engine, cap_usd_micros: int) -> tuple[str, str] | None:
-    """(period, Romanian reason) when the step's cap would exceed an active budget."""
+def may_spend_step(engine: Engine, cap_usd_micros: int) -> tuple[str, str] | None:
+    """(period, Romanian reason) when a paid step's cap would exceed an active budget;
+    None when every budget allows it. The check of every paid step of a film: the sheet's
+    steps, the assemble step's narration and a one-scene redo."""
     from app.economy.budget import may_spend  # noqa: PLC0415 - economy imports media
     from app.economy.services import format_micros  # noqa: PLC0415
 
@@ -1168,6 +1530,122 @@ def _budget_refusal(engine: Engine, cap_usd_micros: int) -> tuple[str, str] | No
         f"{format_micros(cap_usd_micros)} USD și au rămas {detail['remaining_usd']} USD. "
         "Confirmați explicit depășirea pe foaia de filmare, sau așteptați perioada următoare."
     )
+
+
+def book_step_cost(
+    engine: Engine,
+    storyboard_id: str,
+    step: str,
+    plan_hash: str,
+    credit_usd: float,
+    result: dict[str, Any],
+    correlation_id: str,
+) -> dict[str, Any] | None:
+    """What a bought step cost, into the books at once, whoever pressed it.
+
+    The measured balance drop when the vendor's balance was read before and after, otherwise
+    the credits the step committed: one ESTIMATED provider cost per step, like every render
+    cost, so the next step's budget check sees it. The reference is the film, the step and
+    the sheet it was bought under, so the same purchase is never booked twice (a second
+    booking of one reference is refused by the books). The step's own budget check is the
+    gate before the purchase; nothing is reserved ahead of it, because that check would count
+    the hold and the cap twice.
+    """
+    from app.economy.services import (  # noqa: PLC0415 - economy imports media
+        EconomyError,
+        record_provider_cost,
+    )
+
+    measured = result.get("spent_credits_measured")
+    credits = measured if measured is not None else result.get("spent_credits_quoted")
+    if not credits or float(credits) <= 0:
+        return None
+    usd = float(credits) * float(credit_usd)
+    try:
+        record_provider_cost(
+            engine,
+            provider="runway",
+            external_reference=f"foaie:{storyboard_id}:{step}:{str(plan_hash)[:16]}",
+            status="ESTIMATED",
+            amount=f"{usd:.6f}",
+            attribution={
+                "storyboard_id": storyboard_id,
+                "step": step,
+                "plan_hash": plan_hash,
+                "credits": round(float(credits), 4),
+                "measured": measured is not None,
+            },
+            correlation_id=correlation_id,
+        )
+    except (EconomyError, ValueError):
+        logger.info("sheet_step_cost_not_recorded", extra={"storyboard_id": storyboard_id})
+        return None
+    return {"step": step, "credits": round(float(credits), 4), "usd": round(usd, 6)}
+
+
+def withdraw_stale_questions(
+    engine: Engine,
+    storyboard_id: str,
+    action: str,
+    plan_hash: str,
+    *,
+    keep: str | None,
+    step_words: str,
+    correlation_id: str,
+) -> list[str]:
+    """Withdraw the Owner's older unanswered questions about this step of this film.
+
+    A newer sheet (a new ``plan_hash``) asked for the same step: a question about the old
+    sheet can no longer buy anything, because his yes is spent only for the plan it names.
+    Each is closed (EXPIRED, never answered) with the Romanian reason and an event, so his
+    inbox holds only the question that can still buy something. Returns their ids.
+    """
+    from app.models import ApprovalRequest  # noqa: PLC0415
+    from app.services import append_event, utc_now  # noqa: PLC0415 - services imports media
+
+    reason = (
+        f"Retrasă: o foaie de filmare mai nouă cere acum pasul «{step_words}» (planul "
+        f"{str(plan_hash)[:12]}…). Întrebarea aceasta era despre foaia de dinainte și nu mai "
+        "poate cumpăra nimic; răspundeți la întrebarea nouă."
+    )
+    withdrawn: list[str] = []
+    with Session(engine) as session, session.begin():
+        for request in session.scalars(
+            select(ApprovalRequest).where(
+                ApprovalRequest.action == action,
+                ApprovalRequest.subject == storyboard_id,
+                ApprovalRequest.result.in_(("PENDING", "EXPIRED")),
+                ApprovalRequest.decided_at.is_(None),
+            )
+        ):
+            if request.id == keep or request.note:
+                continue
+            asked_for = request.proposed_diff if isinstance(request.proposed_diff, dict) else {}
+            if asked_for.get("plan_hash") == plan_hash:
+                continue
+            previous = request.result
+            request.result = "EXPIRED"
+            request.note = reason
+            append_event(
+                session,
+                WITHDRAWN_EVENT,
+                "owner_approval_request",
+                request.id,
+                2,
+                {
+                    "action": action,
+                    "subject": storyboard_id,
+                    "previous_result": previous,
+                    "old_plan_hash": asked_for.get("plan_hash"),
+                    "new_plan_hash": plan_hash,
+                    "replaced_by": keep,
+                    "reason": reason,
+                    "withdrawn_at": utc_now(),
+                },
+                correlation_id,
+            )
+            withdrawn.append(request.id)
+    return withdrawn
 
 
 def run_sheet_step(
@@ -1273,7 +1751,7 @@ def run_sheet_step(
             f"de {cap} credite plus marja de {round((margin - 1) * 100)}% ({needed} credite). "
             "Alimentați contul înainte de aprobare.",
         )
-    over = _budget_refusal(engine, credits_to_micros(cap, ctx.table.credit_usd))
+    over = may_spend_step(engine, credits_to_micros(cap, ctx.table.credit_usd))
     if over is not None:
         period, reason = over
         if not allow_over_budget:
@@ -1306,7 +1784,7 @@ def run_sheet_step(
                     "NO_ADAPTER",
                     "Niciun model de imagine conectat și verificat; imaginile nu se pot cumpăra.",
                 )
-            return run_stills_stage(
+            result = run_stills_stage(
                 engine,
                 storyboard_id,
                 correlation_id,
@@ -1320,32 +1798,47 @@ def run_sheet_step(
                 integration_id=integration_id,
                 table=ctx.table,
             )
-        if adapter_for_model is None:
-            raise SheetStepRefused(
-                "NO_ADAPTER",
-                "Niciun model video conectat și verificat; mișcarea nu se poate cumpăra.",
+        else:
+            if adapter_for_model is None:
+                raise SheetStepRefused(
+                    "NO_ADAPTER",
+                    "Niciun model video conectat și verificat; mișcarea nu se poate cumpăra.",
+                )
+            result = run_motion_step(
+                engine,
+                storyboard_id,
+                correlation_id,
+                step=step,
+                plan_hash=plan_hash,
+                adapter_for_model=adapter_for_model,
+                capabilities=list(ctx.capabilities),
+                account=account,
+                allowed=ctx.allowed,
+                overrides=sheet_overrides(engine, storyboard_id),
+                resolution=ctx.resolution,
+                settings=settings,
+                environment=environment,
+                plan_hash_of=current_hash,
+                integration_id=integration_id,
+                table=ctx.table,
+                ffmpeg_path=ffmpeg_path,
+                storage_root=storage_root,
+                # The vision model the clip check looks through: without it every shot bought
+                # here would wait, unchecked, for the Owner's look.
+                registry=registry,
             )
-        return run_motion_step(
-            engine,
-            storyboard_id,
-            correlation_id,
-            step=step,
-            plan_hash=plan_hash,
-            adapter_for_model=adapter_for_model,
-            capabilities=list(ctx.capabilities),
-            account=account,
-            allowed=ctx.allowed,
-            overrides=sheet_overrides(engine, storyboard_id),
-            resolution=ctx.resolution,
-            settings=settings,
-            environment=environment,
-            plan_hash_of=current_hash,
-            integration_id=integration_id,
-            table=ctx.table,
-            ffmpeg_path=ffmpeg_path,
-            storage_root=storage_root,
-        )
     except (StillsStageRefused, MotionStepRefused) as exc:
+        withdrawn: list[str] = []
+        if exc.status == "NEEDS_APPROVAL":
+            withdrawn = withdraw_stale_questions(
+                engine,
+                storyboard_id,
+                SHEET_STEP_ACTIONS[step],
+                plan_hash,
+                keep=exc.approval_id,
+                step_words=STEP_WORDS_RO[step],
+                correlation_id=correlation_id,
+            )
         raise SheetStepRefused(
             exc.status,
             exc.reason_ro,
@@ -1353,7 +1846,335 @@ def run_sheet_step(
             cost_usd=info["cost_usd"],
             cap_credits=cap,
             findings=exc.findings,
+            withdrawn=withdrawn,
         ) from exc
+    # Into the books here, once, whoever pressed the step (the Owner on the sheet or the
+    # day's staircase), before the next step's budget check reads them.
+    result["booked"] = book_step_cost(
+        engine,
+        storyboard_id,
+        step,
+        plan_hash,
+        float(ctx.table.credit_usd),
+        result,
+        correlation_id,
+    )
+    return result
+
+
+# ----------------------------------------------------------------- the last step: assemble
+
+
+def narration_action(usd_micros: int, priced: bool, threshold_usd: float | None) -> str:
+    """The narration's action: over the Owner's threshold (T3) when dearer than it or when
+    nothing can price it, within it (T2) otherwise."""
+    if not priced or threshold_usd is None:
+        return NARRATION_ACTION_OVER
+    return NARRATION_ACTION_OVER if usd_micros / 1_000_000 > threshold_usd else NARRATION_ACTION
+
+
+def narration_gate(
+    engine: Engine,
+    storyboard_id: str,
+    plan_hash: str,
+    *,
+    usd_micros: int,
+    priced: bool,
+    threshold_usd: float | None,
+    requester: str = "video_editor",
+    caveat: str = "",
+) -> dict[str, Any]:
+    """The Policy Kernel's verdict on voicing this film's narration, bound to the sheet.
+
+    Asked through `may_act` with the sheet's ``plan_hash`` and the step as its context, so
+    the Owner's answer is spent only for the plan he was shown, as for every paid step; the
+    day's assembly and his own click ask the same question about the same plan, and his one
+    yes is spent once.
+    """
+    from app.economy.services import format_micros  # noqa: PLC0415 - economy imports media
+    from app.services import may_act  # noqa: PLC0415 - services imports media
+
+    action = narration_action(usd_micros, priced, threshold_usd)
+    price = f"{format_micros(usd_micros)} USD" if priced else "preț necunoscut"
+    with Session(engine) as session, session.begin():
+        verdict: dict[str, Any] = may_act(
+            session,
+            action,
+            requester=requester,
+            subject=storyboard_id,
+            evidence=(
+                f"storyboard {storyboard_id}: narațiunea filmului asamblat din preluările "
+                f"aprobate, {price}" + (f" ({caveat})" if caveat else "")
+            ),
+            cost_usd=usd_micros / 1_000_000 if priced else None,
+            context={"plan_hash": plan_hash, "step": ASSEMBLE_STEP},
+        )
+    return verdict
+
+
+def _letter_sheet(sheet: dict[str, Any]) -> dict[str, Any]:
+    """The sheet in the shape the QC letter prices its redo proposals from."""
+    rows = []
+    for scene in sheet.get("scenes") or []:
+        motion = scene.get("motion") or {}
+        rows.append(
+            {
+                "scene_index": scene.get("scene_index"),
+                "kind": scene.get("kind"),
+                "still_credits": scene.get("still_credits"),
+                "still_price_source": scene.get("still_price_source"),
+                "credits": motion.get("credits"),
+                "price_source": motion.get("price_source"),
+                "model_id": motion.get("model_id"),
+                "resolution": motion.get("resolution"),
+            }
+        )
+    return {"credit_usd": sheet.get("credit_usd"), "scenes": rows}
+
+
+def _qc_letter(qc: dict[str, Any], spend: Any, sheet: dict[str, Any]) -> str:
+    """The Owner's QC letter (`qc_report.qc_summary_ro`): what failed, what the film cost in
+    measured credits, what is fixed for free and what each paid fix would cost."""
+    from app.media.qc_report import qc_summary_ro  # noqa: PLC0415
+
+    kinds = {int(s["scene_index"]): str(s["kind"]) for s in sheet.get("scenes") or []}
+    try:
+        return qc_summary_ro(
+            qc,
+            spend if isinstance(spend, dict) else None,
+            sheet=_letter_sheet(sheet),
+            scene_kinds=kinds,
+        )
+    except (TypeError, ValueError, KeyError, AttributeError) as exc:
+        reasons = qc.get("failure_reasons_json") or []
+        return (
+            f"Controlul calității: {qc.get('status')}. Raportul detaliat nu a putut fi scris "
+            f"({type(exc).__name__}: {str(exc)[:160]}). Motivele, așa cum le-a scris "
+            "controlul:" + "".join("\n- " + str(reason)[:300] for reason in list(reasons)[:8])
+        )
+
+
+def run_assemble_step(
+    engine: Engine,
+    storyboard_id: str,
+    plan_hash: str,
+    *,
+    correlation_id: str,
+    capabilities: Iterable[ModelCapability] | None = None,
+    integration_id: str | None = None,
+    table: PriceTable | None = None,
+    allowed: Iterable[str] | None = None,
+    resolution: str | None = None,
+    stills_model: str | None = None,
+    settings: Any = None,
+    environment: str | None = None,
+    storage_root: Path | None = None,
+    ffmpeg_path: str | None = None,
+    registry: Any = None,
+    tts_adapter: Any = None,
+    tts_adapter_for_scene: Callable[..., Any] | None = None,
+    voice_segments_for_scene: Callable[..., Any] | None = None,
+    reference_for_scene: Callable[..., Any] | None = None,
+    production_plan: dict[str, Any] | None = None,
+    allow_over_budget: bool = False,
+    requester: str = "video_editor",
+) -> dict[str, Any]:
+    """The sheet's last step: the film assembled from its takes, its master and its QC.
+
+    Under the Owner's plan (``plan_hash``, the sheet he was shown): every filmed scene must
+    have its approved still and an accepted shot, or (in PRODUCTION) his own LOCAL_MOVE,
+    otherwise 409 TAKES_NOT_ACCEPTED names each scene and why, before anything is spoken or
+    encoded. The narration is the step's only purchase: its price is a line of the sheet and
+    part of its hash, checked against the budget and asked through `narration_gate` (202
+    with his question, bound to the plan). Then `assemble_from_takes` (which runs
+    `qc.require_chosen_fallbacks` again and books the measured spend of the film's steps),
+    the narration's cost into the books, quality control and the Owner's QC letter.
+
+    Raises `SheetStepRefused`; returns the film, its QC and the letter.
+    """
+    from app.economy.accountant import record_render_costs  # noqa: PLC0415
+    from app.economy.services import EconomyError  # noqa: PLC0415
+    from app.media.assembler import (  # noqa: PLC0415
+        ClipsNotAccepted,
+        RenderEngineUnavailable,
+        RenderStopped,
+        TakesMissing,
+        assemble_from_takes,
+    )
+    from app.media.qc import evaluate_media_qc  # noqa: PLC0415
+    from app.media.services import ReferenceRequired  # noqa: PLC0415
+    from app.providers.media_http import MediaProviderError  # noqa: PLC0415
+    from app.services import append_event, studio_environment  # noqa: PLC0415
+
+    environment = environment or studio_environment(engine)
+    ctx = _context(
+        engine,
+        capabilities=capabilities,
+        integration_id=integration_id,
+        table=table,
+        allowed=allowed,
+        resolution=resolution or getattr(settings, "motion_resolution", None),
+        stills_model=stills_model,
+        today=None,
+    )
+    sheet = _sheet(engine, storyboard_id, ctx, read_live=False, environment=environment)
+    if not plan_hash or plan_hash != sheet["sheet_hash"]:
+        raise SheetStepRefused(
+            "STALE_PLAN",
+            "Foaia de filmare s-a schimbat de când a fost văzută (sau cererea numește altă "
+            "foaie): nu se asamblează nimic. Deschideți foaia de filmare din nou și aprobați "
+            "planul de acum.",
+        )
+    info = sheet["steps"][ASSEMBLE_STEP]
+    if info["blocked"]:
+        raise SheetStepRefused(
+            "TAKES_NOT_ACCEPTED",
+            "Filmul nu se asamblează: " + " ".join(i["reason_ro"] for i in info["blocked"]),
+            scenes=info["blocked"],
+        )
+
+    narration = info["narration"]
+    micros = int(narration["usd_micros"])
+    voices: list[Any] = [tts_adapter]
+    for scene in sheet["scenes"]:
+        index = {"scene_index": scene["scene_index"]}
+        if tts_adapter_for_scene is not None:
+            voices.append(tts_adapter_for_scene(index))
+        if voice_segments_for_scene is not None:
+            voices.extend(
+                part.get("adapter") for part in voice_segments_for_scene(index) or [] if part
+            )
+    from app.media.factory import paid_vendors_of  # noqa: PLC0415 - factory imports media
+
+    paid_voice = bool(paid_vendors_of(voices))
+    # The narration is asked when it has a price, and when a real voice would speak words
+    # nobody could price: never bought on an unknown figure without the question.
+    asks = narration["characters"] > 0 and (micros > 0 or (paid_voice and not narration["priced"]))
+    gate: dict[str, Any] | None = None
+    if asks:
+        if micros > 0 and not allow_over_budget:
+            over = may_spend_step(engine, micros)
+            if over is not None:
+                period, reason = over
+                raise SheetStepRefused(
+                    "OVER_DAILY_BUDGET" if period == "DAILY" else "OVER_BUDGET", reason
+                )
+        threshold = getattr(settings, "paid_generation_approval_threshold_usd", None)
+        gate = narration_gate(
+            engine,
+            storyboard_id,
+            plan_hash,
+            usd_micros=micros,
+            priced=bool(narration["priced"]),
+            threshold_usd=float(threshold) if threshold is not None else None,
+            requester=requester,
+        )
+        if not gate["allowed"]:
+            withdrawn: list[str] = []
+            if gate["status"] == "NEEDS_APPROVAL" and gate.get("approval_id"):
+                withdrawn = withdraw_stale_questions(
+                    engine,
+                    storyboard_id,
+                    str(gate["action"]),
+                    plan_hash,
+                    keep=str(gate["approval_id"]),
+                    step_words=STEP_WORDS_RO[ASSEMBLE_STEP],
+                    correlation_id=correlation_id,
+                )
+            raise SheetStepRefused(
+                str(gate["status"]),
+                str(gate["reason"]),
+                approval_id=gate.get("approval_id"),
+                cost_usd=narration["usd"] if narration["priced"] else None,
+                cap_credits=0,
+                withdrawn=withdrawn,
+            )
+
+    try:
+        film = assemble_from_takes(
+            engine,
+            storyboard_id,
+            correlation_id,
+            storage_root=storage_root,
+            ffmpeg_path=ffmpeg_path,
+            reference_for_scene=reference_for_scene,
+            tts_adapter=tts_adapter,
+            tts_adapter_for_scene=tts_adapter_for_scene,
+            voice_segments_for_scene=voice_segments_for_scene,
+            environment=environment,
+            production_plan=production_plan,
+            settings=settings,
+        )
+    except ClipsNotAccepted as exc:
+        raise SheetStepRefused(
+            "TAKES_NOT_ACCEPTED",
+            exc.message_ro,
+            scenes=[{"scene_index": n, "reason_ro": exc.message_ro} for n in exc.scenes],
+        ) from exc
+    except TakesMissing as exc:
+        raise SheetStepRefused("TAKES_MISSING", str(exc)) from exc
+    except RenderStopped as exc:
+        raise SheetStepRefused("STOPPED", f"Asamblarea s-a oprit: {exc}") from exc
+    except RenderEngineUnavailable as exc:
+        raise SheetStepRefused("NO_ENGINE", f"Asamblarea nu poate rula: {exc}") from exc
+    except (ReferenceRequired, MediaProviderError) as exc:
+        raise SheetStepRefused("REFUSED", f"Asamblarea a fost refuzată: {str(exc)[:300]}") from exc
+
+    job_id = str(film["job_id"])
+    asset_id = str(film["output_asset_id"])
+    try:
+        costs: dict[str, Any] = record_render_costs(
+            engine,
+            job_id,
+            correlation_id,
+            alert_percent=getattr(settings, "price_change_alert_percent", None),
+        )
+    except (EconomyError, KeyError, ValueError) as exc:
+        costs = {"error": str(exc)[:200]}
+    qc = evaluate_media_qc(
+        engine,
+        asset_id,
+        correlation_id,
+        settings=settings,
+        registry=registry,
+        ffmpeg_path=ffmpeg_path,
+    )
+    release_after_qc(engine, asset_id, correlation_id)
+    spend = (film.get("production") or {}).get("credits_measured")
+    letter = _qc_letter(qc, spend, sheet)
+    with Session(engine) as session, session.begin():
+        append_event(
+            session,
+            ASSEMBLED_EVENT,
+            "storyboard",
+            storyboard_id,
+            1,
+            {
+                "plan_hash": plan_hash,
+                "job_id": job_id,
+                "asset_id": asset_id,
+                "environment": environment,
+                "narration_usd_micros": micros,
+                "narration_asked": asks,
+                "approval_id": (gate or {}).get("approval_id"),
+                "qc_status": qc.get("status"),
+            },
+            correlation_id,
+        )
+    return {
+        "status": "ASSEMBLED",
+        "storyboard_id": storyboard_id,
+        "plan_hash": plan_hash,
+        "job_id": job_id,
+        "asset_id": asset_id,
+        "file_path": film.get("file_path"),
+        "narration": {**narration, "asked": asks},
+        "credits_measured": spend,
+        "fallback_gate": (film.get("production") or {}).get("fallback_gate"),
+        "costs": costs,
+        "qc": qc,
+        "qc_letter_ro": letter,
+    }
 
 
 # --------------------------------------------------------------- the studio's own wiring

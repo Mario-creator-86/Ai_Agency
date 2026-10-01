@@ -183,6 +183,10 @@ def shot_takes(engine, storyboard_id: str) -> list[SceneTake]:
 
 
 def redo_motion(engine, storyboard_id, tmp_path, models, account, scene, plan_hash):
+    """A motion redo whose new shot passes clip QC (faked: the shots here are still colour
+    fields, which the real motion floor would fail; test_clip_qc_wiring.py checks the QC)."""
+    from test_clip_qc_wiring import passing
+
     return redo_scene(
         engine,
         storyboard_id,
@@ -194,6 +198,7 @@ def redo_motion(engine, storyboard_id, tmp_path, models, account, scene, plan_ha
         adapter_for_model=models,
         account=account,
         storage_root=tmp_path / "media",
+        clip_check=passing(),
     )
 
 
@@ -392,6 +397,49 @@ def test_a_motion_redo_rebuilds_only_its_shot_and_reuses_every_other(engine, tmp
         t for t in shot_takes(engine, storyboard_id) if t.scene_number == 3 and t.status == "PAID"
     ]
     assert scene_3["motion"]["take_id"] == new_take[0].id
+
+
+def test_a_motion_redo_after_the_release_rederives_the_shots_it_reuses_from_their_takes(
+    engine, tmp_path
+):
+    """Once quality control has read a film its shots are deleted (DISK_AND_BREATHS); the redo
+    re-derives the three it reuses from the approved takes they were cut from, buying only its
+    own one shot."""
+    from app.media.assembler import release_intermediates
+    from app.media.qc import evaluate_media_qc
+
+    storyboard_id = a_film(engine, tmp_path, scenes=4)
+    filmed(engine, storyboard_id, tmp_path, coloured_clip(tmp_path, "navy"))
+    first = assemble_from_takes(
+        engine, storyboard_id, str(uuid4()), storage_root=tmp_path / "media"
+    )
+    folder = Path(first["file_path"]).parent
+    recorded = {int(r["scene_index"]): r["sha256"] for r in first["production"]["shots"]}
+    evaluate_media_qc(engine, first["output_asset_id"], str(uuid4()))
+    released = release_intermediates(engine, first["output_asset_id"], str(uuid4()))
+    assert {f"shot_{n:02d}.mp4" for n in range(1, 5)} <= set(released["files"])
+    assert not any((folder / f"shot_{n:02d}.mp4").exists() for n in range(1, 5))
+    account = Account(10_000)
+    models = Models(SpyVideo("seedance2_5", account, clip=coloured_clip(tmp_path, "olive")))
+
+    plan = redo_plan(engine, storyboard_id, "motion", 3, capabilities=[SEEDANCE])
+    with pytest.raises(SceneRedoRefused) as asked:
+        redo_motion(engine, storyboard_id, tmp_path, models, account, 3, plan["plan_hash"])
+    answer(engine, asked.value.approval_id, "APPROVED")
+    result = redo_motion(engine, storyboard_id, tmp_path, models, account, 3, plan["plan_hash"])
+
+    assert models.posts() == 1, "the redo bought more than its own shot"
+    film = result["film"]
+    assert film["reused_shots"] == [1, 2, 4] and film["rebuilt_shots"] == [3]
+    assert film["rederived_shots"] == [1, 2, 4]
+    with Session(engine) as session:
+        job = session.scalar(
+            select(VideoRenderJob).where(VideoRenderJob.output_asset_id == film["output_asset_id"])
+        )
+        shots = {int(r["scene_index"]): r for r in job.production_json["shots"]}
+    for n in (1, 2, 4):
+        assert sha(folder / shots[n]["file"]) == shots[n]["sha256"] == recorded[n]
+    assert shots[3]["source"]["clip"]
 
 
 # --------------------------------- 4. a still redo: one pair, only scene 3's shot invalidated

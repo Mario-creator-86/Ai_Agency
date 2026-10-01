@@ -4,19 +4,37 @@ Uses the documented REST API at https://elevenlabs.io/docs/api-reference/introdu
 
   GET  /v1/models                  -> models returned for this key
   GET  /v2/voices                  -> paginated voices this key can use
-  POST /v1/text-to-speech/{voice_id} -> narration audio
+  POST /v1/text-to-speech/{voice_id}/with-timestamps -> narration audio with its own clock
+  POST /v1/text-to-speech/{voice_id} -> narration audio only (the fallback)
 
 The duration attached to a result is measured from the audio that came back, never derived from
 the length of the text. A render job records how long each segment is, and the assembler cuts
 video to it; a guessed number there would desynchronise the picture from the voice while
 appearing to be a measurement.
+
+Narration is asked for on /with-timestamps. Its documented answer is JSON: ``audio_base64`` and
+two character alignments, ``alignment`` (the text sent) and ``normalized_alignment`` (the text
+as spoken, numbers spelled out), each ``{characters, character_start_times_seconds,
+character_end_times_seconds}``. It is billed per character like the plain endpoint (the API
+pricing page lists no surcharge for timing). The captions are timed from it word by word;
+without it they fall back to each word's share of the line.
+
+A narration is a purchase. The plain endpoint is tried only when the timed one is refused as a
+shape the vendor does not serve (404, 405, 422: no audio was made, nothing was billed), and only
+once. Once audio has come back it is never asked for again: a timing that is malformed, about
+other words or longer than the audio is dropped with a warning and the audio is kept.
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import json
+import logging
+import math
 import time
+import unicodedata
 from typing import Any
 from urllib.parse import quote, urlencode
 
@@ -32,6 +50,96 @@ from app.providers.media_http import (
 from app.wording import settings_place
 
 HOST = "api.elevenlabs.io"
+
+logger = logging.getLogger(__name__)
+
+#: The documented default, named so the result's `format` and `sample_rate` are what was
+#: asked for rather than whatever the vendor defaults to that day.
+OUTPUT_FORMAT = "mp3_44100_128"
+#: Refusals that mean "this endpoint shape is not served" (a contract change): no audio was
+#: made, so asking the plain endpoint once buys nothing twice.
+CONTRACT_REFUSALS = frozenset({404, 405, 422})
+#: How far past the measured audio an alignment may end and still be about this audio. MP3
+#: frames and the vendor's own clock disagree by a frame or two, never by half a second.
+ALIGNMENT_SLACK_SECONDS = 0.5
+ALIGNMENT_KEYS = (
+    "characters",
+    "character_start_times_seconds",
+    "character_end_times_seconds",
+)
+
+
+class AlignmentProblem(ValueError):
+    """The vendor's alignment cannot be trusted; the reason is kept, the timing dropped."""
+
+
+def checked_alignment(alignment: Any, duration: float) -> dict[str, list[Any]]:
+    """The vendor's character alignment, only its three documented lists, or AlignmentProblem.
+
+    Trusted only when it is that shape, every time is a finite non-negative number, each
+    character ends no earlier than it starts, starts never run backwards, and nothing ends
+    after the audio does.
+    """
+    if not isinstance(alignment, dict):
+        raise AlignmentProblem("the alignment is not an object")
+    characters, starts, ends = (alignment.get(key) for key in ALIGNMENT_KEYS)
+    if not (isinstance(characters, list) and isinstance(starts, list) and isinstance(ends, list)):
+        raise AlignmentProblem("the alignment is missing one of its three lists")
+    if not characters or not len(characters) == len(starts) == len(ends):
+        raise AlignmentProblem("the alignment lists are empty or of different lengths")
+    previous = 0.0
+    for char, start, end in zip(characters, starts, ends, strict=True):
+        if not isinstance(char, str):
+            raise AlignmentProblem("the alignment has a character that is not text")
+        for value in (start, end):
+            if isinstance(value, bool) or not isinstance(value, int | float):
+                raise AlignmentProblem("the alignment has a time that is not a number")
+            if not math.isfinite(value) or value < 0:
+                raise AlignmentProblem("the alignment has a time that is not a real moment")
+        if end < start or start < previous:
+            raise AlignmentProblem("the alignment runs backwards")
+        if end > duration + ALIGNMENT_SLACK_SECONDS:
+            raise AlignmentProblem(
+                f"the alignment ends at {end:.2f} s, after the {duration:.2f} s of audio"
+            )
+        previous = start
+    return {
+        "characters": characters,
+        "character_start_times_seconds": starts,
+        "character_end_times_seconds": ends,
+    }
+
+
+def words_of(alignment: dict[str, list[Any]]) -> list[dict[str, Any]]:
+    """Each run of non-space characters as {word, start, end}: from its first character's
+    start to its last character's end, the vendor's numbers as they came."""
+    words: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    for char, start, end in zip(*(alignment[key] for key in ALIGNMENT_KEYS), strict=True):
+        if not char.strip():
+            current = None
+            continue
+        if current is None:
+            current = {"word": char, "start": float(start), "end": float(end)}
+            words.append(current)
+        else:
+            current["word"] += char
+            current["end"] = float(end)
+    for word in words:
+        word["word"] = unicodedata.normalize("NFC", word["word"])
+    return words
+
+
+def word_timings_for(narration: str, alignment: dict[str, list[Any]]) -> list[dict[str, Any]]:
+    """The words said, timed, when the alignment is about exactly these words; otherwise
+    AlignmentProblem. Compared after NFC, since "ș" may arrive as s + a combining comma."""
+    words = words_of(alignment)
+    said = unicodedata.normalize("NFC", narration).split()
+    if [w["word"] for w in words] != said:
+        raise AlignmentProblem(
+            f"the alignment times {len(words)} words that are not the {len(said)} words sent"
+        )
+    return words
 
 
 class ElevenLabsTTSAdapter(TTSProvider):
@@ -193,28 +301,91 @@ class ElevenLabsTTSAdapter(TTSProvider):
             }
         ).encode("utf-8")
 
-        _, audio, content_type = await asyncio.to_thread(
-            retrying,
-            request,
-            HOST,
-            "POST",
-            f"/v1/text-to-speech/{quote(voice, safe='')}",
-            self._headers("audio/mpeg"),
-            payload,
-            expect_json=False,
-        )
-        if not audio or "audio" not in content_type:
-            raise MediaProviderError("ElevenLabs did not return audio")
+        voice_path = f"/v1/text-to-speech/{quote(voice, safe='')}"
+        query = "?" + urlencode({"output_format": OUTPUT_FORMAT})
+        alignments: dict[str, Any] = {}
+        try:
+            # The JSON answer carries the audio inline (base64), so it is read under the
+            # media size cap, not the small one a catalogue answer gets, and parsed here.
+            _, body, content_type = await asyncio.to_thread(
+                retrying,
+                request,
+                HOST,
+                "POST",
+                f"{voice_path}/with-timestamps{query}",
+                self._headers("application/json"),
+                payload,
+                expect_json=False,
+            )
+        except MediaProviderError as exc:
+            if exc.http_status not in CONTRACT_REFUSALS:
+                raise
+            # A refused shape made no audio. The plain endpoint, once: its own refusal or
+            # silence is the error, and the timed endpoint is not asked again.
+            logger.warning(
+                "ElevenLabs refused /with-timestamps (HTTP %s); the narration falls back to "
+                "the plain endpoint and its captions to each word's share of the line",
+                exc.http_status,
+            )
+            _, audio, content_type = await asyncio.to_thread(
+                retrying,
+                request,
+                HOST,
+                "POST",
+                f"{voice_path}{query}",
+                self._headers("audio/mpeg"),
+                payload,
+                expect_json=False,
+            )
+            if not audio or "audio" not in content_type:
+                raise MediaProviderError("ElevenLabs did not return audio") from None
+            raw: dict[str, Any] = {
+                "endpoint": "text-to-speech",
+                "timestamps_refused": exc.http_status,
+            }
+        else:
+            audio, alignments = self._timed_answer(body, content_type)
+            raw = {"endpoint": "with-timestamps"}
+
+        # Counted from the returned frames, not estimated from the words sent.
+        duration = mp3_duration_seconds(audio)
+        word_timings: list[dict[str, Any]] = []
+        problems: list[str] = []
+        for key in ("alignment", "normalized_alignment"):
+            if alignments.get(key) is None:
+                continue
+            try:
+                checked = checked_alignment(alignments[key], duration)
+                if key == "alignment":
+                    # The alignment of the text sent is the captions' clock. The normalized
+                    # one spells numbers out, so its words are not the caption's words: it
+                    # is kept for the assembler, which matches it against the words itself.
+                    word_timings = word_timings_for(narration, checked)
+            except AlignmentProblem as problem:
+                problems.append(f"{key}: {problem}")
+                continue
+            raw[key] = checked
+        if raw["endpoint"] == "with-timestamps" and not word_timings and not problems:
+            problems.append("the answer carried no alignment of the text sent")
+        if problems:
+            raw["alignment_problem"] = "; ".join(problems)
+            # The narration stands; only its clock is dropped. Never a second purchase.
+            logger.warning(
+                "ElevenLabs narration kept, %s: %s",
+                "its word timing intact"
+                if word_timings
+                else "without its word timing (captions fall back to each word's share)",
+                raw["alignment_problem"],
+            )
 
         return TTSResult(
             audio_bytes=audio,
             format="mp3",
-            # Counted from the returned frames, not estimated from the words sent.
-            duration_seconds=mp3_duration_seconds(audio),
+            duration_seconds=duration,
             sample_rate=44100,
-            # The API returns no word timings on this endpoint, so none are reported. An
-            # invented alignment would drive subtitle timing that matches nothing.
-            word_timings=[],
+            # From the vendor's own character clock, or none at all. An invented alignment
+            # would drive subtitle timing that matches nothing.
+            word_timings=word_timings,
             # The characters sent, at the Owner's price per thousand for this model — the
             # unit the vendor bills in. None when no price covers the model, never zero.
             cost_vr=tts_cost_vr(self.price_lookup, self.model, len(narration)),
@@ -223,7 +394,37 @@ class ElevenLabsTTSAdapter(TTSProvider):
                 "model": self.model,
                 "voice_id": voice,
                 "content_type": content_type,
+                "output_format": OUTPUT_FORMAT,
                 "bytes": len(audio),
                 "characters": len(narration),
+                **raw,
             },
         )
+
+    @staticmethod
+    def _timed_answer(body: bytes, content_type: str) -> tuple[bytes, dict[str, Any]]:
+        """(audio, the two alignments as they came) from a /with-timestamps answer.
+
+        Raises when there is no audio in it. Either way the request is not sent again: it
+        may have been served and billed.
+        """
+        if "audio" in content_type and body:
+            # Bare audio on the timed endpoint would be a contract change; it was billed, so
+            # it is kept, without a clock.
+            return body, {}
+        if "json" not in content_type:
+            raise MediaProviderError("ElevenLabs did not return audio")
+        try:
+            data = json.loads(body)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            raise MediaProviderError("ElevenLabs answered without readable audio") from None
+        encoded = data.get("audio_base64") if isinstance(data, dict) else None
+        if not isinstance(encoded, str) or not encoded:
+            raise MediaProviderError("ElevenLabs did not return audio")
+        try:
+            audio = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError):
+            raise MediaProviderError("ElevenLabs returned audio that does not decode") from None
+        if not audio:
+            raise MediaProviderError("ElevenLabs did not return audio")
+        return audio, {key: data.get(key) for key in ("alignment", "normalized_alignment")}

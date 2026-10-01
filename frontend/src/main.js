@@ -41,10 +41,11 @@ import {
 } from './dialog_words.js';
 import {
   PRICES_MEANING, PRICE_BOTH, channelFacts, checkNewModel, knownModels, priceAnswer, priceCommands, priceInput, providerMark, providerWideRows,
-  tokenPriceRows, usdWords,
+  savePaidMediaRule, tokenPriceRows, usdWords,
 } from './owner_controls.js';
 import {
-  SHEET_TITLE, approveStep, requestRender, sceneModelPath, sheetHtml, sheetPath, takeDecisionPath,
+  ASSEMBLE_STEP, SHEET_TITLE, approveAssemble, approveRedo, approveStep, redoKey, requestRender, sceneModelPath, sheetHtml, sheetPath,
+  takeDecisionPath, withdrawnWords,
 } from './shooting_sheet.js';
 import { LiveWindows, eventMatchesAgent } from './live_window.js';
 import { MailThread } from './mail_thread.js';
@@ -3309,6 +3310,9 @@ const sheetDrawer = {
   notice: '',
   noticeError: false,
   busy: false,
+  /** What the assembly answered last (its QC and the letter), for this storyboard. @type {any} */ assembled: null,
+  /** Whether «Schimbă regula» is open, kept across repaints. */
+  ruleOpen: false,
 };
 /** The pictures already read with the Owner's key, as data: URLs (the page's img-src takes data:). */
 const sheetPictures = new Map();
@@ -3329,6 +3333,11 @@ function sheetDialog() {
     + '<div class="dialog-body sheet-body" data-sheet-body></div>';
   document.body.append(dialog);
   dialog.addEventListener('click', (event) => { void onSheetClick(event); });
+  // «Schimbă regula» stays open across the repaints that follow a press (toggle does not bubble).
+  dialog.addEventListener('toggle', (event) => {
+    const box = event.target;
+    if (box instanceof HTMLDetailsElement && box.classList.contains('sheet-rule-box')) sheetDrawer.ruleOpen = box.open;
+  }, true);
   sheetDrawer.dialog = dialog;
   return dialog;
 }
@@ -3370,6 +3379,10 @@ function paintSheet() {
     confirm: sheetDrawer.confirm,
     notice: sheetDrawer.notice,
     noticeError: sheetDrawer.noticeError,
+    // his rule and its version as the snapshot read them (the command is sent against that version)
+    policy: state?.policy || null,
+    assembled: sheetDrawer.assembled,
+    ruleOpen: sheetDrawer.ruleOpen,
   });
   body.querySelectorAll('img[data-sheet-src]').forEach((node) => {
     const img = /** @type {HTMLImageElement} */ (node);
@@ -3397,7 +3410,7 @@ async function loadSheet() {
  */
 async function openShootingSheet(storyboardId, message = '') {
   const dialog = sheetDialog();
-  if (sheetDrawer.id !== storyboardId) sheetDrawer.sheet = null;
+  if (sheetDrawer.id !== storyboardId) Object.assign(sheetDrawer, { sheet: null, assembled: null });
   Object.assign(sheetDrawer, { id: storyboardId, confirm: null, notice: message, noticeError: false, busy: false });
   if (!dialog.open) dialog.showModal();
   paintSheet();
@@ -3429,6 +3442,46 @@ async function playSheetClip(node) {
   }
 }
 
+/** The Owner's note and his consent over the day's budget, from the open question. */
+function sheetAnswer() {
+  const dialog = sheetDialog();
+  return {
+    note: /** @type {HTMLTextAreaElement|null} */ (dialog.querySelector('[data-sheet-note]'))?.value || '',
+    over: /** @type {HTMLInputElement|null} */ (dialog.querySelector('[data-sheet-over-budget]'))?.checked || false,
+  };
+}
+
+/**
+ * A refusal or a wait, in the backend's own words, each scene it names once.
+ * @param {{message?: string, scenes?: string[]}} result @param {string} fallback
+ */
+function sheetRefusal(result, fallback) {
+  const lines = [result.message || fallback, ...(result.scenes || [])].map((line) => String(line).trim()).filter(Boolean);
+  return [...new Set(lines)].join(' ');
+}
+
+/** «(1 întrebare veche retrasă …)» after a notice, when the press withdrew older questions. @param {{withdrawn?: string[]}} result */
+function withdrawnNote(result) {
+  const n = Array.isArray(result.withdrawn) ? result.withdrawn.length : 0;
+  return n ? ` (${withdrawnWords(n)}: erau pentru o foaie mai veche.)` : '';
+}
+
+/** The redo plan a press names, as the sheet on screen carries it. @param {string} kind @param {string} scene */
+function sheetRedoPlan(kind, scene) {
+  const sheet = sheetDrawer.sheet;
+  if (kind === 'audio') return sheet?.footer?.audio_redo || null;
+  const found = (sheet?.scenes || []).find((/** @type {any} */ s) => String(s.scene_index) === scene);
+  return found?.redo?.[kind] || null;
+}
+
+/** The redo's notice, once it is done. @param {string} kind @param {string} scene */
+function redoDoneWords(kind, scene) {
+  if (kind === 'still') return `Imaginea scenei ${scene} a fost refăcută cu aprobarea ta: alege varianta nouă pe foaie; celelalte scene nu s-au atins.`;
+  if (kind === 'motion') return `Mișcarea scenei ${scene} a fost refăcută cu aprobarea ta: privește clipul nou pe foaie; celelalte scene nu s-au atins.`;
+  if (kind === 'card') return `Cardul scenei ${scene} a fost recompus local, iar filmul reasamblat din celelalte cadre: 0 credite.`;
+  return 'Sunetul filmului a fost remasterizat sub aceeași imagine: 0 credite.';
+}
+
 /**
  * What a press on the sheet does, as one call that answers the Owner's notice; null when the press
  * is only the drawer's own (open a question, close it).
@@ -3437,16 +3490,44 @@ async function playSheetClip(node) {
  */
 function sheetCommand(node, id) {
   const action = node.dataset.sheetAction;
-  const dialog = sheetDialog();
   if (action === 'confirm-step') {
     const step = node.dataset.step || '';
-    const note = /** @type {HTMLTextAreaElement|null} */ (dialog.querySelector('[data-sheet-note]'))?.value || '';
-    const over = /** @type {HTMLInputElement|null} */ (dialog.querySelector('[data-sheet-over-budget]'))?.checked || false;
+    const { note, over } = sheetAnswer();
     const planHash = String(sheetDrawer.sheet?.sheet_hash || '');
+    if (step === ASSEMBLE_STEP) {
+      return async () => {
+        const result = await approveAssemble(api, { storyboardId: id, planHash, note, allowOverBudget: over, commandId: crypto.randomUUID() });
+        if (result.status !== 'ASSEMBLED') throw new Error(sheetRefusal(result, 'Filmul nu a fost asamblat.'));
+        sheetDrawer.assembled = result.result;
+        const verdict = result.result?.qc?.status === 'PASSED' ? 'a trecut controlul calității' : 'nu a trecut controlul calității: motivele și scrisoarea sunt mai jos';
+        return `Filmul a fost asamblat din cadrele acceptate și ${verdict}.${withdrawnNote(result)}`;
+      };
+    }
     return async () => {
       const result = await approveStep(api, { storyboardId: id, step, planHash, note, allowOverBudget: over, commandId: crypto.randomUUID() });
-      if (result.status !== 'BOUGHT') throw new Error(result.message || 'Pasul nu a cumpărat nimic.');
-      return 'Pasul a fost cumpărat cu aprobarea ta, pentru foaia pe care ai văzut-o. Foaia de mai jos arată ce s-a cumpărat.';
+      if (result.status !== 'BOUGHT') throw new Error(sheetRefusal(result, 'Pasul nu a cumpărat nimic.'));
+      return `Pasul a fost cumpărat cu aprobarea ta, pentru foaia pe care ai văzut-o. Foaia de mai jos arată ce s-a cumpărat.${withdrawnNote(result)}`;
+    };
+  }
+  if (action === 'confirm-redo') {
+    const kind = node.dataset.kind || '';
+    const scene = node.dataset.scene || '';
+    const { note, over } = sheetAnswer();
+    const plan = sheetRedoPlan(kind, scene);
+    return async () => {
+      const result = await approveRedo(api, {
+        storyboardId: id,
+        kind,
+        sceneIndex: scene ? Number(scene) : null,
+        planHash: plan?.plan_hash || null,
+        note,
+        allowOverBudget: over,
+        commandId: crypto.randomUUID(),
+      });
+      if (result.status !== 'DONE') throw new Error(sheetRefusal(result, 'Nimic nu a fost refăcut.'));
+      // a redone film is a new film: the QC shown was the old one's
+      sheetDrawer.assembled = null;
+      return `${redoDoneWords(kind, scene)}${withdrawnNote(result)}`;
     };
   }
   if (action === 'take') {
@@ -3456,17 +3537,6 @@ function sheetCommand(node, id) {
       return decision === 'APPROVED'
         ? 'Aprobat. Foaia are o amprentă nouă: o aprobare veche nu mai cumpără nimic. Nimic nu s-a cumpărat.'
         : 'Respins: nu se mai folosește în film. Nimic nu s-a cumpărat.';
-    };
-  }
-  if (action === 'redo-still') {
-    const scene = node.dataset.scene || '';
-    if (!window.confirm(`Respingi imaginea scenei ${scene}? Acum nu se cumpără nimic: scena intră în pasul imaginilor, pe care îl aprobi separat, cu prețul lui.`)) return null;
-    return async () => {
-      await api(takeDecisionPath(node.dataset.take || ''), {
-        method: 'POST',
-        body: JSON.stringify({ decision: 'REJECTED', note: 'Refă imaginea, de pe foaia de filmare.' }),
-      });
-      return `Imaginea scenei ${scene} a fost respinsă. Scena intră în pasul imaginilor: aprobă-l ca să se cumpere din nou.`;
     };
   }
   if (action === 'model') {
@@ -3491,8 +3561,29 @@ async function onSheetClick(event) {
   if (action === 'close') { sheetDialog().close(); return; }
   if (!id || !sheetDrawer.sheet) return;
   if (action === 'step') { sheetDrawer.confirm = node.dataset.step || null; sheetNotice(''); paintSheet(); return; }
+  if (action === 'redo') { sheetDrawer.confirm = redoKey(node.dataset.kind || '', node.dataset.scene || null); sheetNotice(''); paintSheet(); return; }
   if (action === 'cancel-step') { sheetDrawer.confirm = null; paintSheet(); return; }
   if (action === 'play') { await playSheetClip(node); return; }
+  if (action === 'paid-media-save') {
+    // His rule, sent against the policy version the page read; a 409 means it moved meanwhile.
+    const dialog = sheetDialog();
+    const choice = /** @type {HTMLInputElement|null} */ (dialog.querySelector('input[name="paid-media"]:checked'))?.value || '';
+    const amount = /** @type {HTMLInputElement|null} */ (dialog.querySelector('[data-paid-media-amount]'))?.value || '';
+    sheetDrawer.busy = true;
+    sheetDrawer.ruleOpen = true;
+    paintSheet();
+    try {
+      const saved = await savePaidMediaRule(api, { choice, amount, version: state?.policy?.version, commandId: crypto.randomUUID() });
+      // saved or stale: the page reads the policy again, so he looks at the rule as it is now
+      if (saved.reload) await refresh();
+      sheetNotice(saved.message, saved.status !== 'SAVED');
+      if (saved.status === 'SAVED') sheetDrawer.ruleOpen = false;
+    } finally {
+      sheetDrawer.busy = false;
+      await loadSheet();
+    }
+    return;
+  }
   const run = sheetCommand(node, id);
   if (!run) return;
   sheetDrawer.busy = true;

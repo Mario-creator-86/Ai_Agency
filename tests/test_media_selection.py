@@ -302,6 +302,9 @@ def test_a_render_from_a_real_provider_records_that_provider_and_passes_content_
         str(uuid4()),
         storage_root=tmp_path / "media",
         image_adapter=adapter,
+        # Real stills and no motion model: pushed stills, which only a TEST film may be
+        # without the Owner's LOCAL_MOVE (PRODUCTION refuses it before the encode).
+        environment="TEST",
     )
 
     assert adapter.prompts, "the provider must actually have been asked for the frames"

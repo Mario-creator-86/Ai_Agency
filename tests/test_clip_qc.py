@@ -1008,3 +1008,197 @@ def test_duplicates_are_counted_on_the_lossless_shots_not_the_lossy_film(tmp_pat
     assert share is not None and 0.15 <= share <= 0.25, share
     # A moving scene whose shot file is gone cannot be counted this way.
     assert shot_duplicate_share(FFMPEG, production, tmp_path, [(3, 6.0, 9.0)]) is None
+
+
+# ------------------------------------- 8. silent cards and full breaths against the narration
+#
+# The timeline used to shrink every 0.35 s breath so the film stayed within 0.9 s of its
+# words: six speaking scenes kept about 0.11 s each and the cuts felt rushed. And a scene with
+# no words at all (a black end card, a silent title) counted as film over narration. Quality
+# control now allows the narration, the breaths the timeline plans after each scene's words,
+# and the silent composed cards, each up to its own maximum, plus the one second it always
+# allowed.
+
+
+def _timeline_production(*scenes, tail=0.35):
+    """A render's record with its timeline: (index, kind, spoken seconds, span seconds)."""
+    clock = 0.0
+    spans, entries = [], []
+    for index, kind, spoken, seconds in scenes:
+        spans.append(
+            {
+                "scene_index": index,
+                "start": round(clock, 6),
+                "end": round(clock + seconds, 6),
+                "join_in": "cut",
+                "dissolve_seconds": 0.0,
+                "shot_seconds": seconds,
+                "moving": False,
+                "composed": kind != "LIVE",
+                "held_seconds": 0.0,
+            }
+        )
+        entries.append({"scene_index": index, "scene_kind": kind, "audio_seconds": spoken})
+        clock += seconds
+    return {
+        "scenes": entries,
+        "timeline": {
+            "fps": 24,
+            "spoken_tail_seconds": tail,
+            "film_seconds": round(clock, 6),
+            "spans": spans,
+        },
+    }
+
+
+SIX_SPEAKING = [(n, "LIVE", 5.0, 5.35) for n in range(1, 7)]
+
+
+def test_the_silent_card_maximums_come_from_what_each_card_must_show():
+    """A black end card is a beat of silence or the closing call to action (the writer's
+    spec): 2 s. A silent title must be read: 2.5 s. A silent chart must finish growing its
+    four bars and hold: the card's own animation, 3.75 s, inside 4 s."""
+    from app.media import cards
+
+    assert qc.MAX_SILENT_CARD_SECONDS == {"BLACK": 2.0, "TITLE_CARD": 2.5, "DATA_CARD": 4.0}
+    four_bars = (
+        cards.BAR_START_SECONDS
+        + cards.BAR_STAGGER_SECONDS * (cards.MAX_BARS - 1)
+        + cards.BAR_GROW_SECONDS
+        + cards.VALUE_DELAY_SECONDS
+        + cards.TEXT_FADE_SECONDS
+        + cards.HOLD_SECONDS
+    )
+    assert four_bars <= qc.MAX_SILENT_CARD_SECONDS["DATA_CARD"]
+    assert qc.BREATH_SECONDS == 0.35
+
+
+def test_a_silent_end_card_and_full_breaths_are_not_counted_against_the_narration():
+    production = _timeline_production(*SIX_SPEAKING, (7, "BLACK", 0.0, 2.0))
+    budget = qc.film_length_budget(production)
+    assert budget["narration_seconds"] == pytest.approx(30.0)
+    assert budget["speaking_scenes"] == 6
+    assert budget["breath_seconds"] == pytest.approx(2.1)
+    assert budget["silent_card_seconds"] == pytest.approx(2.0)
+    assert budget["silent_cards"] == [
+        {"scene_index": 7, "kind": "BLACK", "seconds": 2.0, "max_seconds": 2.0, "within": True}
+    ]
+    assert budget["overruns_ro"] == []
+    assert budget["allowed_seconds"] == pytest.approx(30.0 + 2.1 + 2.0 + 1.0)
+
+    probe = {**GOOD_PROBE, "duration_seconds": 34.1}
+    failures, warnings = technical_problems(
+        probe, environment="PRODUCTION", timeline_fps=30, narration_seconds=30.0, budget=budget
+    )
+    assert failures == [] and warnings == []
+    # The rule as it was fails the same film by 3.1 s.
+    failures, _ = technical_problems(
+        probe, environment="PRODUCTION", timeline_fps=30, narration_seconds=30.0
+    )
+    assert any("narați" in f for f in failures)
+
+
+def test_a_silence_longer_than_its_card_allows_still_fails_and_names_the_scene():
+    production = _timeline_production(*SIX_SPEAKING, (7, "BLACK", 0.0, 3.4))
+    budget = qc.film_length_budget(production)
+    assert budget["silent_cards"][0]["within"] is False
+    # Only the card's own maximum is allowed for; the rest is film over the narration.
+    assert budget["silent_card_seconds"] == pytest.approx(2.0)
+    assert len(budget["overruns_ro"]) == 1
+    overrun = budget["overruns_ro"][0]
+    assert "Scena 7" in overrun and "3,4 s" in overrun and "2,0 s" in overrun
+
+    probe = {**GOOD_PROBE, "duration_seconds": 35.5}
+    failures, _ = technical_problems(
+        probe, environment="PRODUCTION", timeline_fps=30, narration_seconds=30.0, budget=budget
+    )
+    assert overrun in failures
+    # In TEST the same floors warn, as every delivery floor does.
+    failures, warnings = technical_problems(
+        probe, environment="TEST", timeline_fps=30, narration_seconds=30.0, budget=budget
+    )
+    assert overrun not in failures and overrun in warnings
+
+
+def test_a_silent_live_scene_is_not_a_card_and_counts_against_the_narration():
+    production = _timeline_production(*SIX_SPEAKING, (7, "LIVE", 0.0, 2.0))
+    budget = qc.film_length_budget(production)
+    assert budget["silent_cards"] == [] and budget["silent_card_seconds"] == 0.0
+    failures, _ = technical_problems(
+        {**GOOD_PROBE, "duration_seconds": 34.1},
+        environment="PRODUCTION",
+        timeline_fps=30,
+        narration_seconds=30.0,
+        budget=budget,
+    )
+    assert any("narați" in f for f in failures), failures
+
+
+def test_a_card_with_words_is_narration_and_has_its_breath():
+    production = _timeline_production((1, "LIVE", 5.0, 5.35), (2, "DATA_CARD", 3.0, 3.35))
+    budget = qc.film_length_budget(production)
+    assert budget["silent_cards"] == []
+    assert budget["speaking_scenes"] == 2
+    assert budget["breath_seconds"] == pytest.approx(0.7)
+
+
+def test_full_breaths_pass_and_a_film_past_them_fails_naming_the_breaths():
+    production = _timeline_production(*SIX_SPEAKING)
+    budget = qc.film_length_budget(production)
+    # 30 s of words, six full breaths (2.1 s), plus the second: 33.1 s.
+    for seconds, passes in ((32.1, True), (33.1, True), (33.2, False)):
+        failures, _ = technical_problems(
+            {**GOOD_PROBE, "duration_seconds": seconds},
+            environment="PRODUCTION",
+            timeline_fps=30,
+            narration_seconds=30.0,
+            budget=budget,
+        )
+        assert (failures == []) is passes, (seconds, failures)
+        if not passes:
+            assert any("respirați" in f and "2,1 s" in f for f in failures), failures
+
+
+def test_the_breath_is_the_one_the_timeline_recorded():
+    production = _timeline_production(*SIX_SPEAKING, tail=0.25)
+    assert qc.film_length_budget(production)["breath_seconds"] == pytest.approx(1.5)
+
+
+def test_a_render_without_a_timeline_is_budgeted_from_its_scene_record():
+    """A render from before the timeline record: the spans are rebuilt from the plan."""
+    production = {
+        "scenes": [
+            {"scene_index": 1, "scene_kind": "LIVE", "audio_seconds": 4.0},
+            {"scene_index": 2, "scene_kind": "BLACK", "audio_seconds": 0.0},
+        ]
+    }
+    budget = qc.film_length_budget(production, {1: 4.0, 2: 1.5})
+    assert budget["silent_cards"] == [
+        {"scene_index": 2, "kind": "BLACK", "seconds": 1.5, "max_seconds": 2.0, "within": True}
+    ]
+    assert budget["breath_seconds"] == pytest.approx(0.35)
+    # A record that did not measure the narration has no budget to give.
+    assert qc.film_length_budget({"scenes": [{"scene_index": 1}]})["narration_seconds"] is None
+
+
+@requires_ffmpeg
+def test_quality_control_reads_the_budget_off_the_films_own_timeline(engine, tmp_path):
+    """10.5 s of film over 8 s of words: two full breaths and a 1.8 s silent end card are
+    the film the Owner asked for, not 1.5 s too long."""
+    film = _hot_film(tmp_path)
+    production = _timeline_production(
+        (1, "LIVE", 4.0, 4.35), (2, "LIVE", 4.0, 4.35), (3, "BLACK", 0.0, 1.8)
+    )
+    asset_id = _film_row(engine, tmp_path, film, narration=8.0, production_extra=production)
+    with Session(engine) as session, session.begin():
+        session.get(OwnerPolicy, 1).environment = "PRODUCTION"
+
+    report = evaluate_media_qc(engine, asset_id, str(uuid4()))
+
+    technical = report["checks_json"]["technical_qc"]
+    assert technical["length_budget"]["silent_card_seconds"] == pytest.approx(1.8)
+    assert technical["length_budget"]["breath_seconds"] == pytest.approx(0.7)
+    reasons = report["failure_reasons_json"]
+    assert not any("narați" in reason for reason in reasons), reasons
+    # The file's other faults are still there: this film is not passed by the budget.
+    assert report["status"] == "FAILED"

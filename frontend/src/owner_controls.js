@@ -356,6 +356,142 @@ export function paidMediaRuleWords(rule) {
   return 'Regula ta: fiecare pas plătit al unui film îți cere aprobarea, în orice mod al studioului.';
 }
 
+/*
+ * DRAWER_COMPLETE (2026-10-01): the rule above as a real control. Only he moves it: the page sends
+ * his versioned command (backend services.PaidMediaApprovalCommand) to
+ * `POST /owner/paid-media-approval` with the policy version the page read (`/snapshot` policy). A
+ * stale version answers 409 and the page reloads the policy before he chooses again; a refusal
+ * (403) is shown in the backend's own words. Nothing is sent that the command would refuse.
+ */
+
+/** The Owner's route for the rule. */
+export const PAID_MEDIA_PATH = '/owner/paid-media-approval';
+
+/**
+ * His three choices, each with the one line that says what he will be asked and when.
+ * @type {readonly {value: typeof PAID_MEDIA_APPROVALS[number], label: string, meaning: string}[]}
+ */
+export const PAID_MEDIA_CHOICES = [
+  {
+    value: 'EVERY_PAID_STEP',
+    label: 'La fiecare pas plătit',
+    meaning: 'Te întreb pe foaia de filmare înainte de fiecare pas plătit al unui film (imaginile, cadrul de probă, mișcarea, o refacere), în orice mod al studioului.',
+  },
+  {
+    value: 'OVER_USD',
+    label: 'Doar peste o sumă',
+    meaning: 'Te întreb doar când un pas costă peste suma scrisă aici sau când costul lui nu se știe; un pas mai mic urmează modul studioului.',
+  },
+  {
+    value: 'MODE',
+    label: 'După modul studioului',
+    meaning: 'Pașii plătiți urmează modul studioului, ca orice altă acțiune plătită; foaia de filmare și plafonul ei rămân obligatorii.',
+  },
+];
+
+const AMOUNT_ERROR = 'Scrie suma în USD, de exemplu 2,50.';
+
+/** The rule the page holds now, the strictest when it is not read. @param {any} policy */
+function ruleOf(policy) {
+  const value = String(policy?.paid_media_approval || '');
+  const known = /** @type {readonly string[]} */ (PAID_MEDIA_APPROVALS).includes(value) ? value : 'EVERY_PAID_STEP';
+  const over = policy?.paid_media_approval_over_usd;
+  return { value: known, over: over === null || over === undefined || !Number.isFinite(Number(over)) ? null : Number(over) };
+}
+
+/**
+ * His command, or the reason it is not one (nothing is sent then). The amount is read the way he
+ * writes it («2,50» or «2.50»), and only for OVER_USD; the other choices carry no threshold.
+ * @param {unknown} choice @param {unknown} amount @param {unknown} version the policy version read
+ * @param {string} commandId
+ * @returns {{ok: true, command: {schema_version: 1, command_id: string, expected_version: number, paid_media_approval: string, over_usd: number|null}} | {ok: false, error: string}}
+ */
+export function paidMediaCommand(choice, amount, version, commandId) {
+  const value = String(choice || '');
+  if (!(/** @type {readonly string[]} */ (PAID_MEDIA_APPROVALS)).includes(value)) return { ok: false, error: 'Alege una dintre cele trei reguli.' };
+  if (!(Number.isInteger(Number(version)) && Number(version) >= 1) || version === null || version === undefined) {
+    return { ok: false, error: 'Versiunea regulii nu a fost citită; reîncarcă pagina.' };
+  }
+  let over = null;
+  if (value === 'OVER_USD') {
+    const typed = priceInput(amount);
+    if (!typed.ok) return { ok: false, error: AMOUNT_ERROR };
+    over = Number(typed.usd);
+  }
+  return {
+    ok: true,
+    command: { schema_version: 1, command_id: commandId, expected_version: Number(version), paid_media_approval: value, over_usd: over },
+  };
+}
+
+/**
+ * The backend's answer in words. @param {any} result PaidMediaApprovalResult
+ */
+export function paidMediaAnswer(result) {
+  const version = Number(result?.version) || 1;
+  if (result?.status === 'NO_CHANGE') return `Nimic de schimbat: regula era deja aceasta (versiunea ${version}).`;
+  return `Salvat. ${paidMediaRuleWords({ paid_media_approval: result?.paid_media_approval, over_usd: result?.over_usd })} (versiunea ${version})`;
+}
+
+/**
+ * What a refused save means: 409 is a stale version (the page reloads the policy and says so);
+ * anything else is the backend's own sentence.
+ * @param {any} error as main.js's api() throws it ({status, detail})
+ * @returns {{status: 'STALE'|'REFUSED', reload: boolean, message: string}}
+ */
+export function paidMediaRefusal(error) {
+  if (error && error.status === 409) {
+    return {
+      status: 'STALE',
+      reload: true,
+      message: 'Regula ta s-a schimbat între timp, din altă parte. Am reîncărcat-o: privește-o și alege din nou.',
+    };
+  }
+  return { status: 'REFUSED', reload: false, message: String((error && error.message) || 'Regula nu a fost salvată.') };
+}
+
+/**
+ * His press of «Salvează regula»: the command, checked first, then sent once.
+ * @param {(path: string, options?: any) => Promise<any>} api
+ * @param {{choice: unknown, amount: unknown, version: unknown, commandId: string}} o
+ * @returns {Promise<{status: 'SAVED'|'STALE'|'REFUSED'|'INVALID', reload: boolean, message: string, result?: any}>}
+ */
+export async function savePaidMediaRule(api, o) {
+  const built = paidMediaCommand(o.choice, o.amount, o.version, o.commandId);
+  if ('error' in built) return { status: 'INVALID', reload: false, message: built.error };
+  try {
+    const result = await api(PAID_MEDIA_PATH, { method: 'POST', body: JSON.stringify(built.command) });
+    return { status: 'SAVED', reload: true, message: paidMediaAnswer(result), result };
+  } catch (error) {
+    return paidMediaRefusal(error);
+  }
+}
+
+/**
+ * The control: three choices, each with its line, the amount for «Doar peste o sumă», and the
+ * policy version it will be sent against. An unread policy shows the strictest rule and cannot be
+ * saved.
+ * @param {any} policy the page's `/snapshot` policy (version, paid_media_approval, paid_media_approval_over_usd)
+ * @param {{escape: (value: unknown) => string}} o
+ */
+export function paidMediaFormHtml(policy, o) {
+  const e = o.escape;
+  const rule = ruleOf(policy);
+  const read = Boolean(policy) && Number.isInteger(Number(policy.version)) && Number(policy.version) >= 1;
+  const amount = rule.over === null ? '' : rule.over.toLocaleString('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 6, useGrouping: false });
+  const options = PAID_MEDIA_CHOICES.map((c) => `<label class="paid-media-option"><input type="radio" name="paid-media" value="${e(c.value)}"${c.value === rule.value ? ' checked' : ''}>`
+    + `<span class="paid-media-text"><span class="paid-media-label">${e(c.label)}</span><span class="paid-media-meaning">${e(c.meaning)}</span>`
+    + (c.value === 'OVER_USD'
+      ? `<span class="paid-media-amount">Suma: <input type="text" inputmode="decimal" autocomplete="off" data-paid-media-amount value="${e(amount)}" aria-label="Suma în USD peste care te întreb" placeholder="2,50"> USD</span>`
+      : '')
+    + '</span></label>').join('');
+  return '<div class="paid-media-form" role="group" aria-label="Când te întreabă un pas plătit al unui film">'
+    + `<fieldset class="paid-media-options"><legend>Când te întreabă un pas plătit al unui film</legend>${options}</fieldset>`
+    + `<p class="paid-media-version">${read ? `Se trimite pentru politica studioului la versiunea ${e(policy.version)}; dacă între timp s-a schimbat, nu se schimbă nimic.` : 'Politica studioului nu a fost citită: regula nu se poate schimba de aici până la reîncărcare.'}</p>`
+    + `<button type="button" class="sheet-yes paid-media-save" data-sheet-action="paid-media-save"${read ? '' : ' disabled'}>Salvează regula</button>`
+    + '</div>';
+}
+
 /* ------------------------------------------------------------------------- about the studio */
 
 /** The module words the drawer used (main.js), kept for Setări → Despre studio. */

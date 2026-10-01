@@ -5905,6 +5905,58 @@ details[open].pf-ok .pf-ok-line .pf-message { white-space: normal; overflow: vis
 .sheet-note textarea { width: 100%; font: inherit; padding: var(--s2); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface-sunk); color: var(--ink); }
 .sheet-confirm-actions { display: flex; flex-wrap: wrap; gap: var(--s2); }
 .sheet-yes { min-height: var(--hit-lg, 44px); font-weight: var(--w-bold); }
+
+/* DRAWER_COMPLETE (2026-10-01): the «Refă» buttons with their prices, the SAFETY suggestion, each
+   shot's clip QC, «Asamblează filmul» with the QC verdict and letter, and his paid-media rule. */
+.sheet-redos { display: grid; gap: var(--s2); padding-top: var(--s2); border-top: 1px solid var(--line); }
+.sheet-redo-box { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s2); }
+.sheet-redo-box .sheet-step-why, .sheet-redo-why { flex-basis: 100%; }
+.sheet-redo-why { margin: 0; font-size: var(--fs-micro); color: var(--ink-3); }
+.sheet-redo-btn { min-height: var(--hit); font-size: var(--fs-micro); font-weight: var(--w-semi); }
+.sheet-redo-btn:disabled, .sheet-redo-btn[disabled] { opacity: .55; cursor: not-allowed; }
+.sheet-redo-price { font-size: var(--fs-micro); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.sheet-redo-audio { display: grid; }
+.sheet-redo-audio .sheet-redos { border-top: 0; padding-top: 0; }
+.sheet-confirm-price { font-variant-numeric: tabular-nums; font-weight: var(--w-semi); color: var(--ink); }
+.sheet-safety { display: grid; gap: var(--s1); padding: var(--s2) var(--s3); border: 1px solid var(--info-line); border-radius: var(--radius-sm); background: var(--info-bg); color: var(--info-ink); font-size: var(--fs-micro); }
+.sheet-safety p { margin: 0; }
+.sheet-safety-head { text-transform: uppercase; letter-spacing: var(--track-caps); font-weight: var(--w-semi); }
+.sheet-safety .sheet-model { justify-self: start; }
+.sheet-clip-qc { margin: 0; font-size: var(--fs-micro); color: var(--ink-3); }
+.sheet-clip-qc[data-verdict="PASSED"] { color: var(--ok-ink); }
+.sheet-clip-qc[data-verdict="FAILED"] { color: var(--alert-ink); font-weight: var(--w-semi); }
+.sheet-clip-qc[data-verdict="UNCHECKED"] { color: var(--warn-ink); }
+.sheet-assemble { border-color: var(--gold-line, var(--gold-ink)); background: var(--surface); box-shadow: var(--shadow-raised); }
+.sheet-assemble .sheet-step { font-weight: var(--w-bold); }
+.sheet-assemble-line { margin: 0; font-size: var(--fs-micro); color: var(--ink-3); }
+.sheet-qc { display: grid; gap: var(--s2); padding: var(--s3); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface-quiet); }
+.sheet-qc p { margin: 0; }
+.sheet-qc[data-verdict="PASSED"] { border-color: var(--ok-line); background: var(--ok-bg); }
+.sheet-qc[data-verdict="FAILED"] { border-color: var(--alert-line); background: var(--alert-bg); }
+.sheet-qc-head { font-weight: var(--w-bold); color: var(--ink); }
+.sheet-qc[data-verdict="PASSED"] .sheet-qc-head { color: var(--ok-ink); }
+.sheet-qc[data-verdict="FAILED"] .sheet-qc-head { color: var(--alert-ink); }
+.sheet-qc-meta { font-size: var(--fs-micro); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.sheet-qc-reasons { margin: 0; padding-left: var(--s4); font-size: var(--fs-meta); color: var(--ink); }
+.sheet-letter-box summary { cursor: pointer; min-height: var(--hit); display: flex; align-items: center; font-size: var(--fs-meta); color: var(--ink-2); }
+.sheet-letter { white-space: pre-line; font-size: var(--fs-meta); line-height: 1.55; color: var(--ink); max-width: var(--measure, 72ch); }
+.sheet-rule-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s1) var(--s3); }
+.sheet-rule-box { flex-basis: 100%; }
+.sheet-rule-box > summary { cursor: pointer; display: inline-flex; align-items: center; min-height: var(--hit); font-size: var(--fs-meta); color: var(--teal); font-weight: var(--w-semi); }
+.paid-media-form { display: grid; gap: var(--s2); margin-top: var(--s2); padding: var(--s3); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface-quiet); }
+.paid-media-options { display: grid; gap: var(--s2); margin: 0; padding: 0; border: 0; min-width: 0; }
+.paid-media-options legend { margin-bottom: var(--s1); padding: 0; font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: var(--track-caps); color: var(--ink-3); }
+.paid-media-option { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--s2); align-items: start; padding: var(--s2) var(--s3); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); cursor: pointer; }
+.paid-media-option:has(input:checked) { border-color: var(--teal); box-shadow: inset 3px 0 0 var(--teal); }
+.paid-media-option input[type="radio"] { margin-top: 3px; accent-color: var(--teal); }
+.paid-media-text { display: grid; gap: 2px; }
+.paid-media-label { font-size: var(--fs-meta); font-weight: var(--w-semi); color: var(--ink); }
+.paid-media-meaning { font-size: var(--fs-micro); color: var(--ink-2); }
+.paid-media-amount { display: inline-flex; align-items: center; gap: var(--s1); font-size: var(--fs-micro); color: var(--ink-2); }
+.paid-media-amount input { width: 8ch; min-height: var(--hit); padding: 0 var(--s2); font: inherit; font-variant-numeric: tabular-nums; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface-sunk); color: var(--ink); }
+.paid-media-version { margin: 0; font-size: var(--fs-micro); color: var(--ink-3); }
+.paid-media-save { justify-self: start; }
+.paid-media-save:disabled { opacity: .55; cursor: not-allowed; }
 @media (max-width: 700px) {
   .sheet-scenes, .sheet-rows, .sheet-steps { grid-template-columns: minmax(0, 1fr); }
 }

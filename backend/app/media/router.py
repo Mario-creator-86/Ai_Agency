@@ -27,10 +27,15 @@ from app.media.assembler import (
     assemble_video_job,
     redo_plan,
     redo_scene,
+    release_after_qc,
 )
 from app.media.factory import (
+    PaidVendorRefused,
+    abandon_unfinished_renders,
     describe,
+    guard_motion_chooser,
     image_provider,
+    legacy_render_vendors,
     motion_for_scene,
     render_plan,
     tts_provider,
@@ -92,6 +97,7 @@ from app.media.services import (
     seed_default_character_bibles,
 )
 from app.media.shooting_sheet import (
+    ASSEMBLE_STEP,
     SHEET_STEPS,
     SheetChoiceRefused,
     SheetNotFound,
@@ -102,6 +108,7 @@ from app.media.shooting_sheet import (
     connection_capabilities,
     connection_video_adapters,
     decide_sheet_take,
+    run_assemble_step,
     run_sheet_step,
     runway_connection_id,
     set_scene_model,
@@ -153,6 +160,18 @@ def _use_the_sheet(engine: Any, storyboard_id: str, correlation_id: str) -> dict
     }
 
 
+def _paid_vendor_refusal(storyboard_id: str, refused: PaidVendorRefused) -> dict[str, Any]:
+    """The 409 of the legacy render in any environment when it would reach a real paid
+    vendor: the way to the shooting sheet, and the vendors it would have bought from."""
+    return {
+        "error": "UseShootingSheet",
+        "message": refused.message_ro,
+        "sheet_url": sheet_url(storyboard_id),
+        "paid_vendors": refused.vendors,
+        "shot_plan_gaps": [],
+    }
+
+
 class SceneRedoCommand(BaseModel):
     """The Owner's request to redo one scene (still | motion | card) or the film's sound.
 
@@ -195,6 +214,53 @@ def _sheet_wiring(request: Request) -> dict[str, Any]:
         "adapter_for_model": adapters,
         "resolution": getattr(state.settings, "motion_resolution", None),
     }
+
+
+def _assemble_step(
+    request: Request, storyboard_id: str, cmd: SheetStepCommand, wiring: dict[str, Any]
+) -> Any:
+    """The sheet's assemble step on the Owner's route: the voices the film would be spoken
+    in (a test's injected voice alone, otherwise the production plan's), then
+    `run_assemble_step`. 202 with his narration question, 409 with the reason, 200 with the
+    film, its QC and his letter."""
+    state = request.app.state
+    engine = state.engine
+    settings = state.settings
+    storage = getattr(state, "media_storage_root", None)
+    injected_tts = getattr(state, "tts_adapter", None)
+    try:
+        planned = render_plan(engine, state.credential_vault, storyboard_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    try:
+        return run_assemble_step(
+            engine,
+            storyboard_id,
+            cmd.plan_hash,
+            correlation_id=str(uuid4()),
+            capabilities=wiring["capabilities"],
+            integration_id=wiring["integration_id"],
+            resolution=wiring["resolution"],
+            stills_model=getattr(wiring["image_adapter"], "model", None),
+            settings=settings,
+            storage_root=Path(storage) if storage else None,
+            ffmpeg_path=getattr(settings, "ffmpeg_path", None),
+            registry=getattr(state, "registry", None),
+            tts_adapter=injected_tts or tts_provider(engine, state.credential_vault),
+            tts_adapter_for_scene=None if injected_tts else planned.get("tts_for_scene"),
+            voice_segments_for_scene=(
+                None if injected_tts else planned.get("voice_segments_for_scene")
+            ),
+            reference_for_scene=planned.get("reference_for_scene"),
+            production_plan=planned.get("plan"),
+            allow_over_budget=cmd.allow_over_budget,
+        )
+    except SheetNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SheetStepRefused as exc:
+        if exc.http_status == 202:
+            return JSONResponse(status_code=202, content=exc.as_dict())
+        raise HTTPException(status_code=exc.http_status, detail=exc.as_dict()) from exc
 
 
 def create_media_router() -> APIRouter:
@@ -394,6 +460,7 @@ def create_media_router() -> APIRouter:
         model: Annotated[str | None, Query(max_length=200)] = None,
     ) -> dict:
         correlation_id = str(uuid4())
+        started = utc_now()
         engine = request.app.state.engine
         vault = request.app.state.credential_vault
         # Nothing is generated for a film whose story has not been read and passed. Every
@@ -429,6 +496,25 @@ def create_media_router() -> APIRouter:
             environment = studio_environment(engine)
             injected_tts = getattr(request.app.state, "tts_adapter", None)
             injected_image = getattr(request.app.state, "image_adapter", None)
+            voice = injected_tts or tts_provider(engine, vault)
+            # Real paid media is bought only through the shooting sheet's steps, under the
+            # Owner's yes bound to its plan_hash, in every environment. This button keeps
+            # working with fakes and local stand-ins; it refuses, before a render job exists,
+            # whenever it would hand a real paid vendor to the render (TEST included: it
+            # could still buy a whole film from the real Runway connection).
+            vendors = legacy_render_vendors(
+                engine,
+                storyboard_id,
+                image=injected_image or planned["image"],
+                image_chain=None if injected_image else planned.get("image_chain"),
+                tts=voice,
+                tts_for_scene=None if injected_tts else planned["tts_for_scene"],
+                voice_segments_for_scene=(
+                    None if injected_tts else planned.get("voice_segments_for_scene")
+                ),
+            )
+            if vendors:
+                raise PaidVendorRefused(vendors)
             result = assemble_video_job(
                 engine,
                 storyboard_id,
@@ -448,7 +534,7 @@ def create_media_router() -> APIRouter:
                 # a fact about the film's characters and not about the vendor, and a locked
                 # character with no readable sheet refuses the render below.
                 reference_for_scene=planned.get("reference_for_scene"),
-                tts_adapter=injected_tts or tts_provider(engine, vault),
+                tts_adapter=voice,
                 tts_adapter_for_scene=None if injected_tts else planned["tts_for_scene"],
                 voice_segments_for_scene=(
                     None if injected_tts else planned.get("voice_segments_for_scene")
@@ -458,10 +544,12 @@ def create_media_router() -> APIRouter:
                 video_adapter_for_scene=(
                     None if getattr(request.app.state, "image_adapter", None) else None
                 ),
+                # The motion model is chosen per scene inside the render; a real paid one is
+                # refused where it is chosen, before it is used for anything.
                 motion_chooser=(
                     None
                     if getattr(request.app.state, "image_adapter", None)
-                    else (
+                    else guard_motion_chooser(
                         lambda scene, tier, seconds, budget, exclude: motion_for_scene(
                             engine,
                             vault,
@@ -538,8 +626,16 @@ def create_media_router() -> APIRouter:
                 registry=getattr(request.app.state, "registry", None),
                 ffmpeg_path=getattr(request.app.state.settings, "ffmpeg_path", None),
             )
+            release_after_qc(request.app.state.engine, result["output_asset_id"], correlation_id)
             result["qc"] = qc_result
             return result
+        except PaidVendorRefused as exc:
+            # Refused before any render job existed, or inside one, where the motion model
+            # was chosen: that job is failed here, nothing having been bought.
+            abandon_unfinished_renders(engine, storyboard_id, started, exc.message_ro)
+            raise HTTPException(
+                status_code=409, detail=_paid_vendor_refusal(storyboard_id, exc)
+            ) from exc
         except RenderEngineUnavailable as exc:
             raise HTTPException(
                 status_code=503,
@@ -681,12 +777,18 @@ def create_media_router() -> APIRouter:
         cmd: SheetStepCommand,
     ) -> Any:
         """One paid step of the sheet: 202 with the Owner's question, 409 with the reason
-        nothing was bought, 200 once his yes for THIS sheet was spent and the step bought."""
-        if step not in SHEET_STEPS:
+        nothing was bought, 200 once his yes for THIS sheet was spent and the step bought.
+
+        ``assemble`` is the last step: the film from its takes, its narration (asked under
+        the same plan), its master, quality control and the Owner's QC letter; 409 names
+        each filmed scene that has no accepted take and no LOCAL_MOVE of his."""
+        if step not in SHEET_STEPS and step != ASSEMBLE_STEP:
             raise HTTPException(status_code=404, detail=f"Pas necunoscut: {step}")
         settings = request.app.state.settings
         wiring = _sheet_wiring(request)
         storage = getattr(request.app.state, "media_storage_root", None)
+        if step == ASSEMBLE_STEP:
+            return _assemble_step(request, storyboard_id, cmd, wiring)
         try:
             return run_sheet_step(
                 request.app.state.engine,

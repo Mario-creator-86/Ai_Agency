@@ -43,6 +43,7 @@ from app.media.cost_plan import (
 )
 from app.media.models import (
     MediaAsset,
+    QualityControlReport,
     SceneTake,
     Storyboard,
     StoryboardScene,
@@ -71,6 +72,7 @@ from app.media.toolchain import (
     has_filter,
     measure_loudness,
 )
+from app.models import DomainEvent
 from app.providers.deterministic_media import (
     DeterministicTTSAdapter,
     DeterministicVisualAdapter,
@@ -106,11 +108,12 @@ DISSOLVE_SECONDS = 8 / TIMELINE_FPS
 #: What ``transition_in`` says when the writer wants the shot before to mix into this one.
 #: Anything else, the default CUT included, is a hard cut. The first scene has nothing before it.
 DISSOLVE_WORDS: tuple[str, ...] = ("DISSOLVE", "CROSSFADE", "CROSS_DISSOLVE", "MIX", "FADE")
-#: A scene lasts its words plus this breath, never past its plan, never cutting a word.
+#: A scene lasts its words plus this breath, never past its plan, never cutting a word. Every
+#: speaking scene keeps it whole: quality control allows the narration, this breath per
+#: speaking scene, the silent cards and 1.0 s (qc.film_length_budget, which reads it from
+#: production['timeline']['spoken_tail_seconds']). Until 2026-10-01 the breaths were shrunk
+#: together to keep the film within 0.9 s of its words, and six scenes kept about 0.11 s each.
 SPOKEN_TAIL_SECONDS = 0.35
-#: Quality control fails a film longer than its narration plus 1.0 s; the breaths are shortened
-#: together so the film stays under this, a tenth of a second inside that line.
-FILM_OVER_NARRATION_SECONDS = 0.9
 
 #: How long one scene's motion may take, and how often the task is asked about.
 MOTION_DEADLINE_SECONDS = 600
@@ -815,6 +818,7 @@ def _generate_motion(
     *,
     seed: int | None = None,
     on_submitted: Callable[[str], None] | None = None,
+    prompt_text: str | None = None,
 ) -> tuple[bytes, dict[str, Any]]:
     """Ask the scene's model for its shot, and wait for the clip.
 
@@ -824,8 +828,12 @@ def _generate_motion(
     the deadline raises; nothing invents a shot. ``seed`` is the film's one seed (the adapter
     sends it where the contract declares it); ``on_submitted`` hears the task id once the
     vendor has accepted the request, which is when a shot starts to cost money.
+    ``prompt_text`` replaces the scene's motion prompt (clip QC's one retry asks the camera
+    move more firmly); the extras (the negative prompt) stay the scene's.
     """
     prompt, extra = motion_request(adapter, scene, from_still=still is not None)
+    if prompt_text:
+        prompt = prompt_text
     if seed is not None:
         extra = {**extra, "seed": int(seed)}
     job_id = asyncio.run(
@@ -1121,15 +1129,25 @@ _COLOUR_FLAGS: tuple[str, ...] = (
     "-color_trc",
     "bt709",
 )
-#: A shot is an intermediate: lossless x264 (``-qp 0``), so the film is encoded lossily once,
-#: at the end, and not twice as it was (a veryfast shot, then the film).
+#: A shot is an intermediate, read once by the final encode and by quality control, then
+#: deleted (release_intermediates). Lossless x264 (``-qp 0``) was about 16 MB a second at
+#: 1080x1920 (139 MB for an 8.6 s still push-in; 1.1 GB a film). Measured 2026-10-01 on the
+#: Nepal stills and clips, x264 High at CRF 4 (veryfast, its default B-frames) is half that
+#: (7.7 MB/s for the push-in, 4.7-5.9 for the vendor clips, 0.06 for a card) at 51.6-54.4 dB
+#: against the lossless shot, and the CRF 17 film made from it is within 0.55 dB PSNR and
+#: 0.25 VMAF of the film made from lossless shots. CRF 6 lost one repeated frame in 77 to
+#: quality control's duplicate count; without B-frames or at a fixed QP the files were larger
+#: and the repeats of a still push-in read 0.05-0.08. A repeated frame reads at most 0.013
+#: here and the slowest real Nepal clip 0.097 (qc.LOSSLESS_DUPLICATE_YDIF = 0.03).
 INTERMEDIATE_VIDEO_ARGS: tuple[str, ...] = (
     "-c:v",
     "libx264",
-    "-qp",
-    "0",
+    "-profile:v",
+    "high",
     "-preset",
     "veryfast",
+    "-crf",
+    "4",
     "-pix_fmt",
     "yuv420p",
     *_COLOUR_FLAGS,
@@ -1231,38 +1249,36 @@ def shot_spans(scenes: list[dict[str, Any]], joins: list[float] | None = None) -
 
 
 def scene_spans(
-    planned: Sequence[float], spoken: Sequence[float | None], *, fps: int = TIMELINE_FPS
+    planned: Sequence[float],
+    spoken: Sequence[float | None],
+    *,
+    fps: int = TIMELINE_FPS,
+    kinds: Sequence[str | None] | None = None,
 ) -> list[float]:
     """How long each scene lasts on the timeline, on whole frames.
 
     A scene with words lasts min(planned, spoken + SPOKEN_TAIL_SECONDS), and never less than
-    its words: a word is never cut, so words longer than the plan set the length. A scene
-    with no words keeps its plan. The breaths after the words are shortened together, never
-    dropped one by one, so the film stays within FILM_OVER_NARRATION_SECONDS of its words —
-    quality control fails a film longer than its narration plus a second, and the planned
-    lengths used to pad the Nepal film with silence.
+    its words: a word is never cut, so words longer than the plan set the length. Every
+    speaking scene keeps its whole breath, rounded up to a frame: quality control counts the
+    breaths (qc.film_length_budget), and the planned lengths used to pad the Nepal film with
+    silence. A scene with no words keeps its plan, except a silent composed scene (``kinds``:
+    BLACK, TITLE_CARD, DATA_CARD), which lasts at most what quality control allows its kind
+    (qc.MAX_SILENT_CARD_SECONDS): one beat of black, a title read, a chart's animation.
     """
-    speaking = [isinstance(s, int | float) and float(s) > 0 for s in spoken]
-    tails = [
-        (
-            min(SPOKEN_TAIL_SECONDS, max(0.0, float(plan) - float(said or 0.0)))
-            if float(plan) > 0
-            else SPOKEN_TAIL_SECONDS
-        )
-        if talks
-        else 0.0
-        for plan, said, talks in zip(planned, spoken, speaking, strict=True)
-    ]
-    # Each scene's length is rounded up to a frame: that frame is counted in the budget.
-    budget = max(0.0, FILM_OVER_NARRATION_SECONDS - sum(speaking) / fps)
-    if sum(tails) > budget > 0:
-        tails = [tail * budget / sum(tails) for tail in tails]
-    elif budget <= 0:
-        tails = [0.0] * len(tails)
+    from app.media.qc import MAX_SILENT_CARD_SECONDS  # noqa: PLC0415 - qc reads the models
+
+    kinds = list(kinds) if kinds is not None else [None] * len(planned)
     spans: list[float] = []
-    for plan, said, talks, tail in zip(planned, spoken, speaking, tails, strict=True):
-        if talks:
-            spans.append(whole_frames(float(said or 0.0) + tail, fps, up=True))
+    for plan, said, kind in zip(planned, spoken, kinds, strict=True):
+        if isinstance(said, int | float) and float(said) > 0:
+            tail = (
+                min(SPOKEN_TAIL_SECONDS, max(0.0, float(plan) - float(said)))
+                if float(plan) > 0
+                else SPOKEN_TAIL_SECONDS
+            )
+            spans.append(whole_frames(float(said) + tail, fps, up=True))
+        elif kind in MAX_SILENT_CARD_SECONDS:
+            spans.append(whole_frames(min(float(plan), MAX_SILENT_CARD_SECONDS[kind]), fps))
         else:
             spans.append(whole_frames(float(plan), fps))
     return spans
@@ -1334,6 +1350,30 @@ def _shot_command(
         *INTERMEDIATE_VIDEO_ARGS,
         str(target),
     ]
+
+
+def _shot_source(
+    *,
+    still: Path | None,
+    clip: Path | None,
+    card: bool,
+    hold: float,
+    dither: bool,
+    fps: int,
+) -> dict[str, Any]:
+    """What a shot was cut from, so it can be cut again once its file is gone
+    (release_intermediates): the still or the vendor clip with their sha256, or ``card`` for a
+    composed card (recomposed from its own spec), and how it was cut (hold, dither, fps)."""
+    return {
+        "card": bool(card),
+        "still": str(still) if still is not None else None,
+        "still_sha256": _file_sha256(still) if still is not None else None,
+        "clip": str(clip) if clip is not None else None,
+        "clip_sha256": _file_sha256(clip) if clip is not None else None,
+        "hold": round(float(hold), 6),
+        "dither": bool(dither),
+        "fps": int(fps),
+    }
 
 
 def _shot_record(
@@ -1460,6 +1500,22 @@ class TakesMissing(RuntimeError):
     Raised before a render job exists and before any adapter is asked: assembling from takes
     never buys a picture. The message is the Owner's, in Romanian.
     """
+
+
+class ClipsNotAccepted(TakesMissing):
+    """A PRODUCTION film would show a LIVE scene as a still the Owner did not choose.
+
+    A scene without an accepted clip (approved by the Owner, or passed by clip QC) may be a
+    locally animated still only when he chose LOCAL_MOVE for it on the sheet
+    (`qc.require_chosen_fallbacks`). ``scenes`` names them; the message says why, per scene,
+    in Romanian. A TakesMissing, so every caller that holds a film for missing takes holds
+    this one too.
+    """
+
+    def __init__(self, scenes: list[int], message_ro: str) -> None:
+        super().__init__(message_ro)
+        self.scenes = list(scenes)
+        self.message_ro = message_ro
 
 
 def scene_kind_of(scene: dict[str, Any]) -> str:
@@ -2039,48 +2095,223 @@ def assemble_from_takes(
     """Assemble the film from its takes alone: no still and no shot is bought.
 
     Every LIVE scene must have an APPROVED still take for its prompt as it is now, otherwise
-    TakesMissing is raised before a render job exists. A LIVE scene's shot is its usable motion
-    take (APPROVED, or PAID and not rejected) when one exists, else its still given a slow
-    push, which quality control counts as a fallback. Cards are composed. Narration, captions,
-    the master and the encode are done as in any render; any image or video adapter passed is
-    never asked. The other keyword arguments are `assemble_video_job`'s.
+    TakesMissing is raised before a render job exists. A LIVE scene's shot is its accepted
+    motion take (the Owner's APPROVED, or a PAID one clip QC passed; in TEST also a PAID one
+    nobody could check), else its still given a slow push, which quality control counts as a
+    fallback. In PRODUCTION such a still is allowed only where the Owner chose LOCAL_MOVE for
+    the scene on the sheet (`qc.require_chosen_fallbacks`); otherwise `ClipsNotAccepted` (a
+    TakesMissing) names the scenes and why, before anything is spoken or encoded. Cards are
+    composed. Narration, captions, the master and the encode are done as in any render; any
+    image or video adapter passed is never asked. The other keyword arguments are
+    `assemble_video_job`'s.
+
+    The measured spend of the film's paid steps (each step's balance before and after, in its
+    own event) is written on the film (``production['credits_measured']``) and booked once
+    through the accountant (`book_film_spend`); a film assembled again from the same takes
+    books nothing again.
     """
+    from app.media.prompt_agent import strip_on_screen_text  # noqa: PLC0415
+
+    environment = str(render.get("environment") or "PRODUCTION")
     _title, scenes = _storyboard_scenes(engine, storyboard_id)
     missing: list[int] = []
+    shots: list[dict[str, Any]] = []
+    why_not: dict[int, str] = {}
     with Session(engine) as session:
         for scene in scenes:
+            index = int(scene["scene_index"])
             if is_composed(scene):
+                shots.append({"scene_index": index, "scene_kind": scene_kind_of(scene)})
                 continue
             # The reference picture is part of the still's identity; it is read here the
             # same way the render reads it.
             chooser = render.get("reference_for_scene")
             reference = chooser(scene) if chooser else None
             fields = still_fields(str(scene["visual_prompt"] or ""), reference)
-            from app.media.prompt_agent import strip_on_screen_text  # noqa: PLC0415
-
             retry = still_fields(
                 strip_on_screen_text(str(scene["visual_prompt"] or "")) + DEGENERATE_RETRY_SUFFIX,
                 reference,
             )
-            if (
-                usable_take(
-                    session,
-                    storyboard_id,
-                    int(scene["scene_index"]),
-                    "still",
-                    [fields, retry],
-                    statuses=("APPROVED",),
-                )
-                is None
-            ):
-                missing.append(int(scene["scene_index"]))
+            still = usable_take(
+                session, storyboard_id, index, "still", [fields, retry], statuses=("APPROVED",)
+            )
+            if still is None:
+                missing.append(index)
+                continue
+            # Whether the scene has a shot to cut in: any length here (the render measures it
+            # against the narration), accepted by the Owner or by clip QC.
+            shot = _shot_take(
+                session,
+                storyboard_id,
+                index,
+                motion_fields(scene, still.sha256, from_prompt=False),
+                0.0,
+            )
+            accepted = False
+            if shot is not None:
+                accepted, reason = clip_accepted(session, shot, environment)
+                if not accepted:
+                    why_not[index] = reason
+            else:
+                refusal, _record = _scene_clip_refusal(session, storyboard_id, index)
+                if refusal:
+                    why_not[index] = refusal
+            shots.append(
+                {
+                    "scene_index": index,
+                    "scene_kind": LIVE_KIND,
+                    "motion": {"reused_take": True} if accepted else None,
+                }
+            )
     if missing:
         raise TakesMissing(
             "Filmul nu se poate asambla din imaginile aprobate: "
             + ", ".join(f"Scena {n}" for n in missing)
             + " nu are o imagine aprobată pentru promptul de acum. Nimic nu a fost cumpărat."
         )
-    return assemble_video_job(engine, storyboard_id, correlation_id, takes_only=True, **render)
+    _require_chosen_stills(
+        engine,
+        storyboard_id,
+        {"scenes": shots},
+        environment=environment,
+        settings=render.get("settings"),
+        why_not=why_not,
+    )
+    film = assemble_video_job(engine, storyboard_id, correlation_id, takes_only=True, **render)
+    spend = book_film_spend(engine, storyboard_id, str(film["job_id"]))
+    if spend:
+        film["production"]["credits_measured"] = spend
+    return film
+
+
+def _require_chosen_stills(
+    engine: Engine,
+    storyboard_id: str,
+    production: dict[str, Any],
+    *,
+    environment: str,
+    settings: Any | None,
+    why_not: dict[int, str] | None = None,
+) -> dict[str, Any]:
+    """`qc.require_chosen_fallbacks`, raised as `ClipsNotAccepted` with each scene's reason:
+    in PRODUCTION a LIVE scene without an accepted clip is a still only by the Owner's
+    LOCAL_MOVE on the sheet. Returns the verdict (recorded on the film)."""
+    from app.media import qc as clip_qc  # noqa: PLC0415 - qc reads the media models
+
+    try:
+        return clip_qc.require_chosen_fallbacks(
+            engine, storyboard_id, production, environment=environment, settings=settings
+        )
+    except clip_qc.FallbackNotChosen as exc:
+        reasons = [(why_not or {}).get(index) for index in exc.scenes]
+        details = " ".join(reason for reason in reasons if reason)
+        raise ClipsNotAccepted(
+            list(exc.scenes),
+            f"{exc.message_ro}" + (f" {details}" if details else ""),
+        ) from exc
+
+
+#: The paid steps of a film whose own event records the account's balance before and after:
+#: the stills step, each motion step (the hero test shot, the motion, a motion redo) and a
+#: still redo.
+SPEND_STEP_EVENTS: tuple[str, ...] = (
+    "media.stills_step_finished",
+    "media.motion_step_finished",
+    "media.scene_redone",
+)
+#: The accountant's event (economy.credits.record_credit_spend), read to book a step once.
+CREDITS_BOOKED_EVENT = "economy.credits_measured"
+
+
+def _credits(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value)
+
+
+def film_step_spend(engine: Engine, storyboard_id: str) -> dict[str, dict[str, Any]]:
+    """What each paid step of the film moved the account by, from the step's own event.
+
+    One entry per step that bought something and saw the balance drop, keyed by its event
+    (``<event_type>:<event_id>``), in the shape ``production['credits_measured']`` keeps
+    (kind, unit, before, after, spent), so the QC letter reads real credits. A step that read
+    no balance is not a measurement and is left out; a rise (a top-up) is not a spend.
+    """
+    spend: dict[str, dict[str, Any]] = {}
+    with Session(engine) as session:
+        for event in session.scalars(
+            select(DomainEvent)
+            .where(
+                DomainEvent.aggregate_id == storyboard_id,
+                DomainEvent.event_type.in_(SPEND_STEP_EVENTS),
+            )
+            .order_by(DomainEvent.sequence)
+        ):
+            payload = event.payload if isinstance(event.payload, dict) else {}
+            before = _credits(payload.get("balance_before"))
+            after = _credits(payload.get("balance_after"))
+            if before is None or after is None or before - after <= 0:
+                continue
+            step = payload.get("step") or (
+                "stills"
+                if event.event_type == "media.stills_step_finished"
+                else payload.get("kind")
+            )
+            item: dict[str, Any] = {
+                "kind": "runway",
+                "unit": "credits",
+                "before": before,
+                "after": after,
+                "spent": before - after,
+                "step": step,
+                "event_id": event.event_id,
+            }
+            per_credit = _credits(payload.get("credit_usd"))
+            if per_credit:
+                item["usd"] = round((before - after) * per_credit, 4)
+            spend[f"{event.event_type}:{event.event_id}"] = item
+    return spend
+
+
+def book_film_spend(engine: Engine, storyboard_id: str, render_job_id: str) -> dict[str, Any]:
+    """Book the film's measured step spend once, and write all of it on the film.
+
+    The steps not yet booked by any film go through the accountant
+    (`economy.credits.record_credit_spend`, one ``economy.credits_measured`` event on this
+    render); a step an earlier film of the same takes booked is not booked again. The film's
+    ``production['credits_measured']`` carries every step, booked now or before
+    (``booked_now``), so its QC letter says what the film cost instead of "necunoscut".
+    """
+    from app.economy.credits import record_credit_spend  # noqa: PLC0415 - economy reads media
+
+    spend = film_step_spend(engine, storyboard_id)
+    if not spend:
+        return {}
+    booked: set[str] = set()
+    with Session(engine) as session:
+        for event in session.scalars(
+            select(DomainEvent).where(DomainEvent.event_type == CREDITS_BOOKED_EVENT)
+        ):
+            measured = (event.payload or {}).get("measured")
+            if isinstance(measured, dict):
+                booked |= set(measured)
+    fresh = {key: item for key, item in spend.items() if key not in booked}
+    if fresh:
+        record_credit_spend(
+            engine,
+            render_job_id,
+            {key: {"kind": "runway", "balance": item["before"]} for key, item in fresh.items()},
+            {key: {"kind": "runway", "balance": item["after"]} for key, item in fresh.items()},
+        )
+    for key, item in spend.items():
+        item["booked_now"] = key in fresh
+    with Session(engine) as session, session.begin():
+        job = session.get(VideoRenderJob, render_job_id)
+        if job is not None:
+            production = dict(job.production_json) if isinstance(job.production_json, dict) else {}
+            production["credits_measured"] = spend
+            job.production_json = production
+    return spend
 
 
 def _compose_card_clip(
@@ -2241,6 +2472,10 @@ def _timeline_record(
                 "moving": not is_composed(scene) and motion_clips[position] is not None,
                 "composed": card_clips[position] is not None,
                 "held_seconds": round(holds[position], 3),
+                # What quality control reads of the span (qc.timeline_spans): the scene's
+                # kind, and how long its words are (None: not measured).
+                "kind": scene_kind_of(scene),
+                "spoken_seconds": scene.get("audio_seconds"),
             }
         )
         clock += length
@@ -2382,6 +2617,154 @@ def _shot_take(
     ]
     found.sort(key=lambda take: 0 if take.status == "APPROVED" else 1)
     return found[0] if found else None
+
+
+# --------------------------------------------------------------- clip QC on the shot takes
+#
+# Every shot the motion staircase buys is checked before anything else happens to it
+# (qc.check_clip: its motion against the floor of its camera move, a hard cut, YuNet on its
+# first, middle and last frames when the bible forbids faces, and the vision model's look).
+# The report is kept on the take, as an event. A clip a check measured wrong is REJECTED and
+# never cut in; a clip nobody could check stays PAID and waits for the Owner's look: in
+# PRODUCTION only his APPROVED or a passing report lets a shot into the film.
+
+#: The event a shot's clip-QC report is kept in, on its take (aggregate ``scene_take``).
+CLIP_QC_EVENT = "media.clip_qc_checked"
+#: The failure code of a shot the studio's clip check, not the vendor, refused.
+CLIP_QC_FAILURE_CODE = "QC.CLIP"
+
+
+def clip_report_record(report: Any) -> dict[str, Any]:
+    """A ``qc.ClipReport`` as the take's event and the scene's record keep it.
+
+    ``verdict`` is PASSED; FAILED when a check measured the clip wrong (the take is
+    rejected); or UNCHECKED when every block is a check that could not run, which a retry
+    cannot repair: the clip was paid for and waits for the Owner's look.
+    """
+    checks = [
+        {
+            "code": item.code,
+            "status": item.status,
+            "blocking": bool(item.blocking),
+            "value": item.value,
+            "detail_ro": item.detail_ro,
+        }
+        for item in report.checks
+    ]
+    if report.passed:
+        verdict = "PASSED"
+    elif any(item["blocking"] and item["status"] == "FAILED" for item in checks):
+        verdict = "FAILED"
+    else:
+        verdict = "UNCHECKED"
+    return {
+        "scene": int(report.scene),
+        "passed": bool(report.passed),
+        "verdict": verdict,
+        "checks": checks,
+        "blocks_ro": list(report.blocks_ro),
+        "warnings_ro": list(report.warnings_ro),
+        "unmeasured": list(report.unmeasured),
+        "measured": json.loads(json.dumps(report.measured or {}, default=str)),
+    }
+
+
+def _keep_clip_report(
+    engine: Engine,
+    take_id: str,
+    record: dict[str, Any],
+    *,
+    storyboard_id: str,
+    scene_number: int,
+    seed: int | None,
+    attempt: int,
+    correlation_id: str,
+) -> None:
+    """Write one clip's report on its take; a clip measured wrong is REJECTED (QC.CLIP)."""
+    with Session(engine) as session, session.begin():
+        row = session.get(SceneTake, take_id)
+        if row is not None and record["verdict"] == "FAILED" and row.status == "PAID":
+            row.status = "REJECTED"
+            row.failure_code = CLIP_QC_FAILURE_CODE
+            row.failure_detail = ("Controlul clipului: " + "; ".join(record["blocks_ro"]))[
+                :TAKE_DETAIL_MAX
+            ]
+            row.updated_at = utc_now()
+        append_event(
+            session,
+            CLIP_QC_EVENT,
+            "scene_take",
+            take_id,
+            1,
+            {
+                "storyboard_id": storyboard_id,
+                "scene_number": scene_number,
+                "take_id": take_id,
+                "seed": seed,
+                "attempt": attempt,
+                **record,
+            },
+            correlation_id,
+        )
+
+
+def clip_qc_of(session: Session, take_id: str) -> dict[str, Any] | None:
+    """The latest clip-QC report kept on a take, or None when it was never checked."""
+    event = session.scalars(
+        select(DomainEvent)
+        .where(DomainEvent.event_type == CLIP_QC_EVENT, DomainEvent.aggregate_id == take_id)
+        .order_by(DomainEvent.sequence.desc())
+        .limit(1)
+    ).first()
+    return dict(event.payload) if event is not None and isinstance(event.payload, dict) else None
+
+
+def clip_accepted(session: Session, take: SceneTake, environment: str) -> tuple[bool, str]:
+    """Whether a usable shot take may be cut into the film, and the Owner's reason when not.
+
+    His APPROVED look accepts it; otherwise its clip QC must have passed. In TEST a paid shot
+    nobody could check is used (the rehearsal's takes predate clip QC); in PRODUCTION it
+    waits for his look on the sheet.
+    """
+    if take.status == "APPROVED":
+        return True, ""
+    record = clip_qc_of(session, take.id) or {}
+    verdict = record.get("verdict")
+    if verdict == "PASSED":
+        return True, ""
+    if verdict != "FAILED" and environment != "PRODUCTION":
+        return True, ""
+    why = "; ".join(str(text) for text in record.get("blocks_ro") or []) or (
+        "clipul nu a fost verificat de controlul clipului"
+    )
+    return False, (
+        f"Scena {take.scene_number}: cadrul plătit nu a trecut controlul clipului ({why}) și "
+        "Proprietarul nu l-a aprobat pe foaia de filmare."
+    )
+
+
+def _scene_clip_refusal(
+    session: Session, storyboard_id: str, scene_number: int
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Why a scene has no shot to cut in: its latest shot refused by clip QC, and its report."""
+    row = session.scalars(
+        select(SceneTake)
+        .where(
+            SceneTake.storyboard_id == storyboard_id,
+            SceneTake.scene_number == scene_number,
+            SceneTake.kind.in_(SHOT_TAKE_KINDS),
+            SceneTake.failure_code == CLIP_QC_FAILURE_CODE,
+        )
+        .order_by(SceneTake.updated_at.desc())
+        .limit(1)
+    ).first()
+    if row is None:
+        return None, None
+    detail = str(row.failure_detail or "").removeprefix("Controlul clipului: ")
+    return (
+        f"Scena {scene_number}: cadrul plătit a picat controlul clipului ({detail}).",
+        clip_qc_of(session, row.id),
+    )
 
 
 def _record_motion_take(
@@ -2535,6 +2918,12 @@ def assemble_video_job(
         storage_root = DEFAULT_STORAGE_ROOT
     work_dir = storage_root / storyboard_id
     work_dir.mkdir(parents=True, exist_ok=True)
+    # Every film quality control has read gives back its intermediates before another is
+    # made (release_reviewed_intermediates). A sweep that cannot finish never stops a render.
+    try:
+        release_reviewed_intermediates(engine, correlation_id)
+    except Exception:  # noqa: BLE001
+        logger.warning("intermediates_not_released", exc_info=True)
 
     with Session(engine) as session, session.begin():
         sb = session.get(Storyboard, storyboard_id)
@@ -2878,7 +3267,11 @@ def assemble_video_job(
         spoken_lengths = [float(scene.get("audio_seconds") or 0.0) for scene in scenes_data]
         for scene, span, pad_at, words_for in zip(
             scenes_data,
-            scene_spans(planned_lengths, spoken_lengths),
+            scene_spans(
+                planned_lengths,
+                spoken_lengths,
+                kinds=[scene_kind_of(scene) for scene in scenes_data],
+            ),
             last_pads,
             spoken_lengths,
             strict=True,
@@ -2932,6 +3325,17 @@ def assemble_video_job(
             # again with the same prompts.
             fields = motion_fields(scene, _file_sha256(still), from_prompt=motion_from_prompt)
             found_take = _usable_motion_take(engine, storyboard_id, scene, fields, needed)
+            # What clip QC said of the shot (kept on its take), and, from takes, whether it
+            # may be cut in: in PRODUCTION only the Owner's APPROVED or a passing report.
+            found_qc: dict[str, Any] | None = None
+            not_accepted: str | None = None
+            if found_take is not None:
+                with Session(engine) as session:
+                    found_qc = clip_qc_of(session, found_take.id)
+                    if takes_only:
+                        accepted, reason = clip_accepted(session, found_take, environment)
+                        if not accepted:
+                            not_accepted, found_take = reason, None
             if found_take is not None:
                 reused_clip = _take_file(found_take, work_dir, f"motion_{scene['scene_index']:02d}")
                 motion_clips[position] = reused_clip
@@ -2949,13 +3353,18 @@ def assemble_video_job(
                         "take_id": found_take.id,
                         "take_status": found_take.status,
                         "bytes": reused_clip.stat().st_size,
+                        "clip_qc": found_qc,
                     },
                 )
                 motion_seconds += wanted
                 continue
             if takes_only:
-                # Assembling from takes buys nothing: no usable shot means the still pushed,
-                # which quality control counts as a fallback.
+                # Assembling from takes buys nothing: no accepted shot means the still pushed,
+                # which quality control counts as a fallback, and the scene says why.
+                with Session(engine) as session:
+                    refusal, refused_qc = _scene_clip_refusal(
+                        session, storyboard_id, int(scene["scene_index"])
+                    )
                 _attach_motion(
                     production,
                     scene,
@@ -2966,7 +3375,10 @@ def assemble_video_job(
                         "tier": tier,
                         "scene_category": scene_kind_of(scene),
                         "story_purpose": scene.get("story_purpose"),
-                        "refused": "nicio mișcare plătită pentru promptul de acum (imagine fixă)",
+                        "refused": not_accepted
+                        or refusal
+                        or "nicio mișcare plătită pentru promptul de acum (imagine fixă)",
+                        "clip_qc": found_qc if not_accepted else refused_qc,
                     },
                 )
                 continue
@@ -3205,6 +3617,32 @@ def assemble_video_job(
         "transition_seconds": DISSOLVE_SECONDS,
         "dissolves": sum(1 for join in joins if join > 0),
     }
+    if real_stills:
+        # No LIVE scene of a PRODUCTION film is a still unless the Owner chose LOCAL_MOVE for
+        # it on the sheet: refused here, before the sound is mastered and the film encoded.
+        # A placeholder film has no footage at all; QC blocks it from publication anyway.
+        why_not: dict[int, str] = {}
+        for entry in production["scenes"]:
+            record = entry.get("motion")
+            text = str(record.get("refused") or "") if isinstance(record, dict) else ""
+            if text:
+                why_not[int(entry["scene_index"])] = (
+                    text
+                    if text.startswith("Scena ")
+                    else f"Scena {entry['scene_index']}: mișcarea nu a fost livrată ({text})."
+                )
+        try:
+            production["fallback_gate"] = _require_chosen_stills(
+                engine,
+                storyboard_id,
+                production,
+                environment=environment,
+                settings=settings,
+                why_not=why_not,
+            )
+        except ClipsNotAccepted as exc:
+            _fail_job(str(exc), str(exc))
+            raise
 
     audio_file = work_dir / VOICE_TRACK_NAME
     if all_real:
@@ -3326,7 +3764,17 @@ def assemble_video_job(
                 _fail_job(reason, reason)
                 raise RenderEngineUnavailable(reason)
             shots.append(target)
-            shot_records.append(_shot_record(scene, target, span, joins[position]))
+            record = _shot_record(scene, target, span, joins[position])
+            composed = card_clips[position] is not None
+            record["source"] = _shot_source(
+                still=None if composed else frame_files[position],
+                clip=None if composed else motion_clips[position],
+                card=composed,
+                hold=holds[position],
+                dither=dither,
+                fps=TIMELINE_FPS,
+            )
+            shot_records.append(record)
         # Which shot file each scene is, with its sha256 and its span on the timeline: a
         # one-scene redo rebuilds one of them and rejoins the others exactly as they are.
         production["shots"] = shot_records
@@ -4085,6 +4533,7 @@ def _motion_state(
         "fields": fields_of,
         "findings": findings,
         "prices": prices,
+        "bible": bible,
     }
 
 
@@ -4299,6 +4748,34 @@ def _storyboard_event(
         append_event(session, event_type, "storyboard", storyboard_id, 1, payload, correlation_id)
 
 
+#: Where a filmed scene's prompt package must come from before anything is bought for it in
+#: PRODUCTION: the model's shot plan. Template prompts are a TEST convenience only.
+SHOT_PLAN_SOURCES: tuple[str, ...] = ("model",)
+#: An episode of the office serial may also be composed from the series' one fixed look, the
+#: look the Owner approved (S8, prompt_agent.SOURCE_SERIES_LOOK): still linted, still gated.
+SERIAL_SHOT_PLAN_SOURCES: tuple[str, ...] = ("model", "series_look")
+
+
+def shot_plan_sources(engine: Engine, storyboard_id: str) -> tuple[str, ...]:
+    """The package sources a storyboard's filmed scenes may be bought from in PRODUCTION.
+
+    A factual film needs the model's plan; the office serial's episodes accept the scenes
+    composed from the Owner-approved series look too, so his one-click serial is not held
+    with NEEDS_SHOT_PLAN when its writer's model does not answer for every beat."""
+    from app.agents.editorial import is_serial_film  # noqa: PLC0415 - agents import media
+    from app.factual.models import ScriptDraft  # noqa: PLC0415
+
+    with Session(engine) as session:
+        board = session.get(Storyboard, storyboard_id)
+        script = (
+            session.get(ScriptDraft, board.script_draft_id)
+            if board is not None and board.script_draft_id
+            else None
+        )
+        serial = is_serial_film(board, script)
+    return SERIAL_SHOT_PLAN_SOURCES if serial else SHOT_PLAN_SOURCES
+
+
 def _refuse_before_buying(
     engine: Engine,
     state: dict[str, Any],
@@ -4321,10 +4798,12 @@ def _refuse_before_buying(
             plan=plan,
         )
     if environment == "PRODUCTION":
+        sources = shot_plan_sources(engine, storyboard_id)
         unwritten = [
             int(scene["scene_index"])
             for scene in state["scenes"]
-            if not is_composed(scene) and (scene.get("prompt_json") or {}).get("source") != "model"
+            if not is_composed(scene)
+            and (scene.get("prompt_json") or {}).get("source") not in sources
         ]
         if unwritten:
             raise MotionStepRefused(
@@ -4363,6 +4842,186 @@ def _refuse_before_buying(
         )
 
 
+def _clip_plan(scene: dict[str, Any], bible: dict[str, Any]) -> Any:
+    """What one shot must be, as clip QC judges it: the still's plan, the camera move asked
+    for, the bible's face rule and rules, the look (a still_gate.StillPlan)."""
+    from app.media import stills_stage as stills  # noqa: PLC0415 - stills_stage imports us
+    from app.media.prompt_lint import bible_face_rule  # noqa: PLC0415
+    from app.media.still_gate import StillPlan  # noqa: PLC0415
+
+    raw = scene.get("prompt_json")
+    package: dict[str, Any] = raw if isinstance(raw, dict) else {}
+    intent = package.get("motion_intent")
+    asked = intent.get("camera_move") if isinstance(intent, dict) else None
+    look = str(package.get("look_block") or "")
+    return StillPlan(
+        scene=int(scene["scene_index"]),
+        still_prompt=" ".join(
+            str(package.get("still_prompt") or scene.get("visual_prompt") or "").split()
+        ),
+        camera_move=str(package.get("camera_move") or asked or ""),
+        faces_forbidden=bible_face_rule(bible) is not None,
+        bible_rules=stills._bible_rules(bible),
+        look_block=look,
+        palette_words=stills._palette_words(look),
+    )
+
+
+def _check_shot(
+    engine: Engine,
+    *,
+    storyboard_id: str,
+    correlation_id: str,
+    scene: dict[str, Any],
+    clip: Path,
+    take_id: str,
+    seed: int,
+    model_id: str,
+    adapter: Any,
+    price: float,
+    committed: float,
+    cap: float,
+    environment: str,
+    bible: dict[str, Any],
+    ffmpeg_exe: str | None,
+    buy: Callable[[int, str], tuple[Path | None, str | None]],
+    registry: Any = None,
+    clip_judge: Callable[[int, list[Path]], Any] | None = None,
+    face_counter: Callable[..., Any] | None = None,
+    clip_check: Callable[..., Any] | None = None,
+) -> dict[str, Any]:
+    """Clip QC on one bought shot (`qc.qc_clip_with_retry` with `qc.check_clip`, judged by
+    `picture_qc.judge_clip`), with at most one retry on the same model, seed + 1 and a firmer
+    motion prompt, bought by ``buy(seed, prompt) -> (clip, take_id)`` only when ``committed``
+    plus ``price`` stays within ``cap``. Every report is kept on its take.
+
+    Returns ``status`` (PAID: a shot that passed, or one nobody could check and that waits for
+    the Owner's look; NEEDS_OWNER: every shot measured wrong), the surviving ``take_id``, the
+    Owner's ``reason``, the scene's ``clip_qc`` record and ``cap_stop`` (STOPPED_AT_CAP when
+    the retry was not bought because of the cap).
+    """
+    from app.media import picture_qc  # noqa: PLC0415
+    from app.media import qc as clip_qc  # noqa: PLC0415 - qc reads the media models
+
+    index = int(scene["scene_index"])
+    plan = _clip_plan(scene, bible)
+    prompt_sent, _negative = motion_request(adapter, scene, from_still=True)
+
+    def judge(frames: list[Path]) -> Any:
+        if clip_judge is not None:
+            return clip_judge(index, list(frames))
+        return picture_qc.judge_clip(
+            engine,
+            registry,
+            frames,
+            plan,
+            correlation_id,
+            motion_prompt=prompt_sent,
+            ffmpeg_path=ffmpeg_exe,
+        )
+
+    checker = clip_check or clip_qc.check_clip
+
+    def check(path: Path) -> Any:
+        return checker(
+            path,
+            scene=index,
+            camera_move=plan.camera_move,
+            faces_forbidden=plan.faces_forbidden,
+            environment=environment,
+            ffmpeg_path=ffmpeg_exe,
+            face_counter=face_counter,
+            judge=judge,
+        )
+
+    checked_takes: list[str] = [take_id]
+
+    def buy_again(new_seed: int, new_prompt: str) -> Path | None:
+        path, new_take = buy(new_seed, new_prompt)
+        if path is None or new_take is None:
+            return None
+        checked_takes.append(new_take)
+        return path
+
+    outcome = clip_qc.qc_clip_with_retry(
+        clip,
+        check=check,
+        buy=buy_again,
+        seed=seed,
+        motion_prompt=prompt_sent,
+        camera_move=plan.camera_move,
+        model_id=model_id,
+        price_credits=float(price),
+        committed_credits=float(committed),
+        cap_credits=float(cap),
+    )
+    records: list[dict[str, Any]] = []
+    for attempt, report in enumerate(outcome.reports):
+        record = clip_report_record(report)
+        checked = checked_takes[min(attempt, len(checked_takes) - 1)]
+        used_seed = outcome.seeds[attempt] if attempt < len(outcome.seeds) else None
+        _keep_clip_report(
+            engine,
+            checked,
+            record,
+            storyboard_id=storyboard_id,
+            scene_number=index,
+            seed=used_seed,
+            attempt=attempt + 1,
+            correlation_id=correlation_id,
+        )
+        records.append({**record, "take_id": checked, "seed": used_seed})
+    surviving = [record for record in records if record["verdict"] != "FAILED"]
+    final = surviving[-1] if surviving else None
+    clip_record: dict[str, Any] = {
+        "status": outcome.status,
+        "verdict": final["verdict"] if final is not None else "FAILED",
+        "attempts": outcome.attempts,
+        "seeds": list(outcome.seeds),
+        "retry_credits": outcome.retry_credits,
+        "retry_prompt": outcome.prompt or None,
+        "reason_ro": outcome.reason_ro,
+        "take_id": final["take_id"] if final is not None else None,
+        "reports": records,
+    }
+    cap_stop: str | None = None
+    if (
+        final is None
+        and outcome.attempts == 1
+        and records
+        and records[0]["verdict"] == "FAILED"
+        and committed + price > cap
+    ):
+        cap_stop = (
+            f"STOPPED_AT_CAP: reluarea cadrului scenei {index} ({price:.0f} credite) ar depăși "
+            f"plafonul aprobat de {cap:.0f} credite (deja {committed:.0f})."
+        )
+    if final is None:
+        blocks = " ".join(records[-1]["blocks_ro"]) if records else ""
+        return {
+            "status": "NEEDS_OWNER",
+            "take_id": records[-1]["take_id"] if records else take_id,
+            "reason": f"{outcome.reason_ro} {blocks}".strip(),
+            "clip_qc": clip_record,
+            "cap_stop": cap_stop,
+        }
+    reason: str | None = None
+    if final["verdict"] == "UNCHECKED":
+        reason = (
+            f"Scena {index}: clipul nu a putut fi verificat ("
+            + ", ".join(final["unmeasured"] or ["?"])
+            + "); așteaptă privirea Proprietarului pe foaia de filmare și nu intră într-un "
+            "film de producție fără aprobarea lui."
+        )
+    return {
+        "status": "PAID",
+        "take_id": final["take_id"],
+        "reason": reason,
+        "clip_qc": clip_record,
+        "cap_stop": None,
+    }
+
+
 def run_motion_step(
     engine: Engine,
     storyboard_id: str,
@@ -4387,9 +5046,19 @@ def run_motion_step(
     requester: str = "video_editor",
     redo_scene: int | None = None,
     redo_note: str | None = None,
+    registry: Any = None,
+    clip_judge: Callable[[int, list[Path]], Any] | None = None,
+    face_counter: Callable[..., Any] | None = None,
+    clip_check: Callable[..., Any] | None = None,
 ) -> dict[str, Any]:
     """One step of the motion staircase (``test_shot`` or ``motion``), bought only under the
     Owner's yes for this plan and this cap.
+
+    Every shot bought is checked before the step goes on (`_check_shot`: qc.check_clip, the
+    vision model through ``registry`` or ``clip_judge(scene, frames)``, YuNet through
+    ``face_counter``; ``clip_check`` replaces qc.check_clip in tests). A failing shot is
+    bought again once, inside the cap, else the scene goes to the Owner; each report is kept
+    on its take and on the scene's entry (``clip_qc``).
 
     ``step='scene_redo'`` with ``redo_scene`` buys that one scene's shot again under
     ``media.scene_redo`` (`redo_scene`, the per-scene redo): the scene's old shot takes are
@@ -4428,12 +5097,13 @@ def run_motion_step(
     )
     plan = state["plan"]
     prices: PriceTable = state["prices"]
+    environment = environment or studio_environment(engine)
     _refuse_before_buying(
         engine,
         state,
         step,
         plan_hash,
-        environment=environment or studio_environment(engine),
+        environment=environment,
         plan_hash_of=plan_hash_of,
         storyboard_id=storyboard_id,
     )
@@ -4550,6 +5220,101 @@ def run_motion_step(
         identity = take_hash(state["fields"][index], model_id)
         attempts = 0
         outcome: dict[str, Any] | None = None
+        bought_clip: Path | None = None
+
+        def buy_retry(
+            new_seed: int,
+            new_prompt: str,
+            *,
+            _index: int = index,
+            _adapter: Any = adapter,
+            _model: str = model_id,
+            _price: int = price,
+            _seconds: int = seconds,
+            _still: SceneTake = still_take,
+            _identity: str = identity,
+        ) -> tuple[Path | None, str | None]:
+            """Clip QC's one retry of this scene: the same model and still, seed + 1, the
+            camera move asked more firmly; bought like any shot (balance, stop, take)."""
+            nonlocal committed, stopped
+            if stop_requested(engine):
+                stopped = "Proprietarul a oprit autonomia; nu se mai cumpără mișcare."
+                return None, None
+            _read, balance, problem = _account_balance(source)
+            if problem is not None or (balance is not None and balance < _price):
+                stopped = (
+                    f"Nu se mai cumpără mișcare: {problem}."
+                    if problem
+                    else f"Soldul furnizorului ({balance:.0f} credite) nu mai acoperă reluarea "
+                    f"scenei {_index} ({_price} credite)."
+                )
+                return None, None
+            posted: list[str] = []
+            try:
+                with _at_work(
+                    engine, "VideoEditor", "generate_motion", f"reluarea scenei {_index}"
+                ):
+                    retry_bytes, _raw = _generate_motion(
+                        _adapter,
+                        scene_dicts[_index],
+                        Path(str(_still.path)),
+                        float(_seconds),
+                        str(ffmpeg_exe),
+                        seed=new_seed,
+                        on_submitted=posted.append,
+                        prompt_text=new_prompt,
+                    )
+            except (MediaProviderError, MediaProviderNotConfigured, ValueError, OSError) as exc:
+                lost: float | None = None
+                if posted:
+                    lost = max(float(_price), float(_quoted_credits(_adapter) or 0.0))
+                    committed += lost
+                lost_take = record_take(
+                    engine,
+                    storyboard_id=storyboard_id,
+                    scene_number=_index,
+                    kind=take_kind,
+                    prompt_hash=_identity,
+                    model_id=_model,
+                    resolution=MOTION_RESOLUTION,
+                    status="REFUSED",
+                    correlation_id=correlation_id,
+                    seconds=float(_seconds),
+                    seed=new_seed,
+                    credits_quoted=lost,
+                    failure_code=failure_code_of(exc) or "TECHNICAL",
+                    failure_detail=failure_detail_of(exc),
+                )
+                if lost is not None:
+                    charged.append(
+                        {"take_id": lost_take, "model": _model, "seconds": _seconds, "spend": lost}
+                    )
+                return None, None
+            paid = max(float(_price), float(_quoted_credits(_adapter) or 0.0))
+            committed += paid
+            retry_clip = work_dir / f"{take_kind}_{_index:02d}_{uuid4().hex[:8]}.mp4"
+            retry_clip.write_bytes(retry_bytes)
+            retry_take = record_take(
+                engine,
+                storyboard_id=storyboard_id,
+                scene_number=_index,
+                kind=take_kind,
+                prompt_hash=_identity,
+                model_id=_model,
+                resolution=MOTION_RESOLUTION,
+                status="PAID",
+                correlation_id=correlation_id,
+                seconds=float(_seconds),
+                seed=new_seed,
+                credits_quoted=paid,
+                path=retry_clip,
+                sha256=_file_sha256(retry_clip),
+            )
+            charged.append(
+                {"take_id": retry_take, "model": _model, "seconds": _seconds, "spend": paid}
+            )
+            return retry_clip, retry_take
+
         while outcome is None:
             if stop_requested(engine):
                 stopped = "Proprietarul a oprit autonomia; nu se mai cumpără mișcare."
@@ -4682,7 +5447,48 @@ def run_motion_step(
                 {"take_id": take_id, "model": model_id, "seconds": seconds, "spend": spend}
             )
             bought_now.append(index)
+            bought_clip = clip
             outcome = {"status": "PAID", "take_id": take_id, "credits_quoted": spend}
+        if outcome["status"] == "PAID" and bought_clip is not None:
+            # No shot goes on unchecked: clip QC now, with its one retry inside the cap.
+            first_spend = committed
+            checked = _check_shot(
+                engine,
+                storyboard_id=storyboard_id,
+                correlation_id=correlation_id,
+                scene=scene_dicts[index],
+                clip=bought_clip,
+                take_id=str(outcome["take_id"]),
+                seed=seed,
+                model_id=model_id,
+                adapter=adapter,
+                price=float(price),
+                committed=committed,
+                cap=float(cap),
+                environment=environment,
+                bible=state["bible"],
+                ffmpeg_exe=ffmpeg_exe,
+                buy=buy_retry,
+                registry=registry,
+                clip_judge=clip_judge,
+                face_counter=face_counter,
+                clip_check=clip_check,
+            )
+            entry["clip_qc"] = checked["clip_qc"]
+            outcome = {
+                **outcome,
+                "status": checked["status"],
+                "take_id": checked["take_id"],
+                "credits_quoted": round(
+                    float(outcome["credits_quoted"]) + committed - first_spend, 4
+                ),
+            }
+            if checked["reason"]:
+                outcome["reason"] = checked["reason"]
+            if checked["status"] != "PAID" and index in bought_now:
+                bought_now.remove(index)
+            if checked["cap_stop"] and stopped is None:
+                stopped = checked["cap_stop"]
         entry.update(outcome)
         entry["attempts"] = attempts
         if outcome["status"] in ("NEEDS_OWNER", "NEEDS_STILL"):
@@ -4697,6 +5503,7 @@ def run_motion_step(
                     "reason": outcome["reason"],
                     "failure_kind": entry.get("failure_kind"),
                     "suggested": entry.get("suggested"),
+                    "clip_qc": (entry.get("clip_qc") or {}).get("verdict"),
                 },
                 correlation_id,
             )
@@ -4748,10 +5555,255 @@ def run_motion_step(
         "stopped": stopped,
         "needs_owner": [e["scene_index"] for e in results if e.get("status") == "NEEDS_OWNER"],
         "needs_still": [e["scene_index"] for e in results if e.get("status") == "NEEDS_STILL"],
+        # Clip QC: the scenes whose every shot was measured wrong (rejected, the Owner
+        # decides), and those whose shot nobody could check (it waits for his look).
+        "clip_qc_failed": [
+            e["scene_index"] for e in results if (e.get("clip_qc") or {}).get("verdict") == "FAILED"
+        ],
+        "clip_unchecked": [
+            e["scene_index"]
+            for e in results
+            if (e.get("clip_qc") or {}).get("verdict") == "UNCHECKED"
+        ],
         "credit_usd": prices.credit_usd,
     }
     _storyboard_event(engine, "media.motion_step_finished", storyboard_id, summary, correlation_id)
     return summary
+
+
+# ------------------------------------------------------------- the film's intermediates
+#
+# 2026-10-01 (DISK_AND_BREATHS): every render kept its shot intermediates for ever, about
+# 1.1 GB a film while they were lossless, and the test suite had left 321 GB of films in the
+# studio's media folder. A shot and a card clip exist to be joined into the film and read once
+# by quality control (qc.shot_duplicate_share). Once the film's QC report is recorded they are
+# deleted; the vendor takes, the stills, the film, its captions, its voice and its mastered
+# sound stay. A redo or a rejoin cuts the shots it needs again from what they were cut from
+# (each shot record's ``source``; _rederive_shot), at 0 credits.
+
+#: The event a film's released intermediates are recorded under, on the film's asset.
+INTERMEDIATES_RELEASED_EVENT = "media.intermediates_released"
+#: A render still writing into a storyboard's folder: nothing there is released meanwhile.
+_RENDERING_STATUSES = ("PENDING", "RENDERING")
+
+
+def film_intermediates(production: dict[str, Any], folder: Path) -> list[dict[str, Any]]:
+    """The intermediates a film's manifest names: each scene's shot (production['shots']) and
+    each composed card's clip. ``rederivable`` says whether a redo could cut the file again
+    (a shot recorded with its ``source``; a card, from its own spec)."""
+    found: list[dict[str, Any]] = []
+    for record in production.get("shots") or []:
+        if isinstance(record, dict) and record.get("file"):
+            found.append(
+                {
+                    "kind": "shot",
+                    "path": folder / Path(str(record["file"])).name,
+                    "sha256": record.get("sha256"),
+                    "rederivable": isinstance(record.get("source"), dict),
+                }
+            )
+    for entry in production.get("scenes") or []:
+        card = entry.get("card") if isinstance(entry, dict) else None
+        if isinstance(card, dict) and card.get("path"):
+            found.append(
+                {
+                    "kind": "card",
+                    "path": Path(str(card["path"])),
+                    "sha256": card.get("sha256"),
+                    "rederivable": True,
+                }
+            )
+    return found
+
+
+def _inside(path: Path, folder: Path) -> str | None:
+    """``path`` relative to ``folder`` (posix), or None when it lies outside it."""
+    try:
+        return path.resolve().relative_to(folder.resolve()).as_posix()
+    except (OSError, ValueError):
+        return None
+
+
+def release_intermediates(
+    engine: Engine, media_asset_id: str, correlation_id: str
+) -> dict[str, Any]:
+    """Delete a film's intermediates once its quality-control report is recorded.
+
+    Only files inside the film's own folder, that are still the bytes this film recorded, and
+    that a redo could cut again, are deleted. A file another film of the storyboard still
+    needs (finished, its QC not recorded yet) stays, and nothing is released while a render of
+    the storyboard is still writing. Returns ``status`` (RELEASED, NO_QC_REPORT,
+    ALREADY_RELEASED, BUSY or NOT_A_FILM), the ``files`` deleted (relative to the film's
+    folder), the ``bytes`` they held and what was ``kept`` and why. A release is recorded
+    once, as INTERMEDIATES_RELEASED_EVENT on the film's asset.
+    """
+    result: dict[str, Any] = {
+        "asset_id": media_asset_id,
+        "status": "NOT_A_FILM",
+        "files": [],
+        "bytes": 0,
+        "kept": [],
+    }
+    with Session(engine) as session:
+        asset = session.get(MediaAsset, media_asset_id)
+        job = session.scalar(
+            select(VideoRenderJob)
+            .where(VideoRenderJob.output_asset_id == media_asset_id)
+            .order_by(VideoRenderJob.started_at.desc())
+            .limit(1)
+        )
+        if asset is None or job is None or job.status != "COMPLETED":
+            return result
+        if session.scalar(
+            select(DomainEvent.event_id)
+            .where(
+                DomainEvent.event_type == INTERMEDIATES_RELEASED_EVENT,
+                DomainEvent.aggregate_id == media_asset_id,
+            )
+            .limit(1)
+        ):
+            return {**result, "status": "ALREADY_RELEASED"}
+        if not session.scalar(
+            select(QualityControlReport.id)
+            .where(QualityControlReport.media_asset_id == media_asset_id)
+            .limit(1)
+        ):
+            return {**result, "status": "NO_QC_REPORT"}
+        if session.scalar(
+            select(VideoRenderJob.id)
+            .where(
+                VideoRenderJob.storyboard_id == job.storyboard_id,
+                VideoRenderJob.status.in_(_RENDERING_STATUSES),
+            )
+            .limit(1)
+        ):
+            return {**result, "status": "BUSY"}
+        production = copy.deepcopy(job.production_json or {})
+        folder = Path(asset.uri_or_path).parent
+        # The files a finished film of this storyboard still needs: its QC has not read it.
+        needed: set[tuple[str, str]] = set()
+        others = session.execute(
+            select(VideoRenderJob.production_json, MediaAsset.uri_or_path, MediaAsset.id)
+            .join(MediaAsset, MediaAsset.id == VideoRenderJob.output_asset_id)
+            .where(
+                VideoRenderJob.storyboard_id == job.storyboard_id,
+                VideoRenderJob.status == "COMPLETED",
+                VideoRenderJob.id != job.id,
+            )
+        ).all()
+        reviewed = set(
+            session.scalars(
+                select(QualityControlReport.media_asset_id).where(
+                    QualityControlReport.media_asset_id.in_([row[2] for row in others])
+                )
+            )
+        )
+        for other_production, other_path, other_id in others:
+            if other_id in reviewed:
+                continue
+            for item in film_intermediates(other_production or {}, Path(other_path).parent):
+                if item.get("sha256"):
+                    needed.add((str(Path(item["path"]).resolve()), str(item["sha256"])))
+
+    released: list[str] = []
+    kept: list[dict[str, str]] = []
+    freed = 0
+    for item in film_intermediates(production, folder):
+        path = Path(item["path"])
+        name = _inside(path, folder)
+        if name is None:
+            kept.append({"file": str(path), "reason": "în afara dosarului filmului"})
+            continue
+        if not path.is_file():
+            continue
+        if not item["rederivable"]:
+            kept.append(
+                {
+                    "file": name,
+                    "reason": "randat înainte ca sursa cadrului să fie păstrată: o refacere "
+                    "nu l-ar mai putea reface",
+                }
+            )
+            continue
+        digest = _file_sha256(path)
+        if item.get("sha256") and digest != item["sha256"]:
+            kept.append({"file": name, "reason": "reconstruit între timp de alt film"})
+            continue
+        if (str(path.resolve()), digest) in needed:
+            kept.append(
+                {
+                    "file": name,
+                    "reason": "îl folosește un film mai nou, încă necitit de controlul calității",
+                }
+            )
+            continue
+        size = path.stat().st_size
+        try:
+            path.unlink()
+        except OSError as exc:
+            kept.append({"file": name, "reason": f"nu a putut fi șters ({exc.strerror})"})
+            continue
+        released.append(name)
+        freed += size
+    # A card redo's own folder is left empty once its card clip is gone.
+    for work in folder.glob("redo_*"):
+        if work.is_dir() and not any(work.iterdir()):
+            work.rmdir()
+    with Session(engine) as session, session.begin():
+        append_event(
+            session,
+            INTERMEDIATES_RELEASED_EVENT,
+            "media_asset",
+            media_asset_id,
+            1,
+            {"files": released, "bytes": freed, "kept": kept},
+            correlation_id,
+        )
+    return {**result, "status": "RELEASED", "files": released, "bytes": freed, "kept": kept}
+
+
+def release_reviewed_intermediates(engine: Engine, correlation_id: str) -> list[dict[str, Any]]:
+    """Release the intermediates of every finished film whose QC report is recorded and whose
+    release is not: what each render does first, and what a caller of quality control may do
+    the moment the report is written. Returns the releases made."""
+    with Session(engine) as session:
+        done = set(
+            session.scalars(
+                select(DomainEvent.aggregate_id).where(
+                    DomainEvent.event_type == INTERMEDIATES_RELEASED_EVENT
+                )
+            )
+        )
+        reviewed = set(
+            session.scalars(
+                select(QualityControlReport.media_asset_id)
+                .join(
+                    VideoRenderJob,
+                    VideoRenderJob.output_asset_id == QualityControlReport.media_asset_id,
+                )
+                .where(VideoRenderJob.status == "COMPLETED")
+            )
+        )
+    releases: list[dict[str, Any]] = []
+    for asset_id in sorted(reviewed - done):
+        outcome = release_intermediates(engine, asset_id, correlation_id)
+        if outcome["status"] == "RELEASED":
+            releases.append(outcome)
+    return releases
+
+
+def release_after_qc(engine: Engine, media_asset_id: str, correlation_id: str) -> dict[str, Any]:
+    """`release_intermediates` the moment a production film's QC report is recorded.
+
+    Called where a film ends (the sheet's assemble step, the daily stage, the render route),
+    so about a gigabyte of shots does not wait for the next render's sweep. A failed clean-up
+    is logged and never changes the film's verdict; the sweep stays as the backstop.
+    """
+    try:
+        return release_intermediates(engine, media_asset_id, correlation_id)
+    except Exception:  # noqa: BLE001 - a clean-up never fails the film
+        logger.warning("intermediates_release_failed", extra={"asset_id": media_asset_id})
+        return {"asset_id": media_asset_id, "status": "FAILED", "files": [], "bytes": 0}
 
 
 # ------------------------------------------------------------------------ the scene redo
@@ -5311,9 +6363,11 @@ def _run_ffmpeg(command: list[str], cwd: Path) -> subprocess.CompletedProcess[st
 
 def _verified_timeline(
     film: dict[str, Any], scenes: list[dict[str, Any]], scene_index: int
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[int]]:
     """The film's shots, each other than ``scene_index`` checked to be the very file the film
-    was joined from; a shot rebuilt since (another render) is never mixed in."""
+    was joined from; a shot rebuilt since (another render) is never mixed in. With them, the
+    scenes whose shot must be cut again from what it was cut from (its recorded ``source``):
+    its file was released after quality control, or rebuilt since by another render."""
     folder = Path(film["path"]).parent
     timeline = _film_timeline(film["production"], scenes, folder)
     if [int(item["scene_index"]) for item in timeline] != [int(s["scene_index"]) for s in scenes]:
@@ -5322,21 +6376,145 @@ def _verified_timeline(
             "Scenele storyboardului nu mai sunt cele din film: filmul nu se reasamblează pe "
             "bucăți.",
         )
+    stale: list[int] = []
     for item in timeline:
         if int(item["scene_index"]) == scene_index:
             continue
         path = folder / str(item["file"])
-        if not path.is_file():
+        missing = not path.is_file()
+        changed = not missing and bool(item.get("sha256")) and _file_sha256(path) != item["sha256"]
+        if (missing or changed) and isinstance(item.get("source"), dict):
+            stale.append(int(item["scene_index"]))
+        elif missing:
             raise SceneRedoRefused(
                 "NO_SHOTS", f"Cadrul scenei {item['scene_index']} lipsește de lângă film."
             )
-        if item.get("sha256") and _file_sha256(path) != item["sha256"]:
+        elif changed:
             raise SceneRedoRefused(
                 "SHOT_CHANGED",
                 f"Cadrul scenei {item['scene_index']} nu mai este cel din film (a fost "
                 "reconstruit între timp): nu se amestecă cadre din filme diferite.",
             )
-    return timeline
+    return timeline, stale
+
+
+def _source_file(
+    engine: Engine,
+    storyboard_id: str,
+    scene_index: int,
+    folder: Path,
+    recorded: Any,
+    digest: Any,
+) -> Path | None:
+    """The file a shot was cut from: where the render read it, else beside the film, else this
+    scene's take with the same sha256. None when none of them is on disk with those bytes."""
+    if not recorded:
+        return None
+    candidates = [Path(str(recorded)), folder / Path(str(recorded)).name]
+    if digest:
+        with Session(engine) as session:
+            candidates += [
+                Path(str(path))
+                for path in session.scalars(
+                    select(SceneTake.path).where(
+                        SceneTake.storyboard_id == storyboard_id,
+                        SceneTake.scene_number == scene_index,
+                        SceneTake.sha256 == str(digest),
+                    )
+                )
+                if path
+            ]
+    for candidate in candidates:
+        if candidate.is_file() and (not digest or _file_sha256(candidate) == digest):
+            return candidate
+    return None
+
+
+def _rederive_shot(
+    engine: Engine,
+    storyboard_id: str,
+    film: dict[str, Any],
+    scenes: list[dict[str, Any]],
+    item: dict[str, Any],
+    *,
+    ffmpeg_exe: str,
+    stamp: str,
+) -> dict[str, Any]:
+    """One shot cut again from what it was cut from, at 0 credits and with no adapter: a
+    composed card recomposed from its spec, a LIVE scene from its still or its vendor clip
+    (the file the render read, or the scene's take with the same sha256). Written under a name
+    of its own, never over a file another render may hold."""
+    folder = Path(film["path"]).parent
+    source: dict[str, Any] = item["source"]
+    index = int(item["scene_index"])
+    span = float(item["span"])
+    fps = int(source.get("fps") or film_fps(film["production"]))
+    scene = next(s for s in scenes if int(s["scene_index"]) == index)
+    hold = float(source.get("hold") or 0.0)
+    if source.get("card"):
+        background = _card_background(
+            engine, storyboard_id, film["production"], scenes, folder, index
+        )
+        work = folder / f"redo_{stamp}"
+        work.mkdir(parents=True, exist_ok=True)
+        try:
+            card = _compose_card_clip(
+                scene, work, seconds=span, background=background, ffmpeg_exe=ffmpeg_exe, fps=fps
+            )
+        except CardError as exc:
+            raise SceneRedoRefused(
+                "NO_SHOTS", f"Scena {index}: cardul nu poate fi recompus: {exc}"
+            ) from exc
+        clip: Path | None = Path(card["path"])
+        still = clip
+        hold = 0.0
+    else:
+        still = _source_file(
+            engine, storyboard_id, index, folder, source.get("still"), source.get("still_sha256")
+        )
+        clip = _source_file(
+            engine, storyboard_id, index, folder, source.get("clip"), source.get("clip_sha256")
+        )
+        lost: str | None = None
+        if source.get("clip") and clip is None:
+            lost = "clipul"
+        elif (source.get("still") and still is None) or (still is None and clip is None):
+            lost = "imaginea"
+        if lost is not None:
+            raise SceneRedoRefused(
+                "NO_SHOTS",
+                f"Cadrul scenei {index} nu mai este lângă film, iar {lost} din care a fost "
+                "făcut nu mai este pe disc: filmul nu se reasamblează fără să fie randat din nou.",
+            )
+    picture = still if still is not None else clip
+    if picture is None:  # refused above; kept for the type checker
+        raise SceneRedoRefused("NO_SHOTS", f"Cadrul scenei {index} nu are sursă.")
+    target = folder / f"shot_{index:02d}_{stamp}.mp4"
+    built = _run_ffmpeg(
+        _shot_command(
+            ffmpeg_exe,
+            picture,
+            clip,
+            span,
+            target,
+            fps=fps,
+            hold=hold,
+            dither=bool(source.get("dither", True)),
+        ),
+        folder,
+    )
+    if built.returncode != 0 or not target.is_file() or target.stat().st_size == 0:
+        target.unlink(missing_ok=True)
+        raise SceneRedoRefused(
+            "ENCODE_FAILED", f"Cadrul scenei {index} nu a putut fi refăcut din sursa lui."
+        )
+    return {
+        **item,
+        "file": target.name,
+        "sha256": _file_sha256(target),
+        "rederived": True,
+        "recorded_sha256": item.get("sha256"),
+    }
 
 
 def _rebuild_film(
@@ -5368,7 +6546,7 @@ def _rebuild_film(
     source = Path(film["path"])
     folder = source.parent
     _title, scenes = _storyboard_scenes(engine, storyboard_id)
-    timeline = _verified_timeline(film, scenes, scene_index)
+    timeline, stale = _verified_timeline(film, scenes, scene_index)
     target = next(item for item in timeline if int(item["scene_index"]) == scene_index)
     scene = next(s for s in scenes if int(s["scene_index"]) == scene_index)
     span = float(target["span"])
@@ -5376,6 +6554,22 @@ def _rebuild_film(
     # timeline is rejoined at its 30, never a mix of the two.
     fps = film_fps(production)
     stamp = uuid4().hex[:8]
+    # The shots released after quality control (or rebuilt since by another render) are cut
+    # again from their takes first: 0 credits, no adapter, and a refusal before anything new.
+    rederived: list[int] = []
+    made: list[Path] = []
+    try:
+        for position, item in enumerate(timeline):
+            if int(item["scene_index"]) in stale:
+                timeline[position] = _rederive_shot(
+                    engine, storyboard_id, film, scenes, item, ffmpeg_exe=ffmpeg_exe, stamp=stamp
+                )
+                made.append(folder / str(timeline[position]["file"]))
+                rederived.append(int(item["scene_index"]))
+    except SceneRedoRefused:
+        for path in made:
+            path.unlink(missing_ok=True)
+        raise
     card_record: dict[str, Any] | None = None
     if redo == "card":
         work = folder / f"redo_{stamp}"
@@ -5422,6 +6616,14 @@ def _rebuild_film(
         "duration_seconds": target["duration_seconds"],
         "dissolve_seconds": target.get("dissolve_seconds", 0.0),
         "held_seconds": round(hold, 3),
+        "source": _shot_source(
+            still=None,
+            clip=None if redo == "card" else moving,
+            card=redo == "card",
+            hold=hold,
+            dither=has_filter(ffmpeg_exe, "zscale"),
+            fps=fps,
+        ),
     }
     timeline = [rebuilt if int(i["scene_index"]) == scene_index else i for i in timeline]
 
@@ -5495,6 +6697,7 @@ def _rebuild_film(
         "of_job": film["job_id"],
         "reused_shots": reused,
         "rebuilt_shots": [scene_index],
+        "rederived_shots": rederived,
         "credits": 0 if redo == "card" else None,
         "credits_quoted": credits_quoted,
     }
@@ -5518,6 +6721,7 @@ def _rebuild_film(
         "of_asset": film["asset_id"],
         "reused_shots": reused,
         "rebuilt_shots": [scene_index],
+        "rederived_shots": rederived,
     }
 
 
@@ -5659,8 +6863,14 @@ def redo_scene(
     requester: str = "video_editor",
     note: str | None = None,
     allow_over_budget: bool = False,
+    clip_judge: Callable[[int, list[Path]], Any] | None = None,
+    clip_check: Callable[..., Any] | None = None,
 ) -> dict[str, Any]:
     """Redo one scene (``still`` | ``motion`` | ``card``) or the film's sound (``audio``).
+
+    A motion redo's new shot goes through clip QC like any shot of the motion step
+    (``registry``, ``clip_judge``, ``face_counter``, ``clip_check``), with its one retry
+    inside the redo's cap; the film is rejoined only with a shot QC accepted.
 
     Card and audio cost 0 credits and need no yes. A still or motion redo buys only under the
     Owner's yes for ``media.scene_redo`` bound to ``plan_hash`` (`redo_plan`), spent once;
@@ -5730,6 +6940,10 @@ def redo_scene(
                 requester=requester,
                 redo_scene=int(plan["scene_index"]),
                 redo_note=note,
+                registry=registry,
+                clip_judge=clip_judge,
+                face_counter=face_counter,
+                clip_check=clip_check,
             )
         except MotionStepRefused as exc:
             raise SceneRedoRefused(
@@ -5741,7 +6955,9 @@ def redo_scene(
             ) from exc
         detail["motion"] = summary
         spent = (float(summary["spent_credits_quoted"]), summary["spent_credits_measured"])
-        film = _film_after_motion(engine, storyboard_id, correlation_id, plan, summary, ffmpeg_path)
+        film = _film_after_motion(
+            engine, storyboard_id, correlation_id, plan, summary, ffmpeg_path, environment
+        )
     else:
         outcome = _redo_still(
             engine,
@@ -5832,9 +7048,9 @@ def _paid_redo_gate(
         raise SceneRedoRefused("NOTHING_TO_BUY", plan["reason_ro"], plan=plan)
     if allow_over_budget:
         return
-    from app.media.shooting_sheet import _budget_refusal  # noqa: PLC0415 - it imports us
+    from app.media.shooting_sheet import may_spend_step  # noqa: PLC0415 - it imports us
 
-    budget = _budget_refusal(engine, credits_to_micros(plan["cap_credits"], plan["credit_usd"]))
+    budget = may_spend_step(engine, credits_to_micros(plan["cap_credits"], plan["credit_usd"]))
     if budget is not None:
         period, reason = budget
         raise SceneRedoRefused(
@@ -5877,6 +7093,16 @@ def _redo_done(
             "credits_measured": measured,
             "film_asset_id": (film or {}).get("output_asset_id"),
             "of_asset": plan["base_asset_id"],
+            # A still redo's balance before and after, read by the film that uses it
+            # (film_step_spend); a motion redo's are on its own motion step's event.
+            **(
+                {
+                    "balance_before": (detail.get("still") or {}).get("balance_before"),
+                    "balance_after": (detail.get("still") or {}).get("balance_after"),
+                }
+                if plan["kind"] == "still"
+                else {}
+            ),
         },
         correlation_id,
     )
@@ -5890,11 +7116,17 @@ def _film_after_motion(
     plan: dict[str, Any],
     summary: dict[str, Any],
     ffmpeg_path: str | None,
+    environment: str = "PRODUCTION",
 ) -> dict[str, Any] | None:
-    """The film rejoined with the redone shot, when one landed and a film exists."""
+    """The film rejoined with the redone shot, when one landed, clip QC accepted it and a
+    film exists. A shot nobody could check is cut into a TEST film only; in PRODUCTION it
+    waits for the Owner's look and the film is assembled again from the approved takes."""
     index = int(plan["scene_index"])
     entry: dict[str, Any] = next((e for e in summary["scenes"] if e["scene_index"] == index), {})
     if entry.get("status") != "PAID" or plan["base_asset_id"] is None:
+        return None
+    verdict = (entry.get("clip_qc") or {}).get("verdict")
+    if verdict == "FAILED" or (verdict != "PASSED" and environment == "PRODUCTION"):
         return None
     ffmpeg_exe = resolve_ffmpeg_path(ffmpeg_path)
     with Session(engine) as session:
@@ -5916,6 +7148,7 @@ def _film_after_motion(
         "take_status": take_status,
         "estimated_credits": entry.get("credits_quoted"),
         "bytes": clip.stat().st_size,
+        "clip_qc": entry.get("clip_qc"),
     }
     return _rebuild_film(
         engine,
@@ -5993,7 +7226,7 @@ def _redo_still(
     bible, scenes = stills._read_scenes(engine, storyboard_id)
     scene = next(s for s in scenes if s.index == index)
     live = [s for s in scenes if s.kind == LIVE_KIND]
-    if environment == "PRODUCTION" and scene.source != "model":
+    if environment == "PRODUCTION" and scene.source not in shot_plan_sources(engine, storyboard_id):
         raise SceneRedoRefused(
             "NEEDS_SHOT_PLAN",
             f"Scena {index} nu are promptul scris de model din planul de cadre; nu se cumpără "

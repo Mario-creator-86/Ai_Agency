@@ -152,8 +152,12 @@ def test_tts_reports_the_duration_of_the_audio_it_received(monkeypatch):
     # 120 frames, not the length the sentence "should" take.
     assert result.duration_seconds == pytest.approx(3.135, abs=0.002)
     assert result.format == "mp3"
-    assert result.word_timings == [], "the endpoint returns no alignment, so none is reported"
-    assert recorder.calls[0]["path"] == "/v1/text-to-speech/v1"
+    # Bare audio carries no alignment, so none is reported (the timed answer is covered in
+    # test_elevenlabs_timestamps.py).
+    assert result.word_timings == []
+    assert recorder.calls[0]["path"] == (
+        "/v1/text-to-speech/v1/with-timestamps?output_format=mp3_44100_128"
+    )
 
 
 def test_tts_without_a_voice_refuses_before_calling_the_vendor(monkeypatch):
@@ -319,7 +323,9 @@ def test_a_503_from_the_voice_vendor_is_retried_once_and_the_audio_kept(monkeypa
     result = asyncio.run(adapter.synthesize("Hubble was launched in 1990."))
 
     assert result.duration_seconds == pytest.approx(3.135, abs=0.002)
-    assert [c["path"] for c in recorder.calls] == ["/v1/text-to-speech/v1"] * 2
+    assert [c["path"] for c in recorder.calls] == [
+        "/v1/text-to-speech/v1/with-timestamps?output_format=mp3_44100_128"
+    ] * 2
 
 
 def test_a_400_from_the_voice_vendor_is_not_retried(monkeypatch):

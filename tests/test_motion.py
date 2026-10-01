@@ -172,6 +172,8 @@ def test_the_still_becomes_the_first_frame_of_a_generated_shot(engine, tmp_path)
 
 @pytest.mark.skipif(find_ffmpeg() is None, reason="ffmpeg not installed")
 def test_a_model_that_refuses_one_shot_leaves_a_push_and_the_film_is_made(engine, tmp_path):
+    """In TEST. In PRODUCTION the same still is refused unless the Owner chose LOCAL_MOVE for
+    that scene (2026-10-01, CLIP_QC_WIRING; test_clip_qc_wiring.py)."""
     from test_phase5_media import _seeded_storyboard
 
     storyboard_id, _ = _seeded_storyboard(engine, tmp_path)
@@ -184,6 +186,7 @@ def test_a_model_that_refuses_one_shot_leaves_a_push_and_the_film_is_made(engine
         storage_root=tmp_path / "media",
         image_adapter=StubImages(),
         video_adapter_for_scene=lambda scene: motion,
+        environment="TEST",
     )
 
     with Session(engine) as session:
@@ -317,6 +320,8 @@ def test_a_film_whose_picture_ends_early_is_not_recorded(engine, tmp_path, monke
             str(uuid4()),
             storage_root=tmp_path / "media",
             image_adapter=StubImages(),
+            # A film of pushed stills: in PRODUCTION it is refused before its encode.
+            environment="TEST",
         )
     assert "picture is 1.00s" in str(excinfo.value)
     with Session(engine) as session:
@@ -426,6 +431,7 @@ def test_a_ceiling_stops_the_motion_pass_and_a_test_renders_the_minimum(engine, 
         image_adapter=StubImages(),
         video_adapter_for_scene=lambda scene: limited,
         motion_scene_limit=1,
+        environment="TEST",
     )
     with Session(engine) as session:
         production = session.get(VideoRenderJob, render["job_id"]).production_json
@@ -595,6 +601,7 @@ def test_the_approved_hero_test_shot_is_the_films_first_shot_and_nothing_is_boug
     from app.media.assembler import assemble_from_takes, decide_take
     from app.media.models import SceneTake
     from test_approvals import answer
+    from test_clip_qc_wiring import passing
     from test_film_costing import SEEDANCE, Account, Models, SpyVideo, a_film, run, takes
 
     storyboard_id = a_film(engine, tmp_path, scenes=2)
@@ -602,9 +609,9 @@ def test_the_approved_hero_test_shot_is_the_films_first_shot_and_nothing_is_boug
     models = Models(SpyVideo("seedance2_5", account, clip=a_clip(tmp_path)))
     for step in ("test_shot", "motion"):
         with pytest.raises(Exception) as asked:
-            run(engine, storyboard_id, tmp_path, step, models, account)
+            run(engine, storyboard_id, tmp_path, step, models, account, clip_check=passing())
         answer(engine, asked.value.approval_id, "APPROVED")
-        run(engine, storyboard_id, tmp_path, step, models, account)
+        run(engine, storyboard_id, tmp_path, step, models, account, clip_check=passing())
         if step == "test_shot":
             (hero,) = takes(engine, storyboard_id, "test_shot")
             decide_take(engine, hero.id, "APPROVED", decided_by="owner")

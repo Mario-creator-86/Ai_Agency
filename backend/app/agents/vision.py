@@ -24,13 +24,85 @@ hires, still cuts film, and is told here, honestly, that nobody looked.
 
 from __future__ import annotations
 
+import subprocess
+from collections.abc import Sequence
+from pathlib import Path
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agents.editorial import VISION, frames_for, model_can_see
 from app.agents.models import Agent, Capability, ModelCapability, Role
+from app.media.toolchain import find_ffmpeg
 
-__all__ = ["VISION", "frames_for", "model_can_see", "vision_agent"]
+__all__ = ["SPAN_FRAME_WIDTH", "VISION", "frames_at", "frames_for", "model_can_see", "vision_agent"]
+
+#: The width quality control cuts a film's frames at: the delivered 1080 px, so a face or a
+#: letter the viewer will see is there to be seen. `frames_for` cuts 480 px for one quick
+#: look per scene; a 480 px frame of a 1080 px film hides exactly the small faces the
+#: Nepal bible forbade.
+SPAN_FRAME_WIDTH = 1080
+
+
+def frames_at(
+    path: str,
+    ffmpeg_path: str | None,
+    frame_numbers: Sequence[int],
+    work_dir: Path,
+    *,
+    width: int = SPAN_FRAME_WIDTH,
+) -> dict[int, Path]:
+    """The film's frames with these numbers, as PNGs ``width`` px wide, cut in one pass.
+
+    Quality control asks for the first, middle and last frame of every scene's span on the
+    film's own timeline (`app.media.qc.span_picture_qc`). One decode of the film selects them
+    all by number, so a frame is the frame the viewer sees, not the keyframe nearest a
+    timestamp. Empty when there is no encoder, no file, nothing asked or the cut fails: the
+    caller reads that as "not looked at", never as a pass.
+    """
+    ffmpeg = find_ffmpeg(ffmpeg_path)
+    file = Path(path)
+    wanted = sorted({int(n) for n in frame_numbers if int(n) >= 0})
+    if not ffmpeg or not file.is_file() or not wanted:
+        return {}
+    work_dir.mkdir(parents=True, exist_ok=True)
+    stem = "span_frame"
+    for old in work_dir.glob(f"{stem}_*.png"):
+        old.unlink()
+    select_frames = "+".join(f"eq(n\\,{n})" for n in wanted)
+    try:
+        result = subprocess.run(  # noqa: S603 - argument list, no shell
+            [
+                ffmpeg,
+                "-v",
+                "error",
+                "-nostdin",
+                "-y",
+                "-threads",
+                "2",
+                "-i",
+                str(file),
+                "-an",
+                "-vf",
+                f"select='{select_frames}',scale={width}:-2:flags=lanczos",
+                "-fps_mode",
+                "passthrough",
+                str(work_dir / f"{stem}_%d.png"),
+            ],
+            capture_output=True,
+            timeout=300,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    out = [work_dir / f"{stem}_{i}.png" for i in range(1, len(wanted) + 1)]
+    # A film shorter than a number asked for returns fewer frames, and then the order no
+    # longer says which frame is which: nothing is returned rather than a wrong frame.
+    if result.returncode != 0 or not all(frame.is_file() for frame in out):
+        return {}
+    if (work_dir / f"{stem}_{len(wanted) + 1}.png").exists():
+        return {}
+    return dict(zip(wanted, out, strict=True))
 
 
 def vision_agent(session: Session, *prefer_roles: str) -> tuple[str, str] | None:

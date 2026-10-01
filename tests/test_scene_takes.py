@@ -283,8 +283,15 @@ def test_approved_stills_are_assembled_without_a_single_image_call(engine, tmp_p
         assert session.scalars(select(VideoRenderJob)).all() == []
 
     approve_stills(engine, storyboard_id)
+    # No shot was bought: every LIVE scene is a pushed still, which only a TEST film may be
+    # without the Owner's LOCAL_MOVE (test_clip_qc_wiring.py holds PRODUCTION to it).
     film = assemble_from_takes(
-        engine, storyboard_id, str(uuid4()), storage_root=tmp_path / "media", image_adapter=images
+        engine,
+        storyboard_id,
+        str(uuid4()),
+        storage_root=tmp_path / "media",
+        image_adapter=images,
+        environment="TEST",
     )
     assert len(images.asked) == 4, "assembling approved takes asked the image model again"
     assert Path(film["file_path"]).is_file()
@@ -356,6 +363,8 @@ def test_a_refused_clip_keeps_the_vendors_reason_on_its_take(engine, tmp_path):
         storage_root=tmp_path / "media",
         image_adapter=SpyImages(),
         video_adapter_for_scene=lambda scene: motion,
+        # The refused scene is a pushed still: a TEST film (PRODUCTION refuses it).
+        environment="TEST",
     )
 
     refused = [t for t in takes(engine, storyboard_id) if t.kind == "motion"]

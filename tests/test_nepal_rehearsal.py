@@ -925,3 +925,71 @@ def test_the_real_nepal_film_rehearses_from_a_copy(tmp_path, settings):  # pragm
     assert snapshot(media) == original
     assert result["credits"] == 0
     engine.dispose()
+
+
+# ------------------------------------- the sheet before a render tells the timeline's truth
+
+
+@requires_ffmpeg
+@requires_yunet
+def test_the_sheet_before_a_render_measures_a_clip_against_the_timelines_own_span(
+    engine, tmp_path, vendors
+):
+    """Before a render the sheet foresaw a clip's span as max(plan, words) + 0.4 s, the
+    formula from before the 24 fps timeline. The film lasts each scene's words plus a breath
+    (scene_spans), so a 3 s hero clip under a 5 s plan and 1.6 s of words fills its scene,
+    and the sheet must not call it too short before the render proves otherwise."""
+    from app.media.assembler import scene_joins, scene_spans, shot_spans
+    from app.media.rehearsal import adopt_existing_files
+
+    folder = media_folder(tmp_path / "media")
+    storyboard_id = nepal_board(engine, folder)
+    with Session(engine) as session, session.begin():
+        scene = session.scalars(
+            select(StoryboardScene).where(
+                StoryboardScene.storyboard_id == storyboard_id, StoryboardScene.scene_index == 1
+            )
+        ).one()
+        scene.duration_seconds = 5.0
+
+    adopted = adopt_existing_files(
+        engine,
+        storyboard_id,
+        folder,
+        rehearsal_root=tmp_path / "rehearsal",
+        issued_by="owner",
+        cards={5: CARD},
+    )
+
+    rows = {row["scene_index"]: row for row in adopted["sheet"]["scenes"]}
+    spoken = [float(rows[n]["voice"]["seconds"]) for n in range(1, 7)]
+    planned = [5.0] + [PLANNED_SECONDS] * 5
+    spans = scene_spans(planned, spoken)
+    scenes = [
+        {"scene_index": n, "duration_seconds": span, "transition_in": "CUT"}
+        for n, span in enumerate(spans, start=1)
+    ]
+    shots = shot_spans(scenes, scene_joins(scenes))
+    hero = rows[1]["motion"]
+    assert hero["scene_seconds"] == pytest.approx(round(spans[0], 3))
+    assert hero["span"] == pytest.approx(round(shots[0], 3))
+    # The old formula's 5.4 s would have left the paid clip out.
+    assert hero["span"] < 2.0
+    assert hero["used"] is True
+    assert "(seedance2_5, 3,00 s) se folosește" in rows[1]["line_ro"]
+    assert vendors == []
+
+
+def test_without_every_voice_the_sheet_foresees_the_planned_lengths_on_whole_frames():
+    """The assembler keeps the plan when the narration is not all real; so does the sheet."""
+    from app.media.assembler import whole_frames
+    from app.media.rehearsal import foreseen_spans
+
+    views = [
+        {"scene_index": 1, "duration_seconds": 2.01, "transition_in": "CUT"},
+        {"scene_index": 2, "duration_seconds": 3.0, "transition_in": "DISSOLVE"},
+    ]
+    scene_seconds, shots = foreseen_spans(views, [1.6, None])
+    assert scene_seconds == [whole_frames(2.01), whole_frames(3.0)]
+    # Scene 1's shot also covers the dissolve that scene 2 asks for.
+    assert shots[0] > scene_seconds[0] and shots[1] == scene_seconds[1]

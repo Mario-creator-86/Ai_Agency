@@ -1469,7 +1469,9 @@ def test_a_storyboard_the_content_gate_refuses_is_named_and_the_day_goes_on(
 # then spends it and buys that step alone. The stage writes him the sheet and a letter and
 # goes on. Every vendor below is a spy; the Owner's own database is never opened.
 
-LIVE_DB = Path(__file__).resolve().parents[1] / "data" / "studio.db"
+#: Only its size and time are read (`_stamp`); nothing here opens it.
+_REPO = Path(__file__).resolve().parents[1]
+LIVE_DB = _REPO / "data" / "studio.db"
 
 
 def _stamp(path: Path) -> tuple[int, int] | None:

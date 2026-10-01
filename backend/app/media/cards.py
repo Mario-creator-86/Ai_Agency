@@ -902,12 +902,17 @@ def compose_card(
             "-r",
             str(fps),
             "-an",
+            # The shot intermediate's encode (assembler.INTERMEDIATE_VIDEO_ARGS, measured
+            # 2026-10-01): x264 High at CRF 4, visually lossless for the one final encode, at
+            # 0.06 MB a second for a chart over a blurred still (0.10 lossless).
             "-c:v",
             "libx264",
-            "-qp",
-            "0",
+            "-profile:v",
+            "high",
             "-preset",
-            "fast",
+            "veryfast",
+            "-crf",
+            "4",
             "-pix_fmt",
             "yuv420p",
             "-color_range",

@@ -5,6 +5,9 @@ Following docs/architecture/08_VIDEO_PIPELINE.md:
 - Factual QC: every referenced claim must remain SUPPORTED in the database.
 - Picture QC: a model that can see reads one frame per scene and says whether it is a
   picture at all and whether it shows what the scene asked for (app.media.picture_qc).
+- Picture spans QC: every filmed scene is judged on the first, middle and last frame of its
+  span on the film's timeline, at the delivered 1080 px, with the per-clip checklist
+  (picture_qc.judge_clip), and YuNet counts faces on each frame when the bible forbids them.
 - Character Drift QC: the same look, against the Character Bible's canonical description.
 - Rights/License QC: all assets must be clear of copyright blocks.
 - Audio QC: the film measures at the platform's loudness, under the true-peak ceiling.
@@ -20,11 +23,12 @@ import difflib
 import hashlib
 import json
 import logging
+import math
 import re
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -34,6 +38,7 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from app.agents.memory import agent_for_role, remember
+from app.agents.vision import SPAN_FRAME_WIDTH, frames_at
 from app.factual.models import FactualClaim
 from app.media.models import (
     MediaAsset,
@@ -42,7 +47,8 @@ from app.media.models import (
     StoryboardScene,
     VideoRenderJob,
 )
-from app.media.picture_qc import evaluate_pictures
+from app.media.picture_qc import evaluate_pictures, judge_clip
+from app.media.prompt_lint import bible_face_rule
 from app.media.schemas import QCReportView
 from app.media.toolchain import (
     LOUDNESS_TARGET_LUFS,
@@ -318,6 +324,8 @@ def evaluate_media_qc(
     *,
     registry: Any | None = None,
     ffmpeg_path: str | None = None,
+    span_judge: Callable[[list[Path], Any], Any] | None = None,
+    face_counter: Callable[..., Any] | None = None,
 ) -> dict:
     """Run comprehensive Quality Control check on a rendered media asset.
 
@@ -330,6 +338,9 @@ def evaluate_media_qc(
     encoder that cuts one frame per scene. Without either, the picture and character checks
     report NOT_APPLICABLE with the reason and the film's verdict is unchanged — never a
     pass by absence.
+
+    ``span_judge`` and ``face_counter`` replace the per-scene look of `span_picture_qc` (the
+    judge bound to ``registry`` and YuNet) for a test; nothing else passes them.
     """
     qc_id = str(uuid4())
     verified_at = utc_now()
@@ -343,6 +354,17 @@ def evaluate_media_qc(
     # one SQLite connection are a lock, not a gate.
     pictures = evaluate_pictures(
         engine, registry, media_asset_id, correlation_id, ffmpeg_path=ffmpeg_path
+    )
+    # The same, scene by scene: three frames of each filmed scene's span at 1080 px. One
+    # vision call per scene, so it runs here too, outside the report's transaction.
+    spans_look = span_picture_qc(
+        engine,
+        registry,
+        media_asset_id,
+        correlation_id,
+        ffmpeg_path=ffmpeg_path,
+        judge=span_judge,
+        face_counter=face_counter,
     )
 
     with Session(engine) as session, session.begin():
@@ -499,6 +521,9 @@ def evaluate_media_qc(
         narration_seconds = narration_seconds_of(manifest)
         planned = {sc.scene_index: float(sc.duration_seconds or 0.0) for sc in storyboard_scenes}
         spans = moving_spans(manifest, planned)
+        # What the film may last beyond its words: the breath the timeline plans after each
+        # scene's words, and the silent cards up to their own maximum (film_length_budget).
+        budget = film_length_budget(manifest, planned)
         # Counted on the lossless shots when the render kept them; the lossy film only for
         # renders that did not (a slow clip reads like a repeated frame after CRF 17).
         duplicates = shot_duplicate_share(ffmpeg, manifest, file_path.parent, spans)
@@ -513,6 +538,7 @@ def evaluate_media_qc(
                 timeline_fps=timeline_fps,
                 narration_seconds=narration_seconds,
                 duplicate_share=duplicates,
+                budget=budget,
             )
             failure_reasons.extend(delivery_failures)
             tech_passed = tech_passed and not delivery_failures
@@ -532,6 +558,7 @@ def evaluate_media_qc(
                     round(narration_seconds, 3) if narration_seconds is not None else None
                 ),
                 "moving_spans": [list(span) for span in spans],
+                "length_budget": budget,
                 "duplicate_share": round(duplicates, 4) if duplicates is not None else None,
                 "environment": environment,
                 "failures": delivery_failures,
@@ -706,6 +733,14 @@ def evaluate_media_qc(
         checks["picture_qc"] = pictures["picture_qc"]
         checks["character_drift_qc"] = pictures["character_drift_qc"]
         failure_reasons.extend(pictures["failures"])
+        # 4b. The same look, scene by scene, on three frames of each filmed scene at 1080 px.
+        #     A refusal or a face fails the film in every environment, as picture_qc does; a
+        #     face count that could not run when the bible forbids faces fails in PRODUCTION
+        #     (clip QC's rule); a look that did not happen certifies nothing (passed None).
+        checks["picture_spans_qc"] = {
+            key: value for key, value in spans_look.items() if key != "failures"
+        }
+        failure_reasons.extend(spans_look["failures"])
 
         # 3b. Content integrity — a still the generator returned as stripes or an empty field,
         #     measured when it was made and still broken after one more attempt. A technically
@@ -734,6 +769,7 @@ def evaluate_media_qc(
             # (None) leaves the verdict exactly where the other gates left it.
             and pictures["picture_qc"]["passed"] is not False
             and pictures["character_drift_qc"]["passed"] is not False
+            and spans_look["passed"] is not False
         )
         status = "PASSED" if overall_passed else "FAILED"
         score = 1.0 if overall_passed else round(max(0.0, 1.0 - (len(failure_reasons) * 0.25)), 2)
@@ -846,10 +882,14 @@ MAX_CLIP_RETRIES = 1
 #: converted to 30 fps has exactly 20% such frames; the clips as delivered, none (their
 #: slowest frame reads 0.12).
 DUPLICATE_YDIF = 0.05
-#: On a lossless shot intermediate (x264 -qp 0) a repeated frame reads exactly 0; the slowest
-#: real motion measured on the Nepal hero shot reads 0.13. The lossy film cannot separate
-#: them: after CRF 17 the same slow clip reads under 0.05 on real frames.
-LOSSLESS_DUPLICATE_YDIF = 0.01
+#: Read on the shot intermediates, which the final encode has not touched. Since 2026-10-01
+#: they are x264 High at CRF 4 (assembler.INTERMEDIATE_VIDEO_ARGS), no longer lossless.
+#: Measured on such shots: a repeated frame reads at most 0.013 (the Nepal motion_04 at 12 fps
+#: with a held end; a grained 12 fps clip, 0.003), where lossless it read exactly 0; the
+#: slowest real Nepal clip reads 0.097 (0.104 lossless), a faint-grain still 0.13. The line
+#: sits between them, with room on both sides. The lossy film cannot separate them: after
+#: CRF 17 the same slow clip reads under 0.05 on real frames.
+LOSSLESS_DUPLICATE_YDIF = 0.03
 
 #: The delivered film's technical floor: the encoder's own spec (final_video_args).
 DELIVERY_SIZE = (1080, 1920)
@@ -864,8 +904,29 @@ DEFAULT_TIMELINE_FPS = 30.0
 #: small and can be right at 7).
 MIN_VIDEO_BITRATE = 6_000_000
 WARN_VIDEO_BITRATE = 8_000_000
-#: How much longer than its narration a film may run.
+#: How much longer than its narration, its planned breaths and its silent cards a film may
+#: run (film_length_budget).
 DURATION_OVER_NARRATION_SECONDS = 1.0
+#: The breath the timeline plans after each scene's words: the assembler's SPOKEN_TAIL_SECONDS,
+#: read from production['timeline']['spoken_tail_seconds'] when the render recorded it. The
+#: film used to be held within narration + 1.0 s, so the timeline shrank every breath to keep
+#: under 0.9 s: six speaking scenes kept about 0.11 s each and every cut felt rushed. A breath
+#: the writer planned is part of the film, not film over the narration.
+BREATH_SECONDS = 0.35
+#: The scenes the studio composes itself: never filmed, never sent to a model.
+COMPOSED_KINDS = ("DATA_CARD", "TITLE_CARD", "BLACK")
+#: A scene whose recorded words are shorter than this says nothing.
+SILENT_SPOKEN_SECONDS = 0.05
+#: How long a composed card may stay silent, from what the writer's spec asks of each kind
+#: (agent_pipeline._WRITE_INSTRUCTIONS). BLACK is "a silence or the closing call to action":
+#: one beat, 2 s; a short plays in a loop, and more black than that reads as a broken file and
+#: the viewer swipes. A silent TITLE_CARD must be read: its 0.25 s fade-in, about 2 s for a
+#: title of a few words, and the card's 0.3 s hold, 2.5 s. A silent DATA_CARD must finish its
+#: animation: four bars (MAX_BARS) grow in 0.3 + 3 x 0.6 + 1.0 s, their values fade in over
+#: 0.1 + 0.25 s and the card holds 0.3 s, 3.75 s in all, inside 4 s. Silence beyond these is
+#: film over the narration and fails as such, naming the scene.
+MAX_SILENT_CARD_SECONDS: dict[str, float] = {"BLACK": 2.0, "TITLE_CARD": 2.5, "DATA_CARD": 4.0}
+_CARD_WORDS_RO = {"BLACK": "ecran negru", "TITLE_CARD": "titlu", "DATA_CARD": "grafic"}
 #: Duplicated frames tolerated on the spans of LIVE scenes that move.
 MAX_DUPLICATE_SHARE = 0.02
 #: How far from each span's edges duplicates are counted: a dissolve is not a duplicate.
@@ -1750,8 +1811,14 @@ def technical_problems(
     timeline_fps: float,
     narration_seconds: float | None,
     duplicate_share: float | None = None,
+    budget: Mapping[str, Any] | None = None,
 ) -> tuple[list[str], list[str]]:
     """What keeps the delivered file from the encoder's own spec: (failures, warnings).
+
+    ``budget`` is `film_length_budget`'s reading of the render: the film may last its
+    narration, the breaths the timeline planned and its silent cards (each up to its own
+    maximum), plus DURATION_OVER_NARRATION_SECONDS; a silent card past its maximum is a floor
+    of its own, naming the scene. Without one, the narration alone, as before.
 
     The format (size, H.264 High, yuv420p, tv range, BT.709 tags, the timeline's fps) is what
     the encoder writes whatever the picture is, so it fails in every environment. The
@@ -1804,16 +1871,21 @@ def technical_problems(
             f"Debitul video mediu este {_ro_number(rate / 1e6)} Mbps, sub cei 8 Mbps recomandați"
         )
     duration = float(probe.get("duration_seconds") or 0.0)
+    breaths = float((budget or {}).get("breath_seconds") or 0.0)
+    silent = float((budget or {}).get("silent_card_seconds") or 0.0)
     if narration_seconds is None:
         floors.append(
             "Lungimea narațiunii nu este înregistrată; durata filmului nu poate fi judecată"
         )
-    elif duration > narration_seconds + DURATION_OVER_NARRATION_SECONDS + 1e-6:
+    elif duration > narration_seconds + breaths + silent + DURATION_OVER_NARRATION_SECONDS + 1e-6:
         floors.append(
             f"Filmul durează {_ro_number(duration)} s, mai mult decât narațiunea "
-            f"({_ro_number(narration_seconds)} s) plus "
-            f"{_ro_number(DURATION_OVER_NARRATION_SECONDS)} s"
+            f"({_ro_number(narration_seconds)} s)"
+            + (f", respirațiile dintre scene ({_ro_number(breaths)} s)" if breaths else "")
+            + (f", cardurile mute ({_ro_number(silent)} s)" if silent else "")
+            + f" plus {_ro_number(DURATION_OVER_NARRATION_SECONDS)} s"
         )
+    floors.extend(str(overrun) for overrun in (budget or {}).get("overruns_ro") or [])
     if duplicate_share is not None and duplicate_share >= MAX_DUPLICATE_SHARE:
         floors.append(
             f"{_ro_number(duplicate_share * 100)}% din cadrele scenelor filmate sunt dublate "
@@ -1916,3 +1988,426 @@ def narration_seconds_of(production: dict[str, Any]) -> float | None:
             return None
         total += float(seconds)
     return total
+
+
+# --------------------------------------------------------- the film's length, scene by scene
+
+
+def _seconds(value: Any) -> float | None:
+    """A recorded length, or None when it was not recorded (a bool is not a length)."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value)
+
+
+def _kind(value: Any) -> str:
+    kind = str(value or "LIVE").upper()
+    return kind if kind in COMPOSED_KINDS else "LIVE"
+
+
+def timeline_spans(
+    production: dict[str, Any], planned: Mapping[int, float] | None = None
+) -> list[dict[str, Any]]:
+    """Every scene's place on the film's timeline, with its kind and its words.
+
+    The render's own spans when it recorded them (production['timeline']['spans']); a span
+    that names its kind (``kind``) or its words (``spoken_seconds``) is read as it says,
+    otherwise the render's per-scene record says them. A render from before the timeline
+    record is rebuilt the way it was laid out: each scene its plan or its words, whichever is
+    longer, end to end. Each item: scene_index, start, end, seconds, kind, composed, moving,
+    dissolve_seconds (the join into this scene) and spoken (None when not recorded).
+    """
+    entries: dict[int, dict[str, Any]] = {}
+    for entry in production.get("scenes") or []:
+        if isinstance(entry, dict):
+            try:
+                entries[int(entry.get("scene_index") or 0)] = entry
+            except (TypeError, ValueError):
+                continue
+    timeline = production.get("timeline")
+    recorded = timeline.get("spans") if isinstance(timeline, dict) else None
+    out: list[dict[str, Any]] = []
+    if isinstance(recorded, list) and recorded:
+        for span in recorded:
+            if not isinstance(span, dict):
+                continue
+            try:
+                index = int(span["scene_index"])
+                start, end = float(span["start"]), float(span["end"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            entry = entries.get(index, {})
+            kind = _kind(span.get("kind") or span.get("scene_kind") or entry.get("scene_kind"))
+            spoken = _seconds(span.get("spoken_seconds", entry.get("audio_seconds")))
+            out.append(
+                {
+                    "scene_index": index,
+                    "start": start,
+                    "end": end,
+                    "seconds": max(0.0, end - start),
+                    "kind": kind,
+                    "composed": bool(span.get("composed")) or kind in COMPOSED_KINDS,
+                    "moving": bool(span.get("moving")),
+                    "dissolve_seconds": float(span.get("dissolve_seconds") or 0.0),
+                    "spoken": spoken,
+                }
+            )
+        return out
+    clock = 0.0
+    for index, entry in entries.items():
+        spoken = _seconds(entry.get("audio_seconds"))
+        length = max(float((planned or {}).get(index) or 0.0), spoken or 0.0)
+        kind = _kind(entry.get("scene_kind"))
+        out.append(
+            {
+                "scene_index": index,
+                "start": clock,
+                "end": clock + length,
+                "seconds": length,
+                "kind": kind,
+                "composed": kind in COMPOSED_KINDS,
+                "moving": kind == "LIVE" and _moved(entry.get("motion")),
+                "dissolve_seconds": 0.0,
+                "spoken": spoken,
+            }
+        )
+        clock += length
+    return out
+
+
+def film_length_budget(
+    production: dict[str, Any], planned: Mapping[int, float] | None = None
+) -> dict[str, Any]:
+    """What the film may last beyond its words, read from the render's own record.
+
+    - the narration: every scene's recorded words (narration_seconds_of);
+    - the breaths: the breath the timeline plans after each speaking scene's words
+      (production['timeline']['spoken_tail_seconds'], else BREATH_SECONDS);
+    - the silent cards: a composed scene (BLACK, TITLE_CARD, DATA_CARD) with no words is a
+      deliberate silence, allowed up to its kind's MAX_SILENT_CARD_SECONDS. A longer one is
+      allowed only up to that maximum and is named in ``overruns_ro``. A silent LIVE scene is
+      not a card: its length counts against the narration as it always did.
+
+    ``allowed_seconds`` adds DURATION_OVER_NARRATION_SECONDS; None when the narration was not
+    recorded, which technical QC reports on its own.
+    """
+    narration = narration_seconds_of(production)
+    spans = timeline_spans(production, planned)
+    timeline = production.get("timeline")
+    recorded_tail = (
+        _seconds(timeline.get("spoken_tail_seconds")) if isinstance(timeline, dict) else None
+    )
+    breath = recorded_tail if recorded_tail is not None and recorded_tail >= 0 else BREATH_SECONDS
+    speaking = sum(
+        1
+        for span in spans
+        if span["spoken"] is not None and span["spoken"] >= SILENT_SPOKEN_SECONDS
+    )
+    silent_cards: list[dict[str, Any]] = []
+    overruns: list[str] = []
+    allowance = 0.0
+    for span in spans:
+        spoken = span["spoken"]
+        if span["kind"] not in COMPOSED_KINDS or spoken is None or spoken >= SILENT_SPOKEN_SECONDS:
+            continue
+        seconds = round(float(span["seconds"]), 3)
+        maximum = MAX_SILENT_CARD_SECONDS[span["kind"]]
+        within = seconds <= maximum + 1e-6
+        allowance += min(seconds, maximum)
+        silent_cards.append(
+            {
+                "scene_index": span["scene_index"],
+                "kind": span["kind"],
+                "seconds": seconds,
+                "max_seconds": maximum,
+                "within": within,
+            }
+        )
+        if not within:
+            word = _CARD_WORDS_RO[span["kind"]]
+            overruns.append(
+                f"Scena {span['scene_index']} ({word}) tace {_ro_number(seconds)} s, peste "
+                f"maximul de {_ro_number(maximum)} s al unui {word} fără narațiune"
+            )
+    breaths = round(breath * speaking, 3)
+    silent = round(allowance, 3)
+    return {
+        "narration_seconds": round(narration, 3) if narration is not None else None,
+        "speaking_scenes": speaking,
+        "breath_per_scene": breath,
+        "breath_seconds": breaths,
+        "silent_cards": silent_cards,
+        "silent_card_seconds": silent,
+        "over_seconds": DURATION_OVER_NARRATION_SECONDS,
+        "allowed_seconds": (
+            round(narration + breaths + silent + DURATION_OVER_NARRATION_SECONDS, 3)
+            if narration is not None
+            else None
+        ),
+        "overruns_ro": overruns,
+    }
+
+
+# ------------------------------------------------- the film's pictures, three frames a scene
+#
+# The film-level look in picture_qc is one 480 px frame from the middle of each scene. Here
+# each filmed scene is judged as a bought clip is (picture_qc.judge_clip): the first frame
+# after its own dissolve in, the middle and the last frame of its span on the film's own
+# timeline, at the delivered 1080 px, with YuNet counting faces on each frame when the bible
+# forbids faces. A composed card is drawn by the studio, carries text by design and is never
+# judged as a photograph.
+
+#: Which frames of a span are looked at.
+SPAN_FRAME_POSITIONS = ("first", "middle", "last")
+
+
+def span_frame_numbers(
+    start: float, end: float, fps: float, dissolve_in: float = 0.0
+) -> list[tuple[str, int]]:
+    """The first, middle and last frame of a span on a ``fps`` timeline, by number.
+
+    The first is the first whole frame once the dissolve into the scene (if any) has ended,
+    so it is the scene's own picture and not a mix; the last is the frame before the span
+    ends (a dissolve out of the scene happens inside the next scene's span)."""
+    first = max(0, math.ceil((start + max(0.0, dissolve_in)) * fps - 1e-6))
+    last = max(first, math.ceil(end * fps - 1e-6) - 1)
+    middle = (first + last + 1) // 2
+    return list(zip(SPAN_FRAME_POSITIONS, (first, middle, last), strict=True))
+
+
+def _bible_rules(bible: Mapping[str, Any]) -> tuple[str, ...]:
+    """The bible's rules as the clip judge is shown them (the stills step's own reading)."""
+    rules: list[str] = []
+    for key in ("continuity_rules", "rules", "people_rule"):
+        value = bible.get(key)
+        if isinstance(value, str) and value.strip():
+            rules.append(value.strip())
+        elif isinstance(value, list | tuple):
+            rules += [str(item).strip() for item in value if str(item).strip()]
+    return tuple(dict.fromkeys(rules))
+
+
+def span_picture_qc(
+    engine: Engine,
+    registry: Any | None,
+    media_asset_id: str,
+    correlation_id: str,
+    *,
+    ffmpeg_path: str | None = None,
+    judge: Callable[[list[Path], Any], Any] | None = None,
+    face_counter: Callable[..., Any] | None = None,
+) -> dict[str, Any]:
+    """Look at every filmed scene of one finished film on three frames of its span.
+
+    ``judge`` takes the three frame paths and the scene's StillPlan and returns a
+    picture_qc.ClipJudgement; by default judge_clip bound to ``registry`` (one vision call per
+    scene), and none without a registry. ``face_counter`` is YuNet unless a test passes its own.
+
+    A scene fails when the look refuses it or YuNet finds a face the bible forbids (every
+    environment), or when the face count could not run on a bible that forbids faces
+    (PRODUCTION; a warning in TEST). A look that did not happen certifies nothing: the scene is
+    ``passed`` None and adds no failure. ``passed`` is True only when every filmed scene was
+    looked at and passed. With no one to look and faces allowed, or no film on disk, nothing
+    is cut and the check is NOT_APPLICABLE with the reason.
+    """
+    from app.media.still_gate import StillPlan  # noqa: PLC0415 - still_gate imports this module
+
+    record: dict[str, Any] = {
+        "status": "NOT_APPLICABLE",
+        "passed": None,
+        "detail": None,
+        "frame_width": SPAN_FRAME_WIDTH,
+        "faces_forbidden": False,
+        "scenes": [],
+        "failures": [],
+        "warnings": [],
+    }
+
+    def stood_down(detail: str) -> dict[str, Any]:
+        record["detail"] = detail
+        return record
+
+    environment = studio_environment(engine)
+    with Session(engine) as session:
+        asset = session.get(MediaAsset, media_asset_id)
+        if asset is None:
+            return stood_down("materialul nu există")
+        job = session.scalar(
+            select(VideoRenderJob).where(VideoRenderJob.output_asset_id == media_asset_id)
+        )
+        if job is None:
+            return stood_down("filmul nu are o randare în spate: nu se știe unde stă fiecare scenă")
+        production: dict[str, Any] = (
+            job.production_json if isinstance(job.production_json, dict) else {}
+        )
+        board = session.get(Storyboard, job.storyboard_id)
+        bible: dict[str, Any] = (
+            board.visual_bible_json
+            if board is not None and isinstance(board.visual_bible_json, dict)
+            else {}
+        )
+        rows: dict[int, dict[str, Any]] = {}
+        for row in session.scalars(
+            select(StoryboardScene).where(StoryboardScene.storyboard_id == job.storyboard_id)
+        ):
+            package = row.prompt_json if isinstance(row.prompt_json, dict) else {}
+            rows[int(row.scene_index)] = {
+                "planned": float(row.duration_seconds or 0.0),
+                "still_prompt": str(package.get("still_prompt") or row.visual_prompt or ""),
+                "camera_move": str(package.get("camera_move") or ""),
+                "look_block": str(package.get("look_block") or ""),
+                "motion_prompt": str(package.get("motion_prompt") or ""),
+            }
+        film_path = str(asset.uri_or_path or "")
+
+    faces_forbidden = bible_face_rule(bible) is not None
+    record["faces_forbidden"] = faces_forbidden
+    if judge is None and registry is not None:
+
+        def judge(paths: list[Path], plan: Any) -> Any:
+            return judge_clip(
+                engine,
+                registry,
+                paths,
+                plan,
+                correlation_id,
+                motion_prompt=rows.get(int(plan.scene), {}).get("motion_prompt", ""),
+                ffmpeg_path=ffmpeg_path,
+            )
+
+    if judge is None and not faces_forbidden:
+        return stood_down(
+            "nimeni nu se uită la cadre: niciun model care vede nu este înregistrat, iar "
+            "biblia vizuală permite fețe"
+        )
+    if not Path(film_path).is_file():
+        return stood_down("filmul nu este pe disc: nu are ce cadre să se taie")
+    spans = timeline_spans(production, {index: row["planned"] for index, row in rows.items()})
+    if not any(not span["composed"] for span in spans):
+        return stood_down(
+            "filmul nu are scene filmate: cardurile compuse nu se judecă drept fotografii"
+        )
+    timeline = production.get("timeline")
+    fps = float(
+        (timeline.get("fps") if isinstance(timeline, dict) else None)
+        or production.get("fps")
+        or DEFAULT_TIMELINE_FPS
+    )
+    picks = {
+        span["scene_index"]: span_frame_numbers(
+            span["start"], span["end"], fps, span["dissolve_seconds"]
+        )
+        for span in spans
+        if not span["composed"]
+    }
+    if face_counter is None:
+        from app.media.faces import count_faces  # noqa: PLC0415 - opencv loads lazily
+
+        face_counter = count_faces
+    rules = _bible_rules(bible)
+    folder = Path(tempfile.mkdtemp(prefix="span_qc_"))
+    measured_any = False
+    try:
+        cut = frames_at(
+            film_path,
+            ffmpeg_path,
+            [n for chosen in picks.values() for _at, n in chosen],
+            folder / "cut",
+        )
+        for span in spans:
+            index = span["scene_index"]
+            entry: dict[str, Any] = {
+                "scene_index": index,
+                "kind": span["kind"],
+                "start": round(span["start"], 3),
+                "end": round(span["end"], 3),
+                "status": "NOT_APPLICABLE",
+                "passed": None,
+                "frames": [],
+                "faces": None,
+                "picture": None,
+                "reason": None,
+            }
+            record["scenes"].append(entry)
+            if span["composed"]:
+                entry["reason"] = "card compus de studio: nu se judecă drept fotografie"
+                continue
+            frames: list[tuple[str, float, Path]] = []
+            for at, number in picks[index]:
+                source = cut.get(number)
+                if source is None:
+                    frames = []
+                    break
+                named = folder / f"scene_{index:02d}_{at}.png"
+                shutil.copyfile(source, named)
+                frames.append((at, round(number / fps, 3), named))
+            entry["frames"] = [
+                {"at": at, "time": round(number / fps, 3), "frame": number}
+                for at, number in picks[index]
+                if frames
+            ]
+            measured: dict[str, Any] = {}
+            faces = _faces_check(
+                frames, face_counter, faces_forbidden=faces_forbidden, measured=measured
+            )
+            judgement = None
+            if judge is not None and frames:
+                asked = rows.get(index, {})
+                plan = StillPlan(
+                    scene=index,
+                    still_prompt=str(asked.get("still_prompt") or ""),
+                    camera_move=str(asked.get("camera_move") or ""),
+                    faces_forbidden=faces_forbidden,
+                    bible_rules=rules,
+                    look_block=str(asked.get("look_block") or ""),
+                )
+                judgement = judge([path for _at, _moment, path in frames], plan)
+            picture = _picture_check(judgement, faces_forbidden=faces_forbidden)
+            entry["faces"] = {
+                "status": faces.status,
+                "detail_ro": faces.detail_ro,
+                **(measured.get("faces") or {}),
+            }
+            entry["picture"] = {
+                "status": picture.status,
+                "detail_ro": picture.detail_ro,
+                "run_id": getattr(judgement, "run_id", None),
+                "looked_by": getattr(judgement, "looked_by", None),
+            }
+            problems: list[str] = []
+            if faces.status == "FAILED":
+                problems.append(faces.detail_ro)
+            elif faces.status == "NOT_RUN" and faces_forbidden:
+                if environment == "PRODUCTION":
+                    problems.append(faces.detail_ro)
+                else:
+                    record["warnings"].append(f"Scena {index}: {faces.detail_ro}")
+            if picture.status == "FAILED":
+                problems.append(picture.detail_ro)
+            if faces.status in ("PASSED", "FAILED") or picture.status in ("PASSED", "FAILED"):
+                measured_any = True
+            if problems:
+                entry.update(status="FAILED", passed=False, reason="; ".join(problems))
+                record["failures"] += [f"Scena {index}: {problem}" for problem in problems]
+            elif picture.status == "PASSED" and faces.status in ("PASSED", "NOT_APPLICABLE"):
+                entry.update(status="PASSED", passed=True, reason=picture.detail_ro)
+            else:
+                entry.update(
+                    status="NOT_RUN",
+                    reason=picture.detail_ro if picture.status == "NOT_RUN" else faces.detail_ro,
+                )
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
+    filmed = [entry for entry in record["scenes"] if entry["kind"] not in COMPOSED_KINDS]
+    if any(entry["passed"] is False for entry in filmed):
+        record["passed"] = False
+    elif filmed and all(entry["passed"] is True for entry in filmed):
+        record["passed"] = True
+    record["status"] = "MEASURED" if measured_any else "NOT_RUN" if filmed else "NOT_APPLICABLE"
+    looked = sum(1 for entry in filmed if entry["status"] in ("PASSED", "FAILED"))
+    record["detail"] = (
+        f"{looked} din {len(filmed)} scene filmate privite pe primul, mijlocul și ultimul cadru "
+        f"la {SPAN_FRAME_WIDTH} px"
+    )
+    return record

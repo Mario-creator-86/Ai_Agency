@@ -19,6 +19,8 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from app.wording import count as count_ro
+
 BLOCK = "BLOCK"
 WARN = "WARN"
 
@@ -269,7 +271,11 @@ def _others(values: list[str], shown: int = 3) -> str:
     if not rest:
         return ""
     listed = ", ".join(f"„{value}”" for value in rest[:shown])
-    more = f" și alte {len(rest) - shown}" if len(rest) > shown else ""
+    more = (
+        f" și {count_ro(len(rest) - shown, 'altă valoare', 'alte valori')}"
+        if len(rest) > shown
+        else ""
+    )
     return f" (și încă: {listed}{more})"
 
 
@@ -503,7 +509,8 @@ def lint_still_prompt(
                 WARN,
                 scene,
                 exclusions[MAX_INLINE_EXCLUSIONS],
-                f"Promptul imaginii are {len(exclusions)} excluderi; sunt permise cel mult "
+                f"Promptul imaginii are {count_ro(len(exclusions), 'excludere', 'excluderi')}; "
+                f"sunt permise cel mult "
                 f"{MAX_INLINE_EXCLUSIONS}. Prima în plus: „{exclusions[MAX_INLINE_EXCLUSIONS]}”. "
                 "Spuneți pozitiv ce se vede.",
             )
@@ -577,7 +584,8 @@ def lint_still_prompt(
                 WARN,
                 scene,
                 _excerpt(text),
-                f"Promptul imaginii are {count} cuvinte („{_excerpt(text, 60)}”); "
+                f"Promptul imaginii are {count_ro(count, 'cuvânt', 'cuvinte')} "
+                f"(„{_excerpt(text, 60)}”); "
                 f"lungimea potrivită este {low}–{high}.",
             )
         )
@@ -637,7 +645,9 @@ def lint_motion_prompt(
         if moves:
             evidence = ", ".join(written for _, written in moves)
             message = (
-                f"Promptul de mișcare are {len(moves)} mișcări de cameră („{evidence}”); "
+                "Promptul de mișcare are "
+                f"{count_ro(len(moves), 'mișcare de cameră', 'mișcări de cameră')} "
+                f"(„{evidence}”); "
                 "este permisă exact una."
             )
         else:
@@ -723,7 +733,8 @@ def lint_motion_prompt(
                     WARN,
                     scene,
                     _excerpt(text),
-                    f"Promptul de mișcare are {count} cuvinte („{_excerpt(text, 60)}”); "
+                    f"Promptul de mișcare are {count_ro(count, 'cuvânt', 'cuvinte')} "
+                    f"(„{_excerpt(text, 60)}”); "
                     f"lungimea potrivită este {low}–{high}.",
                 )
             )
@@ -850,7 +861,9 @@ def _camera_language(
                     BLOCK,
                     None,
                     first[2],
-                    f"Toate cele {len(values)} scene filmate au aceeași {what} („{first[2]}”). "
+                    "Toate cele "
+                    f"{count_ro(len(values), 'scenă filmată', 'scene filmate')} au aceeași "
+                    f"{what} („{first[2]}”). "
                     "Filmul pare o singură imagine; variați încadrarea și mișcarea.",
                 )
             ]
@@ -896,7 +909,10 @@ def summary_ro(findings: Sequence[Finding]) -> str:
     warns = [f for f in findings if f.severity == WARN]
     if not blocks and not warns:
         return "Prompturile sunt în regulă."
-    text = f"Prompturile au {len(blocks)} blocaje și {len(warns)} avertismente."
+    text = (
+        f"Prompturile au {count_ro(len(blocks), 'blocaj', 'blocaje')} și "
+        f"{count_ro(len(warns), 'avertisment', 'avertismente')}."
+    )
     if blocks:
         first = blocks[0]
         where = f"scena {first.scene}" if first.scene is not None else "tot filmul"

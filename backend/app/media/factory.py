@@ -16,7 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, TypeVar
 
-from sqlalchemy import Engine
+from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from app.economy.prices import price_lookup
@@ -36,6 +36,164 @@ from app.providers.runway import RunwayImageAdapter, RunwayVideoAdapter
 
 #: Statuses that mean the vendor itself answered. Anything else is an untested claim.
 VERIFIED_STATUSES = ("VERIFIED", "ACCESS_VERIFIED")
+
+
+# ------------------------------------------------- paid vendors stay off the whole-film path
+#
+# The legacy whole-film render (POST /media/render/{id} and the TEST day's media stage) shows
+# no price and asks nothing per step. In TEST it could still buy a whole film from the real
+# Runway connection. Real paid media is bought only through the shooting sheet's steps, under
+# the Owner's yes bound to the sheet's plan_hash, in every environment, so the legacy path
+# refuses whenever it would hand a real paid vendor adapter to the render.
+#
+# The marker is where the adapter's class comes from, not a flag each vendor must remember to
+# set: every module under app/providers that is not one of the free ones below is a vendor,
+# and an adapter whose class (or any base) is defined there is paid. A sixth vendor added
+# tomorrow is paid until someone lists its module here, in review. The same list is what the
+# static scan of the day's paid call sites reads (tests/test_no_paid_path_escapes.py).
+
+#: The provider modules that cost nothing: interfaces, the deterministic stand-ins, the
+#: registry and the transport helpers the vendor adapters share.
+FREE_PROVIDER_MODULES = frozenset(
+    {
+        "app.providers",
+        "app.providers.base",
+        "app.providers.media_base",
+        "app.providers.analytics_base",
+        "app.providers.publishing_base",
+        "app.providers.deterministic_analytics",
+        "app.providers.deterministic_media",
+        "app.providers.deterministic_pub",
+        "app.providers.registry",
+        "app.providers.retry",
+        "app.providers.media_http",
+    }
+)
+_PROVIDERS_PACKAGE = "app.providers"
+
+
+class PaidVendorRefused(RuntimeError):
+    """The legacy whole-film path would have handed a real paid vendor to the render.
+
+    ``vendors`` names them (each adapter's PROVIDER_NAME); ``message_ro`` is the Owner's.
+    """
+
+    def __init__(self, vendors: list[str]) -> None:
+        self.vendors = sorted(set(vendors))
+        self.message_ro = (
+            "Folosește foaia de filmare: calea veche de randare a filmului întreg ar fi "
+            f"cumpărat de la un furnizor real ({', '.join(self.vendors)}). Imaginile, mișcarea "
+            "și narațiunea plătite se cumpără doar prin pașii foii de filmare, fiecare cu "
+            "aprobarea Proprietarului legată de planul văzut (plan_hash), în orice mediu. "
+            "Nimic nu a fost cumpărat."
+        )
+        super().__init__(self.message_ro)
+
+
+def is_paid_vendor_class(cls: type) -> bool:
+    """Whether this class, or any class it inherits from, is a paid vendor's adapter."""
+    for klass in getattr(cls, "__mro__", ()):
+        module = str(getattr(klass, "__module__", "") or "")
+        inside = module == _PROVIDERS_PACKAGE or module.startswith(_PROVIDERS_PACKAGE + ".")
+        if inside and module not in FREE_PROVIDER_MODULES:
+            return True
+    return False
+
+
+def is_paid_vendor_adapter(adapter: object) -> bool:
+    """Whether calling this adapter would reach a real paid vendor. A fake, a local stand-in
+    and None are not; the class actually run decides, so a mock is never mistaken for one."""
+    return adapter is not None and is_paid_vendor_class(type(adapter))
+
+
+def _vendor_name(adapter: object) -> str:
+    return str(getattr(adapter, "PROVIDER_NAME", None) or type(adapter).__name__)
+
+
+def paid_vendors_of(adapters: Any) -> list[str]:
+    """The names of the real paid vendors among ``adapters`` (any iterable, Nones allowed)."""
+    return sorted({_vendor_name(a) for a in adapters if is_paid_vendor_adapter(a)})
+
+
+def legacy_render_vendors(
+    engine: Engine,
+    storyboard_id: str,
+    *,
+    image: Any = None,
+    image_chain: Any = None,
+    tts: Any = None,
+    tts_for_scene: Any = None,
+    voice_segments_for_scene: Any = None,
+) -> list[str]:
+    """Every real paid vendor the whole-film render would be handed for this storyboard:
+    its image adapter and chain, its voice, and each scene's voice and speakers' voices.
+
+    Reads the adapters the caller already resolved (the plan builds them, 0 credits) and
+    calls none of them. The motion model is chosen per scene inside the render, so it is
+    guarded where it is chosen (`guard_motion_chooser`).
+    """
+    from app.media.models import StoryboardScene  # noqa: PLC0415
+
+    found: list[Any] = [image, tts, *(image_chain or [])]
+    with Session(engine) as session:
+        indexes = [
+            int(index)
+            for index in session.scalars(
+                select(StoryboardScene.scene_index).where(
+                    StoryboardScene.storyboard_id == storyboard_id
+                )
+            )
+        ]
+    for index in indexes:
+        scene = {"scene_index": index}
+        if callable(tts_for_scene):
+            found.append(tts_for_scene(scene))
+        if callable(voice_segments_for_scene):
+            for part in voice_segments_for_scene(scene) or []:
+                found.append(part.get("adapter") if isinstance(part, dict) else None)
+    return paid_vendors_of(found)
+
+
+def guard_motion_chooser(chooser: Any) -> Any:
+    """``chooser`` (the render's ``motion_chooser``), refusing a real paid video adapter.
+
+    The refusal is raised where the model is chosen, before the adapter is used for anything:
+    not a quote, not a balance read, not a shot. None stays None.
+    """
+    if chooser is None:
+        return None
+
+    def guarded(*args: Any, **kwargs: Any) -> Any:
+        adapter, decision = chooser(*args, **kwargs)
+        if is_paid_vendor_adapter(adapter):
+            raise PaidVendorRefused([_vendor_name(adapter)])
+        return adapter, decision
+
+    return guarded
+
+
+def abandon_unfinished_renders(
+    engine: Engine, storyboard_id: str, since: str, reason: str
+) -> list[str]:
+    """Fail the storyboard's renders started at or after ``since`` and left unfinished by a
+    refusal raised inside them (`PaidVendorRefused`), so no job stays RUNNING."""
+    from app.media.models import VideoRenderJob  # noqa: PLC0415
+    from app.services import utc_now  # noqa: PLC0415
+
+    failed: list[str] = []
+    with Session(engine) as session, session.begin():
+        for job in session.scalars(
+            select(VideoRenderJob).where(
+                VideoRenderJob.storyboard_id == storyboard_id,
+                VideoRenderJob.status.not_in(("COMPLETED", "FAILED")),
+                VideoRenderJob.started_at >= since,
+            )
+        ):
+            job.status = "FAILED"
+            job.execution_log = reason[-8000:]
+            job.finished_at = utc_now()
+            failed.append(job.id)
+    return failed
 
 
 def _selected(session: Session, purpose: str) -> Integration | None:

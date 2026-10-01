@@ -564,7 +564,10 @@ def test_capabilities_are_read_from_the_catalogue_and_the_studios_own_results(en
                     },
                     api_available=True,
                     last_seen_at=utc_now(),
+                    # A steward's sourced research: it outranks config/film_models.json.
                     capabilities={
+                        "basis": "steward",
+                        "sources": ["https://docs.dev.runwayml.com/guides/models/"],
                         "quality_score": quality,
                         "need_quality": {"people": 0.7},
                         "camera_moves": ["static", "slow push-in"],
@@ -599,7 +602,9 @@ def test_capabilities_are_read_from_the_catalogue_and_the_studios_own_results(en
     assert caps["wan3"].seconds == {"min": 2, "max": 10}
     assert caps["wan3"].ratios == ("1080:1920",)
     assert caps["wan3"].tasks == ("image_to_video",)
-    assert caps["wan3"].need_quality == {"people": 0.7}
+    # The steward's people figure; the needs he did not research come from the documented file.
+    assert caps["wan3"].need_quality["people"] == 0.7
+    assert set(caps["wan3"].need_quality) == {"people", "water", "fast_motion"}
     assert caps["wan3"].camera_moves == ("static", "slow push-in")
     assert caps["wan3"].failures["people"] == (2, 2)
     # Three judged generations: its own results now weigh on the documented score.
@@ -616,6 +621,9 @@ def test_capabilities_are_read_from_the_catalogue_and_the_studios_own_results(en
     assert scene(plan, 1)["model_id"] != "new_model"
     why = {e["model_id"]: e["why_ro"] for e in scene(plan, 1)["excluded"]}
     assert "producție" in why["new_model"]
+    # Nor is a model the Owner's allowed set (config/film_models.json) does not name.
+    assert caps["new_model"].owner_allowed is False
+    assert "aprobat" in why["new_model"]
 
 
 def test_the_policy_module_calls_no_provider(monkeypatch):

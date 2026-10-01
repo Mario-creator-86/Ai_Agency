@@ -15,6 +15,7 @@ Tests:
 from __future__ import annotations
 
 import asyncio
+import math
 from pathlib import Path
 from uuid import uuid4
 
@@ -801,13 +802,24 @@ def test_elevenlabs_character_alignment_is_read_as_words():
     )
 
 
-def test_a_scene_lasts_its_words_and_a_breath_and_the_film_stays_within_a_second_of_them():
+def test_a_scene_lasts_its_words_and_its_full_breath_and_a_silent_card_one_beat():
+    """2026-10-01 (DISK_AND_BREATHS, after QC_SPANS): quality control now counts the breath the
+    timeline plans after each scene's words, so the timeline no longer shrinks the breaths to
+    keep the film within 0.9 s of its narration (six scenes kept about 0.11 s each and every
+    cut felt rushed). A silent composed scene lasts at most what QC allows its kind
+    (qc.MAX_SILENT_CARD_SECONDS); a writer's longer plan is cut to it, not failed."""
+    from app.media import assembler
     from app.media.assembler import SPOKEN_TAIL_SECONDS, TIMELINE_FPS, scene_spans
+    from app.media.qc import MAX_SILENT_CARD_SECONDS
 
     assert SPOKEN_TAIL_SECONDS == 0.35
+    assert not hasattr(assembler, "FILM_OVER_NARRATION_SECONDS")
 
     def whole_frames(spans: list[float]) -> bool:
         return all(abs(s * TIMELINE_FPS - round(s * TIMELINE_FPS)) < 1e-6 for s in spans)
+
+    def up(seconds: float) -> float:
+        return math.ceil(seconds * TIMELINE_FPS - 1e-6) / TIMELINE_FPS
 
     # Two scenes: the full breath after each, never past the plan, on whole frames.
     two = scene_spans([5.0, 5.0], [4.0, 4.6])
@@ -815,16 +827,36 @@ def test_a_scene_lasts_its_words_and_a_breath_and_the_film_stays_within_a_second
     assert whole_frames(two)
     # Words longer than the plan are never cut: the scene lasts its words.
     assert scene_spans([4.0], [5.2]) == pytest.approx([125 / 24])
+    # A breath never runs past the plan: 4.9 s of words under a 5 s plan keep 0.1 s.
+    assert scene_spans([5.0], [4.9]) == pytest.approx([up(5.0)])
     # A scene with no words keeps its planned length.
     assert scene_spans([3.0], [0.0]) == pytest.approx([3.0])
-    # Six scenes with a second of slack each: the breaths are shortened together so the film
-    # stays within a second of its narration, the line quality control draws.
+    # Six scenes with a second of slack each: every one keeps its full 0.35 s breath.
     planned, spoken = [5.0] * 6, [4.0, 3.2, 4.4, 3.9, 4.1, 2.8]
     six = scene_spans(planned, spoken)
     assert whole_frames(six)
-    assert all(sp <= s <= p + 1e-9 for s, sp, p in zip(six, spoken, planned, strict=True))
-    assert sum(six) - sum(spoken) <= 0.9 + 1e-9
-    assert sum(six) - sum(spoken) >= 0.5  # the breath is shortened, not dropped
+    assert six == pytest.approx([up(s + SPOKEN_TAIL_SECONDS) for s in spoken])
+    assert sum(six) - sum(spoken) >= 6 * SPOKEN_TAIL_SECONDS - 1e-9
+    assert sum(six) - sum(spoken) <= 6 * SPOKEN_TAIL_SECONDS + 6 / TIMELINE_FPS
+
+    # Silent composed scenes: one beat each, never longer than QC allows their kind.
+    kinds = ["LIVE", "BLACK", "DATA_CARD", "TITLE_CARD", "BLACK", "LIVE"]
+    spans = scene_spans(
+        [5.0, 3.0, 6.0, 4.0, 1.5, 4.0], [4.0, 0.0, 0.0, 0.0, None, 0.0], kinds=kinds
+    )
+    assert spans == pytest.approx(
+        [
+            up(4.0 + SPOKEN_TAIL_SECONDS),
+            MAX_SILENT_CARD_SECONDS["BLACK"],
+            MAX_SILENT_CARD_SECONDS["DATA_CARD"],
+            MAX_SILENT_CARD_SECONDS["TITLE_CARD"],
+            1.5,  # a plan under the maximum stands
+            4.0,  # a silent LIVE scene is not a card: its plan stands (QC counts it)
+        ]
+    )
+    assert whole_frames(spans)
+    # A card with words is narration: its words and a breath, like any scene.
+    assert scene_spans([6.0], [2.0], kinds=["DATA_CARD"]) == pytest.approx([up(2.35)])
 
 
 class AlignedVoice:
@@ -958,6 +990,9 @@ def test_a_real_film_is_24_fps_within_a_second_of_its_words_with_captions_in_the
         storage_root=tmp_path / "media",
         image_adapter=StubImages(),
         tts_adapter=voice,
+        # A TEST film: no motion model here, and PRODUCTION refuses a still the Owner did
+        # not choose (the fallback gate); the timeline and the captions are what is read.
+        environment="TEST",
     )
     production = render["production"]
     film = Path(render["file_path"])
@@ -968,10 +1003,20 @@ def test_a_real_film_is_24_fps_within_a_second_of_its_words_with_captions_in_the
     assert probe["video_fps"] == pytest.approx(24.0)
     # Within a second of the narration: the planned six seconds are not padded with silence.
     narration = sum(scene["audio_seconds"] for scene in production["scenes"])
-    assert probe["duration_seconds"] <= narration + 1.0, (probe["duration_seconds"], narration)
-    assert render["duration_seconds"] <= narration + 0.9 + 1e-6
+    breaths = 2 * production["timeline"]["spoken_tail_seconds"]
+    assert breaths == pytest.approx(0.7)
+    assert probe["duration_seconds"] <= narration + breaths + 1.0, (
+        probe["duration_seconds"],
+        narration,
+    )
+    # Each scene keeps its words and its full breath, rounded up to a frame at most.
+    assert render["duration_seconds"] <= narration + breaths + 2 / TIMELINE_FPS + 1e-6
     spans = production["timeline"]["spans"]
     assert [s["scene_index"] for s in spans] == [1, 2]
+    # What quality control reads of each span: its kind and how long its words are.
+    for span, scene in zip(spans, production["scenes"], strict=True):
+        assert span["kind"] == "LIVE"
+        assert span["spoken_seconds"] == pytest.approx(scene["audio_seconds"])
     assert spans[1]["start"] == pytest.approx(spans[0]["end"])
 
     # Captions: ASS, Inter Bold from the studio's own verified file, burnt in.
@@ -1021,6 +1066,7 @@ def test_a_real_film_is_24_fps_within_a_second_of_its_words_with_captions_in_the
         storage_root=tmp_path / "media",
         image_adapter=StubImages(),
         tts_adapter=AlignedVoice(aligned=False),
+        environment="TEST",
     )
     assert plain["production"]["captions"]["timing"] == {"alignment": 0, "character_share": 2}
 
@@ -1303,6 +1349,8 @@ def test_the_render_counts_its_own_fallbacks(engine, tmp_path):
         storage_root=tmp_path / "media",
         image_adapter=StubImages(),
         video_adapter_for_scene=lambda scene: motion,
+        # A TEST film: in PRODUCTION the refused scene would be a still the Owner never chose.
+        environment="TEST",
     )
     summary = render["production"]["motion"]
     assert summary["motion_scenes"] == 1 and summary["fallback_scenes"] == 1

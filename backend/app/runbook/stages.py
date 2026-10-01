@@ -1306,8 +1306,8 @@ def _film_staircase(
     him), HELD (a step refused for the film's own fault before anything was asked or
     bought: a stale plan, a lint BLOCK, prompts no model wrote, his own no) or READY
     (nothing is left to buy: the film is assembled from its takes). ``bought`` lists every
-    stair bought here, each already in the books (`_book_step`) before the next stair's
-    budget check reads them.
+    stair bought here, each already in the books (`run_sheet_step` books what a step spent)
+    before the next stair's budget check reads them.
     """
     from app.media.shooting_sheet import (  # noqa: PLC0415 - media imports runbook
         SHEET_STEPS,
@@ -1349,6 +1349,17 @@ def _film_staircase(
             return stop("HELD", None, str(exc), refusal="NOT_FOUND")
         step = next((name for name in SHEET_STEPS if sheet["steps"][name]["to_buy"]), None)
         if step is None:
+            # Nothing left to buy; but a filmed scene with no accepted take and no LOCAL_MOVE
+            # of his cannot be cut in (PRODUCTION): the film waits for his look on the sheet,
+            # and nobody is asked about a narration for a film that cannot be assembled.
+            blocked = ((sheet.get("steps") or {}).get("assemble") or {}).get("blocked") or []
+            if blocked:
+                return stop(
+                    "WAITING",
+                    None,
+                    " ".join(str(item.get("reason_ro") or "") for item in blocked),
+                    refusal="TAKES_NOT_ACCEPTED",
+                )
             return stop("READY", None, "")
         if bought and SHEET_STEPS.index(step) <= SHEET_STEPS.index(bought[-1]["step"]):
             # The stair just bought left scenes behind (a still the gate sent to him, a shot
@@ -1404,57 +1415,14 @@ def _film_staircase(
             "sheet_hash": sheet["sheet_hash"],
             "credit_usd": float(sheet.get("credit_usd") or 0.01),
             "result": result,
+            # Booked by the step itself (`run_sheet_step`), once, before the next stair is
+            # priced against the budget: the day books nothing of its own.
+            "booked": result.get("booked"),
         }
-        # Into the books before the next stair is priced against the budget.
-        entry["booked"] = _book_step(engine, storyboard_id, entry, correlation)
         bought.append(entry)
         if result.get("stopped"):
             return stop("WAITING", step, str(result["stopped"]), refusal="STOPPED")
     return stop("WAITING", None, "Scara filmului nu s-a încheiat în această rulare.")
-
-
-def _book_step(
-    engine: Engine, storyboard_id: str, entry: dict[str, Any], correlation: str
-) -> dict[str, Any] | None:
-    """What a bought stair cost, into the books at once: the measured balance drop when the
-    vendor's balance was read before and after, otherwise the credits the step committed.
-
-    The step's own budget check (`run_sheet_step`, the step's cap against every active
-    budget) is the gate before the purchase; nothing is reserved ahead of it, because that
-    check would count the hold and the cap twice. What the stair spent is then a cost row,
-    ESTIMATED like every render cost, so the next film's check sees it. One stair, one row:
-    the reference is the film, the stair and the sheet it was bought under.
-    """
-    from app.economy.services import record_provider_cost  # noqa: PLC0415
-
-    result = entry["result"]
-    measured = result.get("spent_credits_measured")
-    credits = measured if measured is not None else result.get("spent_credits_quoted")
-    if not credits or float(credits) <= 0:
-        return None
-    usd = float(credits) * float(entry["credit_usd"])
-    try:
-        record_provider_cost(
-            engine,
-            provider="runway",
-            external_reference=(
-                f"foaie:{storyboard_id}:{entry['step']}:{str(entry['sheet_hash'])[:16]}"
-            ),
-            status="ESTIMATED",
-            amount=f"{usd:.6f}",
-            attribution={
-                "storyboard_id": storyboard_id,
-                "step": entry["step"],
-                "plan_hash": entry["sheet_hash"],
-                "credits": round(float(credits), 4),
-                "measured": measured is not None,
-            },
-            correlation_id=correlation,
-        )
-    except (EconomyError, ValueError):
-        logger.info("sheet_step_cost_not_recorded", extra={"storyboard_id": storyboard_id})
-        return None
-    return {"step": entry["step"], "credits": round(float(credits), 4), "usd": round(usd, 6)}
 
 
 def _film_figures(sheet: dict[str, Any]) -> dict[str, Any]:
@@ -1566,9 +1534,15 @@ def _assemble_from_takes(
     environment: str,
     plan_cost: dict[str, Any],
     correlation: str,
+    *,
+    sheet_hash: str | None = None,
 ) -> dict[str, Any]:
     """Assemble a film whose sheet has nothing left to buy: from its takes, buying no still
-    and no shot. Only the narration is paid, so only the narration is asked and held."""
+    and no shot. Only the narration is paid, so only the narration is asked and held.
+
+    The question is the sheet's own (`shooting_sheet.narration_gate`'s action, subject and
+    context): bound to ``sheet_hash`` and the assemble step, so the Owner's one yes for that
+    plan is spent once, whether the day or his own click on the sheet assembles the film."""
     from app.economy.accountant import (  # noqa: PLC0415
         budget_refusal_letter,
         record_render_costs,
@@ -1598,6 +1572,7 @@ def _assemble_from_takes(
             f"aprobate, estimat {format_micros(narration)} USD" + (f" ({caveat})" if caveat else "")
         ),
         cost_usd=usd,
+        context={"plan_hash": sheet_hash, "step": "assemble"} if sheet_hash else None,
     )
     if refusal is not None:
         return {
@@ -1766,7 +1741,15 @@ def _media_staircase(
             return stopped_outcome(storyboard_id, "Scara filmului s-a oprit.")
         if film["status"] == "READY" and plan_cost is not None:
             made = _assemble_from_takes(
-                engine, settings, vault, storyboard_id, wiring, environment, plan_cost, correlation
+                engine,
+                settings,
+                vault,
+                storyboard_id,
+                wiring,
+                environment,
+                plan_cost,
+                correlation,
+                sheet_hash=str(sheet.get("sheet_hash") or "") or None,
             )
             costs_recorded += int(made.get("costs_recorded") or 0)
             if made["status"] == "ASSEMBLED":
@@ -1891,7 +1874,16 @@ def _media(
     """
     from app.economy.credits import credit_balances, record_credit_spend
     from app.media.assembler import RenderEngineUnavailable, RenderStopped, assemble_video_job
-    from app.media.factory import image_provider, motion_for_scene, render_plan, tts_provider
+    from app.media.factory import (
+        PaidVendorRefused,
+        abandon_unfinished_renders,
+        guard_motion_chooser,
+        image_provider,
+        legacy_render_vendors,
+        motion_for_scene,
+        render_plan,
+        tts_provider,
+    )
     from app.media.production_policy import named_model
     from app.media.services import ReferenceRequired
     from app.providers.media_http import MediaProviderError
@@ -2002,6 +1994,9 @@ def _media(
     narration_reviews = []
     costs_recorded = 0
     credit_lines: list[str] = []
+    # Films this whole-film path refused because it would have bought from a real paid
+    # vendor: their media is bought on the shooting sheet, step by step, under his yes.
+    use_the_sheet: list[dict[str, Any]] = []
     for storyboard_id in pending:
         # The Owner's switch, read before each film and not once for the stage. The render
         # polls it between scenes and the runbook between stages, so a stop pressed during
@@ -2108,10 +2103,27 @@ def _media(
         # What the vendors say the account holds, read just before the money is spent, so the
         # render's cost can be proven from the credits and not only estimated from prices.
         balances_before = credit_balances(engine, vault)
+        render_started = utc_now()
         try:
             # Channel policy, series rules, overrides and locked character voices decide per
             # scene; the Organization default is the fallback for scenes nothing else names.
             planned = render_plan(engine, vault, storyboard_id)
+            # Real paid media is bought only through the shooting sheet's steps, under the
+            # Owner's yes bound to its plan_hash, in every environment. In TEST this path
+            # could still buy a whole film from the real Runway connection; it now refuses
+            # whenever it would hand a real paid vendor to the render, and keeps working
+            # with fakes and local stand-ins.
+            vendors = legacy_render_vendors(
+                engine,
+                storyboard_id,
+                image=planned.get("image") or images,
+                image_chain=planned.get("image_chain"),
+                tts=voice,
+                tts_for_scene=planned.get("tts_for_scene"),
+                voice_segments_for_scene=planned.get("voice_segments_for_scene"),
+            )
+            if vendors:
+                raise PaidVendorRefused(vendors)
             result = assemble_video_job(
                 engine,
                 storyboard_id,
@@ -2139,7 +2151,8 @@ def _media(
                 # the environment the studio is in: a test buys the cheapest that can do the
                 # job, production the least expensive that reaches the quality. A model a
                 # level of the hierarchy named by hand is honoured as an override.
-                motion_chooser=(
+                # A real paid motion model is refused where it is chosen, before any use.
+                motion_chooser=guard_motion_chooser(
                     lambda scene, tier, seconds, budget, exclude, plan=planned["plan"]: (
                         motion_for_scene(
                             engine,
@@ -2182,6 +2195,21 @@ def _media(
                 # The Owner's delivery choices (captions burnt in) travel with the render.
                 settings=settings,
             )
+        except PaidVendorRefused as exc:
+            # Nothing was bought: the refusal came before the render, or where a motion model
+            # was chosen inside it, before that model was used. The film waits for its sheet.
+            abandon_unfinished_renders(engine, storyboard_id, render_started, exc.message_ro)
+            _release(
+                engine, reservation_id, "folosește foaia de filmare (furnizor real)", correlation
+            )
+            use_the_sheet.append(
+                {
+                    "storyboard_id": storyboard_id,
+                    "paid_vendors": exc.vendors,
+                    "said": exc.message_ro,
+                }
+            )
+            continue
         except RenderStopped as exc:
             # The Owner's switch, read between two scenes: his decision, not a fault. The
             # runbook records the stage BLOCKED and the day PARTIAL, and opens no safe mode.
@@ -2305,6 +2333,13 @@ def _media(
     if asked_correlation:
         waiting_approvals_letter(engine, asked_correlation)
 
+    if use_the_sheet and not produced and not refused and not awaiting_owner:
+        return _outcome(
+            SKIPPED,
+            str(use_the_sheet[0]["said"])[:500],
+            use_the_sheet=use_the_sheet,
+        )
+
     if awaiting_owner and not produced and not refused:
         # Nothing was filmed and the mode is why: the stage could not run, which is SKIPPED
         # in the runbook's own vocabulary, with the Owner's reason and the request he answers.
@@ -2333,6 +2368,8 @@ def _media(
         reason += " Credite măsurate la furnizor: " + " | ".join(credit_lines) + "."
     if refused:
         reason += f" {count(len(refused), *REFUSED_RENDERS)}: {refused[0]['said']}."
+    if use_the_sheet:
+        reason += f" {use_the_sheet[0]['said']}"
     if retry:
         reason += (
             " (o randare reluată: cea veche picase la QC cu substitute, acum sunt imagini reale.)"
@@ -2353,6 +2390,7 @@ def _media(
         # Each refused render with the vendor's own text and the exception's class: the
         # reason above says it in Romanian, and this is what a person diagnosing it reads.
         refused=refused,
+        use_the_sheet=use_the_sheet,
     )
 
 
@@ -2412,6 +2450,9 @@ def _edit_and_qc(
             registry=registry,
             ffmpeg_path=settings.ffmpeg_path if settings is not None else None,
         )
+        from app.media.assembler import release_after_qc  # noqa: PLC0415 - media imports runbook
+
+        release_after_qc(engine, asset_id, str(uuid4()))
         if report["status"] == "PASSED":
             passed += 1
             continue

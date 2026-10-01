@@ -1,5 +1,15 @@
 # Changelog
 
+## The film staircase closed — ready for the Owner's next paid film (2026-10-01)
+
+- **Every paid clip is checked before the film**: motion, faces on three frames, cuts, one retry inside the cap; a bad clip is never assembled.
+- **Asamblează filmul** on the sheet; the film's real spend on its QC letter; costs booked once; stale questions withdrawn.
+- **Real films only through the sheet**, in every environment: the old render refuses a real paid adapter.
+- **The cheapest capable model per scene works on the real catalogue** (config/film_models.json, sourced).
+- **Captions follow the voice** (ElevenLabs with timestamps); full breaths; silent cards bounded.
+- **Disk**: intermediates CRF 4, deleted after QC; tests write in their own folders.
+- **The drawer**: redo buttons with prices, the assemble button, the Owner's paid-media switch.
+
 ## The film staircase — after the Nepal film (2026-09-26 → 2026-10-01)
 
 - **The shot plan is never lost again**: strict parse, repair, one re-ask, NEEDS_SHOT_PLAN instead of templates.

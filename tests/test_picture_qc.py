@@ -1008,3 +1008,346 @@ def test_judge_still_with_nobody_who_can_see_is_not_run(engine, staffed):
     assert judged.status == "NOT_RUN" and "nu a fost privită" in judged.detail_ro
     assert unregistered.status == "NOT_RUN"
     assert model.calls == []
+
+
+# ------------------------------------ the film's pictures, three frames a scene at 1080 px
+#
+# The film-level look used to be one 480 px frame from the middle of each scene. A scene is
+# judged now as a bought clip is (picture_qc.judge_clip): its first, middle and last frame on
+# the film's own timeline, at the delivered 1080 px, with YuNet counting faces on each frame
+# when the bible forbids faces. Composed cards are drawn by the studio and are not judged as
+# photographs. Every model and the detector are faked here; ffmpeg cuts a real film.
+
+requires_ffmpeg = pytest.mark.skipif(
+    __import__("shutil").which("ffmpeg") is None, reason="ffmpeg is not installed"
+)
+NO_FACES_BIBLE = {"people_rule": "No human faces appear; people only from behind."}
+
+
+def _png_width(path) -> int:
+    data = open(path, "rb").read(32)
+    assert data[:8] == b"\x89PNG\r\n\x1a\n"
+    return int.from_bytes(data[16:20], "big")
+
+
+def _span_film(tmp_path):
+    """Five seconds at 24 fps, 1080x1920: four seconds of picture, one of black."""
+    import shutil
+    import subprocess
+
+    out = tmp_path / "film.mp4"
+    result = subprocess.run(
+        [
+            shutil.which("ffmpeg"),
+            "-v",
+            "error",
+            "-nostdin",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=s=1080x1920:r=24:d=4",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=1080x1920:r=24:d=1",
+            "-filter_complex",
+            "[0:v][1:v]concat=n=2:v=1:a=0[v]",
+            "-map",
+            "[v]",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-pix_fmt",
+            "yuv420p",
+            str(out),
+        ],  # fmt: skip
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr[-1500:]
+    return out
+
+
+def _spanned_film(engine, tmp_path, *, bible=None):
+    """a_film's three scenes on a real file: two LIVE scenes of 2 s and a 1 s black card."""
+    ids = a_film(engine)
+    film = _span_film(tmp_path)
+    spans = [
+        {"scene_index": 1, "start": 0.0, "end": 2.0, "dissolve_seconds": 0.0, "composed": False},
+        {"scene_index": 2, "start": 2.0, "end": 4.0, "dissolve_seconds": 0.0, "composed": False},
+        {"scene_index": 3, "start": 4.0, "end": 5.0, "dissolve_seconds": 0.0, "composed": True},
+    ]
+    with Session(engine) as session, session.begin():
+        session.get(MediaAsset, ids["asset"]).uri_or_path = str(film)
+        session.get(VideoRenderJob, ids["job"]).production_json = {
+            "scenes": [
+                {"scene_index": 1, "scene_kind": "LIVE", "audio_seconds": 1.8},
+                {"scene_index": 2, "scene_kind": "LIVE", "audio_seconds": 1.8},
+                {"scene_index": 3, "scene_kind": "BLACK", "audio_seconds": 0.0},
+            ],
+            "timeline": {"fps": 24, "spans": spans},
+        }
+        session.get(Storyboard, ids["board"]).visual_bible_json = bible or {}
+        card = session.scalars(
+            select(StoryboardScene).where(
+                StoryboardScene.storyboard_id == ids["board"], StoryboardScene.scene_index == 3
+            )
+        ).one()
+        card.scene_kind = "BLACK"
+    return ids
+
+
+def _keep(scene, **changes):
+    from app.media.picture_qc import ClipJudgement, ClipVerdict
+
+    fields = {
+        "scene": scene,
+        "faces_visible": False,
+        "readable_text": False,
+        "matches_plan": True,
+        "look_ok": True,
+        "technical_ok": True,
+        "same_shot": True,
+        "bible_violations": "none",
+        "verdict": "keep",
+        "reason": "the mirror against the dark",
+    }
+    fields.update(changes)
+    return ClipJudgement(
+        status="MEASURED",
+        verdict=ClipVerdict(**fields),
+        detail_ro="privit",
+        run_id="run",
+        looked_by="Video Editor",
+        image_width=1080,
+        frames=3,
+    )
+
+
+class _Judge:
+    def __init__(self, answer=None):
+        self.calls: list[tuple[int, list]] = []
+        self.answer = answer or (lambda scene: _keep(scene))
+
+    def __call__(self, paths, plan):
+        # The frames live only while the check runs: their widths are read as they arrive.
+        self.calls.append((plan.scene, [_png_width(p) for p in paths]))
+        return self.answer(plan.scene)
+
+
+class _Faces:
+    def __init__(self, faces=None, status="MEASURED"):
+        self.seen: list[str] = []
+        self.faces = faces or {}
+        self.status = status
+
+    def __call__(self, path, **_):
+        from app.media.faces import FaceCount
+
+        self.seen.append(str(path))
+        if self.status != "MEASURED":
+            return FaceCount(status="NOT_RUN", faces=None, boxes=(), detail_ro="YuNet lipsește")
+        found = next((n for key, n in self.faces.items() if key in str(path)), 0)
+        return FaceCount(status="MEASURED", faces=found, boxes=(), detail_ro="numărat")
+
+
+@requires_ffmpeg
+def test_frames_at_cuts_the_frames_asked_for_at_the_delivered_1080_px(tmp_path):
+    from app.agents.vision import frames_at
+
+    film = _span_film(tmp_path)
+    frames = frames_at(str(film), None, [0, 47, 96], tmp_path / "cut")
+    assert sorted(frames) == [0, 47, 96]
+    assert all(_png_width(path) == 1080 for path in frames.values())
+    # The black second is black and the test card is not: the frames are the ones asked for.
+    assert frames[96].stat().st_size < frames[0].stat().st_size
+    assert frames_at(str(tmp_path / "missing.mp4"), None, [0], tmp_path / "cut") == {}
+    assert frames_at(str(film), None, [], tmp_path / "cut") == {}
+
+
+@requires_ffmpeg
+def test_each_live_scene_is_judged_on_its_first_middle_and_last_frame(engine, staffed, tmp_path):
+    from app.media.qc import span_picture_qc
+
+    ids = _spanned_film(engine, tmp_path, bible=NO_FACES_BIBLE)
+    judge, faces = _Judge(), _Faces()
+
+    record = span_picture_qc(
+        engine, None, ids["asset"], str(uuid4()), judge=judge, face_counter=faces
+    )
+
+    assert record["status"] == "MEASURED" and record["passed"] is True, record
+    assert record["failures"] == []
+    # One look per LIVE scene, three frames each; the black card is never sent.
+    assert [scene for scene, _ in judge.calls] == [1, 2]
+    assert [widths for _, widths in judge.calls] == [[1080] * 3] * 2
+    assert len(faces.seen) == 6
+    scenes = {entry["scene_index"]: entry for entry in record["scenes"]}
+    times = [frame["time"] for frame in scenes[2]["frames"]]
+    assert [frame["at"] for frame in scenes[2]["frames"]] == ["first", "middle", "last"]
+    assert times[0] == pytest.approx(2.0, abs=0.05)
+    assert times[1] == pytest.approx(3.0, abs=0.05)
+    assert 3.9 <= times[2] < 4.0
+    assert scenes[3]["kind"] == "BLACK" and scenes[3]["status"] == "NOT_APPLICABLE"
+    assert scenes[3]["passed"] is None
+    assert record["frame_width"] == 1080
+
+
+@requires_ffmpeg
+def test_a_face_yunet_finds_on_any_of_the_three_frames_fails_the_film(engine, staffed, tmp_path):
+    from app.media.qc import span_picture_qc
+
+    ids = _spanned_film(engine, tmp_path, bible=NO_FACES_BIBLE)
+
+    record = span_picture_qc(
+        engine,
+        None,
+        ids["asset"],
+        str(uuid4()),
+        judge=_Judge(),
+        face_counter=_Faces({"scene_02_middle": 1}),
+    )
+
+    assert record["passed"] is False
+    assert len(record["failures"]) == 1
+    assert "Scena 2" in record["failures"][0] and "YuNet" in record["failures"][0]
+    scenes = {entry["scene_index"]: entry for entry in record["scenes"]}
+    assert scenes[1]["passed"] is True and scenes[2]["passed"] is False
+
+
+@requires_ffmpeg
+def test_what_the_look_refuses_fails_the_film_and_names_the_scene(engine, staffed, tmp_path):
+    from app.media.qc import span_picture_qc
+
+    ids = _spanned_film(engine, tmp_path, bible=NO_FACES_BIBLE)
+    judge = _Judge(
+        lambda scene: (
+            _keep(scene, faces_visible=True, reason="a woman faces the camera")
+            if scene == 1
+            else _keep(scene)
+        )
+    )
+
+    record = span_picture_qc(
+        engine, None, ids["asset"], str(uuid4()), judge=judge, face_counter=_Faces()
+    )
+
+    assert record["passed"] is False
+    assert any("Scena 1" in f and "față" in f for f in record["failures"]), record["failures"]
+    assert not any("Scena 2" in f for f in record["failures"])
+
+
+@requires_ffmpeg
+def test_a_look_that_did_not_happen_certifies_nothing_and_fails_nothing(engine, staffed, tmp_path):
+    from app.media.picture_qc import ClipJudgement
+    from app.media.qc import span_picture_qc
+
+    ids = _spanned_film(engine, tmp_path)
+    unseen = _Judge(
+        lambda scene: ClipJudgement(
+            status="NOT_RUN",
+            verdict=None,
+            detail_ro="clipul nu a fost privit: niciun angajat nu are un model care vede",
+            run_id=None,
+            looked_by=None,
+            image_width=None,
+            frames=0,
+        )
+    )
+
+    record = span_picture_qc(engine, None, ids["asset"], str(uuid4()), judge=unseen)
+
+    assert record["passed"] is None and record["failures"] == []
+    assert all(entry["passed"] is None for entry in record["scenes"])
+
+
+def test_with_nobody_to_look_and_faces_allowed_no_frame_is_cut(engine, staffed, monkeypatch):
+    from app.media.qc import span_picture_qc
+
+    ids = a_film(engine)
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("no frame should be cut when nothing would look at it")
+
+    monkeypatch.setattr("app.media.qc.frames_at", refuse)
+    record = span_picture_qc(engine, None, ids["asset"], str(uuid4()))
+    assert record["status"] == "NOT_APPLICABLE" and record["passed"] is None
+    assert record["detail"]
+
+
+@requires_ffmpeg
+def test_a_face_count_that_could_not_run_blocks_in_production_and_warns_in_test(
+    engine, staffed, tmp_path
+):
+    from app.media.qc import span_picture_qc
+
+    ids = _spanned_film(engine, tmp_path, bible=NO_FACES_BIBLE)
+    seen = {}
+    for environment in ("TEST", "PRODUCTION"):
+        with Session(engine) as session, session.begin():
+            session.get(OwnerPolicy, 1).environment = environment
+        seen[environment] = span_picture_qc(
+            engine,
+            None,
+            ids["asset"],
+            str(uuid4()),
+            judge=_Judge(),
+            face_counter=_Faces(status="NOT_RUN"),
+        )
+    assert seen["PRODUCTION"]["passed"] is False
+    assert any("Scena 1" in f for f in seen["PRODUCTION"]["failures"])
+    assert seen["TEST"]["passed"] is None and seen["TEST"]["failures"] == []
+    assert any("Scena 1" in w for w in seen["TEST"]["warnings"])
+
+
+@requires_ffmpeg
+def test_the_studios_own_judge_is_one_vision_call_per_live_scene(engine, staffed, tmp_path):
+    import base64
+    import re
+
+    from app.media.qc import span_picture_qc
+
+    ids = _spanned_film(engine, tmp_path, bible=NO_FACES_BIBLE)
+    give_vision(engine, staffed["agents"]["VideoEditor"].id)
+
+    def answer(prompt):
+        scene = int(re.search(r"for scene (\d+)", prompt).group(1))
+        verdict = _keep(scene).verdict
+        return json.dumps({"clips": [verdict.model_dump()]})
+
+    registry, model = registry_with(staffed, answer)
+
+    record = span_picture_qc(engine, registry, ids["asset"], str(uuid4()), face_counter=_Faces())
+
+    assert record["passed"] is True, record
+    assert len(model.calls) == 2
+    for call in model.calls:
+        images = call["extra"]["images"]
+        assert len(images) == 3
+        assert _jpeg_size(base64.b64decode(images[0])) == (1080, 1920)
+        assert "No human faces appear" in call["prompt"]
+
+
+@requires_ffmpeg
+def test_quality_control_fails_a_film_with_a_face_in_a_scene_and_keeps_the_one_frame_look(
+    engine, staffed, tmp_path
+):
+    ids = _spanned_film(engine, tmp_path, bible=NO_FACES_BIBLE)
+
+    report = evaluate_media_qc(
+        engine,
+        ids["asset"],
+        str(uuid4()),
+        span_judge=_Judge(),
+        face_counter=_Faces({"scene_01_last": 2}),
+    )
+
+    spans = report["checks_json"]["picture_spans_qc"]
+    assert spans["passed"] is False
+    assert report["status"] == "FAILED"
+    assert any("Scena 1" in r and "YuNet" in r for r in report["failure_reasons_json"])
+    # The film-wide look and the character check are still the picture_qc they were.
+    assert report["checks_json"]["picture_qc"]["status"] == "NOT_APPLICABLE"
