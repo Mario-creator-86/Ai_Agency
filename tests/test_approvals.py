@@ -520,3 +520,536 @@ def test_a_question_whose_figure_is_whole_carries_no_caveat(engine):
     assert letter is not None
     assert UNPRICED_CAVEAT_PREFIX not in (letter.body_text or "")
     assert letter.body_json["questions"][0]["cost_caveat"] == ""
+
+
+# ------------------------------------------ the Owner's gate on every paid media step --
+#
+# The Nepal film (2026-09-26): the second full render started from a button, showed no
+# price and asked nothing, because a T3 media purchase in AUTONOMOUS_CEO is simply ALLOWED
+# by the mode. `owner_policy.paid_media_approval` (migration 0048) is read inside `may_act`
+# for the four paid media steps, after the stop, the unclassified check, T4 and safe mode,
+# and before the mode's ALLOWED return. Each answer is bound to the plan it was given about.
+
+STILLS = "media.stills_purchase"
+TEST_SHOT = "media.test_shot"
+MOTION = "media.motion_purchase"
+REDO = "media.scene_redo"
+PLAN_A = "a" * 64
+PLAN_B = "b" * 64
+
+
+def plan(plan_hash: str = PLAN_A, step: str = "motion", cap_credits: int = 2190) -> dict:
+    return {"plan_hash": plan_hash, "step": step, "cap_credits": cap_credits}
+
+
+def paid_policy(engine, value: str = "EVERY_PAID_STEP", over_usd: float | None = None) -> None:
+    """Set the field directly, the way a test sets the mode; the command is tested below."""
+    with Session(engine) as session, session.begin():
+        policy = session.get(OwnerPolicy, 1)
+        policy.paid_media_approval = value
+        policy.paid_media_approval_over_usd = over_usd
+
+
+def test_every_paid_step_asks_even_the_autonomous_ceo_and_names_the_plan(engine):
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+    paid_policy(engine, "EVERY_PAID_STEP")
+
+    verdict = ask(engine, MOTION, "board-nepal", cost_usd=12.24, context=plan())
+
+    assert verdict["allowed"] is False
+    assert verdict["status"] == "NEEDS_APPROVAL"
+    assert verdict["approval_id"]
+    written = rows(engine)
+    assert len(written) == 1
+    request = written[0]
+    assert request.id == verdict["approval_id"]
+    assert request.action == MOTION
+    assert request.subject == "board-nepal"
+    assert request.risk_tier == "T3"
+    assert request.cost_usd == 12.24
+    assert request.proposed_diff == {"plan_hash": PLAN_A, "step": "motion", "cap_credits": 2190}
+    assert request.result == "PENDING"
+    # Romanian, and it names the Owner's policy rather than the mode.
+    assert "pas plătit" in verdict["reason"]
+
+
+def test_the_default_policy_is_the_strict_one(engine):
+    """A studio bootstrapped today asks before every paid step without anyone setting it."""
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+
+    verdict = ask(engine, TEST_SHOT, "board-1", cost_usd=3.4, context=plan(step="test_shot"))
+
+    assert verdict["status"] == "NEEDS_APPROVAL"
+
+
+@pytest.mark.parametrize("mode", ["MANUAL", "SUPERVISED", "AUTONOMOUS_CEO"])
+@pytest.mark.parametrize("action", [STILLS, TEST_SHOT, MOTION, REDO])
+def test_every_paid_step_asks_in_every_mode(engine, mode, action):
+    a_studio_that_asks(engine, mode)
+    paid_policy(engine, "EVERY_PAID_STEP")
+
+    verdict = ask(engine, action, "board-1", cost_usd=1.0, context={"plan_hash": PLAN_A})
+
+    assert verdict["status"] == "NEEDS_APPROVAL"
+    assert verdict["approval_id"] is not None
+
+
+def test_the_step_is_named_by_the_action_when_the_caller_leaves_it_out(engine):
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+
+    verdict = ask(engine, STILLS, "board-1", cost_usd=0.72, context={"plan_hash": PLAN_A})
+
+    with Session(engine) as session:
+        request = session.get(ApprovalRequest, verdict["approval_id"])
+        assert request.proposed_diff == {"plan_hash": PLAN_A, "step": "stills", "cap_credits": None}
+
+
+def test_a_paid_step_without_a_plan_hash_is_refused_and_writes_nothing(engine):
+    """An answer not bound to a plan could be spent on any plan: the gate will not ask it."""
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+
+    for context in (None, {}, {"step": "motion"}, {"plan_hash": ""}, {"plan_hash": 7}):
+        verdict = ask(engine, MOTION, "board-1", cost_usd=5.0, context=context)
+        assert verdict["allowed"] is False
+        assert verdict["status"] == "BLOCKED_NO_PLAN"
+        assert "foaia de filmare" in verdict["reason"]
+    assert rows(engine) == []
+
+
+def test_a_step_the_caller_names_wrongly_is_refused(engine):
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+
+    verdict = ask(engine, MOTION, "board-1", cost_usd=5.0, context=plan(step="stills"))
+
+    assert verdict["status"] == "BLOCKED_NO_PLAN"
+    assert rows(engine) == []
+
+
+def test_a_yes_for_one_plan_never_buys_another(engine):
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+    first = ask(engine, MOTION, "board-1", cost_usd=12.24, context=plan(PLAN_A))
+    answer(engine, first["approval_id"], "APPROVED", note="Da, doar acest plan.")
+
+    other = ask(engine, MOTION, "board-1", cost_usd=12.24, context=plan(PLAN_B))
+
+    assert other["allowed"] is False
+    assert other["status"] == "NEEDS_APPROVAL"
+    assert other["approval_id"] != first["approval_id"]
+    with Session(engine) as session:
+        assert session.get(ApprovalRequest, first["approval_id"]).consumed_at is None
+        fresh = session.get(ApprovalRequest, other["approval_id"])
+        assert fresh.proposed_diff["plan_hash"] == PLAN_B
+
+
+def test_a_yes_under_one_cap_never_buys_a_higher_cap(engine):
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+    first = ask(engine, MOTION, "board-1", cost_usd=12.24, context=plan(cap_credits=2190))
+    answer(engine, first["approval_id"], "APPROVED")
+
+    dearer = ask(engine, MOTION, "board-1", cost_usd=12.24, context=plan(cap_credits=4000))
+
+    assert dearer["status"] == "NEEDS_APPROVAL"
+    assert dearer["approval_id"] != first["approval_id"]
+
+
+def test_a_yes_buys_exactly_one_step_and_is_spent_before_the_purchase(engine):
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+    asked = ask(engine, MOTION, "board-1", cost_usd=12.24, context=plan())
+    answer(engine, asked["approval_id"], "APPROVED")
+
+    # The purchase happens after `may_act` returns, in the caller's code: by then the yes
+    # must already be marked spent in the same transaction, so a crash mid-purchase cannot
+    # leave a second free attempt behind.
+    with Session(engine) as session, session.begin():
+        bought = may_act(session, MOTION, subject="board-1", cost_usd=12.24, context=plan())
+        assert bought["status"] == "ALLOWED"
+        assert bought["approval_id"] == asked["approval_id"]
+        assert session.get(ApprovalRequest, asked["approval_id"]).consumed_at is not None
+
+    again = ask(engine, MOTION, "board-1", cost_usd=12.24, context=plan())
+
+    assert again["allowed"] is False
+    assert again["status"] == "NEEDS_APPROVAL"
+    assert again["approval_id"] != asked["approval_id"]
+    with Session(engine) as session:
+        consumed = list(
+            session.scalars(
+                select(DomainEvent).where(DomainEvent.event_type == "governance.approval_consumed")
+            )
+        )
+    assert len(consumed) == 1
+    assert consumed[0].payload["action"] == MOTION
+
+
+def test_a_yes_for_the_stills_does_not_buy_the_motion(engine):
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+    stills = ask(engine, STILLS, "board-1", cost_usd=0.72, context=plan(step="stills"))
+    answer(engine, stills["approval_id"], "APPROVED")
+
+    motion = ask(engine, MOTION, "board-1", cost_usd=12.24, context=plan(step="motion"))
+
+    assert motion["status"] == "NEEDS_APPROVAL"
+    with Session(engine) as session:
+        assert session.get(ApprovalRequest, stills["approval_id"]).consumed_at is None
+
+
+def test_a_no_on_the_sheet_is_the_answer_for_that_plan(engine):
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+    asked = ask(engine, MOTION, "board-1", cost_usd=12.24, context=plan())
+    answer(engine, asked["approval_id"], "REFUSED", note="Prea scump.")
+
+    verdict = ask(engine, MOTION, "board-1", cost_usd=12.24, context=plan())
+
+    assert verdict["status"] == "REFUSED_BY_OWNER"
+    assert "Prea scump." in verdict["reason"]
+    assert len(rows(engine)) == 1
+
+
+def test_asking_without_writing_leaves_the_owner_alone(engine):
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+    asked = ask(engine, MOTION, "board-1", cost_usd=12.24, context=plan())
+    answer(engine, asked["approval_id"], "APPROVED")
+
+    verdict = ask(engine, MOTION, "board-1", cost_usd=12.24, context=plan(), ask_owner=False)
+
+    assert verdict["status"] == "NEEDS_APPROVAL"
+    assert verdict["approval_id"] is None
+    assert len(rows(engine)) == 1
+    with Session(engine) as session:
+        assert session.get(ApprovalRequest, asked["approval_id"]).consumed_at is None
+
+
+@pytest.mark.parametrize("hard_gate", ["STOP", "SAFE_MODE", "T4"])
+def test_the_hard_gates_still_refuse_before_the_paid_media_gate_and_leave_the_yes_unspent(
+    engine, hard_gate
+):
+    from app.runbook.models import SafeModeRecord
+
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+    asked = ask(engine, MOTION, "board-1", cost_usd=12.24, context=plan())
+    answer(engine, asked["approval_id"], "APPROVED")
+    extra: dict = {}
+    if hard_gate == "STOP":
+        with Session(engine) as session, session.begin():
+            session.get(OwnerPolicy, 1).autonomy_stopped = True
+    elif hard_gate == "SAFE_MODE":
+        with Session(engine) as session, session.begin():
+            session.add(
+                SafeModeRecord(
+                    id=str(uuid4()),
+                    reason="Un incident ține studioul în SAFE_MODE.",
+                    trigger="STAGE_FAILURE",
+                    run_id=None,
+                    entered_at=utc_now(),
+                    cleared_at=None,
+                    cleared_notes=None,
+                    event_id=None,
+                )
+            )
+    else:
+        # A caller's tier is only ever taken upward, and T4 is nobody's but the Owner's.
+        extra = {"tier": "T4"}
+
+    with Session(engine) as session, session.begin():
+        verdict = may_act(
+            session, MOTION, subject="board-1", cost_usd=12.24, context=plan(), **extra
+        )
+
+    assert verdict["allowed"] is False
+    assert (
+        verdict["status"]
+        == {
+            "STOP": "BLOCKED_STOP",
+            "SAFE_MODE": "BLOCKED_SAFE_MODE",
+            "T4": "BLOCKED_OWNER_ONLY",
+        }[hard_gate]
+    )
+    with Session(engine) as session:
+        assert session.get(ApprovalRequest, asked["approval_id"]).consumed_at is None
+    assert len(rows(engine)) == 1
+
+
+def test_an_unclassified_paid_action_is_refused_before_the_gate(engine):
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+
+    verdict = ask(engine, "media.stills_purchase_v2", "board-1", cost_usd=1.0, context=plan())
+
+    assert verdict["status"] == "BLOCKED_UNCLASSIFIED"
+    assert rows(engine) == []
+
+
+def test_the_paid_media_steps_have_their_tiers_and_romanian_names():
+    from app.services import (
+        ACTION_RISK_TIERS,
+        APPROVAL_ACTION_LABELS,
+        PAID_MEDIA_STEPS,
+    )
+
+    assert ACTION_RISK_TIERS[STILLS] == "T2"
+    assert ACTION_RISK_TIERS[TEST_SHOT] == "T3"
+    assert ACTION_RISK_TIERS[MOTION] == "T3"
+    assert ACTION_RISK_TIERS[REDO] == "T3"
+    assert PAID_MEDIA_STEPS == {
+        STILLS: "stills",
+        TEST_SHOT: "test_shot",
+        MOTION: "motion",
+        REDO: "scene_redo",
+    }
+    for action in PAID_MEDIA_STEPS:
+        assert ACTION_RISK_TIERS[action] != "T4"
+        label = APPROVAL_ACTION_LABELS[action]
+        assert label and label != action
+        # Romanian: no English step names leak into what the Owner reads.
+        assert not any(word in label.lower() for word in ("purchase", "shot", "redo", "stills"))
+
+
+def test_a_request_parameter_cannot_loosen_the_gate(engine):
+    """Nothing the caller passes changes the Owner's setting: not the context, not a tier."""
+    import inspect
+
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+    loose = {**plan(), "paid_media_approval": "MODE"}
+
+    verdict = ask(engine, MOTION, "board-1", cost_usd=1.0, context=loose)
+    lowered = ask(engine, MOTION, "board-2", tier="T1", cost_usd=1.0, context=plan())
+
+    assert verdict["status"] == lowered["status"] == "NEEDS_APPROVAL"
+    assert "paid_media_approval" not in inspect.signature(may_act).parameters
+
+
+# -------------------------------------------------------------- OVER_USD and MODE --
+
+
+def test_over_usd_asks_only_above_the_threshold(engine):
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+    paid_policy(engine, "OVER_USD", 5.0)
+
+    cheap = ask(engine, STILLS, "board-1", cost_usd=0.72, context=plan(step="stills"))
+    at_the_line = ask(engine, TEST_SHOT, "board-1", cost_usd=5.0, context=plan(step="test_shot"))
+    dear = ask(engine, MOTION, "board-1", cost_usd=12.24, context=plan())
+    unknown = ask(engine, REDO, "board-1", cost_usd=None, context=plan(step="scene_redo"))
+
+    assert cheap["status"] == "ALLOWED" and cheap["approval_id"] is None
+    assert at_the_line["status"] == "ALLOWED"
+    assert dear["status"] == "NEEDS_APPROVAL"
+    assert "5" in dear["reason"] and "12,24" in dear["reason"]
+    # A cost nobody could compute is not below any threshold.
+    assert unknown["status"] == "NEEDS_APPROVAL"
+    assert "necunoscut" in unknown["reason"]
+    assert {row.action for row in rows(engine)} == {MOTION, REDO}
+
+
+def test_over_usd_below_the_threshold_still_obeys_the_mode(engine):
+    """Below his threshold the Owner hands the step back to the mode, not past it."""
+    a_studio_that_asks(engine, "MANUAL")
+    paid_policy(engine, "OVER_USD", 5.0)
+
+    verdict = ask(engine, STILLS, "board-1", cost_usd=0.72, context=plan(step="stills"))
+
+    assert verdict["status"] == "BLOCKED_MODE"
+    assert rows(engine) == []
+
+
+@pytest.mark.parametrize(
+    ("mode", "action", "expected"),
+    [
+        ("AUTONOMOUS_CEO", MOTION, "ALLOWED"),
+        ("AUTONOMOUS_CEO", STILLS, "ALLOWED"),
+        ("SUPERVISED", STILLS, "ALLOWED"),
+        ("SUPERVISED", MOTION, "NEEDS_APPROVAL"),
+        ("MANUAL", STILLS, "BLOCKED_MODE"),
+        ("MANUAL", MOTION, "BLOCKED_MODE"),
+    ],
+)
+def test_mode_restores_what_the_autonomy_mode_decides_today(engine, mode, action, expected):
+    a_studio_that_asks(engine, mode)
+    paid_policy(engine, "MODE")
+    step = "stills" if action == STILLS else "motion"
+
+    verdict = ask(engine, action, "board-1", cost_usd=12.24, context=plan(step=step))
+
+    assert verdict["status"] == expected
+
+
+def test_mode_under_supervision_still_binds_the_yes_to_the_plan(engine):
+    a_studio_that_asks(engine, "SUPERVISED")
+    paid_policy(engine, "MODE")
+    asked = ask(engine, MOTION, "board-1", cost_usd=12.24, context=plan(PLAN_A))
+    answer(engine, asked["approval_id"], "APPROVED")
+
+    assert ask(engine, MOTION, "board-1", context=plan(PLAN_B))["status"] == "NEEDS_APPROVAL"
+    assert ask(engine, MOTION, "board-1", context=plan(PLAN_A))["status"] == "ALLOWED"
+
+
+def test_an_unknown_stored_value_is_read_as_the_strictest(engine):
+    """The database refuses other values; a row that somehow holds one still asks."""
+    from app.services import paid_media_policy
+
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+    with Session(engine) as session:
+        policy = session.get(OwnerPolicy, 1)
+        policy.paid_media_approval = "NEVER_ASK"  # in memory only, never flushed
+        assert paid_media_policy(policy) == ("EVERY_PAID_STEP", None)
+        policy.paid_media_approval = None
+        assert paid_media_policy(policy) == ("EVERY_PAID_STEP", None)
+        policy.paid_media_approval = "OVER_USD"
+        policy.paid_media_approval_over_usd = None
+        assert paid_media_policy(policy) == ("EVERY_PAID_STEP", None)
+        session.rollback()
+    assert paid_media_policy(None) == ("EVERY_PAID_STEP", None)
+
+
+# ------------------------------------------------- SetPaidMediaApproval, the Owner's only --
+
+
+def paid_command(expected_version: int, value: str, over_usd: float | None = None):
+    from app.services import PaidMediaApprovalCommand
+
+    return PaidMediaApprovalCommand(
+        command_id=uuid4(),
+        expected_version=expected_version,
+        paid_media_approval=value,
+        over_usd=over_usd,
+    )
+
+
+def policy_row(engine) -> tuple[str, float | None, int]:
+    with Session(engine) as session:
+        policy = session.get(OwnerPolicy, 1)
+        return policy.paid_media_approval, policy.paid_media_approval_over_usd, policy.version
+
+
+def test_the_owner_changes_the_paid_media_policy_with_a_versioned_command(engine):
+    from app.services import change_paid_media_approval
+
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+    _, _, version = policy_row(engine)
+    command = paid_command(version, "OVER_USD", 5.0)
+
+    result = change_paid_media_approval(engine, command, issued_by="owner")
+    replay = change_paid_media_approval(engine, command, issued_by="owner")
+
+    assert result.status == "COMMITTED"
+    assert result.paid_media_approval == "OVER_USD"
+    assert result.over_usd == 5.0
+    assert result.version == version + 1
+    assert replay.model_dump() == result.model_dump()
+    assert policy_row(engine) == ("OVER_USD", 5.0, version + 1)
+    with Session(engine) as session:
+        events = list(
+            session.scalars(
+                select(DomainEvent).where(
+                    DomainEvent.event_type == "owner.paid_media_approval_changed"
+                )
+            )
+        )
+    assert len(events) == 1
+    assert events[0].event_id == result.event_id
+    assert events[0].payload == {
+        "paid_media_approval": "OVER_USD",
+        "over_usd": 5.0,
+        "previous_paid_media_approval": "EVERY_PAID_STEP",
+        "previous_over_usd": None,
+    }
+
+    # And the gate reads the new value at once.
+    cheap = ask(engine, STILLS, "board-1", cost_usd=0.72, context=plan(step="stills"))
+    assert cheap["status"] == "ALLOWED"
+
+
+def test_the_same_value_again_is_no_change_and_keeps_the_version(engine):
+    from app.services import change_paid_media_approval
+
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+    _, _, version = policy_row(engine)
+
+    result = change_paid_media_approval(
+        engine, paid_command(version, "EVERY_PAID_STEP"), issued_by="owner"
+    )
+
+    assert result.status == "NO_CHANGE"
+    assert result.event_id is None
+    assert policy_row(engine) == ("EVERY_PAID_STEP", None, version)
+
+
+def test_a_stale_version_is_refused(engine):
+    from app.services import CommandConflict, change_paid_media_approval
+
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+    _, _, version = policy_row(engine)
+
+    with pytest.raises(CommandConflict):
+        change_paid_media_approval(engine, paid_command(version + 5, "MODE"), issued_by="owner")
+    assert policy_row(engine) == ("EVERY_PAID_STEP", None, version)
+
+
+@pytest.mark.parametrize("issuer", ["director", "video_editor", "agent", "autorun", "AUTORUN", ""])
+def test_nobody_but_the_owner_can_change_it(engine, issuer):
+    from app.services import PaidMediaApprovalRefused, change_paid_media_approval
+
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+    before = policy_row(engine)
+
+    with pytest.raises(PaidMediaApprovalRefused) as refused:
+        change_paid_media_approval(engine, paid_command(before[2], "MODE"), issued_by=issuer)
+
+    assert "Proprietar" in str(refused.value)
+    assert policy_row(engine) == before
+    with Session(engine) as session:
+        assert not list(
+            session.scalars(
+                select(DomainEvent).where(
+                    DomainEvent.event_type == "owner.paid_media_approval_changed"
+                )
+            )
+        )
+
+
+def test_the_issuer_must_be_named():
+    import inspect
+
+    from app.services import change_paid_media_approval
+
+    parameter = inspect.signature(change_paid_media_approval).parameters["issued_by"]
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
+    assert parameter.default is inspect.Parameter.empty
+
+
+@pytest.mark.parametrize(
+    ("value", "over_usd"),
+    [
+        ("OVER_USD", None),
+        ("MODE", 5.0),
+        ("EVERY_PAID_STEP", 1.0),
+        ("OVER_USD", -1.0),
+        ("NEVER", None),
+    ],
+)
+def test_the_command_refuses_a_shape_the_database_would_refuse(value, over_usd):
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        paid_command(1, value, over_usd)
+
+
+def test_the_command_accepts_exactly_the_values_the_database_accepts():
+    from typing import get_args
+
+    from app.models import PAID_MEDIA_APPROVALS
+    from app.services import PaidMediaApprovalCommand
+
+    annotation = PaidMediaApprovalCommand.model_fields["paid_media_approval"].annotation
+    assert set(get_args(annotation)) == set(PAID_MEDIA_APPROVALS)
+
+
+def test_the_command_takes_no_extra_fields():
+    from app.services import PaidMediaApprovalCommand
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        PaidMediaApprovalCommand(
+            command_id=uuid4(),
+            expected_version=1,
+            paid_media_approval="MODE",
+            issued_by="owner",
+        )

@@ -121,6 +121,13 @@ class StudioModel:
     # -- the shapes, most specific marker first ---------------------------------------
 
     def _answer(self, prompt: str) -> str:
+        # The shot brief carries the film's story and its visual bible (core_message,
+        # continuity_rules), so it is told apart first, by the shape it asks to be returned.
+        # Asked in the old order, this stand-in answered the shot plan with a script, and the
+        # film went on from template prompts in silence - which is now a lost plan, waiting as
+        # NEEDS_SHOT_PLAN (SHOT_PLAN_PARSE, 2026-09-27).
+        if '"shots": [' in prompt:
+            return self._shots(prompt)
         if "evidence_quote" in prompt:
             return json.dumps(
                 {
@@ -677,6 +684,10 @@ VENDOR_FAKES = (
     ("app.runbook.stages", "analytics_provider_for_channel"),
     ("app.economy.credits", "credit_balances"),
     ("app.research.service", "verified_search_provider"),
+    # The PRODUCTION staircase's wiring (the Runway connection, its balance and adapters)
+    # and the sheet's reference-image flag: the day reaches both once it climbs a sheet.
+    ("app.runbook.stages", "sheet_wiring"),
+    ("app.media.shooting_sheet", "_reference_verified"),
 )
 
 
@@ -716,6 +727,17 @@ def install_vendor_fakes(monkeypatch, *, publisher: Any, motion: FakeMotionChoos
         ("app.economy.credits", "credit_balances"): lambda *a, **k: {},
         # No web search engine, as in a studio that never connected one.
         ("app.research.service", "verified_search_provider"): lambda *a, **k: None,
+        # A staircase with no Runway connection: no balance, no motion adapter, local stills.
+        ("app.runbook.stages", "sheet_wiring"): lambda *a, **k: {
+            "integration_id": None,
+            "capabilities": [],
+            "image_adapter": TestImages(),
+            "account": None,
+            "adapter_for_model": None,
+            "resolution": None,
+            "storage_root": None,
+        },
+        ("app.media.shooting_sheet", "_reference_verified"): lambda: False,
     }
     assert set(fakes) == set(VENDOR_FAKES), set(fakes) ^ set(VENDOR_FAKES)
     for (module, attribute), fake in fakes.items():

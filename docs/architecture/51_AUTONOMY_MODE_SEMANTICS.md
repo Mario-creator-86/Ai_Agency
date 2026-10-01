@@ -73,6 +73,37 @@ and a test proves the mode cannot move one: the five-point publishing gate is as
 film in each of the three modes and refuses in all three. A mode decides what the studio may
 *attempt*; it never decides what a gate *concludes*.
 
+## Paid media steps: the Owner's own rule, read before the mode
+
+Amended deliberately on 2026-09-27, after the Nepal film. Under AUTONOMOUS_CEO the studio bought
+two whole films (over 1,000 Runway credits) with no question asked, because a paid render sat
+inside the mode's T3 ceiling. The paid steps of a film are therefore four actions of their own:
+`media.stills_purchase` (T2), `media.test_shot` (T3), `media.motion_purchase` (T3) and
+`media.scene_redo` (T3). None of them is T4, because T4 would make a film impossible to buy. For
+these four, `may_act` reads one more thing, the Owner policy's `paid_media_approval`, after the
+unclassified check, STOP, T4 and SAFE_MODE and before the mode's "within the ceiling → allowed"
+return. `EVERY_PAID_STEP` is the default, and a missing, unknown or incomplete value is read as
+it; it asks him in every mode, AUTONOMOUS_CEO included. `OVER_USD` asks above his threshold and
+whenever the cost is unknown. `MODE` hands the step back to the modes above, unchanged. This is
+stricter than the modes by the Owner's own policy, which 31's hierarchy already ranks above the
+Director, and it loosens nothing: a step the rule lets through still meets the mode, and a mode
+that refuses still refuses. The question and the answer are bound to the shooting sheet's
+`plan_hash`, its step and its credit cap through the proposed diff, so a yes is spent once, before
+the purchase, and only on the plan he saw; a request that names no plan is refused
+`BLOCKED_NO_PLAN` and asks nothing. 31's "read in one place only" still holds: the same gate, the
+same spending, after the same refusals, with one widening — "he would have to be asked" can now
+come from his paid-media rule as well as from SUPERVISED. Only his versioned command
+`SetPaidMediaApproval` (`change_paid_media_approval`, issued by the Owner and nobody else) moves
+the rule; no agent, AUTORUN, mode change or request parameter does. The cost of the rule is stated
+here on purpose: while it stays `EVERY_PAID_STEP`, every film waits for him at the stills, the hero
+test shot and the motion, which conflicts openly with "autonomous from day two", and only he can
+resolve that, by loosening it. Not built at this writing: the gate is code and tested, but nothing
+calls these four actions yet. The shooting sheet's step routes, the stills and motion stages and
+the daily run's staircase are specified and pending; until they land, the daily run's media stage
+is still asked as `media.paid_generation` under the mode alone, and the page's render button does
+not consult `may_act`. The MANUAL whole-day statement above is unaffected, because the daily run's
+media stage is skipped under MANUAL before any paid step is proposed.
+
 ## Feature flags are separate
 
 Autonomy mode alone does not imply every feature is enabled.

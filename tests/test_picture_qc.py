@@ -864,3 +864,147 @@ def test_a_guessed_name_is_looked_at_and_can_never_fail_the_film(engine, staffed
     assert result["failures"] == [], "a guess never fails a film"
     assert result["picture_qc"]["passed"] is True
     assert len(model.calls) == 1, "one look per film"
+
+
+# ------------------------------------------------------------- one still, before motion
+#
+# judge_still is the vision half of the stills gate (app.media.still_gate): one call per
+# candidate still, at 1080 px, through the same LOOKERS path, with a verdict schema that has
+# no field a silent model could pass by.
+
+NEPAL_STILL = (
+    __import__("pathlib").Path(__file__).resolve().parent
+    / "fixtures"
+    / "nepal_1d530880"
+    / "scene_01.jpg"
+)
+
+
+def still_plan(scene=1):
+    from app.media.still_gate import StillPlan
+
+    return StillPlan(
+        scene=scene,
+        still_prompt="A remote Himalayan village under gathering storm clouds, seen from above.",
+        camera_move="aerial drift forward",
+        faces_forbidden=True,
+        bible_rules=("No human faces appear",),
+        look_block="Late monsoon, overcast, soft diffuse light, muted greens and slate blue.",
+    )
+
+
+def a_still_answer(scene=1, **changes):
+    entry = {
+        "scene": scene,
+        "faces_visible": False,
+        "readable_text": False,
+        "matches_plan": True,
+        "look_ok": True,
+        "technical_ok": True,
+        "bible_violations": "none",
+        "verdict": "buy_motion",
+        "reason": "the village under storm clouds",
+    }
+    entry.update(changes)
+    return json.dumps({"stills": [entry]})
+
+
+def _jpeg_size(data: bytes) -> tuple[int, int]:
+    """Width and height from a baseline or progressive JPEG's SOF marker."""
+    index = 2
+    while index < len(data):
+        assert data[index] == 0xFF
+        marker = data[index + 1]
+        length = int.from_bytes(data[index + 2 : index + 4], "big")
+        if marker in (0xC0, 0xC1, 0xC2):
+            height = int.from_bytes(data[index + 5 : index + 7], "big")
+            width = int.from_bytes(data[index + 7 : index + 9], "big")
+            return width, height
+        index += 2 + length
+    raise AssertionError("no SOF marker")
+
+
+@pytest.mark.skipif(__import__("shutil").which("ffmpeg") is None, reason="ffmpeg is not installed")
+def test_judge_still_sends_the_still_at_1080_px_in_one_call(engine, staffed):
+    import base64
+
+    from app.media.picture_qc import STILL_TASK, STILL_WIDTH, judge_still
+
+    give_vision(engine, staffed["agents"]["VideoEditor"].id)
+    registry, model = registry_with(staffed, lambda p: a_still_answer())
+
+    judged = judge_still(engine, registry, NEPAL_STILL, still_plan(), str(uuid4()))
+
+    assert STILL_WIDTH == 1080
+    assert judged.status == "MEASURED" and judged.verdict is not None
+    assert judged.verdict.verdict == "buy_motion" and judged.image_width == 1080
+    assert len(model.calls) == 1
+    images = model.calls[0]["extra"]["images"]
+    assert len(images) == 1
+    assert _jpeg_size(base64.b64decode(images[0])) == (1080, 1920)
+    prompt = model.calls[0]["prompt"]
+    assert "No human faces appear" in prompt and "bible_violations" in prompt
+    assert "name the violation or write none" in prompt
+    with Session(engine) as session:
+        runs = list(session.scalars(select(AgentRun).where(AgentRun.task_type == STILL_TASK)))
+    assert len(runs) == 1 and judged.run_id == runs[0].id
+
+
+def test_the_still_verdict_has_no_field_that_passes_by_default():
+    from app.media.picture_qc import StillVerdict
+    from pydantic import ValidationError
+
+    assert all(field.is_required() for field in StillVerdict.model_fields.values())
+    assert set(StillVerdict.model_fields) >= {
+        "faces_visible",
+        "readable_text",
+        "matches_plan",
+        "look_ok",
+        "technical_ok",
+        "bible_violations",
+        "verdict",
+        "reason",
+    }
+    with pytest.raises(ValidationError):
+        StillVerdict.model_validate({"scene": 1, "verdict": "buy_motion", "reason": "fine"})
+    # A word is not an answer: "yes" and "true" in quotes are refused, not read as passes.
+    good = json.loads(a_still_answer())["stills"][0]
+    with pytest.raises(ValidationError):
+        StillVerdict.model_validate({**good, "faces_visible": "no"})
+    with pytest.raises(ValidationError):
+        StillVerdict.model_validate({**good, "verdict": "looks fine"})
+
+
+@pytest.mark.skipif(__import__("shutil").which("ffmpeg") is None, reason="ffmpeg is not installed")
+@pytest.mark.parametrize(
+    "answer",
+    [
+        json.dumps({"stills": []}),
+        a_still_answer(scene=2),
+        "I looked and it is lovely.",
+    ],
+    ids=["no-entry", "another-scene", "prose"],
+)
+def test_judge_still_without_an_entry_for_this_still_is_not_run(engine, staffed, answer):
+    from app.media.picture_qc import judge_still
+
+    give_vision(engine, staffed["agents"]["VideoEditor"].id)
+    registry, _ = registry_with(staffed, lambda p: answer)
+
+    judged = judge_still(engine, registry, NEPAL_STILL, still_plan(), str(uuid4()))
+
+    assert judged.status == "NOT_RUN" and judged.verdict is None
+    assert "nu a fost privită" in judged.detail_ro
+
+
+def test_judge_still_with_nobody_who_can_see_is_not_run(engine, staffed):
+    from app.media.picture_qc import judge_still
+
+    registry, model = registry_with(staffed, lambda p: a_still_answer())
+
+    judged = judge_still(engine, registry, NEPAL_STILL, still_plan(), str(uuid4()))
+    unregistered = judge_still(engine, None, NEPAL_STILL, still_plan(), str(uuid4()))
+
+    assert judged.status == "NOT_RUN" and "nu a fost privită" in judged.detail_ro
+    assert unregistered.status == "NOT_RUN"
+    assert model.calls == []

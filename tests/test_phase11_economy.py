@@ -854,3 +854,170 @@ def test_a_film_whose_every_shot_was_refused_settles_its_hold_against_what_was_b
     assert reservation.usd_micros == 1_304_720
     daily = budget_status(engine)["budgets"][0]
     assert (daily["spent_usd"], daily["reserved_usd"]) == ("0.02", "0")
+
+
+# ------------------------------------------------ what the vendor charged, written back --
+#
+# The Nepal film: the balance fell by 966 credits over one render and the books said 0.74 USD,
+# because the published rates were never checked against the account. A measured drop is
+# shared across what was bought, in proportion to the published prices, and written over the
+# documented figures as MEASURED, so the next shooting sheet prices with what was paid.
+
+
+def _runway_with_models(engine) -> str:
+    from pathlib import Path
+
+    from app.integrations.models import Integration, ProviderResource
+    from app.integrations.vault import CredentialVault
+    from app.services import append_event, utc_now
+
+    identifier = str(uuid4())
+    vault = CredentialVault(Path(str(engine.url.database)).with_suffix(".credentials.key"))
+    with Session(engine) as session, session.begin():
+        event = append_event(
+            session, "settings.integration_saved", "integration", identifier, 1, {}, str(uuid4())
+        )
+        session.add(
+            Integration(
+                id=identifier,
+                kind="runway",
+                name="runway",
+                config={"credit_usd": 0.01},
+                encrypted_secrets=vault.encrypt({"api_key": "k"}),
+                secret_fields=["api_key"],
+                version=1,
+                status="ACCESS_VERIFIED",
+                checked_at=None,
+                event_id=event.event_id,
+            )
+        )
+    with Session(engine) as session, session.begin():
+        for remote_id, pricing in (
+            ("seedance2_5", {"per_second_usd": 0.68, "unit": "per second of video"}),
+            ("seedream5_pro", {"per_image_usd": 0.09, "unit": "per image"}),
+        ):
+            session.add(
+                ProviderResource(
+                    id=str(uuid4()),
+                    integration_id=identifier,
+                    resource_type="MODEL",
+                    remote_id=remote_id,
+                    name=remote_id,
+                    api_metadata={},
+                    api_available=True,
+                    last_seen_at=utc_now(),
+                    pricing=pricing,
+                    capabilities={},
+                    metadata_version=1,
+                    production_status="PRODUCTION",
+                )
+            )
+    return identifier
+
+
+NEPAL_TAKES = [{"kind": "still", "model_id": "seedream5_pro", "resolution": "2K", "count": 6}] + [
+    {"kind": "motion", "model_id": "seedance2_5", "resolution": "1080p", "seconds": 5}
+] * 4
+
+
+def test_a_measured_balance_drop_writes_measured_rows_and_moves_the_per_second_price(engine):
+    from datetime import date
+
+    from app.economy.credits import measured_price_table, record_measured_prices
+    from app.integrations.models import ProviderResource
+    from app.media.cost_plan import source_label
+    from app.models import DomainEvent
+
+    connection = _runway_with_models(engine)
+    before = {connection: {"kind": "runway", "unit": "credits", "balance": 5000.0}}
+    after = {connection: {"kind": "runway", "unit": "credits", "balance": 4034.0}}
+
+    result = record_measured_prices(
+        engine, connection, before, after, NEPAL_TAKES, measured_on=date(2026, 9, 27)
+    )
+
+    assert result["spent_credits"] == 966
+    assert result["attribution"] == "proportional"
+    per_second = 966 * 1360 / 1414 / 20 * 0.01
+    per_image = 966 * 54 / 1414 / 6 * 0.01
+    with Session(engine) as session:
+        rows = {
+            r.remote_id: r
+            for r in session.scalars(
+                select(ProviderResource).where(ProviderResource.integration_id == connection)
+            )
+        }
+        events = list(
+            session.scalars(
+                select(DomainEvent).where(DomainEvent.event_type == "economy.prices_measured")
+            )
+        )
+    motion = rows["seedance2_5"]
+    assert motion.pricing["per_second_usd"] == pytest.approx(per_second, abs=1e-6)
+    assert motion.pricing["per_second_usd"] != 0.68, "the documented figure moved"
+    assert motion.pricing["source"] == "measured" and motion.price_verification == "BILLED"
+    assert rows["seedream5_pro"].pricing["per_image_usd"] == pytest.approx(per_image, abs=1e-6)
+    assert len(events) == 1 and events[0].payload["spent_credits"] == 966
+
+    # And the next sheet reads what was paid, not what the page said.
+    table = measured_price_table(engine, connection)
+    row = table.row("seedance2_5", "1080p")
+    assert row.provenance == "MEASURED"
+    assert row.credits_per_second == pytest.approx(966 * 1360 / 1414 / 20, rel=1e-4)
+    assert row.documented_credits_per_second == 68
+    assert source_label(row, today=date.fromisoformat(row.date)) == "măsurat"
+    # A resolution nobody measured keeps its published price.
+    assert table.row("seedance2_5", "720p").provenance == "DOCUMENTED"
+
+
+def test_no_balance_drop_writes_no_measured_price(engine):
+    from app.economy.credits import record_measured_prices
+    from app.integrations.models import ProviderResource
+
+    connection = _runway_with_models(engine)
+    same = {connection: {"kind": "runway", "unit": "credits", "balance": 5000.0}}
+
+    result = record_measured_prices(engine, connection, same, same, NEPAL_TAKES)
+
+    assert result["rows"] == [] and result["spent_credits"] == 0
+    with Session(engine) as session:
+        motion = session.scalar(
+            select(ProviderResource).where(ProviderResource.remote_id == "seedance2_5")
+        )
+    assert motion.pricing["per_second_usd"] == 0.68
+
+
+def test_the_estimate_prices_stills_and_uses_the_sheet_total_not_the_flat_ceiling(engine, settings):
+    """The reservation used to hold the flat 12 USD motion ceiling and no still at all. With
+    a shooting sheet, it holds the sheet's own figures: stills, hero, the rest, and the cap."""
+    from app.economy.budget import estimate_film_cost_micros
+    from app.media.cost_plan import plan_film
+
+    board = _a_film_with_voiceover(engine, ("", "", "", ""))
+    sheet = plan_film([5, 6, 6, 6], model_id="seedance2_5", resolution="1080p")
+
+    estimate = estimate_film_cost_micros(
+        engine, board, environment="PRODUCTION", settings=settings, sheet=sheet
+    )
+
+    assert estimate["stills_usd_micros"] == 72 * 10_000
+    assert estimate["motion_usd_micros"] == (340 + 1224) * 10_000
+    assert estimate["expected_usd_micros"] == 1636 * 10_000
+    # What is held is the sheet's hard cap, the most the motion loop may spend.
+    assert estimate["usd_micros"] == sheet["cap_credits"] * 10_000
+    assert estimate["motion_usd_micros"] != 12_000_000
+    assert estimate["source"] == "foaia de filmare"
+
+
+def test_without_a_sheet_the_estimate_still_prices_the_stills(engine, settings):
+    """No sheet yet: the legacy motion ceiling stays, and the stills of every LIVE scene are
+    priced at the published rate instead of being left outside the figure."""
+    from app.economy.budget import estimate_film_cost_micros
+
+    board = _a_film_with_voiceover(engine, ("", "", ""))
+
+    estimate = estimate_film_cost_micros(engine, board, environment="PRODUCTION", settings=settings)
+
+    assert estimate["stills_usd_micros"] == 3 * 2 * 9 * 10_000
+    assert estimate["usd_micros"] == estimate["motion_usd_micros"] + 540_000
+    assert estimate["source"] == "plafon fix"

@@ -1,5 +1,16 @@
 # Changelog
 
+## The film staircase — after the Nepal film (2026-09-26 → 2026-10-01)
+
+- **The shot plan is never lost again**: strict parse, repair, one re-ask, NEEDS_SHOT_PLAN instead of templates.
+- **Prompts written for each model** from a plain-English look block; a lint blocks enum codes, hex, forbidden faces, charts sent to a photo model and over-long prompts before a price is shown.
+- **Charts, titles and black screens are composed locally** from the real numbers (0 credits).
+- **Per-scene, cost-optimised model choice** (the Owner's decision): the cheapest capable model per scene, premium only for the hook, his override wins, the saving reported.
+- **Faces measured** with YuNet (opencv); still checks; stills first, a hero test shot, capped motion, per-scene redo; takes never bought twice (migration 0048).
+- **Foaia de filmare**: the sheet and its drawer — prompts, models, seconds, credits and USD, the cap, his click bound to a plan_hash in every mode.
+- **Premium master**: 24 fps, lossless intermediates, CRF 17 High, -14 LUFS with a true-peak limiter; ASS captions.
+- **The Nepal rehearsal** rebuilds the film from the already-paid files for 0 credits.
+
 ## The Unreal skyline has a real day — 2026-09-26
 
 - **The towers-by-day pass is live** (art-source/unreal/towers_day, run on the saved level, backup kept): glass facades by day, no lit windows in the glare, green trees, the sign whole; the approved dusk pixel-identical.

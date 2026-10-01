@@ -1,0 +1,132 @@
+{
+  "_about": "As-sent prompts of the Nepal film (storyboard 1d530880, 2026-09-26), copied from the scratchpad copy of the Owner's database. The same visual_prompt went to the image model and, as promptText, to the image-to-video model. Used by tests/test_prompt_lint.py; never sent to a provider.",
+  "storyboard_id": "1d530880-c94a-48a1-baf5-6ad7c1796a6d",
+  "title": "Storyboard: Why Nepal Is Being Handed a Climate Bill It Cannot Pay",
+  "visual_style": "MOTION_GRAPHIC",
+  "visual_bible": {
+    "style": "MOTION_GRAPHIC_DOCU_HYBRID",
+    "realism": "STYLIZED_REALISM",
+    "period": "CONTEMPORARY_2020_2025",
+    "world": "NEPAL_CLIMATE_CRISIS",
+    "palette": "primary: #2E4A66, #5D8AA8, #87CEEB; secondary: #D2691E, #8B4513, #F4A460; accent: #FFD700, #FF4500; neutral: #1A1A1A, #FFFFFF",
+    "lighting": "NATURALISTIC_WITH_HIGH_CONTRAST",
+    "camera_language": "STATIC_FRAMES_WITH_SUBTLE_MOTION",
+    "weather": "VARIABLE_EXTREMES",
+    "continuity_rules": [
+      "Himalayan landscape palette remains consistent (#2E4A66 to #87CEEB for skies/mountains, #D2691E to #F4A460 for earth/structures)",
+      "Time of day is ambiguous but consistent (soft overcast light, no harsh shadows)",
+      "All text/graphics use the same font family (bold sans-serif for emphasis, regular for body)",
+      "The 100B/83B bar chart uses #FFD700 (promised) and #FF4500 (delivered) with identical dimensions across shots",
+      "No human faces appear (avoids uncanny valley in stylized realism)",
+      "Weather effects (rain, storm clouds) are animated consistently (24fps, 30% opacity)"
+    ],
+    "avoid": [
+      "on-screen text or captions",
+      "warped or extra hands and fingers",
+      "plastic or waxy skin",
+      "cartoon or 3D-render look when realism is asked for",
+      "unmotivated camera movement",
+      "clothing, hair or weather changing without reason",
+      "faces or bodies morphing mid-shot",
+      "watermarks or logos",
+      "Factories or industrial infrastructure",
+      "Modern vehicles/technology (keep pre-2010 farming tools only)",
+      "Bright saturated greens (misrepresents Nepal’s climate-stressed landscapes)",
+      "Handheld camera movement (maintains motion-graphic precision)",
+      "Day/night cycles (time is frozen in overcast ambiguity)",
+      "Voiceover lip-sync (no characters = no sync needed)"
+    ],
+    "aspect_ratio": "9:16",
+    "quality_target": "premium cinematic, readable on a phone in vertical framing",
+    "source": "director",
+    "written_at": "2026-09-26T14:43:04.936889+00:00"
+  },
+  "scenes": [
+    {
+      "scene_index": 1,
+      "kind_as_sent": "LIVE",
+      "story_purpose": "HOOK",
+      "shot_type": "MEDIUM",
+      "duration_seconds": 4.0,
+      "narration": "Nepal is paying for a crisis it did not create.",
+      "writer_visual": "Aerial view of Himalayan mountains with dark storm clouds gathering over a remote village.",
+      "claim_ids": [
+        "55c26333-bf54-44ec-aebf-89e2a8248553"
+      ],
+      "still_prompt": "Aerial view of Himalayan mountains with dark storm clouds gathering over a remote village. Environment: NEPAL_CLIMATE_CRISIS. Camera: medium shot, locked camera. Lighting: NATURALISTIC_WITH_HIGH_CONTRAST. Composition: subject centred in a vertical frame, readable on a phone. Motion: slow, natural movement within the frame. Style: MOTION_GRAPHIC_DOCU_HYBRID, STYLIZED_REALISM. Palette: primary: #2E4A66, #5D8AA8, #87CEEB; secondary: #D2691E, #8B4513, #F4A460; accent: #FFD700, #FF4500; neutral: #1A1A1A, #FFFFFF. Avoid: on-screen text or captions, warped or extra hands and fingers, plastic or waxy skin, cartoon or 3D-render look when realism is asked for, unmotivated camera movement, clothing, hair or weather changing without reason.",
+      "motion_prompt": "Aerial view of Himalayan mountains with dark storm clouds gathering over a remote village. Environment: NEPAL_CLIMATE_CRISIS. Camera: medium shot, locked camera. Lighting: NATURALISTIC_WITH_HIGH_CONTRAST. Composition: subject centred in a vertical frame, readable on a phone. Motion: slow, natural movement within the frame. Style: MOTION_GRAPHIC_DOCU_HYBRID, STYLIZED_REALISM. Palette: primary: #2E4A66, #5D8AA8, #87CEEB; secondary: #D2691E, #8B4513, #F4A460; accent: #FFD700, #FF4500; neutral: #1A1A1A, #FFFFFF. Avoid: on-screen text or captions, warped or extra hands and fingers, plastic or waxy skin, cartoon or 3D-render look when realism is asked for, unmotivated camera movement, clothing, hair or weather changing without reason."
+    },
+    {
+      "scene_index": 2,
+      "kind_as_sent": "LIVE",
+      "story_purpose": "SETUP",
+      "shot_type": "MEDIUM",
+      "duration_seconds": 5.6,
+      "narration": "It is the fourth most climate-vulnerable country on Earth, hit by floods and landslides.",
+      "writer_visual": "Raging floodwaters carrying debris through a mountain valley, houses partially submerged.",
+      "claim_ids": [
+        "55c26333-bf54-44ec-aebf-89e2a8248553",
+        "684dd48c-763d-4497-b3b1-dfc7cf7f150a"
+      ],
+      "still_prompt": "Raging floodwaters carrying debris through a mountain valley, houses partially submerged. Environment: NEPAL_CLIMATE_CRISIS. Camera: medium shot, locked camera. Lighting: NATURALISTIC_WITH_HIGH_CONTRAST. Composition: subject centred in a vertical frame, readable on a phone. Motion: slow, natural movement within the frame. Style: MOTION_GRAPHIC_DOCU_HYBRID, STYLIZED_REALISM. Palette: primary: #2E4A66, #5D8AA8, #87CEEB; secondary: #D2691E, #8B4513, #F4A460; accent: #FFD700, #FF4500; neutral: #1A1A1A, #FFFFFF. Avoid: on-screen text or captions, warped or extra hands and fingers, plastic or waxy skin, cartoon or 3D-render look when realism is asked for, unmotivated camera movement, clothing, hair or weather changing without reason.",
+      "motion_prompt": "Raging floodwaters carrying debris through a mountain valley, houses partially submerged. Environment: NEPAL_CLIMATE_CRISIS. Camera: medium shot, locked camera. Lighting: NATURALISTIC_WITH_HIGH_CONTRAST. Composition: subject centred in a vertical frame, readable on a phone. Motion: slow, natural movement within the frame. Style: MOTION_GRAPHIC_DOCU_HYBRID, STYLIZED_REALISM. Palette: primary: #2E4A66, #5D8AA8, #87CEEB; secondary: #D2691E, #8B4513, #F4A460; accent: #FFD700, #FF4500; neutral: #1A1A1A, #FFFFFF. Avoid: on-screen text or captions, warped or extra hands and fingers, plastic or waxy skin, cartoon or 3D-render look when realism is asked for, unmotivated camera movement, clothing, hair or weather changing without reason."
+    },
+    {
+      "scene_index": 3,
+      "kind_as_sent": "LIVE",
+      "story_purpose": "EVIDENCE",
+      "shot_type": "MEDIUM",
+      "duration_seconds": 4.0,
+      "narration": "In one season, floods cost Nepal six hundred million dollars.",
+      "writer_visual": "Mudslides covering terraced farmland, people salvaging belongings from a collapsed home.",
+      "claim_ids": [
+        "3ab56ae3-1d30-458c-9a66-b0edb953a838"
+      ],
+      "still_prompt": "Mudslides covering terraced farmland, people salvaging belongings from a collapsed home. Environment: NEPAL_CLIMATE_CRISIS. Camera: medium shot, locked camera. Lighting: NATURALISTIC_WITH_HIGH_CONTRAST. Composition: subject centred in a vertical frame, readable on a phone. Motion: slow, natural movement within the frame. Style: MOTION_GRAPHIC_DOCU_HYBRID, STYLIZED_REALISM. Palette: primary: #2E4A66, #5D8AA8, #87CEEB; secondary: #D2691E, #8B4513, #F4A460; accent: #FFD700, #FF4500; neutral: #1A1A1A, #FFFFFF. Avoid: on-screen text or captions, warped or extra hands and fingers, plastic or waxy skin, cartoon or 3D-render look when realism is asked for, unmotivated camera movement, clothing, hair or weather changing without reason.",
+      "motion_prompt": "Mudslides covering terraced farmland, people salvaging belongings from a collapsed home. Environment: NEPAL_CLIMATE_CRISIS. Camera: medium shot, locked camera. Lighting: NATURALISTIC_WITH_HIGH_CONTRAST. Composition: subject centred in a vertical frame, readable on a phone. Motion: slow, natural movement within the frame. Style: MOTION_GRAPHIC_DOCU_HYBRID, STYLIZED_REALISM. Palette: primary: #2E4A66, #5D8AA8, #87CEEB; secondary: #D2691E, #8B4513, #F4A460; accent: #FFD700, #FF4500; neutral: #1A1A1A, #FFFFFF. Avoid: on-screen text or captions, warped or extra hands and fingers, plastic or waxy skin, cartoon or 3D-render look when realism is asked for, unmotivated camera movement, clothing, hair or weather changing without reason."
+    },
+    {
+      "scene_index": 4,
+      "kind_as_sent": "LIVE",
+      "story_purpose": "REVEAL",
+      "shot_type": "MEDIUM",
+      "duration_seconds": 6.0,
+      "narration": "Almost all of Nepal's emissions come from farms and forests, not industry. Yet it pays.",
+      "writer_visual": "A farmer working a small terraced field, smoke rising from a distant forest, no factories in sight.",
+      "claim_ids": [
+        "701883c4-24e8-4295-976e-6c04c5ceceee"
+      ],
+      "still_prompt": "A farmer working a small terraced field, smoke rising from a distant forest, no factories in sight. Environment: NEPAL_CLIMATE_CRISIS. Camera: medium shot, locked camera. Lighting: NATURALISTIC_WITH_HIGH_CONTRAST. Composition: subject centred in a vertical frame, readable on a phone. Motion: slow, natural movement within the frame. Style: MOTION_GRAPHIC_DOCU_HYBRID, STYLIZED_REALISM. Palette: primary: #2E4A66, #5D8AA8, #87CEEB; secondary: #D2691E, #8B4513, #F4A460; accent: #FFD700, #FF4500; neutral: #1A1A1A, #FFFFFF. Avoid: on-screen text or captions, warped or extra hands and fingers, plastic or waxy skin, cartoon or 3D-render look when realism is asked for, unmotivated camera movement, clothing, hair or weather changing without reason.",
+      "motion_prompt": "A farmer working a small terraced field, smoke rising from a distant forest, no factories in sight. Environment: NEPAL_CLIMATE_CRISIS. Camera: medium shot, locked camera. Lighting: NATURALISTIC_WITH_HIGH_CONTRAST. Composition: subject centred in a vertical frame, readable on a phone. Motion: slow, natural movement within the frame. Style: MOTION_GRAPHIC_DOCU_HYBRID, STYLIZED_REALISM. Palette: primary: #2E4A66, #5D8AA8, #87CEEB; secondary: #D2691E, #8B4513, #F4A460; accent: #FFD700, #FF4500; neutral: #1A1A1A, #FFFFFF. Avoid: on-screen text or captions, warped or extra hands and fingers, plastic or waxy skin, cartoon or 3D-render look when realism is asked for, unmotivated camera movement, clothing, hair or weather changing without reason."
+    },
+    {
+      "scene_index": 5,
+      "kind_as_sent": "LIVE",
+      "story_purpose": "ENDING",
+      "shot_type": "MEDIUM",
+      "duration_seconds": 5.2,
+      "narration": "The world promised one hundred billion a year by 2020. It delivered eighty-three.",
+      "writer_visual": "Two vertical bars side by side: the first fills to the top, the second stops noticeably short; the image holds, then fades to black.",
+      "claim_ids": [
+        "c4a0e6c8-c71f-48d4-93c3-089148a27790",
+        "d3561aea-dcaa-4f19-aa4a-23b80a1c52ef"
+      ],
+      "still_prompt": "Two vertical bars side by side: the first fills to the top, the second stops noticeably short the image holds, then fades to black. Environment: NEPAL_CLIMATE_CRISIS. Camera: medium shot, locked camera. Lighting: NATURALISTIC_WITH_HIGH_CONTRAST. Composition: subject centred in a vertical frame, readable on a phone. Motion: slow, natural movement within the frame. Style: MOTION_GRAPHIC_DOCU_HYBRID, STYLIZED_REALISM. Palette: primary: #2E4A66, #5D8AA8, #87CEEB; secondary: #D2691E, #8B4513, #F4A460; accent: #FFD700, #FF4500; neutral: #1A1A1A, #FFFFFF. Avoid: on-screen text or captions, warped or extra hands and fingers, plastic or waxy skin, cartoon or 3D-render look when realism is asked for, unmotivated camera movement, clothing, hair or weather changing without reason.",
+      "motion_prompt": "Two vertical bars side by side: the first fills to the top, the second stops noticeably short the image holds, then fades to black. Environment: NEPAL_CLIMATE_CRISIS. Camera: medium shot, locked camera. Lighting: NATURALISTIC_WITH_HIGH_CONTRAST. Composition: subject centred in a vertical frame, readable on a phone. Motion: slow, natural movement within the frame. Style: MOTION_GRAPHIC_DOCU_HYBRID, STYLIZED_REALISM. Palette: primary: #2E4A66, #5D8AA8, #87CEEB; secondary: #D2691E, #8B4513, #F4A460; accent: #FFD700, #FF4500; neutral: #1A1A1A, #FFFFFF. Avoid: on-screen text or captions, warped or extra hands and fingers, plastic or waxy skin, cartoon or 3D-render look when realism is asked for, unmotivated camera movement, clothing, hair or weather changing without reason."
+    },
+    {
+      "scene_index": 6,
+      "kind_as_sent": "LIVE",
+      "story_purpose": "CTA",
+      "shot_type": "MEDIUM",
+      "duration_seconds": 6.8,
+      "narration": "Which other country do you think is being asked to pay a bill it never ran up?",
+      "writer_visual": "A black screen, silent and still.",
+      "claim_ids": [
+        "d3561aea-dcaa-4f19-aa4a-23b80a1c52ef"
+      ],
+      "still_prompt": "A black screen, silent and still. Environment: NEPAL_CLIMATE_CRISIS. Camera: medium shot, locked camera. Lighting: NATURALISTIC_WITH_HIGH_CONTRAST. Composition: subject centred in a vertical frame, readable on a phone. Motion: slow, natural movement within the frame. Style: MOTION_GRAPHIC_DOCU_HYBRID, STYLIZED_REALISM. Palette: primary: #2E4A66, #5D8AA8, #87CEEB; secondary: #D2691E, #8B4513, #F4A460; accent: #FFD700, #FF4500; neutral: #1A1A1A, #FFFFFF. Avoid: on-screen text or captions, warped or extra hands and fingers, plastic or waxy skin, cartoon or 3D-render look when realism is asked for, unmotivated camera movement, clothing, hair or weather changing without reason.",
+      "motion_prompt": "A black screen, silent and still. Environment: NEPAL_CLIMATE_CRISIS. Camera: medium shot, locked camera. Lighting: NATURALISTIC_WITH_HIGH_CONTRAST. Composition: subject centred in a vertical frame, readable on a phone. Motion: slow, natural movement within the frame. Style: MOTION_GRAPHIC_DOCU_HYBRID, STYLIZED_REALISM. Palette: primary: #2E4A66, #5D8AA8, #87CEEB; secondary: #D2691E, #8B4513, #F4A460; accent: #FFD700, #FF4500; neutral: #1A1A1A, #FFFFFF. Avoid: on-screen text or captions, warped or extra hands and fingers, plastic or waxy skin, cartoon or 3D-render look when realism is asked for, unmotivated camera movement, clothing, hair or weather changing without reason."
+    }
+  ]
+}

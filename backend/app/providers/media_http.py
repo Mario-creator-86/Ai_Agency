@@ -37,10 +37,18 @@ class MediaProviderError(RuntimeError):
         retry_after: float | None = None,
         unsent: bool = False,
         unanswered: bool = False,
+        detail: str | None = None,
+        issues: list[dict[str, str]] | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.http_status = http_status
+        #: The vendor's own reason, sanitised (no keys, pictures, signed URLs) and capped at
+        #: `MAX_DETAIL_CHARS`. Runway's 400 names the field it refused; dropped, the studio
+        #: could only guess and changed the model instead of fixing the request.
+        self.detail = detail
+        #: The vendor's per-field complaints as {"path", "message"}, sanitised, at most ten.
+        self.issues: list[dict[str, str]] = list(issues or [])
         #: Seconds the vendor asked the studio to wait (its Retry-After), when it answered.
         self.retry_after = retry_after
         #: The request never left this machine (refused connection, DNS, TLS handshake).
@@ -98,15 +106,19 @@ def request(
         if len(payload) > limit:
             raise MediaProviderError(f"{host} returned more data than the adapter accepts")
         if response.status != 200:
-            # The provider's own error text is not echoed: it can carry request details, and
-            # the Owner needs the status and the fact that nothing was stored. Only the
-            # vendor's short error identifier travels with the exception, and the wait the
-            # vendor asked for, so a rate limit is honoured rather than guessed at.
+            # The message stays the status alone. The vendor's reason travels beside it,
+            # sanitised and capped (`error_details`): it can echo request details, so keys,
+            # inline pictures and signed URLs are cut out before anything keeps it. The
+            # vendor's short error identifier and the wait it asked for travel too, so a
+            # rate limit is honoured rather than guessed at.
+            detail, issues = error_details(payload)
             raise MediaProviderError(
                 f"{host} refused the request (HTTP {response.status})",
                 code=error_code(payload),
                 http_status=response.status,
                 retry_after=parse_retry_after(response.getheader("Retry-After")),
+                detail=detail,
+                issues=issues,
             )
         content_type = response.headers.get_content_type()
         if not expect_json:
@@ -175,6 +187,78 @@ def error_code(payload: bytes) -> str | None:
         if isinstance(candidate, str) and _CODE.match(candidate):
             return candidate
     return None
+
+
+#: The most of a vendor's reason the studio keeps, in characters.
+MAX_DETAIL_CHARS = 500
+MAX_ISSUES = 10
+_REDACTED = "[…]"
+#: What must never be kept from a vendor's text, in the order it is cut: an inline picture
+#: (a data URI is the whole first frame), an Authorization value, a URL (a signed output
+#: URL is a credential in its query), a key-shaped token, and any long opaque run that
+#: could be one.
+_SECRET_PATTERNS = (
+    re.compile(r"data:[\w.+/-]*;base64,[A-Za-z0-9+/=_-]*"),
+    re.compile(r"(?i)\b(?:bearer|basic)\s+[^\s\"',;]+"),
+    re.compile(r"(?i)\b(?:https?|wss?)://[^\s\"'<>]+"),
+    re.compile(r"(?i)\b(?:key|sk|pk|api[_-]?key|token|secret)[_-][A-Za-z0-9._-]{8,}"),
+    re.compile(r"[A-Za-z0-9+/=_-]{32,}"),
+)
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]+")
+
+
+def sanitise_vendor_text(text: Any, limit: int = MAX_DETAIL_CHARS) -> str:
+    """A vendor's free text made safe to keep and to show: secrets cut, one line, capped."""
+    cleaned = _CONTROL.sub(" ", str(text))
+    for pattern in _SECRET_PATTERNS:
+        cleaned = pattern.sub(_REDACTED, cleaned)
+    cleaned = " ".join(cleaned.split())
+    if len(cleaned) > limit:
+        cleaned = cleaned[: max(0, limit - 1)].rstrip() + "…"
+    return cleaned
+
+
+def _issue_path(path: Any) -> str:
+    if isinstance(path, list | tuple):
+        return ".".join(str(part) for part in path)
+    return str(path) if path is not None else ""
+
+
+def error_details(payload: bytes) -> tuple[str | None, list[dict[str, str]]]:
+    """(sanitised reason, per-field issues) from an error body, or (None, []) if unreadable.
+
+    Reads Runway's ``{"error": str, "issues": [{"path": [...], "message": str}]}`` and the
+    ``{"error": {"message"}}`` / ``{"detail": str | {"message"}}`` shapes other vendors use.
+    """
+    try:
+        body = json.loads(payload)
+    except (ValueError, UnicodeDecodeError):
+        return None, []
+    if not isinstance(body, dict):
+        return None, []
+    parts: list[str] = []
+    for key in ("error", "detail", "message"):
+        value = body.get(key)
+        if isinstance(value, dict):
+            value = value.get("message") or value.get("status") or value.get("code")
+        if isinstance(value, str) and value.strip():
+            parts.append(value)
+            break
+    issues: list[dict[str, str]] = []
+    raw_issues = body.get("issues")
+    if isinstance(raw_issues, list):
+        for issue in raw_issues[:MAX_ISSUES]:
+            if not isinstance(issue, dict):
+                continue
+            path = sanitise_vendor_text(_issue_path(issue.get("path")), 80)
+            message = sanitise_vendor_text(issue.get("message") or "", 200)
+            if not (path or message):
+                continue
+            issues.append({"path": path, "message": message})
+            parts.append(f"{path}: {message}" if path else message)
+    if not parts:
+        return None, issues
+    return sanitise_vendor_text("; ".join(parts)), issues
 
 
 def host_of(base_url: str, default: str) -> str:

@@ -494,9 +494,20 @@ Scrie {scenes} scene. Fiecare scenă:
   etichetează ENDING sau CTA. Nu termina pe EVIDENCE sau PAYOFF și nu lăsa finalul doar în
   câmpurile de sus — se rostește în scenă;
 - spune în "visual" ce se VEDE, nu ce se aude: arată informația (nori care se strâng, apa
-  care urcă, reacția unui om), nu repeta în imagine ce spune deja naratorul.
+  care urcă, un sat văzut de sus), nu repeta în imagine ce spune deja naratorul. Oamenii apar
+  doar văzuți de departe sau din spate, niciodată cu fața spre cameră.
   Niciodată text în imagine: fără "text overlay", titluri, etichete, cifre scrise sau
-  subtitrări — generatorul desenează literele greșit, iar textul se pune la montaj.
+  subtitrări — generatorul desenează literele greșit, iar textul se pune la montaj;
+- declară în "kind" ce fel de scenă este. "LIVE": o imagine filmată. "DATA_CARD": o
+  comparație de cifre (două sume, două procente) — graficul îl desenează studioul, gratuit,
+  din cifrele tale, așa că dă-le în "card": {{"title": "...", "bars": [{{"label": "...",
+  "value": 100, "unit": "mld. USD", "claim_id": "..."}}], "highlight": "..."}}. Fiecare
+  "value" și "unit" se copiază EXACT dintr-o afirmație de mai jos, iar "claim_id" este
+  identificatorul ei; o cifră pe care afirmația nu o conține face ca scenariul să fie
+  respins. "TITLE_CARD": un titlu pe ecran, cu "card": {{"title": "..."}}. "BLACK": ecran
+  negru, pentru o tăcere sau pentru îndemnul final, cu "card": {{"cta": "..."}} dacă vrei.
+  Nu cere grafice, bare sau ecran negru într-o scenă LIVE: un generator de fotografii le
+  desenează greșit, iar fiecare încercare costă bani.
 
 LUNGIMEA — ținta, nu o cămașă de forță:
 - naratorul spune {wps} cuvinte pe secundă, deci {duration} secunde ≈ {words} de cuvinte de
@@ -513,7 +524,7 @@ Răspunde EXCLUSIV cu un obiect JSON valid, fără text în plus:
 spectatorului", "hook": "prima propoziție", "ending": "cum se închide", "cta": "îndemnul
 final, care vorbește despre povestea asta", "cta_kind": "CURIOSITY|DECISION|KNOWLEDGE|DEBATE|
 FOLLOW|SERIES|COMMENT", "scenes": [{{"narration": "...", "visual": "...", "purpose": "HOOK",
-"claim_ids": ["..."]}}]}}
+"kind": "LIVE", "claim_ids": ["..."]}}]}}
 
 - "title": titlul episodului, 3-200 de caractere, care promite exact ce livrează filmul.
 - "narration": textul rostit în scenă, 10-800 de caractere.
@@ -545,6 +556,11 @@ class _Scene(BaseModel):
     #: Why this shot is in the film. A scene that plays no part in the story is decoration,
     #: and decoration is what the Owner paid eight generated shots for.
     purpose: str = Field(default="", max_length=20)
+    #: LIVE, DATA_CARD, TITLE_CARD or BLACK (SCENE_KINDS). The classifier still reads the
+    #: picture asked for: a chart the writer called LIVE is a chart.
+    kind: str = Field(default="", max_length=20)
+    #: A composed scene's card: bars with value, unit and the claim each comes from.
+    card: Any = None
 
 
 class _Script(BaseModel):
@@ -761,33 +777,78 @@ def agent_write_script(
         cut = list(still)
 
     draft = _parse_script(result["output_text"], drop_uncited=bool(cut))
+    _check_citations(draft, allowed)
+    kinds, card_faults = _scene_kinds(draft, allowed)
+    if card_faults:
+        # A chart whose numbers no verified claim carries - or a chart with no numbers at all -
+        # is sent back once, with each fault named; the draft stays on record as the run it
+        # was. A card is drawn from these numbers exactly, so a wrong one is never stored.
+        prompt += (
+            "\nCARDURILE PRIMEI VERSIUNI AU FOST REFUZATE:\n"
+            + "\n".join(f"- {fault}" for fault in card_faults[:6])
+            + "\nFiecare bară ia valoarea și unitatea EXACT dintr-o afirmație verificată de mai "
+            'sus și îi numește identificatorul în "claim_id". Un grafic pe care afirmațiile nu îl '
+            "pot susține nu se desenează: scrie-l din cifrele lor sau descrie altă imagine, "
+            "într-o scenă LIVE. Răspunde cu scenariul întreg, corectat.\n"
+        )
+        result = run_agent_task(
+            engine,
+            registry,
+            writer_id,
+            "write_script",
+            prompt,
+            "v1+cards",
+            correlation_id,
+            summary=f"Rescriu «{topic_title}»: {len(card_faults)} probleme la grafice.",
+            max_tokens=7200,
+            temperature=0.2,
+            emit_message=False,
+        )
+        if result["status"] != "SUCCEEDED" or not (result.get("output_text") or "").strip():
+            detail = result.get("error_detail") or "fără text vizibil"
+            raise ScriptRejected(
+                f"Scenaristul nu a produs un rezultat la corectarea graficelor "
+                f"({result['status']}: {detail})"
+            )
+        draft = _parse_script(result["output_text"], drop_uncited=bool(cut))
+        _check_citations(draft, allowed)
+        kinds, card_faults = _scene_kinds(draft, allowed)
+        if card_faults:
+            raise ScriptRejected(
+                "Scenariul a fost respins: "
+                + " ".join(card_faults[:3])
+                + " Nimic nu a fost salvat."
+            )
 
     cited: list[str] = []
-    for index, scene in enumerate(draft.scenes, start=1):
-        unknown = [cid for cid in scene.claim_ids if cid not in allowed]
-        if unknown:
-            raise ScriptRejected(
-                f"Scenariul a fost respins: scena {index} citează afirmații care nu există sau "
-                "nu sunt verificate. Nimic nu a fost salvat."
-            )
-        cited.extend(cid for cid in scene.claim_ids if cid not in cited)
+    for scene, kind in zip(draft.scenes, kinds, strict=True):
+        cited.extend(cid for cid in [*scene.claim_ids, *kind["card_claims"]] if cid not in cited)
 
     narrations = [scene.narration.strip() for scene in draft.scenes]
-    scenes: list[dict[str, Any]] = [
-        {
+    scenes: list[dict[str, Any]] = []
+    for index, (scene, narration, kind) in enumerate(
+        zip(draft.scenes, narrations, kinds, strict=True), start=1
+    ):
+        stored: dict[str, Any] = {
             "scene_number": index,
             "narration": narration,
             "visual_description": scene.visual.strip(),
-            "claim_ids": scene.claim_ids,
+            # The claims a card's bars stand on are claims this scene uses.
+            "claim_ids": [
+                *scene.claim_ids,
+                *(cid for cid in kind["card_claims"] if cid not in scene.claim_ids),
+            ],
             # The part this shot plays. Kept on the scene so the storyboard, the prompt agent
             # and the story review all read the same answer to "why is this shot here".
             "purpose": (scene.purpose or "").strip().upper()
             or _implied_purpose(index, len(draft.scenes)),
+            # What kind of shot it is, and the card a composed scene is drawn from.
+            "scene_kind": kind["kind"],
+            "card": kind["card"],
         }
-        for index, (scene, narration) in enumerate(
-            zip(draft.scenes, narrations, strict=True), start=1
-        )
-    ]
+        if kind["forced_by"]:
+            stored["kind_forced_by"] = kind["forced_by"]
+        scenes.append(stored)
     # The story around the scenes, and how long it actually takes to say at the studio's own
     # speaking rate — the number the review compares with the target length.
     story = {
@@ -830,6 +891,60 @@ def agent_write_script(
         "cut_scenes": cut,
         "story": story,
     }
+
+
+def _check_citations(draft: _Script, allowed: dict[str, str]) -> None:
+    """Refuse the draft when a scene cites a claim that was not supplied."""
+    for index, scene in enumerate(draft.scenes, start=1):
+        if any(cid not in allowed for cid in scene.claim_ids):
+            raise ScriptRejected(
+                f"Scenariul a fost respins: scena {index} citează afirmații care nu există sau "
+                "nu sunt verificate. Nimic nu a fost salvat."
+            )
+
+
+def _scene_kinds(draft: _Script, allowed: dict[str, str]) -> tuple[list[dict[str, Any]], list[str]]:
+    """Each scene's kind and card, and what is wrong with the cards (Romanian).
+
+    The writer's word is the first reading and the picture he asked for is the second: bars,
+    a chart or a black screen in a scene he called LIVE make it a card (SCENE_KINDS). A card is
+    checked against the verified claims of its own scene and of its bars, never the topic's
+    others: every value and unit on screen is one a SUPPORTED claim states.
+    """
+    from app.media.services import (  # noqa: PLC0415 - media reads factual, not the reverse
+        DATA_CARD,
+        LIVE,
+        card_claim_ids,
+        card_problems,
+        classify_scene_kind,
+    )
+
+    decided: list[dict[str, Any]] = []
+    faults: list[str] = []
+    for index, scene in enumerate(draft.scenes, start=1):
+        own = [allowed[cid] for cid in scene.claim_ids if cid in allowed]
+        kind, forced = classify_scene_kind(scene.kind, scene.visual, scene.narration, own)
+        card = scene.card if kind != LIVE and scene.card not in ({}, None) else None
+        card_ids = card_claim_ids(card) if kind == DATA_CARD else []
+        faults += card_problems(
+            index,
+            kind,
+            card,
+            {
+                cid: (allowed[cid], "SUPPORTED")
+                for cid in [*scene.claim_ids, *card_ids]
+                if cid in allowed
+            },
+        )
+        decided.append(
+            {
+                "kind": kind,
+                "forced_by": forced,
+                "card": card if isinstance(card, dict) else None,
+                "card_claims": [cid for cid in card_ids if cid in allowed],
+            }
+        )
+    return decided, faults
 
 
 def _implied_purpose(index: int, total: int) -> str:

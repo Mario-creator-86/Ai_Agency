@@ -14,6 +14,7 @@ dependencies = [
   "pydantic-settings>=2.8,<3",
   "tzdata>=2025.1",
   "cryptography>=46,<49",
+  "opencv-python-headless>=4.10",
 ]
 
 [dependency-groups]

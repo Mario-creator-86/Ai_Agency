@@ -1,0 +1,37 @@
+{
+  "vendor": "runway",
+  "credit_usd": 0.01,
+  "notes": "Runway's published API prices in credits, read from the source_url on the row's date. A row is DOCUMENTED until a measured balance delta replaces it (MEASURED, via app.economy.credits.record_measured_prices). resolution '*' means the page gives one price for every resolution. seconds: the whole-second lengths the vendor accepts, as documented; the live model contract (app.providers.runway) outranks it. Input or reference VIDEO is billed extra by seedance2_5 (not priced here: the studio sends a still, never a video).",
+  "seconds": {
+    "seedance2_5": {"min": 4, "max": 30},
+    "seedance2": {"min": 4, "max": 30},
+    "veo3.1": {"values": [4, 6, 8]},
+    "veo3.1_fast": {"values": [4, 6, 8]}
+  },
+  "rows": [
+    {"model_id": "seedance2_5", "kind": "video", "resolution": "480p", "credits_per_second": 20, "minimum_credits": 80, "source_url": "https://docs.dev.runwayml.com/guides/pricing/", "date": "2026-09-27", "provenance": "DOCUMENTED"},
+    {"model_id": "seedance2_5", "kind": "video", "resolution": "720p", "credits_per_second": 30, "minimum_credits": 80, "source_url": "https://docs.dev.runwayml.com/guides/pricing/", "date": "2026-09-27", "provenance": "DOCUMENTED"},
+    {"model_id": "seedance2_5", "kind": "video", "resolution": "1080p", "credits_per_second": 68, "minimum_credits": 80, "source_url": "https://docs.dev.runwayml.com/guides/pricing/", "date": "2026-09-27", "provenance": "DOCUMENTED"},
+    {"model_id": "seedance2", "kind": "video", "resolution": "480p", "credits_per_second": 36, "source_url": "https://docs.dev.runwayml.com/guides/pricing/", "date": "2026-09-27", "provenance": "DOCUMENTED"},
+    {"model_id": "seedance2", "kind": "video", "resolution": "720p", "credits_per_second": 36, "source_url": "https://docs.dev.runwayml.com/guides/pricing/", "date": "2026-09-27", "provenance": "DOCUMENTED"},
+    {"model_id": "seedance2", "kind": "video", "resolution": "1080p", "credits_per_second": 40, "source_url": "https://docs.dev.runwayml.com/guides/pricing/", "date": "2026-09-27", "provenance": "DOCUMENTED"},
+    {"model_id": "seedance2", "kind": "video", "resolution": "4K", "credits_per_second": 150, "source_url": "https://docs.dev.runwayml.com/guides/pricing/", "date": "2026-09-27", "provenance": "DOCUMENTED"},
+    {"model_id": "seedance2_fast", "kind": "video", "resolution": "480p", "credits_per_second": 29, "source_url": "https://docs.dev.runwayml.com/guides/pricing/", "date": "2026-09-27", "provenance": "DOCUMENTED"},
+    {"model_id": "seedance2_fast", "kind": "video", "resolution": "720p", "credits_per_second": 29, "source_url": "https://docs.dev.runwayml.com/guides/pricing/", "date": "2026-09-27", "provenance": "DOCUMENTED"},
+    {"model_id": "seedance2_mini", "kind": "video", "resolution": "480p", "credits_per_second": 16, "minimum_credits": 64, "source_url": "https://docs.dev.runwayml.com/guides/pricing/", "date": "2026-09-27", "provenance": "DOCUMENTED"},
+    {"model_id": "seedance2_mini", "kind": "video", "resolution": "720p", "credits_per_second": 16, "minimum_credits": 64, "source_url": "https://docs.dev.runwayml.com/guides/pricing/", "date": "2026-09-27", "provenance": "DOCUMENTED"},
+    {"model_id": "veo3.1", "kind": "video", "resolution": "*", "credits_per_second": 20, "credits_per_second_audio": 40, "source_url": "https://docs.dev.runwayml.com/guides/pricing/", "date": "2026-09-27", "provenance": "DOCUMENTED"},
+    {"model_id": "veo3.1_fast", "kind": "video", "resolution": "*", "credits_per_second": 10, "credits_per_second_audio": 15, "source_url": "https://docs.dev.runwayml.com/guides/pricing/", "date": "2026-09-27", "provenance": "DOCUMENTED"},
+    {"model_id": "wan3", "kind": "video", "resolution": "480p", "credits_per_second": 5, "source_url": "https://docs.dev.runwayml.com/guides/pricing/", "date": "2026-09-27", "provenance": "DOCUMENTED"},
+    {"model_id": "wan3", "kind": "video", "resolution": "720p", "credits_per_second": 10, "source_url": "https://docs.dev.runwayml.com/guides/pricing/", "date": "2026-09-27", "provenance": "DOCUMENTED"},
+    {"model_id": "wan3", "kind": "video", "resolution": "1080p", "credits_per_second": 20, "source_url": "https://docs.dev.runwayml.com/guides/pricing/", "date": "2026-09-27", "provenance": "DOCUMENTED"},
+    {"model_id": "gen4.5", "kind": "video", "resolution": "*", "credits_per_second": 12, "source_url": "https://docs.dev.runwayml.com/guides/pricing/", "date": "2026-09-27", "provenance": "DOCUMENTED"},
+    {"model_id": "gen4_turbo", "kind": "video", "resolution": "*", "credits_per_second": 5, "source_url": "https://docs.dev.runwayml.com/guides/pricing/", "date": "2026-09-27", "provenance": "DOCUMENTED"},
+    {"model_id": "seedream5_pro", "kind": "image", "resolution": "1K", "credits_per_image": 5, "source_url": "https://docs.dev.runwayml.com/guides/pricing/", "date": "2026-09-27", "provenance": "DOCUMENTED"},
+    {"model_id": "seedream5_pro", "kind": "image", "resolution": "2K", "credits_per_image": 9, "source_url": "https://docs.dev.runwayml.com/guides/pricing/", "date": "2026-09-27", "provenance": "DOCUMENTED"},
+    {"model_id": "seedream5_lite", "kind": "image", "resolution": "*", "credits_per_image": 4, "source_url": "https://docs.dev.runwayml.com/guides/pricing/", "date": "2026-09-27", "provenance": "DOCUMENTED"},
+    {"model_id": "gen4_image", "kind": "image", "resolution": "720p", "credits_per_image": 5, "source_url": "https://docs.dev.runwayml.com/guides/pricing/", "date": "2026-09-27", "provenance": "DOCUMENTED"},
+    {"model_id": "gen4_image", "kind": "image", "resolution": "1080p", "credits_per_image": 8, "source_url": "https://docs.dev.runwayml.com/guides/pricing/", "date": "2026-09-27", "provenance": "DOCUMENTED"},
+    {"model_id": "gen4_image_turbo", "kind": "image", "resolution": "*", "credits_per_image": 2, "source_url": "https://docs.dev.runwayml.com/guides/pricing/", "date": "2026-09-27", "provenance": "DOCUMENTED"}
+  ]
+}

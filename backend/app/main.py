@@ -59,8 +59,12 @@ from app.services import (
     ApprovalMissing,
     AutonomyRefused,
     CommandConflict,
+    PaidMediaApprovalCommand,
+    PaidMediaApprovalRefused,
+    PaidMediaApprovalResult,
     change_autonomy_mode,
     change_environment,
+    change_paid_media_approval,
     change_stop,
     decide_approval,
     pending_approvals,
@@ -183,8 +187,10 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
             # the vendor invoice that replaces the studio's estimates, so a budget stops
             # counting an estimate and its bill together. 0046 indexes each employee's runs
             # by start, for the snapshot's last task per employee. 0047 indexes the events by
-            # stamp and the runs by start, for the replay's reads by time.
-            if revision != "0047_replay_reads":
+            # stamp and the runs by start, for the replay's reads by time. 0048 adds the
+            # production sheet's rows: each scene's kind, the paid takes, and the Owner's rule
+            # for paid media.
+            if revision != "0048_production_sheet":
                 raise RuntimeError("Run scripts/bootstrap.py with this application version")
             if connection.scalar(text("SELECT COUNT(*) FROM owner_policy")) != 1:
                 raise RuntimeError("Run scripts/bootstrap.py to initialize the studio")
@@ -521,6 +527,24 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
         except CommandConflict as exc:
             return JSONResponse(status_code=409, content={"detail": str(exc)})
         except AutonomyRefused as exc:
+            return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+    @router.post("/owner/paid-media-approval", response_model=PaidMediaApprovalResult)
+    def set_paid_media_approval(
+        command: PaidMediaApprovalCommand,
+    ) -> PaidMediaApprovalResult | JSONResponse:
+        """When a paid step of a film (stills, hero test, motion, one-scene redo) asks him.
+
+        The Owner's command and only his: this route is behind his key, so it is issued as
+        "owner", and no body field can name another issuer (the command forbids extra
+        fields). A stale version answers 409, a malformed rule 422 (the command's own
+        validation), and an issuer the service refuses 403.
+        """
+        try:
+            return change_paid_media_approval(engine, command, issued_by="owner")
+        except PaidMediaApprovalRefused as exc:
+            return JSONResponse(status_code=403, content={"detail": str(exc)})
+        except CommandConflict as exc:
             return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     @router.get("/owner/approvals", response_model=list[ApprovalView])

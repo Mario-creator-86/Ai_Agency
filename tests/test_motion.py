@@ -13,7 +13,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from app.media.assembler import TRANSITION_SECONDS, assemble_video_job
+from app.media.assembler import assemble_video_job
 from app.media.models import VideoRenderJob
 from app.media.toolchain import find_ffmpeg
 from app.providers.media_base import ImageResult, VideoGenerationResult
@@ -104,33 +104,39 @@ def a_clip(tmp_path: Path) -> bytes:
     return target.read_bytes()
 
 
-def test_the_shots_dissolve_and_the_picture_never_drifts_from_the_voice():
-    """Each shot is one transition longer than its narration and each dissolve eats exactly
-    that overlap, so shot N starts where scene N's words start."""
-    from app.media.assembler import _dissolve_command
+def test_the_shots_cut_by_default_and_the_picture_never_drifts_from_the_voice():
+    """2026-10-01 (TIMELINE_24_CAPTIONS): scenes join by a hard cut unless the script asks for
+    a dissolve. A shot is as long as its scene, plus the overlap a dissolve into the next scene
+    consumes, so shot N still starts where scene N's words start."""
+    from app.media.assembler import DISSOLVE_SECONDS, _dissolve_command
 
     shots = [Path(f"shot_{i:02d}.mp4") for i in (1, 2, 3)]
     args = _dissolve_command("ffmpeg", shots, SCENES, Path("audio.wav"), Path("out.mp4"))
     chain = args[args.index("-filter_complex") + 1]
-    # Offsets are the cumulative narration lengths: 4.0 and 10.0, not 4.0 and 9.6.
-    assert "offset=4.000" in chain and "offset=10.000" in chain
-    assert chain.count("xfade=transition=fade") == 2
-    assert f"duration={TRANSITION_SECONDS:.3f}" in chain
-    # The film is exactly as long as the narration it carries (the output -t, after -map).
+    # No transition named: two hard cuts, no dissolve.
+    assert "xfade" not in chain and chain.count("concat=n=2") == 2
+    # The film is exactly as long as the narration it carries: 15 s, 360 frames at 24 fps.
     tail = args[args.index("-map") :]
-    assert "trim=duration=15.000" in chain and tail[tail.index("-t") + 1] == "15.000"
+    assert "trim=end_frame=360" in chain and tail[tail.index("-t") + 1] == "15.000"
     # Every scene is a shot file of its own, plus the audio.
     assert args.count("-i") == 4
     assert all(str(shot) in args for shot in shots)
-    # And a shot is built from the still with a push, or from the clip, each on its own.
+
+    # Where the script asks for one, the dissolve starts where the scene's words start: the
+    # offset is the narration before it (4.0), not shortened by any earlier overlap.
+    asked = [SCENES[0], {**SCENES[1], "transition_in": "DISSOLVE"}, SCENES[2]]
+    chain = _dissolve_command("ffmpeg", shots, asked, Path("a.wav"), Path("o.mp4"))
+    chain = chain[chain.index("-filter_complex") + 1]
+    assert chain.count("xfade=transition=fade") == 1 and "offset=4.000000" in chain
+    assert f"duration={DISSOLVE_SECONDS:.6f}" in chain and chain.count("concat=n=2") == 1
+    # And a shot is built from the still with a push, or from the clip, each on its own; a
+    # clip is trimmed to its span, never held on its last frame.
     from app.media.assembler import _shot_command
 
     push = _shot_command("ffmpeg", Path("scene_01.png"), None, 4.4, Path("shot_01.mp4"))
     assert "zoompan" in " ".join(push) and "-loop" in push
     moved = _shot_command("ffmpeg", Path("scene_01.png"), Path("motion_01.mp4"), 4.4, Path("s.mp4"))
-    assert "motion_01.mp4" in moved and "tpad=stop_mode=clone:stop_duration=4.400" in " ".join(
-        moved
-    )
+    assert "motion_01.mp4" in moved and "tpad" not in " ".join(moved)
 
 
 @pytest.mark.skipif(find_ffmpeg() is None, reason="ffmpeg not installed")
@@ -575,3 +581,51 @@ def test_the_director_sees_a_frame_from_every_scene(tmp_path):
     )
     assert len(frames_for(str(film), ffmpeg, 10.0, scene_seconds=[2, 2, 2, 2, 2])) == 5
     assert len(frames_for(str(film), ffmpeg, 10.0)) == 3  # no scenes known: the old three
+
+
+# ----------------------------------------------------- the motion step's takes reach the film
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="ffmpeg not installed")
+def test_the_approved_hero_test_shot_is_the_films_first_shot_and_nothing_is_bought_again(
+    engine, tmp_path
+):
+    """The hero test shot is kept in the film: assembled from takes, it is the shot of its
+    scene, the other scene uses the clip the motion step bought, and no adapter is asked."""
+    from app.media.assembler import assemble_from_takes, decide_take
+    from app.media.models import SceneTake
+    from test_approvals import answer
+    from test_film_costing import SEEDANCE, Account, Models, SpyVideo, a_film, run, takes
+
+    storyboard_id = a_film(engine, tmp_path, scenes=2)
+    account = Account(10_000)
+    models = Models(SpyVideo("seedance2_5", account, clip=a_clip(tmp_path)))
+    for step in ("test_shot", "motion"):
+        with pytest.raises(Exception) as asked:
+            run(engine, storyboard_id, tmp_path, step, models, account)
+        answer(engine, asked.value.approval_id, "APPROVED")
+        run(engine, storyboard_id, tmp_path, step, models, account)
+        if step == "test_shot":
+            (hero,) = takes(engine, storyboard_id, "test_shot")
+            decide_take(engine, hero.id, "APPROVED", decided_by="owner")
+    assert models.posts() == 2
+
+    film = assemble_from_takes(engine, storyboard_id, str(uuid4()), storage_root=tmp_path / "media")
+
+    assert models.posts() == 2, "assembling the film bought a shot"
+    scenes = {entry["scene_index"]: entry for entry in film["production"]["scenes"]}
+    assert scenes[1]["motion"]["reused_take"] is True
+    assert scenes[1]["motion"]["take_id"] == hero.id
+    assert scenes[1]["motion"]["model"] == "seedance2_5"
+    with Session(engine) as session:
+        bought = session.scalars(select(SceneTake).where(SceneTake.kind == "motion")).one()
+    assert scenes[2]["motion"]["take_id"] == bought.id
+    assert film["production"]["motion"]["fallback_scenes"] == 0
+    assert SEEDANCE.model_id == "seedance2_5"
+
+
+def test_the_first_frame_goes_as_a_high_quality_jpeg():
+    """Runway is sent the approved still as a high-quality JPEG (mjpeg q 2), not q 4."""
+    from app.media.assembler import FIRST_FRAME_QUALITY
+
+    assert int(FIRST_FRAME_QUALITY) <= 2

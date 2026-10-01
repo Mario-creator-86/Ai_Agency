@@ -21,8 +21,10 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import math
+import re
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from typing import Any
 from urllib.parse import quote, urlsplit
 
@@ -38,6 +40,7 @@ from app.providers.media_http import (
     image_dimensions,
     request,
     retrying,
+    sanitise_vendor_text,
 )
 from app.wording import settings_place
 
@@ -65,6 +68,71 @@ TASK_STATES = {
     "FAILED": "FAILED",
     "CANCELLED": "FAILED",
 }
+
+#: The prompt length a task takes when its contract states none (the API's documented cap
+#: for promptText), in UTF-16 code units, which is how the vendor counts.
+DEFAULT_PROMPT_MAX = 1000
+#: A duration within this much of a whole second is that second. Float noise in a span
+#: (5.0000001 s) must not buy the next legal length.
+DURATION_TOLERANCE_SECONDS = 1e-3
+#: `auto_1080p`: the vendor keeps the first frame's own ratio at that resolution.
+_AUTO_RATIO = re.compile(r"^auto(?:_(\d+)p)?$")
+
+
+def estimated_credits(value: Any) -> float | None:
+    """The credits in a Runway `estimatedCost`, or None when it states none.
+
+    The contract's shape is ``{"credits": n}``; a bare number is still read. Anything else
+    (absent, a string, a boolean) is unknown, never 0: a price nobody stated is not free.
+    """
+    if isinstance(value, dict):
+        value = value.get("credits")
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    if not math.isfinite(float(value)) or value < 0:
+        return None
+    return float(value)
+
+
+def _utf16_units(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
+
+
+def fit_prompt(text: str, limit: int) -> str:
+    """The prompt on one line, within `limit` UTF-16 units, cut at a sentence if it must be.
+
+    A prompt sliced at a character count ends mid-word, and the model reads the fragment
+    as an instruction. Cut at the last sentence end that fits; with none, at the last whole
+    word; only a single word longer than the cap is cut inside itself.
+    """
+    words = " ".join(str(text).split())
+    if limit <= 0:
+        return ""
+    if _utf16_units(words) <= limit:
+        return words
+    used = 0
+    end = 0
+    for index, char in enumerate(words):
+        used += _utf16_units(char)
+        if used > limit:
+            break
+        end = index + 1
+    head = words[:end]
+    sentence_end = max(
+        (
+            i + 1
+            for i, char in enumerate(head)
+            if char in ".!?" and words[i + 1 : i + 2] in ("", " ")
+        ),
+        default=0,
+    )
+    if sentence_end:
+        return head[:sentence_end]
+    if words[end : end + 1] == " ":
+        return head.rstrip()
+    if " " in head:
+        return head.rsplit(" ", 1)[0].rstrip(" ,;:")
+    return head
 
 
 def _deref(spec: dict, node: Any) -> Any:
@@ -113,6 +181,50 @@ def _values(spec: dict, node: Any) -> list[Any]:
     return [v for key in ("oneOf", "anyOf") for s in node.get(key, []) for v in _values(spec, s)]
 
 
+def _bounds(spec: dict, node: Any, depth: int = 0) -> dict[str, float]:
+    """{"min", "max"} of a numeric schema, looking inside its oneOf/anyOf alternatives.
+
+    The newer models publish `duration` as ``anyOf: [{integer, minimum, maximum}, null]``;
+    read only at the top, the bounds were lost and the request fell back to a guess.
+    """
+    node = _deref(spec, node)
+    if not isinstance(node, dict) or depth > 8:
+        return {}
+    lows: list[float] = []
+    highs: list[float] = []
+    if isinstance(node.get("minimum"), int | float):
+        lows.append(node["minimum"])
+    if isinstance(node.get("maximum"), int | float):
+        highs.append(node["maximum"])
+    for key in ("oneOf", "anyOf", "allOf"):
+        for alternative in node.get(key, []) or []:
+            inner = _bounds(spec, alternative, depth + 1)
+            if "min" in inner:
+                lows.append(inner["min"])
+            if "max" in inner:
+                highs.append(inner["max"])
+    bounds: dict[str, float] = {}
+    if lows:
+        bounds["min"] = min(lows)
+    if highs:
+        bounds["max"] = max(highs)
+    return bounds
+
+
+def _max_length(spec: dict, node: Any, depth: int = 0) -> int | None:
+    """The largest `maxLength` a string schema allows, inside its alternatives too."""
+    node = _deref(spec, node)
+    if not isinstance(node, dict) or depth > 8:
+        return None
+    found = [node["maxLength"]] if isinstance(node.get("maxLength"), int) else []
+    for key in ("oneOf", "anyOf", "allOf"):
+        for alternative in node.get(key, []) or []:
+            inner = _max_length(spec, alternative, depth + 1)
+            if inner is not None:
+                found.append(inner)
+    return max(found) if found else None
+
+
 def parse_model_contract(spec: Any) -> dict[str, dict[str, Any]]:
     """Which task endpoint accepts each model, and the ratios and durations it takes.
 
@@ -142,14 +254,16 @@ def parse_model_contract(spec: Any) -> dict[str, dict[str, Any]]:
                 continue
             ratios = [r for r in _values(spec, properties.get("ratio")) if isinstance(r, str)]
             duration_node = _deref(spec, properties.get("duration"))
-            durations: Any = [d for d in _values(spec, duration_node) if isinstance(d, int | float)]
-            if not durations and isinstance(duration_node, dict):
-                bounds = {
-                    key: duration_node[field]
-                    for key, field in (("min", "minimum"), ("max", "maximum"))
-                    if isinstance(duration_node.get(field), int | float)
-                }
-                durations = bounds or None
+            durations: Any = [
+                d
+                for d in _values(spec, duration_node)
+                if isinstance(d, int | float) and not isinstance(d, bool)
+            ]
+            if durations:
+                durations = sorted(set(durations))
+            else:
+                durations = _bounds(spec, duration_node) or None
+            prompt_max = _max_length(spec, properties.get("promptText"))
             # What the model must be given besides words. gen4_image_turbo lists
             # referenceImages as required: an editing model, not a text-to-image one, and a
             # studio that generates stills from a prompt alone cannot use it — a fact the
@@ -179,13 +293,26 @@ def parse_model_contract(spec: Any) -> dict[str, dict[str, Any]]:
                     entry["durations"][task] = durations
                 entry.setdefault("needs_references", {})[task] = needs_references
                 entry.setdefault("dry_run", {})[task] = dry_run
+                # The fields this task declares. An optional one (audio, negativePrompt,
+                # seed) is sent only to a model whose contract takes it: an undeclared
+                # field is a refusal at best, and at worst read some other way.
+                declared = set(entry.setdefault("fields", {}).get(task, []))
+                entry["fields"][task] = sorted(declared | {str(name) for name in properties})
+                if prompt_max is not None:
+                    entry.setdefault("prompt_max", {})[task] = prompt_max
     for entry in contract.values():
         entry["tasks"].sort()
     return contract
 
 
-def pick_ratio(ratios: list[str] | None, aspect_ratio: str) -> str:
-    """The contract ratio closest to the requested aspect ("9:16", "16:9", "1:1")."""
+def pick_ratio(ratios: list[str] | None, aspect_ratio: str, *, follows_image: bool = False) -> str:
+    """The contract ratio closest to the requested aspect ("9:16", "16:9", "1:1").
+
+    Among ratios of the same aspect the largest wins (1080:1920 over 720:1280). With a first
+    frame (`follows_image`), an ``auto_<N>p`` ratio keeps the frame's own framing at N; it
+    is chosen when no explicit ratio of the wanted aspect reaches that resolution — wan
+    offers 9:16 only at 720p explicitly, and ``auto_1080p`` at 1080p.
+    """
     if not ratios:
         raise MediaProviderError(
             "The ratios this Runway model accepts are not known; refresh the catalog first"
@@ -195,30 +322,48 @@ def pick_ratio(ratios: list[str] | None, aspect_ratio: str) -> str:
         wanted = w / h
     except (ValueError, ZeroDivisionError):
         raise MediaProviderError(f"Unrecognised aspect ratio {aspect_ratio!r}") from None
-    scored = []
+    scored: list[tuple[float, float, str]] = []
+    autos: list[tuple[int, str]] = []
     for ratio in ratios:
+        auto = _AUTO_RATIO.match(str(ratio))
+        if auto:
+            autos.append((int(auto.group(1) or 1), str(ratio)))
+            continue
         try:
             rw, rh = (float(part) for part in ratio.split(":", 1))
-            scored.append((abs(rw / rh - wanted), ratio))
+            scored.append((round(abs(rw / rh - wanted), 3), -min(rw, rh), ratio))
         except (ValueError, ZeroDivisionError):
             continue
-    if not scored:
+    best = min(scored) if scored else None
+    if follows_image and autos:
+        exact_side = -best[1] if best is not None and best[0] <= 0.01 else 0
+        side, auto_ratio = max(autos)
+        if side > exact_side:
+            return auto_ratio
+    if best is None:
         raise MediaProviderError("The Runway contract lists no usable ratios for this model")
-    return min(scored)[1]
+    return best[2]
 
 
 def pick_duration(durations: Any, seconds: float) -> int:
-    """The contract duration nearest to the request, or the request clamped to its bounds."""
-    wanted = max(1, int(round(float(seconds))))
+    """The shortest legal duration that covers the request: rounded UP, never down.
+
+    A clip shorter than its span freezes on its last frame under the next dissolve (the
+    Nepal film: 4.4 s bought as 4). The assembler trims a longer clip; it never pads one.
+    Above the longest legal duration, the longest; below the shortest, the shortest.
+    """
+    wanted = max(1, math.ceil(float(seconds) - DURATION_TOLERANCE_SECONDS))
     if isinstance(durations, list) and durations:
-        return int(min(durations, key=lambda d: (abs(float(d) - wanted), d)))
+        legal = sorted(int(d) for d in durations)
+        covering = [d for d in legal if d >= wanted]
+        return covering[0] if covering else legal[-1]
     if isinstance(durations, dict):
         low = durations.get("min")
         high = durations.get("max")
         if isinstance(low, int | float):
-            wanted = max(wanted, int(low))
+            wanted = max(wanted, math.ceil(low))
         if isinstance(high, int | float):
-            wanted = min(wanted, int(high))
+            wanted = min(wanted, math.floor(high))
     return wanted
 
 
@@ -272,8 +417,13 @@ class _RunwayClient:
         self.model_metadata: dict[str, Any] = dict(model_metadata or {})
         #: Set by list_models() when the account answered but the contract could not be read.
         self.capabilities_warning: str | None = None
-        #: The credits the vendor said the last submitted task may cost, when it said.
+        #: The credits the vendor said the last submitted task may cost, when it said. Reset
+        #: at every submit: a task the vendor priced at nothing is unknown, never the price
+        #: of the shot before it.
         self.last_estimated_credits: float | None = None
+        #: The id of the last task this adapter submitted; a poll of that task may carry
+        #: the price the submit answer left out.
+        self.last_task_id: str | None = None
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -294,11 +444,46 @@ class _RunwayClient:
                 f"Model {self.model} does not serve {task} according to Runway's contract"
             )
 
-    def _ratio_for(self, task: str, aspect_ratio: str) -> str:
+    def _ratio_for(self, task: str, aspect_ratio: str, *, follows_image: bool = False) -> str:
         ratios = self.model_metadata.get("ratios", {})
-        return pick_ratio(ratios.get(task) if isinstance(ratios, dict) else None, aspect_ratio)
+        return pick_ratio(
+            ratios.get(task) if isinstance(ratios, dict) else None,
+            aspect_ratio,
+            follows_image=follows_image,
+        )
+
+    def _fields(self, task: str) -> set[str] | None:
+        """The fields the contract says `task` takes for this model, or None if unknown."""
+        fields = self.model_metadata.get("fields")
+        declared = fields.get(task) if isinstance(fields, dict) else None
+        return {str(f) for f in declared} if isinstance(declared, list) else None
+
+    def _prompt_max(self, task: str) -> int:
+        limits = self.model_metadata.get("prompt_max")
+        limit = limits.get(task) if isinstance(limits, dict) else None
+        return limit if isinstance(limit, int) and limit > 0 else DEFAULT_PROMPT_MAX
+
+    async def organization(self) -> dict[str, Any]:
+        data, _, _ = await asyncio.to_thread(
+            retrying, request, HOST, "GET", "/v1/organization", self._headers(), timeout=20
+        )
+        if not isinstance(data, dict) or not isinstance(data.get("tier"), dict):
+            raise MediaProviderError("Runway did not describe the organization")
+        return data
+
+    async def credit_balance(self) -> float | None:
+        """The credits the account holds now, read from GET /v1/organization.
+
+        A free read: it buys nothing and is asked before every paid step and every shot. A
+        balance the vendor did not state is None, never 0; a vendor that cannot answer
+        raises, and the caller that was about to buy stops.
+        """
+        data = await self.organization()
+        return estimated_credits(data.get("creditBalance"))
 
     async def _submit(self, task: str, body: dict[str, Any]) -> str:
+        self.last_estimated_credits = None
+        self.last_task_id = None
         data, _, _ = await asyncio.to_thread(
             retrying,
             request,
@@ -309,14 +494,17 @@ class _RunwayClient:
             json.dumps(body).encode("utf-8"),
             timeout=60,
         )
-        # Runway answers a new task with the most it may charge, in credits. It is the only
-        # number the vendor states about the money, so it is kept for the books rather than
-        # dropped in favour of a price someone wrote down elsewhere.
-        if isinstance(data, dict) and isinstance(data.get("estimatedCost"), int | float):
-            self.last_estimated_credits = float(data["estimatedCost"])
+        # Runway answers a new task with the most it may charge, as {"credits": n}. It is
+        # the only number the vendor states about the money, so it is kept for the books
+        # rather than dropped in favour of a price someone wrote down elsewhere. Read as a
+        # bare number only, it was lost: the Nepal film's books showed 0.74 USD for two
+        # whole films.
+        if isinstance(data, dict):
+            self.last_estimated_credits = estimated_credits(data.get("estimatedCost"))
         task_id = data.get("id") if isinstance(data, dict) else None
         if not isinstance(task_id, str) or not task_id:
             raise MediaProviderError("Runway did not return a task id")
+        self.last_task_id = task_id
         return task_id
 
     async def _quote(self, task: str, body: dict[str, Any]) -> float | None:
@@ -350,8 +538,7 @@ class _RunwayClient:
         started = data.get("id")
         if isinstance(started, str) and started:
             await self._cancel(started)
-        cost = data.get("estimatedCost")
-        return float(cost) if isinstance(cost, int | float) else None
+        return estimated_credits(data.get("estimatedCost"))
 
     async def _cancel(self, job_id: str) -> None:
         """Cancel a task. Used when a dry run created one anyway; failure is logged, not raised."""
@@ -381,6 +568,13 @@ class _RunwayClient:
         )
         if not isinstance(data, dict) or not isinstance(data.get("status"), str):
             raise MediaProviderError("Runway did not return the task status")
+        # The submit answer may leave the price out; the task states it while it waits.
+        # Only the task this adapter last submitted may set it: a poll of an older task is
+        # about another shot's money.
+        if job_id == self.last_task_id:
+            credits = estimated_credits(data.get("estimatedCost"))
+            if credits is not None:
+                self.last_estimated_credits = credits
         return data
 
     async def _download(self, url: str) -> tuple[bytes, str]:
@@ -425,6 +619,132 @@ class RunwayImageAdapter(_RunwayClient, ImageProvider):
             return {"status": "OFFLINE", "detail": "Runway did not describe the organization"}
         return {"status": "HEALTHY", "detail": ""}
 
+    async def _image_outputs(self, job_id: str) -> list[str]:
+        """Poll a text_to_image task until it ends; the output URLs it served, in order."""
+        deadline = time.monotonic() + IMAGE_DEADLINE_SECONDS
+        while True:
+            data = await self._task(job_id)
+            remote = data["status"]
+            if remote == "SUCCEEDED":
+                break
+            if remote in ("FAILED", "CANCELLED"):
+                code = data.get("failureCode")
+                failure = data.get("failure")
+                raise MediaProviderError(
+                    f"Runway image task {remote.lower()}",
+                    code=code if isinstance(code, str) else None,
+                    detail=sanitise_vendor_text(failure) if isinstance(failure, str) else None,
+                )
+            if time.monotonic() >= deadline:
+                raise MediaProviderError("Runway image task did not finish before the deadline")
+            await asyncio.sleep(IMAGE_POLL_SECONDS)
+        outputs = data.get("output")
+        urls = [url for url in outputs if isinstance(url, str)] if isinstance(outputs, list) else []
+        if not urls:
+            raise MediaProviderError("Runway reported success without an output")
+        return urls
+
+    async def generate_candidates(
+        self,
+        prompt: str,
+        *,
+        ratio: str,
+        count: int = 2,
+        references: Sequence[bytes] = (),
+        seed: int | None = None,
+    ) -> list[ImageResult]:
+        """``count`` candidate stills of one prompt, at exactly ``ratio``, in one purchase.
+
+        The stills step buys two candidates per scene at 2K (1530:2720) and keeps the better
+        one; the vendor's ``outputCount`` returns both from one task. A contract that lists
+        the task's fields without ``outputCount`` gets one task per candidate instead, which
+        costs the same per image. The ratio is the one asked, never the nearest: a 2K still is
+        priced as 2K, and a ratio the contract does not list is refused before any call.
+
+        ``references`` are pictures the prompt names as "Figure 1", "Figure 2"... (the film's
+        first approved still, for its light, palette and grain). They go as data URIs, in
+        order. ``REFERENCE_IMAGE_VERIFIED`` rides on every result: until an Owner-approved
+        run has drawn with them, the sheet says the field is unverified.
+
+        ``last_estimated_credits`` is the vendor's price for everything bought by this call
+        (the sum over its tasks), or None when any task left it unstated.
+        """
+        task = "text_to_image"
+        self._require_task(task)
+        wanted = max(1, int(count))
+        pictures = [bytes(picture) for picture in references if picture]
+        needs = self.model_metadata.get("needs_references", {})
+        if not pictures and isinstance(needs, dict) and needs.get(task):
+            raise MediaProviderError(
+                f"{self.model} are nevoie de imagini de referință și nu poate desena o imagine "
+                "doar din text",
+                code="reference_images_required",
+            )
+        ratios = self.model_metadata.get("ratios", {})
+        listed = ratios.get(task) if isinstance(ratios, dict) else None
+        if not isinstance(listed, list) or not listed:
+            raise MediaProviderError(
+                "The ratios this Runway model accepts are not known; refresh the catalog first"
+            )
+        if ratio not in listed:
+            raise MediaProviderError(
+                f"Model {self.model} does not take ratio {ratio} for {task} according to "
+                "Runway's contract"
+            )
+        described = fit_prompt(prompt, self._prompt_max(task))
+        if not described:
+            raise MediaProviderError("There is no prompt to generate an image from")
+        body: dict[str, Any] = {"model": self.model, "promptText": described, "ratio": ratio}
+        fields = self._fields(task)
+        if isinstance(seed, int) and (fields is None or "seed" in fields):
+            body["seed"] = seed
+        if pictures:
+            body["referenceImages"] = [
+                {"uri": _image_data_uri(picture, "reference image")} for picture in pictures
+            ]
+        in_one = wanted > 1 and (fields is None or "outputCount" in fields)
+        if in_one:
+            body["outputCount"] = wanted
+        tasks = 1 if in_one or wanted == 1 else wanted
+
+        served: list[tuple[str, str]] = []
+        prices: list[float | None] = []
+        for _ in range(tasks):
+            job_id = await self._submit(task, body)
+            urls = await self._image_outputs(job_id)
+            prices.append(self.last_estimated_credits)
+            served += [(job_id, url) for url in urls]
+        self.last_estimated_credits = (
+            None if any(price is None for price in prices) else float(sum(p or 0 for p in prices))
+        )
+        results: list[ImageResult] = []
+        for index, (job_id, url) in enumerate(served[:wanted]):
+            image, content_type = await self._download(url)
+            fmt, actual_width, actual_height = image_dimensions(image, content_type)
+            results.append(
+                ImageResult(
+                    image_bytes=image,
+                    format=fmt,
+                    width=actual_width,
+                    height=actual_height,
+                    seed=seed if isinstance(seed, int) else None,
+                    prompt=described,
+                    raw_response={
+                        "provider": self.PROVIDER_NAME,
+                        "model": self.model,
+                        "task_id": job_id,
+                        "ratio": ratio,
+                        "content_type": content_type,
+                        "output_index": index,
+                        "output_count": wanted,
+                        "reference_images": len(pictures),
+                        "reference_verified": self.REFERENCE_IMAGE_VERIFIED,
+                        "bytes": len(image),
+                    },
+                )
+            )
+        return results
+
     async def generate_image(
         self,
         prompt: str,
@@ -454,7 +774,7 @@ class RunwayImageAdapter(_RunwayClient, ImageProvider):
                 f"{settings_place('media')}",
                 code="reference_images_required",
             )
-        described = " ".join(f"{prompt} {style or ''}".split())[:1000]
+        described = fit_prompt(f"{prompt} {style or ''}", self._prompt_max(task))
         if not described:
             raise MediaProviderError("There is no prompt to generate an image from")
         body: dict[str, Any] = {
@@ -472,25 +792,7 @@ class RunwayImageAdapter(_RunwayClient, ImageProvider):
             # it as `@tag`, and inventing one would change the words the Director approved.
             body["referenceImages"] = [{"uri": _image_data_uri(reference, "reference image")}]
         job_id = await self._submit(task, body)
-        deadline = time.monotonic() + IMAGE_DEADLINE_SECONDS
-        while True:
-            data = await self._task(job_id)
-            remote = data["status"]
-            if remote == "SUCCEEDED":
-                break
-            if remote in ("FAILED", "CANCELLED"):
-                code = data.get("failureCode")
-                raise MediaProviderError(
-                    f"Runway image task {remote.lower()}",
-                    code=code if isinstance(code, str) else None,
-                )
-            if time.monotonic() >= deadline:
-                raise MediaProviderError("Runway image task did not finish before the deadline")
-            await asyncio.sleep(IMAGE_POLL_SECONDS)
-        outputs = data.get("output")
-        url = outputs[0] if isinstance(outputs, list) and outputs else None
-        if not isinstance(url, str):
-            raise MediaProviderError("Runway reported success without an output")
+        url = (await self._image_outputs(job_id))[0]
         image, content_type = await self._download(url)
         fmt, actual_width, actual_height = image_dimensions(image, content_type)
         return ImageResult(
@@ -515,14 +817,6 @@ class RunwayImageAdapter(_RunwayClient, ImageProvider):
 
 
 class RunwayVideoAdapter(_RunwayClient, VideoProvider):
-    async def organization(self) -> dict[str, Any]:
-        data, _, _ = await asyncio.to_thread(
-            retrying, request, HOST, "GET", "/v1/organization", self._headers(), timeout=20
-        )
-        if not isinstance(data, dict) or not isinstance(data.get("tier"), dict):
-            raise MediaProviderError("Runway did not describe the organization")
-        return data
-
     async def health_check(self) -> dict[str, Any]:
         """Ask the API which organization this key belongs to. Reachability is never assumed."""
         try:
@@ -584,6 +878,54 @@ class RunwayVideoAdapter(_RunwayClient, VideoProvider):
             items.append(item)
         return items
 
+    def _video_body(
+        self,
+        task: str,
+        prompt: str,
+        image_ref: bytes | None,
+        duration_seconds: float,
+        aspect_ratio: str,
+        extra: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """The request body for one shot, built from this model's contract.
+
+        The same body is bought and quoted, so a quote is about this shot. Optional fields
+        follow the contract: `audio` is sent, as False, to a model that declares it (the
+        narration is the film's only sound, and a generated soundtrack is paid for and
+        thrown away); `negativePrompt` only to one that declares it (veo); `seed` — the
+        film's one seed — to a model that declares it, or when the contract's fields are
+        not known, as before.
+        """
+        wanted = extra if isinstance(extra, dict) else {}
+        fields = self._fields(task)
+        cap = self._prompt_max(task)
+        body: dict[str, Any] = {
+            "model": self.model,
+            "promptText": fit_prompt(prompt, cap),
+            "ratio": self._ratio_for(task, aspect_ratio, follows_image=bool(image_ref)),
+            "duration": pick_duration(self._durations(task), duration_seconds),
+        }
+        if image_ref:
+            # The assembler hands over the still as a high-quality JPEG: a PNG of a
+            # 1080x1920 frame, base64-encoded, runs past what a data URI may carry.
+            body["promptImage"] = _image_data_uri(image_ref)
+        seed = wanted.get("seed")
+        if isinstance(seed, int) and not isinstance(seed, bool):
+            if fields is None or "seed" in fields:
+                body["seed"] = seed
+        if fields is not None and "audio" in fields:
+            body["audio"] = wanted.get("audio") is True
+        negative = wanted.get("negative_prompt")
+        if fields is not None and "negativePrompt" in fields and isinstance(negative, str):
+            fitted = fit_prompt(negative, cap)
+            if fitted:
+                body["negativePrompt"] = fitted
+        return body
+
+    def _durations(self, task: str) -> Any:
+        durations = self.model_metadata.get("durations", {})
+        return durations.get(task) if isinstance(durations, dict) else None
+
     async def create_generation(
         self,
         prompt: str,
@@ -593,27 +935,15 @@ class RunwayVideoAdapter(_RunwayClient, VideoProvider):
         aspect_ratio: str = "9:16",
         extra: dict[str, Any] | None = None,
     ) -> str:
-        text = " ".join(str(prompt).split())[:1000]
         if not self.model:
             raise MediaProviderNotConfigured(
                 f"Niciun model video Runway ales; alege unul în {settings_place('media')}"
             )
         task = "image_to_video" if image_ref else "text_to_video"
         self._require_task(task)
-        durations = self.model_metadata.get("durations", {})
-        task_durations = durations.get(task) if isinstance(durations, dict) else None
-        body: dict[str, Any] = {
-            "model": self.model,
-            "promptText": text,
-            "ratio": self._ratio_for(task, aspect_ratio),
-            "duration": pick_duration(task_durations, duration_seconds),
-        }
-        if not text and task == "text_to_video":
+        body = self._video_body(task, prompt, image_ref, duration_seconds, aspect_ratio, extra)
+        if not body["promptText"] and task == "text_to_video":
             raise MediaProviderError("There is no prompt text to generate a video from")
-        if image_ref:
-            body["promptImage"] = _image_data_uri(image_ref)
-        if isinstance(extra, dict) and isinstance(extra.get("seed"), int):
-            body["seed"] = extra["seed"]
         return await self._submit(task, body)
 
     async def estimate_generation(
@@ -623,6 +953,7 @@ class RunwayVideoAdapter(_RunwayClient, VideoProvider):
         image_ref: bytes | None = None,
         duration_seconds: float = 4.0,
         aspect_ratio: str = "9:16",
+        extra: dict[str, Any] | None = None,
     ) -> float | None:
         """The credits this exact shot would cost, asked of the vendor, or None if it will not say.
 
@@ -630,26 +961,16 @@ class RunwayVideoAdapter(_RunwayClient, VideoProvider):
         about a model in general: a price per second written down somewhere is a guess about
         a length, a resolution and a task all at once.
         """
-        text = " ".join(str(prompt).split())[:1000]
         if not self.model:
             return None
         task = "image_to_video" if image_ref else "text_to_video"
         tasks = self.model_metadata.get("tasks")
         if isinstance(tasks, list) and task not in tasks:
             return None
-        durations = self.model_metadata.get("durations", {})
-        task_durations = durations.get(task) if isinstance(durations, dict) else None
         try:
-            body: dict[str, Any] = {
-                "model": self.model,
-                "promptText": text,
-                "ratio": self._ratio_for(task, aspect_ratio),
-                "duration": pick_duration(task_durations, duration_seconds),
-            }
+            body = self._video_body(task, prompt, image_ref, duration_seconds, aspect_ratio, extra)
         except MediaProviderError:
             return None
-        if image_ref:
-            body["promptImage"] = _image_data_uri(image_ref)
         return await self._quote(task, body)
 
     async def get_generation_status(self, job_id: str) -> VideoGenerationResult:
@@ -665,6 +986,11 @@ class RunwayVideoAdapter(_RunwayClient, VideoProvider):
             "task_status": remote,
             "failure_code": data.get("failureCode"),
         }
+        failure = data.get("failure")
+        if isinstance(failure, str) and failure.strip():
+            # The vendor's reason in its own words, sanitised: a refused input can be
+            # echoed back as a signed URL or the picture itself.
+            raw["failure"] = sanitise_vendor_text(failure)
         video: bytes | None = None
         if status == "COMPLETED":
             outputs = data.get("output")

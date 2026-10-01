@@ -416,3 +416,115 @@ def test_the_operational_record_is_untouched_by_the_narrative(engine, staffed, m
     # Writing an episode only appends its own event; nothing that already existed changed.
     assert set(before).issubset(set(after))
     assert len(after) > len(before)
+
+
+# ---------------------------------------------------------------------------
+# The story's scenes keep their kind all the way to the storyboard (SCENE_KINDS)
+# ---------------------------------------------------------------------------
+
+
+def test_a_writer_scene_of_kind_data_card_keeps_its_kind_through_the_storyboard(
+    engine, staffed, monkeypatch
+):
+    """A chart the writer declared, with numbers from its claims, is a chart on the board.
+
+    The storyboard used to copy one style onto every scene, so a chart was a photograph like
+    any other and went to a paid image model. The kind now travels with the scene.
+    """
+    from app.factual import agent_pipeline
+    from app.factual.models import FactualClaim, ScriptDraft, TopicIdea
+    from app.media.models import StoryboardScene
+    from app.media.services import generate_storyboard_from_script, get_storyboard
+    from app.models import OwnerPolicy
+    from app.services import append_event, utc_now
+
+    topic_id = str(uuid4())
+    claims = {
+        "k-budget": "The city budgeted 40 million euros for flood defences in 2021.",
+        "k-spent": "By 2023 the city had spent 12 million euros on flood defences.",
+    }
+    with Session(engine) as session, session.begin():
+        session.get(OwnerPolicy, 1).autonomy_stopped = False
+        event = append_event(
+            session, "factual.topic_proposed", "topic_idea", topic_id, 1, {}, str(uuid4())
+        )
+        session.add(
+            TopicIdea(
+                id=topic_id,
+                title="Flood defences",
+                topic="city",
+                angle="Budgeted and spent",
+                status="SELECTED",
+                created_at=utc_now(),
+                event_id=event.event_id,
+            )
+        )
+        for claim_id, text in claims.items():
+            session.add(
+                FactualClaim(
+                    id=claim_id,
+                    topic_id=topic_id,
+                    claim_text=text,
+                    status="SUPPORTED",
+                    confidence=0.9,
+                    evidence_text=text,
+                    created_at=utc_now(),
+                )
+            )
+    card = {
+        "title": "Apărarea contra inundațiilor",
+        "bars": [
+            {"label": "Bugetat", "value": 40, "unit": "mil. EUR", "claim_id": "k-budget"},
+            {"label": "Cheltuit", "value": 12, "unit": "mil. EUR", "claim_id": "k-spent"},
+        ],
+        "highlight": 1,
+    }
+    answer = json.dumps(
+        {
+            "title": "The flood wall that was never built",
+            "scenes": [
+                {
+                    "narration": "The city promised a wall against the river and set money aside.",
+                    "visual": "The river high against an old stone embankment, seen from above.",
+                    "purpose": "HOOK",
+                    "kind": "LIVE",
+                    "claim_ids": ["k-budget"],
+                },
+                {
+                    "narration": "Forty million was budgeted. Two years later, twelve was spent.",
+                    "visual": "Two amounts side by side.",
+                    "purpose": "EVIDENCE",
+                    "kind": "DATA_CARD",
+                    "card": card,
+                    "claim_ids": ["k-budget", "k-spent"],
+                },
+            ],
+        }
+    )
+
+    def fake_run(_engine, _registry, agent_id, *args, **kwargs):
+        return {"id": str(uuid4()), "status": "SUCCEEDED", "output_text": answer}
+
+    monkeypatch.setattr(agent_pipeline, "run_agent_task", fake_run)
+    monkeypatch.setattr(agent_pipeline, "_announce", lambda *a, **k: None)
+    written = agent_pipeline.agent_write_script(engine, object(), topic_id, str(uuid4()))
+    with Session(engine) as session, session.begin():
+        session.get(ScriptDraft, written["script"]["id"]).status = "APPROVED"
+
+    board = generate_storyboard_from_script(engine, written["script"]["id"], None, "9:16", "c")
+
+    with Session(engine) as session:
+        rows = list(
+            session.scalars(
+                select(StoryboardScene)
+                .where(StoryboardScene.storyboard_id == board["id"])
+                .order_by(StoryboardScene.scene_index)
+            )
+        )
+    assert [row.scene_kind for row in rows] == ["LIVE", "DATA_CARD"]
+    assert rows[1].card_json == card
+    assert rows[0].card_json is None
+    assert [s["scene_kind"] for s in get_storyboard(engine, board["id"])["scenes"]] == [
+        "LIVE",
+        "DATA_CARD",
+    ]

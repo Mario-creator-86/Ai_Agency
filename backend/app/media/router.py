@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import mimetypes
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi import Path as FPath
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -18,9 +20,22 @@ from app.economy.services import EconomyError
 from app.factual.models import FactualClaim, ScriptDraft, TopicIdea
 from app.factual.services import FactualGateError
 from app.factual.story_review import story_gate
-from app.media.assembler import RenderEngineUnavailable, assemble_video_job
-from app.media.factory import describe, motion_for_scene, render_plan, tts_provider
-from app.media.models import MediaAsset, Storyboard, VideoRenderJob
+from app.media.assembler import (
+    DEFAULT_STORAGE_ROOT,
+    RenderEngineUnavailable,
+    SceneRedoRefused,
+    assemble_video_job,
+    redo_plan,
+    redo_scene,
+)
+from app.media.factory import (
+    describe,
+    image_provider,
+    motion_for_scene,
+    render_plan,
+    tts_provider,
+)
+from app.media.models import MediaAsset, SceneTake, Storyboard, StoryboardScene, VideoRenderJob
 from app.media.production_policy import (
     IdentityChangeCommand,
     IdentityDecisionCommand,
@@ -37,14 +52,31 @@ from app.media.production_policy import (
     set_storyboard_production,
     set_voice_binding,
 )
-from app.media.prompt_agent import PromptError, production_package, write_shot_prompts
+from app.media.prompt_agent import (
+    PromptError,
+    hold_for_shot_plan,
+    production_package,
+    shot_plan_gaps,
+    write_shot_prompts,
+)
 from app.media.qc import evaluate_media_qc, get_media_qc
+from app.media.rehearsal import (
+    AdoptExistingFilesCommand,
+    RehearsalError,
+    RehearsalNotFound,
+    RehearsalRefused,
+    adopt_existing_files,
+    rehearse,
+)
 from app.media.schemas import (
     GenerateStoryboardCommand,
     MediaAssetView,
     QCReportView,
     RenderJobView,
+    SceneModelCommand,
+    SheetStepCommand,
     StoryboardView,
+    TakeDecisionCommand,
 )
 from app.media.services import (
     REFERENCE_STORAGE_ROOT,
@@ -59,10 +91,110 @@ from app.media.services import (
     list_storyboards,
     seed_default_character_bibles,
 )
+from app.media.shooting_sheet import (
+    SHEET_STEPS,
+    SheetChoiceRefused,
+    SheetNotFound,
+    SheetStepRefused,
+    build_sheet,
+    card_preview_png,
+    connection_account,
+    connection_capabilities,
+    connection_video_adapters,
+    decide_sheet_take,
+    run_sheet_step,
+    runway_connection_id,
+    set_scene_model,
+    sheet_hash,
+    sheet_overrides,
+    sheet_url,
+)
 from app.providers.media_http import MediaProviderError
 from app.security import require_owner
 from app.services import append_event, studio_environment, utc_now
 from app.wording import settings_place
+
+
+def _use_the_sheet(engine: Any, storyboard_id: str, correlation_id: str) -> dict[str, Any]:
+    """The 409 of the legacy render button in PRODUCTION: the way to the shooting sheet.
+
+    A film whose shots a model did not write is also held for its shot plan (NEEDS_SHOT_PLAN
+    and a WARNING event), as the day's media stage holds it. Office-serial scenes composed
+    from the fixed series look are not template prompts and are not held.
+    """
+    with Session(engine) as session:
+        gaps = shot_plan_gaps(session, storyboard_id)
+        serial = {
+            row.scene_index
+            for row in session.scalars(
+                select(StoryboardScene).where(StoryboardScene.storyboard_id == storyboard_id)
+            )
+            if (row.prompt_json or {}).get("source") == "series_look"
+        }
+    gaps = [index for index in gaps if index not in serial]
+    message = (
+        "Folosește foaia de filmare: în PRODUCȚIE nimic nu se mai cumpără de la butonul vechi "
+        "de randare. Foaia arată fiecare imagine, fiecare prompt, modelul fiecărei scene, "
+        "secundele, creditele, soldul și plafonul, iar fiecare pas plătit (imaginile, cadrul "
+        "de probă, mișcarea) cere aprobarea Proprietarului."
+    )
+    if gaps:
+        hold_for_shot_plan(engine, storyboard_id, correlation_id)
+        message += (
+            " Scenele "
+            + ", ".join(map(str, gaps))
+            + " nu au planul de cadre scris de model; filmul așteaptă planul de cadre."
+        )
+    return {
+        "error": "UseShootingSheet",
+        "message": message,
+        "sheet_url": sheet_url(storyboard_id),
+        "shot_plan_gaps": gaps,
+    }
+
+
+class SceneRedoCommand(BaseModel):
+    """The Owner's request to redo one scene (still | motion | card) or the film's sound.
+
+    A still or motion redo names the plan he was shown (``plan_hash``, from the redo plan);
+    card and audio cost nothing and need none. Nothing in the body says who asks: the route
+    is the Owner's, and what the redo may buy is decided by his yes for that plan alone.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["still", "motion", "card", "audio"]
+    scene_index: int | None = Field(default=None, ge=1, le=200)
+    plan_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    note: str | None = Field(default=None, max_length=500)
+    allow_over_budget: bool = False
+
+
+def _sheet_wiring(request: Request) -> dict[str, Any]:
+    """What the sheet and its steps are built from: the fakes a test put on ``app.state``,
+    otherwise the Runway connection the Owner selected and verified."""
+    state = request.app.state
+    engine = state.engine
+    vault = state.credential_vault
+    integration_id = getattr(state, "runway_integration_id", None) or runway_connection_id(engine)
+    capabilities = getattr(state, "scene_model_capabilities", None)
+    if capabilities is None:
+        capabilities = connection_capabilities(engine, integration_id)
+    image = getattr(state, "image_adapter", None) or image_provider(engine, vault)
+    account = getattr(state, "runway_account", None) or connection_account(
+        engine, vault, integration_id
+    )
+    adapters = getattr(state, "video_adapter_for_model", None) or connection_video_adapters(
+        engine, vault, integration_id
+    )
+    return {
+        "integration_id": integration_id,
+        "capabilities": list(capabilities),
+        "image_adapter": image,
+        "account": account,
+        "adapter_for_model": adapters,
+        "resolution": getattr(state.settings, "motion_resolution", None),
+    }
 
 
 def create_media_router() -> APIRouter:
@@ -270,7 +402,17 @@ def create_media_router() -> APIRouter:
             board = session.get(Storyboard, storyboard_id)
             if board is None:
                 raise HTTPException(status_code=404, detail="Storyboard not found")
-            passed, why = story_gate(session, board.script_draft_id)
+            script_id = board.script_draft_id
+        # In PRODUCTION nothing is bought from this button any more. The second Nepal render
+        # (2026-09-26) started here: no price, no prompt, no model shown, no question asked,
+        # and every still and clip of the film bought again. The shooting sheet shows all of
+        # it first and asks the Owner at every paid step. TEST keeps the button for the fakes.
+        if studio_environment(engine) == "PRODUCTION":
+            raise HTTPException(
+                status_code=409, detail=_use_the_sheet(engine, storyboard_id, correlation_id)
+            )
+        with Session(engine) as session:
+            passed, why = story_gate(session, script_id)
         if not passed:
             raise HTTPException(status_code=422, detail=why)
         # Only a provider the Owner selected *and* verified is used. With none, the render
@@ -438,6 +580,295 @@ def create_media_router() -> APIRouter:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Render execution failed: {exc}") from exc
+
+    @router.post("/storyboards/{storyboard_id}/adopt-existing-files")
+    def post_adopt_existing_files(
+        request: Request,
+        # A uuid and nothing else: the id names a folder on disk.
+        storyboard_id: Annotated[
+            str, FPath(min_length=36, max_length=36, pattern=r"^[0-9a-fA-F-]{36}$")
+        ],
+        cmd: AdoptExistingFilesCommand,
+    ) -> dict:
+        """The zero-credit rehearsal: rebuild a film from the files already paid for.
+
+        The Owner's own route (the router requires his key); it is issued as 'owner' and
+        nothing a request carries can change who adopts. The film's media folder is only read:
+        the files are copied into a new folder under ``rehearsals/`` beside it, adopted as
+        takes there, and the film is assembled from them with no image, video or voice
+        adapter, so no vendor is asked and nothing goes into the books. Whatever adapter a
+        test or an old wiring left on ``app.state`` is never passed.
+        """
+        engine = request.app.state.engine
+        settings = request.app.state.settings
+        storage = Path(
+            getattr(request.app.state, "media_storage_root", None) or DEFAULT_STORAGE_ROOT
+        )
+        stamp = utc_now().replace(":", "").replace("-", "").replace("+", "_").replace(".", "_")
+        source = storage / storyboard_id
+        root = storage / "rehearsals" / f"{storyboard_id}-{stamp}"
+        ffmpeg_path = getattr(settings, "ffmpeg_path", None)
+        try:
+            if cmd.render:
+                return rehearse(
+                    engine,
+                    storyboard_id,
+                    source,
+                    rehearsal_root=root,
+                    issued_by="owner",
+                    cards=cmd.cards,
+                    keep_flagged_for_rehearsal=cmd.keep_flagged_for_rehearsal,
+                    settings=settings,
+                    ffmpeg_path=ffmpeg_path,
+                )
+            adoption = adopt_existing_files(
+                engine,
+                storyboard_id,
+                source,
+                rehearsal_root=root,
+                issued_by="owner",
+                cards=cmd.cards,
+                keep_flagged_for_rehearsal=cmd.keep_flagged_for_rehearsal,
+                ffmpeg_path=ffmpeg_path,
+            )
+            return {"adoption": adoption, "film": None, "qc": None, "credits": 0}
+        except RehearsalNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except RehearsalRefused as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except RehearsalError as exc:
+            raise HTTPException(
+                status_code=422, detail={"error": "RehearsalRefused", "message": str(exc)}
+            ) from exc
+        except RenderEngineUnavailable as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={"error": "RenderEngineUnavailable", "message": str(exc)},
+            ) from exc
+
+    @router.get("/storyboards/{storyboard_id}/shooting-sheet")
+    def get_shooting_sheet(
+        request: Request,
+        storyboard_id: Annotated[str, FPath(min_length=36, max_length=36)],
+    ) -> dict:
+        """Foaia de filmare: everything a film will buy, before a credit is spent.
+
+        0 credits. Its only live call is the free Runway balance read; the face badge of an
+        approved still is counted locally.
+        """
+        from app.media.faces import count_faces  # noqa: PLC0415 - opencv loads lazily
+
+        wiring = _sheet_wiring(request)
+        try:
+            return build_sheet(
+                request.app.state.engine,
+                storyboard_id,
+                capabilities=wiring["capabilities"],
+                integration_id=wiring["integration_id"],
+                account=wiring["account"],
+                resolution=wiring["resolution"],
+                stills_model=getattr(wiring["image_adapter"], "model", None),
+                face_counter=count_faces,
+            )
+        except SheetNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @router.post("/storyboards/{storyboard_id}/steps/{step}")
+    def post_sheet_step(
+        request: Request,
+        storyboard_id: Annotated[str, FPath(min_length=36, max_length=36)],
+        step: Annotated[str, FPath(max_length=20)],
+        cmd: SheetStepCommand,
+    ) -> Any:
+        """One paid step of the sheet: 202 with the Owner's question, 409 with the reason
+        nothing was bought, 200 once his yes for THIS sheet was spent and the step bought."""
+        if step not in SHEET_STEPS:
+            raise HTTPException(status_code=404, detail=f"Pas necunoscut: {step}")
+        settings = request.app.state.settings
+        wiring = _sheet_wiring(request)
+        storage = getattr(request.app.state, "media_storage_root", None)
+        try:
+            return run_sheet_step(
+                request.app.state.engine,
+                storyboard_id,
+                step,
+                cmd.plan_hash,
+                correlation_id=str(uuid4()),
+                capabilities=wiring["capabilities"],
+                integration_id=wiring["integration_id"],
+                account=wiring["account"],
+                image_adapter=wiring["image_adapter"],
+                adapter_for_model=wiring["adapter_for_model"],
+                registry=getattr(request.app.state, "registry", None),
+                allow_over_budget=cmd.allow_over_budget,
+                settings=settings,
+                storage_root=Path(storage) if storage else None,
+                ffmpeg_path=getattr(settings, "ffmpeg_path", None),
+            )
+        except SheetNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except SheetStepRefused as exc:
+            if exc.http_status == 202:
+                return JSONResponse(status_code=202, content=exc.as_dict())
+            raise HTTPException(status_code=exc.http_status, detail=exc.as_dict()) from exc
+
+    @router.put("/storyboards/{storyboard_id}/shooting-sheet/scenes/{scene_index}/model")
+    def put_scene_model(
+        request: Request,
+        storyboard_id: Annotated[str, FPath(min_length=36, max_length=36)],
+        scene_index: Annotated[int, FPath(ge=1, le=200)],
+        cmd: SceneModelCommand,
+    ) -> dict:
+        """The Owner's choice of one filmed scene's motion model (or LOCAL_MOVE), on the sheet.
+        It changes the sheet and its hash; a yes for the old sheet buys nothing."""
+        engine = request.app.state.engine
+        wiring = _sheet_wiring(request)
+        context = {
+            "capabilities": wiring["capabilities"],
+            "integration_id": wiring["integration_id"],
+            "resolution": wiring["resolution"],
+            "stills_model": getattr(wiring["image_adapter"], "model", None),
+        }
+        try:
+            before = sheet_hash(engine, storyboard_id, **context)
+            chosen = set_scene_model(
+                engine,
+                storyboard_id,
+                scene_index,
+                cmd.model_id,
+                issued_by="owner",
+                note=cmd.note,
+                resolution=wiring["resolution"] or "1080p",
+            )
+        except SheetNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except SheetChoiceRefused as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {
+            **chosen,
+            "previous_sheet_hash": before,
+            "sheet_hash": sheet_hash(engine, storyboard_id, **context),
+        }
+
+    @router.get("/storyboards/{storyboard_id}/redo-plan")
+    def get_redo_plan(
+        request: Request,
+        storyboard_id: Annotated[str, FPath(min_length=36, max_length=36)],
+        kind: Annotated[Literal["still", "motion", "card", "audio"], Query()],
+        scene: Annotated[int | None, Query(ge=1, le=200)] = None,
+    ) -> dict:
+        """What redoing one scene (or the sound) would do, cost and replace, with the
+        plan_hash the Owner's yes is bound to. 0 credits, no vendor asked."""
+        engine = request.app.state.engine
+        wiring = _sheet_wiring(request)
+        try:
+            return redo_plan(
+                engine,
+                storyboard_id,
+                kind,
+                scene,
+                capabilities=wiring["capabilities"],
+                integration_id=wiring["integration_id"],
+                overrides=sheet_overrides(engine, storyboard_id),
+                resolution=wiring["resolution"],
+                stills_model=getattr(wiring["image_adapter"], "model", None),
+            )
+        except SceneRedoRefused as exc:
+            raise HTTPException(status_code=exc.http_status, detail=exc.as_dict()) from exc
+
+    @router.post("/storyboards/{storyboard_id}/redo")
+    def post_scene_redo(
+        request: Request,
+        storyboard_id: Annotated[str, FPath(min_length=36, max_length=36)],
+        cmd: SceneRedoCommand,
+    ) -> Any:
+        """Redo one scene alone, or the film's sound; every other take and shot is reused.
+
+        200 when it is done (a card or the sound at 0 credits; a paid redo once the Owner's
+        yes for THIS redo plan was spent), 202 with his question, 409 with the reason nothing
+        was bought, 404 for an unknown storyboard or scene.
+        """
+        engine = request.app.state.engine
+        settings = request.app.state.settings
+        storage = getattr(request.app.state, "media_storage_root", None)
+        paid = cmd.kind in ("still", "motion")
+        wiring = _sheet_wiring(request) if paid else {}
+        try:
+            return redo_scene(
+                engine,
+                storyboard_id,
+                str(uuid4()),
+                kind=cmd.kind,
+                scene_index=cmd.scene_index,
+                plan_hash=cmd.plan_hash,
+                image_adapter=wiring.get("image_adapter"),
+                adapter_for_model=wiring.get("adapter_for_model"),
+                capabilities=wiring.get("capabilities"),
+                account=wiring.get("account"),
+                integration_id=wiring.get("integration_id"),
+                registry=getattr(request.app.state, "registry", None),
+                overrides=sheet_overrides(engine, storyboard_id) if paid else None,
+                resolution=wiring.get("resolution"),
+                settings=settings,
+                ffmpeg_path=getattr(settings, "ffmpeg_path", None),
+                storage_root=Path(storage) if storage else None,
+                note=cmd.note,
+                allow_over_budget=cmd.allow_over_budget,
+            )
+        except SceneRedoRefused as exc:
+            if exc.http_status == 202:
+                return JSONResponse(status_code=202, content=exc.as_dict())
+            raise HTTPException(status_code=exc.http_status, detail=exc.as_dict()) from exc
+
+    @router.post("/takes/{take_id}/decision")
+    def post_take_decision(
+        request: Request,
+        take_id: Annotated[str, FPath(min_length=1, max_length=36)],
+        cmd: TakeDecisionCommand,
+    ) -> dict:
+        """The Owner's look at a paid take on the contact sheet: APPROVED or REJECTED."""
+        try:
+            return decide_sheet_take(request.app.state.engine, take_id, cmd.decision, note=cmd.note)
+        except SheetNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @router.get("/takes/{take_id}/file")
+    def get_take_file(
+        request: Request,
+        take_id: Annotated[str, FPath(min_length=1, max_length=36)],
+    ) -> FileResponse:
+        """A paid take's picture or clip, for the contact sheet."""
+        with Session(request.app.state.engine) as session:
+            take = session.get(SceneTake, take_id)
+            path = Path(take.path) if take is not None and take.path else None
+        if path is None or not path.is_file():
+            raise HTTPException(status_code=404, detail="Fișierul înregistrării nu există.")
+        media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        return FileResponse(path, media_type=media_type)
+
+    @router.get("/storyboards/{storyboard_id}/scenes/{scene_index}/card-preview")
+    def get_card_preview(
+        request: Request,
+        storyboard_id: Annotated[str, FPath(min_length=36, max_length=36)],
+        scene_index: Annotated[int, FPath(ge=1, le=200)],
+    ) -> Response:
+        """A card scene's last frame, composed locally from its verified numbers: 0 credits."""
+        try:
+            picture = card_preview_png(
+                request.app.state.engine,
+                storyboard_id,
+                scene_index,
+                ffmpeg_path=getattr(request.app.state.settings, "ffmpeg_path", None),
+            )
+        except SheetNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except SheetChoiceRefused as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return Response(content=picture, media_type="image/png")
 
     @router.post("/storyboards/{storyboard_id}/prompts")
     def write_prompts(

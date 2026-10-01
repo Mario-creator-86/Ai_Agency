@@ -1,15 +1,26 @@
 import hashlib
 import json
+import math
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from typing import Literal
+from uuid import UUID, uuid4
 
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import Engine, and_, func, select, update
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session
 
 from app.agents.models import AgentRun
 from app.config import Settings
-from app.models import ApprovalRequest, CommandRecord, DomainEvent, OwnerPolicy, Room, Studio
+from app.models import (
+    PAID_MEDIA_APPROVALS,
+    ApprovalRequest,
+    CommandRecord,
+    DomainEvent,
+    OwnerPolicy,
+    Room,
+    Studio,
+)
 from app.publishing.models import ChannelRecord
 from app.schemas import (
     AUTONOMY_RANK,
@@ -177,6 +188,7 @@ def policy_view(policy: OwnerPolicy, session: Session | None = None) -> PolicyVi
                 .where(ChannelRecord.public_publish_enabled.is_(True))
             )
         )
+    paid_rule, paid_threshold = paid_media_policy(policy)
     return PolicyView(
         version=policy.version,
         autonomy_stopped=policy.autonomy_stopped,
@@ -186,6 +198,9 @@ def policy_view(policy: OwnerPolicy, session: Session | None = None) -> PolicyVi
         # of an unknown mode: it grants the least.
         autonomy_mode=policy.autonomy_mode or "MANUAL",  # type: ignore[arg-type]
         public_publish_enabled=public,
+        # Read as may_act reads it: anything incomplete or unknown shows as the strictest.
+        paid_media_approval=paid_rule,  # type: ignore[arg-type]
+        paid_media_approval_over_usd=paid_threshold,
     )
 
 
@@ -387,6 +402,17 @@ ACTION_RISK_TIERS: dict[str, str] = {
     "agent.fire": "T3",
     "provider.activate": "T3",
     "story.public_world_change": "T3",
+    # The paid steps of a film on its shooting sheet (the Owner's rule of 2026-09-26, after
+    # the Nepal film bought two whole films unasked). The stills are a few dozen credits
+    # inside the budget, so T2 like `media.paid_generation`; the hero test shot, the rest of
+    # the motion and a one-scene redo are the dear part, T3 like a render over threshold.
+    # None is T4: T4 is refused in every mode, and a step nobody can ever buy is not a gate.
+    # Whether the Owner is asked is not the tier's decision but `paid_media_approval`'s,
+    # read in `may_act` (see `PAID_MEDIA_STEPS`).
+    "media.stills_purchase": "T2",
+    "media.test_shot": "T3",
+    "media.motion_purchase": "T3",
+    "media.scene_redo": "T3",
     # T4 — alter hard budget; change the Policy Kernel; reveal/rotate credentials; accept
     # legal terms; disable core audit or security protections.
     "budget.change_hard_limit": "T4",
@@ -446,7 +472,24 @@ APPROVAL_ACTION_LABELS: dict[str, str] = {
     "agent.fire": "Concedierea unui angajat",
     "provider.activate": "Activarea unui furnizor nou",
     "story.public_world_change": "O schimbare publică în lumea serialului",
+    "media.stills_purchase": "Imaginile unui film, înainte de orice mișcare",
+    "media.test_shot": "Cadrul de probă al unui film, care rămâne în film",
+    "media.motion_purchase": "Mișcarea pentru restul scenelor unui film",
+    "media.scene_redo": "Refacerea unei singure scene a unui film",
 }
+
+#: The paid steps of a film's shooting sheet, each named by the step the sheet calls it. For
+#: these actions `may_act` reads the Owner's `paid_media_approval` before the mode may allow
+#: them, and binds his answer to the sheet's `plan_hash`.
+PAID_MEDIA_STEPS: dict[str, str] = {
+    "media.stills_purchase": "stills",
+    "media.test_shot": "test_shot",
+    "media.motion_purchase": "motion",
+    "media.scene_redo": "scene_redo",
+}
+
+#: The value a missing, unknown or incomplete setting is read as: the strictest one.
+STRICTEST_PAID_MEDIA_APPROVAL = PAID_MEDIA_APPROVALS[0]
 
 
 def action_words(action: str) -> str:
@@ -772,6 +815,94 @@ def request_approval(
     return request
 
 
+def paid_media_policy(policy: OwnerPolicy | None) -> tuple[str, float | None]:
+    """The Owner's `paid_media_approval` as `may_act` reads it: (value, threshold in USD).
+
+    The database refuses any other value (migration 0048), but this is the one place a
+    wrong reading would spend money, so anything that is not a complete, known setting — a
+    missing row, an unknown value, OVER_USD without a usable threshold — is read as the
+    strictest one, EVERY_PAID_STEP. Never as MODE: an unreadable rule must ask, not allow.
+    """
+    value = getattr(policy, "paid_media_approval", None)
+    if value not in PAID_MEDIA_APPROVALS:
+        return STRICTEST_PAID_MEDIA_APPROVAL, None
+    if value != "OVER_USD":
+        return str(value), None
+    raw = getattr(policy, "paid_media_approval_over_usd", None)
+    if isinstance(raw, bool) or not isinstance(raw, int | float):
+        return STRICTEST_PAID_MEDIA_APPROVAL, None
+    threshold = float(raw)
+    if not math.isfinite(threshold) or threshold < 0:
+        return STRICTEST_PAID_MEDIA_APPROVAL, None
+    return "OVER_USD", threshold
+
+
+def _usd_words(amount: float) -> str:
+    """An amount of dollars the Romanian way: 12,24 and 5 rather than 12.24 and 5.00."""
+    text = f"{amount:.2f}".replace(".", ",")
+    return text[:-3] if text.endswith(",00") else text
+
+
+def _paid_media_context(step: str, context: dict | None) -> dict | None:
+    """The plan a paid media step is asked about, or None when the caller named none.
+
+    The answer is bound to this dict (`proposed_diff`, then `_context_matches`), so it must
+    carry the sheet's `plan_hash`: an answer bound to nothing would match every plan. The
+    step is the action's own; a caller that names another step is describing another
+    purchase and gets no plan. `cap_credits` is always a key, None when the caller did not
+    give one, so the Owner's question and his answer have the same shape.
+    """
+    if not isinstance(context, dict):
+        return None
+    plan_hash = context.get("plan_hash")
+    if not isinstance(plan_hash, str) or not plan_hash.strip():
+        return None
+    if context.get("step", step) != step:
+        return None
+    return {**context, "step": step, "cap_credits": context.get("cap_credits")}
+
+
+def _ask_or_spend(
+    session: Session,
+    action: str,
+    tier: str,
+    *,
+    requester: str,
+    subject: str,
+    evidence: str | None,
+    cost_usd: float | None,
+    context: dict | None,
+    ask_owner: bool,
+    waiting: str,
+) -> tuple[str, str, str | None]:
+    """The one way the Owner's answer is read and spent: (status, reason, approval id).
+
+    His standing answer about this subject in this exact context is looked for; a no is
+    the answer, a yes is spent here — before the act it authorises — and a missing answer
+    becomes one request carrying `context` as its proposed diff. With `ask_owner` False
+    nothing is read, written or spent: the caller only wants to know that he would be asked.
+    """
+    if not ask_owner:
+        return "NEEDS_APPROVAL", waiting, None
+    answered = _answered_approval(session, action, subject, context)
+    if answered is not None and answered.result == "REFUSED":
+        return "REFUSED_BY_OWNER", _owner_refusal_reason(answered), answered.id
+    if answered is not None:
+        _spend_approval(session, answered)
+        return "ALLOWED", "", answered.id
+    request = request_approval(
+        session,
+        action,
+        tier,
+        requester,
+        subject=subject,
+        evidence=evidence,
+        proposed_diff=context,
+        cost_usd=cost_usd,
+    )
+    return "NEEDS_APPROVAL", waiting, request.id
+
+
 def may_act(
     session: Session,
     action: str,
@@ -807,6 +938,16 @@ def may_act(
     gate would otherwise have made him wait for: it turns SUPERVISED's "ask him" into
     "allowed, once". It never reaches a refusal above it — the stop, safe mode, T4 and a
     mode that was not asking are all read first, and all of them leave his yes unspent.
+
+    **The paid steps of a film** (`PAID_MEDIA_STEPS`: stills, the hero test shot, the rest of
+    the motion, a one-scene redo) pass one more gate, after the stop, the unclassified check,
+    T4 and safe mode and before the mode may allow them: the Owner's `paid_media_approval`.
+    EVERY_PAID_STEP (the default) asks him in every mode, AUTONOMOUS_CEO included; OVER_USD
+    asks above his threshold and whenever the cost is unknown; MODE hands the step back to
+    the mode. `context` must carry the shooting sheet's `plan_hash` — the step is filled in
+    from the action — and his answer is spent only for that same plan, so one yes buys
+    exactly one step of one plan. Only his `change_paid_media_approval` moves the setting;
+    nothing a caller passes here does.
     """
     known = ACTION_RISK_TIERS.get(action)
     if known and tier:
@@ -856,46 +997,87 @@ def may_act(
             f"«{action_words(action)}» ({tier}).",
         )
 
+    step = PAID_MEDIA_STEPS.get(action)
+    if step is not None:
+        # The Owner's gate on paid media (his policy, stricter than 51's modes): read after
+        # every refusal above, so a stop, safe mode or T4 leaves his yes unspent, and before
+        # the mode's ALLOWED, so AUTONOMOUS_CEO no longer buys a film's motion unasked.
+        plan = _paid_media_context(step, context)
+        if plan is None:
+            return verdict(
+                "BLOCKED_NO_PLAN",
+                f"«{action_words(action)}» se cumpără doar după foaia de filmare: cererea nu "
+                "numește planul (plan_hash) pe care Proprietarul l-a văzut, așa că nu se "
+                "cere și nu se cheltuie nicio aprobare.",
+            )
+        # Whatever decides below — the Owner or the mode — decides about this plan.
+        context = plan
+        rule, threshold = paid_media_policy(policy)
+        why = None
+        if rule == "EVERY_PAID_STEP":
+            why = "Politica Proprietarului cere aprobarea fiecărui pas plătit al unui film"
+        elif rule == "OVER_USD" and threshold is not None:
+            if cost_usd is None:
+                why = (
+                    f"Costul pentru «{action_words(action)}» este necunoscut, deci nu se "
+                    f"poate spune că e sub pragul de {_usd_words(threshold)} USD al "
+                    "Proprietarului"
+                )
+            elif cost_usd > threshold:
+                why = (
+                    f"«{action_words(action)}» costă {_usd_words(cost_usd)} USD, peste "
+                    f"pragul de {_usd_words(threshold)} USD al Proprietarului"
+                )
+        if why is not None:
+            status, reason, approval_id = _ask_or_spend(
+                session,
+                action,
+                tier,
+                requester=requester,
+                subject=subject,
+                evidence=evidence,
+                cost_usd=cost_usd,
+                context=context,
+                ask_owner=ask_owner,
+                waiting=(
+                    f"{why}: «{action_words(action)}» ({tier}) așteaptă aprobarea lui pe "
+                    "foaia de filmare."
+                ),
+            )
+            return verdict(status, reason, approval_id)
+        # MODE, or under his threshold: the autonomy mode decides, exactly as it does today.
+
     if tier <= MODE_ALLOWS.get(mode, "T1"):
         return verdict("ALLOWED", "")
 
     if mode == "SUPERVISED" and tier == "T3":
-        if not ask_owner:
-            # A caller asking on behalf of something it cannot name — the daily run's stage
-            # wrapper, before it knows which film — gets the answer and leaves the Owner
-            # alone: nothing is written, nothing of his is spent, and the caller that can
-            # name the film asks it properly.
-            return verdict(
-                "NEEDS_APPROVAL",
-                f"Modul de autonomie este supravegheat: acțiunea «{action_words(action)}» "
-                f"({tier}) cere aprobarea Proprietarului.",
-            )
+        # A caller asking on behalf of something it cannot name — the daily run's stage
+        # wrapper, before it knows which film — passes ask_owner=False, gets the answer and
+        # leaves the Owner alone: nothing is written, nothing of his is spent, and the caller
+        # that can name the film asks it properly.
+        #
         # His answer is read only here, and only under the mode that asks. A yes given while
         # the studio was SUPERVISED is not a way past MANUAL, which he chose afterwards
         # precisely to be asked about everything; the mode branch above has already refused
         # that case without ever looking for an answer to spend.
-        answered = _answered_approval(session, action, subject, context)
-        if answered is not None and answered.result == "REFUSED":
-            return verdict("REFUSED_BY_OWNER", _owner_refusal_reason(answered), answered.id)
-        if answered is not None:
-            _spend_approval(session, answered)
-            return verdict("ALLOWED", "", answered.id)
-        request = request_approval(
+        words = f"Modul de autonomie este supravegheat: acțiunea «{action_words(action)}» ({tier})"
+        status, reason, approval_id = _ask_or_spend(
             session,
             action,
             tier,
-            requester,
+            requester=requester,
             subject=subject,
             evidence=evidence,
-            proposed_diff=context,
             cost_usd=cost_usd,
+            context=context,
+            ask_owner=ask_owner,
+            waiting=(
+                f"{words} așteaptă aprobarea Proprietarului."
+                if ask_owner
+                else f"{words} cere aprobarea Proprietarului."
+            ),
         )
-        return verdict(
-            "NEEDS_APPROVAL",
-            f"Modul de autonomie este supravegheat: acțiunea «{action_words(action)}» "
-            f"({tier}) așteaptă aprobarea Proprietarului.",
-            request.id,
-        )
+        return verdict(status, reason, approval_id)
 
     return verdict(
         "BLOCKED_MODE",
@@ -1022,6 +1204,150 @@ MODE_MEMORY = {
         "la fel de închise."
     ),
 }
+
+
+# ---------------------------------------------------------------------------
+# SetPaidMediaApproval: when a paid step of a film asks the Owner
+# ---------------------------------------------------------------------------
+
+
+class PaidMediaApprovalRefused(Exception):
+    """Someone other than the Owner tried to change when paid media asks him."""
+
+
+class PaidMediaApprovalCommand(BaseModel):
+    """The Owner sets when a paid step of a film (stills, hero test, motion, one-scene redo)
+    waits for his yes: EVERY_PAID_STEP, OVER_USD with a threshold, or MODE.
+
+    The same shape as the mode and the environment — versioned, idempotent by command id,
+    recorded in the ledger — and the same shape the database accepts (migration 0048): a
+    threshold exactly when the value is OVER_USD, never negative. Who issued it is not a
+    field: it is the caller's `issued_by`, so no request body can name itself the Owner.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    schema_version: Literal[1] = 1
+    command_id: UUID
+    expected_version: int = Field(ge=1)
+    paid_media_approval: Literal["EVERY_PAID_STEP", "OVER_USD", "MODE"]
+    over_usd: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def _threshold_only_with_over_usd(self) -> "PaidMediaApprovalCommand":
+        if (self.paid_media_approval == "OVER_USD") != (self.over_usd is not None):
+            raise ValueError("Pragul în USD se dă doar, și obligatoriu, pentru OVER_USD.")
+        return self
+
+
+class PaidMediaApprovalResult(BaseModel):
+    command_id: str
+    status: Literal["COMMITTED", "NO_CHANGE"]
+    paid_media_approval: str
+    over_usd: float | None
+    version: int
+    event_id: str | None
+
+
+#: What every agent is told when the rule moves, in the Owner's language.
+PAID_MEDIA_MEMORY = {
+    "EVERY_PAID_STEP": (
+        "Proprietarul aprobă pe foaia de filmare fiecare pas plătit al unui film (imaginile, "
+        "cadrul de probă, mișcarea, refacerea unei scene), în orice mod de autonomie. Un "
+        "răspuns cumpără un singur pas, pentru un singur plan."
+    ),
+    "OVER_USD": (
+        "Proprietarul aprobă pe foaia de filmare orice pas plătit al unui film care costă "
+        "peste {threshold} USD sau al cărui cost nu se știe; sub prag decide modul de autonomie."
+    ),
+    "MODE": (
+        "Proprietarul lasă pașii plătiți ai unui film în seama modului de autonomie; foaia "
+        "de filmare și plafonul ei rămân obligatorii."
+    ),
+}
+
+
+def change_paid_media_approval(
+    engine: Engine, command: PaidMediaApprovalCommand, *, issued_by: str
+) -> PaidMediaApprovalResult:
+    """The Owner's command, and only his, that moves `owner_policy.paid_media_approval`.
+
+    `issued_by` is keyword-only with no default: the route that serves the Owner's page
+    names him after authenticating him, and every other caller — an agent's tool, the
+    developer AUTORUN, the daily run — has to say who it is and is refused. Developer
+    AUTORUN does not enable product autonomy, and an agent cannot loosen the gate it is
+    waiting at. The refusal writes nothing.
+
+    Otherwise it is the environment's command: idempotent by command id, refusing a stale
+    version, one `owner.paid_media_approval_changed` event with the old rule and the new,
+    the version bumped only when something changed, and one standing memory for the agents.
+    """
+    if issued_by != "owner":
+        raise PaidMediaApprovalRefused(
+            "Doar Proprietarul poate schimba când îl întreabă un pas plătit al unui film; "
+            f"comanda venită de la «{issued_by or 'necunoscut'}» nu a schimbat nimic."
+        )
+    payload_hash = hashlib.sha256(
+        json.dumps(command.model_dump(mode="json"), sort_keys=True).encode()
+    ).hexdigest()
+    command_id = str(command.command_id)
+    with Session(engine) as session, session.begin():
+        session.execute(update(OwnerPolicy).where(OwnerPolicy.id == 1).values(id=1))
+        previous = recall_command(session, command_id, payload_hash)
+        if previous is not None:
+            return PaidMediaApprovalResult.model_validate(previous)
+        policy = session.get(OwnerPolicy, 1)
+        if policy is None:
+            raise RuntimeError("Studio has not been initialized")
+        if command.expected_version != policy.version:
+            raise CommandConflict("Policy changed; refresh the snapshot and retry")
+
+        before = (policy.paid_media_approval, policy.paid_media_approval_over_usd)
+        after = (command.paid_media_approval, command.over_usd)
+        event_id = None
+        changed = before != after
+        if changed:
+            policy.paid_media_approval, policy.paid_media_approval_over_usd = after
+            policy.version += 1
+            policy.updated_at = utc_now()
+            event = append_event(
+                session,
+                "owner.paid_media_approval_changed",
+                "owner_policy",
+                "1",
+                policy.version,
+                {
+                    "paid_media_approval": command.paid_media_approval,
+                    "over_usd": command.over_usd,
+                    "previous_paid_media_approval": before[0],
+                    "previous_over_usd": before[1],
+                },
+                command_id,
+            )
+            event_id = event.event_id
+            from app.agents.memory import remember  # noqa: PLC0415
+
+            remember(
+                session,
+                memory_class="OWNER_POLICY",
+                content=PAID_MEDIA_MEMORY[command.paid_media_approval].format(
+                    threshold=_usd_words(command.over_usd or 0.0)
+                ),
+                source_type="owner",
+                source_id=event_id,
+                event_id=event_id,
+            )
+        result = PaidMediaApprovalResult(
+            command_id=command_id,
+            status="COMMITTED" if changed else "NO_CHANGE",
+            paid_media_approval=policy.paid_media_approval,
+            over_usd=policy.paid_media_approval_over_usd,
+            version=policy.version,
+            event_id=event_id,
+        )
+        remember_command(
+            session, command_id, "SetPaidMediaApproval", payload_hash, result.model_dump()
+        )
+        return result
 
 
 def last_task_per_agent(session: Session) -> dict[str, dict]:

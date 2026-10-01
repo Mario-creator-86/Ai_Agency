@@ -120,7 +120,8 @@ that fails must not be the thing that changes state, while the row is marked EXP
 next raises the same question — which is the studio's own write, not a failed answer's.
 
 **What an approval does, and what it can never do.** It is read in one place only: inside the
-authority gate, in the branch where the mode would otherwise have made the studio wait for him, and
+authority gate, in the branch where the mode, or the Owner's own paid_media_approval for a
+film's paid steps (51, 2026-09-27), would otherwise have made the studio wait for him, and
 only after the stop, the Owner-only tier and SAFE_MODE have already answered. An approval therefore
 converts exactly one verdict — "he would have to be asked" becomes "allowed, once". **It never turns a
 hard gate's refusal into a pass**, and it cannot reach a refusal that outranks it.

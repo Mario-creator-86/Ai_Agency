@@ -179,6 +179,21 @@ def parse_srt(text: str) -> list[dict]:
     return cues
 
 
+def by_take(cues: list[dict], texts: list[str]) -> list[list[dict]]:
+    """The cues grouped by the take they caption: consecutive cards whose words make up each
+    take's line in turn (2026-10-01: a cue is a card of two to five words, not a line)."""
+    groups: list[list[dict]] = []
+    position = 0
+    for text in texts:
+        group: list[dict] = []
+        while " ".join(c["text"] for c in group) != text:
+            assert position < len(cues), (text, cues)
+            group.append(cues[position])
+            position += 1
+        groups.append(group)
+    return groups
+
+
 # ---------------------------------------------------------------------------- the proof
 
 
@@ -245,15 +260,16 @@ def test_a_two_speaker_beat_is_two_takes_in_two_voices_and_one_caption_track(
     cues = parse_srt(srt.read_text(encoding="utf-8"))
     text = " ".join(c["text"] for c in cues)
     assert "Kael" not in text and "Sarah" not in text and "(" not in text
-    # Scene 1's two cues: Kael's line while Kael speaks, then Sarah's after the breath.
-    kael_cue, sarah_cue = cues[0], cues[1]
-    assert kael_cue["text"] == SPOKEN[0] and sarah_cue["text"] == SPOKEN[1]
-    assert kael_cue["start"] == 0.0
-    assert kael_cue["end"] == pytest.approx(takes[0]["audio_seconds"], abs=0.002)
-    assert sarah_cue["start"] == pytest.approx(
-        takes[0]["audio_seconds"] + SPEAKER_GAP_SECONDS, abs=0.002
-    )
-    assert sarah_cue["end"] == pytest.approx(first["audio_seconds"], abs=0.002)
+    # Scene 1's cards: Kael's line while Kael speaks, then Sarah's after the breath.
+    kael, sarah = by_take(cues, [SPOKEN[0], SPOKEN[1]])
+    assert all(2 <= len(c["text"].split()) <= 5 for c in kael + sarah)
+    # Each take's first card comes up on its first word (the voice's own word timing), inside
+    # that take: Kael's from the scene's start, Sarah's after Kael's take and the breath.
+    sarah_from = takes[0]["audio_seconds"] + SPEAKER_GAP_SECONDS
+    assert 0.0 <= kael[0]["start"] < 0.5
+    assert kael[-1]["end"] == pytest.approx(takes[0]["audio_seconds"], abs=0.002)
+    assert sarah_from - 0.002 <= sarah[0]["start"] < sarah_from + 0.5
+    assert sarah[-1]["end"] == pytest.approx(first["audio_seconds"], abs=0.002)
 
     # The joined voice track is as long as the pictures: each scene's takes are padded to its
     # shot, so the next scene's first speaker starts with the next scene's picture.
@@ -263,7 +279,7 @@ def test_a_two_speaker_beat_is_two_takes_in_two_voices_and_one_caption_track(
 
     ffprobe = find_ffprobe()
     if ffprobe:
-        track = srt.parent / "master_audio.m4a"
+        track = srt.parent / "master_audio.wav"
         probed = subprocess.run(  # noqa: S603
             [ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0"]
             + [str(track)],
@@ -307,8 +323,8 @@ def test_with_no_real_voice_the_takes_are_placeholders_and_still_captioned_apart
     assert [t["voice_source"] for t in first["segments"]] == ["placeholder", "placeholder"]
     assert "segments" not in second  # a scene with no takes is read whole
     cues = parse_srt(Path(production["captions"]["srt"]).read_text(encoding="utf-8"))
-    assert [cues[0]["text"], cues[1]["text"]] == [SPOKEN[0], SPOKEN[1]]
-    assert cues[1]["start"] > cues[0]["end"]
+    kael, sarah = by_take(cues, [SPOKEN[0], SPOKEN[1]])
+    assert sarah[0]["start"] > kael[-1]["end"]
 
 
 # ---------------------------------------------------------------------------- the choice

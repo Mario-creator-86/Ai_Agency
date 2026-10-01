@@ -3409,3 +3409,51 @@ Owner: it says which checks do not exist yet, in Romanian, naming no file he doe
 2026-09-26 17:14): run 3 kept with a stated failed gate. The 18:50 frame's distance from the dusk reference (27.5, limit 26.6) was exceeded by the level pass itself (run 2: 27.0), which the art director had ordered kept; the curve's own effect on that score is +0.5 and every defect he named is repaired, so the subagent kept rather than roll the Owner's stream back to dark daytime towers. sign_baseline.json was restored beside the re-applied level (sign_hq_live.py records the built location only when the file is absent). The rollback path stays a copy by hash from the backup, about four minutes of black page.
 
 2026-09-26, the windows rule, art director): the towers' windows follow the sun, not the clock. WindowsOn is 0 only while the sun is high enough for glare to hide the windows (above about +15 deg), rises through the last hour of sun to about 0.7 at +2.5 deg, and is 1 at and below the reference dusk (-2.5 deg) so 19:19 stays the reference to the tenth; on the sunrise side the same curve is capped at 0.45 so dawn has fewer lights than dusk but is never empty; the near blocks are residential and keep their own share so a lit near block never goes black (floor 0.5 now, to be raised to about 0.95 below +3 deg after the run 3 probes). The dusk-reference score is a gate only at and below the reference dusk; for sun-up instants the gates are lit_px against BEFORE, the near block lit, and the day-lit facades of the kept level pass. Run 3 shipped on this rule with the near block called out as the one patch thinner than BEFORE.
+
+## The film staircase — after the Nepal film (2026-09-26 → 2026-10-01)
+
+2026-09-27 (a), the Owner's paid-media rule): `owner_policy.paid_media_approval` (EVERY_PAID_STEP by
+default, OVER_USD x, MODE) is read inside `may_act` for media.stills_purchase T2, media.test_shot T3,
+media.motion_purchase T3 and media.scene_redo T3, after the unclassified check, STOP, T4 and SAFE_MODE
+and before the mode's ALLOWED return, so it asks the Owner in every mode, AUTONOMOUS_CEO included.
+Answers are bound to plan_hash, step and cap_credits and spent once; a request without a plan gets
+BLOCKED_NO_PLAN. Only the Owner's SetPaidMediaApproval command (POST /api/v1/owner/paid-media-approval)
+changes it. Stricter than 51's modes by the Owner's own policy (31's hierarchy). Why: the Nepal film
+was bought twice with no question asked. Spec change: 51 got a dated section (hash
+175261efc524867d87519109f3bed5d0aa97ab48db6121150803cc82182e7d57) and 31's "read in one place only"
+sentence names the rule (hash 970fcce0e0cbcde9c2b6b99852fe3b81d2f9f68f97feb92c76d3f3ba41734f06). Known cost: under EVERY_PAID_STEP every film waits for him,
+which conflicts with "autonomous from day two"; only he can loosen it.
+
+2026-09-27 (b), dependencies): opencv-python-headless (with numpy) and the hash-pinned YuNet
+face_detection_yunet_2023mar.onnx (Apache-2.0, sha256 8f2383e4…52fa4) for face checks on stills and
+clips; the Inter Bold and Regular fonts (OFL 1.1) for the composed cards and captions. Installed
+2026-10-01 from PyPI and the opencv Hugging Face repository (opencv-python-headless 5.0.0.93,
+numpy 2.5.3); the model's sha256 verified. Without the detector a face check is NOT_RUN and blocks
+in PRODUCTION.
+
+2026-09-27 (c), the master): -14 LUFS with a true-peak target of -2.0 dBTP — two-pass loudnorm
+linear, aresample 48000, alimiter, AAC once; the QC ceiling stays -1.0 dBTP measured after the AAC
+encode. A mono narration is pre-limited and gain-corrected so loudnorm never falls back to dynamic
+mode (found on real ElevenLabs takes at -23 to -25 LUFS). Why: Nepal failed at -0.93 dBTP; a limiter
+fixes it for 0 credits.
+
+2026-09-27 (d), the Owner's decision, replacing the proposed "one model per film"): "Nu trebuie un
+singur model pe tot filmul! Trebuie să optimizăm costurile!" There is no model lock. Each scene
+declares its needs (kind, tier HERO or STANDARD, camera move, people/water/fast motion, seconds);
+the studio picks the cheapest model in his allowed set whose documented or measured capability
+covers them, using the price table, the vendor contract and the failure history per model and kind.
+His per-scene override on the sheet wins. The film's expected cost and cap are the sums of its
+scenes, with the saving against premium-everywhere reported. Consistency comes from the look block,
+stills first with one image model and references, and a colour match — not from one model. A SAFETY
+or CONTRACT failure moves only that scene to its next-cheapest capable model; nothing is bought
+twice, never a whole-film re-render.
+
+2026-09-27 (e), the timeline): the vendor's native 24 fps with dithered 10-to-8-bit conversion;
+lossless x264 intermediates (-qp 0), one lossy final encode: libx264 High 4.2, preset slow, CRF 17,
+maxrate 14M, BT.709 limited range, +faststart; cards render at 24; ASS captions of 2-5 words.
+
+2026-10-01 (f), shot plans): a factual film's scene is bought only from a model-written shot
+(prompt_json.source == "model"); the parse repairs and re-asks once and otherwise holds the film with
+NEEDS_SHOT_PLAN. The office serial's scenes composed from its fixed, Owner-approved series look
+(source "series_look") count as a plan too; until the stills and motion steps accept them (next
+workflow) a serial episode in PRODUCTION is held with NEEDS_SHOT_PLAN.

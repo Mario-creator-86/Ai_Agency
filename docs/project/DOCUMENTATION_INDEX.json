@@ -192,7 +192,7 @@
       "original_path": "31_GOVERNANCE_APPROVAL_POLICY.md",
       "path": "docs/architecture/31_GOVERNANCE_APPROVAL_POLICY.md",
       "original_sha256": "ce9bca5714eeb9c07b478a27b35e8f00bf1f083017bf4a1b9e45bc26bcc6333c",
-      "sha256": "b4aedc31809d929569329fdd51692c1e9c7b36c7da0b45315c4db4ce8becd77a"
+      "sha256": "970fcce0e0cbcde9c2b6b99852fe3b81d2f9f68f97feb92c76d3f3ba41734f06"
     },
     {
       "original_path": "32_AGENT_TOOL_PERMISSION_MATRIX.md",
@@ -312,7 +312,7 @@
       "original_path": "51_AUTONOMY_MODE_SEMANTICS.md",
       "path": "docs/architecture/51_AUTONOMY_MODE_SEMANTICS.md",
       "original_sha256": "c18937e2da4d958f50dba801b5c3862c1b78131fce1c9e06f45c2beb6db82948",
-      "sha256": "f5f96f184a7b870b870fa28bac763d5b446de35d779b2e3ae3c00c3f1fe4edda"
+      "sha256": "175261efc524867d87519109f3bed5d0aa97ab48db6121150803cc82182e7d57"
     },
     {
       "original_path": "52_OBSERVABILITY_METRICS_CATALOG.md",

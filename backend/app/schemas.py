@@ -65,6 +65,11 @@ class PolicyView(BaseModel):
     #: command); the studio view sums them, so a page reading it is not told "never"
     #: while a channel's own policy says otherwise.
     public_publish_enabled: bool = False
+    #: When a paid step of a film (stills, hero test, motion, one-scene redo) waits for the
+    #: Owner's yes: EVERY_PAID_STEP (the default), OVER_USD with its threshold, or MODE. Only
+    #: his SetPaidMediaApproval command moves it (POST /owner/paid-media-approval).
+    paid_media_approval: Literal["EVERY_PAID_STEP", "OVER_USD", "MODE"] = "EVERY_PAID_STEP"
+    paid_media_approval_over_usd: float | None = None
     external_payments_enabled: Literal[False] = False
     autonomous_firing_enabled: Literal[False] = False
     provider_auto_switch_enabled: Literal[False] = False

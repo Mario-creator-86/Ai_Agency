@@ -27,6 +27,11 @@ class Studio(Base):
     created_at: Mapped[str] = mapped_column(String(40))
 
 
+#: The values `owner_policy.paid_media_approval` may hold (migration 0048 checks them), the
+#: strictest first. The first is the default.
+PAID_MEDIA_APPROVALS: tuple[str, ...] = ("EVERY_PAID_STEP", "OVER_USD", "MODE")
+
+
 class OwnerPolicy(Base):
     __tablename__ = "owner_policy"
     __table_args__ = (CheckConstraint("id = 1"), CheckConstraint("version >= 1"))
@@ -50,6 +55,16 @@ class OwnerPolicy(Base):
     autonomy_mode: Mapped[str] = mapped_column(
         String(20), nullable=False, server_default="AUTONOMOUS_CEO"
     )
+    #: EVERY_PAID_STEP | OVER_USD | MODE (migration 0048): when a paid media step (stills, the
+    #: hero test shot, motion, a one-scene redo) asks the Owner before a credit is spent.
+    #: EVERY_PAID_STEP asks in every autonomy mode, AUTONOMOUS_CEO included; OVER_USD asks
+    #: above `paid_media_approval_over_usd`; MODE leaves it to the autonomy mode. The database
+    #: refuses any other value, and a threshold on anything but OVER_USD. Server-side default
+    #: for the same reason as `environment`, and the strictest value on purpose.
+    paid_media_approval: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="EVERY_PAID_STEP"
+    )
+    paid_media_approval_over_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     updated_at: Mapped[str] = mapped_column(String(40))
 
 

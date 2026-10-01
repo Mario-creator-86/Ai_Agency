@@ -22,7 +22,7 @@ against the period until the real cost replaces it or it is let go.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
@@ -529,8 +529,15 @@ def estimate_film_cost_micros(
     *,
     environment: str,
     settings: Any,
+    sheet: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """What a film is expected to cost before it is made, for the reservation.
+
+    With a shooting sheet (``app.media.cost_plan.plan_film`` or the sheet built on it) the
+    figure is the sheet's own: its stills, its hero and the rest of its motion, summed over
+    each scene's own model, and what is held is the sheet's hard cap, the most the motion loop
+    may spend. Without one, the stills of every LIVE scene are priced at the published rate and
+    the motion keeps the environment's flat ceiling below, marked ``source: plafon fix``.
 
     Conservative on purpose: the motion is taken at the ceiling the render will be given
     (the per-film motion budget in PRODUCTION, the test shots at the test ceiling in TEST),
@@ -545,16 +552,29 @@ def estimate_film_cost_micros(
     note, to that question and to the letter about it, so all three say the same thing.
     """
     from app.economy.models import ProviderPrice  # noqa: PLC0415
+    from app.media.cost_plan import (  # noqa: PLC0415
+        STILL_CANDIDATES,
+        STILLS_MODEL,
+        STILLS_RESOLUTION,
+        credits_to_micros,
+        load_price_table,
+        price_still,
+    )
     from app.media.models import StoryboardScene  # noqa: PLC0415
 
     with Session(engine) as session:
-        characters = sum(
-            len(" ".join(str(segment or "").split()))
-            for segment in session.scalars(
-                select(StoryboardScene.voiceover_segment).where(
-                    StoryboardScene.storyboard_id == storyboard_id
-                )
+        scenes = list(
+            session.scalars(
+                select(StoryboardScene).where(StoryboardScene.storyboard_id == storyboard_id)
             )
+        )
+        characters = sum(
+            len(" ".join(str(scene.voiceover_segment or "").split())) for scene in scenes
+        )
+        # Only a LIVE scene buys stills; a card is composed locally. A row written before the
+        # scene kind existed reads as LIVE, which is the dearer and so the safer reading.
+        live_scenes = sum(
+            1 for scene in scenes if str(getattr(scene, "scene_kind", None) or "LIVE") == "LIVE"
         )
         per_1k = session.scalar(
             select(func.max(ProviderPrice.usd_micros)).where(
@@ -568,28 +588,49 @@ def estimate_film_cost_micros(
     # storyboard with no voiceover costs nothing for narration whatever the books hold, and a
     # caveat on every film would teach the Owner to read past the one that matters.
     unpriced = ["narration"] if characters and not per_1k else []
-    if environment == "TEST":
-        motion_usd = float(getattr(settings, "test_max_cost_per_generation_usd", 0.0)) * int(
-            getattr(settings, "test_motion_scenes", 0)
+    if sheet is not None:
+        per_credit = float(sheet.get("credit_usd") or load_price_table().credit_usd)
+        stills = credits_to_micros(int(sheet.get("stills_credits") or 0), per_credit)
+        motion = credits_to_micros(
+            int(sheet.get("hero_credits") or 0) + int(sheet.get("rest_credits") or 0),
+            per_credit,
         )
+        cap = credits_to_micros(int(sheet.get("cap_credits") or 0), per_credit)
+        expected = narration + stills + motion
+        total = narration + max(cap, stills + motion)
+        source = "foaia de filmare"
     else:
-        motion_usd = float(getattr(settings, "motion_budget_usd", 0.0))
-    motion = to_micros(f"{max(0.0, motion_usd):.6f}")
-    total = narration + motion
+        prices = load_price_table()
+        stills = credits_to_micros(
+            live_scenes
+            * price_still(STILLS_MODEL, STILLS_RESOLUTION, STILL_CANDIDATES, table=prices),
+            prices.credit_usd,
+        )
+        if environment == "TEST":
+            motion_usd = float(getattr(settings, "test_max_cost_per_generation_usd", 0.0)) * int(
+                getattr(settings, "test_motion_scenes", 0)
+            )
+        else:
+            motion_usd = float(getattr(settings, "motion_budget_usd", 0.0))
+        motion = to_micros(f"{max(0.0, motion_usd):.6f}")
+        total = expected = narration + stills + motion
+        source = "plafon fix"
     return {
         "usd_micros": total,
         "usd": format_micros(total),
+        "expected_usd_micros": expected,
+        "source": source,
         "narration_usd_micros": narration,
         "narration_priced": bool(per_1k),
         "characters": characters,
+        "stills_usd_micros": stills,
         "motion_usd_micros": motion,
         # The three the callers carry onward: the parts as data, the sentence the Owner
         # reads, and the one flag a caller can branch on without knowing either. `complete`
-        # means every part this function *tried* to price was priced — the narration and the
-        # motion ceiling — and never that the figure is the whole film: the stills are not
-        # priced here at all, so a film's image spend is outside the estimate rather than
-        # inside it as a zero. A caller that reads this as "the whole cost" would be making
-        # the claim the caveat exists to stop.
+        # means every part this function *tried* to price was priced — the narration, the
+        # stills at the published rate and the motion (the sheet's, or the flat ceiling) —
+        # and never that the figure is what the vendor will bill: only a measured balance
+        # delta says that (app.economy.credits.record_measured_prices).
         "unpriced": unpriced,
         "caveat": unpriced_caveat(unpriced),
         "complete": not unpriced,

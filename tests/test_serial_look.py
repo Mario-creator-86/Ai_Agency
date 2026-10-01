@@ -22,7 +22,12 @@ from uuid import uuid4
 
 import pytest
 from app.media.models import CharacterBible, Storyboard, StoryboardScene
-from app.media.prompt_agent import _TEXT_REQUEST, strip_on_screen_text, write_shot_prompts
+from app.media.prompt_agent import (
+    _TEXT_REQUEST,
+    ShotPlanUnusable,
+    strip_on_screen_text,
+    write_shot_prompts,
+)
 from app.media.series_look import load_series_look
 from app.story.services import decide_episode
 from sqlalchemy import select
@@ -299,9 +304,12 @@ def test_a_factual_film_keeps_its_own_look(engine, staffed, monkeypatch):
     calls: list = []
     fake_editor(monkeypatch, "not json", calls)
 
-    write_shot_prompts(engine, models(), board["id"], str(uuid4()))
+    # An unreadable plan is asked for once more and then waits as NEEDS_SHOT_PLAN
+    # (SHOT_PLAN_PARSE, 2026-09-27); what was composed meanwhile still keeps its own look.
+    with pytest.raises(ShotPlanUnusable):
+        write_shot_prompts(engine, models(), board["id"], str(uuid4()))
 
-    assert [c["task"] for c in calls] == ["visual_bible", "shot_prompts"]
+    assert [c["task"] for c in calls] == ["visual_bible", "shot_prompts", "shot_prompts"]
     assert all(block not in c["prompt"] for c in calls)
     for scene in scenes_of(engine, board["id"]):
         assert not scene.visual_prompt.startswith(block[:40])

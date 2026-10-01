@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -67,6 +67,11 @@ class StoryboardSceneView(BaseModel):
     character_ids_json: list[str]
     claim_ids_json: list[str]
     created_at: str
+    #: LIVE (filmed), DATA_CARD, TITLE_CARD or BLACK (composed locally, 0 credits). Declared
+    #: so the API stops stripping what `get_storyboard` returns (migration 0048).
+    scene_kind: str = "LIVE"
+    #: The card's verified numbers ({title, bars[...], highlight}, or {cta}); None for LIVE.
+    card_json: dict[str, Any] | None = None
 
 
 class StoryboardView(BaseModel):
@@ -75,7 +80,8 @@ class StoryboardView(BaseModel):
     id: str
     script_draft_id: str
     title: str
-    visual_style: str
+    #: The caller's named style, or "PER_SCENE" since each scene carries its own kind.
+    visual_style: str | None
     aspect_ratio: str
     target_duration_seconds: int
     status: str
@@ -134,3 +140,36 @@ class QCReportView(BaseModel):
     checks_json: dict[str, Any]
     failure_reasons_json: list[str]
     verified_at: str
+
+
+class SheetStepCommand(BaseModel):
+    """The Owner's press of a step on the shooting sheet: the sheet he was shown, by hash.
+
+    ``allow_over_budget`` is his explicit consent to go over the daily budget for this step;
+    without it a step that would exceed the budget is refused (409). Neither field buys
+    anything on its own: the step still needs his yes for this very sheet.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    plan_hash: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+    allow_over_budget: bool = False
+
+
+class SceneModelCommand(BaseModel):
+    """The Owner's choice of a filmed scene's motion model on the sheet: a model id,
+    LOCAL_MOVE (the approved still moved locally, 0 credits), or null for the policy's."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model_id: str | None = Field(default=None, min_length=1, max_length=100)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class TakeDecisionCommand(BaseModel):
+    """The Owner's look at a paid take on the contact sheet."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    decision: Literal["APPROVED", "REJECTED"]
+    note: str | None = Field(default=None, max_length=500)

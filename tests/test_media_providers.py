@@ -797,3 +797,231 @@ def test_no_runway_reference_path_is_marked_verified():
     assert adapter.ACCEPTS_REFERENCE_IMAGE is True
     assert adapter.REFERENCE_IMAGE_VERIFIED is False
     assert OpenAIImageAdapter("key").REFERENCE_IMAGE_VERIFIED is False
+
+
+# --- RUNWAY_TRUTH: the body a motion task is bought with ---------------------------------
+# The Nepal film (2026-09-26) paid for clips whose requests were wrong in ways no test saw:
+# generated soundtracks nobody used, a veo request with its exclusions written into the
+# picture's own words, a first frame of a different aspect than the one asked for. What is
+# asserted here is the body the adapter built, recorded by a fake transport; no request
+# leaves the machine and no credit is spent.
+
+
+def jpeg_bytes() -> bytes:
+    """A minimal JPEG header (SOI + SOF0 for 1080x1920), enough to be told from a PNG."""
+    sof = b"\xff\xc0" + struct.pack(">HBHHB", 11, 8, 1920, 1080, 1) + b"\x01\x11\x00"
+    return b"\xff\xd8\xff\xe0" + struct.pack(">H", 16) + b"JFIF\x00" + b"\x00" * 9 + sof
+
+
+def _video_contract(fields: list[str], ratios: list[str], durations) -> dict:
+    return {
+        "tasks": ["image_to_video", "text_to_video"],
+        "ratios": {"image_to_video": ratios, "text_to_video": ratios},
+        "durations": {"image_to_video": durations, "text_to_video": durations},
+        "fields": {"image_to_video": fields, "text_to_video": fields},
+    }
+
+
+SEEDANCE = _video_contract(
+    ["audio", "duration", "model", "promptImage", "promptText", "ratio", "seed"],
+    ["1080:1920", "720:1280", "1920:1080"],
+    {"min": 4, "max": 30},
+)
+VEO = _video_contract(
+    ["duration", "model", "negativePrompt", "promptImage", "promptText", "ratio", "seed"],
+    ["1080:1920", "1920:1080"],
+    [4, 6, 8],
+)
+WAN = _video_contract(
+    ["duration", "model", "promptImage", "promptText", "ratio", "seed"],
+    ["1280:720", "720:1280", "auto_720p", "auto_1080p"],
+    [5, 10],
+)
+
+
+def _runway_video(monkeypatch, model: str, contract: dict):
+    from app.providers import runway
+    from app.providers.runway import RunwayVideoAdapter
+
+    recorder = Recorder(({"id": "task-1"}, b"", "application/json"))
+    monkeypatch.setattr(runway, "request", recorder)
+    return RunwayVideoAdapter("key", model, dict(contract)), recorder
+
+
+def _submit(adapter, prompt: str = "Slow push-in. Continuous, seamless shot.", **kwargs):
+    import asyncio
+
+    kwargs.setdefault("image_ref", jpeg_bytes())
+    kwargs.setdefault("duration_seconds", 4.4)
+    return asyncio.run(adapter.create_generation(prompt, aspect_ratio="9:16", **kwargs))
+
+
+def test_a_seedance_shot_is_bought_silent_with_the_films_seed(monkeypatch):
+    """The narration is the film's only sound: a generated soundtrack is paid for and
+    thrown away. The film's one seed goes with every shot."""
+    adapter, recorder = _runway_video(monkeypatch, "seedance2_5", SEEDANCE)
+
+    _submit(adapter, extra={"seed": 1234567})
+
+    body = recorder.calls[0]["body"]
+    assert recorder.calls[0]["path"] == "/v1/image_to_video"
+    assert body["audio"] is False
+    assert body["seed"] == 1234567
+    assert body["ratio"] == "1080:1920"
+    assert body["duration"] == 5  # 4.4 s rounded up, never down
+
+
+def test_a_model_whose_contract_has_no_audio_field_is_not_sent_one(monkeypatch):
+    """A field the contract does not declare is a 400 waiting to happen, or worse, a
+    field the vendor reads some other way."""
+    adapter, recorder = _runway_video(monkeypatch, "wan3_prime", WAN)
+
+    _submit(adapter, extra={"seed": 7, "negative_prompt": "human faces, text"})
+
+    body = recorder.calls[0]["body"]
+    assert "audio" not in body and "negativePrompt" not in body
+    assert body["seed"] == 7
+
+
+def test_a_veo_shot_carries_its_exclusions_as_a_negative_prompt(monkeypatch):
+    adapter, recorder = _runway_video(monkeypatch, "veo3.1", VEO)
+
+    _submit(
+        adapter,
+        prompt="Slow push-in over terraced fields, mist drifting.",
+        extra={"negative_prompt": "human faces, text, subtitles, logo, watermark"},
+    )
+
+    body = recorder.calls[0]["body"]
+    assert body["negativePrompt"] == "human faces, text, subtitles, logo, watermark"
+    assert body["promptText"] == "Slow push-in over terraced fields, mist drifting."
+    assert body["duration"] == 6  # veo takes 4, 6 or 8
+
+
+def test_a_wan_keyframe_shot_keeps_the_frames_own_ratio_at_1080p(monkeypatch):
+    """wan3_prime offers explicit ratios only at 720p; `auto_1080p` keeps the 9:16 still's
+    framing at the higher resolution."""
+    adapter, recorder = _runway_video(monkeypatch, "wan3_prime", WAN)
+
+    _submit(adapter)
+
+    assert recorder.calls[0]["body"]["ratio"] == "auto_1080p"
+
+
+def test_without_a_first_frame_an_auto_ratio_is_never_chosen(monkeypatch):
+    """`auto` follows a picture; with no picture there is nothing for it to follow."""
+    adapter, recorder = _runway_video(monkeypatch, "wan3_prime", WAN)
+
+    _submit(adapter, image_ref=None)
+
+    assert recorder.calls[0]["body"]["ratio"] == "720:1280"
+
+
+def test_the_first_frame_travels_as_a_jpeg(monkeypatch):
+    frame = jpeg_bytes()
+    adapter, recorder = _runway_video(monkeypatch, "seedance2_5", SEEDANCE)
+
+    _submit(adapter, image_ref=frame)
+
+    image = recorder.calls[0]["body"]["promptImage"]
+    assert image == "data:image/jpeg;base64," + base64.b64encode(frame).decode("ascii")
+
+
+def test_a_long_prompt_is_cut_at_a_sentence_within_the_contracts_cap(monkeypatch):
+    """Sliced at a character count, a prompt ended mid-word in the Nepal film. The cap is
+    the contract's, counted in UTF-16 units as the vendor counts."""
+    contract = {**VEO, "prompt_max": {"image_to_video": 120, "text_to_video": 120}}
+    adapter, recorder = _runway_video(monkeypatch, "veo3.1", contract)
+    first = "Slow push-in over terraced fields in Nepal, mist drifting past the ridge."
+    prompt = first + " Continuous, seamless shot. " + "Aerial drift forward. " * 20
+
+    _submit(adapter, prompt=prompt)
+
+    sent = recorder.calls[0]["body"]["promptText"]
+    assert len(sent.encode("utf-16-le")) // 2 <= 120
+    assert sent == first + " Continuous, seamless shot."
+
+
+def test_a_prompt_with_no_sentence_end_in_reach_is_cut_at_a_word(monkeypatch):
+    contract = {**VEO, "prompt_max": {"image_to_video": 40, "text_to_video": 40}}
+    adapter, recorder = _runway_video(monkeypatch, "veo3.1", contract)
+
+    _submit(adapter, prompt="terraced fields and mist and rivers and more mist and ridges")
+
+    sent = recorder.calls[0]["body"]["promptText"]
+    assert len(sent) <= 40 and not sent.endswith(" ")
+    assert "terraced fields and mist and rivers and more mist and ridges".startswith(sent)
+
+
+# --- a refusal keeps its reason, and nothing secret ---------------------------------------
+
+
+def test_a_400_body_survives_sanitised_and_capped(https_script):
+    """Runway's 400 names the field it refused. The studio threw that away and changed
+    the model instead; now the reason survives, without a key, a picture or a signed URL."""
+    from app.providers.media_http import request
+
+    secret = "key_" + "a1b2c3d4" * 8
+    frame = "data:image/jpeg;base64," + "QUJD" * 200
+    body = {
+        "error": f"Validation of body failed (Authorization: Bearer {secret})",
+        "issues": [
+            {"path": ["ratio"], "message": "Invalid enum value. Expected '720:1280'"},
+            {"path": ["promptImage"], "message": f"Image too large: {frame}"},
+            {"path": "duration", "message": "See https://files.test/x.mp4?sig=abcdef"},
+        ]
+        + [{"path": ["promptText"], "message": "String must contain at most 1000 characters"}] * 20,
+    }
+    https_script.append({"status": 400, "body": json.dumps(body).encode()})
+
+    with pytest.raises(MediaProviderError) as excinfo:
+        request("api.dev.runwayml.com", "POST", "/v1/image_to_video", {}, b"{}")
+
+    error = excinfo.value
+    assert error.http_status == 400
+    assert error.detail is not None and len(error.detail) <= 500
+    assert "Validation of body failed" in error.detail
+    assert "ratio: Invalid enum value. Expected '720:1280'" in error.detail
+    assert error.issues[0] == {
+        "path": "ratio",
+        "message": "Invalid enum value. Expected '720:1280'",
+    }
+    assert len(error.issues) <= 10
+    everything = error.detail + json.dumps(error.issues) + str(error)
+    for leaked in (secret, "QUJDQUJD", "sig=abcdef", "Bearer key_"):
+        assert leaked not in everything
+    # The message the Owner already knew stays as it was; the reason travels beside it.
+    assert str(error) == "api.dev.runwayml.com refused the request (HTTP 400)"
+
+
+def test_an_error_body_that_is_not_json_leaves_no_detail(https_script):
+    from app.providers.media_http import request
+
+    https_script.append({"status": 502, "body": b"<html>bad gateway</html>"})
+
+    with pytest.raises(MediaProviderError) as excinfo:
+        request("api.dev.runwayml.com", "GET", "/v1/tasks/t", {})
+
+    assert excinfo.value.detail is None and excinfo.value.issues == []
+
+
+def test_a_failed_tasks_reason_is_kept_sanitised(monkeypatch):
+    import asyncio
+
+    from app.providers import runway
+    from app.providers.runway import RunwayVideoAdapter
+
+    failed = {
+        "id": "task-1",
+        "status": "FAILED",
+        "failureCode": "INPUT_PREPROCESSING.SAFETY.THIRD_PARTY",
+        "failure": "Input rejected: https://files.test/frame.jpg?sig=zzz9999",
+    }
+    monkeypatch.setattr(runway, "request", Recorder((failed, b"", "application/json")))
+
+    status = asyncio.run(RunwayVideoAdapter("key", "m", {}).get_generation_status("task-1"))
+
+    assert status.status == "FAILED"
+    assert status.raw_response["failure_code"] == "INPUT_PREPROCESSING.SAFETY.THIRD_PARTY"
+    assert status.raw_response["failure"].startswith("Input rejected:")
+    assert "sig=zzz9999" not in status.raw_response["failure"]

@@ -1458,3 +1458,19 @@ No provider was called, no run was queued, no credit was spent, and
 - 1) the Owner restarts his studio so the 09-26 curve drives the live towers (until then the page shows the 09-24 curve from about 18:00); (2) art director's look at run3\montage_1850/0725/1919 and near_zoom_1850_2.png - if 18:50's near block should match BEFORE, give near_blocks its own curve reaching about 1.0 by +3 deg (probe: 0.85 -> 9 windows, 1.0 -> 18); (3) preview 17:58 by eye (WindowsOn 0.122 there, run 2 had 0); (4) decide whether the 18:50 score gate (+1.0 over BEFORE against a dusk reference) is the right measure for an instant with the sun up, or replace it with the lit_px / near-block gates that did discriminate; (5) retire the 09-24 curve copy in towers_day.py.
 
 - towers, still open after run 3): (1) near_blocks its own windows curve reaching about 0.95-1.0 by sun +3 deg (probe 0.85 -> 9 windows, 1.0 -> 18 = BEFORE), backend only, previewed live with a held report; (2) the Owner restarts his studio so the 09-26 curve drives the live towers; (3) preview 17:58 by eye with WindowsOn 0.122 and judge the warm low-sun tint - at sun +12 the horizon should be gold and the stone warm, not noon cobalt and white facades; (4) the flat tower crowns - dark caps with no roof, parapet or plant, most visible at noon and at 07:25 now that the facades are lit; (5) the dark board by day - the CREATE/AUTOMATE board and the BUCHAREST AI DISTRICT sign are black slabs at noon; a printed board must read in daylight, or the board is an LED that lights from dusk; (6) the morning palette - the 07:25 cloud band is the evening's rose-mauve; dawn wants a colder grey-blue low band, warm only around the sun, and the far towers one pale grey at noon want depth; (7) replace the 18:50 dusk-reference score gate with the lit_px / near-block / 19:19 gates; (8) retire the 09-24 curve copy in towers_day.py.
+
+## The film staircase — after the Nepal film (2026-09-26 → 2026-10-01)
+
+- Done: the 25 items of the staircase (see CURRENT_STATUS); YuNet installed 2026-10-01.
+- Next (workflow amn-film-close-gaps): clip QC (motion floor, faces on three frames, one seed+1
+  retry inside the cap) between the motion step and assembly; `require_chosen_fallbacks` before
+  assembly; the measured spend on the film; the serial's series_look accepted by the stills and
+  motion steps; documented model capabilities and the Owner's allowed set (config/film_models.json)
+  so the per-scene cheapest choice works on the real catalogue; ElevenLabs with-timestamps for
+  captions; silent card spans and full breaths in QC; three frames per scene in the film-level
+  picture check; the assemble step route; the legacy whole-film path never reaching a real paid
+  adapter in any environment; step costs booked once; stale paid-step questions withdrawn; the
+  drawer's redo and assemble buttons and the Owner's paid-media switch.
+- Owner: scripts/bootstrap.py before his next restart, then npm run build --prefix frontend; the
+  zero-credit Nepal rehearsal; his decisions (allowed models, hero threshold, budget per film, the
+  paid-media rule, a Runway top-up).

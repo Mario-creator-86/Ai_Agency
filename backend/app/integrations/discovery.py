@@ -299,6 +299,11 @@ def _metadata(item: dict, resource_type: str, kind: str = "elevenlabs") -> dict:
             # What a task needs besides words: a model that requires reference images edits
             # pictures and cannot draw one, and `usable_purposes` reads this to decide.
             "needs_references",
+            # The fields each task declares and its prompt cap: the adapter sends audio,
+            # negativePrompt and seed only where the contract takes them, and cuts a prompt
+            # at a sentence within the model's own limit.
+            "fields",
+            "prompt_max",
         )
         return {field: item[field] for field in fields if field in item}
     fields = (

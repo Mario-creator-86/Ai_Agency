@@ -148,6 +148,15 @@ class Settings(BaseSettings):
     #: spent nothing while twenty-one dollars went out.
     motion_budget_usd: float = 12.0
 
+    #: The resolution the motion step films at (STUDIO_MOTION_RESOLUTION). 1080p is the
+    #: delivered frame; 720p is the cheaper alternative the shooting sheet prices beside it.
+    motion_resolution: Literal["1080p", "720p"] = "1080p"
+
+    #: How much more than a paid step's cap the vendor account must hold before the step is
+    #: asked or bought (STUDIO_PAID_STEP_BALANCE_MARGIN). 1.15: a step never starts on a
+    #: balance it could exhaust half-way, leaving a film paid for and unfinished.
+    paid_step_balance_margin: float = Field(default=1.15, ge=1.0, le=3.0)
+
     #: How long a short should be. The Owner's answer: about thirty seconds, and the story
     #: decides — twenty-four when that is the film, thirty-four when a premium story needs it.
     #: The writer is briefed with it, and the story review measures the narration against it.
@@ -175,11 +184,12 @@ class Settings(BaseSettings):
     #: the film, for the platform to carry as a track.
     captions_burn_in: bool = True
 
-    #: How many scenes of a PRODUCTION film may be stills pushed slowly because the motion
-    #: model refused, failed or quoted past the ceiling (STUDIO_MAX_FALLBACK_SCENES). Past it
-    #: quality control fails the film: a mostly-still film is a slideshow, not a short. None
-    #: means half the scenes; in TEST the same count is a warning, because two motion scenes
-    #: are policy there.
+    #: How many scenes of a TEST film may be stills pushed slowly before quality control warns
+    #: (STUDIO_MAX_FALLBACK_SCENES); None means half the scenes. In TEST two motion scenes are
+    #: policy, so the count is only a warning. In PRODUCTION this setting is NOT read: no LIVE
+    #: scene may be a still unless the Owner chose "imagine fixă animată local" for that very
+    #: scene on the shooting sheet (CLIP_QC, 2026-10-01). The old default of half the scenes
+    #: let two of the Nepal film's six scenes through as stills.
     max_fallback_scenes: int | None = Field(default=None, ge=0)
 
     # ---------------------------------------------------------------- models come and go

@@ -13,6 +13,60 @@ database resource discovery/refresh, separate production choices, UI and regress
 > providers their acceptance criteria require still do not exist. Sections below state what is
 > actually true.
 
+## The film staircase — after the Nepal film (2026-09-26 → 2026-10-01)
+
+The Nepal film (storyboard 1d530880, 26.09) cost over 1,000 Runway credits and failed QC. Root
+cause: the VideoEditor model wrote a good shot plan (aerial 24 mm, "no faces", an abstract bar chart,
+a pure-black end card) but one unescaped quote made its JSON undecodable, and
+`prompt_agent.write_shot_prompts` silently fell back for all six scenes — enum codes and hex
+palettes in the prompts, "medium shot, locked camera" everywhere, the bible's "no faces" rule in no
+prompt. A bar chart and a black screen went to a photo generator, the master had no limiter
+(-0.93 dBTP), and the film was rendered twice (the second time every scene was bought again with
+five different motion models). The studio is now built as a **money staircase**: the Owner's
+*Foaia de filmare* (shooting sheet), then stills, then one hero test shot kept in the film, then
+capped motion, each paid step approved by him against a `plan_hash` inside `may_act` in every mode.
+
+Landed (workflow wf_5aa5f42a-1e3, 25 items, every provider faked, 0 credits):
+- **Shot plan** parsed strictly with repair and one re-ask; a factual film whose scenes are not
+  model-written is held (NEEDS_SHOT_PLAN), never filled from templates (`prompt_agent.py`).
+- **Prompt compiler** per model with a plain-English look block (`config/factual_look.json`), the
+  bible's rules as words the model obeys; **prompt lint** blocks enum codes, hex, faces the bible
+  forbids, kind mismatches and over-long prompts before anything is priced (`prompt_lint.py`).
+- **Scene kinds**: LIVE scenes are generated; DATA_CARD / TITLE_CARD / BLACK are composed locally
+  from the real numbers with Inter fonts (`cards.py`), 0 credits.
+- **Runway truth**: estimatedCost read, contract durations/ratios/prompt caps honoured, prompts cut
+  at sentence ends, vendor 400 bodies sanitised (`providers/runway.py`, `media_http.py`).
+- **Prices and plan**: published prices (`config/runway_prices.json`), measured prices written back,
+  the film's expected and capped cost (`cost_plan.py`, `economy/credits.py`).
+- **Per-scene model choice** (the Owner's decision of 2026-09-27): the cheapest capable model per
+  scene, premium only where needed, his override on the sheet wins, failures move only that scene
+  (`production_policy.plan_scene_models`, `replan_after_failure`).
+- **Faces and stills**: YuNet face detector (opencv-python-headless, hash-pinned model) and still
+  checks (`faces.py`, `still_gate.py`); measured on the Nepal stills 0, 0, 3, 1, 9, 1 faces —
+  people in scenes 3-6 although the bible forbade faces.
+- **Takes** (migration `0048_production_sheet`: scene kind, card json, SceneTake, the Owner's
+  paid-media rule): an approved take is never bought again; per-scene redo
+  {still|motion|card|audio}; assembly from takes.
+- **Stills step** (2 candidates, scene 1 first then references, local checks + judge, re-rolls,
+  then NEEDS_OWNER), **motion step** with the hero test shot and STOPPED_AT_CAP, clip QC functions,
+  the **sheet API and drawer**, the **daily stage** in PRODUCTION, the **24 fps timeline** with ASS
+  captions, the **premium master** (-14 LUFS, true-peak limiter at -2.0 dBTP, CRF 17 High, BT.709),
+  the zero-credit **Nepal rehearsal** from the already-paid files, a dry run end to end.
+- The adversary found and fixed eight defects (real ElevenLabs narration at -23 LUFS failing QC
+  after the spend, a 10-bit clip passing the motion floor, captions over the chart labels, a
+  rehearsal-only face still able to start a paid shot, and others).
+
+Verified 2026-10-01: ruff, ruff format, mypy, check_docs clean; the items' test files and their
+neighbours green (the verify agent ran about 1,150 tests); npm test 624/624 and npm run check.
+**Adversary verdict: NEEDS_WORK** — clip QC is not yet called between the motion step and
+assembly, assembly does not yet refuse unchosen fallbacks, there is no Owner route to assemble from
+takes, the legacy render can still buy a whole film from the real connection in TEST, the model
+catalogue has no documented capabilities (every LIVE scene shows NEEDS_OWNER on the real sheet),
+and captions are timed by character share. Those are the next workflow's items.
+
+Owner: his studio must run `scripts/bootstrap.py` (migration 0048) before its next restart; the
+default `paid_media_approval` is EVERY_PAID_STEP (asks him at every paid step).
+
 ## The Unreal skyline has a real day (2026-09-26)
 
 The Unreal skyline has a real day, live. The prepared towers-by-day pass ran on the saved level (glass masks and window ranks from the bake textures; day materials for the 12 facades, the 8 trees and the torn sign; every new parameter defaulting to the approved dusk), and the backend drives it from the real sun: TowerDaylight, WindowsOn per label, LeafDaylight and the skyline's Daylight (commits 0fc72aa, 99f23ad). Measured on the stream: at noon the facades went 83.6/81.5 → 145.0/137.1 and the trees 39.2/45.0 → 69.0/75.3 (glass towers, green foliage, the BUCHAREST AI DISTRICT sign whole); 17:58 clearly better; the reference 19:19 identical (6.8, every building region within 0.1); p95 15.37 ms. Three windows: run 1 (13:53) ran clean and was rolled back when the Owner started a game; run 2 (16:02) passed every numeric gate but the art director refused it because the first windows curve switched almost every window off at +2.7° (18:50) and left the dawn empty — the level was rolled back and the curve reshaped (windows off only above +15°, 70% lit at +2.5°, all at dusk, the dawn's share as a ceiling, the near blocks their own floor); run 3 (16:55-17:16) re-applied the saved pass by hash, previewed 18:50, 07:25 and 19:19 and was KEPT: 18:50 has its lit windows back (1515/2172 px, 88%/86% of before), 07:25 its towers (459/814), 19:19 unchanged. The art director: ALMOST, ship it; his one note is the near block at 18:50 (3 lit windows where before had 9), fixed by its own curve in the next step. Backups: E:\AMN_backup\hq_before_towers_day_20260926_1355 (the pre-window level) and the run records under the session scratchpad. The stream runs the new level since 17:00; the Owner's studio reads day_state but still runs the code it loaded at 13:49, so the fixed curve reaches the live towers on his next restart.

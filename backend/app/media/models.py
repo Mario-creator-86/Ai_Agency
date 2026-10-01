@@ -13,10 +13,17 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models import Base
+
+#: What a scene is (migration 0048 checks these). Only LIVE reaches an image or video model.
+SCENE_KINDS: tuple[str, ...] = ("LIVE", "DATA_CARD", "TITLE_CARD", "BLACK")
+#: What a paid take is, and the states it may be in (migration 0048 checks these).
+SCENE_TAKE_KINDS: tuple[str, ...] = ("still", "motion", "test_shot")
+SCENE_TAKE_STATUSES: tuple[str, ...] = ("QUOTED", "PAID", "APPROVED", "REJECTED", "REFUSED")
 
 
 class CharacterBible(Base):
@@ -135,9 +142,89 @@ class StoryboardScene(Base):
     #: Why this shot is in the film: HOOK, SETUP, DEVELOPMENT, EVIDENCE, REVEAL, PAYOFF,
     #: ENDING or CTA. A shot that serves nothing is cut or redesigned, not filmed.
     story_purpose: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    #: LIVE | DATA_CARD | TITLE_CARD | BLACK (migration 0048). Only a LIVE scene reaches an
+    #: image or video model; a card is composed locally from verified numbers at 0 credits.
+    #: The database refuses any other value (``ck_scene_kind``, written by the migration).
+    scene_kind: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="LIVE", server_default="LIVE"
+    )
+    #: A composed card's spec: {title, bars: [{label, value, unit, claim_id}], highlight}.
+    #: None for a LIVE scene.
+    card_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[str] = mapped_column(String(40), nullable=False)
 
     storyboard: Mapped[Storyboard] = relationship("Storyboard", back_populates="scenes")
+
+
+class SceneTake(Base):
+    """One paid (or quoted, or refused) asset for one scene of one film (migration 0048).
+
+    A still, a motion clip or the hero test shot. Every credit the studio spends on a picture
+    leaves one of these, with what was asked (``prompt_hash``, model, resolution, seconds,
+    seed), what it was quoted and what the balance actually moved (``credits_measured``, None
+    until measured, never zero by assumption), and where the file is and its sha256.
+
+    QUOTED -> PAID -> APPROVED | REJECTED, or REFUSED when the vendor declined it (a refusal is
+    paid like a success, so it is recorded like one). An APPROVED take whose prompt hash is
+    unchanged is never bought again: one file of one prompt for one scene is one row
+    (``uq_scene_take_identity``). Measured on the Nepal film: a second full render bought
+    every still and clip again with the same prompts, because nothing said they were paid.
+    """
+
+    __tablename__ = "scene_take"
+    __table_args__ = (
+        CheckConstraint("kind IN ('still','motion','test_shot')", name="ck_scene_take_kind"),
+        CheckConstraint(
+            "status IN ('QUOTED','PAID','APPROVED','REJECTED','REFUSED')",
+            name="ck_scene_take_status",
+        ),
+        CheckConstraint("scene_number >= 1", name="ck_scene_take_scene_number"),
+        UniqueConstraint(
+            "storyboard_id",
+            "scene_number",
+            "kind",
+            "prompt_hash",
+            "sha256",
+            name="uq_scene_take_identity",
+        ),
+        Index("ix_scene_take_scene", "storyboard_id", "scene_number", "kind", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    storyboard_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("storyboard.id"), nullable=False
+    )
+    #: The scene's 1-based position in the film (``StoryboardScene.scene_index``).
+    scene_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: still | motion | test_shot
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    #: sha256 of the exact prompt package sent (prompts, model, resolution, seconds, seed).
+    prompt_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    model_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    #: The vendor's ratio string, e.g. "1530:2720" for a 2K still or "1080:1920" for motion.
+    resolution: Mapped[str] = mapped_column(String(20), nullable=False)
+    seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    seed: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    credits_quoted: Mapped[float | None] = mapped_column(Float, nullable=True)
+    credits_measured: Mapped[float | None] = mapped_column(Float, nullable=True)
+    #: QUOTED | PAID | APPROVED | REJECTED | REFUSED
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="QUOTED", server_default="QUOTED"
+    )
+    #: The vendor's failureCode (e.g. SAFETY.INPUT.IMAGE) when it declined or failed.
+    failure_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    #: The sanitised vendor message, at most 500 characters; never a credential or a URL.
+    failure_detail: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    #: None until a file exists (a QUOTED take has none).
+    sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: Who approved it: "owner", or the reviewer's id. None until APPROVED.
+    approved_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    updated_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    event_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("domain_event.event_id"), nullable=True
+    )
 
 
 class MediaAsset(Base):

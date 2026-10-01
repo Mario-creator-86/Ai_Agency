@@ -1,0 +1,660 @@
+{
+ "storyboard_id": "1d530880-c94a-48a1-baf5-6ad7c1796a6d",
+ "title": "Why Nepal Is Being Handed a Climate Bill It Cannot Pay",
+ "sheet_hash": "7d1e6a0f3b52c8e4a9d07f61b2c3e4d5f60718293a4b5c6d7e8f90a1b2c3d4e5",
+ "seed": 2914450021,
+ "resolution": "1080p",
+ "credit_usd": 0.01,
+ "faces_forbidden": true,
+ "owner_rule": {
+  "paid_media_approval": "EVERY_PAID_STEP",
+  "over_usd": null
+ },
+ "shot_plan_gaps": [],
+ "reference_images_verified": false,
+ "scenes": [
+  {
+   "scene_index": 1,
+   "kind": "LIVE",
+   "story_purpose": "HOOK",
+   "narration": "Nepalul produce o parte infimă din emisiile lumii.",
+   "planned_seconds": 4.6,
+   "shot_seconds": 5.0,
+   "prompt_source": "model",
+   "still_prompt": "Late monsoon in the Himalayan foothills, overcast sky with low grey cloud, soft diffuse light from the left, muted greens, slate blue and ochre, 35 mm lens feel, fine film grain, a real location as it is today, calm and documentary. A wide establishing view of steep Himalayan ridges and a far village of stone houses on a terraced slope, 24 mm lens, seen from high above. Vertical 9:16 frame, the subject in the upper two thirds, the lower quarter calm and empty for captions. Any people appear only as small distant figures seen from behind, faces turned away. No text, no logo.",
+   "motion_prompt": "Slow aerial drift forward. Low grey cloud drifts slowly over the ridges. Continuous, seamless shot. No subtitles, no on-screen text.",
+   "negative_prompt": null,
+   "still": {
+    "take_id": "a1f0c2d0-0001-4c11-9a00-000000000101",
+    "sha256": "4593e6f7f7d54341a76ded72e77498ce7f8f86817e213d9965021dda892d5969",
+    "approved_by": "owner",
+    "model_id": "seedream5_pro",
+    "file_url": "/api/v1/media/takes/a1f0c2d0-0001-4c11-9a00-000000000101/file"
+   },
+   "candidates": [],
+   "shots": [],
+   "card": null,
+   "override": null,
+   "motion": {
+    "model_id": "seedance2_5",
+    "status": "PLANNED",
+    "tier": "HERO",
+    "decided_by": "policy",
+    "reason_ro": "seedance2_5 este cel mai ieftin model capabil pentru HERO (cere 0,93, are 0,95 pe oameni): 5 s, 340 de credite.",
+    "resolution": "1080p",
+    "billed_seconds": 5,
+    "credits": 340,
+    "usd_micros": 3400000,
+    "price_source": "tarif publicat 27.09",
+    "quality": 0.95,
+    "required_quality": 0.93,
+    "cheaper": {
+     "model_id": "veo3.1_fast",
+     "credits": 60,
+     "usd_micros": 600000,
+     "quality": 0.85,
+     "why_ro": "calitate 0,85 sub 0,93 cerut pentru HERO"
+    },
+    "better": null,
+    "suggested": null,
+    "warnings_ro": [],
+    "excluded": [
+     {
+      "model_id": "veo3.1_fast",
+      "why_ro": "calitate 0,85 sub 0,93 cerut pentru HERO",
+      "credits": 60
+     }
+    ],
+    "seed": 2914450021,
+    "usd": 3.4,
+    "step_status": "PLANNED",
+    "take_id": null,
+    "take_kind": null,
+    "take_status": null
+   },
+   "still_credits": 18,
+   "still_price_source": "tarif publicat 27.09",
+   "price_line_ro": "seedance2_5 · 5 s · 340 de credite (3,40 USD) · tarif publicat 27.09",
+   "lint": [],
+   "badges": [
+    {
+     "code": "faces",
+     "label_ro": "fără fețe: da",
+     "source": "măsurat"
+    },
+    {
+     "code": "text",
+     "label_ro": "fără text: cerut în prompt",
+     "source": "prompt"
+    },
+    {
+     "code": "light",
+     "label_ro": "lumină: înnorat",
+     "source": "prompt"
+    }
+   ]
+  },
+  {
+   "scene_index": 2,
+   "kind": "LIVE",
+   "story_purpose": "SETUP",
+   "narration": "Dar inundațiile din munți îl lovesc tot mai des.",
+   "planned_seconds": 5.6,
+   "shot_seconds": 6.0,
+   "prompt_source": "model",
+   "still_prompt": "Late monsoon in the Himalayan foothills, overcast sky with low grey cloud, soft diffuse light from the left, muted greens, slate blue and ochre, 35 mm lens feel, fine film grain, a real location as it is today, calm and documentary. A medium view of brown floodwater running through a narrow mountain valley, stones and broken trees in the current, 50 mm lens. Vertical 9:16 frame, the subject in the upper two thirds, the lower quarter calm and empty for captions. Any people appear only as small distant figures seen from behind, faces turned away. No text, no logo.",
+   "motion_prompt": "Slow pan right across the scene. Brown water flows steadily through the valley. The movement stays smooth and unhurried. Continuous, seamless shot.",
+   "negative_prompt": "human faces, text, subtitles, logo, watermark",
+   "still": {
+    "take_id": "a1f0c2d0-0002-4c11-9a00-000000000102",
+    "sha256": "9b2b0ba630acdb2c2b35699eb36fa7161c51328861dd7109efe7c3e48d2ac1d1",
+    "approved_by": "owner",
+    "model_id": "seedream5_pro",
+    "file_url": "/api/v1/media/takes/a1f0c2d0-0002-4c11-9a00-000000000102/file"
+   },
+   "candidates": [],
+   "shots": [],
+   "card": null,
+   "override": null,
+   "motion": {
+    "model_id": "veo3.1_fast",
+    "status": "PLANNED",
+    "tier": "STANDARD",
+    "decided_by": "policy",
+    "reason_ro": "veo3.1_fast este cel mai ieftin model capabil pentru STANDARD (cere 0,80, are 0,85 pe oameni, mișcare rapidă): 6 s, 60 de credite.",
+    "resolution": "1080p",
+    "billed_seconds": 6,
+    "credits": 60,
+    "usd_micros": 600000,
+    "price_source": "tarif publicat 27.09",
+    "quality": 0.85,
+    "required_quality": 0.8,
+    "cheaper": null,
+    "better": {
+     "model_id": "seedance2_5",
+     "credits": 340,
+     "usd_micros": 3400000,
+     "quality": 0.95,
+     "why_ro": null
+    },
+    "suggested": null,
+    "warnings_ro": [],
+    "excluded": [],
+    "seed": 2914450021,
+    "usd": 0.6,
+    "step_status": "PLANNED",
+    "take_id": null,
+    "take_kind": null,
+    "take_status": null
+   },
+   "still_credits": 18,
+   "still_price_source": "tarif publicat 27.09",
+   "price_line_ro": "veo3.1_fast · 6 s · 60 de credite (0,60 USD) · tarif publicat 27.09",
+   "lint": [],
+   "badges": [
+    {
+     "code": "faces",
+     "label_ro": "fără fețe: da",
+     "source": "măsurat"
+    },
+    {
+     "code": "text",
+     "label_ro": "fără text: cerut în prompt",
+     "source": "prompt"
+    },
+    {
+     "code": "light",
+     "label_ro": "lumină: înnorat",
+     "source": "prompt"
+    }
+   ]
+  },
+  {
+   "scene_index": 3,
+   "kind": "LIVE",
+   "story_purpose": "EVIDENCE",
+   "narration": "Terasele rămân goale după fiecare sezon ploios.",
+   "planned_seconds": 4.6,
+   "shot_seconds": 5.0,
+   "prompt_source": "model",
+   "still_prompt": "Late monsoon in the Himalayan foothills, overcast sky with low grey cloud, soft diffuse light from the left, muted greens, slate blue and ochre, 35 mm lens feel, fine film grain, a real location as it is today, calm and documentary. A wide view of an empty terraced field at dusk below a dark forest, 24 mm lens. Vertical 9:16 frame, the subject in the upper two thirds, the lower quarter calm and empty for captions. Any people appear only as small distant figures seen from behind, faces turned away. No text, no logo.",
+   "motion_prompt": "Gentle tilt up. Mist drifts along the forest edge. Continuous, seamless shot. No subtitles, no on-screen text.",
+   "negative_prompt": null,
+   "still": {
+    "take_id": "a1f0c2d0-0003-4c11-9a00-000000000103",
+    "sha256": "49b4c6a5f8341a3b5492c1b3ac96611d589a687ca7545f41fc471ef87c50e6f9",
+    "approved_by": "owner",
+    "model_id": "seedream5_pro",
+    "file_url": "/api/v1/media/takes/a1f0c2d0-0003-4c11-9a00-000000000103/file"
+   },
+   "candidates": [
+    {
+     "take_id": "b7e1c2d0-0003-4c11-9a00-000000000302",
+     "kind": "still",
+     "status": "PAID",
+     "model_id": "seedream5_pro",
+     "resolution": "1530:2720",
+     "seconds": null,
+     "seed": null,
+     "sha256": "5c0f000000000000000000000000000000000000000000000000000000000000",
+     "credits_quoted": 9.0,
+     "credits_measured": 9.0,
+     "failure_code": null,
+     "reason_ro": null,
+     "approved_by": null,
+     "for_current_prompt": true,
+     "file_url": "/api/v1/media/takes/b7e1c2d0-0003-4c11-9a00-000000000302/file"
+    }
+   ],
+   "shots": [],
+   "card": null,
+   "override": "seedance2_5",
+   "motion": {
+    "model_id": "seedance2_5",
+    "status": "PLANNED",
+    "tier": "STANDARD",
+    "decided_by": "owner",
+    "reason_ro": "Alegerea Proprietarului pe foaia de filmare: seedance2_5 (5 s, 340 de credite).",
+    "resolution": "1080p",
+    "billed_seconds": 5,
+    "credits": 340,
+    "usd_micros": 3400000,
+    "price_source": "tarif publicat 27.09",
+    "quality": 0.95,
+    "required_quality": 0.8,
+    "cheaper": {
+     "model_id": "veo3.1_fast",
+     "credits": 60,
+     "usd_micros": 600000,
+     "quality": 0.85,
+     "why_ro": null
+    },
+    "better": null,
+    "suggested": null,
+    "warnings_ro": [],
+    "excluded": [],
+    "seed": 2914450021,
+    "usd": 3.4,
+    "step_status": "PLANNED",
+    "take_id": null,
+    "take_kind": null,
+    "take_status": null
+   },
+   "still_credits": 18,
+   "still_price_source": "tarif publicat 27.09",
+   "price_line_ro": "seedance2_5 · 5 s · 340 de credite (3,40 USD) · tarif publicat 27.09",
+   "lint": [
+    {
+     "code": "MOTION_LENGTH",
+     "severity": "WARN",
+     "scene": 3,
+     "evidence": "Gentle tilt up.",
+     "message_ro": "Promptul de mișcare are 16 cuvinte („Gentle tilt up.”); lungimea potrivită este 20–70."
+    }
+   ],
+   "badges": [
+    {
+     "code": "faces",
+     "label_ro": "fără fețe: da",
+     "source": "măsurat"
+    },
+    {
+     "code": "text",
+     "label_ro": "fără text: cerut în prompt",
+     "source": "prompt"
+    },
+    {
+     "code": "light",
+     "label_ro": "lumină: înnorat",
+     "source": "prompt"
+    }
+   ]
+  },
+  {
+   "scene_index": 4,
+   "kind": "LIVE",
+   "story_purpose": "EVIDENCE",
+   "narration": "Iar orezul tânăr se pierde sub apă.",
+   "planned_seconds": 5.6,
+   "shot_seconds": 6.0,
+   "prompt_source": "model",
+   "still_prompt": "Late monsoon in the Himalayan foothills, overcast sky with low grey cloud, soft diffuse light from the left, muted greens, slate blue and ochre, 35 mm lens feel, fine film grain, a real location as it is today, calm and documentary. A detail of wet terraced soil and young rice seedlings after rain, 85 mm lens, shallow depth of field. Vertical 9:16 frame, the subject in the upper two thirds, the lower quarter calm and empty for captions. Any people appear only as small distant figures seen from behind, faces turned away. No text, no logo.",
+   "motion_prompt": "Slow push-in toward the subject. Rain drips gently from the seedling leaves. The movement stays smooth and unhurried. Continuous, seamless shot.",
+   "negative_prompt": "human faces, text, subtitles, logo, watermark",
+   "still": {
+    "take_id": "a1f0c2d0-0004-4c11-9a00-000000000104",
+    "sha256": "4265ef8611098473c88a76e06c93d36dbe32e8fc9fec0333e7ab648b09fe25e4",
+    "approved_by": "owner",
+    "model_id": "seedream5_pro",
+    "file_url": "/api/v1/media/takes/a1f0c2d0-0004-4c11-9a00-000000000104/file"
+   },
+   "candidates": [
+    {
+     "take_id": "c9d0e1f2-0004-4c11-9a00-000000000401",
+     "kind": "still",
+     "status": "REJECTED",
+     "model_id": "seedream5_pro",
+     "resolution": "1530:2720",
+     "seconds": null,
+     "seed": null,
+     "sha256": null,
+     "credits_quoted": null,
+     "credits_measured": null,
+     "failure_code": "LOCAL.STILL_GATE",
+     "reason_ro": "YuNet a găsit 2 fețe; biblia vizuală nu permite fețe.",
+     "approved_by": null,
+     "for_current_prompt": false,
+     "file_url": null
+    }
+   ],
+   "shots": [],
+   "card": null,
+   "override": null,
+   "motion": {
+    "model_id": "veo3.1_fast",
+    "status": "PLANNED",
+    "tier": "STANDARD",
+    "decided_by": "policy",
+    "reason_ro": "veo3.1_fast este cel mai ieftin model capabil pentru STANDARD (cere 0,80, are 0,85 pe oameni, apă): 6 s, 60 de credite.",
+    "resolution": "1080p",
+    "billed_seconds": 6,
+    "credits": 60,
+    "usd_micros": 600000,
+    "price_source": "tarif publicat 27.09",
+    "quality": 0.85,
+    "required_quality": 0.8,
+    "cheaper": null,
+    "better": {
+     "model_id": "seedance2_5",
+     "credits": 340,
+     "usd_micros": 3400000,
+     "quality": 0.95,
+     "why_ro": null
+    },
+    "suggested": null,
+    "warnings_ro": [],
+    "excluded": [],
+    "seed": 2914450021,
+    "usd": 0.6,
+    "step_status": "PLANNED",
+    "take_id": null,
+    "take_kind": null,
+    "take_status": null
+   },
+   "still_credits": 18,
+   "still_price_source": "tarif publicat 27.09",
+   "price_line_ro": "veo3.1_fast · 6 s · 60 de credite (0,60 USD) · tarif publicat 27.09",
+   "lint": [],
+   "badges": [
+    {
+     "code": "faces",
+     "label_ro": "fără fețe: da",
+     "source": "măsurat"
+    },
+    {
+     "code": "text",
+     "label_ro": "fără text: cerut în prompt",
+     "source": "prompt"
+    },
+    {
+     "code": "light",
+     "label_ro": "lumină: înnorat",
+     "source": "prompt"
+    }
+   ]
+  },
+  {
+   "scene_index": 5,
+   "kind": "DATA_CARD",
+   "story_purpose": "REVEAL",
+   "narration": "Țările bogate au promis o sută de miliarde pe an. Au livrat optzeci și trei.",
+   "planned_seconds": 6.0,
+   "shot_seconds": 0.0,
+   "prompt_source": "model",
+   "still_prompt": "",
+   "motion_prompt": "",
+   "negative_prompt": null,
+   "still": null,
+   "candidates": [],
+   "shots": [],
+   "card": {
+    "card_json": {
+     "title": "Promis și livrat",
+     "bars": [
+      {
+       "label": "Promis",
+       "value": 100,
+       "unit": "mld. USD",
+       "claim_id": "c4a0e6c8"
+      },
+      {
+       "label": "Livrat",
+       "value": 83,
+       "unit": "mld. USD",
+       "claim_id": "d3561aea"
+      }
+     ],
+     "highlight": 1
+    },
+    "problem_ro": null,
+    "preview_url": "/api/v1/media/storyboards/1d530880-c94a-48a1-baf5-6ad7c1796a6d/scenes/5/card-preview",
+    "provenance": "composed",
+    "credits": 0
+   },
+   "override": null,
+   "motion": {
+    "model_id": null,
+    "status": "COMPOSED",
+    "tier": "STANDARD",
+    "decided_by": "composed",
+    "reason_ro": "Grafic compus local · 0 credite.",
+    "resolution": null,
+    "billed_seconds": 0,
+    "credits": 0,
+    "usd_micros": 0,
+    "price_source": null,
+    "quality": null,
+    "required_quality": null,
+    "cheaper": null,
+    "better": null,
+    "suggested": null,
+    "warnings_ro": [],
+    "excluded": [],
+    "seed": null,
+    "usd": 0.0,
+    "step_status": "COMPOSED",
+    "take_id": null,
+    "take_kind": null,
+    "take_status": null
+   },
+   "still_credits": 0,
+   "still_price_source": null,
+   "price_line_ro": "Grafic compus local · 0 credite",
+   "lint": [],
+   "badges": []
+  },
+  {
+   "scene_index": 6,
+   "kind": "BLACK",
+   "story_purpose": "ENDING",
+   "narration": "",
+   "planned_seconds": 2.0,
+   "shot_seconds": 0.0,
+   "prompt_source": "model",
+   "still_prompt": "",
+   "motion_prompt": "",
+   "negative_prompt": null,
+   "still": null,
+   "candidates": [],
+   "shots": [],
+   "card": {
+    "card_json": {
+     "cta": ""
+    },
+    "problem_ro": null,
+    "preview_url": "/api/v1/media/storyboards/1d530880-c94a-48a1-baf5-6ad7c1796a6d/scenes/6/card-preview",
+    "provenance": "composed",
+    "credits": 0
+   },
+   "override": null,
+   "motion": {
+    "model_id": null,
+    "status": "COMPOSED",
+    "tier": "STANDARD",
+    "decided_by": "composed",
+    "reason_ro": "Ecran negru compus local · 0 credite.",
+    "resolution": null,
+    "billed_seconds": 0,
+    "credits": 0,
+    "usd_micros": 0,
+    "price_source": null,
+    "quality": null,
+    "required_quality": null,
+    "cheaper": null,
+    "better": null,
+    "suggested": null,
+    "warnings_ro": [],
+    "excluded": [],
+    "seed": null,
+    "usd": 0.0,
+    "step_status": "COMPOSED",
+    "take_id": null,
+    "take_kind": null,
+    "take_status": null
+   },
+   "still_credits": 0,
+   "still_price_source": null,
+   "price_line_ro": "Ecran negru compus local · 0 credite",
+   "lint": [],
+   "badges": []
+  }
+ ],
+ "lint": [
+  {
+   "code": "MOTION_LENGTH",
+   "severity": "WARN",
+   "scene": 3,
+   "evidence": "Gentle tilt up.",
+   "message_ro": "Promptul de mișcare are 16 cuvinte („Gentle tilt up.”); lungimea potrivită este 20–70."
+  }
+ ],
+ "blocks": [],
+ "lint_blocked": false,
+ "lint_summary_ro": "Prompturile au 0 blocaje și 1 avertismente.",
+ "steps": {
+  "stills": {
+   "step": "stills",
+   "action": "media.stills_purchase",
+   "tier": "T2",
+   "to_buy": [],
+   "cost_credits": 0,
+   "cap_credits": 0,
+   "cost_usd": 0.0,
+   "cap_usd": 0.0,
+   "ready": false,
+   "waiting_ro": "Toate imaginile scenelor filmate sunt deja aprobate; nu se cumpără nimic.",
+   "model_id": "seedream5_pro",
+   "ratio": "1530:2720",
+   "candidates": 2,
+   "max_rerolls": 2,
+   "price_source": "tarif publicat 27.09"
+  },
+  "test_shot": {
+   "step": "test_shot",
+   "action": "media.test_shot",
+   "tier": "T3",
+   "to_buy": [
+    1
+   ],
+   "cost_credits": 340,
+   "cap_credits": 680,
+   "cost_usd": 3.4,
+   "cap_usd": 6.8,
+   "ready": true,
+   "waiting_ro": ""
+  },
+  "motion": {
+   "step": "motion",
+   "action": "media.motion_purchase",
+   "tier": "T3",
+   "to_buy": [
+    2,
+    3,
+    4
+   ],
+   "cost_credits": 460,
+   "cap_credits": 800,
+   "cost_usd": 4.6,
+   "cap_usd": 8.0,
+   "ready": true,
+   "waiting_ro": ""
+  }
+ },
+ "prices": [
+  {
+   "model_id": "seedream5_pro",
+   "kind": "image",
+   "resolution": "2K",
+   "credits_per_second": null,
+   "credits_per_image": 9.0,
+   "minimum_credits": 0,
+   "provenance": "DOCUMENTED",
+   "date": "2026-09-27",
+   "source_url": "https://docs.dev.runwayml.com/guides/pricing/",
+   "source": "tarif publicat 27.09"
+  },
+  {
+   "model_id": "seedance2_5",
+   "kind": "video",
+   "resolution": "1080p",
+   "credits_per_second": 68.0,
+   "credits_per_image": null,
+   "minimum_credits": 80,
+   "provenance": "DOCUMENTED",
+   "date": "2026-09-27",
+   "source_url": "https://docs.dev.runwayml.com/guides/pricing/",
+   "source": "tarif publicat 27.09"
+  },
+  {
+   "model_id": "veo3.1_fast",
+   "kind": "video",
+   "resolution": "1080p",
+   "credits_per_second": 10.0,
+   "credits_per_image": null,
+   "minimum_credits": 0,
+   "provenance": "DOCUMENTED",
+   "date": "2026-09-27",
+   "source_url": "https://docs.dev.runwayml.com/guides/pricing/",
+   "source": "tarif publicat 27.09"
+  }
+ ],
+ "footer": {
+  "stills_spent_credits": {
+   "quoted_credits": 72.0,
+   "measured_credits": 72.0
+  },
+  "stills_to_buy_credits": 0,
+  "stills_to_buy_usd_micros": 0,
+  "stills_credits": 72,
+  "hero_scene": 1,
+  "hero_credits": 340,
+  "hero_usd_micros": 3400000,
+  "rest_credits": 460,
+  "rest_usd_micros": 4600000,
+  "motion_credits": 800,
+  "total_credits": 872,
+  "total_usd_micros": 8720000,
+  "cap_credits": 1284,
+  "cap_usd_micros": 12840000,
+  "premium_credits": 1568,
+  "saved_credits": 696,
+  "saved_usd_micros": 6960000,
+  "price_source": "tarif publicat 27.09",
+  "summary_ro": "Filmul costă 872 de credite (8,72 USD): 72 de credite pe imagini și 800 de credite pe mișcare, cu modelul ales scenă cu scenă (seedance2_5, veo3.1_fast). Față de seedance2_5 la 1080p peste tot (1.568 de credite) economisește 696 de credite (6,96 USD). Plafon: 1.284 de credite.",
+  "alternatives": [
+   {
+    "model_id": "mixt",
+    "resolution": "720p",
+    "total_credits": 552,
+    "total_usd_micros": 5520000,
+    "total_usd": 5.52,
+    "price_source": "tarif publicat 27.09"
+   },
+   {
+    "model_id": "seedance2",
+    "resolution": "1080p",
+    "total_credits": 1032,
+    "total_usd_micros": 10320000,
+    "total_usd": 10.32,
+    "price_source": "tarif publicat 27.09"
+   },
+   {
+    "model_id": "veo3.1_fast",
+    "resolution": "1080p",
+    "total_credits": 312,
+    "total_usd_micros": 3120000,
+    "total_usd": 3.12,
+    "price_source": "tarif publicat 27.09"
+   }
+  ],
+  "balance": {
+   "credits": 900.0,
+   "read": true,
+   "problem": null
+  },
+  "balance_needed_credits": {
+   "stills": 0,
+   "test_shot": 782,
+   "motion": 920
+  },
+  "daily_budget": {
+   "limit_usd": 15.0,
+   "spent_usd": 0.74,
+   "reserved_usd": 0.0,
+   "remaining_usd": 14.26,
+   "remaining_usd_micros": 14260000,
+   "state": "OK"
+  },
+  "sheet_hash": "7d1e6a0f3b52c8e4a9d07f61b2c3e4d5f60718293a4b5c6d7e8f90a1b2c3d4e5"
+ }
+}

@@ -117,7 +117,12 @@ from app.media.models import (
     Storyboard,
     VideoRenderJob,
 )
-from app.media.prompt_agent import PromptError, write_shot_prompts
+from app.media.prompt_agent import (
+    PromptError,
+    ShotPlanUnusable,
+    hold_for_shot_plan,
+    write_shot_prompts,
+)
 from app.media.qc import evaluate_media_qc
 from app.media.serial_storyboard import describe_serial_shots
 from app.media.services import generate_storyboard_from_script
@@ -153,6 +158,7 @@ from app.story.serial_stage import run_serial_next_stage, run_serial_stage
 from app.story.services import business_date
 from app.wording import (
     count,
+    decimal,
     error_fields,
     error_words,
     privacy,
@@ -1010,10 +1016,22 @@ def _script_and_storyboard(
 
     boards = 0
     prompted = 0
+    # Films whose shot plan could not be read even after the one re-ask. They wait as
+    # NEEDS_SHOT_PLAN and are named in the day's outcome: the Nepal film's plan was lost to a
+    # log line nobody read, and template prompts were bought in its place (2026-09-26).
+    waiting_plan: list[str] = []
+    # Scripts the storyboard's Content Gate refused: a card whose numbers no SUPPORTED claim
+    # carries, or a claim refuted since. Named in the day's outcome; the day goes on.
+    gated: list[str] = []
     for script_id in approved:
-        board = generate_storyboard_from_script(
-            engine, script_id, "MOTION_GRAPHIC", "9:16", str(uuid4())
-        )
+        try:
+            # No style is named: each scene carries its own kind (SCENE_KINDS). The Nepal film
+            # got one motion-graphic style for all six scenes, chart and black screen included.
+            board = generate_storyboard_from_script(engine, script_id, None, "9:16", str(uuid4()))
+        except FactualGateError as exc:
+            logger.info("storyboard_gated", extra={"script_id": script_id, "reason": str(exc)})
+            gated.append(f"{script_id[:8]}: {exc}")
+            continue
         boards += 1
         # One look for the whole film, then a full prompt package per shot. This is where a
         # story becomes instructions a camera would understand — the step the studio did not
@@ -1021,6 +1039,9 @@ def _script_and_storyboard(
         try:
             written = write_shot_prompts(engine, registry, board["id"], str(uuid4()))
             prompted += len(written["shots"])
+        except ShotPlanUnusable as exc:
+            logger.warning("shot_plan_unusable", extra={"storyboard_id": board["id"]})
+            waiting_plan.append(f"{str(board['id'])[:8]}: {exc}")
         except PromptError as exc:
             logger.info("shot_prompts_skipped", extra={"reason": str(exc)[:160]})
 
@@ -1037,6 +1058,16 @@ def _script_and_storyboard(
     )
     if prompted:
         reason += f" {count(prompted, 'cadru descris', 'cadre descrise')} complet."
+    if waiting_plan:
+        reason += (
+            f" {count(len(waiting_plan), 'film așteaptă', 'filme așteaptă')} planul de cadre: "
+            f"{waiting_plan[0][:160]}"
+        )
+    if gated:
+        reason += (
+            f" {count(len(gated), 'storyboard oprit', 'storyboarduri oprite')} la poarta de "
+            f"conținut: {gated[0][:200]}"
+        )
     if reviews:
         reason += (
             " Recenzia poveștii: " + ", ".join(review_verdict(r["verdict"]) for r in reviews) + "."
@@ -1054,6 +1085,8 @@ def _script_and_storyboard(
         story_reviews=reviews,
         rejected=rejected,
         awaiting_approval=bool(awaiting),
+        waiting_shot_plan=waiting_plan,
+        storyboards_gated=gated,
     )
 
 
@@ -1192,6 +1225,651 @@ def _record_failed_attempt(engine: Engine, storyboard_id: str, correlation: str)
         return 0
 
 
+# ------------------------------------------------- the staircase, in PRODUCTION --
+#
+# The Nepal film (2026-09-26) was bought twice, whole, from a path that showed no price, no
+# prompt and no model and asked nothing. In PRODUCTION the daily run no longer buys a film in
+# one piece: it builds the film's shooting sheet (0 credits; one free balance read) and hands
+# the first stair that has something to buy (stills, then the hero test shot, then the rest of
+# the motion) to `shooting_sheet.run_sheet_step`. That step asks the Owner, under his
+# `paid_media_approval` (EVERY_PAID_STEP by default, read inside `may_act` in every mode,
+# AUTONOMOUS_CEO included), and buys only once his yes for THIS sheet's hash is spent. The day
+# then writes him the sheet and a letter and goes on; it never waits inside the stage, and it
+# never buys a second stair on the first one's yes. A film with nothing left to buy is
+# assembled from its takes, which buys nothing but its narration.
+
+#: The Owner's words for each paid stair of the shooting sheet.
+STEP_WORDS: dict[str, str] = {
+    "stills": "imaginile",
+    "test_shot": "cadrul de probă",
+    "motion": "restul mișcării",
+}
+#: The kind of the letter that carries a film's sheet to the Owner.
+SHEET_LETTER_KIND = "owner_shooting_sheet"
+#: A step refused for a reason only the Owner can lift: his look at the hero take, money on
+#: the account, a budget, a scene the gate handed to him. The film WAITS for him; it is not
+#: held for a fault of its own (a stale plan, a lint BLOCK, prompts no model wrote).
+OWNER_DECIDES = frozenset(
+    {"HERO_NOT_APPROVED", "HERO_FIRST", "LOW_BALANCE", "OVER_DAILY_BUDGET", "OVER_BUDGET"}
+)
+
+
+def sheet_wiring(engine: Engine, vault: Any, settings: Settings) -> dict[str, Any]:
+    """What the day's sheets and steps are built from: the Runway connection the Owner
+    selected and verified, its catalogue, its balance and its adapters (the same wiring the
+    shooting-sheet routes use). Building any of it opens no connection."""
+    from app.media.factory import image_provider  # noqa: PLC0415 - media imports runbook
+    from app.media.shooting_sheet import (  # noqa: PLC0415
+        connection_account,
+        connection_capabilities,
+        connection_video_adapters,
+        runway_connection_id,
+    )
+
+    integration_id = runway_connection_id(engine)
+    return {
+        "integration_id": integration_id,
+        "capabilities": connection_capabilities(engine, integration_id),
+        "image_adapter": image_provider(engine, vault),
+        "account": connection_account(engine, vault, integration_id),
+        "adapter_for_model": connection_video_adapters(engine, vault, integration_id),
+        "resolution": getattr(settings, "motion_resolution", None),
+        "storage_root": None,
+    }
+
+
+def _credits_words(value: float | int | None) -> str:
+    """«36 de credite», «10.000 de credite»: counted the Romanian way, grouped by dots."""
+    number = round(float(value or 0))
+    words = count(number, "credit", "credite")
+    return f"{number:,}".replace(",", ".") + words[len(str(number)) :]
+
+
+def _usd_words(micros: int | float | None) -> str:
+    """«7,16 USD»: dollars with a decimal comma."""
+    return f"{decimal(float(micros or 0) / 1_000_000)} USD"
+
+
+def _film_staircase(
+    engine: Engine,
+    settings: Settings,
+    registry: ProviderRegistry | None,
+    storyboard_id: str,
+    wiring: dict[str, Any],
+    environment: str,
+    correlation: str,
+) -> dict[str, Any]:
+    """Walk one film up its staircase as far as the Owner's answers allow, and no further.
+
+    Returns ``status``: ASKED (his question waits), WAITING (only he can move it on: his
+    look at the hero take, money on the account, a budget, scenes a bought stair left for
+    him), HELD (a step refused for the film's own fault before anything was asked or
+    bought: a stale plan, a lint BLOCK, prompts no model wrote, his own no) or READY
+    (nothing is left to buy: the film is assembled from its takes). ``bought`` lists every
+    stair bought here, each already in the books (`_book_step`) before the next stair's
+    budget check reads them.
+    """
+    from app.media.shooting_sheet import (  # noqa: PLC0415 - media imports runbook
+        SHEET_STEPS,
+        SheetNotFound,
+        SheetStepRefused,
+        build_sheet,
+        run_sheet_step,
+    )
+
+    image = wiring.get("image_adapter")
+    context: dict[str, Any] = {
+        "capabilities": list(wiring.get("capabilities") or []),
+        "integration_id": wiring.get("integration_id"),
+        "resolution": wiring.get("resolution") or getattr(settings, "motion_resolution", None),
+    }
+    bought: list[dict[str, Any]] = []
+    sheet: dict[str, Any] = {}
+
+    def stop(status: str, step: str | None, reason: str, **more: Any) -> dict[str, Any]:
+        return {
+            "status": status,
+            "step": step,
+            "reason": reason,
+            "sheet": sheet,
+            "bought": bought,
+            **more,
+        }
+
+    for _stair in range(len(SHEET_STEPS) + 1):
+        try:
+            sheet = build_sheet(
+                engine,
+                storyboard_id,
+                account=wiring.get("account"),
+                stills_model=getattr(image, "model", None),
+                **context,
+            )
+        except SheetNotFound as exc:
+            return stop("HELD", None, str(exc), refusal="NOT_FOUND")
+        step = next((name for name in SHEET_STEPS if sheet["steps"][name]["to_buy"]), None)
+        if step is None:
+            return stop("READY", None, "")
+        if bought and SHEET_STEPS.index(step) <= SHEET_STEPS.index(bought[-1]["step"]):
+            # The stair just bought left scenes behind (a still the gate sent to him, a shot
+            # the vendor refused). The same stair is not asked again in the same run: what
+            # those scenes need is his decision on the sheet, not a second purchase.
+            left = bought[-1]["result"]
+            scenes = sorted(
+                {*(left.get("needs_owner") or []), *(left.get("needs_still") or [])}
+            ) or list(sheet["steps"][step]["to_buy"])
+            return stop(
+                "WAITING",
+                step,
+                f"după pasul «{STEP_WORDS[bought[-1]['step']]}», scenele "
+                + ", ".join(map(str, scenes))
+                + " așteaptă decizia Proprietarului pe foaia de filmare.",
+                refusal="NEEDS_OWNER",
+            )
+        try:
+            result = run_sheet_step(
+                engine,
+                storyboard_id,
+                step,
+                sheet["sheet_hash"],
+                correlation_id=correlation,
+                account=wiring.get("account"),
+                image_adapter=image,
+                adapter_for_model=wiring.get("adapter_for_model"),
+                registry=registry,
+                settings=settings,
+                environment=environment,
+                storage_root=wiring.get("storage_root"),
+                ffmpeg_path=settings.ffmpeg_path,
+                **context,
+            )
+        except SheetStepRefused as exc:
+            if exc.status == "NEEDS_APPROVAL":
+                status = "ASKED"
+            elif exc.status in OWNER_DECIDES:
+                status = "WAITING"
+            else:
+                status = "HELD"
+            return stop(
+                status,
+                step,
+                exc.reason_ro,
+                refusal=exc.status,
+                approval_id=exc.approval_id,
+                cost_usd=exc.cost_usd,
+                cap_credits=exc.cap_credits,
+            )
+        entry = {
+            "step": step,
+            "sheet_hash": sheet["sheet_hash"],
+            "credit_usd": float(sheet.get("credit_usd") or 0.01),
+            "result": result,
+        }
+        # Into the books before the next stair is priced against the budget.
+        entry["booked"] = _book_step(engine, storyboard_id, entry, correlation)
+        bought.append(entry)
+        if result.get("stopped"):
+            return stop("WAITING", step, str(result["stopped"]), refusal="STOPPED")
+    return stop("WAITING", None, "Scara filmului nu s-a încheiat în această rulare.")
+
+
+def _book_step(
+    engine: Engine, storyboard_id: str, entry: dict[str, Any], correlation: str
+) -> dict[str, Any] | None:
+    """What a bought stair cost, into the books at once: the measured balance drop when the
+    vendor's balance was read before and after, otherwise the credits the step committed.
+
+    The step's own budget check (`run_sheet_step`, the step's cap against every active
+    budget) is the gate before the purchase; nothing is reserved ahead of it, because that
+    check would count the hold and the cap twice. What the stair spent is then a cost row,
+    ESTIMATED like every render cost, so the next film's check sees it. One stair, one row:
+    the reference is the film, the stair and the sheet it was bought under.
+    """
+    from app.economy.services import record_provider_cost  # noqa: PLC0415
+
+    result = entry["result"]
+    measured = result.get("spent_credits_measured")
+    credits = measured if measured is not None else result.get("spent_credits_quoted")
+    if not credits or float(credits) <= 0:
+        return None
+    usd = float(credits) * float(entry["credit_usd"])
+    try:
+        record_provider_cost(
+            engine,
+            provider="runway",
+            external_reference=(
+                f"foaie:{storyboard_id}:{entry['step']}:{str(entry['sheet_hash'])[:16]}"
+            ),
+            status="ESTIMATED",
+            amount=f"{usd:.6f}",
+            attribution={
+                "storyboard_id": storyboard_id,
+                "step": entry["step"],
+                "plan_hash": entry["sheet_hash"],
+                "credits": round(float(credits), 4),
+                "measured": measured is not None,
+            },
+            correlation_id=correlation,
+        )
+    except (EconomyError, ValueError):
+        logger.info("sheet_step_cost_not_recorded", extra={"storyboard_id": storyboard_id})
+        return None
+    return {"step": entry["step"], "credits": round(float(credits), 4), "usd": round(usd, 6)}
+
+
+def _film_figures(sheet: dict[str, Any]) -> dict[str, Any]:
+    """The sheet's own money, in the shape `estimate_film_cost_micros(sheet=...)` reads."""
+    return {**dict(sheet.get("footer") or {}), "credit_usd": sheet.get("credit_usd")}
+
+
+def _sheet_letter(
+    engine: Engine,
+    storyboard_id: str,
+    film: dict[str, Any],
+    plan_cost: dict[str, Any] | None,
+    correlation: str,
+) -> str | None:
+    """The Owner's letter about one film stopped on its staircase: the sheet in words.
+
+    Written once per film, sheet, stair and reason: the same day run again, or tomorrow's
+    run finding the same question standing, writes nothing new. Deterministic: the sheet's
+    own facts, never a model's account of them.
+    """
+    from app.agents.messages import post_message  # noqa: PLC0415
+    from app.media.shooting_sheet import sheet_url  # noqa: PLC0415
+
+    sheet = film.get("sheet") or {}
+    step = film.get("step")
+    status = str(film.get("refusal") or film["status"])
+    key = {
+        "storyboard_id": storyboard_id,
+        "sheet_hash": sheet.get("sheet_hash"),
+        "step": step,
+        "status": status,
+    }
+    title = str(sheet.get("title") or storyboard_id[:8])
+    words = STEP_WORDS.get(str(step), "") if step else "narațiunea și asamblarea"
+    if film["status"] == "ASKED":
+        headline = f"așteaptă răspunsul tău la pasul «{words}»"
+    elif film["status"] == "WAITING":
+        headline = "așteaptă decizia ta pe foaia de filmare"
+    else:
+        headline = f"este oprit înainte de pasul «{words}»" if words else "este oprit"
+    lines = [
+        f"Către Owner. Filmul «{title}» {headline}. Pasul acesta nu se cumpără fără "
+        "răspunsul tău pe foaia de filmare."
+    ]
+    lines.append(str(film.get("reason") or "").strip())
+    info = (sheet.get("steps") or {}).get(step) if step else None
+    if info:
+        lines.append(
+            f"Pasul «{words}» costă {_credits_words(info.get('cost_credits'))} "
+            f"({decimal(float(info.get('cost_usd') or 0.0))} USD), cu plafonul de "
+            f"{_credits_words(info.get('cap_credits'))}."
+        )
+    if plan_cost is not None:
+        lines.append(
+            f"Filmul întreg, după foaia de filmare: estimat "
+            f"{_usd_words(plan_cost['expected_usd_micros'])}, plafon "
+            f"{_usd_words(plan_cost['usd_micros'])}"
+            + (f" ({plan_cost['caveat']})" if plan_cost.get("caveat") else "")
+            + "."
+        )
+    balance = ((sheet.get("footer") or {}).get("balance") or {}).get("credits")
+    if balance is not None:
+        lines.append(f"Soldul Runway citit acum: {_credits_words(balance)}.")
+    for scene in sheet.get("scenes") or []:
+        line = scene.get("price_line_ro") or ""
+        lines.append(f"Scena {scene.get('scene_index')} · {scene.get('kind')} · {line}".rstrip())
+    url = sheet_url(storyboard_id)
+    lines.append(f"Foaia de filmare: {url}")
+    body = {
+        "kind": SHEET_LETTER_KIND,
+        **key,
+        "sheet_url": url,
+        "approval_id": film.get("approval_id"),
+        "reason": film.get("reason"),
+        "cost_credits": (info or {}).get("cost_credits"),
+        "cap_credits": (info or {}).get("cap_credits"),
+        "film_expected_usd_micros": (plan_cost or {}).get("expected_usd_micros"),
+        "film_cap_usd_micros": (plan_cost or {}).get("usd_micros"),
+    }
+    with Session(engine) as session, session.begin():
+        for existing in session.scalars(
+            select(AgentMessage).where(AgentMessage.to_agent_id.is_(None))
+        ):
+            letter = existing.body_json if isinstance(existing.body_json, dict) else {}
+            if letter.get("kind") == SHEET_LETTER_KIND and all(
+                letter.get(name) == value for name, value in key.items()
+            ):
+                return None
+        director = agent_for_role(session, "Director")
+        message = post_message(
+            session,
+            intent="ESCALATE",
+            subject=f"Foaia de filmare: «{title}» {headline}"[:200],
+            body=body,
+            body_text="\n".join(line for line in lines if line),
+            from_agent_id=director.id if director else None,
+            to_owner=True,
+            correlation_id=correlation,
+        )
+        return str(message.id)
+
+
+def _assemble_from_takes(
+    engine: Engine,
+    settings: Settings,
+    vault: Any,
+    storyboard_id: str,
+    wiring: dict[str, Any],
+    environment: str,
+    plan_cost: dict[str, Any],
+    correlation: str,
+) -> dict[str, Any]:
+    """Assemble a film whose sheet has nothing left to buy: from its takes, buying no still
+    and no shot. Only the narration is paid, so only the narration is asked and held."""
+    from app.economy.accountant import (  # noqa: PLC0415
+        budget_refusal_letter,
+        record_render_costs,
+    )
+    from app.economy.services import format_micros  # noqa: PLC0415
+    from app.media.assembler import (  # noqa: PLC0415 - media imports runbook
+        RenderEngineUnavailable,
+        RenderStopped,
+        TakesMissing,
+        assemble_from_takes,
+    )
+    from app.media.factory import render_plan, tts_provider  # noqa: PLC0415
+    from app.media.services import ReferenceRequired  # noqa: PLC0415
+    from app.providers.media_http import MediaProviderError  # noqa: PLC0415
+
+    narration = int(plan_cost.get("narration_usd_micros") or 0)
+    caveat = str(plan_cost.get("caveat") or "")
+    usd = narration / 1_000_000
+    dear = usd > settings.paid_generation_approval_threshold_usd
+    refusal = mode_refusal(
+        engine,
+        "media.paid_generation_over_threshold" if dear else "media.paid_generation",
+        requester="video_editor",
+        subject=storyboard_id,
+        evidence=(
+            f"storyboard {storyboard_id}: narațiunea filmului asamblat din preluările "
+            f"aprobate, estimat {format_micros(narration)} USD" + (f" ({caveat})" if caveat else "")
+        ),
+        cost_usd=usd,
+    )
+    if refusal is not None:
+        return {
+            "status": "ASKED" if refusal.get("approval_id") else "HELD",
+            "reason": str(refusal.get("reason") or ""),
+            "approval_id": refusal.get("approval_id"),
+        }
+    hold = reserve_spend(
+        engine,
+        narration,
+        f"film {storyboard_id}",
+        correlation,
+        note=f"narațiunea filmului din preluări: {format_micros(narration)} USD"
+        + (f"; {caveat}" if caveat else ""),
+    )
+    if not hold["allowed"]:
+        budget_refusal_letter(engine, hold["reason"], correlation)
+        return {"status": "HELD", "reason": str(hold["reason"])}
+    reservation_id = hold.get("reservation_id")
+    planned = render_plan(engine, vault, storyboard_id)
+    try:
+        result = assemble_from_takes(
+            engine,
+            storyboard_id,
+            str(uuid4()),
+            storage_root=wiring.get("storage_root"),
+            ffmpeg_path=settings.ffmpeg_path,
+            reference_for_scene=planned.get("reference_for_scene"),
+            tts_adapter=tts_provider(engine, vault),
+            tts_adapter_for_scene=planned.get("tts_for_scene"),
+            voice_segments_for_scene=planned.get("voice_segments_for_scene"),
+            environment=environment,
+            production_plan=planned.get("plan"),
+            settings=settings,
+        )
+    except TakesMissing as exc:
+        _release(engine, reservation_id, f"preluări lipsă: {exc}"[:120], correlation)
+        return {"status": "HELD", "reason": str(exc)}
+    except RenderStopped as exc:
+        failed = _record_failed_attempt(engine, storyboard_id, correlation)
+        _release(engine, reservation_id, f"asamblare oprită: {error_words(exc)}", correlation)
+        return {"status": "STOPPED", "reason": error_words(exc), "costs_recorded": failed}
+    except RenderEngineUnavailable as exc:
+        _release(
+            engine, reservation_id, f"asamblarea nu poate rula: {error_words(exc)}", correlation
+        )
+        return {"status": "NO_ENGINE", "reason": error_words(exc)}
+    except (ReferenceRequired, MediaProviderError) as exc:
+        failed = _record_failed_attempt(engine, storyboard_id, correlation)
+        _release(
+            engine, reservation_id, f"asamblare refuzată: {error_words(exc)}"[:120], correlation
+        )
+        return {
+            "status": "REFUSED",
+            "reason": error_words(exc),
+            "error_class": type(exc).__name__,
+            "costs_recorded": failed,
+        }
+    recorded = 0
+    try:
+        recorded = int(
+            record_render_costs(
+                engine,
+                result["job_id"],
+                correlation,
+                alert_percent=settings.price_change_alert_percent,
+            )["recorded"]
+        )
+    except (EconomyError, KeyError):
+        logger.info("render_cost_not_recorded", extra={"storyboard_id": storyboard_id})
+    if reservation_id:
+        settle_reservation(
+            engine,
+            reservation_id,
+            settled_reference=f"render:{result['job_id']}",
+            correlation_id=correlation,
+        )
+    return {
+        "status": "ASSEMBLED",
+        "asset_id": result["output_asset_id"],
+        "job_id": result["job_id"],
+        "costs_recorded": recorded,
+    }
+
+
+def _media_staircase(
+    engine: Engine,
+    settings: Settings,
+    vault: Any,
+    registry: ProviderRegistry | None,
+    pending: list[str],
+    held: list[str],
+    serial_ids: set[str],
+    environment: str,
+) -> dict[str, Any]:
+    """The PRODUCTION media stage: every film up its own staircase, one answered stair at a
+    time, then the Owner is written to and the day goes on."""
+    wiring = sheet_wiring(engine, vault, settings)
+    produced: list[str] = []
+    serial_assets: list[str] = []
+    awaiting_owner: list[dict[str, Any]] = []
+    waiting: list[str] = []
+    bought_lines: list[str] = []
+    bought_steps: list[dict[str, Any]] = []
+    refused: list[dict[str, Any]] = []
+    sheets: dict[str, str] = {}
+    films: list[dict[str, Any]] = []
+    asked_correlation = ""
+    costs_recorded = 0
+
+    def stopped_outcome(storyboard_id: str, said: str) -> dict[str, Any]:
+        if asked_correlation:
+            waiting_approvals_letter(engine, asked_correlation)
+        return _outcome(
+            BLOCKED,
+            f"{OWNER_STOP_REASON} {said}"[:500],
+            assets=produced,
+            serial_assets=serial_assets,
+            stopped_storyboard=storyboard_id,
+            bought_steps=bought_steps,
+            sheets=sheets,
+        )
+
+    for storyboard_id in pending:
+        # His switch, before each film, as on the legacy path.
+        if stop_requested(engine):
+            return stopped_outcome(storyboard_id, "Filmul următor nu a fost început.")
+        correlation = str(uuid4())
+        film = _film_staircase(
+            engine, settings, registry, storyboard_id, wiring, environment, correlation
+        )
+        sheet = film.get("sheet") or {}
+        if sheet.get("sheet_hash"):
+            sheets[storyboard_id] = str(sheet["sheet_hash"])
+        title = str(sheet.get("title") or storyboard_id[:8])
+        for entry in film["bought"]:
+            booked = entry.get("booked")
+            result = entry["result"]
+            spent = result.get("spent_credits_measured")
+            if spent is None:
+                spent = result.get("spent_credits_quoted")
+            bought_steps.append(
+                {
+                    "storyboard_id": storyboard_id,
+                    "step": entry["step"],
+                    "sheet_hash": entry["sheet_hash"],
+                    "credits": spent,
+                    "booked": booked,
+                }
+            )
+            bought_lines.append(f"«{title}»: {STEP_WORDS[entry['step']]} ({_credits_words(spent)})")
+        # The film's own money, from its sheet: what the Owner reads in his letter, and the
+        # narration the assembly holds. Never the flat motion ceiling.
+        plan_cost = (
+            estimate_film_cost_micros(
+                engine,
+                storyboard_id,
+                environment=environment,
+                settings=settings,
+                sheet=_film_figures(sheet),
+            )
+            if sheet
+            else None
+        )
+        if stop_requested(engine):
+            return stopped_outcome(storyboard_id, "Scara filmului s-a oprit.")
+        if film["status"] == "READY" and plan_cost is not None:
+            made = _assemble_from_takes(
+                engine, settings, vault, storyboard_id, wiring, environment, plan_cost, correlation
+            )
+            costs_recorded += int(made.get("costs_recorded") or 0)
+            if made["status"] == "ASSEMBLED":
+                produced.append(str(made["asset_id"]))
+                if storyboard_id in serial_ids:
+                    serial_assets.append(str(made["asset_id"]))
+                films.append({"storyboard_id": storyboard_id, "status": "ASSEMBLED"})
+                continue
+            if made["status"] == "STOPPED":
+                return stopped_outcome(storyboard_id, sentence(str(made["reason"])))
+            if made["status"] == "NO_ENGINE":
+                return _outcome(
+                    SKIPPED,
+                    f"Asamblarea nu poate rula: {made['reason']}.",
+                    assets=produced,
+                    bought_steps=bought_steps,
+                    sheets=sheets,
+                )
+            if made["status"] == "REFUSED":
+                refused.append({"storyboard_id": storyboard_id, "said": made["reason"]})
+                films.append({"storyboard_id": storyboard_id, "status": "REFUSED"})
+                continue
+            film = {**film, **made, "status": made["status"], "step": None}
+        films.append(
+            {
+                "storyboard_id": storyboard_id,
+                "status": film["status"],
+                "step": film.get("step"),
+                "refusal": film.get("refusal"),
+                "approval_id": film.get("approval_id"),
+            }
+        )
+        reason = " ".join(str(film.get("reason") or "").split())[:400]
+        if film["status"] == "ASKED":
+            step = film.get("step")
+            info = (sheet.get("steps") or {}).get(step) if step else None
+            price = (
+                f" ({_credits_words(info.get('cost_credits'))}, "
+                f"{decimal(float(info.get('cost_usd') or 0.0))} USD; plafon "
+                f"{_credits_words(info.get('cap_credits'))})"
+                if info
+                else ""
+            )
+            awaiting_owner.append(
+                {
+                    "storyboard_id": storyboard_id,
+                    "status": "NEEDS_APPROVAL",
+                    "step": step,
+                    "approval_id": film.get("approval_id"),
+                    "reason": reason,
+                    "sheet_hash": sheet.get("sheet_hash"),
+                }
+            )
+            waiting.append(f"«{title}» la pasul «{STEP_WORDS.get(str(step), 'narațiunea')}»{price}")
+            if film.get("approval_id") and not asked_correlation:
+                asked_correlation = correlation
+        elif film["status"] == "WAITING":
+            waiting.append(f"«{title}»: {reason}")
+        else:
+            held.append(f"{storyboard_id[:8]}: {reason}")
+        _sheet_letter(engine, storyboard_id, film, plan_cost, correlation)
+
+    # The day's one letter about every standing question, as on the legacy path.
+    if asked_correlation:
+        waiting_approvals_letter(engine, asked_correlation)
+
+    parts: list[str] = []
+    if produced:
+        parts.append(
+            f"{count(len(produced), 'videoclip asamblat', 'videoclipuri asamblate')} din "
+            "preluările aprobate."
+        )
+    if bought_lines:
+        parts.append("Cumpărat pe foaia de filmare: " + "; ".join(bought_lines) + ".")
+    if waiting:
+        parts.append(
+            f"{count(len(waiting), 'film așteaptă', 'filme așteaptă')} Proprietarul: "
+            + "; ".join(waiting)
+            + ". Foaia de filmare și scrisoarea i-au fost trimise."
+        )
+    if refused:
+        parts.append(f"{count(len(refused), *REFUSED_RENDERS)}: {refused[0]['said']}.")
+    if held:
+        parts.append("Oprit: " + held[0])
+    reason_text = " ".join(parts) or "Nimic de cumpărat."
+    status = COMPLETED if produced or bought_steps else SKIPPED
+    return _outcome(
+        status,
+        reason_text[:1500],
+        assets=produced,
+        serial_assets=serial_assets,
+        awaiting_owner=awaiting_owner,
+        approval_id=awaiting_owner[0]["approval_id"] if awaiting_owner else None,
+        bought_steps=bought_steps,
+        sheets=sheets,
+        films=films,
+        held=held,
+        refused=refused,
+        costs_recorded=costs_recorded,
+        staircase=True,
+    )
+
+
 def _media(
     engine: Engine, settings: Settings, vault: Any, registry: ProviderRegistry | None = None
 ) -> dict[str, Any]:
@@ -1265,6 +1943,33 @@ def _media(
         )
     pending = allowed
 
+    # Which environment the day renders in is the studio's own state, not a parameter.
+    environment = studio_environment(engine)
+    # In PRODUCTION a factual film is bought only from the shot plan its video editor's model
+    # wrote. A film whose scenes carry template prompts (no model was reachable, a TEST
+    # convenience) or a plan that was lost is stopped here, before any adapter is asked for
+    # anything: NEEDS_SHOT_PLAN and a WARNING event, and the day says so. The Nepal film was
+    # rendered twice from template prompts after its plan was lost to one unescaped quote.
+    if environment == "PRODUCTION":
+        without_plan: list[str] = []
+        for storyboard_id in pending:
+            if storyboard_id in serial_ids:
+                continue
+            gaps = hold_for_shot_plan(engine, storyboard_id, str(uuid4()))
+            if gaps:
+                without_plan.append(storyboard_id)
+                held.append(
+                    f"{storyboard_id[:8]}: planul de cadre al modelului lipsește pentru "
+                    f"{count(len(gaps), 'cadru', 'cadre')} ({', '.join(map(str, gaps))})"
+                )
+        pending = [storyboard_id for storyboard_id in pending if storyboard_id not in without_plan]
+        if not pending:
+            return _outcome(
+                SKIPPED,
+                "Niciun film nu are planul de cadre scris de model: " + held[0],
+                held=held,
+            )
+
     # A serial episode's shots are described from its beats before anything is bought (S8).
     # The serial stage already did it for a storyboard it built; this catches the one the
     # Owner's approval built, and one composed under an older series look. Once per look.
@@ -1272,8 +1977,15 @@ def _media(
         if storyboard_id in serial_ids:
             describe_serial_shots(engine, registry, storyboard_id, str(uuid4()))
 
-    # Which environment the day renders in is the studio's own state, not a parameter.
-    environment = studio_environment(engine)
+    # In PRODUCTION nothing is bought in one piece: each film climbs its shooting sheet one
+    # answered stair at a time (stills, the hero test shot, the rest of the motion), every
+    # stair under the Owner's own yes for that sheet, and is assembled from its takes once
+    # nothing is left to buy. The whole-film render below is the TEST environment's alone.
+    if environment == "PRODUCTION":
+        return _media_staircase(
+            engine, settings, vault, registry, pending, held, serial_ids, environment
+        )
+
     images = image_provider(engine, vault)
     voice = tts_provider(engine, vault)
     produced: list[str] = []

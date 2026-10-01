@@ -294,7 +294,8 @@ def runway_video(monkeypatch, recorder):
 def test_runway_submit_survives_a_503_and_records_the_estimate_once(monkeypatch):
     recorder = Recorder(
         MediaProviderError("api.dev.runwayml.com refused the request (HTTP 503)", http_status=503),
-        ({"id": "task-1", "estimatedCost": 25}, b"", "application/json"),
+        # The contract's shape: an object carrying the credits, not a bare number.
+        ({"id": "task-1", "estimatedCost": {"credits": 25}}, b"", "application/json"),
     )
     adapter = runway_video(monkeypatch, recorder)
 
@@ -309,7 +310,7 @@ def test_runway_submit_that_left_and_got_no_answer_is_not_sent_again(monkeypatch
     """A task may have been created and billed; a second one would be a second charge."""
     recorder = Recorder(
         MediaProviderError("api.dev.runwayml.com did not answer", unanswered=True),
-        ({"id": "task-2", "estimatedCost": 25}, b"", "application/json"),
+        ({"id": "task-2", "estimatedCost": {"credits": 25}}, b"", "application/json"),
     )
     adapter = runway_video(monkeypatch, recorder)
 
@@ -318,6 +319,70 @@ def test_runway_submit_that_left_and_got_no_answer_is_not_sent_again(monkeypatch
 
     assert len(recorder.calls) == 1
     assert adapter.last_estimated_credits is None
+
+
+def test_runway_estimate_is_read_from_the_contracts_credits_object(monkeypatch):
+    """Runway states `estimatedCost` as {"credits": n}. Read as a bare number only, the
+    Nepal film's price was dropped and the books showed 0.74 USD for two whole films."""
+    recorder = Recorder(({"id": "t", "estimatedCost": {"credits": 340}}, b"", "application/json"))
+    adapter = runway_video(monkeypatch, recorder)
+
+    asyncio.run(adapter.create_generation("a comet over the sea"))
+
+    assert adapter.last_estimated_credits == 340.0
+
+
+def test_runway_estimate_as_a_bare_number_is_still_read(monkeypatch):
+    recorder = Recorder(({"id": "t", "estimatedCost": 25}, b"", "application/json"))
+    adapter = runway_video(monkeypatch, recorder)
+
+    asyncio.run(adapter.create_generation("a comet over the sea"))
+
+    assert adapter.last_estimated_credits == 25.0
+
+
+def test_runway_missing_estimate_stays_unknown_and_is_never_the_last_tasks(monkeypatch):
+    """No figure is None, never 0, and never the previous shot's price carried over."""
+    recorder = Recorder(
+        ({"id": "t1", "estimatedCost": {"credits": 340}}, b"", "application/json"),
+        ({"id": "t2"}, b"", "application/json"),
+        ({"id": "t3", "estimatedCost": {"credits": "a lot"}}, b"", "application/json"),
+    )
+    adapter = runway_video(monkeypatch, recorder)
+
+    asyncio.run(adapter.create_generation("first shot"))
+    assert adapter.last_estimated_credits == 340.0
+    asyncio.run(adapter.create_generation("second shot"))
+    assert adapter.last_estimated_credits is None
+    asyncio.run(adapter.create_generation("third shot"))
+    assert adapter.last_estimated_credits is None
+
+
+def test_runway_estimate_is_read_from_the_task_while_it_is_pending(monkeypatch):
+    """The submit answer may omit the price; the task itself states it while it waits."""
+    recorder = Recorder(
+        ({"id": "task-9"}, b"", "application/json"),
+        (
+            {"id": "task-9", "status": "PENDING", "estimatedCost": {"credits": 68}},
+            b"",
+            "application/json",
+        ),
+        # A poll of some other, older task does not overwrite the price of this one.
+        (
+            {"id": "task-old", "status": "PENDING", "estimatedCost": {"credits": 999}},
+            b"",
+            "application/json",
+        ),
+    )
+    adapter = runway_video(monkeypatch, recorder)
+
+    job_id = asyncio.run(adapter.create_generation("a comet over the sea"))
+    assert adapter.last_estimated_credits is None
+    status = asyncio.run(adapter.get_generation_status(job_id))
+    assert status.status == "PENDING"
+    assert adapter.last_estimated_credits == 68.0
+    asyncio.run(adapter.get_generation_status("task-old"))
+    assert adapter.last_estimated_credits == 68.0
 
 
 def test_runway_rejects_a_400_without_asking_again(monkeypatch):

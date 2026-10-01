@@ -17,7 +17,12 @@ from app.integrations.models import Integration, ProviderResource
 from app.integrations.vault import CredentialVault
 from app.media.factory import video_provider_for
 from app.providers.media_http import MediaProviderError
-from app.providers.runway import RunwayVideoAdapter, parse_model_contract, pick_ratio
+from app.providers.runway import (
+    RunwayVideoAdapter,
+    parse_model_contract,
+    pick_duration,
+    pick_ratio,
+)
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -204,11 +209,14 @@ def test_generation_follows_the_contract_and_polls_the_task(runway_api):
         adapter.create_generation("A calm office at dawn", duration_seconds=7, aspect_ratio="9:16")
     )
     assert task_id == "task-1"
+    # Seven seconds of narration need a ten-second clip: a duration is rounded UP to the
+    # next one the contract allows, and the assembler trims. Rounded down, the picture froze
+    # under the dissolves of the Nepal film.
     assert runway_api.bodies[-1] == {
         "model": model,
         "promptText": "A calm office at dawn",
         "ratio": "720:1280",
-        "duration": 5,
+        "duration": 10,
     }
     pending = asyncio.run(adapter.get_generation_status(task_id))
     assert pending.status == "PENDING" and pending.video_bytes is None
@@ -284,6 +292,9 @@ def test_contract_parser_reads_tasks_ratios_and_durations_per_model():
         # Only the vendor's contract may say so: a dry-run flag the API does not declare
         # could submit a real, billed task.
         "dry_run": {"text_to_video": False},
+        # The fields the task declares, so an optional one (audio, negativePrompt) is sent
+        # only to a model whose contract takes it.
+        "fields": {"text_to_video": ["duration", "model", "ratio"]},
     }
     assert contract["m2"]["durations"] == {"text_to_video": {"min": 2, "max": 10}}
     # What the model must be given besides words is part of its contract: m2 and m3 require
@@ -500,3 +511,105 @@ def test_an_image_model_that_only_edits_is_not_offered_for_images(client, header
     chosen = client.post("/api/v1/settings/auto-configure", headers=headers).json()
     assert "image" not in [a["purpose"] for a in chosen["applied"]]
     assert identifier
+
+
+# --------------------------------------------------------------- durations the contract allows
+
+
+def _anyof_contract() -> dict:
+    """The contract shape the vendor publishes for the newer models: `duration` is an
+    anyOf (a bounded integer or null; or a choice of constants), not a bare schema."""
+    seedance = {
+        "properties": {
+            "model": {"const": "seedance2_5"},
+            "promptText": {"type": "string", "maxLength": 3000},
+            "ratio": {"enum": ["1080:1920", "720:1280"]},
+            "duration": {
+                "anyOf": [
+                    {"type": "integer", "minimum": 4, "maximum": 30},
+                    {"type": "null"},
+                ]
+            },
+            "audio": {"type": "boolean"},
+            "seed": {"type": "integer"},
+        }
+    }
+    veo = {
+        "properties": {
+            "model": {"const": "veo3.1"},
+            "promptText": {"type": "string", "maxLength": 1000},
+            "ratio": {"enum": ["1080:1920"]},
+            "duration": {"anyOf": [{"const": 4}, {"const": 6}, {"const": 8}]},
+            "negativePrompt": {"type": "string"},
+        }
+    }
+    schema = {"oneOf": [seedance, veo]}
+    return {
+        "paths": {
+            "/v1/image_to_video": {
+                "post": {"requestBody": {"content": {"application/json": {"schema": schema}}}}
+            }
+        }
+    }
+
+
+def test_duration_bounds_are_read_inside_an_anyof():
+    contract = parse_model_contract(_anyof_contract())
+
+    assert contract["seedance2_5"]["durations"] == {"image_to_video": {"min": 4, "max": 30}}
+    assert contract["veo3.1"]["durations"] == {"image_to_video": [4, 6, 8]}
+    # The prompt's length cap is the contract's, per model and task, not one number for all.
+    assert contract["seedance2_5"]["prompt_max"] == {"image_to_video": 3000}
+    assert contract["veo3.1"]["prompt_max"] == {"image_to_video": 1000}
+    assert "audio" in contract["seedance2_5"]["fields"]["image_to_video"]
+    assert "negativePrompt" in contract["veo3.1"]["fields"]["image_to_video"]
+    assert "audio" not in contract["veo3.1"]["fields"]["image_to_video"]
+
+
+def test_a_duration_is_rounded_up_to_the_next_legal_one_never_down():
+    contract = parse_model_contract(_anyof_contract())
+    seedance = contract["seedance2_5"]["durations"]["image_to_video"]
+    veo = contract["veo3.1"]["durations"]["image_to_video"]
+
+    assert pick_duration(seedance, 4.4) == 5
+    assert pick_duration(veo, 4.4) == 6
+    # A whole number is not pushed past itself by float noise.
+    assert pick_duration(seedance, 5.0) == 5
+    assert pick_duration(seedance, 5.0000001) == 5
+    assert pick_duration(veo, 6.0) == 6
+    # Below the shortest legal clip: the shortest. Above the longest: the longest.
+    assert pick_duration(seedance, 1.2) == 4
+    assert pick_duration(veo, 2.0) == 4
+    assert pick_duration(seedance, 41.0) == 30
+    assert pick_duration(veo, 9.5) == 8
+    # With no contract at all: the request itself, rounded up.
+    assert pick_duration(None, 4.4) == 5
+
+
+# ---------------------------------------------------------------------- what the account holds
+
+
+def test_credit_balance_is_a_free_read_of_the_organization(runway_api):
+    """Asked before every paid step and every shot; it costs nothing and buys nothing."""
+    key = "test-key"  # pragma: allowlist secret
+    adapter = RunwayVideoAdapter(key, runway_api.video_models[0], {})
+
+    assert asyncio.run(adapter.credit_balance()) == 1200.0
+    assert runway_api.calls == [("api.dev.runwayml.com", "GET", "/v1/organization")]
+    assert runway_api.bodies == []
+
+
+def test_a_credit_balance_the_vendor_did_not_state_is_unknown_not_zero(monkeypatch):
+    from app.providers import runway
+
+    calls: list[str] = []
+
+    def transport(host, method, path, headers, body=None, **kwargs):
+        calls.append(f"{method} {path}")
+        return {"tier": {"models": {}}}, b"", "application/json"
+
+    monkeypatch.setattr(runway, "request", transport)
+    key = "test-key"  # pragma: allowlist secret
+
+    assert asyncio.run(RunwayVideoAdapter(key, "m", {}).credit_balance()) is None
+    assert calls == ["GET /v1/organization"]

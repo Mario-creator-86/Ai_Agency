@@ -48,10 +48,13 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import subprocess
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, field_validator
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
@@ -65,6 +68,10 @@ from app.media.models import (
     StoryboardScene,
     VideoRenderJob,
 )
+from app.media.toolchain import find_ffmpeg
+
+if TYPE_CHECKING:
+    from app.media.still_gate import StillPlan
 
 logger = logging.getLogger("studio.picture_qc")
 
@@ -620,3 +627,411 @@ def evaluate_pictures(
         "character_drift_qc": drift,
         "failures": failures + character_failures,
     }
+
+
+# ------------------------------------------------------------ one still, before motion
+#
+# The film-level look above runs after the money is spent. The stills gate
+# (`app.media.still_gate`) asks the same department to look at each candidate still
+# BEFORE a clip is bought: one call per still, at 1080 px. The frames above are 480 px,
+# which is enough to see that a scene is a blank field and not enough to see a face in the
+# lower third of a 9:16 picture.
+
+STILL_TASK = "still_qc"
+STILL_TEMPLATE_VERSION = "still-qc-v1"
+#: The width the still is shown at. A 2K still (1530x2720) is scaled down to it.
+STILL_WIDTH = 1080
+#: The largest still read for judging; a vendor still is a few megabytes.
+MAX_STILL_BYTES = 40_000_000
+
+StillAction = Literal["buy_motion", "regenerate_still", "compose_locally"]
+
+
+class StillVerdict(BaseModel):
+    """What the model saw in one still. Every field is required and every yes/no is a
+    real boolean: an answer that leaves a question out, or answers it in words, does not
+    validate, and a still with no valid verdict is a still nobody looked at."""
+
+    model_config = ConfigDict(extra="ignore")
+    scene: StrictInt
+    faces_visible: StrictBool
+    readable_text: StrictBool
+    matches_plan: StrictBool
+    look_ok: StrictBool
+    technical_ok: StrictBool
+    bible_violations: str = Field(min_length=1, max_length=300)
+    verdict: StillAction
+    reason: str = Field(min_length=1, max_length=300)
+    _clip_violations = field_validator("bible_violations", mode="before")(clipped(300))
+    _clip_reason = field_validator("reason", mode="before")(clipped(300))
+
+
+class StillJudgeReport(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    stills: list[StillVerdict] = Field(default_factory=list, max_length=4)
+
+
+@dataclass(frozen=True)
+class StillJudgement:
+    """The vision half of the stills gate. `verdict` is None whenever status is NOT_RUN."""
+
+    status: str  # MEASURED | NOT_RUN
+    verdict: StillVerdict | None
+    detail_ro: str
+    run_id: str | None
+    looked_by: str | None
+    image_width: int | None
+
+
+_STILL_INSTRUCTIONS = (
+    "You are the studio's quality control. Attached is ONE still, generated for scene "
+    "{scene} of a factual short, before any money is spent on animating it. Judge only what "
+    "you can see. The plan, the film's look and the visual bible's rules are below.\n"
+    "Answer each question about this still:\n"
+    "- faces_visible: is any human face visible, even small, partly turned or in the "
+    "background? A figure seen only from behind, a silhouette or hands alone is not a face.\n"
+    "- readable_text: is there any lettering, number, sign, caption or logo?\n"
+    "- matches_plan: does it show what the plan asks for?\n"
+    "- look_ok: does it match the film's look (light, palette, grain)?\n"
+    "- technical_ok: is it sharp where it should be, free of warped anatomy, smears, "
+    "stripes or artefacts?\n"
+    "- bible_violations: name the violation or write none. Check every rule listed.\n"
+    "- verdict: buy_motion only if the still is right as it is; regenerate_still if a new "
+    "still could fix it; compose_locally if the plan asks for a chart, a title, numbers or "
+    "a black screen, which the studio draws itself.\n"
+    'Return only JSON: {{"stills": [{{"scene": {scene}, "faces_visible": false, '
+    '"readable_text": false, "matches_plan": true, "look_ok": true, "technical_ok": true, '
+    '"bible_violations": "none", "verdict": "buy_motion", "reason": "one short sentence '
+    'saying what you actually see"}}]}}\n'
+)
+
+
+def still_image(ffmpeg: str | None, path: Path | str, width: int = STILL_WIDTH) -> str | None:
+    """The still scaled to `width` px as base64 JPEG, or None when it cannot be made."""
+    source = Path(path)
+    if not ffmpeg or not source.is_file():
+        return None
+    try:
+        if source.stat().st_size > MAX_STILL_BYTES:
+            return None
+        result = subprocess.run(  # noqa: S603 - argument list, no shell
+            [
+                ffmpeg,
+                "-v",
+                "error",
+                "-nostdin",
+                "-i",
+                str(source),
+                "-frames:v",
+                "1",
+                "-vf",
+                f"scale={width}:-2:flags=lanczos",
+                "-q:v",
+                "3",
+                "-f",
+                "image2pipe",
+                "-c:v",
+                "mjpeg",
+                "pipe:1",
+            ],
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0 or not result.stdout:
+        return None
+    return base64.b64encode(result.stdout).decode("ascii")
+
+
+def _still_not_run(
+    detail: str,
+    *,
+    run_id: str | None = None,
+    looked_by: str | None = None,
+    width: int | None = None,
+) -> StillJudgement:
+    return StillJudgement(
+        status="NOT_RUN",
+        verdict=None,
+        detail_ro=f"nu a fost privită: {detail}",
+        run_id=run_id,
+        looked_by=looked_by,
+        image_width=width,
+    )
+
+
+def judge_still(
+    engine: Engine,
+    registry: Any | None,
+    still_path: Path | str,
+    plan: StillPlan,
+    correlation_id: str,
+    *,
+    ffmpeg_path: str | None = None,
+) -> StillJudgement:
+    """One vision call on one candidate still, at 1080 px, by the LOOKERS.
+
+    Returns MEASURED with the verdict only when the model answered for exactly this scene
+    with every field; anything else is NOT_RUN ("nu a fost privită"), which the stills gate
+    treats as a block. Nothing here passes a still by silence.
+    """
+    if registry is None or not registry.registered_ids():
+        return _still_not_run("niciun furnizor de modele nu este înregistrat")
+    with Session(engine) as session:
+        looker = vision_agent(session, *LOOKERS)
+    if looker is None:
+        return _still_not_run("niciun angajat nu are un model care vede")
+    looker_id, looker_name = looker
+    image = still_image(find_ffmpeg(ffmpeg_path), still_path)
+    if image is None:
+        return _still_not_run(
+            "imaginea nu a putut fi pregătită la 1080 px (lipsește codorul sau fișierul)",
+            looked_by=looker_name,
+        )
+    shown = {
+        "scene": plan.scene,
+        "plan": plan.still_prompt,
+        "look": plan.look_block,
+        "camera_move": plan.camera_move,
+        "faces_forbidden": plan.faces_forbidden,
+        "bible_rules": list(plan.bible_rules),
+    }
+    prompt = _STILL_INSTRUCTIONS.format(scene=plan.scene) + wrap_in_inert_boundary(
+        json.dumps(shown, ensure_ascii=False)[:8000], "the-still"
+    )
+
+    from app.agents.structured import structured_run  # noqa: PLC0415
+
+    parsed, first, second = structured_run(
+        engine,
+        registry,
+        looker_id,
+        STILL_TASK,
+        prompt,
+        STILL_TEMPLATE_VERSION,
+        correlation_id,
+        StillJudgeReport,
+        '{"stills": [...]}',
+        summary=f"Mă uit la imaginea scenei {plan.scene} înainte să se cumpere mișcarea.",
+        max_tokens=800,
+        temperature=0.1,
+        extra={"images": [image]},
+    )
+    run = second or first
+    run_id = run["id"]
+    if parsed is None:
+        return _still_not_run(
+            f"{looker_name} nu a dat un verdict utilizabil ({run['status']})",
+            run_id=run_id,
+            looked_by=looker_name,
+            width=STILL_WIDTH,
+        )
+    entries = [verdict for verdict in parsed.stills if verdict.scene == plan.scene]
+    if len(entries) != 1:
+        return _still_not_run(
+            f"{looker_name} nu a răspuns pentru scena {plan.scene}"
+            if not entries
+            else f"{looker_name} a dat {len(entries)} verdicte pentru scena {plan.scene}",
+            run_id=run_id,
+            looked_by=looker_name,
+            width=STILL_WIDTH,
+        )
+    return StillJudgement(
+        status="MEASURED",
+        verdict=entries[0],
+        detail_ro=entries[0].reason,
+        run_id=run_id,
+        looked_by=looker_name,
+        image_width=STILL_WIDTH,
+    )
+
+
+# ------------------------------------------------------------ one clip, before assembly
+#
+# A bought clip is looked at before it is cut into the film: three frames of it (the first,
+# the middle and the last) in one call, at 1080 px, with the same plan, look and bible rules
+# its still was judged against. Three frames see what one cannot: a face that turns toward
+# the camera half-way, a picture that melts or changes place, writing that appears late.
+
+CLIP_TASK = "clip_qc"
+CLIP_TEMPLATE_VERSION = "clip-qc-v1"
+#: The frames shown per clip, in order: first, middle, last.
+CLIP_FRAMES = 3
+
+ClipAction = Literal["keep", "regenerate_motion", "back_to_still"]
+
+
+class ClipVerdict(BaseModel):
+    """What the model saw in one clip's three frames. As with `StillVerdict`, every field is
+    required and every yes/no is a real boolean; a clip with no valid verdict was not seen."""
+
+    model_config = ConfigDict(extra="ignore")
+    scene: StrictInt
+    faces_visible: StrictBool
+    readable_text: StrictBool
+    matches_plan: StrictBool
+    look_ok: StrictBool
+    technical_ok: StrictBool
+    same_shot: StrictBool
+    bible_violations: str = Field(min_length=1, max_length=300)
+    verdict: ClipAction
+    reason: str = Field(min_length=1, max_length=300)
+    _clip_violations = field_validator("bible_violations", mode="before")(clipped(300))
+    _clip_reason = field_validator("reason", mode="before")(clipped(300))
+
+
+class ClipJudgeReport(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    clips: list[ClipVerdict] = Field(default_factory=list, max_length=4)
+
+
+@dataclass(frozen=True)
+class ClipJudgement:
+    """The vision half of clip QC. `verdict` is None whenever status is NOT_RUN."""
+
+    status: str  # MEASURED | NOT_RUN
+    verdict: ClipVerdict | None
+    detail_ro: str
+    run_id: str | None
+    looked_by: str | None
+    image_width: int | None
+    frames: int
+
+
+_CLIP_INSTRUCTIONS = (
+    "You are the studio's quality control. Attached are THREE frames of ONE generated clip "
+    "for scene {scene} of a factual short, in order: the first frame, the middle frame and "
+    "the last frame. The clip was animated from an approved still and has not been cut into "
+    "the film yet. Judge only what you can see. The plan, the camera move asked for, the "
+    "film's look and the visual bible's rules are below.\n"
+    "Answer each question about the clip, looking at all three frames:\n"
+    "- faces_visible: is any human face visible in ANY of the three frames, even small, "
+    "partly turned or in the background? A figure seen only from behind, a silhouette or "
+    "hands alone is not a face.\n"
+    "- readable_text: is there any lettering, number, sign, caption or logo in any frame?\n"
+    "- matches_plan: does the clip show what the plan asks for?\n"
+    "- look_ok: does it keep the film's look (light, palette, grain) in every frame?\n"
+    "- technical_ok: are all three frames free of warped or melting shapes, morphing "
+    "bodies, smears, flicker artefacts and stripes?\n"
+    "- same_shot: are the three frames one continuous shot of the same place, with no cut "
+    "to another picture and nothing turning into something else?\n"
+    "- bible_violations: name the violation or write none. Check every rule listed.\n"
+    "- verdict: keep only if the clip is right as it is; regenerate_motion if animating the "
+    "same still again could fix it; back_to_still if the still itself must change.\n"
+    'Return only JSON: {{"clips": [{{"scene": {scene}, "faces_visible": false, '
+    '"readable_text": false, "matches_plan": true, "look_ok": true, "technical_ok": true, '
+    '"same_shot": true, "bible_violations": "none", "verdict": "keep", "reason": "one short '
+    'sentence saying what you actually see"}}]}}\n'
+)
+
+
+def _clip_not_run(
+    detail: str,
+    *,
+    run_id: str | None = None,
+    looked_by: str | None = None,
+    width: int | None = None,
+    frames: int = 0,
+) -> ClipJudgement:
+    return ClipJudgement(
+        status="NOT_RUN",
+        verdict=None,
+        detail_ro=f"clipul nu a fost privit: {detail}",
+        run_id=run_id,
+        looked_by=looked_by,
+        image_width=width,
+        frames=frames,
+    )
+
+
+def judge_clip(
+    engine: Engine,
+    registry: Any | None,
+    frame_paths: Sequence[Path | str],
+    plan: StillPlan,
+    correlation_id: str,
+    *,
+    motion_prompt: str = "",
+    ffmpeg_path: str | None = None,
+) -> ClipJudgement:
+    """One vision call on one clip's first, middle and last frames, at 1080 px, by the
+    LOOKERS. MEASURED only when the model answered for exactly this scene with every field;
+    anything else is NOT_RUN ("clipul nu a fost privit"), which clip QC treats as a block."""
+    if len(frame_paths) != CLIP_FRAMES:
+        return _clip_not_run(f"s-au tăiat {len(frame_paths)} cadre, nu {CLIP_FRAMES}")
+    if registry is None or not registry.registered_ids():
+        return _clip_not_run("niciun furnizor de modele nu este înregistrat")
+    with Session(engine) as session:
+        looker = vision_agent(session, *LOOKERS)
+    if looker is None:
+        return _clip_not_run("niciun angajat nu are un model care vede")
+    looker_id, looker_name = looker
+    ffmpeg = find_ffmpeg(ffmpeg_path)
+    images = [still_image(ffmpeg, path) for path in frame_paths]
+    if any(image is None for image in images):
+        return _clip_not_run(
+            "cadrele nu au putut fi pregătite la 1080 px (lipsește codorul sau fișierul)",
+            looked_by=looker_name,
+        )
+    shown = {
+        "scene": plan.scene,
+        "plan": plan.still_prompt,
+        "camera_move": plan.camera_move,
+        "motion": motion_prompt,
+        "look": plan.look_block,
+        "faces_forbidden": plan.faces_forbidden,
+        "bible_rules": list(plan.bible_rules),
+    }
+    prompt = _CLIP_INSTRUCTIONS.format(scene=plan.scene) + wrap_in_inert_boundary(
+        json.dumps(shown, ensure_ascii=False)[:8000], "the-clip"
+    )
+
+    from app.agents.structured import structured_run  # noqa: PLC0415
+
+    parsed, first, second = structured_run(
+        engine,
+        registry,
+        looker_id,
+        CLIP_TASK,
+        prompt,
+        CLIP_TEMPLATE_VERSION,
+        correlation_id,
+        ClipJudgeReport,
+        '{"clips": [...]}',
+        summary=f"Mă uit la clipul scenei {plan.scene} înainte să intre în film.",
+        max_tokens=800,
+        temperature=0.1,
+        extra={"images": [image for image in images if image is not None]},
+    )
+    run = second or first
+    run_id = run["id"]
+    if parsed is None:
+        return _clip_not_run(
+            f"{looker_name} nu a dat un verdict utilizabil ({run['status']})",
+            run_id=run_id,
+            looked_by=looker_name,
+            width=STILL_WIDTH,
+            frames=CLIP_FRAMES,
+        )
+    entries = [verdict for verdict in parsed.clips if verdict.scene == plan.scene]
+    if len(entries) != 1:
+        return _clip_not_run(
+            f"{looker_name} nu a răspuns pentru scena {plan.scene}"
+            if not entries
+            else f"{looker_name} a dat {len(entries)} verdicte pentru scena {plan.scene}",
+            run_id=run_id,
+            looked_by=looker_name,
+            width=STILL_WIDTH,
+            frames=CLIP_FRAMES,
+        )
+    return ClipJudgement(
+        status="MEASURED",
+        verdict=entries[0],
+        detail_ro=entries[0].reason,
+        run_id=run_id,
+        looked_by=looker_name,
+        image_width=STILL_WIDTH,
+        frames=CLIP_FRAMES,
+    )

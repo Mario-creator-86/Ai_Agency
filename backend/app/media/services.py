@@ -5,6 +5,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import math
+import re
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -785,10 +790,453 @@ def _scene_cast(
     return stated, guessed
 
 
+# ------------------------------------------------------------------------------ scene kinds
+#
+# SCENE_KINDS (2026-09-27). The Nepal film was one storyboard-wide MOTION_GRAPHIC copied onto
+# every scene, and every scene went to a photographic image model: scene 5 asked for two
+# vertical bars (100 vs 83 billion dollars) and got a woman beside two abstract bars, scene 6
+# asked for a black screen and got a woman in a landscape. Both were paid for. Each scene now
+# carries its own kind. The writer declares it; the words below back him up; a card's numbers
+# are checked against the SUPPORTED claims before anything is stored.
+
+LIVE = "LIVE"
+DATA_CARD = "DATA_CARD"
+TITLE_CARD = "TITLE_CARD"
+BLACK = "BLACK"
+#: Scenes the studio composes itself (cards.py), for 0 credits.
+COMPOSED_KINDS = (DATA_CARD, TITLE_CARD, BLACK)
+#: What a storyboard built without a named style records: the style is decided per scene.
+PER_SCENE_STYLE = "PER_SCENE"
+
+_SCALES: dict[str, float] = {
+    "thousand": 1e3,
+    "thousands": 1e3,
+    "mii": 1e3,
+    "million": 1e6,
+    "millions": 1e6,
+    "mn": 1e6,
+    "mln": 1e6,
+    "mil": 1e6,
+    "milion": 1e6,
+    "milioane": 1e6,
+    "billion": 1e9,
+    "billions": 1e9,
+    "bn": 1e9,
+    "mld": 1e9,
+    "miliard": 1e9,
+    "miliarde": 1e9,
+    "trillion": 1e12,
+    "trillions": 1e12,
+    "tn": 1e12,
+    "trilion": 1e12,
+    "trilioane": 1e12,
+}
+_CURRENCY_WORDS: dict[str, str] = {
+    "usd": "USD",
+    "dollar": "USD",
+    "dollars": "USD",
+    "dolar": "USD",
+    "dolari": "USD",
+    "dolarul": "USD",
+    "eur": "EUR",
+    "euro": "EUR",
+    "euros": "EUR",
+    "gbp": "GBP",
+    "pound": "GBP",
+    "pounds": "GBP",
+    "lire": "GBP",
+    "ron": "RON",
+    "lei": "RON",
+}
+_CURRENCY_SIGNS = {"$": "USD", "€": "EUR", "£": "GBP"}
+_PERCENT_WORDS = frozenset({"percent", "procent", "procente", "procentul"})
+#: Words between a number and its unit, or around a currency, that say nothing of the unit.
+_FILLER = frozenset(
+    {"de", "of", "a", "the", "us", "american", "americani", "americane", "s", "per", "din"}
+)
+#: Words that end a number's unit: "in 2020 and ..." is a year followed by a sentence.
+_NOT_UNITS = frozenset(
+    {"and", "or", "in", "on", "by", "to", "at", "for", "from", "with", "was", "were", "is"}
+    | {"și", "si", "sau", "în", "pe", "la", "cu", "au", "a", "era", "este", "sunt"}
+)
+#: The same unit in the languages a claim and a card are written in.
+_WORD_UNITS: dict[str, str] = {
+    "km": "km",
+    "kilometre": "km",
+    "kilometres": "km",
+    "kilometer": "km",
+    "kilometers": "km",
+    "kilometru": "km",
+    "kilometri": "km",
+    "t": "t",
+    "tone": "t",
+    "tonă": "t",
+    "tonne": "t",
+    "tonnes": "t",
+    "ton": "t",
+    "tons": "t",
+    "people": "people",
+    "persons": "people",
+    "oameni": "people",
+    "persoane": "people",
+}
+
+#: A number as claims and cards write it: 1,000 / 1.000 / 83.3 / 83,3. A number glued to a
+#: word ("COP16") is a name, not a quantity, and is not read.
+_NUMBER = re.compile(r"(?<![\w.,])(\d{1,3}(?:[,.  ]\d{3})+(?:[.,]\d+)?|\d+(?:[.,]\d+)?)(?![\d\w])")
+_CURRENCY_BEFORE = re.compile(r"(US\$|\$|€|£|\bUSD|\bEUR|\bGBP|\bRON)\s?$", re.IGNORECASE)
+_UNIT_STOP = re.compile(r"[,;:!?()\[\]\d]|\.(?:\s|$)")
+
+
+@dataclass(frozen=True)
+class Quantity:
+    """One number a text states, with the unit it is stated in.
+
+    ``kind`` is ``percent``, ``money`` (with ``currency``), ``word`` (with ``word``, e.g. km)
+    or ``plain``; ``scale`` is 1, 1e3, 1e6, 1e9 or 1e12. ``text`` is the number as written.
+    """
+
+    value: float
+    kind: str
+    scale: float = 1.0
+    currency: str | None = None
+    word: str | None = None
+    text: str = ""
+
+
+def _to_float(token: str) -> float:
+    """83.3, 83,3, 1,000, 1.000 and 1,000.5 as the numbers their writers meant."""
+    seps = [ch for ch in token if not ch.isdigit()]
+    if not seps:
+        return float(token)
+    if len(set(seps)) > 1:
+        head, _, tail = token.rpartition(seps[-1])
+        return float(re.sub(r"\D", "", head) + "." + tail)
+    groups = re.split(r"[,.  ]", token)
+    if len(groups) > 2 or (len(groups[1]) == 3 and groups[0] != "0"):
+        return float("".join(groups))
+    return float(f"{groups[0]}.{groups[1]}")
+
+
+def _unit_words(text: str) -> list[str]:
+    return re.findall(r"%|[^\W\d_]+", text.lower())
+
+
+def _read_unit(words: list[str], currency: str | None) -> tuple[str, float, str | None, str | None]:
+    """(kind, scale, currency, word) from the words that follow a number, or a card's unit."""
+    scale = 1.0
+    word: str | None = None
+    percent = False
+    rest = [w for w in words if w not in _FILLER]
+    for index, token in enumerate(rest[:4]):
+        if token == "%" or token in _PERCENT_WORDS:
+            percent = True
+            break
+        if token == "cent" and index and rest[index - 1] == "per":
+            percent = True
+            break
+        if token in _SCALES and scale == 1.0 and word is None:
+            scale = _SCALES[token]
+            continue
+        if token in _CURRENCY_WORDS and currency is None:
+            currency = _CURRENCY_WORDS[token]
+            continue
+        if token in ("la", "sută", "suta") and ("sută" in rest or "suta" in rest):
+            percent = True
+            break
+        if token in _NOT_UNITS:
+            break
+        if word is None and currency is None:
+            word = _WORD_UNITS.get(token, token)
+        break
+    if percent:
+        return "percent", 1.0, None, None
+    if currency:
+        return "money", scale, currency, None
+    if word:
+        return "word", scale, None, word
+    return "plain", scale, None, None
+
+
+def claim_quantities(text: str) -> list[Quantity]:
+    """Every number a sentence states, each with the unit it is stated in."""
+    found: list[Quantity] = []
+    for match in _NUMBER.finditer(text or ""):
+        token = match.group(1)
+        sign = _CURRENCY_BEFORE.search(text[max(0, match.start() - 5) : match.start()])
+        currency = None
+        if sign:
+            mark = sign.group(1).upper()
+            # "US$" and "$" are dollars, "€" euros; a written code ("USD") is itself.
+            currency = _CURRENCY_SIGNS.get(mark[-1], mark)
+        tail = text[match.end() : match.end() + 48]
+        percent_sign = bool(re.match(r"\s?%", tail))
+        tail = _UNIT_STOP.split(tail, maxsplit=1)[0]
+        if percent_sign:
+            kind, scale, currency, word = "percent", 1.0, None, None
+        else:
+            kind, scale, currency, word = _read_unit(_unit_words(tail), currency)
+        found.append(
+            Quantity(
+                value=_to_float(token),
+                kind=kind,
+                scale=scale,
+                currency=currency,
+                word=word,
+                text=text[match.start() : match.end()].strip(),
+            )
+        )
+    return found
+
+
+def card_unit(unit: str) -> Quantity:
+    """A card's unit ("mld. USD", "miliarde de dolari", "%", "km") read as a unit of 1."""
+    words = _unit_words(unit.replace("$", " usd ").replace("€", " eur ").replace("£", " gbp "))
+    kind, scale, currency, word = _read_unit(words, None)
+    return Quantity(value=1.0, kind=kind, scale=scale, currency=currency, word=word, text=unit)
+
+
+def _same_number(stated: float, true: float) -> bool:
+    """Whether ``stated`` is ``true``, or ``true`` rounded to the digits ``stated`` writes.
+
+    83 stands for 83.3 (rounded as written); 84 does not, and neither does 80.
+    """
+    if math.isclose(stated, true, rel_tol=1e-9, abs_tol=1e-9):
+        return True
+    written = Decimal(str(stated)).normalize()
+    places = max(0, -int(written.as_tuple().exponent))
+    step = Decimal(1).scaleb(-places)
+    return Decimal(str(round(true, 9))).quantize(step, rounding=ROUND_HALF_UP) == written
+
+
+def _same_unit(a: Quantity, b: Quantity) -> bool:
+    if a.kind != b.kind:
+        return False
+    if a.kind == "money":
+        return a.currency == b.currency
+    if a.kind == "word":
+        return a.word == b.word
+    return True
+
+
+def _carries(value: float, unit: Quantity, quantities: Sequence[Quantity]) -> bool:
+    """Whether one of the claim's quantities is ``value`` in ``unit``."""
+    return any(
+        _same_unit(unit, q) and _same_number(value, q.value * q.scale / unit.scale)
+        for q in quantities
+    )
+
+
+def _comparable_numbers(text: str, claims: Sequence[str]) -> str | None:
+    """Two or more amounts of one kind that the scene says and its claims carry.
+
+    Only percentages and money compare here: a year next to an amount is not a comparison,
+    and two lengths are rarely the point of a shot. Numbers the claims do not carry decide
+    nothing - they are the review's business, not a reason to draw them.
+    """
+    carried = [q for claim in claims for q in claim_quantities(claim)]
+    groups: dict[tuple[str, str | None], list[Quantity]] = {}
+    for said in claim_quantities(text):
+        if said.kind not in ("percent", "money"):
+            continue
+        if _carries(said.value, said, carried):
+            groups.setdefault((said.kind, said.currency), []).append(said)
+    for group in groups.values():
+        if len({q.value * q.scale for q in group}) >= 2:
+            return ", ".join(q.text for q in group)
+    return None
+
+
+def classify_scene_kind(
+    declared: str | None,
+    visual: str,
+    narration: str = "",
+    claims: Sequence[str] = (),
+) -> tuple[str, str | None]:
+    """The scene's kind and, when the words overruled the writer, the words that did.
+
+    A composed kind the writer chose is kept: nothing here turns a card back into a paid
+    photograph. A LIVE (or missing, or unknown) declaration is judged by the picture it asks
+    for - bars or a chart are a DATA_CARD, a black screen or a fade to black is BLACK, a title
+    card is a TITLE_CARD (the same phrases prompt_lint blocks on a LIVE scene) - and then by
+    its numbers: two comparable amounts its claims carry make a chart.
+    """
+    kind = str(declared or "").strip().upper()
+    if kind in COMPOSED_KINDS:
+        return kind, None
+    from app.media.prompt_lint import classify_kind_phrase  # noqa: PLC0415 - pure text
+
+    phrase = classify_kind_phrase(visual or "")
+    if phrase is not None:
+        return phrase
+    numbers = _comparable_numbers(f"{narration} {visual}", claims)
+    if numbers:
+        return DATA_CARD, numbers
+    return LIVE, None
+
+
+def _card_text_numbers(
+    scene_number: int, card: Mapping[str, Any], claims: Sequence[str]
+) -> list[str]:
+    """Numbers written in a card's words that no SUPPORTED claim of the scene states."""
+    texts = [card.get(key) for key in ("title", "subtitle", "cta")]
+    texts += [bar.get("label") for bar in card.get("bars") or [] if isinstance(bar, Mapping)]
+    carried = [q for claim in claims for q in claim_quantities(claim)]
+    problems: list[str] = []
+    for text in texts:
+        if not isinstance(text, str):
+            continue
+        for said in claim_quantities(text):
+            # As written ("100" for "US$100 billion"), or the same amount in another scale.
+            if not any(
+                _same_number(said.value, q.value)
+                or _same_number(said.value, q.value * q.scale / said.scale)
+                for q in carried
+            ):
+                problems.append(
+                    f"Scena {scene_number}: textul cardului „{text}” scrie {said.text}, un număr "
+                    "pe care nicio afirmație SUSȚINUTĂ a scenei nu îl conține."
+                )
+    return problems
+
+
+def card_problems(
+    scene_number: int,
+    kind: str,
+    card: Any,
+    claims: Mapping[str, tuple[str, str]],
+) -> list[str]:
+    """What is wrong with a scene's card, in Romanian; empty when it may be drawn.
+
+    ``claims`` maps a claim id to (text, status). Every bar's value and unit must be a
+    quantity a SUPPORTED claim states (the value may be rounded to the digits the card writes:
+    83 for 83.3, never 84 or 80), and the bar must name that claim. A number written in the
+    card's words must be one a SUPPORTED claim states. A chart without its numbers is named
+    too: the studio never makes them up.
+    """
+    from app.media.cards import CardError, card_spec_from_json, format_value  # noqa: PLC0415
+
+    if kind not in COMPOSED_KINDS:
+        return []
+    if kind == DATA_CARD and not card:
+        return [
+            f"Scena {scene_number} este un grafic (DATA_CARD), dar nu dă cifrele lui: fiecare "
+            "bară are nevoie de o valoare, o unitate și afirmația verificată din care vine."
+        ]
+    try:
+        spec = card_spec_from_json(kind, dict(card) if isinstance(card, Mapping) else card)
+    except CardError as exc:
+        return [f"Scena {scene_number}: {exc}"]
+    supported = [text for text, status in claims.values() if status == "SUPPORTED"]
+    problems: list[str] = []
+    for bar in spec.bars:
+        shown = f"{format_value(bar.value)} {bar.unit}"
+        if bar.claim_id not in claims:
+            problems.append(
+                f"Scena {scene_number}: bara „{bar.label}” ({shown}) citează afirmația "
+                f"„{bar.claim_id}”, care nu este printre afirmațiile verificate ale filmului."
+            )
+            continue
+        text, status = claims[bar.claim_id]
+        if status != "SUPPORTED":
+            problems.append(
+                f"Scena {scene_number}: bara „{bar.label}” se sprijină pe afirmația "
+                f"„{bar.claim_id}”, care nu este SUSȚINUTĂ de o sursă ({status})."
+            )
+            continue
+        if not _carries(bar.value, card_unit(bar.unit), claim_quantities(text)):
+            stated = ", ".join(q.text for q in claim_quantities(text)) or "niciun număr"
+            problems.append(
+                f"Scena {scene_number}: bara „{bar.label}” arată {shown}, dar afirmația "
+                f"„{bar.claim_id}” nu conține această valoare cu această unitate "
+                f"(ea spune: {stated})."
+            )
+    problems += _card_text_numbers(
+        scene_number, card if isinstance(card, Mapping) else {}, supported
+    )
+    return problems
+
+
+def card_claim_ids(card: Any) -> list[str]:
+    """The claims a card's bars name, in order, each once."""
+    ids: list[str] = []
+    bars = card.get("bars") if isinstance(card, Mapping) else None
+    for bar in bars if isinstance(bars, list) else []:
+        claim_id = bar.get("claim_id") if isinstance(bar, Mapping) else None
+        if isinstance(claim_id, str) and claim_id and claim_id not in ids:
+            ids.append(claim_id)
+    return ids
+
+
+def _scene_narration(scene: Mapping[str, Any]) -> str:
+    return str(
+        scene.get("voiceover_segment") or scene.get("voiceover") or scene.get("narration") or ""
+    ).strip()
+
+
+def _board_scene_kinds(
+    session: Session, scenes: Sequence[Mapping[str, Any]], default_claims: Sequence[str]
+) -> list[dict[str, Any]]:
+    """Each scene's kind, card and card problems, read against the claims as stored now.
+
+    The claims are read again here rather than trusted from the writer: a claim refuted after
+    the script was written must not put its number on screen.
+    """
+    from app.factual.models import FactualClaim  # noqa: PLC0415 - read projection only
+
+    def cited(scene: Mapping[str, Any]) -> list[str]:
+        return [str(cid) for cid in scene.get("claim_ids", default_claims) or []]
+
+    wanted: set[str] = set()
+    for scene in scenes:
+        wanted.update(cited(scene))
+        wanted.update(card_claim_ids(scene.get("card") or scene.get("card_json")))
+    rows: dict[str, tuple[str, str]] = (
+        {
+            claim.id: (claim.claim_text, claim.status)
+            for claim in session.scalars(select(FactualClaim).where(FactualClaim.id.in_(wanted)))
+        }
+        if wanted
+        else {}
+    )
+
+    decided: list[dict[str, Any]] = []
+    for index, scene in enumerate(scenes, start=1):
+        own = cited(scene)
+        supported = [rows[cid][0] for cid in own if cid in rows and rows[cid][1] == "SUPPORTED"]
+        kind, forced = classify_scene_kind(
+            scene.get("scene_kind") or scene.get("kind"),
+            _scene_visual(dict(scene), index),
+            _scene_narration(scene),
+            supported,
+        )
+        card = (scene.get("card") or scene.get("card_json")) if kind != LIVE else None
+        card_ids = card_claim_ids(card) if kind == DATA_CARD else []
+        missing = card is None and kind in (DATA_CARD, TITLE_CARD)
+        problems = (
+            []
+            if missing
+            else card_problems(
+                index, kind, card, {cid: rows[cid] for cid in own + card_ids if cid in rows}
+            )
+        )
+        decided.append(
+            {
+                "kind": kind,
+                "forced_by": forced,
+                "card": dict(card) if isinstance(card, Mapping) else None,
+                "card_claims": card_ids,
+                "card_missing": missing,
+                "problems": problems,
+            }
+        )
+    return decided
+
+
 def generate_storyboard_from_script(
     engine: Engine,
     script_draft_id: str,
-    visual_style: str,
+    visual_style: str | None,
     aspect_ratio: str,
     correlation_id: str,
 ) -> dict:
@@ -856,7 +1304,6 @@ def generate_storyboard_from_script(
                 {
                     "scene_index": 1,
                     "visual_prompt": f"Opening scene illustrating: {script.title}",
-                    "visual_type": "MOTION_GRAPHIC",
                     "duration_seconds": float(script.target_duration_seconds),
                     "voiceover_segment": script.voiceover_full_text,
                     "shot_type": "MEDIUM",
@@ -889,6 +1336,20 @@ def generate_storyboard_from_script(
             if guessed
         }
 
+        # Each scene's own kind, decided before anything is written. A card whose numbers no
+        # SUPPORTED claim carries fails here, as the Content Gate: nothing is stored. A chart
+        # nobody gave numbers for is recorded as missing, never invented - and it is no longer
+        # a LIVE scene a photographic model could be paid for.
+        kinds = _board_scene_kinds(session, scenes_data, script.claim_ids_json or [])
+        problems = [problem for kind in kinds for problem in kind["problems"]]
+        if problems:
+            raise FactualGateError(
+                "Poarta de conținut a oprit storyboardul: " + " ".join(problems[:3]),
+                sorted({cid for kind in kinds for cid in kind["card_claims"]}),
+            )
+        cards_missing = [index for index, kind in enumerate(kinds, start=1) if kind["card_missing"]]
+        board_style = (visual_style or "").strip() or PER_SCENE_STYLE
+
         event = append_event(
             session,
             "media.storyboard_created",
@@ -898,9 +1359,18 @@ def generate_storyboard_from_script(
             {
                 "script_draft_id": script_draft_id,
                 "title": script.title,
-                "visual_style": visual_style,
+                "visual_style": board_style,
                 "aspect_ratio": aspect_ratio,
                 "scene_count": len(scenes_data),
+                # Each scene's kind; where the words overruled the writer, the words that did;
+                # and the charts that still wait for their numbers (never made up here).
+                "scene_kinds": [kind["kind"] for kind in kinds],
+                "kinds_forced": {
+                    str(index): kind["forced_by"]
+                    for index, kind in enumerate(kinds, start=1)
+                    if kind["forced_by"]
+                },
+                "cards_missing": cards_missing,
                 # The storyboard's own record of its cast: how many scenes state somebody,
                 # which names the prose only suggested, and — when nobody is stated — why
                 # there is no cast. A check that finds no character reads this instead of
@@ -922,7 +1392,8 @@ def generate_storyboard_from_script(
             id=storyboard_id,
             script_draft_id=script_draft_id,
             title=f"Storyboard: {script.title}",
-            visual_style=visual_style,
+            # A caller's named style is kept on the board as his word; no scene inherits it.
+            visual_style=board_style,
             aspect_ratio=aspect_ratio,
             target_duration_seconds=script.target_duration_seconds,
             status="APPROVED",
@@ -951,14 +1422,21 @@ def generate_storyboard_from_script(
             )
             st = str(s.get("shot_type", "MEDIUM"))
             tr = str(s.get("transition_in", "CUT"))
+            kind = kinds[idx - 1]
             claims = list(s.get("claim_ids", script.claim_ids_json))
+            # The claims a card's bars stand on are claims this scene uses.
+            claims += [cid for cid in kind["card_claims"] if cid not in claims]
 
             scene_rec = StoryboardScene(
                 id=scene_id,
                 storyboard_id=storyboard_id,
                 scene_index=idx,
                 visual_prompt=vp,
-                visual_type=visual_style,
+                # The scene's own kind, never a style copied from the board (the Nepal film's
+                # six scenes all said MOTION_GRAPHIC, the chart and the black screen too).
+                visual_type=kind["kind"],
+                scene_kind=kind["kind"],
+                card_json=kind["card"],
                 duration_seconds=dur,
                 voiceover_segment=vo,
                 shot_type=st,
@@ -1065,6 +1543,11 @@ def get_storyboard(engine: Engine, storyboard_id: str) -> dict | None:
         view = StoryboardView.model_validate(sb)
         view.scenes = [StoryboardSceneView.model_validate(s) for s in scenes]
         data = view.model_dump()
+        # Each scene's own kind and card, beside the view's columns until the view carries
+        # them itself: a chart is composed for 0 credits, a LIVE scene is bought.
+        for row, scene in zip(scenes, data.get("scenes") or [], strict=False):
+            scene["scene_kind"] = row.scene_kind
+            scene["card_json"] = row.card_json
         # Why this film lists nobody, when its maker decided it shows nobody. Carried beside
         # the view rather than in it, because it is a fact from the ledger, not a column.
         data["cast_note"] = storyboard_cast_note(session, storyboard_id)

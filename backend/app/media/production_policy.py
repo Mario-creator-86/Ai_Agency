@@ -28,7 +28,10 @@ workflow.
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict, dataclass
+import re
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import asdict, dataclass, field, fields
+from datetime import date
 from typing import Any
 from uuid import uuid4
 
@@ -48,6 +51,7 @@ from app.integrations.models import (
     ProviderResource,
     ServiceSelection,
 )
+from app.media import cost_plan
 from app.media.models import (
     CharacterBible,
     CharacterIdentityChange,
@@ -1878,3 +1882,1103 @@ def list_identity_changes(engine: Engine, character_id: str | None = None) -> li
         if character_id:
             query = query.where(CharacterIdentityChange.character_id == character_id)
         return [identity_change_view(row) for row in session.scalars(query)]
+
+
+# ============================================== the model of each scene, chosen for its cost
+#
+# The Owner, 2026-09-27: "Nu trebuie un singur model pe tot filmul! Trebuie sa optimizam
+# costurile!" A film is not locked to one motion model. Every scene states what it needs
+# (kind, tier, seconds, camera move, people / water / fast motion in frame) and is bought on
+# the CHEAPEST model in the Owner's allowed set whose documented or measured capability
+# covers that need. A premium model is bought only where the need asks for it; a card, a
+# black screen or a still the Owner accepted with a local camera move costs no motion at all.
+# Consistency across models comes from the shared look block, the stills made first on one
+# image model, and the colour match in the master - not from forcing one model on the film.
+#
+# Everything below is pure: capability records and the published price table in, a priced
+# plan out. `scene_model_capabilities` is the only part that reads the database.
+
+#: The Owner's per-scene choice of "no generated motion: move the approved still locally".
+LOCAL_MOVE = "LOCAL_MOVE"
+
+#: Kinds composed locally from the verified numbers (app.media.cards): 0 credits.
+COMPOSED_KINDS = ("DATA_CARD", "TITLE_CARD", "BLACK")
+COMPOSED_LABELS_RO = {"DATA_CARD": "Grafic", "TITLE_CARD": "Titlu", "BLACK": "Ecran negru"}
+
+#: What a LIVE scene may carry in frame that not every model films well.
+SCENE_NEEDS = ("people", "water", "fast_motion")
+NEED_LABELS_RO = {
+    "people": "oameni",
+    "water": "apă",
+    "fast_motion": "mișcare rapidă",
+    "general": "scene obișnuite",
+}
+
+#: A model that failed at least this share of at least this many judged generations on a
+#: kind of scene is not trusted with that kind again until the Owner says otherwise.
+FAILURE_HISTORY_MIN_JUDGED = 2
+FAILURE_HISTORY_RATE = 0.5
+
+#: Failures that move the scene to its next-cheapest capable model (that scene only).
+MOVING_FAILURES = ("SAFETY", "CONTRACT")
+#: Failures retried once on the same model, then handed to the Owner.
+RETRY_FAILURES = ("TRANSIENT", "BAD_OUTPUT", "QUALITY")
+#: Two safety refusals on one scene mean the picture is the problem, not the model.
+MAX_SAFETY_MOVES = 1
+
+#: The frame each resolution must deliver in 9:16.
+FRAME_FOR_RESOLUTION = {"1080p": "1080:1920", "720p": "720:1280"}
+
+#: At most this much of a vendor's error text is kept (the adapter already sanitised it).
+FAILURE_DETAIL_MAX = 500
+
+_INSUFFICIENT = re.compile(
+    r"insufficient|not enough credits|out of credits|credit balance|fonduri insuficiente",
+    re.IGNORECASE,
+)
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+
+_PEOPLE_WORDS = re.compile(
+    r"\b(person|people|man|men|woman|women|child|children|kid|kids|farmer|farmers|villager|"
+    r"villagers|worker|workers|crowd|crowds|figure|figures|family|families|hand|hands|"
+    r"herder|herders|porter|porters|pilgrim|pilgrims|oameni|om|femeie|femei|bărbat|bărbați|"
+    r"copil|copii|fermier|fermieri|săteni|mulțime)\b",
+    re.IGNORECASE,
+)
+_WATER_WORDS = re.compile(
+    r"\b(river|rivers|water|waters|waterfall|lake|lakes|sea|ocean|wave|waves|flood|floods|"
+    r"flooded|flooding|rain|rainfall|stream|streams|torrent|glacial lake|râu|râuri|apă|ape|"
+    r"ploaie|inundație|inundații|inundat|lac|cascadă)\b",
+    re.IGNORECASE,
+)
+_FAST_WORDS = re.compile(
+    r"\b(running|runs|rushing|racing|fast|rapid|rapidly|storm|explosion|avalanche|traffic|"
+    r"stampede|collapsing|collapse|galloping|landslide|fleeing|aleargă|rapid|furtună|"
+    r"avalanșă|alunecare de teren)\b",
+    re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True)
+class SceneNeed:
+    """What one scene needs from a motion model. Never a model name."""
+
+    scene_index: int
+    kind: str = "LIVE"
+    #: HERO for the hook and the moments that carry the film, STANDARD for the rest.
+    tier: str = "STANDARD"
+    seconds: float = 0.0
+    camera_move: str = "static"
+    people: bool = False
+    water: bool = False
+    fast_motion: bool = False
+    #: The shot starts from the approved still (image_to_video).
+    first_frame: bool = True
+    #: None: the film's resolution.
+    resolution: str | None = None
+
+    def needs(self) -> tuple[str, ...]:
+        return tuple(name for name in SCENE_NEEDS if getattr(self, name))
+
+    def categories(self) -> tuple[str, ...]:
+        """The kinds of scene a model's failure history is read for."""
+        return self.needs() or ("general",)
+
+
+@dataclass(frozen=True)
+class ModelCapability:
+    """What the studio knows one model can do: the contract, the research, its own results."""
+
+    model_id: str
+    #: 0..1 on the catalogue's scale.
+    quality: float
+    #: The duration contract: {"min", "max"} or {"values"}; None reads the price table's rule.
+    seconds: Mapping[str, Any] | None = None
+    #: The image_to_video ratios; None when the contract did not list them.
+    ratios: tuple[str, ...] | None = None
+    tasks: tuple[str, ...] | None = None
+    #: Quality on a kind of content, where it differs from the overall score.
+    need_quality: Mapping[str, float] = field(default_factory=dict)
+    #: The camera moves it follows; None when nothing is known against any.
+    camera_moves: tuple[str, ...] | None = None
+    #: (failed, judged) generations per kind of scene: "people", "water", "general", ...
+    failures: Mapping[str, tuple[int, int]] = field(default_factory=dict)
+    #: In the production lifecycle's admitted stations.
+    admitted: bool = True
+    #: "documentat" (research) or "măsurat" (the studio's own judged results).
+    quality_source: str = "documentat"
+
+    def as_dict(self) -> dict[str, Any]:
+        return {item.name: getattr(self, item.name) for item in fields(self)}
+
+    def quality_for(self, need: str) -> float:
+        value = self.need_quality.get(need)
+        return float(value) if isinstance(value, int | float) else float(self.quality)
+
+
+@dataclass(frozen=True)
+class FailureRecord:
+    """One refusal or failure of one model on one scene."""
+
+    model_id: str | None
+    kind: str
+    code: str | None = None
+    detail: str | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class FailureVerdict:
+    """What a failure is, and what it does to the scene and the step."""
+
+    kind: str  # SAFETY | CONTRACT | TRANSIENT | BAD_OUTPUT | QUALITY | ACCOUNT | UNKNOWN
+    action: str  # move_scene | retry_same | stop_step | needs_owner
+    reason_ro: str
+    blame_model: bool
+    code: str | None = None
+    http_status: int | None = None
+    detail: str | None = None
+
+    @property
+    def move_scene(self) -> bool:
+        return self.action == "move_scene"
+
+    @property
+    def retry_same(self) -> bool:
+        return self.action == "retry_same"
+
+    @property
+    def stop_step(self) -> bool:
+        return self.action == "stop_step"
+
+
+def _clean_detail(detail: str | None) -> str | None:
+    if not detail:
+        return None
+    text = _CONTROL.sub(" ", str(detail)).strip()
+    return text[:FAILURE_DETAIL_MAX] or None
+
+
+def classify_failure(
+    code: str | None,
+    *,
+    http_status: int | None = None,
+    detail: str | None = None,
+    previous: str | None = None,
+) -> FailureVerdict:
+    """Sort a vendor failure by kind (Runway's failureCode, the HTTP status, its text).
+
+    SAFETY and CONTRACT move THAT scene to its next-cheapest capable model: the refused input
+    is never sent to the same model again, and a safety refusal is not held against the
+    model's picture. A second contract refusal in a row stops the step (the request, not the
+    model, is wrong). TRANSIENT and BAD_OUTPUT retry the same model once. An account problem
+    (no credits, no access) stops the step. Anything unknown goes to the Owner.
+    """
+    upper = str(code or "").strip().upper()
+    text = _clean_detail(detail)
+    haystack = f"{upper} {text or ''}"
+    common: dict[str, Any] = {"code": code or None, "http_status": http_status, "detail": text}
+    if (
+        http_status in (401, 402, 403)
+        or upper.startswith("ACCOUNT")
+        or _INSUFFICIENT.search(haystack)
+    ):
+        return FailureVerdict(
+            kind="ACCOUNT",
+            action="stop_step",
+            reason_ro="Contul furnizorului nu poate plăti sau nu are acces; pasul se oprește.",
+            blame_model=False,
+            **common,
+        )
+    if upper.startswith("SAFETY") or ".SAFETY" in upper:
+        return FailureVerdict(
+            kind="SAFETY",
+            action="move_scene",
+            reason_ro=(
+                "Refuz de siguranță: aceeași imagine nu se mai trimite acestui model; scena "
+                "trece pe următorul model capabil, cel mai ieftin."
+            ),
+            blame_model=False,
+            **common,
+        )
+    if upper.startswith("INTERNAL.BAD_OUTPUT"):
+        return FailureVerdict(
+            kind="BAD_OUTPUT",
+            action="retry_same",
+            reason_ro="Modelul a livrat un rezultat stricat; se reîncearcă o singură dată.",
+            blame_model=True,
+            **common,
+        )
+    if (
+        upper.startswith("THIRD_PARTY.UNAVAILABLE")
+        or upper == "INTERNAL"
+        or upper.startswith("INTERNAL.")
+        or http_status in (408, 429, 500, 502, 503, 504)
+    ):
+        return FailureVerdict(
+            kind="TRANSIENT",
+            action="retry_same",
+            reason_ro="Furnizorul nu a fost disponibil; se așteaptă și se reîncearcă o dată.",
+            blame_model=False,
+            **common,
+        )
+    if upper.startswith("QC.") or upper == "CLIP_QC":
+        return FailureVerdict(
+            kind="QUALITY",
+            action="retry_same",
+            reason_ro="Clipul a picat controlul; se reîncearcă o dată pe același model.",
+            blame_model=True,
+            **common,
+        )
+    if http_status in (400, 422) or upper.startswith(("INPUT_PREPROCESSING", "ASSET", "INVALID")):
+        if str(previous or "").upper() == "CONTRACT":
+            return FailureVerdict(
+                kind="CONTRACT",
+                action="stop_step",
+                reason_ro="Două cereri refuzate la rând (400); pasul se oprește.",
+                blame_model=False,
+                **common,
+            )
+        return FailureVerdict(
+            kind="CONTRACT",
+            action="move_scene",
+            reason_ro=(
+                "Cererea nu se potrivește contractului acestui model; scena trece pe "
+                "următorul model capabil, cel mai ieftin."
+            ),
+            blame_model=False,
+            **common,
+        )
+    return FailureVerdict(
+        kind="UNKNOWN",
+        action="needs_owner",
+        reason_ro="Eroare necunoscută; decide Proprietarul.",
+        blame_model=False,
+        **common,
+    )
+
+
+# ------------------------------------------------------------------------ Romanian figures
+
+
+def _ro_int(value: int) -> str:
+    return f"{int(value):,}".replace(",", ".")
+
+
+def _ro_decimal(value: float, places: int = 2) -> str:
+    return f"{float(value):.{places}f}".replace(".", ",")
+
+
+def _ro_credits(value: int) -> str:
+    """'18 credite', '200 de credite', '1.170 de credite' (Romanian takes 'de' from 20 up)."""
+    number = int(value)
+    rest = abs(number) % 100
+    joiner = " de " if number >= 20 and (rest == 0 or rest >= 20) else " "
+    return f"{_ro_int(number)}{joiner}credite"
+
+
+def _ro_usd(micros: int) -> str:
+    return f"{_ro_decimal(micros / 1_000_000)} USD"
+
+
+def _ro_seconds(seconds: float) -> str:
+    whole = float(seconds)
+    return f"{int(whole)} s" if whole == int(whole) else f"{_ro_decimal(whole, 1)} s"
+
+
+# ------------------------------------------------------------------------ one scene's need
+
+
+def need_from_scene(scene: Mapping[str, Any], total_scenes: int) -> SceneNeed:
+    """A storyboard scene (its dict view) as what it needs from a motion model.
+
+    The tier is the scene's own when it states one; otherwise the hook is HERO and every
+    other scene STANDARD. People, water and fast motion are read from the words the models
+    will receive, never guessed from the narration.
+    """
+    raw_json = scene.get("prompt_json")
+    package: Mapping[str, Any] = raw_json if isinstance(raw_json, Mapping) else {}
+    index = int(scene.get("scene_index") or scene.get("scene_number") or 1)
+    kind = str(scene.get("scene_kind") or package.get("scene_kind") or "LIVE").upper()
+    stated = str(
+        scene.get("tier") or package.get("tier") or scene.get("quality_tier") or ""
+    ).upper()
+    if stated in QUALITY_TIERS:
+        tier = stated
+    else:
+        tier = "HERO" if scene_role(index, total_scenes) == "HOOK" else "STANDARD"
+    seconds = scene.get("duration_seconds") or scene.get("seconds") or package.get("seconds")
+    camera = package.get("camera_move") or scene.get("camera_move") or "static"
+    words = " ".join(
+        str(value)
+        for value in (
+            package.get("still_prompt"),
+            package.get("motion_prompt"),
+            package.get("motion_intent"),
+            scene.get("visual_prompt"),
+            scene.get("visual_description"),
+        )
+        if isinstance(value, str)
+    )
+    return SceneNeed(
+        scene_index=index,
+        kind=kind,
+        tier=tier,
+        seconds=float(seconds or 0.0),
+        camera_move=str(camera).strip().lower() or "static",
+        people=bool(_PEOPLE_WORDS.search(words)),
+        water=bool(_WATER_WORDS.search(words)),
+        fast_motion=bool(_FAST_WORDS.search(words)),
+    )
+
+
+# ------------------------------------------------------------------ what a model can cover
+
+
+def _price(
+    capability: ModelCapability,
+    need: SceneNeed,
+    resolution: str,
+    table: cost_plan.PriceTable,
+) -> tuple[int | None, int | None, str | None, cost_plan.PriceRow | None]:
+    """Credits and billed seconds for this model on this scene, or why it cannot be bought."""
+    try:
+        row = table.row(capability.model_id, resolution)
+    except cost_plan.UnpricedError:
+        return None, None, f"nu are preț publicat la {resolution}", None
+    if row.kind != "video":
+        return None, None, "nu face mișcare", None
+    try:
+        billed = cost_plan.billable_seconds(
+            capability.model_id, need.seconds, table=table, contract=capability.seconds
+        )
+        credits = cost_plan.price_shot(
+            capability.model_id,
+            resolution,
+            need.seconds,
+            table=table,
+            contract=capability.seconds,
+        )
+    except cost_plan.UnpricedError:
+        return None, None, f"nu ține {_ro_seconds(need.seconds)} într-un singur cadru", row
+    return credits, billed, None, row
+
+
+def _shortfalls(
+    capability: ModelCapability,
+    need: SceneNeed,
+    resolution: str,
+    *,
+    allowed: frozenset[str] | None,
+    refused_here: Mapping[str, str],
+) -> tuple[list[str], float]:
+    """Why this model does NOT cover the need (empty: it does), and its effective quality."""
+    why: list[str] = []
+    model = capability.model_id
+    if allowed is not None and model not in allowed:
+        why.append("nu e în setul aprobat de Proprietar")
+    if not capability.admitted:
+        why.append("nu e admis în producție")
+    if model in refused_here:
+        why.append(f"a refuzat deja această scenă ({refused_here[model]})")
+    if need.first_frame and capability.tasks is not None:
+        if "image_to_video" not in capability.tasks:
+            why.append("nu pornește dintr-o imagine aprobată")
+    frame = FRAME_FOR_RESOLUTION.get(resolution)
+    if frame and capability.ratios is not None:
+        if frame not in capability.ratios and f"auto_{resolution}" not in capability.ratios:
+            why.append(f"nu livrează {frame.replace(':', '×')}")
+    move = need.camera_move or "static"
+    if capability.camera_moves is not None and move != "static":
+        if move not in capability.camera_moves:
+            why.append(f"nu face mișcarea «{move}»")
+    needed = required_quality(need.tier)
+    tier = str(need.tier).upper()
+    effective = float(capability.quality)
+    if capability.quality < needed:
+        why.append(
+            f"calitate {_ro_decimal(capability.quality)} sub {_ro_decimal(needed)} "
+            f"cerut pentru {tier}"
+        )
+    for name in need.needs():
+        score = capability.quality_for(name)
+        effective = min(effective, score)
+        if score < needed and score != capability.quality:
+            why.append(
+                f"calitate pe {NEED_LABELS_RO[name]} {_ro_decimal(score)} sub "
+                f"{_ro_decimal(needed)} cerut pentru {tier}"
+            )
+    for category in need.categories():
+        failed, judged = capability.failures.get(category, (0, 0))
+        if judged >= FAILURE_HISTORY_MIN_JUDGED and failed / judged >= FAILURE_HISTORY_RATE:
+            where = (
+                "scene obișnuite"
+                if category == "general"
+                else f"scene cu {NEED_LABELS_RO.get(category, category)}"
+            )
+            why.append(f"a eșuat de {failed} din {judged} ori pe {where}")
+    return why, round(effective, 4)
+
+
+def _history(
+    failures: Mapping[int, Sequence[FailureRecord | Mapping[str, Any]]] | None,
+) -> dict[int, list[FailureRecord]]:
+    history: dict[int, list[FailureRecord]] = {}
+    for index, records in (failures or {}).items():
+        for record in records:
+            if isinstance(record, FailureRecord):
+                entry = record
+            else:
+                entry = FailureRecord(
+                    model_id=record.get("model_id"),
+                    kind=str(record.get("kind") or "UNKNOWN"),
+                    code=record.get("code"),
+                    detail=record.get("detail"),
+                )
+            history.setdefault(int(index), []).append(entry)
+    return history
+
+
+def _option(candidate: dict[str, Any], table: cost_plan.PriceTable) -> dict[str, Any]:
+    return {
+        "model_id": candidate["model_id"],
+        "credits": candidate["credits"],
+        "usd_micros": cost_plan.credits_to_micros(candidate["credits"], table.credit_usd),
+        "quality": candidate["quality"],
+        "why_ro": "; ".join(candidate["why"]) or None,
+    }
+
+
+def _choose_scene(
+    need: SceneNeed,
+    capabilities: Mapping[str, ModelCapability],
+    *,
+    resolution: str,
+    table: cost_plan.PriceTable,
+    allowed: frozenset[str] | None,
+    override: str | None,
+    kept: str | None,
+    bought: bool,
+    hold_ro: str | None,
+    history: list[FailureRecord],
+    today: date | None,
+) -> dict[str, Any]:
+    stills = cost_plan.price_still(
+        cost_plan.STILLS_MODEL,
+        cost_plan.STILLS_RESOLUTION,
+        cost_plan.STILL_CANDIDATES,
+        table=table,
+    )
+    entry: dict[str, Any] = {
+        "scene_index": need.scene_index,
+        "kind": need.kind,
+        "tier": str(need.tier).upper(),
+        "seconds": float(need.seconds),
+        "camera_move": need.camera_move,
+        "needs": list(need.needs()),
+        "model_id": None,
+        "resolution": None,
+        "billed_seconds": 0,
+        "credits": 0,
+        "usd_micros": 0,
+        "still_credits": 0,
+        "price_source": None,
+        "quality": None,
+        "required_quality": None,
+        "decided_by": None,
+        "status": None,
+        "retry": False,
+        "reason_ro": "",
+        "warnings_ro": [],
+        "cheaper": None,
+        "better": None,
+        "excluded": [],
+        "failures": [record.as_dict() for record in history],
+    }
+    if need.kind in COMPOSED_KINDS:
+        entry.update(
+            decided_by="composed",
+            status="COMPOSED",
+            reason_ro=f"{COMPOSED_LABELS_RO[need.kind]} compus local · 0 credite.",
+        )
+        return entry
+    if need.kind != cost_plan.LIVE:
+        entry.update(
+            decided_by="policy",
+            status="NEEDS_OWNER",
+            reason_ro=f"Tip de scenă necunoscut ({need.kind}); decide Proprietarul.",
+        )
+        return entry
+
+    entry.update(
+        still_credits=stills,
+        resolution=resolution,
+        required_quality=required_quality(need.tier),
+    )
+    refused_here = {
+        str(record.model_id): record.kind
+        for record in history
+        if record.kind in MOVING_FAILURES and record.model_id
+    }
+    safety = [record for record in history if record.kind == "SAFETY"]
+
+    candidates: list[dict[str, Any]] = []
+    for capability in capabilities.values():
+        credits, billed, unpriced, row = _price(capability, need, resolution, table)
+        why, quality = _shortfalls(
+            capability, need, resolution, allowed=allowed, refused_here=refused_here
+        )
+        candidates.append(
+            {
+                "model_id": capability.model_id,
+                "credits": credits,
+                "billed_seconds": billed,
+                "row": row,
+                "quality": quality,
+                "quality_source": capability.quality_source,
+                "why": ([unpriced] if unpriced else []) + why,
+                "priced": credits is not None,
+            }
+        )
+    by_id = {c["model_id"]: c for c in candidates}
+    capable = sorted(
+        (c for c in candidates if not c["why"]),
+        key=lambda c: (c["credits"], -c["quality"], c["model_id"]),
+    )
+    entry["excluded"] = [
+        {"model_id": c["model_id"], "why_ro": "; ".join(c["why"]), "credits": c["credits"]}
+        for c in sorted(candidates, key=lambda c: c["model_id"])
+        if c["why"]
+    ]
+
+    def take(chosen: dict[str, Any], decided_by: str, reason: str) -> None:
+        row = chosen["row"]
+        entry.update(
+            model_id=chosen["model_id"],
+            billed_seconds=chosen["billed_seconds"],
+            credits=chosen["credits"],
+            usd_micros=cost_plan.credits_to_micros(chosen["credits"], table.credit_usd),
+            price_source=cost_plan.source_label(row, today=today) if row else None,
+            quality=chosen["quality"],
+            quality_source=chosen["quality_source"],
+            decided_by=decided_by,
+            status="BOUGHT" if bought else "PLANNED",
+            reason_ro=reason,
+        )
+        cheaper_capable = [c for c in capable if c["credits"] < chosen["credits"]]
+        if cheaper_capable:
+            entry["cheaper"] = _option(cheaper_capable[0], table)
+        else:
+            below = [
+                c
+                for c in candidates
+                if c["priced"]
+                and c["model_id"] != chosen["model_id"]
+                and c["credits"] < chosen["credits"]
+            ]
+            if below:
+                closest = max(below, key=lambda c: (c["credits"], c["quality"]))
+                entry["cheaper"] = _option(closest, table)
+        better = [
+            c
+            for c in capable
+            if c["quality"] > chosen["quality"] and c["model_id"] != chosen["model_id"]
+        ]
+        if better:
+            entry["better"] = _option(better[0], table)
+
+    def hold(status: str, reason: str) -> None:
+        # A scene that waits has no model and no price; what it would have been is kept
+        # as a suggestion for the sheet.
+        if entry["model_id"]:
+            entry["suggested"] = {"model_id": entry["model_id"], "credits": entry["credits"]}
+        entry.update(
+            model_id=None,
+            billed_seconds=0,
+            credits=0,
+            usd_micros=0,
+            retry=False,
+            decided_by=entry["decided_by"] or "policy",
+            status=status,
+            reason_ro=reason,
+        )
+
+    if len(safety) > MAX_SAFETY_MOVES and not bought:
+        hold(
+            "NEEDS_STILL",
+            "Două modele au refuzat imaginea acestei scene din motive de siguranță; imaginea "
+            "se întoarce la poarta imaginilor, nu se mai trimite nimănui.",
+        )
+        return entry
+
+    if override == LOCAL_MOVE and not bought:
+        entry.update(
+            decided_by="owner",
+            status="LOCAL",
+            reason_ro=(
+                "Proprietarul a ales imaginea fixă animată local (mișcare de cameră locală): "
+                "imaginea se cumpără, mișcarea costă 0 credite."
+            ),
+        )
+        return entry
+
+    named = kept if bought or (kept and not override) else override
+    if named:
+        chosen = by_id.get(named)
+        who = "owner" if (override and named == override) else "policy"
+        label = "Alegerea Proprietarului" if who == "owner" else "Modelul păstrat"
+        if chosen is None:
+            hold("NEEDS_OWNER", f"{label} ({named}) nu e în catalogul conexiunii; decide din nou.")
+            entry["decided_by"] = who
+            return entry
+        if not chosen["priced"]:
+            hold(
+                "NEEDS_OWNER",
+                f"{label}, {named}, nu poate fi cumpărată: {'; '.join(chosen['why'])}.",
+            )
+            entry["decided_by"] = who
+            return entry
+        if who == "owner":
+            reason = (
+                f"Ales de Proprietar pe foaia de filmare: {named}, "
+                f"{_ro_credits(chosen['credits'])}."
+            )
+        elif bought:
+            reason = f"Cumpărat și acceptat pe {named}; nu se mai cumpără."
+        else:
+            reason = f"Păstrat din foaia aprobată: {named}, {_ro_credits(chosen['credits'])}."
+        take(chosen, who, reason)
+        if chosen["why"] and not bought:
+            entry["warnings_ro"] = [f"{named}: {'; '.join(chosen['why'])}"]
+    elif capable:
+        chosen = capable[0]
+        needs = ", ".join(NEED_LABELS_RO[n] for n in need.needs())
+        reason = (
+            f"{chosen['model_id']} este cel mai ieftin model capabil pentru "
+            f"{str(need.tier).upper()} (cere {_ro_decimal(required_quality(need.tier))}, "
+            f"are {_ro_decimal(chosen['quality'])}"
+            + (f" pe {needs}" if needs else "")
+            + f"): {_ro_seconds(chosen['billed_seconds'])}, {_ro_credits(chosen['credits'])}."
+        )
+        take(chosen, "policy", reason)
+    else:
+        hold(
+            "NEEDS_OWNER",
+            "Niciun model din setul aprobat nu poate filma această scenă: "
+            + " | ".join(f"{e['model_id']}: {e['why_ro']}" for e in entry["excluded"])
+            + ". Decide Proprietarul (alt model sau mișcare locală).",
+        )
+        return entry
+
+    if bought:
+        return entry
+    tries = [
+        record
+        for record in history
+        if record.model_id == entry["model_id"] and record.kind in RETRY_FAILURES
+    ]
+    unknown = [record for record in history if record.kind == "UNKNOWN"]
+    if unknown:
+        hold("NEEDS_OWNER", f"Eroare necunoscută pe {entry['model_id']}; decide Proprietarul.")
+    elif len(tries) >= 2:
+        hold(
+            "NEEDS_OWNER",
+            f"{entry['model_id']} a eșuat de două ori pe această scenă ({tries[-1].kind}); "
+            "decide Proprietarul.",
+        )
+    elif len(tries) == 1:
+        entry["retry"] = True
+        entry["reason_ro"] += f" Se reîncearcă o dată după {tries[0].kind}."
+    if hold_ro:
+        hold("NEEDS_OWNER", hold_ro)
+    return entry
+
+
+def _premium_credits(needs: Sequence[SceneNeed], table: cost_plan.PriceTable) -> int:
+    model, resolution = cost_plan.PREMIUM_REFERENCE
+    total = 0
+    for need in needs:
+        if need.kind != cost_plan.LIVE:
+            continue
+        try:
+            total += cost_plan.price_shot(model, resolution, need.seconds, table=table)
+        except cost_plan.UnpricedError:
+            continue
+    return total
+
+
+def plan_scene_models(
+    needs: Sequence[SceneNeed],
+    capabilities: Sequence[ModelCapability] | Mapping[str, ModelCapability],
+    *,
+    allowed: Iterable[str] | None = None,
+    overrides: Mapping[int, str | None] | None = None,
+    failures: Mapping[int, Sequence[FailureRecord | Mapping[str, Any]]] | None = None,
+    keep: Mapping[int, str] | None = None,
+    bought: Iterable[int] = (),
+    hold: Mapping[int, str] | None = None,
+    spent_credits: int = 0,
+    stills_paid: bool = False,
+    cap_credits: int | None = None,
+    budget_credits: int | None = None,
+    resolution: str = "1080p",
+    table: cost_plan.PriceTable | None = None,
+    today: date | None = None,
+) -> dict[str, Any]:
+    """Price a film scene by scene on the cheapest model that covers each scene's need.
+
+    ``allowed`` is the Owner's allowed set (None: every admitted model the capabilities
+    list). ``overrides`` are his choices on the sheet, per scene: a model id or LOCAL_MOVE;
+    they win. ``failures`` is each scene's history: a SAFETY or CONTRACT failure excludes
+    that model for THAT scene only. ``keep`` pins scenes to the model an approved sheet gave
+    them, and ``bought`` scenes are frozen and never in ``to_buy`` again.
+
+    The film costs the SUM of its scenes. The cap is the approved one when given, else the
+    total plus one redo of the dearest shot plus one more round of stills. A plan whose
+    committed spend (spent + still to buy) is over the cap or the budget buys nothing.
+    """
+    prices = table if table is not None else cost_plan.load_price_table()
+    catalogue: dict[str, ModelCapability] = (
+        {c.model_id: c for c in capabilities.values()}
+        if isinstance(capabilities, Mapping)
+        else {c.model_id: c for c in capabilities}
+    )
+    permitted = frozenset(allowed) if allowed is not None else None
+    chosen_by_owner = {int(k): v for k, v in (overrides or {}).items() if v}
+    pinned = {int(k): v for k, v in (keep or {}).items() if v}
+    frozen = {int(index) for index in bought}
+    held = {int(k): v for k, v in (hold or {}).items()}
+    history = _history(failures)
+
+    scenes = [
+        _choose_scene(
+            need,
+            catalogue,
+            resolution=need.resolution or resolution,
+            table=prices,
+            allowed=permitted,
+            override=chosen_by_owner.get(need.scene_index),
+            kept=pinned.get(need.scene_index),
+            bought=need.scene_index in frozen,
+            hold_ro=held.get(need.scene_index),
+            history=history.get(need.scene_index, []),
+            today=today,
+        )
+        for need in needs
+    ]
+
+    live = [s for s in scenes if s["kind"] == cost_plan.LIVE]
+    motion = [s for s in scenes if s["status"] in ("PLANNED", "BOUGHT")]
+    stills = sum(int(s["still_credits"]) for s in live)
+    motion_credits = sum(int(s["credits"]) for s in motion)
+    total = stills + motion_credits
+    heroes = [s for s in motion if s["tier"] == "HERO"]
+    hero = (heroes or motion)[0] if motion else None
+    hero_credits = int(hero["credits"]) if hero else 0
+    dearest = max((int(s["credits"]) for s in motion), default=0)
+    cap = int(cap_credits) if cap_credits is not None else (total + dearest + stills if live else 0)
+    premium = _premium_credits(needs, prices) + stills
+    saved = max(0, premium - total)
+    to_buy = [s["scene_index"] for s in motion if s["status"] == "PLANNED"]
+    remaining = sum(int(s["credits"]) for s in motion if s["status"] == "PLANNED") + (
+        0 if stills_paid else stills
+    )
+    committed = int(spent_credits) + remaining
+    rows = [
+        prices.row(str(s["model_id"]), str(s["resolution"]))
+        for s in motion
+        if s["model_id"] and s["resolution"]
+    ]
+    source = ""
+    if rows:
+        labels = [cost_plan.source_label(row, today=today) for row in rows]
+        documented = [row for row in rows if row.provenance != cost_plan.MEASURED]
+        if "nevalidat" in labels:
+            source = "nevalidat"
+        elif not documented:
+            source = "măsurat"
+        else:
+            oldest = min(documented, key=lambda row: row.date)
+            source = cost_plan.source_label(oldest, today=today)
+
+    def usd(credits: int) -> int:
+        return cost_plan.credits_to_micros(credits, prices.credit_usd)
+
+    waiting = [s["scene_index"] for s in scenes if s["status"] in ("NEEDS_OWNER", "NEEDS_STILL")]
+    if budget_credits is not None and total > int(budget_credits):
+        status = "OVER_BUDGET"
+    elif committed > cap:
+        status = "OVER_CAP"
+    elif waiting:
+        status = "NEEDS_OWNER"
+    else:
+        status = "READY"
+    buyable = status == "READY" and bool(to_buy)
+    if status in ("OVER_BUDGET", "OVER_CAP"):
+        to_buy = []
+
+    models = sorted({str(s["model_id"]) for s in motion})
+    premium_name = " la ".join(cost_plan.PREMIUM_REFERENCE)
+    summary = (
+        f"Filmul costă {_ro_credits(total)} ({_ro_usd(usd(total))}): {_ro_credits(stills)} "
+        f"pe imagini și {_ro_credits(motion_credits)} pe mișcare, "
+        f"cu modelul ales scenă cu scenă ({', '.join(models) or 'niciun model'}). "
+        f"Față de {premium_name} peste tot ({_ro_credits(premium)}) economisește "
+        f"{_ro_credits(saved)} ({_ro_usd(usd(saved))}). Plafon: {_ro_credits(cap)}."
+    )
+    if status == "OVER_BUDGET":
+        summary += (
+            f" Depășește bugetul de {_ro_credits(int(budget_credits or 0))}; nu se cumpără "
+            "nimic până nu decide Proprietarul."
+        )
+    elif status == "OVER_CAP":
+        summary += (
+            f" Cu cele {_ro_credits(int(spent_credits))} deja cheltuite ar ajunge la "
+            f"{_ro_credits(committed)}, peste plafon; nu se cumpără nimic."
+        )
+    elif waiting:
+        summary += " Așteaptă Proprietarul la scenele " + ", ".join(map(str, waiting)) + "."
+
+    plan_film_scenes: list[dict[str, Any]] = []
+    for s in scenes:
+        if s["status"] in ("PLANNED", "BOUGHT"):
+            plan_film_scenes.append(
+                {
+                    "scene_index": s["scene_index"],
+                    "seconds": s["seconds"],
+                    "kind": cost_plan.LIVE,
+                    "model_id": s["model_id"],
+                    "resolution": s["resolution"],
+                    "hero": hero is not None and s["scene_index"] == hero["scene_index"],
+                }
+            )
+        else:
+            # cost_plan.plan_film prices only LIVE-with-a-model scenes; a local move or a
+            # scene waiting for the Owner has no motion price (its still is counted here).
+            plan_film_scenes.append(
+                {
+                    "scene_index": s["scene_index"],
+                    "seconds": s["seconds"],
+                    "kind": s["kind"] if s["kind"] in COMPOSED_KINDS else s["status"],
+                }
+            )
+
+    return {
+        "scenes": scenes,
+        "models": models,
+        "hero_scene": hero["scene_index"] if hero else None,
+        "stills_credits": stills,
+        "motion_credits": motion_credits,
+        "hero_credits": hero_credits,
+        "rest_credits": motion_credits - hero_credits,
+        "total_credits": total,
+        "cap_credits": cap,
+        "premium_credits": premium,
+        "saved_credits": saved,
+        "stills_usd_micros": usd(stills),
+        "hero_usd_micros": usd(hero_credits),
+        "rest_usd_micros": usd(motion_credits - hero_credits),
+        "total_usd_micros": usd(total),
+        "cap_usd_micros": usd(cap),
+        "premium_usd_micros": usd(premium),
+        "saved_usd_micros": usd(saved),
+        "credit_usd": prices.credit_usd,
+        "price_source": source,
+        "budget_credits": budget_credits,
+        "spent_credits": int(spent_credits),
+        "remaining_credits": remaining,
+        "committed_credits": committed,
+        "to_buy": to_buy,
+        "waiting": waiting,
+        "status": status,
+        "buyable": buyable,
+        "last_failure_kind": None,
+        "summary_ro": summary,
+        "plan_film_scenes": plan_film_scenes,
+    }
+
+
+def replan_after_failure(
+    previous: Mapping[str, Any],
+    needs: Sequence[SceneNeed],
+    capabilities: Sequence[ModelCapability] | Mapping[str, ModelCapability],
+    *,
+    scene_index: int,
+    failure: FailureVerdict,
+    failures: Mapping[int, Sequence[FailureRecord | Mapping[str, Any]]] | None = None,
+    bought: Iterable[int] = (),
+    spent_credits: int = 0,
+    allowed: Iterable[str] | None = None,
+    resolution: str = "1080p",
+    table: cost_plan.PriceTable | None = None,
+    today: date | None = None,
+) -> dict[str, Any]:
+    """The sheet after one scene's shot failed: only THAT scene may change.
+
+    Every other scene keeps the model the approved sheet gave it; the bought ones are frozen
+    and never bought again. A SAFETY or CONTRACT failure moves the scene to its next-cheapest
+    capable model (a second safety refusal sends its picture back to the stills gate); a
+    TRANSIENT or BAD_OUTPUT failure retries the same model once. The approved cap still binds:
+    a move that would break it sends that scene to the Owner instead. An account failure or a
+    second contract refusal in a row stops the step.
+
+    ``failures`` is the full history when given; otherwise the previous sheet's is used.
+    """
+    earlier = {int(s["scene_index"]): s for s in previous.get("scenes", [])}
+    failed_on = earlier.get(int(scene_index), {}).get("model_id")
+    if failures is not None:
+        history = _history(failures)
+    else:
+        history = _history({index: s.get("failures") or [] for index, s in earlier.items()})
+    history.setdefault(int(scene_index), []).append(
+        FailureRecord(
+            model_id=failed_on, kind=failure.kind, code=failure.code, detail=failure.detail
+        )
+    )
+
+    overrides: dict[int, str | None] = {}
+    keep: dict[int, str] = {}
+    for index, entry in earlier.items():
+        moving = index == int(scene_index) and failure.kind in MOVING_FAILURES
+        if entry.get("status") == "LOCAL":
+            overrides[index] = LOCAL_MOVE
+        elif entry.get("decided_by") == "owner" and entry.get("model_id") and not moving:
+            overrides[index] = str(entry["model_id"])
+        elif entry.get("model_id") and not moving:
+            keep[index] = str(entry["model_id"])
+
+    frozen = {int(i) for i in bought}
+    cap = previous.get("cap_credits")
+    arguments: dict[str, Any] = {
+        "allowed": allowed,
+        "overrides": overrides,
+        "failures": history,
+        "keep": keep,
+        "bought": frozen,
+        "spent_credits": spent_credits,
+        "stills_paid": True,
+        "cap_credits": int(cap) if cap is not None else None,
+        "resolution": resolution,
+        "table": table,
+        "today": today,
+    }
+    plan = plan_scene_models(needs, capabilities, **arguments)
+    if plan["status"] == "OVER_CAP" and int(scene_index) not in frozen:
+        moved = next(s for s in plan["scenes"] if s["scene_index"] == int(scene_index))
+        arguments["hold"] = {
+            int(scene_index): (
+                f"Mutarea pe {moved.get('model_id') or 'alt model'} "
+                f"({_ro_credits(int(moved.get('credits') or 0))}) ar depăși plafonul aprobat "
+                f"de {_ro_credits(int(plan['cap_credits']))}; decide Proprietarul."
+            )
+        }
+        plan = plan_scene_models(needs, capabilities, **arguments)
+
+    plan["last_failure_kind"] = failure.kind
+    plan["last_failure"] = {
+        "scene_index": int(scene_index),
+        "model_id": failed_on,
+        "kind": failure.kind,
+        "action": failure.action,
+        "reason_ro": failure.reason_ro,
+    }
+    if failure.stop_step:
+        plan.update(status="STOPPED", buyable=False, to_buy=[])
+        plan["summary_ro"] = f"Pasul s-a oprit la scena {scene_index}: {failure.reason_ro}"
+    return plan
+
+
+# ------------------------------------------------------------- what the catalogue records
+
+
+def scene_model_capabilities(
+    session: Session, integration_id: str, purpose: str = "video"
+) -> list[ModelCapability]:
+    """The capability of every model on one connection, from its contract and its results.
+
+    The contract gives tasks, the image_to_video ratios and the duration bounds; research
+    (`capabilities`) gives the documented quality, per-content quality and camera moves; the
+    studio's own judged generations turn the documented quality into a measured one and
+    count failures per kind of scene. A retired (DEPRECATED) or unavailable model is left
+    out; a model outside the admitted stations is listed but never bought.
+    """
+    from app.integrations.discovery import usable_purposes  # noqa: PLC0415
+    from app.integrations.models import ModelOutcome  # noqa: PLC0415
+
+    integration = session.get(Integration, integration_id)
+    kind = integration.kind if integration else ""
+    outcomes: dict[str, dict[str, list[int]]] = {}
+    for outcome in session.scalars(
+        select(ModelOutcome).where(
+            ModelOutcome.integration_id == integration_id,
+            ModelOutcome.purpose == purpose,
+            ModelOutcome.run_kind.in_(("PRODUCTION", "TEST_BENCHMARK")),
+        )
+    ):
+        if outcome.failure_kind == "SAFETY":
+            continue  # a safety refusal says nothing about the model's picture
+        category = str(outcome.scene_category or "general").lower()
+        counts = outcomes.setdefault(outcome.remote_id, {}).setdefault(category, [0, 0])
+        counts[1] += 1
+        if not outcome.accepted:
+            counts[0] += 1
+
+    found: list[ModelCapability] = []
+    for row in session.scalars(
+        select(ProviderResource)
+        .where(
+            ProviderResource.integration_id == integration_id,
+            ProviderResource.resource_type == "MODEL",
+        )
+        .order_by(ProviderResource.remote_id)
+    ):
+        if not resource_available(row) or str(row.production_status or "") == "DEPRECATED":
+            continue
+        if purpose not in usable_purposes(kind, row):
+            continue
+        meta = row.api_metadata if isinstance(row.api_metadata, dict) else {}
+        caps = row.capabilities if isinstance(row.capabilities, dict) else {}
+        tasks = meta.get("tasks")
+        ratios = meta.get("ratios")
+        durations = meta.get("durations")
+        task = "image_to_video"
+        listed_ratios = ratios.get(task) if isinstance(ratios, dict) else None
+        contract = durations.get(task) if isinstance(durations, dict) else None
+        seconds: dict[str, Any] | None = None
+        if isinstance(contract, list) and contract:
+            seconds = {"values": [int(v) for v in contract]}
+        elif isinstance(contract, dict) and contract:
+            seconds = {k: contract[k] for k in ("min", "max") if k in contract}
+        need_quality = caps.get("need_quality")
+        moves = caps.get("camera_moves")
+        record = model_record(session, integration_id, purpose, str(row.remote_id))
+        annotated = _number(caps.get("quality_score"), 0.5)
+        judged = int(record.get("judged") or 0)
+        found.append(
+            ModelCapability(
+                model_id=str(row.remote_id),
+                quality=_observed_quality(record, annotated),
+                seconds=seconds,
+                ratios=tuple(str(r) for r in listed_ratios)
+                if isinstance(listed_ratios, list)
+                else None,
+                tasks=tuple(str(t) for t in tasks) if isinstance(tasks, list) else None,
+                need_quality={
+                    str(k): float(v)
+                    for k, v in (need_quality or {}).items()
+                    if isinstance(v, int | float)
+                }
+                if isinstance(need_quality, dict)
+                else {},
+                camera_moves=tuple(str(m) for m in moves) if isinstance(moves, list) else None,
+                failures={
+                    category: (counts[0], counts[1])
+                    for category, counts in outcomes.get(str(row.remote_id), {}).items()
+                },
+                admitted=str(row.production_status or "PRODUCTION") in PRODUCTION_READY,
+                quality_source="măsurat" if judged >= 3 else "documentat",
+            )
+        )
+    return found

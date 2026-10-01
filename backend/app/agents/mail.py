@@ -38,6 +38,7 @@ from app.agents.messages import (
     thread_messages,
 )
 from app.agents.models import Agent, AgentMessage, AgentRun
+from app.agents.reviews import mark_unproven_claims
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.models import OwnerPolicy
 from app.providers.registry import ProviderRegistry
@@ -198,6 +199,10 @@ def answer_mail(
             in_reply_to=message_id,
             correlation_id=correlation,
         )
+        # A letter that says media work was done, with no media.* event since the thread
+        # began, is labelled NEEFĂCUT before the Director reads it (Nepal, 2026-09-26: "Am
+        # re-randat pista audio", and nothing had been rendered).
+        mark_unproven_claims(session, sent, correlation)
         original = session.get(AgentMessage, message_id)
         # A HANDOFF is an instruction: it follows the employee into every run until the
         # work is done, so it closes only on the employee's word. A question or a request

@@ -14,7 +14,7 @@ assemble a video to look at, but it may never present one as publishable content
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
@@ -273,30 +273,49 @@ def motion_for_scene(
     the cheapest model that can do the job, production the least expensive that reaches the
     quality. The decision travels with the adapter so the page and the render job can both
     say why.
+
+    The scene's kind (``scene_category``) and its story purpose travel with the requirement
+    and come back on the decision. A card scene (DATA_CARD, TITLE_CARD, BLACK) is composed
+    locally for 0 credits: the router is never asked for it and no adapter is built.
     """
-    from app.media.production_policy import (  # noqa: PLC0415
-        PROMPT_TO_VIDEO,
-        SceneRequirement,
-        choose_model,
-    )
+    from app.media import production_policy  # noqa: PLC0415
+    from app.media.cards import CARD_KINDS  # noqa: PLC0415
+
+    kind = str(scene.get("scene_kind") or scene.get("scene_category") or "").upper()
+    told: dict[str, Any] = {
+        "scene_category": str(scene.get("scene_category") or kind or "GENERAL"),
+        "story_purpose": scene.get("story_purpose"),
+    }
+    if kind in CARD_KINDS:
+        return None, {
+            "model_id": None,
+            "reason": "Scenă compusă local (grafic, titlu sau ecran negru), 0 credite.",
+            **told,
+        }
 
     with Session(engine) as session:
         row = _selected(session, "video")
         if row is None:
-            return None, {"model_id": None, "reason": "No connection is selected for video."}
+            return None, {
+                "model_id": None,
+                "reason": "No connection is selected for video.",
+                **told,
+            }
         # A test films from the words (nothing is bought to make a first frame); production
         # moves the still the Director approved.
-        tasks = (PROMPT_TO_VIDEO,) if environment == "TEST" else ("image_to_video",)
-        requirement = SceneRequirement(
+        tasks = (
+            (production_policy.PROMPT_TO_VIDEO,) if environment == "TEST" else ("image_to_video",)
+        )
+        requirement = production_policy.SceneRequirement(
             purpose="video",
             tasks=tasks,
             tier=tier,
-            scene_category=str(scene.get("scene_category") or "GENERAL"),
+            scene_category=told["scene_category"],
             seconds=seconds,
             budget_usd=budget_usd,
             max_usd_per_second=max_usd_per_second,
         )
-        decision = choose_model(
+        decision = production_policy.choose_model(
             session,
             row.id,
             requirement,
@@ -305,6 +324,7 @@ def motion_for_scene(
             forced=forced_model,
         )
         integration_id = row.id
+    decision = {**decision, **told}
     if not decision.get("model_id"):
         return None, decision
     adapter = video_provider_for(

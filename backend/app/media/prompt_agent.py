@@ -38,6 +38,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from typing import Any
 from uuid import uuid4
 
@@ -49,11 +51,14 @@ from app.agents.memory import agent_for_role, remember
 from app.factual.editorial import SCENE_PURPOSES
 from app.factual.models import FactualClaim, ScriptDraft
 from app.factual.sanitizer import wrap_in_inert_boundary
+from app.media import prompt_lint as lint
 from app.media.models import CharacterBible, Storyboard, StoryboardScene
 from app.media.series_look import (
     PART_PURPOSES,
     SHOT_TYPES,
+    load_factual_look,
     load_series_look,
+    look_block,
     serial_shot_size,
     series_bible,
 )
@@ -108,8 +113,37 @@ REQUIRED_SHOT_FIELDS = (
 LESSON_MARKER = "prompt lesson:"
 
 
+#: What the payload of each call may take, in characters of JSON. Whole claims, lessons and
+#: then scenes are dropped to fit (`trim_payload`); nothing is ever sliced mid-string.
+MAX_BIBLE_PAYLOAD_CHARS = 12000
+MAX_SHOTS_PAYLOAD_CHARS = 16000
+
+#: A storyboard whose model shot plan could not be read, even after the one re-ask. It is
+#: not rendered until a plan is written: template prompts are a TEST convenience only.
+NEEDS_SHOT_PLAN = "NEEDS_SHOT_PLAN"
+
+#: Where each scene's package came from: the video editor's model, the studio's template
+#: (no model reachable; TEST only), or the office serial's fixed look with no model.
+SOURCE_MODEL = "model"
+SOURCE_TEMPLATE = "template"
+SOURCE_SERIES_LOOK = "series_look"
+
+
 class PromptError(ValueError):
     """The prompt package could not be written; nothing was stored."""
+
+
+class ShotPlanUnusable(PromptError):
+    """The model answered, was asked once more, and shots are still missing.
+
+    The storyboard is NEEDS_SHOT_PLAN and a WARNING event names the scenes; nothing about
+    it is rendered until a plan is written.
+    """
+
+    def __init__(self, storyboard_id: str, missing: list[int], reason: str) -> None:
+        self.storyboard_id = storyboard_id
+        self.missing = list(missing)
+        super().__init__(reason)
 
 
 # ------------------------------------------------------------------ the shapes
@@ -129,6 +163,63 @@ class VisualBible(BaseModel):
     weather: str = Field(default="", max_length=200)
     continuity_rules: list[str] = Field(default_factory=list, max_length=10)
     avoid: list[str] = Field(default_factory=list, max_length=12)
+    season: str = Field(default="", max_length=100)
+    # The only place a hex colour is kept: the local card compositor reads it, no image or
+    # video model ever does (`_coerce` moves every hex it finds in a prompt-bound field here).
+    card_palette: list[str] = Field(default_factory=list, max_length=16)
+
+
+#: The bible fields whose words can reach a picture prompt. A code in capitals or a hex
+#: colour in them is refused (`_coerce`): the Nepal bible's "NEPAL_CLIMATE_CRISIS" and
+#: "#2E4A66" were pasted into every prompt and read literally by the image model.
+PROMPT_BOUND_BIBLE_FIELDS = (
+    "style",
+    "realism",
+    "period",
+    "world",
+    "season",
+    "palette",
+    "lighting",
+    "camera_language",
+    "weather",
+    "continuity_rules",
+    "avoid",
+)
+
+_HEX_COLOUR = re.compile(r"#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})\b")
+_LABEL_PREFIX = re.compile(r"^[A-Za-z][\w /'-]{0,24}:\s*")
+
+
+def _hex6(value: str) -> str:
+    """A hex colour as the cards read it: '#RRGGBB', upper case."""
+    digits = value.lstrip("#").upper()
+    if len(digits) == 3:
+        digits = "".join(char * 2 for char in digits)
+    return f"#{digits}"
+
+
+def _scrub_codes(text: str) -> str:
+    """A bible value with every clause that holds a code or a hex colour taken out.
+
+    A hex inside an otherwise worded clause is removed and the words kept ("slate blue
+    (#2E4A66)" is "slate blue"); a clause that is only a label and codes ("primary:
+    #2E4A66") goes. The rest keeps its own punctuation.
+    """
+    pieces = re.split(r"((?<=[.!?])\s+|\s*[;,]\s*)", text)
+    kept: list[str] = []
+    separator = ""
+    for position, piece in enumerate(pieces):
+        if position % 2:
+            separator = piece
+            continue
+        cleaned = " ".join(re.sub(r"\(\s*\)", "", _HEX_COLOUR.sub("", piece)).split())
+        body = _LABEL_PREFIX.sub("", cleaned)
+        if lint.ENUM_CODE.search(cleaned) or not re.search(r"[A-Za-z]", body):
+            continue
+        if kept:
+            kept.append("; " if ";" in separator else ", " if "," in separator else " ")
+        kept.append(cleaned)
+    return " ".join("".join(kept).split())
 
 
 class ShotPrompt(BaseModel):
@@ -151,6 +242,8 @@ class ShotPrompt(BaseModel):
     audio_intent: str = Field(default="", max_length=200)
     transition: str = Field(default="", max_length=200)
     avoid: list[str] = Field(default_factory=list, max_length=10)
+    # One move from prompt_lint.CAMERA_MOVES; anything else is ignored by the compiler.
+    camera_move: str = Field(default="", max_length=40)
 
 
 class ShotPack(BaseModel):
@@ -168,10 +261,17 @@ _BIBLE_INSTRUCTIONS = (
     "if any; the continuity rules every shot must obey (what stays identical from shot to "
     "shot — a character's face and clothing, a location, a time of day, a palette); and what "
     "must never appear. Vertical 9:16, watched on a phone: the subject has to stay readable. "
-    "Be specific and brief — a rule that could describe any film is not a rule. Return only "
+    "Be specific and brief — a rule that could describe any film is not a rule. Write every "
+    "value in plain English words, the way a photographer would say it: the place by its "
+    "name and what it looks like, the season, the weather, the light, and colours named in "
+    "words (slate blue, wet ochre). Never write codes in capitals with underscores and never "
+    "hex colour codes: an image model reads them literally. A chart or a title card is drawn "
+    "by the studio, not by the model; if the film has one, give its colours as hex codes in "
+    "card_palette, the only place a code belongs. Return only "
     'JSON: {"style": "...", "realism": "...", "period": "...", "world": "...", '
-    '"palette": "...", "lighting": "...", "camera_language": "...", "weather": "...", '
-    '"continuity_rules": ["..."], "avoid": ["..."]}.\n'
+    '"season": "...", "palette": "...", "lighting": "...", "camera_language": "...", '
+    '"weather": "...", "continuity_rules": ["..."], "avoid": ["..."], '
+    '"card_palette": ["#RRGGBB"]}.\n'
 )
 
 _SHOTS_INSTRUCTIONS = (
@@ -196,12 +296,22 @@ _SHOTS_INSTRUCTIONS = (
     "add facts, numbers, dates or events that are not in the narration or the claims. Do not "
     "make the film more spectacular than the story: no explosions, crowds, battles or aliens "
     "unless the scene says so. Detailed does not mean long — every phrase must earn its "
-    "place. Return only JSON: "
+    "place.\n\n"
+    "The camera: name the shot size (a wide establishing shot, a medium shot, or a detail "
+    "of hands, objects or texture; never a close-up of a face) and the lens (24mm wide, "
+    "50mm, 85mm compression), and choose exactly one camera_move from this list: static, "
+    "slow push-in, slow pull-back, slow pan left, slow pan right, tilt up, tilt down, aerial "
+    "drift forward, pedestal up, slow orbit. Vary the size and the move across the film; "
+    "never the same one three scenes in a row. In motion, say what moves in the world "
+    "(cloud, wind, water, dust, smoke) and how fast, without camera words. Name colours in "
+    "words, never as hex codes or codes in capitals. When the bible says people's faces must "
+    "not be seen, show people only from behind, small and distant, or their hands. Return "
+    "only JSON: "
     '{"shots": [{"scene_index": 1, "story_purpose": "HOOK", "subject": "...", '
-    '"action": "...", "environment": "...", "camera": "...", "lighting": "...", '
-    '"composition": "...", "motion": "...", "emotion": "...", "background": "...", '
-    '"continuity": "...", "ending_frame": "...", "audio_intent": "...", '
-    '"transition": "...", "avoid": ["..."]}]}.\n'
+    '"action": "...", "environment": "...", "camera": "...", "camera_move": "slow push-in", '
+    '"lighting": "...", "composition": "...", "motion": "...", "emotion": "...", '
+    '"background": "...", "continuity": "...", "ending_frame": "...", '
+    '"audio_intent": "...", "transition": "...", "avoid": ["..."]}]}.\n'
 )
 
 
@@ -399,10 +509,37 @@ _TEXT_REQUEST = re.compile(
 
 
 def strip_on_screen_text(text: str) -> str:
-    """The description with every clause that asks for writing in the picture removed."""
-    parts = re.split(r"(?<=[.!?])\s+|\s*;\s*", str(text or ""))
-    kept = [part for part in parts if part.strip() and not _TEXT_REQUEST.search(part)]
-    return " ".join(" ".join(kept).split())
+    """The description with every clause that asks for writing in the picture removed.
+
+    Clauses are sentences and the parts between ';'. What is kept keeps its own
+    punctuation: the text used to be rejoined with spaces, so every ';' vanished and each
+    package with one was reported as "repaired" although nothing had been taken out. With
+    nothing removed the text comes back as it was (whitespace aside).
+    """
+    said = " ".join(str(text or "").split())
+    pieces = re.split(r"((?<=[.!?])\s+|\s*;\s*)", said)
+    kept: list[str] = []
+    separator = ""
+    removed = False
+    for position, piece in enumerate(pieces):
+        if position % 2:
+            separator = piece
+            continue
+        if not piece.strip():
+            continue
+        if _TEXT_REQUEST.search(piece):
+            removed = True
+            ending = piece.rstrip()[-1:]
+            # A removed sentence took its full stop with it; the clause before keeps one.
+            if ending in ".!?" and kept and kept[-1][-1:] not in ".!?":
+                kept[-1] += ending
+            continue
+        if kept:
+            kept.append("; " if ";" in separator else " ")
+        kept.append(piece.strip())
+    if not removed:
+        return said
+    return " ".join("".join(kept).split())
 
 
 #: A clause that asks for another rendering than the series' look: another medium, another
@@ -470,24 +607,53 @@ def _coerce(data: dict[str, Any], model: type[BaseModel]) -> dict[str, Any]:
     writer's one-line description. His visual bible went the same way for describing the
     palette, the light and the camera as objects instead of sentences. A field that is too
     long is shortened, a structured value is said as a sentence; nothing good is discarded
-    for its formatting.
+    for its formatting. A text that is too long is cut at a whole word, never mid-word.
+
+    A visual bible's prompt-bound fields refuse codes in capitals and hex colours (the Nepal
+    bible, 2026-09-26, was "NEPAL_CLIMATE_CRISIS" and "#2E4A66" throughout): a clause holding
+    one is dropped, and a rule or exclusion holding one is dropped whole. Every hex colour
+    found is kept in ``card_palette``, the one field only the local card compositor reads.
     """
+    bible = model is VisualBible
+    found_hex: list[str] = []
     fitted: dict[str, Any] = {}
     for name, field in model.model_fields.items():
-        if name not in data:
+        if name not in data or (bible and name == "card_palette"):
             continue
         value = data[name]
         limit = _max_length(field)
+        scrub = bible and name in PROMPT_BOUND_BIBLE_FIELDS
         if field.annotation is str:
             text = " ".join(_flatten(value).split())
-            fitted[name] = text[:limit] if limit else text
+            if scrub:
+                found_hex.extend(_HEX_COLOUR.findall(text))
+                text = _scrub_codes(text)
+            fitted[name] = _fit(text, limit) if limit else text
         elif field.annotation == list[str]:
             items = value if isinstance(value, list) else [value]
             cleaned = [" ".join(_flatten(item).split()) for item in items]
             cleaned = [item for item in cleaned if item]
+            if scrub:
+                found_hex.extend(hexes for item in cleaned for hexes in _HEX_COLOUR.findall(item))
+                cleaned = [
+                    item
+                    for item in cleaned
+                    if not _HEX_COLOUR.search(item) and not lint.ENUM_CODE.search(item)
+                ]
             fitted[name] = cleaned[:limit] if limit else cleaned
         else:
             fitted[name] = value
+    if bible:
+        given = data.get("card_palette")
+        stated = given if isinstance(given, list) else [given] if given else []
+        colours = [
+            _hex6(str(item).strip())
+            for item in [*stated, *found_hex]
+            if _HEX_COLOUR.fullmatch(str(item).strip())
+        ]
+        palette = list(dict.fromkeys(colours))[:16]
+        if palette:
+            fitted["card_palette"] = palette
     return fitted
 
 
@@ -510,22 +676,221 @@ def _first_object(text: str, wanted: tuple[str, ...]) -> dict[str, Any] | None:
     return None
 
 
-def _parse_shot_pack(text: str) -> ShotPack | None:
+@dataclass
+class ShotPlanParse:
+    """What could be read of a shot plan, how, and what the decoder said about the rest.
+
+    ``method`` is ``strict`` (the answer decoded as written), ``repaired`` (it decoded after
+    the narrow repair), ``salvaged`` (only shot by shot) or ``none``. ``error`` is the strict
+    decoder's own message with its offset in the answer, kept even when a repair succeeded:
+    it is what a re-ask tells the model, and what the Owner's event carries.
+    """
+
+    shots: dict[int, ShotPrompt] = dataclass_field(default_factory=dict)
+    method: str = "none"
+    error: str | None = None
+
+
+def repair_json(text: str) -> str:
+    """The narrow repair, and nothing else: an inner quote is escaped, a trailing comma dropped.
+
+    Inside a string, a double quote that is not followed (after blanks) by one of ``, : } ]``
+    or the end cannot be the string's end, so it is written as ``\\"``. Outside a string, a
+    comma followed only by blanks and a closing bracket is removed. Valid JSON is unchanged.
+    The Nepal plan (2026-09-26) was lost to exactly the first case:
+    ``"Subtle metallic "ping" as bars stop, then silence"``.
+    """
+    out: list[str] = []
+    in_string = False
+    index = 0
+    size = len(text)
+    while index < size:
+        char = text[index]
+        if in_string:
+            if char == "\\":
+                out.append(text[index : index + 2])
+                index += 2
+                continue
+            if char == '"':
+                ahead = index + 1
+                while ahead < size and text[ahead] in " \t\r\n":
+                    ahead += 1
+                if ahead >= size or text[ahead] in ",:}]":
+                    in_string = False
+                    out.append(char)
+                else:
+                    out.append('\\"')
+                index += 1
+                continue
+            out.append(char)
+            index += 1
+            continue
+        if char == '"':
+            in_string = True
+        elif char == ",":
+            ahead = index + 1
+            while ahead < size and text[ahead] in " \t\r\n":
+                ahead += 1
+            if ahead < size and text[ahead] in "}]":
+                index += 1
+                continue
+        out.append(char)
+        index += 1
+    return "".join(out)
+
+
+def _decoder_error(raw: str, start: int, exc: json.JSONDecodeError) -> str:
+    """The decoder's message, placed in the model's own answer (offset, line, column)."""
+    offset = start + exc.pos
+    line = raw.count("\n", 0, offset) + 1
+    column = offset - (raw.rfind("\n", 0, offset) + 1) + 1
+    return f"{exc.msg} at offset {offset} (line {line}, column {column})"
+
+
+def _shots_from(items: Any) -> dict[int, ShotPrompt]:
     """Every shot that can be placed, fitted to the schema; a broken shot costs only itself."""
     from pydantic import ValidationError  # noqa: PLC0415
 
-    data = _first_object(text, ("shots",))
-    if data is None:
-        return None
-    shots: list[ShotPrompt] = []
-    for raw in data.get("shots") or []:
+    shots: dict[int, ShotPrompt] = {}
+    for raw in items if isinstance(items, list) else []:
         if not isinstance(raw, dict):
             continue
         try:
-            shots.append(ShotPrompt.model_validate(_coerce(raw, ShotPrompt)))
+            shot = ShotPrompt.model_validate(_coerce(raw, ShotPrompt))
         except ValidationError:
             continue
-    return ShotPack(shots=shots[:60]) if shots else None
+        shots.setdefault(shot.scene_index, shot)
+    return shots
+
+
+def _salvage_shots(raw: str) -> list[dict[str, Any]]:
+    """Each shot decoded on its own, from the answer as written or after the narrow repair.
+
+    A shot starts at the brace before its ``"scene_index"`` and ends where the next shot
+    starts; one shot that cannot be read no longer takes the others with it, and a repair
+    that misreads one shot's quotes cannot spill into the next.
+    """
+    decoder = json.JSONDecoder()
+    starts: list[int] = []
+    for match in re.finditer(r'"scene_index"\s*:', raw):
+        brace = raw.rfind("{", 0, match.start())
+        if brace >= 0 and brace not in starts:
+            starts.append(brace)
+    found: list[dict[str, Any]] = []
+    for position, start in enumerate(starts):
+        end = starts[position + 1] if position + 1 < len(starts) else len(raw)
+        chunk = raw[start:end]
+        for attempt in (chunk, repair_json(chunk)):
+            try:
+                data, _end = decoder.raw_decode(attempt)
+            except ValueError:
+                continue
+            if isinstance(data, dict) and "scene_index" in data and "shots" not in data:
+                found.append(data)
+                break
+    return found
+
+
+def parse_shot_plan(text: str) -> ShotPlanParse:
+    """A model's shot plan read in four steps, each only when the one before failed.
+
+    A strict parse; the narrow repair (`repair_json`); a salvage shot by shot; and otherwise
+    nothing, with the decoder's error kept for the one re-ask. Never raises.
+    """
+    raw = str(text or "")
+    start, end = raw.find("{"), raw.rfind("}")
+    if start < 0 or end <= start:
+        return ShotPlanParse(error="no JSON object in the answer")
+    candidate = raw[start : end + 1]
+    error: str | None = None
+    try:
+        data = json.loads(candidate)
+    except json.JSONDecodeError as exc:
+        error = _decoder_error(raw, start, exc)
+        data = _first_object(raw, ("shots",))
+        if data is not None:
+            # A strict object that stands on its own, with prose or a second object around it.
+            error = None
+    if isinstance(data, dict) and "shots" in data:
+        return ShotPlanParse(_shots_from(data.get("shots")), "strict", error)
+    try:
+        repaired = json.loads(repair_json(candidate))
+    except json.JSONDecodeError:
+        repaired = None
+    if isinstance(repaired, dict) and "shots" in repaired:
+        return ShotPlanParse(_shots_from(repaired.get("shots")), "repaired", error)
+    salvaged = _shots_from(_salvage_shots(raw))
+    if salvaged:
+        return ShotPlanParse(salvaged, "salvaged", error)
+    return ShotPlanParse({}, "none", error or "no shot plan in the answer")
+
+
+def _parse_shot_pack(text: str) -> ShotPack | None:
+    """Every shot that can be placed, as a pack; None when not one shot could be read."""
+    parsed = parse_shot_plan(text)
+    shots = [parsed.shots[index] for index in parsed.shots][:60]
+    return ShotPack(shots=shots) if shots else None
+
+
+# ------------------------------------------------------------------ whole-item payloads
+
+
+def _scene_lists(data: Any) -> list[list[Any]]:
+    """Every ``scenes`` list inside a payload, at whatever depth the payload keeps it."""
+    found: list[list[Any]] = []
+    if isinstance(data, dict):
+        for key, value in data.items():
+            if key == "scenes" and isinstance(value, list):
+                found.append(value)
+            else:
+                found.extend(_scene_lists(value))
+    return found
+
+
+def _dumps(data: Any) -> str:
+    return json.dumps(data, ensure_ascii=False, default=str)
+
+
+def trim_payload(data: dict[str, Any], limit: int) -> tuple[dict[str, Any], dict[str, int]]:
+    """The payload made to fit ``limit`` characters by dropping whole items, never by slicing.
+
+    First the longest claims, one at a time; then the studio's prompt lessons, last first;
+    then whole scenes from the end. What is sent always parses, and whatever is sent is
+    whole: the payload used to be cut at 12,000 / 16,000 characters, mid-string, and the
+    model was handed JSON that did not close. Returns the fitted copy and what was dropped.
+    """
+    fitted: dict[str, Any] = json.loads(_dumps(data))
+    dropped = {"claims": 0, "lessons": 0, "scenes": 0}
+    while len(_dumps(fitted)) > limit:
+        holders = [
+            scene
+            for scenes in _scene_lists(fitted)
+            for scene in scenes
+            if isinstance(scene, dict) and isinstance(scene.get("claims"), list) and scene["claims"]
+        ]
+        if holders:
+            longest = max(
+                (
+                    (scene, position)
+                    for scene in holders
+                    for position in range(len(scene["claims"]))
+                ),
+                key=lambda pair: len(_dumps(pair[0]["claims"][pair[1]])),
+            )
+            del longest[0]["claims"][longest[1]]
+            dropped["claims"] += 1
+            continue
+        lessons = fitted.get("lessons")
+        if isinstance(lessons, list) and lessons:
+            lessons.pop()
+            dropped["lessons"] += 1
+            continue
+        lists = [scenes for scenes in _scene_lists(fitted) if scenes]
+        if not lists:
+            break
+        lists[0].pop()
+        dropped["scenes"] += 1
+    return fitted, dropped
 
 
 def _parse_bible(text: str) -> VisualBible | None:
@@ -567,7 +932,8 @@ def build_visual_bible(
     bible: VisualBible | None = None
     run_id = None
     if editor_id is not None and registry is not None:
-        payload = json.dumps(facts, ensure_ascii=False, default=str)[:12000]
+        fitted, _dropped = trim_payload(facts, MAX_BIBLE_PAYLOAD_CHARS)
+        payload = _dumps(fitted)
         result = _run(
             engine,
             registry,
@@ -619,7 +985,7 @@ def build_visual_bible(
 
 def _avoid_list(raw: Any) -> list[str]:
     """The film's own exclusions, on top of the ones the studio always refuses."""
-    theirs = [str(item)[:120] for item in raw] if isinstance(raw, list) else []
+    theirs = [_fit(str(item), 120) for item in raw] if isinstance(raw, list) else []
     merged = list(DEFAULT_NEGATIVES)
     for item in theirs:
         if item and item.lower() not in {m.lower() for m in merged}:
@@ -675,8 +1041,15 @@ def write_shot_prompts(
         board = session.get(Storyboard, storyboard_id)
         bible = dict((board.visual_bible_json or {}) if board else {})
 
+    expected = [int(scene["scene_index"]) for scene in facts["scenes"]]
     packs: dict[int, ShotPrompt] = {}
     run_id = None
+    run_ids: list[str] = []
+    # Whether a model answered at all: an answer that cannot be read is a lost plan, never a
+    # reason to fall back to templates in silence (the Nepal film, 2026-09-26).
+    answered = False
+    reasked = False
+    parsed = ShotPlanParse()
     if editor_id is not None and registry is not None:
         if serial:
             data: dict[str, Any] = {
@@ -692,28 +1065,55 @@ def write_shot_prompts(
         else:
             data = {"visual_bible": bible, "film": facts, "lessons": lessons}
             instructions, template = _SHOTS_INSTRUCTIONS, SHOTS_TEMPLATE
-        payload = json.dumps(data, ensure_ascii=False, default=str)[:16000]
+        fitted, _dropped = trim_payload(data, MAX_SHOTS_PAYLOAD_CHARS)
+        prompt = instructions + wrap_in_inert_boundary(_dumps(fitted), "approved-film")
         result = _run(
             engine,
             registry,
             editor_id,
             "shot_prompts",
-            instructions + wrap_in_inert_boundary(payload, "approved-film"),
+            prompt,
             template,
             correlation,
             f"Scriu prompturile pentru {len(facts['scenes'])} cadre.",
             7000,
         )
         if result is not None:
+            answered = True
             run_id = result["id"]
-            parsed = _parse_shot_pack(result.get("output_text") or "")
-            if parsed is not None:
-                packs = {shot.scene_index: shot for shot in parsed.shots}
+            run_ids.append(str(run_id))
+            parsed = parse_shot_plan(result.get("output_text") or "")
+            packs = dict(parsed.shots)
+            missing = [index for index in expected if index not in packs]
+            # ONE re-ask, carrying the decoder's own words, for a factual film. The serial's
+            # shots are composed from its fixed look when the model's are missing (S8).
+            if missing and not serial:
+                reasked = True
+                again = _run(
+                    engine,
+                    registry,
+                    editor_id,
+                    "shot_prompts",
+                    prompt + _reask_note(parsed, missing),
+                    template,
+                    correlation,
+                    f"Cer din nou planul de cadre: lipsesc cadrele {_listed(missing)}.",
+                    7000,
+                )
+                if again is not None:
+                    run_id = again["id"]
+                    run_ids.append(str(run_id))
+                    second = parse_shot_plan(again.get("output_text") or "")
+                    for index, answer in second.shots.items():
+                        packs.setdefault(index, answer)
+                    parsed = ShotPlanParse(packs, second.method, second.error)
 
     allowed = _allowed_text(facts)
     written: list[dict[str, Any]] = []
     refused: list[str] = []
     previous_ending = ""
+    kept_from_before: list[int] = []
+    moves: list[str] = []
     with Session(engine) as session, session.begin():
         scenes = list(
             session.scalars(
@@ -723,17 +1123,36 @@ def write_shot_prompts(
             )
         )
         facts_by_index = {int(s["scene_index"]): s for s in facts["scenes"]}
+        lost = answered and not serial and any(s.scene_index not in packs for s in scenes)
         for scene in scenes:
             scene_facts = facts_by_index.get(scene.scene_index, {})
             shot = packs.get(scene.scene_index)
+            earlier = dict(scene.prompt_json or {})
+            if lost and shot is None and earlier.get("source") == SOURCE_MODEL:
+                # A plan a model wrote before is never overwritten by a template because
+                # this answer could not be read.
+                kept_from_before.append(scene.scene_index)
+                previous_ending = str(earlier.get("ending_frame") or "")
+                continue
             package, notes = _validated_package(shot, scene_facts, bible, allowed, previous_ending)
             refused.extend(f"cadrul {scene.scene_index}: {note}" for note in notes)
             if serial:
                 package = _serial_package(package, shot, scene_facts, look)
                 scene.shot_type = SHOT_TYPES[package["shot_size"]]
+                package["source"] = SOURCE_MODEL if shot is not None else SOURCE_SERIES_LOOK
                 composed = compose_serial_prompt(package, look)
             else:
-                composed = compose_prompt(package, bible)
+                # Two prompts per filmed scene (compile_prompts); a scene composed locally
+                # carries none, and its visual_prompt stays the writer's line.
+                package["scene_kind"] = str(getattr(scene, "scene_kind", None) or LIVE_KIND).upper()
+                package["shot_type"] = scene.shot_type
+                compiled = compile_prompts(package, bible, previous_moves=moves)
+                package.update(compiled)
+                if compiled["camera_move"]:
+                    moves.append(compiled["camera_move"])
+                composed = compiled["still_prompt"] or str(
+                    package.get("writer_visual") or scene.visual_prompt or ""
+                )
             scene.prompt_json = package
             scene.story_purpose = package["story_purpose"]
             scene.visual_prompt = composed
@@ -746,18 +1165,62 @@ def write_shot_prompts(
                     "from_model": shot is not None,
                 }
             )
-        append_event(
-            session,
-            "media.shot_prompts_written",
-            "storyboard",
+        missing = [
+            s.scene_index
+            for s in scenes
+            if s.scene_index not in packs and s.scene_index not in kept_from_before
+        ]
+        board = session.get(Storyboard, storyboard_id)
+        if lost and missing:
+            if board is not None:
+                board.status = NEEDS_SHOT_PLAN
+            append_event(
+                session,
+                "media.shot_prompts_incomplete",
+                "storyboard",
+                storyboard_id,
+                1,
+                {
+                    "severity": "WARNING",
+                    "from_model": sum(1 for item in written if item["from_model"]),
+                    "missing_scenes": missing,
+                    "kept_from_before": kept_from_before,
+                    "decoder_error": parsed.error,
+                    "parse_method": parsed.method,
+                    "reasked": reasked,
+                    "run_ids": run_ids,
+                },
+                correlation,
+            )
+        else:
+            if board is not None and board.status == NEEDS_SHOT_PLAN:
+                board.status = "APPROVED"  # the plan it was waiting for is written
+            append_event(
+                session,
+                "media.shot_prompts_written",
+                "storyboard",
+                storyboard_id,
+                1,
+                {
+                    "shots": len(written),
+                    "from_model": sum(1 for item in written if item["from_model"]),
+                    "repaired": refused[:6],
+                    "parse_method": parsed.method,
+                    "reasked": reasked,
+                },
+                correlation,
+            )
+    if lost and missing:
+        logger.warning(
+            "shot_prompts_incomplete",
+            extra={"storyboard_id": storyboard_id, "missing": missing, "error": parsed.error},
+        )
+        raise ShotPlanUnusable(
             storyboard_id,
-            1,
-            {
-                "shots": len(written),
-                "from_model": sum(1 for item in written if item["from_model"]),
-                "repaired": refused[:6],
-            },
-            correlation,
+            missing,
+            f"Planul de cadre al editorului nu a putut fi citit pentru cadrele "
+            f"{_listed(missing)}, nici după a doua cerere; filmul așteaptă un plan "
+            f"({NEEDS_SHOT_PLAN}).",
         )
     logger.info(
         "shot_prompts_written",
@@ -770,6 +1233,68 @@ def write_shot_prompts(
         "run_id": run_id,
         "bible": bible,
     }
+
+
+def _listed(indexes: list[int]) -> str:
+    return ", ".join(str(index) for index in indexes)
+
+
+def _reask_note(parsed: ShotPlanParse, missing: list[int]) -> str:
+    """What the one re-ask adds to the brief: the decoder's error and the missing scenes."""
+    return (
+        "\n\nYour previous answer could not be read in full. The JSON decoder said: "
+        f"{parsed.error or 'no readable shot plan'}. Scenes missing from what could be read: "
+        f"{_listed(missing)}. Answer again with the complete JSON for every scene and nothing "
+        'else. Inside a value, write a double quote as \\" or use single quotes.\n'
+    )
+
+
+def shot_plan_gaps(session: Session, storyboard_id: str) -> list[int]:
+    """The scenes of a storyboard whose package was not written by the model."""
+    return [
+        scene.scene_index
+        for scene in session.scalars(
+            select(StoryboardScene)
+            .where(StoryboardScene.storyboard_id == storyboard_id)
+            .order_by(StoryboardScene.scene_index)
+        )
+        if (scene.prompt_json or {}).get("source") != SOURCE_MODEL
+    ]
+
+
+def hold_for_shot_plan(engine: Engine, storyboard_id: str, correlation_id: str) -> list[int]:
+    """Stop a film whose shots a model did not write: NEEDS_SHOT_PLAN and a WARNING event.
+
+    Returns the scenes without a model package; an empty list means the film may go on and
+    nothing was changed. Template prompts are a TEST convenience; in PRODUCTION the media
+    stage asks this before anything is bought.
+    """
+    with Session(engine) as session, session.begin():
+        gaps = shot_plan_gaps(session, storyboard_id)
+        board = session.get(Storyboard, storyboard_id)
+        if not gaps or board is None:
+            return gaps
+        total = int(board.total_scenes or 0) or len(gaps)
+        board.status = NEEDS_SHOT_PLAN
+        append_event(
+            session,
+            "media.shot_prompts_incomplete",
+            "storyboard",
+            storyboard_id,
+            1,
+            {
+                "severity": "WARNING",
+                "from_model": max(0, total - len(gaps)),
+                "missing_scenes": gaps,
+                "decoder_error": None,
+                "parse_method": "not_model",
+                "reasked": False,
+                "run_ids": [],
+                "held_by": "media_stage",
+            },
+            correlation_id,
+        )
+    return gaps
 
 
 def _validated_package(
@@ -813,6 +1338,16 @@ def _validated_package(
         "transition": (shot.transition if shot else "dissolve into the next shot"),
         "avoid": _avoid_list(shot.avoid if shot else None),
         "characters": scene.get("characters") or [],
+        # The plan's own camera move, when it named one from the enum; the compiler
+        # chooses one otherwise (`choose_camera_move`).
+        "camera_move": (
+            shot.camera_move.strip().lower()
+            if shot and shot.camera_move.strip().lower() in lint.CAMERA_MOVES
+            else ""
+        ),
+        # Where this package came from. A render in PRODUCTION requires "model": template
+        # prompts are a TEST convenience (SHOT_PLAN_PARSE, 2026-09-27).
+        "source": SOURCE_MODEL if shot is not None else SOURCE_TEMPLATE,
     }
     for key in ("subject", "action", "environment", "background", "composition", "ending_frame"):
         original = str(package.get(key) or "")
@@ -1072,8 +1607,527 @@ def compose_prompt(package: dict[str, Any], bible: dict[str, Any]) -> str:
             parts.append(f"{label}: {said}")
     parts.append(f"Avoid: {', '.join(str(a) for a in (package.get('avoid') or [])[:6])}")
     text = " ".join(f"{part}." for part in parts if part)
-    text = " ".join(text.split())
-    return text[:MAX_PROMPT_CHARS]
+    return cut_at_sentence(text, MAX_PROMPT_CHARS)
+
+
+def cut_at_sentence(text: str, limit: int) -> str:
+    """``text`` on one line within ``limit`` UTF-16 units, cut after its last whole sentence.
+
+    A prompt sliced at a character count ends mid-word, and the model reads the fragment as
+    an instruction. With no sentence end inside the limit the cut is at the last whole word;
+    only a single word longer than the limit is cut inside itself.
+    """
+    said = " ".join(str(text or "").split())
+    if limit <= 0:
+        return ""
+    if lint.utf16_units(said) <= limit:
+        return said
+    used = 0
+    end = 0
+    for index, char in enumerate(said):
+        used += lint.utf16_units(char)
+        if used > limit:
+            break
+        end = index + 1
+    head = said[:end]
+    stops = [m.end() for m in re.finditer(r"[.!?](?=\s|$)", said[: end + 1]) if m.end() <= end]
+    if stops:
+        return head[: stops[-1]]
+    if said[end : end + 1] == " ":
+        return head.rstrip()
+    if " " in head:
+        return head.rsplit(" ", 1)[0].rstrip(" ,;:")
+    return head
+
+
+# ------------------------------------------------------------------ the compiler
+#
+# compile_prompts (2026-09-27, after the Nepal film): two prompts per filmed scene, each
+# written for the model that reads it, from the shot plan's package and the film's bible.
+#
+# - The still prompt goes to the image model (seedream5_pro): 60-120 words of plain
+#   photographic English that open with the film's look block, then the frame (shot size,
+#   lens, angle), the subject, the people as the bible allows them, a 9:16 composition
+#   with the lower quarter calm for captions, and the light. No codes, no hex, no "Camera:"
+#   or "Motion:" line, no quotations, no "Avoid:" list: at most two inline exclusions.
+# - The motion prompt goes with the approved still to the video model: 20-70 words that
+#   never describe the picture again, only exactly one camera move from the enum, one motion
+#   of the world, one speed word, and the closing line. Each video model has its dialect:
+#   veo takes its exclusions as negativePrompt nouns and no negation in its promptText;
+#   seedance and wan take short constraint sentences; Runway gen4 only positive words.
+# - Caps come from the model's contract and are met by leaving out whole sentences, the
+#   least important first, never by slicing.
+
+LIVE_KIND = "LIVE"
+DEFAULT_STILL_MODEL = "seedream5_pro"
+DEFAULT_MOTION_MODEL = "seedance2_5"
+STILL_MAX_WORDS = lint.STILL_WORDS[1]
+MOTION_MIN_WORDS, MOTION_MAX_WORDS = lint.MOTION_WORDS
+
+#: How each camera move of the enum is said. Each sentence names exactly one move (as
+#: prompt_lint.camera_moves reads it) and carries its speed word.
+MOVE_SENTENCES: dict[str, str] = {
+    "static": "Static camera, held steady.",
+    "slow push-in": "Slow push-in toward the subject.",
+    "slow pull-back": "Slow pull-back that widens the view.",
+    "slow pan left": "Slow pan left across the scene.",
+    "slow pan right": "Slow pan right across the scene.",
+    "tilt up": "Gentle tilt up.",
+    "tilt down": "Gentle tilt down.",
+    "aerial drift forward": "Slow aerial drift forward.",
+    "pedestal up": "Gentle pedestal up.",
+    "slow orbit": "Slow orbit around the subject.",
+}
+
+#: The moves that suit each shot size, best first, for a plan that named none. "static" is
+#: never chosen for a plan that did not ask for it: the Nepal clips, asked for "no camera
+#: movement" on every scene, came back almost still (mean YDIF about 1.1 of 255).
+SIZE_MOVES: dict[str, tuple[str, ...]] = {
+    "aerial": ("aerial drift forward", "slow pan right", "slow push-in"),
+    "wide": ("slow pan right", "slow push-in", "slow pan left", "slow pull-back"),
+    "medium": ("slow push-in", "slow pan left", "slow orbit"),
+    "close": ("slow push-in", "tilt up", "pedestal up"),
+    "detail": ("slow push-in", "tilt down", "pedestal up"),
+}
+
+COMPOSITION_SENTENCE = (
+    "Vertical 9:16 frame, main subject in the upper two thirds, lower quarter calm and uncluttered."
+)
+STILL_EXCLUSIONS = "No text, no logo."
+PEOPLE_SENTENCE = (
+    "Any people appear only as small distant figures seen from behind, faces turned away."
+)
+FACES_CONSTRAINT = "Faces stay turned away from the camera."
+MOTION_PAD = "The movement stays smooth and unhurried."
+DEFAULT_WORLD_MOTION = "Soft haze drifts slowly through the air."
+VEO_NEGATIVE = ("text", "subtitles", "logo", "watermark")
+VEO_FACES = "human faces"
+
+_COLOUR_WORDS = re.compile(
+    r"\b(?:blue|blues|gold|golden|grey|gray|greys|brown|browns|green|greens|red|reds|amber"
+    r"|ochre|teal|orange|yellow|purple|violet|pink|crimson|beige|cyan|magenta|silver"
+    r"|palette|hue|tones?)\b",
+    re.IGNORECASE,
+)
+_CAMERA_WORDS = re.compile(
+    r"\b(?:camera|lens|shot|pan|pans|panning|tilt\w*|zoom\w*|dolly|static|locked|tracking"
+    r"|handheld|orbit\w*|push|pull|crane|frame|framing|angle|movement)\b",
+    re.IGNORECASE,
+)
+_PERCENT = re.compile(r"\d\s?%|\bper\s?cent\b", re.IGNORECASE)
+_FACE_KEPT = re.compile(r"\bfrom\s+behind\b|\bdistant\b", re.IGNORECASE)
+_QUOTE_MARKS = re.compile('["“”„]')
+_NOT_A_PERSON = re.compile(r"\b(?:no|without|not\s+a|zero)\s+(?:\w+\s+)?$")
+
+
+def _clauses_of(text: Any, *, motion: bool = False) -> list[str]:
+    """The clauses of a plan field that may enter a prompt, in the plan's words.
+
+    Dropped: codes, hex colours (their parentheses too), a negation ("no camera movement"
+    is still about the camera), a percentage, a chart, a black screen or a title (those
+    scenes are composed locally), writing, a quotation, a label such as "Direction:". For
+    the motion prompt also anything about the camera, a colour or a "then" chain.
+    """
+    said = _flatten(text).replace("’", "'").replace("‘", "'")
+    said = re.sub(r"\(\s*\)", "", _HEX_COLOUR.sub("", said))
+    kept: list[str] = []
+    for clause in re.split(r"[;,.!?]\s*|\s*\(|\)\s*|\s+-{1,2}\s+|\s*—\s*", said):
+        part = _LABEL_PREFIX.sub("", " ".join(clause.split()).strip(" -:/"))
+        if not re.search(r"[A-Za-z]", part) or part.lower() in ("n/a", "none"):
+            continue
+        if (
+            lint.ENUM_CODE.search(part)
+            or lint.NEGATION.search(part)
+            or lint.INLINE_EXCLUSION.search(part)
+            or _PERCENT.search(part)
+            or lint.classify_kind_phrase(part)
+            or _TEXT_REQUEST.search(part)
+            or _QUOTE_MARKS.search(part)
+        ):
+            continue
+        if motion and (
+            _CAMERA_WORDS.search(part)
+            or lint.camera_moves(part)
+            or _COLOUR_WORDS.search(part)
+            or lint.THEN_CHAIN.search(part)
+        ):
+            continue
+        kept.append(part)
+    return kept
+
+
+def _phrase(clauses: list[str], max_words: int) -> str:
+    """Whole clauses joined while they fit ``max_words``; a first clause alone that does
+    not fit is kept to its first ``max_words`` words."""
+    fitted: list[str] = []
+    count = 0
+    for clause in clauses:
+        words = len(clause.split())
+        if count + words > max_words:
+            if not fitted:
+                fitted.append(" ".join(clause.split()[:max_words]))
+            break
+        fitted.append(clause)
+        count += words
+    return ", ".join(fitted)
+
+
+def _sentence(text: str) -> str:
+    said = " ".join(str(text or "").split()).strip(" ,;:")
+    if not said:
+        return ""
+    said = said[:1].upper() + said[1:]
+    return said if said.endswith((".", "!", "?")) else f"{said}."
+
+
+def _person_window(text: str, start: int) -> str:
+    """The words around a person mention, as prompt_lint reads them: its own sentence,
+    three words before and six after."""
+    offset = 0
+    for sentence in re.split(r"(?<=[.!?;])\s+", text):
+        begin = text.find(sentence, offset)
+        if begin <= start < begin + len(sentence):
+            words = list(re.finditer(r"\S+", sentence))
+            index = next(
+                (i for i, w in enumerate(words) if w.start() <= start - begin < w.end()), 0
+            )
+            first = words[max(0, index - 3)].start()
+            last = words[min(len(words) - 1, index + 6)].end()
+            return sentence[first:last]
+        offset = begin + len(sentence)
+    return ""
+
+
+def hide_faces(text: str) -> str:
+    """Every person the text shows, kept from behind: "seen from behind" is added after a
+    person mention that has neither "from behind" nor "distant" among its nearby words."""
+    said = text
+    for _ in range(32):
+        changed = False
+        for match in lint.PERSON.finditer(said):
+            before = said[max(0, match.start() - 16) : match.start()].lower()
+            if _NOT_A_PERSON.search(before):
+                continue
+            if _FACE_KEPT.search(_person_window(said, match.start())):
+                continue
+            said = f"{said[: match.end()]} seen from behind{said[match.end() :]}"
+            changed = True
+            break
+        if not changed:
+            break
+    return said
+
+
+def _shows_people(text: str) -> bool:
+    for match in lint.PERSON.finditer(text):
+        before = text[max(0, match.start() - 16) : match.start()].lower()
+        if not _NOT_A_PERSON.search(before):
+            return True
+    return False
+
+
+def shot_frame(camera: Any, shot_type: Any = "") -> tuple[str, str]:
+    """(size, sentence) of the plan's frame: the shot size, the lens and the angle, in
+    words. Anything the plan said about moving the camera stays out of the still."""
+    text = f"{_flatten(camera)} ".lower()
+    fallback = str(shot_type or "").lower().replace("_", " ")
+    size = ""
+    label = ""
+    for source in (text, fallback):
+        if re.search(r"extreme\s+wide", source):
+            size, label = "wide", "Extreme wide shot"
+        elif re.search(r"\baerial\b|\bdrone\b|bird'?s[- ]eye", source):
+            size, label = "aerial", "Aerial wide shot"
+        elif re.search(r"medium[- ](?:wide|long)", source):
+            size, label = "wide", "Medium wide shot"
+        elif re.search(r"\bwide\b|\bestablishing\b|\blong shot\b", source):
+            size, label = "wide", "Wide establishing shot"
+        elif re.search(r"medium[- ]close", source):
+            size, label = "close", "Medium close-up shot"
+        elif re.search(r"extreme\s+close|\bmacro\b|\bdetail\b|\binsert\b", source):
+            size, label = "detail", "Detail shot"
+        elif re.search(r"close[- ]?up|closeup", source):
+            size, label = "close", "Close-up shot"
+        elif re.search(r"\bmedium\b|\bmid[- ]shot\b", source):
+            size, label = "medium", "Medium shot"
+        if size:
+            break
+    if not size:
+        size, label = "medium", "Medium shot"
+    parts = [label]
+    lens = re.search(r"\b(\d{2,3})\s?mm\b", text)
+    if lens:
+        parts.append(f"{lens.group(1)}mm lens")
+    angle = re.search(r"\b(low|high|eye[- ]level|overhead|top[- ]down)(?:\s+angle)?\b", text)
+    if angle:
+        word = angle.group(1).replace(" ", "-")
+        parts.append(word if word in ("overhead", "top-down") else f"{word} angle")
+    return size, _sentence(", ".join(parts))
+
+
+def choose_camera_move(
+    package: dict[str, Any], size: str, previous: list[str] | tuple[str, ...] = ()
+) -> str:
+    """The one camera move a scene's clip makes.
+
+    The plan's own choice wins: its ``camera_move`` field, else the one move its camera
+    text names ("static" and "no movement" name none). Otherwise the move that suits the
+    shot size, never the move of the scene before, so the film's camera varies.
+    """
+    stated = str(package.get("camera_move") or "").strip().lower()
+    if stated in lint.CAMERA_MOVES:
+        return stated
+    named = [
+        move for move, _ in lint.camera_moves(_flatten(package.get("camera"))) if move != "static"
+    ]
+    if len(named) == 1:
+        return named[0]
+    choices = SIZE_MOVES.get(size) or SIZE_MOVES["medium"]
+    last = previous[-1] if previous else None
+    return next((move for move in choices if move != last), choices[0])
+
+
+def _fit_sentences(items: list[tuple[int, int, str]], cap: int, max_words: int) -> str:
+    """Sentences chosen by rank (0 first), said in their order.
+
+    First the word budget decides what the prompt says; then the contract's cap (UTF-16
+    units) takes whole sentences out of that prompt, the least important first, so a capped
+    prompt is always the uncapped one with sentences left out, never a slice of it. When
+    not even one sentence fits the cap, the first is cut at its last whole word.
+    """
+
+    def choose(pool: list[tuple[int, int, str]], limit: int | None) -> list[tuple[int, str]]:
+        chosen: list[tuple[int, str]] = []
+        for _rank, order, text in sorted(pool):
+            if not text:
+                continue
+            candidate = " ".join(t for _, t in sorted([*chosen, (order, text)]))
+            if len(candidate.split()) <= max_words and (
+                limit is None or lint.utf16_units(candidate) <= limit
+            ):
+                chosen.append((order, text))
+        return chosen
+
+    said = {order for order, _ in choose(items, None)}
+    chosen = choose([item for item in items if item[1] in said], cap)
+    if not chosen:
+        first = next((text for _rank, _order, text in sorted(items) if text), "")
+        return cut_at_sentence(first, cap)
+    return " ".join(text for _, text in sorted(chosen))
+
+
+def _motion_family(model_id: Any) -> str | None:
+    return lint.model_family(model_id) if isinstance(model_id, str) else None
+
+
+def _contract_model(contract: Any, key: str, default: str) -> str:
+    if isinstance(contract, dict):
+        for name in (key, "model") if key == "model_id" else (key,):
+            value = contract.get(name)
+            if isinstance(value, str) and value:
+                return value
+    return default
+
+
+def _motion_intent(
+    package: dict[str, Any], move: str, faces_banned: bool, people: bool
+) -> dict[str, Any]:
+    """What moves in the scene, model-neutral: the move, the world's motion, the subject's.
+
+    The world's motion is the first clause of the plan's motion, then its action, then its
+    environment, that names something the world does (cloud, wind, water, dust); the
+    subject's is what else the plan's motion says. Neither describes the picture.
+    """
+    from_motion = _clauses_of(package.get("motion"), motion=True)
+    candidates = [
+        *from_motion,
+        *_clauses_of(package.get("action"), motion=True),
+        *_clauses_of(package.get("environment"), motion=True),
+    ]
+    world = next(
+        (
+            clause
+            for clause in candidates
+            if lint.ENVIRONMENT_MOTION.search(clause) and not _shows_people(clause)
+        ),
+        "",
+    )
+    subject = _phrase([c for c in from_motion if c != world], 12)
+    return {
+        "camera_move": move,
+        "world": _sentence(_phrase([world], 14)) if world else DEFAULT_WORLD_MOTION,
+        "subject": _sentence(subject),
+        "faces_banned": faces_banned,
+        "people": people,
+    }
+
+
+def render_motion(
+    intent: dict[str, Any], family: str | None, cap: int = lint.DEFAULT_PROMPT_MAX_UTF16
+) -> tuple[str, str | None]:
+    """(promptText, negativePrompt or None) for one video model, from a motion intent."""
+    move = str(intent.get("camera_move") or "")
+    camera = MOVE_SENTENCES.get(move, MOVE_SENTENCES["slow push-in"])
+    positive_only = family in ("veo", "gen4")
+    closing = lint.VEO_MOTION_CLOSING if positive_only else lint.MOTION_CLOSING
+    faces = bool(intent.get("faces_banned"))
+    constraint = FACES_CONSTRAINT if faces and intent.get("people") and family != "veo" else ""
+    negative = None
+    if family == "veo":
+        negative = ", ".join(((VEO_FACES,) if faces else ()) + VEO_NEGATIVE)
+    items = [
+        (0, 0, camera),
+        (1, 1, str(intent.get("world") or DEFAULT_WORLD_MOTION)),
+        (2, 9, closing),
+        (3, 3, constraint),
+        (4, 2, str(intent.get("subject") or "")),
+    ]
+    prompt = _fit_sentences(items, cap, MOTION_MAX_WORDS)
+    if len(prompt.split()) < MOTION_MIN_WORDS:
+        prompt = _fit_sentences([*items, (5, 8, MOTION_PAD)], cap, MOTION_MAX_WORDS)
+    return prompt, negative
+
+
+def compile_prompts(
+    package: dict[str, Any],
+    bible: dict[str, Any] | None,
+    contract: dict[str, Any] | None = None,
+    *,
+    previous_moves: list[str] | tuple[str, ...] = (),
+    look: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The still prompt, the motion prompt and the negative prompt for one scene.
+
+    ``contract`` names the video model (``model_id``), optionally the still model
+    (``still_model_id``, seedream5_pro by default), and the prompt caps as the vendor's
+    contract states them (``prompt_max``, an int or a per-task dict; 1000 UTF-16 units by
+    default). A scene composed locally (DATA_CARD, TITLE_CARD, BLACK) gets no prompt at all:
+    it never reaches a paid model. Deterministic: the same package gives the same prompts.
+    """
+    kind = str(package.get("scene_kind") or LIVE_KIND).upper()
+    bible = bible if isinstance(bible, dict) else {}
+    motion_model = _contract_model(contract, "model_id", DEFAULT_MOTION_MODEL)
+    family = _motion_family(motion_model)
+    if kind != LIVE_KIND:
+        return {
+            "scene_kind": kind,
+            "still_prompt": "",
+            "motion_prompt": "",
+            "negative_prompt": None,
+            "look_block": "",
+            "camera_move": "",
+            "shot_size": "",
+            "motion_family": family or "generic",
+            "motion_intent": None,
+        }
+    faces_banned = bool(lint.bible_face_rule(bible))
+    still_family = _motion_family(_contract_model(contract, "still_model_id", DEFAULT_STILL_MODEL))
+    block = look_block(bible, look or load_factual_look())
+    size, frame = shot_frame(package.get("camera"), package.get("shot_type"))
+
+    def said(field: str, words: int) -> str:
+        text = _sentence(_phrase(_clauses_of(package.get(field)), words))
+        return hide_faces(text) if faces_banned else text
+
+    subject = said("subject", 24)
+    action = said("action", 16)
+    if action and subject and action.casefold() == subject.casefold():
+        action = ""
+    environment = said("environment", 16)
+    if environment and environment.casefold() in (subject.casefold(), action.casefold()):
+        environment = ""
+    light = _phrase(_clauses_of(package.get("lighting")), 12)
+    if light and not re.search(r"\blight", light, re.IGNORECASE):
+        light = f"light {light}"
+    cast = _cast_sentence(package.get("characters"), faces_banned)
+    people = _shows_people(" ".join((subject, action, environment, cast)))
+    items = [
+        (0, 0, block),
+        (1, 1, frame),
+        (2, 2, subject),
+        (6, 3, cast),
+        (9, 4, action),
+        (7, 5, environment),
+        (3, 6, PEOPLE_SENTENCE if faces_banned else ""),
+        (5, 7, COMPOSITION_SENTENCE),
+        (8, 8, _sentence(light)),
+        (4, 9, STILL_EXCLUSIONS if still_family != "gen4" else ""),
+    ]
+    still = _fit_sentences(items, lint.prompt_cap(contract, "still"), STILL_MAX_WORDS)
+    move = choose_camera_move(package, size, previous_moves)
+    intent = _motion_intent(package, move, faces_banned, people)
+    motion, negative = render_motion(intent, family, lint.prompt_cap(contract, "motion"))
+    return {
+        "scene_kind": kind,
+        "still_prompt": still,
+        "motion_prompt": motion,
+        "negative_prompt": negative,
+        "look_block": block,
+        "camera_move": move,
+        "shot_size": size,
+        "motion_family": family or "generic",
+        "motion_intent": intent,
+    }
+
+
+def _cast_sentence(characters: Any, faces_banned: bool) -> str:
+    """The film's characters as the picture shows them: their look in words, never their
+    name (a name means nothing to an image model and can be drawn as writing). When faces
+    are forbidden, only what they wear, seen from behind."""
+    described: list[str] = []
+    for character in characters if isinstance(characters, list) else []:
+        if not isinstance(character, dict):
+            continue
+        outfit = ", ".join(_clauses_of(character.get("outfit")))
+        if faces_banned:
+            if outfit:
+                described.append(f"a figure seen from behind wearing {outfit}")
+            continue
+        look = ", ".join(_clauses_of(character.get("face_hair")))
+        parts = [part for part in (look, f"wearing {outfit}" if outfit else "") if part]
+        if parts:
+            described.append(", ".join(parts))
+    return _sentence("; ".join(described))
+
+
+def compile_film_prompts(
+    packages: list[dict[str, Any]],
+    bible: dict[str, Any] | None,
+    contract: dict[str, Any] | None = None,
+    *,
+    contracts: dict[int, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """compile_prompts for every scene of a film in order, so the camera varies from one
+    filmed scene to the next. ``contracts`` may give a scene (by its ``scene_index``) its
+    own model's contract: the model is chosen per scene, by cost (the Owner, 2026-09-27)."""
+    moves: list[str] = []
+    look = load_factual_look()
+    compiled: list[dict[str, Any]] = []
+    for package in packages:
+        index = package.get("scene_index")
+        terms = (contracts or {}).get(int(index)) if isinstance(index, int) else None
+        item = compile_prompts(package, bible, terms or contract, previous_moves=moves, look=look)
+        if item["camera_move"]:
+            moves.append(item["camera_move"])
+        compiled.append(item)
+    return compiled
+
+
+def motion_prompt_for(
+    package: dict[str, Any], model_id: Any, contract: dict[str, Any] | None = None
+) -> tuple[str, str | None]:
+    """(promptText, negativePrompt or None) for the model that films this scene.
+
+    A package the compiler wrote carries its motion intent, so the prompt is said again in
+    the dialect of whichever model the scene is bought on. A package from before the
+    compiler has none: its stored motion prompt is used as it is (empty when it has none).
+    """
+    intent = package.get("motion_intent") if isinstance(package, dict) else None
+    if isinstance(intent, dict) and intent.get("camera_move") in lint.CAMERA_MOVES:
+        return render_motion(intent, _motion_family(model_id), lint.prompt_cap(contract, "motion"))
+    stored = " ".join(str((package or {}).get("motion_prompt") or "").split())
+    negative = (package or {}).get("negative_prompt")
+    return stored, negative if isinstance(negative, str) and negative else None
 
 
 def _run(

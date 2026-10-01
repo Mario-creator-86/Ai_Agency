@@ -208,3 +208,188 @@ def test_a_synthetic_tone_is_measured_by_the_encoder(tmp_path):
     assert measure_loudness(ffmpeg, tmp_path / "missing.wav") is None
     assert has_filter(ffmpeg, "loudnorm") is True
     assert has_filter(ffmpeg, "no_such_filter_anywhere") is False
+
+
+# --------------------------------------------------------------------------- the master
+# The Nepal film peaked at -0.93 dBTP after a loudnorm that aimed at -1.0 exactly, and quality
+# control refused it for 0.07 dB. The target now sits a full dB under the ceiling, a sample
+# limiter holds whatever the loudness filter lets through, and the AAC encode happens once.
+
+
+def test_the_master_aims_two_db_under_a_ceiling_that_stays_at_minus_one():
+    from app.media.toolchain import (
+        LIMITER_LIMIT,
+        TRUE_PEAK_CEILING_DBTP,
+        TRUE_PEAK_TARGET_DBTP,
+        loudnorm_filter,
+        master_audio_filter,
+        parse_loudnorm_json,
+    )
+
+    assert TRUE_PEAK_TARGET_DBTP == -2.0
+    assert TRUE_PEAK_CEILING_DBTP == -1.0
+    one_pass = loudnorm_filter(None)
+    two_pass = loudnorm_filter(parse_loudnorm_json(LOUDNORM_STDERR))
+    for chain in (one_pass, two_pass):
+        assert "TP=-2.0" in chain and "linear=true" in chain and "I=-14.0" in chain
+
+    master = master_audio_filter(parse_loudnorm_json(LOUDNORM_STDERR))
+    steps = master.split(",")
+    # Loudness first, then back to 48 kHz, then the limiter; auto-level off, or the limiter
+    # would lift the whole film back up to its limit.
+    assert steps[0].startswith("loudnorm=") and "measured_I=-23.10" in steps[0]
+    assert steps.index("aresample=48000") > 0
+    limiter = next(step for step in steps if step.startswith("alimiter="))
+    assert steps.index(limiter) > steps.index("aresample=48000")
+    assert "level=0" in limiter.split("=", 1)[1].split(":")
+    assert f"limit={LIMITER_LIMIT:.2f}" in limiter
+    # 0.79 of full scale is -2.05 dBFS: the limiter holds the target, not the ceiling.
+    assert -2.1 < 20 * __import__("math").log10(LIMITER_LIMIT) < -2.0
+
+    # Padded to the picture and cut there, so the audio never outlasts the film.
+    padded = master_audio_filter(None, duration=12.5)
+    assert padded.endswith("apad=whole_dur=12.500,atrim=duration=12.500")
+    # An encoder without loudnorm still gets the resample and the limiter.
+    bare = master_audio_filter(None, normalise=False)
+    assert not bare.startswith("loudnorm") and "alimiter=" in bare
+
+
+def test_the_audio_is_encoded_once_as_aac_lc_256k_stereo_48k():
+    from app.media.toolchain import AUDIO_CODEC_ARGS
+
+    args = list(AUDIO_CODEC_ARGS)
+    assert args[args.index("-c:a") + 1] == "aac"
+    assert args[args.index("-profile:a") + 1] == "aac_low"
+    assert args[args.index("-b:a") + 1] == "256k"
+    assert args[args.index("-ac") + 1] == "2"
+    assert args[args.index("-ar") + 1] == "48000"
+
+
+def test_a_dynamic_loudnorm_pass_is_a_warning_for_the_owner():
+    from app.media.toolchain import loudnorm_warning, parse_loudnorm_json
+
+    linear = parse_loudnorm_json(LOUDNORM_STDERR)
+    assert loudnorm_warning(linear) is None
+    dynamic = parse_loudnorm_json(LOUDNORM_STDERR.replace('"linear"', '"dynamic"'))
+    warning = loudnorm_warning(dynamic)
+    assert warning is not None
+    # Romanian, and it names what happened and what he should do.
+    assert "dinamic" in warning and "ascultați" in warning.lower()
+    # No report means nothing is known: no warning is invented.
+    assert loudnorm_warning(None) is None
+
+
+def _hot_fixture(ffmpeg: str, target: Path, expression: str, seconds: float = 6.0) -> None:
+    import subprocess
+
+    subprocess.run(
+        [
+            ffmpeg,
+            "-nostdin",
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            f"aevalsrc='{expression}':s=48000:d={seconds}",
+            "-c:a",
+            "pcm_s24le",
+            str(target),
+        ],
+        check=True,
+        capture_output=True,
+        stdin=subprocess.DEVNULL,
+    )
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="no FFmpeg on this machine")
+@pytest.mark.parametrize(
+    ("name", "expression", "expected_type"),
+    [
+        # A steady sine peaking at -3 dBTP: loudnorm cannot use a linear gain on a signal
+        # with no loudness range and falls back to dynamic mode.
+        ("steady", "0.708*sin(2*PI*997*t)", "dynamic"),
+        # The same peak with a slow swell: a range, so the second pass is one linear gain.
+        ("swelling", "0.708*(0.3+0.7*abs(sin(2*PI*0.4*t)))*sin(2*PI*997*t)", "linear"),
+    ],
+)
+def test_a_hot_tone_mastered_and_aac_encoded_lands_under_the_ceiling(
+    tmp_path, name, expression, expected_type
+):
+    from app.media.toolchain import encode_master_audio, measure_loudness
+
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg is not None
+    source = tmp_path / f"{name}.wav"
+    _hot_fixture(ffmpeg, source, expression)
+    before = measure_loudness(ffmpeg, source)
+    assert before is not None and -3.2 <= before["true_peak_dbtp"] <= -2.8
+
+    target = tmp_path / f"{name}.m4a"
+    result = encode_master_audio(ffmpeg, source, target)
+    assert result["passes"] == 2
+    assert result["normalization_type"] == expected_type
+    # The fallback to dynamic mode is written down for the Owner, the linear pass is not.
+    assert (result["warning"] is not None) == (expected_type == "dynamic")
+
+    # Measured on the delivered AAC file, not taken from the filter's own report.
+    delivered = measure_loudness(ffmpeg, target)
+    assert delivered is not None
+    assert delivered["true_peak_dbtp"] <= -1.5, delivered
+    assert -15.0 <= delivered["integrated_lufs"] <= -13.0, delivered
+    assert result["delivered"]["true_peak_dbtp"] == pytest.approx(delivered["true_peak_dbtp"])
+
+
+#: Narration-like: quiet syllables with short hot consonants. ElevenLabs takes measure like
+#: this (the six Nepal voices: -23 to -25 LUFS with true peaks of -3 to -6 dBTP), so reaching
+#: -14 LUFS by one gain would push the peaks far over -2 dBTP.
+SPEECH_LIKE = (
+    "0.06*sin(2*PI*180*t)*(0.5+0.5*sin(2*PI*4*t))*(gt(sin(2*PI*2.3*t),-0.3))"
+    " + 0.55*sin(2*PI*900*t)*lt(mod(t,0.37),0.004)"
+)
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="no FFmpeg on this machine")
+def test_quiet_narration_with_hot_peaks_is_limited_first_and_lands_in_the_band(tmp_path):
+    """The zero-credit Nepal rehearsal (2026-10-01): the real narration measured -23.97 LUFS
+    with -3.31 dBTP peaks. loudnorm could not use one linear gain, fell back to dynamic mode
+    and delivered -15.57 LUFS, outside QC's -15..-13 band: every real film would have failed
+    audio QC after its credits were spent. The peaks are now limited before the gain, so one
+    linear gain reaches -14 LUFS under the -2.0 dBTP target."""
+    from app.media.toolchain import encode_master_audio, measure_loudness
+
+    ffmpeg = find_ffmpeg()
+    assert ffmpeg is not None
+    source = tmp_path / "narration.wav"
+    _hot_fixture(ffmpeg, source, SPEECH_LIKE, seconds=26.0)
+    before = measure_loudness(ffmpeg, source)
+    assert before is not None
+    gain = -14.0 - before["integrated_lufs"]
+    assert before["true_peak_dbtp"] + gain > -2.0, "the fixture must leave no room for one gain"
+
+    target = tmp_path / "narration.m4a"
+    result = encode_master_audio(ffmpeg, source, target)
+
+    delivered = measure_loudness(ffmpeg, target)
+    assert delivered is not None
+    assert -14.5 <= delivered["integrated_lufs"] <= -13.5, delivered
+    assert delivered["true_peak_dbtp"] <= -1.5, delivered
+    # A mono narration is made stereo before it is limited, at full level on both sides:
+    # the default upmix lowers each side 3 dB, which the limiter would have paid for in
+    # 3 dB more limiting and the film would never have used.
+    assert delivered["true_peak_dbtp"] >= -3.0, delivered
+    assert result["normalization_type"] == "linear"
+    assert result["warning"] is None
+    assert result["prelimit"]["gain_db"] > 0
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="no FFmpeg on this machine")
+def test_a_master_that_cannot_be_encoded_raises_rather_than_returning_silence(tmp_path):
+    from app.media.toolchain import AudioMasterError, encode_master_audio
+
+    ffmpeg = find_ffmpeg()
+    broken = tmp_path / "broken.wav"
+    broken.write_bytes(b"not audio at all")
+    with pytest.raises(AudioMasterError):
+        encode_master_audio(ffmpeg, broken, tmp_path / "out.m4a")

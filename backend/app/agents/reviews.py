@@ -14,25 +14,51 @@ after its gate, with a fixed output schema, validated before anything is stored:
 An answer that does not parse against the schema is recorded as a failed review, not
 interpreted. A structured blocker becomes an ESCALATE message to the Director. What each
 review concluded becomes the employee's own AGENT_OPINION memory, with the run as provenance.
+
+Two honesty rules, measured on the Nepal film (2026-09-26):
+
+- Kael's correction used to be free text, and "re-render" was the only remedy on offer; a
+  second whole film was bought with the same prompts. His diagnosis now carries the studio's
+  own priced redo proposals per scene (``app.media.qc_report``: still | motion | card | audio,
+  and encode), and a whole-film render is never recommended.
+- An employee's letter that claims media work done (re-rendered, re-normalised, prompt
+  rewritten, sent to Runway) with no media.* event recorded since its thread began is
+  labelled "NEEFĂCUT — afirmație fără dovadă" before the Director reads it
+  (``mark_unproven_claims``). That evening Kael wrote "Am re-randat pista audio" and nothing
+  had been rendered; the Director reported it to the Owner as done.
 """
 
 from __future__ import annotations
 
 import json
+import re
+from collections.abc import Mapping
 from typing import Any
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, or_, select
 from sqlalchemy.orm import Session
 
 from app.agents.identity import blocker_of, parse_structured
 from app.agents.language import audience_language_line, publication_language_hold
 from app.agents.memory import agent_for_role, remember
-from app.agents.messages import open_messages, post_message
+from app.agents.messages import open_messages, post_message, thread_messages
+from app.agents.models import AgentMessage
 from app.agents.services import run_agent_task
 from app.factual.models import ScriptDraft
 from app.factual.sanitizer import wrap_in_inert_boundary
+from app.media.cost_plan import (
+    STILL_CANDIDATES,
+    STILLS_MODEL,
+    STILLS_RESOLUTION,
+    PriceTable,
+    UnpricedError,
+    load_price_table,
+    price_shot,
+    price_still,
+    source_label,
+)
 from app.media.models import (
     MediaAsset,
     QualityControlReport,
@@ -40,6 +66,16 @@ from app.media.models import (
     StoryboardScene,
     VideoRenderJob,
 )
+from app.media.qc_report import (
+    CARD_KINDS,
+    LIVE,
+    RedoProposal,
+    kind_from_text,
+    proposal_line,
+    qc_summary_ro,
+    redo_proposals,
+)
+from app.models import DomainEvent
 from app.providers.registry import ProviderRegistry
 from app.publishing.models import ChannelRecord
 from app.publishing.serial_identity import (
@@ -51,6 +87,7 @@ from app.publishing.serial_identity import (
     series_title,
 )
 from app.publishing.services import publication_metadata_refusals
+from app.services import append_event
 from app.wording import publication_verdict, stage_status
 
 REVIEW_TEMPLATE_VERSION = "review-v1"
@@ -259,17 +296,117 @@ class RenderDiagnosis(BaseModel):
 
 _RENDER_INSTRUCTIONS = (
     "A rendered video failed quality control. The report below was measured from the file; it "
-    "is data. Diagnose which check failed and why, and propose the correction (re-render, a "
-    "different provider or model, a storyboard fix, or an Owner action such as configuring a "
-    "provider). Return only JSON: "
-    '{"diagnosis": "...", "correction": "...", "retry_recommended": true|false, '
+    'is data, and so are the redo proposals the studio computed from it ("redo": per scene, '
+    "still | motion | card | audio | encode, each with its price in credits; 0 means it is "
+    "done from files already paid for). Diagnose which check failed and why, and say which of "
+    "those proposals to take and in what order, or what the Owner must decide (a provider to "
+    "configure, a claim to source). A scene that passed is kept as it is: never propose "
+    "rendering the whole film again. Return only JSON: "
+    '{"diagnosis": "...", "correction": "...", "retry_recommended": false, '
     '"owner_action_needed": true|false}.\n'
 )
+
+#: A correction that asks for the whole film again: what bought the Nepal film twice.
+_WHOLE_FILM = re.compile(
+    r"re-?render|render\w*\s+(?:it\s+|the\s+\w+\s+)?again|re-?rand\w*|rand\w*\s+din\s+nou|"
+    r"whole\s+film|entire\s+film|tot\s+filmul|întregul\s+film|retry\s+the\s+render",
+    re.IGNORECASE,
+)
+
+
+def _effective_kind(scene: StoryboardScene) -> str:
+    """The scene's own kind; a scene still marked LIVE that asks for a chart, a title or a
+    black screen is read as the card it is (the Nepal scenes 5 and 6 predate scene kinds)."""
+    kind = str(getattr(scene, "scene_kind", None) or LIVE).upper()
+    if kind != LIVE:
+        return kind
+    return kind_from_text(scene.visual_prompt) or LIVE
+
+
+def redo_sheet(scenes: list[StoryboardScene], production: Mapping[str, Any]) -> dict[str, Any]:
+    """Prices for redoing each scene of a rendered film, in the shooting sheet's shape.
+
+    A sheet recorded with the render wins. Otherwise each LIVE scene is priced from the
+    published table: two stills at the stills tier, and its motion on the model that scene was
+    actually rendered with (the model is chosen per scene), at 1080p, for its planned length.
+    A model the table does not list stays unpriced; nothing is guessed. A table that cannot
+    be read leaves every paid redo unpriced rather than stopping the diagnosis.
+    """
+    recorded = production.get("sheet")
+    if isinstance(recorded, Mapping) and isinstance(recorded.get("scenes"), list):
+        return dict(recorded)
+    table: PriceTable | None
+    try:
+        table = load_price_table()
+    except (OSError, ValueError, KeyError, TypeError):
+        table = None
+    models: dict[int, str] = {}
+    for entry in production.get("scenes") or []:
+        if not isinstance(entry, Mapping) or entry.get("scene_index") is None:
+            continue
+        motion = entry.get("motion")
+        if isinstance(motion, Mapping) and motion.get("model"):
+            models[int(entry["scene_index"])] = str(motion["model"])
+    rows: list[dict[str, Any]] = []
+    for scene in scenes:
+        kind = _effective_kind(scene)
+        row: dict[str, Any] = {
+            "scene_index": scene.scene_index,
+            "kind": kind,
+            "seconds": float(scene.duration_seconds or 0.0),
+        }
+        if kind in CARD_KINDS:
+            row.update(credits=0, still_credits=0)
+            rows.append(row)
+            continue
+        model = models.get(scene.scene_index)
+        row.update(
+            model_id=model, resolution="1080p" if model else None, credits=None, still_credits=None
+        )
+        if table is None:
+            rows.append(row)
+            continue
+        try:
+            row["still_credits"] = price_still(
+                STILLS_MODEL, STILLS_RESOLUTION, STILL_CANDIDATES, table=table
+            )
+            row["still_price_source"] = source_label(table.row(STILLS_MODEL, STILLS_RESOLUTION))
+        except UnpricedError:
+            row["still_credits"] = None
+        if model:
+            try:
+                row["credits"] = price_shot(model, "1080p", row["seconds"], table=table)
+                row["price_source"] = source_label(table.row(model, "1080p"))
+            except UnpricedError:
+                row["credits"] = None
+        rows.append(row)
+    return {
+        "credit_usd": table.credit_usd if table is not None else None,
+        "scenes": rows,
+        "source": "tabel de prețuri" if table is not None else "fără tabel de prețuri",
+    }
+
+
+def _correction_ro(proposals: list[RedoProposal]) -> str:
+    if not proposals:
+        return (
+            "Nicio refacere de imagine sau de sunet nu rezolvă ce a picat; decide "
+            "Proprietarul (vezi raportul)."
+        )
+    return ("Se refac doar: " + " ".join(proposal_line(p) for p in proposals))[:1000]
 
 
 def review_failed_render(
     engine: Engine, registry: ProviderRegistry, report_id: str, correlation_id: str | None = None
 ) -> dict[str, Any]:
+    """Kael's diagnosis of a failed render, and the studio's priced redo, scene by scene.
+
+    The proposals are computed from the report, not asked of the model: audio, encode and
+    card scenes are redone for 0 credits; a LIVE scene whose picture failed needs a new still
+    and new motion, priced; every scene that passed is kept. The model's diagnosis is its own;
+    its correction is kept as ``model_correction`` and, when it asks for the whole film again,
+    refused in words. ``retry_recommended`` (a whole render) is never true.
+    """
     correlation = correlation_id or str(uuid4())
     with Session(engine) as session:
         report = session.get(QualityControlReport, report_id)
@@ -286,11 +423,35 @@ def review_failed_render(
             select(VideoRenderJob).where(VideoRenderJob.output_asset_id == report.media_asset_id)
         )
         production = dict(job.production_json or {}) if job and job.production_json else {}
+        scenes = (
+            list(
+                session.scalars(
+                    select(StoryboardScene)
+                    .where(StoryboardScene.storyboard_id == job.storyboard_id)
+                    .order_by(StoryboardScene.scene_index)
+                )
+            )
+            if job is not None
+            else []
+        )
+        sheet = redo_sheet(scenes, production)
+        report_data = {
+            "status": report.status,
+            "score": report.score,
+            "checks_json": dict(report.checks_json or {}),
+            "failure_reasons_json": list(report.failure_reasons_json or []),
+        }
+        media_asset_id = report.media_asset_id
         report_reasons = list(report.failure_reasons_json or [])
+        proposals = redo_proposals(report_data, sheet=sheet)
+        summary_ro = qc_summary_ro(report_data, production.get("credits_measured"), sheet=sheet)
         facts = {
-            "asset_id": report.media_asset_id,
+            # First, so that nothing that follows can push it out of the payload.
+            "redo": [p.as_dict() for p in proposals],
+            "asset_id": media_asset_id,
             "provider_name": asset.provider_name if asset else None,
             "failure_reasons": report_reasons,
+            "scene_kinds": {str(row["scene_index"]): row["kind"] for row in sheet["scenes"]},
             "checks": report.checks_json,
             "production_purposes": production.get("purposes"),
         }
@@ -318,14 +479,34 @@ def review_failed_render(
     diagnosis = parse_structured(text, RenderDiagnosis)
     if not isinstance(diagnosis, RenderDiagnosis):
         raise ReviewError("Diagnosticul randării nu respectă forma cerută; nimic nu a fost salvat")
+    refused = (
+        "Propunerea modelului de a randa tot filmul din nou nu se aplică: se refac doar "
+        "scenele și pistele de mai sus, iar scenele care au trecut rămân cum sunt."
+        if diagnosis.retry_recommended or _WHOLE_FILM.search(diagnosis.correction)
+        else None
+    )
+    verdict: dict[str, Any] = {
+        "diagnosis": diagnosis.diagnosis,
+        "correction": _correction_ro(proposals),
+        "retry_recommended": False,
+        # Credits are bought only with the Owner's yes on the shooting sheet.
+        "owner_action_needed": bool(
+            diagnosis.owner_action_needed or any(p.credits != 0 for p in proposals)
+        ),
+        "model_correction": diagnosis.correction,
+        "model_correction_refused": refused,
+        "redo": [p.as_dict() for p in proposals],
+        "redo_credits": sum(int(p.credits) for p in proposals if p.credits),
+        "redo_unpriced": sum(1 for p in proposals if p.credits is None),
+    }
     with Session(engine) as session, session.begin():
         remember(
             session,
             memory_class="AGENT_OPINION",
             content=(
-                f"Failed render {report.media_asset_id[:8]}: {diagnosis.diagnosis} → "
-                f"{diagnosis.correction}"
-            ),
+                f"Failed render {media_asset_id[:8]}: {diagnosis.diagnosis} → "
+                f"{verdict['correction']}"
+            )[:2000],
             source_type="run",
             source_id=result["id"],
             agent_id=reviewer_id,
@@ -334,11 +515,8 @@ def review_failed_render(
             session,
             intent="ESCALATE",
             subject=f"Randarea nu a trecut QC: {diagnosis.diagnosis[:150]}",
-            body={
-                "report_id": report_id,
-                "media_asset_id": report.media_asset_id,
-                **diagnosis.model_dump(),
-            },
+            body={"report_id": report_id, "media_asset_id": media_asset_id, **verdict},
+            body_text=summary_ro,
             from_agent_id=reviewer_id,
             to_agent_id=None,
             run_id=result["id"],
@@ -350,8 +528,186 @@ def review_failed_render(
         "agent_id": reviewer_id,
         "run_id": result["id"],
         "message_id": message_id,
-        **diagnosis.model_dump(),
+        "summary_ro": summary_ro,
+        **verdict,
     }
+
+
+# ------------------------------------------------------------------ claims of work, checked
+
+UNPROVEN_LABEL = "NEEFĂCUT — afirmație fără dovadă"
+
+#: Past-tense claims of media work, each with the event types that would prove it. Only a
+#: completed act is a claim: "voi re-randa" and "will re-render" do not match, and a claim
+#: under a negation or a future in its own clause ("nu am re-randat", "va fi re-randată")
+#: is not counted (``_NOT_DONE``).
+_PARTICIPLE = r"[ăaei]?"
+_WORK_CLAIMS: tuple[tuple[str, re.Pattern[str], tuple[str, ...], str], ...] = (
+    (
+        "render",
+        re.compile(
+            rf"\b(?:re-?randat{_PARTICIPLE}|randat{_PARTICIPLE}\s+din\s+nou|"
+            rf"re-?generat{_PARTICIPLE}|refăcut{_PARTICIPLE}\s+(?:pista|sunetul|scena|scenele|"
+            r"clipul|clipurile|imaginea|imaginile|filmul|randarea|mișcarea|cadrul|cadrele)|"
+            r"re-?rendered|rendered\s+(?:it\s+|the\s+\w+\s+)?again|regenerated|"
+            r"redid\s+the\s+(?:audio|scene|clip|still|render|film|shot))\b",
+            re.IGNORECASE,
+        ),
+        (
+            "media.video_rendered",
+            "media.render",
+            "media.scene_redo",
+            "media.motion",
+            "media.still",
+            "media.test_shot",
+            "media.rehearsal",
+            "media.card",
+            "media.audio",
+        ),
+        "o randare, o scenă refăcută sau un clip nou",
+    ),
+    (
+        "audio",
+        re.compile(
+            rf"\b(?:re-?normali[sz]at{_PARTICIPLE}|normali[sz]at{_PARTICIPLE}|"
+            rf"remasterizat{_PARTICIPLE}|re-?mixat{_PARTICIPLE}|re-?normali[sz]ed|"
+            r"normali[sz]ed|remastered|re-?mixed)\b",
+            re.IGNORECASE,
+        ),
+        ("media.audio", "media.scene_redo", "media.video_rendered", "media.rehearsal"),
+        "o remasterizare a sunetului",
+    ),
+    (
+        "prompt",
+        re.compile(
+            r"\b(?:prompt(?:ul|urile)?\s+(?:a\s+fost\s+|au\s+fost\s+)?rescris[ăe]?|"
+            r"am\s+rescris\s+prompt(?:ul|urile)?|rewrote\s+the\s+prompts?|"
+            r"prompts?\s+(?:was\s+|were\s+|has\s+been\s+|have\s+been\s+)?rewritten)\b",
+            re.IGNORECASE,
+        ),
+        ("media.shot_prompts_written", "media.prompt"),
+        "prompturi scrise din nou",
+    ),
+    (
+        "sent",
+        re.compile(
+            r"\b(?:trimis[ăe]?\s+(?:către|catre|la|spre)\s+(?:runway|elevenlabs|furnizor\w*)|"
+            r"sent\s+(?:it\s+|them\s+)?to\s+(?:runway|elevenlabs))\b",
+            re.IGNORECASE,
+        ),
+        (
+            "media.paid_generation",
+            "media.video_rendered",
+            "media.still",
+            "media.motion",
+            "media.test_shot",
+            "media.scene_redo",
+        ),
+        "o generare plătită la furnizor",
+    ),
+)
+#: A clause ends here; a negation or a future only counts inside the claim's own clause.
+_CLAUSE_END = re.compile(r"[.!?;,:\n—]")
+_NOT_DONE = re.compile(
+    r"\b(?:nu|n-am|n-a|n-au|va\s+fi|vor\s+fi|o\s+să|urmează|trebuie|ar\s+trebui|poate\s+fi|"
+    r"pot\s+fi|voi|vom|not|never|didn't|haven't|hasn't|won't|will|should|must|need\s+to|"
+    r"to\s+be)\b",
+    re.IGNORECASE,
+)
+
+
+def _clause(text: str, start: int, end: int) -> tuple[str, str]:
+    """The words before the match inside its clause, and the whole clause, trimmed."""
+    before = text[:start]
+    cut = max((m.end() for m in _CLAUSE_END.finditer(before)), default=0)
+    after = _CLAUSE_END.search(text, end)
+    clause = " ".join(text[cut : after.start() if after else len(text)].split())
+    return before[cut:], clause[:160]
+
+
+def check_work_claims(
+    session: Session, text: str, *, since: str, until: str | None = None
+) -> list[dict[str, Any]]:
+    """The claims of finished media work in ``text``, each checked against the event stream.
+
+    A claim is proven by a media.* event of a type that does that work, recorded at or after
+    ``since`` (when the thread began: an event from before anyone asked is not the fix) and,
+    when given, no later than ``until``. One entry per kind of claim, first quote kept.
+    """
+    found: list[dict[str, Any]] = []
+    for kind, pattern, proof, wording in _WORK_CLAIMS:
+        for match in pattern.finditer(text or ""):
+            prefix, clause = _clause(text, match.start(), match.end())
+            if _NOT_DONE.search(prefix):
+                continue
+            query = select(DomainEvent).where(
+                DomainEvent.timestamp >= since,
+                or_(*(DomainEvent.event_type.startswith(p) for p in proof)),
+            )
+            if until is not None:
+                query = query.where(DomainEvent.timestamp <= until)
+            event = session.scalars(query.order_by(DomainEvent.sequence).limit(1)).first()
+            found.append(
+                {
+                    "kind": kind,
+                    "quote": clause or match.group(0),
+                    "proven": event is not None,
+                    "event_id": event.event_id if event is not None else None,
+                    "event_type": event.event_type if event is not None else None,
+                    "needs": (
+                        f"nicio înregistrare media.* ({wording}) de la "
+                        f"{since[:16].replace('T', ' ')} încoace"
+                    ),
+                }
+            )
+            break
+    return found
+
+
+def mark_unproven_claims(
+    session: Session, message: AgentMessage, correlation_id: str | None = None
+) -> dict[str, Any] | None:
+    """Label a letter's claims of media work that no event proves, before anyone reads it.
+
+    The letter's words are kept; the label goes in front of them and in ``body_json``
+    (``claim_check``), which is what the Director's review reads. An ``agent.claim_unproven``
+    event records it. Returns the check, or None when the letter claims no media work.
+    """
+    text = message.body_text or ""
+    if not text.strip():
+        return None
+    thread = thread_messages(session, message.thread_id or message.id)
+    since = min([m.created_at for m in thread if m.id != message.id] or [message.created_at])
+    claims = check_work_claims(session, text, since=since)
+    if not claims:
+        return None
+    unproven = [c for c in claims if not c["proven"]]
+    check: dict[str, Any] = {
+        "since": since,
+        "proven": [c for c in claims if c["proven"]],
+        "unproven": unproven,
+    }
+    if unproven:
+        check["label"] = UNPROVEN_LABEL
+        quotes = "; ".join(f"«{c['quote']}»" for c in unproven)
+        message.body_text = f"[{UNPROVEN_LABEL}: {quotes}] {text}"[:8000]
+        append_event(
+            session,
+            "agent.claim_unproven",
+            "agent_message",
+            message.id,
+            1,
+            {
+                "from_agent_id": message.from_agent_id,
+                "kinds": [c["kind"] for c in unproven],
+                "quotes": [c["quote"] for c in unproven],
+                "since": since,
+            },
+            correlation_id or str(uuid4()),
+        )
+    message.body_json = {**dict(message.body_json or {}), "claim_check": check}
+    session.flush()
+    return check
 
 
 # ------------------------------------------------------------------------- Vera: publishing

@@ -333,6 +333,29 @@ export function priceAnswer(row, input, output) {
   return `Salvat: ${row.kind} · ${row.model === ANY_MODEL ? 'toate modelele' : row.model} — intrare ${usdWords(input.usd_micros)} USD, ieșire ${usdWords(output.usd_micros)} USD pe milion de tokenuri (versiunea ${Math.max(Number(input.version) || 1, Number(output.version) || 1)}).`;
 }
 
+/* ------------------------------------------------------------ the paid steps of a film (2026-10-01) */
+
+/** The values of the Owner's rule for a film's paid steps (backend app.models PAID_MEDIA_APPROVALS). */
+export const PAID_MEDIA_APPROVALS = /** @type {const} */ (['EVERY_PAID_STEP', 'OVER_USD', 'MODE']);
+
+/**
+ * The Owner's own rule for a film's paid steps (stills, the hero test shot, the motion), as the
+ * shooting sheet carries it (`owner_rule`: paid_media_approval, over_usd). Read the way the backend
+ * reads it (services.paid_media_policy): a missing or unknown value, or OVER_USD without a finite
+ * threshold of 0 or more, is the strictest rule, never MODE. Only he changes it; the page only says it.
+ * @param {any} rule
+ */
+export function paidMediaRuleWords(rule) {
+  const value = String(rule?.paid_media_approval || '');
+  const over = rule?.over_usd;
+  if (value === 'OVER_USD' && over !== null && over !== undefined && Number.isFinite(Number(over)) && Number(over) >= 0) {
+    const usd = Number(over).toLocaleString('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return `Regula ta: un pas plătit de peste ${usd} USD îți cere aprobarea; unul mai mic urmează modul studioului.`;
+  }
+  if (value === 'MODE') return 'Regula ta: pașii plătiți urmează modul studioului.';
+  return 'Regula ta: fiecare pas plătit al unui film îți cere aprobarea, în orice mod al studioului.';
+}
+
 /* ------------------------------------------------------------------------- about the studio */
 
 /** The module words the drawer used (main.js), kept for Setări → Despre studio. */

@@ -14,12 +14,16 @@ looked and there was nothing" and "we could not look".
 
 from __future__ import annotations
 
+import subprocess
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
 import pytest
 from app.factual.models import FactualClaim, TopicIdea
 from app.factual.services import TopicNotProducible, select_topic
+from app.media.toolchain import find_ffmpeg
 from app.providers.registry import ProviderRegistry
 from app.runbook.stages import build_stage_runners
 from app.services import utc_now
@@ -1387,3 +1391,492 @@ def test_a_hold_taken_on_an_incomplete_estimate_says_so_in_its_own_note(
 
     (hold,) = _reservations(engine)
     assert unpriced_caveat(["narration"]) in (hold.note or ""), hold.note
+
+
+# ------------------------------------------- the content gate refuses one storyboard --
+
+
+def _approved_script(engine, title: str) -> str:
+    """An APPROVED script with no storyboard yet, as the Director's approval leaves it."""
+    from app.factual.models import ScriptDraft
+
+    topic_id = _topic(engine, status="SELECTED")
+    script_id = str(uuid4())
+    with Session(engine) as session, session.begin():
+        session.add(
+            ScriptDraft(
+                id=script_id,
+                topic_id=topic_id,
+                version=1,
+                title=title,
+                target_duration_seconds=12,
+                voiceover_full_text="One line.",
+                scenes_json=[],
+                status="APPROVED",
+                claim_ids_json=[],
+                unverified_claim_ids_json=[],
+                created_at=utc_now(),
+            )
+        )
+    return script_id
+
+
+def test_a_storyboard_the_content_gate_refuses_is_named_and_the_day_goes_on(
+    engine, settings, monkeypatch
+):
+    """A card whose numbers no SUPPORTED claim states stops its storyboard (SCENE_KINDS); the
+    stage names it in the day's reason and storyboards the other approved script."""
+    from app.factual.services import FactualGateError
+    from app.runbook import stages
+
+    gated = _approved_script(engine, "A chart with a false bar")
+    kept = _approved_script(engine, "A film whose numbers hold")
+    styles: list[Any] = []
+
+    def storyboard(engine_, script_id, style, ratio, correlation):
+        styles.append(style)
+        if script_id == gated:
+            raise FactualGateError(
+                "Poarta de conținut a oprit storyboardul: Scena 5: valoarea 89 nu este "
+                "a niciunei afirmații SUPPORTED.",
+                [],
+            )
+        return {"id": str(uuid4()), "script_draft_id": kept}
+
+    passed = SimpleNamespace(verdict="PASS", notes_json={})
+    monkeypatch.setattr(stages, "latest_review", lambda session, script_id: passed)
+    monkeypatch.setattr(stages, "generate_storyboard_from_script", storyboard)
+    monkeypatch.setattr(stages, "write_shot_prompts", lambda *a, **k: {"shots": [1, 2]})
+    registry = ProviderRegistry()
+    registry.register("any", object())
+
+    outcome = stages._script_and_storyboard(engine, registry)
+
+    assert outcome["status"] == "COMPLETED", outcome
+    assert outcome["artefacts"]["storyboards"] == 1
+    (refused,) = outcome["artefacts"]["storyboards_gated"]
+    assert refused.startswith(gated[:8]) and "Scena 5" in refused
+    assert "1 storyboard oprit la poarta de conținut" in outcome["reason"]
+    # No style is named for the film: each scene carries its own kind.
+    assert styles == [None, None]
+
+
+# --------------------------------- the daily run follows the staircase (PRODUCTION) --
+#
+# In PRODUCTION the media stage no longer buys a whole film. It builds the shooting sheet
+# (0 credits, one free balance read) and hands the first step that has something to buy to
+# `run_sheet_step`, which asks the Owner (202) unless his yes for THIS sheet is standing, and
+# then spends it and buys that step alone. The stage writes him the sheet and a letter and
+# goes on. Every vendor below is a spy; the Owner's own database is never opened.
+
+LIVE_DB = Path(__file__).resolve().parents[1] / "data" / "studio.db"
+
+
+def _stamp(path: Path) -> tuple[int, int] | None:
+    if not path.exists():
+        return None
+    stat = path.stat()
+    return (stat.st_size, stat.st_mtime_ns)
+
+
+#: The Owner's database as this module found it; no test here may change it.
+LIVE_DB_AT_IMPORT = _stamp(LIVE_DB)
+
+requires_ffmpeg = pytest.mark.skipif(find_ffmpeg() is None, reason="ffmpeg not installed")
+
+
+def _production(engine, mode: str = "AUTONOMOUS_CEO") -> None:
+    """The studio in PRODUCTION, autonomy on, in the Owner's mode, with its employees."""
+    from app.agents.services import seed_initial_workforce
+    from app.models import OwnerPolicy
+
+    _autonomy_on(engine)
+    with Session(engine) as session, session.begin():
+        policy = session.get(OwnerPolicy, 1)
+        policy.environment = "PRODUCTION"
+        policy.autonomy_mode = mode
+    seed_initial_workforce(engine)
+
+
+def _bottom_of_the_staircase(engine, tmp_path, scenes: int = 2) -> str:
+    """A film with model-written, lint-clean prompts and no still bought yet."""
+    from app.media.models import SceneTake
+    from sqlalchemy import select
+    from test_film_costing import a_film
+
+    storyboard_id = a_film(engine, tmp_path, scenes=scenes)
+    with Session(engine) as session, session.begin():
+        for take in session.scalars(
+            select(SceneTake).where(SceneTake.storyboard_id == storyboard_id)
+        ):
+            session.delete(take)
+    return storyboard_id
+
+
+def _noise_stills(tmp_path) -> tuple[Path, Path]:
+    """Two detailed 1080x1920 pictures with nobody in them: the stills gate's local checks
+    (a real picture, sharpness, motion blur, YuNet) read them as good stills."""
+    made = []
+    for seed in (1, 2):
+        path = tmp_path / f"noise_{seed}.jpg"
+        subprocess.run(  # noqa: S603 - the local encoder, arguments built here
+            [
+                str(find_ffmpeg()),
+                "-nostdin",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                f"color=c=gray:s=1080x1920,noise=alls=40:allf=t:all_seed={seed}",
+                "-frames:v",
+                "1",
+                "-q:v",
+                "3",
+                "-y",
+                str(path),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=60,
+        )
+        made.append(path)
+    return made[0], made[1]
+
+
+def _staircase_world(engine, tmp_path, monkeypatch, *, stills=None) -> dict[str, Any]:
+    """The vendors, faked, as the stage's wiring hands them over; the legacy render refuses."""
+    from app.runbook import stages
+    from test_film_costing import SEEDANCE, Account, Models, SpyVideo
+    from test_stills_stage import SpyStills
+
+    account = Account(10_000)
+    pictures = (lambda prompt, call: list(stills)) if stills else None
+    images = SpyStills(pictures=pictures, balance=10_000)
+    models = Models(SpyVideo("seedance2_5", account))
+    monkeypatch.setattr(stages, "story_gate", lambda session, script_id: (True, ""))
+    monkeypatch.setattr(
+        stages,
+        "sheet_wiring",
+        lambda engine_, vault, settings_: {
+            "integration_id": None,
+            "capabilities": [SEEDANCE],
+            "image_adapter": images,
+            "account": account,
+            "adapter_for_model": models,
+            "resolution": "1080p",
+            "storage_root": tmp_path / "media",
+        },
+    )
+
+    def legacy(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("the whole-film render ran in PRODUCTION")
+
+    monkeypatch.setattr("app.media.assembler.assemble_video_job", legacy)
+    return {"images": images, "models": models, "account": account}
+
+
+def _judge_sees_good_stills(monkeypatch):
+    """The vision model, faked (it is a paid agent run); every local check stays real."""
+    import functools
+
+    from app.media import shooting_sheet
+    from test_stills_stage import SpyJudge
+
+    judge = SpyJudge()
+    monkeypatch.setattr(
+        shooting_sheet,
+        "run_stills_stage",
+        functools.partial(shooting_sheet.run_stills_stage, judge=judge),
+    )
+    return judge
+
+
+def _current_sheet_hash(engine, storyboard_id: str) -> str:
+    from app.media.shooting_sheet import sheet_hash
+    from test_film_costing import SEEDANCE
+
+    return sheet_hash(
+        engine,
+        storyboard_id,
+        capabilities=[SEEDANCE],
+        resolution="1080p",
+        stills_model="seedream5_pro",
+    )
+
+
+def _provider_costs(engine) -> list[Any]:
+    from app.economy.models import ProviderCostRecord
+    from sqlalchemy import select
+
+    with Session(engine) as session:
+        rows = list(session.scalars(select(ProviderCostRecord)))
+        session.expunge_all()
+        return rows
+
+
+def test_in_autonomous_ceo_the_stage_asks_for_the_stills_writes_to_the_owner_and_moves_on(
+    engine, settings, tmp_path, monkeypatch
+):
+    """EVERY_PAID_STEP (the default) asks in every mode, AUTONOMOUS_CEO included: the stage
+    builds the sheet, raises the stills question bound to its hash, writes the Owner the sheet
+    and a letter, and returns without a single paid call."""
+    from app.runbook import stages
+
+    _production(engine, "AUTONOMOUS_CEO")
+    storyboard_id = _bottom_of_the_staircase(engine, tmp_path)
+    world = _staircase_world(engine, tmp_path, monkeypatch)
+
+    outcome = stages._media(engine, settings, None, None)
+
+    assert outcome["status"] == "SKIPPED", outcome
+    assert "așteaptă Proprietarul" in outcome["reason"]
+    assert world["images"].asked == [] and world["models"].posts() == 0
+    (question,) = _approvals(engine)
+    assert question.action == "media.stills_purchase" and question.result == "PENDING"
+    assert question.subject == storyboard_id
+    plan_hash = _current_sheet_hash(engine, storyboard_id)
+    assert question.proposed_diff["plan_hash"] == plan_hash
+    assert question.proposed_diff["step"] == "stills"
+    assert outcome["artefacts"]["awaiting_owner"][0]["approval_id"] == question.id
+    assert outcome["artefacts"]["sheets"] == {storyboard_id: plan_hash}
+
+    (letter,) = _owner_letters(engine, "owner_shooting_sheet")
+    body = letter.body_json
+    assert body["storyboard_id"] == storyboard_id and body["step"] == "stills"
+    assert body["approval_id"] == question.id and body["sheet_hash"] == plan_hash
+    assert body["sheet_url"].endswith(f"/media/storyboards/{storyboard_id}/shooting-sheet")
+    assert "Foaia de filmare" in letter.subject
+    # Two LIVE scenes, two candidates each at 9 credits: 36 credits, 0,36 USD.
+    assert "36 de credite (0,36 USD)" in letter.body_text
+    assert "așteaptă" in letter.body_text
+    assert len(_owner_letters(engine, "owner_waiting")) == 1
+    # Nothing was held and nothing was booked: nothing was bought.
+    assert _reservations(engine) == [] and _provider_costs(engine) == []
+
+    # The same day again: the same question stands, and the Owner gets no second letter.
+    again = stages._media(engine, settings, None, None)
+    assert again["status"] == "SKIPPED"
+    assert [request.id for request in _approvals(engine)] == [question.id]
+    assert len(_owner_letters(engine, "owner_shooting_sheet")) == 1
+    assert world["images"].asked == [] and world["models"].posts() == 0
+
+
+def test_a_film_without_the_models_shot_plan_stops_with_a_romanian_reason_and_spends_nothing(
+    engine, settings, tmp_path, monkeypatch
+):
+    from app.media.models import Storyboard, StoryboardScene
+    from app.runbook import stages
+    from sqlalchemy import select
+
+    _production(engine)
+    storyboard_id = _bottom_of_the_staircase(engine, tmp_path)
+    with Session(engine) as session, session.begin():
+        row = session.scalars(
+            select(StoryboardScene).where(
+                StoryboardScene.storyboard_id == storyboard_id, StoryboardScene.scene_index == 2
+            )
+        ).one()
+        row.prompt_json = {**dict(row.prompt_json), "source": "template"}
+    world = _staircase_world(engine, tmp_path, monkeypatch)
+
+    outcome = stages._media(engine, settings, None, None)
+
+    assert outcome["status"] == "SKIPPED", outcome
+    assert "planul de cadre" in outcome["reason"]
+    assert world["images"].asked == [] and world["models"].posts() == 0
+    assert world["account"].reads == 0, "not even the balance was read"
+    assert _approvals(engine) == [] and _provider_costs(engine) == []
+    with Session(engine) as session:
+        assert session.get(Storyboard, storyboard_id).status == "NEEDS_SHOT_PLAN"
+
+
+def test_a_film_whose_prompts_carry_a_lint_block_stops_before_the_owner_is_asked(
+    engine, settings, tmp_path, monkeypatch
+):
+    from app.media.models import StoryboardScene
+    from app.runbook import stages
+    from sqlalchemy import select
+
+    _production(engine)
+    storyboard_id = _bottom_of_the_staircase(engine, tmp_path)
+    with Session(engine) as session, session.begin():
+        row = session.scalars(
+            select(StoryboardScene).where(
+                StoryboardScene.storyboard_id == storyboard_id, StoryboardScene.scene_index == 1
+            )
+        ).one()
+        words = "Environment: NEPAL_CLIMATE_CRISIS. " + row.prompt_json["still_prompt"]
+        row.visual_prompt = words
+        row.prompt_json = {**dict(row.prompt_json), "still_prompt": words}
+    world = _staircase_world(engine, tmp_path, monkeypatch)
+
+    outcome = stages._media(engine, settings, None, None)
+
+    assert outcome["status"] == "SKIPPED", outcome
+    assert "NEPAL_CLIMATE_CRISIS" in outcome["reason"]
+    assert "blocaj" in outcome["reason"]
+    assert world["images"].asked == [] and world["models"].posts() == 0
+    assert _approvals(engine) == [] and _provider_costs(engine) == []
+    (letter,) = _owner_letters(engine, "owner_shooting_sheet")
+    assert letter.body_json["status"] == "LINT_BLOCKED"
+    assert "NEPAL_CLIMATE_CRISIS" in letter.body_text
+
+
+@requires_ffmpeg
+def test_after_the_stills_yes_the_stage_buys_the_stills_only_and_motion_waits_for_its_own_yes(
+    engine, settings, tmp_path, monkeypatch
+):
+    from app.media.models import SceneTake
+    from app.runbook import stages
+    from sqlalchemy import select
+
+    _production(engine)
+    storyboard_id = _bottom_of_the_staircase(engine, tmp_path)
+    world = _staircase_world(engine, tmp_path, monkeypatch, stills=_noise_stills(tmp_path))
+    judge = _judge_sees_good_stills(monkeypatch)
+
+    stages._media(engine, settings, None, None)
+    (stills_question,) = _approvals(engine)
+    _answer(engine, stills_question.id, "APPROVED", note="Da, imaginile.")
+
+    bought = stages._media(engine, settings, None, None)
+
+    assert bought["status"] == "COMPLETED", bought
+    # The stills step alone: one request of two candidates per LIVE scene, each judged.
+    assert [request["count"] for request in world["images"].asked] == [2, 2]
+    assert len(judge.looked_at) == 4
+    assert world["models"].posts() == 0, "a shot was bought on the stills' yes"
+    with Session(engine) as session:
+        stills = list(
+            session.scalars(
+                select(SceneTake).where(
+                    SceneTake.storyboard_id == storyboard_id, SceneTake.status == "APPROVED"
+                )
+            )
+        )
+    assert sorted(take.scene_number for take in stills) == [1, 2]
+    by_action = {request.action: request for request in _approvals(engine)}
+    assert by_action["media.stills_purchase"].consumed_at is not None
+    # The hero test shot is the next question, bound to the sheet as it is after the stills.
+    hero_question = by_action["media.test_shot"]
+    assert hero_question.result == "PENDING"
+    assert hero_question.proposed_diff["plan_hash"] == _current_sheet_hash(engine, storyboard_id)
+    assert "media.motion_purchase" not in by_action
+    assert "așteaptă Proprietarul" in bought["reason"]
+    # What the stills cost is in the books: the measured balance drop, 36 credits.
+    (cost,) = _provider_costs(engine)
+    assert cost.attribution_json["step"] == "stills"
+    assert cost.attribution_json["credits"] == 36 and cost.usd_micros == 360_000
+
+    # His yes to the hero buys the hero alone; the rest of the motion waits for his look at
+    # it and for a yes of its own.
+    _answer(engine, hero_question.id, "APPROVED", note="Da, cadrul de probă.")
+    hero = stages._media(engine, settings, None, None)
+
+    assert world["models"].posts() == 1, hero
+    actions = [request.action for request in _approvals(engine)]
+    assert "media.motion_purchase" not in actions
+    assert "cadrul de probă" in hero["reason"] and "așteaptă Proprietarul" in hero["reason"]
+    look = [
+        letter
+        for letter in _owner_letters(engine, "owner_shooting_sheet")
+        if letter.body_json["status"] == "HERO_NOT_APPROVED"
+    ]
+    assert len(look) == 1 and "așteaptă decizia ta" in look[0].subject
+    assert len(_provider_costs(engine)) == 2
+
+
+def test_every_bought_step_leaves_the_film_to_be_assembled_from_its_takes(
+    engine, settings, tmp_path, monkeypatch
+):
+    """When the sheet has nothing left to buy, the stage assembles the film from its takes:
+    no image or video adapter is asked, and only the narration is held in the budget."""
+    from app.runbook import stages
+
+    _production(engine)
+    storyboard_id = _bottom_of_the_staircase(engine, tmp_path)
+    world = _staircase_world(engine, tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "app.media.shooting_sheet.build_sheet",
+        _sheet_with_nothing_to_buy(storyboard_id),
+    )
+    assembled: list[dict[str, Any]] = []
+
+    def from_takes(engine_, board, correlation, **render):
+        assembled.append({"storyboard_id": board, **render})
+        return {"output_asset_id": "asset-from-takes", "job_id": str(uuid4())}
+
+    monkeypatch.setattr("app.media.assembler.assemble_from_takes", from_takes)
+    monkeypatch.setattr(
+        "app.media.factory.render_plan",
+        lambda engine_, vault, board: {"tts_for_scene": lambda *a: None, "plan": {}},
+    )
+    monkeypatch.setattr("app.media.factory.tts_provider", lambda engine_, vault: None)
+
+    outcome = stages._media(engine, settings, None, None)
+
+    assert outcome["status"] == "COMPLETED", outcome
+    assert outcome["artefacts"]["assets"] == ["asset-from-takes"]
+    (call,) = assembled
+    assert call["storyboard_id"] == storyboard_id
+    assert "image_adapter" not in call and "motion_chooser" not in call
+    assert world["images"].asked == [] and world["models"].posts() == 0
+    assert _approvals(engine) == []
+
+
+def _sheet_with_nothing_to_buy(storyboard_id: str):
+    """build_sheet as it reads once every step is bought: nothing left on any stair."""
+
+    def build(engine_, board, **_context):
+        step = {"to_buy": [], "cost_credits": 0, "cap_credits": 0, "cost_usd": 0.0}
+        return {
+            "storyboard_id": board,
+            "title": "A film",
+            "sheet_hash": "f" * 64,
+            "credit_usd": 0.01,
+            "scenes": [],
+            "steps": {"stills": step, "test_shot": step, "motion": step},
+            "lint_blocked": False,
+            "lint_summary_ro": "",
+            "shot_plan_gaps": [],
+            "footer": {
+                "stills_credits": 36,
+                "hero_credits": 340,
+                "rest_credits": 340,
+                "cap_credits": 1056,
+                "total_credits": 716,
+                "balance": {"credits": 9000.0, "read": True, "problem": None},
+            },
+        }
+
+    return build
+
+
+def test_the_daily_job_is_never_activated_by_any_test(engine, settings, tmp_path, monkeypatch):
+    """The staircase stage runs on a temporary studio: no schedule wakes, no clock is started,
+    and the Owner's own database is untouched by anything in this module."""
+    from app.models import DomainEvent
+    from app.runbook import stages
+    from app.workflows.models import ScheduledJob
+    from sqlalchemy import select
+
+    _production(engine)
+    _bottom_of_the_staircase(engine, tmp_path)
+    _staircase_world(engine, tmp_path, monkeypatch)
+
+    stages._media(engine, settings, None, None)
+
+    with Session(engine) as session:
+        assert not list(session.scalars(select(ScheduledJob).where(ScheduledJob.is_active)))
+        assert not list(
+            session.scalars(
+                select(DomainEvent).where(DomainEvent.event_type == "workflow.job_activated")
+            )
+        )
+    assert Path(str(engine.url.database)).resolve() != LIVE_DB.resolve()
+    assert LIVE_DB.as_posix() not in settings.database_url
+    assert _stamp(LIVE_DB) == LIVE_DB_AT_IMPORT
+    source = Path(__file__).read_text(encoding="utf-8")
+    for name in ("set_job_" + "active", "scheduler_" + "tick", "ensure_scheduled_" + "job"):
+        assert name not in source, name

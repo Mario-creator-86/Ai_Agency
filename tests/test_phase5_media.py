@@ -29,7 +29,7 @@ from app.media.services import (
     list_character_bibles,
     seed_default_character_bibles,
 )
-from app.media.toolchain import find_ffmpeg
+from app.media.toolchain import find_ffmpeg, has_filter
 from app.models import OwnerPolicy
 from app.providers.deterministic_media import (
     DeterministicTTSAdapter,
@@ -601,15 +601,24 @@ def _words(text: str) -> list[str]:
     return [w for w in "".join(c.lower() if c.isalnum() else " " for c in text).split() if w]
 
 
-def test_captions_are_sentence_cues_timed_to_each_scenes_narration():
-    from app.media.assembler import CAPTION_LINE_CHARS, CAPTION_MAX_LINES, caption_cues
+def test_captions_are_cards_of_two_to_five_words_timed_by_character_share():
+    """2026-10-01: a cue is a card of two to five words, never a whole sentence. Without the
+    voice's own word timing the scene's spoken time is shared by the cards' characters."""
+    from app.media.assembler import (
+        CAPTION_LINE_CHARS,
+        CAPTION_MAX_LINES,
+        CAPTION_MAX_WORDS,
+        CAPTION_MIN_WORDS,
+        caption_cues,
+    )
 
+    first = "Perseverance found layered rock near the old crater. It points to a river delta."
     scenes = [
         {
             "scene_index": 1,
             "duration_seconds": 6.0,
             "audio_seconds": 5.0,
-            "voiceover_segment": "Perseverance found layered rock. It points to a river delta.",
+            "voiceover_segment": first,
         },
         {
             "scene_index": 2,
@@ -619,34 +628,40 @@ def test_captions_are_sentence_cues_timed_to_each_scenes_narration():
         },
     ]
     cues = caption_cues(scenes)
-    # One cue per sentence, in order.
-    assert [" ".join(c["lines"]) for c in cues] == [
-        "Perseverance found layered rock.",
-        "It points to a river delta.",
-        "The evidence is conclusive.",
-    ]
-    # Timed from the scene's audio start over the narration actually recorded for it, not the
-    # storyboard's planned length: scene one's words end at 5.0, scene two's start at 6.0.
-    assert cues[0]["start"] == 0.0
-    assert cues[1]["end"] == pytest.approx(5.0, abs=0.01)
-    assert cues[2]["start"] == 6.0 and cues[2]["end"] == pytest.approx(10.0, abs=0.01)
-    # Within a scene, time is shared by the sentences' length, so the longer one lasts longer.
-    assert (cues[0]["end"] - cues[0]["start"]) > (cues[1]["end"] - cues[1]["start"])
-    assert cues[0]["end"] == cues[1]["start"]
+    assert (CAPTION_MIN_WORDS, CAPTION_MAX_WORDS) == (2, 5)
     for cue in cues:
+        words = " ".join(cue["lines"]).split()
+        assert CAPTION_MIN_WORDS <= len(words) <= CAPTION_MAX_WORDS, cue
         assert 1 <= len(cue["lines"]) <= CAPTION_MAX_LINES
         assert all(len(line) <= CAPTION_LINE_CHARS for line in cue["lines"])
         assert cue["end"] > cue["start"]
+        assert cue["timing"] == "character_share"
+        # A sentence ends a card: no card runs on past a full stop.
+        assert not any(word.endswith(".") for word in words[:-1]), cue
+    # Nothing is lost or reordered.
+    said = " ".join(scene["voiceover_segment"] for scene in scenes)
+    assert _words(" ".join(" ".join(c["lines"]) for c in cues)) == _words(said)
+    # Scene one's words are up from 0.0 until its recording ends at 5.0, scene two's from its
+    # own start at 6.0 for its 4.0 seconds; the cards follow each other with no gap.
+    one = [c for c in cues if c["scene_index"] == 1]
+    two = [c for c in cues if c["scene_index"] == 2]
+    assert one[0]["start"] == 0.0 and one[-1]["end"] == pytest.approx(5.0, abs=0.001)
+    assert two[0]["start"] == pytest.approx(6.0) and two[-1]["end"] == pytest.approx(10.0)
+    for before, after in zip(one, one[1:], strict=False):
+        assert after["start"] == pytest.approx(before["end"])
+    # Shared by characters: every card of the scene is up for the same time per character.
+    rates = [(c["end"] - c["start"]) / len(" ".join(c["lines"])) for c in one]
+    assert max(rates) == pytest.approx(min(rates), rel=0.01)
 
 
-def test_a_long_sentence_splits_into_cues_of_two_lines_of_forty_two_characters():
+def test_a_long_sentence_becomes_many_short_cards_and_the_srt_reads_back():
     from app.media.assembler import (
         CAPTION_LINE_CHARS,
-        CAPTION_MAX_LINES,
+        CAPTION_MAX_WORDS,
         caption_cues,
         generate_subtitles_srt,
     )
-    from app.media.qc import parse_srt
+    from app.media.qc import caption_problems, parse_srt
 
     sentence = (
         "The rover drilled through layered sandstone for eleven hours while the orbiter "
@@ -662,23 +677,417 @@ def test_a_long_sentence_splits_into_cues_of_two_lines_of_forty_two_characters()
         }
     ]
     cues = caption_cues(scenes)
-    assert len(cues) >= 3, "one sentence of 190 characters cannot fit two lines of 42"
+    assert len(cues) >= len(sentence.split()) // CAPTION_MAX_WORDS
     for cue in cues:
-        assert len(cue["lines"]) <= CAPTION_MAX_LINES
+        assert 2 <= len(" ".join(cue["lines"]).split()) <= CAPTION_MAX_WORDS
         assert all(0 < len(line) <= CAPTION_LINE_CHARS for line in cue["lines"])
-    # Nothing is lost or reordered in the split.
     assert _words(" ".join(" ".join(c["lines"]) for c in cues)) == _words(sentence)
     assert cues[0]["start"] == 0.0 and cues[-1]["end"] == pytest.approx(11.5, abs=0.01)
 
-    # The SRT the studio writes is the SRT quality control reads back.
+    # The SRT the studio writes is the SRT quality control reads back, and passes.
     parsed = parse_srt(generate_subtitles_srt(scenes))
     assert [c["lines"] for c in parsed] == [c["lines"] for c in cues]
     assert parsed[-1]["end"] == pytest.approx(11.5, abs=0.001)
+    assert caption_problems(parsed) == []
 
     # A scene with no words has no cue; nothing invents a caption from a visual prompt.
     assert (
         caption_cues([{"scene_index": 1, "duration_seconds": 3.0, "voiceover_segment": ""}]) == []
     )
+    # One lone word at the end of a passage joins the card before it: never a one-word card
+    # where a second word exists.
+    lone = caption_cues(
+        [
+            {
+                "scene_index": 1,
+                "duration_seconds": 4.0,
+                "audio_seconds": 3.0,
+                "voiceover_segment": "One two three four five six.",
+            }
+        ]
+    )
+    assert [len(" ".join(c["lines"]).split()) for c in lone] in ([4, 2], [3, 3], [2, 4])
+
+
+def test_caption_timing_follows_the_voices_word_alignment_when_the_take_has_it():
+    """With the voice's own word timing (ElevenLabs' alignment, or an adapter's word_timings),
+    each card comes up on its first word, not on a share of the characters."""
+    from app.media.assembler import caption_cues
+
+    text = "Nepal is paying for a crisis it did not create."
+    starts = [0.12, 0.61, 0.80, 1.45, 1.70, 1.81, 2.60, 2.71, 2.95, 3.10]
+    words = [
+        {"word": word, "start": start, "end": start + 0.2}
+        for word, start in zip(text.split(), starts, strict=True)
+    ]
+    planned = {
+        "scene_index": 1,
+        "duration_seconds": 4.0,
+        "audio_seconds": 3.6,
+        "voiceover_segment": text,
+    }
+    aligned = caption_cues(
+        [
+            {
+                **planned,
+                "voice_segments": [{"text": text, "offset": 0.0, "seconds": 3.6, "words": words}],
+            },
+            {
+                "scene_index": 2,
+                "duration_seconds": 3.0,
+                "audio_seconds": 2.0,
+                "voiceover_segment": "Yet it pays.",
+                "voice_segments": [
+                    {
+                        "text": "Yet it pays.",
+                        "offset": 0.0,
+                        "seconds": 2.0,
+                        "words": [
+                            {"word": "Yet", "start": 0.3, "end": 0.5},
+                            {"word": "it", "start": 0.55, "end": 0.7},
+                            {"word": "pays.", "start": 0.9, "end": 1.4},
+                        ],
+                    }
+                ],
+            },
+        ]
+    )
+    shared = caption_cues([planned])
+    first_scene = [c for c in aligned if c["scene_index"] == 1]
+    assert all(c["timing"] == "alignment" for c in aligned)
+    position = 0
+    for cue in first_scene:
+        assert cue["start"] == pytest.approx(starts[position])
+        position += len(" ".join(cue["lines"]).split())
+    assert position == len(starts)
+    # Scene two starts on its own clock (4.0) plus its first word (0.3).
+    assert aligned[len(first_scene)]["start"] == pytest.approx(4.3)
+    # The same words shared by characters land elsewhere: the alignment is what moved them.
+    assert [c["start"] for c in first_scene] != pytest.approx([c["start"] for c in shared])
+    assert all(c["timing"] == "character_share" for c in shared)
+
+    # A timing that does not match the words said (another count) is not trusted.
+    mismatched = caption_cues(
+        [
+            {
+                **planned,
+                "voice_segments": [
+                    {"text": text, "offset": 0.0, "seconds": 3.6, "words": words[:4]}
+                ],
+            }
+        ]
+    )
+    assert all(c["timing"] == "character_share" for c in mismatched)
+
+
+def test_elevenlabs_character_alignment_is_read_as_words():
+    from app.media.assembler import words_from_alignment
+
+    text = "Nepal pays."
+    alignment = {
+        "characters": list(text),
+        "character_start_times_seconds": [0.1 + 0.05 * i for i in range(len(text))],
+        "character_end_times_seconds": [0.15 + 0.05 * i for i in range(len(text))],
+    }
+    assert words_from_alignment(alignment) == [
+        {"word": "Nepal", "start": pytest.approx(0.1), "end": pytest.approx(0.35)},
+        {"word": "pays.", "start": pytest.approx(0.4), "end": pytest.approx(0.65)},
+    ]
+    assert words_from_alignment(None) is None
+    assert words_from_alignment({"characters": ["a"]}) is None
+    assert (
+        words_from_alignment({"characters": ["a", "b"], "character_start_times_seconds": [0.0]})
+        is None
+    )
+
+
+def test_a_scene_lasts_its_words_and_a_breath_and_the_film_stays_within_a_second_of_them():
+    from app.media.assembler import SPOKEN_TAIL_SECONDS, TIMELINE_FPS, scene_spans
+
+    assert SPOKEN_TAIL_SECONDS == 0.35
+
+    def whole_frames(spans: list[float]) -> bool:
+        return all(abs(s * TIMELINE_FPS - round(s * TIMELINE_FPS)) < 1e-6 for s in spans)
+
+    # Two scenes: the full breath after each, never past the plan, on whole frames.
+    two = scene_spans([5.0, 5.0], [4.0, 4.6])
+    assert two == pytest.approx([105 / 24, 119 / 24])
+    assert whole_frames(two)
+    # Words longer than the plan are never cut: the scene lasts its words.
+    assert scene_spans([4.0], [5.2]) == pytest.approx([125 / 24])
+    # A scene with no words keeps its planned length.
+    assert scene_spans([3.0], [0.0]) == pytest.approx([3.0])
+    # Six scenes with a second of slack each: the breaths are shortened together so the film
+    # stays within a second of its narration, the line quality control draws.
+    planned, spoken = [5.0] * 6, [4.0, 3.2, 4.4, 3.9, 4.1, 2.8]
+    six = scene_spans(planned, spoken)
+    assert whole_frames(six)
+    assert all(sp <= s <= p + 1e-9 for s, sp, p in zip(six, spoken, planned, strict=True))
+    assert sum(six) - sum(spoken) <= 0.9 + 1e-9
+    assert sum(six) - sum(spoken) >= 0.5  # the breath is shortened, not dropped
+
+
+class AlignedVoice:
+    """A narrator that returns real WAV audio, with ElevenLabs-shaped character alignment
+    when ``aligned`` (the /with-timestamps answer), and none otherwise."""
+
+    PROVIDER_NAME = "TEST_ALIGNED_VOICE"
+    model = "test-voice"
+    voice_id = "voice-1"
+    integration_id = "conn-voice"
+
+    def __init__(self, aligned: bool):
+        self.aligned = aligned
+        self.starts: dict[str, list[float]] = {}
+
+    async def synthesize(self, text, **_kwargs):
+        import io
+        import math
+        import wave
+
+        from app.providers.media_base import TTSResult
+
+        words = text.split()
+        # Uneven pacing, so word timing and a share of the characters cannot agree.
+        starts, clock = [], 0.15
+        for position, word in enumerate(words):
+            starts.append(round(clock, 3))
+            clock += 0.18 + 0.05 * len(word) + (0.35 if position == 1 else 0.0)
+        seconds = round(clock + 0.2, 3)
+        self.starts[text] = starts
+        rate = 48000
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as out:
+            out.setnchannels(1)
+            out.setsampwidth(2)
+            out.setframerate(rate)
+            out.writeframes(
+                b"".join(
+                    int(9000 * math.sin(2 * math.pi * 220 * n / rate)).to_bytes(
+                        2, "little", signed=True
+                    )
+                    for n in range(int(seconds * rate))
+                )
+            )
+        raw: dict = {"provider": self.PROVIDER_NAME}
+        if self.aligned:
+            characters, begin, end = [], [], []
+            for position, word in enumerate(words):
+                if position:
+                    characters.append(" ")
+                    begin.append(starts[position] - 0.01)
+                    end.append(starts[position])
+                for offset, char in enumerate(word):
+                    characters.append(char)
+                    begin.append(starts[position] + 0.04 * offset)
+                    end.append(starts[position] + 0.04 * (offset + 1))
+            raw["alignment"] = {
+                "characters": characters,
+                "character_start_times_seconds": begin,
+                "character_end_times_seconds": end,
+            }
+        return TTSResult(
+            audio_bytes=buffer.getvalue(),
+            format="wav",
+            duration_seconds=seconds,
+            sample_rate=rate,
+            raw_response=raw,
+        )
+
+
+requires_libass = pytest.mark.skipif(
+    not has_filter(find_ffmpeg(), "subtitles"),
+    reason="the local ffmpeg has no libass (subtitles filter): burnt captions cannot be measured",
+)
+
+
+def _caption_pixels(film: Path, times: list[float], threshold: int = 60) -> list[set]:
+    """The bright pixels of the film's frames at ``times`` (the stills are black, so every
+    bright pixel is caption), as (x, y) sets, one per sampled frame."""
+    import subprocess
+
+    found = []
+    for moment in times:
+        raw = subprocess.run(  # noqa: S603
+            [
+                find_ffmpeg(),
+                "-nostdin",
+                "-v",
+                "error",
+                "-ss",
+                f"{moment:.3f}",
+                "-i",
+                str(film),
+                "-frames:v",
+                "1",
+                "-vf",
+                "format=gray",
+                "-f",
+                "rawvideo",
+                "-",
+            ],
+            capture_output=True,
+            check=True,
+        ).stdout
+        width = 1080
+        found.append(
+            {
+                (index % width, index // width)
+                for index in range(0, len(raw), 1)
+                if raw[index] > threshold
+            }
+        )
+    return found
+
+
+@requires_libass
+def test_a_real_film_is_24_fps_within_a_second_of_its_words_with_captions_in_the_safe_area(
+    engine, tmp_path: Path
+):
+    from app.media import cards
+    from app.media.assembler import TIMELINE_FPS
+    from app.media.qc import parse_srt, probe_media_file
+    from test_motion import StubImages
+
+    sb_id, _ = _seeded_storyboard(engine, tmp_path)
+    voice = AlignedVoice(aligned=True)
+    render = assemble_video_job(
+        engine,
+        sb_id,
+        str(uuid4()),
+        storage_root=tmp_path / "media",
+        image_adapter=StubImages(),
+        tts_adapter=voice,
+    )
+    production = render["production"]
+    film = Path(render["file_path"])
+
+    # The timeline: 24 fps, recorded for quality control, and the file says the same.
+    assert production["timeline"]["fps"] == TIMELINE_FPS == 24
+    probe = probe_media_file(film)
+    assert probe["video_fps"] == pytest.approx(24.0)
+    # Within a second of the narration: the planned six seconds are not padded with silence.
+    narration = sum(scene["audio_seconds"] for scene in production["scenes"])
+    assert probe["duration_seconds"] <= narration + 1.0, (probe["duration_seconds"], narration)
+    assert render["duration_seconds"] <= narration + 0.9 + 1e-6
+    spans = production["timeline"]["spans"]
+    assert [s["scene_index"] for s in spans] == [1, 2]
+    assert spans[1]["start"] == pytest.approx(spans[0]["end"])
+
+    # Captions: ASS, Inter Bold from the studio's own verified file, burnt in.
+    captions = production["captions"]
+    assert captions["burned_in"] is True
+    ass = Path(captions["ass"])
+    assert ass.is_file() and ass.parent == film.parent
+    script = ass.read_text(encoding="utf-8")
+    assert "PlayResX: 1080" in script and "PlayResY: 1920" in script
+    style = next(line for line in script.splitlines() if line.startswith("Style:")).split(",")
+    assert style[1] == cards.font_family(cards.BOLD)
+    assert 64 <= float(style[2]) <= 68
+    assert 3 <= float(style[16]) <= 4  # outline
+    font_copy = film.parent / "fonts" / cards.BOLD
+    assert font_copy.read_bytes() == cards.font_path(cards.BOLD).read_bytes()
+    with Session(engine) as session:
+        args = " ".join(session.get(VideoRenderJob, render["job_id"]).command_args_json)
+    assert "subtitles=filename=captions.ass:fontsdir=fonts" in args
+
+    # The voice's own word timing placed the cards: each comes up on its first word.
+    assert captions["timing"] == {"alignment": 2, "character_share": 0}
+    cues = parse_srt(Path(captions["srt"]).read_text(encoding="utf-8"))
+    scene_one = [c for c in cues if c["start"] < spans[0]["end"] - 1e-3]
+    said = "Fixture narration segment 1."
+    word_starts = voice.starts[said]
+    position = 0
+    for cue in scene_one:
+        assert cue["start"] == pytest.approx(word_starts[position], abs=0.002)
+        position += len(" ".join(cue["lines"]).split())
+    assert position == len(said.split())
+
+    # No caption pixel outside the safe area, on frames sampled in the middle of every cue.
+    frames = _caption_pixels(film, [(c["start"] + c["end"]) / 2 for c in cues])
+    assert all(frames), "a caption is on every sampled frame"
+    for pixels in frames:
+        xs = [x for x, _ in pixels]
+        ys = [y for _, y in pixels]
+        assert min(xs) >= cards.SAFE_RECT[0] and max(xs) <= 1080 - 120, (min(xs), max(xs))
+        assert min(ys) >= cards.SAFE_RECT[1] and max(ys) <= 1500, (min(ys), max(ys))
+
+    # Without the voice's timing the same film is timed by the characters, and says so.
+    sb_two, _ = _seeded_storyboard(engine, tmp_path)
+    plain = assemble_video_job(
+        engine,
+        sb_two,
+        str(uuid4()),
+        storage_root=tmp_path / "media",
+        image_adapter=StubImages(),
+        tts_adapter=AlignedVoice(aligned=False),
+    )
+    assert plain["production"]["captions"]["timing"] == {"alignment": 0, "character_share": 2}
+
+
+@requires_libass
+def test_the_widest_caption_cards_stay_inside_the_safe_area(tmp_path: Path):
+    """The worst case drawn on black: long Romanian words in capitals, five to a card. Every
+    lit pixel stays inside SAFE_RECT, at or above y 1500 and clear of the right 120 px."""
+    import subprocess
+
+    from app.media import cards
+    from app.media.assembler import (
+        ass_captions_filter,
+        ass_from_cues,
+        caption_cues,
+        install_caption_fonts,
+    )
+
+    text = (
+        "RESPONSABILITĂȚILE EXTRAORDINARE ÎNTOTDEAUNA NEÎNDOIELNIC INTERGUVERNAMENTALE. "
+        "Țara plătește o factură pe care nu a făcut-o niciodată, iar lumea privește."
+    )
+    cues = caption_cues(
+        [
+            {
+                "scene_index": 1,
+                "duration_seconds": 8.0,
+                "audio_seconds": 8.0,
+                "voiceover_segment": text,
+            }
+        ]
+    )
+    (tmp_path / "captions.ass").write_text(ass_from_cues(cues), encoding="utf-8")
+    install_caption_fonts(tmp_path)
+    moments = [(c["start"] + c["end"]) / 2 for c in cues]
+    picks = "+".join(f"eq(n\\,{int(m * 24)})" for m in moments)
+    raw = subprocess.run(  # noqa: S603
+        [
+            find_ffmpeg(),
+            "-nostdin",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:size=1080x1920:rate=24:duration=8",
+            "-vf",
+            f"{ass_captions_filter('captions.ass')},select='{picks}',format=gray",
+            "-fps_mode",
+            "passthrough",
+            "-f",
+            "rawvideo",
+            "-",
+        ],
+        cwd=str(tmp_path),
+        capture_output=True,
+        check=True,
+    ).stdout
+    size = 1080 * 1920
+    assert len(raw) == size * len(moments)
+    for frame in range(len(moments)):
+        lit = [index for index in range(frame * size, (frame + 1) * size) if raw[index] > 30]
+        assert lit, f"card {frame + 1} drew nothing"
+        xs = [(index - frame * size) % 1080 for index in lit]
+        ys = [(index - frame * size) // 1080 for index in lit]
+        assert min(xs) >= cards.SAFE_RECT[0] and max(xs) <= 960, (frame, min(xs), max(xs))
+        assert min(ys) >= cards.SAFE_RECT[1] and max(ys) <= 1500, (frame, min(ys), max(ys))
 
 
 def test_srt_parsing_refuses_what_is_not_srt_and_reads_what_is():
@@ -747,8 +1156,10 @@ def test_the_film_carries_burnt_captions_and_normalised_loudness(engine, tmp_pat
     with Session(engine) as session:
         job = session.get(VideoRenderJob, render["job_id"])
         args = " ".join(job.command_args_json)
-    assert "subtitles=filename=captions.srt" in args
-    assert "BorderStyle=1" in args and "PrimaryColour=&H00FFFFFF" in args
+    # Burnt from the ASS script beside the film, in the studio's own Inter Bold.
+    assert "subtitles=filename=captions.ass:fontsdir=fonts" in args
+    script = (film.parent / "captions.ass").read_text(encoding="utf-8")
+    assert "BorderStyle" in script and "&H00FFFFFF" in script
     # A burnt-in film still plays: the video stream is there and 9:16.
     probe = probe_media_file(film)
     assert probe["ok"] and (probe["width"], probe["height"]) == (1080, 1920)
@@ -849,7 +1260,10 @@ def test_too_many_fallback_scenes_fail_a_production_film_and_warn_a_test_one(eng
     motion = qc["checks_json"]["motion_qc"]
     assert motion["passed"] is False
     assert (motion["motion_scenes"], motion["fallback_scenes"]) == (1, 3)
-    assert motion["max_fallback_scenes"] == 2  # half of four, the default
+    # CLIP_QC (2026-10-01): in PRODUCTION no LIVE scene may be a still unless the Owner
+    # chose it for that scene; the old default of half the scenes is gone.
+    assert motion["max_fallback_scenes"] == 0
+    assert motion["unchosen"] == [1, 2, 3]
     assert motion["environment"] == "PRODUCTION"
     assert any("fallback" in r.lower() or "push" in r.lower() for r in qc["failure_reasons_json"])
 
@@ -861,7 +1275,7 @@ def test_too_many_fallback_scenes_fail_a_production_film_and_warn_a_test_one(eng
     assert motion["passed"] is True and motion["warning"]
     assert not any("fallback" in r.lower() for r in qc["failure_reasons_json"])
 
-    # The Owner's ceiling is read from settings; one refusal over it fails production.
+    # One refusal fails production whatever the setting says: a setting cannot loosen it.
     with Session(engine) as session, session.begin():
         session.get(OwnerPolicy, 1).environment = "PRODUCTION"
     strict = _render_with_motion_record(engine, tmp_path, refused=1, made=3)
@@ -869,8 +1283,10 @@ def test_too_many_fallback_scenes_fail_a_production_film_and_warn_a_test_one(eng
         engine, strict, str(uuid4()), settings=SimpleNamespace(max_fallback_scenes=0)
     )
     assert qc["checks_json"]["motion_qc"]["passed"] is False
-    qc = evaluate_media_qc(engine, strict, str(uuid4()))
-    assert qc["checks_json"]["motion_qc"]["passed"] is True  # one of four is under half
+    qc = evaluate_media_qc(
+        engine, strict, str(uuid4()), settings=SimpleNamespace(max_fallback_scenes=3)
+    )
+    assert qc["checks_json"]["motion_qc"]["passed"] is False
 
 
 @requires_ffmpeg
@@ -1554,3 +1970,151 @@ def test_a_guess_is_not_recorded_twice_when_the_scene_states_the_same_person(eng
     assert board["scenes"][0]["character_ids_json"] == [sarah.id]
     assert record["guessed"] == {}
     assert record["note"] is None
+
+
+# --------------------------------------------------------------------------- the master
+# Sound and encoding cost no credits to fix. The render masters the narration once (a WAV
+# joined at 48 kHz, two-pass loudnorm at -2 dBTP, a limiter, one AAC encode) and copies that
+# track into the film; a film already made can have its sound redone without touching one
+# byte of its picture.
+
+
+def _stream_hash(path: Path, selector: str) -> str:
+    """The SHA-256 of every packet of one stream, as ffmpeg's streamhash muxer reads it."""
+    import subprocess
+
+    result = subprocess.run(  # noqa: S603
+        [
+            find_ffmpeg(),
+            "-nostdin",
+            "-v",
+            "error",
+            "-i",
+            str(path),
+            "-map",
+            selector,
+            "-c",
+            "copy",
+            "-f",
+            "streamhash",
+            "-hash",
+            "sha256",
+            "-",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=300,
+    )
+    return result.stdout.strip()
+
+
+@requires_ffmpeg
+def test_the_render_masters_the_narration_once_and_copies_it_into_the_film(engine, tmp_path):
+    from app.media.qc import probe_media_file
+    from app.media.toolchain import TRUE_PEAK_CEILING_DBTP, measure_loudness
+
+    sb_id, _ = _seeded_storyboard(engine, tmp_path)
+    render = assemble_video_job(engine, sb_id, str(uuid4()), storage_root=tmp_path / "media")
+    loudness = render["production"]["audio"]["loudness"]
+    assert loudness["applied"] is True
+    assert loudness["true_peak_target_dbtp"] == -2.0
+    assert loudness["true_peak_ceiling_dbtp"] == -1.0
+    assert "alimiter=" in loudness["filter"] and "linear=true" in loudness["filter"]
+    assert loudness["codec"] == "aac-lc 256k stereo 48 kHz"
+    assert loudness["normalization_type"] in ("linear", "dynamic")
+    # The output reading is taken from the delivered film, after the AAC encode.
+    film = Path(render["file_path"])
+    delivered = measure_loudness(find_ffmpeg(), film)
+    assert loudness["output"]["true_peak_dbtp"] == pytest.approx(
+        round(delivered["true_peak_dbtp"], 2), abs=0.01
+    )
+    assert delivered["true_peak_dbtp"] <= TRUE_PEAK_CEILING_DBTP
+
+    with Session(engine) as session:
+        job = session.get(VideoRenderJob, render["job_id"])
+        args = list(job.command_args_json)
+    # The film's own encode copies the mastered track: audio is AAC-encoded exactly once.
+    assert args[args.index("-c:a") + 1] == "copy"
+    assert "setrange=pc" not in " ".join(args)
+    assert (film.parent / "master_audio.wav").is_file()
+    assert (film.parent / "master_audio_final.m4a").is_file()
+    probe = probe_media_file(film)
+    assert probe["ok"] and probe["has_audio"]
+
+
+@requires_ffmpeg
+def test_a_dynamic_loudness_pass_is_written_down_for_the_owner(engine, tmp_path, monkeypatch):
+    import app.media.assembler as assembler
+    from app.media.toolchain import loudnorm_warning
+
+    real = assembler.encode_master_audio
+
+    def dynamic(*args, **kwargs):
+        result = real(*args, **kwargs)
+        result["normalization_type"] = "dynamic"
+        result["warning"] = loudnorm_warning({"normalization_type": "dynamic"})
+        return result
+
+    monkeypatch.setattr(assembler, "encode_master_audio", dynamic)
+    sb_id, _ = _seeded_storyboard(engine, tmp_path)
+    render = assemble_video_job(engine, sb_id, str(uuid4()), storage_root=tmp_path / "media")
+    production = render["production"]
+    assert production["audio"]["loudness"]["normalization_type"] == "dynamic"
+    warning = production["audio"]["loudness"]["warning"]
+    assert warning and "dinamic" in warning
+    assert warning in production["owner_warnings"]
+
+
+@requires_ffmpeg
+def test_repair_audio_redoes_the_sound_and_copies_the_picture_packet_for_packet(engine, tmp_path):
+    import hashlib
+
+    from app.media.assembler import AudioRepairError, repair_audio
+    from app.media.toolchain import LOUDNESS_BAND_LUFS, TRUE_PEAK_CEILING_DBTP, measure_loudness
+
+    sb_id, _ = _seeded_storyboard(engine, tmp_path)
+    render = assemble_video_job(engine, sb_id, str(uuid4()), storage_root=tmp_path / "media")
+    original = Path(render["file_path"])
+    original_sha = hashlib.sha256(original.read_bytes()).hexdigest()
+
+    repaired = repair_audio(engine, render["output_asset_id"], str(uuid4()))
+
+    fixed = Path(repaired["file_path"])
+    assert fixed != original and fixed.is_file()
+    # The picture is the same picture, packet for packet: -c:v copy, no re-encode.
+    assert _stream_hash(fixed, "0:v:0") == _stream_hash(original, "0:v:0")
+    assert repaired["video_stream_sha256"] == _stream_hash(original, "0:v:0").split("=", 1)[-1]
+    # The film it came from is left exactly as it was.
+    assert hashlib.sha256(original.read_bytes()).hexdigest() == original_sha
+
+    delivered = measure_loudness(find_ffmpeg(), fixed)
+    low, high = LOUDNESS_BAND_LUFS
+    assert low <= delivered["integrated_lufs"] <= high
+    assert delivered["true_peak_dbtp"] <= TRUE_PEAK_CEILING_DBTP
+    assert repaired["credits"] == 0
+
+    with Session(engine) as session:
+        asset = session.get(MediaAsset, repaired["output_asset_id"])
+        assert asset is not None and asset.uri_or_path == str(fixed)
+        assert asset.provenance_hash == hashlib.sha256(fixed.read_bytes()).hexdigest()
+        job = session.scalar(
+            select(VideoRenderJob).where(
+                VideoRenderJob.output_asset_id == repaired["output_asset_id"]
+            )
+        )
+        # Quality control finds the new film's manifest, and the manifest says what it is.
+        assert job is not None and job.status == "COMPLETED"
+        remaster = job.production_json["remaster"]
+        assert remaster["of_asset"] == render["output_asset_id"]
+        assert remaster["kind"] == "audio" and remaster["credits"] == 0
+        assert job.production_json["audio"]["loudness"]["true_peak_target_dbtp"] == -2.0
+        args = list(job.command_args_json)
+        assert args[args.index("-c:v") + 1] == "copy"
+
+    # Quality control reads the repaired film as a film, with its sound in band.
+    qc = evaluate_media_qc(engine, repaired["output_asset_id"], str(uuid4()))
+    assert qc["checks_json"]["audio_qc"]["passed"] is True, qc["checks_json"]["audio_qc"]
+
+    with pytest.raises(AudioRepairError):
+        repair_audio(engine, str(uuid4()), str(uuid4()))

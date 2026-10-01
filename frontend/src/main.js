@@ -43,6 +43,9 @@ import {
   PRICES_MEANING, PRICE_BOTH, channelFacts, checkNewModel, knownModels, priceAnswer, priceCommands, priceInput, providerMark, providerWideRows,
   tokenPriceRows, usdWords,
 } from './owner_controls.js';
+import {
+  SHEET_TITLE, approveStep, requestRender, sceneModelPath, sheetHtml, sheetPath, takeDecisionPath,
+} from './shooting_sheet.js';
 import { LiveWindows, eventMatchesAgent } from './live_window.js';
 import { MailThread } from './mail_thread.js';
 import { LiveStream } from './hq_stream.js';
@@ -1035,6 +1038,9 @@ function notify(message) {
 }
 
 async function api(path, options = {}) {
+  // A caller that knows its request runs long says so (a paid step of the shooting sheet buys
+  // every still or clip before it answers); a timeout here would not stop the server's work.
+  const timeoutMs = Number(/** @type {any} */ (options).timeoutMs) || 0;
   let response;
   try {
     response = await fetch(`/api/v1${path}`, {
@@ -1044,7 +1050,7 @@ async function api(path, options = {}) {
         'Content-Type': 'application/json',
       },
       signal: AbortSignal.timeout(
-        path.startsWith('/settings') || path.startsWith('/providers') ? 45000 : 10000,
+        timeoutMs || (path.startsWith('/settings') || path.startsWith('/providers') ? 45000 : 10000),
       ),
       cache: 'no-store',
     });
@@ -3288,6 +3294,220 @@ function motionExplanation(motion, scenes, notes) {
     </details>`;
 }
 
+/* ------------------------------------------------------------- Foaia de filmare (2026-10-01) */
+
+/**
+ * The shooting sheet's drawer (shooting_sheet.js builds every word of it). Opened from a storyboard's
+ * «Foaia de filmare» button, and by the render button when the studio answers 409 «Folosește foaia
+ * de filmare» (PRODUCTION). Reading it costs 0 credits; only a step's «Da, aprob și cumpăr» buys.
+ */
+const sheetDrawer = {
+  /** @type {HTMLDialogElement|null} */ dialog: null,
+  /** @type {string|null} */ id: null,
+  /** @type {any} */ sheet: null,
+  /** @type {string|null} */ confirm: null,
+  notice: '',
+  noticeError: false,
+  busy: false,
+};
+/** The pictures already read with the Owner's key, as data: URLs (the page's img-src takes data:). */
+const sheetPictures = new Map();
+/** Remembered across presses: once the studio said «use the sheet», the render button opens it. */
+const renderState = { sheetFirst: false };
+
+function sheetDialog() {
+  if (sheetDrawer.dialog) return sheetDrawer.dialog;
+  const dialog = document.createElement('dialog');
+  dialog.id = 'shooting-sheet-drawer';
+  dialog.className = 'studio-dialog sheet-drawer';
+  dialog.setAttribute('aria-label', SHEET_TITLE);
+  dialog.innerHTML = '<div class="dialog-header"><div><p class="eyebrow dialog-eyebrow">PRODUCȚIE · ÎNAINTE DE ORICE CREDIT</p>'
+    + `<h2 class="dialog-title">${escapeHtml(SHEET_TITLE)}</h2>`
+    + '<p class="dialog-desc">Tot ce cumpără filmul, înainte de primul credit: fiecare imagine, fiecare prompt, modelul fiecărei scene, secundele, creditele, soldul și plafonul.</p></div>'
+    + '<button type="button" class="dialog-close" data-sheet-action="close" aria-label="Închide">'
+    + '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></svg></button></div>'
+    + '<div class="dialog-body sheet-body" data-sheet-body></div>';
+  document.body.append(dialog);
+  dialog.addEventListener('click', (event) => { void onSheetClick(event); });
+  sheetDrawer.dialog = dialog;
+  return dialog;
+}
+
+/**
+ * A take's picture or a card's preview, read with the Owner's key.
+ * @param {string} src
+ * @returns {Promise<string>}
+ */
+async function sheetPicture(src) {
+  const kept = sheetPictures.get(src);
+  if (kept) return kept;
+  if (!src.startsWith('/api/v1/media/')) throw new Error('Adresa imaginii nu este a studioului.');
+  const response = await fetch(src, { headers: { Authorization: `Bearer ${ownerToken}` }, cache: 'no-store' });
+  if (!response.ok) throw new Error(`Imaginea nu a putut fi citită (${response.status}).`);
+  const blob = await response.blob();
+  /** @type {string} */
+  const url = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Imaginea nu a putut fi citită.'));
+    reader.readAsDataURL(blob);
+  });
+  sheetPictures.set(src, url);
+  return url;
+}
+
+function paintSheet() {
+  const body = sheetDialog().querySelector('[data-sheet-body]');
+  if (!body) return;
+  if (!sheetDrawer.sheet) {
+    body.innerHTML = sheetDrawer.noticeError
+      ? `<p class="text-error">${escapeHtml(sheetDrawer.notice)}</p>`
+      : `${sheetDrawer.notice ? `<p class="sheet-notice" role="status">${escapeHtml(sheetDrawer.notice)}</p>` : ''}<p class="topics-loading">Se citește foaia de filmare (0 credite)…</p>`;
+    return;
+  }
+  body.innerHTML = sheetHtml(sheetDrawer.sheet, {
+    escape: escapeHtml,
+    confirm: sheetDrawer.confirm,
+    notice: sheetDrawer.notice,
+    noticeError: sheetDrawer.noticeError,
+  });
+  body.querySelectorAll('img[data-sheet-src]').forEach((node) => {
+    const img = /** @type {HTMLImageElement} */ (node);
+    const src = img.dataset.sheetSrc || '';
+    sheetPicture(src).then((url) => { img.src = url; }).catch(() => { img.alt = `${img.alt} — nu a putut fi citită`; });
+  });
+  if (sheetDrawer.busy) body.querySelectorAll('button').forEach((b) => { /** @type {HTMLButtonElement} */ (b).disabled = true; });
+}
+
+async function loadSheet() {
+  if (!sheetDrawer.id) return;
+  try {
+    sheetDrawer.sheet = await api(sheetPath(sheetDrawer.id), { timeoutMs: 60000 });
+  } catch (error) {
+    sheetDrawer.sheet = null;
+    sheetDrawer.notice = `Foaia de filmare nu a putut fi citită: ${error.message}`;
+    sheetDrawer.noticeError = true;
+  }
+  paintSheet();
+}
+
+/**
+ * @param {string} storyboardId
+ * @param {string} [message] the studio's 409, when it sent the Owner here
+ */
+async function openShootingSheet(storyboardId, message = '') {
+  const dialog = sheetDialog();
+  if (sheetDrawer.id !== storyboardId) sheetDrawer.sheet = null;
+  Object.assign(sheetDrawer, { id: storyboardId, confirm: null, notice: message, noticeError: false, busy: false });
+  if (!dialog.open) dialog.showModal();
+  paintSheet();
+  await loadSheet();
+}
+
+/** @param {string} text @param {boolean} [failed] */
+function sheetNotice(text, failed = false) {
+  sheetDrawer.notice = text;
+  sheetDrawer.noticeError = failed;
+}
+
+/** @param {HTMLElement} node */
+async function playSheetClip(node) {
+  const src = node.dataset.sheetSrc || '';
+  if (!src.startsWith('/api/v1/media/')) return;
+  try {
+    const response = await fetch(src, { headers: { Authorization: `Bearer ${ownerToken}` }, cache: 'no-store' });
+    if (!response.ok) throw new Error(`Clipul nu a putut fi citit (${response.status}).`);
+    const video = document.createElement('video');
+    video.src = URL.createObjectURL(await response.blob());
+    video.controls = true;
+    video.playsInline = true;
+    video.className = 'sheet-video';
+    node.replaceWith(video);
+  } catch (error) {
+    sheetNotice(error.message, true);
+    paintSheet();
+  }
+}
+
+/**
+ * What a press on the sheet does, as one call that answers the Owner's notice; null when the press
+ * is only the drawer's own (open a question, close it).
+ * @param {HTMLElement} node @param {string} id
+ * @returns {(() => Promise<string>) | null}
+ */
+function sheetCommand(node, id) {
+  const action = node.dataset.sheetAction;
+  const dialog = sheetDialog();
+  if (action === 'confirm-step') {
+    const step = node.dataset.step || '';
+    const note = /** @type {HTMLTextAreaElement|null} */ (dialog.querySelector('[data-sheet-note]'))?.value || '';
+    const over = /** @type {HTMLInputElement|null} */ (dialog.querySelector('[data-sheet-over-budget]'))?.checked || false;
+    const planHash = String(sheetDrawer.sheet?.sheet_hash || '');
+    return async () => {
+      const result = await approveStep(api, { storyboardId: id, step, planHash, note, allowOverBudget: over, commandId: crypto.randomUUID() });
+      if (result.status !== 'BOUGHT') throw new Error(result.message || 'Pasul nu a cumpărat nimic.');
+      return 'Pasul a fost cumpărat cu aprobarea ta, pentru foaia pe care ai văzut-o. Foaia de mai jos arată ce s-a cumpărat.';
+    };
+  }
+  if (action === 'take') {
+    const decision = node.dataset.decision === 'APPROVED' ? 'APPROVED' : 'REJECTED';
+    return async () => {
+      await api(takeDecisionPath(node.dataset.take || ''), { method: 'POST', body: JSON.stringify({ decision, note: null }) });
+      return decision === 'APPROVED'
+        ? 'Aprobat. Foaia are o amprentă nouă: o aprobare veche nu mai cumpără nimic. Nimic nu s-a cumpărat.'
+        : 'Respins: nu se mai folosește în film. Nimic nu s-a cumpărat.';
+    };
+  }
+  if (action === 'redo-still') {
+    const scene = node.dataset.scene || '';
+    if (!window.confirm(`Respingi imaginea scenei ${scene}? Acum nu se cumpără nimic: scena intră în pasul imaginilor, pe care îl aprobi separat, cu prețul lui.`)) return null;
+    return async () => {
+      await api(takeDecisionPath(node.dataset.take || ''), {
+        method: 'POST',
+        body: JSON.stringify({ decision: 'REJECTED', note: 'Refă imaginea, de pe foaia de filmare.' }),
+      });
+      return `Imaginea scenei ${scene} a fost respinsă. Scena intră în pasul imaginilor: aprobă-l ca să se cumpere din nou.`;
+    };
+  }
+  if (action === 'model') {
+    const scene = node.dataset.scene || '';
+    const model = node.dataset.model || '';
+    const named = model === 'LOCAL_MOVE' ? 'imagine fixă animată local' : model || 'alegerea studioului';
+    return async () => {
+      await api(sceneModelPath(id, scene), { method: 'PUT', body: JSON.stringify({ model_id: model || null, note: null }) });
+      return `Scena ${scene}: ${named}. Foaia are o amprentă nouă; o aprobare veche nu mai cumpără nimic.`;
+    };
+  }
+  return null;
+}
+
+/** @param {Event} event */
+async function onSheetClick(event) {
+  const target = event.target instanceof Element ? event.target.closest('[data-sheet-action]') : null;
+  if (!target || sheetDrawer.busy) return;
+  const node = /** @type {HTMLElement} */ (target);
+  const action = node.dataset.sheetAction;
+  const id = sheetDrawer.id;
+  if (action === 'close') { sheetDialog().close(); return; }
+  if (!id || !sheetDrawer.sheet) return;
+  if (action === 'step') { sheetDrawer.confirm = node.dataset.step || null; sheetNotice(''); paintSheet(); return; }
+  if (action === 'cancel-step') { sheetDrawer.confirm = null; paintSheet(); return; }
+  if (action === 'play') { await playSheetClip(node); return; }
+  const run = sheetCommand(node, id);
+  if (!run) return;
+  sheetDrawer.busy = true;
+  paintSheet();
+  try {
+    sheetNotice(await run());
+    sheetDrawer.confirm = null;
+  } catch (error) {
+    sheetNotice(error.message, true);
+  } finally {
+    sheetDrawer.busy = false;
+    await loadSheet();
+  }
+}
+
 async function loadMediaStoryboards() {
   const listEl = element('storyboards-list');
   try {
@@ -3422,6 +3642,7 @@ async function loadMediaStoryboards() {
               </div>
             </div>
             <div class="storyboard-actions">
+              <button class="quiet btn-shooting-sheet" data-id="${sb.id}" title="Prompturile, modelul fiecărei scene, creditele și plafonul, înainte de orice cumpărare (0 credite)">Foaia de filmare</button>
               <button class="btn-render-video" data-id="${sb.id}">Randare 9:16</button>
               <button class="btn-qc-video" data-id="${sb.id}">Verifică QC</button>
             </div>
@@ -3502,6 +3723,15 @@ async function loadMediaStoryboards() {
       });
     });
 
+    listEl.querySelectorAll('.btn-shooting-sheet').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = btn.getAttribute('data-id');
+        if (id) void openShootingSheet(id);
+      });
+    });
+
+    // In PRODUCTION the studio answers 409 «Folosește foaia de filmare»: the button opens the sheet
+    // instead, and from then on goes straight to it (shooting_sheet.js requestRender).
     listEl.querySelectorAll('.btn-render-video').forEach((btn) => {
       btn.addEventListener('click', async () => {
         const id = btn.getAttribute('data-id');
@@ -3510,7 +3740,13 @@ async function loadMediaStoryboards() {
         // @ts-ignore
         btn.disabled = true;
         try {
-          await api(`/media/render/${id}`, { method: 'POST' });
+          const answer = await requestRender(api, id, renderState, openShootingSheet);
+          if (answer.opened) {
+            btn.textContent = 'Randare 9:16';
+            // @ts-ignore
+            btn.disabled = false;
+            return;
+          }
           await loadMediaStoryboards();
           await refresh();
         } catch (err) {

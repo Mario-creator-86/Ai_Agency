@@ -524,13 +524,16 @@ def test_9_the_prompt_agent_may_not_invent_a_fact(engine, studio):
     def answer(prompt: str) -> str:
         if '"shots": [' not in prompt:
             return json.dumps(BIBLE_ANSWER)
+        # Every scene is answered (a plan with missing shots is a lost plan, not a template
+        # fill); the first one invents its numbers.
         invented = {
             "shots": [
                 {
                     **SHOT_ANSWER["shots"][0],
                     "scene_index": 1,
                     "action": "typing while 4711 other users watch from 1863 terminals",
-                }
+                },
+                *SHOT_ANSWER["shots"][1:],
             ]
         }
         return json.dumps(invented)
@@ -578,8 +581,13 @@ def test_10_a_shot_prompt_is_detailed_where_detail_changes_the_picture(engine, s
         assert str(package.get(field) or "").strip(), f"{field} is empty"
     assert package["story_purpose"] == "HOOK"
     assert package["audio_intent"] and package["transition"] and package["avoid"]
-    assert 200 < len(prompt) <= 1400, "specific, and not padded"
-    assert "Camera:" in prompt and "Lighting:" in prompt and "Avoid:" in prompt
+    assert 200 < len(prompt) <= 1000, "specific, and not padded"
+    # Since the Nepal film (PROMPT_COMPILER, 2026-09-27) the still prompt is prose: no
+    # template labels and no "Avoid:" list, and the camera move is its own motion prompt.
+    for label in ("Camera:", "Lighting:", "Avoid:", "Motion:"):
+        assert label not in prompt
+    assert package["still_prompt"] == prompt and package["motion_prompt"]
+    assert package["camera_move"] in package["motion_prompt"].lower()
 
 
 def test_11_a_character_looks_the_same_in_every_shot(engine, studio):
@@ -633,7 +641,9 @@ def test_11_a_character_looks_the_same_in_every_shot(engine, studio):
             )
         ]
         bible = dict(session.get(Storyboard, board["id"]).visual_bible_json or {})
-    assert all("The typist" in prompt for prompt in prompts)
+    # The character is described, not named: a name means nothing to an image model and can
+    # be drawn as writing (PROMPT_COMPILER, 2026-09-27).
+    assert all("short dark hair" in prompt for prompt in prompts)
     assert all("grey raincoat" in prompt for prompt in prompts)
     assert any("coat" in rule for rule in bible["continuity_rules"])
 
@@ -677,7 +687,12 @@ def test_13_and_14_light_and_camera_are_decided_not_left_to_the_model(engine, st
         # A model that leaves the light and the camera out: the studio fills them rather
         # than sending a prompt that decides nothing.
         bare = {
-            "shots": [{"scene_index": 1, "story_purpose": "HOOK", "subject": "a laptop screen"}]
+            "shots": [
+                {"scene_index": index, "story_purpose": purpose, "subject": "a laptop screen"}
+                for index, purpose in enumerate(
+                    ["HOOK", "SETUP", "DEVELOPMENT", "REVEAL", "ENDING"], start=1
+                )
+            ]
         }
         return json.dumps(bare)
 
@@ -1685,7 +1700,10 @@ def test_a_shot_plan_is_not_thrown_away_for_one_long_field():
     )
     assert bible is not None
     assert bible.lighting == "ambient: dark, moody; key: high contrast"
-    assert "#0A1E2A" in bible.palette
+    # Codes and hex colours never reach a prompt-bound field (PROMPT_COMPILER, 2026-09-27):
+    # the style code is refused, and the hex palette is kept only for the local cards.
+    assert bible.style == "" and "#" not in bible.palette
+    assert bible.card_palette == ["#0A1E2A", "#1A3E5A"]
 
 
 def test_a_picture_is_never_asked_to_draw_writing():

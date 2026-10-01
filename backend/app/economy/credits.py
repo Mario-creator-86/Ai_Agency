@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import date
 from typing import Any
 from uuid import uuid4
 
@@ -156,3 +157,150 @@ def record_credit_spend(
             str(uuid4()),
         )
     return "; ".join(lines)
+
+
+# ------------------------------------------------ what the account was charged, per model
+#
+# A measured balance drop is the dearest evidence about a price there is. The Nepal film's
+# first render moved the balance by 966 credits while the studio's books said 0.74 USD. The drop
+# over one purchase step is shared across what the step bought (app.media.cost_plan, in
+# proportion to the published prices) and written back over the documented figures, so the
+# next shooting sheet prices with what was paid and says "măsurat" beside it.
+
+#: The unit words ``record_measured_price`` stores; the resolution rides after " at " so the
+#: sheet can read the measurement back for the resolution it was measured at.
+_UNIT_VIDEO = "per second of video at "
+_UNIT_IMAGE = "per image at "
+
+
+def record_measured_prices(
+    engine: Engine,
+    integration_id: str,
+    before: dict[str, dict[str, Any]],
+    after: dict[str, dict[str, Any]],
+    takes: list[dict[str, Any]],
+    *,
+    table: Any = None,
+    measured_on: date | None = None,
+) -> dict[str, Any]:
+    """Turn one step's Runway balance drop into MEASURED prices on the models it bought.
+
+    ``takes`` are what the step bought, in the shapes ``cost_plan.attribute_measured_credits``
+    reads. No drop (or no reading) writes nothing: a price is never measured as zero. Each
+    measured rate goes through ``record_measured_price`` (per second or per image, in USD at
+    the Owner's credit rate), so the old price is kept and a big move reaches the Owner; one
+    ``economy.prices_measured`` event carries the whole attribution.
+    """
+    from app.media.cost_plan import attribute_measured_credits, load_price_table  # noqa: PLC0415
+    from app.media.production_policy import credit_usd, record_measured_price  # noqa: PLC0415
+    from app.services import append_event  # noqa: PLC0415
+
+    prices = table if table is not None else load_price_table()
+    spent = credit_spend(before, after).get(integration_id) or {}
+    credits = float(spent.get("spent") or 0.0) if spent.get("kind") == "runway" else 0.0
+    if credits <= 0:
+        return {"spent_credits": 0, "attribution": None, "rows": [], "moves": []}
+    attribution = attribute_measured_credits(credits, takes, table=prices, measured_on=measured_on)
+    with Session(engine) as session:
+        per_credit = credit_usd(session, integration_id) or float(prices.credit_usd)
+    moves: list[dict[str, Any]] = []
+    for row in attribution["rows"]:
+        if row.kind == "image":
+            rate, unit = row.credits_per_image, _UNIT_IMAGE + row.resolution
+        else:
+            rate, unit = row.credits_per_second, _UNIT_VIDEO + row.resolution
+        if not rate:
+            continue
+        for move in record_measured_price(
+            engine, integration_id, row.model_id, float(rate) * per_credit, unit
+        ):
+            moves.append({**move, "model_id": row.model_id})
+    payload = {
+        "integration_id": integration_id,
+        "spent_credits": credits,
+        "quoted_credits": attribution["quoted_credits"],
+        "attribution": attribution["attribution"],
+        "credit_usd": per_credit,
+        "shares": attribution["shares"],
+        "rows": [row.as_dict() for row in attribution["rows"]],
+    }
+    with Session(engine) as session, session.begin():
+        append_event(
+            session,
+            "economy.prices_measured",
+            "integration",
+            integration_id,
+            1,
+            payload,
+            str(uuid4()),
+        )
+    logger.info(
+        "prices_measured",
+        extra={"spent_credits": credits, "attribution": attribution["attribution"]},
+    )
+    return {
+        "spent_credits": credits,
+        "attribution": attribution["attribution"],
+        "rows": attribution["rows"],
+        "moves": moves,
+    }
+
+
+def measured_price_table(engine: Engine, integration_id: str, table: Any = None) -> Any:
+    """The published table with this connection's MEASURED prices laid over it.
+
+    Reads what ``record_measured_prices`` wrote on each model (``source: measured``, the
+    resolution in the unit words) and converts it back to credits at the Owner's rate. A model
+    or resolution nobody measured keeps its published row.
+    """
+    from dataclasses import replace  # noqa: PLC0415
+
+    from app.integrations.models import ProviderResource  # noqa: PLC0415
+    from app.media.cost_plan import (  # noqa: PLC0415
+        MEASURED,
+        UnpricedError,
+        apply_measured,
+        load_price_table,
+    )
+    from app.media.production_policy import credit_usd  # noqa: PLC0415
+
+    prices = table if table is not None else load_price_table()
+    measured = []
+    with Session(engine) as session:
+        per_credit = credit_usd(session, integration_id) or float(prices.credit_usd)
+        models = session.scalars(
+            select(ProviderResource).where(
+                ProviderResource.integration_id == integration_id,
+                ProviderResource.resource_type == "MODEL",
+            )
+        )
+        for model in models:
+            pricing = model.pricing if isinstance(model.pricing, dict) else {}
+            unit = str(pricing.get("unit") or "")
+            if pricing.get("source") != "measured":
+                continue
+            if unit.startswith(_UNIT_VIDEO):
+                key, resolution = "per_second_usd", unit[len(_UNIT_VIDEO) :]
+                field = "credits_per_second"
+            elif unit.startswith(_UNIT_IMAGE):
+                key, resolution = "per_image_usd", unit[len(_UNIT_IMAGE) :]
+                field = "credits_per_image"
+            else:
+                continue
+            usd = pricing.get(key)
+            if not isinstance(usd, int | float) or usd <= 0:
+                continue
+            try:
+                documented = prices.row(str(model.remote_id), resolution)
+            except UnpricedError:
+                continue
+            day = str(model.price_verified_at or "")[:10] or date.today().isoformat()
+            measured.append(
+                replace(
+                    documented,
+                    provenance=MEASURED,
+                    date=day,
+                    **{field: float(usd) / per_credit},
+                )
+            )
+    return apply_measured(prices, measured)

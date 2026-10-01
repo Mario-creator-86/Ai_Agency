@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "status": "PROPOSED",
+  "proposed_on": "2026-09-27",
+  "proposed_by": "PROMPT_COMPILER, after the Nepal film",
+  "use_until_the_owner_changes_it": true,
+  "note": "The studio's one look for factual shorts, as the opening words of every still prompt (the look block, 40-60 words). A proposal the Owner may change; it is not in his database. The film's visual bible may refine the place, season, weather, light and palette in plain words, never the rendering: a bible that asks for another medium is not read here. No codes, no hex colours and no 'no ...' phrases belong in these words: the image model reads them literally. Chart colours live in the bible's card_palette and reach only the local card compositor. Change the words and bump the version.",
+  "rendering": "Documentary photograph, natural and unposed, true-to-life colour",
+  "slots": {
+    "place": "a real location as it is today",
+    "season": "",
+    "weather": "overcast sky",
+    "light": "soft diffuse daylight from high to one side",
+    "palette": "slate blue, muted moss green, wet earth brown and stone grey",
+    "lens": "natural 35mm lens perspective with gentle depth of field",
+    "grain": "fine film grain and crisp detail"
+  },
+  "slot_words": {
+    "place": 8,
+    "season": 4,
+    "weather": 6,
+    "light": 8,
+    "palette": 8
+  },
+  "fill": [
+    "Honest textures of stone, soil, water and weathered cloth.",
+    "Clear separation between foreground and background."
+  ],
+  "min_words": 40,
+  "max_words": 60
+}
