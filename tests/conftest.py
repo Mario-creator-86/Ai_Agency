@@ -138,6 +138,69 @@ def no_network(monkeypatch):
     return guard
 
 
+# The studio's own media folders. A render with no storage_root writes under them, so every
+# test gets its own instead (measured 2026-10-01: the suite had left about 1,000 test films,
+# 300 GB, among the Owner's real ones, about 1.1 GB per film once intermediates were lossless).
+_STORAGE_NAMES = ("DEFAULT_STORAGE_ROOT", "REFERENCE_STORAGE_ROOT")
+_STORAGE_MODULES = (
+    "app.media.assembler",
+    "app.media.services",
+    "app.media.router",
+    "app.media.stills_stage",
+    "app.media.shooting_sheet",
+    "app.media.rehearsal",
+)
+
+
+def _real_media_entries() -> set[str]:
+    from pathlib import Path
+
+    folder = Path(__file__).resolve().parents[1] / "backend" / "storage" / "media"
+    return {child.name for child in folder.iterdir()} if folder.is_dir() else set()
+
+
+def pytest_sessionstart(session):
+    session.config._real_media_before = _real_media_entries()
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """A run that left anything in the studio's real media folder fails, naming it."""
+    before = getattr(session.config, "_real_media_before", None)
+    if before is None:
+        return
+    leaked = sorted(_real_media_entries() - before)
+    if leaked:
+        print(f"\nTests wrote into backend/storage/media: {leaked[:10]} ({len(leaked)} entries)")
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
+@pytest.fixture(autouse=True)
+def private_media_storage(monkeypatch, tmp_path_factory):
+    """Every module that names the studio's media folders sees a per-test folder instead.
+
+    Patched by name in each module, because the routers and stages import the constant
+    rather than reading it through the assembler. A test that sets its own folder still
+    can: its monkeypatch is applied after this one's and wins.
+    """
+    import importlib
+    import sys
+
+    base = tmp_path_factory.mktemp("studio_storage")
+    folders = {
+        "DEFAULT_STORAGE_ROOT": base / "media",
+        "REFERENCE_STORAGE_ROOT": base / "character_references",
+    }
+    for module_name in _STORAGE_MODULES:
+        importlib.import_module(module_name)
+    for module_name, module in list(sys.modules.items()):
+        if not module_name.startswith("app.") or module is None:
+            continue
+        for name in _STORAGE_NAMES:
+            if hasattr(module, name):
+                monkeypatch.setattr(module, name, folders[name])
+    return folders
+
+
 @pytest.fixture
 def settings(tmp_path):
     return Settings(
