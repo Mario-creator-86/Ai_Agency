@@ -1,5 +1,9 @@
 import { APPROVAL_DECISION_PATH, approvalDecisionCommand } from './governance.js';
 import { paidMediaFormHtml, paidMediaRuleWords } from './owner_controls.js';
+import { sheetKeyFor } from './sheet_key.js';
+
+/** The film a letter, a question or a run names (sheet_key.js), so each can open its sheet. */
+export { sheetKeyFor };
 
 /**
  * FOAIA DE FILMARE — the page in front of every purchase of a film (SHEET_DRAWER, 2026-10-01).
@@ -342,6 +346,20 @@ export function heroState(sheet) {
   };
 }
 
+/** The hero gate's answers that let the rest of the motion be bought (backend assembler.hero_gate). */
+const HERO_LETS_MOTION = ['NO_HERO', 'APPROVED', 'ACCEPTED', 'ACCEPTS'];
+
+/**
+ * Why nothing can be pressed while the film is being bought elsewhere (GATES_BEFORE_BUYING's
+ * per-film lease, `sheet.in_progress`), in the backend's words; '' when nothing is.
+ * @param {any} sheet
+ */
+function inProgressReason(sheet) {
+  const lease = sheet?.in_progress;
+  if (!lease || typeof lease !== 'object') return '';
+  return String(lease.reason_ro || 'Filmul este deja în lucru: o cumpărare a lui nu s-a încheiat încă.');
+}
+
 /**
  * The step buttons: label, price and cap, and every Romanian reason it cannot be pressed now.
  * @param {any} sheet
@@ -351,19 +369,34 @@ export function stepButtons(sheet) {
   const footer = sheet?.footer || {};
   const gaps = Array.isArray(sheet?.shot_plan_gaps) ? sheet.shot_plan_gaps : [];
   const hero = heroState(sheet);
+  const busy = inProgressReason(sheet);
   return SHEET_STEPS.map((name) => {
     const step = (sheet?.steps && sheet.steps[name]) || {};
     const toBuy = Array.isArray(step.to_buy) ? step.to_buy.map(Number) : [];
     const cap = Number(step.cap_credits) || 0;
     /** @type {string[]} */
     const reasons = [];
+    // PAGE-06: a purchase of this film is running (the day, or another press): nothing is
+    // pressed until it ends; the backend would answer 409 FILM_BUSY anyway.
+    if (busy) reasons.push(busy);
+    else if (step.in_progress) reasons.push(`Pasul «${STEP_WORDS[/** @type {keyof typeof STEP_WORDS} */ (name)]}» este deja în curs; foaia se reîncarcă singură când se termină.`);
     if (sheet?.lint_blocked) reasons.push(`Blocaj deschis: ${sheet.lint_summary_ro || 'prompturile au blocaje.'}`);
     if (gaps.length) reasons.push(`Scenele ${gaps.join(', ')} nu au planul de cadre scris de model; filmul așteaptă planul de cadre.`);
     if (!toBuy.length) reasons.push(String(step.waiting_ro || 'Nu este nimic de cumpărat la acest pas.'));
     if (name === 'motion' && hero.scene !== null && !hero.approved) {
-      reasons.push(hero.bought
-        ? `Cadrul de probă (scena ${hero.scene}) așteaptă privirea ta: aprobă-l pe foaie înainte de restul mișcării.`
-        : `Întâi cadrul de probă (scena ${hero.scene}): restul mișcării se cumpără abia după ce îl vezi și îl aprobi.`);
+      // HERO_AUTO_ACCEPT: the backend's own gate says whether the hero lets the motion follow
+      // (clip QC under his rule, or his look); an older backend sends none, and the page then
+      // asks for his look as it always did.
+      const gate = step.hero && typeof step.hero === 'object' ? step.hero : null;
+      if (gate && typeof gate.status === 'string') {
+        if (!HERO_LETS_MOTION.includes(gate.status)) {
+          reasons.push(String(gate.reason_ro || `Cadrul de probă (scena ${hero.scene}) așteaptă privirea ta.`));
+        }
+      } else {
+        reasons.push(hero.bought
+          ? `Cadrul de probă (scena ${hero.scene}) așteaptă privirea ta: aprobă-l pe foaie înainte de restul mișcării.`
+          : `Întâi cadrul de probă (scena ${hero.scene}): restul mișcării se cumpără abia după ce îl vezi și îl aprobi.`);
+      }
     }
     if (toBuy.length) {
       const balance = footer.balance || {};
@@ -414,6 +447,9 @@ export function assembleButton(sheet) {
   else if (narration.priced === false) voice = 'narațiunea: preț necunoscut, te întreabă înainte';
   /** @type {string[]} */
   const reasons = [];
+  const busy = inProgressReason(sheet);
+  if (busy) reasons.push(busy);
+  else if (step.in_progress) reasons.push('Asamblarea este deja în curs; foaia se reîncarcă singură când se termină.');
   const left = (Array.isArray(step.paid_steps_left) ? step.paid_steps_left : []).map((/** @type {string} */ s) => STEP_WORDS[/** @type {keyof typeof STEP_WORDS} */ (s)] || s);
   if (left.length) reasons.push(`Întâi pașii plătiți rămași: ${left.join(', ')}. Filmul se asamblează după ultimul.`);
   for (const b of Array.isArray(step.blocked) ? step.blocked : []) if (b && b.reason_ro) reasons.push(String(b.reason_ro));
@@ -426,6 +462,21 @@ export function assembleButton(sheet) {
     reasons,
     reason_ro: reasons.join(' '),
   };
+}
+
+/**
+ * The film's own ceiling (GATES_BEFORE_BUYING, `footer.film_budget`): what the film already holds
+ * against it and what is left. None from an older studio.
+ * @param {any} budget
+ * @returns {{key: string, label: string, value: string}[]}
+ */
+function filmBudgetRows(budget) {
+  if (!budget || typeof budget !== 'object') return [];
+  return [{
+    key: 'film_budget',
+    label: 'Plafonul filmului',
+    value: `${usdText(budget.spent_usd_micros)} cheltuiți din ${usdText(budget.limit_usd_micros)}; rămân ${usdText(budget.remaining_usd_micros)}`,
+  }];
 }
 
 /**
@@ -462,6 +513,7 @@ export function footerRows(sheet) {
     { key: 'source', label: 'Sursa prețurilor', value: String(f.price_source || 'necunoscută') },
     { key: 'balance', label: 'Sold Runway', value: balance.credits === null || balance.credits === undefined ? `necitit (${balance.problem || 'necunoscut'})` : creditWords(Number(balance.credits)) },
     { key: 'daily', label: 'Bugetul zilei', value: daily ? `${usdText(micros(daily.remaining_usd))} rămași din ${usdText(micros(daily.limit_usd))}` : 'fără buget zilnic citit' },
+    ...filmBudgetRows(f.film_budget),
     { key: 'alternatives', label: 'Alternative', value: alternatives.join('; ') || 'niciuna cu preț publicat' },
     {
       key: 'premium',
@@ -705,6 +757,41 @@ export function assembleResultHtml(result, o) {
 }
 
 /**
+ * PAGE-14: what the sheet asks of him, before the 2,000 px of scenes: his rule, the next step
+ * with its price and cap (the first paid step that still has something to buy, else the
+ * assembly), and whether it can be pressed now.
+ * @param {any} sheet
+ * @param {any} policy the page's `/snapshot` policy, or null (the sheet's own owner_rule then)
+ * @returns {{rule_ro: string, next: {step: string, label: string, price_ro: string, cap_ro: string, disabled: boolean, reason_ro: string}|null}}
+ */
+export function sheetSummary(sheet, policy) {
+  const rule = policy
+    ? { paid_media_approval: policy.paid_media_approval, over_usd: policy.paid_media_approval_over_usd }
+    : sheet?.owner_rule;
+  const step = stepButtons(sheet).find((b) => b.to_buy.length > 0);
+  if (step) {
+    return { rule_ro: paidMediaRuleWords(rule), next: { step: step.step, label: step.label, price_ro: step.price_ro, cap_ro: step.cap_ro, disabled: step.disabled, reason_ro: step.reason_ro } };
+  }
+  const a = assembleButton(sheet);
+  return { rule_ro: paidMediaRuleWords(rule), next: { step: ASSEMBLE_STEP, label: a.label, price_ro: a.price_ro, cap_ro: '', disabled: a.disabled, reason_ro: a.reason_ro } };
+}
+
+/** The bar at the top of the drawer (sticky while he scrolls the scenes). @param {any} sheet @param {SheetOptions} o */
+function sheetSummaryHtml(sheet, o) {
+  const e = o.escape;
+  const summary = sheetSummary(sheet, o.policy || null);
+  const next = summary.next;
+  const busy = inProgressReason(sheet);
+  return '<div class="sheet-summary-bar" role="region" aria-label="Pe scurt">'
+    + `<p class="sheet-summary-rule">${e(summary.rule_ro)}</p>`
+    + (next
+      ? `<p class="sheet-summary-next">Următorul pas: <strong>${e(next.label)}</strong> · ${e(next.price_ro)}${next.cap_ro ? ` · ${e(next.cap_ro)}` : ''}${next.disabled ? ` <span class="sheet-summary-why">— ${e(busy || next.reason_ro)}</span>` : ''}</p>`
+      : '')
+    + '<button type="button" class="quiet sheet-summary-go" data-sheet-action="to-steps">Mergi la pași</button>'
+    + '</div>';
+}
+
+/**
  * The whole drawer's content.
  * @param {any} sheet GET /media/storyboards/{id}/shooting-sheet
  * @param {SheetOptions} o
@@ -757,8 +844,8 @@ export function sheetHtml(sheet, o) {
     + assembleResultHtml(o.assembled, o)
     + '</div>';
   const sound = audioRedoButton(sheet);
-  return `${head}<ol class="sheet-scenes">${list}</ol>`
-    + `<footer class="sheet-footer"><dl class="sheet-rows">${rows}</dl>`
+  return `${sheetSummaryHtml(sheet, o)}${head}<ol class="sheet-scenes">${list}</ol>`
+    + `<footer class="sheet-footer" id="sheet-steps"><dl class="sheet-rows">${rows}</dl>`
     + (sheet?.footer?.summary_ro ? `<p class="sheet-summary">${e(sheet.footer.summary_ro)}</p>` : '')
     + `<div class="sheet-steps">${steps}${assemble}</div>`
     + (sound ? `<div class="sheet-redo-audio">${redoBlockHtml(sheet, [sound], 'Sunetul filmului', o)}</div>` : '')
@@ -830,6 +917,26 @@ export async function requestRender(api, storyboardId, state, openSheet) {
   }
 }
 
+/**
+ * PAGE-06: what the drawer says while a press is being bought. A paid step runs on the server
+ * for up to 45 minutes (STEP_TIMEOUT_MS); the page says so, and that a second press is not
+ * needed, instead of leaving the last notice up.
+ * @param {string} what a step (stills, test_shot, motion, assemble) or a redo key (redoKey)
+ */
+export function buyingNotice(what) {
+  const tail = ': poate dura până la 45 de minute. Nu cumpăra din nou; foaia se reîncarcă singură.';
+  const redo = parseRedoKey(what);
+  if (redo) return `${redo.kind === 'still' || redo.kind === 'motion' ? 'Se reface' : 'Se reface (0 credite)'} ${redoWhat(redo.kind, redo.scene)}${tail}`;
+  if (what === ASSEMBLE_STEP) return `Se asamblează filmul${tail}`;
+  return `Se cumpără ${STEP_WORDS[/** @type {keyof typeof STEP_WORDS} */ (what)] || what}${tail}`;
+}
+
+/**
+ * A press whose answer never reached the page (a dropped connection, the page's own timeout)
+ * may still be buying on the server: said so, never as a refusal.
+ */
+export const NETWORK_STEP_WORDS = 'Răspunsul nu a ajuns; cumpărarea poate continua pe server. Reîncarcă foaia peste câteva minute înainte de orice altă apăsare.';
+
 /** @param {any} body */
 function asksOwner(body) {
   return Boolean(body && body.status === 'NEEDS_APPROVAL');
@@ -842,6 +949,7 @@ function asksOwner(body) {
  * @returns {{status: 'REFUSED', code: string|null, message: string, scenes: string[]}}
  */
 function refused(error) {
+  if (error && error.network) return { status: 'REFUSED', code: 'NETWORK', message: NETWORK_STEP_WORDS, scenes: [] };
   const detail = error && error.detail;
   if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
     const scenes = (Array.isArray(detail.scenes) ? detail.scenes : [])
@@ -866,12 +974,16 @@ function refused(error) {
  * backend's own reason, and nothing is decided. It never asks twice: a press that asks again after
  * his yes stops as WAITING.
  * @param {(path: string, options?: any) => Promise<any>} api
- * @param {string} path @param {any} body @param {{note?: string, commandId: string}} o
+ * @param {string} path @param {any} body @param {{note?: string, commandId: string, purchaseId?: string}} o
  * @param {string} again what WAITING says
  * @returns {Promise<PressResult>}
  */
 async function pressWithApproval(api, path, body, o, again) {
-  const post = () => api(path, { method: 'POST', body: JSON.stringify(body), timeoutMs: STEP_TIMEOUT_MS });
+  // The press's own id (MONEY-04): the same press posted again (after his yes) is one purchase,
+  // and the server answers a repeat with what it bought. Never his yes's id: the two are
+  // different commands in the studio's record.
+  const sent = o.purchaseId ? { ...body, command_id: o.purchaseId } : body;
+  const post = () => api(path, { method: 'POST', body: JSON.stringify(sent), timeoutMs: STEP_TIMEOUT_MS });
   let first;
   try {
     first = await post();
@@ -908,7 +1020,7 @@ function isPlanHash(hash) {
 /**
  * The Owner's «Da, aprob și cumpăr» on one step, bound to the sheet's hash.
  * @param {(path: string, options?: any) => Promise<any>} api
- * @param {{storyboardId: string, step: string, planHash: string, note?: string, commandId: string, allowOverBudget?: boolean}} o
+ * @param {{storyboardId: string, step: string, planHash: string, note?: string, commandId: string, purchaseId?: string, allowOverBudget?: boolean}} o
  * @returns {Promise<{status: 'BOUGHT'|'REFUSED'|'WAITING', message?: string, code?: string|null, scenes?: string[], result?: any, approval_id?: string, withdrawn?: string[]}>}
  */
 export async function approveStep(api, o) {
@@ -934,7 +1046,7 @@ export function redoPath(storyboardId) {
  * motion redo buys, and goes through his yes like a step; a card or the sound costs nothing and is
  * one POST.
  * @param {(path: string, options?: any) => Promise<any>} api
- * @param {{storyboardId: string, kind: string, sceneIndex: number|null, planHash: string|null, note?: string, commandId: string, allowOverBudget?: boolean}} o
+ * @param {{storyboardId: string, kind: string, sceneIndex: number|null, planHash: string|null, note?: string, commandId: string, purchaseId?: string, allowOverBudget?: boolean}} o
  * @returns {Promise<PressResult>}
  */
 export async function approveRedo(api, o) {
@@ -961,7 +1073,7 @@ export async function approveRedo(api, o) {
  * The Owner's «Da, asamblează»: the film from its takes, its narration (asked under the same
  * sheet's hash when it has a price) and its QC.
  * @param {(path: string, options?: any) => Promise<any>} api
- * @param {{storyboardId: string, planHash: string, note?: string, commandId: string, allowOverBudget?: boolean}} o
+ * @param {{storyboardId: string, planHash: string, note?: string, commandId: string, purchaseId?: string, allowOverBudget?: boolean}} o
  * @returns {Promise<{status: 'ASSEMBLED'|'REFUSED'|'WAITING', message?: string, code?: string|null, scenes?: string[], result?: any, approval_id?: string, withdrawn?: string[]}>}
  */
 export async function approveAssemble(api, o) {

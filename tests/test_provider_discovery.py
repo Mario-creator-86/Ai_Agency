@@ -62,7 +62,10 @@ def test_save_key_only_verifies_discovers_all_pages_and_survives_restart(
     fields = client.get("/api/v1/settings", headers=headers).json()["catalog"]["elevenlabs"][
         "fields"
     ]
-    assert [field["key"] for field in fields] == ["api_key"]
+    # The key is the one required field; the plan's commercial-use answer and its terms are
+    # the Owner's optional statement (AR-15).
+    assert [field["key"] for field in fields] == ["api_key", "commercial_use", "licence_terms"]
+    assert [field["required"] for field in fields] == [True, False, False]
     assert saved["catalog"]["production"] == {
         "model_id": None,
         "voice_id": None,

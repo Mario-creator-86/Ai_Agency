@@ -138,7 +138,7 @@ def test_a_whole_day_on_a_copy_of_the_owners_studio(
     from app.economy.prices import seed_documented_prices
     from app.economy.services import seed_chart_of_accounts
     from app.integrations.vault import CredentialVault
-    from app.main import create_app
+    from app.main import create_app, expected_revision
     from app.media import assembler
     from app.media.services import seed_default_character_bibles
     from app.providers.registry import ProviderRegistry
@@ -194,18 +194,25 @@ def test_a_whole_day_on_a_copy_of_the_owners_studio(
     finally:
         engine.dispose()
     report["revision_after"] = _revision(rehearsal_copy)
-    assert report["revision_after"] == "0048_production_sheet", report
+    assert report["revision_after"] == expected_revision(), report
 
-    # 2. The application starts on it, and the preflight answers.
+    # 2. The application starts on it, and the preflight answers. A copy made without its
+    # key file (the Owner's rule: the key is never copied) used to crash the start-up with
+    # FileNotFoundError in load_registry (TS-03); it now starts and says the keys cannot be read.
     headers = {"Authorization": f"Bearer {settings.owner_token.get_secret_value()}"}
     with TestClient(create_app(settings)) as client:
         ready = client.get("/health/ready")
         assert ready.status_code == 200, ready.text
+        report["credentials"] = ready.json().get("credentials")
         preflight = client.get("/api/v1/runbook/preflight", headers=headers)
         assert preflight.status_code == 200, preflight.text
         body = preflight.json()
         assert body["status"] in ("READY", "DEGRADED", "BLOCKED"), body
         assert body["checks"], body
+        vault_line = next(c for c in body["checks"] if c["name"] == "credential_vault")
+        if not rehearsal_copy.with_suffix(".credentials.key").is_file():
+            assert ready.json()["status"] in ("HEALTHY", "DEGRADED"), ready.text
+            report["credentials_line"] = (vault_line["ok"], vault_line["message"])
     report["preflight"] = {
         "status": body["status"],
         "failing": [
@@ -245,6 +252,20 @@ def test_a_whole_day_on_a_copy_of_the_owners_studio(
             "analytics_provider_for_channel",
             analytics_services.analytics_provider_for_channel,
         )
+        # A copy made without its key file (the Owner's rule) has stored keys the day cannot
+        # read, and the preflight now BLOCKS such a day (credential_vault, REL-06). Every
+        # vendor and model of this day is faked, so nothing would read them: the finding is in
+        # the report (step 2), and the day goes on to be rehearsed past it.
+        if not rehearsal_copy.with_suffix(".credentials.key").is_file():
+            from app.runbook import preflight as preflight_module
+
+            real_vault_check = preflight_module._vault_check
+
+            def keyless_copy_vault_check(engine_, vault_):
+                line = real_vault_check(engine_, vault_)
+                return {**line, "ok": True, "impact": "ok", "place": None}
+
+            monkeypatch.setattr(preflight_module, "_vault_check", keyless_copy_vault_check)
         model = StudioModel()
         registry = ProviderRegistry()
         with Session(engine) as session:

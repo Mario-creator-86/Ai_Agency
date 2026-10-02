@@ -7,16 +7,32 @@ live database: two `video_render_job` rows had been RENDERING since 2026-09-12 w
 NULL. In the same way, an upload whose answer was lost leaves a publication in REMOTE_UNKNOWN,
 and `reconcile_publication` — written for exactly that — had no caller outside the tests.
 
-One pass of the watchdog does four things and records each. It fails renders that have made
+One pass of the watchdog does these things and records each. It fails renders that have made
 no progress past a threshold, with the reason on the row and an event, the way the assembler
 itself records a failure. It sends every uncertain publication through the reconciliation that
 already exists, a bounded number of times, and then hands the row to the Owner rather than
 asking a platform that does not answer forever. And it reports task leases that have lapsed
-without touching them: the queue re-claims an expired lease on its own (`claim_task`), and a
-second mechanism doing the same would be two owners of one row. And it releases the money a
+without touching them: the queue re-claims an expired lease that has attempts left on its own
+(`claim_task`), the worker dead-letters one that has none (`sweep_interrupted_tasks`), and a
+third mechanism doing either would be two owners of one row. And it releases the money a
 film held and never spent: the media stage reserves what a render is estimated to cost and
 settles the hold when the cost rows are in the books, so a process killed in between leaves
-the day's budget pledged to a film nobody is making.
+the day's budget pledged to a film nobody is making. And it collects the paid tasks a vendor
+accepted and nobody collected (2026-10-01): a still or a shot is written SUBMITTED, with the
+vendor's task id, the moment the vendor accepts it; a poll that ran out of time, a failed
+download or a dead process leaves it so. Each is asked about by its id (a GET, which buys
+nothing): finished, it is downloaded into its take, PAID; failed, REFUSED; still unknown a day
+after it was bought, LOST, with one letter to the Owner per pass. Never a POST. And it closes a
+day nobody is running any more (2026-10-02, REL-03): a day writes its row RUNNING when it
+begins, so a process that died under it leaves that row behind; when the day's queue task no
+longer holds a live lease (or, for a day started without the queue, nothing moved for longer
+than a lease) the row becomes INTERRUPTED at the stage it was in, with one letter to the Owner.
+The day is not run again: what it bought stays bought. And it keeps publishing honest
+(2026-10-02, PUB-01/PUB-08): a publication left STARTED past `publish_stuck_after_seconds`
+(a process that died mid-upload) becomes REMOTE_UNKNOWN and is reconciled like any other; an
+uncertain publication YouTube never named is asked of the channel's own uploads by its exact
+title; and a published video is looked at for six hours, until YouTube says its processing
+ended, so a rejected or failed one is FAILED_FINAL with a letter instead of PUBLISHED.
 
 What it will not do. It changes nothing while the Owner's autonomy stop is set — safe mode sets
 that stop too — because a stopped studio is a studio in which nothing moves, including repair.
@@ -35,14 +51,20 @@ from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
 from app.economy.budget import DEFAULT_RESERVATION_TTL_SECONDS, release_stale_reservations
-from app.media.models import VideoRenderJob
+from app.media.models import SceneTake, VideoRenderJob
 from app.models import DomainEvent, OwnerPolicy
 from app.providers.publishing_base import PublishingProvider
 from app.publishing.models import PublicationRecord
 from app.publishing.services import (
+    REMOTE_SETTLED_STATES,
     channel_bindings,
+    check_processing,
     execute_publication,
+    hand_to_owner,
+    mark_stale_started,
+    reconcile_by_title,
     reconcile_publication,
+    upload_started_at,
 )
 from app.services import append_event, utc_now
 from app.workflows.models import TaskQueueItem
@@ -70,11 +92,29 @@ PUBLICATIONS_PER_PASS = 20
 #: The event the watchdog writes for each attempt on a publication. Counting these per row is
 #: what bounds the attempts without a column for it: the record is the counter.
 RECONCILE_ATTEMPT_EVENT = "publishing.watchdog_reconcile"
+#: The Owner's own answer about a row the studio could not settle; attempts restart after it.
+OWNER_RESOLVED_EVENT = "publishing.resolved_by_owner"
 
 #: The states `reconcile_publication` and `execute_publication` were written for.
 UNCERTAIN_STATES = ("REMOTE_UNKNOWN", "FAILED_RETRYABLE")
 
+#: An upload of a short takes minutes; one STARTED for an hour is a process that is no longer
+#: there. Read through `settings.publish_stuck_after_seconds`.
+DEFAULT_PUBLISH_STUCK_AFTER_SECONDS = 3600
+
+#: A cut upload whose video YouTube never named is asked of the channel by title only once its
+#: upload began this long ago: a finished upload is listed in the channel's uploads within
+#: moments, and asking too early could read "not there" for a video still being written.
+RECONCILE_BY_TITLE_AFTER_SECONDS = 15 * 60
+
+#: How long after the upload YouTube's processing is followed (PUB-08), and how many published
+#: videos are looked at per pass.
+PROCESSING_WINDOW_SECONDS = 6 * 3600
+PROCESSING_PER_PASS = 20
+
 PublisherResolver = Callable[[str], PublishingProvider | None]
+#: The adapter that may be asked about a SUBMITTED take's task (None: nobody, for now).
+CollectorResolver = Callable[[SceneTake], Any]
 
 
 class NoPublisher(RuntimeError):
@@ -198,6 +238,20 @@ def _default_publisher_for(engine: Engine, settings: Any) -> PublisherResolver:
 
 
 def _attempts_so_far(session: Session, publication_id: str) -> int:
+    """The attempts since the Owner last settled the row by hand (`resolve_publication`).
+
+    Counted from his answer on: the attempts before it were the studio failing to ask, and
+    his «Nu există» is what makes the row retryable again. Counted from the start, a row he
+    answered went straight back to him on the next pass, with a second letter."""
+    since = (
+        session.scalar(
+            select(func.max(DomainEvent.sequence)).where(
+                DomainEvent.aggregate_id == publication_id,
+                DomainEvent.event_type == OWNER_RESOLVED_EVENT,
+            )
+        )
+        or 0
+    )
     return int(
         session.scalar(
             select(func.count())
@@ -205,6 +259,7 @@ def _attempts_so_far(session: Session, publication_id: str) -> int:
             .where(
                 DomainEvent.aggregate_id == publication_id,
                 DomainEvent.event_type == RECONCILE_ATTEMPT_EVENT,
+                DomainEvent.sequence > since,
             )
         )
         or 0
@@ -227,24 +282,9 @@ def _record_attempt(
 
 
 def _hand_to_owner(engine: Engine, publication_id: str, detail: str, correlation_id: str) -> None:
-    """The manual repair queue: a row a person must look at, named as such and not asked again."""
-    with Session(engine) as session, session.begin():
-        record = session.get(PublicationRecord, publication_id)
-        if record is None:
-            return
-        previous = record.status
-        record.status = "NEEDS_RECONCILIATION"
-        record.error_detail = detail
-        event = append_event(
-            session,
-            "publishing.reconcile_exhausted",
-            "publication_record",
-            publication_id,
-            1,
-            {"previous_status": previous, "detail": detail},
-            correlation_id,
-        )
-        record.event_id = event.event_id
+    """The manual repair queue: a row a person must look at, named as such and not asked
+    again, with one letter to the Owner (`hand_to_owner`)."""
+    hand_to_owner(engine, publication_id, detail, correlation_id)
 
 
 def _reconcile_publications(
@@ -252,6 +292,7 @@ def _reconcile_publications(
     publisher_for: PublisherResolver,
     max_attempts: int,
     correlation_id: str,
+    stuck_after: int = DEFAULT_PUBLISH_STUCK_AFTER_SECONDS,
 ) -> dict[str, Any]:
     counts: dict[str, int] = {
         "checked": 0,
@@ -264,9 +305,16 @@ def _reconcile_publications(
         "handed_to_owner": 0,
         "no_publisher": 0,
         "errored": 0,
+        "stale_started": 0,
+        "waiting": 0,
     }
     reasons: list[dict[str, str]] = []
 
+    # A STARTED row past its time is an upload whose process is gone (PUB-01): it is made
+    # REMOTE_UNKNOWN here and reconciled below, in this same pass.
+    counts["stale_started"] = len(mark_stale_started(engine, stuck_after, correlation_id))
+
+    now = datetime.now(UTC)
     with Session(engine) as session:
         rows = session.scalars(
             select(PublicationRecord)
@@ -281,29 +329,23 @@ def _reconcile_publications(
                 "status": row.status,
                 "remote_video_id": row.remote_video_id,
                 "attempts": _attempts_so_far(session, row.id),
+                "upload_age": (now - upload_started_at(session, row)).total_seconds(),
             }
             for row in rows
         ]
 
     for item in pending:
-        counts["checked"] += 1
         publication_id = str(item["id"])
         attempts = int(item["attempts"])
+        by_title = item["status"] == "REMOTE_UNKNOWN" and not item["remote_video_id"]
 
-        if item["status"] == "REMOTE_UNKNOWN" and not item["remote_video_id"]:
-            # YouTube's UNKNOWN carries no id — the stream was interrupted before the platform
-            # named the video — and the existing reconciliation can only ask about an id. The
-            # row would stay REMOTE_UNKNOWN for as long as the studio ran; it is the Owner's.
-            _hand_to_owner(
-                engine,
-                publication_id,
-                "Încărcarea s-a întrerupt înainte ca platforma să numească videoclipul; "
-                "studioul nu poate verifica singur dacă există. Verifică pe canal și "
-                "reia sau închide publicarea.",
-                correlation_id,
-            )
-            counts["handed_to_owner"] += 1
+        if by_title and float(item["upload_age"]) < RECONCILE_BY_TITLE_AFTER_SECONDS:
+            # YouTube's UNKNOWN carries no id: the stream was cut before the platform named
+            # the video. The channel's uploads are asked by title once a finished upload would
+            # be listed there; until then the row waits, asked nothing.
+            counts["waiting"] += 1
             continue
+        counts["checked"] += 1
 
         if attempts >= max_attempts:
             _hand_to_owner(
@@ -331,7 +373,9 @@ def _reconcile_publications(
 
         attempt = attempts + 1
         try:
-            if item["status"] == "REMOTE_UNKNOWN":
+            if by_title:
+                result = reconcile_by_title(engine, publication_id, provider, correlation_id)
+            elif item["status"] == "REMOTE_UNKNOWN":
                 result = reconcile_publication(engine, publication_id, provider, correlation_id)
             else:
                 # FAILED_RETRYABLE: the retry path asks the platform by idempotency key before
@@ -381,11 +425,66 @@ def _reconcile_publications(
     return {**counts, "reasons": reasons}
 
 
+def _follow_processing(
+    engine: Engine, publisher_for: PublisherResolver, correlation_id: str
+) -> dict[str, Any]:
+    """Each video published in the last six hours whose processing YouTube has not finished,
+    asked once (videos.list, 1 quota unit): rejected, failed or deleted becomes FAILED_FINAL
+    with a letter; processed ends the following (PUB-08)."""
+    since = (datetime.now(UTC).timestamp()) - PROCESSING_WINDOW_SECONDS
+    counts: dict[str, int] = {"checked": 0, "processed": 0, "rejected": 0, "unreadable": 0}
+    with Session(engine) as session:
+        rows = [
+            (row.id, row.channel_id, row.published_at)
+            for row in session.scalars(
+                select(PublicationRecord)
+                .where(
+                    PublicationRecord.status == "PUBLISHED",
+                    PublicationRecord.remote_video_id.is_not(None),
+                    PublicationRecord.published_at.is_not(None),
+                )
+                .order_by(PublicationRecord.published_at.desc())
+            )
+            if (row.remote_upload_status or "").lower() not in REMOTE_SETTLED_STATES
+        ]
+    for publication_id, channel_id, published_at in rows:
+        if counts["checked"] >= PROCESSING_PER_PASS:
+            break
+        if _parse(str(published_at)).timestamp() < since:
+            continue
+        try:
+            provider = publisher_for(str(channel_id))
+        except NoPublisher:
+            counts["unreadable"] += 1
+            continue
+        if provider is None:
+            counts["unreadable"] += 1
+            continue
+        counts["checked"] += 1
+        try:
+            said = check_processing(engine, publication_id, provider, correlation_id)
+        except Exception as exc:  # noqa: BLE001 - one bad row must not stop the pass
+            logger.error(
+                "watchdog_processing_failed",
+                extra={"publication_id": publication_id, "error": type(exc).__name__},
+            )
+            counts["unreadable"] += 1
+            continue
+        if said == "processed":
+            counts["processed"] += 1
+        elif said in ("rejected", "failed", "deleted"):
+            counts["rejected"] += 1
+        elif said == "UNREADABLE":
+            counts["unreadable"] += 1
+    return counts
+
+
 # -------------------------------------------------------------------------------- leases --
 
 
 def _lapsed_leases(engine: Engine) -> dict[str, Any]:
-    """Report leases that expired without a completion. The queue reclaims them itself."""
+    """Report leases that expired without a completion. The queue reclaims those with
+    attempts left; the worker's sweep dead-letters the rest (INTERRUPTED)."""
     now = utc_now()
     with Session(engine) as session:
         task_ids = list(
@@ -399,6 +498,93 @@ def _lapsed_leases(engine: Engine) -> dict[str, Any]:
     return {"expired": len(task_ids), "task_ids": task_ids}
 
 
+# --------------------------------------------------------------------- paid tasks --
+
+
+def _default_collector_for(engine: Engine) -> CollectorResolver:
+    """The Runway connection the studio buys from, read from the vault on first use.
+
+    Asking about a task needs the account's key and nothing else (GET /v1/tasks/{id}); the
+    adapter is built once per pass, and only when a SUBMITTED take exists.
+    """
+    from pathlib import Path  # noqa: PLC0415
+
+    from app.integrations.vault import CredentialVault  # noqa: PLC0415
+    from app.media.shooting_sheet import (  # noqa: PLC0415 - media imports workflows
+        connection_account,
+        runway_connection_id,
+    )
+
+    built: dict[str, Any] = {}
+
+    def resolve(_take: SceneTake) -> Any:
+        if "adapter" not in built:
+            vault = CredentialVault(Path(str(engine.url.database)).with_suffix(".credentials.key"))
+            built["adapter"] = connection_account(engine, vault, runway_connection_id(engine))
+        return built["adapter"]
+
+    return resolve
+
+
+def _collect_paid_tasks(
+    engine: Engine,
+    collector_for: CollectorResolver,
+    correlation_id: str,
+    storage_root: Any = None,
+) -> dict[str, Any]:
+    """Every SUBMITTED take asked about by its task id; a summary of what became of each.
+    A collected output is written under the Owner's media root (STUDIO_MEDIA_ROOT)."""
+    from app.media import assembler  # noqa: PLC0415
+
+    outcomes = assembler.collect_submitted_takes(
+        engine,
+        collector_for=collector_for,
+        correlation_id=correlation_id,
+        storage_root=storage_root,
+    )
+    return {
+        "checked": len(outcomes),
+        "paid": sum(1 for item in outcomes if item["status"] == "PAID"),
+        "refused": sum(1 for item in outcomes if item["status"] == "REFUSED"),
+        "lost": sum(1 for item in outcomes if item["status"] == "LOST"),
+        "waiting": sum(1 for item in outcomes if item["status"] == "SUBMITTED"),
+        "take_ids": [item["take_id"] for item in outcomes],
+    }
+
+
+# ------------------------------------------------------------------ intermediates --
+
+
+def _sweep_failed_intermediates(engine: Engine, settings: Any, correlation_id: str) -> dict:
+    """The shot and card clips of renders that FAILED before quality control, deleted once
+    they are older than the Owner's setting: only when he turned the sweep on (REL-08)."""
+    if not getattr(settings, "sweep_failed_intermediates", False):
+        return {"status": "OFF", "files": [], "bytes": 0}
+    from app.media import assembler  # noqa: PLC0415 - media imports workflows
+
+    swept = assembler.sweep_failed_intermediates(
+        engine,
+        storage_root=assembler.media_root(settings),
+        older_than_days=float(getattr(settings, "failed_intermediates_days", 7)),
+        correlation_id=correlation_id,
+    )
+    return {"status": "SWEPT", "files": swept["files"], "bytes": swept["bytes"]}
+
+
+# --------------------------------------------------------------------------- days --
+
+
+def _interrupted_days(engine: Engine, correlation_id: str) -> dict[str, Any]:
+    """Close every RUNNING day whose process is gone; the days closed, with their letters."""
+    from app.runbook.services import interrupt_stale_runs  # noqa: PLC0415 - runbook imports
+    from app.workflows.worker import TASK_LEASE_SECONDS  # noqa: PLC0415 - worker imports runbook
+
+    closed = interrupt_stale_runs(
+        engine, lease_seconds=TASK_LEASE_SECONDS, correlation_id=correlation_id
+    )
+    return {"interrupted": [record["run_id"] for record in closed]}
+
+
 # ------------------------------------------------------------------------------ the pass --
 
 
@@ -408,12 +594,17 @@ def run_watchdog(
     correlation_id: str = "",
     *,
     publisher_for: PublisherResolver | None = None,
+    collector_for: CollectorResolver | None = None,
 ) -> dict[str, Any]:
-    """One pass: fail stuck renders, reconcile publications, report leases, free stale holds.
+    """One pass: fail stuck renders, reconcile publications, report leases, free stale holds,
+    collect the paid tasks nobody collected, close the days nobody is running, and (when the
+    Owner turned it on) delete the intermediates of renders that failed long ago.
 
     Thresholds are read through `getattr` so the pass works before the settings carry them.
     `publisher_for` maps a channel id to the account that can be asked about it; the default
-    reads the channel's binding and the vault, as the publish stage does.
+    reads the channel's binding and the vault, as the publish stage does. `collector_for`
+    gives the adapter a SUBMITTED take's task may be asked about; the default is the studio's
+    Runway connection, from the vault.
     """
     correlation = correlation_id or str(uuid4())
     if _autonomy_stopped(engine):
@@ -422,8 +613,12 @@ def run_watchdog(
             "reason": "Studioul este oprit (STOP AUTONOMIE); paznicul nu schimbă nimic.",
             "renders": {"failed": 0, "failed_ids": [], "rendering": 0},
             "publications": {"checked": 0, "reasons": []},
+            "processing": {"checked": 0, "processed": 0, "rejected": 0, "unreadable": 0},
             "leases": {"expired": 0, "task_ids": []},
             "reservations": {"released": [], "ttl_seconds": 0, "cutoff": None},
+            "takes": {"checked": 0, "paid": 0, "refused": 0, "lost": 0, "waiting": 0},
+            "days": {"interrupted": []},
+            "intermediates": {"status": "OFF", "files": [], "bytes": 0},
             "correlation_id": correlation,
         }
         logger.info("watchdog_skipped", extra={"reason": "autonomy_stopped"})
@@ -434,13 +629,18 @@ def run_watchdog(
     )
     max_attempts = int(getattr(settings, "reconcile_max_attempts", DEFAULT_RECONCILE_MAX_ATTEMPTS))
 
-    renders = _fail_stuck_renders(engine, threshold, correlation)
-    publications = _reconcile_publications(
-        engine,
-        publisher_for or _default_publisher_for(engine, settings),
-        max_attempts,
-        correlation,
+    stuck_after = int(
+        getattr(settings, "publish_stuck_after_seconds", DEFAULT_PUBLISH_STUCK_AFTER_SECONDS)
     )
+
+    renders = _fail_stuck_renders(engine, threshold, correlation)
+    resolver = publisher_for or _default_publisher_for(engine, settings)
+    publications = _reconcile_publications(engine, resolver, max_attempts, correlation, stuck_after)
+    try:
+        processing = _follow_processing(engine, resolver, correlation)
+    except Exception as exc:  # noqa: BLE001 - one part's failure must not lose the others'
+        logger.error("watchdog_processing_pass_failed", extra={"error": type(exc).__name__})
+        processing = {"checked": 0, "processed": 0, "rejected": 0, "unreadable": 0, "error": 1}
     leases = _lapsed_leases(engine)
     # The fourth thing a dead process leaves behind. A film holds the money it is about to
     # spend (`reserve_spend`) and releases or settles it when the render ends; a process
@@ -455,13 +655,43 @@ def run_watchdog(
         correlation_id=correlation,
     )
 
+    # The fifth: a task the vendor accepted, and may have billed, that nobody collected.
+    try:
+        takes = _collect_paid_tasks(
+            engine,
+            collector_for or _default_collector_for(engine),
+            correlation,
+            getattr(settings, "media_root", None),
+        )
+    except Exception as exc:  # noqa: BLE001 - one part's failure must not lose the others'
+        logger.error("watchdog_takes_failed", extra={"error": type(exc).__name__})
+        takes = {"checked": 0, "paid": 0, "refused": 0, "lost": 0, "waiting": 0, "error": True}
+
+    # The sixth: a day left RUNNING by a process that died.
+    try:
+        days = _interrupted_days(engine, correlation)
+    except Exception as exc:  # noqa: BLE001 - one part's failure must not lose the others'
+        logger.error("watchdog_days_failed", extra={"error": type(exc).__name__})
+        days = {"interrupted": [], "error": True}
+
+    # The seventh, only when the Owner turned it on: a failed render's shots, deleted.
+    try:
+        intermediates = _sweep_failed_intermediates(engine, settings, correlation)
+    except Exception as exc:  # noqa: BLE001 - one part's failure must not lose the others'
+        logger.error("watchdog_sweep_failed", extra={"error": type(exc).__name__})
+        intermediates = {"status": "FAILED", "files": [], "bytes": 0, "error": True}
+
     result = {
         "status": "COMPLETED",
         "reason": "",
         "renders": renders,
         "publications": publications,
+        "processing": processing,
         "leases": leases,
         "reservations": reservations,
+        "takes": takes,
+        "days": days,
+        "intermediates": intermediates,
         "correlation_id": correlation,
     }
     logger.info(
@@ -472,6 +702,10 @@ def run_watchdog(
             "publications_handed_to_owner": publications["handed_to_owner"],
             "leases_expired": leases["expired"],
             "reservations_released": len(reservations["released"]),
+            "takes_checked": takes["checked"],
+            "takes_lost": takes["lost"],
+            "days_interrupted": len(days["interrupted"]),
+            "intermediates_swept": len(intermediates["files"]),
         },
     )
     return result

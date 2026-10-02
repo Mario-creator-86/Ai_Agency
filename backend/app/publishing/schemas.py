@@ -28,6 +28,13 @@ class ChannelView(BaseModel):
     # Read on the OFFICE_SERIAL channel only: whether the Director's PASS approves an
     # episode by itself, or the episode waits for the Owner's decide_episode.
     director_may_approve_episodes: bool = False
+    # The upload's own settings (migration 0053), part of the same versioned policy:
+    # YouTube's categoryId, the made-for-kids declaration, the language (None: the studio's
+    # content language) and the longest Short quality control accepts on this channel.
+    youtube_category_id: str = "28"
+    made_for_kids: bool = False
+    default_language: str | None = None
+    shorts_max_seconds: int = 60
     policy_version: int = 1
     policy_changed_event_id: str | None = None
     status: str
@@ -84,6 +91,18 @@ class PublishPolicyCommand(BaseModel):
     # Meaningful on the OFFICE_SERIAL channel; the same versioned, recorded write as the
     # visibility, because it decides what the studio films on its own.
     director_may_approve_episodes: bool | None = None
+    # What every upload of the channel says about itself (audit PUB-09, 2026-10-02): YouTube's
+    # numeric category (1-3 digits, e.g. 27 Education, 24 Entertainment, 28 Science &
+    # Technology), whether the films are made for kids, the language (a BCP-47 code such as
+    # "en" or "en-GB"; "" goes back to the studio's content language) and the longest Short
+    # quality control accepts on the channel (YouTube's own limit is 180 s). Versioned and
+    # recorded like the visibility.
+    youtube_category_id: str | None = Field(default=None, pattern=r"^\d{1,3}$")
+    made_for_kids: bool | None = None
+    default_language: str | None = Field(
+        default=None, max_length=20, pattern=r"^([a-z]{2,3}(-[A-Za-z0-9]{2,8})?)?$"
+    )
+    shorts_max_seconds: int | None = Field(default=None, ge=15, le=180)
 
 
 class PublishPolicyResult(BaseModel):

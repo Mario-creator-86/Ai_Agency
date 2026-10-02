@@ -62,15 +62,20 @@ export function streamLayers(status, hasStill, held = false, kept = false) {
  * HOW THE PAGE'S SOCKETS SAY THE OWNER'S KEY (2026-09-25). A browser cannot set a header on a
  * WebSocket, so the key used to travel in the socket's URL (…?token=…), which the browser prints
  * when the socket fails and which proxy and server access logs keep. A backend that says
- * `auth: 'first_message'` on GET /office/stream takes the key as each socket's first message
- * instead; a backend that does not (the Owner's running studio, until he restarts it) is spoken to
- * as before. The page asks, and follows the answer.
+ * `auth: 'first_message'` on GET /office/stream takes the key as each socket's first message.
+ * SEC-02 (2026-10-01): the key is never put in a URL again, by any page. uvicorn logs a socket's
+ * path with its query, so the backend refuses such a socket, and a route that does not say
+ * 'first_message' ('query') means the live stream is not opened at all: the page keeps its own
+ * renderer and says why (STREAM_NO_SAFE_AUTH).
  * @param {any} route the answer of GET /office/stream, or null when it could not be read
  * @returns {'first_message'|'query'}
  */
 export function socketAuth(route) {
   return route && typeof route === 'object' && route.auth === 'first_message' ? 'first_message' : 'query';
 }
+
+/** What the page says when the live stream cannot be given the key safely. */
+export const STREAM_NO_SAFE_AUTH = 'Sediul live nu poate primi cheia în siguranță (doar ca prim mesaj, niciodată în adresă); pagina își arată propria randare.';
 
 /**
  * The first message of a socket that authenticates by it.
@@ -84,28 +89,22 @@ export function authMessage(token) {
 const wsScheme = (location) => (location.protocol === 'https:' ? 'wss' : 'ws');
 
 /**
- * The backend's relay for the stream's signalling, on the page's own origin. With first-message
- * auth the URL carries no key.
+ * The backend's relay for the stream's signalling, on the page's own origin. It never carries the
+ * key (SEC-02): the key is the socket's first message (authMessage).
  * @param {{protocol: string, host: string}} location
  * @param {string} relayPath from GET /office/stream
- * @param {string} token the Owner token the page already holds
- * @param {'first_message'|'query'} [auth]
  */
-export function relayUrl(location, relayPath, token, auth = 'query') {
+export function relayUrl(location, relayPath) {
   const path = relayPath.startsWith('/') ? relayPath : `/${relayPath}`;
-  const base = `${wsScheme(location)}://${location.host}${path}`;
-  return auth === 'first_message' ? base : `${base}?token=${encodeURIComponent(token)}`;
+  return `${wsScheme(location)}://${location.host}${path}`;
 }
 
 /**
- * The backend's events socket (/api/v1/ws). With first-message auth the URL carries no key.
+ * The backend's events socket (/api/v1/ws). It never carries the key (SEC-02).
  * @param {{protocol: string, host: string}} location
- * @param {string} token
- * @param {'first_message'|'query'} [auth]
  */
-export function eventsUrl(location, token, auth = 'query') {
-  const base = `${wsScheme(location)}://${location.host}/api/v1/ws`;
-  return auth === 'first_message' ? base : `${base}?token=${encodeURIComponent(token)}`;
+export function eventsUrl(location) {
+  return `${wsScheme(location)}://${location.host}/api/v1/ws`;
 }
 
 /**

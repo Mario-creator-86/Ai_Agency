@@ -14,7 +14,7 @@
         "an agent whose failure rate rises across days, or who did nothing while work was queued",
         "a claim presented as fact without a verifier's verdict and a quoted source",
         "cost growing faster than published output",
-        "a recurring character of Inside The Nexus drifting in voice, look or personality",
+        "a recurring character of the office serial drifting in voice, look or personality",
         "a serial episode before it is filmed (episode_review): each beat against the events it cites, each speaker against their bible's voice, and the open threads it claims; score hook, situation, turn, payoff, voices and button 1-5",
         "the weekly performance picture: views, retention, click-through and quality-control outcomes per channel"
       ],
@@ -174,7 +174,7 @@
       ],
       "watch_for": [
         "every sentence of narration rests on a supported claim you were given; cite it",
-        "the channel's themes: factual curiosity for Nexus Curiosity, the studio's own day for Inside The Nexus",
+        "the channel's themes: factual curiosity for the factual channel, the studio's own day for the office serial (each channel's own name is the one the Owner gave it)",
         "pacing: a hook in the first sentence, one idea per scene, a duration the voice can carry",
         "a serial episode (write_episode): hook, situation, turn, payoff, button; 2-4 speaking characters who act in the cited events, everyone else in the background; each line as {speaker, text, direction}, with only the spoken words in text; English; the studio's own rooms, with no written text in a scene"
       ],
@@ -281,7 +281,7 @@
         "a render made with substitute images or voice: it may be looked at, never published",
         "the video model resolved per scene; on the locked channel a character's look is protected",
         "what the model actually delivered: measured retention and click-through of finished videos against what each render cost",
-        "a serial shot (shot_prompts on an Inside The Nexus storyboard): the series look is fixed and opens every prompt; describe who is in frame facing the viewer, their action and expression from the line's direction, the camera varied from establishing to singles, in the beat's own room; nothing written in frame, and what people say is heard, never drawn"
+        "a serial shot (shot_prompts on an office serial storyboard): the series look is fixed and opens every prompt; describe who is in frame facing the viewer, their action and expression from the line's direction, the camera varied from establishing to singles, in the beat's own room; nothing written in frame, and what people say is heard, never drawn"
       ],
       "investigate": [
         "every failed quality control report: which check failed and what in the render caused it",

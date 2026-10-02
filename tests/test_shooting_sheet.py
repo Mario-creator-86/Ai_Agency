@@ -537,7 +537,9 @@ def test_the_owner_picks_a_candidate_and_rejects_another_on_the_contact_sheet(
     identity = take_hash(still_fields(still_prompt(1), None), "seedream5_pro")
     files = []
     for n, (status, approved_by) in enumerate((("APPROVED", "still_gate"), ("PAID", None))):
-        copy = tmp_path / f"candidate_{n}.jpg"
+        # inside the page's media folder (`wire`): the file routes serve nothing else (SEC-06)
+        copy = tmp_path / "media" / storyboard_id / f"candidate_{n}.jpg"
+        copy.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(FIXTURES / f"scene_0{n + 1}.jpg", copy)
         files.append(copy)
         with Session(engine) as session, session.begin():
@@ -633,3 +635,423 @@ def test_a_card_preview_is_composed_locally_from_its_numbers(client, engine, hea
         f"/api/v1/media/storyboards/{storyboard_id}/scenes/1/card-preview", headers=headers
     )
     assert filmed.status_code == 422
+
+
+# ------------------------------------- a superseded question is withdrawn by the policy kernel
+
+
+def test_a_superseded_sheet_question_is_withdrawn_by_the_policy_kernel(engine, monkeypatch):
+    """Only `app.services` reaches an approval row (the closure adversary scans the tree).
+
+    The sheet decides *that* an older question about the same step can no longer buy
+    anything; the kernel closes it: EXPIRED, never answered, with the Romanian reason and the
+    `governance.approval_withdrawn` event, and the question that can still buy is kept.
+    """
+    import app.services as kernel  # noqa: PLC0415
+    from app.media import shooting_sheet  # noqa: PLC0415
+
+    with Session(engine) as session, session.begin():
+        old = kernel.request_approval(
+            session,
+            "media.sheet.stills",
+            "T2",
+            "studio",
+            subject="board-1",
+            proposed_diff={"plan_hash": "a" * 64},
+        ).id
+        new = kernel.request_approval(
+            session,
+            "media.sheet.stills",
+            "T2",
+            "studio",
+            subject="board-1",
+            proposed_diff={"plan_hash": "b" * 64},
+        ).id
+        other_film = kernel.request_approval(
+            session,
+            "media.sheet.stills",
+            "T2",
+            "studio",
+            subject="board-2",
+            proposed_diff={"plan_hash": "a" * 64},
+        ).id
+
+    seen: list[dict] = []
+    real = kernel.withdraw_superseded_approvals
+
+    def spy(session, **kwargs):
+        seen.append(kwargs)
+        return real(session, **kwargs)
+
+    monkeypatch.setattr(kernel, "withdraw_superseded_approvals", spy)
+    withdrawn = shooting_sheet.withdraw_stale_questions(
+        engine,
+        "board-1",
+        "media.sheet.stills",
+        "b" * 64,
+        keep=new,
+        step_words="cadrele fixe",
+        correlation_id="corr-1",
+    )
+
+    assert withdrawn == [old]
+    assert len(seen) == 1 and seen[0]["new_plan_hash"] == "b" * 64 and seen[0]["keep"] == new
+    rows = {row.id: row for row in approvals(engine)}
+    assert rows[old].result == "EXPIRED" and rows[old].decided_at is None
+    assert rows[old].consumed_at is None
+    assert "foaie de filmare mai nouă" in rows[old].note and "«cadrele fixe»" in rows[old].note
+    assert rows[new].result == "PENDING" and rows[new].note is None
+    assert rows[other_film].result == "PENDING"
+    with Session(engine) as session:
+        (event,) = session.scalars(
+            select(DomainEvent).where(DomainEvent.event_type == shooting_sheet.WITHDRAWN_EVENT)
+        )
+    assert shooting_sheet.WITHDRAWN_EVENT == kernel.APPROVAL_WITHDRAWN_EVENT
+    assert event.aggregate_id == old
+    assert event.correlation_id == "corr-1"
+    assert event.payload["old_plan_hash"] == "a" * 64
+    assert event.payload["new_plan_hash"] == "b" * 64
+    assert event.payload["replaced_by"] == new
+    # Asking about the newer plan already closed the old row without a word
+    # (request_approval); the withdrawal is what gives it its reason and its event.
+    assert event.payload["previous_result"] == "EXPIRED"
+    assert event.payload["reason"] == rows[old].note
+
+    # A second pass withdraws nothing more: the closed question carries its note.
+    assert (
+        shooting_sheet.withdraw_stale_questions(
+            engine,
+            "board-1",
+            "media.sheet.stills",
+            "b" * 64,
+            keep=new,
+            step_words="cadrele fixe",
+            correlation_id="corr-2",
+        )
+        == []
+    )
+
+
+# ------------------------------------------- a film's paid steps, one buyer at a time (MONEY-04)
+#
+# Two presses of one step under MODE (no yes is spent, so nothing serialised them) bought an
+# extra shot and lost a paid one to "database is locked". A film's paid steps now take its
+# purchase lease first; a second buyer is told «Filmul este deja în lucru» and buys nothing.
+# Each step also holds its cap against the budgets (AR-03) instead of reading them.
+
+
+def mode_studio(engine) -> None:
+    """AUTONOMOUS_CEO with the paid-media rule MODE: a step buys without asking."""
+    from app.models import OwnerPolicy
+
+    with Session(engine) as session, session.begin():
+        policy = session.get(OwnerPolicy, 1)
+        policy.autonomy_stopped = False
+        policy.autonomy_mode = "AUTONOMOUS_CEO"
+        policy.paid_media_approval = "MODE"
+
+
+class HeldVideo(SpyVideo):
+    """Its first POST waits until the test lets it go: another buyer arrives meanwhile."""
+
+    def __init__(self, *args, **kwargs):
+        import threading
+
+        super().__init__(*args, **kwargs)
+        self.posting = threading.Event()
+        self.release = threading.Event()
+
+    async def create_generation(self, prompt, **kwargs):
+        if not self.posting.is_set():
+            self.posting.set()
+            assert self.release.wait(30), "the test never let the first POST go"
+        return await super().create_generation(prompt, **kwargs)
+
+
+def _sheet_step(engine, storyboard_id, models, account, tmp_path, step="test_shot", **kwargs):
+    from app.media.shooting_sheet import run_sheet_step
+
+    plan_hash = build_sheet(engine, storyboard_id, capabilities=[SEEDANCE], read_live=False)[
+        "sheet_hash"
+    ]
+    return run_sheet_step(
+        engine,
+        storyboard_id,
+        step,
+        plan_hash,
+        correlation_id=str(uuid4()),
+        capabilities=[SEEDANCE],
+        account=account,
+        adapter_for_model=models,
+        storage_root=tmp_path / "media",
+        **kwargs,
+    )
+
+
+def _in_a_thread(target):
+    import threading
+
+    outcome: dict = {}
+
+    def run():
+        try:
+            outcome["result"] = target()
+        except BaseException as exc:  # noqa: BLE001 - the test reads it
+            outcome["error"] = exc
+
+    thread = threading.Thread(target=run)
+    thread.start()
+    return thread, outcome
+
+
+@requires_ffmpeg
+def test_two_buyers_of_one_step_under_mode_buy_it_once_and_the_second_is_told_why(engine, tmp_path):
+    storyboard_id = film_with_stills(engine, tmp_path, scenes=3)
+    mode_studio(engine)
+    account = Account(10_000)
+    spy = HeldVideo("seedance2_5", account)
+    models = Models(spy)
+    sheet = build_sheet(engine, storyboard_id, capabilities=[SEEDANCE], read_live=False)
+    to_buy = sheet["steps"]["test_shot"]["to_buy"]
+
+    first, first_outcome = _in_a_thread(
+        lambda: _sheet_step(engine, storyboard_id, models, account, tmp_path)
+    )
+    assert spy.posting.wait(30), "the first buyer never reached its POST"
+    try:
+        with pytest.raises(SheetStepRefused) as second:
+            _sheet_step(engine, storyboard_id, models, account, tmp_path)
+    finally:
+        spy.release.set()
+        first.join(60)
+
+    assert "error" not in first_outcome, first_outcome.get("error")
+    assert second.value.status == "FILM_BUSY"
+    assert second.value.http_status == 409
+    assert "Filmul este deja în lucru" in second.value.reason_ro
+    assert models.posts() == len(to_buy) == 1
+    # The lease is let go when the step ends: the film is free for its next stair.
+    from app.media.shooting_sheet import current_lease
+
+    assert current_lease(engine, storyboard_id) is None
+
+
+@requires_ffmpeg
+def test_a_scene_another_run_bought_after_the_plan_was_read_is_not_bought_again(
+    engine, tmp_path, monkeypatch
+):
+    """The check behind the lease (MONEY-04): each scene's takes are read again right before
+    its POST. A shot of the scene's identity that appeared since the plan was read (a writer
+    the lease did not stop) means the scene is bought, and it is not bought a second time."""
+    from app.media import assembler
+
+    storyboard_id = film_with_stills(engine, tmp_path, scenes=3)
+    mode_studio(engine)
+    hero = build_sheet(engine, storyboard_id, capabilities=[SEEDANCE], read_live=False)["steps"][
+        "test_shot"
+    ]["to_buy"][0]
+    identities: list[str] = []
+    real_hash = assembler.take_hash
+
+    def recorded(*args, **kwargs):
+        value = real_hash(*args, **kwargs)
+        identities.append(value)
+        return value
+
+    monkeypatch.setattr(assembler, "take_hash", recorded)
+    rival: dict[str, str] = {}
+
+    class Rival(Account):
+        """Its third balance read is the motion loop's, right before the hero's POST; the
+        rival's paid take of that very shot lands then."""
+
+        async def credit_balance(self):
+            value = await super().credit_balance()
+            if self.reads == 3:
+                now = utc_now()
+                rival["id"] = str(uuid4())
+                with Session(engine) as session, session.begin():
+                    session.add(
+                        SceneTake(
+                            id=rival["id"],
+                            storyboard_id=storyboard_id,
+                            scene_number=hero,
+                            kind="test_shot",
+                            prompt_hash=identities[-1],
+                            model_id="seedance2_5",
+                            resolution="1080:1920",
+                            seconds=5,
+                            credits_quoted=340,
+                            status="PAID",
+                            created_at=now,
+                            updated_at=now,
+                        )
+                    )
+            return value
+
+    account = Rival(10_000)
+    models = Models(SpyVideo("seedance2_5", account))
+    result = _sheet_step(engine, storyboard_id, models, account, tmp_path)
+
+    assert rival, "the rival's take never landed before the POST"
+    assert models.posts() == 0
+    scene = next(s for s in result["scenes"] if s["scene_index"] == hero)
+    assert scene["status"] == "BOUGHT_ELSEWHERE", scene
+    assert "nu se cumpără a doua oară" in scene["reason"]
+    with Session(engine) as session:
+        shots = list(
+            session.scalars(
+                select(SceneTake).where(
+                    SceneTake.storyboard_id == storyboard_id, SceneTake.kind == "test_shot"
+                )
+            )
+        )
+    assert [take.id for take in shots] == [rival["id"]]
+
+
+@requires_ffmpeg
+def test_the_sheet_says_which_step_is_being_bought(engine, tmp_path):
+    from app.media.shooting_sheet import film_purchase_lease
+
+    storyboard_id = film_with_stills(engine, tmp_path, scenes=3)
+    with film_purchase_lease(engine, storyboard_id, holder="day-1", step="test_shot"):
+        sheet = build_sheet(engine, storyboard_id, capabilities=[SEEDANCE], read_live=False)
+        busy = sheet["in_progress"]
+        assert busy is not None and busy["step"] == "test_shot"
+        assert sheet["steps"]["test_shot"]["in_progress"] is True
+        assert sheet["steps"]["motion"]["in_progress"] is False
+        # Being bought is not part of what is bought: the hash the Owner's yes is bound to
+        # does not move while the step runs.
+        inside = sheet["sheet_hash"]
+    after = build_sheet(engine, storyboard_id, capabilities=[SEEDANCE], read_live=False)
+    assert after["in_progress"] is None and after["sheet_hash"] == inside
+
+
+@requires_ffmpeg
+def test_a_repeated_command_id_returns_the_stored_result_and_buys_nothing(
+    client, engine, headers, tmp_path
+):
+    storyboard_id = film_with_stills(engine, tmp_path, scenes=3)
+    mode_studio(engine)
+    account = Account(10_000)
+    models = Models(SpyVideo("seedance2_5", account))
+    wire(client, tmp_path, runway_account=account, video_adapter_for_model=models)
+    plan_hash = client.get(sheet_url(storyboard_id), headers=headers).json()["sheet_hash"]
+    body = {"plan_hash": plan_hash, "command_id": str(uuid4())}
+
+    first = client.post(step_url(storyboard_id, "test_shot"), headers=headers, json=body)
+    again = client.post(step_url(storyboard_id, "test_shot"), headers=headers, json=body)
+
+    assert first.status_code == 200, first.text
+    assert again.status_code == 200, again.text
+    assert models.posts() == 1
+    assert again.json()["replayed"] is True
+    assert again.json()["scenes"] == first.json()["scenes"]
+    # The same id with another body is a mistake, not a repeat: refused, nothing bought.
+    other = client.post(
+        step_url(storyboard_id, "motion"), headers=headers, json={**body, "plan_hash": "f" * 64}
+    )
+    assert other.status_code == 409, other.text
+    assert models.posts() == 1
+
+
+@requires_ffmpeg
+def test_two_films_against_one_budget_hold_their_caps_and_the_second_is_refused(engine, tmp_path):
+    from app.economy.models import SpendReservation
+
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    first_film = film_with_stills(engine, tmp_path / "a", scenes=3)
+    second_film = film_with_stills(engine, tmp_path / "b", scenes=3)
+    mode_studio(engine)
+    # Each hero holds its cap of 680 credits (6.80 USD); together they do not fit in 10.
+    set_budget(engine, BudgetCommand(period="DAILY", limit_usd="10"))
+    account = Account(10_000)
+    spy = HeldVideo("seedance2_5", account)
+    first_models = Models(spy)
+    second_models = Models(SpyVideo("seedance2_5", account))
+
+    first, first_outcome = _in_a_thread(
+        lambda: _sheet_step(engine, first_film, first_models, account, tmp_path / "a")
+    )
+    assert spy.posting.wait(30)
+    try:
+        with pytest.raises(SheetStepRefused) as refused:
+            _sheet_step(engine, second_film, second_models, account, tmp_path / "b")
+    finally:
+        spy.release.set()
+        first.join(60)
+
+    assert "error" not in first_outcome, first_outcome.get("error")
+    assert refused.value.status == "OVER_DAILY_BUDGET", refused.value.reason_ro
+    assert "Bugetul zilnic" in refused.value.reason_ro
+    assert second_models.posts() == 0 and first_models.posts() == 1
+    with Session(engine) as session:
+        holds = list(session.scalars(select(SpendReservation)))
+    # The first hold was settled by its booking; the refused one held nothing.
+    assert [h.status for h in holds] == ["SETTLED"]
+    assert holds[0].usd_micros == 6_800_000
+    assert holds[0].purpose == "sheet:test_shot"
+
+
+@requires_ffmpeg
+def test_a_step_that_asks_or_fails_before_paying_lets_its_hold_go(engine, tmp_path):
+    from app.economy.models import SpendReservation
+
+    storyboard_id = film_with_stills(engine, tmp_path, scenes=3)
+    account = Account(10_000)
+
+    class Broken(SpyVideo):
+        async def create_generation(self, prompt, **kwargs):
+            raise RuntimeError("the adapter broke before sending anything")
+
+    # EVERY_PAID_STEP (the default): the step asks him, and its hold is let go.
+    spy = Models(SpyVideo("seedance2_5", account))
+    with pytest.raises(SheetStepRefused) as asked:
+        _sheet_step(engine, storyboard_id, spy, account, tmp_path)
+    assert asked.value.status == "NEEDS_APPROVAL"
+
+    # MODE, and the stage raises before anything was charged: the hold goes too.
+    mode_studio(engine)
+    with pytest.raises(RuntimeError):
+        _sheet_step(
+            engine, storyboard_id, Models(Broken("seedance2_5", account)), account, tmp_path
+        )
+
+    with Session(engine) as session:
+        holds = list(session.scalars(select(SpendReservation)))
+    assert len(holds) == 2
+    assert {h.status for h in holds} == {"RELEASED"}
+
+
+def test_a_step_that_failed_after_paying_answers_409_with_his_words_not_500(
+    client, engine, headers, tmp_path, monkeypatch
+):
+    """BOOK_EVERY_PURCHASE books and letters it; the route now says it instead of a 500."""
+    from app.media import router as media_router
+    from app.media.assembler import SpentStageError
+
+    storyboard_id = film_with_stills(engine, tmp_path, scenes=3)
+    wire(client, tmp_path)
+
+    def spent(*_args, **_kwargs):
+        raise SpentStageError(
+            "Pasul «cadrul de probă» s-a oprit după ce a cumpărat (340 de credite); nu se "
+            "reia automat.",
+            storyboard_id=storyboard_id,
+            step="test_shot",
+            credits=340.0,
+            booked={"credits": 340.0},
+        )
+
+    monkeypatch.setattr(media_router, "run_sheet_step", spent)
+
+    response = client.post(
+        step_url(storyboard_id, "test_shot"), headers=headers, json={"plan_hash": "a" * 64}
+    )
+
+    assert response.status_code == 409, response.text
+    detail = response.json()["detail"]
+    assert detail["status"] == "SPENT_AND_STOPPED"
+    assert "nu se reia automat" in detail["message"]
+    assert detail["booked"] is True

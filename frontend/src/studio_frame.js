@@ -1,4 +1,5 @@
-import { BUCHAREST, solarElevation } from './hq_time.js';
+import { solarElevation } from './hq_time.js';
+import { studioPlace } from './office_clock.js';
 
 /**
  * THE STUDIO'S KEPT FRAME, FOR A FIRST VISIT'S TITLE (W24).
@@ -37,12 +38,12 @@ const FUTURE_SLACK_MS = 60000;
 export const SOLAR_BANDS = { golden: 6, twilight: -1, night: -12 };
 
 /**
- * The solar state of a moment over Bucharest: 'day', 'night', or the golden hour and twilight with
+ * The solar state of a moment over the studio's place: 'day', 'night', or the golden hour and twilight with
  * the half of the day they fall in ('golden-morning', 'twilight-evening', …).
  * @param {number} ms @param {{lat: number, lon: number}} [place]
  * @returns {string}
  */
-export function solarState(ms, place = BUCHAREST) {
+export function solarState(ms, place = studioPlace()) {
   const at = new Date(ms);
   const e = solarElevation(at, place.lat, place.lon);
   if (e >= SOLAR_BANDS.golden) return 'day';

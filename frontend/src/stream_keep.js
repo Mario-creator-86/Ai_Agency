@@ -1,3 +1,5 @@
+import { studioPlace } from './office_clock.js';
+
 /**
  * THE LAST LIVE FRAME, KEPT FOR THE NEXT ENTRY (W19).
  *
@@ -52,7 +54,7 @@ export function keptSize(w, h, max = KEEP_WIDTH) {
  * @param {number} ms @param {string|undefined} timeZone
  */
 function parts(ms, timeZone) {
-  const f = new Intl.DateTimeFormat('en-GB', { timeZone: timeZone || 'Europe/Bucharest', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  const f = new Intl.DateTimeFormat('en-GB', { timeZone: timeZone || studioPlace().timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
   /** @type {Record<string, string>} */
   const p = {};
   for (const x of f.formatToParts(new Date(ms))) p[x.type] = x.value;

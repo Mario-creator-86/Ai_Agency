@@ -8,6 +8,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def document_sha256(path: Path) -> str:
+    """SHA-256 of a document's text with CRLF folded to LF.
+
+    git stores every architecture document with LF; a Windows checkout with core.autocrlf
+    writes CRLF and Linux writes LF. Hashing the raw bytes passed on one of them only, so the
+    recorded hash is the LF one: the bytes git stores, whatever the checkout wrote.
+    """
+    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+
 def check_docs(root: Path = ROOT) -> list[str]:
     index = json.loads((root / "docs/project/DOCUMENTATION_INDEX.json").read_text(encoding="utf-8"))
     errors = []
@@ -31,7 +41,7 @@ def check_docs(root: Path = ROOT) -> list[str]:
             errors.append(f"Missing: {record['path']}")
             continue
         if path.parent.name == "architecture":
-            if hashlib.sha256(path.read_bytes()).hexdigest() != record["sha256"]:
+            if document_sha256(path) != record["sha256"]:
                 errors.append(f"Architecture changed without indexed review: {record['path']}")
         text = path.read_text(encoding="utf-8")
         for reference in re.findall(r"`((?:\.\./)?[A-Za-z0-9_./-]+\.md)`", text):

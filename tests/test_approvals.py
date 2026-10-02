@@ -1053,3 +1053,249 @@ def test_the_command_takes_no_extra_fields():
             paid_media_approval="MODE",
             issued_by="owner",
         )
+
+
+# ------------------------------------------- OVER_USD reads the cap a step may spend (MONEY-08)
+#
+# The threshold was compared with each step's expected cost while his yes lets the step spend up
+# to its cap: the hero's 3.40 USD shot may spend 6.80 (one redo), the stills up to three times
+# their cost. Under a threshold between the two, the studio bought unasked what could spend
+# more than he allowed. The steps now pass their cap; the question says «plafon».
+
+
+def test_over_usd_compares_the_threshold_with_the_cap_and_says_so(engine):
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+    paid_policy(engine, "OVER_USD", 5.0)
+
+    verdict = ask(engine, TEST_SHOT, "board-1", cost_usd=6.8, context=plan(step="test_shot"))
+
+    assert verdict["status"] == "NEEDS_APPROVAL"
+    assert "plafonul" in verdict["reason"] and "6,80" in verdict["reason"]
+    (row,) = rows(engine)
+    # The question he reads carries the cap as its figure, named as such.
+    from app.services import approval_view
+
+    assert approval_view(row).cost_label == "plafon 6.8 USD"
+
+
+def test_under_over_usd_a_hero_whose_cap_passes_the_threshold_is_asked(engine, tmp_path):
+    from app.media.assembler import MotionStepRefused
+    from test_film_costing import Account, Models, SpyVideo, a_film, run
+
+    storyboard_id = a_film(engine, tmp_path, scenes=3)
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+    # The hero costs 3.40 USD and may spend 6.80: a 5 USD threshold lies between the two.
+    paid_policy(engine, "OVER_USD", 5.0)
+    account = Account(10_000)
+    models = Models(SpyVideo("seedance2_5", account))
+
+    with pytest.raises(MotionStepRefused) as asked:
+        run(engine, storyboard_id, tmp_path, "test_shot", models, account)
+
+    assert asked.value.status == "NEEDS_APPROVAL", asked.value.reason_ro
+    assert "plafon" in asked.value.reason_ro
+    assert models.posts() == 0
+    (row,) = rows(engine)
+    assert row.cost_usd == pytest.approx(6.8)
+    assert "3,40 USD" in row.evidence and "6,80 USD" in row.evidence
+
+
+def test_under_over_usd_stills_whose_cap_passes_the_threshold_are_asked(engine, tmp_path):
+    from app.media.stills_stage import StillsStageRefused
+    from test_stills_stage import SpyStills
+    from test_stills_stage import a_film as a_film_without_stills
+    from test_stills_stage import run as run_stills
+
+    storyboard_id = a_film_without_stills(engine, tmp_path)
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+    # Four scenes cost 0.72 USD and may spend 2.16 with their re-rolls; the line is 1 USD.
+    paid_policy(engine, "OVER_USD", 1.0)
+    images = SpyStills(balance=10_000)
+
+    with pytest.raises(StillsStageRefused) as asked:
+        run_stills(engine, storyboard_id, tmp_path, images, None)
+
+    assert asked.value.status == "NEEDS_APPROVAL", asked.value.reason_ro
+    assert images.asked == []
+    (row,) = rows(engine)
+    assert row.cost_usd == pytest.approx(2.16)
+
+
+def test_under_over_usd_a_step_whose_cap_stays_under_the_threshold_still_follows_the_mode(
+    engine, tmp_path
+):
+    from test_film_costing import Account, Models, SpyVideo, a_film, run
+
+    storyboard_id = a_film(engine, tmp_path, scenes=3)
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+    paid_policy(engine, "OVER_USD", 7.0)
+    account = Account(10_000)
+    models = Models(SpyVideo("seedance2_5", account))
+
+    run(engine, storyboard_id, tmp_path, "test_shot", models, account)
+
+    assert models.posts() == 1 and rows(engine) == []
+
+
+# ------------------------------------------- his yes continues the film the same day (A6)
+#
+# 2026-10-02 (CONTINUE_REDOS_E2E; A6, AR-05). His answer to a paid step of a film queued
+# nothing: the yes waited for the next 05:00 run, so under EVERY_PAID_STEP a film moved one
+# stair a day, and a yes given in the morning had often expired (24 h) by the run after it.
+# Now an APPROVED answer on a paid step queues FILM_CONTINUE for that film, once, and a paid
+# step's question stands for `paid_media_approval_expires_hours` (48 h by default).
+
+
+def _production(engine) -> None:
+    with Session(engine) as session, session.begin():
+        session.get(OwnerPolicy, 1).environment = "PRODUCTION"
+
+
+def _mode(engine, mode: str) -> None:
+    with Session(engine) as session, session.begin():
+        session.get(OwnerPolicy, 1).autonomy_mode = mode
+
+
+def _continue_tasks(engine) -> list:
+    from app.workflows.models import TaskQueueItem
+
+    with Session(engine) as session:
+        found = list(
+            session.scalars(select(TaskQueueItem).where(TaskQueueItem.task_type == "FILM_CONTINUE"))
+        )
+        session.expunge_all()
+        return found
+
+
+def _hours_standing(request: ApprovalRequest) -> float:
+    created = datetime.fromisoformat(request.created_at)
+    return (datetime.fromisoformat(request.expires_at) - created).total_seconds() / 3600
+
+
+def test_a_paid_step_question_stands_for_48_hours_and_others_for_24(engine):
+    from app.services import paid_media_approval_expires_hours
+
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+    assert paid_media_approval_expires_hours() == 48
+
+    ask(engine, STILLS, "board-1", cost_usd=0.72, context=plan(step="stills"))
+    _mode(engine, "SUPERVISED")
+    ask(engine, PUBLISH, "asset-1", context={"channel_id": "c"})
+    # The sheet's narration question (the assemble step, bound to the sheet's hash) is a paid
+    # step of the film as well.
+    ask(
+        engine,
+        "media.paid_generation_over_threshold",
+        "board-1",
+        cost_usd=9.0,
+        context={"plan_hash": PLAN_A, "step": "assemble"},
+    )
+
+    by_action = {request.action: request for request in rows(engine)}
+    assert _hours_standing(by_action[STILLS]) == pytest.approx(48, abs=0.01)
+    assert _hours_standing(by_action[PUBLISH]) == pytest.approx(24, abs=0.01)
+    assert _hours_standing(by_action["media.paid_generation_over_threshold"]) == pytest.approx(
+        48, abs=0.01
+    )
+
+
+def test_the_paid_question_hours_are_the_owners_setting(monkeypatch):
+    monkeypatch.setenv("STUDIO_PAID_MEDIA_APPROVAL_EXPIRES_HOURS", "72")
+    from app.services import paid_media_approval_expires_hours
+
+    assert paid_media_approval_expires_hours() == 72
+
+
+@pytest.mark.parametrize("action", [STILLS, TEST_SHOT, MOTION, REDO])
+def test_his_yes_on_a_paid_step_queues_the_film_to_continue_once(engine, action):
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+    _production(engine)
+    asked = ask(engine, action, "board-1", cost_usd=1.0, context={"plan_hash": PLAN_A})
+    assert asked["status"] == "NEEDS_APPROVAL", asked
+
+    command = ApprovalDecisionCommand(
+        command_id=uuid4(), approval_id=asked["approval_id"], decision="APPROVED", note=None
+    )
+    decide_approval(engine, command)
+    decide_approval(engine, command)  # the same command again: replayed, nothing queued twice
+
+    (task,) = _continue_tasks(engine)
+    assert task.payload["storyboard_id"] == "board-1"
+    assert task.payload["approval_id"] == asked["approval_id"]
+    assert task.payload["action"] == action
+    assert task.idempotency_key == f"film-continue-board-1-{asked['approval_id']}"
+    assert task.status == "QUEUED"
+    with Session(engine) as session:
+        decided = session.scalars(
+            select(DomainEvent).where(DomainEvent.event_type == "governance.approval_decided")
+        ).one()
+    assert decided.payload["continue_task_id"] == task.id
+
+
+def test_a_refusal_or_a_question_that_is_not_a_paid_step_queues_nothing(engine):
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+    _production(engine)
+    refused = ask(engine, MOTION, "board-1", cost_usd=12.24, context=plan())
+    answer(engine, refused["approval_id"], "REFUSED", note="Nu azi.")
+    _mode(engine, "SUPERVISED")
+    publish = ask(engine, PUBLISH, "asset-1", context={"channel_id": "c"})
+    answer(engine, publish["approval_id"], "APPROVED")
+
+    assert _continue_tasks(engine) == []
+
+
+def test_in_test_his_yes_queues_nothing_because_the_day_does_not_buy_there(engine):
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+    asked = ask(engine, STILLS, "board-1", cost_usd=0.72, context=plan(step="stills"))
+    answer(engine, asked["approval_id"], "APPROVED")
+
+    assert _continue_tasks(engine) == []
+
+
+# ------------------------------------------- PAGE-03: a paid question says which film, which step
+
+
+def test_a_paid_step_question_carries_its_step_its_plan_and_the_films_title(engine, tmp_path):
+    from app.media.models import Storyboard
+    from test_scene_takes import nepal_like
+
+    # SUPERVISED, so the publication is asked too: a question that is not a film's paid step
+    a_studio_that_asks(engine, "SUPERVISED")
+    paid_policy(engine, "EVERY_PAID_STEP")
+    film = nepal_like(engine, tmp_path)
+    with Session(engine) as session, session.begin():
+        session.get(Storyboard, film).title = "Nepal plătește criza altora"
+
+    ask(engine, MOTION, film, cost_usd=27.2, context=plan())
+    ask(engine, PUBLISH, "asset-1", cost_usd=None)
+
+    views = {view.action: view for view in pending_approvals(engine)}
+    motion = views[MOTION]
+    assert motion.context == {"step": "motion", "plan_hash": PLAN_A[:12], "storyboard_id": film}
+    assert motion.film_title == "Nepal plătește criza altora"
+    # a question that is not a film's paid step has neither
+    assert views[PUBLISH].context is None
+    assert views[PUBLISH].film_title is None
+
+
+def test_a_paid_step_named_only_by_its_action_still_says_its_step(engine):
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+    paid_policy(engine, "EVERY_PAID_STEP")
+    ask(engine, STILLS, "board-gone", cost_usd=0.72, context={"plan_hash": PLAN_A})
+    (view,) = pending_approvals(engine)
+    assert view.context == {
+        "step": "stills",
+        "plan_hash": PLAN_A[:12],
+        "storyboard_id": "board-gone",
+    }
+    assert view.film_title is None, "no storyboard by that id: no invented title"
+
+
+def test_the_approvals_route_carries_the_context_to_the_page(client, headers, engine):
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+    paid_policy(engine, "EVERY_PAID_STEP")
+    ask(engine, TEST_SHOT, "board-9", cost_usd=3.4, context=plan(step="test_shot"))
+    (row,) = client.get("/api/v1/owner/approvals", headers=headers).json()
+    assert row["context"]["step"] == "test_shot"
+    assert row["context"]["plan_hash"] == PLAN_A[:12]
+    assert "film_title" in row

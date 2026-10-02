@@ -273,7 +273,7 @@ def test_the_accountant_answers_a_budget_request_at_the_close(engine, staffed, c
     with Session(engine) as session:
         request = session.scalar(select(AgentMessage).where(AgentMessage.intent == "REQUEST_INFO"))
         assert request.status == "RESOLVED"
-        assert "Numai Owner-ul stabilește bugetul" in request.resolution
+        assert "Numai Proprietarul stabilește bugetul" in request.resolution
         close = session.get(AgentMessage, outcome["message_id"])
         assert close.body_json["budget_requests"][0]["justification"].startswith("Planul măsurat")
 

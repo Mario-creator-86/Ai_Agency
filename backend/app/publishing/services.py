@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import json
 import re
@@ -23,6 +24,16 @@ from app.providers.publishing_base import (
     PublishingProvider,
     RemoteStateUnavailable,
     UploadResult,
+    ask_reconcile,
+)
+from app.providers.retry import is_transient
+from app.providers.youtube import (
+    DEFAULT_CATEGORY_ID,
+    DESCRIPTION_LIMIT_BYTES,
+    fit_bytes,
+    footer_start,
+    register_footer_marker,
+    youtube_safe_metadata,
 )
 from app.publishing.models import ChannelBrandAsset, ChannelRecord, PublicationRecord
 from app.publishing.schemas import (
@@ -37,9 +48,13 @@ from app.wording import (
     COMMAND_REUSED,
     count,
     decimal,
+    error_fields,
     error_words,
+    publication_status,
     qc_status,
     sentence,
+    settings_place,
+    written_for_the_owner,
 )
 from app.wording import environment as environment_word
 from app.wording import privacy as privacy_word
@@ -56,6 +71,10 @@ class PublishingGateError(Exception):
 
 class PublishingAssetNotFound(PublishingGateError):
     """Raised when the referenced media asset or channel does not exist."""
+
+
+class PublicationNotResolvable(ValueError):
+    """The Owner asked to settle a publication the studio is not waiting on him for."""
 
 
 class PublisherNotConfigured(Exception):
@@ -99,6 +118,10 @@ PRIVACY_RANK = {level: rank for rank, level in enumerate(PRIVACY_LEVELS)}
 #: everything else is a factual film for the main channel.
 SERIES_CHANNEL_TYPES = {"office_serial": "OFFICE_SERIAL"}
 DEFAULT_CHANNEL_TYPE = "MAIN_FACTUAL"
+#: The longest Short quality control accepts on a channel that names none (YouTube's own
+#: limit is 180 s since 2024-10-15; a channel's policy sets its own, migration 0053).
+DEFAULT_SHORTS_MAX_SECONDS = 60
+SHORTS_MAX_SECONDS_LIMIT = 180
 
 ROUTE_SELECTED = "SELECTED"
 ROUTE_SKIPPED = "SKIPPED"
@@ -107,7 +130,7 @@ ROUTE_SKIPPED = "SKIPPED"
 # Channel slots the studio plans to use. A slot is NOT a configured channel: it carries no
 # remote channel ID and no credentials until the Owner supplies real ones. Inventing a
 # remote_channel_id or a CONFIGURED status here would fabricate external state.
-DEFAULT_CHANNELS = [
+DEFAULT_CHANNELS: list[dict[str, Any]] = [
     {
         "channel_name": "Main Channel A - Factual Shorts",
         "channel_type": "MAIN_FACTUAL",
@@ -116,6 +139,8 @@ DEFAULT_CHANNELS = [
         "brand_tagline": "Real World. Verified Facts. 60-Second Deep Dives.",
         # Seed default only: production may pick technology per video. Editable in the API.
         "production_policy": "FLEXIBLE",
+        # The longest film quality control accepts: the factual script's own ceiling.
+        "shorts_max_seconds": 60,
     },
     {
         "channel_name": "Channel B - Office Serial",
@@ -125,6 +150,8 @@ DEFAULT_CHANNELS = [
         "brand_tagline": "AMN-AI (Autonomous Machine Nexus): Unscripted Silicon Life.",
         # Seed default only: recurring characters keep their locked identity. Editable in the API.
         "production_policy": "CONSISTENCY_LOCKED",
+        # Episodes are written for 45-70 s (app.story.review.MAX_SECONDS).
+        "shorts_max_seconds": 70,
     },
 ]
 
@@ -171,25 +198,38 @@ def film_identity(session: Session, media_asset_id: str) -> tuple[str | None, st
     return (storyboard.script_draft_id, storyboard.id)
 
 
-def published_films(session: Session, channel_id: str) -> dict[str, PublicationRecord]:
+def published_films(
+    session: Session, channel_id: str, *, exclude_publication_id: str | None = None
+) -> dict[str, PublicationRecord]:
     """Every film this channel already carries, keyed by the identity above.
 
     Keyed by both the script and the storyboard, so a candidate matches whichever of the two
     it can establish. Only live publications count: a failed upload left nothing on the
-    channel and must not block the retry.
+    channel and must not block the retry. ``exclude_publication_id`` is a publication that
+    must not count as its own duplicate (the gate run again at execution).
     """
     carried: dict[str, PublicationRecord] = {}
-    for record in session.scalars(
-        select(PublicationRecord).where(
-            PublicationRecord.channel_id == channel_id,
-            PublicationRecord.status.in_(LIVE_PUBLICATION_STATES),
-        )
-    ):
+    query = select(PublicationRecord).where(
+        PublicationRecord.channel_id == channel_id,
+        PublicationRecord.status.in_(LIVE_PUBLICATION_STATES),
+    )
+    if exclude_publication_id is not None:
+        query = query.where(PublicationRecord.id != exclude_publication_id)
+    for record in session.scalars(query):
         script_id, storyboard_id = film_identity(session, record.media_asset_id)
         for key in (script_id, storyboard_id):
             if key is not None:
                 carried.setdefault(key, record)
     return carried
+
+
+def file_sha256(path: Path) -> str:
+    """The SHA-256 of a file, read in blocks (a film is hundreds of megabytes)."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def derive_channel_status(remote_channel_id: str | None, credentials_ref: str | None) -> str:
@@ -238,6 +278,7 @@ def seed_default_channels(engine: Engine) -> int:
                     upload_privacy_default=ch["upload_privacy_default"],
                     status=CHANNEL_NOT_CONFIGURED,
                     production_policy=ch["production_policy"],
+                    shorts_max_seconds=ch["shorts_max_seconds"],
                     created_at=now,
                     last_sync_at=None,
                     event_id=event.event_id,
@@ -300,6 +341,10 @@ def policy_snapshot(channel: ChannelRecord) -> dict[str, Any]:
         "public_publish_enabled": bool(channel.public_publish_enabled),
         "publish_delay_minutes": int(channel.publish_delay_minutes or 0),
         "director_may_approve_episodes": bool(channel.director_may_approve_episodes),
+        "youtube_category_id": str(channel.youtube_category_id or DEFAULT_CATEGORY_ID),
+        "made_for_kids": bool(channel.made_for_kids),
+        "default_language": channel.default_language or None,
+        "shorts_max_seconds": int(channel.shorts_max_seconds or DEFAULT_SHORTS_MAX_SECONDS),
         "policy_version": int(channel.policy_version or 1),
     }
 
@@ -353,6 +398,15 @@ def change_publish_policy(engine: Engine, channel_id: str, command: PublishPolic
             new["publish_delay_minutes"] = int(command.publish_delay_minutes)
         if command.director_may_approve_episodes is not None:
             new["director_may_approve_episodes"] = bool(command.director_may_approve_episodes)
+        if command.youtube_category_id is not None:
+            new["youtube_category_id"] = str(int(command.youtube_category_id))
+        if command.made_for_kids is not None:
+            new["made_for_kids"] = bool(command.made_for_kids)
+        if command.default_language is not None:
+            # "" goes back to the studio's content language.
+            new["default_language"] = command.default_language or None
+        if command.shorts_max_seconds is not None:
+            new["shorts_max_seconds"] = int(command.shorts_max_seconds)
 
         if command.autonomous_privacy == "public":
             if environment != "PRODUCTION":
@@ -380,6 +434,10 @@ def change_publish_policy(engine: Engine, channel_id: str, command: PublishPolic
             channel.public_publish_enabled = new["public_publish_enabled"]
             channel.publish_delay_minutes = new["publish_delay_minutes"]
             channel.director_may_approve_episodes = new["director_may_approve_episodes"]
+            channel.youtube_category_id = new["youtube_category_id"]
+            channel.made_for_kids = new["made_for_kids"]
+            channel.default_language = new["default_language"]
+            channel.shorts_max_seconds = new["shorts_max_seconds"]
             channel.policy_version = old["policy_version"] + 1
             new["policy_version"] = channel.policy_version
             event = append_event(
@@ -593,15 +651,71 @@ def select_channel_for(
         }
 
 
-#: What the audience reads under every film, in the Owner's words. English, because what the
-#: studio publishes is English.
-AI_DISCLOSURE = (
-    "Disclosure: this video was produced with generative AI by the AMN-AI studio pipeline."
-)
-#: The line that marks where the studio's own block begins, so it is written once however many
-#: times a description passes through here.
-FOOTER_MARKER = "Disclosure: this video was produced with generative AI"
-YOUTUBE_DESCRIPTION_LIMIT = 5000
+#: What the audience reads under every film, per content language: the opening words, how the
+#: studio's name follows them when one is configured (STUDIO_DISPLAY_NAME), and the stop.
+#: Configuration, never a brand in code (audit PUB-07, 2026-10-02): the Owner's own sentence
+#: for a language (STUDIO_AI_DISCLOSURE_TEXTS, a JSON object such as {"de": "… {studio}."})
+#: wins over these, and a language with neither reads the English one.
+BUILTIN_DISCLOSURES: dict[str, tuple[str, str, str]] = {
+    "en": ("Disclosure: this video was produced with generative AI", " by {studio}", "."),
+    "ro": (
+        "Mențiune: acest video a fost realizat cu inteligență artificială generativă",
+        " de {studio}",
+        ".",
+    ),
+}
+for _opening, _by, _stop in BUILTIN_DISCLOSURES.values():
+    register_footer_marker(_opening)
+#: The English sentence with no studio named: what a studio with no configuration writes.
+AI_DISCLOSURE = BUILTIN_DISCLOSURES["en"][0] + BUILTIN_DISCLOSURES["en"][2]
+YOUTUBE_DESCRIPTION_LIMIT = DESCRIPTION_LIMIT_BYTES
+#: The heading of the computed sources block, per upload language (English otherwise).
+SOURCES_HEADINGS = {"en": "Sources:", "ro": "Surse:"}
+#: At most this many source addresses under a film: the ones its first claims rest on.
+MAX_SOURCES = 5
+
+
+@functools.lru_cache(maxsize=1)
+def _configured_settings() -> Any:
+    try:
+        from app.config import Settings  # noqa: PLC0415
+
+        return Settings()  # type: ignore[call-arg]  # read from the environment and .env
+    except Exception:  # noqa: BLE001 - an unreadable configuration reads as the defaults
+        return None
+
+
+def studio_settings() -> Any:
+    """The studio's configuration for the callers that are handed none (the day's publish
+    stage passes only the disclosure site and the creator's channel): the content language,
+    the studio's display name and the Owner's disclosure sentences. Read once, the way
+    `app.providers.retry` reads its own settings."""
+    return _configured_settings()
+
+
+def _language(settings: Any) -> str:
+    return str(getattr(settings, "content_language", None) or "en").strip().lower() or "en"
+
+
+def disclosure_sentence(settings: Any | None = None) -> str:
+    """The disclosure line in the studio's content language, naming the studio when a name is
+    configured. The Owner's own sentence for the language wins, with ``{studio}`` replaced by
+    the name (removed when there is none)."""
+    configured = settings if settings is not None else studio_settings()
+    language = _language(configured)
+    base = language.split("-")[0]
+    name = " ".join(str(getattr(configured, "studio_display_name", None) or "").split())
+    texts = getattr(configured, "ai_disclosure_texts", None)
+    own = (texts.get(language) or texts.get(base)) if isinstance(texts, dict) else None
+    template = " ".join(str(own or "").split())
+    if template:
+        opening = template.split("{studio}")[0].strip()
+        text = " ".join(template.replace("{studio}", name).split())
+        text = re.sub(r"\s+([.,;:!?])", r"\1", text)
+        register_footer_marker(opening if len(opening) >= 8 else text.rstrip(".!"))
+        return text
+    opening, by, stop = BUILTIN_DISCLOSURES.get(base, BUILTIN_DISCLOSURES["en"])
+    return opening + (by.format(studio=name) if name else "") + stop
 
 
 def channel_link(connection: Any) -> str | None:
@@ -622,20 +736,29 @@ def channel_link(connection: Any) -> str | None:
 
 
 def publication_footer(
-    engine: Engine, disclosure_url: str | None, creator_channel_title: str | None
+    engine: Engine | None,
+    disclosure_url: str | None,
+    creator_channel_title: str | None,
+    *,
+    settings: Any | None = None,
 ) -> str:
     """The disclosure, the studio's site when one is configured, and the creator's channel.
 
-    The creator is named by the title of a connected YouTube channel and linked from that
-    connection, so the address is the one the studio actually holds — not one typed here.
-    A title that matches no connection is still credited, without a link, rather than dropped.
+    The disclosure is `disclosure_sentence` for ``settings`` (the studio's configuration when
+    none is given). The creator is named by the title of a connected YouTube channel and
+    linked from that connection, so the address is the one the studio actually holds — not
+    one typed here. A title that matches no connection is still credited, without a link,
+    rather than dropped.
     """
     from app.youtube.models import YouTubeConnection  # noqa: PLC0415
 
+    sentence = disclosure_sentence(settings)
     url = (disclosure_url or "").strip()
-    lines = [f"{AI_DISCLOSURE} {url}" if url else AI_DISCLOSURE]
+    lines = [f"{sentence} {url}" if url else sentence]
     title = (creator_channel_title or "").strip()
-    if title:
+    if title and engine is None:
+        lines.append(f"Created by {title}")
+    elif title and engine is not None:
         with Session(engine) as session:
             match = next(
                 (
@@ -651,17 +774,21 @@ def publication_footer(
 
 
 def with_footer(description: str, footer: str | None) -> str:
-    """The description with the studio's block at the end, once, inside YouTube's limit."""
+    """The description with the studio's block at the end, once, inside YouTube's 5000 bytes:
+    a block already there (from any known disclosure on) is replaced, never doubled, and the
+    text above it is what gets cut."""
     if not footer:
         return description
+    if footer_start(footer) != 0:
+        # A footer opening with words no disclosure is known by is still found again.
+        register_footer_marker(footer.splitlines()[0])
     body = description or ""
-    cut = body.find(FOOTER_MARKER)
+    cut = footer_start(body)
     if cut >= 0:
         body = body[:cut]
     body = body.rstrip()
-    room = YOUTUBE_DESCRIPTION_LIMIT - len(footer) - 2
-    body = body[: max(0, room)].rstrip()
-    return f"{body}\n\n{footer}" if body else footer
+    _, fitted, _ = youtube_safe_metadata("", f"{body}\n\n{footer}" if body else footer, [])
+    return fitted
 
 
 def list_channels(engine: Engine) -> list[dict]:
@@ -719,6 +846,141 @@ def configure_channel(
         return ChannelView.model_validate(ch).model_dump()
 
 
+def film_attributions(session: Session, media_asset_id: str) -> list[str]:
+    """The credits the film's music and ambience licences require, from its render's record
+    (production['audio']['attributions'])."""
+    job = session.scalar(
+        select(VideoRenderJob).where(VideoRenderJob.output_asset_id == media_asset_id)
+    )
+    manifest = job.production_json if job is not None else None
+    audio = manifest.get("audio") if isinstance(manifest, dict) else None
+    lines = audio.get("attributions") if isinstance(audio, dict) else None
+    return [str(line).strip() for line in lines or [] if str(line).strip()]
+
+
+def with_attributions(description: str, attributions: list[str]) -> str:
+    """The description with each required credit written once, just above the studio's block
+    (`footer_start`) or at the end, inside YouTube's limit. A credit already there is not
+    written again."""
+    body = description or ""
+    missing = [line for line in dict.fromkeys(attributions) if line and line not in body]
+    if not missing:
+        return body
+    return _above_footer(body, "\n".join(missing))
+
+
+def _above_footer(description: str, block: str) -> str:
+    """``block`` written just above the studio's block, or at the end; the text above it is
+    what YouTube's 5000 bytes cut, never the block or the footer."""
+    cut = footer_start(description)
+    head, tail = (
+        (description[:cut].rstrip(), description[cut:]) if cut >= 0 else (description.rstrip(), "")
+    )
+    kept = "\n\n".join(part for part in (block, tail) if part)
+    room = DESCRIPTION_LIMIT_BYTES - len(kept.encode("utf-8")) - 2
+    if len(head.encode("utf-8")) > room:
+        head = fit_bytes(head, room) if room > 0 else ""
+    return "\n\n".join(part for part in (head, kept) if part)
+
+
+def _http_address(value: Any) -> str | None:
+    text = str(value or "").strip()
+    if not text.lower().startswith(("https://", "http://")) or any(c.isspace() for c in text):
+        return None
+    return text
+
+
+def film_sources(session: Session, media_asset_id: str, *, limit: int = MAX_SOURCES) -> list[str]:
+    """The addresses a factual film's SUPPORTED claims rest on, in the order the script cites
+    them, each page once, at most ``limit`` (audit PUB-10). A film of the office serial, or one
+    with no script, has none: an episode is not a claim about the world."""
+    from app.factual.models import SourceSnapshot  # noqa: PLC0415
+
+    job = session.scalar(
+        select(VideoRenderJob).where(VideoRenderJob.output_asset_id == media_asset_id)
+    )
+    board = session.get(Storyboard, job.storyboard_id) if job and job.storyboard_id else None
+    if board is None or not board.script_draft_id:
+        return []
+    channel = session.get(ChannelRecord, board.channel_id) if board.channel_id else None
+    kind = channel.channel_type if channel is not None else channel_type_for_storyboard(board)
+    if kind != DEFAULT_CHANNEL_TYPE:
+        return []
+    script = session.get(ScriptDraft, board.script_draft_id)
+    cited = [str(item) for item in (script.claim_ids_json if script else None) or []]
+    if not cited:
+        return []
+    claims = {
+        claim.id: claim
+        for claim in session.scalars(
+            select(FactualClaim).where(
+                FactualClaim.id.in_(cited),
+                FactualClaim.status == "SUPPORTED",
+                FactualClaim.source_id.is_not(None),
+            )
+        )
+    }
+    addresses: list[str] = []
+    seen: set[str] = set()
+    for claim_id in dict.fromkeys(cited):
+        claim = claims.get(claim_id)
+        source = session.get(SourceSnapshot, claim.source_id) if claim is not None else None
+        address = _http_address(source.url if source is not None else None)
+        if address is None:
+            continue
+        key = address.rstrip("/").casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        addresses.append(address)
+        if len(addresses) >= limit:
+            break
+    return addresses
+
+
+def sources_heading(language: str | None) -> str:
+    base = str(language or "en").strip().lower().split("-")[0]
+    return SOURCES_HEADINGS.get(base, SOURCES_HEADINGS["en"])
+
+
+def with_sources(description: str, addresses: list[str], heading: str = "Sources:") -> str:
+    """The description with the film's sources listed once, under ``heading``, above the
+    studio's block (and above any licence credits added after it)."""
+    body = description or ""
+    missing = [address for address in dict.fromkeys(addresses) if address and address not in body]
+    if not missing:
+        return body
+    return _above_footer(body, "\n".join([heading, *missing]))
+
+
+def upload_language(channel: ChannelRecord | None) -> str:
+    """What the channel's uploads are written in and say: its own language, else the studio's
+    content language."""
+    own = str(getattr(channel, "default_language", None) or "").strip()
+    return own or _language(studio_settings())
+
+
+def upload_settings(channel: ChannelRecord | None) -> dict[str, Any]:
+    """The upload's own settings from the channel's policy (migration 0053), as the adapter
+    takes them in ``extra``."""
+    return {
+        "category_id": str(getattr(channel, "youtube_category_id", None) or DEFAULT_CATEGORY_ID),
+        "made_for_kids": bool(getattr(channel, "made_for_kids", False)),
+        "default_language": upload_language(channel),
+    }
+
+
+def film_title(session: Session, media_asset_id: str) -> str:
+    """The film's own title, from its script (else its storyboard), for an upload whose
+    title came out empty."""
+    script_id, storyboard_id = film_identity(session, media_asset_id)
+    script = session.get(ScriptDraft, script_id) if script_id else None
+    if script is not None and script.title:
+        return hook_of(script.title)
+    board = session.get(Storyboard, storyboard_id) if storyboard_id else None
+    return hook_of(board.title) if board is not None and board.title else ""
+
+
 def evaluate_publishing_gate(
     engine: Engine,
     media_asset_id: str,
@@ -727,8 +989,14 @@ def evaluate_publishing_gate(
     privacy_status: str = "private",
     policy_version: int | None = None,
     scheduled_publish_time: str | None = None,
+    exclude_publication_id: str | None = None,
 ) -> dict:
     """Evaluate the 5 mandatory publishing gates per 50_CONTENT_GATE_MATRIX.md.
+
+    ``exclude_publication_id`` is the publication being executed when the gate is asked again
+    at the last moment (PUB-04): it must not be its own duplicate. The file check compares the
+    file's SHA-256 with the one quality control passed (PUB-14), so a file replaced on disk
+    after QC is not uploaded under a PASSED verdict.
 
     A sixth check runs only for a publication that would be seen — unlisted, public, or a
     private upload with a scheduled public release — and asks whether the channel's policy
@@ -789,13 +1057,32 @@ def evaluate_publishing_gate(
                 )
             else:
                 size = p.stat().st_size
-                check(
-                    "MEDIA_ASSET_ON_DISK",
-                    True,
-                    f"Fișierul este pe disc ({count(size, 'octet', 'octeți')}).",
-                    path=asset.uri_or_path,
-                    bytes=size,
-                )
+                actual = file_sha256(p)
+                expected = str(asset.provenance_hash or "").strip().lower()
+                if actual != expected:
+                    check(
+                        "MEDIA_ASSET_ON_DISK",
+                        False,
+                        "Fișierul de pe disc nu este cel trecut de controlul calității "
+                        f"(amprenta SHA-256 {actual[:12]}… nu este {expected[:12] or '—'}…).",
+                        path=asset.uri_or_path,
+                        bytes=size,
+                        sha256=actual,
+                        provenance_hash=asset.provenance_hash,
+                    )
+                    refuse(
+                        "MEDIA_HASH_MISMATCH",
+                        "Fișierul de pe disc nu este cel trecut de controlul calității",
+                    )
+                else:
+                    check(
+                        "MEDIA_ASSET_ON_DISK",
+                        True,
+                        f"Fișierul este pe disc ({count(size, 'octet', 'octeți')}) și este "
+                        "cel trecut de controlul calității.",
+                        path=asset.uri_or_path,
+                        bytes=size,
+                    )
 
         # Gate 3: Technical & Quality Control (QC) Passed
         qc = session.scalars(
@@ -944,17 +1231,20 @@ def evaluate_publishing_gate(
         # sitting in the queue. Identity here is the film (see `film_identity`), so a script
         # already on this channel is not offered to it twice, whichever file it was rendered
         # into. Cross-posting to a DIFFERENT channel stays allowed: the gate is per channel.
-        existing_pub = session.scalars(
-            select(PublicationRecord).where(
-                PublicationRecord.channel_id == channel_id,
-                PublicationRecord.media_asset_id == media_asset_id,
-                PublicationRecord.status.in_(LIVE_PUBLICATION_STATES),
-            )
-        ).first()
+        duplicates = select(PublicationRecord).where(
+            PublicationRecord.channel_id == channel_id,
+            PublicationRecord.media_asset_id == media_asset_id,
+            PublicationRecord.status.in_(LIVE_PUBLICATION_STATES),
+        )
+        if exclude_publication_id is not None:
+            duplicates = duplicates.where(PublicationRecord.id != exclude_publication_id)
+        existing_pub = session.scalars(duplicates).first()
         same_film = None
         if existing_pub is None:
             script_id, storyboard_id = film_identity(session, media_asset_id)
-            carried = published_films(session, channel_id)
+            carried = published_films(
+                session, channel_id, exclude_publication_id=exclude_publication_id
+            )
             for key in (script_id, storyboard_id):
                 if key is not None and key in carried:
                     same_film = carried[key]
@@ -1069,6 +1359,44 @@ def evaluate_publishing_gate(
             check("POLICY_AUTHORISATION_GATE", code is None, detail, **facts)
             if code is not None and reason is not None:
                 refuse(code, reason)
+
+        # Gate 7: Rights, only for a publication that would be seen (AR-15). A film whose
+        # components do not all prove commercial use (NEEDS_REVIEW) may be uploaded private
+        # and nothing more. A status nobody knows never gets here: quality control fails it.
+        if requested != "private" and asset is not None:
+            from app.media.qc import (  # noqa: PLC0415 - qc is heavy; read on demand
+                PRIVATE_ONLY_LICENCE_STATUSES,
+                rights_verdict,
+            )
+
+            job = session.scalar(
+                select(VideoRenderJob).where(VideoRenderJob.output_asset_id == media_asset_id)
+            )
+            manifest = job.production_json if job is not None else None
+            rights = rights_verdict(
+                asset.license_status, manifest if isinstance(manifest, dict) else {}
+            )
+            wanted = privacy_word(requested)
+            if rights["license_status"] not in PRIVATE_ONLY_LICENCE_STATUSES:
+                check(
+                    "RIGHTS_GATE",
+                    True,
+                    f"Licența filmului ({rights['license_status']}) permite un film {wanted}.",
+                    license_status=rights["license_status"],
+                )
+            else:
+                check(
+                    "RIGHTS_GATE",
+                    False,
+                    f"Un film {wanted} cere dovada licenței comerciale pentru fiecare componentă: "
+                    + rights["detail"],
+                    license_status=rights["license_status"],
+                    missing_ro=rights["missing_ro"],
+                )
+                refuse(
+                    "RIGHTS_NEEDS_REVIEW",
+                    f"Licența filmului trebuie verificată înainte de un film {wanted}",
+                )
 
     eligible = len(reasons) == 0
     return {
@@ -1280,6 +1608,24 @@ def create_publication_intent(
     """
     if not idempotency_key:
         idempotency_key = str(uuid4())
+    # What every upload carries, on the one road every upload takes: a factual film's sources
+    # (audit PUB-10), then the credits its music licence requires, above the studio's block;
+    # the disclosure when a caller brought none; and all of it within YouTube's limits
+    # (PUB-06), so the record stored here is exactly what the adapter sends.
+    with Session(engine) as session:
+        channel_row = session.get(ChannelRecord, channel_id)
+        description = with_sources(
+            description,
+            film_sources(session, media_asset_id),
+            sources_heading(upload_language(channel_row)),
+        )
+        description = with_attributions(description, film_attributions(session, media_asset_id))
+        fallback_title = film_title(session, media_asset_id)
+    if footer_start(description) < 0:
+        description = with_footer(description, disclosure_sentence())
+    title, description, tags = youtube_safe_metadata(
+        title, description, list(tags or []), fallback_title=fallback_title
+    )
 
     # Check for existing publication with same (channel_id, idempotency_key)
     with Session(engine) as session:
@@ -1396,38 +1742,413 @@ def create_publication_intent(
     return view
 
 
+#: The states an upload may be started from: a fresh intent, and a retry the studio decided is
+#: safe (the platform is asked first whether the earlier attempt landed).
+RUNNABLE_STATES = ("VALIDATED", "FAILED_RETRYABLE")
+
+#: YouTube's own word for a video it will not show (`status.uploadStatus`). Such a video is
+#: not a publication; the same file would be refused again, and a deleted one was deleted by
+#: a person, so none of them is offered to the channel again.
+REMOTE_REJECTED_STATES = frozenset({"rejected", "failed", "deleted"})
+#: YouTube's processing is finished for the studio's purposes in these states.
+REMOTE_SETTLED_STATES = frozenset({"processed", *REMOTE_REJECTED_STATES})
+
+#: YouTube's reasons, in the Owner's words (`status.rejectionReason` / `failureReason`).
+REMOTE_REASON_WORDS = {
+    "claim": "o revendicare de drepturi",
+    "copyright": "drepturi de autor",
+    "duplicate": "un duplicat al unui videoclip existent",
+    "inappropriate": "conținut nepotrivit",
+    "legal": "un motiv legal",
+    "length": "durata",
+    "termsofuse": "încălcarea termenilor de utilizare",
+    "trademark": "o marcă înregistrată",
+    "uploaderaccountclosed": "contul închis",
+    "uploaderaccountsuspended": "contul suspendat",
+    "codec": "un codec pe care YouTube nu îl citește",
+    "conversion": "conversia a eșuat",
+    "emptyfile": "fișier gol",
+    "invalidfile": "fișier invalid",
+    "toosmall": "fișier prea mic",
+    "uploadaborted": "încărcare întreruptă",
+}
+
+#: PUB-05 / SELL-07, in the words the Owner reads: Google keeps every upload of an unaudited
+#: API project (created after 28 July 2020) private until the project passes the audit.
+LOCKED_PRIVATE_LETTER = (
+    "YouTube a păstrat filmul privat: proiectul Google Cloud nu a trecut auditul YouTube API "
+    "Services; până atunci orice încărcare rămâne privată."
+)
+LOCKED_PRIVATE_NEXT = (
+    "Cere auditul pentru proiectul Google Cloud al aplicației (pașii sunt în "
+    "docs/project/YOUTUBE_CONNECTIONS.md); filmul este pe canal, privat, și poate fi făcut "
+    "vizibil din YouTube Studio."
+)
+
+#: The statuses a letter is written for when a publication moves into them (PUB-12).
+LETTER_STATUSES = ("FAILED_FINAL", "REMOTE_UNKNOWN", "NEEDS_RECONCILIATION")
+
+
+def _requested_visibility(pub: PublicationRecord) -> str:
+    """What the publication asked the audience to see: a scheduled release is public."""
+    return "public" if pub.scheduled_publish_time else str(pub.privacy_status or "private")
+
+
+def _bound_connection(session: Session, channel_id: str) -> Any:
+    from app.youtube.models import YouTubeConnection  # noqa: PLC0415
+
+    channel = session.get(ChannelRecord, channel_id)
+    identifier = bound_connection_id(channel) if channel is not None else None
+    return session.get(YouTubeConnection, identifier) if identifier else None
+
+
+def _channel_name(session: Session, channel_id: str) -> str:
+    channel = session.get(ChannelRecord, channel_id)
+    return channel.channel_name if channel is not None else "canal necunoscut"
+
+
+def _in_owner_words(detail: str | None, status: str) -> str:
+    """The record's reason when it is a Romanian sentence the studio wrote; an adapter's
+    English stays in the record and the letter says what the state means instead."""
+    text = str(detail or "").strip()
+    if text and written_for_the_owner(text):
+        return text.rstrip(".")
+    return {
+        "FAILED_FINAL": "YouTube a refuzat încărcarea, iar studioul nu o mai încearcă singur",
+        "REMOTE_UNKNOWN": "încărcarea s-a întrerupt și nu se știe dacă videoclipul a ajuns pe "
+        "canal",
+        "NEEDS_RECONCILIATION": "studioul nu a putut afla singur dacă videoclipul există pe canal",
+    }.get(status, "publicarea nu s-a încheiat")
+
+
+def _next_step(status: str, *, auth_refused: bool = False, rejected: bool = False) -> str:
+    if status == "FAILED_FINAL" and auth_refused:
+        return (
+            f"Reconectează contul YouTube în {settings_place('social')}; după aceea filmul, "
+            "care a trecut controlul calității, este oferit din nou la următoarea rulare."
+        )
+    if status == "FAILED_FINAL" and rejected:
+        return (
+            "YouTube nu îl va arăta, iar studioul nu îl mai încarcă singur; motivul se vede în "
+            "YouTube Studio."
+        )
+    if status == "FAILED_FINAL":
+        return (
+            "Filmul a trecut controlul calității și este oferit din nou la următoarea rulare; "
+            "dacă motivul se repetă, el trebuie rezolvat întâi."
+        )
+    if status == "REMOTE_UNKNOWN":
+        return (
+            "Studioul întreabă singur canalul dacă videoclipul există și nu îl încarcă din nou "
+            "până nu știe; dacă nu primește răspuns, îți scrie din nou."
+        )
+    return (
+        "Verifică pe canal dacă videoclipul există, apoi închide publicarea din Distribuție → "
+        "Publicări: «Există», cu ID-ul videoclipului, sau «Nu există», ca filmul să poată fi "
+        "încărcat din nou."
+    )
+
+
+def tell_owner_about_publication(
+    session: Session,
+    pub: PublicationRecord,
+    status: str,
+    correlation_id: str,
+    *,
+    auth_refused: bool = False,
+    rejected: bool = False,
+) -> None:
+    """One ESCALATE letter from the Publisher to the Owner about a publication that failed, is
+    unknown or is now his to settle (PUB-12). The subject names the film, the channel and the
+    state, so the same state again is the same open letter, never a second one."""
+    from app.agents.memory import agent_for_role  # noqa: PLC0415 - agents import publishing
+    from app.agents.messages import post_message  # noqa: PLC0415
+
+    channel_name = _channel_name(session, pub.channel_id)
+    title = " ".join(str(pub.title or "").split())
+    said = publication_status(status)
+    publisher = agent_for_role(session, "Publisher")
+    post_message(
+        session,
+        intent="ESCALATE",
+        subject=f"Publicarea «{title[:90]}» pe {channel_name}: {said}",
+        body={
+            "kind": "publication_failed",
+            "publication_id": pub.id,
+            "media_asset_id": pub.media_asset_id,
+            "channel_id": pub.channel_id,
+            "status": status,
+            "auth_refused": auth_refused,
+        },
+        from_agent_id=publisher.id if publisher is not None else None,
+        correlation_id=correlation_id,
+        body_text=(
+            f"Filmul «{title}» pentru {channel_name} este {said}: "
+            f"{_in_owner_words(pub.error_detail, status)}. "
+            f"{_next_step(status, auth_refused=auth_refused, rejected=rejected)}"
+        ),
+        to_owner=True,
+    )
+
+
+def _note_remote_state(
+    session: Session,
+    pub: PublicationRecord,
+    correlation_id: str,
+    *,
+    privacy: str | None,
+    upload: str | None,
+) -> None:
+    """Keep what YouTube says the video is, and tell the Owner once when YouTube kept private
+    a film that was meant to be seen (PUB-05)."""
+    before = pub.remote_privacy_status
+    if privacy:
+        pub.remote_privacy_status = str(privacy)[:20]
+    if upload:
+        pub.remote_upload_status = str(upload)[:30]
+    pub.remote_checked_at = utc_now()
+    if (
+        privacy == "private"
+        and before != "private"
+        and _requested_visibility(pub) in ("public", "unlisted")
+        and not pub.scheduled_publish_time
+    ):
+        pub.error_detail = f"{LOCKED_PRIVATE_LETTER} {LOCKED_PRIVATE_NEXT}"
+        append_event(
+            session,
+            "publishing.visibility_locked_private",
+            "publication_record",
+            pub.id,
+            1,
+            {
+                "requested": pub.privacy_status,
+                "remote_privacy_status": privacy,
+                "remote_video_id": pub.remote_video_id,
+                "channel_id": pub.channel_id,
+            },
+            correlation_id,
+        )
+        from app.agents.memory import agent_for_role  # noqa: PLC0415
+        from app.agents.messages import post_message  # noqa: PLC0415
+
+        channel_name = _channel_name(session, pub.channel_id)
+        publisher = agent_for_role(session, "Publisher")
+        post_message(
+            session,
+            intent="ESCALATE",
+            subject=f"YouTube păstrează private filmele de pe {channel_name}",
+            body={
+                "kind": "publication_locked_private",
+                "publication_id": pub.id,
+                "channel_id": pub.channel_id,
+                "requested": pub.privacy_status,
+            },
+            from_agent_id=publisher.id if publisher is not None else None,
+            correlation_id=correlation_id,
+            body_text=(
+                f"Filmul «{pub.title}» a fost cerut {privacy_word(pub.privacy_status)}. "
+                f"{LOCKED_PRIVATE_LETTER} {LOCKED_PRIVATE_NEXT}"
+            ),
+            to_owner=True,
+        )
+
+
+def _remote_reason(status_res: Any) -> str:
+    code = str(
+        getattr(status_res, "rejection_reason", None)
+        or getattr(status_res, "failure_reason", None)
+        or ""
+    ).strip()
+    upload = str(getattr(status_res, "upload_status", "") or "").lower()
+    what = {
+        "rejected": "YouTube a respins videoclipul",
+        "failed": "YouTube nu a putut prelucra videoclipul",
+        "deleted": "Videoclipul a fost șters de pe YouTube",
+    }.get(upload, "YouTube nu arată videoclipul")
+    if code:
+        words = REMOTE_REASON_WORDS.get(code.replace("_", "").lower())
+        return f"{what} (motiv: {code}{' — ' + words if words else ''})"
+    return what
+
+
+def _record_remote_rejection(
+    session: Session, pub: PublicationRecord, status_res: Any, correlation_id: str
+) -> None:
+    pub.status = "FAILED_FINAL"
+    pub.error_detail = sentence(_remote_reason(status_res))
+    _note_remote_state(
+        session,
+        pub,
+        correlation_id,
+        privacy=getattr(status_res, "privacy_status", None),
+        upload=getattr(status_res, "upload_status", None),
+    )
+    event = append_event(
+        session,
+        "publishing.remote_rejected",
+        "publication_record",
+        pub.id,
+        1,
+        {
+            "remote_video_id": pub.remote_video_id,
+            "upload_status": getattr(status_res, "upload_status", None),
+            "rejection_reason": getattr(status_res, "rejection_reason", None),
+            "failure_reason": getattr(status_res, "failure_reason", None),
+        },
+        correlation_id,
+    )
+    pub.event_id = event.event_id
+    tell_owner_about_publication(session, pub, "FAILED_FINAL", correlation_id, rejected=True)
+
+
+def _blocked_at_execution(
+    engine: Engine, publication_id: str, gate: dict, correlation_id: str
+) -> dict:
+    """The gate said no at the last moment: the row is BLOCKED_GATE with the reasons."""
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        pub = session.get(PublicationRecord, publication_id)
+        if pub is None:
+            raise ValueError(f"Publication {publication_id} not found")
+        previous = pub.status
+        pub.status = "BLOCKED_GATE"
+        pub.error_detail = (
+            "Poarta de publicare a refuzat filmul chiar înainte de încărcare: "
+            + "; ".join(gate["reasons"])
+        )
+        event = append_event(
+            session,
+            "publishing.gate_failed_at_execution",
+            "publication_record",
+            publication_id,
+            1,
+            {
+                "previous_status": previous,
+                "gate_reasons": gate["reasons"],
+                "gate_reason_codes": gate["reason_codes"],
+            },
+            correlation_id,
+        )
+        pub.event_id = event.event_id
+        session.flush()
+        return PublicationView.model_validate(pub).model_dump()
+
+
+def _settle_failed_execution(
+    engine: Engine, publication_id: str, exc: BaseException, correlation_id: str
+) -> dict:
+    """An exception after STARTED: the row is never left STARTED (PUB-01). A fault that passes
+    (the network, a 5xx) is FAILED_RETRYABLE, whose retry asks the channel first; anything
+    else is FAILED_FINAL, with a letter."""
+    status = "FAILED_RETRYABLE" if is_transient(exc) else "FAILED_FINAL"
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        pub = session.get(PublicationRecord, publication_id)
+        if pub is None:
+            raise ValueError(f"Publication {publication_id} not found") from exc
+        if pub.status != "STARTED":
+            # Whatever wrote the outcome before the fault stands.
+            return PublicationView.model_validate(pub).model_dump()
+        pub.status = status
+        pub.error_detail = sentence(f"Publicarea s-a oprit: {error_words(exc)}")
+        event = append_event(
+            session,
+            "publishing.failed",
+            "publication_record",
+            publication_id,
+            1,
+            {"error_detail": pub.error_detail, **error_fields(exc), "status": status},
+            correlation_id,
+        )
+        pub.event_id = event.event_id
+        if status == "FAILED_FINAL":
+            tell_owner_about_publication(session, pub, status, correlation_id)
+        session.flush()
+        return PublicationView.model_validate(pub).model_dump()
+
+
+def _mark_reconnect_needed(
+    engine: Engine, channel_id: str, reason: str, correlation_id: str
+) -> None:
+    """Google refused the account: the connection is ERROR until the Owner reconnects, so the
+    preflight, the page and the next run say «Reconectează» instead of trying again."""
+    from app.youtube.services import mark_reconnect_needed  # noqa: PLC0415
+
+    with Session(engine) as session:
+        connection = _bound_connection(session, channel_id)
+        identifier = connection.id if connection is not None else None
+    if identifier:
+        mark_reconnect_needed(engine, identifier, reason, correlation_id=correlation_id)
+
+
 def execute_publication(
     engine: Engine,
     publisher: PublishingProvider,
     publication_id: str,
     correlation_id: str,
 ) -> dict:
-    """Execute upload for a VALIDATED publication following 47_STATE_MACHINE_SPECIFICATIONS.md."""
-    with Session(engine) as session, session.begin():
+    """Execute upload for a VALIDATED publication following 47_STATE_MACHINE_SPECIFICATIONS.md.
+
+    The gate runs again first (PUB-04): an intent validated yesterday, or a retry the watchdog
+    makes, does not go up after the Owner's STOP, after a newer failed quality report, under a
+    policy he has changed since, or with a file that is not the one QC passed. A refusal is
+    BLOCKED_GATE with the reasons. Once the row is STARTED, every way the upload ends is
+    recorded (PUB-01): nothing leaves it STARTED.
+    """
+    with Session(engine) as session:
         pub = session.get(PublicationRecord, publication_id)
         if not pub:
             raise ValueError(f"Publication {publication_id} not found")
-        if pub.status not in ("VALIDATED", "FAILED_RETRYABLE"):
+        if pub.status not in RUNNABLE_STATES:
             raise ValueError(
                 f"Cannot execute publication in status {pub.status!r}; must be VALIDATED"
             )
+        asset_id, channel_id = pub.media_asset_id, pub.channel_id
+        gate_privacy, gate_policy = pub.privacy_status, pub.policy_version
+        gate_schedule = pub.scheduled_publish_time
 
+    gate = evaluate_publishing_gate(
+        engine,
+        asset_id,
+        channel_id,
+        privacy_status=gate_privacy,
+        policy_version=gate_policy,
+        scheduled_publish_time=gate_schedule,
+        exclude_publication_id=publication_id,
+    )
+    if not gate["eligible"]:
+        return _blocked_at_execution(engine, publication_id, gate, correlation_id)
+
+    with Session(engine) as session, session.begin():
+        # Under the write lock: two callers (the watchdog and a press) cannot both move one
+        # row to STARTED and upload twice.
+        lock_for_write(session)
+        pub = session.get(PublicationRecord, publication_id)
+        if pub is None or pub.status not in RUNNABLE_STATES:
+            raise ValueError(
+                f"Cannot execute publication in status {getattr(pub, 'status', None)!r}; "
+                "it changed while the gate ran"
+            )
         asset = session.get(MediaAsset, pub.media_asset_id)
         if not asset:
             raise ValueError("Associated MediaAsset missing")
-
-        file_path = Path(asset.uri_or_path)
-        title = pub.title
-        description = pub.description
-        tags = pub.tags_json
-        privacy = pub.privacy_status
-        idempotency_key = pub.idempotency_key
-        publish_at = pub.scheduled_publish_time
-        policy_version = pub.policy_version
-
-        is_retry = pub.status == "FAILED_RETRYABLE"
-
-        # Transition to STARTED
+        connection = _bound_connection(session, pub.channel_id)
+        facts = {
+            "file_path": Path(asset.uri_or_path),
+            "title": pub.title,
+            "description": pub.description,
+            "tags": pub.tags_json,
+            "privacy": pub.privacy_status,
+            "idempotency_key": pub.idempotency_key,
+            "publish_at": pub.scheduled_publish_time,
+            "policy_version": pub.policy_version,
+            "created_at": pub.created_at,
+            "remote_channel_id": connection.remote_channel_id if connection else None,
+            "is_retry": pub.status == "FAILED_RETRYABLE",
+            # The channel's own category, audience and language (migration 0053), read at
+            # the moment of the upload, as its visibility policy is.
+            "upload": upload_settings(session.get(ChannelRecord, pub.channel_id)),
+        }
         pub.status = "STARTED"
         append_event(
             session,
@@ -1435,17 +2156,46 @@ def execute_publication(
             "publication_record",
             publication_id,
             1,
-            {"title": title, "channel_id": pub.channel_id},
+            {"title": pub.title, "channel_id": pub.channel_id},
             correlation_id,
         )
         session.flush()
 
+    try:
+        return _upload_and_record(engine, publisher, publication_id, correlation_id, facts)
+    except Exception as exc:  # noqa: BLE001 - the row must not stay STARTED, whatever failed
+        return _settle_failed_execution(engine, publication_id, exc, correlation_id)
+
+
+def _upload_and_record(
+    engine: Engine,
+    publisher: PublishingProvider,
+    publication_id: str,
+    correlation_id: str,
+    facts: dict[str, Any],
+) -> dict:
+    title = facts["title"]
+    privacy = facts["privacy"]
+    publish_at = facts["publish_at"]
     # Never re-upload blindly after a failure: ask the platform whether the previous attempt
     # actually landed (47_STATE_MACHINE_SPECIFICATIONS.md, duplicate protection).
-    if is_retry:
+    if facts["is_retry"]:
         try:
-            reconciled = asyncio.run(publisher.reconcile_upload(idempotency_key, title))
-        except RemoteStateUnavailable as exc:
+            reconciled = asyncio.run(
+                ask_reconcile(
+                    publisher,
+                    facts["idempotency_key"],
+                    title,
+                    created_after=facts["created_at"],
+                    channel_id=facts["remote_channel_id"],
+                )
+            )
+        except Exception as raised:  # noqa: BLE001 - any failure to ask is no answer
+            exc = (
+                raised
+                if isinstance(raised, RemoteStateUnavailable)
+                else RemoteStateUnavailable(str(raised))
+            )
             # The one thing that must not happen here is a second upload. The platform could not
             # say whether the first attempt landed, so the publication stays retryable and the
             # record says why, rather than the studio guessing and posting a duplicate.
@@ -1496,25 +2246,38 @@ def execute_publication(
                     correlation_id,
                 )
                 pub.event_id = event.event_id
+                if not simulated:
+                    _note_remote_state(
+                        session,
+                        pub,
+                        correlation_id,
+                        privacy=getattr(reconciled, "privacy_status", None),
+                        upload=getattr(reconciled, "upload_status", None),
+                    )
                 session.flush()
                 return PublicationView.model_validate(pub).model_dump()
 
     # Upload video via provider. A scheduled release travels as `publish_at`: the intent was
     # stored with it since Phase 6 and, until now, never sent.
-    extra: dict[str, Any] = {"idempotency_key": idempotency_key}
+    extra: dict[str, Any] = {"idempotency_key": facts["idempotency_key"]}
+    # The intent already holds the studio's disclosure (`create_publication_intent`), in
+    # whatever language: the adapter must not write a second one beside it.
+    extra.update(facts.get("upload") or {})
+    extra["disclosed"] = True
     if publish_at:
         extra["publish_at"] = publish_at
     upload_res: UploadResult = asyncio.run(
         publisher.upload_video(
-            file_path,
+            facts["file_path"],
             title=title,
-            description=description,
-            tags=tags,
+            description=facts["description"],
+            tags=facts["tags"],
             privacy_status=privacy,
             extra=extra,
         )
     )
 
+    auth_refused = bool(getattr(upload_res, "auth_refused", False))
     with Session(engine) as session, session.begin():
         pub = session.get(PublicationRecord, publication_id)
         if not pub:
@@ -1530,6 +2293,8 @@ def execute_publication(
             pub.remote_url = upload_res.remote_url or None
             pub.published_at = utc_now()
             pub.error_detail = SIMULATED_UPLOAD if simulated else None
+            remote_privacy = getattr(upload_res, "privacy_status", None)
+            remote_upload = getattr(upload_res, "upload_status", None)
 
             event = append_event(
                 session,
@@ -1543,8 +2308,10 @@ def execute_publication(
                     "remote_video_id": upload_res.remote_video_id,
                     "remote_url": upload_res.remote_url,
                     "privacy_status": privacy,
+                    "remote_privacy_status": remote_privacy,
+                    "remote_upload_status": remote_upload,
                     "publish_at": publish_at,
-                    "policy_version": policy_version,
+                    "policy_version": facts["policy_version"],
                     "title": title,
                     "simulated": simulated,
                     "adapter": type(publisher).__name__,
@@ -1552,12 +2319,30 @@ def execute_publication(
                 correlation_id,
             )
             pub.event_id = event.event_id
+            if not simulated:
+                _note_remote_state(
+                    session, pub, correlation_id, privacy=remote_privacy, upload=remote_upload
+                )
         elif upload_res.status == "UNKNOWN":
             pub.status = "REMOTE_UNKNOWN"
             pub.error_detail = upload_res.error_detail
             append_event(
                 session,
                 "publishing.remote_unknown",
+                "publication_record",
+                publication_id,
+                1,
+                {"error_detail": upload_res.error_detail},
+                correlation_id,
+            )
+            tell_owner_about_publication(session, pub, "REMOTE_UNKNOWN", correlation_id)
+        elif upload_res.status == "RETRYABLE":
+            # Nothing was created; the watchdog retries the row, asking the channel first.
+            pub.status = "FAILED_RETRYABLE"
+            pub.error_detail = upload_res.error_detail
+            append_event(
+                session,
+                "publishing.failed_retryable",
                 "publication_record",
                 publication_id,
                 1,
@@ -1573,12 +2358,21 @@ def execute_publication(
                 "publication_record",
                 publication_id,
                 1,
-                {"error_detail": upload_res.error_detail},
+                {"error_detail": upload_res.error_detail, "auth_refused": auth_refused},
                 correlation_id,
+            )
+            tell_owner_about_publication(
+                session, pub, "FAILED_FINAL", correlation_id, auth_refused=auth_refused
             )
 
         session.flush()
-        return PublicationView.model_validate(pub).model_dump()
+        view = PublicationView.model_validate(pub).model_dump()
+        channel_id = pub.channel_id
+    if auth_refused:
+        _mark_reconnect_needed(
+            engine, channel_id, str(upload_res.error_detail or ""), correlation_id
+        )
+    return view
 
 
 #: What a simulated upload is, in the record the Owner reads: nothing is on any platform.
@@ -1622,7 +2416,9 @@ def reconcile_publication(
     """Reconcile an uncertain publication (REMOTE_UNKNOWN / FAILED_RETRYABLE) with remote state.
 
     Per 47_STATE_MACHINE_SPECIFICATIONS.md: Never re-upload from REMOTE_UNKNOWN
-    without checking remote state.
+    without checking remote state. A video YouTube holds but rejected, failed to process or
+    shows as deleted is not a publication (PUB-08): FAILED_FINAL with YouTube's reason, and a
+    letter.
     """
     with Session(engine) as session, session.begin():
         pub = session.get(PublicationRecord, publication_id)
@@ -1662,7 +2458,10 @@ def reconcile_publication(
         if not pub:
             raise ValueError(f"Publication {publication_id} not found")
 
-        if status_res.exists:
+        upload = str(status_res.upload_status or "").lower()
+        if status_res.exists and upload in REMOTE_REJECTED_STATES:
+            _record_remote_rejection(session, pub, status_res, correlation_id)
+        elif status_res.exists:
             simulated = bool(getattr(provider, "IS_SIMULATED", False))
             pub.status = "PUBLISHED_SIMULATED" if simulated else "PUBLISHED"
             pub.published_at = utc_now()
@@ -1677,6 +2476,14 @@ def reconcile_publication(
                 {"remote_video_id": remote_id, "status": "PUBLISHED"},
                 correlation_id,
             )
+            if not simulated:
+                _note_remote_state(
+                    session,
+                    pub,
+                    correlation_id,
+                    privacy=status_res.privacy_status,
+                    upload=status_res.upload_status,
+                )
         else:
             pub.status = "FAILED_RETRYABLE"
             pub.error_detail = (
@@ -1695,6 +2502,302 @@ def reconcile_publication(
 
         session.flush()
         return PublicationView.model_validate(pub).model_dump()
+
+
+def reconcile_by_title(
+    engine: Engine,
+    publication_id: str,
+    provider: PublishingProvider,
+    correlation_id: str,
+) -> dict:
+    """An uncertain publication with no video id, asked of the channel's own uploads.
+
+    The upload was cut before YouTube named the video (or the process died while STARTED), so
+    the only question left is the one `reconcile_upload` asks: is there, on this channel, a
+    video of exactly this title uploaded since the publication was written. Found, it is the
+    publication; the channel answering no makes the row safely retryable; no answer leaves it
+    REMOTE_UNKNOWN, and the watchdog's bound on attempts hands it to the Owner.
+    """
+    with Session(engine) as session:
+        pub = session.get(PublicationRecord, publication_id)
+        if pub is None:
+            raise ValueError(f"Publication {publication_id} not found")
+        connection = _bound_connection(session, pub.channel_id)
+        facts: dict[str, Any] = {
+            "key": pub.idempotency_key,
+            "title": pub.title,
+            "created_at": pub.created_at,
+            "channel": connection.remote_channel_id if connection else None,
+        }
+    try:
+        found = asyncio.run(
+            ask_reconcile(
+                provider,
+                facts["key"],
+                facts["title"],
+                created_after=facts["created_at"],
+                channel_id=facts["channel"],
+            )
+        )
+    except Exception as raised:  # noqa: BLE001 - any failure to ask is no answer
+        exc = (
+            raised
+            if isinstance(raised, RemoteStateUnavailable)
+            else RemoteStateUnavailable(str(raised))
+        )
+        with Session(engine) as session, session.begin():
+            pub = session.get(PublicationRecord, publication_id)
+            if pub is None:
+                raise ValueError(f"Publication {publication_id} not found") from None
+            pub.error_detail = _remote_state_unread(exc)
+            event = append_event(
+                session,
+                "publishing.reconcile_unavailable",
+                "publication_record",
+                publication_id,
+                1,
+                {"remote_video_id": None, "detail": str(exc), "by": "title"},
+                correlation_id,
+            )
+            pub.event_id = event.event_id
+            session.flush()
+            return PublicationView.model_validate(pub).model_dump()
+
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        pub = session.get(PublicationRecord, publication_id)
+        if pub is None:
+            raise ValueError(f"Publication {publication_id} not found")
+        if found is not None:
+            simulated = bool(found.simulated or getattr(provider, "IS_SIMULATED", False))
+            pub.status = "PUBLISHED_SIMULATED" if simulated else "PUBLISHED"
+            pub.remote_video_id = found.remote_video_id
+            pub.remote_url = found.remote_url or None
+            pub.published_at = utc_now()
+            pub.error_detail = SIMULATED_UPLOAD if simulated else None
+            append_event(
+                session,
+                "publishing.reconciled_published",
+                "publication_record",
+                publication_id,
+                1,
+                {"remote_video_id": found.remote_video_id, "status": pub.status, "by": "title"},
+                correlation_id,
+            )
+            if not simulated:
+                _note_remote_state(
+                    session,
+                    pub,
+                    correlation_id,
+                    privacy=getattr(found, "privacy_status", None),
+                    upload=getattr(found, "upload_status", None),
+                )
+        else:
+            pub.status = "FAILED_RETRYABLE"
+            pub.error_detail = (
+                "Filmul nu a fost găsit pe canal după așteptare; poate fi reîncercat fără "
+                "risc de dublură."
+            )
+            append_event(
+                session,
+                "publishing.reconciled_not_found",
+                "publication_record",
+                publication_id,
+                1,
+                {"remote_video_id": None, "status": "FAILED_RETRYABLE", "by": "title"},
+                correlation_id,
+            )
+        session.flush()
+        return PublicationView.model_validate(pub).model_dump()
+
+
+def upload_started_at(session: Session, pub: PublicationRecord) -> datetime:
+    """When the upload of a publication last began: its newest `publishing.started` event,
+    else the moment the publication was written."""
+    from app.models import DomainEvent  # noqa: PLC0415
+
+    stamp = session.scalar(
+        select(DomainEvent.timestamp)
+        .where(
+            DomainEvent.aggregate_id == pub.id,
+            DomainEvent.event_type == "publishing.started",
+        )
+        .order_by(DomainEvent.sequence.desc())
+        .limit(1)
+    )
+    moment = datetime.fromisoformat(str(stamp or pub.created_at))
+    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
+
+
+def mark_stale_started(engine: Engine, older_than_seconds: int, correlation_id: str) -> list[str]:
+    """STARTED rows whose upload began longer ago than any upload takes become REMOTE_UNKNOWN,
+    to be reconciled (PUB-01): a process that died mid-upload leaves nothing else to move them,
+    and STARTED counts as a film on its way, so the film was blocked for good."""
+    now = datetime.now(UTC)
+    moved: list[str] = []
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        for pub in session.scalars(
+            select(PublicationRecord).where(PublicationRecord.status == "STARTED")
+        ):
+            elapsed = (now - upload_started_at(session, pub)).total_seconds()
+            if elapsed < older_than_seconds:
+                continue
+            pub.status = "REMOTE_UNKNOWN"
+            pub.error_detail = (
+                "Încărcarea a început și nu s-a mai terminat (procesul s-a oprit); studioul "
+                "verifică pe canal dacă videoclipul există înainte de orice reîncercare."
+            )
+            event = append_event(
+                session,
+                "publishing.started_stale",
+                "publication_record",
+                pub.id,
+                1,
+                {"stuck_seconds": int(elapsed)},
+                correlation_id,
+            )
+            pub.event_id = event.event_id
+            moved.append(pub.id)
+    return moved
+
+
+def check_processing(
+    engine: Engine, publication_id: str, provider: PublishingProvider, correlation_id: str
+) -> str:
+    """YouTube's processing of a published video, read once (videos.list, 1 unit): its state
+    is kept; rejected, failed or deleted makes the publication FAILED_FINAL with a letter.
+    Returns YouTube's upload status, or UNREADABLE / GONE."""
+    with Session(engine) as session:
+        pub = session.get(PublicationRecord, publication_id)
+        remote_id = pub.remote_video_id if pub is not None else None
+    if not remote_id:
+        return "UNREADABLE"
+    try:
+        status_res = asyncio.run(provider.get_video_status(remote_id))
+    except RemoteStateUnavailable:
+        return "UNREADABLE"
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        pub = session.get(PublicationRecord, publication_id)
+        if pub is None or pub.status != "PUBLISHED":
+            return "UNREADABLE"
+        if not status_res.exists:
+            # Not there by YouTube's own answer, a video it held an hour ago: deleted.
+            status_res.upload_status = "deleted"
+        upload = str(status_res.upload_status or "").lower()
+        if upload in REMOTE_REJECTED_STATES:
+            _record_remote_rejection(session, pub, status_res, correlation_id)
+            return upload
+        _note_remote_state(
+            session,
+            pub,
+            correlation_id,
+            privacy=status_res.privacy_status,
+            upload=status_res.upload_status,
+        )
+        return upload or "UNREADABLE"
+
+
+def hand_to_owner(engine: Engine, publication_id: str, detail: str, correlation_id: str) -> None:
+    """The manual repair queue: a row a person must look at, named as such, not asked again,
+    and told to the Owner in one letter (PUB-12)."""
+    with Session(engine) as session, session.begin():
+        pub = session.get(PublicationRecord, publication_id)
+        if pub is None:
+            return
+        previous = pub.status
+        pub.status = "NEEDS_RECONCILIATION"
+        pub.error_detail = detail
+        event = append_event(
+            session,
+            "publishing.reconcile_exhausted",
+            "publication_record",
+            publication_id,
+            1,
+            {"previous_status": previous, "detail": detail},
+            correlation_id,
+        )
+        pub.event_id = event.event_id
+        tell_owner_about_publication(session, pub, "NEEDS_RECONCILIATION", correlation_id)
+
+
+#: The states the Owner settles by hand: the studio could not tell whether the video exists.
+RESOLVABLE_STATES = ("NEEDS_RECONCILIATION", "REMOTE_UNKNOWN")
+_VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{6,20}$")
+
+
+def resolve_publication(
+    engine: Engine,
+    publication_id: str,
+    *,
+    found: bool,
+    remote_video_id: str | None,
+    command_id: str,
+) -> dict:
+    """The Owner says whether the video is on the channel (PUB-12).
+
+    Found, with the video's id: PUBLISHED under that id. Not found: FAILED_RETRYABLE, which
+    the watchdog retries after asking the channel itself once more. Idempotent by command id
+    (the same command again is the same answer; the same id with other input is refused), and
+    only for a row the studio could not settle.
+    """
+    payload = {"found": bool(found), "remote_video_id": remote_video_id}
+    payload_hash = hashlib.sha256(
+        json.dumps({"publication_id": publication_id, **payload}, sort_keys=True).encode()
+    ).hexdigest()
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        previous = session.get(CommandRecord, command_id)
+        if previous:
+            if previous.payload_hash != payload_hash:
+                raise CommandConflict(COMMAND_REUSED)
+            return dict(previous.response)
+        pub = session.get(PublicationRecord, publication_id)
+        if pub is None:
+            raise LookupError(f"Publicarea {publication_id} nu există.")
+        if pub.status not in RESOLVABLE_STATES:
+            raise PublicationNotResolvable(
+                f"Publicarea este {publication_status(pub.status)}; doar una pe care studioul "
+                "nu a putut-o verifica singur se închide de mână."
+            )
+        if found:
+            video = str(remote_video_id or "").strip()
+            if not _VIDEO_ID.match(video):
+                raise ValueError("ID-ul videoclipului YouTube nu are forma unui ID de videoclip.")
+            pub.status = "PUBLISHED"
+            pub.remote_video_id = video
+            pub.remote_url = f"https://youtube.com/shorts/{video}"
+            pub.published_at = utc_now()
+            pub.error_detail = None
+        else:
+            pub.status = "FAILED_RETRYABLE"
+            pub.error_detail = (
+                "Proprietarul a verificat: videoclipul nu este pe canal; filmul poate fi "
+                "încărcat din nou."
+            )
+        event = append_event(
+            session,
+            "publishing.resolved_by_owner",
+            "publication_record",
+            publication_id,
+            1,
+            {**payload, "status": pub.status},
+            command_id,
+        )
+        pub.event_id = event.event_id
+        session.flush()
+        view = PublicationView.model_validate(pub).model_dump()
+        session.add(
+            CommandRecord(
+                idempotency_key=command_id,
+                command_type="ResolvePublication",
+                payload_hash=payload_hash,
+                response=view,
+                created_at=utc_now(),
+            )
+        )
+        return view
 
 
 def publish_media_asset(

@@ -238,6 +238,8 @@ PUBLICATION_STATUS = {
     "FAILED_RETRYABLE": "eșuat, se reîncearcă",
     "FAILED_FINAL": "eșuat definitiv",
     "REMOTE_UNKNOWN": "necunoscut la YouTube",
+    "NEEDS_RECONCILIATION": "de verificat de tine pe canal",
+    "BLOCKED_GATE": "oprit de poarta de publicare",
 }
 
 

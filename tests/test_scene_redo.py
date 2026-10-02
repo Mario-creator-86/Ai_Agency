@@ -583,3 +583,78 @@ def test_the_redo_routes_answer_200_for_a_free_redo_and_202_for_a_paid_one(
             )
         )
         assert scene_5.scene_kind == "DATA_CARD"
+
+
+# ------------------------------------------------------- 6. a paid redo reaches the books
+#
+# MONEY-02 (2026-10-02): a paid redo wrote only media.scene_redone. Measured on fakes before
+# the fix: one POST, 340 credits off the account, no cost row, and the day's spend at 0, so
+# the next step's budget check could not see the redo.
+
+
+def provider_costs(engine) -> list:
+    from app.economy.models import ProviderCostRecord
+
+    with Session(engine) as session:
+        rows = list(session.scalars(select(ProviderCostRecord)))
+        session.expunge_all()
+        return rows
+
+
+def test_an_approved_motion_redo_is_booked_once_and_counted_by_the_budget(engine, tmp_path):
+    from app.economy.budget import budget_status
+
+    storyboard_id = a_film(engine, tmp_path, scenes=4)
+    filmed(engine, storyboard_id, tmp_path, coloured_clip(tmp_path, "navy"))
+    account = Account(10_000)
+    models = Models(SpyVideo("seedance2_5", account, clip=coloured_clip(tmp_path, "olive")))
+    plan = redo_plan(engine, storyboard_id, "motion", 3, capabilities=[SEEDANCE])
+    with pytest.raises(SceneRedoRefused) as asked:
+        redo_motion(engine, storyboard_id, tmp_path, models, account, 3, plan["plan_hash"])
+    answer(engine, asked.value.approval_id, "APPROVED")
+    spent_before = budget_status(engine)["today"]["spent_usd_micros"]
+
+    redo_motion(engine, storyboard_id, tmp_path, models, account, 3, plan["plan_hash"])
+
+    assert models.posts() == 1
+    (cost,) = provider_costs(engine)
+    assert cost.provider == "runway" and cost.status == "ESTIMATED"
+    assert cost.external_reference.startswith(f"redo:{storyboard_id}:motion:3:")
+    assert cost.attribution_json["credits"] == pytest.approx(340)
+    assert cost.usd_micros == round(340 * plan["credit_usd"] * 1_000_000)
+    assert budget_status(engine)["today"]["spent_usd_micros"] == spent_before + cost.usd_micros
+
+
+def test_an_approved_still_redo_is_booked_once(engine, tmp_path):
+    storyboard_id = a_film(engine, tmp_path, scenes=4)
+    filmed(engine, storyboard_id, tmp_path, coloured_clip(tmp_path, "navy"))
+    plan = redo_plan(engine, storyboard_id, "still", 3)
+    images = SpyStills(balance=1_000)
+
+    def run():
+        return redo_scene(
+            engine,
+            storyboard_id,
+            str(uuid4()),
+            kind="still",
+            scene_index=3,
+            plan_hash=plan["plan_hash"],
+            image_adapter=images,
+            judge=SpyJudge(),
+            face_counter=faces_in(),
+            measure=("faces",),
+            storage_root=tmp_path / "media",
+        )
+
+    with pytest.raises(SceneRedoRefused) as asked:
+        run()
+    answer(engine, asked.value.approval_id, "APPROVED")
+
+    result = run()
+
+    assert len(images.asked) == 1
+    (cost,) = provider_costs(engine)
+    assert cost.external_reference.startswith(f"redo:{storyboard_id}:still:3:")
+    assert cost.attribution_json["credits"] == pytest.approx(
+        result["still"]["spent_credits_measured"] or result["still"]["spent_credits_quoted"]
+    )

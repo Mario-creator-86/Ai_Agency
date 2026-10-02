@@ -1,10 +1,34 @@
-import { Config, Flags, Logger, PixelStreaming, TextParameters, overrideLogger } from '@epicgames-ps/lib-pixelstreamingfrontend-ue5.8';
 import { HELD_STILL_MS, STREAM_SILENT_MS, authenticateTransport, plateNote, redactingLogger, streamLayers, streamSilent } from './hq_stream_config.js';
 import { KEEP_EVERY_MS, KEEP_FIRST_MS, KEEP_QUALITY, KEEP_TYPE, keptSize } from './stream_keep.js';
 
-// W23: the library prints the signalling URL on every connect; no line of it reaches the console
-// with the value of a `token=` (hq_stream_config.js redactKey)
-overrideLogger(redactingLogger(Logger));
+/**
+ * THE STREAM CLIENT, LOADED ONLY WHEN THE STREAM STARTS (PAGE-20). Epic's Pixel Streaming library
+ * was a static import here, so every visitor downloaded it inside the page's main chunk (777 kB),
+ * the studios without Unreal included. It is now its own chunk, fetched by `loadStreamClient` when
+ * main.js starts a stream the scene switched on.
+ * @type {any}
+ */
+let client = null;
+
+/** Whether the library has been loaded in this page. */
+export function streamClientLoaded() {
+  return client !== null;
+}
+
+/**
+ * Loads the Pixel Streaming library once, and installs the redacting logger with it before any
+ * connect. W23: the library prints the signalling URL on every connect; no line of it reaches the
+ * console with the value of a `token=` (hq_stream_config.js redactKey).
+ */
+export async function loadStreamClient() {
+  if (!client) {
+    const lib = await import('@epicgames-ps/lib-pixelstreamingfrontend-ue5.8');
+    const { Logger, overrideLogger } = lib;
+    overrideLogger(redactingLogger(Logger));
+    client = lib;
+  }
+  return client;
+}
 
 /** How often a frame of the live video is kept, to be shown frozen if the stream drops. */
 const STILL_COPY_MS = 2000;
@@ -47,14 +71,17 @@ export class LiveStream {
   /**
    * @param {HTMLElement} viewport the element the scene is drawn in
    * @param {{signallingUrl: string, streamerId: string, retryMs: number, connectingRetryMs?: number,
-   *          authMessage?: (() => string)|null, legacyUrl?: (() => string)|null}} settings
+   *          authMessage?: (() => string)|null}} settings
    *   `authMessage`: the backend takes the Owner's key as the signalling socket's first message and
-   *   `signallingUrl` carries none (hq_stream_config.js socketAuth); `legacyUrl` is the URL with the
-   *   key, used only should the library's transport not take first-message auth
+   *   `signallingUrl` carries none (hq_stream_config.js socketAuth). Should the library's transport
+   *   not take first-message auth, `firstMessageAuth` stays false and `start` connects nothing: there
+   *   is no URL with the key to fall back to (SEC-02).
    * @param {{onStatus?: (status: 'connecting'|'live'|'offline') => void, onFrameRate?: (fps: number|null) => void, held?: () => boolean,
    *          onKeep?: (record: {blob: Blob, at: number, w: number, h: number}) => void, reduced?: () => boolean}} [options]
    */
   constructor(viewport, settings, options = {}) {
+    if (!client) throw new Error('LiveStream: the stream client is not loaded; await loadStreamClient() first');
+    const { Config, Flags, PixelStreaming } = client;
     this.viewport = viewport;
     this.settings = settings;
     this.onStatus = options.onStatus || (() => {});
@@ -116,12 +143,13 @@ export class LiveStream {
       },
     });
     this.stream = new PixelStreaming(config, { videoElementParent: this.layer });
-    // THE KEY OUT OF THE URL (2026-09-25): the signalling socket says it as its first message
+    // THE KEY OUT OF THE URL (2026-09-25): the signalling socket says it as its first message.
+    // SEC-02 (2026-10-01): never in the URL, so a library whose transport the page cannot reach
+    // leaves the stream unopened (main.js shows the page's renderer and STREAM_NO_SAFE_AUTH).
     this.firstMessageAuth = false;
     if (settings.authMessage) {
       const controller = /** @type {any} */ (this.stream).webRtcController;
       this.firstMessageAuth = authenticateTransport(controller && controller.transport, settings.authMessage);
-      if (!this.firstMessageAuth && settings.legacyUrl) this.stream.config.setTextSetting(TextParameters.SignallingServerUrl, settings.legacyUrl());
     }
     /** Connects that failed since the stream was last live, and whether STREAM_SILENT_MS has passed without a picture. */
     this.failures = 0;
@@ -164,8 +192,11 @@ export class LiveStream {
   }
 
   start() {
+    // without the key as the first message the relay would refuse the socket: nothing is opened
+    if (!this.firstMessageAuth) return false;
     this._setStatus('connecting');
     this.stream.connect();
+    return true;
   }
 
   /**

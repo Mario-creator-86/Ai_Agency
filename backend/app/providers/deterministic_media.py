@@ -6,8 +6,11 @@ without requiring commercial API keys or unverified third-party cloud accounts.
 
 from __future__ import annotations
 
+import hashlib
 import math
+import random
 import struct
+import zlib
 from typing import Any
 
 from app.providers.media_base import (
@@ -110,6 +113,83 @@ class DeterministicVisualAdapter(ImageProvider):
             prompt=prompt,
             cost_vr="0.00",
             raw_response={"engine": "deterministic_svg", "style": style},
+        )
+
+
+def _png(width: int, height: int, rows: list[bytes]) -> bytes:
+    """A truecolour PNG from raw RGB rows, made with the standard library only."""
+
+    def chunk(tag: bytes, payload: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(payload))
+            + tag
+            + payload
+            + struct.pack(">I", zlib.crc32(tag + payload) & 0xFFFFFFFF)
+        )
+
+    raw = b"".join(b"\x00" + row for row in rows)
+    return (
+        bytes.fromhex("89504e470d0a1a0a")  # pragma: allowlist secret
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(raw, 6))
+        + chunk(b"IEND", b"")
+    )
+
+
+class DeterministicPictureAdapter(ImageProvider):
+    """A local still for the demo (SELL-03): a 9:16 PNG drawn from the prompt, bought from nobody.
+
+    A colour field that drifts with the prompt's own hash, crossed by soft diagonal light and a
+    seeded grain, so the encoder and quality control have a real picture with structure in both
+    directions (a flat card is refused, and rightly). It shows nothing the prompt describes and
+    says so in its PROVIDER_NAME: what a buyer sees in the demo is the studio's pipeline, never
+    a vendor's picture.
+    """
+
+    ADAPTER_VERSION = "1.0.0"
+    PROVIDER_NAME = "DEMO_LOCAL_PICTURES"
+    model = "demo-local-pictures"
+    integration_id = None
+
+    async def health_check(self) -> dict[str, Any]:
+        return {"status": "HEALTHY", "adapter": "DeterministicPictureAdapter", "mode": "LOCAL"}
+
+    async def generate_image(
+        self,
+        prompt: str,
+        *,
+        width: int = 1080,
+        height: int = 1920,
+        style: str | None = None,
+        seed: int | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> ImageResult:
+        # Drawn small and scaled by the encoder: a 270x480 picture renders in milliseconds.
+        w, h = 270, 480
+        digest = hashlib.sha256(f"{prompt}|{seed}".encode()).digest()
+        grain = random.Random(int.from_bytes(digest[:8], "big"))
+        top = digest[8:11]
+        bottom = digest[11:14]
+        rows: list[bytes] = []
+        for y in range(h):
+            t = y / (h - 1)
+            base = [top[i] * (1 - t) + bottom[i] * t for i in range(3)]
+            row = bytearray()
+            for x in range(w):
+                light = 40 * math.sin((x + y) / 23.0 + digest[14] / 40.0)
+                for i in range(3):
+                    value = base[i] * 0.7 + light + grain.randrange(-28, 29)
+                    row.append(max(0, min(255, int(value))))
+            rows.append(bytes(row))
+        return ImageResult(
+            image_bytes=_png(w, h, rows),
+            format="png",
+            width=w,
+            height=h,
+            seed=seed,
+            prompt=prompt,
+            cost_vr="0.00",
+            raw_response={"engine": "deterministic_png", "demo": True},
         )
 
 

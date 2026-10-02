@@ -78,15 +78,68 @@ def enter_safe_mode(engine) -> None:
 # --------------------------------------------------------------- the mode the studio is in --
 
 
-def test_a_fresh_studio_carries_the_mode_it_actually_runs_in(engine):
-    """A new database says AUTONOMOUS_CEO because that is what the code does: the daily run
-    walks twelve stages with no Owner approval between them, the Director approves her own
-    scripts, the media stage pays a vendor and the publish stage writes to YouTube within
-    the channel policy the Owner set. Claiming MANUAL would be the lie this column exists
-    to end."""
+def test_the_test_studio_carries_the_mode_it_actually_runs_in(engine):
+    """The suite's studio is the Owner's own, bootstrapped AUTONOMOUS_CEO on purpose
+    (tests/conftest.py): that is what his studio runs in — the daily run walks its stages with
+    no Owner approval between them, the Director approves her own scripts, the media stage
+    pays a vendor within his paid-step rule. The snapshot says the mode the row holds."""
     with Session(engine) as session:
         assert session.get(OwnerPolicy, 1).autonomy_mode == "AUTONOMOUS_CEO"
     assert snapshot(engine)["policy"]["autonomy_mode"] == "AUTONOMOUS_CEO"
+
+
+# AR-09: a buyer's fresh install starts MANUAL; nothing promotes it but the Owner's command.
+
+
+def _fresh(tmp_path, name: str = "fresh"):
+    from app.config import Settings
+    from app.db import create_db_engine, migrate
+    from app.services import bootstrap_studio
+
+    settings = Settings(
+        _env_file=None,
+        owner_token="f" * 48,  # pragma: allowlist secret
+        database_url=f"sqlite:///{(tmp_path / f'{name}.db').as_posix()}",
+    )
+    fresh = create_db_engine(settings.database_url)
+    migrate(fresh)
+    bootstrap_studio(fresh, settings)
+    return fresh, settings
+
+
+def test_a_fresh_install_starts_manual_and_releasing_stop_leaves_it_manual(tmp_path):
+    fresh, _settings = _fresh(tmp_path)
+    try:
+        with Session(fresh) as session:
+            policy = session.get(OwnerPolicy, 1)
+            assert policy.autonomy_mode == "MANUAL"
+            assert policy.autonomy_stopped is True
+        result = change_stop(
+            fresh, PolicyCommand(command_id=uuid4(), expected_version=1, stopped=False)
+        )
+        assert result.policy.autonomy_stopped is False
+        assert result.policy.autonomy_mode == "MANUAL"
+        with Session(fresh) as session:
+            assert session.get(OwnerPolicy, 1).autonomy_mode == "MANUAL"
+        assert snapshot(fresh)["policy"]["autonomy_mode"] == "MANUAL"
+    finally:
+        fresh.dispose()
+
+
+def test_bootstrapping_again_never_changes_an_existing_studios_mode(tmp_path):
+    from app.services import bootstrap_studio
+
+    fresh, settings = _fresh(tmp_path, "existing")
+    try:
+        with Session(fresh) as session, session.begin():
+            session.get(OwnerPolicy, 1).autonomy_mode = "AUTONOMOUS_CEO"
+        # A restart runs the bootstrap again (scripts/start.py): the Owner's row keeps its mode.
+        bootstrap_studio(fresh, settings)
+        bootstrap_studio(fresh, settings, autonomy_mode="MANUAL")
+        with Session(fresh) as session:
+            assert session.get(OwnerPolicy, 1).autonomy_mode == "AUTONOMOUS_CEO"
+    finally:
+        fresh.dispose()
 
 
 def test_only_the_owner_changes_the_mode(client, headers):

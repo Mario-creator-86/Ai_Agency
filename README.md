@@ -1,168 +1,218 @@
 # AMN-AI — Autonomous Machine Nexus
 
-**AMN-AI** (Autonomous Machine Nexus — Artificial Intelligence) is a local-first AI media studio. Phases 0–2 are complete; phases 4–6 are partially implemented and
-their acceptance criteria are not met — see [Current status](docs/project/CURRENT_STATUS.md) and the
-[external audit](docs/project/AUDIT_2026-09-09_EXTERNAL.md). This is not a production AI company.
+AMN-AI is a local, single-owner AI film studio. A team of AI employees (Director, Researcher,
+Fact Checker, Script Writer, Voice Artist, Video Editor, Publisher, Accountant) researches a
+topic, verifies its claims against stored sources, writes a factual short and an office serial,
+plans the shots, buys pictures, motion and narration from the vendors you connect (Runway,
+ElevenLabs), cuts the film with FFmpeg, measures it, and uploads it to YouTube — each paid step
+and each upload only as far as **your** policy allows. The page shows the studio as a living
+office; an optional Unreal Engine headquarters can be streamed into it.
 
-The agency name and logo, and which asset belongs where, are documented in
-[Brand](docs/project/BRAND_AMN_AI.md).
+What it is not: a hosted service, a multi-user product or a promise of good films. It runs on
+one machine, for one Owner, on `127.0.0.1`. Where the work stands is in
+[CURRENT_STATUS](docs/project/CURRENT_STATUS.md) (in a release archive, see the changelog that
+came with it). The Romanian operator guide is [docs/OPERATOR_GUIDE.md](docs/OPERATOR_GUIDE.md).
 
-## Documentation is authoritative
+## Prerequisites
 
-- [Master Prompt](docs/architecture/00_MASTER_PROMPT.md) — primary product/build instructions.
-- [Architecture reading order](docs/architecture/README.md) — complete normative specification package.
-- [Current status](docs/project/CURRENT_STATUS.md) — verified implementation and limitations.
-- [Roadmap](docs/project/13_ROADMAP_TODO.md) and [normalized implementation plan](docs/project/IMPLEMENTATION_PLAN.md).
-- [Decisions](docs/project/16_DECISION_LOG.md) and [developer handoff](docs/project/14_AI_HANDOFF_PROTOCOL.md).
+| Needed | Version | Install |
+|---|---|---|
+| Python | 3.12 – 3.14 | python.org, or `uv python install 3.14` |
+| uv | current | https://docs.astral.sh/uv/ |
+| Node.js + npm | 22.12+ | nodejs.org (only to build the page) |
+| **FFmpeg + FFprobe** | 7 or newer, full build | **required for films**: Windows `winget install Gyan.FFmpeg` · Debian/Ubuntu `sudo apt install ffmpeg` · macOS `brew install ffmpeg` |
+| Git | any | only to clone |
 
-## Repository layout
+FFmpeg is not optional: without it the studio refuses to render (HTTP 503) rather than write a
+fake file, and quality control cannot measure a film. A film uses `libx264`, `aac`, `subtitles`
+(libass), `zscale` (zimg), `loudnorm`, `xfade`, `drawtext`, `zoompan`, `sidechaincompress`,
+`silencedetect` and `signalstats`; the launcher lists any your build lacks and what the film
+loses without it. Gyan's "full" Windows build and the distribution packages have them all.
 
-```text
-docs/architecture/    78 normative specification/review documents
-docs/project/         Live roadmap, status, decisions, change history and document index
-backend/app/          FastAPI, settings, persistence, Owner commands and read models
-backend/migrations/   Explicit versioned Alembic schema
-frontend/             HTML + Tailwind CSS + JavaScript, built with Vite
-tests/                Backend local integration/invariant tests
-frontend/tests/       Snapshot projection tests
-scripts/              start.py launcher, bootstrap, server runner, integrity/security checks
-data/                 Local SQLite data (generated, ignored by Git)
-output/               Local verification artifacts (generated, ignored by Git)
-```
+Optional: Unreal Engine 5.8 and Epic's Pixel Streaming infrastructure, only for the live
+headquarters (see `art-source/unreal/live/`); everything else works without them.
 
-## Local setup
-
-Requires Python 3.12–3.14, uv, Node.js 22.12+ and npm.
-
-One command does everything — dependencies, database, frontend build, server:
+## Install and first run
 
 ```shell
-start.cmd
+git clone <your copy> C:\amn-ai        # a SHORT path: some art files have long names
+cd C:\amn-ai
+start.cmd                               # Windows
+uv run python scripts/start.py          # any platform
 ```
 
-On any platform: `uv run python scripts/start.py`. Every step is idempotent, so this is also how
-you restart after a code change. Useful flags: `--skip-frontend`, `--skip-sync`, `--rebuild`.
+On Windows, either clone into a short folder as above or run
+`git config --global core.longpaths true` first; a deep folder fails with "Filename too long".
+A release archive (`scripts/make_release.py`) has no such files.
 
-Open [the local studio](http://127.0.0.1:8000). Paste `STUDIO_OWNER_TOKEN` from the generated `.env`
-into the Owner sign-in form. Ctrl+C stops the studio.
+`start.py` syncs the locked Python environment, writes `.env` with a fresh Owner key, creates
+and migrates the database (`data/studio.db`, backed up before any later migration), seeds the
+employees, channels and books, builds the page, prints a preflight read from the studio itself,
+and serves http://127.0.0.1:8000. Paste `STUDIO_OWNER_TOKEN` from `.env` into the sign-in form.
+Ctrl+C stops it. Every step is idempotent: run the same command to restart or upgrade.
+Flags: `--skip-frontend`, `--skip-sync`, `--rebuild`.
 
-Before starting, the launcher prints what is actually configured. Two integrations are optional and
-are **disabled rather than simulated** when absent:
+**A new studio starts safe:** autonomy STOPPED, mode **MANUAL**, environment **TEST**, the daily
+job dormant, no vendor connected. Nothing runs, nothing is bought and nothing is published until
+you say so in the page.
 
-- **ffmpeg** (plus `ffprobe`) — without it, video rendering returns HTTP 503 and quality control
-  cannot measure a render. The studio never writes a placeholder file with an `.mp4` name.
-- **YouTube OAuth** (`STUDIO_YOUTUBE_CLIENT_ID`, `STUDIO_YOUTUBE_CLIENT_SECRET`,
-  `STUDIO_YOUTUBE_REFRESH_TOKEN`) — without these, publishing endpoints return HTTP 503. Nothing
-  is uploaded and nothing is reported as published.
+Before the first real day, set where the studio is (it runs the clock and the sky), in `.env`:
+`STUDIO_TIMEZONE`, `STUDIO_OFFICE_LATITUDE`, `STUDIO_OFFICE_LONGITUDE`, `STUDIO_OFFICE_CITY`,
+`STUDIO_HOLIDAY_COUNTRY`. The defaults are Bucharest. Every setting is listed, grouped and
+explained in [.env.example](.env.example); `STUDIO_TIMEZONE` and `STUDIO_NAME` are written into
+a new database at bootstrap.
 
-The individual steps, if you prefer to run them yourself:
+## The demo — no account needed
 
 ```shell
-uv sync --locked
-npm ci --prefix frontend
-uv run python scripts/bootstrap.py
-npm run build --prefix frontend
-uv run python scripts/run.py
-``` The token stays in page memory; refresh or sign-out clears the session.
-Never commit/share `.env`. Bootstrap never overwrites an existing credential file or studio.
+uv run python scripts/start.py --demo   # the page on http://127.0.0.1:8010
+uv run python scripts/demo_daily_run.py --keep   # one day in a temporary folder, in the console
+```
 
-The launcher binds to `127.0.0.1` by default. Remote deployment, TLS and multi-user access are not
-implemented. Do not expose this development service directly to the Internet.
+The demo is a separate studio (`data/demo/`, its own database, films and logs) where every
+vendor is simulated: a scripted language model that answers in the studio's schemas, local
+pictures and a synthetic voice, no motion vendor, no YouTube. A day runs through all thirteen
+stages to a real MP4 that FFmpeg encodes and quality control measures. The page carries the
+banner **DEMO — furnizori simulați, nimic nu se publică**; publishing, payments, connecting
+accounts, switching to PRODUCTION and the paid shooting-sheet steps answer 403; the process
+refuses any connection beyond this machine. The demo never marks a provider as working, and it
+refuses to start on `data/studio.db`. Its film is a pipeline demonstration, not a sample of
+what Runway and ElevenLabs produce.
 
-SQLite files live under `data/`. Migrations must be run before application startup; application
-startup refuses an unexpected schema. Back up the database before future migrations; there is no
-destructive downgrade command. Stop the server before manually copying SQLite files, including WAL
-and SHM companions if present. A complete tested backup/restore tool is a later roadmap item.
+## Connecting the providers
 
-Studio name/timezone are initial bootstrap values. Editing environment defaults later does not
-silently rewrite existing domain state. All event timestamps are UTC; display uses stored timezone.
+All connections are made in the page and their keys are stored encrypted beside the database
+(`data/studio.credentials.key`), never in `.env`.
 
-## What works
+- **Language model** — Setări → Furnizori AI (Ollama, OpenAI, Anthropic, …). The seeded
+  employees point at the first studio's Ollama Cloud models (`glm-5.2:cloud`, `kimi-k2.6:cloud`,
+  `qwen3-coder:480b-cloud`), recorded NOT_CONFIGURED and never contacted. After connecting your
+  provider and syncing its models, give each employee a model in Setări → Angajați (or run
+  `uv run python scripts/apply_llm_allocation.py`, which applies `config/workforce_seed.json`'s
+  allocation to employees nobody configured). Set `STUDIO_AGENT_DAILY_TOKEN_BUDGET` for a paid model.
+- **Runway** (stills and motion) and **ElevenLabs** (narration) — Setări → Video și sunet. Record
+  on each connection whether your plan allows commercial use: until you do, quality control
+  passes a film for a private upload only.
+- **YouTube** — Setări → Conturi și e-mail, with an OAuth client from **your own** Google Cloud
+  project, then bind the account to a channel in Distribuție → Sloturi de canal. Google limits:
+  a consent screen left in "Testing" expires refresh tokens after 7 days, and an unaudited
+  project's uploads are forced private. Both, and what the studio does about each, are in
+  [docs/project/YOUTUBE_CONNECTIONS.md](docs/project/YOUTUBE_CONNECTIONS.md).
+- **Research sources** — Cercetare → Surse și afirmații: the hosts the Researcher may read.
+- **Music** — `config/music_library.json` (or `STUDIO_MUSIC_LIBRARY`): only tracks you are
+  licensed to use commercially, each with its file's SHA-256. It ships empty.
 
-Authenticated snapshots/event history, persisted initial empty room, explicit unavailable modules,
-Owner STOP flag, optimistic versions, idempotent commands, atomic policy/event writes and immutable
-history. Releasing STOP keeps Manual mode and does not start work. There are no workers/providers,
-media jobs or external publishing/payment routes to run yet.
+## Your controls
 
-The frontend polls committed snapshots every five seconds while visible. It labels disconnected
-state and disables commands while stale. This is a foundation shell, **not the Phase 3 office renderer**.
-Rooms/characters, animation, full WebSocket replay and agent inspectors will be implemented later.
+| Control | Where | What it does |
+|---|---|---|
+| STOP | the AUTONOMIE switch | Nothing scheduled fires and no paid loop starts its next scene. |
+| Mode | Guvernanță | MANUAL (you move each stage), SUPERVISED (routine runs, external writes ask), AUTONOMOUS_CEO (the Director acts within policy). T4 actions are always yours. |
+| Environment | the MEDIU switch | TEST buys nothing from real vendors in the daily run; PRODUCTION climbs the shooting sheet. |
+| Paid-step rule | the shooting sheet, «Când te întreabă un pas plătit al unui film» | EVERY_PAID_STEP (default: every stills, hero, motion and redo step asks you), OVER_USD (asks above your amount), MODE (follows the mode). |
+| Budgets | Trezorerie → Buget și cheltuieli | A daily budget is **required** for MODE or OVER_USD in PRODUCTION; without one the step is refused (BLOCKED_NO_BUDGET). |
+| Film ceiling | `STUDIO_FILM_BUDGET_USD` | What one film may spend in all. The default (motion budget + a six-scene stills cap, 15.24 USD) is below a four-scene 10-second film at 1080p: set your own. |
+| Publishing | Distribuție, per channel | Visibility (private/unlisted/public), category, language, Shorts length. |
+
+Every change is a versioned command in the ledger; the studio never changes your policy itself.
+
+## The daily job
+
+The day runs at `STUDIO_DAILY_RUN_HOUR_LOCAL` (05:00) in `STUDIO_TIMEZONE` once you start the
+schedule (Rularea zilei → Pornește programarea zilnică). One worker runs per database: a second
+studio process on the same database serves the page only. Stopping the studio ends the day after
+the scene in flight, recorded INTERRUPTED; an interrupted day is never re-run by the clock, you
+start a new one. Your "yes" to a paid step continues that film at once, not at the next 05:00.
 
 ## Running as a service
 
-`start.cmd` runs the studio in a foreground process, and the background worker that fires the
-daily run lives inside it: close the window or reboot the machine and autonomy ends silently.
-For a studio that is meant to run on its own, register it as a Windows Scheduled Task. The two
-scripts below are the Owner's to run, from a PowerShell opened as administrator (a startup
-trigger needs it); the studio and its agents never run them.
+**Windows** — a Scheduled Task (PowerShell as administrator, your own act):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\install_studio_service.ps1
-powershell -ExecutionPolicy Bypass -File scripts\install_studio_service.ps1 -RunWhenLoggedOff
 powershell -ExecutionPolicy Bypass -File scripts\uninstall_studio_service.ps1
 ```
 
-The task is named **AMN-AI Studio**. It runs the same command `start.cmd` runs, with
-`--skip-frontend` (build the bundle once with `start.cmd` before installing), at logon and at
-startup, restarts it up to three times one minute apart when it exits with an error, and has no
-execution time limit. Registering again replaces the task in place. Everything the studio prints
-goes to `data\studio-service.log`. Without `-RunWhenLoggedOff` the task runs in your signed-in
-session and the startup trigger only takes effect once you sign in; with it, the task runs
-whether you are signed in or not (no password is stored).
+It runs `start.py --skip-frontend` at logon and startup and restarts it on failure. Limit: the
+vault key is wrapped with DPAPI for your Windows account; `-RunWhenLoggedOff` (S4U) may not be
+able to unwrap it, so the supported unattended mode is an interactive logon with automatic
+sign-in. The studio then starts DEGRADED and the day is blocked with a letter rather than run on
+unreadable keys. The service does not activate the daily job and does not keep the PC awake.
 
-Two things the task does not do. It does not activate the daily job: the schedule is seeded
-dormant, and starting the studio's clock is your recorded act from the panel
-(`workflow.job_activated`), the same as clearing the autonomy stop. And it does not keep the
-machine awake: a PC that sleeps at the run hour runs nothing, so set the Windows power plan
-(Settings → System → Power, or `powercfg`) so the machine does not sleep while the studio is
-meant to work. That setting is yours to change; the scripts do not touch it.
+**Linux** — a systemd user unit, [scripts/amn-ai.service](scripts/amn-ai.service) (installation
+steps inside). On Linux the vault key is stored **unwrapped** with mode 0600 beside the database:
+keep the disk encrypted. This path is tested by the suite, not yet on a real Linux machine.
 
-To check that the task exists and when it last ran:
+## Backups, restore, disk
 
-```powershell
-schtasks /Query /TN "AMN-AI Studio" /V /FO LIST
-Get-ScheduledTaskInfo -TaskName "AMN-AI Studio"      # LastRunTime, LastTaskResult (0 = ran)
-Get-Content data\studio-service.log -Tail 40
-```
+- `uv run python scripts/backup.py` — an online copy of the database (safe while the studio
+  runs), checked, with the wrapped key beside it; `--list` lists them. The studio also copies
+  itself daily at `STUDIO_BACKUP_HOUR_LOCAL` and before every migration.
+- `uv run python scripts/restore.py` — stop the studio first. The restored studio comes back
+  STOPPED, in TEST, with the daily job off; re-enter keys that cannot be read (`--restore-key`
+  only on the same Windows account).
+- **Films are not in the backup**, only their list: copy `STUDIO_MEDIA_ROOT` to another disk.
+  `scripts/media_inventory.py` lists media folders the database no longer knows (dry run).
+- A paid step refuses to start below `STUDIO_MIN_FREE_GB` (20) free on the media disk.
 
-`Start-ScheduledTask` / `Stop-ScheduledTask -TaskName "AMN-AI Studio"` start and stop it by hand.
-While the task is running, the watchdog job inside the worker fails renders that have made no
-progress past its threshold, reconciles uncertain publications against the platform a bounded
-number of times before handing them to you, and reports lapsed task leases; it changes nothing
-while STOP AUTONOMY is set.
+## Health and logs
+
+`GET /health/live`; `GET /health/ready` answers 503 when the worker has stalled, the disk is low,
+FFmpeg is missing or the newest backup is older than `STUDIO_BACKUP_MAX_AGE_HOURS` (codes only;
+the page says it in words). The full log is JSON lines in `data/logs/studio.log`, rotated; keys
+and tokens are never written to it.
+
+## Upgrading
+
+Stop the studio, replace the code (pull, or unpack a new release archive over the folder), run
+`start.py` again. The bootstrap copies the database before it migrates; the studio refuses to
+start on a schema it was not written for.
 
 ## Verify
 
 ```shell
-uv run python scripts/check_docs.py
-uv run ruff check .
-uv run ruff format --check .
-uv run mypy
-npm run check --prefix frontend
-npm test --prefix frontend
-npm run build --prefix frontend
-uv run pytest
-uv run python scripts/check_secrets.py
+uv run python scripts/check_all.py          # the whole chain, Idle priority, refuses under 16 GB free
+uv run python scripts/check_all.py --quick  # without the film-making tests
 ```
 
-GitHub Actions contains the same baseline for Windows/Linux. Local passes do not prove hosted CI
-has executed. Real-provider tests have not run; no external integration is claimed.
+Or step by step: `scripts/check_docs.py`, `scripts/check_secrets.py` (fails on any finding not
+reviewed in `.secrets.baseline`; mark a fake key in a test with `# pragma: allowlist secret`),
+`ruff check .`, `ruff format --check .`, `mypy`, `pytest` (`-m "not slow"` for the quick lane),
+`npm run check --prefix frontend`, `npm test --prefix frontend`. Build the page into a scratch
+folder (`npx vite build --outDir <tmp>` in `frontend/`) when a studio is serving `frontend/dist`.
+`STUDIO_REQUIRE_FFMPEG=1` turns an FFmpeg skip into a failure; `STUDIO_REAL_ENCODE=1` keeps the
+production encode in every test. Every test fakes every vendor and refuses non-loopback sockets.
+The GitHub Actions workflow (Windows and Linux) exists but has not run: the repository has no
+remote yet.
 
-Architecture file changes require a recorded decision and explicit index hash update.
-`scripts/check_docs.py` detects missing/moved documents, broken known-document references and
-unexpected architecture edits. Project tracking documents are intentionally mutable.
+## Release archive
+
+`uv run python scripts/make_release.py [--with-dist] [--with-tests]` writes
+`output/release/amn-ai-<version>.zip` and its `.sha256` from an allowlist: the backend, the
+migrations, the page sources, configuration, the operator scripts, this README, the operator
+guide and the notices. It refuses to include `.env`, keys, databases or media, and stops when a
+file names this machine's folders.
+
+## Honest limits
+
+- Local only: no TLS, no multi-user access, no remote deployment. Do not expose the port.
+- No test proves a film good. The first capped paid film under EVERY_PAID_STEP is the real test.
+- Vendor billing and Google's behaviour are known only from fakes until a real run.
+- Licences: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Vendor-generated media are governed
+  by your plans with those vendors.
+
+## Documentation
+
+The normative specification is [docs/architecture](docs/architecture/README.md) (start at
+[00_MASTER_PROMPT](docs/architecture/00_MASTER_PROMPT.md)); decisions are in
+[16_DECISION_LOG](docs/project/16_DECISION_LOG.md). Architecture changes require a recorded
+decision and an explicit index hash update (`scripts/check_docs.py`).
 
 ## API
 
-Public: `GET /health/live`, `GET /health/ready` (API/database scope only).
-
-Owner Bearer token required:
-
-- `GET /api/v1/snapshot`
-- `GET /api/v1/events?after=0&limit=50`
-- `POST /api/v1/owner/autonomy-stop` with `schema_version`, UUID `command_id`,
-  `expected_version` and Boolean `stopped`.
-
-Same command ID + same payload returns its original result. Changed payload or stale policy version
-returns 409. A retry after an unknown network outcome must reuse the original command ID.
-
+Every route except `/health/*` and the YouTube OAuth callback requires
+`Authorization: Bearer <STUDIO_OWNER_TOKEN>` (sockets take the key as their first message, never
+in the URL). The page is the API's client: `GET /api/v1/snapshot`, `GET /api/v1/events`, the
+Owner's commands under `/api/v1/owner/*` (versioned, idempotent by `command_id`; a stale version
+answers 409), and one router per area under `/api/v1/` (agents, providers, settings, factual,
+media, publishing, analytics, economy, youtube, workforce, story, runbook, scheduler, office).

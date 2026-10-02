@@ -25,6 +25,7 @@ Nothing here imports a provider: a card has provenance ``composed`` and costs 0 
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import re
 import shutil
@@ -95,6 +96,18 @@ STILL_LUMA_CAP = 110
 
 #: The legibility floor for any text on a 1080 px wide phone frame.
 MIN_TEXT_SIZE = 36
+
+#: The longest a pure black card may last in a short: a beat, not an ending. The Nepal
+#: rehearsal (2026-10-01) ended on 4.3 s of near-black under its closing question, which
+#: breaks the loop a short is watched in. Longer than this, a black scene of a short becomes a
+#: closing card: the hook's own picture, darkened and pushing in slowly under the words, so the
+#: last frame leads back into the first.
+MAX_SHORT_BLACK_SECONDS = 1.5
+#: The closing card's picture: lightly softened and darkened, so white words read over it,
+#: and pushed in by this much over the card, so it is never a frozen frame.
+CLOSING_DARKEN = 0.5
+CLOSING_BLUR_SIGMA = 3
+CLOSING_PUSH = 0.08
 
 _HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
 _LIVE_KIND = "LIVE"
@@ -765,18 +778,31 @@ def _text_file(index: int) -> str:
     return f"text_{index:02d}.txt"
 
 
-def build_filtergraph(layout: CardLayout, *, duration: float, fps: int, has_still: bool) -> str:
+def build_filtergraph(
+    layout: CardLayout, *, duration: float, fps: int, has_still: bool, closing: bool = False
+) -> str:
     """The ffmpeg filtergraph for a card. Fonts and texts are named relative to the work dir.
 
     Composition happens in RGBA; the one conversion to video is BT.709 limited range at the
     end, tagged as such, so black is Y = 16 and the card sits beside a graded clip without a
-    step in its blacks.
+    step in its blacks. A ``closing`` card stands on its still lightly softened and darkened,
+    pushing in slowly, instead of heavily blurred: it is the hook's picture coming back.
     """
     frames = max(1, round(duration * fps))
     palette = layout.palette
     size = f"{FRAME_WIDTH}x{FRAME_HEIGHT}"
     chains: list[str] = []
-    if has_still:
+    if has_still and closing:
+        over_w, over_h = round(FRAME_WIDTH * 1.1) // 2 * 2, round(FRAME_HEIGHT * 1.1) // 2 * 2
+        chains.append(
+            f"[0:v]scale={over_w}:{over_h}:force_original_aspect_ratio=increase:flags=lanczos,"
+            f"crop={over_w}:{over_h},loop=loop={frames - 1}:size=1:start=0,"
+            f"zoompan=z='min(1+{CLOSING_PUSH}*on/{frames},{1 + CLOSING_PUSH})':d=1:"
+            f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={size}:fps={fps},"
+            f"gblur=sigma={CLOSING_BLUR_SIGMA},format=rgba,colorchannelmixer=rr={CLOSING_DARKEN}"
+            f":gg={CLOSING_DARKEN}:bb={CLOSING_DARKEN},setpts=N/({fps}*TB)[base0]"
+        )
+    elif has_still:
         chains.append(
             f"[0:v]scale={FRAME_WIDTH}:{FRAME_HEIGHT}:force_original_aspect_ratio=increase"
             f":flags=lanczos,crop={FRAME_WIDTH}:{FRAME_HEIGHT},gblur=sigma={STILL_BLUR_SIGMA},"
@@ -847,6 +873,30 @@ class ComposedCard:
     provenance: str = "composed"
     credits: int = 0
     fonts: dict[str, str] = field(default_factory=dict)
+    #: A BLACK scene of a short longer than a beat, drawn on the hook's picture instead.
+    closing: bool = False
+
+
+def _seconds_ro(seconds: float) -> str:
+    return f"{seconds:.1f}".replace(".", ",")
+
+
+def black_refusal(spec: CardSpec, *, duration: float, short: bool, has_still: bool) -> str | None:
+    """Why a BLACK card cannot be composed as asked (Romanian), or None when it can.
+
+    In a short, pure black lasts a beat at most (MAX_SHORT_BLACK_SECONDS); longer, the card
+    must stand on the hook's picture (a closing card), and without one it is refused rather
+    than drawn as the black ending the Nepal rehearsal had. Outside a short nothing changes.
+    """
+    if spec.kind != "BLACK" or not short or has_still:
+        return None
+    if duration <= MAX_SHORT_BLACK_SECONDS + 1e-6:
+        return None
+    return (
+        f"Un ecran negru de {_seconds_ro(duration)} s nu are loc într-un short: negrul este "
+        f"o pauză de cel mult {_seconds_ro(MAX_SHORT_BLACK_SECONDS)} s. Îndemnul final se "
+        "spune peste imaginea de la început, iar filmul nu are încă una."
+    )
 
 
 def compose_card(
@@ -858,21 +908,37 @@ def compose_card(
     background_still: Path | str | None = None,
     palette: CardPalette | None = None,
     ffmpeg: str | None = None,
+    short: bool = False,
 ) -> ComposedCard:
     """Draw ``spec`` into a 1080x1920 H.264 clip (lossless intermediate) at ``out_path``.
 
     ``background_still`` is the film's approved scene-1 still, blurred and darkened behind a
-    DATA_CARD or TITLE_CARD; a BLACK card is always pure black. The fonts are verified before
+    DATA_CARD or TITLE_CARD; a BLACK card is pure black. In a ``short``, a BLACK card longer
+    than MAX_SHORT_BLACK_SECONDS is a closing card on that still (the hook's picture, pushing
+    in), and without a still it is refused (black_refusal). The fonts are verified before
     anything else, so a missing font fails before the encoder is started.
     """
     fonts = {name: _verified_font(name)[1] for name in (BOLD, REGULAR)}
     if fps <= 0:
         raise CardError("Cadența cardului trebuie să fie pozitivă.")
-    has_still = background_still is not None and spec.kind != "BLACK"
+    closing = (
+        spec.kind == "BLACK"
+        and short
+        and background_still is not None
+        and duration > MAX_SHORT_BLACK_SECONDS + 1e-6
+    )
+    refused = black_refusal(
+        spec, duration=duration, short=short, has_still=background_still is not None
+    )
+    if refused:
+        raise CardError(refused)
+    has_still = background_still is not None and (spec.kind != "BLACK" or closing)
     if has_still and not Path(str(background_still)).is_file():
         raise CardError(f"Imaginea de fundal a cardului lipsește: {background_still}")
     layout = layout_card(spec, duration=duration, palette=palette)
-    graph = build_filtergraph(layout, duration=duration, fps=fps, has_still=has_still)
+    graph = build_filtergraph(
+        layout, duration=duration, fps=fps, has_still=has_still, closing=closing
+    )
     frames = max(1, round(duration * fps))
 
     binary = ffmpeg or find_ffmpeg()
@@ -957,4 +1023,258 @@ def compose_card(
         layout=layout,
         filtergraph=graph,
         fonts=dict(FONT_SHA256),
+        closing=closing,
     )
+
+
+# --------------------------------------------------------------------------- the cover
+
+#: The cover's hook: Inter Bold, as large as fits four lines of the safe rect's width, set
+#: from the top of SAFE_RECT, over a band that darkens the picture just enough to read it.
+COVER_TOP_INSET = 60
+COVER_LARGEST = 104
+COVER_SMALLEST = 56
+COVER_MAX_LINES = 4
+COVER_BAND_ALPHA = 0.45
+
+
+@dataclass(frozen=True)
+class ComposedCover:
+    """A cover image on disk: the hero still with the hook over it. Composed locally."""
+
+    path: Path
+    hook: str
+    sha256: str
+    layout: CardLayout
+    filtergraph: str
+    provenance: str = "composed"
+    credits: int = 0
+
+
+def layout_cover(hook: str, palette: CardPalette | None = None) -> CardLayout:
+    """Where the hook's lines go on the cover, inside SAFE_RECT. Pure: no encoder runs."""
+    palette = palette or CardPalette()
+    text = _clean(hook, "cârligul copertei", required=True) or ""
+    x0, y0, x1, _y1 = SAFE_RECT
+    left, right = x0 + TEXT_INSET, x1 - TEXT_INSET
+    size, lines = _fit(
+        text,
+        BOLD,
+        largest=COVER_LARGEST,
+        smallest=COVER_SMALLEST,
+        width=right - left,
+        max_lines=COVER_MAX_LINES,
+    )
+    items, _bottom = _lines(
+        "hook",
+        lines,
+        BOLD,
+        size,
+        center_x=(x0 + x1) // 2,
+        top=y0 + COVER_TOP_INSET,
+        appear_at=0.0,
+        color=palette.text,
+    )
+    return CardLayout(kind="COVER", palette=palette, texts=tuple(items))
+
+
+def compose_cover(
+    still: Path | str,
+    hook: str,
+    out_path: Path | str,
+    *,
+    palette: CardPalette | None = None,
+    ffmpeg: str | None = None,
+) -> ComposedCover:
+    """The film's cover (a thumbnail candidate): ``still`` filling the 9:16 frame, the hook
+    in Inter Bold inside SAFE_RECT over a darkening band, written as a PNG at ``out_path``.
+
+    0 credits and no adapter. A hook the bundled font cannot draw, or one too long for the
+    safe rect, is refused (CardError) rather than set in another face or cut.
+    """
+    fonts = {BOLD: _verified_font(BOLD)[1]}
+    layout = layout_cover(hook, palette)
+    source = Path(str(still))
+    if not source.is_file():
+        raise CardError(f"Imaginea copertei lipsește: {source.name}")
+    top = min(item.y for item in layout.texts) - 40
+    bottom = max(item.y + item.height for item in layout.texts) + 40
+    steps = [
+        f"[0:v]scale={FRAME_WIDTH}:{FRAME_HEIGHT}:force_original_aspect_ratio=increase"
+        f":flags=lanczos,crop={FRAME_WIDTH}:{FRAME_HEIGHT},setsar=1,format=rgba",
+        f"drawbox=x=0:y={top}:w={FRAME_WIDTH}:h={bottom - top}:color=black@{COVER_BAND_ALPHA}"
+        ":t=fill",
+    ]
+    for index, item in enumerate(layout.texts):
+        steps.append(
+            f"drawtext=fontfile={item.font}:textfile={_text_file(index)}:expansion=none"
+            f":fontsize={item.size}:fontcolor={_ff_color(item.color)}"
+            f":x='{item.center_x}-text_w/2':y={item.y}:y_align=font"
+            ":shadowx=3:shadowy=3:shadowcolor=black@0.6"
+        )
+    graph = ",".join(steps) + ",format=rgb24[cover]"
+    binary = ffmpeg or find_ffmpeg()
+    if not binary:
+        raise CardError("FFmpeg lipsește; coperta nu poate fi compusă.")
+    target = Path(out_path).resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="amn_cover_") as work:
+        workdir = Path(work)
+        for name, data in fonts.items():
+            (workdir / name).write_bytes(data)
+        for index, item in enumerate(layout.texts):
+            (workdir / _text_file(index)).write_text(item.text, encoding="utf-8", newline="")
+        partial = workdir / "cover.png"
+        command = [
+            binary,
+            "-v",
+            "error",
+            "-nostdin",
+            "-y",
+            "-i",
+            str(source.resolve()),
+            "-filter_complex",
+            graph,
+            "-map",
+            "[cover]",
+            "-frames:v",
+            "1",
+            "-update",
+            "1",
+            str(partial),
+        ]
+        try:
+            result = subprocess.run(  # noqa: S603 - argument list, no shell
+                command,
+                cwd=workdir,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=120,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise CardError(f"FFmpeg nu a putut compune coperta: {exc}") from exc
+        if result.returncode != 0 or not partial.is_file():
+            detail = (result.stderr or "").strip()[-500:]
+            raise CardError(f"FFmpeg nu a putut compune coperta: {detail}")
+        shutil.move(str(partial), str(target))
+    return ComposedCover(
+        path=target,
+        hook=" ".join(hook.split()),
+        sha256=hashlib.sha256(target.read_bytes()).hexdigest(),
+        layout=layout,
+        filtergraph=graph,
+    )
+
+
+# --------------------------------------------------------------------------- the finish
+# What happens to a film after its pictures are made, all local and all 0 credits: the
+# captions' colours, the hook headline, the grade toward the hero, the second framings, the
+# cover and whether editorial QC refuses. It lives in config/factual_look.json under
+# "finish", the Owner's look file, which he may change. None of it ever reaches a model: the
+# look block sent to the image model is read from "rendering", "slots" and "fill" only.
+
+LOOK_FILE = Path(__file__).resolve().parents[3] / "config" / "factual_look.json"
+
+DEFAULT_FINISH: dict[str, Any] = {
+    "captions": {
+        "text": "#FFFFFF",
+        "active": "#FFD23F",
+        "emphasis": "#5CE1E6",
+        "outline": "#000000",
+        "shadow": "#000000",
+        "shadow_opacity": 0.6,
+        "shadow_px": 2.5,
+        "highlight_active_word": True,
+        "emphasis_numbers": True,
+    },
+    "headline": {"show": False, "seconds": 2.2},
+    "grade": {
+        "match_to_hero": True,
+        "strength": 0.6,
+        "lut": None,
+        "lut_licence": None,
+        "grain": 0,
+    },
+    "second_framing": {"enabled": True, "min_spoken_seconds": 3.2, "zoom": 1.15},
+    "cover": {"compose": True},
+    "editorial_qc_blocking": False,
+}
+
+#: (low, high) for every number the finish carries; a value outside is not used.
+_FINISH_BOUNDS: dict[tuple[str, str], tuple[float, float]] = {
+    ("captions", "shadow_opacity"): (0.0, 1.0),
+    ("captions", "shadow_px"): (0.0, 4.0),
+    ("headline", "seconds"): (0.5, 4.0),
+    ("grade", "strength"): (0.0, 1.0),
+    ("grade", "grain"): (0.0, 10.0),
+    ("second_framing", "min_spoken_seconds"): (2.0, 10.0),
+    ("second_framing", "zoom"): (1.12, 1.2),
+}
+
+
+def _finish_value(section: str, key: str, given: Any, default: Any, notes: list[str]) -> Any:
+    """``given`` when it is a value of the default's kind and inside its bounds, else the
+    default, with a Romanian note naming what was not used."""
+    where = f"finish.{section}.{key}" if section else f"finish.{key}"
+    if given is None and default is None:
+        return None
+    if isinstance(default, bool):
+        if isinstance(given, bool):
+            return given
+    elif isinstance(default, str) and default.startswith("#"):
+        if isinstance(given, str) and _HEX.match(given):
+            return given.upper()
+    elif isinstance(default, int | float):
+        if isinstance(given, int | float) and not isinstance(given, bool):
+            low, high = _FINISH_BOUNDS.get((section, key), (float("-inf"), float("inf")))
+            if low <= float(given) <= high:
+                return type(default)(given) if isinstance(default, float) else given
+    elif default is None:
+        if isinstance(given, str) and given.strip():
+            return given.strip()
+    notes.append(f"Valoarea {where} ({given!r}) nu este folosită; rămâne {default!r}.")
+    return default
+
+
+def film_finish(path: Path | None = None) -> dict[str, Any]:
+    """The studio's finish, read from the look file (built-in defaults where it is silent).
+
+    A value that is not of its kind or outside its bounds is not used: the default stands and
+    ``notes`` says which (in Romanian), so a typo never draws captions in no colour at all.
+    """
+    source = path or LOOK_FILE
+    try:
+        data = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = None
+    given = data.get("finish") if isinstance(data, dict) else None
+    given = given if isinstance(given, dict) else {}
+    notes: list[str] = []
+    finish: dict[str, Any] = {}
+    for section, default in DEFAULT_FINISH.items():
+        if isinstance(default, dict):
+            raw = given.get(section)
+            raw = raw if isinstance(raw, dict) else {}
+            finish[section] = {
+                key: (_finish_value(section, key, raw[key], value, notes) if key in raw else value)
+                for key, value in default.items()
+            }
+        else:
+            finish[section] = (
+                _finish_value("", section, given[section], default, notes)
+                if section in given
+                else default
+            )
+    grade = finish["grade"]
+    if grade["lut"] and not grade["lut_licence"]:
+        notes.append(
+            "LUT-ul din finish.grade.lut nu are licența trecută în finish.grade.lut_licence; "
+            "nu este folosit."
+        )
+        grade["lut"] = None
+    finish["notes"] = notes
+    finish["file"] = str(source)
+    return finish

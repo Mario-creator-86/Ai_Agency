@@ -194,3 +194,63 @@ that an upload has happened; that evidence is `publication_record`, which since 
 two PUBLISHED private uploads to Main Channel A (`98JltCPoOKs`, `sDEtt-WQGh8`) made by the
 publish stage through a bound connection. The Phase 6 correction of 2026-09-09 recorded in
 `13_ROADMAP_TODO.md` ("no upload has reached YouTube") is superseded (corrected 2026-09-18).
+
+## Two limits Google puts on a new studio (2026-10-02, PUB-05, SELL-07)
+
+Every buyer connects their own Google Cloud project, and Google applies two limits to a new one
+that the studio cannot lift. Both are in Google's own documentation, and both used to be
+invisible: the studio recorded a film as «public, PUBLISHED» that nobody but the Owner could
+see, and a publication stayed STARTED for good once a token expired.
+
+1. **Uploads stay private until the project is audited.** Google: «All videos uploaded via the
+   videos.insert endpoint from unverified API projects created after 28 July 2020 will be
+   restricted to private viewing mode»
+   ([videos.insert](https://developers.google.com/youtube/v3/docs/videos/insert)). The lock
+   lifts only after the project passes the
+   [YouTube API Services audit](https://support.google.com/youtube/contact/yt_api_form).
+2. **Refresh tokens of a "Testing" app expire after 7 days.** An OAuth app whose consent screen
+   is External and in *Testing* status receives refresh tokens that Google revokes seven days
+   after the grant; the next refresh answers `400 invalid_grant`
+   ([OAuth 2.0, refresh token expiration](https://developers.google.com/identity/protocols/oauth2#expiration)).
+
+**What the buyer does, once, before the first real publication:**
+
+- create their own Google Cloud project and OAuth client (Web application, redirect URI the
+  studio's public `GET /auth/youtube/callback`, as described above), with the YouTube Data API v3 enabled;
+- set the OAuth consent screen's publishing status to **In production** (Google Cloud console →
+  APIs & Services → OAuth consent screen → Publish app), so tokens no longer expire after a week;
+- apply for the YouTube API Services audit for that project, and keep the channel policy
+  private (the default) until Google confirms it.
+
+**What the studio does about it, without anyone asking:**
+
+- The insert answer's own `status.privacyStatus` and `status.uploadStatus` are kept on the
+  publication (`remote_privacy_status`, `remote_upload_status`, migration
+  `0052_publication_remote_state`). An unlisted or public upload answered *private* writes
+  `publishing.visibility_locked_private`, keeps the Romanian reason on the record, and sends the
+  Owner one letter per channel: «YouTube a păstrat filmul privat: proiectul Google Cloud nu a
+  trecut auditul YouTube API Services; până atunci orice încărcare rămâne privată.» The
+  preflight line `youtube_visibility` (DEGRADING) says the same until an upload of that channel
+  comes back visible.
+- A token Google refuses during an upload is FAILED_FINAL with the reason, never an exception:
+  the connection is set ERROR with «Reconectează contul YouTube», a
+  `youtube.token_refresh_failed` event is written with `auth_refused`, the Owner gets one
+  letter that names the 7-day Testing limit, and the film is offered again the day after he
+  reconnects. The Settings check and the reconnect say the same in Romanian when Google
+  answers `invalid_grant`, instead of quoting Google's JSON.
+- Reconciliation asks the channel's own uploads playlist (`playlistItems.list`, 1 quota unit a
+  page), accepting only the exact title, the channel's own id and an upload no older than the
+  publication. It used `search.list?mine=true`, a parameter `search.list` does not have, so it
+  searched all of YouTube and could adopt another channel's video.
+- For six hours after an upload, the watchdog reads the video's processing (`videos.list`, 1
+  unit) until YouTube says `processed`; `rejected`, `failed` or `deleted` makes the publication
+  FAILED_FINAL with YouTube's reason and a letter, and the film is not offered again.
+- A publication the studio cannot settle (NEEDS_RECONCILIATION) is the Owner's: one letter, and
+  `POST /api/v1/publishing/publications/{id}/resolve` with `{command_id, found,
+  remote_video_id}` closes it (Owner key, idempotent by command id). «Nu există» makes it
+  retryable, and the watchdog's bounded attempts start again from his answer (the retry still
+  asks the channel first). The page button is a later item.
+
+All of this is tested with a faked Google transport only; no request in the suite reaches Google.
+Whether a given project is audited, and whether Google returns `privacyStatus: "private"` exactly
+as documented for it, is known only after the first real upload.

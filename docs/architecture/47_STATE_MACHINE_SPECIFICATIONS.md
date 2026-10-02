@@ -57,6 +57,25 @@ Exceptional:
 - BLOCKED waits for configuration/Owner/policy.
 - PAUSED preserves resumable state.
 
+### The content pipeline as built (amended 2026-10-02)
+
+Amended deliberately on 2026-10-02 after the production-readiness audit (finding AR-14). The
+content pipeline above is implemented as the stages of a `daily_run`, not as a `workflow` row per
+item: preflight, performance intake, idea generation, research and verification, selection,
+script and storyboard, serial queue, media, edit and QC, publish, post-run, daily log and
+tomorrow's serial script. The run's own states:
+
+RUNNING (written right after the preflight)
+→ COMPLETED / PARTIAL / BLOCKED / FAILED
+
+Exceptional:
+- RUNNING → INTERRUPTED, at most once, when the studio stops between stages (the stage in flight
+  ends after its current scene) or when the run's queue task lost its lease (the worker's sweep or
+  the watchdog finds it). An INTERRUPTED day is never re-run by the clock; the Owner starts a new
+  run. One letter tells him where it stopped.
+- A paid step bought for a film is a `scene_take` (QUOTED → SUBMITTED → PAID → APPROVED /
+  REJECTED; REFUSED; SUBMITTED → LOST after 24 h uncollected). APPROVED is the Owner's act only.
+
 ## Publication
 
 DRAFT_INTENT
@@ -99,6 +118,17 @@ CANCEL_REQUESTED
 CANCELLED
 FAILED
 NEEDS_REPAIR
+
+### Workflow rows as built (amended 2026-10-02)
+
+Amended deliberately on 2026-10-02 (finding AR-14). Scheduled jobs no longer create `workflow`
+rows: a scheduled fire writes the event `workflow.job_fired` and a `task_queue` item with no
+workflow. The machine above remains for workflows created by hand, and its pause, resume and
+cancel routes act only on those rows; they never controlled the daily run, which the Owner stops
+with STOP. The 665 rows already in the Owner's database stay as they are (CREATED, DISCOVERY);
+removing or relabelling them is a later maintenance step. A queue task's lease is one token per
+claim, renewed by a heartbeat; a task whose lease lapsed with no attempts left becomes
+DEAD_LETTER with an `INTERRUPTED:` reason and is not run again.
 
 ## Gate
 

@@ -36,6 +36,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 #: The repository root, matching how `app.config` locates the same .env file.
 ROOT = Path(__file__).resolve().parents[3]
 
+#: The .env file the settings are read from (a test points it at its own tmp file).
+ENV_FILE = ROOT / ".env"
+
 #: Windows needs the suffix; everywhere else the bare name is right.
 _SUFFIXES = (".exe", "") if os.name == "nt" else ("", ".exe")
 
@@ -53,6 +56,14 @@ class _EncoderSetting(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="STUDIO_", env_file=ROOT / ".env", extra="ignore")
 
     ffmpeg_path: str | None = None
+    ffprobe_path: str | None = None
+
+
+def _read_setting() -> _EncoderSetting | None:
+    try:
+        return _EncoderSetting(_env_file=ENV_FILE)  # type: ignore[call-arg]
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _configured_ffmpeg() -> str | None:
@@ -61,10 +72,15 @@ def _configured_ffmpeg() -> str | None:
     A configuration that cannot be read means we do not know where ffmpeg is, which is the same
     answer as not having one — so the failure is swallowed rather than raised into a QC run.
     """
-    try:
-        return _EncoderSetting().ffmpeg_path
-    except Exception:  # noqa: BLE001
-        return None
+    setting = _read_setting()
+    return setting.ffmpeg_path if setting else None
+
+
+def _configured_ffprobe() -> str | None:
+    """STUDIO_FFPROBE_PATH, from the process environment or from .env (REL-13: it used to be
+    read from the environment only, while the preflight told the Owner to set it in .env)."""
+    setting = _read_setting()
+    return setting.ffprobe_path if setting else None
 
 
 def find_ffmpeg(configured: str | None = None) -> str | None:
@@ -75,13 +91,17 @@ def find_ffmpeg(configured: str | None = None) -> str | None:
     return shutil.which("ffmpeg")
 
 
-def find_ffprobe(configured_ffmpeg: str | None = None) -> str | None:
+def find_ffprobe(
+    configured_ffmpeg: str | None = None, *, configured: str | None = None
+) -> str | None:
     """The ffprobe binary to use, or None when there is not one.
 
+    ``configured`` is the studio's ffprobe setting (`Settings.ffprobe_path`) when the caller
+    holds the settings; otherwise STUDIO_FFPROBE_PATH is read from the environment and .env.
     ``configured_ffmpeg`` is the studio's ffmpeg setting, used to look in the right folder when
     ffprobe is not on PATH.
     """
-    explicit = os.environ.get("STUDIO_FFPROBE_PATH")
+    explicit = configured or _configured_ffprobe()
     if explicit and Path(explicit).is_file():
         return explicit
 
@@ -545,3 +565,349 @@ def encode_master_audio(
         "delivered": measure_loudness(ffmpeg, written),
         "warning": loudnorm_warning(report),
     }
+
+
+# --------------------------------------------------------------------------- dead air and the bed
+#
+# Measured on the rehearsal film (2026-10-01, audit Q1/Q4): every cut carried 0.28-0.61 s of
+# digital silence (-87 dB), the voice vendor's own trailing silence plus the timeline's
+# breath, and nothing sat under the narration. A take's silent edges are now measured and cut
+# before the scene lengths are computed, and a licensed bed (`app.media.music_library`) is
+# ducked under the voice before the master.
+
+#: What counts as silence at a take's edges and inside the narration: under -45 dBFS for at
+#: least 50 ms. A breath between two words reads around -40 to -30 dB and is kept.
+SILENCE_THRESHOLD_DB = -45.0
+SILENCE_MIN_SECONDS = 0.05
+#: How much of a take's measured silence is kept before its first sound and after its last:
+#: a consonant's attack and a word's decay sit under the threshold and must not be clipped.
+EDGE_KEEP_SECONDS = 0.03
+
+#: Where the bed sits under the voice, as integrated loudness: 20 LU under (QC accepts
+#: 18-22), so the words always lead. Measured on the ducked, faded bed against the voice as it
+#: is heard in the mix (stereo, full level on both sides).
+BED_UNDER_VOICE_LU = 20.0
+BED_UNDER_VOICE_BAND_LU = (18.0, 22.0)
+BED_FADE_IN_SECONDS = 0.3
+BED_FADE_OUT_SECONDS = 0.8
+#: The ducking: keyed by the voice, the bed drops while a word is said and comes back up in
+#: the pauses, over 15 ms down and 350 ms back.
+DUCK_FILTER = "sidechaincompress=threshold=0.03:ratio=6:attack=15:release=350:knee=4"
+#: An ambience sits under the voice at about -30 LUFS once the film is mastered at -14.
+AMBIENCE_UNDER_VOICE_LU = 16.0
+AMBIENCE_FADE_SECONDS = 0.15
+#: How far a track may be turned down or up to sit where it belongs. A mastered music track
+#: (-8 to -14 LUFS) goes 30-40 dB down under a vendor's narration (-23 to -25 LUFS); a track
+#: that would need more than +30 dB is silence or a broken file, not a quiet track.
+MAX_LEVEL_CUT_DB = 60.0
+MAX_LEVEL_BOOST_DB = 30.0
+#: The mix's own ceiling, under full scale, so summing a bed never clips the stem.
+MIX_LIMIT = 0.97
+
+_SILENCE_START = re.compile(r"silence_start:\s*(-?[0-9.]+)")
+_SILENCE_END = re.compile(r"silence_end:\s*(-?[0-9.]+)")
+_DURATION = re.compile(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)")
+
+
+class AudioMixError(RuntimeError):
+    """The bed or the ambience could not be mixed under the voice."""
+
+
+def silence_spans(
+    ffmpeg: str | None,
+    path: Path | str,
+    *,
+    threshold_db: float = SILENCE_THRESHOLD_DB,
+    min_seconds: float = SILENCE_MIN_SECONDS,
+) -> list[tuple[float, float]] | None:
+    """Every silence in ``path`` (its first audio stream) as (start, end) seconds, read from
+    FFmpeg's silencedetect. A silence still open at the end ends at the file's duration. None
+    when the file cannot be read: this measures, it never invents a reading."""
+    if not ffmpeg or not Path(path).is_file():
+        return None
+    try:
+        result = subprocess.run(  # noqa: S603 - argument list, no shell
+            [
+                ffmpeg,
+                "-nostdin",
+                "-v",
+                "info",
+                "-nostats",
+                "-i",
+                str(path),
+                "-vn",
+                "-af",
+                f"silencedetect=noise={threshold_db:.1f}dB:d={min_seconds:.3f}",
+                "-f",
+                "null",
+                "-",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdin=subprocess.DEVNULL,
+            timeout=_MEASURE_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    duration_match = _DURATION.search(result.stderr or "")
+    duration = (
+        int(duration_match.group(1)) * 3600
+        + int(duration_match.group(2)) * 60
+        + float(duration_match.group(3))
+        if duration_match
+        else None
+    )
+    spans: list[tuple[float, float]] = []
+    start: float | None = None
+    for line in (result.stderr or "").splitlines():
+        opened = _SILENCE_START.search(line)
+        if opened:
+            start = max(0.0, float(opened.group(1)))
+            continue
+        closed = _SILENCE_END.search(line)
+        if closed and start is not None:
+            spans.append((start, float(closed.group(1))))
+            start = None
+    if start is not None:
+        spans.append((start, duration if duration is not None else start))
+    return spans
+
+
+def speech_edges(ffmpeg: str | None, path: Path | str, duration: float) -> tuple[float, float]:
+    """(silence before the first sound, silence after the last) of a take ``duration`` long,
+    in seconds; (0, 0) when nothing could be measured or the take is silence throughout."""
+    spans = silence_spans(ffmpeg, path)
+    if not spans:
+        return 0.0, 0.0
+    lead = spans[0][1] if spans[0][0] <= 0.005 else 0.0
+    trail = duration - spans[-1][0] if spans[-1][1] >= duration - 0.02 else 0.0
+    if lead + trail >= duration:  # nothing but silence: there is nothing to keep apart
+        return 0.0, 0.0
+    return max(0.0, lead), max(0.0, trail)
+
+
+def _run_mix(ffmpeg: str, command: list[str], what: str, timeout: int) -> None:
+    try:
+        result = subprocess.run(  # noqa: S603 - argument list, no shell
+            [ffmpeg, "-nostdin", "-v", "error", "-y", *command],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdin=subprocess.DEVNULL,
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise AudioMixError(f"FFmpeg could not {what}: {exc}") from exc
+    output = Path(command[-1])
+    if result.returncode != 0 or not output.is_file() or output.stat().st_size == 0:
+        raise AudioMixError(f"FFmpeg could not {what} (exit code {result.returncode})")
+
+
+def _integrated(ffmpeg: str, path: Path | str, what: str) -> float:
+    reading = measure_loudness(ffmpeg, path)
+    value = reading.get("integrated_lufs") if reading else None
+    if not isinstance(value, int | float) or not math.isfinite(float(value)):
+        raise AudioMixError(f"The {what} could not be measured")
+    return float(value)
+
+
+def _stereo(position: int) -> str:
+    """Input ``position`` at the master's rate, as stereo at full level on both sides."""
+    return (
+        f"[{position}:a]aresample={MASTER_SAMPLE_RATE},"
+        "aformat=sample_fmts=fltp:channel_layouts=stereo"
+    )
+
+
+def _correction(target: float, measured: float, what: str) -> float:
+    gain = target - measured
+    if not -MAX_LEVEL_CUT_DB <= gain <= MAX_LEVEL_BOOST_DB:
+        raise AudioMixError(f"The {what} would need {gain:+.1f} dB: its level is not usable")
+    return gain
+
+
+_STEM_ARGS: tuple[str, ...] = ("-c:a", "pcm_s24le", "-ar", str(MASTER_SAMPLE_RATE), "-ac", "2")
+
+
+def mix_bed(
+    ffmpeg: str,
+    voice: Path | str,
+    target: Path | str,
+    *,
+    bed: Path | str | None,
+    duration: float,
+    work_dir: Path | str,
+    ambience: list[dict[str, Any]] | None = None,
+    under_lu: float = BED_UNDER_VOICE_LU,
+    fade_in: float = BED_FADE_IN_SECONDS,
+    fade_out: float = BED_FADE_OUT_SECONDS,
+    timeout: int = 600,
+) -> dict[str, Any]:
+    """The narration with a bed ducked under it, and any ambience, as one stem for the master.
+
+    Without a bed and without ambience the voice is returned as it is (``path`` is ``voice``).
+    Otherwise:
+
+    1. the voice is taken to stereo at full level (as the master hears it) and measured;
+    2. the bed is looped or cut to ``duration``, set ``under_lu`` under the voice, ducked by
+       the voice (sidechaincompress), faded in over ``fade_in`` and out over ``fade_out``;
+    3. the ducked bed is measured and corrected with one linear gain, so it lands at
+       ``under_lu`` under the voice whatever the ducking took away, and kept as its own stem;
+    4. each ambience ({"path", "start", "seconds"}) is set AMBIENCE_UNDER_VOICE_LU under the
+       voice, faded at its edges and placed at its scene;
+    5. everything is summed at unity (no automatic rescaling) under a sample ceiling.
+
+    Returns {"path", "bed": {...} | None, "ambience": [...]}. Raises AudioMixError; never a
+    stem it did not write.
+    """
+    folder = Path(work_dir)
+    ambience = [item for item in (ambience or []) if Path(item["path"]).is_file()]
+    if bed is None and not ambience:
+        return {"path": Path(voice), "bed": None, "ambience": []}
+    seconds = f"{duration:.3f}"
+    voice_stereo = folder / "mix_voice_stereo.wav"
+    mono = _channels(ffmpeg, voice) == 1
+    upmix = "pan=stereo|c0=c0|c1=c0," if mono else ""
+    _run_mix(
+        ffmpeg,
+        [
+            "-i",
+            str(voice),
+            "-af",
+            f"{upmix}aresample={MASTER_SAMPLE_RATE},apad=whole_dur={seconds},atrim=duration={seconds}",
+            *_STEM_ARGS,
+            str(voice_stereo),
+        ],
+        "take the voice to stereo",
+        timeout,
+    )
+    voice_lufs = _integrated(ffmpeg, voice_stereo, "voice")
+    stems: list[Path] = []
+    bed_record: dict[str, Any] | None = None
+    if bed is not None:
+        raw_lufs = _integrated(ffmpeg, bed, "bed")
+        pre = _correction(voice_lufs - under_lu, raw_lufs, "bed")
+        ducked = folder / "mix_bed_ducked.wav"
+        out_at = max(0.0, duration - fade_out)
+        _run_mix(
+            ffmpeg,
+            [
+                "-stream_loop",
+                "-1",
+                "-i",
+                str(bed),
+                "-i",
+                str(voice_stereo),
+                "-filter_complex",
+                # The bed runs a second past the film and the key never ends: the compressor
+                # drops its last partial block at an input's end, so the cut comes after it.
+                f"{_stereo(0)},atrim=duration={duration + 1.0:.3f},asetpts=N/SR/TB,"
+                f"volume={pre:.2f}dB[b];{_stereo(1)},apad[k];[b][k]{DUCK_FILTER},"
+                f"atrim=duration={seconds},afade=t=in:st=0:d={fade_in:.3f},"
+                f"afade=t=out:st={out_at:.3f}:d={fade_out:.3f}[out]",
+                "-map",
+                "[out]",
+                "-t",
+                seconds,
+                *_STEM_ARGS,
+                str(ducked),
+            ],
+            "duck the bed under the voice",
+            timeout,
+        )
+        ducked_lufs = _integrated(ffmpeg, ducked, "ducked bed")
+        fix = _correction(voice_lufs - under_lu, ducked_lufs, "ducked bed")
+        stem = folder / "mix_bed.wav"
+        _run_mix(
+            ffmpeg,
+            ["-i", str(ducked), "-af", f"volume={fix:.2f}dB", *_STEM_ARGS, str(stem)],
+            "set the bed's level",
+            timeout,
+        )
+        ducked.unlink(missing_ok=True)
+        bed_lufs = _integrated(ffmpeg, stem, "bed")
+        stems.append(stem)
+        bed_record = {
+            "stem": str(stem),
+            "voice_lufs": round(voice_lufs, 2),
+            "bed_lufs": round(bed_lufs, 2),
+            "measured_lu_under_voice": round(voice_lufs - bed_lufs, 2),
+            "target_lu_under_voice": under_lu,
+            "gain_db": round(pre + fix, 2),
+            "ducking": DUCK_FILTER,
+            "fade_in_seconds": fade_in,
+            "fade_out_seconds": fade_out,
+        }
+    placed: list[dict[str, Any]] = []
+    for position, item in enumerate(ambience):
+        start = max(0.0, float(item.get("start") or 0.0))
+        length = max(0.1, min(float(item.get("seconds") or 0.0), duration - start))
+        gain = _correction(
+            voice_lufs - AMBIENCE_UNDER_VOICE_LU,
+            _integrated(ffmpeg, item["path"], "ambience"),
+            "ambience",
+        )
+        stem = folder / f"mix_ambience_{position + 1:02d}.wav"
+        fade = min(AMBIENCE_FADE_SECONDS, length / 4)
+        delay = int(round(start * 1000))
+        _run_mix(
+            ffmpeg,
+            [
+                "-stream_loop",
+                "-1",
+                "-i",
+                str(item["path"]),
+                "-filter_complex",
+                f"{_stereo(0)},atrim=duration={length:.3f},asetpts=N/SR/TB,volume={gain:.2f}dB,"
+                f"afade=t=in:st=0:d={fade:.3f},afade=t=out:st={length - fade:.3f}:d={fade:.3f},"
+                f"adelay={delay}|{delay},apad=whole_dur={seconds},atrim=duration={seconds}[out]",
+                "-map",
+                "[out]",
+                "-t",
+                seconds,
+                *_STEM_ARGS,
+                str(stem),
+            ],
+            "place the ambience",
+            timeout,
+        )
+        stems.append(stem)
+        placed.append(
+            {
+                **{k: v for k, v in item.items() if k != "path"},
+                "start": round(start, 3),
+                "seconds": round(length, 3),
+                "gain_db": round(gain, 2),
+                "stem": str(stem),
+            }
+        )
+    inputs: list[str] = ["-i", str(voice_stereo)]
+    for stem in stems:
+        inputs += ["-i", str(stem)]
+    labels = "".join(f"[{position}:a]" for position in range(len(stems) + 1))
+    _run_mix(
+        ffmpeg,
+        [
+            *inputs,
+            "-filter_complex",
+            f"{labels}amix=inputs={len(stems) + 1}:normalize=0:duration=first,"
+            f"alimiter=limit={MIX_LIMIT:.2f}:attack=1:release=20:level=0[out]",
+            "-map",
+            "[out]",
+            "-t",
+            seconds,
+            *_STEM_ARGS,
+            str(target),
+        ],
+        "mix the bed under the voice",
+        timeout,
+    )
+    voice_stereo.unlink(missing_ok=True)
+    return {"path": Path(target), "bed": bed_record, "ambience": placed}

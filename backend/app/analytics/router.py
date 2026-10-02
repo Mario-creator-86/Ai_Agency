@@ -55,6 +55,14 @@ ANALYTICS_NOT_CONFIGURED_DETAIL = (
 )
 
 
+#: What a route answers when the database refused a write (PAGE-11: Romanian, never
+#: «Internal error»).
+DATABASE_FAULT = (
+    "Studioul nu a putut salva în baza de date; nimic nu s-a schimbat. Detaliile sunt în "
+    "jurnalul serverului."
+)
+
+
 def get_analytics_provider(request: Request) -> AnalyticsProvider:
     """Return the configured analytics provider, or refuse.
 
@@ -157,7 +165,7 @@ def create_analytics_router() -> APIRouter:
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except SQLAlchemyError:
-            raise HTTPException(status_code=500, detail="Internal error") from None
+            raise HTTPException(status_code=500, detail=DATABASE_FAULT) from None
         except (OSError, RuntimeError) as exc:
             # The platform did not answer. Nothing was stored, and we say so.
             raise HTTPException(
@@ -175,7 +183,7 @@ def create_analytics_router() -> APIRouter:
     ) -> dict:
         strat = get_active_strategy(request.app.state.engine, channel_id)
         if strat is None:
-            raise HTTPException(status_code=404, detail="No active strategy found")
+            raise HTTPException(status_code=404, detail="Nu există încă o strategie activă.")
         return strat
 
     @router.get("/recommendations/{channel_id}", response_model=list[DirectorRecommendationView])

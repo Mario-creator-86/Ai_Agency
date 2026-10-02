@@ -1,7 +1,8 @@
 {
  "source": {
-  "hq_day": "E:\\AI Acency\\Autonomous_AI_Studio_Documentation_v5_ECONOMY_TREASURY_VENDORSHOP\\art-source\\blender\\hq\\hq_day.py",
-  "bake": "E:\\AI Acency\\Autonomous_AI_Studio_Documentation_v5_ECONOMY_TREASURY_VENDORSHOP\\art-source\\unreal\\bake"
+  "hq_day": "art-source/blender/hq/hq_day.py",
+  "bake": "art-source/unreal/bake",
+  "note": "Paths relative to the repository root; each texture is named relative to this file's folder."
  },
  "rank": {
   "min": 0.02,
@@ -10,7 +11,7 @@
  },
  "facades": {
   "city_dense": {
-   "texture": "C:\\Users\\mario\\AppData\\Local\\Temp\\claude\\E--AI-Acency-Autonomous-AI-Studio-Documentation-v5-ECONOMY-TREASURY-VENDORSHOP\\23d615c3-4439-4a13-8820-b1c0b25c8893\\scratchpad\\real_sky\\wave3\\prepared\\textures\\T_HQ_TowerMask_city_dense.png",
+   "texture": "T_HQ_TowerMask_city_dense.png",
    "glass_srgb": [
     16,
     21,
@@ -43,7 +44,7 @@
    "DayRoughness": 0.22
   },
   "city_mid": {
-   "texture": "C:\\Users\\mario\\AppData\\Local\\Temp\\claude\\E--AI-Acency-Autonomous-AI-Studio-Documentation-v5-ECONOMY-TREASURY-VENDORSHOP\\23d615c3-4439-4a13-8820-b1c0b25c8893\\scratchpad\\real_sky\\wave3\\prepared\\textures\\T_HQ_TowerMask_city_mid.png",
+   "texture": "T_HQ_TowerMask_city_mid.png",
    "glass_srgb": [
     16,
     21,
@@ -76,7 +77,7 @@
    "DayRoughness": 0.22
   },
   "classic": {
-   "texture": "C:\\Users\\mario\\AppData\\Local\\Temp\\claude\\E--AI-Acency-Autonomous-AI-Studio-Documentation-v5-ECONOMY-TREASURY-VENDORSHOP\\23d615c3-4439-4a13-8820-b1c0b25c8893\\scratchpad\\real_sky\\wave3\\prepared\\textures\\T_HQ_TowerMask_classic.png",
+   "texture": "T_HQ_TowerMask_classic.png",
    "glass_srgb": [
     16,
     21,
@@ -109,7 +110,7 @@
    "DayRoughness": 0.22
   },
   "shopfront_block": {
-   "texture": "C:\\Users\\mario\\AppData\\Local\\Temp\\claude\\E--AI-Acency-Autonomous-AI-Studio-Documentation-v5-ECONOMY-TREASURY-VENDORSHOP\\23d615c3-4439-4a13-8820-b1c0b25c8893\\scratchpad\\real_sky\\wave3\\prepared\\textures\\T_HQ_TowerMask_shopfront_block.png",
+   "texture": "T_HQ_TowerMask_shopfront_block.png",
    "glass_srgb": [
     16,
     21,
@@ -142,7 +143,7 @@
    "DayRoughness": 0.22
   },
   "tower_blue": {
-   "texture": "C:\\Users\\mario\\AppData\\Local\\Temp\\claude\\E--AI-Acency-Autonomous-AI-Studio-Documentation-v5-ECONOMY-TREASURY-VENDORSHOP\\23d615c3-4439-4a13-8820-b1c0b25c8893\\scratchpad\\real_sky\\wave3\\prepared\\textures\\T_HQ_TowerMask_tower_blue.png",
+   "texture": "T_HQ_TowerMask_tower_blue.png",
    "glass_srgb": [
     16,
     21,
@@ -175,7 +176,7 @@
    "DayRoughness": 0.22
   },
   "tower_blue_l": {
-   "texture": "C:\\Users\\mario\\AppData\\Local\\Temp\\claude\\E--AI-Acency-Autonomous-AI-Studio-Documentation-v5-ECONOMY-TREASURY-VENDORSHOP\\23d615c3-4439-4a13-8820-b1c0b25c8893\\scratchpad\\real_sky\\wave3\\prepared\\textures\\T_HQ_TowerMask_tower_blue_l.png",
+   "texture": "T_HQ_TowerMask_tower_blue_l.png",
    "glass_srgb": [
     36,
     45,
@@ -208,7 +209,7 @@
    "DayRoughness": 0.22
   },
   "tower_cool": {
-   "texture": "C:\\Users\\mario\\AppData\\Local\\Temp\\claude\\E--AI-Acency-Autonomous-AI-Studio-Documentation-v5-ECONOMY-TREASURY-VENDORSHOP\\23d615c3-4439-4a13-8820-b1c0b25c8893\\scratchpad\\real_sky\\wave3\\prepared\\textures\\T_HQ_TowerMask_tower_cool.png",
+   "texture": "T_HQ_TowerMask_tower_cool.png",
    "glass_srgb": [
     33,
     42,
@@ -241,7 +242,7 @@
    "DayRoughness": 0.22
   },
   "tower_dark": {
-   "texture": "C:\\Users\\mario\\AppData\\Local\\Temp\\claude\\E--AI-Acency-Autonomous-AI-Studio-Documentation-v5-ECONOMY-TREASURY-VENDORSHOP\\23d615c3-4439-4a13-8820-b1c0b25c8893\\scratchpad\\real_sky\\wave3\\prepared\\textures\\T_HQ_TowerMask_tower_dark.png",
+   "texture": "T_HQ_TowerMask_tower_dark.png",
    "glass_srgb": [
     16,
     21,
@@ -274,7 +275,7 @@
    "DayRoughness": 0.22
   },
   "tower_dark_l": {
-   "texture": "C:\\Users\\mario\\AppData\\Local\\Temp\\claude\\E--AI-Acency-Autonomous-AI-Studio-Documentation-v5-ECONOMY-TREASURY-VENDORSHOP\\23d615c3-4439-4a13-8820-b1c0b25c8893\\scratchpad\\real_sky\\wave3\\prepared\\textures\\T_HQ_TowerMask_tower_dark_l.png",
+   "texture": "T_HQ_TowerMask_tower_dark_l.png",
    "glass_srgb": [
     32,
     41,
@@ -307,7 +308,7 @@
    "DayRoughness": 0.22
   },
   "tower_mauve": {
-   "texture": "C:\\Users\\mario\\AppData\\Local\\Temp\\claude\\E--AI-Acency-Autonomous-AI-Studio-Documentation-v5-ECONOMY-TREASURY-VENDORSHOP\\23d615c3-4439-4a13-8820-b1c0b25c8893\\scratchpad\\real_sky\\wave3\\prepared\\textures\\T_HQ_TowerMask_tower_mauve.png",
+   "texture": "T_HQ_TowerMask_tower_mauve.png",
    "glass_srgb": [
     16,
     21,
@@ -340,7 +341,7 @@
    "DayRoughness": 0.22
   },
   "tower_mauve_l": {
-   "texture": "C:\\Users\\mario\\AppData\\Local\\Temp\\claude\\E--AI-Acency-Autonomous-AI-Studio-Documentation-v5-ECONOMY-TREASURY-VENDORSHOP\\23d615c3-4439-4a13-8820-b1c0b25c8893\\scratchpad\\real_sky\\wave3\\prepared\\textures\\T_HQ_TowerMask_tower_mauve_l.png",
+   "texture": "T_HQ_TowerMask_tower_mauve_l.png",
    "glass_srgb": [
     40,
     42,
@@ -373,7 +374,7 @@
    "DayRoughness": 0.22
   },
   "tower_right": {
-   "texture": "C:\\Users\\mario\\AppData\\Local\\Temp\\claude\\E--AI-Acency-Autonomous-AI-Studio-Documentation-v5-ECONOMY-TREASURY-VENDORSHOP\\23d615c3-4439-4a13-8820-b1c0b25c8893\\scratchpad\\real_sky\\wave3\\prepared\\textures\\T_HQ_TowerMask_tower_right.png",
+   "texture": "T_HQ_TowerMask_tower_right.png",
    "glass_srgb": [
     16,
     21,

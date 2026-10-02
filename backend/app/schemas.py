@@ -148,6 +148,12 @@ class ApprovalView(BaseModel):
     approver: str | None
     note: str | None
     decided_at: str | None
+    #: For a film's paid question (PAGE-03): which step it buys, the first 12 characters of the
+    #: plan its yes is bound to, and the storyboard, so the page opens the sheet instead of
+    #: approving a purchase in one click. None for every other question.
+    context: dict | None = None
+    #: The film's title when the question is about a storyboard the studio holds.
+    film_title: str | None = None
 
 
 class ApprovalDecisionResult(BaseModel):

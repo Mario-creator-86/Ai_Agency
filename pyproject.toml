@@ -13,17 +13,38 @@ dependencies = [
   "alembic>=1.15,<2",
   "pydantic-settings>=2.8,<3",
   "tzdata>=2025.1",
-  "cryptography>=46,<49",
+  # 49 fixes CVE-2026-69247/69248/69249 (48.0.1 had them; the studio uses only Fernet).
+  "cryptography>=49,<51",
   "opencv-python-headless>=4.10",
 ]
 
 [dependency-groups]
-dev = ["pytest>=8,<10", "httpx>=0.28,<1", "ruff>=0.11,<1", "mypy>=1.15,<2", "detect-secrets>=1.5,<2"]
+dev = [
+  "pytest>=8,<10",
+  "pytest-cov>=6,<8",
+  "httpx>=0.28,<1",
+  "ruff>=0.11,<1",
+  "mypy>=1.15,<2",
+  "detect-secrets>=1.5,<2",
+  # tests/test_sky_atlas.py reads and filters images with Pillow; without it the test skipped.
+  "pillow>=11,<13",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["backend"]
-addopts = "-ra"
+# pytester: tests/test_conftest_switches.py runs the suite's own switches in an inner session.
+addopts = "-ra -p pytester"
+markers = [
+  "film: needs FFmpeg (or the YuNet face model); set automatically from the skip marker",
+  "slow: a film test or a known slow module; the quick lane is -m 'not slow'",
+  "real_encode: keeps the production x264 final encode instead of the suite's quick preset",
+]
+filterwarnings = [
+  # Starlette's TestClient on httpx: deprecated upstream in favour of httpx2, harmless here.
+  "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+  "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning",
+]
 
 [tool.ruff]
 target-version = "py312"

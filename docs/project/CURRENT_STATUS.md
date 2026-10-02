@@ -1,8 +1,147 @@
-# CURRENT STATUS — Phases 0-2 complete; Phases 4-6 partially implemented
+# CURRENT STATUS — State on 2026-10-02
 
-Last verified: 2026-09-09 by an independent audit (`AUDIT_2026-09-09_EXTERNAL.md`) and the
-remediation that followed it. Active edit claim: Codex, 2026-09-11 — ElevenLabs authentication,
-database resource discovery/refresh, separate production choices, UI and regression tests.
+Phase 10 (full automation hardening), after the production-readiness audit of 2026-10-01/02.
+Read this block for the current truth; the dated journal below it is history, newest first.
+Edit claim: the audit workflow (DOCS_AND_STATUS), 2026-10-02 — documents only.
+
+**Proven on a real paid run.** Runway stills (seedream5_pro) and Runway image-to-video were
+bought for the Nepal film on 2026-09-26 (over 1,000 credits). The film failed QC: it was bought
+on the old whole-film path from template prompts, after the model's shot plan was discarded on a
+JSON quote. Two private YouTube uploads with real video ids reached Channel A on 2026-09-12.
+OAuth, ElevenLabs narration and the Runway connection worked against the real vendors before
+2026-09-26. Nothing else below has met a real vendor.
+
+**Proven on fakes only** (every vendor, the stills judge, clip QC and the language model faked;
+0 credits): the paid staircase as a whole (sheet, lint, per-scene model on the real catalogue,
+caps, stills, hero test shot, motion); clip QC; take intent and late collection by task id;
+per-scene failure memory; booking every purchase; the purchase lease and per-step reservation;
+hero acceptance by clip QC; FILM_CONTINUE; automatic free repair and capped paid redos;
+ElevenLabs `/with-timestamps`, stitching and pronunciation locators; the music bed mix; the grade,
+second framings, highlighted captions, closing card and cover; publishing reconciliation,
+visibility read-back and the gate re-run at execution; upload metadata within YouTube's limits;
+the demo mode; backups and restore. Each is "proven on fakes only" until a real call proves it.
+
+**Not proven, open.** No real film has passed QC. No whole-suite run since the audit landed: the
+last one is the 2026-10-01 baseline, **2,550 passed, 4 failed, 6 skipped in 1,717 s**; the four
+failures were fixed by GREEN_SUITE, but one full run (`uv run python scripts/check_all.py`, at
+least 16 GB free commit, no game) is still owed — free commit stayed at 13.7-14.5 GB through
+2026-10-02. Known red after the audit: `tests/test_serial_voices.py::test_a_two_speaker_beat_is_two_takes_in_two_voices_and_one_caption_track`
+(caption cards of 1 or more than 5 words since the phrase-aware captions; the test's 2-5 word
+rule or the caption rule must give way). Hosted CI has never run (no git remote). The shared
+`.venv` still has cryptography 48.0.1 and urllib3 2.7.0 until `uv sync --locked`.
+
+**The Owner's studio, 2026-10-02.** Started from this tree with `scripts/start.py`; his database
+is at `0052_publication_remote_state`; `0053_channel_upload_settings` is the code's head and is
+applied by his next start (a `premigrare` backup first). His policy: TEST, AUTONOMOUS_CEO,
+EVERY_PAID_STEP, an active daily budget. Seen live: every model call of his catch-up day failed
+on the Ollama Cloud connection (revoked key or ended plan); both YouTube connections are
+`invalid_grant` since 2026-09-26; `edit_and_qc` died after four retries on "database busy" when
+daily_main, trends_daily and model_review_daily fired together at start-up (not yet fixed).
+
+**The Owner's next steps, in order.**
+1. Restart the studio when it suits him (start.py: backup, migration to 0053, page rebuild).
+   Then run `uv sync --locked` while nothing runs from `.venv`, and `uv run python scripts/backup.py`
+   once (health reports BACKUP_STALE until the first copy).
+2. Reconnect Ollama Cloud and both YouTube channels in Setări (his accounts, his act); move the
+   Google app to "In production" (docs/project/YOUTUBE_CONNECTIONS.md).
+3. Set the daily budget (required for MODE or OVER_USD in PRODUCTION) and `STUDIO_FILM_BUDGET_USD`
+   (the default 15.24 USD is below a four-scene film of 10 s scenes, whose motion cap is 27.20 USD).
+4. Answer «folosire comercială» on the Runway and ElevenLabs connections; add licensed music to
+   `config/music_library.json`; set `STUDIO_DISPLAY_NAME` for the AI disclosure.
+5. Make the first capped paid film under EVERY_PAID_STEP: it is the real test of the staircase,
+   the clip QC thresholds, the captions, the grade and the mix. Loosen the rule to MODE only after.
+6. Decide: a git remote or runner for CI; `narration_purchase`; LOCAL_MOVE; an always-on host.
+
+## The production-readiness audit (2026-10-01 → 2026-10-02)
+
+The Owner's goal (2026-10-01): «audit complet… production ready, filmele trebuie să poată fi
+generate automat» and «proiect gata de vânzare… filme 10 din 10». Ten audits, twenty items,
+each implemented test-first with every provider faked, 0 credits, no run started, the studio on
+:8000 and the Unreal stream never stopped. Claim and tested outcome per item (each ran only its
+own tests and their neighbours; none ran the whole suite):
+
+- **GREEN_SUITE** — the approval-row invariant moved into the kernel (`withdraw_superseded_approvals`);
+  two stale/time-bomb tests fixed; every FFmpeg run from a short temporary folder (paths past
+  MAX_PATH). Tests first, seen red; the four baseline failures green.
+- **PAID_CALLS_AND_TAKE_INTENT** — a billed POST is resent only on 429/502/503/504; Runway output
+  downloads refuse private hosts and pin the checked IP; migration 0049 (remote_task_id,
+  SUBMITTED, LOST, narration); task ids written before polling and collected by GET (the
+  watchdog's fifth job); the migration head computed. Tests first, seen red, green.
+- **BOOK_EVERY_PURCHASE** — a charged-but-unanswered submit counts and is never resent; an
+  uncounted balance drop stops the step; every purchase booked once under its own reference;
+  paid redos booked; narration kept as takes and reused. Measured on fakes: 1 POST under a 700
+  cap (was 3, 1,020 credits). Green.
+- **NO_REBUY_RECOVERY_REFERENCES** — per-scene failure memory and `max_paid_attempts_per_scene`;
+  recovery of paid takes before pricing; serial character references end to end. Measured on
+  fakes over three days: image requests [3,3,3] (was 3/6/9), video POSTs [2,2,2] (was 2/4/6). Green.
+- **GATES_BEFORE_BUYING** — one buyer per film (migration 0050), idempotent presses, reservation per
+  step, the film ceiling, BLOCKED_NO_BUDGET, OVER_USD on the cap, agent spend stopped over budget,
+  the reference set priced and gated. Two concurrent buyers: 1 POST and 409 FILM_BUSY. Green.
+- **HERO_AUTO_ACCEPT** — the hero accepted by clip QC under MODE / OVER_USD-within-amount;
+  EVERY_PAID_STEP still waits for his look. Green, including through the HTTP routes.
+- **DAY_FLOW_NO_STALL** — the walk passes held films, re-asks shot plans, retires stale films,
+  writes clear letters and the TEST letter; QC fails template-prompt or whole-film paid renders
+  made from 2026-09-26. 20 tests seen red, green.
+- **CONTINUE_REDOS_E2E** — FILM_CONTINUE, 48 h paid-media questions, automatic free repair and
+  capped paid redos, the autonomous-day end-to-end tests (MODE; OVER_USD; EVERY_PAID_STEP with 3
+  approvals; low balance / no budget / over budget), and a static scan that no paid call is
+  reached without a gate and a booking. Green.
+- **QUEUE_LEASE_SHUTDOWN** — per-claim lease tokens with heartbeats; a crashed day becomes
+  INTERRUPTED once with a letter and is never re-run by the clock; graceful shutdown; one worker
+  per database; no Workflow rows for scheduled jobs; the outbox claims before it broadcasts. Green.
+- **SECURITY_STARTUP_LOGGING** — the studio starts with an unreadable vault (DEGRADED, preflight
+  BLOCKING, one letter); logs keep content safely and rotate; no key in socket URLs; media file
+  routes confined to the storage roots; concat escaping; socket robustness. Rehearsed on a copy
+  of his database: started, preflight blocked by the vault line. Green.
+- **GATES_AND_CI** — check_docs line-ending independent (77 hashes re-recorded, no content
+  changed); check_secrets scans what git ships against a reviewed baseline; `scripts/check_all.py`;
+  CI matrix with FFmpeg and silent-skip refusal; cryptography 50.0.2, urllib3 2.8.0 locked; a
+  quick lane. Green in a separate environment; hosted CI never run.
+- **FILM_AUDIO_AND_RIGHTS** — silence trimmed (gaps ≤ 0.25 s), a licensed music bed and ambience
+  ducked under the voice, ElevenLabs stitching, migration 0051 and the per-component licence
+  ledger with RIGHTS_GATE. Green; an intermittent "file is not a database" in test_autonomous_day
+  after test_daily_run_stages (2 of 5 runs) is not explained.
+- **FILM_STORY_PICTURE_QC** — looping endings, no long black, phrase-aware highlighted captions,
+  free second framings, a bounded film-level grade, a local cover, editorial QC (advisory). 80
+  tests green, on synthetic material only.
+- **BACKUP_DISK_HEALTH** — online backups with retention, backup before migrations, restore with
+  the restore guard, a truthful `/health/ready`, a disk floor and media root, a failed-render sweep
+  (off by default), ffprobe configurable. Green.
+- **PUBLISHING_TRUTH** — no STARTED row left stuck, failed uploads not counted, reconciliation by
+  the uploads playlist, the gate re-run at execution, visibility read back (migration 0052, applied
+  on his database), Romanian letters, an Owner resolve route. 112+ tests green.
+- **PUBLISHING_METADATA** — metadata within YouTube's limits, one configurable disclosure, per-channel
+  category, language, made-for-kids and Shorts length (migration 0053), sources in factual
+  descriptions. Green.
+- **SELLABLE** — a demo mode on fakes (its day ends with an encoded film), a true README and
+  operator guide, `.env.example` for every setting, MANUAL for new installs, the studio's place
+  configurable, YuNet's MIT licence and THIRD_PARTY_NOTICES, Unreal scripts without drive paths,
+  a release archive, a systemd unit. Green.
+- **PAGE_OWNER_DAY** — stale-page banner, sheet keys everywhere, the paid rule in Guvernanță with
+  what the next run will buy, consequence confirmations, a safe budget form, buying progress, the
+  inbox, the film of the day. Frontend 686/686, tsc clean; backend neighbours green.
+- **PAGE_SETTINGS_ERRORS** — the publish policy panel, honest error words, the work queue, the demo
+  topic isolated, paged media list and bounded object URLs, plurals, accessibility, seven
+  Playwright flows on fakes. Frontend 735/735, e2e 7/7, tsc clean.
+- **DOCS_AND_STATUS** — this header, the roadmap and changelog entries, twelve decision-log
+  entries, and amendments to architecture 51, 08, 11, 39, 47 and 25 with their index hashes
+  recorded in the decision log; `scripts/check_docs.py` passes; `tests/test_docs_truth.py`
+  (8 tests, 7 seen red first) green. The full-suite run under `scripts/check_all.py` was not run
+  (free commit 13.7 GB, under 16 GB).
+
+Still open after the audit (not done by any item): serial episodes are not walked or retired;
+a SpentStageError at the media stage still opens safe mode; no sweep books credits on takes left
+unbooked by a hard kill; a FILM_CONTINUE does not check the vault before buying; English details
+remain in publishing/router.py and workflows/router.py; the page does not yet show held scenes,
+`production['audio']`, the licence ledger, the grade or the cover; the captions track and the
+cover are not uploaded to YouTube; the start-up collision of three catch-up jobs on "database busy".
+
+## History: the header until 2026-10-01
+
+The title read «Phases 0-2 complete; Phases 4-6 partially implemented» and «Last verified:
+2026-09-09 by an independent audit (`AUDIT_2026-09-09_EXTERNAL.md`) and the remediation that
+followed it», with an edit claim by Codex dated 2026-09-11. Both were three weeks stale on
+2026-10-01 and are replaced by the block above.
 
 > **Correction notice (2026-09-09).** An earlier revision of this document declared Phases 4, 5 An earlier revision of this document declared Phases 4, 5
 > and 6 "complete — verified". That was not supported by the code. The audit found fabricated
@@ -28,10 +167,10 @@ agents, every provider faked, 0 credits); its second verdict is **READY**.
 - **The money hole is closed**: the legacy whole-film render refuses in every environment whenever
   it would reach a real paid vendor adapter (default-deny by the adapter's module); real films go
   only through the shooting sheet.
-- **Per-scene model choice works on the real catalogue**: config/film_models.json holds documented,
+- **Per-scene model choice reads the real catalogue** (proven on fakes only: no vendor was asked; label corrected 2026-10-02, finding AR-11): config/film_models.json holds documented,
   sourced capabilities for 16 models, the Owner's allowed set, the hero threshold (0.93) and the
   premium reference; unsourced catalogue guesses no longer outrank sourced research.
-- **Captions on the voice's clock**: ElevenLabs /with-timestamps, never a second request once audio
+- **Captions on the voice's clock** (proven on fakes only; label corrected 2026-10-02, finding AR-11): ElevenLabs /with-timestamps, never a second request once audio
   has arrived.
 - **QC truths**: silent cards have a maximum (BLACK 2.0 s, TITLE 2.5 s, DATA 4.0 s), breaths count,
   three frames per filmed scene at 1080 px.

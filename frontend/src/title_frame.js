@@ -1,4 +1,5 @@
 import { timeOfDay } from './hq_time.js';
+import { studioPlace } from './office_clock.js';
 import { plateDayMix } from './hq_world.js';
 
 /**
@@ -174,14 +175,21 @@ export function entryOrigin(frame) {
   return { x: frame.building.x + frame.building.w * 0.5, y: frame.building.y + frame.building.h * 0.56 };
 }
 
+/** «Sediul <studio>, <oraș>», from the studio's place. */
+export function headquarters() {
+  const place = studioPlace();
+  return `Sediul ${place.studioName}, ${place.city}`;
+}
+
 /**
  * The line under the key-art, stating the one thing the picture claims: the light is the real
- * hour in Bucharest. The hour is the one the office's clock uses (office_clock.js).
+ * hour at the studio's place. The hour, the city and the studio's name are the ones the office's
+ * clock uses (office_clock.js studioPlace).
  * @param {{text: string, phase: string}} time
  */
 export function titleCaption(time) {
   const phase = { day: 'zi', dawn: 'zori', dusk: 'amurg', night: 'noapte' }[time.phase] || '';
-  return `Sediul AMN-AI, București · ${time.text}${phase ? ` · ${phase}` : ''}, în lumina reală a orei`;
+  return `${headquarters()} · ${time.text}${phase ? ` · ${phase}` : ''}, în lumina reală a orei`;
 }
 
 /* ---------------------------------------------------------------------------------------------
@@ -200,7 +208,7 @@ export const KEPT_DEPTH = 0.5;
  * @param {{text: string}} time the real hour @param {string} kept keptCaption(at, now)
  */
 export function titleKeptCaption(time, kept) {
-  return `Sediul AMN-AI, București · acum ${time.text}${kept ? ` · ${kept}` : ''}`;
+  return `${headquarters()} · acum ${time.text}${kept ? ` · ${kept}` : ''}`;
 }
 
 /**

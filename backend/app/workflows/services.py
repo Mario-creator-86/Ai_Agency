@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import Engine, or_, select
 from sqlalchemy.orm import Session
 
+from app.db import lock_for_write
 from app.models import DomainEvent, OwnerPolicy
 from app.services import append_event, utc_now
 from app.workflows.models import (
@@ -68,6 +69,29 @@ VALID_WORKFLOW_TRANSITIONS: dict[str, set[str]] = {
 
 class InvalidStateTransitionError(ValueError):
     """Raised when attempting an illegal workflow or task status change."""
+
+
+class LeaseLost(ValueError):
+    """The task is no longer held under this lease token: it lapsed and was taken over, or
+    the row was finished elsewhere. The caller's outcome is not written over the new holder's.
+    A ValueError, as the old refusal was, so callers that caught that still catch this."""
+
+
+#: What a task whose lease lapsed with no attempts left becomes: DEAD_LETTER, with this word
+#: opening its ``error_detail`` and an event of `TASK_INTERRUPTED_EVENT`. The process that held
+#: it died (a crash, a kill, a reboot); running it again would repeat whatever it had done —
+#: for a day, its purchases — so nothing re-runs it on its own (REL-03, 2026-10-02).
+INTERRUPTED = "INTERRUPTED"
+TASK_INTERRUPTED_EVENT = "workflow.task_interrupted"
+#: A worker found at completion that its lease was no longer its own.
+TASK_LEASE_LOST_EVENT = "workflow.task_lease_lost"
+#: A scheduled job fired: the job and the task it queued. Scheduled fires used to create a
+#: `Workflow` row each (status CREATED, stage DISCOVERY) that nothing ever moved — 665 such
+#: rows in the live copy — so its pause and cancel controlled nothing (AR-14, 2026-10-02).
+JOB_FIRED_EVENT = "workflow.job_fired"
+
+#: Queue states in which a task is held under a lease.
+LEASED_STATES = ("CLAIMED", "RUNNING")
 
 
 # ---------------------------------------------------------------------------
@@ -307,43 +331,128 @@ def claim_task(
 ) -> dict | None:
     """Atomically claim the next eligible task in queue with a lease.
 
-    Refuses to claim tasks if Owner autonomy stop is enabled.
-    Reclaims tasks with expired leases automatically.
+    Refuses to claim tasks if Owner autonomy stop is enabled. A task whose lease lapsed is
+    claimed again only while it has attempts left: one that had its last attempt was being run
+    by a process that died, and is `sweep_interrupted_tasks`'s (REL-03). Measured before
+    2026-10-02: a day queued with max_attempts=1, claimed, its lease lapsed, was claimed a
+    second time — the whole day, purchases included, ran again an hour after a crash.
+
+    Every claim carries its own lease token, ``<worker_id>:<uuid>`` (AR-17): every process
+    used to call itself 'worker_main', so a second process could complete or fail the first
+    one's claim. The worker id stays readable at the front for the logs.
     """
     now_dt = datetime.now(UTC)
     now_str = now_dt.isoformat()
     lease_expiry = (now_dt + timedelta(seconds=lease_duration_seconds)).isoformat()
+    eligible_when = or_(
+        (TaskQueueItem.status.in_(["QUEUED", "RETRYING"]))
+        & (TaskQueueItem.next_attempt_at <= now_str),
+        (TaskQueueItem.status.in_(LEASED_STATES))
+        & (TaskQueueItem.lease_expires_at < now_str)
+        & (TaskQueueItem.attempts < TaskQueueItem.max_attempts),
+    )
+    order = (TaskQueueItem.priority.desc(), TaskQueueItem.next_attempt_at.asc())
 
-    with Session(engine) as session, session.begin():
+    # A plain read first: the worker asks every few seconds, and an empty queue must not take
+    # the studio's write lock each time.
+    with Session(engine) as session:
         policy = session.get(OwnerPolicy, 1)
         if policy and policy.autonomy_stopped:
             return None
+        if session.scalars(select(TaskQueueItem.id).where(eligible_when).limit(1)).first() is None:
+            return None
 
-        # Eligible = (QUEUED/RETRYING and ready) OR (CLAIMED/RUNNING with expired lease)
+    with Session(engine) as session, session.begin():
+        # Read-then-write under the write lock, so two claimers (two processes on one
+        # database) are served one after the other and cannot both take the same row.
+        lock_for_write(session)
+        policy = session.get(OwnerPolicy, 1)
+        if policy and policy.autonomy_stopped:
+            return None
         eligible = session.scalars(
-            select(TaskQueueItem)
-            .where(
-                or_(
-                    (TaskQueueItem.status.in_(["QUEUED", "RETRYING"]))
-                    & (TaskQueueItem.next_attempt_at <= now_str),
-                    (TaskQueueItem.status.in_(["CLAIMED", "RUNNING"]))
-                    & (TaskQueueItem.lease_expires_at < now_str),
-                )
-            )
-            .order_by(TaskQueueItem.priority.desc(), TaskQueueItem.next_attempt_at.asc())
-            .limit(1)
+            select(TaskQueueItem).where(eligible_when).order_by(*order).limit(1)
         ).first()
 
         if eligible is None:
             return None
 
         eligible.status = "CLAIMED"
-        eligible.lease_token = worker_id
+        eligible.lease_token = new_lease_token(worker_id)
         eligible.lease_expires_at = lease_expiry
         eligible.attempts += 1
         eligible.updated_at = now_str
         session.flush()
         return TaskQueueItemView.model_validate(eligible).model_dump()
+
+
+def new_lease_token(worker_id: str) -> str:
+    """A token no other claim has: the worker's id (cut to fit the column) and a uuid."""
+    return f"{worker_id[:27]}:{uuid4().hex}"
+
+
+def sweep_interrupted_tasks(engine: Engine) -> list[dict]:
+    """Dead-letter every leased task whose lease lapsed with no attempts left; the tasks.
+
+    Its holder is gone — the process was killed, crashed or the machine restarted — and the
+    task had its last attempt, so nothing runs it again on its own. Each becomes DEAD_LETTER
+    with ``error_detail`` opening with INTERRUPTED and one `TASK_INTERRUPTED_EVENT`; the caller
+    (the worker) tells the Owner about the kinds of work he cares for. A lapsed task with
+    attempts left is not touched: the queue re-claims it, as before.
+
+    Not behind the autonomy stop: it starts nothing and spends nothing, it only records that
+    a dead task is dead — and a day left CLAIMED would make the Owner's own start refuse,
+    saying a run is already under way.
+    """
+    now_str = utc_now()
+    lapsed = (
+        (TaskQueueItem.status.in_(LEASED_STATES))
+        & (TaskQueueItem.lease_expires_at < now_str)
+        & (TaskQueueItem.attempts >= TaskQueueItem.max_attempts)
+    )
+    with Session(engine) as session:
+        if session.scalars(select(TaskQueueItem.id).where(lapsed).limit(1)).first() is None:
+            return []
+
+    swept: list[dict] = []
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        for task in session.scalars(select(TaskQueueItem).where(lapsed)):
+            previous_token = task.lease_token
+            lapsed_at = task.lease_expires_at
+            task.status = "DEAD_LETTER"
+            task.error_detail = (
+                f"{INTERRUPTED}: procesul care rula sarcina s-a oprit înainte să o încheie "
+                f"(contractul expirat la {str(lapsed_at)[:19]}); sarcina și-a folosit "
+                "încercările și nu este pornită din nou automat."
+            )
+            task.lease_token = None
+            task.lease_expires_at = None
+            task.updated_at = now_str
+            append_event_with_outbox(
+                session,
+                TASK_INTERRUPTED_EVENT,
+                "task_queue",
+                task.id,
+                1,
+                {
+                    "task_type": task.task_type,
+                    "attempts": task.attempts,
+                    "max_attempts": task.max_attempts,
+                    "lease_token": previous_token,
+                    "lease_expired_at": lapsed_at,
+                },
+                task.id,
+            )
+            swept.append(TaskQueueItemView.model_validate(task).model_dump())
+    for item in swept:
+        logger.error(
+            "task_interrupted", extra={"task_id": item["id"], "task_type": item["task_type"]}
+        )
+    return swept
+
+
+def _held(task: TaskQueueItem | None, lease_token: str) -> bool:
+    return task is not None and task.status in LEASED_STATES and task.lease_token == lease_token
 
 
 def heartbeat_task(
@@ -352,11 +461,14 @@ def heartbeat_task(
     lease_token: str,
     extension_seconds: int = 30,
 ) -> bool:
+    """Push the lease on while the holder still has it; False once it is no longer its own."""
     now_dt = datetime.now(UTC)
     with Session(engine) as session, session.begin():
+        lock_for_write(session)
         task = session.get(TaskQueueItem, task_id)
-        if task is None or task.lease_token != lease_token:
+        if not _held(task, lease_token):
             return False
+        assert task is not None  # _held says so
         task.lease_expires_at = (now_dt + timedelta(seconds=extension_seconds)).isoformat()
         task.updated_at = now_dt.isoformat()
         return True
@@ -369,9 +481,10 @@ def complete_task(
 ) -> dict:
     now_str = utc_now()
     with Session(engine) as session, session.begin():
+        lock_for_write(session)
         task = session.get(TaskQueueItem, task_id)
         if task is None or task.lease_token != lease_token:
-            raise ValueError(f"Task {task_id} not claimed by token {lease_token}")
+            raise LeaseLost(f"Task {task_id} is no longer held under lease {lease_token}")
         task.status = "COMPLETED"
         task.lease_token = None
         task.lease_expires_at = None
@@ -391,9 +504,10 @@ def fail_task(
     now_str = now_dt.isoformat()
 
     with Session(engine) as session, session.begin():
+        lock_for_write(session)
         task = session.get(TaskQueueItem, task_id)
         if task is None or task.lease_token != lease_token:
-            raise ValueError(f"Task {task_id} not claimed by token {lease_token}")
+            raise LeaseLost(f"Task {task_id} is no longer held under lease {lease_token}")
 
         task.lease_token = None
         task.lease_expires_at = None
@@ -663,7 +777,7 @@ def scheduler_tick(
     leader_id: str = "scheduler_main",
     lease_seconds: int = 15,
 ) -> list[dict]:
-    """Fire the jobs that are due: a workflow record and a queued task for each.
+    """Fire the jobs that are due: a queued task and a `JOB_FIRED_EVENT` for each.
 
     Leader leasing keeps two schedulers from firing the same job; the task's idempotency key —
     the job and the slot it was due for — keeps a restart from queueing the same run twice even
@@ -720,47 +834,18 @@ def scheduler_tick(
                     job.leader_token = None
                     job.leader_expires_at = None
                     continue
-                # Trigger workflow
-                wf_cmd = CreateWorkflowCommand(
-                    command_id=uuid4(),
-                    workflow_type=job.workflow_type,
-                    title=f"Scheduled: {job.name} @ {now_str[:19]}",
-                    config={"scheduled_job_id": job.id, "job_name": job.name},
-                )
-                # Create workflow inline
-                event, _ = append_event_with_outbox(
-                    session,
-                    "workflow.created",
-                    "workflow",
-                    str(wf_cmd.command_id),
-                    1,
-                    {"job_name": job.name, "workflow_type": job.workflow_type},
-                    str(wf_cmd.command_id),
-                )
-                wf = Workflow(
-                    id=str(wf_cmd.command_id),
-                    workflow_type=job.workflow_type,
-                    title=wf_cmd.title,
-                    status="CREATED",
-                    current_stage=PIPELINE_STAGES[0],
-                    config=wf_cmd.config,
-                    created_at=now_str,
-                    updated_at=now_str,
-                    event_id=event.event_id,
-                )
-                session.add(wf)
-                # Flushed before the task references it: the row must exist for the foreign key.
-                session.flush()
-
                 # The slot this run was due for names the task, so a second tick — or a second
                 # scheduler after a restart — finds the queued work rather than adding to it.
+                # No `Workflow` row: scheduled work keeps its real state where it runs (a day
+                # in `DailyRun`, stage by stage), and a row nothing ever moved made its pause
+                # and cancel controls that controlled nothing (AR-14). The fire itself is an
+                # event, so the ledger still shows the job starting.
                 task = TaskQueueItem(
                     id=str(uuid4()),
-                    workflow_id=wf.id,
+                    workflow_id=None,
                     step_id=None,
                     task_type=job.workflow_type,
                     payload={
-                        "workflow_id": wf.id,
                         "scheduled_job_id": job.id,
                         "job_name": job.name,
                         "due_at": due_at,
@@ -779,13 +864,27 @@ def scheduler_tick(
                     updated_at=now_str,
                 )
                 session.add(task)
+                session.flush()
+                append_event_with_outbox(
+                    session,
+                    JOB_FIRED_EVENT,
+                    "scheduled_job",
+                    job.id,
+                    1,
+                    {
+                        "job_name": job.name,
+                        "workflow_type": job.workflow_type,
+                        "task_id": task.id,
+                        "due_at": due_at,
+                    },
+                    task.id,
+                )
 
                 job.last_run_at = now_str
                 job.next_run_at = following.isoformat()
                 triggered.append(
                     {
                         "job_id": job.id,
-                        "workflow_id": wf.id,
                         "task_id": task.id,
                         "name": job.name,
                         "due_at": due_at,

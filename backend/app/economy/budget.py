@@ -25,10 +25,10 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
@@ -36,8 +36,15 @@ from app.agents.models import AgentRun
 from app.db import lock_for_write
 from app.economy.models import ProviderCostRecord, SpendingBudget, SpendReservation
 from app.economy.services import EconomyError, format_micros, to_micros
-from app.models import Studio
-from app.services import append_event, utc_now
+from app.models import DomainEvent, Studio
+from app.services import (
+    CommandConflict,
+    append_event,
+    command_hash,
+    recall_command,
+    remember_command,
+    utc_now,
+)
 
 PERIODS = ("DAILY", "MONTHLY")
 
@@ -47,13 +54,60 @@ PERIODS = ("DAILY", "MONTHLY")
 DEFAULT_RESERVATION_TTL_SECONDS = 6 * 3600
 
 
+#: What an empty or zero limit is told (PAGE-05): it never retires the budget by itself.
+LIMIT_REQUIRED = (
+    "Scrie limita bugetului ca o sumă pozitivă în USD, de exemplu 15. Un câmp gol sau 0 nu "
+    "retrage bugetul: pentru asta folosește «Retrage bugetul zilnic»."
+)
+#: A limit sent together with a retirement: one command, one act.
+RETIRE_WITH_LIMIT = "Retragerea bugetului nu primește o limită; trimite doar perioada."
+#: The command type a budget's idempotency record is kept under.
+BUDGET_COMMAND = "SpendingBudget"
+
+
 class BudgetCommand(BaseModel):
+    """The Owner sets or retires one period's budget.
+
+    PAGE-05: an empty field once sent ``limit_usd: ""``, which was read as 0 and retired the
+    daily budget with one Enter. A limit is now a positive sum or the command is refused (422);
+    retiring is its own ``retire: true``. ``command_id`` makes a repeat answer the first time's
+    result and change nothing twice; ``expected_version`` is the period's version the page read
+    (`budget_status()["versions"]`), so a limit set against a budget that moved meanwhile is
+    refused rather than applied to a state nobody looked at. Both are optional for the
+    studio's own callers.
+    """
+
     model_config = ConfigDict(extra="forbid")
     period: str = Field(pattern="^(DAILY|MONTHLY)$")
-    #: The limit in USD, as a decimal string; "0" or "" retires the active budget.
-    limit_usd: str = Field(max_length=20)
+    #: The limit in USD, as a decimal string, above zero; absent when retiring.
+    limit_usd: str = Field(default="", max_length=20)
     warn_ratio: float = Field(default=0.8, ge=0.1, le=1.0)
     notes: str | None = Field(default=None, max_length=2000)
+    #: Retire the active budget of the period: no limit, nothing stops the period's spend.
+    retire: bool = False
+    command_id: UUID | None = None
+    expected_version: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _a_limit_or_a_retirement(self) -> BudgetCommand:
+        text = (self.limit_usd or "").strip()
+        if self.retire:
+            if text and _micros_or_none(text) != 0:
+                raise ValueError(RETIRE_WITH_LIMIT)
+            return self
+        micros = _micros_or_none(text)
+        if micros is not None and micros < 0:
+            return self  # a negative sum is refused by `set_budget` in its own words
+        if not text or micros == 0:
+            raise ValueError(LIMIT_REQUIRED)
+        return self
+
+
+def _micros_or_none(text: str) -> int | None:
+    try:
+        return to_micros(text) if text else None
+    except EconomyError:
+        return None
 
 
 def studio_timezone(session: Session) -> str:
@@ -100,54 +154,123 @@ def set_budget(
     set_by: str = "owner",
     correlation_id: str | None = None,
 ) -> dict[str, Any]:
-    """Set (or retire) the active budget for a period. The previous one is kept, replaced."""
+    """Set (or retire) the active budget for a period. The previous one is kept, replaced.
+
+    Idempotent by ``command_id`` and versioned by ``expected_version`` when the command carries
+    them (the Owner's page always does): the same command again returns the first answer, the
+    same id with another body is refused, and a version that is no longer the period's is
+    refused with the version it now has."""
     correlation = correlation_id or str(uuid4())
-    limit_micros = to_micros(command.limit_usd or "0") if (command.limit_usd or "").strip() else 0
-    if limit_micros < 0:
-        raise EconomyError("A budget cannot be negative.")
+    if command.retire:
+        limit_micros = 0
+    else:
+        text = (command.limit_usd or "").strip()
+        limit_micros = to_micros(text) if text else 0
+        if limit_micros < 0:
+            raise EconomyError("Un buget nu poate fi negativ.")
+    fingerprint = command_hash(command.model_dump(mode="json", exclude={"command_id"}))
     with Session(engine) as session, session.begin():
-        now = utc_now()
-        for previous in session.scalars(
-            select(SpendingBudget).where(
-                SpendingBudget.period == command.period, SpendingBudget.active.is_(True)
-            )
-        ):
-            previous.active = False
-            previous.replaced_at = now
-        if limit_micros == 0:
-            append_event(
-                session,
-                "economy.budget_retired",
-                "spending_budget",
-                command.period,
-                1,
-                {"period": command.period, "set_by": set_by},
-                correlation,
-            )
-            return {"period": command.period, "active": False}
-        row = SpendingBudget(
-            id=str(uuid4()),
-            period=command.period,
-            limit_usd_micros=limit_micros,
-            warn_ratio=command.warn_ratio,
-            active=True,
-            set_by=set_by[:100],
-            notes=(command.notes or "").strip()[:2000] or None,
-            created_at=now,
+        if command.command_id is not None or command.expected_version is not None:
+            # A reader that will write: the lock first, so two tabs cannot both pass the check.
+            lock_for_write(session)
+        if command.command_id is not None:
+            try:
+                already = recall_command(session, str(command.command_id), fingerprint)
+            except CommandConflict:
+                raise EconomyError(
+                    "Comanda aceasta a mai fost trimisă cu altă limită; reîncarcă bugetul și "
+                    "trimite-o din nou."
+                ) from None
+            if already is not None:
+                return already
+        if command.expected_version is not None:
+            actual = budget_version(session, command.period)
+            if actual != command.expected_version:
+                raise EconomyError(
+                    f"Bugetul {PERIOD_RO.get(command.period, command.period)} are versiunea "
+                    f"{actual}, nu {command.expected_version}: s-a schimbat între timp; "
+                    "recitește-l înainte să-l schimbi."
+                )
+        answer = _apply_budget(session, command, limit_micros, set_by, correlation)
+        if command.command_id is not None:
+            remember_command(session, str(command.command_id), BUDGET_COMMAND, fingerprint, answer)
+        return answer
+
+
+#: A period in a sentence: «Bugetul zilnic», «Bugetul lunar».
+PERIOD_RO = {"DAILY": "zilnic", "MONTHLY": "lunar"}
+
+#: The event a retirement writes; it counts toward the period's version like a new limit does.
+BUDGET_RETIRED_EVENT = "economy.budget_retired"
+
+
+def budget_version(session: Session, period: str) -> int:
+    """How many times the Owner has changed this period's budget: every limit set (a row each,
+    kept when replaced) and every retirement (an event each). 0 for a period never set. The
+    page sends it back as ``expected_version``."""
+    rows = session.scalar(
+        select(func.count()).select_from(SpendingBudget).where(SpendingBudget.period == period)
+    )
+    retired = session.scalar(
+        select(func.count())
+        .select_from(DomainEvent)
+        .where(
+            DomainEvent.event_type == BUDGET_RETIRED_EVENT,
+            DomainEvent.aggregate_id == period,
         )
-        session.add(row)
-        session.flush()
-        event = append_event(
+    )
+    return int(rows or 0) + int(retired or 0)
+
+
+def _apply_budget(
+    session: Session,
+    command: BudgetCommand,
+    limit_micros: int,
+    set_by: str,
+    correlation: str,
+) -> dict[str, Any]:
+    now = utc_now()
+    for previous in session.scalars(
+        select(SpendingBudget).where(
+            SpendingBudget.period == command.period, SpendingBudget.active.is_(True)
+        )
+    ):
+        previous.active = False
+        previous.replaced_at = now
+    if limit_micros == 0:
+        append_event(
             session,
-            "economy.budget_set",
+            BUDGET_RETIRED_EVENT,
             "spending_budget",
-            row.id,
+            command.period,
             1,
-            {"period": row.period, "limit_usd": format_micros(limit_micros), "set_by": set_by},
+            {"period": command.period, "set_by": set_by},
             correlation,
         )
-        row.event_id = event.event_id
-        return _budget_view(row)
+        return {"period": command.period, "active": False}
+    row = SpendingBudget(
+        id=str(uuid4()),
+        period=command.period,
+        limit_usd_micros=limit_micros,
+        warn_ratio=command.warn_ratio,
+        active=True,
+        set_by=set_by[:100],
+        notes=(command.notes or "").strip()[:2000] or None,
+        created_at=now,
+    )
+    session.add(row)
+    session.flush()
+    event = append_event(
+        session,
+        "economy.budget_set",
+        "spending_budget",
+        row.id,
+        1,
+        {"period": row.period, "limit_usd": format_micros(limit_micros), "set_by": set_by},
+        correlation,
+    )
+    row.event_id = event.event_id
+    return _budget_view(row)
 
 
 def _agent_spend_micros(session: Session, since_iso: str) -> int:
@@ -302,8 +425,11 @@ def budget_status(engine: Engine, now: datetime | None = None) -> dict[str, Any]
         periods = _period_status(session, moment, timezone)
         today = spend_since(session, _period_start("DAILY", moment, timezone))
         month = spend_since(session, _period_start("MONTHLY", moment, timezone))
+        versions = {period: budget_version(session, period) for period in PERIODS}
     return {
         "budgets": periods,
+        # Each period's version, sent back with the Owner's next change (PAGE-05).
+        "versions": versions,
         "today": today,
         "month": month,
         "timezone": timezone,
@@ -352,6 +478,7 @@ def reserve_spend(
     *,
     now: datetime | None = None,
     note: str | None = None,
+    force: bool = False,
 ) -> dict[str, Any]:
     """Hold a sum against every active budget, or refuse. Decided behind the write lock.
 
@@ -360,12 +487,16 @@ def reserve_spend(
     studio's write lock before reading anything, so the second caller reads the first one's
     row. A sum of zero (an unpriced plan) is checked and holds nothing: there is nothing to
     hold, and the refusal of an exceeded budget still applies.
+
+    ``force`` is the Owner's explicit consent to go over a budget for this one purchase (the
+    sheet's ``allow_over_budget``): nothing is refused, and the sum is still held, so every
+    other caller sees the money as taken. The caller records his consent.
     """
     moment = now or datetime.now(UTC)
     with Session(engine) as session, session.begin():
         lock_for_write(session)
         periods = _period_status(session, moment, studio_timezone(session))
-        for period in periods:
+        for period in periods if not force else ():
             committed = period["spent_usd_micros"] + period["reserved_usd_micros"]
             if committed + max(0, usd_micros) > period["limit_usd_micros"]:
                 return {**_refusal(period, usd_micros), "reservation_id": None}
@@ -407,7 +538,7 @@ def _close_reservation(
 ) -> dict[str, Any]:
     row = session.get(SpendReservation, reservation_id)
     if row is None:
-        raise EconomyError("Reservation not found")
+        raise EconomyError("Rezervarea nu există.")
     if row.status != "RESERVED":
         return {"reservation_id": row.id, "status": row.status, "released": False, "changed": False}
     row.status = status

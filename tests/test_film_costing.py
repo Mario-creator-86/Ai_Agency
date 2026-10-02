@@ -741,3 +741,607 @@ def test_a_still_kept_only_for_the_rehearsal_never_starts_a_paid_shot(engine, tm
     assert 1 not in plan["steps"]["motion"]["to_buy"]
     scene = next(s for s in plan["scenes"] if s["scene_index"] == 1)
     assert "repetiț" in scene["reason_ro"]
+
+
+# ------------------------------------- 7. a task the vendor accepted is on the books at once
+#
+# Until 2026-10-01 the id of a task Runway had accepted lived only in a list in memory: a poll
+# that ran out of time was recorded REFUSED and the id thrown away, a process killed while it
+# waited left no row at all, and the next run bought the scene again. Now the take is written
+# SUBMITTED, with the vendor's task id, the moment the vendor accepts it; it is collected with
+# a free GET, and no step buys a scene whose task is still open.
+
+
+class Killed(BaseException):
+    """The process dying under the step: not an Exception, so nothing in the step catches it."""
+
+
+class DyingVideo(SpyVideo):
+    """A SpyVideo whose status poll fails for the calls in ``dies`` (the task was created and
+    charged); ``kill`` raises Killed instead, as a process killed mid-poll would stop."""
+
+    def __init__(self, *args, dies=(), kill=(), **kwargs):
+        super().__init__(*args, **kwargs)
+        self.dies = set(dies)
+        self.kill = set(kill)
+        self.polls: list[str] = []
+
+    async def get_generation_status(self, job_id):
+        self.polls.append(job_id)
+        number = int(job_id.rsplit("-", 1)[1])
+        if number in self.kill:
+            raise Killed()
+        if number in self.dies:
+            raise MediaProviderError("api.dev.runwayml.com did not answer", unanswered=True)
+        return await super().get_generation_status(job_id)
+
+
+@pytest.fixture
+def instant_polls(monkeypatch):
+    from app.media import assembler
+
+    monkeypatch.setattr(assembler, "MOTION_POLL_SECONDS", 0)
+
+
+def test_a_shot_whose_poll_fails_stays_submitted_and_is_never_bought_again(
+    engine, tmp_path, instant_polls
+):
+    storyboard_id = a_film(engine, tmp_path, scenes=3)
+    account = Account(10_000)
+    video = DyingVideo("seedance2_5", account, dies={1})
+    models = Models(video)
+
+    result = approved(engine, storyboard_id, tmp_path, "test_shot", models, account)
+
+    assert models.posts() == 1
+    hero = by_scene(result)[1]
+    assert hero["status"] == "IN_FLIGHT"
+    assert "seedance2_5-task-1" not in (hero.get("reason") or "")  # no vendor id in his words
+    (take,) = takes(engine, storyboard_id, "test_shot")
+    assert take.status == "SUBMITTED"
+    assert take.remote_task_id == "seedance2_5-task-1"
+    assert take.credits_quoted == pytest.approx(340)
+    assert take.path is None and take.sha256 is None
+    # The money went out: it is counted against the cap and named in the result.
+    assert result["spent_credits_quoted"] == 340
+    assert result["stopped"]
+
+    plan = motion_plan(engine, storyboard_id, capabilities=[SEEDANCE])
+    assert next(s for s in plan["scenes"] if s["scene_index"] == 1)["status"] == "IN_FLIGHT"
+    assert plan["steps"]["test_shot"]["to_buy"] == []
+
+    # The next step, the vendor still silent: the task is asked about, never bought again.
+    again = run(engine, storyboard_id, tmp_path, "test_shot", models, account)
+    assert models.posts() == 1
+    assert again["bought_shots"] == 0
+    assert video.polls.count("seedance2_5-task-1") >= 2
+
+
+def test_a_submitted_shot_is_collected_on_the_next_step_with_no_new_post(
+    engine, tmp_path, instant_polls
+):
+    storyboard_id = a_film(engine, tmp_path, scenes=3)
+    account = Account(10_000)
+    video = DyingVideo("seedance2_5", account, dies={1})
+    models = Models(video)
+    approved(engine, storyboard_id, tmp_path, "test_shot", models, account)
+    (take,) = takes(engine, storyboard_id, "test_shot")
+    assert take.status == "SUBMITTED"
+
+    video.dies.clear()  # the vendor answers again
+    result = run(engine, storyboard_id, tmp_path, "test_shot", models, account)
+
+    assert models.posts() == 1, "a shot the vendor had already made was bought again"
+    (collected,) = takes(engine, storyboard_id, "test_shot")
+    assert collected.id == take.id
+    assert collected.status == "PAID"
+    assert collected.remote_task_id == "seedance2_5-task-1"
+    assert collected.path and Path(collected.path).read_bytes() == b"clip seedance2_5 1"
+    assert collected.sha256 == sha(Path(collected.path))
+    assert result["collected"][0]["take_id"] == take.id
+    with Session(engine) as session:
+        # Collected and then checked like any bought shot: its clip-QC report is on the take.
+        reports = session.scalars(
+            select(DomainEvent).where(
+                DomainEvent.event_type == "media.clip_qc_checked",
+                DomainEvent.aggregate_id == take.id,
+            )
+        ).all()
+        collected_events = session.scalars(
+            select(DomainEvent).where(DomainEvent.event_type == "media.scene_take_collected")
+        ).all()
+    assert len(reports) == 1
+    assert [e.aggregate_id for e in collected_events] == [take.id]
+    plan = motion_plan(engine, storyboard_id, capabilities=[SEEDANCE])
+    assert next(s for s in plan["scenes"] if s["scene_index"] == 1)["status"] == "BOUGHT"
+
+
+def test_a_process_killed_while_it_waits_leaves_the_task_on_the_books(
+    engine, tmp_path, instant_polls
+):
+    storyboard_id = a_film(engine, tmp_path, scenes=3)
+    account = Account(10_000)
+    models = Models(DyingVideo("seedance2_5", account, kill={1}))
+    with pytest.raises(MotionStepRefused) as asked:
+        run(engine, storyboard_id, tmp_path, "test_shot", models, account)
+    answer(engine, asked.value.approval_id, "APPROVED")
+
+    with pytest.raises(Killed):
+        run(engine, storyboard_id, tmp_path, "test_shot", models, account)
+
+    (take,) = takes(engine, storyboard_id, "test_shot")
+    assert (take.status, take.remote_task_id) == ("SUBMITTED", "seedance2_5-task-1")
+    # Restarted, with a vendor that answers: collected, not bought.
+    healthy = Models(SpyVideo("seedance2_5", account))
+    run(engine, storyboard_id, tmp_path, "test_shot", healthy, account)
+    assert healthy.posts() == 0 and models.posts() == 1
+    (take,) = takes(engine, storyboard_id, "test_shot")
+    assert take.status == "PAID"
+
+
+def test_an_open_motion_task_stops_the_step_and_only_that_scene_waits(
+    engine, tmp_path, instant_polls
+):
+    storyboard_id = a_film(engine, tmp_path, scenes=4)
+    account = Account(50_000)
+    hero_approved(
+        engine, storyboard_id, tmp_path, Models(SpyVideo("seedance2_5", account)), account
+    )
+    # Scenes 2, 3, 4 are this spy's calls 1, 2, 3: scene 2's poll fails.
+    video = DyingVideo("seedance2_5", account, dies={1})
+    models = Models(video)
+
+    result = approved(engine, storyboard_id, tmp_path, "motion", models, account)
+
+    assert len(video.asked) == 1, "the step went on buying while a paid task was open"
+    scenes = by_scene(result)
+    assert scenes[2]["status"] == "IN_FLIGHT"
+    assert scenes[3]["status"] == "NOT_BOUGHT" and scenes[4]["status"] == "NOT_BOUGHT"
+    assert result["stopped"]
+
+    plan = motion_plan(engine, storyboard_id, capabilities=[SEEDANCE])
+    assert plan["steps"]["motion"]["to_buy"] == [3, 4]
+    result = approved(engine, storyboard_id, tmp_path, "motion", models, account)
+    # Scene 2 is never POSTed again; scenes 3 and 4 are bought once each.
+    assert len(video.asked) == 3
+    assert by_scene(result)[2]["status"] == "IN_FLIGHT"
+
+
+def test_a_task_the_vendor_failed_turns_its_own_row_refused_with_the_task_id(engine, tmp_path):
+    storyboard_id = a_film(engine, tmp_path, scenes=2)
+    account = Account(10_000)
+    models = Models(
+        SpyVideo("seedance2_5", account, fail={1: ("INTERNAL.BAD_OUTPUT.CODE01", "bad output")})
+    )
+
+    approved(engine, storyboard_id, tmp_path, "test_shot", models, account)
+
+    shots = takes(engine, storyboard_id, "test_shot")
+    first = [t for t in shots if t.remote_task_id == "seedance2_5-task-1"]
+    assert len(first) == 1 and first[0].status == "REFUSED"
+    assert first[0].failure_code == "INTERNAL.BAD_OUTPUT.CODE01"
+    assert not [t for t in shots if t.status == "SUBMITTED"]
+
+
+# ----------------------------- 8. a submit charged without an answer is counted, never re-sent
+#
+# MONEY-01 (2026-10-02): ``posted`` was filled only once create_generation returned. A POST
+# that left and whose answer was lost raised MediaProviderError(unanswered=True), counted as
+# free and sorted TECHNICAL, so the same POST was sent again. Measured on fakes before the
+# fix: 3 POSTs, 1,020 credits off the account under an approved cap of 700.
+
+
+class UnansweredVideo(SpyVideo):
+    """A SpyVideo whose POSTs in ``lost`` are charged by the vendor and never answered."""
+
+    def __init__(self, *args, lost=(), **kwargs):
+        super().__init__(*args, **kwargs)
+        self.lost = set(lost)
+
+    async def create_generation(self, prompt, **kwargs):
+        number = len(self.asked) + 1
+        if number in self.lost:
+            self.asked.append({"prompt": prompt, "lost": True, "extra": {}})
+            self.account.charge(price_shot(self.model, "1080p", kwargs.get("duration_seconds")))
+            raise MediaProviderError("api.dev.runwayml.com did not answer", unanswered=True)
+        return await super().create_generation(prompt, **kwargs)
+
+
+def test_a_charged_but_unanswered_submit_is_counted_and_never_sent_again(engine, tmp_path):
+    storyboard_id = a_film(engine, tmp_path, scenes=3)
+    account = Account(50_000)
+    hero_approved(
+        engine, storyboard_id, tmp_path, Models(SpyVideo("seedance2_5", account)), account
+    )
+    start = account.balance
+    video = UnansweredVideo("seedance2_5", account, lost={1})
+    models = Models(video)
+
+    result = approved(engine, storyboard_id, tmp_path, "motion", models, account, cap_credits=700)
+
+    scenes = by_scene(result)
+    assert len(video.asked) == 1, "a POST whose answer was lost was sent again"
+    assert scenes[2]["status"] == "NEEDS_OWNER"
+    assert "poate fi taxat" in scenes[2]["reason"]
+    # It is counted against the cap and named as possibly charged; nothing more is bought
+    # in this step from a vendor whose answers are being lost.
+    assert result["spent_credits_quoted"] == pytest.approx(340)
+    assert scenes[3]["status"] == "NOT_BOUGHT" and result["stopped"]
+    assert start - account.balance <= 700
+    (refused,) = [t for t in takes(engine, storyboard_id, "motion") if t.scene_number == 2]
+    assert refused.status == "REFUSED" and refused.credits_quoted == pytest.approx(340)
+
+
+def test_a_request_that_never_left_is_not_counted_as_charged(engine, tmp_path):
+    """A request that never left this machine cost nothing and may be sent again."""
+    storyboard_id = a_film(engine, tmp_path, scenes=3)
+    account = Account(50_000)
+    hero_approved(
+        engine, storyboard_id, tmp_path, Models(SpyVideo("seedance2_5", account)), account
+    )
+    unsent = MediaProviderError("api.dev.runwayml.com could not be reached", unsent=True)
+    video = SpyVideo("seedance2_5", account, refuse={1: unsent})
+    models = Models(video)
+
+    result = approved(engine, storyboard_id, tmp_path, "motion", models, account)
+
+    # The unsent request is tried once more (it cannot have been charged); both scenes land.
+    assert len(video.asked) == 3
+    assert result["spent_credits_quoted"] == pytest.approx(680)
+    first = [t for t in takes(engine, storyboard_id, "motion") if t.status == "REFUSED"]
+    assert len(first) == 1 and first[0].credits_quoted is None
+
+
+def test_an_account_that_drops_more_than_was_counted_stops_before_the_next_post(engine, tmp_path):
+    storyboard_id = a_film(engine, tmp_path, scenes=4)
+    account = Account(50_000)
+    hero_approved(
+        engine, storyboard_id, tmp_path, Models(SpyVideo("seedance2_5", account)), account
+    )
+    # After the first motion shot (the account's 2nd charge) 500 credits more are gone than
+    # the step counted: a charge it does not know about.
+    account.after_shot = {2: account.balance - 340 - 500}
+    video = SpyVideo("seedance2_5", account)
+    models = Models(video)
+
+    result = approved(engine, storyboard_id, tmp_path, "motion", models, account)
+
+    assert len(video.asked) == 1, "the step bought on after the account lost uncounted credits"
+    assert result["stopped"] and "neexplicat" in result["stopped"]
+    scenes = by_scene(result)
+    assert scenes[3]["status"] == "NOT_BOUGHT" and scenes[4]["status"] == "NOT_BOUGHT"
+
+
+# ---------------------------------- 9. every purchase is booked once, under its own reference
+
+
+def test_two_runs_under_one_plan_book_two_rows_and_a_refused_booking_is_loud(engine):
+    from app.agents.models import AgentMessage
+    from app.economy.models import ProviderCostRecord
+    from app.media.shooting_sheet import book_step_cost
+
+    storyboard_id = "film-" + uuid4().hex[:8]
+    spend = {"spent_credits_quoted": 340.0, "spent_credits_measured": None}
+
+    first = book_step_cost(engine, storyboard_id, "motion", "f" * 64, 0.01, spend, "day-1")
+    second = book_step_cost(engine, storyboard_id, "motion", "f" * 64, 0.01, spend, "day-2")
+
+    assert first and second
+    with Session(engine) as session:
+        rows = list(session.scalars(select(ProviderCostRecord)))
+    assert len(rows) == 2, "a second purchase under the same sheet was not booked"
+    assert {r.external_reference for r in rows} == {
+        f"foaie:{storyboard_id}:motion:{'f' * 16}:day-1",
+        f"foaie:{storyboard_id}:motion:{'f' * 16}:day-2",
+    }
+
+    # The same purchase booked again is refused by the books, and that is never silent.
+    again = book_step_cost(engine, storyboard_id, "motion", "f" * 64, 0.01, spend, "day-2")
+
+    assert again is None
+    with Session(engine) as session:
+        assert len(list(session.scalars(select(ProviderCostRecord)))) == 2
+        warned = session.scalars(
+            select(DomainEvent).where(DomainEvent.event_type == "media.step_cost_not_booked")
+        ).all()
+        sent = [
+            m
+            for m in session.scalars(select(AgentMessage))
+            if isinstance(m.body_json, dict) and m.body_json.get("kind") == "booking_refused"
+        ]
+        text = sent[0].body_text if sent else ""
+    assert len(warned) == 1 and warned[0].payload["severity"] == "WARNING"
+    assert len(sent) == 1 and "3,40 USD" in text and "nu a putut fi trecut" in text, text
+
+
+def test_a_clip_that_cannot_be_written_still_books_what_was_bought(engine, tmp_path, monkeypatch):
+    from app.economy.models import ProviderCostRecord
+    from app.media.assembler import SpentStageError
+    from app.media.shooting_sheet import SheetStepRefused, build_sheet, run_sheet_step
+
+    storyboard_id = a_film(engine, tmp_path, scenes=3)
+    account = Account(50_000)
+    hero_approved(
+        engine, storyboard_id, tmp_path, Models(SpyVideo("seedance2_5", account)), account
+    )
+    start = account.balance
+    models = Models(SpyVideo("seedance2_5", account))
+    context = {
+        "capabilities": [SEEDANCE],
+        "account": account,
+        "adapter_for_model": models,
+        "storage_root": tmp_path / "media",
+        "environment": "TEST",
+    }
+    plan_hash = build_sheet(engine, storyboard_id, capabilities=[SEEDANCE], read_live=False)[
+        "sheet_hash"
+    ]
+    with pytest.raises(SheetStepRefused) as asked:
+        run_sheet_step(engine, storyboard_id, "motion", plan_hash, correlation_id="a", **context)
+    answer(engine, asked.value.approval_id, "APPROVED")
+
+    # The second shot's clip meets a full disk after Runway has charged for it.
+    real_write = Path.write_bytes
+    clips: list[str] = []
+
+    def full_disk(self: Path, data: bytes) -> int:
+        if self.name.startswith("motion_"):
+            clips.append(self.name)
+            if len(clips) == 2:
+                raise OSError(28, "No space left on device")
+        return real_write(self, data)
+
+    monkeypatch.setattr(Path, "write_bytes", full_disk)
+
+    with pytest.raises(SpentStageError):
+        run_sheet_step(engine, storyboard_id, "motion", plan_hash, correlation_id="b", **context)
+
+    assert models.posts() == 2
+    with Session(engine) as session:
+        (cost,) = session.scalars(select(ProviderCostRecord)).all()
+    # Both shots were charged: the first one landed, the second is on the vendor's side.
+    assert cost.attribution_json["credits"] == pytest.approx(start - account.balance)
+    assert cost.attribution_json["credits"] >= 340
+
+
+def test_a_stills_request_charged_without_an_answer_is_counted_and_not_sent_again(engine, tmp_path):
+    """The same rule on the stills step: no task heard, no answer, the request is counted
+    as possibly charged, is never re-sent, and the step stops."""
+    import test_stills_stage as stills_tests
+
+    class UnansweredStills(stills_tests.SpyStills):
+        async def generate_candidates(self, prompt, *, ratio, count=2, references=(), **kwargs):
+            self.asked.append({"prompt": prompt, "ratio": ratio, "count": count})
+            if self.balance is not None:
+                self.balance -= 9.0 * count
+            raise MediaProviderError("api.dev.runwayml.com did not answer", unanswered=True)
+
+    storyboard_id = stills_tests.a_film(engine, tmp_path)
+    images = UnansweredStills(balance=1_000)
+
+    result = stills_tests.approved_run(
+        engine, storyboard_id, tmp_path, images, stills_tests.SpyJudge()
+    )
+
+    assert len(images.asked) == 1, "a stills request whose answer was lost was sent again"
+    assert result["spent_credits_quoted"] == pytest.approx(18)
+    first = next(e for e in result["scenes"] if e["scene_index"] == 1)
+    assert first["status"] == "NEEDS_OWNER" and "poate fi taxat" in first["reason"]
+    assert result["stopped"]
+    (refused,) = stills_tests.takes(engine, storyboard_id)
+    assert refused.status == "REFUSED" and refused.credits_quoted == pytest.approx(18)
+    assert refused.failure_code == "VENDOR.UNANSWERED"
+
+
+# ------------------------------------- 9. a scene that failed is not bought again across runs
+#
+# 2026-10-02 (NO_REBUY_RECOVERY_REFERENCES, MONEY-03): under AUTONOMOUS_CEO with the Owner's
+# MODE rule, a scene whose shots failed went back to PLANNED on the next run and was bought
+# again, unasked ("day1 posts 3 day2 posts 2"). The scene now remembers what happened to it
+# since the Owner last decided about it: it waits for him, and only his decision on the sheet
+# lifts the hold.
+
+
+def autonomous_mode(engine) -> None:
+    """AUTONOMOUS_CEO with the paid-media rule MODE: the step buys without asking."""
+    from app.models import OwnerPolicy
+
+    with Session(engine) as session, session.begin():
+        policy = session.get(OwnerPolicy, 1)
+        policy.autonomy_mode = "AUTONOMOUS_CEO"
+        policy.paid_media_approval = "MODE"
+
+
+def test_under_mode_a_scene_that_failed_is_not_bought_again_on_the_next_run(engine, tmp_path):
+    storyboard_id = a_film(engine, tmp_path, scenes=3)
+    account = Account(50_000)
+    first = Models(SpyVideo("seedance2_5", account))
+    hero_approved(engine, storyboard_id, tmp_path, first, account)
+    autonomous_mode(engine)
+    # Run 1: scene 3's task fails twice (charged both times, as Runway does) -> NEEDS_OWNER.
+    day1 = Models(SpyVideo("seedance2_5", account, fail={2: (None, "x"), 3: (None, "x")}))
+    first = run(engine, storyboard_id, tmp_path, "motion", day1, account)
+    assert day1.posts() == 3
+    assert by_scene(first)[3]["status"] == "NEEDS_OWNER"
+
+    # Run 2: nobody decided anything. Scene 3 waits for the Owner and nothing is bought.
+    day2 = Models(SpyVideo("seedance2_5", account))
+    second = run(engine, storyboard_id, tmp_path, "motion", day2, account)
+
+    assert day2.posts() == 0, "a scene that failed was bought again without the Owner"
+    assert by_scene(second)[3]["status"] == "NEEDS_OWNER"
+    assert by_scene(second)[3]["reason"]
+    plan = motion_plan(engine, storyboard_id, capabilities=[SEEDANCE])
+    scene_three = next(s for s in plan["scenes"] if s["scene_index"] == 3)
+    assert scene_three["status"] == "NEEDS_OWNER"
+    assert "Proprietar" in scene_three["reason_ro"]
+    assert plan["steps"]["motion"]["to_buy"] == []
+
+
+def test_the_owners_choice_on_the_sheet_lifts_the_hold_and_the_scene_is_bought_once(
+    engine, tmp_path
+):
+    from app.media.shooting_sheet import set_scene_model
+
+    storyboard_id = a_film(engine, tmp_path, scenes=3)
+    account = Account(50_000)
+    first = Models(SpyVideo("seedance2_5", account))
+    hero_approved(engine, storyboard_id, tmp_path, first, account)
+    autonomous_mode(engine)
+    day1 = Models(SpyVideo("seedance2_5", account, fail={2: (None, "x"), 3: (None, "x")}))
+    run(engine, storyboard_id, tmp_path, "motion", day1, account)
+
+    # His decision on the sheet: scene 3 on the same model, once more.
+    set_scene_model(engine, storyboard_id, 3, "seedance2_5", issued_by="owner")
+    day2 = Models(SpyVideo("seedance2_5", account))
+    second = run(
+        engine, storyboard_id, tmp_path, "motion", day2, account, overrides={3: "seedance2_5"}
+    )
+
+    assert day2.posts() == 1
+    assert by_scene(second)[3]["status"] == "PAID"
+
+
+def test_a_vendor_refusal_that_cost_nothing_does_not_hold_the_scene(engine, tmp_path):
+    """An account problem refused before anything was charged says nothing about the scene:
+    once the account is topped up the scene is bought; it is not held for the Owner."""
+    storyboard_id = a_film(engine, tmp_path, scenes=2)
+    account = Account(50_000)
+    first = Models(SpyVideo("seedance2_5", account))
+    hero_approved(engine, storyboard_id, tmp_path, first, account)
+    autonomous_mode(engine)
+    broke = MediaProviderError(
+        "api.dev.runwayml.com refused the request (HTTP 402)",
+        http_status=402,
+        detail="Insufficient credits.",
+    )
+    day1 = Models(SpyVideo("seedance2_5", account, refuse={1: broke}))
+    first = run(engine, storyboard_id, tmp_path, "motion", day1, account)
+    assert by_scene(first)[2]["status"] == "NEEDS_OWNER"
+
+    day2 = Models(SpyVideo("seedance2_5", account))
+    second = run(engine, storyboard_id, tmp_path, "motion", day2, account)
+
+    assert day2.posts() == 1
+    assert by_scene(second)[2]["status"] == "PAID"
+
+
+def test_no_scene_is_bought_past_the_paid_attempt_limit_without_the_owner(
+    engine, tmp_path, monkeypatch
+):
+    """A new prompt is a new shot, but not a new allowance: past the limit of paid attempts
+    since the Owner last decided about the scene, it waits for him."""
+    from app.media import assembler
+
+    monkeypatch.setattr(assembler, "max_paid_attempts_per_scene", lambda: 2)
+    storyboard_id = a_film(engine, tmp_path, scenes=3)
+    account = Account(50_000)
+    first = Models(SpyVideo("seedance2_5", account))
+    hero_approved(engine, storyboard_id, tmp_path, first, account)
+    autonomous_mode(engine)
+    day1 = Models(SpyVideo("seedance2_5", account, fail={2: (None, "x"), 3: (None, "x")}))
+    run(engine, storyboard_id, tmp_path, "motion", day1, account)
+    # The shot plan of scene 3 is written again (a new motion prompt: a new shot identity).
+    with Session(engine) as session, session.begin():
+        row = session.scalars(
+            select(StoryboardScene).where(
+                StoryboardScene.storyboard_id == storyboard_id, StoryboardScene.scene_index == 3
+            )
+        ).one()
+        package = dict(row.prompt_json)
+        package["motion_intent"] = {**package["motion_intent"], "world": "Rain falls softly."}
+        row.prompt_json = package
+
+    day2 = Models(SpyVideo("seedance2_5", account))
+    second = run(engine, storyboard_id, tmp_path, "motion", day2, account)
+
+    assert day2.posts() == 0
+    assert by_scene(second)[3]["status"] == "NEEDS_OWNER"
+    assert "2" in by_scene(second)[3]["reason"]
+
+
+def test_the_paid_attempt_limit_is_the_owners_setting(settings, monkeypatch):
+    """STUDIO_MAX_PAID_ATTEMPTS_PER_SCENE, 3 by default; read from one place for every plan,
+    so the sheet on the page and the one the day buys from hash the same."""
+    from app.media import assembler
+
+    assert settings.max_paid_attempts_per_scene == 3
+    stricter = settings.model_copy(update={"max_paid_attempts_per_scene": 5})
+    monkeypatch.setattr(assembler, "_studio_settings", lambda: stricter)
+    assert assembler.max_paid_attempts_per_scene() == 5
+    monkeypatch.setattr(assembler, "_studio_settings", lambda: None)
+    assert assembler.max_paid_attempts_per_scene() == assembler.DEFAULT_MAX_PAID_ATTEMPTS == 3
+
+
+# ------------------------------- 10. a paid shot nobody checked is checked before the day waits
+
+
+def test_a_paid_shot_without_a_clip_report_is_judged_before_the_staircase_waits(
+    engine, settings, tmp_path, monkeypatch
+):
+    """A shot that landed PAID and was never checked (the process died before clip QC) used
+    to keep the film TAKES_NOT_ACCEPTED for ever. The day checks it first (vision tokens only,
+    no media bought) and the film goes on."""
+    from app.media import assembler
+    from app.media import qc as clip_qc
+    from app.models import OwnerPolicy
+    from app.runbook import stages
+
+    storyboard_id = a_film(engine, tmp_path, scenes=2)
+    account = Account(10_000)
+    models = Models(SpyVideo("seedance2_5", account))
+    hero_approved(engine, storyboard_id, tmp_path, models, account)
+
+    def dies(*_args, **_kwargs):
+        raise Killed()
+
+    with monkeypatch.context() as patched:
+        patched.setattr(assembler, "_check_shot", dies)
+        with pytest.raises(Killed):
+            approved(engine, storyboard_id, tmp_path, "motion", models, account)
+    (left,) = takes(engine, storyboard_id, "motion")
+    assert left.status == "PAID" and left.remote_task_id
+    posts = models.posts()
+
+    checked: list[int] = []
+
+    def passing(path, *, scene, **_kwargs):
+        checked.append(scene)
+        return clip_qc.ClipReport(
+            scene=scene,
+            path=str(path),
+            checks=(),
+            passed=True,
+            blocks_ro=(),
+            warnings_ro=(),
+            unmeasured=(),
+        )
+
+    monkeypatch.setattr(clip_qc, "check_clip", passing)
+    with Session(engine) as session, session.begin():
+        session.get(OwnerPolicy, 1).environment = "PRODUCTION"
+    wiring = {
+        "integration_id": None,
+        "capabilities": [SEEDANCE],
+        "image_adapter": None,
+        "account": account,
+        "adapter_for_model": models,
+        "resolution": "1080p",
+        "storage_root": tmp_path / "media",
+    }
+
+    film = stages._film_staircase(
+        engine, settings, None, storyboard_id, wiring, "PRODUCTION", str(uuid4())
+    )
+
+    assert checked == [2]
+    assert models.posts() == posts, "a shot was bought to replace one nobody had checked"
+    assert film["status"] == "READY", film
+    with Session(engine) as session:
+        reports = session.scalars(
+            select(DomainEvent).where(
+                DomainEvent.event_type == "media.clip_qc_checked",
+                DomainEvent.aggregate_id == left.id,
+            )
+        ).all()
+    assert len(reports) == 1

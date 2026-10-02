@@ -1653,8 +1653,10 @@ def test_in_autonomous_ceo_the_stage_asks_for_the_stills_writes_to_the_owner_and
     assert "36 de credite (0,36 USD)" in letter.body_text
     assert "așteaptă" in letter.body_text
     assert len(_owner_letters(engine, "owner_waiting")) == 1
-    # Nothing was held and nothing was booked: nothing was bought.
-    assert _reservations(engine) == [] and _provider_costs(engine) == []
+    # Nothing is held and nothing was booked: nothing was bought. (The step held its cap
+    # while it asked, AR-03, and let it go when it was refused.)
+    assert all(r.status == "RELEASED" for r in _reservations(engine))
+    assert _provider_costs(engine) == []
 
     # The same day again: the same question stands, and the Owner gets no second letter.
     again = stages._media(engine, settings, None, None)
@@ -1785,7 +1787,7 @@ def test_after_the_stills_yes_the_stage_buys_the_stills_only_and_motion_waits_fo
         for letter in _owner_letters(engine, "owner_shooting_sheet")
         if letter.body_json["status"] == "HERO_NOT_APPROVED"
     ]
-    assert len(look) == 1 and "așteaptă decizia ta" in look[0].subject
+    assert len(look) == 1 and "așteaptă privirea ta" in look[0].subject
     assert len(_provider_costs(engine)) == 2
 
 
@@ -1882,3 +1884,1036 @@ def test_the_daily_job_is_never_activated_by_any_test(engine, settings, tmp_path
     source = Path(__file__).read_text(encoding="utf-8")
     for name in ("set_job_" + "active", "scheduler_" + "tick", "ensure_scheduled_" + "job"):
         assert name not in source, name
+
+
+# ------------------------------------- a scene that failed is not bought again the next day
+#
+# 2026-10-02 (NO_REBUY_RECOVERY_REFERENCES, A2): under AUTONOMOUS_CEO with the Owner's MODE
+# rule, a film whose first still never passed bought it again every day (image requests 3, 6,
+# 9), and a hero whose clip failed QC twice bought it again every day (video POSTs 2, 4, 6),
+# with one letter on the first day and silence after. The scene now waits for the Owner.
+
+
+def _paid_media_mode(engine) -> None:
+    """His paid-media rule MODE: under AUTONOMOUS_CEO a paid step is bought without asking,
+    within the daily budget he set (in PRODUCTION nothing is bought unasked without one)."""
+    from app.economy.budget import BudgetCommand, set_budget
+    from app.models import OwnerPolicy
+
+    with Session(engine) as session, session.begin():
+        session.get(OwnerPolicy, 1).paid_media_approval = "MODE"
+    set_budget(engine, BudgetCommand(period="DAILY", limit_usd="100"))
+
+
+def _judge_rejects_every_still(monkeypatch):
+    """The vision model, faked, finding every still wrong for its scene."""
+    import dataclasses
+    import functools
+
+    from app.media import shooting_sheet
+    from test_stills_stage import SpyJudge
+
+    class Rejects(SpyJudge):
+        def __call__(self, engine, registry, path, plan, correlation_id, *, ffmpeg_path=None):
+            seen = super().__call__(
+                engine, registry, path, plan, correlation_id, ffmpeg_path=ffmpeg_path
+            )
+            assert seen.verdict is not None
+            verdict = seen.verdict.model_copy(
+                update={
+                    "matches_plan": False,
+                    "verdict": "regenerate_still",
+                    "reason": "the wrong subject",
+                }
+            )
+            return dataclasses.replace(seen, verdict=verdict)
+
+    judge = Rejects()
+    monkeypatch.setattr(
+        shooting_sheet,
+        "run_stills_stage",
+        functools.partial(shooting_sheet.run_stills_stage, judge=judge),
+    )
+    return judge
+
+
+def _clip_qc_fails_every_shot(monkeypatch) -> None:
+    from app.media import qc as clip_qc
+
+    def failing(path, *, scene, **_kwargs):
+        bad = clip_qc.ClipCheck("picture", "FAILED", True, None, "nu arată ce s-a cerut")
+        return clip_qc.ClipReport(
+            scene=scene,
+            path=str(path),
+            checks=(bad,),
+            passed=False,
+            blocks_ro=("nu arată ce s-a cerut",),
+            warnings_ro=(),
+            unmeasured=(),
+        )
+
+    monkeypatch.setattr(clip_qc, "check_clip", failing)
+
+
+@requires_ffmpeg
+def test_under_mode_a_first_still_that_never_passes_is_bought_once_not_every_day(
+    engine, settings, tmp_path, monkeypatch
+):
+    from app.media.shooting_sheet import build_sheet
+    from app.runbook import stages
+    from test_film_costing import SEEDANCE
+
+    _production(engine)
+    _paid_media_mode(engine)
+    storyboard_id = _bottom_of_the_staircase(engine, tmp_path, scenes=2)
+    world = _staircase_world(engine, tmp_path, monkeypatch, stills=_noise_stills(tmp_path))
+    _judge_rejects_every_still(monkeypatch)
+
+    asked: list[int] = []
+    for _day in range(3):
+        stages._media(engine, settings, None, None)
+        asked.append(len(world["images"].asked))
+
+    # Scene 1: one request and its two re-rolls, then the Owner; scene 2 waits for Figure 1.
+    assert asked == [3, 3, 3], asked
+    assert world["models"].posts() == 0
+    sheet = build_sheet(
+        engine, storyboard_id, capabilities=[SEEDANCE], resolution="1080p", read_live=False
+    )
+    assert sheet["steps"]["stills"]["held"] == [1]
+    assert sheet["steps"]["stills"]["to_buy"] == []
+    scene_one = next(s for s in sheet["scenes"] if s["scene_index"] == 1)
+    assert scene_one["still_hold"]["status"] == "NEEDS_OWNER"
+    assert "Proprietar" in scene_one["still_hold"]["reason_ro"]
+    letters = _owner_letters(engine, "owner_shooting_sheet")
+    assert len(letters) == 1
+    assert letters[0].body_json["status"] == "NEEDS_OWNER"
+    assert letters[0].body_json["step"] == "stills"
+
+
+@requires_ffmpeg
+def test_under_mode_a_hero_that_fails_clip_qc_twice_is_bought_once_not_every_day(
+    engine, settings, tmp_path, monkeypatch
+):
+    from app.runbook import stages
+
+    _production(engine)
+    _paid_media_mode(engine)
+    _bottom_of_the_staircase(engine, tmp_path, scenes=2)
+    world = _staircase_world(engine, tmp_path, monkeypatch, stills=_noise_stills(tmp_path))
+    _judge_sees_good_stills(monkeypatch)
+    _clip_qc_fails_every_shot(monkeypatch)
+
+    posts: list[int] = []
+    outcomes = []
+    for _day in range(3):
+        outcomes.append(stages._media(engine, settings, None, None))
+        posts.append(world["models"].posts())
+
+    # The hero and clip QC's one retry, on the first day only; no other scene became the
+    # test shot in its place.
+    assert posts == [2, 2, 2], posts
+    assert len(world["images"].asked) == 2
+    films = outcomes[-1]["artefacts"]["films"]
+    assert films[0]["status"] == "WAITING" and films[0]["refusal"] == "NEEDS_OWNER"
+    assert films[0]["step"] == "test_shot"
+    letters = _owner_letters(engine, "owner_shooting_sheet")
+    assert len(letters) == 1, [letter.body_json for letter in letters]
+    # Every purchase is in the books once: the stills and the two shots.
+    steps = sorted(cost.attribution_json["step"] for cost in _provider_costs(engine))
+    assert steps == ["stills", "test_shot"]
+
+
+# ------------------------------------- the hero test shot judged by clip QC, not waited on
+#
+# 2026-10-02 (HERO_AUTO_ACCEPT, A1 / TS-02): under AUTONOMOUS_CEO with the Owner's MODE rule
+# the day bought the hero and then ended WAITING HERO_NOT_APPROVED, every day: only his
+# APPROVED unlocked the rest of the motion, even when clip QC had passed it. Now a hero whose
+# clip QC PASSED is accepted when his rule would let the motion step through unasked (MODE, or
+# OVER_USD with the motion cap within his amount), and the motion is bought in the same run.
+
+
+def _clip_qc_passes_every_shot(monkeypatch) -> None:
+    from app.media import qc as clip_qc
+
+    def passing(path, *, scene, **_kwargs):
+        good = clip_qc.ClipCheck("picture", "PASSED", True, None, "arată ce s-a cerut")
+        return clip_qc.ClipReport(
+            scene=scene,
+            path=str(path),
+            checks=(good,),
+            passed=True,
+            blocks_ro=(),
+            warnings_ro=(),
+            unmeasured=(),
+        )
+
+    monkeypatch.setattr(clip_qc, "check_clip", passing)
+
+
+def _assembled_from_takes(monkeypatch) -> list[str]:
+    """The assembly from takes, faked (it is tested on its own): only which film it was."""
+    assembled: list[str] = []
+
+    def from_takes(engine_, board, correlation, **render):
+        assembled.append(board)
+        return {"output_asset_id": f"asset-{board[:8]}", "job_id": str(uuid4())}
+
+    monkeypatch.setattr("app.media.assembler.assemble_from_takes", from_takes)
+    monkeypatch.setattr(
+        "app.media.factory.render_plan",
+        lambda engine_, vault, board: {"tts_for_scene": lambda *a: None, "plan": {}},
+    )
+    monkeypatch.setattr("app.media.factory.tts_provider", lambda engine_, vault: None)
+    return assembled
+
+
+def _hero_acceptances(engine) -> list[Any]:
+    from app.media.assembler import HERO_ACCEPTED_EVENT
+    from app.models import DomainEvent
+    from sqlalchemy import select
+
+    with Session(engine) as session:
+        rows = list(
+            session.scalars(
+                select(DomainEvent).where(DomainEvent.event_type == HERO_ACCEPTED_EVENT)
+            )
+        )
+        session.expunge_all()
+        return rows
+
+
+def _over_usd(engine, amount: float) -> None:
+    from app.models import OwnerPolicy
+
+    with Session(engine) as session, session.begin():
+        policy = session.get(OwnerPolicy, 1)
+        policy.paid_media_approval = "OVER_USD"
+        policy.paid_media_approval_over_usd = amount
+
+
+@requires_ffmpeg
+def test_under_mode_a_hero_that_passes_clip_qc_is_accepted_and_the_motion_bought_the_same_run(
+    engine, settings, tmp_path, monkeypatch
+):
+    from app.runbook import stages
+
+    _production(engine)
+    _paid_media_mode(engine)
+    storyboard_id = _bottom_of_the_staircase(engine, tmp_path, scenes=2)
+    world = _staircase_world(engine, tmp_path, monkeypatch, stills=_noise_stills(tmp_path))
+    _judge_sees_good_stills(monkeypatch)
+    _clip_qc_passes_every_shot(monkeypatch)
+    assembled = _assembled_from_takes(monkeypatch)
+
+    outcome = stages._media(engine, settings, None, None)
+
+    # One run: the stills, the hero, its acceptance by clip QC, the rest of the motion, and
+    # the film assembled from its takes. Nobody was asked.
+    assert len(world["images"].asked) == 2
+    assert world["models"].posts() == 2, outcome
+    (accepted,) = _hero_acceptances(engine)
+    assert accepted.payload["storyboard_id"] == storyboard_id
+    assert accepted.payload["approved_by"] == "clip_qc"
+    assert accepted.payload["clip_qc_verdict"] == "PASSED"
+    assert _approvals(engine) == []
+    assert assembled == [storyboard_id]
+    assert outcome["artefacts"]["films"][0]["status"] == "ASSEMBLED", outcome
+    assert "acceptat de controlul clipului" in outcome["reason"]
+    steps = sorted(cost.attribution_json["step"] for cost in _provider_costs(engine))
+    assert steps == ["motion", "stills", "test_shot"]
+
+
+@requires_ffmpeg
+@pytest.mark.parametrize(("amount", "accepted"), [(10.2, True), (7.0, False)])
+def test_under_over_usd_the_hero_is_accepted_only_when_the_motion_cap_is_within_his_amount(
+    engine, settings, tmp_path, monkeypatch, amount, accepted
+):
+    from app.media.shooting_sheet import build_sheet
+    from app.runbook import stages
+    from test_film_costing import SEEDANCE
+
+    _production(engine)
+    _paid_media_mode(engine)
+    _over_usd(engine, amount)
+    storyboard_id = _bottom_of_the_staircase(engine, tmp_path, scenes=3)
+    world = _staircase_world(engine, tmp_path, monkeypatch, stills=_noise_stills(tmp_path))
+    _judge_sees_good_stills(monkeypatch)
+    _clip_qc_passes_every_shot(monkeypatch)
+    _assembled_from_takes(monkeypatch)
+
+    outcome = stages._media(engine, settings, None, None)
+
+    film = outcome["artefacts"]["films"][0]
+    if accepted:
+        # The motion's cap (two shots of 340 credits plus one redo: 10,20 USD) is within his
+        # amount: the hero is accepted and the motion bought, unasked.
+        assert world["models"].posts() == 3, outcome
+        assert len(_hero_acceptances(engine)) == 1
+        assert film["status"] == "ASSEMBLED"
+    else:
+        # The hero's cap (6,80 USD) is within 7 USD and is bought; the motion's is not, so
+        # the Owner looks at the hero before the motion is even asked about.
+        assert world["models"].posts() == 1, outcome
+        assert _hero_acceptances(engine) == []
+        assert film["status"] == "WAITING" and film["refusal"] == "HERO_NOT_APPROVED"
+        assert "a trecut controlul clipului" in outcome["reason"]
+        assert "pragul" in outcome["reason"]
+        sheet = build_sheet(
+            engine, storyboard_id, capabilities=[SEEDANCE], resolution="1080p", read_live=False
+        )
+        assert sheet["steps"]["motion"]["cap_usd"] == pytest.approx(10.2)
+        assert sheet["steps"]["motion"]["hero"]["status"] == "WAITING"
+    assert _approvals(engine) == []
+
+
+@requires_ffmpeg
+def test_under_every_paid_step_a_hero_that_passed_clip_qc_still_waits_for_the_owners_look(
+    engine, settings, tmp_path, monkeypatch
+):
+    from app.runbook import stages
+
+    _production(engine)
+    _bottom_of_the_staircase(engine, tmp_path, scenes=2)
+    world = _staircase_world(engine, tmp_path, monkeypatch, stills=_noise_stills(tmp_path))
+    _judge_sees_good_stills(monkeypatch)
+    _clip_qc_passes_every_shot(monkeypatch)
+
+    stages._media(engine, settings, None, None)
+    (stills_question,) = _approvals(engine)
+    _answer(engine, stills_question.id, "APPROVED", note="Da, imaginile.")
+    stages._media(engine, settings, None, None)
+    hero_question = next(a for a in _approvals(engine) if a.action == "media.test_shot")
+    _answer(engine, hero_question.id, "APPROVED", note="Da, cadrul de probă.")
+
+    outcome = stages._media(engine, settings, None, None)
+
+    assert world["models"].posts() == 1, outcome
+    film = outcome["artefacts"]["films"][0]
+    assert film["status"] == "WAITING" and film["refusal"] == "HERO_NOT_APPROVED"
+    assert "a trecut controlul clipului" in outcome["reason"]
+    assert _hero_acceptances(engine) == []
+    assert "media.motion_purchase" not in [a.action for a in _approvals(engine)]
+
+
+# ----------------------------------------------------------------- the day never stalls
+#
+# 2026-10-02 (DAY_FLOW_NO_STALL; AR-02, REL-11, A4, A3, A15). The media stage took only the
+# oldest approved factual film: one held by its story, without a shot plan or waiting for the
+# Owner stopped every later film, and its topic counted as in production for ever, so nothing
+# new was chosen. A film without a plan was never asked of the model again. In TEST the day
+# refused the paid vendors with a line nobody read, and every staircase letter said the step
+# was not bought without his answer, whatever it waited for.
+
+
+def _busy_elsewhere(engine, storyboard_id: str) -> None:
+    """Another buyer (the Owner's own press on the sheet) holds the film's purchase lease."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.media.models import FilmPurchaseLease
+
+    now = datetime.now(UTC)
+    with Session(engine) as session, session.begin():
+        session.add(
+            FilmPurchaseLease(
+                storyboard_id=storyboard_id,
+                holder="owner-press",
+                step="stills",
+                acquired_at=now.isoformat(),
+                expires_at=(now + timedelta(days=30)).isoformat(),
+            )
+        )
+
+
+def _on_day(monkeypatch, day: str) -> None:
+    """The studio's business date, as the stages read it."""
+    from app.runbook import stages
+
+    monkeypatch.setattr(stages, "business_date", lambda timezone, when=None: day)
+
+
+def _board_status(engine, storyboard_id: str) -> str:
+    from app.media.models import Storyboard
+
+    with Session(engine) as session:
+        return str(session.get(Storyboard, storyboard_id).status)
+
+
+def _script_of(engine, storyboard_id: str) -> str:
+    from app.media.models import Storyboard
+
+    with Session(engine) as session:
+        return str(session.get(Storyboard, storyboard_id).script_draft_id)
+
+
+def _topic_of(engine, storyboard_id: str) -> str:
+    from app.factual.models import ScriptDraft
+
+    with Session(engine) as session:
+        return str(session.get(ScriptDraft, _script_of(engine, storyboard_id)).topic_id)
+
+
+@pytest.mark.parametrize("why", ["waiting", "story_gate", "no_shot_plan"])
+def test_a_stopped_older_film_does_not_stop_the_newer_one(
+    engine, settings, tmp_path, monkeypatch, why
+):
+    """Two approved films, the older one stopped: the newer one climbs its staircase (here,
+    under EVERY_PAID_STEP, its stills are asked), the older one is named as skipped, and the
+    Owner hears about the older one at most once."""
+    from app.media.models import StoryboardScene
+    from app.runbook import stages
+    from sqlalchemy import select
+
+    _production(engine)
+    older = _bottom_of_the_staircase(engine, tmp_path)
+    newer = _bottom_of_the_staircase(engine, tmp_path)
+    _staircase_world(engine, tmp_path, monkeypatch)
+    if why == "waiting":
+        _busy_elsewhere(engine, older)
+    elif why == "story_gate":
+        held_script = _script_of(engine, older)
+        monkeypatch.setattr(
+            stages,
+            "story_gate",
+            lambda session, script_id: (
+                (False, "Recenzia de poveste s-a încheiat cu REVISE.")
+                if script_id == held_script
+                else (True, "")
+            ),
+        )
+    else:
+        with Session(engine) as session, session.begin():
+            row = session.scalars(
+                select(StoryboardScene).where(
+                    StoryboardScene.storyboard_id == older, StoryboardScene.scene_index == 2
+                )
+            ).one()
+            row.prompt_json = {**dict(row.prompt_json), "source": "template"}
+
+    outcome = stages._media(engine, settings, None, None)
+
+    asked = [(request.action, request.subject) for request in _approvals(engine)]
+    assert asked == [("media.stills_purchase", newer)], outcome
+    films = outcome["artefacts"]["films"]
+    assert [film["storyboard_id"] for film in films if film["status"] == "ASKED"] == [newer]
+    skipped = outcome["artefacts"]["skipped"]
+    assert [item["storyboard_id"] for item in skipped] == [older], skipped
+    assert skipped[0]["reason"]
+    about_older = [
+        letter
+        for letter in _owner_letters(engine, "owner_shooting_sheet")
+        if letter.body_json["storyboard_id"] == older
+    ]
+    assert len(about_older) == (1 if why == "waiting" else 0)
+    assert ".." not in outcome["reason"], outcome["reason"]
+
+    # The same day again: nothing new is asked and nothing new is written about the older.
+    stages._media(engine, settings, None, None)
+    assert [(r.action, r.subject) for r in _approvals(engine)] == asked
+    assert len(
+        [
+            letter
+            for letter in _owner_letters(engine, "owner_shooting_sheet")
+            if letter.body_json["storyboard_id"] == older
+        ]
+    ) == len(about_older)
+
+
+def test_a_film_without_its_shot_plan_is_asked_of_the_model_again_once_a_day_for_two_days(
+    engine, settings, tmp_path, monkeypatch
+):
+    """NEEDS_SHOT_PLAN, and a film the lint held: the shot plan is asked of the model again
+    (text only, no media credit) once a business day, on at most two days."""
+    from app.media.models import Storyboard, StoryboardScene
+    from app.media.prompt_agent import ShotPlanUnusable
+    from app.models import DomainEvent
+    from app.runbook import stages
+    from sqlalchemy import select
+
+    _production(engine)
+    waiting = _bottom_of_the_staircase(engine, tmp_path)
+    linted = _bottom_of_the_staircase(engine, tmp_path)
+    with Session(engine) as session, session.begin():
+        session.get(Storyboard, waiting).status = "NEEDS_SHOT_PLAN"
+        row = session.scalars(
+            select(StoryboardScene).where(
+                StoryboardScene.storyboard_id == linted, StoryboardScene.scene_index == 1
+            )
+        ).one()
+        words = "Environment: NEPAL_CLIMATE_CRISIS. " + row.prompt_json["still_prompt"]
+        row.visual_prompt = words
+        row.prompt_json = {**dict(row.prompt_json), "still_prompt": words}
+    world = _staircase_world(engine, tmp_path, monkeypatch)
+
+    asked: list[str] = []
+
+    def the_model_still_cannot(engine_, registry, storyboard_id, correlation_id=None):
+        asked.append(storyboard_id)
+        raise ShotPlanUnusable(storyboard_id, [2], "Planul de cadre nu a putut fi citit.")
+
+    monkeypatch.setattr(stages, "write_shot_prompts", the_model_still_cannot)
+    registry = SimpleNamespace(registered_ids=lambda: ["fake-model"])
+
+    for day in ("2026-10-02", "2026-10-02", "2026-10-03", "2026-10-04"):
+        _on_day(monkeypatch, day)
+        # The media stage finds the lint BLOCK (a film's own fault, recorded for the day)...
+        stages._media(engine, settings, None, None)
+        # ...and the script stage asks the model for both plans again, once that day.
+        stages._script_and_storyboard(engine, registry, "en", 30, settings=settings)
+
+    assert sorted(asked) == sorted([waiting, waiting, linted, linted]), asked
+    with Session(engine) as session:
+        events = list(
+            session.scalars(
+                select(DomainEvent).where(DomainEvent.event_type == stages.SHOT_PLAN_REASKED_EVENT)
+            )
+        )
+    assert sorted(event.payload["business_date"] for event in events) == [
+        "2026-10-02",
+        "2026-10-02",
+        "2026-10-03",
+        "2026-10-03",
+    ]
+    assert world["images"].asked == [] and world["models"].posts() == 0
+    assert _approvals(engine) == [] and _provider_costs(engine) == []
+
+
+def test_a_film_with_a_bought_take_is_not_described_again(engine, settings, tmp_path, monkeypatch):
+    """Describing the shots again rewrites the stills' prompts, and a still bought for the old
+    words would be bought again: a film that holds a bought take is never re-asked."""
+    from app.media.models import Storyboard
+    from app.runbook import stages
+
+    _production(engine)
+    film = _bottom_of_the_staircase(engine, tmp_path)
+    with Session(engine) as session, session.begin():
+        session.get(Storyboard, film).status = "NEEDS_SHOT_PLAN"
+    _a_bought_still(engine, film)
+    asked: list[str] = []
+    monkeypatch.setattr(
+        stages,
+        "write_shot_prompts",
+        lambda engine_, registry, storyboard_id, correlation_id=None: asked.append(storyboard_id),
+    )
+
+    stages._script_and_storyboard(
+        engine, SimpleNamespace(registered_ids=lambda: ["fake-model"]), "en", 30, settings=settings
+    )
+
+    assert asked == []
+
+
+def _a_bought_still(engine, storyboard_id: str) -> None:
+    """One still bought for the film before it stopped (18 credits, its candidates paid)."""
+    from app.media.models import SceneTake
+
+    with Session(engine) as session, session.begin():
+        session.add(
+            SceneTake(
+                id=str(uuid4()),
+                storyboard_id=storyboard_id,
+                scene_number=1,
+                kind="still",
+                prompt_hash="b" * 64,
+                model_id="seedream5_pro",
+                resolution="1530:2720",
+                credits_quoted=18,
+                status="PAID",
+                created_at="2026-09-30T10:00:00+00:00",
+                updated_at="2026-09-30T10:00:00+00:00",
+            )
+        )
+
+
+def test_a_film_standing_still_past_its_wait_is_retired_and_the_next_topic_is_chosen(
+    engine, settings, tmp_path, monkeypatch
+):
+    from app.runbook import stages
+
+    _production(engine)
+    stuck = _bottom_of_the_staircase(engine, tmp_path)
+    _staircase_world(engine, tmp_path, monkeypatch)
+    _busy_elsewhere(engine, stuck)
+    _a_bought_still(engine, stuck)
+    candidate = _topic(engine)
+    _claim(engine, candidate, status="SUPPORTED")
+    assert settings.film_wait_days == 3
+
+    for day in ("2026-10-02", "2026-10-03", "2026-10-04"):
+        _on_day(monkeypatch, day)
+        stages._media(engine, settings, None, None)
+        assert _board_status(engine, stuck) == "APPROVED", day
+    assert _owner_letters(engine, "owner_film_retired") == []
+    with Session(engine) as session:
+        live, _stalled = stages.topics_in_production(session)
+    assert _topic_of(engine, stuck) in live
+
+    _on_day(monkeypatch, "2026-10-05")
+    outcome = stages._media(engine, settings, None, None)
+
+    assert _board_status(engine, stuck) == "REJECTED"
+    assert outcome["artefacts"]["retired"] == [stuck]
+    (letter,) = _owner_letters(engine, "owner_film_retired")
+    assert letter.body_json["storyboard_id"] == stuck
+    text = letter.body_text
+    assert "retras" in text and "3 zile" in text
+    assert "1 imagine" in text, text
+    assert "Filmul este deja în lucru" in text  # why it stood still
+    with Session(engine) as session:
+        live, stalled = stages.topics_in_production(session)
+    assert _topic_of(engine, stuck) in stalled and live == []
+    chosen = stages._selection(engine)
+    assert chosen["artefacts"]["topic_id"] == candidate, chosen
+
+    # Retired once: another day writes nothing new.
+    _on_day(monkeypatch, "2026-10-06")
+    stages._media(engine, settings, None, None)
+    assert len(_owner_letters(engine, "owner_film_retired")) == 1
+
+
+def test_a_film_waiting_only_for_the_owners_yes_is_reminded_and_never_retired(
+    engine, settings, tmp_path, monkeypatch
+):
+    from app.runbook import stages
+
+    _production(engine)
+    film = _bottom_of_the_staircase(engine, tmp_path)
+    _staircase_world(engine, tmp_path, monkeypatch)
+
+    for day in ("2026-10-02", "2026-10-03", "2026-10-04", "2026-10-05", "2026-10-06"):
+        _on_day(monkeypatch, day)
+        stages._media(engine, settings, None, None)
+
+    assert _board_status(engine, film) == "APPROVED"
+    (question,) = _approvals(engine)
+    assert question.result == "PENDING" and question.subject == film
+    assert _owner_letters(engine, "owner_film_retired") == []
+    assert len(_owner_letters(engine, "owner_waiting")) >= 1
+
+
+def test_a_waiting_film_with_a_pending_question_is_never_retired(
+    engine, settings, tmp_path, monkeypatch
+):
+    """His question stands about the film (asked on an earlier day), and the film now waits
+    on something else: it is still his to answer, and the Director does not retire it."""
+    from app.runbook import stages
+
+    _production(engine)
+    film = _bottom_of_the_staircase(engine, tmp_path)
+    _staircase_world(engine, tmp_path, monkeypatch)
+    _on_day(monkeypatch, "2026-10-01")
+    stages._media(engine, settings, None, None)
+    (question,) = _approvals(engine)
+    _busy_elsewhere(engine, film)
+
+    for day in ("2026-10-02", "2026-10-03", "2026-10-04", "2026-10-05", "2026-10-06"):
+        _on_day(monkeypatch, day)
+        stages._media(engine, settings, None, None)
+
+    assert _board_status(engine, film) == "APPROVED"
+    assert _owner_letters(engine, "owner_film_retired") == []
+
+
+def test_in_test_the_day_writes_one_letter_naming_the_environment_the_rule_and_the_place(
+    engine, settings, monkeypatch
+):
+    from app.factual.models import ScriptDraft  # noqa: F401 - the board's script exists
+    from app.media.factory import PaidVendorRefused
+    from app.models import OwnerPolicy
+    from app.providers.elevenlabs import ElevenLabsTTSAdapter
+    from app.runbook import stages
+
+    _autonomy_on(engine)
+    board = _approved_board(engine, "A factual short")
+    rendered: list[str] = []
+    _media_stage_with_a_fake_camera(monkeypatch, rendered)
+    voice = ElevenLabsTTSAdapter(
+        "test-key", "voice-id", "eleven_multilingual_v2"
+    )  # pragma: allowlist secret
+    monkeypatch.setattr(
+        "app.media.factory.render_plan",
+        lambda engine_, vault, board_: {
+            "image": None,
+            "tts_for_scene": lambda *a: voice,
+            "video_for_scene": lambda *a: None,
+            "plan": {},
+        },
+    )
+
+    first = stages._media(engine, settings, None, None)
+    stages._media(engine, settings, None, None)
+
+    assert rendered == []
+    assert "TEST" in first["reason"]
+    (letter,) = _owner_letters(engine, "owner_test_environment")
+    assert letter.body_json["storyboard_id"] == board
+    assert letter.body_json["paid_vendors"] == ["ELEVENLABS"]
+    text = letter.body_text
+    assert "«A factual short»" in text
+    assert "TEST" in text and "PRODUCTION" in text
+    assert "nu cumpără" in text
+    # His rule as it is now, and what the day would do under it in PRODUCTION.
+    assert "fiecare pas plătit" in text
+    assert "imaginile" in text and "cadrul de probă" in text and "restul mișcării" in text
+    assert "MEDIU" in text and "Când te întreabă un pas plătit" in text
+    assert ".." not in text
+    with Session(engine) as session:
+        assert session.get(OwnerPolicy, 1).environment == "TEST"
+    said = PaidVendorRefused(["ELEVENLABS"]).message_ro
+    assert said.startswith("Folosește foaia de filmare")
+    assert "TEST" in said and "PRODUCTION" in said
+
+
+def test_in_test_the_letter_follows_the_owners_rule(engine, settings, monkeypatch):
+    """Under MODE in AUTONOMOUS_CEO, the letter says the day would buy on its own, within the
+    daily budget; it never says the rule is anything other than his."""
+    from app.models import OwnerPolicy
+    from app.providers.elevenlabs import ElevenLabsTTSAdapter
+    from app.runbook import stages
+
+    _autonomy_on(engine)
+    with Session(engine) as session, session.begin():
+        policy = session.get(OwnerPolicy, 1)
+        policy.paid_media_approval = "MODE"
+        policy.autonomy_mode = "AUTONOMOUS_CEO"
+    _approved_board(engine, "A factual short")
+    _media_stage_with_a_fake_camera(monkeypatch, [])
+    voice = ElevenLabsTTSAdapter(
+        "test-key", "voice-id", "eleven_multilingual_v2"
+    )  # pragma: allowlist secret
+    monkeypatch.setattr(
+        "app.media.factory.render_plan",
+        lambda engine_, vault, board_: {
+            "image": None,
+            "tts_for_scene": lambda *a: voice,
+            "video_for_scene": lambda *a: None,
+            "plan": {},
+        },
+    )
+
+    stages._media(engine, settings, None, None)
+
+    (letter,) = _owner_letters(engine, "owner_test_environment")
+    assert "urmează modul studioului" in letter.body_text
+    assert "fără să te întrebe" in letter.body_text
+    assert "buget zilnic" in letter.body_text
+    with Session(engine) as session:
+        policy = session.get(OwnerPolicy, 1)
+        assert (policy.environment, policy.paid_media_approval) == ("TEST", "MODE")
+
+
+@pytest.mark.parametrize(
+    ("status", "refusal", "headline"),
+    [
+        ("ASKED", "NEEDS_APPROVAL", "așteaptă răspunsul tău"),
+        ("WAITING", "HERO_NOT_APPROVED", "așteaptă privirea ta"),
+        ("WAITING", "LOW_BALANCE", "alimentarea contului"),
+        ("WAITING", "OVER_DAILY_BUDGET", "bugetul"),
+    ],
+)
+def test_the_sheet_letter_says_what_the_film_waits_for_and_names_the_rule(
+    engine, tmp_path, status, refusal, headline
+):
+    from app.runbook import stages
+
+    _production(engine)
+    board = _bottom_of_the_staircase(engine, tmp_path)
+    film = {
+        "status": status,
+        "step": "test_shot",
+        "refusal": refusal,
+        "reason": "Motivul pasului, așa cum l-a spus pasul.",
+        "sheet": {"title": "Un film", "sheet_hash": "a" * 64, "steps": {}},
+        "approval_id": None,
+    }
+
+    stages._sheet_letter(engine, board, film, None, str(uuid4()))
+
+    (letter,) = _owner_letters(engine, "owner_shooting_sheet")
+    assert headline in letter.subject, letter.subject
+    text = letter.body_text
+    assert headline in text
+    assert "Regula ta pentru pașii plătiți:" in text
+    assert "mediul: PRODUCTION" in text
+    assert "MEDIU" in text
+    assert ".." not in text, text
+    asks_a_purchase = "Pasul acesta nu se cumpără fără răspunsul tău" in text
+    assert asks_a_purchase == (status == "ASKED")
+
+
+# --------------------------------------------- a film that fails QC is repaired, not dropped
+#
+# 2026-10-02 (CONTINUE_REDOS_E2E, A8). `_edit_and_qc` only asked the Video Editor's model for a
+# diagnosis: the priced proposals (a free sound remaster, a card recomposed, a re-encode from
+# the clips already paid for; a scene's new picture or motion) were never applied, redo_scene
+# ran only from the Owner's click, and when the diagnosis model failed he got no letter at all.
+# Now a FAILED film assembled from its takes gets its free fixes at once and QC once more; a
+# paid scene redo is bought only through may_act('media.scene_redo') under his rule, within
+# `film_max_paid_redos_per_scene` (1) and `film_max_paid_redos` (2); and a deterministic
+# Romanian letter always tells him what failed, what was done and what waits for him.
+
+
+def _assembled_staircase_film(engine, settings, tmp_path, monkeypatch):
+    """A 2-scene film climbed under MODE and assembled for real from faked vendors: real
+    stills, real clips of the asked seconds, the deterministic voice. Returns (storyboard,
+    asset, world)."""
+    from app.media.models import VideoRenderJob
+    from app.runbook import stages
+    from sqlalchemy import select
+    from test_autonomous_day_end_to_end import TestImages, TestVoice, _test_clip
+    from test_film_costing import SEEDANCE, Account, Models, SpyVideo
+    from test_stills_stage import SpyStills
+
+    _production(engine)
+    _paid_media_mode(engine)
+    storyboard_id = _bottom_of_the_staircase(engine, tmp_path, scenes=2)
+    stills = _noise_stills(tmp_path)
+
+    class TimedVideo(SpyVideo):
+        async def get_generation_status(self, job_id):
+            result = await super().get_generation_status(job_id)
+            if result.status == "COMPLETED":
+                number = int(job_id.rsplit("-", 1)[1])
+                seconds = round(float(self.asked[number - 1]["seconds"]), 3)
+                result.video_bytes = _test_clip(seconds)
+            return result
+
+    account = Account(10_000)
+    images = SpyStills(pictures=lambda prompt, call: list(stills), balance=10_000)
+    models = Models(TimedVideo("seedance2_5", account))
+    wiring = {
+        "integration_id": None,
+        "capabilities": [SEEDANCE],
+        "image_adapter": images,
+        "account": account,
+        "adapter_for_model": models,
+        "resolution": "1080p",
+        "storage_root": tmp_path / "media",
+    }
+    monkeypatch.setattr(stages, "story_gate", lambda session, script_id: (True, ""))
+    monkeypatch.setattr(stages, "sheet_wiring", lambda engine_, vault, settings_: wiring)
+    monkeypatch.setattr("app.media.factory.tts_provider", lambda *a, **k: TestVoice())
+    monkeypatch.setattr(
+        "app.media.factory.render_plan",
+        lambda engine_, vault, board: {
+            "image": TestImages(),
+            "tts_for_scene": lambda *a: TestVoice(),
+            "video_for_scene": lambda *a: None,
+            "plan": {},
+        },
+    )
+    _judge_sees_good_stills(monkeypatch)
+    _clip_qc_passes_every_shot(monkeypatch)
+    settings.film_budget_usd = 60.0
+    settings.ffmpeg_path = settings.ffmpeg_path or str(find_ffmpeg())
+
+    made = stages._media(engine, settings, None, None)
+    assert made["artefacts"]["films"][0]["status"] == "ASSEMBLED", made
+    with Session(engine) as session:
+        job = session.scalars(
+            select(VideoRenderJob).where(
+                VideoRenderJob.storyboard_id == storyboard_id,
+                VideoRenderJob.status == "COMPLETED",
+            )
+        ).one()
+        asset_id = job.output_asset_id
+    return storyboard_id, asset_id, {"images": images, "models": models, "account": account}
+
+
+#: What the scripted quality control says: the sound peaks too hot and scene 2's clip stutters.
+FAILED_CHECKS = {
+    "audio_qc": {"passed": False, "true_peak_dbtp": 0.4, "true_peak_ceiling_dbtp": -2.0},
+    "motion_qc": {
+        "passed": False,
+        "warning": "a clip stutters",
+        "clips": [{"scene": 2, "passed": False, "reason": "the clip stutters"}],
+    },
+}
+
+
+def _scripted_qc(monkeypatch, verdicts: list[str]) -> list[str]:
+    """Quality control, scripted: each call records a report with the next verdict (a FAILED
+    one carries FAILED_CHECKS); returns the asset ids it was asked about, in order."""
+    from app.media.models import QualityControlReport
+    from app.runbook import stages
+    from app.services import utc_now
+
+    looked: list[str] = []
+
+    def evaluate(engine_, asset_id, correlation_id, **_kwargs):
+        status = verdicts[min(len(looked), len(verdicts) - 1)]
+        looked.append(asset_id)
+        report_id = str(uuid4())
+        with Session(engine_) as session, session.begin():
+            session.add(
+                QualityControlReport(
+                    id=report_id,
+                    media_asset_id=asset_id,
+                    status=status,
+                    score=0.95 if status == "PASSED" else 0.4,
+                    checks_json={} if status == "PASSED" else dict(FAILED_CHECKS),
+                    failure_reasons_json=[] if status == "PASSED" else ["sunetul", "scena 2"],
+                    verified_at=utc_now(),
+                )
+            )
+        return {"id": report_id, "status": status}
+
+    monkeypatch.setattr(stages, "evaluate_media_qc", evaluate)
+    monkeypatch.setattr("app.media.assembler.release_after_qc", lambda *a, **k: {})
+    return looked
+
+
+def _events(engine, event_type: str) -> list[Any]:
+    from app.models import DomainEvent
+    from sqlalchemy import select
+
+    with Session(engine) as session:
+        rows = list(
+            session.scalars(select(DomainEvent).where(DomainEvent.event_type == event_type))
+        )
+        session.expunge_all()
+        return rows
+
+
+@requires_ffmpeg
+def test_a_failed_staircase_film_gets_its_free_fixes_and_one_paid_redo_and_qc_once_more(
+    engine, settings, tmp_path, monkeypatch
+):
+    from app.runbook import stages
+
+    storyboard_id, asset_id, world = _assembled_staircase_film(
+        engine, settings, tmp_path, monkeypatch
+    )
+    posts_before = world["models"].posts()
+    looked = _scripted_qc(monkeypatch, ["FAILED", "PASSED"])
+
+    outcome = stages._edit_and_qc(engine, None, settings, vault=None)
+
+    # The first film failed; the sound was remastered for 0 credits, scene 2's motion was
+    # bought once under his MODE rule, and the film that came of both was measured once more.
+    assert looked[0] == asset_id
+    assert len(looked) == 2, looked
+    assert looked[1] != asset_id
+    assert world["models"].posts() == posts_before + 1
+    assert outcome["artefacts"]["passed_assets"] == [looked[1]]
+    (repair,) = _events(engine, "runbook.qc_repair")
+    assert repair.payload["of_asset"] == asset_id
+    assert repair.payload["new_asset"] == looked[1]
+    assert [item["redo"] for item in repair.payload["applied"]] == ["audio"]
+    bought = [(item["redo"], item["scene_index"]) for item in repair.payload["bought"]]
+    assert bought == [("motion", 2)]
+    assert repair.payload["requalified"] == "PASSED"
+    # The redo is in the books under its own reference.
+    redo_costs = [
+        cost
+        for cost in _provider_costs(engine)
+        if (cost.attribution_json or {}).get("step") == "motion_redo"
+    ]
+    assert len(redo_costs) == 1
+    # And the Owner has one letter, in Romanian, with the deterministic report in it.
+    (letter,) = _owner_letters(engine, "owner_qc_failed")
+    assert letter.body_json["storyboard_id"] == storyboard_id
+    assert "Controlul calității: PICAT" in letter.body_text
+    assert "refăcut" in letter.body_text and "a trecut" in letter.body_text
+    assert _approvals(engine) == []
+
+    # The repaired film is not repaired again, and a second QC pass buys nothing.
+    again = stages._edit_and_qc(engine, None, settings, vault=None)
+    assert again["artefacts"].get("repairs", []) == []
+    assert world["models"].posts() == posts_before + 1
+
+
+@requires_ffmpeg
+def test_a_paid_redo_is_asked_under_every_paid_step_and_never_bought_unasked(
+    engine, settings, tmp_path, monkeypatch
+):
+    from app.models import OwnerPolicy
+    from app.runbook import stages
+
+    storyboard_id, _asset_id, world = _assembled_staircase_film(
+        engine, settings, tmp_path, monkeypatch
+    )
+    with Session(engine) as session, session.begin():
+        session.get(OwnerPolicy, 1).paid_media_approval = "EVERY_PAID_STEP"
+    posts_before = world["models"].posts()
+    looked = _scripted_qc(monkeypatch, ["FAILED", "FAILED", "PASSED"])
+
+    stages._edit_and_qc(engine, None, settings, vault=None)
+
+    assert world["models"].posts() == posts_before
+    (question,) = _approvals(engine)
+    assert question.action == "media.scene_redo" and question.result == "PENDING"
+    assert question.subject == storyboard_id
+    # The free sound fix was still applied and measured once more.
+    assert len(looked) == 2
+    (letter,) = _owner_letters(engine, "owner_qc_failed")
+    assert "așteaptă răspunsul tău" in letter.body_text
+
+    # His yes queues the film to continue; the continuation spends it on that redo at once,
+    # rejoins the film and measures it once more, and he is told the outcome.
+    from app.workflows.models import TaskQueueItem
+    from sqlalchemy import select
+
+    _answer(engine, question.id, "APPROVED", note="Da, reface scena 2.")
+    with Session(engine) as session:
+        (task,) = session.scalars(
+            select(TaskQueueItem).where(TaskQueueItem.task_type == "FILM_CONTINUE")
+        ).all()
+        assert task.payload["storyboard_id"] == storyboard_id
+
+    outcome = stages.continue_film(
+        engine, settings, None, None, storyboard_id, cause="x", correlation_id="c"
+    )
+
+    assert world["models"].posts() == posts_before + 1, outcome
+    assert len(looked) == 3 and looked[2] not in looked[:2]
+    assert outcome["passed_assets"] == [looked[2]]
+    letters = _owner_letters(engine, "owner_qc_failed")
+    assert len(letters) == 2 and "a trecut" in letters[-1].body_text
+    with Session(engine) as session:
+        from app.models import ApprovalRequest
+
+        assert session.get(ApprovalRequest, question.id).consumed_at is not None
+
+
+@requires_ffmpeg
+def test_the_paid_redo_limits_hold_and_the_letter_says_so(engine, settings, tmp_path, monkeypatch):
+    from app.runbook import stages
+
+    _storyboard_id, _asset_id, world = _assembled_staircase_film(
+        engine, settings, tmp_path, monkeypatch
+    )
+    settings.film_max_paid_redos = 0
+    posts_before = world["models"].posts()
+    _scripted_qc(monkeypatch, ["FAILED", "FAILED"])
+
+    stages._edit_and_qc(engine, None, settings, vault=None)
+
+    assert world["models"].posts() == posts_before
+    assert _approvals(engine) == []
+    (letter,) = _owner_letters(engine, "owner_qc_failed")
+    assert "limita" in letter.body_text
+
+
+@requires_ffmpeg
+def test_the_letter_is_written_even_when_the_diagnosis_model_fails(
+    engine, settings, tmp_path, monkeypatch
+):
+    from app.agents.reviews import ReviewError
+    from app.runbook import stages
+
+    _assembled_staircase_film(engine, settings, tmp_path, monkeypatch)
+    settings.film_max_paid_redos = 0
+    _scripted_qc(monkeypatch, ["FAILED", "FAILED"])
+
+    def broken(*_args, **_kwargs):
+        raise ReviewError("Diagnosticul randării nu respectă forma cerută")
+
+    monkeypatch.setattr(stages, "review_failed_render", broken)
+    monkeypatch.setattr(stages, "_has_language_model", lambda registry: True)
+
+    outcome = stages._edit_and_qc(engine, object(), settings, vault=None)
+
+    assert outcome["artefacts"]["diagnoses"][0]["error_class"] == "ReviewError"
+    (letter,) = _owner_letters(engine, "owner_qc_failed")
+    assert "Controlul calității: PICAT" in letter.body_text

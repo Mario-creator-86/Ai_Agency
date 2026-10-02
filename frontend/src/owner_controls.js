@@ -1,4 +1,6 @@
 import { channelTypeWord, providerName } from './dialog_words.js';
+import { escapeHtml } from './html.js';
+import { countWords } from './plurals.js';
 
 /**
  * W34 — THE OWNER'S OWN DECISIONS, ON THE PAGE.
@@ -343,6 +345,8 @@ export const PAID_MEDIA_APPROVALS = /** @type {const} */ (['EVERY_PAID_STEP', 'O
  * shooting sheet carries it (`owner_rule`: paid_media_approval, over_usd). Read the way the backend
  * reads it (services.paid_media_policy): a missing or unknown value, or OVER_USD without a finite
  * threshold of 0 or more, is the strictest rule, never MODE. Only he changes it; the page only says it.
+ * Since 2026-10-02 OVER_USD compares his amount with a step's cap (the most his yes lets it spend,
+ * MONEY-08 / A10), and the narration is not one of these steps yet (A13, his decision pending).
  * @param {any} rule
  */
 export function paidMediaRuleWords(rule) {
@@ -350,10 +354,10 @@ export function paidMediaRuleWords(rule) {
   const over = rule?.over_usd;
   if (value === 'OVER_USD' && over !== null && over !== undefined && Number.isFinite(Number(over)) && Number(over) >= 0) {
     const usd = Number(over).toLocaleString('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    return `Regula ta: un pas plătit de peste ${usd} USD îți cere aprobarea; unul mai mic urmează modul studioului.`;
+    return `Regula ta: un pas plătit cu plafonul de peste ${usd} USD îți cere aprobarea; unul cu plafonul mai mic urmează modul studioului.`;
   }
   if (value === 'MODE') return 'Regula ta: pașii plătiți urmează modul studioului.';
-  return 'Regula ta: fiecare pas plătit al unui film îți cere aprobarea, în orice mod al studioului.';
+  return 'Regula ta: fiecare pas plătit al unui film îți cere aprobarea, în orice mod al studioului; narațiunea urmează deocamdată modul studioului.';
 }
 
 /*
@@ -368,24 +372,27 @@ export function paidMediaRuleWords(rule) {
 export const PAID_MEDIA_PATH = '/owner/paid-media-approval';
 
 /**
- * His three choices, each with the one line that says what he will be asked and when.
+ * His three choices, each with the one line that says what he will be asked and when. Since
+ * 2026-10-02 (HERO_AUTO_ACCEPT) the hero test shot follows the rule too: under MODE, or OVER_USD
+ * with the motion's cap within his amount, a hero whose clip QC passed is accepted without him
+ * (backend assembler.hero_gate); under EVERY_PAID_STEP he still looks at it himself.
  * @type {readonly {value: typeof PAID_MEDIA_APPROVALS[number], label: string, meaning: string}[]}
  */
 export const PAID_MEDIA_CHOICES = [
   {
     value: 'EVERY_PAID_STEP',
     label: 'La fiecare pas plătit',
-    meaning: 'Te întreb pe foaia de filmare înainte de fiecare pas plătit al unui film (imaginile, cadrul de probă, mișcarea, o refacere), în orice mod al studioului.',
+    meaning: 'Te întreb pe foaia de filmare înainte de fiecare pas plătit al unui film (imaginile, cadrul de probă, mișcarea, o refacere), în orice mod al studioului, iar cadrul de probă îl privești tu, chiar dacă a trecut controlul clipului. Narațiunea nu e încă unul dintre acești pași: urmează modul studioului.',
   },
   {
     value: 'OVER_USD',
     label: 'Doar peste o sumă',
-    meaning: 'Te întreb doar când un pas costă peste suma scrisă aici sau când costul lui nu se știe; un pas mai mic urmează modul studioului.',
+    meaning: 'Te întreb doar când plafonul unui pas depășește suma scrisă aici sau când costul lui nu se știe; un pas cu plafonul mai mic urmează modul studioului, iar în producție cere un buget zilnic activ. Când plafonul restului mișcării e sub sumă, cadrul de probă care trece controlul clipului e acceptat fără să te aștepte; altfel îl privești tu.',
   },
   {
     value: 'MODE',
     label: 'După modul studioului',
-    meaning: 'Pașii plătiți urmează modul studioului, ca orice altă acțiune plătită; foaia de filmare și plafonul ei rămân obligatorii.',
+    meaning: 'Pașii plătiți urmează modul studioului, ca orice altă acțiune plătită, cadrul de probă inclus: dacă trece controlul clipului, e acceptat fără să te aștepte, iar dacă nu trece, îl privești tu. Foaia de filmare și plafonul ei rămân obligatorii, iar în producție nimic nu se cumpără neîntrebat fără un buget zilnic activ.',
   },
 ];
 
@@ -512,4 +519,180 @@ export function modulesSummary(modules) {
   if (part) parts.push(`${part} parțial`);
   if (none) parts.push(`${none} ${none === 1 ? 'neimplementat' : 'neimplementate'}`);
   return parts.join(' · ') || '—';
+}
+
+/* ------------------------------------------------- PAGE-10 / PUB-11: a channel's publish policy */
+
+/** The three ways YouTube releases a video, in his words. */
+export const PRIVACY_CHOICES = /** @type {const} */ ([
+  ['private', 'Privat'],
+  ['unlisted', 'Nelistat'],
+  ['public', 'Public'],
+]);
+const PRIVACY_WORD = /** @type {Record<string, string>} */ (Object.fromEntries(PRIVACY_CHOICES));
+/** YouTube's own horizon for a scheduled release, the backend's bound (PublishPolicyCommand). */
+export const PUBLISH_DELAY_MAX = 43200;
+
+/** «Privat», «Nelistat», «Public»; an unknown value is «—», never «Public». @param {unknown} status */
+export function privacyWord(status) {
+  return PRIVACY_WORD[String(status || '')] || '—';
+}
+
+/**
+ * The privacy badge of a publication: what was asked, and what YouTube reports when it differs
+ * (a channel whose Google project is not audited is held private, PUB-05).
+ * @param {unknown} asked @param {unknown} [reported]
+ */
+export function privacyBadgeHtml(asked, reported) {
+  const key = PRIVACY_WORD[String(asked || '')] ? String(asked) : 'unknown';
+  const differs = reported && String(reported) !== String(asked) && PRIVACY_WORD[String(reported)];
+  return `<span class="privacy-badge privacy-badge-${escapeHtml(key)}">${escapeHtml(privacyWord(asked))}</span>${
+    differs ? ` <span class="privacy-badge privacy-badge-reported" title="Ce raportează YouTube pentru videoclip">YouTube: ${escapeHtml(privacyWord(reported))}</span>` : ''
+  }`;
+}
+
+/** «fără întârziere», «întârziere de 1 minut», «întârziere de 20 de minute». @param {number} minutes */
+function delayWords(minutes) {
+  return minutes > 0 ? `întârziere de ${countWords(minutes, 'minut', 'minute')}` : 'fără întârziere';
+}
+
+/** The channel's policy as the page read it. @param {any} channel */
+function policyOf(channel) {
+  const c = channel || {};
+  return {
+    privacy: PRIVACY_WORD[String(c.autonomous_privacy || '')] ? String(c.autonomous_privacy) : 'private',
+    publicAllowed: Boolean(c.public_publish_enabled),
+    delay: Number.isInteger(Number(c.publish_delay_minutes)) ? Number(c.publish_delay_minutes) : 0,
+    version: channelFacts(c).version,
+  };
+}
+
+/** One line: how the studio's own uploads on this channel are released. @param {any} channel */
+export function publishPolicyWords(channel) {
+  const p = policyOf(channel);
+  return `Încărcările făcute singur de studio: ${privacyWord(p.privacy).toLowerCase()} · publicul ${
+    p.publicAllowed ? 'este permis' : 'nu este permis'
+  } · ${delayWords(p.delay)} · versiunea ${p.version}.`;
+}
+
+/**
+ * The versioned command for what he changed in the form, and nothing else (a field left out keeps
+ * its value on the backend). A form the backend would refuse for its shape is stopped here; the
+ * refusals that depend on the studio (public while in TEST) stay the backend's, shown verbatim.
+ * @param {any} channel the channel as the page read it
+ * @param {{privacy: string, publicAllowed: boolean, delay: string|number}} form
+ * @param {string} commandId
+ * @returns {{command: Record<string, unknown>} | {error: string}}
+ */
+export function publishPolicyCommand(channel, form, commandId) {
+  if (!channel || !channel.id) return { error: 'Canalul nu a fost citit; reîncarcă înainte să schimbi politica.' };
+  const now = policyOf(channel);
+  const privacy = String(form.privacy || '');
+  if (!PRIVACY_WORD[privacy]) return { error: 'Alege o vizibilitate: privat, nelistat sau public.' };
+  const delayText = String(form.delay ?? '').trim();
+  if (!/^\d+$/.test(delayText) || Number(delayText) > PUBLISH_DELAY_MAX) {
+    return { error: `Scrie întârzierea în minute, un număr întreg între 0 și ${PUBLISH_DELAY_MAX}.` };
+  }
+  const delay = Number(delayText);
+  const publicAllowed = Boolean(form.publicAllowed);
+  if (privacy === 'public' && !publicAllowed) {
+    return { error: 'Vizibilitatea publică cere și bifa «publicul permis».' };
+  }
+  /** @type {Record<string, unknown>} */
+  const command = { command_id: commandId, expected_version: now.version };
+  if (privacy !== now.privacy) command.autonomous_privacy = privacy;
+  if (publicAllowed !== now.publicAllowed) command.public_publish_enabled = publicAllowed;
+  if (delay !== now.delay) command.publish_delay_minutes = delay;
+  if (Object.keys(command).length === 2) return { error: 'Nu ai schimbat nimic: politica este deja aceasta.' };
+  return { command };
+}
+
+/**
+ * The confirmation's question, naming the channel and every change.
+ * @param {any} channel @param {Record<string, unknown>} command
+ */
+export function publishPolicyQuestion(channel, command) {
+  const now = policyOf(channel);
+  const parts = [];
+  if (command.autonomous_privacy !== undefined) {
+    parts.push(`${privacyWord(now.privacy).toLowerCase()} → ${privacyWord(command.autonomous_privacy).toLowerCase()}`);
+  }
+  if (command.public_publish_enabled !== undefined) parts.push(command.public_publish_enabled ? 'publicul permis' : 'publicul oprit');
+  if (command.publish_delay_minutes !== undefined) parts.push(delayWords(Number(command.publish_delay_minutes)));
+  return `Schimbi politica de publicare a canalului «${String((channel && channel.channel_name) || '—')}»: ${parts.join(', ')}?`;
+}
+
+/** The backend's answer, in the same words as the policy line. @param {any} result */
+export function publishPolicyAnswer(result) {
+  if (!result || !result.channel) return '';
+  return result.status === 'NO_CHANGE'
+    ? `Nimic de schimbat. ${publishPolicyWords(result.channel)}`
+    : `Salvat. ${publishPolicyWords(result.channel)}`;
+}
+
+/* -------------------------------------------- PUB-12: a publication the studio could not settle */
+
+/** The states the backend lets him settle (publishing/services.py RESOLVABLE_STATES). */
+export const RESOLVABLE_STATES = ['NEEDS_RECONCILIATION', 'REMOTE_UNKNOWN'];
+const VIDEO_ID = /^[A-Za-z0-9_-]{6,20}$/;
+
+/** A video id from what he pasted: the id itself, or a /shorts/, watch?v= or youtu.be link. @param {string} text */
+function videoIdOf(text) {
+  const raw = String(text || '').trim();
+  if (VIDEO_ID.test(raw)) return raw;
+  try {
+    const url = new URL(raw);
+    const fromQuery = url.searchParams.get('v');
+    if (fromQuery && VIDEO_ID.test(fromQuery)) return fromQuery;
+    const last = url.pathname.split('/').filter(Boolean).pop() || '';
+    if (VIDEO_ID.test(last)) return last;
+  } catch {
+    // not a link either
+  }
+  return '';
+}
+
+/**
+ * His answer: «Există», with the video's id, or «Nu există».
+ * @param {{found: boolean, video: string, commandId: string}} o
+ * @returns {{command: Record<string, unknown>} | {error: string}}
+ */
+export function resolvePublicationCommand(o) {
+  if (!o.found) return { command: { command_id: o.commandId, found: false } };
+  const id = videoIdOf(o.video);
+  if (!id) return { error: '«Există» cere ID-ul videoclipului de pe YouTube sau linkul lui (…/shorts/ID sau watch?v=ID).' };
+  return { command: { command_id: o.commandId, found: true, remote_video_id: id } };
+}
+
+/* ---------------------------------------------------- PAGE-10: the gate and the quick publish */
+
+/**
+ * The publishing gate as the backend evaluated it for the newest film that passed QC, never a
+ * static list of promises.
+ * @param {any} evaluation PublishingGateEvaluationView, or null when no film passed QC
+ */
+export function gateChecksHtml(evaluation) {
+  if (!evaluation) return '<p class="pub-gate-note">Niciun film care să fi trecut QC; poarta nu are încă ce verifica.</p>';
+  const checks = Array.isArray(evaluation.checks) ? evaluation.checks : [];
+  const items = checks
+    .map((/** @type {any} */ c) => `<li class="${c.passed ? 'is-passed' : 'is-failed'}"><strong>${c.passed ? 'Trecut' : 'Oprit'}:</strong> ${escapeHtml(c.detail || c.check_name || '')}</li>`)
+    .join('');
+  const verdict = evaluation.eligible
+    ? 'Cel mai nou film care a trecut QC poate fi publicat pe acest canal.'
+    : 'Cel mai nou film care a trecut QC nu poate fi publicat încă pe acest canal.';
+  return `${items ? `<ul class="pub-gate-list">${items}</ul>` : ''}<p class="pub-gate-note">${verdict}</p>`;
+}
+
+/** The quick publish's question. @param {{title: string, channel: string, privacy: string}} o */
+export function quickPublishQuestion(o) {
+  return `Încarci «${o.title}» pe «${o.channel}», ${privacyWord(o.privacy).toLowerCase()}?`;
+}
+
+/**
+ * PAGE-09: «Creează un caz demo» writes a demo topic (status DEMO, which the day never reads); the
+ * key is offered only while the studio is in TEST, never in PRODUCTION or before the policy is read.
+ * @param {any} policy the snapshot's policy
+ */
+export function demoCaseShown(policy) {
+  return Boolean(policy && policy.environment === 'TEST');
 }

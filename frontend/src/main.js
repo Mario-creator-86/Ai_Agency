@@ -41,22 +41,30 @@ import {
 } from './dialog_words.js';
 import {
   PRICES_MEANING, PRICE_BOTH, channelFacts, checkNewModel, knownModels, priceAnswer, priceCommands, priceInput, providerMark, providerWideRows,
-  savePaidMediaRule, tokenPriceRows, usdWords,
+  paidMediaFormHtml, savePaidMediaRule, tokenPriceRows, usdWords,
+  RESOLVABLE_STATES, demoCaseShown, gateChecksHtml, privacyBadgeHtml, privacyWord, quickPublishQuestion, resolvePublicationCommand,
 } from './owner_controls.js';
 import {
-  ASSEMBLE_STEP, SHEET_TITLE, approveAssemble, approveRedo, approveStep, redoKey, requestRender, sceneModelPath, sheetHtml, sheetPath,
-  takeDecisionPath, withdrawnWords,
+  ASSEMBLE_STEP, SHEET_TITLE, approveAssemble, approveRedo, approveStep, buyingNotice, redoKey, requestRender, sceneModelPath, sheetHtml,
+  sheetKeyFor, sheetPath, takeDecisionPath, withdrawnWords,
 } from './shooting_sheet.js';
+import { bannersKey, pageBanners } from './build_banner.js';
+import { apiErrorMessage, fetchFailure } from './api_errors.js';
+import { MediaCache, ObjectUrls, PICTURE_CAPACITY } from './media_cache.js';
+import { countWords } from './plurals.js';
+import { CANCEL_QUESTION, QUEUE_PATH, queueHtml, retryQuestion, stuckWords } from './work_queue.js';
+import { RETIRE_QUESTION, budgetCommand, retireCommand } from './budget_form.js';
+import { OWNER_LETTERS_PATH, inboxHtml, lettersWord, ownerMarkWords, readLetters, resolveCommand, resolvePath } from './owner_inbox.js';
 import { LiveWindows, eventMatchesAgent } from './live_window.js';
 import { MailThread } from './mail_thread.js';
-import { LiveStream } from './hq_stream.js';
-import { authMessage, eventsUrl, liveStreamSettings, relayUrl, socketAuth, warmVideoCodecs } from './hq_stream_config.js';
+import { STREAM_NO_SAFE_AUTH, authMessage, eventsUrl, liveStreamSettings, relayUrl, socketAuth, warmVideoCodecs } from './hq_stream_config.js';
 import { browserStore, keptCaption, keptUsable, readKept, writeKept } from './stream_keep.js';
 import { chooseTitleFrame, lightMatches, readStudioFrame, sendStudioFrame, studioSendDue } from './studio_frame.js';
 import { StreamPlaques } from './stream_plaques.js';
 import { EventsLink, connectionLabel, liveScope, roomCaption, roomCaptionShort, sceneReadout } from './live_claims.js';
 import { TitleScreen } from './title_screen.js';
 import { ENTRY, entryPlays, landingPlacement } from './title_frame.js';
+import { setStudioPlace } from './office_clock.js';
 import { STREAM_ROOMS, stillLine, stillSentence } from './replay_still.js';
 import { attachDoor, doorLanded, doorNeedsRead, doorTiming, doorWorldRect, revealInSteps, roomOnScreen } from './dialog_doors.js';
 import { applyMeters, portraitWindow, requesterPerson, rosterCards, rosterHtml, rosterKey, stillFrame, streamPortraitSource } from './roster.js';
@@ -72,6 +80,8 @@ import {
   autonomyModeCommand,
   autonomyModeLabel,
   autonomyModeMeaning,
+  consequenceWords,
+  dayWillWords,
   promotionBlockedReason,
   readApprovals,
   referenceSetSummary,
@@ -188,8 +198,6 @@ function renderLiveSignals() {
  * @type {Promise<any>|null}
  */
 let streamRoute = null;
-/** How the events socket says the key: set from the route before it first connects. @type {'first_message'|'query'} */
-let eventsAuth = 'query';
 function officeStreamRoute() {
   if (!streamRoute) streamRoute = api('/office/stream').catch(() => null);
   return streamRoute;
@@ -197,8 +205,9 @@ function officeStreamRoute() {
 
 /** The backend's events, reconnected after a drop; see EventsLink. */
 const eventsLink = new EventsLink({
-  url: () => eventsUrl(location, ownerToken, eventsAuth),
-  firstMessage: () => (eventsAuth === 'first_message' && ownerToken ? authMessage(ownerToken) : null),
+  // the key is always the socket's first message, never its URL (SEC-02)
+  url: () => eventsUrl(location),
+  firstMessage: () => (ownerToken ? authMessage(ownerToken) : null),
   open: (url) => new WebSocket(url),
   // Everything after the newest event the page holds: the snapshot's cursor, or further on when
   // the register has already read past it.
@@ -346,7 +355,7 @@ const officeState = new OfficeState();
 let officeEngine = null;
 /** Whether the camera keys, fullscreen and the stream have been wired (once per page). */
 let officeWired = false;
-/** @type {LiveStream|null} the Unreal headquarters over the renderer, when scene.json turns it on */
+/** @type {import('./hq_stream.js').LiveStream|null} the Unreal headquarters over the renderer, when scene.json turns it on */
 let liveStream = null;
 /** @type {StreamPlaques|null} the studio's numbers over the live video (W19) */
 let streamPlaques = null;
@@ -514,6 +523,7 @@ function pushWorldFacts() {
   // and the readouts outside the world keep the live ones
   if (officeEngine && !replaying()) officeEngine.setFacts({ ...worldFacts });
   renderStudioReadout();
+  renderDayWill();
   refreshSceneReadout();
   considerInvite();
   layoutPlaques();
@@ -616,11 +626,13 @@ function renderStudioReadout() {
     reads: worldFacts.reads,
     stopped: policy ? Boolean(policy.autonomy_stopped) : null,
     timeZone: state && state.studio ? state.studio.timezone : undefined,
+    // PAGE-14: «Filmul zilei», from the newest run's stages
+    run: worldFacts.run,
   });
   if (readout.key === studioReadoutKey) return;
   studioReadoutKey = readout.key;
   list.innerHTML = readout.rows
-    .map((row) => `<div class="readout-row" data-tone="${escapeHtml(row.tone || 'quiet')}"><dt>${escapeHtml(row.label)}</dt><dd><span class="readout-value">${escapeHtml(row.value)}</span>${row.note ? `<span class="readout-note">${escapeHtml(row.note)}</span>` : ''}</dd></div>`)
+    .map((row) => `<div class="readout-row" data-tone="${escapeHtml(row.tone || 'quiet')}"><dt>${escapeHtml(row.label)}</dt><dd><span class="readout-value">${escapeHtml(row.value)}</span>${row.note ? `<span class="readout-note">${escapeHtml(row.note)}</span>` : ''}${row.sheet ? `<button type="button" class="quiet readout-key" data-sheet-open="${escapeHtml(row.sheet)}">Foaia de filmare</button>` : ''}</dd></div>`)
     .join('');
 }
 
@@ -1009,12 +1021,19 @@ function waitingWords(n) {
 }
 
 const ownerMark = /** @type {HTMLButtonElement} */ (element('owner-mark'));
-/** @param {number} pending how many requests the approvals route lists as waiting */
+/** The requests last counted, and the open letters to him (PAGE-07, owner_inbox.js). */
+let pendingRequests = 0;
+let openLetters = 0;
+/** @param {number} [pending] how many requests the approvals route lists as waiting; kept when omitted */
 function renderOwnerMark(pending) {
-  ownerMark.hidden = !(pending > 0);
-  element('owner-mark-text').textContent = pending > 0 ? waitingWords(pending) : '';
-  drawers.setPending(pending);
-  ownerMark.title = pending > 0 ? 'Du-mă la cererile de aprobare' : '';
+  if (pending !== undefined) pendingRequests = pending;
+  const waiting = pendingRequests + openLetters;
+  ownerMark.hidden = !(waiting > 0);
+  // «1 cerere așteaptă decizia ta», «1 cerere și 13 scrisori te așteaptă» (owner_inbox.js); the
+  // older waitingWords stays the words for requests alone
+  element('owner-mark-text').textContent = !waiting ? '' : openLetters ? ownerMarkWords(pendingRequests, openLetters) : waitingWords(pendingRequests);
+  drawers.setPending(waiting);
+  ownerMark.title = !waiting ? '' : pendingRequests ? 'Du-mă la cererile de aprobare' : 'Du-mă la scrisorile pentru tine';
 }
 /** A request arrived as it happened: the mark glows once, for MOMENT_TIMING.mark. */
 function markArrived() {
@@ -1027,7 +1046,7 @@ ownerMark.addEventListener('animationend', () => ownerMark.classList.remove('is-
 ownerMark.addEventListener('click', () => {
   // In the game frame the approvals are in the side drawer: it opens first.
   drawers.showApprovals();
-  const heading = document.querySelector('.approvals-heading');
+  const heading = document.querySelector(pendingRequests ? '.approvals-heading' : '.inbox-heading');
   if (heading) heading.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'start' });
   const first = /** @type {HTMLButtonElement|null} */ (approvalsList.querySelector('.btn-approval'));
   if (first) first.focus({ preventScroll: true });
@@ -1055,27 +1074,20 @@ async function api(path, options = {}) {
       ),
       cache: 'no-store',
     });
-  } catch {
-    throw new Error('Conexiunea nu este disponibilă. Ce se vede nu mai este la zi.');
+  } catch (failure) {
+    // PAGE-06: marked, so a paid press whose answer never arrived says the purchase may still
+    // be running on the server (shooting_sheet.js NETWORK_STEP_WORDS), never that it was refused.
+    // PAGE-11: a request that took too long has its own sentence (api_errors.js).
+    throw fetchFailure(failure);
   }
   if (!response.ok) {
     // Prefer what the server said. Every refusal this backend writes is a sentence meant for
     // the Owner — which host is not authorised, why a provider did not answer, what is missing
     // before a publication can proceed — and replacing it with "try again" would throw away
-    // exactly the part that tells them what to do. The generic wording is the fallback for a
-    // response that carries no explanation of its own.
-    let message =
-      response.status === 401
-        ? 'Cheia Proprietarului nu este valabilă.'
-        : response.status === 409
-          ? 'Starea s-a schimbat. Datele au fost reîncărcate; repetă comanda.'
-          : 'Conexiunea nu a putut fi verificată. Încearcă din nou.';
+    // exactly the part that tells them what to do. PAGE-11: what is said when it wrote none,
+    // or wrote a list (422) or the catch-all 500, is decided in api_errors.js.
     const body = await response.json().catch(() => ({}));
-    if (typeof body.detail === 'string' && body.detail.trim()) {
-      message = body.detail;
-    } else if (body.detail && typeof body.detail.error === 'string') {
-      message = body.detail.message || body.detail.error;
-    }
+    const message = apiErrorMessage(response.status, body);
     const error = new Error(message);
     Object.assign(error, { status: response.status, detail: body.detail });
     throw error;
@@ -1118,17 +1130,40 @@ async function startLiveStream() {
     renderLiveSignals();
     return;
   }
-  // the Owner's key goes as the signalling socket's first message when the backend takes it so
-  const auth = socketAuth(relay);
-  const relayPath = String(relay.relay);
-  const signallingUrl = relayUrl(window.location, relayPath, ownerToken, auth);
-  const firstMessage = auth === 'first_message';
+  // the Owner's key goes only as the signalling socket's first message, never in its URL (SEC-02):
+  // a backend that cannot take it so gets no stream, and the page keeps its own renderer
+  const streamOff = () => {
+    viewport.dataset.stream = 'off';
+    viewport.title = STREAM_NO_SAFE_AUTH;
+    liveSignals.stream = 'off';
+    renderLiveSignals();
+    console.warn(STREAM_NO_SAFE_AUTH);
+  };
+  if (socketAuth(relay) !== 'first_message') {
+    streamOff();
+    return;
+  }
+  const signallingUrl = relayUrl(window.location, String(relay.relay));
+  // PAGE-20: the stream module and Epic's client are fetched only now, for a studio whose scene
+  // switched the stream on; a studio without Unreal never downloads them.
+  let LiveStream;
+  try {
+    const streamModule = await import('./hq_stream.js');
+    await streamModule.loadStreamClient();
+    LiveStream = streamModule.LiveStream;
+  } catch (err) {
+    viewport.dataset.stream = 'off';
+    liveSignals.stream = 'off';
+    renderLiveSignals();
+    console.warn('Clientul fluxului live nu s-a putut încărca.', err);
+    return;
+  }
+  if (liveStream) return;
   streamPlaques = new StreamPlaques(viewport);
   liveStream = new LiveStream(viewport, {
     ...settings,
     signallingUrl,
-    authMessage: firstMessage ? () => authMessage(ownerToken) : null,
-    legacyUrl: firstMessage ? () => relayUrl(window.location, relayPath, ownerToken, 'query') : null,
+    authMessage: () => authMessage(ownerToken),
   }, {
     onStatus: (status) => {
       viewport.dataset.stream = status;
@@ -1164,6 +1199,13 @@ async function startLiveStream() {
       }
     },
   });
+  if (!liveStream.firstMessageAuth) {
+    // the library's transport could not be given the key as a first message: no stream at all
+    liveStream.layer.remove();
+    liveStream = null;
+    streamOff();
+    return;
+  }
   // the starting plate shows the last live frame an earlier visit kept, dimmed and named (W19); W24:
   // the frame the title stood on, when it stood on one (a first visit's is the studio's)
   Promise.all([titleChoice, keptFrame]).then(([titled, browserKept]) => titled || browserKept).then((kept) => {
@@ -1609,7 +1651,6 @@ function updateOfficeCanvas() {
 }
 
 async function connectWebSocket() {
-  eventsAuth = socketAuth(await officeStreamRoute());
   if (!ownerToken) return;
   eventsLink.start();
 }
@@ -1958,7 +1999,7 @@ element('agent-pause-btn').addEventListener('click', async () => {
     showInspectorStates(null, updated.lifecycle);
     updateOfficeCanvas();
   } catch (err) {
-    alert(err.message);
+    notify(err.message);
   }
 });
 
@@ -1971,7 +2012,7 @@ element('agent-resume-btn').addEventListener('click', async () => {
     showInspectorStates(null, updated.lifecycle);
     updateOfficeCanvas();
   } catch (err) {
-    alert(err.message);
+    notify(err.message);
   }
 });
 
@@ -2229,7 +2270,7 @@ function renderAllowedHosts(rows, health) {
   ];
   if (health) {
     line.push(health.search_provider === 'VERIFIED' ? 'Un motor de căutare web este conectat.' : 'Niciun motor de căutare web nu este conectat.');
-    line.push(`${health.claims_available} afirmații verificate în evidență.`);
+    line.push(`${countWords(health.claims_available, 'afirmație verificată', 'afirmații verificate')} în evidență.`);
     if (health.status === 'DEGRADED') line.push(...(health.degraded_reasons || []));
   }
   line.push('Numai Proprietarul poate schimba lista; angajații nu au niciun instrument pentru ea.');
@@ -2839,6 +2880,16 @@ const mediaCharactersSection = element('media-characters-section');
 const generateDemoStoryboardBtn = element('generate-demo-storyboard-btn');
 const refreshMediaBtn = element('refresh-media-btn');
 const mediaStatusMsg = element('media-status-msg');
+/**
+ * PAGE-11: the media room's status line, instead of a blocking browser alert: what failed stays
+ * on screen beside the films until the next action replaces it.
+ * @param {string} text @param {boolean} [error]
+ */
+function mediaStatus(text, error = false) {
+  mediaStatusMsg.hidden = !text;
+  mediaStatusMsg.className = error ? 'dialog-status-msg text-error' : 'dialog-status-msg';
+  mediaStatusMsg.textContent = text;
+}
 
 doorReads.set('media-modal', () => { loadMediaProviderNote(); loadAwaitingStoryboard(); loadMediaStoryboards(); });
 if (openMediaBtn) {
@@ -3024,7 +3075,7 @@ function identityLine(c) {
   if (binding.voice_id) parts.push(`<span class="char-voice-bound" title="${escapeHtml(`Identificatorul vocii: ${binding.voice_id}`)}">Voce alocată</span>${binding.model_id ? ` · model ${escapeHtml(binding.model_id)}` : ''}`);
   if (lockedFields.length) parts.push(`Blocate: ${escapeHtml(lockedFields.join(', '))}`);
   if (c.consistency_status) parts.push(`Consistență: ${escapeHtml(consistencyWord(c.consistency_status))}`);
-  if ((c.approved_fallbacks_json || []).length) parts.push(`${c.approved_fallbacks_json.length} modele aprobate`);
+  if ((c.approved_fallbacks_json || []).length) parts.push(countWords(c.approved_fallbacks_json.length, 'model aprobat', 'modele aprobate'));
   return parts.length ? `<div class="char-voice">${parts.join(' · ')}</div>` : '';
 }
 
@@ -3201,7 +3252,7 @@ async function makeStoryboard(button) {
         aspect_ratio: '9:16',
       }),
     });
-    mediaStatusMsg.textContent = `Storyboard creat: „${storyboard.title}” — ${storyboard.total_scenes} scene.`;
+    mediaStatusMsg.textContent = `Storyboard creat: „${storyboard.title}” — ${countWords(storyboard.total_scenes, 'scenă', 'scene')}.`;
     await loadAwaitingStoryboard();
     await loadMediaStoryboards();
   } catch (err) {
@@ -3260,7 +3311,7 @@ function motionExplanation(motion, scenes, notes) {
   const head = motion
     ? `<div class="motion-head"><span class="${test ? 'env-banner is-test' : 'env-banner is-production'}">${
         test ? 'TEST' : 'PRODUCTION'
-      }</span> <span>${motion.clips || 0} din ${motion.scenes || 0} scene filmate · ${
+      }</span> <span>filmate: ${motion.clips || 0} din ${countWords(motion.scenes || 0, 'scenă', 'scene')} · ${
         motion.estimated_usd != null ? `${amount(Number(motion.estimated_usd).toFixed(2))} USD` : 'cost nemăsurat'
       }${motion.from_prompt ? ' · din text, fără cadru plătit' : ''}</span></div>`
     : '';
@@ -3309,13 +3360,26 @@ const sheetDrawer = {
   /** @type {string|null} */ confirm: null,
   notice: '',
   noticeError: false,
-  busy: false,
+  /** PAGE-06: a purchase of the film on screen is in flight (sheetBusy, kept per storyboard). */
+  get busy() { return Boolean(this.id && sheetBusy.has(this.id)); },
   /** What the assembly answered last (its QC and the letter), for this storyboard. @type {any} */ assembled: null,
   /** Whether «Schimbă regula» is open, kept across repaints. */
   ruleOpen: false,
 };
-/** The pictures already read with the Owner's key, as data: URLs (the page's img-src takes data:). */
-const sheetPictures = new Map();
+/**
+ * PAGE-06: the presses still running, by storyboard, with what they buy in words. Kept apart
+ * from the drawer: reopening a film's sheet (or another film's and back) never re-enables the
+ * buttons of a purchase the server is still making.
+ * @type {Map<string, string>}
+ */
+const sheetBusy = new Map();
+/**
+ * The pictures already read with the Owner's key, as data: URLs (the page's img-src takes data:,
+ * not blob:). PAGE-17: at most PICTURE_CAPACITY of them, the least recently shown let go first.
+ */
+const sheetPictures = new MediaCache(PICTURE_CAPACITY);
+/** The clips played in the open sheet; a repaint or a close removes them, and they are revoked. */
+const sheetClips = new ObjectUrls();
 /** Remembered across presses: once the studio said «use the sheet», the render button opens it. */
 const renderState = { sheetFirst: false };
 
@@ -3330,14 +3394,25 @@ function sheetDialog() {
     + '<p class="dialog-desc">Tot ce cumpără filmul, înainte de primul credit: fiecare imagine, fiecare prompt, modelul fiecărei scene, secundele, creditele, soldul și plafonul.</p></div>'
     + '<button type="button" class="dialog-close" data-sheet-action="close" aria-label="Închide">'
     + '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></svg></button></div>'
+    // PAGE-19: one status line for the whole drawer, outside the body a repaint replaces, so
+    // assistive technology hears each notice as a change of one live region
+    + '<p class="sheet-notice sheet-status" role="status" aria-live="polite" data-sheet-status hidden></p>'
     + '<div class="dialog-body sheet-body" data-sheet-body></div>';
   document.body.append(dialog);
   dialog.addEventListener('click', (event) => { void onSheetClick(event); });
+  // PAGE-06: Esc does not hide a purchase in flight; the drawer says it is still buying.
+  dialog.addEventListener('cancel', (event) => {
+    if (!sheetDrawer.busy) return;
+    event.preventDefault();
+    sheetNotice(sheetBusy.get(String(sheetDrawer.id)) || buyingNotice('stills'));
+    paintSheet();
+  });
   // «Schimbă regula» stays open across the repaints that follow a press (toggle does not bubble).
   dialog.addEventListener('toggle', (event) => {
     const box = event.target;
     if (box instanceof HTMLDetailsElement && box.classList.contains('sheet-rule-box')) sheetDrawer.ruleOpen = box.open;
   }, true);
+  dialog.addEventListener('close', () => { sheetClips.revokeAll(); });
   sheetDrawer.dialog = dialog;
   return dialog;
 }
@@ -3365,19 +3440,53 @@ async function sheetPicture(src) {
   return url;
 }
 
+/**
+ * PAGE-19: the key that had keyboard focus, as a selector of its data attributes, so the same key
+ * can be focused again after a repaint replaced it.
+ * @param {Element|null} element @param {Element} body
+ */
+function focusKey(element, body) {
+  if (!(element instanceof HTMLElement) || !body.contains(element)) return '';
+  const attrs = Array.from(element.attributes).filter((a) => a.name.startsWith('data-'));
+  if (!attrs.length && !element.id) return '';
+  return element.tagName.toLowerCase()
+    + (element.id ? `#${CSS.escape(element.id)}` : '')
+    + attrs.map((a) => `[${a.name}="${CSS.escape(a.value)}"]`).join('');
+}
+
+/** @param {Element} body @param {string} key */
+function restoreFocus(body, key) {
+  if (!key) return;
+  const again = /** @type {HTMLElement|null} */ (body.querySelector(key));
+  if (again && !(/** @type {HTMLButtonElement} */ (again).disabled)) again.focus({ preventScroll: true });
+  else /** @type {HTMLElement|null} */ (sheetDialog().querySelector('[data-sheet-action="close"]'))?.focus({ preventScroll: true });
+}
+
+/** The drawer's one status line. @param {string} text @param {boolean} error */
+function sheetStatus(text, error) {
+  const line = /** @type {HTMLElement|null} */ (sheetDialog().querySelector('[data-sheet-status]'));
+  if (!line) return;
+  if (line.textContent !== text) line.textContent = text;
+  line.hidden = !text;
+  line.classList.toggle('sheet-blocked', Boolean(text && error));
+}
+
 function paintSheet() {
   const body = sheetDialog().querySelector('[data-sheet-body]');
   if (!body) return;
+  const focused = focusKey(document.activeElement, body);
+  // the repaint removes every clip the body held: their object URLs go with them (PAGE-17)
+  sheetClips.revokeAll();
+  sheetStatus(sheetDrawer.notice, sheetDrawer.noticeError);
   if (!sheetDrawer.sheet) {
-    body.innerHTML = sheetDrawer.noticeError
-      ? `<p class="text-error">${escapeHtml(sheetDrawer.notice)}</p>`
-      : `${sheetDrawer.notice ? `<p class="sheet-notice" role="status">${escapeHtml(sheetDrawer.notice)}</p>` : ''}<p class="topics-loading">Se citește foaia de filmare (0 credite)…</p>`;
+    body.innerHTML = sheetDrawer.noticeError ? '' : '<p class="topics-loading">Se citește foaia de filmare (0 credite)…</p>';
     return;
   }
   body.innerHTML = sheetHtml(sheetDrawer.sheet, {
     escape: escapeHtml,
     confirm: sheetDrawer.confirm,
-    notice: sheetDrawer.notice,
+    // the notice is the drawer's status line, outside the body (PAGE-19)
+    notice: '',
     noticeError: sheetDrawer.noticeError,
     // his rule and its version as the snapshot read them (the command is sent against that version)
     policy: state?.policy || null,
@@ -3390,6 +3499,7 @@ function paintSheet() {
     sheetPicture(src).then((url) => { img.src = url; }).catch(() => { img.alt = `${img.alt} — nu a putut fi citită`; });
   });
   if (sheetDrawer.busy) body.querySelectorAll('button').forEach((b) => { /** @type {HTMLButtonElement} */ (b).disabled = true; });
+  restoreFocus(body, focused);
 }
 
 async function loadSheet() {
@@ -3411,7 +3521,9 @@ async function loadSheet() {
 async function openShootingSheet(storyboardId, message = '') {
   const dialog = sheetDialog();
   if (sheetDrawer.id !== storyboardId) Object.assign(sheetDrawer, { sheet: null, assembled: null });
-  Object.assign(sheetDrawer, { id: storyboardId, confirm: null, notice: message, noticeError: false, busy: false });
+  // A purchase still in flight for this film keeps its notice and its disabled buttons.
+  const buying = sheetBusy.get(storyboardId);
+  Object.assign(sheetDrawer, { id: storyboardId, confirm: null, notice: buying || message, noticeError: false });
   if (!dialog.open) dialog.showModal();
   paintSheet();
   await loadSheet();
@@ -3431,7 +3543,7 @@ async function playSheetClip(node) {
     const response = await fetch(src, { headers: { Authorization: `Bearer ${ownerToken}` }, cache: 'no-store' });
     if (!response.ok) throw new Error(`Clipul nu a putut fi citit (${response.status}).`);
     const video = document.createElement('video');
-    video.src = URL.createObjectURL(await response.blob());
+    video.src = sheetClips.add(URL.createObjectURL(await response.blob()));
     video.controls = true;
     video.playsInline = true;
     video.className = 'sheet-video';
@@ -3496,7 +3608,7 @@ function sheetCommand(node, id) {
     const planHash = String(sheetDrawer.sheet?.sheet_hash || '');
     if (step === ASSEMBLE_STEP) {
       return async () => {
-        const result = await approveAssemble(api, { storyboardId: id, planHash, note, allowOverBudget: over, commandId: crypto.randomUUID() });
+        const result = await approveAssemble(api, { storyboardId: id, planHash, note, allowOverBudget: over, commandId: crypto.randomUUID(), purchaseId: crypto.randomUUID() });
         if (result.status !== 'ASSEMBLED') throw new Error(sheetRefusal(result, 'Filmul nu a fost asamblat.'));
         sheetDrawer.assembled = result.result;
         const verdict = result.result?.qc?.status === 'PASSED' ? 'a trecut controlul calității' : 'nu a trecut controlul calității: motivele și scrisoarea sunt mai jos';
@@ -3504,7 +3616,7 @@ function sheetCommand(node, id) {
       };
     }
     return async () => {
-      const result = await approveStep(api, { storyboardId: id, step, planHash, note, allowOverBudget: over, commandId: crypto.randomUUID() });
+      const result = await approveStep(api, { storyboardId: id, step, planHash, note, allowOverBudget: over, commandId: crypto.randomUUID(), purchaseId: crypto.randomUUID() });
       if (result.status !== 'BOUGHT') throw new Error(sheetRefusal(result, 'Pasul nu a cumpărat nimic.'));
       return `Pasul a fost cumpărat cu aprobarea ta, pentru foaia pe care ai văzut-o. Foaia de mai jos arată ce s-a cumpărat.${withdrawnNote(result)}`;
     };
@@ -3523,6 +3635,7 @@ function sheetCommand(node, id) {
         note,
         allowOverBudget: over,
         commandId: crypto.randomUUID(),
+        purchaseId: crypto.randomUUID(),
       });
       if (result.status !== 'DONE') throw new Error(sheetRefusal(result, 'Nimic nu a fost refăcut.'));
       // a redone film is a new film: the QC shown was the old one's
@@ -3563,13 +3676,17 @@ async function onSheetClick(event) {
   if (action === 'step') { sheetDrawer.confirm = node.dataset.step || null; sheetNotice(''); paintSheet(); return; }
   if (action === 'redo') { sheetDrawer.confirm = redoKey(node.dataset.kind || '', node.dataset.scene || null); sheetNotice(''); paintSheet(); return; }
   if (action === 'cancel-step') { sheetDrawer.confirm = null; paintSheet(); return; }
+  if (action === 'to-steps') {
+    sheetDialog().querySelector('#sheet-steps')?.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'start' });
+    return;
+  }
   if (action === 'play') { await playSheetClip(node); return; }
   if (action === 'paid-media-save') {
     // His rule, sent against the policy version the page read; a 409 means it moved meanwhile.
     const dialog = sheetDialog();
     const choice = /** @type {HTMLInputElement|null} */ (dialog.querySelector('input[name="paid-media"]:checked'))?.value || '';
     const amount = /** @type {HTMLInputElement|null} */ (dialog.querySelector('[data-paid-media-amount]'))?.value || '';
-    sheetDrawer.busy = true;
+    sheetBusy.set(id, 'Se salvează regula ta…');
     sheetDrawer.ruleOpen = true;
     paintSheet();
     try {
@@ -3579,71 +3696,102 @@ async function onSheetClick(event) {
       sheetNotice(saved.message, saved.status !== 'SAVED');
       if (saved.status === 'SAVED') sheetDrawer.ruleOpen = false;
     } finally {
-      sheetDrawer.busy = false;
+      sheetBusy.delete(id);
       await loadSheet();
     }
     return;
   }
   const run = sheetCommand(node, id);
   if (!run) return;
-  sheetDrawer.busy = true;
+  // PAGE-06: say what is being bought and that a second press is not needed; the purchase is
+  // kept busy for this film until the server answers, whatever the drawer shows meanwhile.
+  const buying = action === 'confirm-step'
+    ? buyingNotice(node.dataset.step || '')
+    : action === 'confirm-redo' ? buyingNotice(redoKey(node.dataset.kind || '', node.dataset.scene || null)) : 'Se trimite…';
+  sheetBusy.set(id, buying);
+  sheetNotice(buying);
   paintSheet();
+  let said = '';
+  let failed = false;
   try {
-    sheetNotice(await run());
-    sheetDrawer.confirm = null;
+    said = await run();
+    if (sheetDrawer.id === id) sheetDrawer.confirm = null;
   } catch (error) {
-    sheetNotice(error.message, true);
+    said = error.message;
+    failed = true;
   } finally {
-    sheetDrawer.busy = false;
-    await loadSheet();
+    sheetBusy.delete(id);
+    // the answer belongs to its film: shown only while that film's sheet is the one open
+    if (sheetDrawer.id === id) {
+      sheetNotice(said, failed);
+      await loadSheet();
+    }
   }
 }
 
-async function loadMediaStoryboards() {
-  const listEl = element('storyboards-list');
-  try {
-    const data = await api('/media/storyboards');
-    const storyboards = data.storyboards || [];
-    if (storyboards.length === 0) {
-      listEl.innerHTML = `
-        <div class="topics-loading">
-          Niciun storyboard în flux.
-          <br>Apasă «Creează un caz demo» pentru un caz de test: un subiect, un scenariu și o afirmație neverificată, de verificat în Cercetare.
-        </div>
-      `;
-      return;
-    }
+/**
+ * PAGE-17: the media room reads one page of summary rows (GET /media/storyboards?limit=&offset=,
+ * newest first: the scene count, the QC verdict and the film's asset id) and loads a card's
+ * production package, scenes and QC only when he opens «Detalii». It used to fetch all three for
+ * every storyboard on every opening: 3N+1 requests.
+ */
+const MEDIA_PAGE = 10;
+/** @type {any[]} the summary rows read so far */
+let mediaRows = [];
+/** @type {number|null} where the next page starts, or null when every row is read */
+let mediaNext = null;
+let mediaTotal = 0;
+/** The films played in the media room, revoked when the list is read again or the room closes. */
+const filmUrls = new ObjectUrls();
 
-    const itemsHtml = await Promise.all(
-      storyboards.map(async (sb) => {
-        let scenes = [];
-        let qcReport = null;
-        let motion = null;
-        let motionScenes = [];
-        let motionNotes = [];
-        let pack = null;
-        try {
-          pack = await api(`/media/storyboards/${sb.id}/production-package`);
-        } catch (_) {}
-        try {
-          const detail = await api(`/media/storyboards/${sb.id}`);
-          scenes = detail.scenes || [];
-          motion = detail.motion || null;
-          motionScenes = detail.motion_scenes || [];
-          motionNotes = detail.motion_notes || [];
-        } catch (_) {}
+/** @param {any} sb a summary row */
+function storyboardSummaryHtml(sb) {
+  const qc = sb.qc_status
+    ? `<span class="${sb.qc_status === 'PASSED' ? 'qc-badge-pass' : 'qc-badge-fail'}">QC: ${escapeHtml(qcWord(sb.qc_status))}</span>`
+    : (sb.asset_id ? '<span class="tag">QC: Neefectuat</span>' : '');
+  return `
+        <div class="storyboard-card" data-id="${escapeHtml(sb.id)}" data-door-steps>
+          <div class="storyboard-header">
+            <div>
+              <h4 class="storyboard-title">${escapeHtml(sb.title)}</h4>
+              <div class="storyboard-meta">
+                <span>Aspect: <strong>${escapeHtml(sb.aspect_ratio || '9:16')}</strong></span>
+                <span>${escapeHtml(countWords(sb.scene_count, 'scenă', 'scene'))}</span>
+                <span>Stare: <strong class="${storyboardTone(sb.status)}" data-status="${escapeHtml(sb.status)}" title="${escapeHtml(sb.status)}">${escapeHtml(storyboardStatus(sb.status))}</strong></span>
+                ${qc}
+              </div>
+            </div>
+            <div class="storyboard-actions">
+              <button type="button" class="quiet" data-media-detail="${escapeHtml(sb.id)}" aria-expanded="false" aria-controls="media-detail-${escapeHtml(sb.id)}">Detalii</button>
+              <button type="button" class="quiet btn-shooting-sheet" data-id="${escapeHtml(sb.id)}" title="Prompturile, modelul fiecărei scene, creditele și plafonul, înainte de orice cumpărare (0 credite)">Foaia de filmare</button>
+              <button type="button" class="btn-render-video" data-id="${escapeHtml(sb.id)}">Randare 9:16</button>
+              <button type="button" class="btn-qc-video" data-id="${escapeHtml(sb.id)}">Verifică QC</button>
+            </div>
+          </div>
+          <div class="storyboard-detail" id="media-detail-${escapeHtml(sb.id)}" hidden></div>
+        </div>`;
+}
 
-        if (sb.status === 'RENDERED') {
-          try {
-            qcReport = await api(`/media/qc/${sb.id}`);
-          } catch (_) {}
-        }
-
-        // W28: the directions every scene's prompt ends with are said once, under the scenes
-        const shared = sharedTail(scenes.map((s) => s.visual_prompt));
-        const scenesHtml = scenes
-          .map(
-            (s, i) => `
+/**
+ * A card's detail, read when he opens it: the production package, the scenes and, for a rendered
+ * film, its QC report and the film itself.
+ * @param {any} sb a summary row
+ */
+async function storyboardDetailHtml(sb) {
+  const [pack, detail, qcReport] = await Promise.all([
+    api(`/media/storyboards/${sb.id}/production-package`).catch(() => null),
+    api(`/media/storyboards/${sb.id}`).catch(() => null),
+    sb.asset_id ? api(`/media/qc/${sb.id}`).catch(() => null) : Promise.resolve(null),
+  ]);
+  const scenes = (detail && detail.scenes) || [];
+  const motion = (detail && detail.motion) || null;
+  const motionScenes = (detail && detail.motion_scenes) || [];
+  const motionNotes = (detail && detail.motion_notes) || [];
+  // W28: the directions every scene's prompt ends with are said once, under the scenes
+  const shared = sharedTail(scenes.map((/** @type {any} */ s) => s.visual_prompt));
+  const scenesHtml = scenes
+    .map(
+      (/** @type {any} */ s, /** @type {number} */ i) => `
         <div class="scene-card">
           <div class="scene-card-header">
             <span class="scene-badge">Scena #${s.scene_index}</span>
@@ -3654,34 +3802,32 @@ async function loadMediaStoryboards() {
           ${String(s.voiceover_segment || '').trim() ? `<p class="scene-audio"><q lang="en">${escapeHtml(s.voiceover_segment)}</q></p>` : '<p class="scene-audio scene-audio-none" title="Scena nu are narațiune">—</p>'}
         </div>
       `,
-          )
-          .join('');
+    )
+    .join('');
 
-        let renderHtml = '';
-        if (sb.status === 'RENDERED') {
-          const qcPassed = qcReport && qcReport.status === 'PASSED';
-          const qcBadge = qcReport
-            ? `<span class="${qcPassed ? 'qc-badge-pass' : 'qc-badge-fail'}">QC: ${escapeHtml(qcWord(qcReport.status))}</span>`
-            : '<span class="tag">QC: Neefectuat</span>';
-
-          const checks = qcReport ? qcReport.checks_json || {} : {};
-          const techPassed = Boolean(checks.technical_qc && checks.technical_qc.passed);
-          const factualPassed = Boolean(checks.factual_qc && checks.factual_qc.passed);
-          // null means "not implemented"; it is deliberately not coerced to false.
-          const charDrift = checks.character_drift_qc ? checks.character_drift_qc.passed : null;
-          const rightsPassed = Boolean(checks.rights_qc && checks.rights_qc.passed);
-
-          // A check that was never implemented must not be scored: an em dash says
-          // "not evaluated", whereas 0% would claim a failed measurement.
-          const scoreCell = (label, passed) => {
-            const value = passed === null || passed === undefined ? '—' : passed ? '100%' : '0%';
-            return `<div class="qc-score-item"><div>${label}</div><div class="qc-score-num">${value}</div></div>`;
-          };
-          const tech = checks.technical_qc || {};
-          // The film itself: the asset quality control measured is the one to watch.
-          const assetId = qcReport ? qcReport.media_asset_id : null;
-          const qcScoresHtml = qcReport
-            ? `
+  let renderHtml = '';
+  if (sb.asset_id || sb.status === 'RENDERED') {
+    const qcPassed = qcReport && qcReport.status === 'PASSED';
+    const qcBadge = qcReport
+      ? `<span class="${qcPassed ? 'qc-badge-pass' : 'qc-badge-fail'}">QC: ${escapeHtml(qcWord(qcReport.status))}</span>`
+      : '<span class="tag">QC: Neefectuat</span>';
+    const checks = qcReport ? qcReport.checks_json || {} : {};
+    const techPassed = Boolean(checks.technical_qc && checks.technical_qc.passed);
+    const factualPassed = Boolean(checks.factual_qc && checks.factual_qc.passed);
+    // null means "not implemented"; it is deliberately not coerced to false.
+    const charDrift = checks.character_drift_qc ? checks.character_drift_qc.passed : null;
+    const rightsPassed = Boolean(checks.rights_qc && checks.rights_qc.passed);
+    // A check that was never implemented must not be scored: an em dash says
+    // "not evaluated", whereas 0% would claim a failed measurement.
+    const scoreCell = (/** @type {string} */ label, /** @type {any} */ passed) => {
+      const value = passed === null || passed === undefined ? '—' : passed ? '100%' : '0%';
+      return `<div class="qc-score-item"><div>${label}</div><div class="qc-score-num">${value}</div></div>`;
+    };
+    const tech = checks.technical_qc || {};
+    // The film itself: the asset quality control measured is the one to watch.
+    const assetId = qcReport ? qcReport.media_asset_id : sb.asset_id;
+    const qcScoresHtml = qcReport
+      ? `
           <div class="qc-scores-grid">
             ${scoreCell('Tehnic', techPassed)}
             ${scoreCell('Factual', factualPassed)}
@@ -3689,14 +3835,13 @@ async function loadMediaStoryboards() {
             ${scoreCell('Drepturi', rightsPassed)}
           </div>
         `
-            : '';
-
-          renderHtml = `
+      : '';
+    renderHtml = `
           <div class="video-preview-card">
             <div class="video-container-9-16">
               ${
                 assetId
-                  ? `<button class="video-play" data-asset="${escapeHtml(assetId)}" title="Redă filmul">${icon('play')}Redă</button>`
+                  ? `<button type="button" class="video-play" data-asset="${escapeHtml(assetId)}" title="Redă filmul">${icon('play')}Redă</button>`
                   : '<div class="tag">Video 9:16</div>'
               }
             </div>
@@ -3719,159 +3864,186 @@ async function loadMediaStoryboards() {
             </div>
           </div>
         `;
-        }
-
-        return `
-        <div class="storyboard-card" data-id="${sb.id}" data-door-steps>
-          <div class="storyboard-header">
-            <div>
-              <h4 class="storyboard-title">${escapeHtml(sb.title)}</h4>
-              <div class="storyboard-meta">
-                <span>Aspect: <strong>9:16</strong></span>
-                <span>Scene: <strong>${scenes.length}</strong></span>
-                <span>Stare: <strong class="${storyboardTone(sb.status)}" data-status="${escapeHtml(sb.status)}" title="${escapeHtml(sb.status)}">${escapeHtml(storyboardStatus(sb.status))}</strong></span>
-              </div>
-            </div>
-            <div class="storyboard-actions">
-              <button class="quiet btn-shooting-sheet" data-id="${sb.id}" title="Prompturile, modelul fiecărei scene, creditele și plafonul, înainte de orice cumpărare (0 credite)">Foaia de filmare</button>
-              <button class="btn-render-video" data-id="${sb.id}">Randare 9:16</button>
-              <button class="btn-qc-video" data-id="${sb.id}">Verifică QC</button>
-            </div>
-          </div>
-
+  }
+  return `
           ${productionPackageBlock(pack)}
-
           <div class="storyboard-scenes-grid">
             ${scenesHtml}
           </div>
           ${shared.tail ? `<div class="scene-common"><p class="scene-common-label">Aceleași indicații, la sfârșitul fiecărei scene</p><p class="scene-prompt scene-common-text" lang="en">${escapeHtml(shared.tail)}</p></div>` : ''}
+          ${renderHtml}`;
+}
 
-          ${renderHtml}
+/** @param {boolean} [more] read the next page and add it, instead of reading the first again */
+async function loadMediaStoryboards(more = false) {
+  const listEl = element('storyboards-list');
+  if (!more) filmUrls.revokeAll();
+  try {
+    const offset = more && mediaNext !== null ? mediaNext : 0;
+    const data = await api(`/media/storyboards?limit=${MEDIA_PAGE}&offset=${offset}`);
+    const rows = Array.isArray(data.storyboards) ? data.storyboards : [];
+    mediaRows = more ? mediaRows.concat(rows) : rows;
+    mediaNext = data.next_offset ?? null;
+    mediaTotal = Number(data.total) || mediaRows.length;
+    if (mediaRows.length === 0) {
+      listEl.innerHTML = `
+        <div class="topics-loading">
+          Niciun storyboard în flux.
+          ${demoCaseShown(state?.policy) ? '<br>Apasă «Creează un caz demo» pentru un caz de test: un subiect, un scenariu și o afirmație neverificată, de verificat în Cercetare.' : ''}
         </div>
       `;
-      }),
-    );
-
-    listEl.innerHTML = itemsHtml.join('');
-
-    // The film plays where the film is. The Owner's key travels in a header, so the bytes
-    // are fetched once and played from a blob rather than handed to <video src>, which
-    // could not authenticate. The same bytes are what the download link saves.
-    const playFilm = async (assetId, container, trigger) => {
-      const button = /** @type {HTMLButtonElement | null} */ (trigger);
-      if (button) { button.disabled = true; button.textContent = 'Se încarcă…'; }
-      try {
-        const response = await fetch(`/api/v1/media/assets/${assetId}/stream`, {
-          headers: { Authorization: `Bearer ${ownerToken}` },
-          cache: 'no-store',
-        });
-        if (!response.ok) throw new Error(`Fișierul nu a putut fi citit (${response.status}).`);
-        const url = URL.createObjectURL(await response.blob());
-        const video = document.createElement('video');
-        video.src = url;
-        video.controls = true;
-        video.autoplay = true;
-        video.playsInline = true;
-        video.className = 'video-player-9-16';
-        container.innerHTML = '';
-        container.append(video);
-        return url;
-      } catch (err) {
-        if (button) { button.disabled = false; button.innerHTML = `${icon('play')}Redă`; }
-        alert(`Filmul nu a putut fi redat: ${err.message}`);
-        return null;
-      }
-    };
-
-    listEl.querySelectorAll('.video-play').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const assetId = btn.getAttribute('data-asset');
-        const container = btn.parentElement;
-        if (assetId && container) playFilm(assetId, container, btn);
-      });
-    });
-
-    listEl.querySelectorAll('[data-download]').forEach((link) => {
-      link.addEventListener('click', async (event) => {
-        event.preventDefault();
-        const assetId = link.getAttribute('data-download');
-        if (!assetId) return;
-        try {
-          const response = await fetch(`/api/v1/media/assets/${assetId}/stream`, {
-            headers: { Authorization: `Bearer ${ownerToken}` },
-            cache: 'no-store',
-          });
-          if (!response.ok) throw new Error(`Fișierul nu a putut fi citit (${response.status}).`);
-          const url = URL.createObjectURL(await response.blob());
-          const save = document.createElement('a');
-          save.href = url;
-          save.download = `short_9_16_${assetId.slice(0, 8)}.mp4`;
-          save.click();
-          setTimeout(() => URL.revokeObjectURL(url), 30000);
-        } catch (err) {
-          alert(`Filmul nu a putut fi descărcat: ${err.message}`);
-        }
-      });
-    });
-
-    listEl.querySelectorAll('.btn-shooting-sheet').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const id = btn.getAttribute('data-id');
-        if (id) void openShootingSheet(id);
-      });
-    });
-
-    // In PRODUCTION the studio answers 409 «Folosește foaia de filmare»: the button opens the sheet
-    // instead, and from then on goes straight to it (shooting_sheet.js requestRender).
-    listEl.querySelectorAll('.btn-render-video').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const id = btn.getAttribute('data-id');
-        if (!id) return;
-        btn.textContent = 'Se randează…';
-        // @ts-ignore
-        btn.disabled = true;
-        try {
-          const answer = await requestRender(api, id, renderState, openShootingSheet);
-          if (answer.opened) {
-            btn.textContent = 'Randare 9:16';
-            // @ts-ignore
-            btn.disabled = false;
-            return;
-          }
-          await loadMediaStoryboards();
-          await refresh();
-        } catch (err) {
-          alert(`Randarea a eșuat: ${err.message}`);
-          btn.textContent = 'Randare 9:16';
-          // @ts-ignore
-          btn.disabled = false;
-        }
-      });
-    });
-
-    listEl.querySelectorAll('.btn-qc-video').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const id = btn.getAttribute('data-id');
-        if (!id) return;
-        btn.textContent = 'Se evaluează QC…';
-        // @ts-ignore
-        btn.disabled = true;
-        try {
-          await api(`/media/qc/${id}`, { method: 'POST' });
-          await loadMediaStoryboards();
-          await refresh();
-        } catch (err) {
-          alert(`QC a eșuat: ${err.message}`);
-          btn.textContent = 'Verifică QC';
-          // @ts-ignore
-          btn.disabled = false;
-        }
-      });
-    });
+      return;
+    }
+    const left = mediaTotal - mediaRows.length;
+    listEl.innerHTML = mediaRows.map(storyboardSummaryHtml).join('')
+      + (mediaNext !== null && left > 0
+        ? `<div class="source-actions"><button type="button" class="quiet" data-media-more>Încă ${escapeHtml(countWords(Math.min(left, MEDIA_PAGE), 'storyboard', 'storyboarduri'))} (din ${escapeHtml(String(left))} rămase)</button></div>`
+        : '');
   } catch (err) {
     listEl.innerHTML = `<div class="text-error">Încărcarea producției media a eșuat: ${escapeHtml(err.message)}</div>`;
   }
 }
+
+// The film plays where the film is. The Owner's key travels in a header, so the bytes are
+// fetched once and played from a blob rather than handed to <video src>, which could not
+// authenticate. The same bytes are what the download link saves.
+/** @param {string} assetId @param {HTMLElement} container @param {HTMLButtonElement|null} button */
+async function playFilm(assetId, container, button) {
+  if (button) { button.disabled = true; button.textContent = 'Se încarcă…'; }
+  try {
+    const response = await fetch(`/api/v1/media/assets/${assetId}/stream`, {
+      headers: { Authorization: `Bearer ${ownerToken}` },
+      cache: 'no-store',
+    });
+    if (!response.ok) throw new Error(`Fișierul nu a putut fi citit (${response.status}).`);
+    const url = filmUrls.add(URL.createObjectURL(await response.blob()));
+    const video = document.createElement('video');
+    video.src = url;
+    video.controls = true;
+    video.autoplay = true;
+    video.playsInline = true;
+    video.className = 'video-player-9-16';
+    container.innerHTML = '';
+    container.append(video);
+    return url;
+  } catch (err) {
+    if (button) { button.disabled = false; button.innerHTML = `${icon('play')}Redă`; }
+    mediaStatus(`Filmul nu a putut fi redat: ${err.message}`, true);
+    return null;
+  }
+}
+
+/** @param {string} assetId */
+async function downloadFilm(assetId) {
+  try {
+    const response = await fetch(`/api/v1/media/assets/${assetId}/stream`, {
+      headers: { Authorization: `Bearer ${ownerToken}` },
+      cache: 'no-store',
+    });
+    if (!response.ok) throw new Error(`Fișierul nu a putut fi citit (${response.status}).`);
+    const url = URL.createObjectURL(await response.blob());
+    const save = document.createElement('a');
+    save.href = url;
+    save.download = `short_9_16_${assetId.slice(0, 8)}.mp4`;
+    save.click();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+  } catch (err) {
+    mediaStatus(`Filmul nu a putut fi descărcat: ${err.message}`, true);
+  }
+}
+
+/** @param {HTMLButtonElement} btn */
+async function toggleMediaDetail(btn) {
+  const id = btn.dataset.mediaDetail || '';
+  const box = document.getElementById(`media-detail-${id}`);
+  const row = mediaRows.find((r) => r.id === id);
+  if (!box || !row) return;
+  const open = btn.getAttribute('aria-expanded') === 'true';
+  if (open) {
+    box.hidden = true;
+    btn.setAttribute('aria-expanded', 'false');
+    btn.textContent = 'Detalii';
+    return;
+  }
+  btn.setAttribute('aria-expanded', 'true');
+  btn.textContent = 'Ascunde detaliile';
+  box.hidden = false;
+  if (!box.dataset.loaded) {
+    box.innerHTML = '<div class="topics-loading">Se încarcă detaliile…</div>';
+    box.innerHTML = await storyboardDetailHtml(row);
+    box.dataset.loaded = '1';
+  }
+}
+
+/** One listener for the whole list: the cards are repainted, the listener stays. */
+element('storyboards-list').addEventListener('click', async (event) => {
+  const target = /** @type {HTMLElement} */ (event.target);
+  const more = target.closest('[data-media-more]');
+  if (more) { /** @type {HTMLButtonElement} */ (more).disabled = true; await loadMediaStoryboards(true); return; }
+  const detail = /** @type {HTMLButtonElement|null} */ (target.closest('[data-media-detail]'));
+  if (detail) { await toggleMediaDetail(detail); return; }
+  const play = /** @type {HTMLButtonElement|null} */ (target.closest('.video-play'));
+  if (play) {
+    const assetId = play.getAttribute('data-asset');
+    const container = play.parentElement;
+    if (assetId && container) await playFilm(assetId, container, play);
+    return;
+  }
+  const download = /** @type {HTMLElement|null} */ (target.closest('[data-download]'));
+  if (download) {
+    event.preventDefault();
+    const assetId = download.getAttribute('data-download');
+    if (assetId) await downloadFilm(assetId);
+    return;
+  }
+  const sheet = target.closest('.btn-shooting-sheet');
+  if (sheet) {
+    const id = sheet.getAttribute('data-id');
+    if (id) void openShootingSheet(id);
+    return;
+  }
+  // In PRODUCTION the studio answers 409 «Folosește foaia de filmare»: the button opens the sheet
+  // instead, and from then on goes straight to it (shooting_sheet.js requestRender).
+  const renderKey = /** @type {HTMLButtonElement|null} */ (target.closest('.btn-render-video'));
+  if (renderKey) {
+    const id = renderKey.getAttribute('data-id');
+    if (!id) return;
+    renderKey.textContent = 'Se randează…';
+    renderKey.disabled = true;
+    try {
+      const answer = await requestRender(api, id, renderState, openShootingSheet);
+      if (answer.opened) {
+        renderKey.textContent = 'Randare 9:16';
+        renderKey.disabled = false;
+        return;
+      }
+      await loadMediaStoryboards();
+      await refresh();
+    } catch (err) {
+      mediaStatus(`Randarea a eșuat: ${err.message}`, true);
+      renderKey.textContent = 'Randare 9:16';
+      renderKey.disabled = false;
+    }
+    return;
+  }
+  const qcButton = /** @type {HTMLButtonElement|null} */ (target.closest('.btn-qc-video'));
+  if (qcButton) {
+    const id = qcButton.getAttribute('data-id');
+    if (!id) return;
+    qcButton.textContent = 'Se evaluează QC…';
+    qcButton.disabled = true;
+    try {
+      await api(`/media/qc/${id}`, { method: 'POST' });
+      await loadMediaStoryboards();
+      await refresh();
+    } catch (err) {
+      mediaStatus(`QC a eșuat: ${err.message}`, true);
+      qcButton.textContent = 'Verifică QC';
+      qcButton.disabled = false;
+    }
+  }
+});
+mediaModal.addEventListener('close', () => { filmUrls.revokeAll(); });
 
 if (generateDemoStoryboardBtn) {
   generateDemoStoryboardBtn.addEventListener('click', async () => {
@@ -3941,13 +4113,15 @@ if (budgetForm) {
     status.hidden = false;
     status.className = 'dialog-status-msg';
     try {
-      const result = await api('/economy/budget', {
-        method: 'PUT',
-        body: JSON.stringify({
-          period: /** @type {HTMLSelectElement} */ (element('budget-period')).value,
-          limit_usd: /** @type {HTMLInputElement} */ (element('budget-limit')).value.trim(),
-        }),
+      // PAGE-05: a positive sum or nothing is sent; an empty field never retires the budget
+      const built = budgetCommand({
+        period: /** @type {HTMLSelectElement} */ (element('budget-period')).value,
+        limit: /** @type {HTMLInputElement} */ (element('budget-limit')).value,
+        status: worldFacts.budget,
+        commandId: crypto.randomUUID(),
       });
+      if ('error' in built) throw new Error(built.error);
+      const result = await api('/economy/budget', { method: 'PUT', body: JSON.stringify(built.command) });
       status.textContent = result.active === false ? 'Bugetul a fost retras.' : `Buget ${result.period === 'DAILY' ? 'zilnic' : 'lunar'} de ${amount(result.limit_usd)} USD setat.`;
       await loadBudget();
     } catch (error) {
@@ -3956,6 +4130,24 @@ if (budgetForm) {
     }
   });
 }
+/** PAGE-05: «Retrage bugetul zilnic», its own key, asked first. */
+document.getElementById('budget-retire')?.addEventListener('click', async () => {
+  const status = element('budget-status');
+  const yes = await confirmDialog({ question: 'Retragi bugetul zilnic?', words: RETIRE_QUESTION, yes: 'Da, retrage bugetul zilnic' });
+  if (!yes) return;
+  status.hidden = false;
+  status.className = 'dialog-status-msg';
+  try {
+    const built = retireCommand({ period: 'DAILY', status: worldFacts.budget, commandId: crypto.randomUUID() });
+    if ('error' in built) throw new Error(built.error);
+    await api('/economy/budget', { method: 'PUT', body: JSON.stringify(built.command) });
+    status.textContent = 'Bugetul zilnic a fost retras: nimic din buget nu mai oprește un film al zilei.';
+    await loadBudget();
+  } catch (error) {
+    status.className = 'dialog-status-msg text-error';
+    status.textContent = error instanceof Error ? error.message : 'Bugetul nu a putut fi retras.';
+  }
+});
 const closeBooksBtn = document.getElementById('close-books-btn');
 if (closeBooksBtn) {
   closeBooksBtn.addEventListener('click', async () => {
@@ -4012,8 +4204,9 @@ async function loadPublishingHub() {
           'Credențiale YouTube prezente. Publicarea folosește API-ul oficial.';
       } else {
         publisherBanner.className = 'dialog-status-msg text-error';
+        // Channels are connected from the page (OAuth), not by editing .env (PAGE-13).
         publisherBanner.textContent =
-          'Nicio credențială YouTube configurată: publicarea este oprită. Setează STUDIO_YOUTUBE_CLIENT_ID, STUDIO_YOUTUBE_CLIENT_SECRET și STUDIO_YOUTUBE_REFRESH_TOKEN în .env. Studioul nu simulează niciodată publicarea.';
+          'Niciun cont YouTube conectat: publicarea este oprită. Conectează contul canalului din Setări → Conturi și e-mail, apoi leagă-l de canal din Distribuție → Sloturi de canal. Studioul nu simulează niciodată publicarea.';
       }
       publisherBanner.hidden = false;
     }
@@ -4071,6 +4264,7 @@ async function loadPublishingHub() {
       });
     }
 
+    void loadPublishingGate();
     const publications = pubData.publications || [];
     if (publications.length === 0) {
       pubListEl.innerHTML =
@@ -4095,10 +4289,8 @@ async function loadPublishingHub() {
               : isSimulated
                 ? '<span class="pub-sim-note">Simulare locală — niciun video pe YouTube</span>'
                 : '';
-          const privacyBadge =
-            p.privacy_status === 'private'
-              ? '<span class="privacy-badge privacy-badge-private">Privat</span>'
-              : '<span class="privacy-badge privacy-badge-public">Public</span>';
+          // PAGE-10: private, unlisted and public are three words; an «unlisted» upload read «Public»
+          const privacyBadge = privacyBadgeHtml(p.privacy_status, p.remote_privacy_status);
 
           return `
           <div class="pub-item-card">
@@ -4109,6 +4301,8 @@ async function loadPublishingHub() {
                 ${privacyBadge}
                 <span>Data: ${new Date(p.created_at).toLocaleString('ro-RO')}</span>
               </div>
+              ${p.error_detail && p.status !== 'PUBLISHED' ? `<p class="claim-notes">${escapeHtml(p.error_detail)}</p>` : ''}
+              ${resolveFormHtml(p)}
             </div>
             <div>
               ${remoteLink}
@@ -4126,62 +4320,165 @@ async function loadPublishingHub() {
   }
 }
 
+/**
+ * PAGE-10: the film quick publish would upload, chosen by the studio in one query (the newest
+ * storyboard whose newest film passed QC), and the channel it goes to. Used by the gate card and
+ * by the question «Publică privat» asks before anything is sent.
+ * @returns {Promise<{asset: string, title: string, channel: any|null}|null>}
+ */
+async function quickPublishTarget() {
+  const [films, chData] = await Promise.all([
+    api('/media/storyboards?qc_status=PASSED&limit=1'),
+    api('/publishing/channels'),
+  ]);
+  const film = (films.storyboards || [])[0];
+  if (!film || !film.asset_id) return null;
+  const channel = (chData.channels || []).find((/** @type {any} */ c) => c.channel_type === 'MAIN_FACTUAL') || null;
+  return { asset: film.asset_id, title: film.title, channel };
+}
+
+/** The gate card: the backend's own evaluation of the film quick publish would send. */
+async function loadPublishingGate() {
+  const box = document.getElementById('pub-gate-checks');
+  if (!box) return;
+  try {
+    const target = await quickPublishTarget();
+    if (!target || !target.channel) { box.innerHTML = gateChecksHtml(null); return; }
+    const evaluation = await api(`/publishing/gate/evaluate/${target.asset}/${target.channel.id}`);
+    box.innerHTML = `<p class="pub-gate-note">Pentru «${escapeHtml(target.title)}» pe «${escapeHtml(target.channel.channel_name)}»:</p>${gateChecksHtml(evaluation)}`;
+  } catch (err) {
+    box.innerHTML = `<p class="text-error">Poarta de publicare nu a putut fi citită: ${escapeHtml(err.message)}</p>`;
+  }
+}
+
+/** @param {string} text @param {boolean} [error] */
+function publishingStatus(text, error = false) {
+  publishingStatusMsg.hidden = !text;
+  publishingStatusMsg.className = error ? 'dialog-status-msg text-error' : 'dialog-status-msg';
+  publishingStatusMsg.textContent = text;
+}
+
+/** @param {any} pubRes the publication the studio answered with */
+function quickPublishAnswer(pubRes) {
+  if (pubRes.status === 'PUBLISHED') {
+    publishingStatus(`Filmul a fost încărcat privat pe YouTube. ID extern: ${pubRes.remote_video_id}`);
+  } else if (pubRes.status === 'PUBLISHED_SIMULATED') {
+    publishingStatus('Încărcare SIMULATĂ: nu există niciun video pe YouTube. Configurează credențiale reale.', true);
+  } else {
+    publishingStatus(`Publicarea nu s-a încheiat. Stare: ${publicationStatus(pubRes.status)}. ${pubRes.error_detail || ''}`, true);
+  }
+}
+
 if (triggerQuickPublishBtn) {
+  // PAGE-10: the first press only asks, naming the film, the channel and the privacy; nothing is
+  // uploaded until «Da, încarcă». The film is the studio's choice (one query), not the page's.
   triggerQuickPublishBtn.addEventListener('click', async () => {
-    publishingStatusMsg.hidden = false;
-    publishingStatusMsg.className = 'dialog-status-msg';
-    publishingStatusMsg.textContent =
-      'Se verifică fluxul media și se caută cel mai recent film aprobat de QC…';
+    publishingStatus('Se caută cel mai nou film care a trecut QC…');
+    const ask = element('quick-publish-confirm');
+    ask.hidden = true;
     try {
-      // Find a storyboard with an assembled and QC passed video via /media/qc/{sb.id}
-      const sbData = await api('/media/storyboards');
-      const storyboards = sbData.storyboards || [];
-      let targetAssetId = null;
-
-      for (const sb of storyboards) {
-        try {
-          const qc = await api(`/media/qc/${sb.id}`);
-          if (qc && qc.status === 'PASSED' && qc.media_asset_id) {
-            targetAssetId = qc.media_asset_id;
-            break;
-          }
-        } catch (_) {}
-      }
-
-      if (!targetAssetId) {
-        publishingStatusMsg.className = 'dialog-status-msg text-error';
-        publishingStatusMsg.textContent =
-          'Nu s-a găsit niciun film care să fi trecut QC. Creează întâi un storyboard și o randare 9:16 în Producție media.';
+      const target = await quickPublishTarget();
+      if (!target) {
+        publishingStatus('Nu s-a găsit niciun film care să fi trecut QC. Creează întâi un storyboard și o randare 9:16 în Producție media.', true);
         return;
       }
-
-      publishingStatusMsg.textContent = 'Verificarea porții de publicare și încărcarea privată a celui mai recent film care a trecut QC…';
-      const pubRes = await api(`/publishing/publish-asset/${targetAssetId}`, {
-        method: 'POST',
-      });
-
-      if (pubRes.status === 'PUBLISHED') {
-        publishingStatusMsg.className = 'dialog-status-msg';
-        publishingStatusMsg.textContent = `Filmul a fost încărcat privat pe YouTube. ID extern: ${pubRes.remote_video_id}`;
-      } else if (pubRes.status === 'PUBLISHED_SIMULATED') {
-        publishingStatusMsg.className = 'dialog-status-msg text-error';
-        publishingStatusMsg.textContent =
-          'Încărcare SIMULATĂ: nu există niciun video pe YouTube. Configurează credențiale reale.';
-      } else {
-        publishingStatusMsg.className = 'dialog-status-msg text-error';
-        publishingStatusMsg.textContent = `Publicarea nu s-a încheiat. Stare: ${publicationStatus(pubRes.status)}. ${pubRes.error_detail || ''}`;
+      if (!target.channel) {
+        publishingStatus('Canalul A nu este configurat; nu există unde să se încarce filmul.', true);
+        return;
       }
+      publishingStatus('');
+      ask.innerHTML = `<p class="owner-confirm-question">${escapeHtml(quickPublishQuestion({ title: target.title, channel: target.channel.channel_name, privacy: 'private' }))}</p>
+        <div class="owner-confirm-keys">
+          <button type="button" class="primary owner-confirm-yes" data-quick-publish-yes="${escapeHtml(target.asset)}">Da, încarcă</button>
+          <button type="button" class="quiet" data-quick-publish-no>Nu acum</button>
+        </div>
+        <p class="decision-confirm-note">Până nu apeși Da, nu se încarcă nimic.</p>`;
+      ask.hidden = false;
+      /** @type {HTMLElement|null} */ (ask.querySelector('[data-quick-publish-yes]'))?.focus();
+    } catch (err) {
+      publishingStatus(`Eroare la publicare: ${err.message}`, true);
+    }
+  });
+  element('quick-publish-confirm').addEventListener('click', async (event) => {
+    const target = /** @type {HTMLElement} */ (event.target);
+    const ask = element('quick-publish-confirm');
+    if (target.closest('[data-quick-publish-no]')) {
+      ask.hidden = true;
+      triggerQuickPublishBtn.focus();
+      return;
+    }
+    const yes = /** @type {HTMLButtonElement|null} */ (target.closest('[data-quick-publish-yes]'));
+    if (!yes) return;
+    const assetId = yes.dataset.quickPublishYes || '';
+    ask.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+    publishingStatus('Verificarea porții de publicare și încărcarea privată…');
+    try {
+      quickPublishAnswer(await api(`/publishing/publish-asset/${assetId}`, { method: 'POST', timeoutMs: 600000 }));
+      ask.hidden = true;
       await loadPublishingHub();
       await refresh();
     } catch (err) {
-      publishingStatusMsg.className = 'dialog-status-msg text-error';
-      publishingStatusMsg.textContent = `Eroare la publicare: ${err.message}`;
+      ask.hidden = true;
+      publishingStatus(`Eroare la publicare: ${err.message}`, true);
     }
   });
 }
 
+/**
+ * PUB-12: a publication the studio could not settle (NEEDS_RECONCILIATION, REMOTE_UNKNOWN) is
+ * settled by his answer: «Există», with the video's id or link, or «Nu există». Each answer
+ * carries its own command id; the backend refuses a state it cannot settle in its own words.
+ * @param {any} p
+ */
+function resolveFormHtml(p) {
+  if (!RESOLVABLE_STATES.includes(p.status)) return '';
+  const id = escapeHtml(p.id);
+  return `<div class="pub-resolve" data-resolve-box="${id}">
+      <p class="helper">Studioul nu știe sigur dacă filmul a ajuns pe canal. Uită-te pe YouTube Studio și spune-i ce ai găsit.</p>
+      <label for="resolve-video-${id}">ID-ul sau linkul videoclipului găsit</label>
+      <input id="resolve-video-${id}" type="text" autocomplete="off" spellcheck="false" placeholder="https://www.youtube.com/shorts/…">
+      <div class="owner-confirm-keys">
+        <button type="button" class="secondary" data-resolve-found="${id}">Există</button>
+        <button type="button" class="quiet" data-resolve-missing="${id}">Nu există</button>
+      </div>
+      <p class="owner-answer" role="status" data-resolve-answer="${id}"></p>
+    </div>`;
+}
+
+element('publications-list').addEventListener('click', async (event) => {
+  const target = /** @type {HTMLElement} */ (event.target);
+  const found = /** @type {HTMLElement|null} */ (target.closest('[data-resolve-found]'));
+  const missing = /** @type {HTMLElement|null} */ (target.closest('[data-resolve-missing]'));
+  if (!found && !missing) return;
+  const id = String((found || missing)?.dataset.resolveFound || (found || missing)?.dataset.resolveMissing || '');
+  const box = document.querySelector(`[data-resolve-box="${id}"]`);
+  const said = document.querySelector(`[data-resolve-answer="${id}"]`);
+  const video = /** @type {HTMLInputElement|null} */ (document.getElementById(`resolve-video-${id}`));
+  const built = resolvePublicationCommand({ found: Boolean(found), video: video ? video.value : '', commandId: crypto.randomUUID() });
+  if ('error' in built) { if (said) { said.textContent = built.error; said.classList.add('settings-error'); } return; }
+  box?.querySelectorAll('button, input').forEach((el) => { /** @type {HTMLButtonElement} */ (el).disabled = true; });
+  try {
+    const answer = await api(`/publishing/publications/${id}/resolve`, { method: 'POST', body: JSON.stringify(built.command) });
+    publishingStatus(`Răspunsul tău a fost înregistrat: ${publicationStatus(answer.status)}.`);
+    await loadPublishingHub();
+  } catch (err) {
+    if (said) { said.textContent = err.message; said.classList.add('settings-error'); }
+    box?.querySelectorAll('button, input').forEach((el) => { /** @type {HTMLButtonElement} */ (el).disabled = false; });
+  }
+});
+
 function render(data) {
   element('studio-name').textContent = data.studio.name;
+  // The clock, the sun, the street and the labels follow the studio's own place (SELL-08):
+  // the snapshot serves it from the settings; Bucharest is only the fallback.
+  setStudioPlace({ ...(data.studio.location || {}), timezone: data.studio.timezone, studioName: data.studio.name });
+  renderDemoBanner(data.demo);
+  // PAGE-01 and REL-07: the page older than the studio, and what keeps the studio running
+  renderPageBanners(data);
+  // PAGE-04: his rule for the paid steps, under the mode it combines with
+  renderGovernanceRule();
+  // PAGE-09: the demo case writes a topic of its own (status DEMO); offered only in TEST
+  if (generateDemoStoryboardBtn) generateDemoStoryboardBtn.hidden = !demoCaseShown(data.policy);
   // The masthead chip and the slate caption say «live» only while it is (live_claims.js).
   renderLiveSignals();
   element('snapshot-time').textContent =
@@ -4273,6 +4570,7 @@ async function refresh() {
     }
     // The approvals have their own, slower clock; this only lets them ride the same poll.
     await loadApprovals();
+    await loadOwnerLetters();
     return true;
   } catch (error) {
     if (generation !== epoch) return false;
@@ -4382,7 +4680,6 @@ element('logout').addEventListener('click', () => {
   eventsLink.stop();
   // the next key may meet another backend: it is asked again how its sockets take the key
   streamRoute = null;
-  eventsAuth = 'query';
   liveSignals.data = 'fresh';
   keyLight.stop();
   if (officeEngine) officeEngine.park();
@@ -4432,11 +4729,14 @@ element('logout').addEventListener('click', () => {
 
 environmentButton.addEventListener('click', async () => {
   if (busy || !connected || !state) return;
+  const next = state.policy.environment === 'TEST' ? 'PRODUCTION' : 'TEST';
+  // PAGE-08: PRODUCTION is where the paid vendors are bought from; back to TEST asks nothing.
+  if (!(await askConsequence({ environment: next }))) return;
+  if (busy || !connected || !state) return;
   busy = true;
   environmentButton.disabled = true;
   notify('');
   const generation = epoch;
-  const next = state.policy.environment === 'TEST' ? 'PRODUCTION' : 'TEST';
   pendingEnvironment ||= {
     schema_version: 1,
     command_id: crypto.randomUUID(),
@@ -4547,6 +4847,10 @@ modeButtons.addEventListener('click', async (event) => {
     return;
   }
   if (busy) return;
+  // PAGE-08: a promotion lets the studio do more alone; he reads what the next run will do and
+  // says yes first. Lowering the mode asks nothing (consequenceWords answers null).
+  if (!(await askConsequence({ mode }))) return;
+  if (busy) return;
   busy = true;
   governanceNote('');
   const generation = epoch;
@@ -4586,6 +4890,9 @@ const APPROVALS_INTERVAL_MS = 30000;
 let approvalsLastRead = 0;
 let approvalsRouteMissing = false;
 
+/** PAGE-03: the T3/T4 request whose «Aprobă» opened its question, or null. */
+let approvalConfirming = /** @type {string|null} */ (null);
+
 /** @param {ReturnType<typeof readApprovals>[number]} request @param {number} now */
 function approvalCard(request, now) {
   // Beside the figure and not under it in the evidence line: the Owner answers the number, so
@@ -4596,6 +4903,7 @@ function approvalCard(request, now) {
     caveat: approvalCaveat(request.evidence),
     tierMeaning: riskTierMeaning(request.risk_tier || '—'),
     person: requesterPerson(request.requester, officeState.agents),
+    confirming: approvalConfirming === request.id,
   });
 }
 
@@ -4646,15 +4954,24 @@ approvalsList.addEventListener('click', async (event) => {
   if (!target || busy) return;
   const button = /** @type {HTMLButtonElement} */ (target);
   const card = button.closest('.approval-card');
+  const id = button.dataset.id || '';
+  const decision = button.dataset.decision || '';
+  // PAGE-03: a T3/T4 «Aprobă» only opens its question; «Nu acum» closes it. Nothing is sent.
+  if (decision === 'CONFIRM' || decision === 'CANCEL') {
+    approvalConfirming = decision === 'CONFIRM' ? id : null;
+    renderApprovals();
+    if (approvalConfirming) /** @type {HTMLTextAreaElement|null} */ (approvalsList.querySelector('[data-approval-note]'))?.focus();
+    return;
+  }
+  const note = /** @type {HTMLTextAreaElement|null} */ (card?.querySelector('[data-approval-note]'))?.value.trim() || undefined;
   card?.querySelectorAll('button').forEach((node) => {
     /** @type {HTMLButtonElement} */ (node).disabled = true;
   });
-  const id = button.dataset.id || '';
-  const decision = button.dataset.decision || '';
   busy = true;
   const generation = epoch;
   try {
-    const command = approvalDecisionCommand(id, decision, crypto.randomUUID());
+    const command = approvalDecisionCommand(id, decision, crypto.randomUUID(), note);
+    approvalConfirming = null;
     await api(APPROVAL_DECISION_PATH, {
       method: 'POST',
       body: JSON.stringify(command),
@@ -4838,7 +5155,7 @@ async function loadWorkforce() {
       <div class="wf-stat"><span class="wf-stat-value">${data.idle_agents.length}</span><span class="wf-stat-label">fără nicio rulare</span></div>`;
     summaryEl.insertAdjacentHTML(
       'beforeend',
-      `<p class="helper-note wf-window">Măsurat pe ultimele ${data.window_days} zile, din rulările înregistrate.</p>`,
+      `<p class="helper-note wf-window">Măsurat pe ${Number(data.window_days) === 1 ? 'ultima zi' : `ultimele ${countWords(data.window_days, 'zi', 'zile')}`}, din rulările înregistrate.</p>`,
     );
 
     rosterMeasured = data;
@@ -5947,6 +6264,7 @@ async function loadPreflight() {
   const checksEl = element('runbook-checks');
   try {
     const data = await api('/runbook/preflight');
+    lastPreflight = data;
     const status = String(data.status || '');
     summaryEl.innerHTML = `
       <div class="runbook-verdict rb-${escapeHtml(status.toLowerCase())}">
@@ -6004,6 +6322,8 @@ function renderRunCard(run) {
   // What the day made, not only how far it got: the backend's sentence under the header and,
   // per stage, its count. A COMPLETED day that produced nothing loses its green (`rb-empty`).
   const headline = runHeadline(run);
+  // PAGE-02: a day that waits for him at a film's paid step opens that film's sheet
+  const sheet = sheetKeyFor(run);
   return `
     <div class="${escapeHtml(runClassName(run))}">
       <div class="topic-card-header">
@@ -6011,12 +6331,13 @@ function renderRunCard(run) {
         <span class="topic-card-novelty" title="${escapeHtml(run.status)}">${escapeHtml(runStatusWord(run.status))}</span>
       </div>
       <div class="topic-card-meta">
-        <span>${run.stages_completed}/${run.stages_total} etape încheiate</span>
+        <span>${run.stages_completed} din ${countWords(run.stages_total, 'etapă încheiată', 'etape încheiate')}</span>
         · <span>verificare preliminară: ${escapeHtml(run.preflight_status ? preflightWord(run.preflight_status) : '—')}</span>
         ${run.stopped_at_stage ? ` · <span>oprită la «${escapeHtml(stageLabel(run.stopped_at_stage))}»</span>` : ''}
       </div>
       ${headline.text ? `<div class="runbook-run-summary${headline.empty ? ' rb-empty' : ''}">${escapeHtml(headline.text)}</div>` : ''}
       ${run.stop_reason ? `<div class="claim-notes">${escapeHtml(run.stop_reason)}</div>` : ''}
+      ${sheet ? `<div class="source-actions"><button type="button" class="secondary" data-sheet-open="${escapeHtml(sheet)}">Deschide foaia de filmare</button></div>` : ''}
       <div class="runbook-stages">
         ${stages
           .map(
@@ -6032,6 +6353,66 @@ function renderRunCard(run) {
     </div>`;
 }
 
+/**
+ * PAGE-12: «Coada de lucru». The worker's tasks with their kind, age, attempts and last error;
+ * a dead task can be queued again and a task's workflow cancelled, each only after a question
+ * that names what it does (work_queue.js).
+ * @type {any[]}
+ */
+let queueTasks = [];
+async function loadWorkQueue() {
+  const box = element('work-queue');
+  try {
+    const tasks = await api(QUEUE_PATH);
+    queueTasks = Array.isArray(tasks) ? tasks : [];
+    box.innerHTML = queueHtml(queueTasks, Date.now());
+  } catch (err) {
+    box.innerHTML = `<div class="text-error">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+/** @param {string} text @param {boolean} [error] */
+function queueStatus(text, error = false) {
+  const line = element('queue-status');
+  line.hidden = !text;
+  line.className = error ? 'dialog-status-msg text-error' : 'dialog-status-msg';
+  line.textContent = text;
+}
+
+element('refresh-queue-btn').addEventListener('click', () => { void loadWorkQueue(); });
+element('work-queue').addEventListener('click', async (event) => {
+  const target = /** @type {HTMLElement} */ (event.target);
+  const retry = /** @type {HTMLButtonElement|null} */ (target.closest('[data-queue-retry]'));
+  const cancel = /** @type {HTMLButtonElement|null} */ (target.closest('[data-workflow-cancel]'));
+  if (retry) {
+    const task = queueTasks.find((t) => t.id === retry.dataset.queueRetry);
+    if (!task) return;
+    const yes = await confirmDialog({ question: retryQuestion(task), words: 'Sarcina pornește din nou de la prima încercare, când lucrătorul ajunge la ea.', yes: 'Da, reîncearcă' });
+    if (!yes) return;
+    retry.disabled = true;
+    try {
+      await api(`/tasks/${encodeURIComponent(task.id)}/retry`, { method: 'POST' });
+      queueStatus('Sarcina este din nou în coadă.');
+    } catch (err) {
+      queueStatus(err.message, true);
+    }
+    await loadWorkQueue();
+    return;
+  }
+  if (cancel) {
+    const yes = await confirmDialog({ question: CANCEL_QUESTION, words: 'Sarcinile fluxului nu mai pornesc după anulare.', yes: 'Da, anulează fluxul' });
+    if (!yes) return;
+    cancel.disabled = true;
+    try {
+      await api(`/workflows/${encodeURIComponent(cancel.dataset.workflowCancel || '')}/cancel`, { method: 'POST' });
+      queueStatus('Fluxul a fost anulat.');
+    } catch (err) {
+      queueStatus(err.message, true);
+    }
+    await loadWorkQueue();
+  }
+});
+
 /** Renders the runs and returns whether one is still on its way. */
 async function loadRuns() {
   const listEl = element('runbook-runs');
@@ -6043,6 +6424,7 @@ async function loadRuns() {
           <div class="topic-card-header">
             <strong class="topic-card-title">Rularea de azi</strong>
             <span class="topic-card-novelty">ÎN CURS</span>
+            ${stuckWords(data.pending, Date.now()) ? `<span class="topic-card-novelty rb-stuck" title="Ziua așteaptă mai mult decât îi permit reîncercările și nu mai ține lucrătorul ocupat. Vezi Coada de lucru.">${escapeHtml(stuckWords(data.pending, Date.now()))}</span>` : ''}
           </div>
           <div class="topic-card-meta">În coadă de la ${escapeHtml(timelineTime(data.pending.created_at))}</div>
           <div class="claim-notes">Etapele apar în registrul din stânga pe măsură ce se întâmplă.</div>
@@ -6061,6 +6443,34 @@ async function loadRuns() {
  * panel says when, and says plainly that it will not fire while autonomy is stopped, because
  * a "next run" time shown beside a stopped studio would promise something that cannot happen.
  */
+/**
+ * The demo's permanent banner (SELL-03): a studio started with `scripts/start.py --demo` runs on
+ * simulated vendors and publishes nothing, and the page says so on every screen.
+ * @param {{active?: boolean, banner_ro?: string}|null|undefined} demo
+ */
+function renderDemoBanner(demo) {
+  let banner = document.getElementById('demo-banner');
+  if (!demo || !demo.active) {
+    if (banner) banner.hidden = true;
+    return;
+  }
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'demo-banner';
+    banner.className = 'demo-banner';
+    banner.setAttribute('role', 'status');
+    // set through the CSSOM (the page's policy refuses inline style attributes, not this), so the
+    // banner needs no rule of its own in the shared stylesheet
+    Object.assign(banner.style, {
+      position: 'sticky', top: '0', zIndex: '1000', padding: '6px 12px', textAlign: 'center',
+      font: '600 14px/1.4 system-ui, sans-serif', background: '#7c2d12', color: '#fff7ed',
+    });
+    document.body.prepend(banner);
+  }
+  banner.textContent = demo.banner_ro || 'DEMO — furnizori simulați, nimic nu se publică';
+  banner.hidden = false;
+}
+
 async function loadRunbookSchedule() {
   const box = element('runbook-schedule');
   try {
@@ -6082,7 +6492,8 @@ async function loadRunbookSchedule() {
           <strong class="topic-card-title" title="${escapeHtml(daily.name)}">${escapeHtml(SCHEDULE_TITLE)}</strong>
           <span class="topic-card-novelty">${daily.is_active ? 'ACTIV' : 'INACTIV'}</span>
         </div>
-        <div class="topic-card-meta">Următoarea rulare: ${escapeHtml(when(scheduleNextRun(daily)))} · ultima: ${escapeHtml(when(daily.last_run_at))} · la ${escapeHtml(String(Math.round(daily.interval_seconds / 3600)))} ore · rulări ratate: ${escapeHtml(daily.missed_policy === 'CATCH_UP' ? 'o singură recuperare, apoi cadența inițială' : 'sărite')}</div>
+        <div class="topic-card-meta">Ora rulării zilnice: ${escapeHtml(daily.run_at_local || '—')}${daily.timezone ? ` (${escapeHtml(daily.timezone)})` : ''} · se schimbă cu STUDIO_DAILY_RUN_HOUR_LOCAL și STUDIO_TIMEZONE</div>
+        <div class="topic-card-meta">Următoarea rulare: ${escapeHtml(when(scheduleNextRun(daily)))} · ultima: ${escapeHtml(when(daily.last_run_at))} · la ${escapeHtml(countWords(Math.round(daily.interval_seconds / 3600), 'oră', 'ore'))} · rulări ratate: ${escapeHtml(daily.missed_policy === 'CATCH_UP' ? 'o singură recuperare, apoi cadența inițială' : 'sărite')}</div>
         ${stopped ? `<p class="runbook-note">Autonomia este oprită: treaba nu va porni nimic până nu o repornești.</p>` : ''}
         ${daily.is_active ? '' : `<p class="runbook-note">Programarea este oprită: studioul nu pornește nicio zi de la sine. Pornirea este decizia ta și rămâne în istoric.</p>`}
         <div class="settings-actions">
@@ -6091,6 +6502,8 @@ async function loadRunbookSchedule() {
       </div>`;
     element('toggle-daily-job-btn').addEventListener('click', async (event) => {
       const button = /** @type {HTMLButtonElement} */ (event.currentTarget);
+      // PAGE-08: switching the schedule on asks first; switching it off is one click
+      if (button.dataset.active !== 'true' && !(await askConsequence({ dailyJob: true }))) return;
       button.disabled = true;
       try {
         await api(`/scheduler/jobs/${button.dataset.jobId}/active`, {
@@ -6117,7 +6530,7 @@ attachRail(treasuryModal.querySelector('.dialog-body'));
 attachRail(researchModal.querySelector('.dialog-body'));
 attachRail(storyModal.querySelector('.dialog-body'));
 
-doorReads.set('runbook-modal', () => { loadCompanyState(); loadPreflight(); loadSafeMode(); loadRuns(); loadRunbookSchedule(); });
+doorReads.set('runbook-modal', () => { loadCompanyState(); loadPreflight(); loadSafeMode(); loadRuns(); loadRunbookSchedule(); loadWorkQueue(); });
 element('open-runbook-btn').addEventListener('click', () => openDoor(runbookModal));
 
 // Where the company stands, and what the Director decided about it. A channel with nothing
@@ -6156,7 +6569,7 @@ async function loadCompanyState() {
             : 'nimic măsurat în 7 zile';
         return `<div class="runbook-check ${channel.measured ? 'rb-ok' : ''}">
           <strong>${escapeHtml(channel.channel_name)}</strong>
-          <div>${channel.published} publicate · ${channel.measured} măsurate</div>
+          <div>${escapeHtml(countWords(channel.published, 'film publicat', 'filme publicate'))} · ${escapeHtml(countWords(channel.measured, 'măsurat', 'măsurate'))}</div>
           <div>${escapeHtml(views)} · ${escapeHtml(change)}</div>
           <div class="motion-reason">${escapeHtml(channel.baseline?.note || '')}</div>
         </div>`;
@@ -6209,7 +6622,7 @@ async function loadCompanyState() {
           <div class="motion-reason">${escapeHtml(row.observation)}</div>
           <div class="motion-reason">Interpretare (încredere ${escapeHtml(confidenceWord(row.confidence))}): ${escapeHtml(row.interpretation)}</div>
           <div><strong>De făcut:</strong> ${escapeHtml(row.action)}${row.owner_role ? ` — ${escapeHtml(roleHolder(row.owner_role))}` : ''}</div>
-          ${row.review_after_videos ? `<div class="motion-reason">Revizuire după ${row.review_after_videos} filme.</div>` : ''}
+          ${row.review_after_videos ? `<div class="motion-reason">Revizuire după ${countWords(row.review_after_videos, 'film', 'filme')}.</div>` : ''}
           ${row.outcome ? `<div class="motion-reason">Rezultat: ${escapeHtml(row.outcome)}</div>` : ''}
         </div>`,
           )
@@ -6310,6 +6723,8 @@ element('runbook-checks').addEventListener('click', (event) => {
  */
 element('start-run-btn').addEventListener('click', async (event) => {
   const button = /** @type {HTMLButtonElement} */ (event.currentTarget);
+  // PAGE-08: what today's run will buy alone, before it starts
+  if (!(await askConsequence({ runNow: true }))) return;
   button.disabled = true;
   runbookStatus('Se pornește rularea de azi…', false);
   try {
@@ -6524,3 +6939,198 @@ for (const [key, id] of Object.entries(DOOR_KEYS)) {
   button.addEventListener('pointerleave', () => clearTimeout(rest));
   button.addEventListener('focus', () => readDoorAhead(id));
 }
+
+/* ---------------------------------------------------------------------------
+ * PAGE_OWNER_DAY (2026-10-02): what the Owner sees and decides about the autonomous day.
+ * Every word comes from the pure modules (build_banner.js, governance.js, owner_inbox.js,
+ * budget_form.js, shooting_sheet.js); this only wires them to the page.
+ * ------------------------------------------------------------------------- */
+
+/** The newest preflight read in Rularea zilei, for the consequence of starting a run. @type {any} */
+let lastPreflight = null;
+
+/**
+ * PAGE-01 / REL-07: the banners at the top of every screen, from the snapshot.
+ * @param {any} data the snapshot
+ */
+let pageBannersKey = '';
+function renderPageBanners(data) {
+  const banners = pageBanners(data);
+  const key = bannersKey(banners);
+  if (key === pageBannersKey) return;
+  pageBannersKey = key;
+  let box = document.getElementById('page-banners');
+  if (!banners.length) {
+    if (box) box.hidden = true;
+    return;
+  }
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'page-banners';
+    box.className = 'page-banners';
+    box.setAttribute('role', 'status');
+    document.body.prepend(box);
+  }
+  box.innerHTML = banners.map((b) => `<p class="page-banner" data-kind="${escapeHtml(b.kind)}" data-tone="${escapeHtml(b.tone)}">${escapeHtml(b.text)}</p>`).join('');
+  box.hidden = false;
+}
+
+/**
+ * A question asked before a switch that lets the studio spend (PAGE-08) or retires the daily
+ * budget (PAGE-05): what it is, what follows, «Da, …» and «Nu acum». Resolves true on his yes.
+ * @param {{question: string, words: string, yes: string}} q
+ * @returns {Promise<boolean>}
+ */
+function confirmDialog(q) {
+  let dialog = /** @type {HTMLDialogElement|null} */ (document.getElementById('consequence-dialog'));
+  if (!dialog) {
+    dialog = document.createElement('dialog');
+    dialog.id = 'consequence-dialog';
+    dialog.className = 'studio-dialog consequence-dialog';
+    document.body.append(dialog);
+  }
+  const box = dialog;
+  box.innerHTML = '<div class="dialog-body consequence-body">'
+    + `<h2 class="dialog-title consequence-question">${escapeHtml(q.question)}</h2>`
+    + `<p class="consequence-words">${escapeHtml(q.words)}</p>`
+    + '<div class="source-actions">'
+    + `<button type="button" class="secondary" data-consequence="yes">${escapeHtml(q.yes)}</button>`
+    + '<button type="button" class="quiet" data-consequence="no">Nu acum</button>'
+    + '</div></div>';
+  return new Promise((resolve) => {
+    /** @param {boolean} answer */
+    const done = (answer) => {
+      box.removeEventListener('click', onClick);
+      box.removeEventListener('cancel', onCancel);
+      if (box.open) box.close();
+      resolve(answer);
+    };
+    /** @param {Event} event */
+    const onClick = (event) => {
+      const key = event.target instanceof Element ? event.target.closest('[data-consequence]') : null;
+      if (key) done(key.getAttribute('data-consequence') === 'yes');
+    };
+    /** @param {Event} event */
+    const onCancel = (event) => { event.preventDefault(); done(false); };
+    box.addEventListener('click', onClick);
+    box.addEventListener('cancel', onCancel);
+    box.showModal();
+    /** @type {HTMLButtonElement|null} */ (box.querySelector('[data-consequence="no"]'))?.focus();
+  });
+}
+
+/**
+ * PAGE-08: the switch's question with what the next run will do once it is on; true at once for a
+ * change that makes the studio safer (consequenceWords answers null).
+ * @param {{mode?: string, environment?: string, dailyJob?: boolean, runNow?: boolean}} change
+ */
+async function askConsequence(change) {
+  const q = consequenceWords({ policy: state ? state.policy : null, budget: worldFacts.budget, job: worldFacts.jobs, preflight: lastPreflight }, change);
+  return q ? confirmDialog(q) : true;
+}
+
+/**
+ * PAGE-04: his rule for the paid steps under «Mod de autonomie», and what the next run will do
+ * with it, from the policy the snapshot read. The form is drawn again only when the policy's
+ * version or the rule moves, so a choice he is making is not wiped by the five-second snapshot.
+ * The sheet keeps its own copy.
+ */
+let governanceRuleKey = '';
+function renderGovernanceRule() {
+  const form = document.getElementById('paid-media-governance');
+  if (!form || !state || !state.policy) return;
+  const policy = state.policy;
+  const key = `${policy.version}|${policy.paid_media_approval}|${policy.paid_media_approval_over_usd}`;
+  if (key !== governanceRuleKey && !form.contains(document.activeElement)) {
+    governanceRuleKey = key;
+    form.innerHTML = paidMediaFormHtml(state.policy, { escape: escapeHtml });
+  }
+  renderDayWill();
+}
+
+function renderDayWill() {
+  const line = document.getElementById('day-will');
+  if (!line || !state || !state.policy) return;
+  line.textContent = dayWillWords(state.policy, worldFacts.budget, worldFacts.jobs);
+}
+
+const governanceRuleForm = /** @type {HTMLFormElement|null} */ (document.getElementById('paid-media-governance'));
+if (governanceRuleForm) {
+  // the amount field's Enter would submit the form: the rule is saved by its key only
+  governanceRuleForm.addEventListener('submit', (event) => event.preventDefault());
+  governanceRuleForm.addEventListener('click', async (event) => {
+    const key = event.target instanceof Element ? event.target.closest('[data-sheet-action="paid-media-save"]') : null;
+    if (!key || busy || !state) return;
+    const choice = /** @type {HTMLInputElement|null} */ (governanceRuleForm.querySelector('input[name="paid-media"]:checked'))?.value || '';
+    const amount = /** @type {HTMLInputElement|null} */ (governanceRuleForm.querySelector('[data-paid-media-amount]'))?.value || '';
+    /** @type {HTMLButtonElement} */ (key).disabled = true;
+    const saved = await savePaidMediaRule(api, { choice, amount, version: state.policy.version, commandId: crypto.randomUUID() });
+    governanceNote(saved.message, saved.status !== 'SAVED');
+    // saved or stale: the policy is read again, so he looks at the rule as it is now
+    governanceRuleKey = '';
+    if (saved.reload) await refresh();
+    else /** @type {HTMLButtonElement} */ (key).disabled = false;
+  });
+}
+
+/* PAGE-07: «Scrisori pentru tine», under the approvals. */
+let lettersLastRead = 0;
+let lettersRead = /** @type {'pending'|'ok'|'failed'} */ ('pending');
+/** @type {ReturnType<typeof readLetters>} */
+let lettersShown = [];
+
+function renderOwnerLetters() {
+  const list = document.getElementById('owner-inbox-list');
+  if (!list) return;
+  list.innerHTML = inboxHtml(lettersShown, { escape: escapeHtml, read: lettersRead, timezone: state && state.studio ? state.studio.timezone : undefined });
+  const count = document.getElementById('owner-inbox-count');
+  if (count) count.textContent = lettersRead === 'ok' ? (lettersShown.length ? lettersWord(lettersShown.length) : 'niciuna') : '—';
+}
+
+/** @param {boolean} [force] read now, whatever the interval says */
+async function loadOwnerLetters(force) {
+  if (!ownerToken || !connected) return;
+  const now = Date.now();
+  if (!force && now - lettersLastRead < APPROVALS_INTERVAL_MS) return;
+  lettersLastRead = now;
+  try {
+    lettersShown = readLetters(await api(OWNER_LETTERS_PATH));
+    lettersRead = 'ok';
+    openLetters = lettersShown.length;
+  } catch {
+    lettersRead = 'failed';
+  }
+  renderOwnerLetters();
+  renderOwnerMark();
+}
+
+document.getElementById('owner-inbox-list')?.addEventListener('click', async (event) => {
+  const target = event.target instanceof Element ? event.target : null;
+  const thread = target?.closest('[data-inbox-thread]');
+  if (thread) {
+    void mailThread.open(thread.getAttribute('data-inbox-thread'));
+    return;
+  }
+  const resolve = target?.closest('[data-inbox-resolve]');
+  if (!resolve) return;
+  /** @type {HTMLButtonElement} */ (resolve).disabled = true;
+  try {
+    await api(resolvePath(resolve.getAttribute('data-inbox-resolve') || ''), { method: 'POST', body: JSON.stringify(resolveCommand()) });
+  } catch (error) {
+    governanceNote(error instanceof Error ? error.message : 'Scrisoarea nu a putut fi marcată rezolvată.', true);
+  }
+  await loadOwnerLetters(true);
+});
+document.getElementById('refresh-inbox-btn')?.addEventListener('click', () => loadOwnerLetters(true));
+
+/**
+ * PAGE-02: every «Deschide foaia de filmare» on the page (a letter, a paid question, the day's run,
+ * the readout, the inbox) opens the film's sheet in its drawer; the key carries only the film's id.
+ */
+document.addEventListener('click', (event) => {
+  const key = event.target instanceof Element ? event.target.closest('[data-sheet-open]') : null;
+  const id = key ? key.getAttribute('data-sheet-open') : null;
+  if (!id || !/^[0-9a-f-]{36}$/i.test(id)) return;
+  event.preventDefault();
+  void openShootingSheet(id);
+});

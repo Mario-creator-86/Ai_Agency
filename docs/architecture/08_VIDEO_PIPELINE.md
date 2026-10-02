@@ -210,3 +210,74 @@ If repeated generation fails:
 - switch provider;
 - use deterministic fallback;
 - or block.
+
+## Paid staircase (amended 2026-10-02)
+
+Amended deliberately on 2026-10-02 after the production-readiness audit (finding AR-13). Since
+2026-10-01 a real film is bought only through this staircase: the old whole-film render refuses a
+real paid adapter, and quality control fails a render started on or after 2026-09-26 that was
+filmed from template prompts in PRODUCTION or bought whole inside the render
+(`production_path_qc`). Everything below is code with tests in which every vendor is faked
+(proven on fakes only). The last real paid film, the Nepal film of 2026-09-26, was bought on the
+old path, cost over 1,000 Runway credits and failed QC; the first capped paid film under
+`EVERY_PAID_STEP` is the real test of this section.
+
+1. **Shot plan.** The model writes the shot plan (`media.prompt_agent.write_shot_prompts`): strict
+   parse, one repair, one re-ask. A film without a usable model plan waits `NEEDS_SHOT_PLAN` and is
+   asked again at most once a day on two days; it is never filled with template prompts.
+2. **Shooting sheet** (`media.shooting_sheet`). Per scene: the prompt written for its model; a lint
+   that blocks enum codes, hex colours, forbidden faces, charts sent to a photo model and
+   over-long prompts before a price is shown; the cheapest capable model per scene (premium only
+   for the hook; the Owner's override wins); seconds, credits and USD; and each step's credit cap.
+   The sheet has a `plan_hash`; a yes is bound to that hash, its step and its cap, and spent once.
+3. **Gates before any purchase.** One buyer per film (`film_purchase_lease`, `FILM_BUSY`
+   otherwise; a repeated press with the same `command_id` replays the stored answer); the step's
+   cap reserved against the budget (purpose `sheet:<step>`), settled when booked and released when
+   nothing was spent; the film ceiling (`film_budget_usd`, `OVER_FILM_BUDGET`); a free-disk floor
+   on the media root (`STUDIO_MIN_FREE_GB`, `LOW_DISK`); then `may_act` with the `plan_hash`
+   (51_AUTONOMY_MODE_SEMANTICS).
+4. **Stills** (`media.stills_purchase`). Candidates per scene, each judged automatically by the
+   stills gate. A scene that shows a locked serial character sends the character's reference
+   picture first and the film's look second; a locked character with no reference is refused
+   `NEEDS_REFERENCE` before anything is bought.
+5. **Hero test shot** (`media.test_shot`). One motion clip of the hook scene, checked by clip QC.
+   The rest of the motion follows only through `hero_gate` (51).
+6. **Motion** (`media.motion_purchase`). Image-to-video per scene on its own model, under the cap.
+   Clip QC checks every paid clip (a motion floor per camera move, YuNet faces on the first, middle
+   and last frames, cut spikes, the vision judge) and buys at most one retry (seed+1, a firmer
+   prompt) inside the approved cap. A failed clip is REJECTED and never assembled.
+7. **Takes, intent and recovery** (`scene_take`). Every purchase is a take keyed by its identity
+   (`prompt_hash` over the words, the model and the reference picture), so one identity is never
+   bought twice. The request is written `SUBMITTED` with the vendor's task id before any poll. A
+   clip or still that did not arrive stays `SUBMITTED` (in flight, never to buy) and is collected
+   later by GET only, by the next step or by the watchdog; past 24 h it becomes `LOST` with one
+   letter. A submit that may have been charged without an answer counts against the cap, is
+   recorded `VENDOR.UNANSWERED` and is never sent again automatically. Only Runway's documented
+   "may retry" statuses (429, 502, 503, 504) are resent on a billed POST. A paid but unjudged take
+   is judged (0 media credits) before anything is bought.
+8. **Per-scene failure memory.** A scene the gate sent to the Owner, refused for safety, lost,
+   left unanswered, or that reached `max_paid_attempts_per_scene` (default 3) paid attempts is
+   held `NEEDS_OWNER` and never bought again until his own act lifts it (a model change, a
+   decision on its takes, a redo he approved, or new words).
+9. **Booking.** Each purchase is booked once under its own reference (the step, the film, the
+   `plan_hash` and the run's correlation; `redo:{film}:{kind}:{scene}:…` for a redo). A step that
+   fails after paying is booked from the measured balance drop, raises `SpentStageError` (a HARD
+   fault, never retried) and writes the Owner a letter.
+10. **Assemble.** Narration bought per scene and kept as a `narration` take (reused, never bought
+    twice), its silent edges trimmed to a 0.12 s breath, stitched with the neighbouring words for
+    a voice that accepts it; captions on the voice's own clock, lit word by word; the film graded
+    toward its first filmed scene; free second framings (punch-ins) inside long scenes; a closing
+    card instead of a black ending; a music bed and ambience only from the Owner's licensed
+    library (`config/music_library.json` or `STUDIO_MUSIC_LIBRARY`; each entry needs
+    `commercial_ok`, a licence and a matching SHA-256), the bed ducked 20 LU under the voice;
+    the premium master: 24 fps, x264 High CRF 17, -14 LUFS with a true-peak limiter.
+11. **QC and repair.** Technical, rights (a per-component licence ledger: a film is LICENSED only
+    when every still, clip, voice, font and track carries commercial-use evidence, otherwise
+    NEEDS_REVIEW, which publishes privately only), audio mix, editorial (advisory unless the Owner
+    makes it blocking) and production-path checks. A failed film is repaired free first
+    (re-encode from the takes, card recompose, sound remaster), then by capped paid scene redos
+    (`film_max_paid_redos_per_scene` 1, `film_max_paid_redos` 2), each a priced plan behind
+    `media.scene_redo`.
+12. **Cover.** A 1080x1920 cover from the hero still and the hook, composed locally (0 credits).
+
+The "Generation quality budget" above is met by items 7, 8 and 11.

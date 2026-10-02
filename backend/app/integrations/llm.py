@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 
 from app.economy.prices import PriceLookup, llm_cost_vr
 from app.providers.base import GenerateResult, HealthResult, LLMProvider, ModelInfo
-from app.providers.retry import call_with_retries, parse_retry_after
+from app.providers.retry import SAFE_TO_RESEND_STATUSES, call_with_retries, parse_retry_after
 
 BASE_URLS = {"openai": "https://api.openai.com/v1", "anthropic": "https://api.anthropic.com/v1"}
 
@@ -39,6 +39,9 @@ class ProviderHTTPError(ValueError):
         super().__init__(f"Provider request failed (HTTP {http_status})")
         self.http_status = http_status
         self.retry_after = retry_after
+        #: A 5xx the vendor does not call safe to retry may come after the model wrote (and
+        #: billed) the answer: a generation is not asked again on it.
+        self.unanswered = 500 <= http_status <= 599 and http_status not in SAFE_TO_RESEND_STATUSES
 
 
 class ProviderUnreachable(OSError):
@@ -72,10 +75,11 @@ class ConfiguredLLM(LLMProvider):
         self.price_lookup = price_lookup
 
     def request(self, method: str, path: str, body: dict | None = None) -> dict:
-        """One call to the provider, asked again a bounded number of times on 429, 5xx and a
-        connection that never opened. A generation that left and got no answer is not sent
-        again: the model may still be writing, and the tokens are billed either way. The one
-        POST that is a read — Ollama's /api/show — may be repeated.
+        """One call to the provider, asked again a bounded number of times on 429, 502, 503,
+        504 and a connection that never opened. A generation that left and got no answer, or
+        got any other 5xx, is not sent again: the model may have written it, and the tokens
+        are billed either way. The one POST that is a read — Ollama's /api/show — may be
+        repeated, on any 5xx.
         """
         repeatable = method.upper() != "POST" or path.endswith("/api/show")
         return call_with_retries(

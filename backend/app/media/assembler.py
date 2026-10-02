@@ -12,14 +12,20 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
+import io
 import json
 import logging
 import math
+import re
 import shutil
 import subprocess
+import tempfile
 import time
 from collections.abc import Callable, Sequence
 from contextlib import nullcontext
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -29,7 +35,17 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.config import ROOT
-from app.media.cards import CARD_KINDS, CardError, card_spec_from_json, compose_card
+from app.db import lock_for_write
+from app.factual.editorial import dangles
+from app.media import music_library
+from app.media.cards import (
+    CARD_KINDS,
+    CardError,
+    card_spec_from_json,
+    compose_card,
+    compose_cover,
+    film_finish,
+)
 from app.media.cost_plan import (
     STILL_CANDIDATES,
     STILLS_MODEL,
@@ -41,6 +57,7 @@ from app.media.cost_plan import (
     price_still,
     source_label,
 )
+from app.media.disk import LOW_DISK, disk_refusal
 from app.media.models import (
     MediaAsset,
     QualityControlReport,
@@ -50,6 +67,7 @@ from app.media.models import (
     VideoRenderJob,
 )
 from app.media.production_policy import (
+    FailureRecord,
     FailureVerdict,
     ModelCapability,
     need_from_scene,
@@ -62,23 +80,32 @@ from app.media.speaker_voices import SPEAKER_GAP_SECONDS
 from app.media.toolchain import (
     AUDIO_CODEC_ARGS,
     AUDIO_CODEC_LABEL,
+    EDGE_KEEP_SECONDS,
     LOUDNESS_TARGET_LUFS,
     MASTER_SAMPLE_RATE,
     TRUE_PEAK_CEILING_DBTP,
     TRUE_PEAK_TARGET_DBTP,
     AudioMasterError,
+    AudioMixError,
     encode_master_audio,
     find_ffmpeg,
     has_filter,
     measure_loudness,
+    mix_bed,
+    speech_edges,
 )
 from app.models import DomainEvent
 from app.providers.deterministic_media import (
     DeterministicTTSAdapter,
     DeterministicVisualAdapter,
 )
-from app.providers.media_base import ImageProvider, TTSProvider, VideoProvider
-from app.providers.media_http import MediaProviderError, MediaProviderNotConfigured
+from app.providers.media_base import ImageProvider, TTSProvider, TTSResult, VideoProvider
+from app.providers.media_http import (
+    MediaProviderError,
+    MediaProviderNotConfigured,
+    TaskStillOpen,
+)
+from app.providers.retry import SAFE_TO_RESEND_STATUSES
 from app.services import append_event, utc_now
 
 
@@ -94,6 +121,16 @@ def _at_work(engine: Engine | None, role_name: str, task_type: str, detail: str)
 logger = logging.getLogger("studio.assembler")
 
 DEFAULT_STORAGE_ROOT = ROOT / "backend" / "storage" / "media"
+
+
+def media_root(settings: Any = None) -> Path:
+    """The folder films are written to: the Owner's STUDIO_MEDIA_ROOT when the settings carry
+    one, else `DEFAULT_STORAGE_ROOT` (read at call time). Every entry below that is handed
+    no ``storage_root`` but the settings resolves its folder here (REL-08)."""
+    from app.media.disk import media_root as configured_root  # noqa: PLC0415
+
+    return configured_root(settings)
+
 
 #: The headroom a generated shot is asked for beyond its scene: at least the longest dissolve
 #: it may have to cover. Films used to dissolve everywhere by this much; since 2026-10-01 they
@@ -113,7 +150,11 @@ DISSOLVE_WORDS: tuple[str, ...] = ("DISSOLVE", "CROSSFADE", "CROSS_DISSOLVE", "M
 #: speaking scene, the silent cards and 1.0 s (qc.film_length_budget, which reads it from
 #: production['timeline']['spoken_tail_seconds']). Until 2026-10-01 the breaths were shrunk
 #: together to keep the film within 0.9 s of its words, and six scenes kept about 0.11 s each.
-SPOKEN_TAIL_SECONDS = 0.35
+#: It was 0.35 s on top of the vendor's own trailing silence, never trimmed: the rehearsal film
+#: measured 0.28-0.61 s of digital silence at every cut (audit Q4). Since 2026-10-02 each take's
+#: silent edges are cut first (`_trimmed_take`, -45 dB, keeping EDGE_KEEP_SECONDS either side)
+#: and the breath is 0.12 s, so a cut carries at most about 0.22 s with the frame rounding.
+SPOKEN_TAIL_SECONDS = 0.12
 
 #: How long one scene's motion may take, and how often the task is asked about.
 MOTION_DEADLINE_SECONDS = 600
@@ -131,6 +172,69 @@ class RenderEngineUnavailable(RuntimeError):
     The studio never writes a stand-in file with an .mp4 name: a render either produces a real
     encoded video or it fails, so that no downstream gate can be satisfied by a fake artefact.
     """
+
+
+def concat_line(path: str | Path) -> str:
+    """One ``file`` line of an FFmpeg concat list (SEC-09). Inside single quotes nothing can be
+    escaped, so a quote in the path is written as ``'\\''``: close the quotes, an escaped
+    quote, open them again. A buyer's folder named O'Brien used to break the list and the film.
+    A backslash is taken as it is inside quotes and is left alone; paths are written with
+    forward slashes (``as_posix``) anyway."""
+    text = path.as_posix() if isinstance(path, Path) else str(path)
+    return "file '" + text.replace("'", "'\\''") + "'\n"
+
+
+def run_encoder(
+    command: Sequence[str],
+    folder: Path,
+    *,
+    carry: Sequence[str] = (),
+    timeout: float = 600,
+) -> subprocess.CompletedProcess[str]:
+    """Run an FFmpeg ``command`` for the film in ``folder``, from a short working directory.
+
+    Every input and output of the studio's commands is an absolute path, which FFmpeg opens
+    at any depth. Only the working directory is limited: Windows refuses one longer than
+    MAX_PATH (260 characters), and measured 2026-10-01 a 258-character film folder given as
+    ``cwd`` failed with NotADirectoryError (WinError 267) before the encoder started. So the
+    encoder always runs in a fresh, short temporary folder; the few things a filter names
+    *relative* to its working directory (the ASS captions and their font folder, whose
+    absolute Windows paths would need escaping twice over) are listed in ``carry`` and copied
+    there from ``folder`` first. The folder is removed afterwards.
+
+    A launch that fails (OSError) or an encoder past ``timeout`` raises
+    RenderEngineUnavailable with a Romanian reason, which the routes answer as 503.
+    """
+    staging = Path(tempfile.mkdtemp(prefix="amn_ff_"))
+    try:
+        for name in carry:
+            source = folder / name
+            if source.is_dir():
+                shutil.copytree(source, staging / name)
+            elif source.is_file():
+                shutil.copy2(source, staging / name)
+        return subprocess.run(  # noqa: S603 - argument list, no shell
+            list(command),
+            cwd=str(staging),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdin=subprocess.DEVNULL,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RenderEngineUnavailable(
+            f"FFmpeg nu a terminat în {timeout:g} secunde și a fost oprit; filmul nu a fost "
+            "înregistrat."
+        ) from exc
+    except OSError as exc:
+        raise RenderEngineUnavailable(
+            f"FFmpeg nu a putut porni ({type(exc).__name__}: {exc}); filmul nu a fost înregistrat."
+        ) from exc
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
 
 
 class RenderStopped(RuntimeError):
@@ -212,8 +316,10 @@ CAPTION_STYLE = (
 #: in pixels of the 1080x1920 frame. The face is the studio's bundled Inter Bold (verified by
 #: its pinned SHA-256 in app.media.cards), handed to libass in a fonts folder beside the film.
 CAPTION_PLAY_RES = (1080, 1920)
-#: ASS sizes a font by its line cell, not its em: 66 is Inter Bold at an em of about 54.5 px.
-CAPTION_FONT_SIZE = 66
+#: ASS sizes a font by its line cell, not its em: 66 was Inter Bold at an em of about 54.5 px.
+#: 74 since 2026-10-02 (audit Q7): a card of two to five words reads at a glance at this
+#: size, and two lines of it still end at y 1500 (cards.CAPTION_BAND_TOP stays clear).
+CAPTION_FONT_SIZE = 74
 CAPTION_OUTLINE = 3.5
 #: The smallest a card may be set when one word will not fit a line at the full size.
 CAPTION_MIN_FONT_SIZE = 40
@@ -309,19 +415,48 @@ def _ends_with(word: str, marks: tuple[str, ...]) -> bool:
     return word.rstrip(_CLOSERS).endswith(marks)
 
 
+def _release_dangling(card: list[str]) -> tuple[list[str], list[str]]:
+    """A full card split before the function words it would end on: (kept, carried). The
+    carried words open the next card, so "Nepal is paying for a" becomes "Nepal is paying"
+    and the next card starts "for a crisis". A card never shrinks below two words for it."""
+    kept = list(card)
+    carried: list[str] = []
+    while len(kept) > CAPTION_MIN_WORDS and dangles(kept[-1]):
+        carried.insert(0, kept.pop())
+    return kept, carried
+
+
+def _mend_dangling(groups: list[list[str]]) -> list[list[str]]:
+    """The last pass over a passage's cards: a card (but the last) that still ends on a
+    function word gives it to the next card, as long as that card still fits two lines and
+    stays a card a glance can read (CAPTION_MAX_WORDS plus two)."""
+    for position in range(len(groups) - 1):
+        card, following = groups[position], groups[position + 1]
+        while len(card) > 1 and dangles(card[-1]):
+            moved = [card[-1], *following]
+            if len(moved) > CAPTION_MAX_WORDS + 2 or _card_lines(moved) is None:
+                break
+            following.insert(0, card.pop())
+    return [group for group in groups if group]
+
+
 def caption_cards(words: list[str]) -> list[list[str]]:
     """A passage's words as caption cards of two to five words.
 
+    The cut is chosen whole by _segmented_cards; the greedy rules below are its fallback.
     A card ends at a sentence's end once it has two words, at a clause's end once it has
     three, at five words, or before a word that would not fit two lines. A last word is never
-    left alone: it joins the card before it, or takes that card's last word with it.
+    left alone: it joins the card before it, or takes that card's last word with it. A card
+    never ends on a function word (editorial.FUNCTION_WORDS, English and Romanian): the
+    rehearsal's "Nepal is paying for a" / "crisis it did not create." broke both phrases, so
+    the function words move on and open the next card (audit Q7).
     """
     groups: list[list[str]] = []
     current: list[str] = []
     for position, word in enumerate(words):
         if len(current) >= CAPTION_MIN_WORDS and _card_lines([*current, word]) is None:
-            groups.append(current)
-            current = []
+            kept, current = _release_dangling(current)
+            groups.append(kept)
         current.append(word)
         left = len(words) - position - 1
         full = len(current) >= CAPTION_MAX_WORDS
@@ -330,8 +465,8 @@ def caption_cards(words: list[str]) -> list[list[str]]:
         if full or sentence or clause:
             if left == 1 and not full and _card_lines([*current, words[-1]]) is not None:
                 continue  # the passage's last word joins this card instead of standing alone
-            groups.append(current)
-            current = []
+            kept, current = _release_dangling(current)
+            groups.append(kept)
     if current:
         if len(current) == 1 and groups:
             last = groups[-1]
@@ -344,7 +479,51 @@ def caption_cards(words: list[str]) -> list[list[str]]:
                 groups.append(current)
         else:
             groups.append(current)
-    return groups
+    if len(words) >= CAPTION_MIN_WORDS:
+        # The passage is cut whole (2026-10-02): the greedy walk below, mending function
+        # words afterwards, could leave a word alone ("Right,") or make a six-word card,
+        # breaking the two-to-five contract the render records. The walk stays as the
+        # fallback for a passage no cut of two to five words can set (a word too long).
+        chosen = _segmented_cards(words)
+        if chosen is not None:
+            return chosen
+    return _mend_dangling(groups)
+
+
+def _segmented_cards(words: list[str]) -> list[list[str]] | None:
+    """A passage cut into cards of two to five words that each fit two lines, chosen whole:
+    the fewest cards ending on a function word first, then cards ending at a sentence or a
+    clause, then cards near four words. None when no such cut exists (a word too long)."""
+    count = len(words)
+    best: list[tuple[float, int] | None] = [None] * (count + 1)
+    best[0] = (0.0, -1)
+    for end in range(1, count + 1):
+        for size in range(CAPTION_MIN_WORDS, CAPTION_MAX_WORDS + 1):
+            start = end - size
+            if start < 0 or best[start] is None:
+                continue
+            card = words[start:end]
+            if _card_lines(card) is None:
+                continue
+            last = card[-1]
+            cost = abs(size - 4) * 0.2
+            if end < count:
+                if dangles(last):
+                    cost += 10.0
+                elif not (_ends_with(last, _SENTENCE_MARKS) or _ends_with(last, _CLAUSE_MARKS)):
+                    cost += 1.0
+            total = best[start][0] + cost  # type: ignore[index]
+            if best[end] is None or total < best[end][0]:  # type: ignore[index]
+                best[end] = (total, start)
+    if best[count] is None:
+        return None
+    cards: list[list[str]] = []
+    end = count
+    while end > 0:
+        start = best[end][1]  # type: ignore[index]
+        cards.insert(0, words[start:end])
+        end = start
+    return cards
 
 
 def words_from_alignment(alignment: Any) -> list[dict[str, Any]] | None:
@@ -410,6 +589,134 @@ def take_word_timing(said: Any) -> list[dict[str, Any]] | None:
         if len(words) == len(timings):
             return words
     return None
+
+
+def _shift_times(values: Any, by: float, limit: float) -> Any:
+    """A list of seconds moved ``by`` earlier, held inside [0, limit]; anything else as it is."""
+    if not isinstance(values, list):
+        return values
+    return [
+        round(min(limit, max(0.0, float(v) - by)), 4)
+        if isinstance(v, int | float) and not isinstance(v, bool)
+        else v
+        for v in values
+    ]
+
+
+def _trimmed_take(
+    ffmpeg_exe: str, said: TTSResult, work_dir: Path, name: str
+) -> tuple[TTSResult, dict[str, Any]]:
+    """The take with the vendor's silence before and after its words cut away (audit Q4).
+
+    The take is decoded to a 48 kHz, 24-bit mono WAV (``name``.wav in ``work_dir``), its
+    silent edges measured (`toolchain.speech_edges`: under -45 dB for 50 ms), and all but
+    EDGE_KEEP_SECONDS of each cut, never into a word the vendor timed. Its word timing and
+    the vendor's character alignment move earlier by what was cut from the front, so the
+    captions stay on the words. The vendor's own file, kept as the narration take, is not
+    touched: this is done again, for nothing, every time the take is used. A take that cannot
+    be decoded or measured is returned as it came, and the record says why.
+    """
+    import wave  # noqa: PLC0415
+
+    record: dict[str, Any] = {
+        "lead_seconds": 0.0,
+        "trail_seconds": 0.0,
+        "seconds": round(float(said.duration_seconds), 3),
+    }
+    source = work_dir / f"{name}_vendor.{str(said.format or 'bin')[:10]}"
+    decoded = work_dir / f"{name}.wav"
+    try:
+        source.write_bytes(said.audio_bytes)
+        result = subprocess.run(  # noqa: S603 - argument list, no shell
+            [
+                ffmpeg_exe,
+                "-nostdin",
+                "-v",
+                "error",
+                "-y",
+                "-i",
+                str(source),
+                "-vn",
+                *_VOICE_WAV_ARGS,
+                str(decoded),
+            ],
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=300,
+            check=False,
+        )
+        if result.returncode != 0 or not decoded.is_file():
+            record["error"] = f"the take could not be decoded (exit code {result.returncode})"
+            return said, record
+        with wave.open(str(decoded), "rb") as audio:
+            params = audio.getparams()
+            frames = audio.readframes(params.nframes)
+        rate = params.framerate
+        duration = params.nframes / rate if rate else 0.0
+        lead, trail = speech_edges(ffmpeg_exe, decoded, duration)
+    except (OSError, subprocess.SubprocessError, wave.Error, EOFError) as exc:
+        record["error"] = f"the take could not be measured ({type(exc).__name__})"
+        return said, record
+    finally:
+        source.unlink(missing_ok=True)
+    cut_lead = max(0.0, lead - EDGE_KEEP_SECONDS)
+    cut_trail = max(0.0, trail - EDGE_KEEP_SECONDS)
+    words = take_word_timing(said)
+    if words:
+        # The vendor's clock wins over the meter: a word it timed is never cut.
+        cut_lead = min(cut_lead, max(0.0, min(float(w["start"]) for w in words)))
+        cut_trail = min(cut_trail, max(0.0, duration - max(float(w["end"]) for w in words)))
+    first = int(round(cut_lead * rate))
+    last = max(first + 1, params.nframes - int(round(cut_trail * rate)))
+    step = params.sampwidth * params.nchannels
+    kept = frames[first * step : last * step]
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as out:
+        out.setnchannels(params.nchannels)
+        out.setsampwidth(params.sampwidth)
+        out.setframerate(rate)
+        out.writeframes(kept)
+    seconds = (last - first) / rate
+    shift = first / rate
+    record.update(
+        lead_seconds=round(shift, 3),
+        trail_seconds=round((params.nframes - last) / rate, 3),
+        seconds=round(seconds, 3),
+        measured_lead_seconds=round(lead, 3),
+        measured_trail_seconds=round(trail, 3),
+    )
+    raw = copy.deepcopy(said.raw_response) if isinstance(said.raw_response, dict) else {}
+    for key in ("alignment", "normalized_alignment"):
+        timing = raw.get(key)
+        if isinstance(timing, dict):
+            for field_name in ("character_start_times_seconds", "character_end_times_seconds"):
+                timing[field_name] = _shift_times(timing.get(field_name), shift, seconds)
+    raw["trimmed"] = dict(record)
+    timings = [
+        {
+            **item,
+            "start": _shift_times([item["start"]], shift, seconds)[0],
+            "end": _shift_times([item["end"]], shift, seconds)[0],
+        }
+        if isinstance(item, dict) and "start" in item and "end" in item
+        else item
+        for item in (said.word_timings or [])
+    ]
+    # The trimmed take travels in memory to the voice join; the decoded copy is not kept.
+    decoded.unlink(missing_ok=True)
+    return (
+        TTSResult(
+            audio_bytes=buffer.getvalue(),
+            format="wav",
+            duration_seconds=seconds,
+            sample_rate=rate,
+            word_timings=timings,
+            cost_vr=said.cost_vr,
+            raw_response=raw,
+        ),
+        record,
+    )
 
 
 def _aligned_starts(words: list[str], timed: Any, span: float) -> list[float] | None:
@@ -497,14 +804,35 @@ def _timed_cues(
             firsts.append(min(starts[position], span))
             position += len(group)
         previous_end = begin
+        position = 0
         for index, group in enumerate(groups):
             start = max(begin + firsts[index], previous_end)
             end = begin + (firsts[index + 1] if index + 1 < len(groups) else span)
             # A card is up for at least a frame, and never past the passage.
             end = min(max(end, start + 1 / TIMELINE_FPS), begin + span)
+            first_word = position
+            position += len(group)
             if end <= start:
                 continue
-            cues.append(_cue(scene_index, start, end, group, "alignment"))
+            # Each word is lit from its own start to the next word's (the last to the card's
+            # end), so the highlight follows the voice without gaps (audit Q7).
+            spoken = [
+                {
+                    "word": word,
+                    "start": min(max(begin + starts[first_word + offset], start), end),
+                    "end": min(
+                        max(
+                            begin + starts[first_word + offset + 1]
+                            if offset + 1 < len(group)
+                            else end,
+                            start,
+                        ),
+                        end,
+                    ),
+                }
+                for offset, word in enumerate(group)
+            ]
+            cues.append(_cue(scene_index, start, end, group, "alignment", spoken))
             previous_end = end
         return cues
     weights = [len(" ".join(group)) for group in groups]
@@ -518,22 +846,47 @@ def _timed_cues(
         end = (
             begin + span if position == len(groups) - 1 else begin + span * (elapsed / total_weight)
         )
-        cues.append(_cue(scene_index, start, end, group, "character_share"))
+        # Without the voice's timing the words share the card by their characters too.
+        total_chars = float(sum(len(word) + 1 for word in group)) or 1.0
+        shared: list[dict[str, Any]] = []
+        clock = start
+        for word in group:
+            share = (end - start) * (len(word) + 1) / total_chars
+            shared.append({"word": word, "start": clock, "end": min(clock + share, end)})
+            clock += share
+        cues.append(_cue(scene_index, start, end, group, "character_share", shared))
         start = end
     return cues
 
 
 def _cue(
-    scene_index: Any, start: float, end: float, words: list[str], timing: str
+    scene_index: Any,
+    start: float,
+    end: float,
+    words: list[str],
+    timing: str,
+    spoken: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     lines = _card_lines(words) or _wrap_words(words, CAPTION_LINE_CHARS)[:CAPTION_MAX_LINES]
-    return {
+    cue: dict[str, Any] = {
         "scene_index": scene_index,
         "start": start,
         "end": end,
         "lines": lines,
         "timing": timing,
     }
+    # The words as they are lit (start and end in film seconds), when the lines carry
+    # exactly these words: a word cut across lines by _wrap_words is not highlighted.
+    if spoken is not None and " ".join(lines).split() == [w["word"] for w in spoken]:
+        cue["words"] = [
+            {
+                "word": w["word"],
+                "start": round(float(w["start"]), 4),
+                "end": round(float(w["end"]), 4),
+            }
+            for w in spoken
+        ]
+    return cue
 
 
 def srt_from_cues(cues: list[dict[str, Any]]) -> str:
@@ -567,14 +920,79 @@ def _ass_text(line: str) -> str:
     return line.replace("\\", "/").replace("{", "(").replace("}", ")")
 
 
-def ass_from_cues(cues: list[dict[str, Any]]) -> str:
-    """The burnt captions as an ASS script at 1080x1920: Inter Bold at size 66, a 3.5 px dark
-    outline, bottom-centred inside the safe area. A card whose longest line would not fit at
-    66 is set smaller for that card alone, never below 40, never outside the margins."""
+#: Numbers on screen: digits, with the marks a figure carries ("83", "1.000", "41%", "$100").
+_NUMBER_WORD = re.compile(r"\d")
+#: The headline's place: top-centred, its first line at about y 420 (inside SAFE_RECT).
+HEADLINE_MARGIN_V = 420
+HEADLINE_FONT_SIZE = 84
+
+
+def ass_colour(hex_colour: str, alpha: float = 0.0) -> str:
+    """'#RRGGBB' as an ASS colour (&HAABBGGRR, alpha 0 opaque .. 255 clear)."""
+    red, green, blue = hex_colour[1:3], hex_colour[3:5], hex_colour[5:7]
+    transparency = max(0, min(255, round(255 * float(alpha))))
+    return f"&H{transparency:02X}{blue}{green}{red}".upper()
+
+
+def _override_colour(hex_colour: str) -> str:
+    """'#RRGGBB' as the colour of an override tag (&HBBGGRR&)."""
+    return f"&H{hex_colour[5:7]}{hex_colour[3:5]}{hex_colour[1:3]}&".upper()
+
+
+def _highlighted(cue: dict[str, Any], captions: dict[str, Any]) -> str | None:
+    """The card's text with each word lit while it is spoken and numbers in their own colour,
+    as ASS override tags; None when the cue carries no word times (the plain text is used)."""
+    spoken = cue.get("words")
+    if not isinstance(spoken, list) or not spoken:
+        return None
+    text_colour = _override_colour(captions["text"])
+    active = _override_colour(captions["active"])
+    emphasis = _override_colour(captions["emphasis"])
+    begin = float(cue["start"])
+    remaining = list(spoken)
+    rendered_lines: list[str] = []
+    for line in cue["lines"]:
+        pieces: list[str] = []
+        for _word in line.split():
+            entry = remaining.pop(0)
+            word = str(entry["word"])
+            base = (
+                emphasis
+                if captions.get("emphasis_numbers") and _NUMBER_WORD.search(word)
+                else text_colour
+            )
+            tags = f"\\1c{base}"
+            if captions.get("highlight_active_word"):
+                on = max(0, round((float(entry["start"]) - begin) * 1000))
+                off = max(on + 1, round((float(entry["end"]) - begin) * 1000))
+                tags += f"\\t({on},{on + 1},\\1c{active})\\t({off},{off + 1},\\1c{base})"
+            pieces.append(f"{{{tags}}}{_ass_text(word)}")
+        rendered_lines.append(" ".join(pieces))
+    return "\\N".join(rendered_lines)
+
+
+def ass_from_cues(
+    cues: list[dict[str, Any]],
+    *,
+    finish: dict[str, Any] | None = None,
+    headline: str | None = None,
+) -> str:
+    """The burnt captions as an ASS script at 1080x1920: Inter Bold at size 74, a 3.5 px dark
+    outline and a soft shadow, bottom-centred inside the safe area. The word being spoken is
+    lit in the finish's active colour, timed from the voice's own word timing, and numbers
+    carry the emphasis colour (audit Q7); the colours are the Owner's look setting
+    (``finish``: cards.film_finish). A card whose longest line would not fit is set smaller
+    for that card alone, never below 40, never outside the margins. ``headline`` is the hook,
+    written at the top for its first seconds when the finish shows it (off by default)."""
     from app.media import cards  # noqa: PLC0415
 
+    finish = finish or film_finish()
+    captions = finish["captions"]
     family = cards.font_family(cards.BOLD)
     width, height = CAPTION_PLAY_RES
+    shadow_px = float(captions["shadow_px"])
+    back = ass_colour(captions["shadow"], 1.0 - float(captions["shadow_opacity"]))
+    show_headline = bool(headline and str(headline).strip() and finish["headline"]["show"])
     lines = [
         "[Script Info]",
         "ScriptType: v4.00+",
@@ -588,13 +1006,28 @@ def ass_from_cues(cues: list[dict[str, Any]]) -> str:
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
         "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
         "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-        f"Style: Caption,{family},{CAPTION_FONT_SIZE},&H00FFFFFF,&H00FFFFFF,&H00000000,"
-        f"&H00000000,-1,0,0,0,100,100,0,0,1,{CAPTION_OUTLINE:g},0,2,{CAPTION_MARGIN_X},"
+        f"Style: Caption,{family},{CAPTION_FONT_SIZE},{ass_colour(captions['text'])},"
+        f"{ass_colour(captions['active'])},{ass_colour(captions['outline'])},{back},"
+        f"-1,0,0,0,100,100,0,0,1,{CAPTION_OUTLINE:g},{shadow_px:g},2,{CAPTION_MARGIN_X},"
         f"{CAPTION_MARGIN_X},{CAPTION_MARGIN_V},1",
+    ]
+    if show_headline:
+        lines.append(
+            f"Style: Headline,{family},{HEADLINE_FONT_SIZE},{ass_colour(captions['text'])},"
+            f"{ass_colour(captions['active'])},{ass_colour(captions['outline'])},{back},"
+            f"-1,0,0,0,100,100,0,0,1,{CAPTION_OUTLINE:g},{shadow_px:g},8,{CAPTION_MARGIN_X},"
+            f"{CAPTION_MARGIN_X},{HEADLINE_MARGIN_V},1"
+        )
+    lines += [
         "",
         "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
+    if show_headline:
+        seconds = float(finish["headline"]["seconds"])
+        words = " ".join(str(headline).split()).split()
+        text = "\\N".join(_ass_text(line) for line in _wrap_words(words, 26)[:3])
+        lines.append(f"Dialogue: 1,{_ass_time(0)},{_ass_time(seconds)},Headline,,0,0,0,,{text}")
     for cue in cues:
         widest = max((_caption_px(line) for line in cue["lines"]), default=0.0)
         override = ""
@@ -606,7 +1039,7 @@ def ass_from_cues(cues: list[dict[str, Any]]) -> str:
         start, end = _ass_time(cue["start"]), _ass_time(cue["end"])
         if end <= start:
             end = _ass_time(float(cue["start"]) + 0.01)
-        text = "\\N".join(_ass_text(line) for line in cue["lines"])
+        text = _highlighted(cue, captions) or "\\N".join(_ass_text(line) for line in cue["lines"])
         lines.append(f"Dialogue: 0,{start},{end},Caption,,0,0,0,,{override}{text}")
     return "\n".join(lines) + "\n"
 
@@ -711,9 +1144,7 @@ def _concatenate_audio(
             )
         return output
     listing = work_dir / "voice_segments.txt"
-    listing.write_text(
-        "".join(f"file '{segment.as_posix()}'\n" for segment in segments), encoding="utf-8"
-    )
+    listing.write_text("".join(concat_line(segment) for segment in segments), encoding="utf-8")
     result = subprocess.run(  # noqa: S603
         [
             ffmpeg_exe,
@@ -827,9 +1258,15 @@ def _generate_motion(
     words, which is what a test does on the cheapest model. A task that has not finished by
     the deadline raises; nothing invents a shot. ``seed`` is the film's one seed (the adapter
     sends it where the contract declares it); ``on_submitted`` hears the task id once the
-    vendor has accepted the request, which is when a shot starts to cost money.
+    vendor has accepted the request, which is when a shot starts to cost money, and before
+    any poll, so the caller can write the task down first.
     ``prompt_text`` replaces the scene's motion prompt (clip QC's one retry asks the camera
     move more firmly); the extras (the negative prompt) stay the scene's.
+
+    From the submit on, the shot exists and may be billed. The vendor's own FAILED is a
+    `MotionTaskFailed`; anything else that keeps the clip from arriving (a poll the vendor
+    does not answer, the deadline, a failed download) is `TaskStillOpen`: the task is
+    collected later by its id, never bought again.
     """
     prompt, extra = motion_request(adapter, scene, from_still=still is not None)
     if prompt_text:
@@ -847,6 +1284,24 @@ def _generate_motion(
     )
     if on_submitted is not None:
         on_submitted(str(job_id))
+    try:
+        return _await_motion(adapter, str(job_id))
+    except MotionTaskFailed:
+        raise
+    except Exception as exc:  # noqa: BLE001 - every other way the clip did not arrive
+        raise TaskStillOpen(
+            "the motion task's clip was not collected", task_id=str(job_id)
+        ) from exc
+
+
+class MotionTaskFailed(MediaProviderError):
+    """The vendor itself reported the motion task FAILED (or CANCELLED): a refusal, with its
+    code. Every other way a submitted clip fails to arrive is `TaskStillOpen`."""
+
+
+def _await_motion(adapter: VideoProvider, job_id: str) -> tuple[bytes, dict[str, Any]]:
+    """Poll a submitted motion task until its clip arrives, the vendor fails it, or the
+    deadline passes (raised; `_generate_motion` makes that TaskStillOpen)."""
     deadline = time.monotonic() + MOTION_DEADLINE_SECONDS
     attempts = 0
     while True:
@@ -854,7 +1309,7 @@ def _generate_motion(
             result = asyncio.run(adapter.get_generation_status(job_id))
         except MediaProviderError:
             # The shot exists and is paid for; a failed download is worth a second attempt
-            # before it is written off.
+            # before it is left for the collection.
             attempts += 1
             if attempts > 2 or time.monotonic() >= deadline:
                 raise
@@ -868,7 +1323,7 @@ def _generate_motion(
             failure = raw.get("failure")
             # The vendor's code (SAFETY.*, INTERNAL.BAD_OUTPUT, ...) travels with the error:
             # it decides whether the scene moves, retries or goes to the Owner.
-            raise MediaProviderError(
+            raise MotionTaskFailed(
                 f"the motion task failed ({code or 'no reason given'})",
                 code=code if isinstance(code, str) and code else None,
                 detail=failure if isinstance(failure, str) and failure else None,
@@ -1402,6 +1857,10 @@ def _dissolve_command(
     audio_filter: str | None = "apad",
     captions: str | None = None,
     fps: int = TIMELINE_FPS,
+    framings: Sequence[dict[str, Any] | None] | None = None,
+    grades: Sequence[str | None] | None = None,
+    grain: int = 0,
+    lut: str | None = None,
 ) -> list[str]:
     """One ffmpeg call over the shot files: the film's edit.
 
@@ -1412,6 +1871,11 @@ def _dissolve_command(
     an audio chain to encode the track with, or None when ``audio_file`` is the mastered
     track, which is then copied in untouched; ``captions`` is the subtitles filter to burn in
     after the edit, or None to leave the picture clean.
+
+    ``grades`` is each shot's grade (a lutyuv toward the hero, film_grade) and ``framings``
+    each shot's second framing (plan_second_framings): the shot is cut at ``at`` seconds to a
+    punch-in of itself. ``lut`` (a .cube named relative to the working directory) and
+    ``grain`` are the finish's film-wide look. Without them the edit is exactly what it was.
     """
     args = [ffmpeg_exe, "-nostdin", "-y"]
     for shot in shots:
@@ -1421,9 +1885,23 @@ def _dissolve_command(
     joins = scene_joins(scenes_data)
     # Every shot on one clock first: a time base of one frame, so a cut (concat) and a
     # dissolve (xfade, which refuses inputs on different time bases) join the same frames.
-    chain = "".join(
-        f"[{index}:v]fps={fps},settb=1/{fps},setpts=N[s{index}];" for index in range(len(shots))
-    )
+    chain = ""
+    for index in range(len(shots)):
+        grade = grades[index] if grades is not None and index < len(grades) else None
+        framing = framings[index] if framings is not None and index < len(framings) else None
+        head = f"[{index}:v]fps={fps},settb=1/{fps},setpts=N" + (f",{grade}" if grade else "")
+        if not framing:
+            chain += f"{head}[s{index}];"
+            continue
+        cut = max(1, round(float(framing["at"]) * fps))
+        x, y, width, height = (int(value) for value in framing["crop"])
+        chain += (
+            f"{head},split=2[w{index}][c{index}];"
+            f"[w{index}]trim=end_frame={cut},setpts=N[wa{index}];"
+            f"[c{index}]trim=start_frame={cut},setpts=N,crop={width}:{height}:{x}:{y},"
+            f"scale={SHOT_WIDTH}:{SHOT_HEIGHT}:flags=lanczos,setsar=1[ca{index}];"
+            f"[wa{index}][ca{index}]concat=n=2:v=1:a=0,settb=1/{fps},setpts=N[s{index}];"
+        )
     current = "s0"
     start = 0.0
     for index in range(1, len(shots)):
@@ -1443,7 +1921,9 @@ def _dissolve_command(
     burn = f",{captions}" if captions else ""
     # The captions are drawn onto the limited-range picture and the result is converted and
     # tagged once more, so what is burnt in keeps to 16-235 as well.
-    tail = f"fps={fps},trim=end_frame={frames},setpts=PTS-STARTPTS{burn},{TO_BT709_TV}[vout]"
+    look = f",lut3d=file={lut}:interp=tetrahedral" if lut else ""
+    look += f",noise=alls={int(grain)}:allf=t" if grain and int(grain) > 0 else ""
+    tail = f"fps={fps},trim=end_frame={frames},setpts=PTS-STARTPTS{look}{burn},{TO_BT709_TV}[vout]"
     chain += f"[{current}]{tail}"
 
     args += [
@@ -1460,6 +1940,456 @@ def _dissolve_command(
         str(output_mp4),
     ]
     return args
+
+
+# --------------------------------------------------------------------------- one look
+# Audit Q8 (2026-10-02). Every shot used to pass through nothing but the BT.709 conversion, so
+# the image model's stills and the motion model's clips were joined as they came: the Nepal
+# stills jumped between a cold storm blue, saturated orange mud and a sunny sky. The film is
+# now graded toward its hero (the first filmed scene, the hook): each other filmed shot is
+# measured (signalstats) and pulled part of the way toward the hero's luma levels, colour
+# balance and saturation by one lutyuv, inside the final edit. 0 credits, nothing bought, and
+# the distance before and after (Delta E 1976 on the mean colour) is recorded for QC.
+
+#: The keys of a picture's measurement (8-bit limited range: Y 16-235, U and V around 128).
+PICTURE_KEYS: tuple[str, ...] = ("y_low", "y_high", "y_avg", "u_avg", "v_avg", "sat_avg")
+_SIGNALSTATS = {
+    "YLOW": "y_low",
+    "YHIGH": "y_high",
+    "YAVG": "y_avg",
+    "UAVG": "u_avg",
+    "VAVG": "v_avg",
+    "SATAVG": "sat_avg",
+}
+#: How far the grade may move a shot: luma gain, saturation and the chroma shift in 8-bit
+#: units. A shot further than this from the hero is pulled as far as this, and QC names it.
+GRADE_GAIN_RANGE = (0.8, 1.25)
+GRADE_SATURATION_RANGE = (0.75, 1.25)
+GRADE_MAX_CHROMA_SHIFT = 6.0
+GRADE_DEFAULT_STRENGTH = 0.6
+#: A shot whose correction would be smaller than this is left as it is.
+_GRADE_NEGLIGIBLE = {"gain": 0.01, "offset": 0.5, "saturation": 0.01, "shift": 0.5}
+
+
+def measure_picture(
+    ffmpeg_exe: str | None, path: Path, *, every: int = 12
+) -> dict[str, float] | None:
+    """A picture's (or a shot's) luma levels, mean chroma and saturation, from signalstats on
+    every ``every``-th frame at 270 px, averaged. None when it cannot be read."""
+    if not ffmpeg_exe or not Path(path).is_file():
+        return None
+    try:
+        result = subprocess.run(  # noqa: S603 - argument list, no shell
+            [
+                ffmpeg_exe,
+                "-v",
+                "error",
+                "-nostdin",
+                "-i",
+                str(path),
+                "-an",
+                "-vf",
+                f"select='not(mod(n\\,{max(1, int(every))}))',scale=270:-2:flags=area,"
+                "format=yuv420p,signalstats,metadata=print:file=-",
+                "-fps_mode",
+                "passthrough",
+                "-f",
+                "null",
+                "-",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=300,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    sums = dict.fromkeys(PICTURE_KEYS, 0.0)
+    counts = dict.fromkeys(PICTURE_KEYS, 0)
+    for line in (result.stdout or "").splitlines():
+        key, _, value = line.strip().partition("=")
+        name = _SIGNALSTATS.get(key.removeprefix("lavfi.signalstats."))
+        if name is None:
+            continue
+        try:
+            sums[name] += float(value)
+            counts[name] += 1
+        except ValueError:
+            continue
+    if not all(counts.values()):
+        return None
+    return {key: round(sums[key] / counts[key], 3) for key in PICTURE_KEYS}
+
+
+def _lab(stats: dict[str, float]) -> tuple[float, float, float]:
+    """The mean colour (Y, U, V in BT.709 limited range) as CIE L*a*b* (D65)."""
+    y = (float(stats["y_avg"]) - 16.0) / 219.0
+    cb = (float(stats["u_avg"]) - 128.0) / 224.0
+    cr = (float(stats["v_avg"]) - 128.0) / 224.0
+    rgb = (
+        y + 1.5748 * cr,
+        y - 0.1873 * cb - 0.4681 * cr,
+        y + 1.8556 * cb,
+    )
+
+    def linear(value: float) -> float:
+        value = min(1.0, max(0.0, value))
+        return value / 4.5 if value < 0.081 else ((value + 0.099) / 1.099) ** (1 / 0.45)
+
+    r, g, b = (linear(c) for c in rgb)
+    x = 0.4124 * r + 0.3576 * g + 0.1805 * b
+    yy = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    z = 0.0193 * r + 0.1192 * g + 0.9505 * b
+
+    def f(t: float) -> float:
+        return t ** (1 / 3) if t > 0.008856 else 7.787 * t + 16 / 116
+
+    fx, fy, fz = f(x / 0.95047), f(yy / 1.0), f(z / 1.08883)
+    return 116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)
+
+
+def delta_e(first: dict[str, float], second: dict[str, float]) -> float:
+    """Delta E 1976 between two measured pictures' mean colours."""
+    a, b = _lab(first), _lab(second)
+    return round(math.sqrt(sum((p - q) ** 2 for p, q in zip(a, b, strict=True))), 3)
+
+
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
+def grade_toward(
+    shot: dict[str, float], hero: dict[str, float], *, strength: float = GRADE_DEFAULT_STRENGTH
+) -> dict[str, Any] | None:
+    """The correction that pulls ``shot`` part of the way (``strength``) toward ``hero``: a
+    luma gain and offset that move its 10th and 90th percentiles, a saturation factor and a
+    shift of U and V, each bounded. Returns the lutyuv filter, its parameters and the
+    measurement the shot is predicted to have after it; None when nothing needs moving."""
+    s = max(0.0, min(1.0, float(strength)))
+    low, high = float(shot["y_low"]), float(shot["y_high"])
+    want_low = low + s * (float(hero["y_low"]) - low)
+    want_high = high + s * (float(hero["y_high"]) - high)
+    gain = _clamp((want_high - want_low) / max(high - low, 1.0), *GRADE_GAIN_RANGE)
+    offset = want_low - gain * low
+    sat = float(shot["sat_avg"])
+    saturation = _clamp(
+        1.0 + s * (float(hero["sat_avg"]) / sat - 1.0) if sat > 0.5 else 1.0,
+        *GRADE_SATURATION_RANGE,
+    )
+
+    def shift(key: str) -> float:
+        mean = float(shot[key])
+        want = mean + s * (float(hero[key]) - mean)
+        scaled = (mean - 128.0) * saturation + 128.0
+        return _clamp(want - scaled, -GRADE_MAX_CHROMA_SHIFT, GRADE_MAX_CHROMA_SHIFT)
+
+    u_shift, v_shift = shift("u_avg"), shift("v_avg")
+    if (
+        abs(gain - 1.0) < _GRADE_NEGLIGIBLE["gain"]
+        and abs(offset) < _GRADE_NEGLIGIBLE["offset"]
+        and abs(saturation - 1.0) < _GRADE_NEGLIGIBLE["saturation"]
+        and abs(u_shift) < _GRADE_NEGLIGIBLE["shift"]
+        and abs(v_shift) < _GRADE_NEGLIGIBLE["shift"]
+    ):
+        return None
+
+    def luma(value: float) -> float:
+        return _clamp(value * gain + offset, 16.0, 235.0)
+
+    def chroma(value: float, moved: float) -> float:
+        return _clamp((value - 128.0) * saturation + 128.0 + moved, 16.0, 240.0)
+
+    predicted = {
+        "y_low": round(luma(low), 3),
+        "y_high": round(luma(high), 3),
+        "y_avg": round(luma(float(shot["y_avg"])), 3),
+        "u_avg": round(chroma(float(shot["u_avg"]), u_shift), 3),
+        "v_avg": round(chroma(float(shot["v_avg"]), v_shift), 3),
+        "sat_avg": round(sat * saturation, 3),
+    }
+    graph = (
+        f"lutyuv=y='clip(val*{gain:.4f}+({offset:.3f})\\,16\\,235)'"
+        f":u='clip((val-128)*{saturation:.4f}+128+({u_shift:.3f})\\,16\\,240)'"
+        f":v='clip((val-128)*{saturation:.4f}+128+({v_shift:.3f})\\,16\\,240)'"
+    )
+    return {
+        "filter": graph,
+        "params": {
+            "gain": round(gain, 4),
+            "offset": round(offset, 3),
+            "saturation": round(saturation, 4),
+            "u_shift": round(u_shift, 3),
+            "v_shift": round(v_shift, 3),
+            "strength": s,
+        },
+        "predicted": predicted,
+    }
+
+
+def film_grade(
+    ffmpeg_exe: str,
+    scenes: list[dict[str, Any]],
+    shots: list[Path],
+    composed: list[bool],
+    finish: dict[str, Any],
+) -> dict[str, Any]:
+    """The film's grade: the hero (its first filmed scene) measured, every other filmed shot
+    measured and pulled toward it. Cards keep the studio's own palette. The record names the
+    reference, each shot's correction, and the Delta E to the hero before and after."""
+    settings = finish["grade"]
+    record: dict[str, Any] = {
+        "reference_scene": None,
+        "reference": None,
+        "strength": float(settings["strength"]),
+        "lut": settings["lut"],
+        "lut_licence": settings["lut_licence"],
+        "grain": int(settings["grain"]),
+        "shots": [],
+        "delta_e_max_before": None,
+        "delta_e_max_after": None,
+        "applied": False,
+    }
+    filmed = [i for i, is_card in enumerate(composed) if not is_card]
+    if not settings["match_to_hero"] or not filmed:
+        record["reason"] = (
+            "potrivirea culorii cu eroul este oprită în finish.grade"
+            if not settings["match_to_hero"]
+            else "filmul nu are scene filmate"
+        )
+        return record
+    hero_position = filmed[0]
+    hero = measure_picture(ffmpeg_exe, shots[hero_position])
+    if hero is None:
+        record["reason"] = "imaginea eroului nu a putut fi măsurată"
+        return record
+    record["reference_scene"] = int(scenes[hero_position]["scene_index"])
+    record["reference"] = hero
+    befores: list[float] = []
+    afters: list[float] = []
+    for position in filmed:
+        index = int(scenes[position]["scene_index"])
+        if position == hero_position:
+            record["shots"].append(
+                {"scene_index": index, "filter": None, "delta_e_before": 0.0, "delta_e_after": 0.0}
+            )
+            continue
+        stats = measure_picture(ffmpeg_exe, shots[position])
+        if stats is None:
+            record["shots"].append({"scene_index": index, "filter": None, "measured": False})
+            continue
+        grade = grade_toward(stats, hero, strength=record["strength"])
+        before = delta_e(stats, hero)
+        after = delta_e(grade["predicted"], hero) if grade else before
+        befores.append(before)
+        afters.append(after)
+        record["shots"].append(
+            {
+                "scene_index": index,
+                "filter": grade["filter"] if grade else None,
+                "params": grade["params"] if grade else None,
+                "measured": stats,
+                "predicted": grade["predicted"] if grade else stats,
+                "delta_e_before": before,
+                "delta_e_after": after,
+            }
+        )
+    record["delta_e_max_before"] = max(befores, default=0.0)
+    record["delta_e_max_after"] = max(afters, default=0.0)
+    record["applied"] = any(entry.get("filter") for entry in record["shots"])
+    return record
+
+
+def _shot_grade(grade: dict[str, Any] | None, scene_index: int) -> str | None:
+    """The grade filter a film recorded for one scene's shot, if any."""
+    for entry in (grade or {}).get("shots") or []:
+        if isinstance(entry, dict) and entry.get("scene_index") == scene_index:
+            value = entry.get("filter")
+            return str(value) if value else None
+    return None
+
+
+# --------------------------------------------------------------------------- second framings
+# Audit Q6 (2026-10-02): one picture per scene at about five seconds (4.65 s measured on the
+# rehearsal) is slow for a short. A scene whose words run past SECOND_FRAMING_MIN_SPOKEN is cut
+# in two inside the edit, at a caption card's start near its middle: the same take, the second
+# part a 1.15x punch-in centred where the shot plan's ``second_framing`` asks (the frame's
+# upper middle otherwise). Nothing is bought; a second paid clip per scene is a later choice.
+
+SECOND_FRAMING_MIN_SPOKEN = 3.2
+SECOND_FRAMING_MIN_PART = 1.2
+SECOND_FRAMING_ZOOM = 1.15
+SECOND_FRAMING_CENTRE = (0.5, 0.45)
+#: Every shot of the timeline is this size (1080x1920, 9:16).
+SHOT_WIDTH, SHOT_HEIGHT = CAPTION_PLAY_RES
+
+
+def _framing_centre(scene: dict[str, Any]) -> tuple[list[float], str]:
+    package = scene.get("prompt_json")
+    asked = package.get("second_framing") if isinstance(package, dict) else None
+    if isinstance(asked, dict):
+        x, y = asked.get("centre_x"), asked.get("centre_y")
+        if isinstance(x, int | float) and isinstance(y, int | float):
+            return [float(x), float(y)], "model"
+    return list(SECOND_FRAMING_CENTRE), "default"
+
+
+def framing_crop(centre: Sequence[float], zoom: float) -> list[int]:
+    """The punch-in's crop (x, y, width, height) on the 1080x1920 shot, inside the frame."""
+    width = int(round(SHOT_WIDTH / zoom / 2) * 2)
+    height = int(round(SHOT_HEIGHT / zoom / 2) * 2)
+    x = int(round(_clamp(float(centre[0]) * SHOT_WIDTH - width / 2, 0, SHOT_WIDTH - width)))
+    y = int(round(_clamp(float(centre[1]) * SHOT_HEIGHT - height / 2, 0, SHOT_HEIGHT - height)))
+    return [x, y, width, height]
+
+
+def plan_second_framings(
+    scenes: list[dict[str, Any]],
+    cues: list[dict[str, Any]],
+    finish: dict[str, Any],
+) -> list[dict[str, Any] | None]:
+    """For each scene, where its shot cuts to a second framing of the same picture, or None.
+
+    A LIVE scene whose words last more than the finish's ``min_spoken_seconds`` is cut at the
+    caption card start closest to its middle, with at least SECOND_FRAMING_MIN_PART seconds
+    on each side; a card is never reframed, and a scene with no such card start is left
+    whole. ``at`` is seconds from the scene's start."""
+    settings = finish["second_framing"]
+    framings: list[dict[str, Any] | None] = [None] * len(scenes)
+    if not settings["enabled"]:
+        return framings
+    zoom = float(settings["zoom"])
+    clock = 0.0
+    for position, scene in enumerate(scenes):
+        length = float(scene.get("duration_seconds") or 0.0)
+        begin, clock = clock, clock + length
+        spoken = scene.get("audio_seconds")
+        if (
+            is_composed(scene)
+            or not isinstance(spoken, int | float)
+            or float(spoken) <= float(settings["min_spoken_seconds"])
+        ):
+            continue
+        middle = length / 2
+        candidates = [
+            float(cue["start"]) - begin
+            for cue in cues
+            if cue.get("scene_index") == scene.get("scene_index")
+            and SECOND_FRAMING_MIN_PART
+            <= float(cue["start"]) - begin
+            <= length - SECOND_FRAMING_MIN_PART
+        ]
+        if not candidates:
+            continue
+        at = min(candidates, key=lambda value: abs(value - middle))
+        centre, source = _framing_centre(scene)
+        centre = [_clamp(centre[0], 0.0, 1.0), _clamp(centre[1], 0.0, 1.0)]
+        framings[position] = {
+            "at": round(at, 6),
+            "zoom": zoom,
+            "centre": centre,
+            "source": source,
+            "crop": framing_crop(centre, zoom),
+        }
+    return framings
+
+
+# --------------------------------------------------------------------------- hook and cover
+
+#: Where a film's LUTs live (the finish's grade.lut names one of them, with its licence).
+LUT_FOLDER = ROOT / "config" / "luts"
+LUT_NAME = "grade.cube"
+COVER_NAME = "cover.png"
+
+
+def film_hook(engine: Engine, script_draft_id: str | None, scenes: list[dict[str, Any]]) -> str:
+    """The film's hook as the script stated it (story_json['hook']), else the first sentence
+    the film says. The cover and the optional headline are written from it."""
+    if script_draft_id:
+        from app.factual.models import ScriptDraft  # noqa: PLC0415 - media reads factual
+
+        with Session(engine) as session:
+            script = session.get(ScriptDraft, script_draft_id)
+            story = script.story_json if script is not None else None
+            hook = story.get("hook") if isinstance(story, dict) else None
+            if isinstance(hook, str) and hook.strip():
+                return " ".join(hook.split())
+    for scene in scenes:
+        said = " ".join(str(scene.get("voiceover_segment") or "").split())
+        if said:
+            match = re.match(r"(.+?[.!?…])(\s|$)", said)
+            return match.group(1) if match else said
+    return ""
+
+
+def _install_lut(folder: Path, grade: dict[str, Any]) -> str | None:
+    """Copy the finish's LUT (config/luts, with its licence named) beside the film as
+    grade.cube, for the edit to read relative to its working directory; None without one."""
+    name = grade.get("lut")
+    if not name:
+        return None
+    source = LUT_FOLDER / Path(str(name)).name
+    if source.suffix.lower() != ".cube" or not source.is_file():
+        grade["lut_missing"] = f"LUT-ul {Path(str(name)).name} nu este în config/luts."
+        grade["lut"] = None
+        return None
+    shutil.copy2(source, folder / LUT_NAME)
+    grade["lut_sha256"] = _file_sha256(source)
+    return LUT_NAME
+
+
+def film_cover(
+    folder: Path,
+    scenes: list[dict[str, Any]],
+    frames: list[Path | None],
+    card_clips: list[Path | None],
+    hook: str,
+    finish: dict[str, Any],
+    ffmpeg_exe: str,
+) -> dict[str, Any]:
+    """The film's cover: its hero still (the first filmed scene's) with the hook, composed
+    locally (cards.compose_cover) as cover.png beside the film. 0 credits; a hook the font
+    cannot draw, or no still, is recorded as the reason there is no cover."""
+    record: dict[str, Any] = {"path": None, "hook": hook, "credits": 0, "reason": None}
+    if not finish["cover"]["compose"]:
+        record["reason"] = "coperta este oprită în finish.cover"
+        return record
+    hero = next(
+        (
+            frame
+            for frame, card in zip(frames, card_clips, strict=False)
+            if frame is not None and card is None and frame.suffix.lower() in _RASTER
+        ),
+        None,
+    )
+    if hero is None or not hook:
+        record["reason"] = "filmul nu are o imagine filmată" if hero is None else "nu are cârlig"
+        return record
+    try:
+        cover = compose_cover(hero, hook, folder / COVER_NAME, ffmpeg=ffmpeg_exe)
+    except CardError as exc:
+        record["reason"] = str(exc)
+        return record
+    scene_index = next(
+        (
+            int(scene["scene_index"])
+            for scene, frame in zip(scenes, frames, strict=False)
+            if frame == hero
+        ),
+        None,
+    )
+    record.update(
+        path=str(cover.path),
+        sha256=cover.sha256,
+        still=hero.name,
+        scene_index=scene_index,
+        provenance=cover.provenance,
+        size=[1080, 1920],
+    )
+    return record
 
 
 # --------------------------------------------------------------------------- scene takes
@@ -1488,6 +2418,8 @@ DEGENERATE_RETRY_SUFFIX = (
 )
 #: The failure code a take carries when the studio's own check, not the vendor, refused it.
 DEGENERATE_FAILURE_CODE = "LOCAL.DEGENERATE_STILL"
+#: A paid take whose delivered file another take of the scene already holds.
+DUPLICATE_FILE_CODE = "VENDOR.DUPLICATE_FILE"
 #: At most this much of a vendor's reason is kept on a take (the column's own limit).
 TAKE_DETAIL_MAX = 500
 #: The take kinds that are a scene's shot: the hero test shot is kept in the film.
@@ -1694,12 +2626,21 @@ def record_take(
     sha256: str | None = None,
     failure_code: str | None = None,
     failure_detail: str | None = None,
+    remote_task_id: str | None = None,
+    take_id: str | None = None,
 ) -> str:
     """Write one take (and its event). The same file of the same prompt is one row: buying it
-    again updates that row instead of breaking the identity the table enforces."""
+    again updates that row instead of breaking the identity the table enforces.
+
+    ``take_id`` names the row to update: a SUBMITTED take (written the moment the vendor
+    accepted its task, with ``remote_task_id``) becomes PAID, REFUSED or LOST in place, so
+    one purchase is one row. Its own short transaction, the write lock taken first: the row
+    that says money went out must not be refused because a reader committed in between."""
     now = utc_now()
     with Session(engine) as session, session.begin():
-        existing = (
+        lock_for_write(session)
+        existing = session.get(SceneTake, take_id) if take_id else None
+        same_file = (
             session.scalars(
                 select(SceneTake).where(
                     SceneTake.storyboard_id == storyboard_id,
@@ -1712,6 +2653,17 @@ def record_take(
             if sha256
             else None
         )
+        if existing is not None and same_file is not None and same_file.id != existing.id:
+            # The vendor delivered a file this scene already holds. The file keeps its one
+            # row; the purchase keeps its own, REJECTED as a duplicate, its credits and task
+            # id still on the books.
+            existing.status = "REJECTED"
+            existing.failure_code = DUPLICATE_FILE_CODE
+            existing.failure_detail = "Furnizorul a predat un fișier identic cu unul deja primit."
+            existing.updated_at = now
+            existing = same_file
+        elif existing is None:
+            existing = same_file
         take_id = existing.id if existing is not None else str(uuid4())
         event = append_event(
             session,
@@ -1728,6 +2680,8 @@ def record_take(
                 "prompt_hash": prompt_hash,
                 "credits_quoted": credits_quoted,
                 "failure_code": failure_code,
+                "remote_task_id": remote_task_id
+                or (existing.remote_task_id if existing is not None else None),
             },
             correlation_id,
         )
@@ -1749,6 +2703,8 @@ def record_take(
         row.failure_detail = (failure_detail or None) and failure_detail[:TAKE_DETAIL_MAX]
         row.path = str(path) if path is not None else None
         row.sha256 = sha256
+        if remote_task_id is not None:
+            row.remote_task_id = str(remote_task_id)[:100]
         row.updated_at = now
         row.event_id = event.event_id
         if existing is None:
@@ -1930,6 +2886,343 @@ def _still_for_scene(
         image_attempts,
         {"take_id": take_id, "status": "REJECTED" if broken else "PAID", "reused": False},
     )
+
+
+# ------------------------------------------------------------- narration bought once
+#
+# A9 / MONEY-12 (2026-10-02): every assembly voiced every scene again, so an assembly that
+# failed after its narration (the master, the encode, a stop) and was tried again paid
+# ElevenLabs twice. Each voiced segment is now a SceneTake of kind ``narration``: its audio
+# beside the film, its word timing and the vendor's answer in a sidecar JSON, its identity
+# the words and everything the voice was asked with. The next assembly of the same words in
+# the same voice reads it back for nothing.
+
+NARRATION_KIND = "narration"
+#: Where a film's bought narration is kept, under the film's folder (never released).
+NARRATION_FOLDER = "narration"
+#: The suffix of a narration take's sidecar: its timing and the vendor's answer.
+NARRATION_SIDECAR = ".json"
+
+
+def bought_voice(adapter: Any) -> bool:
+    """Whether this voice's narration is kept as a take. A voice of the studio's own code is
+    kept only when it is a paid vendor's adapter (`factory.is_paid_vendor_adapter`): the
+    local stand-in and a rehearsal's played-back recording cost nothing to say again. A
+    voice from outside the studio's code is one the studio cannot vouch is free, so it is
+    treated as bought."""
+    if adapter is None:
+        return False
+    module = str(type(adapter).__module__ or "")
+    if module == "app" or module.startswith("app."):
+        from app.media.factory import is_paid_vendor_adapter  # noqa: PLC0415 - imports media
+
+        return is_paid_vendor_adapter(adapter)
+    return True
+
+
+def stitches(voice: Any) -> bool:
+    """Whether this voice is sent its neighbours' words (request stitching, audit Q3)."""
+    return bool(getattr(type(voice), "ACCEPTS_STITCHING", False))
+
+
+def narration_context(texts: Sequence[Sequence[str]]) -> list[list[dict[str, str | None]]]:
+    """For each scene's parts, in film order, the words said just before and just after them:
+    {"previous_text", "next_text"}, None at the film's two ends. Scenes without words (a
+    silent card) are skipped over, so the context runs on through them."""
+    flat = [
+        (scene, part, text) for scene, parts in enumerate(texts) for part, text in enumerate(parts)
+    ]
+    spoken = [item for item in flat if " ".join(str(item[2]).split())]
+    context: list[list[dict[str, str | None]]] = [
+        [{"previous_text": None, "next_text": None} for _ in parts] for parts in texts
+    ]
+    for position, (scene, part, _text) in enumerate(spoken):
+        context[scene][part] = {
+            "previous_text": str(spoken[position - 1][2]) if position > 0 else None,
+            "next_text": str(spoken[position + 1][2]) if position + 1 < len(spoken) else None,
+        }
+    return context
+
+
+def _context_fields(context: dict[str, Any] | None) -> dict[str, str] | None:
+    """The context as it changes a recording: only the neighbours' words that exist."""
+    if not context:
+        return None
+    kept = {
+        key: " ".join(str(context[key]).split())
+        for key in ("previous_text", "next_text")
+        if isinstance(context.get(key), str) and " ".join(str(context[key]).split())
+    }
+    return kept or None
+
+
+def narration_fields(
+    text: str, voice: Any, context: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """What makes a narration the recording it is, besides the model: the words and every
+    setting the voice is asked with. A new voice, new settings or a new adapter is a new
+    recording; the same words in the same voice are the same one. ``context`` (the words
+    before and after, for a voice that `stitches`) and the voice's own request settings
+    (text normalisation, pronunciation dictionaries) shape the recording, so they are part of
+    it when present; a voice without them keys exactly as it always did."""
+    import sys  # noqa: PLC0415
+
+    module = sys.modules.get(type(voice).__module__)
+    settings = getattr(voice, "voice_settings", None)
+    extra: dict[str, Any] = {}
+    request_settings = getattr(voice, "request_settings", None)
+    if callable(request_settings):
+        asked = request_settings()
+        if isinstance(asked, dict):
+            options = {k: v for k, v in asked.items() if k != "voice_settings"}
+            if options:
+                extra["request_settings"] = options
+    stitched = _context_fields(context)
+    if stitched:
+        extra["context"] = stitched
+    return {
+        "kind": NARRATION_KIND,
+        "text": " ".join(str(text).split()),
+        "provider": str(getattr(voice, "PROVIDER_NAME", "") or ""),
+        "adapter": f"{type(voice).__module__}.{type(voice).__qualname__}",
+        "adapter_version": str(getattr(voice, "ADAPTER_VERSION", "") or ""),
+        "voice_id": getattr(voice, "voice_id", None) or None,
+        "voice_settings": dict(settings) if isinstance(settings, dict) else {},
+        "output_format": getattr(voice, "output_format", None)
+        or getattr(module, "OUTPUT_FORMAT", None),
+        "integration_id": getattr(voice, "integration_id", None) or None,
+        **extra,
+    }
+
+
+def narration_key(text: str, voice: Any, context: dict[str, Any] | None = None) -> str:
+    """The narration take's identity (its ``prompt_hash``): the words, the voice, and for a
+    voice that `stitches`, the words around them."""
+    return take_hash(
+        narration_fields(text, voice, context if stitches(voice) else None),
+        getattr(voice, "model", None) or None,
+    )
+
+
+def _voice_key(voice: Any) -> str:
+    """The voice alone, without the words: which recordings belong to one voice."""
+    fields = narration_fields("", voice)
+    fields.pop("text")
+    return take_hash(fields, getattr(voice, "model", None) or None)
+
+
+def _text_sha(text: str) -> str:
+    return hashlib.sha256(" ".join(str(text).split()).encode("utf-8")).hexdigest()
+
+
+def _sidecar(path: Path) -> Path:
+    return path.with_name(path.name + NARRATION_SIDECAR)
+
+
+def reused_narration(
+    engine: Engine, storyboard_id: str, scene_number: int, key: str
+) -> tuple[TTSResult, str] | None:
+    """(the recording, its take id) when this scene already holds a narration of these words
+    in this voice, its file and sidecar intact; None otherwise. Buys nothing."""
+    with Session(engine) as session:
+        rows = session.scalars(
+            select(SceneTake)
+            .where(
+                SceneTake.storyboard_id == storyboard_id,
+                SceneTake.scene_number == scene_number,
+                SceneTake.kind == NARRATION_KIND,
+                SceneTake.prompt_hash == key,
+                SceneTake.status.in_(REUSABLE_TAKE_STATUSES),
+            )
+            .order_by(SceneTake.created_at.desc())
+        ).all()
+        found = [(row.id, row.path, row.sha256) for row in rows]
+    for take_id, stored, digest in found:
+        if not stored or not digest:
+            continue
+        path = Path(stored)
+        sidecar = _sidecar(path)
+        if not path.is_file() or not sidecar.is_file() or _file_sha256(path) != digest:
+            continue
+        try:
+            kept = json.loads(sidecar.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(kept, dict):
+            continue
+        raw = kept.get("raw_response")
+        timings = kept.get("word_timings")
+        return (
+            TTSResult(
+                audio_bytes=path.read_bytes(),
+                format=str(kept.get("format") or path.suffix.lstrip(".") or "mp3"),
+                duration_seconds=float(kept.get("duration_seconds") or 0.0),
+                sample_rate=int(kept.get("sample_rate") or 44100),
+                word_timings=list(timings) if isinstance(timings, list) else [],
+                cost_vr=None,
+                raw_response={**(raw if isinstance(raw, dict) else {}), "reused_take": take_id},
+            ),
+            take_id,
+        )
+    return None
+
+
+def keep_narration(
+    engine: Engine,
+    *,
+    storyboard_id: str,
+    scene_number: int,
+    key: str,
+    voice: Any,
+    said: TTSResult,
+    folder: Path,
+    scene_text: str,
+    part: int,
+    parts: int,
+    correlation_id: str,
+) -> str | None:
+    """A narration just bought, kept as a PAID take with its audio and its sidecar.
+
+    Never fails the render that bought it: a narration that could not be kept is logged and
+    the film goes on (it would only be bought again next time)."""
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        fmt = str(said.format or "mp3")[:10]
+        path = folder / f"scene_{scene_number:02d}_{key[:16]}.{fmt}"
+        path.write_bytes(said.audio_bytes)
+        _sidecar(path).write_text(
+            json.dumps(
+                {
+                    "format": fmt,
+                    "duration_seconds": said.duration_seconds,
+                    "sample_rate": said.sample_rate,
+                    "word_timings": said.word_timings,
+                    "raw_response": said.raw_response,
+                    "scene_text_sha256": _text_sha(scene_text),
+                    "voice_key": _voice_key(voice),
+                    "part": part,
+                    "parts": parts,
+                    "characters": len(" ".join(str(scene_text).split())),
+                },
+                ensure_ascii=False,
+                default=str,
+            ),
+            encoding="utf-8",
+        )
+        return record_take(
+            engine,
+            storyboard_id=storyboard_id,
+            scene_number=scene_number,
+            kind=NARRATION_KIND,
+            prompt_hash=key,
+            model_id=getattr(voice, "model", None) or None,
+            resolution=fmt,
+            status="PAID",
+            correlation_id=correlation_id,
+            seconds=float(said.duration_seconds),
+            path=path,
+            sha256=_file_sha256(path),
+        )
+    except (OSError, SQLAlchemyError, TypeError, ValueError) as exc:
+        logger.warning(
+            "narration_not_kept",
+            extra={
+                "storyboard_id": storyboard_id,
+                "scene_number": scene_number,
+                "error": type(exc).__name__,
+            },
+        )
+        return None
+
+
+def voiced_scenes(
+    session: Session, storyboard_id: str, scenes: Sequence[dict[str, Any]]
+) -> set[int]:
+    """The scenes whose words as they are now are already voiced, every part of them, by one
+    voice: the sheet prices them at 0. Voice-blind on purpose (the sheet has no adapter);
+    the assemble step checks the actual voice (`narration_to_buy`) and asks for what it
+    would really buy."""
+    rows = session.scalars(
+        select(SceneTake).where(
+            SceneTake.storyboard_id == storyboard_id,
+            SceneTake.kind == NARRATION_KIND,
+            SceneTake.status.in_(REUSABLE_TAKE_STATUSES),
+        )
+    ).all()
+    wanted = {
+        int(scene["scene_index"]): _text_sha(str(scene.get("voiceover_segment") or ""))
+        for scene in scenes
+    }
+    covered: dict[tuple[int, str], set[int]] = {}
+    needed: dict[tuple[int, str], int] = {}
+    for row in rows:
+        if not row.path or wanted.get(int(row.scene_number)) is None:
+            continue
+        path = Path(row.path)
+        try:
+            kept = json.loads(_sidecar(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(kept, dict) or not path.is_file():
+            continue
+        if kept.get("scene_text_sha256") != wanted[int(row.scene_number)]:
+            continue
+        group = (int(row.scene_number), str(kept.get("voice_key") or ""))
+        covered.setdefault(group, set()).add(int(kept.get("part") or 0))
+        needed[group] = int(kept.get("parts") or 1)
+    return {
+        scene for (scene, _voice), parts in covered.items() if len(parts) >= needed[(scene, _voice)]
+    }
+
+
+def _scene_parts(
+    scene: dict[str, Any],
+    voice: Any,
+    voice_segments_for_scene: Callable[[dict[str, Any]], list[dict[str, Any]] | None] | None,
+) -> list[tuple[dict[str, Any], Any]]:
+    """The scene's narration as the render says it: one take per speaker where the scene's
+    lines say who speaks them (each in its own voice, else the scene's), otherwise the
+    scene's words in the scene's voice. (part, voice) pairs."""
+    given = voice_segments_for_scene(scene) if voice_segments_for_scene else None
+    parts: list[dict[str, Any]] = [p for p in (given or []) if str(p.get("text") or "")]
+    if not parts:
+        parts = [{"text": scene["voiceover_segment"]}]
+    return [(part, part.get("adapter") or voice) for part in parts]
+
+
+def narration_to_buy(
+    engine: Engine,
+    storyboard_id: str,
+    *,
+    tts_adapter: Any = None,
+    tts_adapter_for_scene: Callable[[dict[str, Any]], Any] | None = None,
+    voice_segments_for_scene: Callable[[dict[str, Any]], list[dict[str, Any]] | None] | None = None,
+) -> int:
+    """How many characters an assembly with these voices would actually buy: every part a
+    real voice would say that no narration take already holds. 0 for the local stand-in.
+    Calls no voice."""
+    _title, scenes = _storyboard_scenes(engine, storyboard_id)
+    voices = [
+        (tts_adapter_for_scene(scene) if tts_adapter_for_scene else None) or tts_adapter
+        for scene in scenes
+    ]
+    if not voices or any(voice is None for voice in voices):
+        return 0  # the placeholder narrates: nothing is bought
+    characters = 0
+    spoken = [
+        _scene_parts(scene, voice, voice_segments_for_scene)
+        for scene, voice in zip(scenes, voices, strict=True)
+    ]
+    contexts = narration_context([[str(part["text"]) for part, _ in parts] for parts in spoken])
+    for scene, parts, around in zip(scenes, spoken, contexts, strict=True):
+        for (part, speaker), context in zip(parts, around, strict=True):
+            if not bought_voice(speaker):
+                continue
+            text = str(part["text"])
+            key = narration_key(text, speaker, context)
+            if reused_narration(engine, storyboard_id, int(scene["scene_index"]), key) is None:
+                characters += len(" ".join(text.split()))
+    return characters
 
 
 def _storyboard_scenes(engine: Engine, storyboard_id: str) -> tuple[str, list[dict[str, Any]]]:
@@ -2322,9 +3615,12 @@ def _compose_card_clip(
     background: Path | None,
     ffmpeg_exe: str | None,
     fps: int = TIMELINE_FPS,
+    short: bool = True,
 ) -> dict[str, Any]:
     """One card scene's clip, composed locally from its own spec at the timeline's ``fps``:
-    0 credits, no adapter."""
+    0 credits, no adapter. Every film is a short: a BLACK scene longer than a beat is a closing
+    card on the hook's still (cards.MAX_SHORT_BLACK_SECONDS, audit Q5). ``short`` False keeps
+    a card of a film made before that rule exactly as it was made (a rederived shot)."""
     spec = card_spec_from_json(scene_kind_of(scene), scene.get("card_json"))
     index = int(scene["scene_index"])
     usable_background = (
@@ -2337,6 +3633,7 @@ def _compose_card_clip(
         fps=fps,
         background_still=usable_background,
         ffmpeg=ffmpeg_exe,
+        short=short,
     )
     return {
         "kind": card.kind,
@@ -2347,6 +3644,8 @@ def _compose_card_clip(
         "seconds": round(seconds, 3),
         "frames": card.frames,
         "background": usable_background.name if usable_background is not None else None,
+        # A BLACK scene drawn on the hook's still instead of black (a closing card).
+        "closing": card.closing,
     }
 
 
@@ -2453,12 +3752,16 @@ def _timeline_record(
     card_clips: list[Path | None],
     *,
     dither: bool,
+    framings: list[dict[str, Any] | None] | None = None,
 ) -> dict[str, Any]:
     """The film's timeline as the manifest keeps it, and as quality control reads it: the
     frame rate, and each scene's place (start, end), how it is joined from the scene before,
-    its shot's length and whether its shot is a generated clip (``moving``)."""
+    its shot's length and whether its shot is a generated clip (``moving``). A scene cut to a
+    second framing of its picture carries it (``second_framing``), and the film counts the
+    shots on screen and their average length (audit Q6)."""
     spans: list[dict[str, Any]] = []
     clock = 0.0
+    framings = framings if framings is not None else [None] * len(scenes)
     for position, scene in enumerate(scenes):
         length = float(scene["duration_seconds"])
         spans.append(
@@ -2476,6 +3779,7 @@ def _timeline_record(
                 # kind, and how long its words are (None: not measured).
                 "kind": scene_kind_of(scene),
                 "spoken_seconds": scene.get("audio_seconds"),
+                "second_framing": framings[position],
             }
         )
         clock += length
@@ -2485,6 +3789,7 @@ def _timeline_record(
         if all(isinstance(s, int | float) for s in spoken)
         else None
     )
+    on_screen = len(spans) + sum(1 for framing in framings if framing)
     return {
         "fps": TIMELINE_FPS,
         "dither": "zscale error_diffusion" if dither else "swscale",
@@ -2492,6 +3797,8 @@ def _timeline_record(
         "film_seconds": round(clock, 6),
         "narration_seconds": narration,
         "spans": spans,
+        "shots_on_screen": on_screen,
+        "average_shot_seconds": round(clock / on_screen, 3) if on_screen else None,
     }
 
 
@@ -2501,18 +3808,22 @@ def _write_captions(
     ffmpeg_exe: str,
     *,
     wants_burn: bool,
+    finish: dict[str, Any] | None = None,
+    headline: str | None = None,
 ) -> tuple[dict[str, Any], str | None]:
     """Write captions.srt and captions.ass beside the film; return the manifest's record and
-    the filter that burns them (None when they are not burnt, with the reason recorded)."""
+    the filter that burns them (None when they are not burnt, with the reason recorded).
+    ``finish`` carries the Owner's caption colours and whether the hook ``headline`` shows."""
     from app.media import cards  # noqa: PLC0415
 
+    finish = finish or film_finish()
     cues = caption_cues(scenes)
     srt_file = work_dir / "captions.srt"
     srt_file.write_text(srt_from_cues(cues), encoding="utf-8")
     ass_file = work_dir / CAPTIONS_ASS_NAME
     reason: str | None = None
     try:
-        ass_file.write_text(ass_from_cues(cues), encoding="utf-8")
+        ass_file.write_text(ass_from_cues(cues, finish=finish, headline=headline), encoding="utf-8")
         install_caption_fonts(work_dir)
     except cards.CardError as exc:
         reason = f"the caption font cannot be used: {exc}"
@@ -2545,6 +3856,16 @@ def _write_captions(
                 "bottom_y": CAPTION_BOTTOM_Y,
                 "right_clear": CAPTION_RIGHT_CLEAR,
                 "words_per_card": [CAPTION_MIN_WORDS, CAPTION_MAX_WORDS],
+                # The finish the captions were burnt with (audit Q7): the colours, the shadow,
+                # and whether the spoken word and numbers were lit.
+                "colours": {key: finish["captions"][key] for key in ("text", "active", "emphasis")},
+                "shadow_px": finish["captions"]["shadow_px"],
+                "shadow_opacity": finish["captions"]["shadow_opacity"],
+                "highlight": bool(finish["captions"]["highlight_active_word"])
+                and any(cue.get("words") for cue in cues),
+                "emphasis_numbers": bool(finish["captions"]["emphasis_numbers"]),
+                "headline": bool(headline) and bool(finish["headline"]["show"]),
+                "phrase_aware": True,
             }
             if burn_in
             else None
@@ -2682,6 +4003,7 @@ def _keep_clip_report(
 ) -> None:
     """Write one clip's report on its take; a clip measured wrong is REJECTED (QC.CLIP)."""
     with Session(engine) as session, session.begin():
+        lock_for_write(session)  # read-then-write right after a purchase
         row = session.get(SceneTake, take_id)
         if row is not None and record["verdict"] == "FAILED" and row.status == "PAID":
             row.status = "REJECTED"
@@ -2802,6 +4124,438 @@ def _record_motion_take(
     )
 
 
+# ------------------------------------------------------------------- the bed under the voice
+
+#: What a film without a usable library track says about its sound (Romanian: the Owner's).
+NO_BED_ADVISORY = (
+    "Biblioteca de muzică nu are nicio piesă folosibilă (config/music_library.json): filmul are "
+    "doar narațiune, fără muzică dedesubt. Adaugă piese cu licență comercială confirmată ca "
+    "filmele să aibă fundal sonor."
+)
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    """``value`` when it is a dict, else an empty one: a record read back may hold anything."""
+    return value if isinstance(value, dict) else {}
+
+
+def _mood_text(
+    engine: Engine, storyboard_id: str, title: str, scenes: Sequence[dict[str, Any]]
+) -> str:
+    """What the bed is chosen from: the film's title and core message, and each scene's
+    words, purpose and audio intent."""
+    from app.factual.models import ScriptDraft  # noqa: PLC0415 - factual reads media models
+
+    with Session(engine) as session:
+        board = session.get(Storyboard, storyboard_id)
+        script = session.get(ScriptDraft, board.script_draft_id) if board is not None else None
+        story = script.story_json if script is not None else None
+    parts: list[Any] = [title, (story or {}).get("core_message") if isinstance(story, dict) else ""]
+    for scene in scenes:
+        parts += [
+            scene.get("voiceover_segment"),
+            scene.get("story_purpose"),
+            (scene.get("prompt_json") or {}).get("audio_intent"),
+        ]
+    return " ".join(str(part) for part in parts if part)
+
+
+def film_mix(
+    engine: Engine,
+    storyboard_id: str,
+    ffmpeg_exe: str,
+    voice: Path,
+    scenes: Sequence[dict[str, Any]],
+    work_dir: Path,
+    *,
+    duration: float,
+    title: str,
+) -> dict[str, Any]:
+    """The film's sound before the master: the joined narration, a bed from the Owner's
+    library ducked under it, and an ambience under the scenes whose audio_intent names one.
+
+    Returns the stem to master as ``path`` and the record production['audio'] keeps: ``bed``
+    (the track, its licence and attribution, and the measured level under the voice),
+    ``ambience``, ``attributions`` (what the publication must credit), ``advisory`` (why
+    there is no bed) and ``library`` (the tracks it refused, with their reasons). A mix that
+    fails leaves the film voice only, with a warning for the Owner: the bed is never worth the
+    film."""
+    library = music_library.load_library()
+    record: dict[str, Any] = {
+        "bed": None,
+        "ambience": [],
+        "attributions": [],
+        "advisory": None,
+        "library": {
+            "path": library.path.name,
+            "tracks": len(library.tracks),
+            "refused": library.refused[:20],
+        },
+    }
+    bed = music_library.choose_bed(
+        library, mood_text=_mood_text(engine, storyboard_id, title, scenes), seed=storyboard_id
+    )
+    placed: list[dict[str, Any]] = []
+    tracks: dict[str, music_library.Track] = {}
+    offset = 0.0
+    for scene in scenes:
+        span = float(scene.get("duration_seconds") or 0.0)
+        intent = str((scene.get("prompt_json") or {}).get("audio_intent") or "")
+        ambience = music_library.choose_ambience(library, intent) if intent else None
+        if ambience is not None and span > 0.2:
+            tracks[ambience.id] = ambience
+            placed.append(
+                {
+                    "path": ambience.path,
+                    "start": offset,
+                    "seconds": span,
+                    "scene_index": scene.get("scene_index"),
+                    "track_id": ambience.id,
+                }
+            )
+        offset += span
+    if bed is None:
+        record["advisory"] = NO_BED_ADVISORY
+    try:
+        mixed = mix_bed(
+            ffmpeg_exe,
+            voice,
+            work_dir / "mixed_audio.wav",
+            bed=bed.path if bed is not None else None,
+            duration=duration,
+            work_dir=work_dir,
+            ambience=placed,
+        )
+    except AudioMixError as exc:
+        record["advisory"] = NO_BED_ADVISORY if bed is None else None
+        record["warning"] = (
+            "Muzica și ambianța nu au putut fi mixate sub narațiune; filmul are doar vocea. "
+            f"Motiv tehnic: {exc}"
+        )
+        return {"path": voice, **record}
+    if bed is not None and mixed["bed"] is not None:
+        record["bed"] = {**bed.record(), **mixed["bed"], "stem": Path(mixed["bed"]["stem"]).name}
+    for item in mixed["ambience"]:
+        track = tracks[str(item["track_id"])]
+        record["ambience"].append({**track.record(), **item, "stem": Path(item["stem"]).name})
+    used = [tracks[str(i["track_id"])] for i in mixed["ambience"]]
+    if bed is not None and record["bed"]:
+        used.insert(0, bed)
+    record["attributions"] = list(
+        dict.fromkeys(track.attribution for track in used if track.attribution)
+    )
+    return {"path": Path(mixed["path"]), **record}
+
+
+def _drop_mix_stems(folder: Path, mixed: Path, record: dict[str, Any], *, keep: Path) -> None:
+    """Remove the mix's working files (the mixed stem, the bed and ambience stems)."""
+    names = [mixed.name] if mixed != keep else []
+    names += [
+        str(item.get("stem"))
+        for item in [record.get("bed"), *record.get("ambience", [])]
+        if isinstance(item, dict) and item.get("stem")
+    ]
+    for name in names:
+        (folder / Path(name).name).unlink(missing_ok=True)
+
+
+def remix_film_sound(
+    ffmpeg_exe: str, voice: Path, folder: Path, audio: dict[str, Any], *, duration: float
+) -> tuple[Path, dict[str, Any]]:
+    """The bed and ambience a film was made with, mixed again under a remade voice track (an
+    audio repair). A track the library no longer vouches for is left out, and the record
+    says so; nothing is chosen anew."""
+    library = music_library.load_library()
+    record = dict(audio)
+    bed_record = audio.get("bed") if isinstance(audio.get("bed"), dict) else None
+    bed = library.entry(str(bed_record.get("track_id"))) if bed_record else None
+    if bed is not None and bed_record is not None and bed.sha256 != bed_record.get("sha256"):
+        bed = None
+    placed = []
+    for item in audio.get("ambience") or []:
+        track = library.entry(str(item.get("track_id"))) if isinstance(item, dict) else None
+        if track is not None and track.sha256 == item.get("sha256"):
+            placed.append(
+                {
+                    "path": track.path,
+                    "start": float(item.get("start") or 0.0),
+                    "seconds": float(item.get("seconds") or 0.0),
+                    "scene_index": item.get("scene_index"),
+                    "track_id": track.id,
+                }
+            )
+    dropped = (1 if bed_record and bed is None else 0) + (
+        len(audio.get("ambience") or []) - len(placed)
+    )
+    mixed = mix_bed(
+        ffmpeg_exe,
+        voice,
+        folder / f"mixed_audio_repair_{uuid4().hex[:8]}.wav",
+        bed=bed.path if bed is not None else None,
+        duration=duration,
+        work_dir=folder,
+        ambience=placed,
+    )
+    record["bed"] = (
+        {**bed.record(), **mixed["bed"], "stem": Path(mixed["bed"]["stem"]).name}
+        if bed is not None and mixed["bed"] is not None
+        else None
+    )
+    record["ambience"] = []
+    for item in mixed["ambience"]:
+        track = library.entry(str(item["track_id"]))
+        if track is not None:
+            record["ambience"].append({**track.record(), **item, "stem": Path(item["stem"]).name})
+    if dropped:
+        record["warning"] = (
+            "La refacerea sunetului, piese din bibliotecă nu mai sunt cele licențiate și au fost "
+            "scoase din film."
+        )
+    if record["bed"] is None and bed_record is None:
+        record["advisory"] = NO_BED_ADVISORY
+    return Path(mixed["path"]), record
+
+
+# ------------------------------------------------------------------- the licence ledger
+#
+# A film is LICENSED only when every component of it carries commercial-use evidence; any
+# component without it makes the film NEEDS_REVIEW, which quality control lets through for a
+# private upload and the publishing gate refuses public or unlisted (audit AR-15). The stamp
+# PROPRIETARY_STUDIO, which every film used to receive whatever it was made of, is no longer
+# written.
+
+LICENSED = "LICENSED"
+NEEDS_REVIEW = "NEEDS_REVIEW"
+#: The fonts every caption and card is drawn with, and the licence shipped beside them.
+FONTS_LICENCE = {
+    "component": "fonts",
+    "vendor": "Inter (Rasmus Andersson)",
+    "terms": "SIL Open Font License 1.1 (backend/app/media/fonts/OFL.txt)",
+}
+#: What the studio itself draws or says with its own code: cards, placeholder frames, the
+#: deterministic stand-in voice. Nobody else holds a right in them.
+STUDIO_TERMS = "realizat local de studio, fără furnizor"
+_COMPONENT_WORDS = {
+    "still": "imaginea",
+    "motion": "mișcarea",
+    "narration": "narațiunea",
+    "card": "cardul",
+    "fonts": "fonturile",
+    "music": "muzica",
+    "ambience": "ambianța",
+}
+
+
+def _fonts_component() -> dict[str, Any]:
+    ofl = Path(__file__).resolve().parent / "fonts" / "OFL.txt"
+    return {**FONTS_LICENCE, "commercial_use": True if ofl.is_file() else None}
+
+
+def _studio_component(component: str, scene_index: Any) -> dict[str, Any]:
+    return {
+        "component": component,
+        "scene_index": scene_index,
+        "vendor": "STUDIO",
+        "terms": STUDIO_TERMS,
+        "commercial_use": True,
+    }
+
+
+def _take_component(
+    session: Session,
+    component: str,
+    scene_index: Any,
+    take_id: Any,
+    fallback_integration: Any,
+    purposes: tuple[str, ...],
+    stamps: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """A bought component's licence: the evidence already on its take, else the Owner's
+    statement on the connection its model belongs to (or the one the render used)."""
+    from app.media.factory import connection_of_model, vendor_licence  # noqa: PLC0415
+
+    take = session.get(SceneTake, str(take_id)) if take_id else None
+    if take is not None and take.commercial_use is True:
+        return {
+            "component": component,
+            "scene_index": scene_index,
+            "take_id": take.id,
+            "vendor": take.licence_vendor,
+            "terms": take.licence_terms,
+            "commercial_use": True,
+            "source": "take",
+        }
+    integration = (
+        connection_of_model(session, take.model_id, purposes) if take is not None else None
+    ) or fallback_integration
+    licence = vendor_licence(session, integration)
+    found = {
+        "component": component,
+        "scene_index": scene_index,
+        "take_id": take.id if take is not None else None,
+        **licence,
+    }
+    if take is not None:
+        stamps[take.id] = licence
+    return found
+
+
+def licence_components(engine: Engine, production: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every component of a rendered film with its licence evidence, read from the render's
+    own record: per scene its still, its shot, its narration (or the card that replaced the
+    picture), then the fonts and the library's tracks. Takes whose licence was read from a
+    connection carry it from now on (``licence_vendor``, ``licence_terms``,
+    ``commercial_use``), stamped once with the evidence of the day they were first used."""
+    components: list[dict[str, Any]] = []
+    stamps: dict[str, dict[str, Any]] = {}
+    image = _as_dict(production.get("image"))
+    voice = _as_dict(production.get("voice"))
+    placeholder_pictures = str(image.get("provider") or "").startswith(PLACEHOLDER_VISUAL_PROVIDER)
+    with Session(engine) as session:
+        for scene in production.get("scenes") or []:
+            if not isinstance(scene, dict):
+                continue
+            index = scene.get("scene_index")
+            if str(scene.get("scene_kind") or LIVE_KIND) in CARD_KINDS:
+                components.append(_studio_component("card", index))
+            elif placeholder_pictures:
+                components.append(_studio_component("still", index))
+            else:
+                still = _as_dict(scene.get("still_take"))
+                drawn = _as_dict(scene.get("image"))
+                components.append(
+                    _take_component(
+                        session,
+                        "still",
+                        index,
+                        still.get("take_id"),
+                        drawn.get("integration_id") or image.get("integration_id"),
+                        ("image",),
+                        stamps,
+                    )
+                )
+            motion = scene.get("motion") if isinstance(scene.get("motion"), dict) else None
+            if (
+                motion
+                and not motion.get("refused")
+                and (motion.get("bytes") or motion.get("reused_take"))
+            ):
+                components.append(
+                    _take_component(
+                        session,
+                        "motion",
+                        index,
+                        motion.get("take_id"),
+                        motion.get("integration_id"),
+                        ("video",),
+                        stamps,
+                    )
+                )
+            if str(scene.get("voice_provider") or "") == PLACEHOLDER_VOICE_PROVIDER:
+                components.append(_studio_component("narration", index))
+                continue
+            takes = [t for t in scene.get("narration_takes") or [] if t]
+            connections = list(scene.get("voice_integration_ids") or []) or [
+                voice.get("integration_id")
+            ]
+            for take_id in takes or [None]:
+                components.append(
+                    _take_component(
+                        session, "narration", index, take_id, connections[0], ("voice",), stamps
+                    )
+                )
+            for extra in connections[1:]:
+                from app.media.factory import vendor_licence  # noqa: PLC0415
+
+                components.append(
+                    {
+                        "component": "narration",
+                        "scene_index": index,
+                        **vendor_licence(session, extra),
+                    }
+                )
+    components.append(_fonts_component())
+    audio = _as_dict(production.get("audio"))
+    tracks = [audio.get("bed")] + list(audio.get("ambience") or [])
+    for track in tracks:
+        if not isinstance(track, dict):
+            continue
+        components.append(
+            {
+                "component": "music" if track.get("kind", "music") == "music" else "ambience",
+                "track_id": track.get("track_id"),
+                "vendor": "BIBLIOTECA_PROPRIETARULUI",
+                "terms": track.get("licence"),
+                "commercial_use": True if track.get("commercial_ok") is True else None,
+                "attribution": track.get("attribution"),
+                "source": "music_library",
+            }
+        )
+    if stamps:
+        _stamp_licences(engine, stamps)
+    return components
+
+
+def _stamp_licences(engine: Engine, stamps: dict[str, dict[str, Any]]) -> None:
+    """Write each take's licence on it: once found with commercial-use evidence it stays; a
+    take without evidence is written again each time, so the Owner's later yes is read."""
+    try:
+        with Session(engine) as session, session.begin():
+            lock_for_write(session)
+            for take_id, licence in stamps.items():
+                take = session.get(SceneTake, take_id)
+                if take is None or take.commercial_use is True:
+                    continue
+                take.licence_vendor = (str(licence.get("vendor") or "")[:60]) or None
+                take.licence_terms = (str(licence.get("terms") or "")[:200]) or None
+                take.commercial_use = True if licence.get("commercial_use") is True else None
+    except SQLAlchemyError:
+        # The film's own record carries the evidence; the stamp on the take is a convenience.
+        logger.warning("take_licences_not_stamped", exc_info=True)
+
+
+def film_licences(components: list[dict[str, Any]]) -> dict[str, Any]:
+    """The film's licence status from its components: LICENSED only when there are
+    components and every one carries commercial-use evidence; NEEDS_REVIEW otherwise, with
+    what lacks it in Romanian."""
+    missing: list[str] = []
+    for component in components:
+        if component.get("commercial_use") is True:
+            continue
+        word = _COMPONENT_WORDS.get(
+            str(component.get("component")), str(component.get("component"))
+        )
+        where = (
+            f" scenei {component['scene_index']}"
+            if component.get("scene_index") is not None
+            else ""
+        )
+        vendor = component.get("vendor") or "furnizor necunoscut"
+        missing.append(f"{word}{where} ({vendor}): nicio confirmare de folosire comercială")
+    status = LICENSED if components and not missing else NEEDS_REVIEW
+    if not components:
+        missing.append("filmul nu are nicio componentă înregistrată")
+    return {
+        "status": status,
+        "components": components,
+        "missing_ro": list(dict.fromkeys(missing)),
+    }
+
+
+def film_licence_ledger(engine: Engine, production: dict[str, Any]) -> dict[str, Any]:
+    """`licence_components` read and judged by `film_licences`; never fails a film: a ledger
+    that cannot be read is NEEDS_REVIEW with the reason."""
+    try:
+        return film_licences(licence_components(engine, production))
+    except (SQLAlchemyError, OSError, ValueError, TypeError) as exc:
+        logger.warning("licence_ledger_failed", exc_info=True)
+        return {
+            "status": NEEDS_REVIEW,
+            "components": [],
+            "missing_ro": [f"licențele nu au putut fi citite ({type(exc).__name__})"],
+        }
+
+
 def assemble_video_job(
     engine: Engine,
     storyboard_id: str,
@@ -2915,7 +4669,7 @@ def assemble_video_job(
     ffmpeg_exe = resolve_ffmpeg_path(ffmpeg_path)
 
     if storage_root is None:
-        storage_root = DEFAULT_STORAGE_ROOT
+        storage_root = media_root(settings)
     work_dir = storage_root / storyboard_id
     work_dir.mkdir(parents=True, exist_ok=True)
     # Every film quality control has read gives back its intermediates before another is
@@ -2939,6 +4693,7 @@ def assemble_video_job(
             raise ValueError(f"Storyboard {storyboard_id} has no scenes")
 
         storyboard_title = sb.title
+        script_draft_id = sb.script_draft_id
         # Each scene carries its kind (scene_category, what the router is told and what the
         # outcome is recorded under) and its story purpose (what decides its tier).
         scenes_data: list[dict[str, Any]] = [scene_view(s) for s in scenes]
@@ -3071,6 +4826,23 @@ def assemble_video_job(
     # price afterwards. The Owner's stop already failed the job cleanly between two
     # scenes; a refusal now does the same, keeps what was built, and is re-raised for the
     # media stage to cost and to report.
+    #
+    # Each scene's words, part by part, read once before anything is said: a voice that
+    # stitches is told the words before and after its own (narration_context), so the
+    # intonation runs on across a cut instead of ending the film at every scene (audit Q3).
+    # One take per speaker where the scene's lines say who speaks them (S7), each in its own
+    # voice and the scene's voice when that has none; otherwise the scene's words are one take
+    # in the scene's voice, as they always were.
+    scene_parts: list[tuple[list[dict[str, Any]], bool]] = []
+    for scene in scenes_data:
+        given = voice_segments_for_scene(scene) if voice_segments_for_scene else None
+        listed: list[dict[str, Any]] = [p for p in (given or []) if str(p.get("text") or "")]
+        scene_parts.append(
+            (listed, True) if listed else ([{"text": scene["voiceover_segment"]}], False)
+        )
+    part_contexts = narration_context(
+        [[str(part["text"] or "") for part in parts] for parts, _ in scene_parts]
+    )
     try:
         for position, scene in enumerate(scenes_data):
             if position:
@@ -3124,28 +4896,74 @@ def assemble_video_job(
                     write_placeholder_frame_ppm(frame_path, index)
                     frame_files.append(frame_path)
 
-            real_voice = scene_voices[scenes_data.index(scene)]
-            # One take per speaker where the scene's lines say who speaks them (S7), each in
-            # its own voice and the scene's voice when that has none; otherwise the scene's
-            # words are one take in the scene's voice, as they always were.
-            given = voice_segments_for_scene(scene) if voice_segments_for_scene else None
-            parts: list[dict[str, Any]] = [p for p in (given or []) if str(p.get("text") or "")]
-            by_speaker = bool(parts)
-            if not by_speaker:
-                parts = [{"text": scene["voiceover_segment"]}]
+            scene_position = scenes_data.index(scene)
+            real_voice = scene_voices[scene_position]
+            parts, by_speaker = scene_parts[scene_position]
             voice_started = time.monotonic()
             takes: list[tuple[dict[str, Any], TTSProvider, Any]] = []
-            for part in parts:
+            #: Characters this render paid a voice for; a reused narration take costs 0.
+            characters_bought = 0
+            reused_takes: list[str] = []
+            #: The narration takes this scene's words are (bought now or reused), for the
+            #: licence ledger.
+            narration_take_ids: list[str] = []
+            trims: list[dict[str, Any]] = []
+            for position, part in enumerate(parts):
                 take_voice: TTSProvider = (
                     (part.get("adapter") or real_voice) if all_real else None
                 ) or placeholder_voice
-                with _at_work(
-                    engine if all_real else None,
-                    "VoiceArtist",
-                    "synthesize_voice",
-                    f"vocea scenei {index}",
-                ):
-                    said = asyncio.run(take_voice.synthesize(str(part["text"])))
+                context = part_contexts[scene_position][position] if all_real else None
+                key = (
+                    narration_key(str(part["text"]), take_voice, context)
+                    if all_real and bought_voice(take_voice)
+                    else None
+                )
+                kept = reused_narration(engine, storyboard_id, index, key) if key else None
+                if kept is not None:
+                    said, reused_id = kept
+                    reused_takes.append(reused_id)
+                    narration_take_ids.append(reused_id)
+                else:
+                    with _at_work(
+                        engine if all_real else None,
+                        "VoiceArtist",
+                        "synthesize_voice",
+                        f"vocea scenei {index}",
+                    ):
+                        stitched = _context_fields(context) if stitches(take_voice) else None
+                        said = asyncio.run(
+                            take_voice.synthesize(str(part["text"]), extra=stitched)
+                            if stitched
+                            else take_voice.synthesize(str(part["text"]))
+                        )
+                    if all_real:
+                        characters_bought += len(" ".join(str(part["text"]).split()))
+                    if key:
+                        # Kept the moment it is bought, as the vendor sent it: a later part, a
+                        # master or an encode that fails does not make the next attempt pay
+                        # for it again.
+                        kept_id = keep_narration(
+                            engine,
+                            storyboard_id=storyboard_id,
+                            scene_number=index,
+                            key=key,
+                            voice=take_voice,
+                            said=said,
+                            folder=work_dir / NARRATION_FOLDER,
+                            scene_text=str(scene.get("voiceover_segment") or ""),
+                            part=position,
+                            parts=len(parts),
+                            correlation_id=correlation_id,
+                        )
+                        if kept_id:
+                            narration_take_ids.append(kept_id)
+                if all_real and ffmpeg_exe:
+                    # The vendor's silence before and after the words is cut before the
+                    # scene is measured, so no cut carries dead air (audit Q4).
+                    said, trim = _trimmed_take(
+                        ffmpeg_exe, said, work_dir, f"take_{index:02d}_{position + 1:02d}"
+                    )
+                    trims.append(trim)
                 takes.append((part, take_voice, said))
             voice_adapter = takes[0][1]
             gap = SPEAKER_GAP_SECONDS if len(takes) > 1 else 0.0
@@ -3157,7 +4975,20 @@ def assemble_video_job(
                 ),
                 "model_id": getattr(voice_adapter, "model", None) or None,
                 "voice_id": getattr(voice_adapter, "voice_id", None) or None,
+                # The connection each voice of the scene came from, for the licence ledger.
+                "voice_integration_ids": sorted(
+                    {
+                        str(getattr(adapter, "integration_id", None))
+                        for _part, adapter, _said in takes
+                        if getattr(adapter, "integration_id", None)
+                    }
+                ),
+                "narration_takes": narration_take_ids,
                 "characters": sum(len(str(t[0]["text"])) for t in takes),
+                # What the books price: the characters voiced by THIS render. A narration
+                # reused from an earlier attempt was bought, and booked, then.
+                "characters_bought": characters_bought,
+                "narration_reused": reused_takes,
                 "audio_seconds": round(spoken_seconds, 3),
                 "synthesis_ms": round((time.monotonic() - voice_started) * 1000, 1),
                 "attempts": 1,
@@ -3171,6 +5002,14 @@ def assemble_video_job(
                 # placeholder picture, which nobody paid for.
                 "still_take": still_take,
             }
+            if trims:
+                # The silence cut from the vendor's takes: before the scene's first word and
+                # after its last, and take by take.
+                scene_record["trimmed_silence"] = {
+                    "lead_seconds": trims[0]["lead_seconds"],
+                    "trail_seconds": trims[-1]["trail_seconds"],
+                    "takes": trims,
+                }
             if by_speaker:
                 # Who said what, in which voice: the render can be read back take by take.
                 scene_record["segments"] = [
@@ -3683,11 +5522,22 @@ def assemble_video_job(
     #    platform's track, and what quality control reads) and as the ASS script that is
     #    burnt in. The Owner's setting decides the burn; an encoder built without libass, or a
     #    studio whose Inter Bold is missing or altered, cannot, and the manifest says so.
+    # The finish (the Owner's look file): caption colours, the hook headline, the grade,
+    # the second framings and the cover. All local, all 0 credits.
+    finish = film_finish()
+    hook = film_hook(engine, script_draft_id, scenes_data)
+    production["finish"] = {
+        "file": finish["file"],
+        "notes": finish["notes"],
+        "editorial_qc_blocking": finish["editorial_qc_blocking"],
+    }
     production["captions"], captions = _write_captions(
         scenes_data,
         work_dir,
         ffmpeg_exe,
         wants_burn=bool(getattr(settings, "captions_burn_in", True)),
+        finish=finish,
+        headline=hook,
     )
 
     # The sound is mastered once, before the picture: the joined narration is measured,
@@ -3695,24 +5545,60 @@ def assemble_video_job(
     # mode when it cannot, and the Owner is told), brought back to 48 kHz, held under the
     # limiter, padded to the film's length and encoded to AAC — the only lossy encode of the
     # film's sound. The film's own encode copies this track in.
+    #
+    # Before the master, the bed: a licensed track from the Owner's library, ducked under the
+    # voice, and an ambience where a scene's audio_intent names one (audit Q1). Nothing here
+    # is bought; a film without a usable track is voice only and says so.
+    mix = film_mix(
+        engine,
+        storyboard_id,
+        ffmpeg_exe,
+        audio_file,
+        scenes_data,
+        work_dir,
+        duration=total_duration,
+        title=storyboard_title,
+    )
     mastered = work_dir / MASTERED_TRACK_NAME
+    mixed_sound = Path(mix.pop("path"))
     try:
-        master = encode_master_audio(ffmpeg_exe, audio_file, mastered, duration=total_duration)
+        master = encode_master_audio(ffmpeg_exe, mixed_sound, mastered, duration=total_duration)
     except AudioMasterError as exc:
         _fail_job(f"The narration could not be mastered: {exc}", str(exc))
         raise RenderEngineUnavailable(f"The narration could not be mastered: {exc}") from exc
+    finally:
+        # The stems are remade for nothing from the voice track and the library when a
+        # repair needs them (remix_film_sound); the master is what the film keeps.
+        _drop_mix_stems(work_dir, mixed_sound, mix, keep=audio_file)
     loudness = _loudness_record(master)
-    production["audio"] = {"loudness": loudness, "voice_track": voice_track}
+    production["audio"] = {"loudness": loudness, "voice_track": voice_track, **mix}
     if loudness.get("warning"):
         production.setdefault("owner_warnings", []).append(loudness["warning"])
+    if mix.get("warning"):
+        production.setdefault("owner_warnings", []).append(mix["warning"])
 
     # One shot per scene — a generated clip trimmed to its span, a composed card, or the
     # still given a slow push — on the 24 fps timeline, joined by hard cuts and by a dissolve
     # only where the script asks. A 10-bit vendor clip is dithered down to 8 bits.
     dither = has_filter(ffmpeg_exe, "zscale")
-    production["timeline"] = _timeline_record(
-        scenes_data, joins, lengths, holds, motion_clips, card_clips, dither=dither
+    # A long spoken scene is cut to a closer framing of its own picture at a caption card's
+    # start (audit Q6): the same take, nothing bought.
+    framings: list[dict[str, Any] | None] = (
+        plan_second_framings(scenes_data, caption_cues(scenes_data), finish)
+        if real_stills and frame_files
+        else [None] * len(scenes_data)
     )
+    production["timeline"] = _timeline_record(
+        scenes_data,
+        joins,
+        lengths,
+        holds,
+        motion_clips,
+        card_clips,
+        dither=dither,
+        framings=framings,
+    )
+    lut_name: str | None = None
     if real_stills and frame_files:
         shots: list[Path] = []
         shot_records: list[dict[str, Any]] = []
@@ -3737,14 +5623,11 @@ def assemble_video_job(
                 hold=holds[position],
                 dither=dither,
             )
-            shot = subprocess.run(
-                shot_args,
-                cwd=str(work_dir),
-                capture_output=True,
-                text=True,
-                timeout=600,
-                check=False,
-            )
+            try:
+                shot = run_encoder(shot_args, work_dir)
+            except RenderEngineUnavailable as exc:
+                _fail_job(f"Shot {scene['scene_index']} could not be built", str(exc))
+                raise
             if shot.returncode != 0 or not target.is_file() or target.stat().st_size == 0:
                 log = f"shot {scene['scene_index']} failed\n{shot.stdout}\n{shot.stderr}"
                 _fail_job(f"Shot {scene['scene_index']} could not be built", log)
@@ -3775,6 +5658,16 @@ def assemble_video_job(
                 fps=TIMELINE_FPS,
             )
             shot_records.append(record)
+        # One look (audit Q8): every filmed shot pulled toward the hero's light and colour,
+        # measured before and after; the cards keep the studio's palette.
+        composed_flags = [clip is not None for clip in card_clips]
+        grade = film_grade(ffmpeg_exe, scenes_data, shots, composed_flags, finish)
+        lut_name = _install_lut(work_dir, grade)
+        production["grade"] = grade
+        grades = [_shot_grade(grade, int(scene["scene_index"])) for scene in scenes_data]
+        for record, graded, framing in zip(shot_records, grades, framings, strict=True):
+            record["grade"] = graded
+            record["framing"] = framing
         # Which shot file each scene is, with its sha256 and its span on the timeline: a
         # one-scene redo rebuilds one of them and rejoins the others exactly as they are.
         production["shots"] = shot_records
@@ -3786,6 +5679,10 @@ def assemble_video_job(
             output_mp4,
             audio_filter=None,
             captions=captions,
+            framings=framings,
+            grades=grades,
+            grain=int(grade["grain"]),
+            lut=lut_name,
         )
     else:
         concat_list = work_dir / "inputs.txt"
@@ -3793,10 +5690,10 @@ def assemble_video_job(
             # A placeholder film has a frame for every scene, cards included.
             placeholders = [frame for frame in frame_files if frame is not None]
             for frame_path, scene in zip(placeholders, scenes_data, strict=True):
-                f.write(f"file '{frame_path.name}'\n")
+                f.write(concat_line(frame_path.name))
                 f.write(f"duration {float(scene['duration_seconds']):.6f}\n")
             if placeholders:
-                f.write(f"file '{placeholders[-1].name}'\n")
+                f.write(concat_line(placeholders[-1].name))
 
         command_args = [
             ffmpeg_exe,
@@ -3826,18 +5723,18 @@ def assemble_video_job(
             str(output_mp4),
         ]
     try:
-        res = subprocess.run(
+        res = run_encoder(
             command_args,
-            cwd=str(work_dir),
-            capture_output=True,
-            text=True,
-            timeout=600,
-            check=False,
+            work_dir,
+            carry=((CAPTIONS_ASS_NAME, CAPTION_FONTS_DIR) if captions else ())
+            + ((lut_name,) if lut_name else ()),
         )
         log_output = f"FFmpeg exit={res.returncode}\nstdout:\n{res.stdout}\nstderr:\n{res.stderr}"
     except Exception as exc:  # noqa: BLE001
         log_output = f"FFmpeg execution failed: {exc}"
         _fail_job("FFmpeg execution failed", log_output)
+        if isinstance(exc, RenderEngineUnavailable):
+            raise
         raise RenderEngineUnavailable(f"FFmpeg execution failed: {exc}") from exc
 
     if res.returncode != 0 or not output_mp4.is_file() or output_mp4.stat().st_size == 0:
@@ -3862,6 +5759,17 @@ def assemble_video_job(
         )
         _fail_job(reason, f"{log_output}\n{reason}")
         raise RenderEngineUnavailable(reason)
+
+    # The cover (audit Q14): the hero still and the hook, composed locally beside the film.
+    # Uploading it as the platform's thumbnail is the publishing step's, not this one's.
+    if real_stills and frame_files:
+        production["cover"] = film_cover(
+            work_dir, scenes_data, frame_files, card_clips, hook, finish, ffmpeg_exe
+        )
+
+    # The licence of every component, from evidence (AR-15): the film is LICENSED only when
+    # each one carries commercial-use evidence, NEEDS_REVIEW otherwise (private uploads only).
+    production["licences"] = film_licence_ledger(engine, production)
 
     # 4. Calculate Provenance Digest
     file_bytes = output_mp4.read_bytes()
@@ -3901,7 +5809,7 @@ def assemble_video_job(
             duration_seconds=round(total_duration, 2),
             provider_name=visual_source,
             remote_job_id=None,
-            license_status="PROPRIETARY_STUDIO",
+            license_status=production["licences"]["status"],
             provenance_hash=provenance_hash,
             created_at=finished_at,
             event_id=event.event_id,
@@ -4095,10 +6003,21 @@ def repair_audio(
     voice = _repair_voice_source(ffmpeg_exe, folder, production)
     stamp = uuid4().hex[:8]
     mastered = folder / f"master_audio_repair_{stamp}.m4a"
+    # The bed and the ambience the film was made with go back under the remade voice; a
+    # track the library no longer vouches for is left out, never replaced by another.
+    previous_audio = production.get("audio") if isinstance(production.get("audio"), dict) else {}
     try:
-        master = encode_master_audio(ffmpeg_exe, voice, mastered, duration=seconds)
+        sound, remixed = remix_film_sound(
+            ffmpeg_exe, voice, folder, previous_audio or {}, duration=seconds
+        )
+    except AudioMixError as exc:
+        raise AudioRepairError(f"Muzica nu a putut fi mixată din nou sub voce: {exc}") from exc
+    try:
+        master = encode_master_audio(ffmpeg_exe, sound, mastered, duration=seconds)
     except AudioMasterError as exc:
         raise AudioRepairError(f"Narațiunea nu a putut fi masterizată: {exc}") from exc
+    finally:
+        _drop_mix_stems(folder, sound, remixed, keep=voice)
 
     target = folder / f"{source.stem}_audio_{stamp}.mp4"
     command = remux_with_audio(ffmpeg_exe, source, mastered, target)
@@ -4111,14 +6030,20 @@ def repair_audio(
 
     loudness = _loudness_record(master)
     loudness["output"] = _loudness_readings(measure_loudness(ffmpeg_exe, target))
-    audio_record = dict(production.get("audio") or {})
+    audio_record = {**dict(production.get("audio") or {}), **remixed}
     audio_record["loudness"] = loudness
     audio_record["repaired_from"] = voice.name
     production["audio"] = audio_record
     warnings = [w for w in production.get("owner_warnings") or [] if w != loudness["warning"]]
     if loudness["warning"]:
         warnings.append(loudness["warning"])
+    if remixed.get("warning") and remixed["warning"] not in warnings:
+        warnings.append(remixed["warning"])
     production["owner_warnings"] = warnings
+    if "licences" in production:
+        # The components may have changed (a track left out): the evidence is read again.
+        production["licences"] = film_licence_ledger(engine, production)
+        license_status = production["licences"]["status"]
     production["remaster"] = {
         "kind": "audio",
         "of_asset": asset_id,
@@ -4236,6 +6161,22 @@ MOTION_RETRY_KINDS: tuple[str, ...] = ("TRANSIENT", "BAD_OUTPUT", "TECHNICAL")
 MOTION_STEP_RESOLUTION = "1080p"
 #: Runway's seed range (0 .. 2^32 - 1).
 SEED_RANGE = 4_294_967_295
+#: Why a scene whose shot the vendor accepted is not bought, in the Owner's words.
+IN_FLIGHT_REASON = (
+    "Scena {scene}: furnizorul a primit deja cererea plătită pentru acest cadru și nu l-a "
+    "predat încă; cadrul se ridică fără o nouă cumpărare."
+)
+#: Why the step stops when a shot it paid for did not arrive.
+IN_FLIGHT_STOP = (
+    "Scena {scene}: furnizorul a primit cererea plătită, dar clipul nu a sosit încă; se ridică "
+    "mai târziu, fără o nouă cumpărare. În acest pas nu se mai cumpără mișcare."
+)
+#: The event a hero test shot accepted by clip QC is recorded under (on its take), when the
+#: Owner's own paid-media rule lets the rest of the motion be bought without asking him
+#: (2026-10-02, HERO_AUTO_ACCEPT). It never makes the take APPROVED: that stays his alone.
+HERO_ACCEPTED_EVENT = "media.hero_accepted_by_clip_qc"
+#: Who accepted it, as the event and the sheet name it.
+HERO_ACCEPTED_BY = "clip_qc"
 #: Who may approve or reject a take: the Owner, on the sheet. Nobody else.
 TAKE_DECIDER = "owner"
 TAKE_DECISIONS: tuple[str, ...] = ("APPROVED", "REJECTED")
@@ -4268,6 +6209,155 @@ class MotionStepRefused(RuntimeError):
     @property
     def http_status(self) -> int:
         return 202 if self.status == "NEEDS_APPROVAL" else 409
+
+
+def _usd_ro(amount: float) -> str:
+    """«6,80 USD»: an amount in the Owner's question, with a decimal comma."""
+    return f"{float(amount):.2f}".replace(".", ",") + " USD"
+
+
+#: A shot take that means the scene is already bought (or being collected).
+_BOUGHT_SHOT_STATUSES = ("SUBMITTED", "PAID", "APPROVED")
+
+
+def _shot_take_ids(
+    engine: Engine, storyboard_id: str, scenes: Sequence[int]
+) -> dict[int, set[str]]:
+    """Every shot take of these scenes, by scene, whatever its status."""
+    found: dict[int, set[str]] = {int(index): set() for index in scenes}
+    if not found:
+        return found
+    with Session(engine) as session:
+        for take_id, number in session.execute(
+            select(SceneTake.id, SceneTake.scene_number).where(
+                SceneTake.storyboard_id == storyboard_id,
+                SceneTake.kind.in_(SHOT_TAKE_KINDS),
+                SceneTake.scene_number.in_(list(found)),
+            )
+        ):
+            found.setdefault(int(number), set()).add(str(take_id))
+    return found
+
+
+def _bought_elsewhere(
+    engine: Engine, storyboard_id: str, scene_index: int, identity: str, known: set[str]
+) -> bool:
+    """Whether a shot of this scene's identity was bought (or submitted) by someone else since
+    ``known`` was read: a take not in it, in a status that means the scene is bought."""
+    with Session(engine) as session:
+        ids = session.scalars(
+            select(SceneTake.id).where(
+                SceneTake.storyboard_id == storyboard_id,
+                SceneTake.scene_number == scene_index,
+                SceneTake.kind.in_(SHOT_TAKE_KINDS),
+                SceneTake.prompt_hash == identity,
+                SceneTake.status.in_(_BOUGHT_SHOT_STATUSES),
+            )
+        ).all()
+    return any(str(take_id) not in known for take_id in ids)
+
+
+class SpentStageError(RuntimeError):
+    """A paid step failed after it had sent a request a vendor may have charged for.
+
+    Raised by the step's caller (`shooting_sheet.run_sheet_step`, `redo_scene`) once what
+    the step committed is in the books and the Owner has his letter. ``fault_class`` is HARD
+    whatever it was raised from (the runbook reads it, `runbook.services.classify_fault`), so
+    neither the stage's retry nor a second attempt of the day buys the same shots again:
+    measured before 2026-10-02, a "database is locked" after a purchase was TRANSIENT and
+    the stage ran four times, four purchases, none of them booked.
+    """
+
+    fault_class = "HARD"
+
+    def __init__(
+        self,
+        reason_ro: str,
+        *,
+        storyboard_id: str,
+        step: str,
+        credits: float,
+        booked: dict[str, Any] | None,
+    ) -> None:
+        super().__init__(reason_ro)
+        self.reason_ro = reason_ro
+        self.storyboard_id = storyboard_id
+        self.step = step
+        self.credits = credits
+        self.booked = booked
+
+
+@dataclass
+class SpendMeter:
+    """What a paid step has sent and committed so far, read by its caller whatever happens.
+
+    ``attempts`` counts every request handed to a vendor (sent, or possibly sent);
+    ``committed`` is the credits the step counts as possibly charged (`possibly_charged`).
+    The step's caller passes one in and books from it when the step raises, so a step that
+    paid and then failed is never booked as free.
+    """
+
+    committed: float = 0.0
+    attempts: int = 0
+
+
+#: The failure code of a request that left and got no answer: it may have been served and
+#: billed, so it is counted and never sent again automatically.
+UNANSWERED_FAILURE_CODE = "VENDOR.UNANSWERED"
+#: What the Owner reads about such a request, per scene.
+UNANSWERED_REASON = (
+    "Scena {scene}: cererea a plecat la furnizor și răspunsul nu a venit, așa că poate fi "
+    "taxată. Nu se trimite din nou automat; creditele ei sunt numărate. Decide Proprietarul "
+    "pe foaia de filmare."
+)
+#: The account dropped more than the step counted: something it does not know was charged.
+UNCOUNTED_DROP_STOP = (
+    "Soldul furnizorului a scăzut cu {drop:.0f} credite de la începutul pasului, iar pasul a "
+    "numărat {committed:.0f}: o scădere neexplicată. Nu se mai cumpără nimic până nu verifică "
+    "Proprietarul contul."
+)
+#: Credits of rounding the balance read may differ by before a drop counts as uncounted.
+UNCOUNTED_DROP_TOLERANCE = 0.5
+
+
+def possibly_charged(exc: BaseException, *, submitted: bool) -> bool:
+    """Whether a failed paid request may have been charged by the vendor.
+
+    Yes once the vendor named a task (``submitted``). Before that, no only for what provably
+    never reached it or that it refused before making anything: a request that never left
+    this machine (``unsent``), a missing key, the vendor's own 4xx, and a refusal raised here
+    before sending (ValueError, OSError). Everything else (no answer, a 5xx, a malformed
+    200, a missing task id) may have been served and billed.
+    """
+    if submitted:
+        return True
+    if not isinstance(exc, MediaProviderError) or isinstance(exc, MediaProviderNotConfigured):
+        return False
+    if exc.unsent:
+        return False
+    status = exc.http_status
+    if isinstance(status, int) and (400 <= status < 500 or status in SAFE_TO_RESEND_STATUSES):
+        # The vendor's own "not like that" or "not now, send it again" (Runway's 502/503/504
+        # are "May retry"): nothing was made.
+        return False
+    return True
+
+
+def outcome_unknown(exc: BaseException, *, submitted: bool) -> bool:
+    """A failed request whose outcome nobody knows: no task id was heard, the vendor named
+    no failure code (one that did has answered), and it may still have been charged. Such a
+    request is counted against the cap and never sent again automatically (MONEY-01)."""
+    if submitted or getattr(exc, "code", None):
+        return False
+    return possibly_charged(exc, submitted=False)
+
+
+def uncounted_drop(before: float | None, balance: float | None, committed: float) -> float | None:
+    """The credits the account lost beyond what the step counted, or None when it did not."""
+    if before is None or balance is None:
+        return None
+    drop = before - balance
+    return drop if drop - committed > UNCOUNTED_DROP_TOLERANCE else None
 
 
 def film_seed(storyboard_id: str) -> int:
@@ -4304,28 +6394,397 @@ def _capabilities(
         return scene_model_capabilities(session, integration_id)
 
 
+# ------------------------------------------- a scene's still identity, with its reference
+#
+# 2026-10-02 (NO_REBUY_RECOVERY_REFERENCES, A5): the stills step recorded every still as its
+# words alone, while the assembly looked for it by its words AND the reference picture of the
+# character the scene shows. The first reference set would have made every serial film fail
+# at assembly, every day. One identity is now read everywhere a still is looked for.
+
+
+def scene_reference(
+    engine: Engine, scene: dict[str, Any], *, cache: dict[str, bytes] | None = None
+) -> dict[str, Any] | None:
+    """The reference picture this scene's still is drawn from, with its bytes, or None
+    (`factory.reference_payload`: the first character the writer named decides). Raises
+    `app.media.services.ReferenceRequired` for a character whose look is locked and who has
+    no reference the studio can read."""
+    from app.media.factory import reference_payload  # noqa: PLC0415 - factory reaches us
+
+    found: dict[str, Any] | None = reference_payload(
+        engine, scene.get("character_ids"), cache=cache
+    )
+    return found
+
+
+def scene_still_fields(
+    engine: Engine, scene: dict[str, Any], *, cache: dict[str, bytes] | None = None
+) -> dict[str, Any]:
+    """The still identity of a scene as `assemble_from_takes` reads it: its words and the
+    reference picture it is drawn from. Raises ReferenceRequired as `scene_reference`."""
+    return still_fields(
+        str(scene.get("visual_prompt") or ""), scene_reference(engine, scene, cache=cache)
+    )
+
+
+def still_options(engine: Engine, scene: dict[str, Any]) -> list[dict[str, Any]]:
+    """The identities an approved still of this scene may carry, for a lookup that only
+    reads (a card's background, a redo's Figure 1): none when its locked character has no
+    reference, since no still of it can be approved."""
+    from app.media.services import ReferenceRequired  # noqa: PLC0415 - services imports us
+
+    try:
+        return [scene_still_fields(engine, scene)]
+    except ReferenceRequired:
+        return []
+
+
+# ------------------------------------------------------------------ what a scene remembers
+#
+# 2026-10-02 (NO_REBUY_RECOVERY_REFERENCES, A2 / MONEY-03): a scene whose stills the gate sent
+# to the Owner, or whose shots failed, went back into the next run's purchase: under his MODE
+# rule the film bought them again every day (image requests 3, 6, 9; video POSTs 2, 4, 6),
+# unasked. Each scene now remembers, from its own takes and the steps' own events, what
+# happened to it since the Owner last decided about it on the sheet:
+#
+# - a NEEDS_OWNER outcome of a step for the scene as it is now (the event names the identity)
+#   holds it: it is never in a purchase again until he decides;
+# - a failure that needs him on its own (a safety or contract refusal, an unknown error, a
+#   request whose answer was lost, a task never collected) holds it too, even when the
+#   process died before the step could say so;
+# - and past `max_paid_attempts_per_scene` paid attempts (any prompt) it waits for him, so a
+#   prompt rewritten every day is not a new allowance every day.
+#
+# A refusal that cost nothing because the vendor or the account was not there (no credits,
+# a 503) says nothing about the scene and holds nothing. Only his own acts lift a hold: his
+# choice of a model for the scene (`set_scene_model`), his look at one of its takes
+# (`decide_sheet_take`), a redo he approved (takes retired REDO.*), or new words for it.
+
+#: The events a step writes when a scene is left for the Owner.
+STILL_HOLD_EVENT = "media.still_needs_owner"
+MOTION_HOLD_EVENT = "media.motion_needs_owner"
+#: The Owner's acts that lift a hold (shooting_sheet.SCENE_MODEL_EVENT, decide_take's event).
+SCENE_MODEL_SET_EVENT = "media.sheet_scene_model_set"
+TAKE_DECIDED_EVENT = "media.scene_take_decided"
+#: How many paid attempts a scene may have since the Owner last decided about it.
+DEFAULT_MAX_PAID_ATTEMPTS = 3
+#: A failure of these kinds that cost nothing is the vendor's or the account's, not the scene's.
+FREE_FAILURE_KINDS: tuple[str, ...] = ("TRANSIENT", "TECHNICAL", "ACCOUNT")
+#: A failure of these kinds holds the scene for the Owner on its own.
+HOLDING_FAILURE_KINDS: tuple[str, ...] = ("SAFETY", "CONTRACT", "UNKNOWN")
+#: The failure kinds a REFUSED take may carry as its code when the vendor named none.
+_KIND_CODES: tuple[str, ...] = (
+    "SAFETY",
+    "CONTRACT",
+    "TRANSIENT",
+    "TECHNICAL",
+    "BAD_OUTPUT",
+    "QUALITY",
+    "ACCOUNT",
+    "UNKNOWN",
+)
+#: Takes the Owner retired with a redo: his act, and not the scene's failure.
+_OWNER_RETIRED_CODES: tuple[str, ...] = ("REDO.OWNER", "REDO.STILL_REPLACED")
+#: The code a still carries when a video model refused it for safety (`_send_still_back`).
+_SENT_BACK_PREFIX = "MOTION."
+
+
+@lru_cache(maxsize=1)
+def _studio_settings() -> Any:
+    """The studio's settings when they can be built here, else None (the same shortcut
+    `providers.retry` takes: the plans are read from places with no handle on them)."""
+    from app.config import Settings  # noqa: PLC0415
+
+    try:
+        return Settings()  # type: ignore[call-arg]
+    except Exception:  # noqa: BLE001 - a studio without usable settings gets the defaults
+        return None
+
+
+def max_paid_attempts_per_scene() -> int:
+    """`settings.max_paid_attempts_per_scene` (STUDIO_MAX_PAID_ATTEMPTS_PER_SCENE), else 3.
+
+    Read from one place for every plan, so the sheet the Owner approves on the page and the
+    one the day buys from hash the same."""
+    value = getattr(_studio_settings(), "max_paid_attempts_per_scene", None)
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
+        return value
+    return DEFAULT_MAX_PAID_ATTEMPTS
+
+
+def identity_key(fields: dict[str, Any]) -> str:
+    """A scene's identity whatever the model: what a step's hold event names."""
+    return take_hash(fields, None)
+
+
+@dataclass(frozen=True)
+class SceneMemory:
+    """What one scene's takes of one kind say since the Owner last decided about it."""
+
+    scene: int
+    #: Its failures as it is now (this identity), for the model choice (plan_scene_models).
+    failures: tuple[FailureRecord, ...]
+    #: Why it waits for the Owner, in his words; None when it may be bought.
+    hold_ro: str | None
+    #: Paid attempts since his last decision, any identity.
+    attempts: int
+    #: Whether one of those shots was the film's test shot (the hero stays the hero).
+    test_shot: bool
+
+
+def _http_status_of(code: str) -> int | None:
+    if code.startswith("HTTP_") and code[5:].isdigit():
+        return int(code[5:])
+    return None
+
+
+def take_failure(row: SceneTake) -> FailureRecord | None:
+    """One take as a failure of its scene, or None when it says nothing about the scene (a
+    success, the Owner's own rejection or redo, a duplicate file, a refusal that cost nothing
+    because the vendor or the account was not there)."""
+    from app.media.production_policy import classify_failure  # noqa: PLC0415
+
+    code = str(row.failure_code or "")
+    model = row.model_id
+    if row.status == "LOST":
+        return FailureRecord(model_id=model, kind="UNKNOWN", code=code or "LOST")
+    if row.status == "REJECTED":
+        if code == CLIP_QC_FAILURE_CODE or code == "LOCAL.STILL_GATE":
+            return FailureRecord(model_id=model, kind="QUALITY", code=code)
+        if code.startswith(_SENT_BACK_PREFIX):
+            return FailureRecord(model_id=model, kind="SAFETY", code=code)
+        return None
+    if row.status != "REFUSED":
+        return None
+    charged = row.credits_quoted is not None or row.credits_measured is not None
+    if code == UNANSWERED_FAILURE_CODE:
+        kind = "UNKNOWN"
+    elif code in _KIND_CODES:
+        kind = code
+    elif code == "VENDOR.NO_OUTPUT":
+        kind = "BAD_OUTPUT"
+    else:
+        kind = classify_failure(code or None, http_status=_http_status_of(code)).kind
+    if kind in FREE_FAILURE_KINDS and not charged:
+        return None
+    # The policy kernel's retry counting knows TRANSIENT, not the assembler's TECHNICAL.
+    return FailureRecord(
+        model_id=model,
+        kind="TRANSIENT" if kind == "TECHNICAL" else kind,
+        code=code or None,
+        detail=row.failure_detail,
+    )
+
+
+def _charged(row: SceneTake) -> bool:
+    """Whether a take was (or may have been) paid for."""
+    if row.status in ("PAID", "APPROVED", "SUBMITTED", "LOST"):
+        return True
+    if row.credits_quoted is not None or row.credits_measured is not None:
+        return True
+    return row.status == "REJECTED" and bool(row.sha256)
+
+
+def _paid_attempts(rows: list[SceneTake], kind_group: str) -> int:
+    """Paid requests among a scene's takes. A shot is one request; the candidates of one
+    stills request share its vendor task id (two candidates a request when none was heard)."""
+    charged = [row for row in rows if _charged(row)]
+    if kind_group != "still":
+        return len(charged)
+    tasks = {row.remote_task_id for row in charged if row.remote_task_id}
+    loose = sum(1 for row in charged if not row.remote_task_id)
+    return len(tasks) + math.ceil(loose / max(1, STILL_CANDIDATES))
+
+
+def _hold_reason(payload: dict[str, Any], index: int) -> str:
+    said = " ".join(str(payload.get("reason") or "").split())
+    base = said if said else f"Scena {index} a fost lăsată Proprietarului de pasul plătit."
+    return (
+        base.rstrip(".")
+        + ". Nu se cumpără din nou până nu decide Proprietarul pe foaia de filmare."
+    )
+
+
+def _event_holds(payload: dict[str, Any]) -> bool:
+    """Whether a step's NEEDS_OWNER event holds its scene. A step since 2026-10-02 says so
+    itself (``holds``); an older event holds unless it was an account failure (the account,
+    not the scene, was the matter)."""
+    if "holds" in payload:
+        return bool(payload["holds"])
+    return str(payload.get("failure_kind") or "") not in ("ACCOUNT",)
+
+
+def scene_memory(
+    engine: Engine,
+    storyboard_id: str,
+    kind_group: str,
+    identities: dict[int, dict[str, Any]],
+) -> dict[int, SceneMemory]:
+    """Per scene of ``identities`` (scene -> its identity fields as it is now): its failures,
+    whether it is held for the Owner and why, and its paid attempts since he last decided.
+
+    ``kind_group`` is ``still`` (the stills step's takes, held by ``media.still_needs_owner``)
+    or ``shot`` (the test shot's and the motion's, held by ``media.motion_needs_owner``).
+    Reads only: 0 credits, no network.
+    """
+    if kind_group not in ("still", "shot"):
+        raise ValueError(f"unknown take group: {kind_group}")
+    wanted = {int(index): fields for index, fields in identities.items()}
+    if not wanted:
+        return {}
+    kinds = ("still",) if kind_group == "still" else SHOT_TAKE_KINDS
+    hold_event = STILL_HOLD_EVENT if kind_group == "still" else MOTION_HOLD_EVENT
+    limit = max_paid_attempts_per_scene()
+    with Session(engine) as session:
+        rows = list(
+            session.scalars(
+                select(SceneTake)
+                .where(
+                    SceneTake.storyboard_id == storyboard_id,
+                    SceneTake.kind.in_(kinds),
+                    SceneTake.scene_number.in_(list(wanted)),
+                )
+                .order_by(SceneTake.created_at)
+            )
+        )
+        scene_of = {row.id: int(row.scene_number) for row in rows}
+        decided: dict[int, list[datetime]] = {}
+        for row in rows:
+            if row.failure_code in _OWNER_RETIRED_CODES:
+                stamp = _stamp(row.updated_at)
+                if stamp is not None:
+                    decided.setdefault(int(row.scene_number), []).append(stamp)
+        if scene_of:
+            for event in session.scalars(
+                select(DomainEvent).where(
+                    DomainEvent.event_type == TAKE_DECIDED_EVENT,
+                    DomainEvent.aggregate_id.in_(list(scene_of)),
+                )
+            ):
+                stamp = _stamp(event.timestamp)
+                if stamp is not None:
+                    decided.setdefault(scene_of[event.aggregate_id], []).append(stamp)
+        said: dict[int, list[tuple[datetime | None, dict[str, Any]]]] = {}
+        for event in session.scalars(
+            select(DomainEvent)
+            .where(
+                DomainEvent.event_type.in_((hold_event, SCENE_MODEL_SET_EVENT)),
+                DomainEvent.aggregate_id == storyboard_id,
+            )
+            .order_by(DomainEvent.sequence)
+        ):
+            payload = event.payload if isinstance(event.payload, dict) else {}
+            stamp = _stamp(event.timestamp)
+            if event.event_type == SCENE_MODEL_SET_EVENT:
+                index = payload.get("scene_index")
+                if kind_group == "shot" and isinstance(index, int) and stamp is not None:
+                    decided.setdefault(index, []).append(stamp)
+                continue
+            index = payload.get("scene_number")
+            if isinstance(index, int) and index in wanted:
+                said.setdefault(index, []).append((stamp, payload))
+        for row in rows:
+            session.expunge(row)
+
+    memory: dict[int, SceneMemory] = {}
+    for index, fields in wanted.items():
+        cleared = max(decided.get(index, []), default=None)
+
+        def since(stamp: datetime | None, _cleared: datetime | None = cleared) -> bool:
+            return _cleared is None or stamp is None or stamp > _cleared
+
+        recent = [
+            row for row in rows if int(row.scene_number) == index and since(_stamp(row.created_at))
+        ]
+        mine = [row for row in recent if take_hash(fields, row.model_id) == row.prompt_hash]
+        failures = tuple(record for row in mine if (record := take_failure(row)) is not None)
+        attempts = _paid_attempts(recent, kind_group)
+        key = identity_key(fields)
+        hold: str | None = None
+        for stamp, payload in said.get(index, []):
+            if not since(stamp) or not _event_holds(payload):
+                continue
+            named = payload.get("identity")
+            if named is not None and named != key:
+                continue
+            if named is None:
+                # An event from before the identity was written on it: it holds the scene
+                # only when a take of the scene as it is now came before it.
+                bought = [_stamp(row.created_at) for row in mine]
+                if not any(
+                    when is not None and stamp is not None and when <= stamp for when in bought
+                ):
+                    continue
+            hold = _hold_reason(payload, index)
+        if hold is None:
+            severe = [record for record in failures if record.kind in HOLDING_FAILURE_KINDS]
+            if severe:
+                what = (
+                    "imaginea ei a fost refuzată sau pierdută"
+                    if kind_group == "still"
+                    else "cadrul ei a fost refuzat sau pierdut"
+                )
+                hold = (
+                    f"Scena {index}: {what} ({severe[-1].code or severe[-1].kind}); nu se "
+                    "cumpără din nou până nu decide Proprietarul pe foaia de filmare."
+                )
+        if hold is None and attempts >= limit:
+            from app.wording import count as count_ro  # noqa: PLC0415
+
+            hold = (
+                f"Scena {index}: {count_ro(attempts, 'cumpărare plătită', 'cumpărări plătite')} "
+                f"de la ultima decizie a Proprietarului, fără un rezultat acceptat (limita este "
+                f"{limit}); nu se mai cumpără nimic pentru ea până nu decide el pe foaia de "
+                "filmare."
+            )
+        memory[index] = SceneMemory(
+            scene=index,
+            failures=failures,
+            hold_ro=hold,
+            attempts=attempts,
+            test_shot=any(row.kind == "test_shot" for row in recent),
+        )
+    return memory
+
+
 def _bought_shots(
     engine: Engine, storyboard_id: str, scenes: list[dict[str, Any]], redo: int | None = None
 ) -> tuple[dict[int, SceneTake], dict[int, SceneTake], dict[int, dict[str, Any]], dict[int, str]]:
     """Per LIVE scene: its APPROVED still, its usable shot, its shot identity, or why it waits.
 
     ``redo`` names the scene whose shot the Owner is having redone: its existing shot is not
-    counted as bought, so the scene is planned (and priced) again on its own."""
+    counted as bought, so the scene is planned (and priced) again on its own.
+
+    The still is looked for by the scene's still identity with its character's reference
+    picture (`scene_still_fields`), as the assembly looks for it; a locked character with no
+    reference makes the scene wait (its reason is the refusal's)."""
+    from app.media.services import ReferenceRequired  # noqa: PLC0415 - services imports us
+
     stills: dict[int, SceneTake] = {}
     shots: dict[int, SceneTake] = {}
     fields_of: dict[int, dict[str, Any]] = {}
     holds: dict[int, str] = {}
+    identities: dict[int, dict[str, Any]] = {}
+    loaded: dict[str, bytes] = {}
+    for scene in scenes:
+        if is_composed(scene):
+            continue
+        index = int(scene["scene_index"])
+        try:
+            identities[index] = scene_still_fields(engine, scene, cache=loaded)
+        except ReferenceRequired as exc:
+            holds[index] = str(exc)
     with Session(engine) as session:
         for scene in scenes:
             index = int(scene["scene_index"])
-            if is_composed(scene):
+            if is_composed(scene) or index not in identities:
                 continue
             still = usable_take(
                 session,
                 storyboard_id,
                 index,
                 "still",
-                [still_fields(str(scene["visual_prompt"] or ""), None)],
+                [identities[index]],
                 statuses=("APPROVED",),
             )
             if still is None:
@@ -4356,6 +6815,36 @@ def _bought_shots(
     return stills, shots, fields_of, holds
 
 
+def _in_flight_shots(
+    engine: Engine, storyboard_id: str, fields_of: dict[int, dict[str, Any]], skip: set[int]
+) -> dict[int, SceneTake]:
+    """Per scene: a SUBMITTED shot of its current shot identity, the vendor's task still open.
+
+    Such a scene is IN_FLIGHT: its shot was bought (the vendor accepted the task and may bill
+    it) and is collected by its task id. No step buys it again."""
+    found: dict[int, SceneTake] = {}
+    with Session(engine) as session:
+        rows = session.scalars(
+            select(SceneTake)
+            .where(
+                SceneTake.storyboard_id == storyboard_id,
+                SceneTake.kind.in_(SHOT_TAKE_KINDS),
+                SceneTake.status == "SUBMITTED",
+            )
+            .order_by(SceneTake.created_at.desc())
+        ).all()
+        for row in rows:
+            index = int(row.scene_number)
+            fields = fields_of.get(index)
+            if index in skip or index in found or fields is None:
+                continue
+            if take_hash(fields, row.model_id) != row.prompt_hash:
+                continue
+            session.expunge(row)
+            found[index] = row
+    return found
+
+
 def _motion_state(
     engine: Engine,
     storyboard_id: str,
@@ -4380,6 +6869,32 @@ def _motion_state(
         board = session.get(Storyboard, storyboard_id)
         bible = dict(board.visual_bible_json or {}) if board is not None else {}
     stills, shots, fields_of, holds = _bought_shots(engine, storyboard_id, scenes, redo)
+    in_flight = _in_flight_shots(
+        engine, storyboard_id, fields_of, set(shots) | ({redo} if redo is not None else set())
+    )
+    # What each scene still to be filmed remembers since the Owner last decided about it: its
+    # failures (for the model choice) and whether it waits for him. A held scene is never
+    # PLANNED, so no step buys it again (2026-10-02, MONEY-03). The scene he is having redone
+    # is his own act and is not held.
+    remembered = scene_memory(
+        engine,
+        storyboard_id,
+        "shot",
+        {
+            index: fields
+            for index, fields in fields_of.items()
+            if index not in shots and index not in in_flight and index != redo
+        },
+    )
+    for index, memory in remembered.items():
+        if memory.hold_ro:
+            holds[index] = memory.hold_ro
+    # Who accepted each bought test shot: the Owner (APPROVED) or its clip QC under his rule
+    # (HERO_ACCEPTED_EVENT). Part of the plan, and so of its hash.
+    with Session(engine) as session:
+        accepted = hero_acceptances(
+            session, [take.id for take in shots.values() if take.kind == "test_shot"]
+        )
     needs = [
         need_from_scene({**scene, "duration_seconds": motion_seconds(scene)}, len(scenes))
         for scene in scenes
@@ -4389,6 +6904,9 @@ def _motion_state(
         capabilities,
         allowed=allowed,
         overrides=overrides,
+        failures={
+            index: list(memory.failures) for index, memory in remembered.items() if memory.failures
+        },
         keep={index: str(take.model_id) for index, take in shots.items()},
         bought=list(shots),
         hold=holds,
@@ -4407,6 +6925,7 @@ def _motion_state(
         raw = scene.get("prompt_json")
         package: dict[str, Any] = dict(raw) if isinstance(raw, dict) else {}
         shot = shots.get(index)
+        flying = in_flight.get(index)
         still = stills.get(index)
         if kind != LIVE_KIND:
             status = "COMPOSED"
@@ -4414,9 +6933,18 @@ def _motion_state(
             status = "BOUGHT"
         elif still is None:
             status = "NEEDS_STILL"
+        elif flying is not None:
+            status = "IN_FLIGHT"
+            shot = flying
         else:
             status = str(entry.get("status") or "NEEDS_OWNER")
         model_id = str(shot.model_id) if shot is not None else entry.get("model_id")
+        accepted_by: str | None = None
+        if status == "BOUGHT" and shot is not None:
+            if shot.status == "APPROVED":
+                accepted_by = TAKE_DECIDER
+            elif shot.id in accepted:
+                accepted_by = HERO_ACCEPTED_BY
         motion_text = ""
         if kind == LIVE_KIND and model_id:
             motion_text, _negative = motion_prompt_for(package, model_id, None)
@@ -4446,7 +6974,10 @@ def _motion_state(
                 "usd_micros": int(entry.get("usd_micros") or 0),
                 "price_source": entry.get("price_source"),
                 "decided_by": entry.get("decided_by"),
-                "reason_ro": holds.get(index) or entry.get("reason_ro") or "",
+                "reason_ro": holds.get(index)
+                or (IN_FLIGHT_REASON.format(scene=index) if status == "IN_FLIGHT" else "")
+                or entry.get("reason_ro")
+                or "",
                 "cheaper": entry.get("cheaper"),
                 "better": entry.get("better"),
                 "still_take_id": still.id if still is not None else None,
@@ -4454,15 +6985,21 @@ def _motion_state(
                 "take_id": shot.id if shot is not None else None,
                 "take_kind": shot.kind if shot is not None else None,
                 "take_status": shot.status if shot is not None else None,
+                "accepted_by": accepted_by,
                 "motion_prompt": motion_text,
             }
         )
     findings = lint_film(lint_scenes, bible=bible)
     raw_hero = policy.get("hero_scene")
+    held = sorted(index for index, memory in remembered.items() if memory.hold_ro)
+    # A test shot that failed and waits for the Owner stays the film's test shot: another
+    # scene does not become the hero (and is not bought as one) in its place.
+    if not any(take.kind == "test_shot" for take in shots.values()):
+        raw_hero = next((index for index in held if remembered[index].test_shot), raw_hero)
     hero: int | None = int(raw_hero) if raw_hero is not None else None
     by_index = {item["scene_index"]: item for item in view}
 
-    def step(to_buy: list[int]) -> dict[str, Any]:
+    def step(to_buy: list[int], waiting: list[int]) -> dict[str, Any]:
         each = [by_index[index]["credits"] for index in to_buy]
         cost = sum(each)
         cap = cost + max(each, default=0)
@@ -4472,15 +7009,24 @@ def _motion_state(
             "cap_credits": cap,
             "cost_usd": round(cost * prices.credit_usd, 6),
             "cap_usd": round(cap * prices.credit_usd, 6),
+            # Scenes of this step held for the Owner since a paid attempt failed: none of
+            # them is bought again until he decides on the sheet.
+            "held": waiting,
         }
 
     planned = [item["scene_index"] for item in view if item["status"] == "PLANNED"]
     steps = {
-        TEST_SHOT_STEP: step([hero] if hero is not None and hero in planned else []),
-        MOTION_STEP: step([index for index in planned if index != hero]),
+        TEST_SHOT_STEP: step(
+            [hero] if hero is not None and hero in planned else [],
+            [hero] if hero is not None and hero in held else [],
+        ),
+        MOTION_STEP: step(
+            [index for index in planned if index != hero],
+            [index for index in held if index != hero],
+        ),
     }
     if redo is not None:
-        steps[REDO_STEP] = step([redo] if redo in planned else [])
+        steps[REDO_STEP] = step([redo] if redo in planned else [], [])
     hashed: dict[str, Any] = {
         "storyboard_id": storyboard_id,
         "resolution": resolution,
@@ -4500,6 +7046,7 @@ def _motion_state(
                 "motion_prompt": item["motion_prompt"],
                 "take_id": item["take_id"],
                 "take_status": item["take_status"],
+                "accepted_by": item["accepted_by"],
             }
             for item in view
         ],
@@ -4531,6 +7078,7 @@ def _motion_state(
         "scenes": scenes,
         "stills": stills,
         "fields": fields_of,
+        "memory": remembered,
         "findings": findings,
         "prices": prices,
         "bible": bible,
@@ -4617,6 +7165,7 @@ def _send_still_back(
     if not still_take_id:
         return
     with Session(engine) as session, session.begin():
+        lock_for_write(session)  # read-then-write right after a refused purchase
         row = session.get(SceneTake, still_take_id)
         if row is None:
             return
@@ -4738,7 +7287,24 @@ def decide_take(
             },
             correlation_id or str(uuid4()),
         )
-        return {"take_id": row.id, "status": row.status, "kind": row.kind}
+        continue_task_id = None
+        if decision == "APPROVED" and row.kind != "narration":
+            # His look is the decision the film was waiting for (the hero test shot above all,
+            # A6): the film is walked on now, not at the next daily run. PRODUCTION only.
+            from app.services import queue_film_continue  # noqa: PLC0415
+
+            continue_task_id = queue_film_continue(
+                session,
+                row.storyboard_id,
+                key=f"film-continue-{row.storyboard_id}-take-{row.id}",
+                payload={"take_id": row.id, "cause": f"take:{row.id}"},
+            )
+        return {
+            "take_id": row.id,
+            "status": row.status,
+            "kind": row.kind,
+            "continue_task_id": continue_task_id,
+        }
 
 
 def _storyboard_event(
@@ -4776,6 +7342,276 @@ def shot_plan_sources(engine: Engine, storyboard_id: str) -> tuple[str, ...]:
     return SERIAL_SHOT_PLAN_SOURCES if serial else SHOT_PLAN_SOURCES
 
 
+# ------------------------------------------------- the hero test shot, accepted by clip QC
+#
+# 2026-10-02 (HERO_AUTO_ACCEPT, A1 / AR-01 / TS-02): the rest of the motion was bought only
+# after the Owner's APPROVED on the hero take, whatever his paid-media rule said, so under his
+# MODE rule the day bought the hero and then waited for him every day. The hero is now also
+# accepted by its clip QC, when, and only when, (a) its latest clip-QC report PASSED (not
+# UNCHECKED, not FAILED, not missing) and (b) the Policy Kernel, asked without asking him
+# (`may_act(..., ask_owner=False)` for media.motion_purchase at the motion step's cap), would
+# let the motion step through unasked: his MODE rule, or OVER_USD with the cap within his
+# amount, under a mode that allows it. The stop, safe mode, T4, the mode and the fail-closed
+# budget are read by that same call. Under EVERY_PAID_STEP (or a cap over his amount, or the
+# SUPERVISED mode) the hero waits for his look as before. The acceptance is an event on the
+# take (HERO_ACCEPTED_EVENT, approved_by clip_qc, the report's event id); the take itself
+# stays PAID: APPROVED is his alone (`decide_take`).
+
+
+def hero_acceptances(session: Session, take_ids: Sequence[str]) -> dict[str, dict[str, Any]]:
+    """The clip-QC acceptance recorded on each of these takes, by take id (the latest)."""
+    ids = [str(take_id) for take_id in take_ids if take_id]
+    if not ids:
+        return {}
+    found: dict[str, dict[str, Any]] = {}
+    for event in session.scalars(
+        select(DomainEvent)
+        .where(DomainEvent.event_type == HERO_ACCEPTED_EVENT, DomainEvent.aggregate_id.in_(ids))
+        .order_by(DomainEvent.sequence)
+    ):
+        if isinstance(event.payload, dict):
+            found[str(event.aggregate_id)] = {**event.payload, "event_id": event.event_id}
+    return found
+
+
+def _clip_report_event(session: Session, take_id: str) -> DomainEvent | None:
+    """The latest clip-QC report's event on a take (its ``event_id`` names the report)."""
+    return session.scalars(
+        select(DomainEvent)
+        .where(DomainEvent.event_type == CLIP_QC_EVENT, DomainEvent.aggregate_id == take_id)
+        .order_by(DomainEvent.sequence.desc())
+        .limit(1)
+    ).first()
+
+
+def _hero_rule_words(
+    verdict: dict[str, Any], rule: str, threshold: float | None, cap: float
+) -> str:
+    """Why the Owner's look is still needed although the hero's clip passed: his rule, his
+    amount, or the mode, in his words."""
+    from app.services import mode_words  # noqa: PLC0415 - services imports media
+
+    if rule == "OVER_USD" and threshold is not None and cap > threshold:
+        return (
+            f"plafonul restului mișcării, {_usd_ro(cap)}, trece de pragul tău de "
+            f"{_usd_ro(threshold)}"
+        )
+    if rule == "OVER_USD" or rule == "MODE":
+        return f"modul studioului ({mode_words(str(verdict.get('mode') or ''))}) cere aprobarea ta"
+    return "regula ta cere aprobarea fiecărui pas plătit al unui film"
+
+
+def hero_gate(
+    session: Session,
+    plan: dict[str, Any],
+    *,
+    storyboard_id: str,
+    plan_hash: str,
+    cap_credits: int | None = None,
+    requester: str = "video_editor",
+) -> dict[str, Any]:
+    """Whether the rest of the motion may be bought after the hero test shot, and why. 0
+    credits, nothing written: the motion step records the acceptance (`_refuse_before_buying`),
+    the sheet shows this view.
+
+    ``status``: NO_HERO (no test shot in this film), NOT_BOUGHT (the hero is still to be
+    bought), APPROVED (the Owner's look), ACCEPTED (clip QC's acceptance is recorded and still
+    holds), ACCEPTS (clip QC passed and his rule lets it accept: the motion step records it),
+    WAITING (his look is needed: the clip did not pass, or his rule asks him), REFUSED (the
+    Policy Kernel refuses the motion outright: ``policy_status`` says why: a stop, safe mode, no
+    daily budget...). ``rule_accepts`` says whether his rule and mode would let clip QC accept
+    a passing hero now (what the sheet tells him before the hero is even bought).
+    """
+    from app.models import OwnerPolicy  # noqa: PLC0415
+    from app.services import may_act, paid_media_policy  # noqa: PLC0415
+
+    hero = plan.get("hero_scene")
+    view: dict[str, Any] = {
+        "scene_index": hero,
+        "take_id": None,
+        "status": "NO_HERO",
+        "accepted_by": None,
+        "clip_verdict": None,
+        "clip_qc_report_id": None,
+        "policy_status": None,
+        "rule_accepts": False,
+        "reason_ro": "",
+    }
+    steps = plan.get("steps") or {}
+    motion_step = steps.get(MOTION_STEP) or {}
+    cap = int(cap_credits) if cap_credits is not None else int(motion_step.get("cap_credits") or 0)
+    credit_usd = float(plan.get("credit_usd") or 0.01)
+    cap_usd = round(cap * credit_usd, 6)
+    rule, threshold = paid_media_policy(session.get(OwnerPolicy, 1))
+    verdict = may_act(
+        session,
+        MOTION_STEP_ACTIONS[MOTION_STEP],
+        requester=requester,
+        subject=storyboard_id,
+        cost_usd=cap_usd,
+        context={"plan_hash": plan_hash or "?", "cap_credits": cap},
+        ask_owner=False,
+    )
+    rule_accepts = bool(verdict["allowed"])
+    view.update(rule_accepts=rule_accepts, policy_status=str(verdict["status"]))
+    if hero is None:
+        return view
+    hero_view = next(
+        (item for item in plan.get("scenes") or [] if item["scene_index"] == hero), None
+    )
+    if hero_view is None or hero_view.get("status") != "BOUGHT" or not hero_view.get("take_id"):
+        view["status"] = "NOT_BOUGHT"
+        view["reason_ro"] = (
+            f"Întâi cadrul de probă (scena {hero}): restul mișcării se cumpără după el; dacă "
+            "trece controlul clipului, regula ta pentru pașii plătiți îl acceptă fără să te "
+            "aștepte, altfel îl privești tu pe foaia de filmare."
+            if rule_accepts
+            else f"Întâi cadrul de probă (scena {hero}): restul mișcării se cumpără abia după "
+            "ce Proprietarul l-a văzut și l-a aprobat."
+        )
+        return view
+    take = session.get(SceneTake, str(hero_view["take_id"]))
+    view["take_id"] = take.id if take is not None else hero_view["take_id"]
+    if take is not None and take.status == "APPROVED":
+        view.update(
+            status="APPROVED",
+            accepted_by=TAKE_DECIDER,
+            reason_ro=f"Cadrul de probă (scena {hero}) este aprobat de Proprietar.",
+        )
+        return view
+    report = _clip_report_event(session, take.id) if take is not None else None
+    record = dict(report.payload) if report is not None and isinstance(report.payload, dict) else {}
+    clip_verdict = record.get("verdict") if take is not None and take.status == "PAID" else None
+    if take is not None and take.status != "PAID":
+        clip_verdict = "FAILED"
+    view.update(
+        clip_verdict=clip_verdict,
+        clip_qc_report_id=report.event_id if report is not None else None,
+    )
+    looks = (
+        "și așteaptă privirea Proprietarului: restul mișcării nu se cumpără până nu este "
+        "aprobat pe foaia de filmare"
+    )
+    if clip_verdict != "PASSED":
+        if clip_verdict == "FAILED":
+            blocks = "; ".join(str(text) for text in record.get("blocks_ro") or [])
+            said = "a picat controlul clipului" + (f" ({blocks})" if blocks else "")
+        elif clip_verdict == "UNCHECKED":
+            unmeasured = ", ".join(str(text) for text in record.get("unmeasured") or [])
+            said = "nu a putut fi verificat de controlul clipului" + (
+                f" ({unmeasured})" if unmeasured else ""
+            )
+        else:
+            said = "nu a fost verificat încă de controlul clipului"
+        view.update(status="WAITING", reason_ro=f"Cadrul de probă (scena {hero}) {said} {looks}.")
+        return view
+    if verdict["status"] not in ("ALLOWED", "NEEDS_APPROVAL"):
+        # A stop, safe mode, no daily budget, a mode that refuses: the motion step would be
+        # refused anyway; the hero is not accepted under it.
+        view.update(status="REFUSED", reason_ro=str(verdict["reason"]))
+        return view
+    if not rule_accepts:
+        why = _hero_rule_words(verdict, rule, threshold, cap_usd)
+        view.update(
+            status="WAITING",
+            reason_ro=(
+                f"Cadrul de probă (scena {hero}) a trecut controlul clipului {looks} ({why})."
+            ),
+        )
+        return view
+    accepted = hero_acceptances(session, [take.id]) if take is not None else {}
+    if accepted:
+        view.update(
+            status="ACCEPTED",
+            accepted_by=HERO_ACCEPTED_BY,
+            reason_ro=(
+                f"Cadrul de probă (scena {hero}) a fost acceptat de controlul clipului, cum "
+                "permite regula ta pentru pașii plătiți."
+            ),
+        )
+        return view
+    view.update(
+        status="ACCEPTS",
+        reason_ro=(
+            f"Cadrul de probă (scena {hero}) a trecut controlul clipului; regula ta pentru "
+            "pașii plătiți îl acceptă fără să te aștepte, iar restul mișcării se cumpără în "
+            "același pas."
+        ),
+    )
+    return view
+
+
+def _accept_hero(
+    engine: Engine,
+    plan: dict[str, Any],
+    *,
+    storyboard_id: str,
+    plan_hash: str,
+    cap_credits: int | None,
+    requester: str,
+    correlation_id: str,
+) -> dict[str, Any] | None:
+    """The motion step's hero gate: raises `MotionStepRefused` when the rest of the motion may
+    not be bought after the hero yet; records clip QC's acceptance (once per take) when the
+    Owner's rule lets it accept. Returns the acceptance written now, else None."""
+    from app.models import OwnerPolicy  # noqa: PLC0415
+    from app.services import paid_media_policy  # noqa: PLC0415
+
+    with Session(engine) as session, session.begin():
+        gate = hero_gate(
+            session,
+            plan,
+            storyboard_id=storyboard_id,
+            plan_hash=plan_hash,
+            cap_credits=cap_credits,
+            requester=requester,
+        )
+        status = gate["status"]
+        if status in ("NO_HERO", "APPROVED", "ACCEPTED"):
+            return None
+        if status == "NOT_BOUGHT":
+            raise MotionStepRefused("HERO_FIRST", gate["reason_ro"], plan=plan)
+        if status == "WAITING":
+            raise MotionStepRefused("HERO_NOT_APPROVED", gate["reason_ro"], plan=plan)
+        if status == "REFUSED":
+            raise MotionStepRefused(str(gate["policy_status"]), gate["reason_ro"], plan=plan)
+        # ACCEPTS: written under the write lock, once per take, in the same transaction that
+        # read the report and his rule.
+        lock_for_write(session)
+        if hero_acceptances(session, [gate["take_id"]]):
+            return None
+        policy = session.get(OwnerPolicy, 1)
+        rule, threshold = paid_media_policy(policy)
+        payload = {
+            "storyboard_id": storyboard_id,
+            "scene_number": gate["scene_index"],
+            "take_id": gate["take_id"],
+            "approved_by": HERO_ACCEPTED_BY,
+            "clip_qc_report_id": gate["clip_qc_report_id"],
+            "clip_qc_verdict": gate["clip_verdict"],
+            "paid_media_approval": rule,
+            "over_usd": threshold,
+            "autonomy_mode": str(getattr(policy, "autonomy_mode", None) or "MANUAL"),
+            "plan_hash": plan_hash,
+            "reason_ro": gate["reason_ro"],
+            "accepted_at": utc_now(),
+        }
+        append_event(
+            session,
+            HERO_ACCEPTED_EVENT,
+            "scene_take",
+            str(gate["take_id"]),
+            1,
+            payload,
+            correlation_id,
+        )
+    logger.info(
+        "hero_accepted_by_clip_qc",
+        extra={"storyboard_id": storyboard_id, "take_id": gate["take_id"]},
+    )
+    return payload
+
+
 def _refuse_before_buying(
     engine: Engine,
     state: dict[str, Any],
@@ -4785,10 +7621,19 @@ def _refuse_before_buying(
     environment: str,
     plan_hash_of: Callable[[Engine, str], str] | None,
     storyboard_id: str,
-) -> None:
-    """The refusals that come before anything is asked or bought, in order."""
+    current: str | None = None,
+    cap_credits: int | None = None,
+    requester: str = "video_editor",
+    correlation_id: str = "",
+) -> dict[str, Any] | None:
+    """The refusals that come before anything is asked or bought, in order. ``current`` is
+    the hash his yes must match when the caller read it already (before collecting).
+
+    For the motion step, last: the hero gate (`hero_gate`). Returns clip QC's acceptance of the
+    hero when this call recorded it, else None."""
     plan = state["plan"]
-    current = plan_hash_of(engine, storyboard_id) if plan_hash_of else plan["plan_hash"]
+    if current is None:
+        current = plan_hash_of(engine, storyboard_id) if plan_hash_of else plan["plan_hash"]
     if not plan_hash or plan_hash != current:
         raise MotionStepRefused(
             "STALE_PLAN",
@@ -4822,24 +7667,17 @@ def _refuse_before_buying(
             plan=plan,
             findings=blocks,
         )
-    hero = plan["hero_scene"]
-    if step != MOTION_STEP or hero is None:
-        return
-    hero_view = next(item for item in plan["scenes"] if item["scene_index"] == hero)
-    if hero_view["status"] != "BOUGHT":
-        raise MotionStepRefused(
-            "HERO_FIRST",
-            f"Întâi cadrul de probă (scena {hero}): restul mișcării se cumpără abia după ce "
-            "Proprietarul l-a văzut și l-a aprobat.",
-            plan=plan,
-        )
-    if hero_view["take_status"] != "APPROVED":
-        raise MotionStepRefused(
-            "HERO_NOT_APPROVED",
-            f"Cadrul de probă (scena {hero}) așteaptă privirea Proprietarului: restul mișcării "
-            "nu se cumpără până nu este aprobat pe foaia de filmare.",
-            plan=plan,
-        )
+    if step != MOTION_STEP or plan["hero_scene"] is None:
+        return None
+    return _accept_hero(
+        engine,
+        plan,
+        storyboard_id=storyboard_id,
+        plan_hash=plan_hash,
+        cap_credits=cap_credits,
+        requester=requester,
+        correlation_id=correlation_id,
+    )
 
 
 def _clip_plan(scene: dict[str, Any], bible: dict[str, Any]) -> Any:
@@ -5022,6 +7860,484 @@ def _check_shot(
     }
 
 
+# ------------------------------------------------- tasks the vendor accepted, collected later
+#
+# 2026-10-01 (PAID_CALLS_AND_TAKE_INTENT): the id of a task the vendor had accepted, and would
+# bill, lived only in memory. A poll that ran out of time was recorded REFUSED with the id
+# thrown away, a failed download lost it the same way, and a process killed while it waited
+# left no row at all: the next run bought the scene again. Now the take is written SUBMITTED,
+# with the task id, the moment the vendor accepts it (in its own short transaction, before any
+# poll), and is collected here with a GET, which buys nothing: by the next step of the same
+# film, and by the watchdog for every film.
+
+#: How long a task the studio never collected is waited for. Runway keeps an output URL for
+#: 24 to 48 hours (https://docs.dev.runwayml.com/assets/outputs/, read 2026-10-01); past the
+#: lower bound the output may be gone, and the take is LOST, with a letter to the Owner.
+SUBMITTED_TAKE_MAX_AGE_SECONDS = 24 * 3600
+#: The event a collected (or given up) task is recorded under, on its take.
+TAKE_COLLECTED_EVENT = "media.scene_take_collected"
+#: A still candidate collected after its step ended: paid, on disk, not judged yet. The stills
+#: step judges it (0 credits; the vision model's tokens) before it buys that scene again.
+UNJUDGED_FAILURE_CODE = "COLLECTED.UNJUDGED"
+UNJUDGED_DETAIL = "Ridicată de la furnizor după pasul în care a fost cumpărată; încă nejudecată."
+#: A task never collected before its output expired.
+LOST_FAILURE_CODE = "VENDOR.NOT_COLLECTED"
+#: How a take of each kind is named in the Owner's letter.
+TAKE_KIND_WORDS: dict[str, str] = {
+    "still": "imaginea",
+    "motion": "cadrul",
+    "test_shot": "cadrul de probă",
+    "narration": "narațiunea",
+}
+
+
+def _stamp(value: str | None) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def poll_task(adapter: Any, task_id: str, kind: str) -> dict[str, Any]:
+    """Ask the vendor what became of a task, by its id. A GET: nothing is bought.
+
+    Uses the adapter's ``collect_task`` (Runway's GET /v1/tasks/{id}); a video adapter with
+    only ``get_generation_status`` is asked that. Returns ``state`` (RUNNING, SUCCEEDED,
+    FAILED), ``outputs`` as ``(bytes, content_type)`` and the vendor's failure code and
+    reason. Raises when it cannot be asked or does not answer.
+    """
+    collect = getattr(adapter, "collect_task", None)
+    if callable(collect):
+        answer: dict[str, Any] = asyncio.run(collect(task_id))
+        return answer
+    status_of = getattr(adapter, "get_generation_status", None)
+    if kind in SHOT_TAKE_KINDS and callable(status_of):
+        result = asyncio.run(status_of(task_id))
+        raw = result.raw_response if isinstance(result.raw_response, dict) else {}
+        if result.status == "COMPLETED":
+            if not result.video_bytes:
+                raise MediaProviderError("the vendor reported success without the clip")
+            kind_of = str(raw.get("content_type") or "video/mp4")
+            return {"state": "SUCCEEDED", "outputs": [(result.video_bytes, kind_of)]}
+        if result.status == "FAILED":
+            code = raw.get("failure_code")
+            detail = raw.get("failure")
+            return {
+                "state": "FAILED",
+                "outputs": [],
+                "failure_code": code if isinstance(code, str) and code else None,
+                "failure_detail": detail if isinstance(detail, str) and detail else None,
+            }
+        return {"state": "RUNNING", "outputs": []}
+    raise MediaProviderError("this adapter cannot be asked about a task by its id")
+
+
+def _land_output(
+    engine: Engine,
+    take: SceneTake,
+    outputs: list[tuple[bytes, str]],
+    root: Path,
+    correlation_id: str,
+) -> list[str]:
+    """Write a collected task's outputs to disk and its take(s) PAID. Returns the take ids.
+
+    A shot is one clip on its own take. A still task may carry several candidates: the first
+    goes on the SUBMITTED take, every other on a take of its own, the task's credits shared
+    between them; each is UNJUDGED until the stills step looks at it.
+    """
+    from app.providers.media_http import image_dimensions  # noqa: PLC0415
+
+    index = int(take.scene_number)
+    share = (
+        float(take.credits_quoted) / len(outputs)
+        if take.credits_quoted is not None and outputs
+        else None
+    )
+    landed: list[str] = []
+    for number, (payload, content_type) in enumerate(outputs):
+        if take.kind == "still":
+            fmt, _width, _height = image_dimensions(payload, content_type)
+            folder = root / take.storyboard_id / "stills"
+            name = f"scene_{index:02d}_{uuid4().hex[:8]}_c{number + 1}." + (
+                "jpg" if fmt == "jpeg" else fmt
+            )
+            code, detail = UNJUDGED_FAILURE_CODE, UNJUDGED_DETAIL
+        else:
+            folder = root / take.storyboard_id / "motion"
+            name = f"{take.kind}_{index:02d}_{uuid4().hex[:8]}.mp4"
+            code, detail = None, None
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / name
+        path.write_bytes(payload)
+        landed.append(
+            record_take(
+                engine,
+                take_id=take.id if number == 0 else None,
+                storyboard_id=take.storyboard_id,
+                scene_number=index,
+                kind=take.kind,
+                prompt_hash=take.prompt_hash,
+                model_id=take.model_id,
+                resolution=take.resolution,
+                status="PAID",
+                correlation_id=correlation_id,
+                seconds=take.seconds,
+                seed=take.seed,
+                credits_quoted=share,
+                path=path,
+                sha256=_file_sha256(path),
+                failure_code=code,
+                failure_detail=detail,
+                remote_task_id=take.remote_task_id,
+            )
+        )
+    return landed
+
+
+def _collected_event(engine: Engine, take: SceneTake, payload: dict, correlation_id: str) -> None:
+    with Session(engine) as session, session.begin():
+        append_event(
+            session,
+            TAKE_COLLECTED_EVENT,
+            "scene_take",
+            take.id,
+            1,
+            {
+                "storyboard_id": take.storyboard_id,
+                "scene_number": take.scene_number,
+                "kind": take.kind,
+                "model_id": take.model_id,
+                "remote_task_id": take.remote_task_id,
+                **payload,
+            },
+            correlation_id,
+        )
+
+
+def _lost_letter(engine: Engine, lost: list[dict[str, Any]], correlation_id: str) -> str | None:
+    """One letter to the Owner about the paid tasks given up in this pass. Deterministic."""
+    from app.agents.messages import post_message  # noqa: PLC0415 - agents import media
+    from app.wording import count  # noqa: PLC0415
+
+    if not lost:
+        return None
+    titles: dict[str, str] = {}
+    with Session(engine) as session:
+        for item in lost:
+            board = session.get(Storyboard, item["storyboard_id"])
+            titles[item["storyboard_id"]] = str(board.title) if board is not None else "?"
+    lines = [
+        "Furnizorul a primit aceste cereri plătite, dar rezultatul lor nu a mai putut fi "
+        "ridicat înainte să expire. Nu s-a cumpărat nimic din nou; scenele se planifică din nou "
+        "pe foaia de filmare, iar decizia de a le cumpăra rămâne a ta.",
+        "",
+    ]
+    for item in lost:
+        credits = item.get("credits")
+        lines.append(
+            f"- «{titles[item['storyboard_id']]}», scena {item['scene_number']}: "
+            f"{TAKE_KIND_WORDS.get(item['kind'], item['kind'])} ({item['model_id']}"
+            + (f", {count(round(float(credits)), 'credit', 'credite')}" if credits else "")
+            + f"; sarcina {item['remote_task_id']})."
+        )
+    subject = (
+        f"{count(len(lost), 'lucrare plătită pierdută', 'lucrări plătite pierdute')} la "
+        f"furnizor ({utc_now()[:10]})"
+    )
+    with Session(engine) as session, session.begin():
+        message = post_message(
+            session,
+            intent="ESCALATE",
+            subject=subject,
+            body={"kind": "lost_paid_tasks", "takes": [item["take_id"] for item in lost]},
+            body_text="\n".join(lines),
+            to_owner=True,
+            correlation_id=correlation_id,
+        )
+        return str(message.id)
+
+
+def collect_submitted_takes(
+    engine: Engine,
+    *,
+    collector_for: Callable[[SceneTake], Any],
+    correlation_id: str,
+    storyboard_id: str | None = None,
+    kinds: Sequence[str] | None = None,
+    storage_root: Path | None = None,
+    now: datetime | None = None,
+    max_age_seconds: float = SUBMITTED_TAKE_MAX_AGE_SECONDS,
+) -> list[dict[str, Any]]:
+    """Collect every SUBMITTED take (of one film, or all) by its task id. Buys nothing.
+
+    ``collector_for(take)`` gives the adapter that may be asked about it (None: nobody can be
+    asked now). SUCCEEDED: the output is downloaded into the take, PAID (a still candidate
+    UNJUDGED). FAILED: the take is REFUSED with the vendor's code. Still running, or the vendor
+    did not answer: the take stays SUBMITTED, unless it is older than ``max_age_seconds``,
+    when it is LOST and the Owner gets one letter for the pass. Never a POST.
+    """
+    moment = now or datetime.now(UTC)
+    with Session(engine) as session:
+        query = select(SceneTake).where(SceneTake.status == "SUBMITTED")
+        if storyboard_id is not None:
+            query = query.where(SceneTake.storyboard_id == storyboard_id)
+        if kinds is not None:
+            query = query.where(SceneTake.kind.in_(list(kinds)))
+        rows = list(session.scalars(query.order_by(SceneTake.created_at)).all())
+        for row in rows:
+            session.expunge(row)
+    root = storage_root or DEFAULT_STORAGE_ROOT
+    outcomes: list[dict[str, Any]] = []
+    lost: list[dict[str, Any]] = []
+    for take in rows:
+        made = _stamp(take.created_at)
+        age = (moment - made).total_seconds() if made is not None else max_age_seconds
+        answer: dict[str, Any] | None = None
+        problem: str | None = None
+        if not take.remote_task_id:
+            problem = "no task id"
+        else:
+            try:
+                adapter = collector_for(take)
+                if adapter is None:
+                    problem = "no adapter"
+                else:
+                    answer = poll_task(adapter, str(take.remote_task_id), str(take.kind))
+            except Exception as exc:  # noqa: BLE001 - asked again later, or given up
+                problem = type(exc).__name__
+        state = (answer or {}).get("state")
+        base = {
+            "take_id": take.id,
+            "storyboard_id": take.storyboard_id,
+            "scene_number": int(take.scene_number),
+            "kind": take.kind,
+        }
+        if state == "SUCCEEDED":
+            try:
+                landed = _land_output(
+                    engine, take, list((answer or {}).get("outputs") or []), root, correlation_id
+                )
+            except (MediaProviderError, OSError, ValueError) as exc:
+                problem = type(exc).__name__
+            else:
+                _collected_event(
+                    engine, take, {"outcome": "PAID", "take_ids": landed}, correlation_id
+                )
+                outcomes.append({**base, "status": "PAID", "take_ids": landed})
+                continue
+        if state == "FAILED":
+            code = (answer or {}).get("failure_code")
+            record_take(
+                engine,
+                take_id=take.id,
+                storyboard_id=take.storyboard_id,
+                scene_number=int(take.scene_number),
+                kind=take.kind,
+                prompt_hash=take.prompt_hash,
+                model_id=take.model_id,
+                resolution=take.resolution,
+                status="REFUSED",
+                correlation_id=correlation_id,
+                seconds=take.seconds,
+                seed=take.seed,
+                credits_quoted=take.credits_quoted,
+                failure_code=str(code)[:100] if code else "VENDOR.FAILED",
+                failure_detail=(answer or {}).get("failure_detail"),
+            )
+            _collected_event(engine, take, {"outcome": "REFUSED", "code": code}, correlation_id)
+            outcomes.append({**base, "status": "REFUSED", "failure_code": code})
+            continue
+        if age >= max_age_seconds:
+            hours = int(age // 3600)
+            record_take(
+                engine,
+                take_id=take.id,
+                storyboard_id=take.storyboard_id,
+                scene_number=int(take.scene_number),
+                kind=take.kind,
+                prompt_hash=take.prompt_hash,
+                model_id=take.model_id,
+                resolution=take.resolution,
+                status="LOST",
+                correlation_id=correlation_id,
+                seconds=take.seconds,
+                seed=take.seed,
+                credits_quoted=take.credits_quoted,
+                failure_code=LOST_FAILURE_CODE,
+                failure_detail=(
+                    f"Rezultatul nu a putut fi ridicat de la furnizor în {hours} ore de la "
+                    "cumpărare și poate să fi expirat; nu s-a cumpărat nimic din nou."
+                ),
+            )
+            _collected_event(engine, take, {"outcome": "LOST", "problem": problem}, correlation_id)
+            item = {
+                **base,
+                "status": "LOST",
+                "model_id": take.model_id,
+                "credits": take.credits_quoted,
+                "remote_task_id": take.remote_task_id,
+            }
+            lost.append(item)
+            outcomes.append(item)
+            continue
+        outcomes.append({**base, "status": "SUBMITTED", "reason": problem or "RUNNING"})
+    if lost:
+        letter = _lost_letter(engine, lost, correlation_id)
+        for item in lost:
+            item["letter_id"] = letter
+    if outcomes:
+        logger.info(
+            "submitted_takes_collected",
+            extra={
+                "checked": len(outcomes),
+                "paid": sum(1 for o in outcomes if o["status"] == "PAID"),
+                "refused": sum(1 for o in outcomes if o["status"] == "REFUSED"),
+                "lost": len(lost),
+            },
+        )
+    return outcomes
+
+
+def check_unchecked_shots(
+    engine: Engine,
+    storyboard_id: str,
+    correlation_id: str,
+    *,
+    adapter_for_model: Callable[[str], Any],
+    environment: str,
+    ffmpeg_path: str | None = None,
+    registry: Any = None,
+    clip_judge: Callable[[int, list[Path]], Any] | None = None,
+    face_counter: Callable[..., Any] | None = None,
+    clip_check: Callable[..., Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Clip QC on every paid shot of this film that was bought but never checked.
+
+    A shot collected after its step ended, or one whose process died between landing and its
+    check, has no clip-QC report; in PRODUCTION such a shot never enters the film and nothing
+    else would ever check it. Checked here like any bought shot (`_check_shot`), with no retry
+    bought: a shot measured wrong goes to the Owner. Only shots that carry a vendor task id
+    (bought since migration 0049); older takes keep the rule they were bought under.
+    """
+    ffmpeg_exe = resolve_ffmpeg_path(ffmpeg_path)
+    if ffmpeg_exe is None:
+        return []
+    with Session(engine) as session:
+        rows = session.scalars(
+            select(SceneTake)
+            .where(
+                SceneTake.storyboard_id == storyboard_id,
+                SceneTake.kind.in_(SHOT_TAKE_KINDS),
+                SceneTake.status == "PAID",
+                SceneTake.remote_task_id.is_not(None),
+                SceneTake.path.is_not(None),
+            )
+            .order_by(SceneTake.created_at)
+        ).all()
+        unchecked = [row for row in rows if clip_qc_of(session, row.id) is None]
+        for row in unchecked:
+            session.expunge(row)
+        board = session.get(Storyboard, storyboard_id)
+        bible = dict(board.visual_bible_json or {}) if board is not None else {}
+    if not unchecked:
+        return []
+    _title, scenes = _storyboard_scenes(engine, storyboard_id)
+    by_index = {int(scene["scene_index"]): scene for scene in scenes}
+    checked: list[dict[str, Any]] = []
+    for take in unchecked:
+        scene = by_index.get(int(take.scene_number))
+        clip = Path(str(take.path))
+        if scene is None or not clip.is_file():
+            continue
+        adapter = adapter_for_model(str(take.model_id))
+        if adapter is None:
+            continue
+        verdict = _check_shot(
+            engine,
+            storyboard_id=storyboard_id,
+            correlation_id=correlation_id,
+            scene=scene,
+            clip=clip,
+            take_id=take.id,
+            seed=int(take.seed if take.seed is not None else film_seed(storyboard_id)),
+            model_id=str(take.model_id),
+            adapter=adapter,
+            # No retry is bought here: a cap of 0 under a price of at least 1 says so.
+            price=max(1.0, float(take.credits_quoted or 0.0)),
+            committed=0.0,
+            cap=0.0,
+            environment=environment,
+            bible=bible,
+            ffmpeg_exe=ffmpeg_exe,
+            buy=lambda _seed, _prompt: (None, None),
+            registry=registry,
+            clip_judge=clip_judge,
+            face_counter=face_counter,
+            clip_check=clip_check,
+        )
+        checked.append(
+            {
+                "take_id": take.id,
+                "scene_index": int(take.scene_number),
+                "status": verdict["status"],
+                "verdict": verdict["clip_qc"]["verdict"],
+            }
+        )
+    return checked
+
+
+def _record_intent(
+    engine: Engine,
+    task_id: str,
+    *,
+    storyboard_id: str,
+    scene_number: int,
+    kind: str,
+    prompt_hash: str,
+    model_id: str,
+    resolution: str,
+    correlation_id: str,
+    credits: float | None,
+    seconds: float | None = None,
+    seed: int | None = None,
+) -> str | None:
+    """The SUBMITTED take of a task the vendor just accepted, in its own transaction.
+
+    Written before any poll. If even this write fails the task id is logged (it is not a
+    secret) so the Owner's operator can collect it by hand, and the purchase goes on: the
+    shot is paid for, and polling for it is better than dropping it.
+    """
+    try:
+        return record_take(
+            engine,
+            storyboard_id=storyboard_id,
+            scene_number=scene_number,
+            kind=kind,
+            prompt_hash=prompt_hash,
+            model_id=model_id,
+            resolution=resolution,
+            status="SUBMITTED",
+            correlation_id=correlation_id,
+            seconds=seconds,
+            seed=seed,
+            credits_quoted=credits,
+            remote_task_id=task_id,
+        )
+    except SQLAlchemyError as exc:
+        logger.error(
+            "take_intent_not_recorded",
+            extra={
+                "storyboard_id": storyboard_id,
+                "scene_number": scene_number,
+                "kind": kind,
+                "remote_task_id": task_id,
+                "error": type(exc).__name__,
+            },
+        )
+        return None
+
+
 def run_motion_step(
     engine: Engine,
     storyboard_id: str,
@@ -5050,9 +8366,16 @@ def run_motion_step(
     clip_judge: Callable[[int, list[Path]], Any] | None = None,
     face_counter: Callable[..., Any] | None = None,
     clip_check: Callable[..., Any] | None = None,
+    meter: SpendMeter | None = None,
 ) -> dict[str, Any]:
     """One step of the motion staircase (``test_shot`` or ``motion``), bought only under the
     Owner's yes for this plan and this cap.
+
+    ``meter`` (`SpendMeter`) is kept up to date as the step sends and commits, so a caller
+    can book what was spent when the step raises half-way. A request that may have been
+    charged without an answer (`possibly_charged`) counts against the cap, is never sent
+    again automatically, and stops the step; before every request the balance is read again
+    and the step stops when the account lost more than it counted (`uncounted_drop`).
 
     Every shot bought is checked before the step goes on (`_check_shot`: qc.check_clip, the
     vision model through ``registry`` or ``clip_judge(scene, frames)``, YuNet through
@@ -5063,6 +8386,18 @@ def run_motion_step(
     ``step='scene_redo'`` with ``redo_scene`` buys that one scene's shot again under
     ``media.scene_redo`` (`redo_scene`, the per-scene redo): the scene's old shot takes are
     retired (REJECTED, ``REDO.OWNER``) in the same transaction that spends the yes.
+
+    Before anything is planned, the film's SUBMITTED shots are collected by their task ids
+    (`collect_submitted_takes`, a GET each, nothing bought), and every paid shot nobody has
+    checked yet is checked (`check_unchecked_shots`). A shot is written SUBMITTED, with the
+    vendor's task id, the moment the vendor accepts it; a clip that does not arrive leaves the
+    scene IN_FLIGHT (collected later, never bought again) and stops the step.
+
+    A scene a step left to the Owner is held (`scene_memory`) and is in no later step's
+    purchase until he decides on the sheet; no scene is sent more than
+    `max_paid_attempts_per_scene` paid requests since his last decision about it (a redo,
+    his own act, is not counted). Each NEEDS_OWNER event names the scene's identity and
+    whether it holds the scene.
 
     ``plan_hash`` is the hash of the plan he was shown (`motion_plan`; the shooting sheet may
     pass ``plan_hash_of`` so its own hash is the one his yes is bound to). ``cap_credits`` is
@@ -5078,6 +8413,8 @@ def run_motion_step(
     actions = {**MOTION_STEP_ACTIONS, REDO_STEP: REDO_ACTION}
     if step not in actions:
         raise ValueError(f"unknown motion step: {step}")
+    meter = meter if meter is not None else SpendMeter()
+    storage_root = storage_root or media_root(settings)
     if (step == REDO_STEP) != (redo_scene is not None):
         raise ValueError("a scene redo names its scene, and only a scene redo does")
     resolution = resolution or str(
@@ -5085,6 +8422,7 @@ def run_motion_step(
     )
     margin = float(getattr(settings, "paid_step_balance_margin", None) or PAID_STEP_BALANCE_MARGIN)
     caps = _capabilities(engine, capabilities, integration_id)
+    environment = environment or studio_environment(engine)
     state = _motion_state(
         engine,
         storyboard_id,
@@ -5097,26 +8435,66 @@ def run_motion_step(
     )
     plan = state["plan"]
     prices: PriceTable = state["prices"]
-    environment = environment or studio_environment(engine)
-    _refuse_before_buying(
+    # The plan his yes is bound to is the one read before anything is collected: collecting
+    # only ever takes scenes out of buying (an open task landed, a shot checked), and his yes
+    # must not go stale because the vendor delivered.
+    current = plan_hash_of(engine, storyboard_id) if plan_hash_of else plan["plan_hash"]
+    # What the vendor already made for this film is collected (a GET each) and every paid
+    # shot nobody checked is checked, whatever the step decides next: a shot already paid for
+    # is never planned, and never bought, again.
+    collected = collect_submitted_takes(
+        engine,
+        collector_for=lambda take: adapter_for_model(str(take.model_id)),
+        correlation_id=correlation_id,
+        storyboard_id=storyboard_id,
+        kinds=SHOT_TAKE_KINDS,
+        storage_root=storage_root,
+    )
+    rechecked = check_unchecked_shots(
+        engine,
+        storyboard_id,
+        correlation_id,
+        adapter_for_model=adapter_for_model,
+        environment=environment,
+        ffmpeg_path=ffmpeg_path,
+        registry=registry,
+        clip_judge=clip_judge,
+        face_counter=face_counter,
+        clip_check=clip_check,
+    )
+    # A disk too full for the clips refuses before anything is asked or bought (REL-08): a
+    # shot that cannot be written is a shot paid for and lost. Collecting and checking what
+    # was already paid for came first, because it buys nothing.
+    no_room = disk_refusal(storage_root, settings)
+    if no_room:
+        raise MotionStepRefused(LOW_DISK, no_room, plan=plan)
+    # The hero test shot is accepted here by its clip QC when the Owner's rule lets the motion
+    # through unasked (HERO_AUTO_ACCEPT); his yes for this plan, if one is needed, is still
+    # read by may_act below, bound to the hash read before anything was collected.
+    hero_accepted = _refuse_before_buying(
         engine,
         state,
         step,
         plan_hash,
         environment=environment,
-        plan_hash_of=plan_hash_of,
+        plan_hash_of=None,
         storyboard_id=storyboard_id,
+        current=current,
+        cap_credits=cap_credits,
+        requester=requester,
+        correlation_id=correlation_id,
     )
     view = {item["scene_index"]: item for item in plan["scenes"]}
     step_plan = plan["steps"][step]
     to_buy = [int(index) for index in step_plan["to_buy"]]
     cap = int(cap_credits) if cap_credits is not None else int(step_plan["cap_credits"])
+    cap_usd = round(cap * prices.credit_usd, 6)
     take_kind = MOTION_STEP_TAKE_KINDS.get(step, "motion")
     source = account
     before: float | None = None
     read = False
     ffmpeg_exe: str | None = None
-    work_dir = (storage_root or DEFAULT_STORAGE_ROOT) / storyboard_id / "motion"
+    work_dir = storage_root / storyboard_id / "motion"
 
     if to_buy:
         ffmpeg_exe = resolve_ffmpeg_path(ffmpeg_path)
@@ -5147,9 +8525,12 @@ def run_motion_step(
                 subject=storyboard_id,
                 evidence=(
                     f"{len(to_buy)} cadre (scenele {', '.join(map(str, to_buy))}), "
-                    f"{step_plan['cost_credits']} credite, plafon {cap}"
+                    f"{step_plan['cost_credits']} credite, plafon {cap}; cost estimat "
+                    f"{_usd_ro(step_plan['cost_usd'])}, plafon {_usd_ro(cap_usd)}"
                 ),
-                cost_usd=step_plan["cost_usd"],
+                # The cap, the most his yes lets the step spend (MONEY-08, A10): OVER_USD
+                # compares his threshold with it; the expected cost stays in the evidence.
+                cost_usd=cap_usd,
                 context={"plan_hash": plan_hash, "cap_credits": cap},
             )
             if verdict["allowed"] and redo_scene is not None:
@@ -5177,7 +8558,27 @@ def run_motion_step(
     bought_now: list[int] = []
     stopped: str | None = None
     previous_kind: str | None = None
-    committed = 0.0
+    # Paid requests per scene since the Owner last decided about it (scene_memory), this
+    # step's included: past the limit nothing more is bought for the scene without him. A redo
+    # is his own act and is not counted against it.
+    limit = max_paid_attempts_per_scene()
+    sent: dict[int, int] = {}
+    # Every shot take the scenes to buy had when the plan was read: one that appears later and
+    # is not this step's was bought by someone else, and the scene is not bought again.
+    known_shots = _shot_take_ids(engine, storyboard_id, to_buy)
+
+    def over_attempts(scene_index: int) -> bool:
+        return step != REDO_STEP and sent.get(scene_index, 0) >= limit
+
+    def attempts_reason(scene_index: int) -> str:
+        from app.wording import count as count_ro  # noqa: PLC0415
+
+        return (
+            f"Scena {scene_index}: "
+            + count_ro(sent.get(scene_index, 0), "cumpărare plătită", "cumpărări plătite")
+            + f" de la ultima decizie a Proprietarului, fără un cadru acceptat (limita este "
+            f"{limit}); nu se mai cumpără nimic pentru ea până nu decide el pe foaia de filmare."
+        )
 
     for index, item in sorted(view.items()):
         entry: dict[str, Any] = {
@@ -5221,6 +8622,11 @@ def run_motion_step(
         attempts = 0
         outcome: dict[str, Any] | None = None
         bought_clip: Path | None = None
+        # The scene's paid attempts since the Owner last decided about it, and what this step
+        # has spent before it: what its NEEDS_OWNER event, and the attempt limit, are read on.
+        remembered_here = state["memory"].get(index)
+        sent[index] = remembered_here.attempts if remembered_here is not None else 0
+        committed_before_scene = meter.committed
 
         def buy_retry(
             new_seed: int,
@@ -5236,9 +8642,11 @@ def run_motion_step(
         ) -> tuple[Path | None, str | None]:
             """Clip QC's one retry of this scene: the same model and still, seed + 1, the
             camera move asked more firmly; bought like any shot (balance, stop, take)."""
-            nonlocal committed, stopped
+            nonlocal stopped
             if stop_requested(engine):
                 stopped = "Proprietarul a oprit autonomia; nu se mai cumpără mișcare."
+                return None, None
+            if over_attempts(_index):
                 return None, None
             _read, balance, problem = _account_balance(source)
             if problem is not None or (balance is not None and balance < _price):
@@ -5249,7 +8657,34 @@ def run_motion_step(
                     f"scenei {_index} ({_price} credite)."
                 )
                 return None, None
+            drop = uncounted_drop(before, balance, meter.committed)
+            if drop is not None:
+                stopped = UNCOUNTED_DROP_STOP.format(drop=drop, committed=meter.committed)
+                return None, None
             posted: list[str] = []
+            intents: list[str | None] = []
+            meter.attempts += 1
+            sent[_index] = sent.get(_index, 0) + 1
+
+            def submitted(task_id: str) -> None:
+                posted.append(task_id)
+                intents.append(
+                    _record_intent(
+                        engine,
+                        task_id,
+                        storyboard_id=storyboard_id,
+                        scene_number=_index,
+                        kind=take_kind,
+                        prompt_hash=_identity,
+                        model_id=_model,
+                        resolution=MOTION_RESOLUTION,
+                        correlation_id=correlation_id,
+                        credits=max(float(_price), float(_quoted_credits(_adapter) or 0.0)),
+                        seconds=float(_seconds),
+                        seed=new_seed,
+                    )
+                )
+
             try:
                 with _at_work(
                     engine, "VideoEditor", "generate_motion", f"reluarea scenei {_index}"
@@ -5261,16 +8696,38 @@ def run_motion_step(
                         float(_seconds),
                         str(ffmpeg_exe),
                         seed=new_seed,
-                        on_submitted=posted.append,
+                        on_submitted=submitted,
                         prompt_text=new_prompt,
                     )
+            except TaskStillOpen:
+                # Paid and accepted; its clip did not arrive. It stays SUBMITTED, collected
+                # later; nothing more is bought in this step.
+                open_spend = max(float(_price), float(_quoted_credits(_adapter) or 0.0))
+                meter.committed += open_spend
+                if intents and intents[-1]:
+                    charged.append(
+                        {
+                            "take_id": intents[-1],
+                            "model": _model,
+                            "seconds": _seconds,
+                            "spend": open_spend,
+                        }
+                    )
+                stopped = IN_FLIGHT_STOP.format(scene=_index)
+                return None, None
             except (MediaProviderError, MediaProviderNotConfigured, ValueError, OSError) as exc:
                 lost: float | None = None
-                if posted:
+                unanswered = outcome_unknown(exc, submitted=bool(posted))
+                if posted or unanswered:
+                    # A task the vendor accepted, or a request it may have served without an
+                    # answer, may be charged like a success: counted, never sent again here.
                     lost = max(float(_price), float(_quoted_credits(_adapter) or 0.0))
-                    committed += lost
+                    meter.committed += lost
+                if unanswered:
+                    stopped = UNANSWERED_REASON.format(scene=_index)
                 lost_take = record_take(
                     engine,
+                    take_id=intents[-1] if intents else None,
                     storyboard_id=storyboard_id,
                     scene_number=_index,
                     kind=take_kind,
@@ -5282,7 +8739,8 @@ def run_motion_step(
                     seconds=float(_seconds),
                     seed=new_seed,
                     credits_quoted=lost,
-                    failure_code=failure_code_of(exc) or "TECHNICAL",
+                    failure_code=failure_code_of(exc)
+                    or (UNANSWERED_FAILURE_CODE if unanswered else "TECHNICAL"),
                     failure_detail=failure_detail_of(exc),
                 )
                 if lost is not None:
@@ -5291,11 +8749,12 @@ def run_motion_step(
                     )
                 return None, None
             paid = max(float(_price), float(_quoted_credits(_adapter) or 0.0))
-            committed += paid
+            meter.committed += paid
             retry_clip = work_dir / f"{take_kind}_{_index:02d}_{uuid4().hex[:8]}.mp4"
             retry_clip.write_bytes(retry_bytes)
             retry_take = record_take(
                 engine,
+                take_id=intents[-1] if intents else None,
                 storyboard_id=storyboard_id,
                 scene_number=_index,
                 kind=take_kind,
@@ -5320,10 +8779,13 @@ def run_motion_step(
                 stopped = "Proprietarul a oprit autonomia; nu se mai cumpără mișcare."
                 outcome = {"status": "NOT_BOUGHT", "reason": stopped}
                 break
-            if committed + price > cap:
+            if over_attempts(index):
+                outcome = {"status": "NEEDS_OWNER", "reason": attempts_reason(index)}
+                break
+            if meter.committed + price > cap:
                 stopped = (
                     f"STOPPED_AT_CAP: cadrul scenei {index} ({price} credite) ar depăși "
-                    f"plafonul aprobat de {cap} credite (deja {committed:.0f})."
+                    f"plafonul aprobat de {cap} credite (deja {meter.committed:.0f})."
                 )
                 outcome = {"status": "NOT_BOUGHT", "reason": stopped}
                 break
@@ -5337,8 +8799,61 @@ def run_motion_step(
                 )
                 outcome = {"status": "NOT_BOUGHT", "reason": stopped}
                 break
+            drop = uncounted_drop(before, balance, meter.committed)
+            if drop is not None:
+                # The account lost more than this step counted: a charge it does not know
+                # about (an answer lost on the way, another buyer). Nothing more is bought.
+                stopped = UNCOUNTED_DROP_STOP.format(drop=drop, committed=meter.committed)
+                outcome = {"status": "NOT_BOUGHT", "reason": stopped}
+                break
+            if attempts == 0 and _bought_elsewhere(
+                engine, storyboard_id, index, identity, known_shots.get(index, set())
+            ):
+                # Another buyer (a second press, the day's staircase) bought this scene since
+                # the step read its plan: the purchase lease keeps that from happening, and
+                # this is the check behind it (MONEY-04). Never bought twice.
+                outcome = {
+                    "status": "BOUGHT_ELSEWHERE",
+                    "reason": f"Scena {index} a fost cumpărată între timp de altă rulare; "
+                    "nu se cumpără a doua oară.",
+                }
+                break
             attempts += 1
+            meter.attempts += 1
+            sent[index] = sent.get(index, 0) + 1
             posted: list[str] = []
+            intents: list[str | None] = []
+
+            def submitted(
+                task_id: str,
+                *,
+                _index: int = index,
+                _adapter: Any = adapter,
+                _model: str = model_id,
+                _price: int = price,
+                _seconds: int = seconds,
+                _identity: str = identity,
+                _posted: list[str] = posted,
+                _intents: list[str | None] = intents,
+            ) -> None:
+                _posted.append(task_id)
+                _intents.append(
+                    _record_intent(
+                        engine,
+                        task_id,
+                        storyboard_id=storyboard_id,
+                        scene_number=_index,
+                        kind=take_kind,
+                        prompt_hash=_identity,
+                        model_id=_model,
+                        resolution=MOTION_RESOLUTION,
+                        correlation_id=correlation_id,
+                        credits=max(float(_price), float(_quoted_credits(_adapter) or 0.0)),
+                        seconds=float(_seconds),
+                        seed=seed,
+                    )
+                )
+
             try:
                 with _at_work(engine, "VideoEditor", "generate_motion", f"mișcarea scenei {index}"):
                     clip_bytes, _raw = _generate_motion(
@@ -5348,20 +8863,66 @@ def run_motion_step(
                         float(seconds),
                         str(ffmpeg_exe),
                         seed=seed,
-                        on_submitted=posted.append,
+                        on_submitted=submitted,
                     )
+            except TaskStillOpen:
+                # The vendor accepted the shot (it may bill it) and its clip did not arrive.
+                # The take stays SUBMITTED with the task id: collected later, never bought
+                # again. The step stops: a vendor that does not hand over what it sold is not
+                # sold anything more today.
+                in_flight_spend = max(float(price), float(_quoted_credits(adapter) or 0.0))
+                meter.committed += in_flight_spend
+                take_id = intents[-1] if intents else None
+                if take_id is None:
+                    take_id = _record_intent(
+                        engine,
+                        posted[-1] if posted else "",
+                        storyboard_id=storyboard_id,
+                        scene_number=index,
+                        kind=take_kind,
+                        prompt_hash=identity,
+                        model_id=model_id,
+                        resolution=MOTION_RESOLUTION,
+                        correlation_id=correlation_id,
+                        credits=in_flight_spend,
+                        seconds=float(seconds),
+                        seed=seed,
+                    )
+                if take_id is not None:
+                    charged.append(
+                        {
+                            "take_id": take_id,
+                            "model": model_id,
+                            "seconds": seconds,
+                            "spend": in_flight_spend,
+                        }
+                    )
+                stopped = IN_FLIGHT_STOP.format(scene=index)
+                outcome = {
+                    "status": "IN_FLIGHT",
+                    "take_id": take_id,
+                    "credits_quoted": in_flight_spend,
+                    "reason": IN_FLIGHT_REASON.format(scene=index),
+                }
+                break
             except (MediaProviderError, MediaProviderNotConfigured, ValueError, OSError) as exc:
                 failure = _shot_failure(exc, previous_kind)
                 previous_kind = failure.kind
                 spend: float | None = None
-                if posted:
+                # A request that left and got no answer (no task id heard): the vendor may
+                # have served it, so it is counted and never sent again automatically.
+                unanswered = outcome_unknown(exc, submitted=bool(posted))
+                if posted or unanswered:
                     # A task the vendor accepted may be charged like a success.
                     spend = max(float(price), float(_quoted_credits(adapter) or 0.0))
-                    committed += spend
-                code = failure_code_of(exc) or failure.kind
+                    meter.committed += spend
+                code = failure_code_of(exc) or (
+                    UNANSWERED_FAILURE_CODE if unanswered else failure.kind
+                )
                 detail = failure_detail_of(exc)
                 take_id = record_take(
                     engine,
+                    take_id=intents[-1] if intents else None,
                     storyboard_id=storyboard_id,
                     scene_number=index,
                     kind=take_kind,
@@ -5380,6 +8941,18 @@ def run_motion_step(
                     charged.append(
                         {"take_id": take_id, "model": model_id, "seconds": seconds, "spend": spend}
                     )
+                if unanswered:
+                    entry.update(
+                        failure_kind="UNANSWERED",
+                        failure_code=code,
+                        failure_detail=detail,
+                        take_id=take_id,
+                    )
+                    reason = UNANSWERED_REASON.format(scene=index)
+                    # A vendor whose answers are being lost is sold nothing more in this step.
+                    stopped = reason
+                    outcome = {"status": "NEEDS_OWNER", "reason": reason}
+                    break
                 if failure.kind in MOTION_RETRY_KINDS and attempts < 2:
                     continue
                 entry.update(
@@ -5424,11 +8997,12 @@ def run_motion_step(
                 break
             previous_kind = None
             spend = max(float(price), float(_quoted_credits(adapter) or 0.0))
-            committed += spend
+            meter.committed += spend
             clip = work_dir / f"{take_kind}_{index:02d}_{uuid4().hex[:8]}.mp4"
             clip.write_bytes(clip_bytes)
             take_id = record_take(
                 engine,
+                take_id=intents[-1] if intents else None,
                 storyboard_id=storyboard_id,
                 scene_number=index,
                 kind=take_kind,
@@ -5451,7 +9025,7 @@ def run_motion_step(
             outcome = {"status": "PAID", "take_id": take_id, "credits_quoted": spend}
         if outcome["status"] == "PAID" and bought_clip is not None:
             # No shot goes on unchecked: clip QC now, with its one retry inside the cap.
-            first_spend = committed
+            first_spend = meter.committed
             checked = _check_shot(
                 engine,
                 storyboard_id=storyboard_id,
@@ -5463,7 +9037,7 @@ def run_motion_step(
                 model_id=model_id,
                 adapter=adapter,
                 price=float(price),
-                committed=committed,
+                committed=meter.committed,
                 cap=float(cap),
                 environment=environment,
                 bible=state["bible"],
@@ -5480,7 +9054,7 @@ def run_motion_step(
                 "status": checked["status"],
                 "take_id": checked["take_id"],
                 "credits_quoted": round(
-                    float(outcome["credits_quoted"]) + committed - first_spend, 4
+                    float(outcome["credits_quoted"]) + meter.committed - first_spend, 4
                 ),
             }
             if checked["reason"]:
@@ -5492,9 +9066,15 @@ def run_motion_step(
         entry.update(outcome)
         entry["attempts"] = attempts
         if outcome["status"] in ("NEEDS_OWNER", "NEEDS_STILL"):
+            # Whether the scene is held for the Owner (scene_memory): yes, unless what went
+            # wrong cost nothing and was the vendor's or the account's (no credits, a 503).
+            free = (
+                str(entry.get("failure_kind") or "") in FREE_FAILURE_KINDS
+                and meter.committed <= committed_before_scene
+            )
             _storyboard_event(
                 engine,
-                "media.motion_needs_owner",
+                MOTION_HOLD_EVENT,
                 storyboard_id,
                 {
                     "severity": "WARNING",
@@ -5504,6 +9084,8 @@ def run_motion_step(
                     "failure_kind": entry.get("failure_kind"),
                     "suggested": entry.get("suggested"),
                     "clip_qc": (entry.get("clip_qc") or {}).get("verdict"),
+                    "identity": identity_key(state["fields"][index]),
+                    "holds": not free,
                 },
                 correlation_id,
             )
@@ -5517,6 +9099,8 @@ def run_motion_step(
     if measured is not None and charged:
         total = sum(item["spend"] for item in charged) or 1.0
         with Session(engine) as session, session.begin():
+            # Read-then-write after a purchase: the write lock first (app.db.lock_for_write).
+            lock_for_write(session)
             for item in charged:
                 row = session.get(SceneTake, item["take_id"])
                 if row is not None:
@@ -5547,7 +9131,7 @@ def run_motion_step(
         "resolution": resolution,
         "scenes": results,
         "bought_shots": len(bought_now),
-        "spent_credits_quoted": round(committed, 4),
+        "spent_credits_quoted": round(meter.committed, 4),
         "spent_credits_measured": measured,
         "balance_before": before,
         "balance_after": after,
@@ -5555,6 +9139,14 @@ def run_motion_step(
         "stopped": stopped,
         "needs_owner": [e["scene_index"] for e in results if e.get("status") == "NEEDS_OWNER"],
         "needs_still": [e["scene_index"] for e in results if e.get("status") == "NEEDS_STILL"],
+        # Paid tasks still open at the vendor (collected later, never bought again), the
+        # ones collected before this step planned anything, and the shots checked then.
+        "in_flight": [e["scene_index"] for e in results if e.get("status") == "IN_FLIGHT"],
+        "collected": collected,
+        "rechecked": rechecked,
+        # The hero test shot accepted by its clip QC in this step, under the Owner's rule
+        # (HERO_ACCEPTED_EVENT's payload), or None.
+        "hero_accepted": hero_accepted,
         # Clip QC: the scenes whose every shot was measured wrong (rejected, the Owner
         # decides), and those whose shot nobody could check (it waits for his look).
         "clip_qc_failed": [
@@ -5804,6 +9396,108 @@ def release_after_qc(engine: Engine, media_asset_id: str, correlation_id: str) -
     except Exception:  # noqa: BLE001 - a clean-up never fails the film
         logger.warning("intermediates_release_failed", extra={"asset_id": media_asset_id})
         return {"asset_id": media_asset_id, "status": "FAILED", "files": [], "bytes": 0}
+
+
+#: The event the watchdog's sweep of a failed render's intermediates is recorded under.
+FAILED_INTERMEDIATES_SWEPT_EVENT = "media.failed_intermediates_swept"
+#: What the sweep may delete in a film's own folder: a scene's shot (``shot_01.mp4``, a redo's
+#: ``shot_02_redo_<stamp>.mp4``) and a composed card's clip. Nothing in a subfolder (the vendor
+#: takes in motion/, the stills), never the film, its captions or its sound.
+_SWEPT_NAMES = re.compile(r"^(?:shot|card)_\d{2}[A-Za-z0-9_.-]*\.mp4$")
+
+
+def sweep_failed_intermediates(
+    engine: Engine,
+    *,
+    storage_root: Path | None = None,
+    older_than_days: float = 7,
+    now: datetime | None = None,
+    correlation_id: str = "",
+) -> dict[str, Any]:
+    """Delete the shot and card intermediates FAILED renders left behind (REL-08).
+
+    A render that fails before quality control never reaches `release_intermediates`, so its
+    shots (about 230 MB a film) stayed for ever. A storyboard's folder is swept only when a
+    render of it FAILED more than ``older_than_days`` ago, none is still RENDERING or PENDING,
+    and every finished film of it has had its intermediates released already (a film whose QC
+    has not read it may still need them). Only top-level ``shot_*`` and ``card_*`` clips older
+    than the same age are deleted. Returns ``files`` (relative to the media root) and
+    ``bytes``; one FAILED_INTERMEDIATES_SWEPT_EVENT per storyboard swept.
+
+    The watchdog calls this only when the Owner turned STUDIO_SWEEP_FAILED_INTERMEDIATES on.
+    """
+    root = Path(storage_root) if storage_root else DEFAULT_STORAGE_ROOT
+    moment = now or datetime.now(UTC)
+    cutoff = moment - timedelta(days=older_than_days)
+    result: dict[str, Any] = {"status": "SWEPT", "files": [], "bytes": 0, "storyboards": []}
+    with Session(engine) as session:
+        failed = {
+            str(storyboard)
+            for storyboard, finished in session.execute(
+                select(VideoRenderJob.storyboard_id, VideoRenderJob.finished_at).where(
+                    VideoRenderJob.status == "FAILED"
+                )
+            )
+            if (stamp := _stamp(finished)) is not None and stamp < cutoff
+        }
+        busy = set(
+            session.scalars(
+                select(VideoRenderJob.storyboard_id).where(
+                    VideoRenderJob.status.in_(_RENDERING_STATUSES)
+                )
+            )
+        )
+        released = set(
+            session.scalars(
+                select(DomainEvent.aggregate_id).where(
+                    DomainEvent.event_type == INTERMEDIATES_RELEASED_EVENT
+                )
+            )
+        )
+        unreleased = {
+            str(storyboard)
+            for storyboard, asset_id in session.execute(
+                select(VideoRenderJob.storyboard_id, VideoRenderJob.output_asset_id).where(
+                    VideoRenderJob.status == "COMPLETED"
+                )
+            )
+            if asset_id and asset_id not in released
+        }
+    for storyboard_id in sorted(failed - busy - unreleased):
+        folder = root / storyboard_id
+        if not folder.is_dir():
+            continue
+        removed: list[str] = []
+        freed = 0
+        for path in sorted(folder.iterdir()):
+            if not path.is_file() or path.is_symlink() or not _SWEPT_NAMES.match(path.name):
+                continue
+            try:
+                info = path.stat()
+                if datetime.fromtimestamp(info.st_mtime, UTC) >= cutoff:
+                    continue
+                path.unlink()
+            except OSError:
+                logger.warning("failed_intermediate_not_swept", extra={"file": str(path)})
+                continue
+            removed.append(f"{storyboard_id}/{path.name}")
+            freed += int(info.st_size)
+        if not removed:
+            continue
+        with Session(engine) as session, session.begin():
+            append_event(
+                session,
+                FAILED_INTERMEDIATES_SWEPT_EVENT,
+                "storyboard",
+                storyboard_id,
+                1,
+                {"files": removed, "bytes": freed, "older_than_days": older_than_days},
+                correlation_id or str(uuid4()),
+            )
+        result["files"].extend(removed)
+        result["bytes"] += freed
+        result["storyboards"].append(storyboard_id)
+    return result
 
 
 # ------------------------------------------------------------------------ the scene redo
@@ -6126,7 +9820,7 @@ def _still_redo_plan(
                 plan["storyboard_id"],
                 int(first_live["scene_index"]),
                 "still",
-                [still_fields(str(first_live["visual_prompt"] or ""), None)],
+                still_options(engine, first_live),
                 statuses=("APPROVED",),
             )
             figure_one = reference.sha256 if reference is not None else None
@@ -6167,7 +9861,7 @@ def _still_redo_plan(
             "credits": per_request,
             "cap_credits": cap,
             "still_prompt": words,
-            "identity": still_fields(str(scene.get("visual_prompt") or ""), None),
+            "identity": next(iter(still_options(engine, scene)), None),
             "figure_one_sha256": figure_one,
             "replaces": replaces,
             "invalidates": invalidates,
@@ -6343,22 +10037,21 @@ def _card_background(
             storyboard_id,
             int(first_live["scene_index"]),
             "still",
-            [still_fields(str(first_live["visual_prompt"] or ""), None)],
+            still_options(engine, first_live),
             statuses=("APPROVED",),
         )
         return Path(str(take.path)) if take is not None and take.path else None
 
 
-def _run_ffmpeg(command: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(  # noqa: S603 - argument list, no shell
-        command,
-        cwd=str(cwd),
-        capture_output=True,
-        text=True,
-        stdin=subprocess.DEVNULL,
-        timeout=600,
-        check=False,
-    )
+def _run_ffmpeg(
+    command: list[str], folder: Path, carry: Sequence[str] = ()
+) -> subprocess.CompletedProcess[str]:
+    """A redo's encode, from a short working directory (see run_encoder). An encoder that
+    cannot start or runs past its time is the redo's own refusal (ENCODE_FAILED, 409)."""
+    try:
+        return run_encoder(command, folder, carry=carry)
+    except RenderEngineUnavailable as exc:
+        raise SceneRedoRefused("ENCODE_FAILED", str(exc)) from exc
 
 
 def _verified_timeline(
@@ -6457,9 +10150,27 @@ def _rederive_shot(
         )
         work = folder / f"redo_{stamp}"
         work.mkdir(parents=True, exist_ok=True)
+        # Cut again as it was cut: a closing card stays one, and a black card of a film made
+        # before the shorts' rule stays black, so the rejoined film is the film it was.
+        recorded = next(
+            (
+                entry.get("card")
+                for entry in film["production"].get("scenes") or []
+                if isinstance(entry, dict)
+                and entry.get("scene_index") == index
+                and isinstance(entry.get("card"), dict)
+            ),
+            None,
+        )
         try:
             card = _compose_card_clip(
-                scene, work, seconds=span, background=background, ffmpeg_exe=ffmpeg_exe, fps=fps
+                scene,
+                work,
+                seconds=span,
+                background=background,
+                ffmpeg_exe=ffmpeg_exe,
+                fps=fps,
+                short=bool((recorded or {}).get("closing")),
             )
         except CardError as exc:
             raise SceneRedoRefused(
@@ -6515,6 +10226,39 @@ def _rederive_shot(
         "rederived": True,
         "recorded_sha256": item.get("sha256"),
     }
+
+
+def _regrade(
+    ffmpeg_exe: str, production: dict[str, Any], scene_index: int, shot: Path
+) -> str | None:
+    """A rebuilt shot's grade toward the hero the film was graded to, and the film's grade
+    record updated for that scene; None when the film was not graded or the shot is the
+    hero itself or cannot be measured."""
+    grade = production.get("grade")
+    if not isinstance(grade, dict) or not isinstance(grade.get("reference"), dict):
+        return None
+    if grade.get("reference_scene") == scene_index:
+        return None
+    stats = measure_picture(ffmpeg_exe, shot)
+    if stats is None:
+        return None
+    hero = grade["reference"]
+    found = grade_toward(stats, hero, strength=float(grade.get("strength") or 0.0))
+    entry = {
+        "scene_index": scene_index,
+        "filter": found["filter"] if found else None,
+        "params": found["params"] if found else None,
+        "measured": stats,
+        "predicted": found["predicted"] if found else stats,
+        "delta_e_before": delta_e(stats, hero),
+        "delta_e_after": delta_e(found["predicted"], hero) if found else delta_e(stats, hero),
+        "regraded": True,
+    }
+    shots = [e for e in grade.get("shots") or [] if e.get("scene_index") != scene_index]
+    grade["shots"] = sorted([*shots, entry], key=lambda e: int(e.get("scene_index") or 0))
+    afters = [float(e["delta_e_after"]) for e in grade["shots"] if "delta_e_after" in e]
+    grade["delta_e_max_after"] = max(afters, default=0.0)
+    return str(found["filter"]) if found else None
 
 
 def _rebuild_film(
@@ -6624,6 +10368,10 @@ def _rebuild_film(
             dither=has_filter(ffmpeg_exe, "zscale"),
             fps=fps,
         ),
+        # The second framing of the scene's slot is kept (it follows the captions, which do
+        # not change); the grade is measured again on the new picture (audit Q6, Q8).
+        "framing": target.get("framing"),
+        "grade": None if redo == "card" else _regrade(ffmpeg_exe, production, scene_index, shot),
     }
     timeline = [rebuilt if int(i["scene_index"]) == scene_index else i for i in timeline]
 
@@ -6651,6 +10399,9 @@ def _rebuild_film(
         else:
             captions = captions_filter(srt.name)
     output = folder / f"{source.stem}_redo_{stamp}.mp4"
+    raw_grade = production.get("grade")
+    graded: dict[str, Any] = raw_grade if isinstance(raw_grade, dict) else {}
+    lut = LUT_NAME if graded.get("lut") and (folder / LUT_NAME).is_file() else None
     command = _dissolve_command(
         ffmpeg_exe,
         [folder / str(item["file"]) for item in timeline],
@@ -6666,8 +10417,16 @@ def _rebuild_film(
         audio_filter=None,
         captions=captions,
         fps=fps,
+        framings=[item.get("framing") for item in timeline],
+        grades=[item.get("grade") for item in timeline],
+        grain=int(graded.get("grain") or 0),
+        lut=lut,
     )
-    joined = _run_ffmpeg(command, folder)
+    joined = _run_ffmpeg(
+        command,
+        folder,
+        carry=((srt.name, CAPTION_FONTS_DIR) if captions else ()) + ((lut,) if lut else ()),
+    )
     total = sum(float(item["duration_seconds"]) for item in timeline)
     picture = _video_stream_seconds(ffmpeg_exe, output) if output.is_file() else None
     if joined.returncode != 0 or picture is None or picture + 1.0 < total:
@@ -6770,6 +10529,11 @@ def _record_redone_film(
     scene_index: int,
 ) -> dict[str, Any]:
     """A new MediaAsset and a COMPLETED render job for the rejoined film."""
+    licence_status = film["license_status"]
+    if "licences" in production:
+        # A redo may have bought a new still or shot: its evidence is read like the rest.
+        production["licences"] = film_licence_ledger(engine, production)
+        licence_status = production["licences"]["status"]
     file_bytes = output.read_bytes()
     provenance_hash = hashlib.sha256(file_bytes).hexdigest()
     finished_at = utc_now()
@@ -6806,7 +10570,7 @@ def _record_redone_film(
                 duration_seconds=round(seconds, 2),
                 provider_name=film["provider_name"],
                 remote_job_id=None,
-                license_status=film["license_status"],
+                license_status=licence_status,
                 provenance_hash=provenance_hash,
                 created_at=finished_at,
                 event_id=event.event_id,
@@ -6903,20 +10667,155 @@ def redo_scene(
         free = _free_redo(engine, storyboard_id, correlation_id, plan, ffmpeg_path=ffmpeg_path)
         return _redo_done(engine, correlation_id, plan, free, {}, (0.0, None))
 
-    _paid_redo_gate(engine, plan, plan_hash, allow_over_budget=allow_over_budget)
+    _paid_redo_gate(plan, plan_hash)
+    storage_root = storage_root or media_root(settings)
+    no_room = disk_refusal(storage_root, settings)
+    if no_room:
+        raise SceneRedoRefused(LOW_DISK, no_room, plan=plan)
+    from app.media.shooting_sheet import (  # noqa: PLC0415 - it imports us
+        FILM_BUSY,
+        FilmBusy,
+        PurchaseGateRefused,
+        check_film_ceiling,
+        film_purchase_lease,
+        hold_step_budget,
+        lease_seconds,
+        release_step_hold,
+    )
     from app.services import studio_environment  # noqa: PLC0415
 
     environment = environment or studio_environment(engine)
+    # One buyer per film (MONEY-04): the redo runs under the film's purchase lease, and the
+    # plan is read again inside it (another buyer may have changed the film meanwhile).
+    kwargs: dict[str, Any] = {
+        "image_adapter": image_adapter,
+        "adapter_for_model": adapter_for_model,
+        "capabilities": capabilities,
+        "account": account,
+        "registry": registry,
+        "judge": judge,
+        "face_counter": face_counter,
+        "measure": measure,
+        "allowed": allowed,
+        "overrides": overrides,
+        "resolution": resolution,
+        "settings": settings,
+        "environment": environment,
+        "integration_id": integration_id,
+        "table": table,
+        "ffmpeg_path": ffmpeg_path,
+        "storage_root": storage_root,
+        "requester": requester,
+        "note": note,
+        "clip_judge": clip_judge,
+        "clip_check": clip_check,
+    }
+    try:
+        with film_purchase_lease(
+            engine,
+            storyboard_id,
+            holder=correlation_id,
+            step=REDO_STEP,
+            ttl_seconds=lease_seconds(settings),
+        ):
+            # The plan is read again inside the lease: another buyer may have changed the
+            # film between the Owner's press and this moment.
+            plan = current()
+            _paid_redo_gate(plan, plan_hash)
+            cap_micros = credits_to_micros(plan["cap_credits"], plan["credit_usd"])
+            try:
+                check_film_ceiling(
+                    engine,
+                    storyboard_id,
+                    cap_micros,
+                    step=REDO_STEP,
+                    plan_hash=str(plan_hash),
+                    settings=settings,
+                    environment=environment,
+                    allow_over_budget=allow_over_budget,
+                    correlation_id=correlation_id,
+                    table=table,
+                )
+                reservation_id = hold_step_budget(
+                    engine,
+                    storyboard_id,
+                    REDO_STEP,
+                    cap_micros,
+                    plan_hash=str(plan_hash),
+                    allow_over_budget=allow_over_budget,
+                    correlation_id=correlation_id,
+                    detail={"kind": kind, "scene_index": plan["scene_index"]},
+                )
+            except PurchaseGateRefused as exc:
+                raise SceneRedoRefused(exc.status, exc.reason_ro, plan=plan) from exc
+            try:
+                return _paid_redo(
+                    engine,
+                    storyboard_id,
+                    correlation_id,
+                    plan,
+                    kind=kind,
+                    plan_hash=str(plan_hash),
+                    current=current,
+                    reservation_id=reservation_id,
+                    **kwargs,
+                )
+            except SceneRedoRefused:
+                release_step_hold(engine, reservation_id, "refacerea refuzată", correlation_id)
+                raise
+    except FilmBusy as exc:
+        raise SceneRedoRefused(FILM_BUSY, exc.reason_ro, plan=plan) from exc
+
+
+def _paid_redo(
+    engine: Engine,
+    storyboard_id: str,
+    correlation_id: str,
+    plan: dict[str, Any],
+    *,
+    kind: str,
+    plan_hash: str,
+    current: Callable[..., dict[str, Any]],
+    reservation_id: str | None,
+    image_adapter: Any,
+    adapter_for_model: Callable[[str], Any] | None,
+    capabilities: list[ModelCapability] | tuple[ModelCapability, ...] | None,
+    account: Any,
+    registry: Any,
+    judge: Callable[..., Any] | None,
+    face_counter: Callable[..., Any] | None,
+    measure: tuple[str, ...] | None,
+    allowed: Any,
+    overrides: dict[int, str | None] | None,
+    resolution: str | None,
+    settings: Any | None,
+    environment: str,
+    integration_id: str | None,
+    table: PriceTable | None,
+    ffmpeg_path: str | None,
+    storage_root: Path | None,
+    requester: str,
+    note: str | None,
+    clip_judge: Callable[[int, list[Path]], Any] | None,
+    clip_check: Callable[..., Any] | None,
+) -> dict[str, Any]:
+    """The paid part of `redo_scene`, under the film's lease and the step's budget hold: the
+    hold is settled once the redo is in the books and let go when nothing was bought."""
+    from app.media.shooting_sheet import close_step_hold, release_step_hold  # noqa: PLC0415
+
     detail: dict[str, Any] = {}
     film: dict[str, Any] | None = None
-    if kind == "motion":
-        if adapter_for_model is None:
-            raise SceneRedoRefused(
-                "NO_ADAPTER",
-                "Niciun model video conectat și verificat; mișcarea nu se poate cumpăra.",
-                plan=plan,
-            )
-        try:
+    reference = _redo_reference(plan, correlation_id)
+    # What the redo sends and commits, read below if it raises half-way (MONEY-02, REL-01).
+    meter = SpendMeter()
+    try:
+        if kind == "motion":
+            if adapter_for_model is None:
+                raise SceneRedoRefused(
+                    "NO_ADAPTER",
+                    "Niciun model video conectat și verificat; mișcarea nu se poate cumpăra.",
+                    plan=plan,
+                )
             summary = run_motion_step(
                 engine,
                 storyboard_id,
@@ -6944,44 +10843,146 @@ def redo_scene(
                 clip_judge=clip_judge,
                 face_counter=face_counter,
                 clip_check=clip_check,
+                meter=meter,
             )
-        except MotionStepRefused as exc:
-            raise SceneRedoRefused(
-                exc.status,
-                exc.reason_ro,
-                approval_id=exc.approval_id,
-                plan=plan,
-                findings=exc.findings,
-            ) from exc
-        detail["motion"] = summary
-        spent = (float(summary["spent_credits_quoted"]), summary["spent_credits_measured"])
+            detail["motion"] = summary
+            spent = (float(summary["spent_credits_quoted"]), summary["spent_credits_measured"])
+        else:
+            outcome = _redo_still(
+                engine,
+                storyboard_id,
+                correlation_id,
+                plan,
+                plan_hash=str(plan_hash),
+                image_adapter=image_adapter,
+                registry=registry,
+                judge=judge,
+                face_counter=face_counter,
+                measure=measure,
+                environment=environment,
+                ffmpeg_path=ffmpeg_path,
+                storage_root=storage_root,
+                integration_id=integration_id,
+                table=table,
+                requester=requester,
+                note=note,
+                settings=settings,
+                meter=meter,
+            )
+            detail["still"] = outcome
+            spent = (float(outcome["spent_credits_quoted"]), outcome["spent_credits_measured"])
+    except SceneRedoRefused:
+        raise  # its hold is let go by `redo_scene`
+    except MotionStepRefused as exc:
+        raise SceneRedoRefused(
+            exc.status,
+            exc.reason_ro,
+            approval_id=exc.approval_id,
+            plan=plan,
+            findings=exc.findings,
+        ) from exc
+    except Exception as exc:
+        try:
+            _redo_interrupted(engine, plan, meter, exc, correlation_id)
+        except SpentStageError as spent_error:
+            close_step_hold(
+                engine,
+                reservation_id,
+                spent_credits=spent_error.credits,
+                booked=spent_error.booked,
+                reference=reference,
+                correlation_id=correlation_id,
+            )
+            raise
+        release_step_hold(engine, reservation_id, "refacerea a căzut", correlation_id)
+        raise
+    # Into the books at once, before anything else can fail: the redo's own purchase.
+    detail["booked"] = _book_redo(engine, plan, spent, correlation_id)
+    quoted, measured = spent
+    close_step_hold(
+        engine,
+        reservation_id,
+        spent_credits=measured if measured is not None else quoted,
+        booked=detail["booked"],
+        reference=reference,
+        correlation_id=correlation_id,
+    )
+    if kind == "motion":
         film = _film_after_motion(
-            engine, storyboard_id, correlation_id, plan, summary, ffmpeg_path, environment
+            engine, storyboard_id, correlation_id, plan, detail["motion"], ffmpeg_path, environment
         )
-    else:
-        outcome = _redo_still(
-            engine,
-            storyboard_id,
-            correlation_id,
-            plan,
-            plan_hash=str(plan_hash),
-            image_adapter=image_adapter,
-            registry=registry,
-            judge=judge,
-            face_counter=face_counter,
-            measure=measure,
-            environment=environment,
-            ffmpeg_path=ffmpeg_path,
-            storage_root=storage_root,
-            integration_id=integration_id,
-            table=table,
-            requester=requester,
-            note=note,
-            settings=settings,
-        )
-        detail["still"] = outcome
-        spent = (float(outcome["spent_credits_quoted"]), outcome["spent_credits_measured"])
     return _redo_done(engine, correlation_id, plan, film, detail, spent)
+
+
+def _redo_reference(plan: dict[str, Any], correlation_id: str) -> str:
+    """``redo:{film}:{kind}:{scene}:{correlation}``: one reference per paid redo."""
+    from app.media.shooting_sheet import purchase_reference  # noqa: PLC0415 - it imports us
+
+    return purchase_reference(
+        f"redo:{plan['storyboard_id']}:{plan['kind']}:{plan['scene_index']}", correlation_id
+    )
+
+
+def _book_redo(
+    engine: Engine,
+    plan: dict[str, Any],
+    spent: tuple[float, float | None],
+    correlation_id: str,
+) -> dict[str, Any] | None:
+    """A paid redo into the books, measured credits else quoted, under its own reference.
+
+    Until 2026-10-02 a redo wrote only its event: 340 credits off the account, no cost row,
+    and the day's budget at 0 (MONEY-02)."""
+    from app.media.shooting_sheet import book_purchase  # noqa: PLC0415 - it imports us
+
+    quoted, measured = spent
+    credits = measured if measured is not None else quoted
+    return book_purchase(
+        engine,
+        storyboard_id=str(plan["storyboard_id"]),
+        step=f"{plan['kind']}_redo",
+        reference=_redo_reference(plan, correlation_id),
+        credits=float(credits) if credits is not None else None,
+        measured=measured is not None,
+        credit_usd=float(plan["credit_usd"]),
+        correlation_id=correlation_id,
+        attribution={"plan_hash": plan["plan_hash"], "scene_index": plan["scene_index"]},
+    )
+
+
+def _redo_interrupted(
+    engine: Engine,
+    plan: dict[str, Any],
+    meter: SpendMeter,
+    error: BaseException,
+    correlation_id: str,
+) -> None:
+    """A paid redo that raised after it may have paid: what it committed is booked, the
+    Owner has his letter, and the error goes up as `SpentStageError` (never retried)."""
+    if not meter.attempts or meter.committed <= 0:
+        return
+    from app.media.shooting_sheet import book_interrupted_step  # noqa: PLC0415 - it imports us
+
+    booked = book_interrupted_step(
+        engine,
+        str(plan["storyboard_id"]),
+        f"{plan['kind']}_redo",
+        reference=_redo_reference(plan, correlation_id),
+        credits=float(meter.committed),
+        measured=False,
+        credit_usd=float(plan["credit_usd"]),
+        error=error,
+        correlation_id=correlation_id,
+        attribution={"plan_hash": plan["plan_hash"], "scene_index": plan["scene_index"]},
+    )
+    raise SpentStageError(
+        f"Refacerea scenei {plan['scene_index']} s-a oprit după ce a cumpărat "
+        f"({meter.committed:.0f} credite); nu se reia automat.",
+        storyboard_id=str(plan["storyboard_id"]),
+        step=f"{plan['kind']}_redo",
+        credits=float(meter.committed),
+        booked=booked,
+    ) from error
 
 
 def _free_redo(
@@ -7025,11 +11026,11 @@ def _free_redo(
     }
 
 
-def _paid_redo_gate(
-    engine: Engine, plan: dict[str, Any], plan_hash: str | None, *, allow_over_budget: bool
-) -> None:
+def _paid_redo_gate(plan: dict[str, Any], plan_hash: str | None) -> None:
     """The refusals before a paid redo is asked or bought: no plan, a stale plan, nothing to
-    buy, a budget the cap would exceed without the Owner's explicit consent."""
+    buy. The budgets and the film's ceiling are asked next, inside the film's lease
+    (`shooting_sheet.check_film_ceiling`, `shooting_sheet.hold_step_budget`), and a budget the
+    cap would exceed is refused there without the Owner's explicit consent."""
     if not plan_hash:
         raise SceneRedoRefused(
             "NO_PLAN",
@@ -7046,16 +11047,6 @@ def _paid_redo_gate(
         )
     if not plan["buyable"]:
         raise SceneRedoRefused("NOTHING_TO_BUY", plan["reason_ro"], plan=plan)
-    if allow_over_budget:
-        return
-    from app.media.shooting_sheet import may_spend_step  # noqa: PLC0415 - it imports us
-
-    budget = may_spend_step(engine, credits_to_micros(plan["cap_credits"], plan["credit_usd"]))
-    if budget is not None:
-        period, reason = budget
-        raise SceneRedoRefused(
-            "OVER_DAILY_BUDGET" if period == "DAILY" else "OVER_BUDGET", reason, plan=plan
-        )
 
 
 def _redo_done(
@@ -7208,6 +11199,7 @@ def _redo_still(
     requester: str,
     note: str | None,
     settings: Any | None,
+    meter: SpendMeter | None = None,
 ) -> dict[str, Any]:
     """One scene's still bought again: one pair of candidates (at most two re-rolls within the
     cap), judged as the stills step judges them, under the Owner's yes for this redo."""
@@ -7231,6 +11223,14 @@ def _redo_still(
             "NEEDS_SHOT_PLAN",
             f"Scena {index} nu are promptul scris de model din planul de cadre; nu se cumpără "
             "imagini din prompturi-șablon.",
+            plan=plan,
+        )
+    if scene.needs_reference:
+        raise SceneRedoRefused(
+            "NEEDS_REFERENCE",
+            stills.needs_reference_reason(
+                [{"scene_index": index, "reason_ro": scene.needs_reference}]
+            ),
             plan=plan,
         )
     findings = lint_film(
@@ -7264,9 +11264,11 @@ def _redo_still(
             subject=storyboard_id,
             evidence=(
                 f"imaginea scenei {index}: {STILL_CANDIDATES} variante la 2K, "
-                f"{plan['credits']} credite, plafon {cap}"
+                f"{plan['credits']} credite, plafon {cap}; cost estimat "
+                f"{_usd_ro(plan['cost_usd'])}, plafon {_usd_ro(plan['cap_usd'])}"
             ),
-            cost_usd=plan["cost_usd"],
+            # The redo's cap, with its re-rolls (MONEY-08): what OVER_USD compares.
+            cost_usd=plan["cap_usd"],
             context={"plan_hash": plan_hash, "cap_credits": cap},
         )
         if verdict["allowed"]:
@@ -7299,6 +11301,10 @@ def _redo_still(
     figure_one: bytes | None = None
     if first is not None and first.index != index and first.reuse is not None and first.reuse.path:
         figure_one = Path(str(first.reuse.path)).read_bytes()
+    # The character's reference first (when the vendor takes one), the film's look second.
+    references, with_character, with_figure = stills._references(
+        scene, figure_one, image_adapter, first=first is None or first.index == index
+    )
     still_plan = StillPlan(
         scene=index,
         still_prompt=scene.words,
@@ -7318,7 +11324,9 @@ def _redo_still(
         model_id=str(plan["model_id"]),
         per_request=int(plan["credits"]),
         cap=cap,
-        references=[figure_one] if figure_one is not None else [],
+        references=references,
+        with_character=with_character,
+        with_figure=with_figure,
         still_plan=still_plan,
         image_adapter=image_adapter,
         registry=registry,
@@ -7328,6 +11336,8 @@ def _redo_still(
         environment=environment,
         ffmpeg_path=ffmpeg_path,
         work_dir=work_dir,
+        before=before,
+        meter=meter,
     )
     outcome = buyer.run()
     measured = _measured_still_spend(
@@ -7362,12 +11372,21 @@ class _StillRedoBuyer:
     at most two re-rolls with the violations as positive words, then the Owner."""
 
     def __init__(self, **context: Any) -> None:
+        #: What the redo has sent and committed, read by `redo_scene` whatever happens.
+        self.meter: SpendMeter = context.pop("meter", None) or SpendMeter()
         self.context = context
-        self.committed = 0.0
         self.images = 0
         self.take_ids: list[str] = []
         self.rerolls = 0
         self.unverified = False
+
+    @property
+    def committed(self) -> float:
+        return self.meter.committed
+
+    @committed.setter
+    def committed(self, value: float) -> None:
+        self.meter.committed = value
 
     def run(self) -> dict[str, Any]:
         from app.media import stills_stage as stills  # noqa: PLC0415 - stills_stage imports us
@@ -7411,24 +11430,55 @@ class _StillRedoBuyer:
                     f"({per_request} credite).",
                 }
                 break
-            prompt = stills._prompt(scene, instruction, bool(c["references"]))
+            drop = uncounted_drop(c.get("before"), balance, self.committed)
+            if drop is not None:
+                outcome = {
+                    "status": "NOT_BOUGHT",
+                    "reason": UNCOUNTED_DROP_STOP.format(drop=drop, committed=self.committed),
+                }
+                break
+            prompt = stills._prompt(
+                scene,
+                instruction,
+                bool(c.get("with_figure", c["references"])),
+                with_character=bool(c.get("with_character", False)),
+            )
+            heard: list[str] = []
+            self.meter.attempts += 1
             try:
                 candidates, quoted = stills._buy(
-                    c["image_adapter"], prompt, c["references"], STILL_CANDIDATES
+                    c["image_adapter"],
+                    prompt,
+                    c["references"],
+                    STILL_CANDIDATES,
+                    on_submitted=heard.append,
                 )
             except MediaProviderError as exc:
                 failure = classify_vendor_failure(exc, previous_kind)
                 previous_kind = failure.kind
-                self.committed += per_request  # a refusal may be paid like a success
-                self._take(identity, "REFUSED", exc=exc)
-                if failure.kind in stills.RETRY_KINDS and not retried:
+                charged = possibly_charged(exc, submitted=bool(heard))
+                # A request with no task heard and no answer: its outcome is unknown, so it is
+                # counted and never sent again automatically.
+                unknown = outcome_unknown(exc, submitted=bool(heard))
+                if charged:
+                    self.committed += per_request  # a refusal may be paid like a success
+                self._take(
+                    identity,
+                    "REFUSED",
+                    exc=exc,
+                    quoted=float(per_request) if charged else None,
+                    code=UNANSWERED_FAILURE_CODE if unknown else None,
+                )
+                if failure.kind in stills.RETRY_KINDS and not retried and not unknown:
                     retried = True
                     continue
                 outcome = {
                     "status": "NEEDS_OWNER",
-                    "reason": f"Scena {index}: {failure.reason_ro} Decide Proprietarul pe foaia "
+                    "reason": UNANSWERED_REASON.format(scene=index)
+                    if unknown
+                    else f"Scena {index}: {failure.reason_ro} Decide Proprietarul pe foaia "
                     "de filmare; aceleași cuvinte nu se trimit din nou.",
-                    "failure_kind": failure.kind,
+                    "failure_kind": "UNANSWERED" if unknown else failure.kind,
                     "failure_code": failure_code_of(exc),
                 }
                 break
@@ -7500,6 +11550,9 @@ class _StillRedoBuyer:
                     "reason": outcome["reason"],
                     "rerolls": self.rerolls,
                     "redo": True,
+                    "failure_kind": outcome.get("failure_kind"),
+                    "identity": identity_key(scene.identity),
+                    "holds": True,
                 },
                 c["correlation_id"],
             )
@@ -7514,6 +11567,7 @@ class _StillRedoBuyer:
         path: Path | None = None,
         data: bytes | None = None,
         quoted: float | None = None,
+        code: str | None = None,
     ) -> str:
         from app.media.stills_stage import STILL_RATIO  # noqa: PLC0415
 
@@ -7531,7 +11585,7 @@ class _StillRedoBuyer:
             credits_quoted=float(quoted) if quoted is not None else None,
             path=path,
             sha256=hashlib.sha256(data).hexdigest() if data is not None else None,
-            failure_code=failure_code_of(exc) if exc is not None else None,
+            failure_code=(failure_code_of(exc) or code) if exc is not None else None,
             failure_detail=failure_detail_of(exc) if exc is not None else None,
         )
         self.take_ids.append(take_id)
@@ -7561,6 +11615,7 @@ def _measured_still_spend(
     if measured is not None and buyer.images:
         each = measured / buyer.images
         with Session(engine) as session, session.begin():
+            lock_for_write(session)
             for take_id in buyer.take_ids:
                 row = session.get(SceneTake, take_id)
                 if row is not None and row.sha256:

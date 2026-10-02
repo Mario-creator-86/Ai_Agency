@@ -10,14 +10,17 @@ publishing gate would then reason about as if a provider had made it.
 from __future__ import annotations
 
 import http.client
+import ipaddress
 import json
 import re
+import socket
+import ssl
 import struct
 from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlsplit
 
-from app.providers.retry import call_with_retries, parse_retry_after
+from app.providers.retry import SAFE_TO_RESEND_STATUSES, call_with_retries, parse_retry_after
 
 
 class MediaProviderError(RuntimeError):
@@ -63,6 +66,20 @@ class MediaProviderNotConfigured(MediaProviderError):
     """Credentials for this provider are absent, so it cannot be called at all."""
 
 
+class TaskStillOpen(MediaProviderError):
+    """The vendor accepted a task (and may bill it), and its output was not collected: the
+    poll ran out of time, the vendor did not answer the poll, or the download failed.
+
+    Not a refusal. The task is collected later by ``task_id`` (a GET, free), and the scene is
+    never bought again while it is open. A task the vendor itself reported FAILED is a plain
+    MediaProviderError, never this.
+    """
+
+    def __init__(self, message: str, *, task_id: str, **kwargs: Any) -> None:
+        super().__init__(message, **kwargs)
+        self.task_id = task_id
+
+
 #: A generated still or a narration segment is large; a short is not. These caps stop a
 #: mistaken endpoint from streaming an unbounded body into memory.
 #: A generated shot is the largest thing a vendor hands back: eight seconds of 1080x1920
@@ -71,6 +88,48 @@ class MediaProviderNotConfigured(MediaProviderError):
 #: judge a film's weight.
 MAX_MEDIA_BYTES = 96 * 1024 * 1024
 MAX_JSON_BYTES = 4 * 1024 * 1024
+
+
+class PinnedHTTPSConnection(http.client.HTTPSConnection):
+    """HTTPS to an address checked beforehand: the socket goes to that IP, TLS still
+    authenticates the host name. A second lookup at connect time could answer differently
+    (DNS rebinding); pinning the checked address leaves it no say."""
+
+    def __init__(self, host: str, address: str, timeout: float | None = None) -> None:
+        self.tls_context = ssl.create_default_context()
+        super().__init__(host, timeout=timeout, context=self.tls_context)
+        self.address = address
+
+    def connect(self) -> None:
+        sock = socket.create_connection((self.address, 443), timeout=self.timeout)
+        try:
+            self.sock = self.tls_context.wrap_socket(sock, server_hostname=self.host)
+        except BaseException:
+            sock.close()
+            raise
+
+
+def public_address(host: str) -> str:
+    """One public address of ``host``, or MediaProviderError (``unsent``) when the name does
+    not resolve or any of its addresses is private, loopback, link-local or reserved.
+
+    The same rule the research retriever applies to a source (`resolve_public`): every
+    address must be global, so a name with one public and one internal address is refused.
+    """
+    try:
+        found = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+    except OSError as exc:
+        raise MediaProviderError(f"{host} could not be resolved", unsent=True) from exc
+    addresses = {str(item[4][0]) for item in found}
+    try:
+        public = bool(addresses) and all(
+            ipaddress.ip_address(address.split("%", 1)[0]).is_global for address in addresses
+        )
+    except ValueError:
+        public = False
+    if not public:
+        raise MediaProviderError(f"{host} does not resolve to a public address", unsent=True)
+    return sorted(addresses, key=lambda address: (":" in address, address))[0]
 
 
 def request(
@@ -82,13 +141,22 @@ def request(
     *,
     timeout: float = 120,
     expect_json: bool = True,
+    public_only: bool = False,
 ) -> tuple[Any, bytes, str]:
     """Make one HTTPS request and return (parsed json | None, raw body, content type).
 
     Only HTTPS, only the host named by the adapter, and a hard cap on the response size. A
     non-200 status raises rather than returning an empty result that a caller might store.
+    ``public_only`` is for a host the vendor's answer named rather than the code (an output
+    URL): the name must resolve to public addresses only, and the socket is pinned to the
+    one checked.
     """
-    connection = http.client.HTTPSConnection(host, timeout=timeout)
+    if public_only:
+        connection: http.client.HTTPSConnection = PinnedHTTPSConnection(
+            host, public_address(host), timeout=timeout
+        )
+    else:
+        connection = http.client.HTTPSConnection(host, timeout=timeout)
     try:
         # Two failure phases, told apart for the retry policy. `request` connects and sends:
         # a failure here means the vendor never saw the request. From `getresponse` on, it
@@ -119,6 +187,9 @@ def request(
                 retry_after=parse_retry_after(response.getheader("Retry-After")),
                 detail=detail,
                 issues=issues,
+                # A server error the vendor does not call safe to retry may come after the
+                # work was done: for a purchase it is possibly charged, never "nothing".
+                unanswered=possibly_served(response.status),
             )
         content_type = response.headers.get_content_type()
         if not expect_json:
@@ -129,6 +200,12 @@ def request(
             raise MediaProviderError(f"{host} returned a malformed response") from exc
     finally:
         connection.close()
+
+
+def possibly_served(status: int) -> bool:
+    """Whether an error status may have come after the vendor did (and billed) the work: any
+    5xx except the ones it documents as "not served, try again" (`SAFE_TO_RESEND_STATUSES`)."""
+    return 500 <= int(status) <= 599 and int(status) not in SAFE_TO_RESEND_STATUSES
 
 
 def retrying(
@@ -147,7 +224,8 @@ def retrying(
     The transport is passed in rather than named here so each adapter resolves `request`
     from its own module at call time — which is where the tests replace it with a recorder.
     `repeatable` defaults to "not a POST": a POST to these vendors is a purchase (a narration,
-    a still, a task), and a purchase that got no answer is not made twice.
+    a still, a task), and a purchase that got no answer, or a 5xx the vendor does not call
+    safe, is not made twice.
     """
     if repeatable is None:
         repeatable = method.upper() != "POST"

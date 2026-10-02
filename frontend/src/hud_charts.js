@@ -18,6 +18,7 @@
  */
 
 import { escapeHtml } from './html.js';
+import { countWords } from './plurals.js';
 
 /* ------------------------------------------------------------------------------------------
  * THE DAY TRACKER
@@ -305,7 +306,7 @@ export function dayTrackWords(track, context = {}) {
     label,
     // For a slate too narrow for the sentence: the day and the tally, nothing that needs a verb.
     short: `${track.date && context.today && track.date === context.today ? 'Azi' : shortDate(track.date) || 'Rularea'} · ${tally}`,
-    sentence: `Rularea zilei ${when}: ${track.closed} din ${track.total} etape închise, ${state}. ${stages}.`,
+    sentence: `Rularea zilei ${when}: ${track.closed} din ${countWords(track.total, 'etapă închisă', 'etape închise')}, ${state}. ${stages}.`,
   };
 }
 

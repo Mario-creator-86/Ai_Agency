@@ -85,7 +85,10 @@ class PaidVendorRefused(RuntimeError):
             f"cumpărat de la un furnizor real ({', '.join(self.vendors)}). Imaginile, mișcarea "
             "și narațiunea plătite se cumpără doar prin pașii foii de filmare, fiecare cu "
             "aprobarea Proprietarului legată de planul văzut (plan_hash), în orice mediu. "
-            "Nimic nu a fost cumpărat."
+            "În mediul TEST rularea zilnică nu cumpără nimic de la furnizorii reali: filmul "
+            "așteaptă pe foaia de filmare. În PRODUCTION rularea zilnică urcă singură foaia, "
+            "pas cu pas, după regula Proprietarului pentru pașii plătiți. Mediul și regula le "
+            "schimbă doar Proprietarul. Nimic nu a fost cumpărat."
         )
         super().__init__(self.message_ro)
 
@@ -346,6 +349,85 @@ def tts_provider(engine: Engine, vault: CredentialVault) -> TTSProvider | None:
     return None
 
 
+def pronunciation_locators(binding: Any) -> list[dict[str, str]]:
+    """The vendor pronunciation dictionaries a character's voice binding names, as locators.
+
+    ``pronunciation_rules`` holds two kinds of entry: hints for the voice artist ({"term",
+    "hint"}), which never reach a vendor, and dictionaries the Owner created in his ElevenLabs
+    account ({"pronunciation_dictionary_id", "version_id"}), which are sent by locator, at most
+    three. Creating one is his act; the studio never writes to his account."""
+    from app.providers.elevenlabs import checked_locators  # noqa: PLC0415
+
+    rules = binding.get("pronunciation_rules") if isinstance(binding, dict) else None
+    return checked_locators(rules)
+
+
+def _binding_of(session: Session, character_id: Any) -> dict[str, Any]:
+    from app.media.models import CharacterBible  # noqa: PLC0415 - read only for a voice
+
+    if not character_id:
+        return {}
+    character = session.get(CharacterBible, str(character_id))
+    binding = character.voice_binding_json if character is not None else None
+    return dict(binding) if isinstance(binding, dict) else {}
+
+
+# ------------------------------------------------------------- licences of what was bought
+#
+# A film may be published publicly only when every component of it carries commercial-use
+# evidence (AR-15). For what a vendor made, the evidence is the Owner's own statement on the
+# connection the component was bought through: his plan's terms and whether they allow
+# commercial use, typed in Setări. The studio never infers a plan from a vendor's name.
+
+#: The connection's answer that counts as evidence. Anything else, or nothing, is no evidence.
+COMMERCIAL_USE_YES = "da"
+
+
+def vendor_licence(session: Session, integration_id: Any) -> dict[str, Any]:
+    """The licence the Owner recorded on a connection: {vendor, integration_id, terms,
+    commercial_use (True | None), source}. ``commercial_use`` is True only on his explicit
+    yes; a connection that is gone or says nothing is None, never False by assumption."""
+    row = session.get(Integration, str(integration_id)) if integration_id else None
+    if row is None:
+        return {
+            "vendor": None,
+            "integration_id": integration_id or None,
+            "terms": None,
+            "commercial_use": None,
+            "source": "missing_connection",
+        }
+    config = dict(row.config or {})
+    terms = str(config.get("licence_terms") or "").strip() or None
+    answer = str(config.get("commercial_use") or "").strip().lower()
+    return {
+        "vendor": row.kind,
+        "integration_id": row.id,
+        "terms": terms,
+        "commercial_use": True if answer == COMMERCIAL_USE_YES else None,
+        "source": "connection",
+    }
+
+
+def connection_of_model(session: Session, model_id: Any, purposes: tuple[str, ...]) -> str | None:
+    """The connection a model belongs to: the one selected for one of ``purposes`` when it
+    offers the model, else the first connection that discovered it. None when none did."""
+    if not model_id:
+        return None
+    owners = [
+        row.integration_id
+        for row in session.scalars(
+            select(ProviderResource).where(ProviderResource.remote_id == str(model_id))
+        )
+    ]
+    if not owners:
+        return None
+    for purpose in purposes:
+        selection = session.get(ServiceSelection, purpose)
+        if selection is not None and selection.integration_id in owners:
+            return selection.integration_id
+    return owners[0]
+
+
 def tts_provider_for(engine: Engine, vault: CredentialVault, resolved: dict) -> TTSProvider | None:
     """A voice adapter for one resolved selection (see production_policy.resolve_purpose).
 
@@ -361,6 +443,8 @@ def tts_provider_for(engine: Engine, vault: CredentialVault, resolved: dict) -> 
             return None
         kind = row.kind
         secrets = vault.decrypt(row.encrypted_secrets)
+        # The character's own pronunciation dictionaries travel with its voice.
+        locators = pronunciation_locators(_binding_of(session, resolved.get("character_id")))
     try:
         if kind == "elevenlabs":
             adapter = ElevenLabsTTSAdapter(
@@ -372,6 +456,7 @@ def tts_provider_for(engine: Engine, vault: CredentialVault, resolved: dict) -> 
             settings = resolved.get("voice_settings")
             if isinstance(settings, dict) and settings:
                 adapter.voice_settings = settings
+            adapter.pronunciation_locators = locators
             return _from_connection(adapter, row.id)
     except MediaProviderNotConfigured:
         return None

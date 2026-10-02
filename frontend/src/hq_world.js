@@ -1,4 +1,5 @@
 import { TimeOfDayManager, timeOfDay } from './hq_time.js';
+import { studioPlace } from './office_clock.js';
 import { NO_WEATHER, WeatherManager } from './hq_weather.js';
 import { RandomEventManager, streetRule } from './hq_events.js';
 import { TrafficManager, EMERGENCY } from './hq_traffic.js';
@@ -1622,7 +1623,7 @@ export class HQRenderer {
    */
   drawShelter(ctx, time, replay = false) {
     const clock = this.m.street.shelter_clock?.rect;
-    if (clock) this.drawClockFace(ctx, clock, replay ? 'ATUNCI' : 'BUCUREȘTI', time.text);
+    if (clock) this.drawClockFace(ctx, clock, replay ? 'ATUNCI' : studioPlace().city.toLocaleUpperCase('ro'), time.text);
     const adRect = this.m.street.shelter_ad?.rect;
     if (adRect) {
       const ad = SHELTER_ADS[this.world.ambient.adIndex];

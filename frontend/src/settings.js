@@ -5,7 +5,9 @@ import { connectionTitle, policyWord, providerName } from './dialog_words.js';
 import {
   DIRECTOR_RIGHT_LABEL, MODULE_STATE, channelFacts, directorRightAnswer, directorRightCommand,
   directorRightConfirmKey, directorRightLines, directorRightQuestion, modulesSummary, SERIAL_CHANNEL_TYPE,
+  PRIVACY_CHOICES, publishPolicyAnswer, publishPolicyCommand, publishPolicyQuestion, publishPolicyWords,
 } from './owner_controls.js';
+import { countWords } from './plurals.js';
 
 import './settings.css';
 
@@ -71,6 +73,8 @@ export function initSettings(api, hooks = {}) {
     channelsError = '';
     asking = null;
     answer = null;
+    policyAsking = null;
+    policyAnswer = null;
 
     dialog.close();
     // W28: the door goes back into its room with its words fading, not as an empty pane; what
@@ -415,7 +419,7 @@ export function initSettings(api, hooks = {}) {
           const available = (result.models || []).filter(model => model.is_available).length;
           return {
             message: available
-              ? `${provider.name} a răspuns: ${available} modele disponibile.`
+              ? `${provider.name} a răspuns: ${countWords(available, 'model disponibil', 'modele disponibile')}.`
               : `${provider.name} a răspuns, dar nu oferă niciun model.`,
           };
         }, '');
@@ -636,7 +640,7 @@ export function initSettings(api, hooks = {}) {
       fact('Tip', facts.type, String(channel.channel_type || ''));
       fact('Cont YouTube', facts.account, facts.accountTitle);
       fact('Politica canalului', `versiunea ${facts.version}`);
-      card.append(head, facts_);
+      card.append(head, facts_, publishPolicyForm(channel));
       grid.append(card);
     }
     container.append(grid);
@@ -749,6 +753,146 @@ export function initSettings(api, hooks = {}) {
     }
     if (answer) {
       const said = node('p', answer.text, answer.error ? 'owner-answer settings-error' : 'owner-answer');
+      said.setAttribute('role', 'status');
+      box.append(said);
+    }
+    return box;
+  }
+
+  /**
+   * PAGE-10 / PUB-11: what he typed in a channel's publish-policy form, kept across repaints, and
+   * the one question or answer on screen. @type {Record<string, {privacy: string, publicAllowed: boolean, delay: string}>}
+   */
+  const policyDrafts = {};
+  /** @type {{id: string, command: Record<string, unknown>, question: string}|null} */
+  let policyAsking = null;
+  /** @type {{id: string, text: string, error: boolean}|null} */
+  let policyAnswer = null;
+
+  /** @param {any} channel */
+  function policyDraft(channel) {
+    if (!policyDrafts[channel.id]) {
+      policyDrafts[channel.id] = {
+        privacy: String(channel.autonomous_privacy || 'private'),
+        publicAllowed: Boolean(channel.public_publish_enabled),
+        delay: String(Number(channel.publish_delay_minutes) || 0),
+      };
+    }
+    return policyDrafts[channel.id];
+  }
+
+  /**
+   * A channel's publish policy as a versioned form: the privacy of the studio's own uploads,
+   * whether public is allowed at all, and the delay before a public release. Nothing is sent by
+   * the form itself: «Schimbă politica» asks first, naming every change, and only «Da» sends the
+   * channel's command. The backend's refusals (public while in TEST, a stale version) are shown
+   * in its own words.
+   * @param {any} channel
+   */
+  function publishPolicyForm(channel) {
+    const id = String(channel.id);
+    const draft = policyDraft(channel);
+    const box = node('section', '', 'channel-policy');
+    box.setAttribute('aria-labelledby', `policy-title-${id}`);
+    const title = node('h4', 'Politica de publicare', 'channel-policy-title');
+    title.id = `policy-title-${id}`;
+    box.append(title, node('p', publishPolicyWords(channel), 'helper'));
+
+    const privacyLabel = node('label', 'Vizibilitatea încărcărilor făcute singur de studio');
+    privacyLabel.setAttribute('for', `policy-privacy-${id}`);
+    const privacy = /** @type {HTMLSelectElement} */ (node('select', '', 'dialog-input'));
+    privacy.id = `policy-privacy-${id}`;
+    for (const [value, text] of PRIVACY_CHOICES) option(privacy, value, text);
+    privacy.value = draft.privacy;
+    privacy.addEventListener('change', () => { draft.privacy = privacy.value; });
+
+    const allowedRow = node('label', '', 'channel-policy-check');
+    allowedRow.setAttribute('for', `policy-public-${id}`);
+    const allowed = /** @type {HTMLInputElement} */ (node('input'));
+    allowed.type = 'checkbox';
+    allowed.id = `policy-public-${id}`;
+    allowed.checked = draft.publicAllowed;
+    allowed.addEventListener('change', () => { draft.publicAllowed = allowed.checked; });
+    allowedRow.append(allowed, document.createTextNode(' Publicul permis (numai în mediul PRODUCTION)'));
+
+    const delayLabel = node('label', 'Întârzierea publicării publice, în minute');
+    delayLabel.setAttribute('for', `policy-delay-${id}`);
+    const delay = /** @type {HTMLInputElement} */ (node('input', '', 'dialog-input'));
+    delay.id = `policy-delay-${id}`;
+    delay.inputMode = 'numeric';
+    delay.maxLength = 5;
+    delay.value = draft.delay;
+    delay.addEventListener('input', () => { draft.delay = delay.value; });
+
+    const keys = node('div', '', 'settings-actions');
+    const change = /** @type {HTMLButtonElement} */ (node('button', 'Schimbă politica', 'secondary'));
+    change.type = 'button';
+    change.addEventListener('click', () => {
+      const built = publishPolicyCommand(channel, draft, crypto.randomUUID());
+      if ('error' in built) {
+        policyAsking = null;
+        policyAnswer = { id, text: built.error, error: true };
+      } else {
+        policyAsking = { id, command: built.command, question: publishPolicyQuestion(channel, built.command) };
+        policyAnswer = null;
+      }
+      render();
+      /** @type {HTMLElement|null} */ (dialog.querySelector(`#policy-yes-${CSS.escape(id)}`))?.focus();
+    });
+    keys.append(change);
+    box.append(privacyLabel, privacy, allowedRow, delayLabel, delay, keys);
+
+    if (policyAsking && policyAsking.id === id) {
+      const asked = policyAsking;
+      const ask = node('div', '', 'owner-confirm decision-confirm');
+      ask.setAttribute('role', 'group');
+      ask.setAttribute('aria-label', asked.question);
+      ask.append(node('p', asked.question, 'owner-confirm-question'));
+      const answerKeys = node('div', '', 'owner-confirm-keys');
+      const yes = /** @type {HTMLButtonElement} */ (node('button', 'Da, schimbă politica', 'primary owner-confirm-yes'));
+      yes.type = 'button';
+      yes.id = `policy-yes-${id}`;
+      const no = /** @type {HTMLButtonElement} */ (node('button', 'Renunță', 'quiet'));
+      no.type = 'button';
+      no.addEventListener('click', () => { policyAsking = null; render(); });
+      yes.addEventListener('click', async () => {
+        yes.disabled = true;
+        no.disabled = true;
+        const current = generation;
+        try {
+          const result = await api(`/publishing/channels/${encodeURIComponent(id)}/publish-policy`, {
+            method: 'POST',
+            body: JSON.stringify(asked.command),
+          });
+          if (current !== generation) return;
+          const words = publishPolicyAnswer(result);
+          policyAnswer = words
+            ? { id, text: words, error: false }
+            : { id, text: 'Studioul nu a trimis un răspuns pe care pagina să-l poată citi. Reîncarcă și verifică starea.', error: true };
+          if (result && result.channel) {
+            channels = (channels || []).map((c) => (c.id === id ? { ...c, ...result.channel } : c));
+            delete policyDrafts[id];
+          }
+        } catch (error) {
+          if (current !== generation) return;
+          // the backend's own sentence: public in TEST (422), a stale version or a reused id (409)
+          policyAnswer = { id, text: error instanceof Error ? error.message : String(error), error: true };
+          if (error && /** @type {any} */ (error).status === 409) {
+            delete policyDrafts[id];
+            channels = null;
+            void loadChannels();
+          }
+        }
+        policyAsking = null;
+        render();
+        void hooks.onChange?.();
+      });
+      answerKeys.append(yes, no);
+      ask.append(answerKeys, node('p', 'Până nu apeși Da, nu se schimbă nimic.', 'decision-confirm-note'));
+      box.append(ask);
+    }
+    if (policyAnswer && policyAnswer.id === id) {
+      const said = node('p', policyAnswer.text, policyAnswer.error ? 'owner-answer settings-error' : 'owner-answer');
       said.setAttribute('role', 'status');
       box.append(said);
     }

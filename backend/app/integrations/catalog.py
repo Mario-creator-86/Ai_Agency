@@ -32,6 +32,19 @@ CREDIT_USD = field(
     "credit_usd", "Preț pentru un credit, în USD (ex. 0.01 pentru 100 credite = 1 $)", False
 )
 
+#: The Owner's own statement of what his plan with a media vendor allows (AR-15). A film is
+#: LICENSED, and may be seen, only when every component's connection answers "da"; the
+#: studio never infers a plan from a vendor's name. Optional: without it the film stays private.
+COMMERCIAL_USE = field(
+    "commercial_use",
+    "Planul tău permite folosire comercială a materialelor? (da / nu)",
+    False,
+    choices=["da", "nu"],
+)
+LICENCE_TERMS = field(
+    "licence_terms", "Planul și termenii lui (ex. Standard, termeni 2026-05)", False
+)
+
 
 def service(
     label: str,
@@ -142,7 +155,7 @@ CATALOG = {
     "elevenlabs": service(
         "ElevenLabs",
         "media",
-        [KEY],
+        [KEY, COMMERCIAL_USE, LICENCE_TERMS],
         "media",
         "Salvarea verifică cheia și încarcă modelele și vocile din cont. "
         "Modelul și vocea se aleg separat, în configurația de producție.",
@@ -162,7 +175,7 @@ CATALOG = {
     "runway": service(
         "Runway",
         "media",
-        [KEY, CREDIT_USD],
+        [KEY, CREDIT_USD, COMMERCIAL_USE, LICENCE_TERMS],
         "media",
         "Salvarea verifică cheia și încarcă din cont modelele video și de imagine disponibile, "
         "cu limitele lor. Modelele implicite se aleg separat, în configurația de producție, și "

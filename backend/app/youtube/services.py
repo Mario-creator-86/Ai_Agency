@@ -104,6 +104,42 @@ class YouTubeConnectionError(Exception):
 # ------------------------------------------------------------------------------ transport --
 
 
+#: SELL-07, in the Owner's words: Google answers invalid_grant once a grant is revoked, and a
+#: Google OAuth app left in "Testing" gives refresh tokens that expire after seven days.
+INVALID_GRANT_WORDS = (
+    "Google a refuzat accesul la contul YouTube (HTTP {code}, invalid_grant): conexiunea a "
+    "expirat sau a fost revocată. Reconectează contul YouTube. Dacă aplicația Google OAuth "
+    "este în modul Testing, Google face tokenurile să expire după 7 zile: trece ecranul de "
+    "consimțământ în „In production” ca să nu se mai întâmple."
+)
+
+
+def google_refusal_words(code: int, body: str) -> str:
+    """Google's refusal of an OAuth request, said to the Owner.
+
+    Google's own code and description are kept (redirect_uri_mismatch, access_denied say
+    exactly what to change), but read out of its JSON, never shown as JSON; invalid_grant is
+    explained, because its usual cause on a new install is the seven-day Testing token.
+    """
+    try:
+        parsed = json.loads(body) if body else {}
+    except ValueError:
+        parsed = None
+    if not isinstance(parsed, dict):
+        return f"Google a răspuns HTTP {code}: {body.strip()[:300]}".rstrip(": ")
+    error = parsed.get("error")
+    if isinstance(error, dict):  # the APIs' shape, rather than the token endpoint's
+        word = str(error.get("status") or error.get("code") or "")
+        description = str(error.get("message") or "")
+    else:
+        word = str(error or "")
+        description = str(parsed.get("error_description") or "")
+    if word == "invalid_grant":
+        return INVALID_GRANT_WORDS.format(code=code)
+    said = " — ".join(part for part in (word, description) if part)
+    return f"Google a răspuns HTTP {code}" + (f": {said[:300]}" if said else ".")
+
+
 def _post_form(url: str, form: dict[str, str], *, timeout: int = 20) -> dict:
     """POST an x-www-form-urlencoded body and return the parsed JSON answer.
 
@@ -124,9 +160,9 @@ def _post_form(url: str, form: dict[str, str], *, timeout: int = 20) -> dict:
             body = response.read().decode()
             return json.loads(body) if body else {}
     except urllib.error.HTTPError as exc:
-        detail = exc.read().decode()[:500]
+        detail = exc.read().decode(errors="replace")[:500]
         logger.warning("google_oauth_http_error", extra={"status": exc.code})
-        raise YouTubeConnectionError(f"Google a răspuns {exc.code}: {detail}") from None
+        raise YouTubeConnectionError(google_refusal_words(exc.code, detail)) from None
     except OSError as exc:
         raise YouTubeConnectionError(f"Google nu a putut fi contactat: {exc}") from None
 
@@ -490,6 +526,40 @@ def _record_failure(
         )
 
 
+def mark_reconnect_needed(
+    engine: Engine, connection_id: str, reason: str, *, correlation_id: str
+) -> None:
+    """Google refused the account during an upload (PUB-01, SELL-07): the connection is ERROR
+    with the Romanian reason, and the refusal is written the way the analytics stage writes
+    its own (`TOKEN_REFRESH_FAILED`, ``auth_refused``), so every reader of the record — the
+    preflight, the page — says «Reconectează» instead of the studio trying again tomorrow.
+    A reconnect (`complete_authorization`) or a verification sets it CONNECTED again."""
+    words = (reason or "").strip() or "Google a refuzat contul YouTube."
+    if "Reconectează" not in words:
+        words = f"{words.rstrip('.')}. Reconectează contul YouTube."
+    with Session(engine) as session, session.begin():
+        row = session.get(YouTubeConnection, connection_id)
+        if row is None:
+            return
+        row.status = STATUS_ERROR
+        row.last_error = words[:500]
+        row.last_checked_at = utc_now()
+        append_event(
+            session,
+            TOKEN_REFRESH_FAILED,
+            "youtube_connection",
+            connection_id,
+            1,
+            {
+                "connection_id": connection_id,
+                "auth_refused": True,
+                "during": "upload",
+                "reason": words[:300],
+            },
+            correlation_id,
+        )
+
+
 def complete_authorization(
     engine: Engine, vault: CredentialVault, *, code: str, state: str, correlation_id: str
 ) -> dict:
@@ -716,9 +786,12 @@ def provider_for_connection(engine: Engine, vault: CredentialVault, connection_i
                 f"Conexiunea {row.name!r} nu este conectată. Apasă Conectează YouTube."
             )
         blob = vault.decrypt(row.encrypted_secrets)
+        snapshot = row.channel_snapshot if isinstance(row.channel_snapshot, dict) else {}
         return YouTubeProvider(
             client_id=row.client_id,
             client_secret=blob.get("client_secret"),
             refresh_token=blob.get("refresh_token"),
             channel_id=row.remote_channel_id,
+            # The uploads playlist reconciliation reads (PUB-03); asked for when absent.
+            uploads_playlist_id=snapshot.get("uploads_playlist_id") or None,
         )

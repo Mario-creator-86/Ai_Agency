@@ -19,7 +19,7 @@ test('the next run is a time only while the job is active and autonomy is on', (
 
 test('with nothing read, every line is a dash', () => {
   const { rows } = studioReadout({});
-  assert.deepEqual(rows.map((r) => [r.label, r.value]), [['Rularea zilei', '—'], ['Trezorerie', '—'], ['Următoarea rulare', '—']]);
+  assert.deepEqual(rows.map((r) => [r.label, r.value]), [['Rularea zilei', '—'], ['Trezorerie', '—'], ['Următoarea rulare', '—'], ['Filmul zilei', '—']]);
 });
 
 test('the treasury line is the wall screen\'s own figures, cut to cents', () => {
@@ -49,4 +49,52 @@ test('the key changes only when a line does', () => {
   const a = studioReadout({ jobs: [DAILY], stopped: false, timeZone: 'Europe/Bucharest' }).key;
   assert.equal(a, studioReadout({ jobs: [DAILY], stopped: false, timeZone: 'Europe/Bucharest' }).key);
   assert.notEqual(a, studioReadout({ jobs: [DAILY], stopped: true }).key);
+});
+
+// PAGE_OWNER_DAY (PAGE-14): «Filmul zilei», from the newest run's own stages.
+const FILM = '3ec1740c-0000-4000-8000-000000000001';
+/** @param {Record<string, any>} artefacts by stage */
+const runOf = (artefacts) => ({ business_date: '2026-10-02', stages: Object.entries(artefacts).map(([stage, a]) => ({ stage, status: 'COMPLETED', artefacts: a })) });
+
+test('the film of the day waiting at a step says where, what it cost so far and opens its sheet', async () => {
+  const { filmOfTheDay } = await import('../src/side_readout.js');
+  const row = filmOfTheDay(runOf({ media: { awaiting_owner: [{ storyboard_id: FILM, step: 'stills', approval_id: 'a' }], films: [{ storyboard_id: FILM, status: 'ASKED', step: 'stills' }], bought_steps: [] } }));
+  assert.equal(row.label, 'Filmul zilei');
+  assert.equal(row.value, 'te așteaptă la imagini');
+  assert.equal(row.tone, 'warn');
+  assert.equal(row.sheet, FILM);
+  const motion = filmOfTheDay(runOf({ media: { awaiting_owner: [{ storyboard_id: FILM, step: 'motion' }], bought_steps: [{ storyboard_id: FILM, step: 'stills', credits: 18 }, { storyboard_id: FILM, step: 'test_shot', credits: 340 }] } }));
+  assert.equal(motion.value, 'te așteaptă la mișcare');
+  assert.equal(motion.note, 'cumpărat până acum: 358 de credite');
+});
+
+test('in production, assembled with QC passed, QC failed and published private', async () => {
+  const { filmOfTheDay } = await import('../src/side_readout.js');
+  const making = filmOfTheDay(runOf({ media: { bought_steps: [{ storyboard_id: FILM, step: 'stills', credits: 18 }], films: [{ storyboard_id: FILM, status: 'READY' }] } }));
+  assert.equal(making.value, 'în producție');
+  assert.equal(making.note, 'cumpărat până acum: 18 credite');
+  assert.equal(making.sheet, FILM);
+  const passed = filmOfTheDay(runOf({ media: { assets: ['asset-1'], films: [{ storyboard_id: FILM, status: 'ASSEMBLED' }] }, edit_and_qc: { passed: 1, failed: 0 } }));
+  assert.equal(passed.value, 'asamblat, QC trecut');
+  assert.equal(passed.tone, 'ok');
+  const failed = filmOfTheDay(runOf({ media: { assets: ['asset-1'] }, edit_and_qc: { passed: 0, failed: 1 } }));
+  assert.equal(failed.value, 'QC picat');
+  assert.equal(failed.tone, 'alert');
+  const published = filmOfTheDay(runOf({ media: { assets: ['asset-1'] }, edit_and_qc: { passed: 1, failed: 0 }, publish: { published: [{ channel_name: 'Canalul faptelor', release_privacy: 'private', publication_status: 'PUBLISHED' }] } }));
+  assert.equal(published.value, 'publicat privat');
+  assert.equal(published.note, 'Canalul faptelor');
+  assert.equal(published.tone, 'ok');
+});
+
+test('a day with no film says so, and nothing read is a dash', async () => {
+  const { filmOfTheDay } = await import('../src/side_readout.js');
+  assert.equal(filmOfTheDay(runOf({ selection: {} })).value, 'niciun film azi');
+  assert.equal(filmOfTheDay(null).value, '—');
+  assert.equal(filmOfTheDay(runOf({ media: { films: [{ storyboard_id: FILM, status: 'HELD' }] } })).value, 'oprit înainte de un pas plătit');
+});
+
+test('the readout carries the film of the day as its fourth line', () => {
+  const { rows } = studioReadout({ run: runOf({ media: { awaiting_owner: [{ storyboard_id: FILM, step: 'test_shot' }] } }) });
+  assert.deepEqual(rows.map((r) => r.label), ['Rularea zilei', 'Trezorerie', 'Următoarea rulare', 'Filmul zilei']);
+  assert.equal(rows[3].value, 'te așteaptă la cadrul de probă');
 });

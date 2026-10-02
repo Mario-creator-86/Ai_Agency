@@ -5,6 +5,7 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC
+from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
@@ -13,12 +14,12 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import Engine, select, text
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import Connection, Engine, select, text
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import Response
-from starlette.types import ASGIApp, Scope
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.agents.models import ProviderRecord
 from app.agents.router import create_agents_router, create_providers_router
@@ -30,18 +31,28 @@ from app.economy.router import create_economy_router
 from app.factual.router import create_factual_router
 from app.integrations.discovery import refresh_due_catalogs
 from app.integrations.router import create_settings_router
-from app.integrations.services import load_registry
+from app.integrations.services import check_vault_at_startup, load_registry, vault_health
 from app.integrations.vault import CredentialVault
-from app.logging import configure_logging
+from app.logging import configure_logging, log_directory
 from app.media.router import create_media_router
 from app.office.kept_frame import create_kept_frame_router
 from app.office.router import create_office_router
 from app.office.stream import register_stream_gateway
 from app.office.unreal import remote_control_target, run_unreal_bridge
+from app.operations import (
+    new_operations,
+    operations_reading,
+    public_health,
+    record_pass_end,
+    record_pass_failure,
+    record_pass_start,
+)
+from app.page_build import page_build
 from app.providers.ollama import OllamaProvider
 from app.providers.registry import ProviderRegistry
 from app.publishing.router import create_publishing_router
 from app.runbook.router import create_runbook_router
+from app.runbook.services import clear_shutdown, request_shutdown
 from app.runbook.stages import build_stage_runners
 from app.runbook.weekly import WEEKLY_JOB_NAME
 from app.schemas import (
@@ -53,7 +64,7 @@ from app.schemas import (
     PolicyCommand,
     PolicyResult,
 )
-from app.security import require_owner
+from app.security import owner_key_matches, require_owner
 from app.services import (
     ApprovalClosed,
     ApprovalMissing,
@@ -71,9 +82,10 @@ from app.services import (
     read_events,
     read_instant,
     snapshot,
+    studio_location,
 )
 from app.story.router import create_story_router
-from app.workflows.publisher import ConnectionManager, publish_pending_outbox
+from app.workflows.publisher import ConnectionManager, dispatch_pending_outbox
 from app.workflows.router import (
     create_scheduler_router,
     create_tasks_router,
@@ -82,6 +94,8 @@ from app.workflows.router import (
 )
 from app.workflows.services import ensure_scheduled_job
 from app.workflows.worker import (
+    BACKUP,
+    BACKUP_JOB_NAME,
     DAILY_JOB_NAME,
     DAILY_RUN,
     DIRECTOR_LOOP,
@@ -94,13 +108,18 @@ from app.workflows.worker import (
     TRENDS_REFRESH,
     WATCHDOG,
     WATCHDOG_JOB_NAME,
+    WorkerLock,
+    acquire_worker_lock,
     build_task_handlers,
+    worker_lock_path,
     worker_pass,
 )
 from app.workforce.router import create_workforce_router
 from app.youtube.router import create_youtube_callback_router, create_youtube_router
 
 logger = logging.getLogger("studio.api")
+#: How long /health/ready trusts its last reading of the stored keys (it unwraps the key).
+VAULT_HEALTH_TTL_S = 30.0
 
 #: A file Vite built and named by its content: ``/assets/index-D49zCqy2.js``. Its bytes can never
 #: change under that name (a change is a new name, and index.html points at the new one), so a
@@ -130,11 +149,62 @@ class PageFiles(StaticFiles):
     with a 200 or a 304 carries a policy of its own.
     """
 
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        # A socket on a path no route serves falls through to the page's files, which only
+        # speak HTTP: Starlette asserted, printed a traceback and answered 500 on every retry
+        # (the Owner's console, 2026-10-02). Refused with a policy close instead; its path is
+        # logged at DEBUG only, without the query: a stranger's knock is not the studio's error.
+        if scope["type"] == "websocket":
+            logger.debug("websocket_unknown_path", extra={"path": str(scope.get("path", ""))[:200]})
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        await super().__call__(scope, receive, send)
+
     async def get_response(self, path: str, scope: Scope) -> Response:
         response = await super().get_response(path, scope)
         if response.status_code in (200, 304):
             response.headers["Cache-Control"] = static_cache_control(path.replace("\\", "/"))
         return response
+
+
+@lru_cache(maxsize=1)
+def expected_revision() -> str:
+    """The head of the migration chain this code was written for, read from the migrations.
+
+    It was a literal ('0048_production_sheet') that every new revision had to remember to
+    change, and a test copied it. The chain itself is the truth: read once per process.
+    """
+    from alembic.config import Config  # noqa: PLC0415 - only the start needs it
+    from alembic.script import ScriptDirectory  # noqa: PLC0415
+
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(ROOT / "backend/migrations"))
+    head = ScriptDirectory.from_config(config).get_current_head()
+    if not head:
+        raise RuntimeError("The migration chain has no single head")
+    return str(head)
+
+
+#: What the Owner reads when the database is not the one this version needs. Romanian: it is
+#: the first thing a buyer sees on a fresh install that skipped the bootstrap.
+_BOOTSTRAP_HINT = "Rulează scripts/bootstrap.py cu această versiune a aplicației."
+
+
+def database_revision(connection: Connection) -> str | None:
+    """The revision the database is at; RuntimeError in the Owner's words when it has none.
+
+    A file with no `alembic_version` table is a studio nobody bootstrapped. The raw error was
+    an OperationalError naming a missing table, which says nothing about what to do.
+    """
+    try:
+        return connection.scalar(text("SELECT version_num FROM alembic_version"))
+    except OperationalError as exc:
+        if "no such table" not in str(exc).lower():
+            raise
+        raise RuntimeError(
+            "Baza de date nu este inițializată (lipsește tabelul alembic_version). "
+            + _BOOTSTRAP_HINT
+        ) from None
 
 
 def _utc_now_plus(seconds: int) -> str:
@@ -171,15 +241,28 @@ def register_seeded_ollama(engine: Engine, registry: ProviderRegistry) -> None:
 
 def create_app(settings: Settings | None = None) -> ASGIApp:
     settings = settings or Settings()  # type: ignore[call-arg]
-    configure_logging(settings.log_level)
+    if settings.demo_mode:
+        # SELL-03: the demo runs on its own database (refused on the studio's) with every
+        # switch that would reach the network off; its vendors are replaced in the lifespan.
+        from app.demo import demo_settings  # noqa: PLC0415
+
+        settings = demo_settings(settings)
+    configure_logging(
+        settings.log_level,
+        log_dir=log_directory(settings),
+        max_bytes=settings.log_file_max_bytes,
+        backups=settings.log_file_backups,
+        console_level=settings.log_console_level,
+    )
     engine = create_db_engine(settings.database_url)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Migrations/bootstrap are explicit startup commands, never hidden destructive schema edits.
         with engine.connect() as connection:
-            revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
-            # The head of the chain. Phase D/G reserved 0041 (the picture check) and 0042
+            revision = database_revision(connection)
+            # The head of the chain, read from the migrations (`expected_revision`).
+            # Phase D/G reserved 0041 (the picture check) and 0042
             # (the reference set and the second vendor) and neither needed a schema change —
             # the verdicts live in `quality_control_report.checks_json`, the references in
             # columns that already existed — so 0043 chains onto 0040, and 0044 (the subject
@@ -189,26 +272,62 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
             # by start, for the snapshot's last task per employee. 0047 indexes the events by
             # stamp and the runs by start, for the replay's reads by time. 0048 adds the
             # production sheet's rows: each scene's kind, the paid takes, and the Owner's rule
-            # for paid media.
-            if revision != "0048_production_sheet":
-                raise RuntimeError("Run scripts/bootstrap.py with this application version")
+            # for paid media. 0049 records a paid task's id before the studio waits for it.
+            head = expected_revision()
+            if revision != head:
+                raise RuntimeError(
+                    f"Baza de date este la revizia {revision or 'necunoscută'}, iar această "
+                    f"versiune cere {head}. " + _BOOTSTRAP_HINT
+                )
             if connection.scalar(text("SELECT COUNT(*) FROM owner_policy")) != 1:
-                raise RuntimeError("Run scripts/bootstrap.py to initialize the studio")
+                raise RuntimeError(
+                    "Studioul nu este inițializat (lipsește politica Proprietarului). "
+                    + _BOOTSTRAP_HINT
+                )
+        # The stored keys are read once here, and a key that cannot be read is said instead
+        # of crashing the start (REL-06): the page must be up for the Owner to reconnect.
+        app.state.vault_health = check_vault_at_startup(engine, app.state.credential_vault)
+        app.state.vault_health_cache = None
         load_registry(engine, app.state.credential_vault, app.state.registry)
         register_seeded_ollama(engine, app.state.registry)
+        demo_exit = None
+        if settings.demo_mode:
+            # Every vendor seam replaced for the life of this process, and every provider's
+            # adapter the demo's stand-in model (app.demo). Undone at shutdown.
+            from contextlib import ExitStack  # noqa: PLC0415
+
+            from app.demo import (  # noqa: PLC0415
+                demo_vendors,
+                no_outbound_network,
+                register_demo_models,
+            )
+
+            register_demo_models(engine, app.state.registry)
+            demo_exit = ExitStack()
+            demo_exit.enter_context(no_outbound_network())
+            demo_exit.enter_context(demo_vendors())
+        # A studio started again in this process (a restart in place, the next test) is not
+        # born stopped by the last one's shutdown.
+        clear_shutdown(engine)
 
         # Outbox dispatcher: broadcast committed events to WebSocket clients every second.
-        # Runs on the server's own event loop on purpose — publish_pending_outbox schedules
-        # the broadcasts with the running loop, and the sockets belong to this loop. The
-        # SQLite read is a short local transaction, acceptable between request cycles.
+        # The broadcasts run on the server's own event loop, because the sockets belong to
+        # it; the database part (claim, mark PUBLISHED, commit) runs in a thread, so a write
+        # lock held elsewhere makes this pass wait rather than the requests.
         stop_dispatcher = asyncio.Event()
 
         async def dispatch_outbox() -> None:
             while not stop_dispatcher.is_set():
                 try:
-                    publish_pending_outbox(engine, app.state.connection_manager)
+                    # The rows are claimed and committed in a thread, then broadcast here:
+                    # nobody hears of an event whose row did not commit (REL-12).
+                    await dispatch_pending_outbox(engine, app.state.connection_manager)
                 except Exception as exc:
-                    logger.error("outbox_dispatch_failed", extra={"error": type(exc).__name__})
+                    logger.error(
+                        "outbox_dispatch_failed",
+                        extra={"error": type(exc).__name__},
+                        exc_info=exc,
+                    )
                 try:
                     await asyncio.wait_for(stop_dispatcher.wait(), timeout=1.0)
                 except TimeoutError:
@@ -254,7 +373,24 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
         # work, so it runs in a thread and the request loop stays responsive. Nothing fires
         # while the Owner's autonomy stop is set — the scheduler and the queue both refuse.
         worker: asyncio.Task[None] | None = None
-        if settings.worker_enabled:
+        worker_lock: WorkerLock | None = None
+        lock_path = worker_lock_path(engine) if settings.worker_enabled else None
+        if lock_path is not None:
+            # One worker per database (AR-17): a second studio started on the same database
+            # (the scheduled task beside a manual start) serves the page and runs no worker.
+            worker_lock = acquire_worker_lock(lock_path)
+            if worker_lock is None:
+                logger.warning(
+                    "worker_refused_second_instance",
+                    extra={
+                        "lock": str(lock_path),
+                        "reason": (
+                            "Un alt proces al studioului rulează deja lucrătorul pe această bază "
+                            "de date; acesta servește pagina și nu pornește un al doilea."
+                        ),
+                    },
+                )
+        if settings.worker_enabled and (lock_path is None or worker_lock is not None):
             # The day is on the studio's wall clock — STUDIO_DAILY_RUN_HOUR_LOCAL in
             # STUDIO_TIMEZONE — not on the moment the process started; the hour follows the
             # setting on every start-up.
@@ -309,15 +445,17 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
                     first_run_at=_utc_now_plus(120),
                     active=True,
                 )
-            ensure_scheduled_job(
-                engine,
-                name=MODEL_RESEARCH_JOB_NAME,
-                workflow_type=MODEL_RESEARCH,
-                interval_seconds=7 * 86400,
-                missed_policy="CATCH_UP",
-                first_run_at=_utc_now_plus(7200),
-                active=True,
-            )
+            # The stewards read their vendors' pages on the network: not in the demo.
+            if not settings.demo_mode:
+                ensure_scheduled_job(
+                    engine,
+                    name=MODEL_RESEARCH_JOB_NAME,
+                    workflow_type=MODEL_RESEARCH,
+                    interval_seconds=7 * 86400,
+                    missed_policy="CATCH_UP",
+                    first_run_at=_utc_now_plus(7200),
+                    active=True,
+                )
             # And every day, the standing of every model, re-judged on what it delivered.
             # The light review reads the studio's own results and generates nothing, so a
             # model that has started failing stops being chosen within a day instead of a
@@ -343,16 +481,33 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
                 first_run_at=_utc_now_plus(1800),
                 active=True,
             )
+            # The database's backup, once a day on the studio's clock (REL-04): SQLite's online
+            # copy, its check, the wrapped key beside it, then the pruning of old housekeeping
+            # rows (REL-15). No network and no cost, so it is active from birth; behind the
+            # autonomy stop like every other scheduled thing.
+            ensure_scheduled_job(
+                engine,
+                name=BACKUP_JOB_NAME,
+                workflow_type=BACKUP,
+                interval_seconds=86400,
+                missed_policy="CATCH_UP",
+                run_at_local=settings.backup_hour_local,
+                timezone=settings.timezone,
+                active=True,
+            )
             handlers = build_task_handlers(
                 engine, settings, app.state.credential_vault, app.state.stage_runners, registry
             )
+            ops = app.state.operations
 
             async def run_worker() -> None:
                 while not stop_dispatcher.is_set():
                     try:
+                        record_pass_start(ops)
                         summary = await asyncio.to_thread(
-                            worker_pass, engine, handlers, "worker_main", registry
+                            worker_pass, engine, handlers, "worker_main", registry, ops
                         )
+                        record_pass_end(ops)
                         if summary["triggered"] or summary["ran"]:
                             logger.info(
                                 "worker_pass",
@@ -362,7 +517,14 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
                                 },
                             )
                     except Exception as exc:  # noqa: BLE001 - a pass failing must not end the loop
-                        logger.error("worker_pass_failed", extra={"error": type(exc).__name__})
+                        logger.error(
+                            "worker_pass_failed",
+                            extra={"error": type(exc).__name__},
+                            exc_info=exc,
+                        )
+                        # Counted for /health/ready; the third in a row is one event and one
+                        # letter to the Owner (REL-07). Written off the loop: it is database work.
+                        await asyncio.to_thread(record_pass_failure, engine, ops, exc)
                     try:
                         await asyncio.wait_for(
                             stop_dispatcher.wait(), timeout=settings.worker_interval_seconds
@@ -371,23 +533,40 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
                         pass
 
             worker = asyncio.create_task(run_worker())
+            app.state.worker_running = True
 
         try:
             yield
         finally:
-            stop_dispatcher.set()
-            with suppress(asyncio.CancelledError):
-                await dispatcher
-            if worker is not None:
+            # The day running in the worker's thread hears this at its next boundary — the
+            # paid loops read it before every scene — and ends INTERRUPTED instead of being
+            # waited out for hours or killed mid-purchase (REL-10). Asked before the wait.
+            request_shutdown(engine)
+            try:
+                stop_dispatcher.set()
                 with suppress(asyncio.CancelledError):
-                    await worker
-            if catalog_refresher is not None:
-                with suppress(asyncio.CancelledError):
-                    await catalog_refresher
-            if unreal_bridge is not None:
-                with suppress(asyncio.CancelledError):
-                    await unreal_bridge
-            engine.dispose()
+                    await dispatcher
+                if worker is not None:
+                    if not worker.done():
+                        logger.info("shutdown_waiting_for_worker")
+                    with suppress(asyncio.CancelledError):
+                        await worker
+                if catalog_refresher is not None:
+                    with suppress(asyncio.CancelledError):
+                        await catalog_refresher
+                if unreal_bridge is not None:
+                    with suppress(asyncio.CancelledError):
+                        await unreal_bridge
+            finally:
+                # The worker has been awaited: the shutdown it was told of is over, and the
+                # worker's lock is the next start's.
+                app.state.worker_running = False
+                if worker_lock is not None:
+                    worker_lock.release()
+                if demo_exit is not None:
+                    demo_exit.close()
+                clear_shutdown(engine)
+                engine.dispose()
 
     app = FastAPI(
         title="AMN-AI",
@@ -399,6 +578,18 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
     )
     app.state.settings = settings
     app.state.engine = engine
+    #: The worker's own record of its passes (REL-07): read by /health/ready and the snapshot.
+    app.state.operations = new_operations()
+    #: The page's own folder (PAGE-01): the snapshot says whether the bundle it serves was built
+    #: from the sources there (`app.page_build`). A test points it at a page of its own.
+    app.state.page_root = ROOT / "frontend"
+    # The Owner's STUDIO_MEDIA_ROOT (REL-08): the media routes, the sheet's steps and the file
+    # routes' allowed folders read it here. Unset, they use the studio's own folder.
+    if settings.media_root is not None:
+        app.state.media_storage_root = settings.media_root
+    #: True while this process runs the background worker (False when it is off in the
+    #: settings, or another process on the same database holds the worker's lock).
+    app.state.worker_running = False
     app.state.credential_vault = CredentialVault(
         Path(str(engine.url.database)).with_suffix(".credentials.key")
     )
@@ -412,17 +603,38 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
         engine, settings, app.state.credential_vault, registry
     )
 
+    owner_key = settings.owner_token.get_secret_value()
+
+    def demo_refused(request: Request) -> str | None:
+        """The demo's refusal of a write it never runs (SELL-03), told only to the Owner: a
+        request without his key goes on to the route, which answers 401 as everywhere."""
+        if not settings.demo_mode:
+            return None
+        from app.demo import demo_refusal  # noqa: PLC0415
+
+        reason = demo_refusal(request.method, request.url.path)
+        header = request.headers.get("authorization", "")
+        presented = header[7:] if header.lower().startswith("bearer ") else None
+        return reason if reason and owner_key_matches(presented, owner_key) else None
+
     @app.middleware("http")
     async def request_context(request: Request, call_next):  # type: ignore[no-untyped-def]
         correlation_id = str(uuid4())
         started = time.perf_counter()
         try:
-            response = await call_next(request)
+            refusal = demo_refused(request)
+            if refusal is not None:
+                response = JSONResponse({"detail": refusal}, status_code=403)
+            else:
+                response = await call_next(request)
         except Exception as exc:
             # Never log arbitrary request bodies, authorization headers, URLs or DB error strings.
             logger.error(
                 "request_failed",
                 extra={"correlation_id": correlation_id, "error_class": type(exc).__name__},
+                # Its frames, never its text (app.logging): the cause is findable, the
+                # request's data and the database's strings stay out of the file.
+                exc_info=exc,
             )
             response = JSONResponse(
                 {"detail": "Internal error", "correlation_id": correlation_id}, status_code=500
@@ -476,15 +688,75 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
                 connection.execute(text("SELECT version FROM owner_policy WHERE id=1")).one()
         except SQLAlchemyError:
             return JSONResponse({"status": "DEGRADED", "database": "UNAVAILABLE"}, status_code=503)
+        # Whether the stored keys can be read (REL-06). A studio that cannot read them still
+        # answers 200: it serves the page, where the Owner reconnects. Public, so it names no
+        # connection; the preflight says which. Read again at most every VAULT_HEALTH_TTL_S,
+        # because the probe is unauthenticated and each read unwraps the key.
+        credentials = "HEALTHY"
+        try:
+            cached = getattr(app.state, "vault_health_cache", None)
+            if cached is None or time.monotonic() - cached[0] > VAULT_HEALTH_TTL_S:
+                cached = (
+                    time.monotonic(),
+                    vault_health(engine, app.state.credential_vault)["status"],
+                )
+                app.state.vault_health_cache = cached
+            credentials = "HEALTHY" if cached[1] == "HEALTHY" else "UNREADABLE"
+        except Exception as exc:  # noqa: BLE001 - the probe answers; the error is logged
+            logger.warning("vault_health_failed", exc_info=exc)
+            credentials = "UNKNOWN"
+        # What keeps the studio running (REL-07, AR-18): the worker's passes, the media disk,
+        # FFmpeg and FFprobe, the newest backup. Any of them wrong is 503 DEGRADED, so a
+        # supervisor watching this probe sees it; the page reads the same in the snapshot,
+        # in words. The probe is public: statuses and codes only.
+        try:
+            reading = public_health(operations_now())
+        except Exception as exc:  # noqa: BLE001 - the probe answers; the error is logged
+            logger.warning("operations_reading_failed", exc_info=exc)
+            reading = {"worker": "UNKNOWN", "problems": ["OPERATIONS_UNREADABLE"]}
+        degraded = credentials != "HEALTHY" or bool(reading["problems"])
         return JSONResponse(
-            {"status": "HEALTHY", "database": "HEALTHY", "scope": "FOUNDATION_API_AND_DATABASE"}
+            {
+                "status": "DEGRADED" if degraded else "HEALTHY",
+                "database": "HEALTHY",
+                "credentials": credentials,
+                **reading,
+                "scope": "FOUNDATION_API_AND_DATABASE",
+            },
+            status_code=503 if reading["problems"] else 200,
+        )
+
+    def operations_now() -> dict:
+        return operations_reading(
+            engine,
+            settings,
+            getattr(app.state, "operations", None),
+            worker_running=bool(getattr(app.state, "worker_running", False)),
         )
 
     router = APIRouter(prefix="/api/v1", dependencies=[Depends(require_owner)])
 
     @router.get("/snapshot")
     def get_snapshot() -> dict:
-        return snapshot(engine)
+        try:
+            operations = operations_now()
+        except Exception as exc:  # noqa: BLE001 - the snapshot is the page; it still answers
+            logger.warning("operations_reading_failed", exc_info=exc)
+            operations = None
+        reading = snapshot(
+            engine,
+            operations,
+            location=studio_location(settings),
+            demo=settings.demo_mode,
+        )
+        # Whether the page is older than the studio's sources (PAGE-01); None when it cannot be
+        # read, which the page shows as no banner rather than a guess.
+        try:
+            reading["page_build"] = page_build(Path(app.state.page_root))
+        except OSError as exc:
+            logger.warning("page_build_unreadable", exc_info=exc)
+            reading["page_build"] = None
+        return reading
 
     @router.get("/events")
     def get_events(

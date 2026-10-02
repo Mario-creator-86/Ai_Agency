@@ -71,6 +71,14 @@ class InvalidateMemoryCommand(BaseModel):
     reason: str = Field(min_length=1, max_length=600)
 
 
+#: What a route answers when the database refused a write (PAGE-11: Romanian, never
+#: «Internal error»).
+DATABASE_FAULT = (
+    "Studioul nu a putut salva în baza de date; nimic nu s-a schimbat. Detaliile sunt în "
+    "jurnalul serverului."
+)
+
+
 def create_agents_router(registry: ProviderRegistry) -> APIRouter:
     router = APIRouter(prefix="/agents", dependencies=[Depends(require_owner)])
 
@@ -199,7 +207,7 @@ def create_agents_router(registry: ProviderRegistry) -> APIRouter:
     ) -> dict:
         agent = get_agent(request.app.state.engine, agent_id)
         if agent is None:
-            raise HTTPException(status_code=404, detail="Agent not found")
+            raise HTTPException(status_code=404, detail="Angajatul nu există.")
         return agent
 
     @router.get("/{agent_id}/identity")
@@ -210,7 +218,7 @@ def create_agents_router(registry: ProviderRegistry) -> APIRouter:
         """The identity the model is given: contract, character, memory, the prompt itself."""
         identity = identity_view(request.app.state.engine, agent_id)
         if identity is None:
-            raise HTTPException(status_code=404, detail="Agent not found")
+            raise HTTPException(status_code=404, detail="Angajatul nu există.")
         identity["messages"] = list_messages(request.app.state.engine, agent_id=agent_id, limit=20)
         return identity
 
@@ -221,7 +229,7 @@ def create_agents_router(registry: ProviderRegistry) -> APIRouter:
     ) -> dict:
         """What the employee was asked, answered, decided and remembered, newest first."""
         if get_agent(request.app.state.engine, agent_id) is None:
-            raise HTTPException(status_code=404, detail="Agent not found")
+            raise HTTPException(status_code=404, detail="Angajatul nu există.")
         return {"timeline": agent_timeline(request.app.state.engine, agent_id)}
 
     @router.post("/{agent_id}/chat")
@@ -238,7 +246,7 @@ def create_agents_router(registry: ProviderRegistry) -> APIRouter:
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except SQLAlchemyError:
-            raise HTTPException(status_code=500, detail="Internal error") from None
+            raise HTTPException(status_code=500, detail=DATABASE_FAULT) from None
 
     @router.get("/{agent_id}/collaborations")
     def get_collaborations(
@@ -263,7 +271,7 @@ def create_agents_router(registry: ProviderRegistry) -> APIRouter:
         agent_id: Annotated[str, Path(min_length=36, max_length=36)],
     ) -> dict:
         if get_agent(request.app.state.engine, agent_id) is None:
-            raise HTTPException(status_code=404, detail="Agent not found")
+            raise HTTPException(status_code=404, detail="Angajatul nu există.")
         return {"memory": list_memory(request.app.state.engine, agent_id)}
 
     @router.post("/{agent_id}/memory/{record_id}/invalidate")
@@ -302,7 +310,7 @@ def create_agents_router(registry: ProviderRegistry) -> APIRouter:
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except SQLAlchemyError:
-            raise HTTPException(status_code=500, detail="Internal error") from None
+            raise HTTPException(status_code=500, detail=DATABASE_FAULT) from None
 
     @router.post("/{agent_id}/pause")
     def post_pause_agent(
@@ -357,7 +365,7 @@ def create_providers_router(registry: ProviderRegistry) -> APIRouter:
             models = sync_provider_models(request.app.state.engine, registry, provider_id)
             return {"synced_count": len(models), "models": models}
         except SQLAlchemyError:
-            raise HTTPException(status_code=500, detail="Internal error") from None
+            raise HTTPException(status_code=500, detail=DATABASE_FAULT) from None
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except OSError as exc:

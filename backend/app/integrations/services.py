@@ -1,4 +1,6 @@
+import logging
 import re
+from typing import Any
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -12,10 +14,18 @@ from app.integrations.catalog import CATALOG
 from app.integrations.discovery import DISCOVERED_KINDS, reset_discovery
 from app.integrations.llm import ConfiguredLLM
 from app.integrations.models import Integration, ServiceSelection
-from app.integrations.vault import CredentialVault
+from app.integrations.vault import (
+    RECONNECT_RO,
+    VAULT_MISSING,
+    VAULT_REASONS_RO,
+    CredentialVault,
+    VaultUnreadable,
+)
+from app.models import DomainEvent
 from app.providers.registry import ProviderRegistry
 from app.providers.youtube import YouTubeProvider
 from app.services import append_event, utc_now
+from app.wording import SETTINGS_TABS
 
 
 class SaveIntegration(BaseModel):
@@ -98,7 +108,12 @@ def save(engine: Engine, vault: CredentialVault, identifier: str, command: SaveI
             raise ValueError("Conflict de versiune; reîncarcă setările")
         if row and row.kind != command.kind:
             raise ValueError("Tipul unei conexiuni existente nu poate fi schimbat")
-        secrets = vault.decrypt(row.encrypted_secrets) if row else {}
+        try:
+            secrets = vault.decrypt(row.encrypted_secrets) if row else {}
+        except VaultUnreadable:
+            # Keys that cannot be read are lost (REL-06): the Owner reconnects by typing them
+            # again, and the required fields he leaves empty are asked for by `validate`.
+            secrets = {}
         for key, value in command.secrets.items():
             if value.get_secret_value():
                 secrets[key] = value.get_secret_value()
@@ -116,8 +131,15 @@ def save(engine: Engine, vault: CredentialVault, identifier: str, command: SaveI
         if row is None:
             row = Integration(id=identifier)
             session.add(row)
+        try:
+            encrypted = vault.encrypt(secrets)
+        except VaultUnreadable as exc:
+            raise ValueError(
+                f"{exc.reason_ro}. Conexiunea nu poate fi salvată până când fișierul cheii "
+                f"({vault.path.name}) nu este mutat deoparte; apoi {RECONNECT_RO}."
+            ) from None
         row.kind, row.name = command.kind, command.name.strip()
-        row.config, row.encrypted_secrets = command.config, vault.encrypt(secrets)
+        row.config, row.encrypted_secrets = command.config, encrypted
         row.secret_fields, row.version = sorted(secrets), version
         row.status, row.checked_at, row.event_id = "SAVED", None, event.event_id
         if row.kind in DISCOVERED_KINDS:
@@ -142,23 +164,274 @@ def save(engine: Engine, vault: CredentialVault, identifier: str, command: SaveI
         return public(row)
 
 
-def load_registry(engine: Engine, vault: CredentialVault, registry: ProviderRegistry) -> None:
+def load_registry(engine: Engine, vault: CredentialVault, registry: ProviderRegistry) -> list[str]:
+    """Registers every LLM connection whose keys can be read; returns the ids it could not.
+
+    A connection whose keys cannot be read is left out and logged, never fatal: start-up used
+    to decrypt all of them inside the lifespan, and one missing key file took the page down
+    with it, so the Owner could not even reach the form to type the keys again (REL-06).
+    """
+    skipped: list[str] = []
     with Session(engine) as session:
         for row in session.scalars(select(Integration)):
-            if CATALOG[row.kind]["runtime"] == "llm":
-                # The price table of this connection's kind, read once per call inside the
-                # adapter: a price the Owner types this afternoon costs this evening's runs
-                # without a restart. Registered without one, every run of the connection
-                # reported `cost_vr` NULL whatever he had typed.
-                registry.register(
-                    row.id,
-                    ConfiguredLLM(
-                        row.kind,
-                        row.config,
-                        vault.decrypt(row.encrypted_secrets),
-                        price_lookup=price_lookup(engine, row.kind),
-                    ),
+            if CATALOG.get(row.kind, {}).get("runtime") != "llm":
+                continue
+            try:
+                secrets = vault.decrypt(row.encrypted_secrets)
+            except VaultUnreadable as exc:
+                skipped.append(row.id)
+                _log.warning(
+                    "integration_not_loaded",
+                    extra={"integration_id": row.id, "code": exc.code, "reason": exc.reason_ro},
                 )
+                continue
+            # The price table of this connection's kind, read once per call inside the
+            # adapter: a price the Owner types this afternoon costs this evening's runs
+            # without a restart. Registered without one, every run of the connection
+            # reported `cost_vr` NULL whatever he had typed.
+            registry.register(
+                row.id,
+                ConfiguredLLM(
+                    row.kind,
+                    row.config,
+                    secrets,
+                    price_lookup=price_lookup(engine, row.kind),
+                ),
+            )
+    return skipped
+
+
+# ------------------------------------------------------------------ keys that cannot be read
+#
+# REL-06 / TS-03 / SELL-12. `vault_health` reads every stored connection's keys (the canary
+# first, then each row) and says what cannot be read, in the Owner's words. At start-up
+# `check_vault_at_startup` flags each unreadable connection NEEDS_RECONNECT on its own row (with
+# an event saying why), gives a connection its status back once its keys read again, and writes
+# the Owner one letter per distinct failure. The preflight line `credential_vault` reads the
+# same health and BLOCKS the day when a connection the studio uses cannot be read, so no paid
+# stage runs on keys it cannot open.
+
+#: The status an unreadable connection is shown with until the Owner types its keys again.
+NEEDS_RECONNECT = "NEEDS_RECONNECT"
+NEEDS_RECONNECT_EVENT = "settings.integration_needs_reconnect"
+READABLE_AGAIN_EVENT = "settings.integration_readable_again"
+#: The letter's kind, one per distinct failure (`fingerprint`).
+VAULT_LETTER_KIND = "credentials_unreadable"
+VAULT_HEADLINE_RO = "Cheile salvate nu pot fi citite"
+
+_log = logging.getLogger("studio.integrations")
+
+
+def _settings_tab(kind: str) -> str:
+    group = str(CATALOG.get(kind, {}).get("group") or "")
+    return group if group in SETTINGS_TABS else "llm"
+
+
+def vault_health(engine: Engine, vault: CredentialVault) -> dict[str, Any]:
+    """Whether the studio can read the keys it stored. Reads, never writes, never creates a key.
+
+    ``status`` HEALTHY | DEGRADED; ``code`` the key-level VAULT_* code or None; ``unreadable``
+    each connection whose keys cannot be read (id, kind, name, table, in_use, code);
+    ``blocking`` when the studio uses one of them (an LLM connection, or a connection selected
+    for a purpose), or when the key itself cannot be opened and something was stored with it;
+    ``reason_ro`` and ``place`` for the Owner.
+
+    The connections are those saved in Settings (the `integration` table, which start-up and
+    the media factory read). A YouTube channel's OAuth tokens (`youtube_connection`) are the
+    YouTube service's: a token it cannot read surfaces where it is used, at the upload and the
+    statistics read, and its own preflight lines name the channel.
+    """
+    key_code = vault.self_test()
+    with Session(engine) as session:
+        selected = {
+            row.integration_id
+            for row in session.scalars(select(ServiceSelection))
+            if row.integration_id
+        }
+        stored: list[dict[str, Any]] = [
+            {
+                "id": row.id,
+                "kind": row.kind,
+                "name": row.name,
+                "table": "integration",
+                "encrypted": row.encrypted_secrets,
+                "in_use": CATALOG.get(row.kind, {}).get("runtime") == "llm" or row.id in selected,
+                "tab": _settings_tab(row.kind),
+            }
+            for row in session.scalars(select(Integration).order_by(Integration.id))
+            if row.encrypted_secrets
+        ]
+    unreadable: list[dict[str, Any]] = []
+    for item in stored:
+        code = key_code
+        if code is None:
+            try:
+                vault.decrypt(item["encrypted"])
+            except VaultUnreadable as exc:
+                code = exc.code
+        if code is not None:
+            unreadable.append(
+                {k: v for k, v in item.items() if k not in ("encrypted", "tab")}
+                | {"code": code, "tab": item["tab"]}
+            )
+    # A key file that cannot be opened is a fault even before anything is stored with it:
+    # the first connection the Owner saves would fail. A key not there yet is a fresh studio.
+    key_fault = key_code is not None and (bool(stored) or key_code != VAULT_MISSING)
+    healthy = not unreadable and not key_fault
+    code = key_code if key_fault else (unreadable[0]["code"] if unreadable else None)
+    blocking = bool(stored) and any(item["in_use"] for item in unreadable)
+    if key_fault and stored:
+        blocking = True
+    names = ", ".join(f"«{item['name']}»" for item in unreadable)
+    reason = VAULT_REASONS_RO[code] if code else ""
+    if healthy:
+        reason_ro = ""
+    elif unreadable:
+        reason_ro = f"{VAULT_HEADLINE_RO}: {reason}. Conexiuni afectate: {names}; {RECONNECT_RO}."
+    else:
+        reason_ro = (
+            f"{VAULT_HEADLINE_RO}: {reason}. Mutați fișierul cheii deoparte și {RECONNECT_RO}."
+        )
+    tab = next((item["tab"] for item in unreadable if item["tab"] == "llm"), None)
+    tab = tab or (unreadable[0]["tab"] if unreadable else "llm")
+    return {
+        "status": "HEALTHY" if healthy else "DEGRADED",
+        "code": code,
+        "key_present": vault.key_present(),
+        "stored": len(stored),
+        "unreadable": unreadable,
+        "blocking": blocking,
+        "reason_ro": reason_ro,
+        "place": f"settings:{tab}",
+        "fingerprint": "" if healthy else f"{code}:{','.join(i['id'] for i in unreadable)}",
+    }
+
+
+def _flag_connections(engine: Engine, health: dict[str, Any]) -> dict[str, list[str]]:
+    """NEEDS_RECONNECT on each unreadable Integration row (once), and its earlier status back
+    on each flagged row that reads again. Each change bumps the row's version with an event."""
+    unreadable = {
+        item["id"]: item for item in health["unreadable"] if item["table"] == "integration"
+    }
+    flagged: list[str] = []
+    restored: list[str] = []
+    with Session(engine) as session, session.begin():
+        for row in session.scalars(select(Integration)):
+            if row.id in unreadable and row.status != NEEDS_RECONNECT:
+                item = unreadable[row.id]
+                previous = row.status
+                row.status, row.checked_at = NEEDS_RECONNECT, utc_now()
+                row.version += 1
+                event = append_event(
+                    session,
+                    NEEDS_RECONNECT_EVENT,
+                    "integration",
+                    row.id,
+                    row.version,
+                    {
+                        "previous_status": previous,
+                        "code": item["code"],
+                        "reason_ro": f"{VAULT_REASONS_RO[item['code']]}; {RECONNECT_RO}.",
+                    },
+                    str(uuid4()),
+                )
+                row.event_id = event.event_id
+                flagged.append(row.id)
+            elif row.id not in unreadable and row.status == NEEDS_RECONNECT:
+                last = session.scalars(
+                    select(DomainEvent)
+                    .where(
+                        DomainEvent.aggregate_type == "integration",
+                        DomainEvent.aggregate_id == row.id,
+                        DomainEvent.event_type == NEEDS_RECONNECT_EVENT,
+                    )
+                    .order_by(DomainEvent.aggregate_version.desc())
+                ).first()
+                said = (last.payload or {}) if last is not None else {}
+                previous = str(said.get("previous_status") or "SAVED")
+                row.status = previous
+                row.version += 1
+                event = append_event(
+                    session,
+                    READABLE_AGAIN_EVENT,
+                    "integration",
+                    row.id,
+                    row.version,
+                    {"status": previous},
+                    str(uuid4()),
+                )
+                row.event_id = event.event_id
+                restored.append(row.id)
+    return {"flagged": flagged, "restored": restored}
+
+
+def _vault_letter(engine: Engine, health: dict[str, Any]) -> str | None:
+    """One letter to the Owner per distinct failure: the same broken key on every restart is
+    one letter, a new connection that cannot be read is another."""
+    from app.agents.memory import agent_for_role  # noqa: PLC0415
+    from app.agents.messages import post_message  # noqa: PLC0415
+    from app.agents.models import AgentMessage  # noqa: PLC0415
+    from app.db import lock_for_write  # noqa: PLC0415
+
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        for existing in session.scalars(
+            select(AgentMessage).where(AgentMessage.to_agent_id.is_(None))
+        ):
+            body = existing.body_json if isinstance(existing.body_json, dict) else {}
+            if (
+                body.get("kind") == VAULT_LETTER_KIND
+                and body.get("fingerprint") == health["fingerprint"]
+            ):
+                return None
+        author = agent_for_role(session, "Director")
+        consequence = (
+            "Până atunci ziua nu pornește: nicio etapă plătită nu rulează pe chei pe care "
+            "studioul nu le poate deschide."
+            if health["blocking"]
+            else "Ziua pornește, dar fără aceste conexiuni."
+        )
+        message = post_message(
+            session,
+            intent="ESCALATE",
+            subject=VAULT_HEADLINE_RO,
+            body={
+                "kind": VAULT_LETTER_KIND,
+                "fingerprint": health["fingerprint"],
+                "code": health["code"],
+                "connections": [item["id"] for item in health["unreadable"]],
+            },
+            body_text=(
+                f"Către Owner. {health['reason_ro']} {consequence} Dacă studioul rulează ca "
+                "sarcină Windows „fără utilizator conectat” (S4U), pornește-l din contul tău: "
+                "cheia este legată de contul care a salvat conexiunile."
+            ),
+            from_agent_id=author.id if author is not None else None,
+            to_owner=True,
+        )
+        return str(message.id)
+
+
+def check_vault_at_startup(engine: Engine, vault: CredentialVault) -> dict[str, Any]:
+    """The start-up self-test: health, the rows flagged or given back, one letter. Never raises:
+    a studio that cannot say what is wrong with its keys must still start and serve the page."""
+    try:
+        health = vault_health(engine, vault)
+        health["changes"] = _flag_connections(engine, health)
+        if health["status"] != "HEALTHY":
+            _log.warning(
+                "credential_vault_degraded",
+                extra={
+                    "code": health["code"],
+                    "unreadable": [item["id"] for item in health["unreadable"]],
+                    "blocking": health["blocking"],
+                },
+            )
+            health["letter_id"] = _vault_letter(engine, health)
+        return health
+    except Exception as exc:  # noqa: BLE001 - start-up goes on; the preflight reads it again
+        _log.error("credential_vault_check_failed", exc_info=exc)
+        return {"status": "UNKNOWN", "error_class": type(exc).__name__}
 
 
 def selected_youtube(

@@ -15,6 +15,8 @@ which carries only that picture. The callback's own protection is the single-use
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 #: Public on purpose. Anything else answering an anonymous caller is a defect.
@@ -94,3 +96,56 @@ def test_a_wrong_credential_is_refused_everywhere_it_matters(client, credential)
     headers = {"Authorization": credential} if credential else {}
     response = client.get("/api/v1/settings", headers=headers)
     assert response.status_code in REFUSALS
+
+
+# ---------------------------------------------------------------------------------------------
+# SEC-07: a wrong key is logged (where it came from and which path, never the header), and a
+# client that keeps presenting wrong keys is answered 429 after REFUSALS_PER_MINUTE of them in a
+# minute. The Owner's own key still passes from the same address: the studio runs on his machine,
+# where a prober and his page share 127.0.0.1, and a lock-out would be a lock-out of him. The key
+# itself (64 characters) is what makes guessing impractical; this makes the guessing visible.
+# ---------------------------------------------------------------------------------------------
+
+
+class _Records(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__(logging.DEBUG)
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+
+def test_wrong_keys_are_logged_then_slowed_and_the_right_key_still_passes(client, headers):
+    from app.security import REFUSALS_PER_MINUTE
+
+    seen = _Records()
+    security_log = logging.getLogger("studio.security")
+    security_log.addHandler(seen)
+    try:
+        wrong = [f"wrong-key-{n}-{'x' * 20}" for n in range(REFUSALS_PER_MINUTE + 5)]
+        codes = [
+            client.get("/api/v1/settings", headers={"Authorization": f"Bearer {key}"}).status_code
+            for key in wrong
+        ]
+        assert codes[:REFUSALS_PER_MINUTE] == [401] * REFUSALS_PER_MINUTE, codes
+        assert set(codes[REFUSALS_PER_MINUTE:]) == {429}, codes
+        slowed = client.get("/api/v1/settings", headers={"Authorization": "Bearer nope"})
+        assert slowed.status_code == 429 and int(slowed.headers["Retry-After"]) >= 1
+        assert client.get("/api/v1/settings", headers=headers).status_code == 200
+    finally:
+        security_log.removeHandler(seen)
+    refused = [r for r in seen.records if r.getMessage() == "owner_auth_refused"]
+    assert len(refused) == REFUSALS_PER_MINUTE
+    assert refused[0].host == "testclient" and refused[0].path == "/api/v1/settings"
+    assert [r.getMessage() for r in seen.records].count("owner_auth_throttled") == 1
+    text = " ".join(repr(r.__dict__) for r in seen.records)
+    assert "wrong-key" not in text and "Bearer" not in text and "nope" not in text
+
+
+def test_a_missing_key_is_refused_without_counting_as_a_guess(client, headers):
+    from app.security import REFUSALS_PER_MINUTE
+
+    for _ in range(REFUSALS_PER_MINUTE + 5):
+        assert client.get("/api/v1/settings").status_code == 401
+    assert client.get("/api/v1/settings", headers={"Authorization": "Bearer x"}).status_code == 401

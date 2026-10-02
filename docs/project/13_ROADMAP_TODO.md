@@ -54,6 +54,58 @@ cost comparison, and never at the price of a locked character's voice.
 Canonical phase numbering and original-version mapping: [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
 Early STOP/event primitives do not complete Phase 1/2/10 requirements.
 
+## Production-readiness audit — 2026-10-01 → 2026-10-02
+
+The Owner's goal: production ready, ready to sell, films made automatically, quality 10/10.
+Every item below was implemented test-first with every provider faked (0 credits). "Done" means
+done in code and its own tests; nothing here is proven on a real paid vendor
+(see CURRENT_STATUS, «State on 2026-10-02»).
+
+Autonomous films and money safety:
+- [x] GREEN_SUITE — the committed suite's four failures fixed; FFmpeg runs from a short folder
+- [x] PAID_CALLS_AND_TAKE_INTENT — billed POSTs never resent unsafely; task ids kept and collected (0049)
+- [x] BOOK_EVERY_PURCHASE — every purchase booked once; charged-but-unanswered counts; narration cached
+- [x] NO_REBUY_RECOVERY_REFERENCES — per-scene failure memory; paid takes judged first; serial references
+- [x] GATES_BEFORE_BUYING — purchase lease (0050), reservation per step, film ceiling, fail-closed budget, OVER_USD on the cap
+- [x] HERO_AUTO_ACCEPT — hero accepted by clip QC under MODE / OVER_USD
+- [x] DAY_FLOW_NO_STALL — held films skipped, shot plans re-asked, stale films retired, clear letters
+- [x] CONTINUE_REDOS_E2E — FILM_CONTINUE the same day, automatic repair, autonomous-day end-to-end tests
+- [x] QUEUE_LEASE_SHUTDOWN — per-claim leases, INTERRUPTED days, graceful shutdown, no dead Workflow rows
+
+Production readiness:
+- [x] SECURITY_STARTUP_LOGGING — unreadable vault survivable, safe rotating logs, no key in URLs, file routes confined
+- [x] GATES_AND_CI — check_docs and check_secrets green on a fresh clone, check_all.py, CI workflow, patched deps
+- [x] BACKUP_DISK_HEALTH — backups, restore guard, backup before migrations, health, disk floor
+- [x] PUBLISHING_TRUTH — honest publishing states, reconciliation, visibility read back (0052)
+- [x] PUBLISHING_METADATA — YouTube limits, one disclosure, per-channel upload settings (0053), sources
+
+Film quality:
+- [x] FILM_AUDIO_AND_RIGHTS — trimmed narration, licensed music bed, stitching, licence ledger (0051)
+- [x] FILM_STORY_PICTURE_QC — looping endings, highlighted captions, second framings, grade, cover, editorial QC
+
+Sellable and the page:
+- [x] SELLABLE — demo mode, README and operator guide, settings documented, notices, release archive
+- [x] PAGE_OWNER_DAY — stale-page banner, sheet keys, paid rule in Guvernanță, confirmations, inbox
+- [x] PAGE_SETTINGS_ERRORS — publish policy panel, error words, work queue, plurals, a11y, Playwright on fakes
+- [x] DOCS_AND_STATUS — status header, decisions, architecture 51/08/11/39/47/25 amended with hashes
+
+Still open:
+- [ ] One whole-suite run after the audit (`scripts/check_all.py`, ≥16 GB free commit, no game) and its dated line here
+- [ ] `tests/test_serial_voices.py` two-speaker test red on caption card length since the phrase-aware captions
+- [ ] Hosted CI: a git remote or self-hosted runner (Owner's decision); the CI and e2e jobs have never run
+- [ ] `uv sync --locked` into the shared `.venv` (cryptography 50, urllib3 2.8, pillow, pytest-cov)
+- [ ] Serial episodes walked and retired like factual films; FILM_CONTINUE of a serial tested
+- [ ] A SpentStageError at the media stage holds the film with a letter instead of opening safe mode (policy choice)
+- [ ] A sweep that books credits on takes left unbooked by a hard kill
+- [ ] FILM_CONTINUE checks the vault before buying; integrations/router.py answers an unreadable row in Romanian
+- [ ] Romanian details in publishing/router.py and workflows/router.py
+- [ ] The page shows held scenes, needs_reference, the hero view, production audio/licences/grade/cover, editorial QC, remote privacy, and labels for the new letter kinds and events
+- [ ] Upload the cover (thumbnails.set) and a captions track (quota; Owner's decision)
+- [ ] The three catch-up jobs at start-up collide on "database busy" (seen live 2026-10-02)
+- [ ] Workforce seed without a model for new installs (SELL-10); a page for the studio's place settings
+- [ ] Owner decisions: `narration_purchase`, LOCAL_MOVE, always-on host, the film ceiling figure, his music library
+- [ ] The first capped paid film under EVERY_PAID_STEP (the real test)
+
 ## PHASE 0 — Foundation
 - [x] Inspect repository
 - [x] Define repo structure

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import abc
+import inspect
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -12,12 +13,24 @@ from typing import Any
 class UploadResult:
     remote_video_id: str
     remote_url: str
-    status: str  # CONFIRMED | UNKNOWN | FAILED
+    #: CONFIRMED: the platform named the video. UNKNOWN: bytes may have reached it and the
+    #: answer was lost; reconcile before anything else. RETRYABLE: nothing was created (the
+    #: session never started, or the token could not be refreshed for a reason that passes),
+    #: so a later attempt is safe. FAILED: nothing was created and asking again the same way
+    #: gets the same answer.
+    status: str
     error_detail: str | None = None
     raw_response: dict[str, Any] = field(default_factory=dict)
     # True when the result came from a local simulator rather than a real platform.
     # The pipeline must never record a simulated result as a real publication.
     simulated: bool = False
+    #: The platform refused the account itself (a 4xx from the token endpoint, a 401): the
+    #: connection has to be renewed by the Owner before any upload can succeed.
+    auth_refused: bool = False
+    #: What the platform says the video is, from its own answer (``status.privacyStatus`` and
+    #: ``status.uploadStatus``), never what was asked for. None when it did not say.
+    privacy_status: str | None = None
+    upload_status: str | None = None
 
 
 class RemoteStateUnavailable(RuntimeError):
@@ -37,6 +50,7 @@ class RemoteVideoStatus:
     privacy_status: str | None = None
     upload_status: str | None = None
     rejection_reason: str | None = None
+    failure_reason: str | None = None
 
 
 @dataclass
@@ -89,4 +103,38 @@ class PublishingProvider(abc.ABC):
         ``None`` means the platform was asked and holds no such upload. When it could not be
         asked, raise `RemoteStateUnavailable`: the caller's next step is to upload, and it must
         not take that step on the strength of a question that was never answered.
+
+        An adapter that can use them also takes two keyword-only facts (`YouTubeProvider`):
+        ``created_after``, when the publication was written (an upload of it cannot be older),
+        and ``channel_id``, the remote channel it was meant for: a video of the same title made
+        earlier, or on someone else's channel, is not this publication. Callers go through
+        `ask_reconcile`, which passes them only to an adapter that takes them.
         """
+
+
+def ask_reconcile(
+    provider: PublishingProvider,
+    idempotency_key: str,
+    expected_title: str,
+    *,
+    created_after: str | None = None,
+    channel_id: str | None = None,
+) -> Any:
+    """The coroutine of `provider.reconcile_upload`, with the two facts it can take.
+
+    Adapters (and test stand-ins) written before 2026-10-02 take two arguments; they are asked
+    with two. Judged on the signature, never by catching a TypeError, which could come from
+    inside the adapter.
+    """
+    method = provider.reconcile_upload
+    try:
+        parameters = inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        parameters = {}  # type: ignore[assignment]
+    accepts_any = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values())
+    extra: dict[str, Any] = {}
+    if accepts_any or "created_after" in parameters:
+        extra["created_after"] = created_after
+    if accepts_any or "channel_id" in parameters:
+        extra["channel_id"] = channel_id
+    return method(idempotency_key, expected_title, **extra)

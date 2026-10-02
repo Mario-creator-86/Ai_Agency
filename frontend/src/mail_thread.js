@@ -7,7 +7,26 @@
  * the window; the reply goes to whoever wrote last, into the same thread.
  *
  * `renderThread` is pure so what the window says is testable.
+ *
+ * PAGE_OWNER_DAY (PAGE-02): a letter that names a film's sheet (the day's sheet letter, the TEST
+ * letter) carries «Deschide foaia de filmare», and the raw API path the backend writes into its
+ * text («Foaia de filmare: /api/v1/media/…», which answers 401 JSON when opened) is never printed.
  */
+
+import { sheetKeyFor } from './sheet_key.js';
+
+/** The sheet's API path inside a letter's text: the key below opens it instead. */
+const SHEET_PATH_LINE = /^\s*Foaia de filmare:\s*\/api\/v1\/\S*\s*$/gim;
+const API_PATH = /\/api\/v1\/\S+/g;
+
+/**
+ * The text without the sheet's API path: its line goes (the key replaces it), and any other path
+ * is said in words.
+ * @param {string} text
+ */
+function withoutApiPaths(text) {
+  return text.replace(SHEET_PATH_LINE, '').replace(API_PATH, '(foaia de filmare, butonul de mai jos)').replace(/\n{3,}/g, '\n\n').trim();
+}
 
 const INTENT_LABEL = {
   REQUEST_INFO: 'Întrebare',
@@ -48,7 +67,7 @@ export function when(iso, timezone) {
  * @param {any} message
  */
 function letterText(message) {
-  const text = String(message.body_text || '').trim();
+  const text = withoutApiPaths(String(message.body_text || '').trim());
   if (text) return text;
   const body = message.body_json && typeof message.body_json === 'object' ? message.body_json : {};
   const lines = [];
@@ -116,6 +135,9 @@ export function renderThread(thread, { escape, timezone }) {
           : full
             ? ''
             : '<div class="mail-body mail-empty">(fără text; doar subiectul)</div>') +
+        (sheetKeyFor(m)
+          ? `<div class="mail-actions"><button type="button" class="secondary mail-sheet-key" data-sheet-open="${escape(sheetKeyFor(m))}">Deschide foaia de filmare</button></div>`
+          : '') +
         footer +
         '</article>'
       );
@@ -128,7 +150,7 @@ export class MailThread {
    * @param {{dialog: HTMLDialogElement, title: HTMLElement, body: HTMLElement,
    *          form: HTMLFormElement, input: HTMLTextAreaElement, status: HTMLElement,
    *          api: (path: string, options?: any) => Promise<any>, escape: (s: any) => string,
-   *          landed?: () => Promise<void>}} parts
+   *          landed?: () => Promise<void>, openSheet?: (storyboardId: string) => unknown}} parts
    */
   constructor(parts) {
     this.dialog = parts.dialog;
@@ -147,6 +169,13 @@ export class MailThread {
     this.form.addEventListener('submit', (event) => {
       event.preventDefault();
       this.reply();
+    });
+    // «Deschide foaia de filmare» in a letter: the film's sheet, over the thread.
+    const openSheet = parts.openSheet;
+    this.body.addEventListener('click', (event) => {
+      const key = event.target instanceof Element ? event.target.closest('[data-sheet-open]') : null;
+      const id = key ? key.getAttribute('data-sheet-open') : null;
+      if (id && openSheet) openSheet(id);
     });
   }
 

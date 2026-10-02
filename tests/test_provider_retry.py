@@ -546,3 +546,167 @@ def test_youtube_resumable_checkpoint_is_still_a_checkpoint_not_a_retry(monkeypa
 
     assert result.status == "CONFIRMED" and result.remote_video_id == "vid-1"
     assert calls == ["POST", "PUT", "PUT"]
+
+
+# --- a billed request is resent only on the statuses the vendor calls safe ----------------
+#
+# Runway's error page (https://docs.dev.runwayml.com/errors/errors/, read 2026-10-01) lists
+# 429, 502, 503 and 504 as "May retry" and no other status. A 500 answered after the vendor
+# created the task is a task that exists and is billed; sending the POST again buys it twice.
+
+
+def test_a_billed_request_answered_500_is_sent_once():
+    flaky = Flaky(refused(500), "a second purchase")
+
+    with pytest.raises(MediaProviderError) as excinfo:
+        call_with_retries(flaky, attempts=3, repeatable=False, sleep=lambda _: None)
+
+    assert flaky.calls == 1
+    assert excinfo.value.http_status == 500
+
+
+@pytest.mark.parametrize("status", [500, 501, 505, 520, 599])
+def test_no_unlisted_5xx_resends_a_billed_request(status):
+    flaky = Flaky(refused(status), "never")
+    with pytest.raises(MediaProviderError):
+        call_with_retries(flaky, attempts=3, repeatable=False, sleep=lambda _: None)
+    assert flaky.calls == 1
+    assert not is_transient(refused(status), repeatable=False)
+
+
+@pytest.mark.parametrize("status", [429, 502, 503, 504])
+def test_the_statuses_the_vendor_calls_safe_are_retried_even_for_a_billed_request(status):
+    flaky = Flaky(refused(status), "answer")
+    assert call_with_retries(flaky, attempts=3, repeatable=False, sleep=lambda _: None) == "answer"
+    assert flaky.calls == 2
+
+
+def test_a_read_answered_500_is_still_retried():
+    """A GET buys nothing: asking again after a 500 costs nothing."""
+    flaky = Flaky(refused(500), "answer")
+    assert call_with_retries(flaky, attempts=3, repeatable=True, sleep=lambda _: None) == "answer"
+    assert flaky.calls == 2
+
+
+def test_media_http_marks_an_unlisted_5xx_as_possibly_served(monkeypatch):
+    """The transport says what a 500 means for money: the request may have been served."""
+    from app.providers import media_http
+
+    class Answer:
+        status = 500
+        headers = SimpleNamespace(get_content_type=lambda: "application/json")
+
+        def read(self, _limit):
+            return b'{"error": "internal"}'
+
+        def getheader(self, _name):
+            return None
+
+    class Connection:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def request(self, *_args, **_kwargs):
+            return None
+
+        def getresponse(self):
+            return Answer()
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(media_http.http.client, "HTTPSConnection", Connection)
+    with pytest.raises(MediaProviderError) as excinfo:
+        media_http.request("vendor.test", "POST", "/v1/buy", {}, b"{}")
+    assert excinfo.value.http_status == 500 and excinfo.value.unanswered is True
+
+    Answer.status = 503
+    with pytest.raises(MediaProviderError) as excinfo:
+        media_http.request("vendor.test", "POST", "/v1/buy", {}, b"{}")
+    assert excinfo.value.http_status == 503 and excinfo.value.unanswered is False
+
+
+def test_a_runway_submit_answered_500_is_not_sent_again(monkeypatch):
+    recorder = Recorder(
+        MediaProviderError(
+            "api.dev.runwayml.com refused the request (HTTP 500)", http_status=500, unanswered=True
+        ),
+        ({"id": "task-2", "estimatedCost": {"credits": 25}}, b"", "application/json"),
+    )
+    adapter = runway_video(monkeypatch, recorder)
+
+    with pytest.raises(MediaProviderError) as excinfo:
+        asyncio.run(adapter.create_generation("a comet over the sea"))
+
+    assert len(recorder.calls) == 1
+    assert excinfo.value.http_status == 500
+
+
+# --- the configured LLM: a generation is a purchase too ------------------------------------
+
+
+class LLMConnection:
+    """`http.client` for ConfiguredLLM, scripted: each entry is a status, or an exception."""
+
+    script: list[Any] = []
+    sent: list[tuple[str, str]] = []
+
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    def request(self, method, path, *_args, **_kwargs):
+        LLMConnection.sent.append((method, path))
+
+    def getresponse(self):
+        status = LLMConnection.script.pop(0)
+        body = json.dumps({"response": "ok", "choices": [{"message": {"content": "ok"}}]})
+
+        class Answer:
+            def __init__(self) -> None:
+                self.status = status
+
+            def getheader(self, _name):
+                return None
+
+            def read(self, _limit):
+                return body.encode()
+
+        return Answer()
+
+    def close(self):
+        return None
+
+
+def llm(monkeypatch, *statuses: int):
+    import http.client
+
+    from app.integrations.llm import ConfiguredLLM
+
+    LLMConnection.script = list(statuses)
+    LLMConnection.sent = []
+    monkeypatch.setattr(http.client, "HTTPSConnection", LLMConnection)
+    monkeypatch.setattr(http.client, "HTTPConnection", LLMConnection)
+    return ConfiguredLLM("openai", {}, {"api_key": "sk-test"})  # pragma: allowlist secret
+
+
+def test_an_llm_generation_answered_500_is_sent_once(monkeypatch):
+    from app.integrations.llm import ProviderHTTPError
+
+    model = llm(monkeypatch, 500, 200)
+    with pytest.raises(ProviderHTTPError) as excinfo:
+        model.request("POST", "/chat/completions", {"model": "m"})
+    assert LLMConnection.sent == [("POST", "/v1/chat/completions")]
+    assert excinfo.value.http_status == 500 and excinfo.value.unanswered is True
+
+
+@pytest.mark.parametrize("status", [429, 502, 503, 504])
+def test_an_llm_generation_refused_for_now_is_asked_again(monkeypatch, status):
+    model = llm(monkeypatch, status, 200)
+    assert model.request("POST", "/chat/completions", {"model": "m"})["response"] == "ok"
+    assert len(LLMConnection.sent) == 2
+
+
+def test_an_llm_read_answered_500_is_asked_again(monkeypatch):
+    model = llm(monkeypatch, 500, 200)
+    assert model.request("GET", "/models")["response"] == "ok"
+    assert LLMConnection.sent == [("GET", "/v1/models")] * 2

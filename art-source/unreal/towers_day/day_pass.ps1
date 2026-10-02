@@ -10,13 +10,34 @@
 # a commandlet fails on a non-zero exit, on a fatal line or "Failed to compile Material" in its log,
 # and on a log without "finished execution (result 0)".
 
-$repo = 'E:\AI Acency\Autonomous_AI_Studio_Documentation_v5_ECONOMY_TREASURY_VENDORSHOP'
-$ue = "$repo\art-source\unreal"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
+# The repository is three folders up from this file, wherever it was cloned.
+$repo = (Resolve-Path (Join-Path $here '..\..\..')).Path
+$ue = "$repo\art-source\unreal"
+$unrealDir = $ue
+# Machine paths (SELL-11): the environment first, then art-source\unreal\.env.paths (KEY=VALUE lines,
+# ignored by Git, written once per machine), else a refusal that names both. No tracked file names a
+# drive of the first studio's PC. -Optional returns $null instead, for a path only one step needs.
+function Get-AmnPath([string]$Name, [string]$What, [switch]$Optional) {
+    $value = [Environment]::GetEnvironmentVariable($Name)
+    if (-not $value) {
+        $file = Join-Path $unrealDir ".env.paths"
+        if (Test-Path -LiteralPath $file) {
+            foreach ($line in Get-Content -LiteralPath $file -Encoding UTF8) {
+                if ($line -match '^\s*([A-Z_][A-Z0-9_]*)\s*=\s*"?([^"]*?)"?\s*$' -and $Matches[1] -eq $Name) { $value = $Matches[2] }
+            }
+        }
+    }
+    if (-not $value -and -not $Optional) {
+        throw "Set $Name to the $What (an environment variable, or a line $Name=<path> in art-source\unreal\.env.paths), or pass its -Path parameter."
+    }
+    return $value
+}
 $out = Join-Path (Split-Path -Parent $here) 'window'
 New-Item -ItemType Directory -Force $out | Out-Null
-$ueRoot = if ($env:AMN_UE_ROOT) { $env:AMN_UE_ROOT } else { 'E:\Program Files\Epic Games\UE_5.8' }
-$ueCmd = Join-Path $ueRoot 'Engine\Binaries\Win64\UnrealEditor-Cmd.exe'
+# Read at load without failing (nothing runs on load); Preflight refuses when it is missing.
+$ueRoot = Get-AmnPath 'AMN_UE_ROOT' 'Unreal Engine root (the folder holding Engine\Binaries)' -Optional
+$ueCmd = if ($ueRoot) { Join-Path $ueRoot 'Engine\Binaries\Win64\UnrealEditor-Cmd.exe' } else { $null }
 $uproject = "$ue\AMNReference\AMNReference.uproject"
 $umap = "$ue\AMNReference\Content\HQ\HQ_Dusk.umap"
 $envReport = "$ue\env_report.json"
@@ -36,6 +57,7 @@ function StreamProcs {
 }
 
 function Preflight {
+    if (-not $ueRoot) { $null = Get-AmnPath 'AMN_UE_ROOT' 'Unreal Engine root (the folder holding Engine\Binaries)' }
     # the pass needs >= 16 GB of free commit with the stream stopped; the stream gives back what it
     # holds (about 13 GB) when it stops
     $free = FreeCommit
@@ -48,9 +70,11 @@ function Preflight {
     if ($projected -lt 16) { throw "only $projected GB would be free with the stream stopped: no window now" }
 }
 
-function Backup {
+function Backup([string]$Root = '') {
+    # The backup folder is the operator's: -Root, else AMN_BACKUP_ROOT (environment or .env.paths).
+    if (-not $Root) { $Root = Get-AmnPath 'AMN_BACKUP_ROOT' 'folder the HQ backups go to' }
     $stamp = Get-Date -Format 'yyyyMMdd_HHmm'
-    $bk = "E:\AMN_backup\hq_before_towers_day_$stamp"
+    $bk = Join-Path $Root "hq_before_towers_day_$stamp"
     New-Item -ItemType Directory -Force $bk | Out-Null
     robocopy "$ue\AMNReference\Content\HQ" "$bk\Content\HQ" /E /NFL /NDL /NJH /NJS | Out-Null; $a = $LASTEXITCODE
     robocopy "$ue\AMNReference\Content\AMN" "$bk\Content\AMN" /E /NFL /NDL /NJH /NJS | Out-Null; $b = $LASTEXITCODE

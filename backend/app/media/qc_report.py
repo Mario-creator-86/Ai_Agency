@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from app.media.cost_plan import credits_to_micros
@@ -81,8 +81,13 @@ _KNOWN_CHECKS = frozenset(
         "factual_qc",
         "rights_qc",
         "content_source_qc",
+        "editorial_qc",
+        "audio_mix_qc",
     }
 )
+
+#: The heading of the editing notes that do not block publication (editorial QC, advisory).
+EDITORIAL_HEADING = "De îmbunătățit la montaj (nu blochează publicarea):"
 
 
 @dataclass(frozen=True)
@@ -267,6 +272,8 @@ class _Reading:
     encode_reasons: list[str]
     # scene -> (what to redo: "picture" (still+motion) | "motion", the evidence)
     scenes: dict[int, tuple[str, str]]
+    # Editing notes that do not block (editorial QC while it is advisory).
+    editorial: list[str] = field(default_factory=list)
 
 
 def _audio_failure(check: Mapping[str, Any]) -> str:
@@ -431,6 +438,21 @@ def _read(report: Mapping[str, Any]) -> _Reading:
             f"Afirmații: {len(bad)} neverificate; nu se repară cu credite, ci cu surse "
             "(de decis de Proprietar)."
         )
+    editorial = checks.get("editorial_qc")
+    if isinstance(editorial, Mapping):
+        notes = [str(reason) for reason in editorial.get("reasons_ro") or [] if str(reason)]
+        if editorial.get("passed") is False:
+            reading.failures.extend(f"Montaj: {note}" for note in notes)
+        else:
+            reading.editorial.extend(notes)
+    mix = checks.get("audio_mix_qc")
+    if _failed(mix):
+        assert isinstance(mix, Mapping)
+        reasons = [str(r) for r in mix.get("reasons_ro") or [] if str(r)]
+        reading.failures.append(
+            "Fond sonor: " + ("; ".join(_quote(r, 120) for r in reasons[:2]) or "a picat") + "."
+        )
+        reading.audio = True
     for name, label in (("rights_qc", "Drepturi"), ("content_source_qc", "Sursa imaginii")):
         check = checks.get(name)
         if _failed(check):
@@ -589,6 +611,9 @@ def qc_summary_ro(
         lines.extend(f"- {line}" for line in reading.failures)
     else:
         lines.append("Ce a picat: nimic din ce s-a măsurat.")
+    if reading.editorial:
+        lines.append(EDITORIAL_HEADING)
+        lines.extend(f"- {note}" for note in reading.editorial)
     lines.append(_credits_line(spend))
 
     proposals = redo_proposals(data, sheet=sheet, scene_kinds=scene_kinds)

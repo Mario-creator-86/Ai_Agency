@@ -59,6 +59,89 @@ OUTPUT_FORMAT = "mp3_44100_128"
 #: Refusals that mean "this endpoint shape is not served" (a contract change): no audio was
 #: made, so asking the plain endpoint once buys nothing twice.
 CONTRACT_REFUSALS = frozenset({404, 405, 422})
+#: Refusals of a request's *fields* (a validation answer): no audio was made and nothing was
+#: billed, so the optional fields below are dropped once and the same endpoint asked again.
+FIELD_REFUSALS = frozenset({400, 422})
+#: The documented voice settings ("Create speech with timing", read 2026-10-02). Anything
+#: else a binding holds is never sent: an unknown key is a refusal waiting to happen.
+VOICE_SETTING_KEYS = ("stability", "similarity_boost", "style", "use_speaker_boost")
+#: The studio's defaults when the bible's binding sets nothing.
+DEFAULT_VOICE_SETTINGS: dict[str, Any] = {"stability": 0.5, "similarity_boost": 0.75}
+#: Fields that improve a recording but are not needed for one. Request stitching
+#: (previous_text / next_text / previous_request_ids / next_request_ids) keeps the intonation
+#: running across scenes instead of falling at every cut (audit Q3); text normalisation and a
+#: pronunciation dictionary make numbers and names read right (Q13).
+OPTIONAL_FIELDS = (
+    "previous_text",
+    "next_text",
+    "previous_request_ids",
+    "next_request_ids",
+    "apply_text_normalization",
+    "pronunciation_dictionary_locators",
+)
+#: The vendor takes at most three request ids and three dictionary locators per request.
+MAX_REQUEST_IDS = 3
+MAX_LOCATORS = 3
+#: How much neighbouring text is sent as context: the sentence before and after, never the
+#: whole script.
+MAX_CONTEXT_CHARACTERS = 400
+#: The small, fast models. ElevenLabs documents that Flash v2.5 reads "$1,000,000" as "one
+#: thousand thousand dollars" on its own: these are asked to normalise numbers always ("on");
+#: the large models keep the vendor's "auto".
+SMALL_MODEL_MARKERS = ("flash", "turbo")
+
+
+def wants_text_normalisation(model: str | None) -> bool:
+    """Whether this model is asked for ``apply_text_normalization: "on"``."""
+    name = str(model or "").lower()
+    return any(marker in name for marker in SMALL_MODEL_MARKERS)
+
+
+def _context_text(value: Any, *, tail: bool) -> str | None:
+    """A neighbour's words, whitespace-folded and cut to MAX_CONTEXT_CHARACTERS at a word
+    boundary (its end for the text before, its start for the text after); None when empty."""
+    if not isinstance(value, str):
+        return None
+    text = " ".join(value.split())
+    if not text:
+        return None
+    if len(text) <= MAX_CONTEXT_CHARACTERS:
+        return text
+    if tail:
+        cut = text[-MAX_CONTEXT_CHARACTERS:]
+        return cut.split(" ", 1)[1] if " " in cut else cut
+    cut = text[:MAX_CONTEXT_CHARACTERS]
+    return cut.rsplit(" ", 1)[0] if " " in cut else cut
+
+
+def _request_ids(value: Any, *, last: bool) -> list[str] | None:
+    """At most MAX_REQUEST_IDS ids: the latest before this request, the first after it."""
+    if not isinstance(value, list | tuple):
+        return None
+    ids = [str(item) for item in value if isinstance(item, str) and item.strip()]
+    if not ids:
+        return None
+    return ids[-MAX_REQUEST_IDS:] if last else ids[:MAX_REQUEST_IDS]
+
+
+def checked_locators(value: Any) -> list[dict[str, str]]:
+    """The documented locator shape only, at most three: {pronunciation_dictionary_id,
+    version_id}, both non-empty strings."""
+    found: list[dict[str, str]] = []
+    for item in value if isinstance(value, list | tuple) else []:
+        if not isinstance(item, dict):
+            continue
+        dictionary, version = item.get("pronunciation_dictionary_id"), item.get("version_id")
+        if (
+            isinstance(dictionary, str)
+            and dictionary.strip()
+            and isinstance(version, str)
+            and version.strip()
+        ):
+            found.append({"pronunciation_dictionary_id": dictionary, "version_id": version})
+    return found[:MAX_LOCATORS]
+
+
 #: How far past the measured audio an alignment may end and still be about this audio. MP3
 #: frames and the vendor's own clock disagree by a frame or two, never by half a second.
 ALIGNMENT_SLACK_SECONDS = 0.5
@@ -144,7 +227,10 @@ def word_timings_for(narration: str, alignment: dict[str, list[Any]]) -> list[di
 
 class ElevenLabsTTSAdapter(TTSProvider):
     PROVIDER_NAME = "ELEVENLABS"
-    ADAPTER_VERSION = "1.0.0"
+    ADAPTER_VERSION = "1.1.0"
+    #: The assembler sends each scene's neighbours (``extra={"previous_text", "next_text"}``)
+    #: only to a voice that says it can use them.
+    ACCEPTS_STITCHING = True
 
     def __init__(
         self,
@@ -160,10 +246,31 @@ class ElevenLabsTTSAdapter(TTSProvider):
         self.model = model or ""
         #: Per-character voice settings from the bible's binding; the API's defaults otherwise.
         self.voice_settings: dict[str, Any] = {}
+        #: The binding's pronunciation dictionaries, as the vendor's locators. Creating a
+        #: dictionary is the Owner's act in his ElevenLabs account; the studio only names it.
+        self.pronunciation_locators: list[dict[str, str]] = []
+        #: Optional fields the vendor refused for this voice (a 400/422 on them): never
+        #: offered again by this adapter, so one refusal is not paid in time per scene.
+        self.refused_fields: set[str] = set()
         #: The Owner's per-thousand-character prices (`app.economy.prices.price_lookup`).
         #: Nine live models carried `pricing {}` and narration was never costed; with a
         #: price every synthesis reports what its characters cost, and None without one.
         self.price_lookup = price_lookup
+
+    def request_settings(self) -> dict[str, Any]:
+        """What every request of this voice carries besides the words and their context: the
+        documented voice settings, text normalisation for the small models, and the
+        pronunciation dictionaries. Part of a narration's identity (`assembler.narration_key`):
+        the same words said under other settings are another recording."""
+        settings = dict(DEFAULT_VOICE_SETTINGS)
+        settings.update({k: v for k, v in self.voice_settings.items() if k in VOICE_SETTING_KEYS})
+        options: dict[str, Any] = {"voice_settings": settings}
+        if wants_text_normalisation(self.model):
+            options["apply_text_normalization"] = "on"
+        locators = checked_locators(self.pronunciation_locators)
+        if locators:
+            options["pronunciation_dictionary_locators"] = locators
+        return {k: v for k, v in options.items() if k not in self.refused_fields}
 
     def _headers(self, accept: str) -> dict[str, str]:
         return {"xi-api-key": self.api_key, "Accept": accept, "Content-Type": "application/json"}
@@ -286,37 +393,58 @@ class ElevenLabsTTSAdapter(TTSProvider):
                 f"{settings_place('media')}"
             )
 
-        payload = json.dumps(
+        options = self.request_settings()
+        fields: dict[str, Any] = {
+            "text": narration,
+            "model_id": self.model,
+            # The API exposes no pitch control, so the adapter does not pretend to have one:
+            # a pitch argument it silently dropped would read as applied.
+            "voice_settings": {**options.pop("voice_settings"), "speed": speed},
+            **options,
+        }
+        context = extra or {}
+        stitched = {
+            "previous_text": _context_text(context.get("previous_text"), tail=True),
+            "next_text": _context_text(context.get("next_text"), tail=False),
+            "previous_request_ids": _request_ids(context.get("previous_request_ids"), last=True),
+            "next_request_ids": _request_ids(context.get("next_request_ids"), last=False),
+        }
+        fields.update(
             {
-                "text": narration,
-                "model_id": self.model,
-                # The API exposes no pitch control, so the adapter does not pretend to have one:
-                # a pitch argument it silently dropped would read as applied.
-                "voice_settings": {
-                    "stability": 0.5,
-                    "similarity_boost": 0.75,
-                    **{k: v for k, v in self.voice_settings.items() if k != "speed"},
-                    "speed": speed,
-                },
+                key: value
+                for key, value in stitched.items()
+                if value is not None and key not in self.refused_fields
             }
-        ).encode("utf-8")
+        )
 
         voice_path = f"/v1/text-to-speech/{quote(voice, safe='')}"
         query = "?" + urlencode({"output_format": OUTPUT_FORMAT})
+        timed_path = f"{voice_path}/with-timestamps{query}"
         alignments: dict[str, Any] = {}
+        dropped: dict[str, Any] | None = None
         try:
-            # The JSON answer carries the audio inline (base64), so it is read under the
-            # media size cap, not the small one a catalogue answer gets, and parsed here.
-            _, body, content_type = await asyncio.to_thread(
-                retrying,
-                request,
-                HOST,
-                "POST",
-                f"{voice_path}/with-timestamps{query}",
-                self._headers("application/json"),
-                payload,
-                expect_json=False,
-            )
+            try:
+                # The JSON answer carries the audio inline (base64), so it is read under the
+                # media size cap, not the small one a catalogue answer gets, and parsed here.
+                _, body, content_type = await self._post_timed(timed_path, fields)
+            except MediaProviderError as exc:
+                optional = sorted(key for key in fields if key in OPTIONAL_FIELDS)
+                if exc.http_status not in FIELD_REFUSALS or not optional:
+                    raise
+                # A validation refusal made no audio and billed nothing. The fields that only
+                # improve the recording are dropped, once, and remembered for this voice; the
+                # words, the model and the voice settings are asked for again as they were.
+                logger.warning(
+                    "ElevenLabs refused the request with its optional fields (HTTP %s); "
+                    "asking once more without %s",
+                    exc.http_status,
+                    ", ".join(optional),
+                )
+                self.refused_fields.update(optional)
+                dropped = {"http_status": exc.http_status, "fields": optional}
+                for key in optional:
+                    fields.pop(key, None)
+                _, body, content_type = await self._post_timed(timed_path, fields)
         except MediaProviderError as exc:
             if exc.http_status not in CONTRACT_REFUSALS:
                 raise
@@ -334,7 +462,7 @@ class ElevenLabsTTSAdapter(TTSProvider):
                 "POST",
                 f"{voice_path}{query}",
                 self._headers("audio/mpeg"),
-                payload,
+                json.dumps(fields).encode("utf-8"),
                 expect_json=False,
             )
             if not audio or "audio" not in content_type:
@@ -346,6 +474,23 @@ class ElevenLabsTTSAdapter(TTSProvider):
         else:
             audio, alignments = self._timed_answer(body, content_type)
             raw = {"endpoint": "with-timestamps"}
+        if dropped is not None:
+            raw["options_dropped"] = dropped
+        # What the recording was asked with besides its words and their neighbours.
+        raw["request_options"] = {
+            key: fields[key]
+            for key in (
+                "voice_settings",
+                "apply_text_normalization",
+                "pronunciation_dictionary_locators",
+            )
+            if key in fields
+        }
+        raw["stitched"] = sorted(
+            key
+            for key in ("previous_text", "next_text", "previous_request_ids", "next_request_ids")
+            if key in fields
+        )
 
         # Counted from the returned frames, not estimated from the words sent.
         duration = mp3_duration_seconds(audio)
@@ -399,6 +544,20 @@ class ElevenLabsTTSAdapter(TTSProvider):
                 "characters": len(narration),
                 **raw,
             },
+        )
+
+    async def _post_timed(self, path: str, fields: dict[str, Any]) -> tuple[Any, bytes, str]:
+        """One POST of ``fields`` to the timed endpoint, under the studio's retry policy (a
+        purchase that got no answer is never sent again)."""
+        return await asyncio.to_thread(
+            retrying,
+            request,
+            HOST,
+            "POST",
+            path,
+            self._headers("application/json"),
+            json.dumps(fields).encode("utf-8"),
+            expect_json=False,
         )
 
     @staticmethod

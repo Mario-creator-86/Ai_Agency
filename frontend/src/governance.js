@@ -1,4 +1,5 @@
 import { amount } from './numbers.js';
+import { sheetKeyFor } from './sheet_key.js';
 /**
  * What the Owner's panel has to say about the studio's own authority.
  *
@@ -178,8 +179,28 @@ function normaliseApproval(row) {
     created_at: row.created_at || null,
     result,
     pending: result === 'PENDING',
+    // PAGE-03: a film's paid question names its step, its plan and the film (backend
+    // services.approval_context); null for every other question.
+    context: row.context && typeof row.context === 'object' ? row.context : null,
+    film_title: row.film_title ? String(row.film_title) : '',
   };
 }
+
+/**
+ * Whether this question buys something for a film: a `media.*` action that names a storyboard.
+ * Such a question is answered on the film's sheet, where the scenes, the models, the cap and the
+ * balance are, never by one click on a card (PAGE-03).
+ * @param {ReturnType<typeof readApprovals>[number]} request
+ */
+export function isSheetQuestion(request) {
+  return Boolean(request && request.action.startsWith('media.') && sheetKeyFor(request));
+}
+
+/** The paid steps, as the card says them. */
+const STEP_WORDS = { stills: 'imaginile', test_shot: 'cadrul de probă', motion: 'mișcarea', scene_redo: 'o refacere', assemble: 'narațiunea' };
+
+/** The tiers whose «Aprobă» asks first (PAGE-03): they leave the studio or are the Owner's own. */
+const ASK_FIRST_TIERS = ['T3', 'T4'];
 
 /**
  * What this action would cost the studio.
@@ -235,10 +256,32 @@ export function expiryValue(text) {
  * backend's (action_label, subject, cost_label, evidence) or the page's own labels; nothing is
  * reworded.
  * @param {ReturnType<typeof readApprovals>[number]} request
- * @param {{now: number, escape: (s: unknown) => string, caveat: string, tierMeaning: string, person?: {id: string, name: string, seated: boolean}|null}} o
+ * PAGE-03: a film's paid question has no «Aprobă» here: «Deschide foaia de filmare» opens the
+ * sheet the yes is bound to, and «Refuză» stays. Another T3/T4 question asks first: «Aprobă»
+ * opens the question with its cost, his note and «Da, aprob» (`o.confirming`).
+ * @param {{now: number, escape: (s: unknown) => string, caveat: string, tierMeaning: string, person?: {id: string, name: string, seated: boolean}|null, confirming?: boolean}} o
  */
 export function approvalCardHtml(request, o) {
   const e = o.escape;
+  const sheet = isSheetQuestion(request) ? sheetKeyFor(request) : null;
+  const step = request.context && request.context.step ? String(request.context.step) : '';
+  const film = sheet
+    ? `<p class="approval-film"><span class="approval-label">Filmul</span> ${e(request.film_title || '—')}${step ? ` · pasul: ${e(STEP_WORDS[/** @type {keyof typeof STEP_WORDS} */ (step)] || step)}` : ''}${request.context && request.context.plan_hash ? ` · foaia ${e(request.context.plan_hash)}` : ''}</p>`
+    : '';
+  const askFirst = !sheet && ASK_FIRST_TIERS.includes(request.risk_tier);
+  let keys;
+  if (sheet) {
+    keys = `<button class="secondary" type="button" data-sheet-open="${e(sheet)}">Deschide foaia de filmare</button>`
+      + `<button class="quiet btn-approval" data-id="${e(request.id)}" data-decision="REFUSED">Refuză</button>`;
+  } else if (askFirst && !o.confirming) {
+    keys = `<button class="secondary btn-approval" data-id="${e(request.id)}" data-decision="CONFIRM">Aprobă</button>`
+      + `<button class="quiet btn-approval" data-id="${e(request.id)}" data-decision="REFUSED">Refuză</button>`;
+  } else if (askFirst) {
+    keys = approvalConfirmHtml(request, o);
+  } else {
+    keys = `<button class="secondary btn-approval" data-id="${e(request.id)}" data-decision="APPROVED">Aprobă</button>`
+      + `<button class="quiet btn-approval" data-id="${e(request.id)}" data-decision="REFUSED">Refuză</button>`;
+  }
   const tier = request.risk_tier || '—';
   const by = o.person
     ? `<div class="approval-by">${o.person.seated ? `<span class="person-portrait approval-portrait" data-portrait="${e(o.person.id)}" aria-hidden="true"><canvas class="person-canvas" width="0" height="0"></canvas><span class="person-portrait-none">—</span></span>` : ''}<span>Cerută de <strong title="${e(request.requester)}">${e(o.person.name)}</strong></span></div>`
@@ -249,7 +292,7 @@ export function approvalCardHtml(request, o) {
         <span class="approval-action" title="${e(request.action)}">${e(request.action_label || 'acțiune nenumită')}</span>
         <span class="tag approval-tier" title="${e(o.tierMeaning)}">${e(tier)}</span>
       </div>
-      ${request.subject ? `<p class="approval-subject"><span class="approval-label">Despre</span> ${e(request.subject)}</p>` : ''}
+      ${film || (request.subject ? `<p class="approval-subject"><span class="approval-label">Despre</span> ${e(request.subject)}</p>` : '')}
       <dl class="approval-facts">
         <div><dt>Cost</dt><dd>${e(request.cost_label)}${o.caveat ? ` <span class="approval-caveat">(${e(o.caveat)})</span>` : ''}</dd></div>
         <div><dt>Expiră</dt><dd>${e(expiryValue(approvalExpiryText(request.expires_at, o.now)))}</dd></div>
@@ -257,11 +300,23 @@ export function approvalCardHtml(request, o) {
       </dl>
       ${by}
       ${request.evidence ? `<p class="approval-evidence">${e(request.evidence)}</p>` : ''}
-      <div class="source-actions">
-        <button class="secondary btn-approval" data-id="${e(request.id)}" data-decision="APPROVED">Aprobă</button>
-        <button class="quiet btn-approval" data-id="${e(request.id)}" data-decision="REFUSED">Refuză</button>
-      </div>
+      <div class="source-actions">${keys}</div>
     </article>`;
+}
+
+/**
+ * The question a T3/T4 «Aprobă» opens: what is approved, its cost, his note and «Da, aprob».
+ * @param {ReturnType<typeof readApprovals>[number]} request
+ * @param {{escape: (s: unknown) => string, caveat?: string}} o
+ */
+export function approvalConfirmHtml(request, o) {
+  const e = o.escape;
+  return `<div class="approval-confirm" role="group" aria-label="Confirmă aprobarea">`
+    + `<p class="approval-confirm-q">Aprobi «${e(request.action_label || request.action)}»? Cost: ${e(request.cost_label)}${o.caveat ? ` (${e(o.caveat)})` : ''}; ${request.reversible ? 'acțiunea se poate întoarce' : 'acțiunea nu se mai poate întoarce'}.</p>`
+    + '<label class="approval-note">Nota ta (opțional)<textarea data-approval-note maxlength="500" rows="2"></textarea></label>'
+    + `<div class="source-actions"><button class="secondary btn-approval" data-id="${e(request.id)}" data-decision="APPROVED">Da, aprob</button>`
+    + `<button class="quiet btn-approval" data-id="${e(request.id)}" data-decision="CANCEL">Nu acum</button></div>`
+    + '</div>';
 }
 
 /** Said once under the requests, not under each one. */
@@ -351,3 +406,116 @@ export const REFERENCE_CREDIT_WARNING =
   'Producerea setului de referință generează câte o imagine pentru fiecare slot declarat și ' +
   'consumă credite la furnizorul de imagini configurat. Costul intră în bugetul studioului. ' +
   'Apasă „Confirmă” dacă vrei să se producă acum.';
+
+/* ---------------------------------------------------------------- PAGE-04 and PAGE-08 */
+
+/** «15,00 USD». @param {number} usd */
+function usdCents(usd) {
+  return `${usd.toLocaleString('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD`;
+}
+
+/**
+ * The active daily budget's limit in USD; null when there is none, undefined when the budget was
+ * not read (not read is not none, W12).
+ * @param {any} budget GET /economy/budget
+ * @returns {number|null|undefined}
+ */
+function dailyLimit(budget) {
+  if (!budget || typeof budget !== 'object' || !Array.isArray(budget.budgets)) return undefined;
+  const daily = budget.budgets.find((/** @type {any} */ b) => b && b.period === 'DAILY' && b.active !== false);
+  const limit = daily ? Number(daily.limit_usd) : NaN;
+  return Number.isFinite(limit) && limit > 0 ? limit : null;
+}
+
+/** The daily job from the job itself or the /scheduler/jobs list. @param {any} job */
+function dailyJob(job) {
+  if (Array.isArray(job)) return job.find((j) => j && j.workflow_type === 'DAILY_RUN') || null;
+  return job && typeof job === 'object' ? job : null;
+}
+
+/**
+ * What a run buys alone, without its opening (the same judgement as the backend's preflight
+ * line `paid_media_rule`, backend runbook/preflight.py `paid_rule_means`).
+ * @param {any} policy @param {number|null|undefined} limit
+ */
+function buysAlone(policy, limit) {
+  const p = policy || {};
+  const mode = String(p.autonomy_mode || 'MANUAL');
+  const rule = String(p.paid_media_approval || 'EVERY_PAID_STEP');
+  const over = p.paid_media_approval_over_usd;
+  if (p.autonomy_stopped) return 'autonomia este oprită: nu pornește nicio rulare și nu se cumpără nimic.';
+  if (p.environment !== 'PRODUCTION') return 'în mediul TEST rularea nu cumpără nimic de la furnizorii plătiți; filmele se cumpără de pe foaia de filmare, la apăsarea ta.';
+  if (mode === 'MANUAL') return 'modul manual: studioul pregătește filmele, dar nu cumpără nimic singur; fiecare pas plătit se cumpără de pe foaia de filmare, la apăsarea ta.';
+  if (rule === 'EVERY_PAID_STEP' || mode === 'SUPERVISED') {
+    return 'studioul se oprește la imagini și te întreabă: fiecare pas plătit (imaginile, cadrul de probă, restul mișcării) așteaptă aprobarea ta pe foaia de filmare.';
+  }
+  if (limit === undefined) return 'bugetul zilnic nu a fost citit încă; fără un buget zilnic activ, studioul nu cumpără nimic singur.';
+  if (limit === null) return 'fără un buget zilnic activ, studioul nu cumpără nimic singur; bugetul se pune în Trezorerie → Buget și cheltuieli.';
+  if (rule === 'OVER_USD' && over !== null && over !== undefined && Number.isFinite(Number(over))) {
+    return `studioul cumpără singur pașii plătiți cu plafonul de cel mult ${usdCents(Number(over))}, până la bugetul de ${usdCents(limit)}; un pas mai scump se oprește și te întreabă pe foaia de filmare.`;
+  }
+  return `studioul cumpără singur până la plafonul foii și bugetul de ${usdCents(limit)}: imaginile, cadrul de probă și, după ce controlul clipului îl acceptă, restul mișcării.`;
+}
+
+/**
+ * PAGE-04: what the next daily run will buy alone, under «Mod de autonomie», from his mode, his
+ * rule for the paid steps, his daily budget and the schedule. Nothing here changes anything.
+ * @param {any} policy the snapshot's policy
+ * @param {any} budget GET /economy/budget, or null when not read
+ * @param {any} job the daily job, or the /scheduler/jobs list
+ */
+export function dayWillWords(policy, budget, job) {
+  const daily = dailyJob(job);
+  const words = buysAlone(policy, dailyLimit(budget));
+  if (daily && daily.is_active === false) return `Programarea zilnică este oprită; la o rulare pornită de tine: ${words}`;
+  const at = daily && daily.run_at_local ? ` (${daily.run_at_local})` : '';
+  return `La următoarea rulare${at}: ${words}`;
+}
+
+/** Said beside every consequence: where the publishing privacy is decided. */
+const PUBLISHING_WORDS = 'Publicarea urmează politica fiecărui canal din Distribuție.';
+
+/**
+ * PAGE-08: the question a switch that lets the studio spend asks before it is sent, with what
+ * the next run will do once it is on. null for a change that makes the studio safer (lowering
+ * the mode, back to TEST, the schedule off): those stay one click, as document 51 requires.
+ * @param {{policy: any, budget: any, job: any, preflight?: any}} facts
+ * @param {{mode?: string, environment?: string, dailyJob?: boolean, runNow?: boolean}} change
+ * @returns {{question: string, words: string, yes: string}|null}
+ */
+export function consequenceWords(facts, change) {
+  const policy = { ...(facts.policy || {}) };
+  let job = dailyJob(facts.job);
+  let question = '';
+  let yes = '';
+  let opening = null;
+  if (change.mode) {
+    const from = AUTONOMY_RANK[String(policy.autonomy_mode || 'MANUAL')];
+    const to = AUTONOMY_RANK[change.mode];
+    if (to === undefined || from === undefined || to <= from) return null;
+    policy.autonomy_mode = change.mode;
+    question = `Treci studioul în modul «${autonomyModeLabel(change.mode)}»?`;
+    yes = `Da, trec în ${autonomyModeLabel(change.mode)}`;
+  } else if (change.environment) {
+    if (change.environment !== 'PRODUCTION' || policy.environment === 'PRODUCTION') return null;
+    policy.environment = 'PRODUCTION';
+    question = 'Treci studioul în mediul PRODUCTION?';
+    yes = 'Da, trec în PRODUCTION';
+  } else if (change.dailyJob !== undefined) {
+    if (!change.dailyJob) return null;
+    job = { ...(job || {}), is_active: true };
+    question = 'Pornești programarea zilnică?';
+    yes = 'Da, pornește programarea';
+  } else if (change.runNow) {
+    question = 'Pornești rularea de azi acum?';
+    yes = 'Da, pornește rularea';
+    opening = `Rularea de azi: ${buysAlone(policy, dailyLimit(facts.budget))}`;
+  } else {
+    return null;
+  }
+  const parts = [opening || dayWillWords(policy, facts.budget, job), PUBLISHING_WORDS];
+  const checks = facts.preflight && Array.isArray(facts.preflight.checks) ? facts.preflight.checks : [];
+  const blocking = checks.find((c) => c && c.ok === false && c.severity === 'BLOCKING');
+  if (blocking && blocking.message) parts.push(`Verificarea preliminară ar opri ziua: ${String(blocking.message).trim()}`);
+  return { question, words: parts.join(' '), yes };
+}

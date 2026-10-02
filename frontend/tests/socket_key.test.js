@@ -1,7 +1,8 @@
 // THE KEY OUT OF THE URL (2026-09-25): the Owner's key travelled in both sockets' query strings
 // (the stream's signalling and the events), printed by the browser when a socket failed and kept
 // by proxy and server logs. A backend that says `auth: 'first_message'` now takes it as each
-// socket's first message; an older backend is spoken to as before.
+// socket's first message. SEC-02 (2026-10-01): no URL carries it any more, for any backend; a
+// backend that does not say 'first_message' gets no live stream (hq_stream.test.js).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -29,7 +30,7 @@ const RELAY = '/api/v1/office/stream/signalling';
 
 test('the page takes first-message auth only when the backend says it can', () => {
   assert.equal(socketAuth({ available: true, relay: RELAY, auth: 'first_message' }), 'first_message');
-  // the Owner's running studio, until he restarts it: today's answer, and today's behaviour
+  // a backend that does not say it: the page opens no stream (it never puts the key in a URL)
   assert.equal(socketAuth({ available: true, relay: RELAY }), 'query');
   for (const route of [null, undefined, 'first_message', {}, { auth: 'header' }, { auth: true }]) {
     assert.equal(socketAuth(route), 'query', JSON.stringify(route));
@@ -43,9 +44,9 @@ test('with first-message auth neither socket carries the key in its URL', () => 
   assert.equal(events, 'ws://127.0.0.1:8000/api/v1/ws');
   assert.equal(eventsUrl({ protocol: 'https:', host: 'hq.example' }, KEY, 'first_message'), 'wss://hq.example/api/v1/ws');
   for (const url of [relay, events]) assert.doesNotMatch(url, /token|k3y/);
-  // an older backend: the URL it reads, as before
-  assert.equal(relayUrl(HOME, RELAY, KEY), `ws://127.0.0.1:8000${RELAY}?token=${KEY}`);
-  assert.equal(eventsUrl(HOME, 'a b'), 'ws://127.0.0.1:8000/api/v1/ws?token=a%20b');
+  // SEC-02: whatever a caller hands it, no URL carries the key
+  assert.equal(relayUrl(HOME, RELAY, KEY), `ws://127.0.0.1:8000${RELAY}`);
+  assert.equal(eventsUrl(HOME, 'a b'), 'ws://127.0.0.1:8000/api/v1/ws');
   assert.deepEqual(JSON.parse(authMessage(KEY)), { type: 'auth', token: KEY });
 });
 
@@ -53,7 +54,7 @@ test('the page builds no socket URL with the key by hand any more', () => {
   const main = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
   assert.doesNotMatch(main, /\?token=/);
   assert.match(main, /firstMessage:/);
-  assert.match(main, /authMessage: firstMessage \?/);
+  assert.match(main, /authMessage: \(\) => authMessage\(ownerToken\)/);
 });
 
 test('only the relay\'s own word counts as ready', () => {
@@ -193,10 +194,10 @@ test('a refusal before auth_ok is final, as a refused key always was', (t) => {
   assert.equal(h.states.at(-1), 'refused');
 });
 
-test('an older backend: the key in the URL, and the replay is the first message, as before', (t) => {
+test('a link given no first message: still no key in the URL, and the replay is the first message', (t) => {
   const h = eventsHarness(t, false);
   h.link.start();
-  assert.match(h.sockets[0].url, /\?token=/);
+  assert.doesNotMatch(h.sockets[0].url, /token|k3y/);
   h.sockets[0].onopen();
   assert.deepEqual(h.states, ['connecting', 'open']);
   assert.deepEqual(h.sockets[0].sent, [{ type: 'replay', after_sequence: 40, limit: REPLAY_PAGE }]);

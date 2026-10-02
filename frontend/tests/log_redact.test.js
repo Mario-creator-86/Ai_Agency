@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
-import { redactKey, redactingLogger, relayUrl } from '../src/hq_stream_config.js';
+import { redactKey, redactingLogger } from '../src/hq_stream_config.js';
 
 const KEY = 'k3y-'.padEnd(48, 'q');
 const HOME = { protocol: 'http:', host: '127.0.0.1:8000' };
@@ -37,8 +37,10 @@ test('the library, given the page\'s logger, never prints the key of a URL (the 
   lib.overrideLogger(redactingLogger(lib.Logger));
   assert.equal(redactingLogger(lib.Logger), lib.Logger, 'wrapping twice is wrapping once');
   const transport = new lib.WebSocketTransport();
-  transport.connect(relayUrl(HOME, RELAY, KEY, 'query'));
-  lib.Logger.Error(`Failed to construct 'WebSocket': The URL '${relayUrl(HOME, RELAY, KEY, 'query')}' is invalid.`);
+  // SEC-02: the page builds no such URL any more; the logger still blanks one, as a belt
+  const keyed = `ws://${HOME.host}${RELAY}?token=${KEY}`;
+  transport.connect(keyed);
+  lib.Logger.Error(`Failed to construct 'WebSocket': The URL '${keyed}' is invalid.`);
   assert.ok(lines.some((l) => l.includes('/api/v1/office/stream/signalling?token=…')), 'the URL is still said, without its key');
   assert.ok(lines.every((l) => !l.includes(KEY)), 'no line carries the key');
 });

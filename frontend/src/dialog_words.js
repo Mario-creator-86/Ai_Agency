@@ -64,7 +64,9 @@ export const channelTypeWord = lookup({ MAIN_FACTUAL: 'Shorts factuale', OFFICE_
 /** A publication (the film, masculine). */
 export const publicationStatus = lookup({
   PUBLISHED: 'publicat', STARTED: 'în curs', FAILED_RETRYABLE: 'eșuat, se reîncearcă', FAILED_FINAL: 'eșuat definitiv',
-  REMOTE_UNKNOWN: 'necunoscut la YouTube',
+  REMOTE_UNKNOWN: 'necunoscut la YouTube', NEEDS_RECONCILIATION: 'de verificat de tine pe canal',
+  BLOCKED_GATE: 'oprit de poarta de publicare', SCHEDULED: 'programat', REMOTE_CONFIRMED: 'publicat, confirmat de YouTube',
+  PUBLISHED_SIMULATED: 'simulat, nepublicat', VALIDATED: 'validat, neîncărcat',
 });
 
 /** An employee's standing in the company (statut). */

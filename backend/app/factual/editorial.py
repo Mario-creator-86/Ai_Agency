@@ -231,6 +231,57 @@ STOPWORDS = frozenset(
 )
 
 
+#: Words a caption card, or a line on screen, must not end on: articles, prepositions,
+#: conjunctions, auxiliaries and pronouns, in English and in Romanian. "Nepal is paying for a"
+#: / "crisis it did not create." (the Nepal rehearsal) reads as two broken phrases; "Nepal is
+#: paying" / "for a crisis..." reads as two. One list, shared by the caption cutter
+#: (assembler.caption_cards) and by quality control (qc.caption_problems), so the rule that
+#: makes the cards and the rule that checks them cannot drift apart.
+FUNCTION_WORDS_EN = frozenset(
+    """a an the and or nor but so yet if as at by for from in into of off on onto out over to
+    up upon via with without about above after against along among around before behind
+    below beneath beside between beyond during except inside like near past since than
+    through toward towards under until unto within
+    am is are was were be been being do does did done doing have has had having will would
+    shall should can could may might must
+    i you he she it we they me him her us them my your his its our their this that these
+    those who whom whose which what where when why how there here not no""".split()
+)
+FUNCTION_WORDS_RO = frozenset(
+    """un o unui unei niște niste cel cea cei cele celui celei celor al ai ale a lui
+    și si sau ori dar iar ci însă insa că ca dacă daca deși desi fiindcă fiindca
+    de la în in pe cu din spre despre prin pentru până pana fără fara sub peste între intre
+    lângă langa după dupa înainte inainte către catre printre dintre asupra
+    este e sunt eram era erau fost fi fie va vor vom vei voi ar am ai au are avea avem aveți
+    aveti să sa se s-a s-au nu mai
+    eu tu el ea noi voi ei ele îl il îi ii îți iti îmi imi ne vă va le li lor mă ma te
+    care ce cine cât cat câte cate unde când cand cum""".split()
+)
+FUNCTION_WORDS = FUNCTION_WORDS_EN | FUNCTION_WORDS_RO
+
+#: Marks that close a phrase: a word that carries one does not dangle, whatever it is.
+_PHRASE_CLOSERS = ".,;:!?…–—)]»”\"'’"
+
+
+def dangles(word: str) -> bool:
+    """Whether a card ending on ``word`` would leave a phrase open: a function word with no
+    punctuation after it. "for" dangles; "it." and "for," close their phrase."""
+    text = str(word or "").strip()
+    if not text or text[-1] in _PHRASE_CLOSERS:
+        return False
+    return text.lower().strip("\"'“”„«»()[]") in FUNCTION_WORDS
+
+
+#: How long a black screen may be on a script: a silent beat of one second at most. It is
+#: never the last scene: the Nepal rehearsal ended on 4.3 s of near-black under its closing
+#: question, which breaks the loop a short is watched in and invites the swipe.
+BLACK_BEAT_SECONDS = 1.0
+
+
+def _scene_kind(scene: dict[str, Any]) -> str:
+    return str(scene.get("scene_kind") or scene.get("kind") or "").strip().upper()
+
+
 def content_words(text: str) -> set[str]:
     """The words in a line that carry its subject, lowercased and stripped of endings."""
     words = {w for w in re.findall(r"[a-z0-9']+", str(text).lower()) if len(w) > 2}
@@ -355,6 +406,14 @@ def story_checks(
     seconds = expected_seconds(scenes)
 
     hook_text = str(story.get("hook") or (narrations[0] if narrations else ""))
+    kinds = [_scene_kind(s) for s in scenes]
+    spoken_black = [
+        index + 1
+        for index, (kind, text) in enumerate(zip(kinds, narrations, strict=True))
+        if kind == "BLACK" and expected_seconds(text) > BLACK_BEAT_SECONDS
+    ]
+    last_line = narrations[-1] if narrations else ""
+    opening = " ".join(filter(None, [hook_text, narrations[0] if narrations else ""]))
     payoff_indexes = [i for i, p in enumerate(purposes) if p in PAYOFF_PURPOSES]
     tail = " ".join(narrations[payoff_indexes[0] :]) if payoff_indexes else ""
     cta = str(story.get("cta") or "")
@@ -402,6 +461,34 @@ def story_checks(
         "ending_answers_the_hook": _check(
             bool(content_words(hook_text) & content_words(tail)) if tail else False,
             "Finalul trebuie să răspundă la ce promite hook-ul.",
+        ),
+        # A short is watched in a loop: an ending that fades to black is where the viewer
+        # swipes. The last scene is a picture, and the closing words are spoken over it.
+        "ending_is_not_black": _check(
+            not kinds or kinds[-1] != "BLACK",
+            "Ultima scenă nu poate fi un ecran negru: un final negru îl face pe spectator să "
+            "dea mai departe. Îndemnul final se rostește peste o imagine LIVE (răsplata sau "
+            "imaginea de la început).",
+        ),
+        "black_is_a_beat": _check(
+            not spoken_black,
+            "Un ecran negru este doar o pauză tăcută de cel mult o secundă (1 s); "
+            + (
+                "scenele " + ", ".join(str(n) for n in spoken_black) + " vorbesc peste negru"
+                if len(spoken_black) > 1
+                else f"scena {spoken_black[0]} vorbește peste negru"
+                if spoken_black
+                else "nicio scenă nu vorbește peste negru"
+            )
+            + ". Ce se spune acolo se spune peste o imagine.",
+        ),
+        # Measured as words, so it can only point: an ending may lead back into the opening
+        # in other words. Advisory (story_review.ADVISORY_CHECKS); the Director judges it.
+        "ending_loops_to_hook": _check(
+            bool(content_words(last_line) & content_words(opening)) if last_line else False,
+            "Ultima replică ar trebui să ducă înapoi la început (bucla): cine o aude și vede "
+            "din nou primele secunde să simtă că povestea continuă; un short reluat se "
+            "numără de două ori.",
         ),
         "has_one_message": _check(
             12 <= len(str(story.get("core_message") or "").strip()) <= 240,

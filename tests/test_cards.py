@@ -492,3 +492,97 @@ def test_card_content_stays_above_the_burnt_caption_band():
             assert item.box[3] <= CAPTION_BAND_TOP, (spec.kind, item.role, item.box)
         for bar in layout.bars:
             assert bar.baseline <= CAPTION_BAND_TOP, (spec.kind, bar)
+
+
+# --------------------------------------------------------------------------- shorts: endings
+
+
+def _bright_still(tmp_path: Path) -> Path:
+    assert FFMPEG is not None
+    still = tmp_path / "hook.png"
+    subprocess.run(  # noqa: S603 - argument list, no shell
+        [FFMPEG, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=1024x1536",
+         "-frames:v", "1", str(still)],
+        check=True,
+        timeout=120,
+    )  # fmt: skip
+    return still
+
+
+def test_a_short_refuses_pure_black_longer_than_a_beat() -> None:
+    spec = card_spec_from_json("BLACK", {"cta": "Urmărește episodul următor"})
+    assert cards.MAX_SHORT_BLACK_SECONDS == 1.5
+    reason = cards.black_refusal(spec, duration=4.3, short=True, has_still=False)
+    assert reason is not None and "1,5" in reason and "negru" in reason
+    # A beat is allowed, and so is a long closing card that stands on the hook's picture.
+    assert cards.black_refusal(spec, duration=1.5, short=True, has_still=False) is None
+    assert cards.black_refusal(spec, duration=4.3, short=True, has_still=True) is None
+    # Layout alone is pure and refuses nothing.
+    assert layout_card(spec, duration=4.3).texts
+
+
+def test_the_short_rule_is_the_compositors(tmp_path) -> None:
+    spec = card_spec_from_json("BLACK", None)
+    with pytest.raises(CardError, match="1,5"):
+        compose_card(spec, tmp_path / "x.mp4", duration=2.0, short=True, ffmpeg="unused")
+    # Outside a short (the default) the black card is composed as it always was.
+    assert not cards.black_refusal(spec, duration=2.0, short=False, has_still=False)
+
+
+@needs_ffmpeg
+def test_a_closing_card_in_a_short_stands_on_the_hook_still_and_moves(tmp_path) -> None:
+    spec = card_spec_from_json("BLACK", {"cta": "Cine plătește data viitoare?"})
+    card = compose_card(
+        spec,
+        tmp_path / "closing.mp4",
+        duration=3.0,
+        fps=24,
+        background_still=_bright_still(tmp_path),
+        short=True,
+        ffmpeg=FFMPEG,
+    )
+    assert card.closing is True
+    early, late = _luma(card.path, 0.3), _luma(card.path, 2.6)
+    # Not black: the hook's picture, darkened so the words read.
+    assert sum(late) / len(late) > 30
+    # And not frozen: the picture pushes in slowly under the words.
+    differing = sum(1 for a, b in zip(early, late, strict=True) if abs(a - b) > 8)
+    assert differing > len(early) * 0.05
+    lo, hi = _outside_safe_rect_extremes(late)
+    assert hi <= 255 and lo >= 16
+    for item in card.layout.texts:
+        assert _inside(item.box), item
+
+
+# --------------------------------------------------------------------------- the cover
+
+
+@needs_ffmpeg
+def test_a_cover_is_composed_locally_from_the_hero_still_and_the_hook(tmp_path) -> None:
+    still = _bright_still(tmp_path)
+    cover = cards.compose_cover(
+        still, "Cine plătește pentru o criză pe care nu a creat-o?", tmp_path / "cover.png",
+        ffmpeg=FFMPEG,
+    )  # fmt: skip
+    assert cover.path.is_file() and cover.credits == 0 and cover.provenance == "composed"
+    stream = _probe(cover.path)
+    assert (stream["width"], stream["height"]) == (W, H)
+    assert cover.layout.texts and all(item.role == "hook" for item in cover.layout.texts)
+    for item in cover.layout.texts:
+        assert _inside(item.box), item.box
+        assert item.font == cards.BOLD and item.size >= 56
+    y = _luma(cover.path, 0.0)
+    first = cover.layout.texts[0]
+    x0, y0, x1, y1 = first.box
+    region = sorted(_region(y, x0, y0, x1, y1))
+    assert region[int(len(region) * 0.99)] >= 200, "the hook is drawn bright"
+    # The picture below the hook is the still itself, not a card.
+    lower = _region(y, X0, 1400, X1, 1500)
+    assert max(lower) - min(lower) > 60
+
+
+def test_a_hook_the_font_cannot_draw_is_refused_not_substituted(tmp_path) -> None:
+    with pytest.raises(CardError):
+        cards.compose_cover(
+            tmp_path / "missing.png", "漢字のフック", tmp_path / "cover.png", ffmpeg="unused"
+        )

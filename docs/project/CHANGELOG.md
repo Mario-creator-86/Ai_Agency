@@ -1,5 +1,20 @@
 # Changelog
 
+## The production-readiness audit — 2026-10-01 → 2026-10-02
+
+Twenty items, every provider faked, 0 credits. Nothing below has met a real paid vendor.
+
+- **Films without the Owner, when his rule allows it**: the hero test shot accepted by clip QC under MODE / OVER_USD; his yes continues the film the same day (FILM_CONTINUE); free repairs automatic, paid redos capped; a stuck film no longer blocks the next; stale films retired after 3 days with a letter.
+- **Money**: billed POSTs never resent unsafely; task ids saved before polling and collected later (migration 0049); a charged-but-unanswered submit counts and is never resent; every purchase booked once; failed scenes never re-bought (`max_paid_attempts_per_scene`); one buyer per film (0050); a reservation per step; a ceiling per film; no unasked purchase without a daily budget; OVER_USD reads the cap.
+- **Reliability**: per-claim leases with heartbeats; a crashed day INTERRUPTED once, never re-run; graceful shutdown; one worker per database; backups, backup before migrations, restore with a guard; a truthful `/health/ready`; a disk floor; the studio starts with an unreadable vault.
+- **Security**: no key in socket URLs; logs redacted and rotated; media file routes confined; Runway downloads refuse private hosts; concat paths escaped.
+- **Film quality**: trimmed narration, a licensed music bed ducked under the voice, ElevenLabs stitching; highlighted phrase-aware captions; second framings; a bounded grade; a closing card instead of black; a local cover; editorial QC (advisory); a per-component licence ledger (0051).
+- **Publishing**: honest states, reconciliation by the uploads playlist, the gate re-run at upload, visibility read back (0052); metadata within YouTube's limits, one disclosure, per-channel category/language/Shorts length (0053), sources in the description.
+- **Sellable**: demo mode on fakes; README and operator guide; every setting in `.env.example`; MANUAL for new installs; the studio's place configurable; THIRD_PARTY_NOTICES (YuNet is MIT); release archive; systemd unit.
+- **Gates**: check_docs and check_secrets green on a fresh clone; `scripts/check_all.py`; a CI matrix (never run: no remote); cryptography 50.0.2, urllib3 2.8.0.
+- **The page**: stale-page banner; sheet keys everywhere; the paid rule in Guvernanță with what the next run will buy; confirmations; a budget form that cannot set zero; buying progress; the inbox; the work queue; honest errors; Playwright flows on fakes.
+- **Documents**: CURRENT_STATUS «State on 2026-10-02»; twelve decisions; architecture 51, 08, 11, 39, 47, 25 amended with their hashes.
+
 ## The film staircase closed — ready for the Owner's next paid film (2026-10-01)
 
 - **Every paid clip is checked before the film**: motion, faces on three frames, cuts, one retry inside the cap; a bad clip is never assembled.

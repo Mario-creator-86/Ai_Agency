@@ -2,9 +2,9 @@
 
 A key in a WebSocket's query string is printed by the browser when the socket fails and reaches
 proxy and server access logs (2026-09-25). The page sends it as the socket's first message once the
-backend says it can (GET /office/stream ``auth: "first_message"``); a page from before keeps the
-query string until the Owner reloads it, so that form is still read. A socket that does not say
-the key in time, or says another, is closed with 1008 and never joins the broadcast.
+backend says it can (GET /office/stream ``auth: "first_message"``). Since 2026-10-01 (SEC-02) the
+query form is refused outright: uvicorn logs a handshake's path with its query. A socket that does
+not say the key in time, or says another, is closed with 1008 and never joins the broadcast.
 """
 
 import json
@@ -76,21 +76,20 @@ def test_a_silent_socket_is_closed_after_a_short_time_without_joining():
     assert manager.active_count == 0
 
 
-def test_a_page_from_before_still_opens_with_the_key_in_its_url():
+@pytest.mark.parametrize(
+    "query", ["?token=", "?token=not-the-owner", f"?token={TOKEN}", f"?a=1&TOKEN={TOKEN}"]
+)
+def test_a_key_in_the_url_is_refused_even_the_right_one(query):
+    """SEC-02 (2026-10-01): uvicorn prints a socket's path with its query, and the service log
+    kept it on disk. The query form is no longer read at all: any socket that carries a key in
+    its URL is closed 1008 before it is accepted, and never joins the broadcast."""
     client, manager = make()
-    with client.websocket_connect(f"/api/v1/ws?token={TOKEN}") as ws:
-        ws.send_json({"type": "ping"})
-        assert ws.receive_json() == {"type": "pong"}
-        assert manager.active_count == 1
-
-
-@pytest.mark.parametrize("query", ["?token=", "?token=not-the-owner"])
-def test_a_wrong_key_in_the_url_is_refused(query):
-    client, _ = make()
     with pytest.raises(WebSocketDisconnect) as refused:
         with client.websocket_connect(f"/api/v1/ws{query}") as ws:
+            ws.send_text(AUTH)
             ws.receive_text()
     assert refused.value.code == 1008
+    assert manager.active_count == 0
 
 
 def test_the_key_is_never_logged_nor_echoed(caplog):
@@ -181,3 +180,65 @@ def test_a_refusal_for_a_full_house_is_logged_without_anything_the_page_sent(mon
     assert busy.value.code == 1013
     reasons = [getattr(r, "reason", None) for r in caplog.records]
     assert "busy" in reasons
+
+
+# ---------------------------------------------------------------------------------------------
+# SEC-02: the handshake line uvicorn itself writes. Served by a real uvicorn on a loopback port,
+# with the log configuration scripts/run.py gives it: the key a socket carries in its URL never
+# reaches the console, whether the socket is refused (403) or not.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_uvicorns_own_handshake_line_never_carries_the_key():
+    import asyncio
+    import importlib.util
+    import io
+    import threading
+    from pathlib import Path
+
+    import uvicorn
+    from websockets.exceptions import InvalidStatus, WebSocketException
+    from websockets.sync.client import connect
+
+    root = Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location("studio_run_script", root / "scripts" / "run.py")
+    run_script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(run_script)
+
+    app = FastAPI()
+    app.state.settings = SimpleNamespace(owner_token=SecretStr(TOKEN))
+    app.state.engine = None
+    register_websocket_gateway(app, ConnectionManager(), auth_timeout_s=0.3)
+    config = uvicorn.Config(
+        app, host="127.0.0.1", port=0, log_config=run_script.uvicorn_log_config(), lifespan="off"
+    )
+    server = uvicorn.Server(config)
+    written = io.StringIO()
+    loggers = [logging.getLogger(n) for n in ("uvicorn", "uvicorn.error", "uvicorn.access")]
+    try:
+        thread = threading.Thread(target=lambda: asyncio.run(server.serve()), daemon=True)
+        thread.start()
+        deadline = time.monotonic() + 10
+        while not server.started and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert server.started
+        for logger in loggers:
+            for handler in logger.handlers:
+                handler.setStream(written)
+        port = server.servers[0].sockets[0].getsockname()[1]
+        for query in (f"?token={TOKEN}", f"?x=1&token={TOKEN}"):
+            try:
+                with connect(f"ws://127.0.0.1:{port}/api/v1/ws{query}", open_timeout=5) as ws:
+                    ws.recv(timeout=2)
+            except (InvalidStatus, WebSocketException, TimeoutError):
+                pass
+        with connect(f"ws://127.0.0.1:{port}/api/v1/ws", open_timeout=5) as ws:
+            ws.send(AUTH)
+            assert json.loads(ws.recv(timeout=5)) == {"type": "auth_ok"}
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+    text = written.getvalue()
+    assert "/api/v1/ws" in text, "the handshake lines were written"
+    assert TOKEN not in text
+    assert "token=[ascuns]" in text

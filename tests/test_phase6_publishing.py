@@ -796,3 +796,469 @@ def test_a_film_of_stripes_fails_quality_control(engine, tmp_path):
         assert report.status == "FAILED"
         assert report.checks_json["content_integrity_qc"]["passed"] is False
         assert any("Scene 5: vertical stripes" in reason for reason in report.failure_reasons_json)
+
+
+# --------------------------------------------------------------------------------------------
+# Publishing truth (2026-10-02). PUB-04: `execute_publication` uploaded on the strength of the
+# gate it ran when the intent was made, so a VALIDATED or retried row went up after the
+# Owner's STOP, after a newer failed QC report, or under a policy he had since changed.
+# PUB-14: the gate checked that a file existed, not that it was the file QC passed. PUB-12:
+# a failure reached nobody, and a row handed to the Owner had no way back from the page.
+# --------------------------------------------------------------------------------------------
+
+from pathlib import Path  # noqa: E402
+from typing import Any  # noqa: E402
+
+from app.agents.models import AgentMessage  # noqa: E402
+from app.models import DomainEvent  # noqa: E402
+from app.providers.publishing_base import UploadResult  # noqa: E402
+from app.publishing.services import execute_publication  # noqa: E402
+
+
+class CountingPublisher(DeterministicPublishingAdapter):
+    def __init__(self, outcome: str = "CONFIRMED") -> None:
+        super().__init__()
+        self.outcome = outcome
+        self.uploads = 0
+
+    async def upload_video(self, file_path: Path, **kwargs: Any) -> UploadResult:
+        self.uploads += 1
+        if self.outcome == "CONFIRMED":
+            return await super().upload_video(file_path, **kwargs)
+        return UploadResult(
+            remote_video_id="",
+            remote_url="",
+            status=self.outcome,
+            error_detail="Upload stream interrupted: connection reset",
+        )
+
+
+def _validated(engine, tmp_path, **intent: Any) -> tuple[dict, str, str]:
+    seed_default_channels(engine)
+    channel_id = list_channels(engine)[0]["id"]
+    bundle = _create_verified_asset_bundle(engine, tmp_path)
+    fields: dict[str, Any] = {
+        "title": "JWST Deep Field Discovery",
+        "description": "Exploring early galaxies.",
+        "tags": [],
+        "privacy_status": "private",
+        "idempotency_key": str(uuid4()),
+        "correlation_id": str(uuid4()),
+    }
+    fields.update(intent)
+    publication = create_publication_intent(
+        engine, channel_id=channel_id, media_asset_id=bundle["asset_id"], **fields
+    )
+    assert publication["status"] == "VALIDATED"
+    return publication, channel_id, bundle["asset_id"]
+
+
+def _owner_letters(engine) -> list[AgentMessage]:
+    with Session(engine) as session:
+        return [
+            row
+            for row in session.scalars(
+                select(AgentMessage).where(AgentMessage.intent == "ESCALATE")
+            )
+            if row.to_agent_id is None and (row.body_json or {}).get("to") == "Owner"
+        ]
+
+
+def _stop(engine) -> None:
+    with Session(engine) as session, session.begin():
+        session.get(OwnerPolicy, 1).autonomy_stopped = True
+
+
+def _newer_failed_qc(engine, asset_id: str) -> None:
+    with Session(engine) as session, session.begin():
+        session.add(
+            QualityControlReport(
+                id=str(uuid4()),
+                media_asset_id=asset_id,
+                status="FAILED",
+                score=0.2,
+                checks_json={"technical": {"passed": False}},
+                failure_reasons_json=["re-measured"],
+                verified_at="2999-01-01T00:00:00+00:00",
+            )
+        )
+
+
+def _replaced_file(engine, asset_id: str) -> None:
+    with Session(engine) as session:
+        path = Path(session.get(MediaAsset, asset_id).uri_or_path)
+    path.write_bytes(b"another film entirely, written after quality control passed")
+
+
+@pytest.mark.parametrize(
+    ("change", "code"),
+    [
+        (lambda engine, asset_id: _stop(engine), "AUTONOMY_STOPPED"),
+        (_newer_failed_qc, "QC_NOT_PASSED"),
+        (_replaced_file, "MEDIA_HASH_MISMATCH"),
+    ],
+)
+def test_execution_runs_the_gate_again_and_uploads_nothing_it_refuses(
+    engine, tmp_path, change, code
+):
+    publication, _, asset_id = _validated(engine, tmp_path)
+    change(engine, asset_id)
+    publisher = CountingPublisher()
+
+    result = execute_publication(engine, publisher, publication["id"], str(uuid4()))
+
+    assert publisher.uploads == 0
+    assert result["status"] == "BLOCKED_GATE"
+    events = []
+    with Session(engine) as session:
+        events = list(
+            session.scalars(
+                select(DomainEvent).where(
+                    DomainEvent.aggregate_id == publication["id"],
+                    DomainEvent.event_type == "publishing.gate_failed_at_execution",
+                )
+            )
+        )
+    assert len(events) == 1 and code in events[0].payload["gate_reason_codes"]
+
+
+def test_a_retried_row_is_refused_too_once_the_owner_changed_the_policy(engine, tmp_path):
+    from app.publishing.services import change_publish_policy  # noqa: PLC0415
+    from test_publish_policy import _command, _to_production  # noqa: PLC0415
+
+    _to_production(engine)
+    seed_default_channels(engine)
+    channel_id = list_channels(engine)[0]["id"]
+    change_publish_policy(engine, channel_id, _command(autonomous_privacy="unlisted"))
+    publication, _, _ = _validated(engine, tmp_path, privacy_status="unlisted", policy_version=2)
+    with Session(engine) as session, session.begin():
+        session.get(PublicationRecord, publication["id"]).status = "FAILED_RETRYABLE"
+    change_publish_policy(
+        engine, channel_id, _command(expected_version=2, autonomous_privacy="private")
+    )
+    publisher = CountingPublisher()
+
+    result = execute_publication(engine, publisher, publication["id"], str(uuid4()))
+
+    assert publisher.uploads == 0
+    assert result["status"] == "BLOCKED_GATE"
+    assert "versiunea" in (result["error_detail"] or "")
+
+
+def test_the_gate_compares_the_file_with_the_one_quality_control_passed(engine, tmp_path):
+    seed_default_channels(engine)
+    channel_id = list_channels(engine)[0]["id"]
+    bundle = _create_verified_asset_bundle(engine, tmp_path)
+    assert evaluate_publishing_gate(engine, bundle["asset_id"], channel_id)["eligible"]
+
+    _replaced_file(engine, bundle["asset_id"])
+    verdict = evaluate_publishing_gate(engine, bundle["asset_id"], channel_id)
+
+    assert not verdict["eligible"]
+    assert verdict["reason_codes"] == ["MEDIA_HASH_MISMATCH"]
+    assert len(verdict["checks"]) == 5
+    assert "controlul calității" in verdict["reasons"][0]
+
+
+@pytest.mark.parametrize(
+    ("outcome", "status"), [("FAILED", "FAILED_FINAL"), ("UNKNOWN", "REMOTE_UNKNOWN")]
+)
+def test_a_failed_or_unknown_upload_writes_the_owner_one_letter_in_romanian(
+    engine, tmp_path, outcome, status
+):
+    publication, _, _ = _validated(engine, tmp_path)
+
+    result = execute_publication(engine, CountingPublisher(outcome), publication["id"], "c1")
+
+    assert result["status"] == status
+    letters = _owner_letters(engine)
+    assert len(letters) == 1
+    letter = letters[0]
+    assert "JWST Deep Field Discovery" in letter.subject
+    assert letter.body_json["publication_id"] == publication["id"]
+    assert letter.body_json["status"] == status
+    # The adapter's English stays in the record's technical detail, not in his letter.
+    assert "Upload stream interrupted" not in (letter.body_text or "")
+    assert "Main Channel A" in (letter.body_text or "")
+
+
+def _resolve(client, headers, publication_id: str, body: dict) -> Any:
+    return client.post(
+        f"/api/v1/publishing/publications/{publication_id}/resolve", headers=headers, json=body
+    )
+
+
+def test_the_owner_resolves_a_publication_the_studio_could_not(client, headers, engine, tmp_path):
+    publication, _, _ = _validated(engine, tmp_path)
+    with Session(engine) as session, session.begin():
+        session.get(PublicationRecord, publication["id"]).status = "NEEDS_RECONCILIATION"
+    command = {"command_id": str(uuid4()), "found": True, "remote_video_id": "dQw4w9WgXcQ"}
+
+    assert _resolve(client, {}, publication["id"], command).status_code == 401
+    first = _resolve(client, headers, publication["id"], command)
+    again = _resolve(client, headers, publication["id"], command)
+
+    assert first.status_code == 200, first.text
+    assert first.json()["status"] == "PUBLISHED"
+    assert first.json()["remote_video_id"] == "dQw4w9WgXcQ"
+    assert again.json() == first.json()
+    reused = _resolve(
+        client, headers, publication["id"], {**command, "remote_video_id": "otherid0001"}
+    )
+    assert reused.status_code == 409
+    with Session(engine) as session:
+        events = session.scalars(
+            select(DomainEvent).where(
+                DomainEvent.aggregate_id == publication["id"],
+                DomainEvent.event_type == "publishing.resolved_by_owner",
+            )
+        ).all()
+    assert len(events) == 1
+
+
+def test_the_owner_says_the_film_is_not_there_and_it_may_be_tried_again(
+    client, headers, engine, tmp_path
+):
+    publication, _, _ = _validated(engine, tmp_path)
+    with Session(engine) as session, session.begin():
+        session.get(PublicationRecord, publication["id"]).status = "NEEDS_RECONCILIATION"
+
+    answer = _resolve(
+        client, headers, publication["id"], {"command_id": str(uuid4()), "found": False}
+    )
+
+    assert answer.status_code == 200
+    assert answer.json()["status"] == "FAILED_RETRYABLE"
+    # Only a row the studio could not settle is his to settle: a published one is not.
+    done, _, _ = _validated(engine, tmp_path / "other")
+    refused = _resolve(client, headers, done["id"], {"command_id": str(uuid4()), "found": False})
+    assert refused.status_code == 409
+    # Found, without the video's id, is not an answer.
+    missing = _resolve(
+        client, headers, publication["id"], {"command_id": str(uuid4()), "found": True}
+    )
+    assert missing.status_code == 422
+
+
+def test_every_publication_state_has_its_words_on_both_sides():
+    from app.wording import publication_status  # noqa: PLC0415
+
+    assert publication_status("NEEDS_RECONCILIATION") == "de verificat de tine pe canal"
+    assert publication_status("BLOCKED_GATE") == "oprit de poarta de publicare"
+    page = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "dialog_words.js").read_text(
+        encoding="utf-8"
+    )
+    assert "NEEDS_RECONCILIATION: 'de verificat de tine pe canal'" in page
+    assert "BLOCKED_GATE: 'oprit de poarta de publicare'" in page
+
+
+# ------------------------------------------------ sources and the Shorts length per channel --
+# Audit PUB-10 / Q9 / PUB-15 (2026-10-02). Before: a factual film's description listed none of
+# the sources its verified claims rest on (the Publisher was handed the narration only), and
+# quality control refused any Short over 70 seconds on every channel, while YouTube has taken
+# vertical Shorts up to 3 minutes since 2024-10-15.
+
+
+def _sources_for(engine, asset_id: str, urls: list[tuple[str, str]]) -> None:
+    """Give the film's script one claim per (url, status), each resting on its own source."""
+    from app.factual.models import SourceSnapshot
+
+    with Session(engine) as session, session.begin():
+        job = session.scalars(
+            select(VideoRenderJob).where(VideoRenderJob.output_asset_id == asset_id)
+        ).one()
+        board = session.get(Storyboard, job.storyboard_id)
+        script = session.get(ScriptDraft, board.script_draft_id)
+        ids = list(script.claim_ids_json)
+        for n, (url, status) in enumerate(urls):
+            source_id, claim_id = str(uuid4()), str(uuid4())
+            session.add(
+                SourceSnapshot(
+                    id=source_id,
+                    topic_id=script.topic_id,
+                    url=url,
+                    title=f"Source {n}",
+                    publisher="Agency",
+                    content_hash="0" * 64,
+                    raw_content="text",
+                    sanitized_content="text",
+                    fetched_at=utc_now(),
+                )
+            )
+            session.add(
+                FactualClaim(
+                    id=claim_id,
+                    source_id=source_id,
+                    topic_id=script.topic_id,
+                    claim_text=f"Claim {n}.",
+                    status=status,
+                    created_at=utc_now(),
+                )
+            )
+            ids.append(claim_id)
+        script.claim_ids_json = ids
+
+
+def test_a_factual_description_lists_the_sources_of_its_supported_claims(
+    engine, tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from app.publishing.services import film_sources
+
+    # The heading follows the upload language; the studio here speaks English.
+    monkeypatch.setattr(
+        "app.publishing.services.studio_settings",
+        lambda: SimpleNamespace(content_language="en"),
+    )
+    seed_default_channels(engine)
+    channel_id = next(c["id"] for c in list_channels(engine) if c["channel_type"] == "MAIN_FACTUAL")
+    bundle = _create_verified_asset_bundle(engine, tmp_path)
+    _sources_for(
+        engine,
+        bundle["asset_id"],
+        [
+            ("https://science.nasa.gov/webb/", "SUPPORTED"),
+            ("https://science.nasa.gov/webb/", "SUPPORTED"),  # the same page twice
+            ("https://esa.int/webb", "SUPPORTED"),
+            ("https://refuted.example.org/x", "REFUTED"),
+            ("https://uncertain.example.org/y", "UNCERTAIN"),
+            ("https://a.example.org/1", "SUPPORTED"),
+            ("https://b.example.org/2", "SUPPORTED"),
+            ("https://c.example.org/3", "SUPPORTED"),
+            ("https://d.example.org/4", "SUPPORTED"),
+            ("javascript:alert(1)", "SUPPORTED"),
+        ],
+    )
+    with Session(engine) as session:
+        urls = film_sources(session, bundle["asset_id"])
+    assert urls == [
+        "https://science.nasa.gov/webb/",
+        "https://esa.int/webb",
+        "https://a.example.org/1",
+        "https://b.example.org/2",
+        "https://c.example.org/3",
+    ]
+
+    # A script whose claims are not all verified never leaves the studio (the gate's own
+    # rule); the film that goes out cites only the SUPPORTED ones.
+    with Session(engine) as session, session.begin():
+        script = session.get(ScriptDraft, bundle["script_id"])
+        kept = session.scalars(
+            select(FactualClaim.id).where(
+                FactualClaim.id.in_(script.claim_ids_json), FactualClaim.status == "SUPPORTED"
+            )
+        ).all()
+        script.claim_ids_json = [cid for cid in script.claim_ids_json if cid in set(kept)]
+    footer = "Disclosure: this video was produced with generative AI."
+    published = publish_media_asset(
+        engine,
+        media_asset_id=bundle["asset_id"],
+        channel_id=channel_id,
+        title="JWST Deep Field Discovery",
+        description="Exploring early galaxies.",
+        tags=[],
+        privacy_status="private",
+        correlation_id=str(uuid4()),
+        provider=DeterministicPublishingAdapter(),
+        footer=footer,
+    )
+    description = published["description"]
+    assert description.startswith("Exploring early galaxies.")
+    assert description.endswith(footer)
+    block = description[description.index("Sources:") : description.index(footer)]
+    assert [line for line in block.splitlines()[1:] if line.strip()] == urls
+    assert "refuted.example.org" not in description and "javascript" not in description
+    assert description.count("Sources:") == 1
+
+
+def test_an_episode_description_lists_no_sources(engine, tmp_path):
+    from app.publishing.services import film_sources, with_sources
+
+    bundle = _create_verified_asset_bundle(engine, tmp_path)
+    _sources_for(engine, bundle["asset_id"], [("https://esa.int/webb", "SUPPORTED")])
+    with Session(engine) as session, session.begin():
+        job = session.scalars(
+            select(VideoRenderJob).where(VideoRenderJob.output_asset_id == bundle["asset_id"])
+        ).one()
+        session.get(Storyboard, job.storyboard_id).series_key = "office_serial"
+    with Session(engine) as session:
+        assert film_sources(session, bundle["asset_id"]) == []
+    # And the block is never written for no source.
+    assert with_sources("An episode.", []) == "An episode."
+
+
+def test_the_sources_block_is_written_once_above_the_footer():
+    from app.publishing.services import with_sources
+
+    footer = "Disclosure: this video was produced with generative AI."
+    body = f"About the film.\n\n{footer}"
+    once = with_sources(body, ["https://esa.int/webb"])
+    assert once == f"About the film.\n\nSources:\nhttps://esa.int/webb\n\n{footer}"
+    assert with_sources(once, ["https://esa.int/webb"]) == once
+
+
+def _qc_duration(engine, tmp_path, monkeypatch, seconds: float, *, serial: bool = False):
+    from app.media.qc import evaluate_media_qc
+
+    seed_default_channels(engine)
+    bundle = _create_verified_asset_bundle(engine, tmp_path)
+    if serial:
+        with Session(engine) as session, session.begin():
+            job = session.scalars(
+                select(VideoRenderJob).where(VideoRenderJob.output_asset_id == bundle["asset_id"])
+            ).one()
+            session.get(Storyboard, job.storyboard_id).series_key = "office_serial"
+    monkeypatch.setattr(
+        "app.media.qc.probe_media_file",
+        lambda path: {
+            "available": True,
+            "ok": True,
+            "width": 1080,
+            "height": 1920,
+            "duration_seconds": seconds,
+            "video_codec": "h264",
+            "has_audio": True,
+        },
+    )
+    evaluate_media_qc(engine, bundle["asset_id"], str(uuid4()))
+    with Session(engine) as session:
+        report = session.scalars(
+            select(QualityControlReport)
+            .where(QualityControlReport.media_asset_id == bundle["asset_id"])
+            .order_by(QualityControlReport.verified_at.desc())
+        ).first()
+        return report.checks_json["technical_qc"], list(report.failure_reasons_json)
+
+
+@pytest.mark.parametrize(
+    ("seconds", "serial", "passes"),
+    [
+        (60.0, False, True),  # the factual default, exactly
+        (60.9, False, True),  # the container's own rounding and the last breath
+        (61.5, False, False),
+        (69.9, True, True),  # the serial keeps its 45-70 s window
+        (71.5, True, False),
+        (9.5, False, False),  # the floor is unchanged
+    ],
+)
+def test_the_shorts_length_is_read_per_channel(
+    engine, tmp_path, monkeypatch, seconds, serial, passes
+):
+    technical, reasons = _qc_duration(engine, tmp_path, monkeypatch, seconds, serial=serial)
+    assert technical["max_duration_seconds"] == (70 if serial else 60)
+    assert technical["duration_valid"] is passes
+    assert any("durata" in reason.lower() for reason in reasons) is not passes
+
+
+def test_a_channel_may_take_shorts_up_to_three_minutes(engine, tmp_path, monkeypatch):
+    seed_default_channels(engine)
+    with Session(engine) as session, session.begin():
+        channel = session.scalars(
+            select(ChannelRecord).where(ChannelRecord.channel_type == "MAIN_FACTUAL")
+        ).one()
+        channel.shorts_max_seconds = 180
+    technical, _ = _qc_duration(engine, tmp_path / "a", monkeypatch, 179.0)
+    assert technical["max_duration_seconds"] == 180 and technical["duration_valid"] is True
+    technical, _ = _qc_duration(engine, tmp_path / "b", monkeypatch, 181.5)
+    assert technical["duration_valid"] is False

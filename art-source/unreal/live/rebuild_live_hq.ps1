@@ -38,8 +38,27 @@ $ErrorActionPreference = "Stop"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $unrealDir = Resolve-Path (Join-Path $here "..")
 $repo = Resolve-Path (Join-Path $here "..\..\..")
-$blender = if ($env:AMN_BLENDER) { $env:AMN_BLENDER } else { "E:\Program Files\Blender Foundation\Blender 5.2\blender.exe" }
-$ueRoot = if ($env:AMN_UE_ROOT) { $env:AMN_UE_ROOT } else { "E:\Program Files\Epic Games\UE_5.8" }
+# Machine paths (SELL-11): the environment first, then art-source\unreal\.env.paths (KEY=VALUE lines,
+# ignored by Git, written once per machine), else a refusal that names both. No tracked file names a
+# drive of the first studio's PC. -Optional returns $null instead, for a path only one step needs.
+function Get-AmnPath([string]$Name, [string]$What, [switch]$Optional) {
+    $value = [Environment]::GetEnvironmentVariable($Name)
+    if (-not $value) {
+        $file = Join-Path $unrealDir ".env.paths"
+        if (Test-Path -LiteralPath $file) {
+            foreach ($line in Get-Content -LiteralPath $file -Encoding UTF8) {
+                if ($line -match '^\s*([A-Z_][A-Z0-9_]*)\s*=\s*"?([^"]*?)"?\s*$' -and $Matches[1] -eq $Name) { $value = $Matches[2] }
+            }
+        }
+    }
+    if (-not $value -and -not $Optional) {
+        throw "Set $Name to the $What (an environment variable, or a line $Name=<path> in art-source\unreal\.env.paths), or pass its -Path parameter."
+    }
+    return $value
+}
+# Blender is needed only by the export step (-SkipExport passes without it).
+$blender = Get-AmnPath "AMN_BLENDER" "path of blender.exe" -Optional
+$ueRoot = Get-AmnPath "AMN_UE_ROOT" "Unreal Engine root (the folder holding Engine\Binaries)"
 $ueCmd = Join-Path $ueRoot "Engine\Binaries\Win64\UnrealEditor-Cmd.exe"
 $uproject = Join-Path $unrealDir "AMNReference\AMNReference.uproject"
 if (-not $LogDir) { $LogDir = Join-Path $unrealDir "renders\logs" }
@@ -199,6 +218,7 @@ if (-not $SkipExport) {
         # Windows PowerShell 5.1 turns a native program's stderr into error records; under "Stop" the
         # first Blender warning on stderr (a DeprecationWarning) aborted the pass. Judge by exit code.
         $ErrorActionPreference = "Continue"
+        if (-not $blender) { $blender = Get-AmnPath "AMN_BLENDER" "path of blender.exe" }
         & $blender -b --factory-startup --python (Join-Path $unrealDir "export_hq_scene.py") *> $log
         $code = $LASTEXITCODE
         $ErrorActionPreference = "Stop"
@@ -258,7 +278,7 @@ if (-not $NoStream) {
         StopStream
         $since = Get-Date
         & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $here "start_live_hq.ps1")
-        $infra = if ($env:AMN_PS_INFRA) { $env:AMN_PS_INFRA } else { "E:\AMN_PixelStreaming\PixelStreamingInfrastructure-UE5.8-0.1.0" }
+        $infra = Get-AmnPath "AMN_PS_INFRA" "PixelStreamingInfrastructure folder"
         $logs = Join-Path $infra "SignallingWebServer\logs"
         $deadline = (Get-Date).AddMinutes(30)
         do {

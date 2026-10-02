@@ -670,6 +670,31 @@ def _assert_policy_allows_run(session: Session, agent: Agent, registry: Provider
 # ---------------------------------------------------------------------------
 
 
+#: What a provider's HTTP status tells the Owner to fix, in his words.
+_HTTP_MEANING_RO: dict[int, str] = {
+    401: "cheia conexiunii este respinsă (expirată, revocată sau greșită); reintrodu cheia",
+    403: "cheia conexiunii nu are acces la acest model; verifică cheia și abonamentul",
+    402: "abonamentul sau creditul furnizorului s-a terminat",
+    404: "modelul nu mai există la furnizor; alege alt model pentru acest angajat",
+    429: "limita de cereri a furnizorului a fost atinsă; se reîncearcă mai târziu",
+}
+
+
+def _failure_detail(exc: BaseException) -> str:
+    """The error class, with the provider's HTTP status and its meaning when it has one.
+
+    Never the exception's message: a vendor's text can carry a URL with a key in it.
+    """
+    name = type(exc).__name__
+    status = getattr(exc, "http_status", None)
+    if not isinstance(status, int) or isinstance(status, bool):
+        return name
+    meaning = _HTTP_MEANING_RO.get(status)
+    if meaning is None and 500 <= status < 600:
+        meaning = "furnizorul are o problemă de partea lui; se reîncearcă mai târziu"
+    return f"{name}: HTTP {status}" + (f" — {meaning}" if meaning else "")
+
+
 def run_agent_task(
     engine: Engine,
     registry: ProviderRegistry,
@@ -713,7 +738,10 @@ def run_agent_task(
     # under no ceiling at all. The verdict is carried into the kernel below and refused
     # there, so a blocked run is recorded exactly like every other BLOCKED_* — a row with
     # the reason, not an exception the twenty callers would each have to learn.
-    budget_verdict = may_run_agent(engine, _studio_settings(), correlation_id=correlation_id)
+    # An exceeded USD budget refuses the run as well (MONEY-10); the Accountant's own close,
+    # which reports it, is the one run it does not stop (`BUDGET_EXEMPT_TASKS`).
+    gate: dict[str, Any] = {"correlation_id": correlation_id, "task_type": task_type}
+    budget_verdict = may_run_agent(engine, _studio_settings(), **gate)
 
     with Session(engine) as session, session.begin():
         # This transaction reads the agent and its identity and then writes the run: it is
@@ -883,8 +911,9 @@ def run_agent_task(
         )
         status = "FAILED"
         output_text = None
-        # Never echo full message (may contain URLs/secrets)
-        error_detail = type(exc).__name__
+        # Never echo full message (may contain URLs/secrets); the provider's HTTP status is a
+        # number and says what to fix.
+        error_detail = _failure_detail(exc)
         cost_vr = None
         prompt_tokens = None
         completion_tokens = None

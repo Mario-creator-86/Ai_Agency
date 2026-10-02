@@ -2,11 +2,11 @@ import hashlib
 import json
 import math
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import Engine, and_, func, select, update
+from sqlalchemy import Engine, and_, func, inspect, select, update
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session
 
@@ -85,7 +85,22 @@ def append_event(
     return event
 
 
-def bootstrap_studio(engine: Engine, settings: Settings) -> None:
+#: The autonomy mode a NEW studio starts in (AR-09). A buyer's fresh install is MANUAL: agents
+#: draft and the Owner moves each stage, as 51_AUTONOMY_MODE_SEMANTICS asks of a studio that has
+#: no burn-in yet. Only his versioned command promotes it. Migration 0043's AUTONOMOUS_CEO stays
+#: the column default and the recorded reading for the studios that existed then; an existing
+#: row is never changed by a bootstrap.
+NEW_STUDIO_AUTONOMY_MODE = "MANUAL"
+
+
+def bootstrap_studio(
+    engine: Engine, settings: Settings, *, autonomy_mode: str = NEW_STUDIO_AUTONOMY_MODE
+) -> None:
+    """Create the studio row, its policy and its first room, once; a second call changes nothing.
+
+    ``autonomy_mode`` is the mode a studio created by this call starts in: MANUAL for a fresh
+    install (scripts/bootstrap.py); the suite's studio passes the Owner's AUTONOMOUS_CEO.
+    """
     with Session(engine) as session, session.begin():
         created = session.execute(
             insert(Studio)
@@ -101,6 +116,15 @@ def bootstrap_studio(engine: Engine, settings: Settings) -> None:
         session.execute(
             insert(OwnerPolicy).values(id=1, version=1, autonomy_stopped=True, updated_at=utc_now())
         )
+        # The mode only where the column exists (0043 and later): an older schema keeps its
+        # own default, as every later column does.
+        columns = {c["name"] for c in inspect(session.connection()).get_columns("owner_policy")}
+        if "autonomy_mode" in columns:
+            if autonomy_mode not in AUTONOMY_RANK:
+                raise ValueError(f"Unknown autonomy mode: {autonomy_mode}")
+            session.execute(
+                update(OwnerPolicy).where(OwnerPolicy.id == 1).values(autonomy_mode=autonomy_mode)
+            )
         correlation = str(uuid4())
         append_event(
             session,
@@ -288,6 +312,72 @@ def change_environment(engine: Engine, command: EnvironmentCommand) -> PolicyRes
         return result
 
 
+#: The event a restored database's guard is recorded under, and the jobs it turns off.
+RESTORE_GUARD_EVENT = "owner.restore_guard_applied"
+RESTORE_GUARD_JOBS = ("daily_main",)
+
+
+def apply_restore_guard(
+    engine: Engine, *, restored_from: str, correlation_id: str
+) -> dict[str, Any]:
+    """The restore guard (document 25): a database put back from a backup starts stopped.
+
+    Called by the Owner's own restore (`app.backup.restore_backup`, run from
+    scripts/restore.py), never by an agent: the autonomy stop is set, the environment is
+    TEST and the daily run's clock is off, so nothing is bought or published from a restored
+    past until he has looked at it and turned them back on himself, from the page. One
+    RESTORE_GUARD_EVENT records what was there before.
+    """
+    from app.workflows.models import ScheduledJob  # noqa: PLC0415 - workflows import us
+
+    with Session(engine) as session, session.begin():
+        session.execute(update(OwnerPolicy).where(OwnerPolicy.id == 1).values(id=1))
+        policy = session.get(OwnerPolicy, 1)
+        if policy is None:
+            raise RuntimeError("Studio has not been initialized")
+        before = {
+            "autonomy_stopped": bool(policy.autonomy_stopped),
+            "environment": policy.environment,
+        }
+        jobs = list(
+            session.scalars(select(ScheduledJob).where(ScheduledJob.name.in_(RESTORE_GUARD_JOBS)))
+        )
+        active_before = [job.name for job in jobs if job.is_active]
+        policy.autonomy_stopped = True
+        policy.environment = "TEST"
+        policy.version += 1
+        policy.updated_at = utc_now()
+        for job in jobs:
+            job.is_active = False
+        reason = (
+            "Baza de date a fost restaurată dintr-o copie de siguranță: studioul pornește cu "
+            "STOP autonomie, în mediul TEST și cu rularea zilnică oprită. Le repornești tu, din "
+            "pagină, după ce verifici studioul."
+        )
+        event = append_event(
+            session,
+            RESTORE_GUARD_EVENT,
+            "owner_policy",
+            "1",
+            policy.version,
+            {
+                "restored_from": restored_from,
+                "before": before,
+                "jobs_turned_off": active_before,
+                "reason": reason,
+            },
+            correlation_id,
+        )
+        return {
+            "autonomy_stopped": True,
+            "environment": "TEST",
+            "jobs_turned_off": active_before,
+            "before": before,
+            "event_id": event.event_id,
+            "reason_ro": reason,
+        }
+
+
 def change_stop(engine: Engine, command: PolicyCommand) -> PolicyResult:
     payload_hash = hashlib.sha256(
         json.dumps(command.model_dump(mode="json"), sort_keys=True).encode()
@@ -413,6 +503,10 @@ ACTION_RISK_TIERS: dict[str, str] = {
     "media.test_shot": "T3",
     "media.motion_purchase": "T3",
     "media.scene_redo": "T3",
+    # A character's reference pictures, the Owner's own press (2026-10-02, MONEY-13): a few
+    # image credits inside the budget, so T2 like the stills. It had a label and no tier, so
+    # the kernel would have refused it as unclassified had anything asked.
+    "media.character_reference_set": "T2",
     # T4 — alter hard budget; change the Policy Kernel; reveal/rotate credentials; accept
     # legal terms; disable core audit or security protections.
     "budget.change_hard_limit": "T4",
@@ -435,6 +529,35 @@ SAFE_MODE_ALLOWS = "T1"
 DEFAULT_APPROVAL_EXPIRES_AFTER_HOURS = 24
 
 
+def _hours_setting(name: str, default: int) -> int:
+    """One of the Owner's hour settings, read the way `approval_expires_after_hours` explains."""
+    from app.config import Settings  # noqa: PLC0415
+
+    try:
+        settings = Settings()  # type: ignore[call-arg]
+    except Exception:  # noqa: BLE001
+        settings = None
+    hours = getattr(settings, name, default)
+    try:
+        return max(1, int(hours))
+    except (TypeError, ValueError):
+        return default
+
+
+#: What the paid-step questions fall back to with no usable settings (2026-10-02, AR-05).
+DEFAULT_PAID_MEDIA_APPROVAL_EXPIRES_HOURS = 48
+
+
+def paid_media_approval_expires_hours() -> int:
+    """How long a question on a paid step of a film stands, from
+    `Settings.paid_media_approval_expires_hours` (48 h by default): the day that raised it
+    runs again 24 h later, so a one-day question was often dead before his yes could be spent
+    (AR-05). Read like `approval_expires_after_hours`."""
+    return _hours_setting(
+        "paid_media_approval_expires_hours", DEFAULT_PAID_MEDIA_APPROVAL_EXPIRES_HOURS
+    )
+
+
 def approval_expires_after_hours() -> int:
     """How long one approval request stands, from `Settings.approval_expires_after_hours`.
 
@@ -448,17 +571,7 @@ def approval_expires_after_hours() -> int:
     no handle on the application, and a studio whose settings cannot be built gets the number
     it always had rather than an exception raised while asking the Owner a question.
     """
-    from app.config import Settings  # noqa: PLC0415
-
-    try:
-        settings = Settings()  # type: ignore[call-arg]
-    except Exception:  # noqa: BLE001
-        settings = None
-    hours = getattr(settings, "approval_expires_after_hours", DEFAULT_APPROVAL_EXPIRES_AFTER_HOURS)
-    try:
-        return max(1, int(hours))
-    except (TypeError, ValueError):
-        return DEFAULT_APPROVAL_EXPIRES_AFTER_HOURS
+    return _hours_setting("approval_expires_after_hours", DEFAULT_APPROVAL_EXPIRES_AFTER_HOURS)
 
 
 #: What each action is called in the Owner's own language, for the list he decides from. An
@@ -490,6 +603,81 @@ PAID_MEDIA_STEPS: dict[str, str] = {
 
 #: The value a missing, unknown or incomplete setting is read as: the strictest one.
 STRICTEST_PAID_MEDIA_APPROVAL = PAID_MEDIA_APPROVALS[0]
+
+#: The refusal of a paid step the studio would buy unasked in PRODUCTION with no active daily
+#: budget (2026-10-02, MONEY-06 / AR-07): fail closed, never "no budget, no limit".
+BLOCKED_NO_BUDGET = "BLOCKED_NO_BUDGET"
+#: Where the Owner sets the budget, in the page's own words (`preflight.BUDGET_PLACE`).
+BUDGET_PLACE_WORDS = "Trezorerie → Buget și cheltuieli"
+
+
+#: The step the sheet's narration question is bound to (`shooting_sheet.narration_gate`).
+NARRATION_STEP = "assemble"
+#: The task the Owner's yes on a paid step of a film queues (2026-10-02, A6 / AR-05): the film
+#: is walked on at once (`runbook.stages.continue_film`) instead of at the next daily run.
+FILM_CONTINUE_TASK = "FILM_CONTINUE"
+
+
+def is_paid_media_question(action: str, proposed_diff: dict | None) -> bool:
+    """Whether a question is about a paid step of a film: one of `PAID_MEDIA_STEPS`, or the
+    sheet's narration (a paid generation bound to a sheet's ``plan_hash`` at the assemble
+    step). Those stand for `paid_media_approval_expires_hours`, and his yes on one continues
+    the film the same day."""
+    if action in PAID_MEDIA_STEPS:
+        return True
+    diff = proposed_diff if isinstance(proposed_diff, dict) else {}
+    return (
+        action in ("media.paid_generation", "media.paid_generation_over_threshold")
+        and diff.get("step") == NARRATION_STEP
+        and bool(diff.get("plan_hash"))
+    )
+
+
+def queue_film_continue(
+    session: Session, storyboard_id: str, *, key: str, payload: dict
+) -> str | None:
+    """Queue `FILM_CONTINUE_TASK` for one film inside the caller's transaction, once per
+    ``key``; returns the task id (the standing one when the key was queued before).
+
+    Only in PRODUCTION: in TEST the daily run buys nothing from a paid vendor (A3), so there
+    is nothing for a continuation to do there. The task is written in the same transaction as
+    the decision that causes it, so an answer is never recorded without its continuation."""
+    from app.workflows.models import TaskQueueItem  # noqa: PLC0415 - workflows import us
+
+    if not storyboard_id:
+        return None
+    policy = session.get(OwnerPolicy, 1)
+    if str(getattr(policy, "environment", None) or "TEST") != "PRODUCTION":
+        return None
+    standing = session.scalar(select(TaskQueueItem).where(TaskQueueItem.idempotency_key == key))
+    if standing is not None:
+        return str(standing.id)
+    now = utc_now()
+    task = TaskQueueItem(
+        id=str(uuid4()),
+        workflow_id=None,
+        step_id=None,
+        task_type=FILM_CONTINUE_TASK,
+        payload={"storyboard_id": storyboard_id, **payload},
+        # Above the scheduled work, below the day's own re-attempt (5): his answer is the
+        # freshest decision in the studio.
+        priority=4,
+        status="QUEUED",
+        attempts=0,
+        # A continuation that failed is not re-run blind: the next daily run walks the film.
+        max_attempts=1,
+        backoff_seconds=60,
+        next_attempt_at=now,
+        lease_token=None,
+        lease_expires_at=None,
+        idempotency_key=key,
+        error_detail=None,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(task)
+    session.flush()
+    return task.id
 
 
 def action_words(action: str) -> str:
@@ -630,8 +818,48 @@ def _owner_refusal_reason(request: ApprovalRequest) -> str:
     )
 
 
-def approval_view(request: ApprovalRequest) -> ApprovalView:
-    """One request as the Owner reads it, with the word for a cost nobody could compute."""
+def approval_context(request: ApprovalRequest) -> dict | None:
+    """What a film's paid question is about, for the page (PAGE-03): the step it buys, the first
+    12 characters of the plan its yes is bound to, and the storyboard. None for any other
+    question, so the page approves those the way it always has."""
+    if not is_paid_media_question(request.action, request.proposed_diff):
+        return None
+    diff = request.proposed_diff if isinstance(request.proposed_diff, dict) else {}
+    step = diff.get("step") or PAID_MEDIA_STEPS.get(request.action)
+    plan_hash = diff.get("plan_hash")
+    return {
+        "step": str(step) if step else None,
+        "plan_hash": str(plan_hash)[:12] if plan_hash else None,
+        "storyboard_id": request.subject or None,
+    }
+
+
+def film_titles(session: Session, requests: list[ApprovalRequest]) -> dict[str, str]:
+    """The titles of the storyboards these paid questions are about, by storyboard id."""
+    from app.media.models import Storyboard  # noqa: PLC0415 - media imports the kernel
+
+    ids = {r.subject for r in requests if r.subject and approval_context(r) is not None}
+    if not ids:
+        return {}
+    return {
+        board.id: board.title
+        for board in session.scalars(select(Storyboard).where(Storyboard.id.in_(ids)))
+    }
+
+
+def approval_view(request: ApprovalRequest, *, film_title: str | None = None) -> ApprovalView:
+    """One request as the Owner reads it, with the word for a cost nobody could compute.
+
+    A paid step of a film is asked with its cap, the most his yes lets it spend (MONEY-08),
+    so its figure is named «plafon»; the expected cost is in the evidence beside it. A film's
+    paid question also carries its step, plan and storyboard (`approval_context`) and, when
+    the caller read it, the film's title."""
+    if request.cost_usd is None:
+        cost_label = COST_UNKNOWN
+    elif request.action in PAID_MEDIA_STEPS:
+        cost_label = f"plafon {request.cost_usd} USD"
+    else:
+        cost_label = f"{request.cost_usd} USD"
     return ApprovalView(
         id=request.id,
         action=request.action,
@@ -642,7 +870,7 @@ def approval_view(request: ApprovalRequest) -> ApprovalView:
         evidence=request.evidence,
         proposed_diff=request.proposed_diff,
         cost_usd=request.cost_usd,
-        cost_label=COST_UNKNOWN if request.cost_usd is None else f"{request.cost_usd} USD",
+        cost_label=cost_label,
         reversible=bool(request.reversible),
         expires_at=request.expires_at,
         created_at=request.created_at,
@@ -650,6 +878,8 @@ def approval_view(request: ApprovalRequest) -> ApprovalView:
         approver=request.approver,
         note=request.note,
         decided_at=request.decided_at,
+        context=approval_context(request),
+        film_title=film_title,
     )
 
 
@@ -663,13 +893,17 @@ def pending_approvals(engine: Engine) -> list[ApprovalView]:
     """
     now = utc_now()
     with Session(engine) as session:
-        return [
-            approval_view(request)
-            for request in session.scalars(
+        requests = list(
+            session.scalars(
                 select(ApprovalRequest)
                 .where(ApprovalRequest.result == "PENDING", ApprovalRequest.expires_at > now)
                 .order_by(ApprovalRequest.created_at.desc())
             )
+        )
+        titles = film_titles(session, requests)
+        return [
+            approval_view(request, film_title=titles.get(request.subject or ""))
+            for request in requests
         ]
 
 
@@ -721,6 +955,23 @@ def decide_approval(engine: Engine, command: ApprovalDecisionCommand) -> Approva
         request.approver = "owner"
         request.note = command.note
         request.decided_at = utc_now()
+        # His yes on a paid step of a film continues that film now, not at the next daily run
+        # (A6 / AR-05): queued in this transaction, once per answer.
+        continue_task_id = (
+            queue_film_continue(
+                session,
+                str(request.subject or ""),
+                key=f"film-continue-{request.subject}-{request.id}",
+                payload={
+                    "approval_id": request.id,
+                    "action": request.action,
+                    "cause": f"approval:{request.id}",
+                },
+            )
+            if command.decision == "APPROVED"
+            and is_paid_media_question(request.action, request.proposed_diff)
+            else None
+        )
         event = append_event(
             session,
             "governance.approval_decided",
@@ -736,6 +987,7 @@ def decide_approval(engine: Engine, command: ApprovalDecisionCommand) -> Approva
                 "approver": "owner",
                 "note": command.note,
                 "cost_usd": request.cost_usd,
+                "continue_task_id": continue_task_id,
             },
             command_id,
         )
@@ -775,7 +1027,12 @@ def request_approval(
     if existing is not None:
         return existing
     identifier = str(uuid4())
-    expires = datetime.now(UTC) + timedelta(hours=approval_expires_after_hours())
+    hours = (
+        paid_media_approval_expires_hours()
+        if is_paid_media_question(action, proposed_diff)
+        else approval_expires_after_hours()
+    )
+    expires = datetime.now(UTC) + timedelta(hours=hours)
     event = append_event(
         session,
         "governance.approval_requested",
@@ -815,6 +1072,69 @@ def request_approval(
     return request
 
 
+#: The event written when a question can no longer buy anything and is closed unanswered.
+APPROVAL_WITHDRAWN_EVENT = "governance.approval_withdrawn"
+
+
+def withdraw_superseded_approvals(
+    session: Session,
+    *,
+    action: str,
+    subject: str,
+    new_plan_hash: str,
+    keep: str | None,
+    reason: str,
+    correlation_id: str,
+) -> list[str]:
+    """Close the Owner's unanswered questions about an older plan of this action and subject.
+
+    His yes is spent only for the plan it names, so a question about a plan the studio has
+    replaced (a different ``plan_hash`` in its ``proposed_diff``) can no longer buy anything.
+    Each is closed as EXPIRED, never answered, with ``reason`` as its note and an
+    ``APPROVAL_WITHDRAWN_EVENT``; ``keep`` (the question that can still buy) and any question
+    already carrying a note are left alone. The caller decides *that* a plan was superseded
+    and words the reason; only this module, the Owner's command kernel, touches the row.
+    Returns the ids withdrawn, in the order they were found.
+    """
+    withdrawn: list[str] = []
+    for request in session.scalars(
+        select(ApprovalRequest).where(
+            ApprovalRequest.action == action,
+            ApprovalRequest.subject == subject,
+            ApprovalRequest.result.in_(("PENDING", "EXPIRED")),
+            ApprovalRequest.decided_at.is_(None),
+        )
+    ):
+        if request.id == keep or request.note:
+            continue
+        asked_for = request.proposed_diff if isinstance(request.proposed_diff, dict) else {}
+        if asked_for.get("plan_hash") == new_plan_hash:
+            continue
+        previous = request.result
+        request.result = "EXPIRED"
+        request.note = reason
+        append_event(
+            session,
+            APPROVAL_WITHDRAWN_EVENT,
+            "owner_approval_request",
+            request.id,
+            2,
+            {
+                "action": action,
+                "subject": subject,
+                "previous_result": previous,
+                "old_plan_hash": asked_for.get("plan_hash"),
+                "new_plan_hash": new_plan_hash,
+                "replaced_by": keep,
+                "reason": reason,
+                "withdrawn_at": utc_now(),
+            },
+            correlation_id,
+        )
+        withdrawn.append(request.id)
+    return withdrawn
+
+
 def paid_media_policy(policy: OwnerPolicy | None) -> tuple[str, float | None]:
     """The Owner's `paid_media_approval` as `may_act` reads it: (value, threshold in USD).
 
@@ -835,6 +1155,31 @@ def paid_media_policy(policy: OwnerPolicy | None) -> tuple[str, float | None]:
     if not math.isfinite(threshold) or threshold < 0:
         return STRICTEST_PAID_MEDIA_APPROVAL, None
     return "OVER_USD", threshold
+
+
+def has_active_daily_budget(session: Session) -> bool:
+    """Whether the Owner has an active DAILY spending budget, read in the caller's session."""
+    from app.economy.models import SpendingBudget  # noqa: PLC0415 - economy imports services
+
+    found = session.scalar(
+        select(SpendingBudget.id)
+        .where(SpendingBudget.period == "DAILY", SpendingBudget.active.is_(True))
+        .limit(1)
+    )
+    return found is not None
+
+
+def buys_paid_media_unasked(policy: OwnerPolicy | None) -> bool:
+    """Whether the Owner's rule and mode let the studio buy at least one paid step of a film
+    without asking him: MODE, or OVER_USD below his threshold, under a mode that allows the
+    cheapest of those steps (the T2 stills under SUPERVISED, every step under AUTONOMOUS_CEO).
+    The preflight's budget line and `may_act`'s fail-closed refusal read the same answer."""
+    rule, _threshold = paid_media_policy(policy)
+    if rule == STRICTEST_PAID_MEDIA_APPROVAL:
+        return False
+    mode = str(getattr(policy, "autonomy_mode", None) or "MANUAL")
+    cheapest = min(ACTION_RISK_TIERS[action] for action in PAID_MEDIA_STEPS)
+    return cheapest <= MODE_ALLOWS.get(mode, "T1")
 
 
 def _usd_words(amount: float) -> str:
@@ -947,7 +1292,10 @@ def may_act(
     the mode. `context` must carry the shooting sheet's `plan_hash` — the step is filled in
     from the action — and his answer is spent only for that same plan, so one yes buys
     exactly one step of one plan. Only his `change_paid_media_approval` moves the setting;
-    nothing a caller passes here does.
+    nothing a caller passes here does. For these steps ``cost_usd`` is the step's cap, the
+    most it may spend under his yes (2026-10-02, MONEY-08), and OVER_USD compares his
+    threshold with it. In PRODUCTION a step the rule and the mode would let through unasked is
+    refused BLOCKED_NO_BUDGET while no DAILY budget is active (MONEY-06): fail closed.
     """
     known = ACTION_RISK_TIERS.get(action)
     if known and tier:
@@ -1024,9 +1372,11 @@ def may_act(
                     "Proprietarului"
                 )
             elif cost_usd > threshold:
+                # The callers pass the step's cap, the most his yes lets it spend (MONEY-08):
+                # the expected cost is lower and stays in the evidence.
                 why = (
-                    f"«{action_words(action)}» costă {_usd_words(cost_usd)} USD, peste "
-                    f"pragul de {_usd_words(threshold)} USD al Proprietarului"
+                    f"«{action_words(action)}» are plafonul de {_usd_words(cost_usd)} USD, "
+                    f"peste pragul de {_usd_words(threshold)} USD al Proprietarului"
                 )
         if why is not None:
             status, reason, approval_id = _ask_or_spend(
@@ -1045,7 +1395,22 @@ def may_act(
                 ),
             )
             return verdict(status, reason, approval_id)
-        # MODE, or under his threshold: the autonomy mode decides, exactly as it does today.
+        # MODE, or under his threshold: the autonomy mode decides, exactly as it does today,
+        # except that in PRODUCTION nothing is bought unasked without a daily limit (fail
+        # closed, MONEY-06 / AR-07): with no budget `reserve_spend` refuses nothing, and a fresh
+        # install switched to AUTONOMOUS_CEO + MODE would buy on nothing but each sheet's cap.
+        if (
+            tier <= MODE_ALLOWS.get(mode, "T1")
+            and str(policy.environment or "TEST") == "PRODUCTION"
+            and not has_active_daily_budget(session)
+        ):
+            return verdict(
+                BLOCKED_NO_BUDGET,
+                f"Politica ta lasă studioul să cumpere «{action_words(action)}» fără să te "
+                "întrebe, dar nu există niciun buget zilnic activ: în producție nu se cumpără "
+                "nimic neîntrebat fără o limită zilnică. Setează bugetul zilnic în "
+                f"{BUDGET_PLACE_WORDS}.",
+            )
 
     if tier <= MODE_ALLOWS.get(mode, "T1"):
         return verdict("ALLOWED", "")
@@ -1393,7 +1758,33 @@ def last_task_per_agent(session: Session) -> dict[str, dict]:
     return tasks
 
 
-def snapshot(engine: Engine) -> dict:
+def studio_location(settings: Settings) -> dict:
+    """Where the studio stands, as the page draws it (SELL-08): its coordinates for the sun, the
+    city it names and the country whose holidays empty its street. The timezone is the studio
+    row's own (``snapshot()['studio']['timezone']``)."""
+    return {
+        "latitude": settings.office_latitude,
+        "longitude": settings.office_longitude,
+        "city": settings.office_city,
+        "holiday_country": settings.holiday_country,
+    }
+
+
+#: The demo's banner (SELL-03), on every screen of a studio started with --demo.
+DEMO_BANNER_RO = "DEMO — furnizori simulați, nimic nu se publică"
+
+
+def snapshot(
+    engine: Engine,
+    operations: dict | None = None,
+    *,
+    location: dict | None = None,
+    demo: bool = False,
+) -> dict:
+    """The studio as the page reads it. ``operations`` is the running process's reading of
+    its worker, disk, toolchain and backups (`app.operations.operations_reading`, passed by the
+    route), for the page's banner; None outside a running studio. ``location`` is the studio's
+    place from the settings (`studio_location`), and ``demo`` says the studio is the demo."""
     with Session(engine) as session, session.begin():
         studio = session.get(Studio, 1)
         policy = session.get(OwnerPolicy, 1)
@@ -1408,7 +1799,17 @@ def snapshot(engine: Engine) -> dict:
             "schema_version": 1,
             "cursor": cursor,
             "captured_at": utc_now(),
-            "studio": {"id": studio.id, "name": studio.name, "timezone": studio.timezone},
+            # What keeps the studio running, in the Owner's words (REL-07): the page shows
+            # banner_ro when anything is wrong ("Lucrătorul nu a mai lucrat de 14 minute").
+            "operations": operations,
+            "studio": {
+                "id": studio.id,
+                "name": studio.name,
+                "timezone": studio.timezone,
+                "location": location,
+            },
+            # SELL-03: a demo studio says so on every screen; a real one carries no banner.
+            "demo": {"active": True, "banner_ro": DEMO_BANNER_RO} if demo else None,
             "maturity": "DEVELOPMENT",
             "deployment_mode": "LOCAL_STUDIO",
             "policy": policy_view(policy, session).model_dump(),

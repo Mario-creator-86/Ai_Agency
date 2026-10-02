@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { liveStreamSettings, relayUrl, streamLayers } from '../src/hq_stream_config.js';
+import { STREAM_NO_SAFE_AUTH, eventsUrl, liveStreamSettings, relayUrl, streamLayers } from '../src/hq_stream_config.js';
 
 const SCENE = JSON.parse(fs.readFileSync(new URL('../public/assets/hq/scene.json', import.meta.url), 'utf8'));
 
@@ -36,8 +36,39 @@ test('with a stream configured the old renderer is never shown: live video, a fr
 
 test("the relay is on the page's own origin, secure when the page is", () => {
   const path = '/api/v1/office/stream/signalling';
-  assert.equal(relayUrl({ protocol: 'http:', host: '127.0.0.1:8000' }, path, 'a b'), 'ws://127.0.0.1:8000/api/v1/office/stream/signalling?token=a%20b');
-  assert.equal(relayUrl({ protocol: 'https:', host: 'hq.example' }, 'api/x', 't'), 'wss://hq.example/api/x?token=t');
+  assert.equal(relayUrl({ protocol: 'http:', host: '127.0.0.1:8000' }, path), 'ws://127.0.0.1:8000/api/v1/office/stream/signalling');
+  assert.equal(relayUrl({ protocol: 'https:', host: 'hq.example' }, 'api/x'), 'wss://hq.example/api/x');
+});
+
+// SEC-02 (2026-10-01): uvicorn logs a socket's path with its query and the service kept that log
+// on disk, so the backend refuses a key in a socket's URL outright. No URL the page builds carries
+// one, whatever it is handed, and the stream never falls back to one.
+test('no socket URL the page builds ever carries the key', () => {
+  const home = { protocol: 'http:', host: '127.0.0.1:8000' };
+  const urls = [
+    relayUrl(home, '/api/v1/office/stream/signalling'),
+    // a caller from before still passing the key and the old mode gets no key in the URL
+    /** @type {any} */ (relayUrl)(home, '/api/v1/office/stream/signalling', 'k3y', 'query'),
+    eventsUrl(home),
+    /** @type {any} */ (eventsUrl)(home, 'k3y', 'query'),
+  ];
+  for (const url of urls) {
+    assert.doesNotMatch(url, /token=/i, url);
+    assert.doesNotMatch(url, /k3y/, url);
+  }
+});
+
+test('the stream has no URL with the key to fall back to, and says so when it cannot use the first message', () => {
+  const stream = fs.readFileSync(new URL('../src/hq_stream.js', import.meta.url), 'utf8');
+  const main = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+  for (const src of [stream, main]) {
+    assert.doesNotMatch(src, /legacyUrl/);
+    assert.doesNotMatch(src, /'query'\)/);
+  }
+  assert.match(main, /STREAM_NO_SAFE_AUTH/);
+  assert.match(stream, /firstMessageAuth/);
+  assert.equal(typeof STREAM_NO_SAFE_AUTH, 'string');
+  assert.match(STREAM_NO_SAFE_AUTH, /cheia/);
 });
 
 test('W17: the streamed video never takes the pointer from the page\'s hit boxes (the library writes pointer-events: all on it)', () => {
@@ -47,4 +78,25 @@ test('W17: the streamed video never takes the pointer from the page\'s hit boxes
   const rule = css.match(/\.live-stream-layer video \{[^}]*\}/);
   assert.ok(rule);
   assert.match(rule[0], /pointer-events:\s*none\s*!important/, 'an inline style is only beaten by !important');
+});
+
+// PAGE-20: the Pixel Streaming client is downloaded only by a studio whose stream is switched on.
+test('the stream client is never a static import: it is loaded by import() when the stream starts', () => {
+  const stream = fs.readFileSync(new URL('../src/hq_stream.js', import.meta.url), 'utf8');
+  const main = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+  const statics = (src) => src.split('\n').filter((line) => /^\s*import\s[^(]/.test(line));
+  for (const [name, src] of [['hq_stream.js', stream], ['main.js', main]]) {
+    assert.ok(!statics(src).some((line) => line.includes('@epicgames-ps/lib-pixelstreamingfrontend-ue5.8')), name);
+  }
+  assert.ok(!statics(main).some((line) => line.includes("'./hq_stream.js'")), 'main.js imports the stream module only when it starts it');
+  assert.match(stream, /import\('@epicgames-ps\/lib-pixelstreamingfrontend-ue5\.8'\)/);
+  assert.match(main, /await import\('\.\/hq_stream\.js'\)/);
+  // the redacting logger is still installed with the library, before the first connect
+  assert.match(stream, /overrideLogger\(redactingLogger\(Logger\)\);/);
+});
+
+test('a LiveStream made before the client is loaded says so instead of failing inside the library', async () => {
+  const { LiveStream, streamClientLoaded } = await import('../src/hq_stream.js');
+  assert.equal(streamClientLoaded(), false);
+  assert.throws(() => new LiveStream(/** @type {any} */ ({ appendChild() {} }), { signallingUrl: '', streamerId: '', retryMs: 15000 }), /loadStreamClient/);
 });

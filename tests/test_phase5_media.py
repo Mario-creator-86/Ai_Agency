@@ -812,7 +812,8 @@ def test_a_scene_lasts_its_words_and_its_full_breath_and_a_silent_card_one_beat(
     from app.media.assembler import SPOKEN_TAIL_SECONDS, TIMELINE_FPS, scene_spans
     from app.media.qc import MAX_SILENT_CARD_SECONDS
 
-    assert SPOKEN_TAIL_SECONDS == 0.35
+    # 0.12 s since 2026-10-02, after each take's own silence is trimmed (audit Q4).
+    assert SPOKEN_TAIL_SECONDS == 0.12
     assert not hasattr(assembler, "FILM_OVER_NARRATION_SECONDS")
 
     def whole_frames(spans: list[float]) -> bool:
@@ -823,7 +824,7 @@ def test_a_scene_lasts_its_words_and_its_full_breath_and_a_silent_card_one_beat(
 
     # Two scenes: the full breath after each, never past the plan, on whole frames.
     two = scene_spans([5.0, 5.0], [4.0, 4.6])
-    assert two == pytest.approx([105 / 24, 119 / 24])
+    assert two == pytest.approx([99 / 24, 114 / 24])
     assert whole_frames(two)
     # Words longer than the plan are never cut: the scene lasts its words.
     assert scene_spans([4.0], [5.2]) == pytest.approx([125 / 24])
@@ -831,7 +832,7 @@ def test_a_scene_lasts_its_words_and_its_full_breath_and_a_silent_card_one_beat(
     assert scene_spans([5.0], [4.9]) == pytest.approx([up(5.0)])
     # A scene with no words keeps its planned length.
     assert scene_spans([3.0], [0.0]) == pytest.approx([3.0])
-    # Six scenes with a second of slack each: every one keeps its full 0.35 s breath.
+    # Six scenes with a second of slack each: every one keeps its full breath.
     planned, spoken = [5.0] * 6, [4.0, 3.2, 4.4, 3.9, 4.1, 2.8]
     six = scene_spans(planned, spoken)
     assert whole_frames(six)
@@ -856,7 +857,7 @@ def test_a_scene_lasts_its_words_and_its_full_breath_and_a_silent_card_one_beat(
     )
     assert whole_frames(spans)
     # A card with words is narration: its words and a breath, like any scene.
-    assert scene_spans([6.0], [2.0], kinds=["DATA_CARD"]) == pytest.approx([up(2.35)])
+    assert scene_spans([6.0], [2.0], kinds=["DATA_CARD"]) == pytest.approx([up(2.12)])
 
 
 class AlignedVoice:
@@ -1004,7 +1005,7 @@ def test_a_real_film_is_24_fps_within_a_second_of_its_words_with_captions_in_the
     # Within a second of the narration: the planned six seconds are not padded with silence.
     narration = sum(scene["audio_seconds"] for scene in production["scenes"])
     breaths = 2 * production["timeline"]["spoken_tail_seconds"]
-    assert breaths == pytest.approx(0.7)
+    assert breaths == pytest.approx(0.24)
     assert probe["duration_seconds"] <= narration + breaths + 1.0, (
         probe["duration_seconds"],
         narration,
@@ -1028,7 +1029,7 @@ def test_a_real_film_is_24_fps_within_a_second_of_its_words_with_captions_in_the
     assert "PlayResX: 1080" in script and "PlayResY: 1920" in script
     style = next(line for line in script.splitlines() if line.startswith("Style:")).split(",")
     assert style[1] == cards.font_family(cards.BOLD)
-    assert 64 <= float(style[2]) <= 68
+    assert 72 <= float(style[2]) <= 80  # 74 since audit Q7 (2026-10-02)
     assert 3 <= float(style[16]) <= 4  # outline
     font_copy = film.parent / "fonts" / cards.BOLD
     assert font_copy.read_bytes() == cards.font_path(cards.BOLD).read_bytes()

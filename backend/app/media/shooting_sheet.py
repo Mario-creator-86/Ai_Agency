@@ -43,43 +43,55 @@ his yes and buys (200).
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import json
 import logging
 import math
 import subprocess
 import tempfile
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
 from app.media.assembler import (
+    HERO_ACCEPTED_BY,
     MOTION_STEP,
     MOTION_STEP_ACTIONS,
+    SHOT_TAKE_KINDS,
     TEST_SHOT_STEP,
     MotionStepRefused,
     SceneRedoRefused,
+    SpendMeter,
+    SpentStageError,
     _scene_clip_refusal,
     _shot_take,
+    check_unchecked_shots,
     clip_accepted,
     clip_qc_of,
+    collect_submitted_takes,
     decide_take,
     film_seed,
+    hero_acceptances,
+    hero_gate,
     motion_fields,
     motion_plan,
     motion_seconds,
+    narration_to_buy,
     redo_plan,
     release_after_qc,
     run_motion_step,
     scene_kind_of,
     scene_view,
-    still_fields,
+    still_options,
     usable_take,
+    voiced_scenes,
 )
 from app.media.cards import CARD_KINDS, CardError, card_spec_from_json, compose_card
 from app.media.cost_plan import (
@@ -93,9 +105,10 @@ from app.media.cost_plan import (
     credits_to_micros,
     load_price_table,
     plan_film,
+    price_still,
     source_label,
 )
-from app.media.models import SceneTake, Storyboard, StoryboardScene
+from app.media.models import FilmPurchaseLease, SceneTake, Storyboard, StoryboardScene
 from app.media.production_policy import (
     COMPOSED_LABELS_RO,
     LOCAL_MOVE,
@@ -116,7 +129,9 @@ from app.media.stills_stage import (
     STILLS_ACTION,
     STILLS_STEP,
     StillsStageRefused,
+    needs_reference_reason,
     run_stills_stage,
+    settle_stills,
     stills_plan,
 )
 from app.media.toolchain import find_ffmpeg
@@ -128,9 +143,13 @@ __all__ = [
     "ASSEMBLE_STEP",
     "LOCAL_MOVE",
     "SHEET_STEPS",
+    "book_interrupted_step",
+    "book_purchase",
     "book_step_cost",
     "may_spend_step",
+    "purchase_reference",
     "narration_gate",
+    "recover_paid_takes",
     "run_assemble_step",
     "withdraw_stale_questions",
     "connection_account",
@@ -605,8 +624,16 @@ def _scene_takes(session: Session, storyboard_id: str) -> dict[int, list[SceneTa
     return found
 
 
+#: How the sheet names a take accepted by its clip QC under the Owner's rule.
+ACCEPTED_BY_CLIP_QC_RO = "acceptat de controlul clipului"
+
+
 def _take_view(
-    take: SceneTake, *, current: bool, clip_qc: dict[str, Any] | None = None
+    take: SceneTake,
+    *,
+    current: bool,
+    clip_qc: dict[str, Any] | None = None,
+    accepted_by: str | None = None,
 ) -> dict[str, Any]:
     return {
         "take_id": take.id,
@@ -627,6 +654,10 @@ def _take_view(
         # A shot's clip-QC report as it was kept on its take (None for a still, or a shot
         # nobody checked yet): what the Owner's look on the contact sheet is about.
         "clip_qc": clip_qc,
+        # A hero test shot accepted by that report under his paid-media rule (HERO_AUTO_ACCEPT,
+        # 2026-10-02): still PAID, never APPROVED, which stays his.
+        "accepted_by": accepted_by,
+        "accepted_ro": ACCEPTED_BY_CLIP_QC_RO if accepted_by == HERO_ACCEPTED_BY else None,
     }
 
 
@@ -703,19 +734,28 @@ def _price_line(kind: str, motion: dict[str, Any], credit_usd: float) -> str:
     return line
 
 
-def _narration(session: Session, scenes: Sequence[dict[str, Any]]) -> dict[str, Any]:
+def _narration(
+    session: Session, scenes: Sequence[dict[str, Any]], voiced: set[int] | None = None
+) -> dict[str, Any]:
     """The narration's price: its characters at the dearest active ElevenLabs price per
     thousand (the figure the day's estimate holds, `economy.budget.estimate_film_cost_micros`).
 
-    It is its own line on the sheet and part of the hashed plan: a new price, or new words,
-    is a new sheet. With words and no price it is unpriced, never 0: the step then asks.
+    A scene whose words are already voiced (``voiced``, `assembler.voiced_scenes`: a
+    narration take of every part of its words as they are now) costs 0: an assembly reuses
+    it. It is its own line on the sheet and part of the hashed plan: a new price, or new
+    words, is a new sheet. With words and no price it is unpriced, never 0: the step asks.
     """
     from sqlalchemy import func  # noqa: PLC0415
 
     from app.economy.models import ProviderPrice  # noqa: PLC0415 - economy imports media
 
+    reused = sorted(
+        int(scene["scene_index"]) for scene in scenes if int(scene["scene_index"]) in (voiced or ())
+    )
     characters = sum(
-        len(" ".join(str(scene.get("voiceover_segment") or "").split())) for scene in scenes
+        len(" ".join(str(scene.get("voiceover_segment") or "").split()))
+        for scene in scenes
+        if int(scene["scene_index"]) not in reused
     )
     per_1k = session.scalar(
         select(func.max(ProviderPrice.usd_micros)).where(
@@ -727,7 +767,13 @@ def _narration(session: Session, scenes: Sequence[dict[str, Any]]) -> dict[str, 
     micros = (characters * int(per_1k) + 500) // 1000 if per_1k else 0
     priced = bool(per_1k) or characters == 0
     said = count_ro(characters, "caracter", "caractere")
-    if characters == 0:
+    if characters == 0 and reused:
+        line = (
+            "Narațiune: deja înregistrată pentru "
+            + count_ro(len(reused), "scenă", "scene")
+            + " · 0 USD"
+        )
+    elif characters == 0:
         line = "Narațiune: niciun cuvânt de citit · 0 USD"
     elif priced:
         line = (
@@ -739,8 +785,16 @@ def _narration(session: Session, scenes: Sequence[dict[str, Any]]) -> dict[str, 
             f"Narațiune: {said} · preț necunoscut (niciun tarif ElevenLabs activ); "
             "nu se cumpără fără întrebarea Proprietarului"
         )
+    if characters and reused:
+        line += (
+            " · "
+            + count_ro(len(reused), "scenă", "scene")
+            + (" deja înregistrată" if len(reused) == 1 else " deja înregistrate")
+            + ", 0 USD"
+        )
     return {
         "characters": characters,
+        "reused_scenes": reused,
         "per_1k_usd_micros": int(per_1k) if per_1k else None,
         "usd_micros": int(micros),
         "usd": round(micros / 1_000_000, 6),
@@ -945,6 +999,7 @@ def _sheet(
     read_live: bool = True,
     face_counter: Callable[..., Any] | None = None,
     environment: str | None = None,
+    settings: Any = None,
 ) -> dict[str, Any]:
     from app.media.prompt_agent import motion_prompt_for, shot_plan_gaps  # noqa: PLC0415
     from app.media.qc import owner_local_moves  # noqa: PLC0415 - qc reads the sheet's events
@@ -980,12 +1035,14 @@ def _sheet(
             index = int(scene["scene_index"])
             if scene_kind_of(scene) != "LIVE":
                 continue
+            # Looked for by the identity the assembly looks for: the words and the reference
+            # picture of the character the scene shows (none of a locked one without it).
             found = usable_take(
                 session,
                 storyboard_id,
                 index,
                 "still",
-                [still_fields(str(scene["visual_prompt"] or ""), None)],
+                still_options(engine, scene),
                 statuses=("APPROVED",),
             )
             if found is not None:
@@ -1012,8 +1069,12 @@ def _sheet(
             for take in rows_
             if take.kind in ("test_shot", "motion")
         }
+        accepted_heroes = hero_acceptances(
+            session,
+            [take.id for rows_ in takes.values() for take in rows_ if take.kind == "test_shot"],
+        )
         safety = _safety_moves(session, storyboard_id)
-        narration = _narration(session, scenes)
+        narration = _narration(session, scenes, voiced_scenes(session, storyboard_id, scenes))
         session.expunge_all()
 
     overrides = sheet_overrides(engine, storyboard_id)
@@ -1032,8 +1093,18 @@ def _sheet(
             "candidates": STILL_CANDIDATES,
             "max_rerolls": 0,
             "to_buy": [],
+            "held": [],
+            "needs_reference": [],
+            "scenes": [],
             "unpriced_ro": f"Imaginile nu au preț: {exc}.",
         }
+    # Per scene, why its still is not bought: left to the Owner by an earlier step, or a
+    # locked character with no reference picture (stills_plan's own reading).
+    still_holds = {
+        int(entry["scene_index"]): {"status": entry["status"], "reason_ro": entry["reason_ro"]}
+        for entry in stills_step.get("scenes") or []
+        if entry.get("status") in ("NEEDS_OWNER", "NEEDS_REFERENCE")
+    }
     moving = motion_plan(
         engine,
         storyboard_id,
@@ -1044,6 +1115,12 @@ def _sheet(
         table=ctx.table,
     )
     moving_view = {int(item["scene_index"]): item for item in moving["scenes"]}
+    # Whether the rest of the motion may follow the hero test shot: the Owner's look, or its
+    # clip QC under his paid-media rule (HERO_AUTO_ACCEPT). Read only; the step records it.
+    with Session(engine) as session:
+        hero = hero_gate(
+            session, moving, storyboard_id=storyboard_id, plan_hash=moving["plan_hash"]
+        )
     bought = {
         index: str(item["model_id"])
         for index, item in moving_view.items()
@@ -1130,6 +1207,7 @@ def _sheet(
         motion["take_id"] = view.get("take_id")
         motion["take_kind"] = view.get("take_kind")
         motion["take_status"] = view.get("take_status")
+        motion["accepted_by"] = view.get("accepted_by")
         card: dict[str, Any] | None = None
         if kind in CARD_KINDS:
             problem = None
@@ -1152,7 +1230,12 @@ def _sheet(
             if take.kind == "still" and (still is None or take.id != still.id)
         ]
         shots = [
-            _take_view(take, current=True, clip_qc=clip_reports.get(take.id))
+            _take_view(
+                take,
+                current=True,
+                clip_qc=clip_reports.get(take.id),
+                accepted_by=HERO_ACCEPTED_BY if take.id in accepted_heroes else None,
+            )
             for take in takes.get(index, [])
             if take.kind in ("test_shot", "motion")
         ]
@@ -1188,6 +1271,7 @@ def _sheet(
                 "card": card,
                 "override": overrides.get(index),
                 "motion": motion,
+                "still_hold": still_holds.get(index),
                 "still_credits": int(entry.get("still_credits") or 0) if kind == "LIVE" else 0,
                 "still_price_source": still_label if kind == "LIVE" else None,
                 "price_line_ro": _price_line(kind, motion, ctx.table.credit_usd),
@@ -1216,6 +1300,9 @@ def _sheet(
                 "still_credits": entry.get("still_credits"),
                 "take_id": view.get("take_id"),
                 "take_status": view.get("take_status"),
+                # Who accepted the hero (the Owner, or its clip QC under his rule): a new
+                # acceptance is a new sheet.
+                "accepted_by": view.get("accepted_by"),
             }
         )
 
@@ -1240,6 +1327,10 @@ def _sheet(
                 face_counter=face_counter,
             )
 
+    # Who is buying for the film right now (never part of the hash: a step being bought does
+    # not change what is bought). The page disables the buy buttons with its reason.
+    lease = current_lease(engine, storyboard_id)
+
     def step_view(name: str, plan: dict[str, Any], waiting_ro: str) -> dict[str, Any]:
         action = SHEET_STEP_ACTIONS[name]
         to_buy = [int(index) for index in plan.get("to_buy") or []]
@@ -1254,15 +1345,27 @@ def _sheet(
             "cap_usd": float(plan.get("cap_usd") or 0.0),
             "ready": bool(to_buy),
             "waiting_ro": "" if to_buy else waiting_ro,
+            # Scenes of this step a bought stair left to the Owner: never bought again until
+            # he decides on the sheet (assembler.scene_memory).
+            "held": [int(index) for index in plan.get("held") or []],
+            "in_progress": bool(lease and lease["step"] in (name, "staircase")),
         }
 
+    needs_reference = list(stills_step.get("needs_reference") or [])
+    if needs_reference:
+        stills_waiting = needs_reference_reason(needs_reference)
+    elif stills_step.get("held"):
+        stills_waiting = " ".join(
+            str(still_holds[index]["reason_ro"])
+            for index in stills_step["held"]
+            if index in still_holds
+        )
+    else:
+        stills_waiting = "Toate imaginile scenelor filmate sunt deja aprobate; nu se cumpără nimic."
     steps = {
         STILLS_STEP: {
-            **step_view(
-                STILLS_STEP,
-                stills_step,
-                "Toate imaginile scenelor filmate sunt deja aprobate; nu se cumpără nimic.",
-            ),
+            **step_view(STILLS_STEP, stills_step, stills_waiting),
+            "needs_reference": needs_reference,
             "model_id": stills_step["model_id"],
             "ratio": stills_step["ratio"],
             "candidates": stills_step["candidates"],
@@ -1275,13 +1378,25 @@ def _sheet(
             "Cadrul de probă se cumpără după ce imaginea scenei lui este aprobată "
             "(sau a fost deja cumpărat).",
         ),
-        MOTION_STEP: step_view(
-            MOTION_STEP,
-            moving["steps"][MOTION_STEP],
-            "Restul mișcării se cumpără după ce imaginile sunt aprobate și Proprietarul a "
-            "aprobat cadrul de probă.",
-        ),
+        MOTION_STEP: {
+            **step_view(
+                MOTION_STEP,
+                moving["steps"][MOTION_STEP],
+                "Restul mișcării se cumpără după ce imaginile sunt aprobate și cadrul de probă "
+                "este acceptat: de controlul clipului, cum permite regula ta pentru pașii "
+                "plătiți, sau de Proprietar pe foaia de filmare."
+                if hero["rule_accepts"]
+                else "Restul mișcării se cumpără după ce imaginile sunt aprobate și Proprietarul "
+                "a aprobat cadrul de probă.",
+            ),
+            # The hero gate in the Owner's words: who accepted the test shot, or what it waits
+            # for (his look, its clip QC, or a refusal above both).
+            "hero": hero,
+        },
     }
+    if steps[MOTION_STEP]["to_buy"] and hero["status"] in ("NOT_BOUGHT", "WAITING", "REFUSED"):
+        # Shots are planned, but the step would refuse before buying them: say why.
+        steps[MOTION_STEP]["waiting_ro"] = hero["reason_ro"]
     blocked = [item for item in readiness if not item["ok"]]
     paid_left = [name for name in SHEET_STEPS if steps[name]["to_buy"]]
     steps[ASSEMBLE_STEP] = {
@@ -1300,6 +1415,7 @@ def _sheet(
         "cost_credits": 0,
         "cap_credits": 0,
         "waiting_ro": " ".join(item["reason_ro"] for item in blocked),
+        "in_progress": bool(lease and lease["step"] in (ASSEMBLE_STEP, "staircase")),
     }
 
     hashed = {
@@ -1402,6 +1518,8 @@ def _sheet(
             name: math.ceil(steps[name]["cap_credits"] * BALANCE_MARGIN) for name in SHEET_STEPS
         },
         "daily_budget": _daily_budget(engine) if read_live else None,
+        # The film's own ceiling (PRODUCTION): its limit, what the books hold for it, the rest.
+        "film_budget": film_budget_view(engine, storyboard_id, settings, ctx.table),
         "narration": narration,
         **_catalogue_view(policy),
         "audio_redo": None,
@@ -1439,6 +1557,7 @@ def _sheet(
         "steps": steps,
         "prices": prices,
         "footer": footer,
+        "in_progress": ({**lease, "reason_ro": _busy_reason(lease)} if lease is not None else None),
     }
 
 
@@ -1465,6 +1584,7 @@ def build_sheet(
     face_counter: Callable[..., Any] | None = None,
     read_live: bool = True,
     environment: str | None = None,
+    settings: Any = None,
 ) -> dict[str, Any]:
     """The shooting sheet of one film. 0 credits; the only live call is ``account``'s free
     balance read (and the local face count of each approved still, with ``face_counter``).
@@ -1492,6 +1612,7 @@ def build_sheet(
         read_live=read_live,
         face_counter=face_counter,
         environment=environment,
+        settings=settings,
     )
 
 
@@ -1532,6 +1653,588 @@ def may_spend_step(engine: Engine, cap_usd_micros: int) -> tuple[str, str] | Non
     )
 
 
+# ------------------------------------------------------------ the gates before every purchase
+#
+# 2026-10-02 (GATES_BEFORE_BUYING). Nothing is bought unless every gate passes, in this order:
+# the film's purchase lease (one buyer per film, MONEY-04), the balance, the film's own
+# ceiling (PRODUCTION, MONEY-07), a hold of the step's cap against the budgets (AR-03: a
+# reservation decided behind the write lock, not a reading), and then the Owner's rule in
+# `may_act` (which refuses unasked buying in PRODUCTION with no daily budget, MONEY-06).
+
+#: A second buyer of a film while the first is still buying (409; the day WAITs).
+FILM_BUSY = "FILM_BUSY"
+#: A step whose cap would take the film past its ceiling (409; the Owner may consent).
+OVER_FILM_BUDGET = "OVER_FILM_BUDGET"
+#: The Owner's consent to go past the film's ceiling for one step.
+FILM_EXCESS_EVENT = "media.film_budget_excess_approved"
+#: The Owner's consent to go past a period budget for one step.
+BUDGET_EXCESS_EVENT = "media.budget_excess_approved"
+#: What a lease is held for, in the Owner's words.
+LEASE_WORDS_RO: dict[str, str] = {
+    STILLS_STEP: "pasul «imaginile»",
+    TEST_SHOT_STEP: "pasul «cadrul de probă»",
+    MOTION_STEP: "pasul «restul mișcării»",
+    ASSEMBLE_STEP: "asamblarea",
+    "scene_redo": "o refacere de scenă",
+    "staircase": "rularea zilei",
+}
+#: How long a lease stands when the settings do not say (STUDIO_FILM_PURCHASE_LEASE_SECONDS).
+DEFAULT_LEASE_SECONDS = 10_800
+#: The film ceiling's default stills allowance: the stills cap of a six-scene film.
+DEFAULT_CEILING_SCENES = 6
+
+
+class FilmBusy(RuntimeError):
+    """Another buyer holds this film's purchase lease; nothing was bought here."""
+
+    def __init__(self, reason_ro: str, lease: dict[str, Any]) -> None:
+        super().__init__(reason_ro)
+        self.status = FILM_BUSY
+        self.reason_ro = reason_ro
+        self.lease = lease
+
+
+class PurchaseGateRefused(RuntimeError):
+    """A gate before a purchase refused it (a budget, the film's ceiling); each caller says it
+    in its own refusal (`SheetStepRefused`, `SceneRedoRefused`). Nothing was bought."""
+
+    def __init__(self, status: str, reason_ro: str) -> None:
+        super().__init__(reason_ro)
+        self.status = status
+        self.reason_ro = reason_ro
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _lease_view(row: FilmPurchaseLease) -> dict[str, Any]:
+    return {
+        "storyboard_id": row.storyboard_id,
+        "holder": row.holder,
+        "step": row.step,
+        "acquired_at": row.acquired_at,
+        "expires_at": row.expires_at,
+    }
+
+
+def _busy_reason(lease: dict[str, Any]) -> str:
+    """«Filmul este deja în lucru: …» with what is being bought and for how long."""
+    what = LEASE_WORDS_RO.get(str(lease.get("step")), "un pas plătit")
+    try:
+        started = datetime.fromisoformat(str(lease["acquired_at"]))
+        minutes = max(0, int((_now() - started).total_seconds() // 60))
+        since = f"a început acum {count_ro(minutes, 'minut', 'minute')}"
+    except (KeyError, ValueError):
+        since = "a început mai devreme"
+    return (
+        f"Filmul este deja în lucru: {what} {since} și nu s-a terminat. Nu se cumpără nimic de "
+        "două ori; foaia de filmare se reîncarcă singură când pasul se termină."
+    )
+
+
+def current_lease(engine: Engine, storyboard_id: str) -> dict[str, Any] | None:
+    """Who is buying for this film now, or None (an expired lease is nobody's)."""
+    with Session(engine) as session:
+        row = session.get(FilmPurchaseLease, storyboard_id)
+        if row is None or row.expires_at <= _now().isoformat():
+            return None
+        return _lease_view(row)
+
+
+@contextmanager
+def film_purchase_lease(
+    engine: Engine,
+    storyboard_id: str,
+    *,
+    holder: str,
+    step: str,
+    ttl_seconds: int | None = None,
+) -> Iterator[dict[str, Any]]:
+    """Hold this film's purchase lease while the block runs; `FilmBusy` when another holds it.
+
+    Taken behind the studio's write lock, so two buyers asking in the same instant are
+    serialised: the second reads the first one's row. The same ``holder`` (one run's
+    correlation id) may take it again inside its own block (the day's staircase, then each
+    stair it buys): the row then names the step being bought and is given back as it was.
+    A row past its expiry was left by a process that died under it and is taken over.
+    """
+    from app.db import lock_for_write  # noqa: PLC0415
+
+    ttl = int(ttl_seconds or DEFAULT_LEASE_SECONDS)
+    holder = str(holder)[:100]
+    nested_step: str | None = None
+    missing = False
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        now = _now()
+        row = session.get(FilmPurchaseLease, storyboard_id)
+        live = row is not None and row.expires_at > now.isoformat()
+        if row is not None and live and row.holder != holder:
+            view = _lease_view(row)
+            raise FilmBusy(_busy_reason(view), view)
+        if session.get(Storyboard, storyboard_id) is None:
+            # No film: nothing to buy and nothing to hold. The step itself says it is not found.
+            missing = True
+            view = {"storyboard_id": storyboard_id, "holder": holder, "step": step}
+        elif row is not None and live:
+            nested_step = row.step
+            row.step = step[:20]
+            view = _lease_view(row)
+        else:
+            if row is not None:
+                session.delete(row)
+                session.flush()
+            row = FilmPurchaseLease(
+                storyboard_id=storyboard_id,
+                holder=holder,
+                step=step[:20],
+                acquired_at=now.isoformat(),
+                expires_at=(now + timedelta(seconds=ttl)).isoformat(),
+            )
+            session.add(row)
+            session.flush()
+            view = _lease_view(row)
+    try:
+        yield view
+    finally:
+        if not missing:
+            _give_back_lease(engine, storyboard_id, holder, nested_step)
+
+
+def _give_back_lease(
+    engine: Engine, storyboard_id: str, holder: str, nested_step: str | None
+) -> None:
+    """The lease back: deleted by the holder that took it, or its step restored when the same
+    holder had taken it again inside its own block. Never raises: a lease left behind
+    expires on its own."""
+    from app.db import lock_for_write  # noqa: PLC0415
+
+    try:
+        with Session(engine) as session, session.begin():
+            lock_for_write(session)
+            mine = session.get(FilmPurchaseLease, storyboard_id)
+            if mine is not None and mine.holder == holder:
+                if nested_step is None:
+                    session.delete(mine)
+                else:
+                    mine.step = nested_step
+    except Exception:  # noqa: BLE001 - a lease left behind expires on its own
+        logger.warning(
+            "film_purchase_lease_not_released",
+            extra={"storyboard_id": storyboard_id, "holder": holder},
+        )
+
+
+def lease_seconds(settings: Any) -> int:
+    """`settings.film_purchase_lease_seconds`, else three hours."""
+    value = getattr(settings, "film_purchase_lease_seconds", None)
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    return DEFAULT_LEASE_SECONDS
+
+
+def film_spend_micros(engine: Engine, storyboard_id: str) -> int:
+    """What the books already hold for this film, in USD micros: every cost row attributed to
+    it (its stills, shots, redos, interrupted steps), the narration of its render jobs, and
+    any hold of its own still standing (a step that died under it). Estimates count: an
+    estimate is a commitment, and a ceiling that waited for invoices would say "fine" late."""
+    from app.economy.models import (  # noqa: PLC0415 - economy imports media
+        ProviderCostRecord,
+        SpendReservation,
+    )
+    from app.media.models import VideoRenderJob  # noqa: PLC0415
+
+    attributed = func.json_extract(ProviderCostRecord.attribution_json, "$.storyboard_id")
+    rendered = func.json_extract(ProviderCostRecord.attribution_json, "$.render_job_id")
+    with Session(engine) as session:
+        jobs = list(
+            session.scalars(
+                select(VideoRenderJob.id).where(VideoRenderJob.storyboard_id == storyboard_id)
+            )
+        )
+        booked = int(
+            session.scalar(
+                select(func.coalesce(func.sum(ProviderCostRecord.usd_micros), 0)).where(
+                    attributed == storyboard_id
+                )
+            )
+            or 0
+        )
+        voiced = 0
+        if jobs:
+            voiced = int(
+                session.scalar(
+                    select(func.coalesce(func.sum(ProviderCostRecord.usd_micros), 0)).where(
+                        rendered.in_(jobs), attributed.is_(None)
+                    )
+                )
+                or 0
+            )
+        held = int(
+            session.scalar(
+                select(func.coalesce(func.sum(SpendReservation.usd_micros), 0)).where(
+                    SpendReservation.status == "RESERVED",
+                    SpendReservation.correlation_id == storyboard_id[:36],
+                )
+            )
+            or 0
+        )
+    return booked + voiced + held
+
+
+def _settings_of(settings: Any) -> Any:
+    from app.media.assembler import _studio_settings  # noqa: PLC0415
+
+    return settings if settings is not None else _studio_settings()
+
+
+def film_ceiling_micros(settings: Any, table: PriceTable | None = None) -> tuple[int, str]:
+    """(the most one PRODUCTION film may spend, in USD micros; where the figure comes from).
+
+    `settings.film_budget_usd` when the Owner set it ("setare"); otherwise the per-film motion
+    budget plus the stills cap of a six-scene film at the published price ("implicit"):
+    12 + 3.24 = 15.24 USD with the defaults."""
+    from app.media.still_gate import MAX_REROLLS  # noqa: PLC0415 - still_gate reaches qc
+
+    chosen = _settings_of(settings)
+    figure = getattr(chosen, "film_budget_usd", None)
+    if isinstance(figure, int | float) and not isinstance(figure, bool) and figure >= 0:
+        return round(float(figure) * 1_000_000), "setare"
+    prices = table or load_price_table()
+    motion = getattr(chosen, "motion_budget_usd", None)
+    motion_usd = float(motion) if isinstance(motion, int | float) else 12.0
+    try:
+        per_scene = price_still(STILLS_MODEL, STILLS_RESOLUTION, STILL_CANDIDATES, table=prices)
+    except (UnpricedError, KeyError):
+        per_scene = 0
+    stills = credits_to_micros(
+        per_scene * (1 + MAX_REROLLS) * DEFAULT_CEILING_SCENES, prices.credit_usd
+    )
+    return round(motion_usd * 1_000_000) + stills, "implicit"
+
+
+def film_budget_view(
+    engine: Engine, storyboard_id: str, settings: Any, table: PriceTable | None = None
+) -> dict[str, Any]:
+    """The film's ceiling as the sheet shows it: the limit, what it already holds, the rest."""
+    limit, source = film_ceiling_micros(settings, table)
+    spent = film_spend_micros(engine, storyboard_id)
+    return {
+        "limit_usd_micros": limit,
+        "spent_usd_micros": spent,
+        "remaining_usd_micros": limit - spent,
+        "limit_ro": _ro_usd(limit),
+        "spent_ro": _ro_usd(spent),
+        "source": source,
+    }
+
+
+def check_film_ceiling(
+    engine: Engine,
+    storyboard_id: str,
+    cap_usd_micros: int,
+    *,
+    step: str,
+    plan_hash: str,
+    settings: Any,
+    environment: str,
+    allow_over_budget: bool,
+    correlation_id: str,
+    table: PriceTable | None = None,
+) -> None:
+    """Refuse (`PurchaseGateRefused` OVER_FILM_BUDGET) a PRODUCTION step whose cap would take
+    the film past its ceiling; with the Owner's explicit consent, record it and go on.
+
+    TEST films are bounded by their sheet's own cap; the ceiling is the PRODUCTION figure the
+    preflight shows the Owner per film, and it is now true (MONEY-07)."""
+    from app.services import append_event  # noqa: PLC0415 - services imports media
+
+    if environment != "PRODUCTION":
+        return
+    view = film_budget_view(engine, storyboard_id, settings, table)
+    if view["spent_usd_micros"] + int(cap_usd_micros) <= view["limit_usd_micros"]:
+        return
+    reason = (
+        f"Plafonul filmului de {view['limit_ro']} ar fi depășit: filmul are deja "
+        f"{view['spent_ro']} în cărți, iar plafonul pasului este {_ro_usd(cap_usd_micros)}. "
+        "Nu se cumpără nimic. Confirmați explicit depășirea pe foaia de filmare, sau ridicați "
+        "plafonul unui film (STUDIO_FILM_BUDGET_USD, în configurația studioului)."
+    )
+    if not allow_over_budget:
+        raise PurchaseGateRefused(OVER_FILM_BUDGET, reason)
+    with Session(engine) as session, session.begin():
+        append_event(
+            session,
+            FILM_EXCESS_EVENT,
+            "storyboard",
+            storyboard_id,
+            1,
+            {
+                "step": step,
+                "plan_hash": plan_hash,
+                "cap_usd_micros": int(cap_usd_micros),
+                "film_spent_usd_micros": view["spent_usd_micros"],
+                "limit_usd_micros": view["limit_usd_micros"],
+                "reason": reason,
+                "approved_by": OWNER,
+            },
+            correlation_id,
+        )
+
+
+def hold_step_budget(
+    engine: Engine,
+    storyboard_id: str,
+    step: str,
+    cap_usd_micros: int,
+    *,
+    plan_hash: str,
+    allow_over_budget: bool,
+    correlation_id: str,
+    detail: dict[str, Any] | None = None,
+) -> str | None:
+    """Hold the step's cap against every active budget (`reserve_spend`), or refuse.
+
+    The hold is decided behind the write lock, so a second step (another film, the Owner's
+    press beside the day) reads it as taken (AR-03: two films were both told the last ten
+    dollars were free). Its purpose is ``sheet:<step>`` and its correlation the film. With
+    the Owner's explicit consent the sum is held anyway and his consent recorded. Returns the
+    reservation id (None when nothing was held: a cap of 0). The caller settles it once the
+    purchase is in the books, or lets it go when nothing was bought."""
+    from app.economy.budget import reserve_spend  # noqa: PLC0415 - economy imports media
+    from app.services import append_event  # noqa: PLC0415
+
+    purpose = f"sheet:{step}"
+    hold = reserve_spend(engine, int(cap_usd_micros), purpose, storyboard_id, note=plan_hash[:64])
+    if hold["allowed"]:
+        return hold.get("reservation_id")
+    period = str(hold.get("period") or "DAILY")
+    reason = _budget_words(engine, period, int(cap_usd_micros))
+    if not allow_over_budget:
+        raise PurchaseGateRefused(
+            "OVER_DAILY_BUDGET" if period == "DAILY" else "OVER_BUDGET", reason
+        )
+    forced = reserve_spend(
+        engine, int(cap_usd_micros), purpose, storyboard_id, note=plan_hash[:64], force=True
+    )
+    with Session(engine) as session, session.begin():
+        append_event(
+            session,
+            BUDGET_EXCESS_EVENT,
+            "storyboard",
+            storyboard_id,
+            1,
+            {
+                "step": step,
+                "plan_hash": plan_hash,
+                **(detail or {}),
+                "period": period,
+                "reason": reason,
+                "approved_by": OWNER,
+            },
+            correlation_id,
+        )
+    return forced.get("reservation_id")
+
+
+def settle_step_hold(
+    engine: Engine, reservation_id: str | None, reference: str, correlation_id: str
+) -> None:
+    """The step's purchase is in the books: its hold stops counting. Never raises."""
+    if not reservation_id:
+        return
+    from app.economy.budget import settle_reservation  # noqa: PLC0415
+
+    try:
+        settle_reservation(
+            engine,
+            reservation_id,
+            settled_reference=reference[:120],
+            correlation_id=correlation_id,
+        )
+    except Exception:  # noqa: BLE001 - the watchdog lets a stale hold go
+        logger.warning("step_hold_not_settled", extra={"reservation_id": reservation_id})
+
+
+def release_step_hold(
+    engine: Engine, reservation_id: str | None, reason: str, correlation_id: str
+) -> None:
+    """Nothing was bought: the step's hold is let go. Never raises."""
+    if not reservation_id:
+        return
+    from app.economy.budget import release_reservation  # noqa: PLC0415
+
+    try:
+        release_reservation(engine, reservation_id, reason[:120], correlation_id=correlation_id)
+    except Exception:  # noqa: BLE001 - the watchdog lets a stale hold go
+        logger.warning("step_hold_not_released", extra={"reservation_id": reservation_id})
+
+
+def close_step_hold(
+    engine: Engine,
+    reservation_id: str | None,
+    *,
+    spent_credits: float | None,
+    booked: dict[str, Any] | None,
+    reference: str,
+    correlation_id: str,
+) -> None:
+    """After a step: settled when its purchase is in the books, let go when it bought nothing.
+    A purchase the books refused keeps its hold (the money still counts against the day) until
+    the watchdog's TTL; the refusal is already its own letter."""
+    if not spent_credits or float(spent_credits) <= 0:
+        release_step_hold(engine, reservation_id, "nimic cumpărat", correlation_id)
+    elif booked is not None:
+        settle_step_hold(engine, reservation_id, reference, correlation_id)
+
+
+#: The command type a paid press of the Owner's is remembered under (`CommandRecord`).
+PURCHASE_COMMAND = "SheetPurchase"
+
+
+def recall_purchase(engine: Engine, command_id: str, payload: dict[str, Any]) -> dict | None:
+    """What a press with this ``command_id`` already bought, or None when it has not run.
+
+    The same id with another body raises `app.services.CommandConflict`: a mistake, refused
+    rather than guessed about. Only a purchase that ran is remembered (`remember_purchase`):
+    a refusal changed nothing, so asking again is safe."""
+    from app.services import command_hash, recall_command  # noqa: PLC0415
+
+    with Session(engine) as session:
+        return recall_command(session, str(command_id), command_hash(payload))
+
+
+def remember_purchase(
+    engine: Engine, command_id: str, payload: dict[str, Any], result: dict[str, Any]
+) -> None:
+    """Remember what this press bought, so the same press again buys nothing. Never raises:
+    the purchase is already in the books, and its answer is not worth losing it over."""
+    from app.services import command_hash, remember_command  # noqa: PLC0415
+
+    stored = json.loads(json.dumps(result, default=str))
+    try:
+        with Session(engine) as session, session.begin():
+            remember_command(
+                session, str(command_id), PURCHASE_COMMAND, command_hash(payload), stored
+            )
+    except Exception:  # noqa: BLE001 - a second writer of the same id already remembered it
+        logger.warning("purchase_command_not_remembered", extra={"command_id": str(command_id)})
+
+
+def _budget_words(engine: Engine, period: str, cap_usd_micros: int) -> str:
+    """The Romanian refusal of a period budget for a step's cap, with what is left."""
+    from app.economy.budget import budget_status  # noqa: PLC0415 - economy imports media
+    from app.economy.services import format_micros  # noqa: PLC0415
+
+    detail = next((p for p in budget_status(engine)["budgets"] if p["period"] == period), None)
+    word = PERIOD_WORDS.get(period, period.lower())
+    if detail is None:
+        return f"Bugetul {word} ar fi depășit."
+    held = (
+        f" (din care {detail['reserved_usd']} USD rezervați pentru pași în lucru)"
+        if detail.get("reserved_usd_micros")
+        else ""
+    )
+    return (
+        f"Bugetul {word} de {detail['limit_usd']} USD ar fi depășit: plafonul pasului este "
+        f"{format_micros(cap_usd_micros)} USD și au rămas {detail['remaining_usd']} USD{held}. "
+        "Confirmați explicit depășirea pe foaia de filmare, sau așteptați perioada următoare."
+    )
+
+
+#: The books' reference column holds 120 characters; a correlation id is cut to fit.
+_REFERENCE_MAX = 120
+#: The event of a purchase the books refused to record (a WARNING, and a letter).
+COST_NOT_BOOKED_EVENT = "media.step_cost_not_booked"
+#: The event of a paid step that failed after it had paid (a WARNING, and a letter).
+INTERRUPTED_EVENT = "media.paid_step_interrupted"
+
+
+def purchase_reference(prefix: str, correlation_id: str) -> str:
+    """``prefix:correlation``, cut to the books' column: one reference per purchase."""
+    room = _REFERENCE_MAX - len(prefix) - 1
+    return f"{prefix}:{str(correlation_id)[: max(room, 8)]}"[:_REFERENCE_MAX]
+
+
+def book_purchase(
+    engine: Engine,
+    *,
+    storyboard_id: str,
+    step: str,
+    reference: str,
+    credits: float | None,
+    measured: bool,
+    credit_usd: float,
+    correlation_id: str,
+    attribution: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """One purchase of a film's paid step into the books, under its own reference.
+
+    One ESTIMATED Runway cost, so the next budget check sees it. A booking the books refuse
+    (a reference already recorded, a value they cannot take) is never silent: a WARNING
+    event on the film and a letter from the Accountant to the Owner, then None.
+    """
+    from app.economy.accountant import booking_refused_letter  # noqa: PLC0415
+    from app.economy.services import (  # noqa: PLC0415 - economy imports media
+        EconomyError,
+        record_provider_cost,
+    )
+    from app.services import append_event  # noqa: PLC0415
+
+    if not credits or float(credits) <= 0:
+        return None
+    usd = float(credits) * float(credit_usd)
+    try:
+        record_provider_cost(
+            engine,
+            provider="runway",
+            external_reference=reference,
+            status="ESTIMATED",
+            amount=f"{usd:.6f}",
+            attribution={
+                "storyboard_id": storyboard_id,
+                "step": step,
+                "credits": round(float(credits), 4),
+                "measured": measured,
+                **(attribution or {}),
+            },
+            correlation_id=correlation_id,
+        )
+    except (EconomyError, ValueError) as exc:
+        reason = str(exc)[:300]
+        logger.warning(
+            "sheet_step_cost_not_recorded",
+            extra={"storyboard_id": storyboard_id, "step": step, "reference": reference},
+        )
+        with Session(engine) as session, session.begin():
+            append_event(
+                session,
+                COST_NOT_BOOKED_EVENT,
+                "storyboard",
+                storyboard_id,
+                1,
+                {
+                    "severity": "WARNING",
+                    "step": step,
+                    "reference": reference,
+                    "credits": round(float(credits), 4),
+                    "usd": round(usd, 6),
+                    "reason": reason,
+                },
+                correlation_id,
+            )
+        booking_refused_letter(
+            engine,
+            reference=reference,
+            amount_ro=_ro_usd(round(usd * 1_000_000)),
+            reason=reason,
+            correlation_id=correlation_id,
+        )
+        return None
+    return {"step": step, "credits": round(float(credits), 4), "usd": round(usd, 6)}
+
+
 def book_step_cost(
     engine: Engine,
     storyboard_id: str,
@@ -1544,43 +2247,102 @@ def book_step_cost(
     """What a bought step cost, into the books at once, whoever pressed it.
 
     The measured balance drop when the vendor's balance was read before and after, otherwise
-    the credits the step committed: one ESTIMATED provider cost per step, like every render
-    cost, so the next step's budget check sees it. The reference is the film, the step and
-    the sheet it was bought under, so the same purchase is never booked twice (a second
-    booking of one reference is refused by the books). The step's own budget check is the
-    gate before the purchase; nothing is reserved ahead of it, because that check would count
-    the hold and the cap twice.
+    the credits the step committed (``spent_credits_measured`` / ``spent_credits_quoted``).
+    The reference is the film, the step, the sheet and the run that bought it
+    (``foaie:{film}:{step}:{plan_hash[:16]}:{correlation}``): one row per purchase. Until
+    2026-10-02 it was the sheet alone, so a second purchase under an unchanged sheet (a
+    scene that failed again on a later day) was refused as a duplicate and dropped at INFO:
+    2,040 credits spent, 680 booked. The step's own budget check is the gate before the
+    purchase; nothing is reserved ahead of it, because that check would count the hold and
+    the cap twice.
     """
-    from app.economy.services import (  # noqa: PLC0415 - economy imports media
-        EconomyError,
-        record_provider_cost,
-    )
-
     measured = result.get("spent_credits_measured")
     credits = measured if measured is not None else result.get("spent_credits_quoted")
-    if not credits or float(credits) <= 0:
-        return None
-    usd = float(credits) * float(credit_usd)
-    try:
-        record_provider_cost(
-            engine,
-            provider="runway",
-            external_reference=f"foaie:{storyboard_id}:{step}:{str(plan_hash)[:16]}",
-            status="ESTIMATED",
-            amount=f"{usd:.6f}",
-            attribution={
-                "storyboard_id": storyboard_id,
+    return book_purchase(
+        engine,
+        storyboard_id=storyboard_id,
+        step=step,
+        reference=purchase_reference(
+            f"foaie:{storyboard_id}:{step}:{str(plan_hash)[:16]}", correlation_id
+        ),
+        credits=float(credits) if credits is not None else None,
+        measured=measured is not None,
+        credit_usd=credit_usd,
+        correlation_id=correlation_id,
+        attribution={"plan_hash": plan_hash},
+    )
+
+
+def interrupted_spend(meter: Any, account: Any, before: float | None) -> tuple[float, bool]:
+    """(credits, measured) a step that raised had spent: the balance drop when the account
+    can be read again, else what the step counted as possibly charged."""
+    after = _read_balance(account)["credits"] if account is not None else None
+    if before is not None and after is not None and before - after > 0:
+        return float(before - after), True
+    return float(getattr(meter, "committed", 0.0) or 0.0), False
+
+
+def book_interrupted_step(
+    engine: Engine,
+    storyboard_id: str,
+    step: str,
+    *,
+    reference: str,
+    credits: float,
+    measured: bool,
+    credit_usd: float,
+    error: BaseException,
+    correlation_id: str,
+    attribution: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """A paid step that raised after it had paid: booked, a WARNING event and the Owner's
+    letter. Returns the booking (None when the books refused it, which is its own letter)."""
+    from app.economy.accountant import paid_step_interrupted_letter  # noqa: PLC0415
+    from app.services import append_event  # noqa: PLC0415
+    from app.wording import error_words  # noqa: PLC0415
+
+    booked = book_purchase(
+        engine,
+        storyboard_id=storyboard_id,
+        step=step,
+        reference=reference,
+        credits=credits,
+        measured=measured,
+        credit_usd=credit_usd,
+        correlation_id=correlation_id,
+        attribution={**(attribution or {}), "interrupted": True},
+    )
+    reason = error_words(error)
+    usd_micros = round(float(credits) * float(credit_usd) * 1_000_000)
+    with Session(engine) as session, session.begin():
+        append_event(
+            session,
+            INTERRUPTED_EVENT,
+            "storyboard",
+            storyboard_id,
+            1,
+            {
+                "severity": "WARNING",
                 "step": step,
-                "plan_hash": plan_hash,
                 "credits": round(float(credits), 4),
-                "measured": measured is not None,
+                "measured": measured,
+                "booked": booked is not None,
+                "error_class": type(error).__name__,
+                "reason": reason[:300],
             },
-            correlation_id=correlation_id,
+            correlation_id,
         )
-    except (EconomyError, ValueError):
-        logger.info("sheet_step_cost_not_recorded", extra={"storyboard_id": storyboard_id})
-        return None
-    return {"step": step, "credits": round(float(credits), 4), "usd": round(usd, 6)}
+    paid_step_interrupted_letter(
+        engine,
+        storyboard_id=storyboard_id,
+        step_words=STEP_WORDS_RO.get(step, step),
+        credits_ro=_ro_credits(round(float(credits))),
+        amount_ro=_ro_usd(usd_micros),
+        booked=booked is not None,
+        reason=reason,
+        correlation_id=correlation_id,
+    )
+    return booked
 
 
 def withdraw_stale_questions(
@@ -1600,52 +2362,88 @@ def withdraw_stale_questions(
     Each is closed (EXPIRED, never answered) with the Romanian reason and an event, so his
     inbox holds only the question that can still buy something. Returns their ids.
     """
-    from app.models import ApprovalRequest  # noqa: PLC0415
-    from app.services import append_event, utc_now  # noqa: PLC0415 - services imports media
+    # The approval row belongs to the Owner's command kernel (app.services): the sheet words
+    # the reason, the kernel closes the rows and writes the event.
+    from app import services as kernel  # noqa: PLC0415 - services imports media
 
     reason = (
         f"Retrasă: o foaie de filmare mai nouă cere acum pasul «{step_words}» (planul "
         f"{str(plan_hash)[:12]}…). Întrebarea aceasta era despre foaia de dinainte și nu mai "
         "poate cumpăra nimic; răspundeți la întrebarea nouă."
     )
-    withdrawn: list[str] = []
     with Session(engine) as session, session.begin():
-        for request in session.scalars(
-            select(ApprovalRequest).where(
-                ApprovalRequest.action == action,
-                ApprovalRequest.subject == storyboard_id,
-                ApprovalRequest.result.in_(("PENDING", "EXPIRED")),
-                ApprovalRequest.decided_at.is_(None),
-            )
-        ):
-            if request.id == keep or request.note:
-                continue
-            asked_for = request.proposed_diff if isinstance(request.proposed_diff, dict) else {}
-            if asked_for.get("plan_hash") == plan_hash:
-                continue
-            previous = request.result
-            request.result = "EXPIRED"
-            request.note = reason
-            append_event(
-                session,
-                WITHDRAWN_EVENT,
-                "owner_approval_request",
-                request.id,
-                2,
-                {
-                    "action": action,
-                    "subject": storyboard_id,
-                    "previous_result": previous,
-                    "old_plan_hash": asked_for.get("plan_hash"),
-                    "new_plan_hash": plan_hash,
-                    "replaced_by": keep,
-                    "reason": reason,
-                    "withdrawn_at": utc_now(),
-                },
-                correlation_id,
-            )
-            withdrawn.append(request.id)
-    return withdrawn
+        return kernel.withdraw_superseded_approvals(
+            session,
+            action=action,
+            subject=storyboard_id,
+            new_plan_hash=plan_hash,
+            keep=keep,
+            reason=reason,
+            correlation_id=correlation_id,
+        )
+
+
+def recover_paid_takes(
+    engine: Engine,
+    storyboard_id: str,
+    *,
+    correlation_id: str,
+    image_adapter: Any = None,
+    adapter_for_model: Callable[[str], Any] | None = None,
+    registry: Any = None,
+    environment: str | None = None,
+    storage_root: Path | None = None,
+    ffmpeg_path: str | None = None,
+) -> dict[str, Any]:
+    """What was paid for and not settled, settled before the film's next stair is priced.
+
+    Stills and shots the vendor delivered after their step are collected by their task ids
+    (a GET each); collected still candidates, and ones a dying process never judged, are
+    judged by the stills gate (`stills_stage.settle_stills`); every paid shot nobody checked
+    gets clip QC (`assembler.check_unchecked_shots`: vision tokens only, no retry bought).
+    Nothing is bought and no yes is asked: what was bought is only looked at. Without this a
+    film whose only open scene was such a take waited for ever (2026-10-02, A7)."""
+    from app.services import studio_environment  # noqa: PLC0415 - services imports media
+
+    environment = environment or studio_environment(engine)
+    stills: dict[str, Any] = {"collected": [], "scenes": []}
+    if image_adapter is not None:
+        stills = settle_stills(
+            engine,
+            storyboard_id,
+            correlation_id,
+            image_adapter=image_adapter,
+            registry=registry,
+            environment=environment,
+            ffmpeg_path=ffmpeg_path,
+            storage_root=storage_root,
+        )
+    collected: list[dict[str, Any]] = []
+    rechecked: list[dict[str, Any]] = []
+    if adapter_for_model is not None:
+        collected = collect_submitted_takes(
+            engine,
+            collector_for=lambda take: adapter_for_model(str(take.model_id)),
+            correlation_id=correlation_id,
+            storyboard_id=storyboard_id,
+            kinds=SHOT_TAKE_KINDS,
+            storage_root=storage_root,
+        )
+        rechecked = check_unchecked_shots(
+            engine,
+            storyboard_id,
+            correlation_id,
+            adapter_for_model=adapter_for_model,
+            environment=environment,
+            ffmpeg_path=ffmpeg_path,
+            registry=registry,
+        )
+    return {
+        "stills_collected": stills.get("collected") or [],
+        "stills_judged": stills.get("scenes") or [],
+        "shots_collected": collected,
+        "shots_checked": rechecked,
+    }
 
 
 def run_sheet_step(
@@ -1675,11 +2473,75 @@ def run_sheet_step(
 
     Raises `SheetStepRefused` (202 NEEDS_APPROVAL with his question, or 409 with the reason)
     when nothing may be bought; otherwise returns what the stage bought.
-    """
-    from app.services import append_event, studio_environment  # noqa: PLC0415
 
+    The whole step runs under the film's purchase lease (holder: ``correlation_id``): a second
+    buyer of the same film is refused FILM_BUSY («Filmul este deja în lucru») before anything
+    is priced. Before the stage, the film's ceiling (PRODUCTION) and a hold of the step's cap
+    against the budgets (`hold_step_budget`); the hold is settled once the purchase is in the
+    books and let go on every refusal.
+    """
     if step not in SHEET_STEPS:
         raise SheetStepRefused("UNKNOWN_STEP", f"Pas necunoscut: {step}.")
+    try:
+        with film_purchase_lease(
+            engine,
+            storyboard_id,
+            holder=correlation_id,
+            step=step,
+            ttl_seconds=lease_seconds(settings),
+        ):
+            return _run_sheet_step(
+                engine,
+                storyboard_id,
+                step,
+                plan_hash,
+                correlation_id=correlation_id,
+                capabilities=capabilities,
+                integration_id=integration_id,
+                table=table,
+                account=account,
+                image_adapter=image_adapter,
+                adapter_for_model=adapter_for_model,
+                registry=registry,
+                allow_over_budget=allow_over_budget,
+                allowed=allowed,
+                resolution=resolution,
+                settings=settings,
+                environment=environment,
+                storage_root=storage_root,
+                ffmpeg_path=ffmpeg_path,
+                today=today,
+            )
+    except FilmBusy as exc:
+        raise SheetStepRefused(FILM_BUSY, exc.reason_ro) from exc
+
+
+def _run_sheet_step(
+    engine: Engine,
+    storyboard_id: str,
+    step: str,
+    plan_hash: str,
+    *,
+    correlation_id: str,
+    capabilities: Iterable[ModelCapability] | None,
+    integration_id: str | None,
+    table: PriceTable | None,
+    account: Any,
+    image_adapter: Any,
+    adapter_for_model: Callable[[str], Any] | None,
+    registry: Any,
+    allow_over_budget: bool,
+    allowed: Iterable[str] | None,
+    resolution: str | None,
+    settings: Any,
+    environment: str | None,
+    storage_root: Path | None,
+    ffmpeg_path: str | None,
+    today: date | None,
+) -> dict[str, Any]:
+    """`run_sheet_step` inside the film's purchase lease."""
+    from app.services import studio_environment  # noqa: PLC0415
+
     stills_model = str(getattr(image_adapter, "model", None) or STILLS_MODEL)
     ctx = _context(
         engine,
@@ -1691,7 +2553,7 @@ def run_sheet_step(
         stills_model=stills_model,
         today=today,
     )
-    sheet = _sheet(engine, storyboard_id, ctx, read_live=False)
+    sheet = _sheet(engine, storyboard_id, ctx, read_live=False, settings=settings)
 
     def current_hash(engine_: Engine, board: str) -> str:
         digest: str = _sheet(engine_, board, ctx, read_live=False)["sheet_hash"]
@@ -1751,32 +2613,38 @@ def run_sheet_step(
             f"de {cap} credite plus marja de {round((margin - 1) * 100)}% ({needed} credite). "
             "Alimentați contul înainte de aprobare.",
         )
-    over = may_spend_step(engine, credits_to_micros(cap, ctx.table.credit_usd))
-    if over is not None:
-        period, reason = over
-        if not allow_over_budget:
-            raise SheetStepRefused(
-                "OVER_DAILY_BUDGET" if period == "DAILY" else "OVER_BUDGET", reason
-            )
-        with Session(engine) as session, session.begin():
-            append_event(
-                session,
-                "media.budget_excess_approved",
-                "storyboard",
-                storyboard_id,
-                1,
-                {
-                    "step": step,
-                    "plan_hash": plan_hash,
-                    "cap_credits": cap,
-                    "cap_usd": info["cap_usd"],
-                    "period": period,
-                    "reason": reason,
-                    "approved_by": OWNER,
-                },
-                correlation_id,
-            )
+    cap_micros = credits_to_micros(cap, ctx.table.credit_usd)
+    try:
+        check_film_ceiling(
+            engine,
+            storyboard_id,
+            cap_micros,
+            step=step,
+            plan_hash=plan_hash,
+            settings=settings,
+            environment=environment,
+            allow_over_budget=allow_over_budget,
+            correlation_id=correlation_id,
+            table=ctx.table,
+        )
+        reservation_id = hold_step_budget(
+            engine,
+            storyboard_id,
+            step,
+            cap_micros,
+            plan_hash=plan_hash,
+            allow_over_budget=allow_over_budget,
+            correlation_id=correlation_id,
+            detail={"cap_credits": cap, "cap_usd": info["cap_usd"]},
+        )
+    except PurchaseGateRefused as exc:
+        raise SheetStepRefused(exc.status, exc.reason_ro) from exc
+    reference = purchase_reference(
+        f"foaie:{storyboard_id}:{step}:{str(plan_hash)[:16]}", correlation_id
+    )
 
+    # What the stage sends and commits, kept up to date as it buys: read below if it raises.
+    meter = SpendMeter()
     try:
         if step == STILLS_STEP:
             if image_adapter is None:
@@ -1797,6 +2665,7 @@ def run_sheet_step(
                 storage_root=storage_root,
                 integration_id=integration_id,
                 table=ctx.table,
+                meter=meter,
             )
         else:
             if adapter_for_model is None:
@@ -1826,30 +2695,116 @@ def run_sheet_step(
                 # The vision model the clip check looks through: without it every shot bought
                 # here would wait, unchecked, for the Owner's look.
                 registry=registry,
+                meter=meter,
             )
+    except SheetStepRefused:
+        release_step_hold(engine, reservation_id, f"pasul {step} refuzat", correlation_id)
+        raise
     except (StillsStageRefused, MotionStepRefused) as exc:
-        withdrawn: list[str] = []
-        if exc.status == "NEEDS_APPROVAL":
-            withdrawn = withdraw_stale_questions(
-                engine,
-                storyboard_id,
-                SHEET_STEP_ACTIONS[step],
-                plan_hash,
-                keep=exc.approval_id,
-                step_words=STEP_WORDS_RO[step],
-                correlation_id=correlation_id,
-            )
-        raise SheetStepRefused(
-            exc.status,
-            exc.reason_ro,
-            approval_id=exc.approval_id,
-            cost_usd=info["cost_usd"],
-            cap_credits=cap,
-            findings=exc.findings,
-            withdrawn=withdrawn,
+        # A stage refuses before it sends anything: nothing to book, nothing held.
+        release_step_hold(engine, reservation_id, f"pasul {step}: {exc.status}", correlation_id)
+        raise _step_refused(
+            engine, storyboard_id, step, plan_hash, exc, info, cap, correlation_id
         ) from exc
-    # Into the books here, once, whoever pressed the step (the Owner on the sheet or the
-    # day's staircase), before the next step's budget check reads them.
+    except Exception as exc:
+        # The stage raised after it may have paid. Retried, it would buy the same shots
+        # again (REL-01: four purchases on one "database is locked", none booked): what it
+        # committed goes into the books now, the Owner gets his letter, and the error is
+        # HARD, so neither the runbook's retry nor a second attempt of the day re-runs it.
+        if not meter.attempts:
+            release_step_hold(engine, reservation_id, f"pasul {step} a căzut", correlation_id)
+            raise  # nothing was sent: the step may be tried again
+        credits, measured = interrupted_spend(meter, source, balance["credits"])
+        if credits <= 0:
+            release_step_hold(engine, reservation_id, f"pasul {step} a căzut", correlation_id)
+            raise  # sent, and refused before anything was made: nothing was charged
+        booked = book_interrupted_step(
+            engine,
+            storyboard_id,
+            step,
+            reference=reference,
+            credits=credits,
+            measured=measured,
+            credit_usd=float(ctx.table.credit_usd),
+            error=exc,
+            correlation_id=correlation_id,
+            attribution={"plan_hash": plan_hash, "attempts": meter.attempts},
+        )
+        close_step_hold(
+            engine,
+            reservation_id,
+            spent_credits=credits,
+            booked=booked,
+            reference=reference,
+            correlation_id=correlation_id,
+        )
+        raise SpentStageError(
+            f"Pasul «{STEP_WORDS_RO[step]}» s-a oprit după ce a cumpărat "
+            f"({_ro_credits(round(credits))}); nu se reia automat.",
+            storyboard_id=storyboard_id,
+            step=step,
+            credits=credits,
+            booked=booked,
+        ) from exc
+    bought = _step_bought(engine, storyboard_id, step, plan_hash, ctx, result, correlation_id)
+    spent = bought.get("spent_credits_measured")
+    close_step_hold(
+        engine,
+        reservation_id,
+        spent_credits=float(
+            spent if spent is not None else bought.get("spent_credits_quoted") or 0
+        ),
+        booked=bought.get("booked"),
+        reference=reference,
+        correlation_id=correlation_id,
+    )
+    return bought
+
+
+def _step_refused(
+    engine: Engine,
+    storyboard_id: str,
+    step: str,
+    plan_hash: str,
+    exc: StillsStageRefused | MotionStepRefused,
+    info: dict[str, Any],
+    cap: int,
+    correlation_id: str,
+) -> SheetStepRefused:
+    """The stage's refusal in the sheet's words, with the older questions it withdrew."""
+    withdrawn: list[str] = []
+    if exc.status == "NEEDS_APPROVAL":
+        withdrawn = withdraw_stale_questions(
+            engine,
+            storyboard_id,
+            SHEET_STEP_ACTIONS[step],
+            plan_hash,
+            keep=exc.approval_id,
+            step_words=STEP_WORDS_RO[step],
+            correlation_id=correlation_id,
+        )
+    return SheetStepRefused(
+        exc.status,
+        exc.reason_ro,
+        approval_id=exc.approval_id,
+        cost_usd=info["cost_usd"],
+        cap_credits=cap,
+        findings=exc.findings,
+        withdrawn=withdrawn,
+    )
+
+
+def _step_bought(
+    engine: Engine,
+    storyboard_id: str,
+    step: str,
+    plan_hash: str,
+    ctx: _Context,
+    result: dict[str, Any],
+    correlation_id: str,
+) -> dict[str, Any]:
+    """Into the books here, once, whoever pressed the step (the Owner on the sheet or the
+    day's staircase), before the next step's budget check reads them."""
     result["booked"] = book_step_cost(
         engine,
         storyboard_id,
@@ -1954,6 +2909,31 @@ def _qc_letter(qc: dict[str, Any], spend: Any, sheet: dict[str, Any]) -> str:
         )
 
 
+def _leased(step: str) -> Callable[[Callable[..., dict[str, Any]]], Callable[..., dict[str, Any]]]:
+    """Run a paid step of a film under its purchase lease (holder: the call's correlation id);
+    a second buyer is refused FILM_BUSY («Filmul este deja în lucru») before anything else."""
+
+    def wrap(function: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
+        @functools.wraps(function)
+        def leased(engine: Engine, storyboard_id: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
+            try:
+                with film_purchase_lease(
+                    engine,
+                    storyboard_id,
+                    holder=str(kwargs["correlation_id"]),
+                    step=step,
+                    ttl_seconds=lease_seconds(kwargs.get("settings")),
+                ):
+                    return function(engine, storyboard_id, *args, **kwargs)
+            except FilmBusy as exc:
+                raise SheetStepRefused(FILM_BUSY, exc.reason_ro) from exc
+
+        return leased
+
+    return wrap
+
+
+@_leased(ASSEMBLE_STEP)
 def run_assemble_step(
     engine: Engine,
     storyboard_id: str,
@@ -2004,7 +2984,7 @@ def run_assemble_step(
     from app.media.qc import evaluate_media_qc  # noqa: PLC0415
     from app.media.services import ReferenceRequired  # noqa: PLC0415
     from app.providers.media_http import MediaProviderError  # noqa: PLC0415
-    from app.services import append_event, studio_environment  # noqa: PLC0415
+    from app.services import append_event, studio_environment, utc_now  # noqa: PLC0415
 
     environment = environment or studio_environment(engine)
     ctx = _context(
@@ -2047,9 +3027,25 @@ def run_assemble_step(
     from app.media.factory import paid_vendors_of  # noqa: PLC0415 - factory imports media
 
     paid_voice = bool(paid_vendors_of(voices))
+    characters = int(narration["characters"])
+    if tts_adapter is not None or tts_adapter_for_scene is not None:
+        # The sheet counts a scene already voiced whatever the voice (it has no adapter);
+        # these voices may have to say it again. What they would really buy is asked for,
+        # never less: a narration is never bought on a figure smaller than its own.
+        exact = narration_to_buy(
+            engine,
+            storyboard_id,
+            tts_adapter=tts_adapter,
+            tts_adapter_for_scene=tts_adapter_for_scene,
+            voice_segments_for_scene=voice_segments_for_scene,
+        )
+        if exact > characters:
+            characters = exact
+            per_1k = narration.get("per_1k_usd_micros")
+            micros = (exact * int(per_1k) + 500) // 1000 if per_1k else 0
     # The narration is asked when it has a price, and when a real voice would speak words
     # nobody could price: never bought on an unknown figure without the question.
-    asks = narration["characters"] > 0 and (micros > 0 or (paid_voice and not narration["priced"]))
+    asks = characters > 0 and (micros > 0 or (paid_voice and not narration["priced"]))
     gate: dict[str, Any] | None = None
     if asks:
         if micros > 0 and not allow_over_budget:
@@ -2090,6 +3086,7 @@ def run_assemble_step(
                 withdrawn=withdrawn,
             )
 
+    started = utc_now()
     try:
         film = assemble_from_takes(
             engine,
@@ -2114,10 +3111,13 @@ def run_assemble_step(
     except TakesMissing as exc:
         raise SheetStepRefused("TAKES_MISSING", str(exc)) from exc
     except RenderStopped as exc:
+        _book_failed_assembly(engine, storyboard_id, started, correlation_id)
         raise SheetStepRefused("STOPPED", f"Asamblarea s-a oprit: {exc}") from exc
     except RenderEngineUnavailable as exc:
+        _book_failed_assembly(engine, storyboard_id, started, correlation_id)
         raise SheetStepRefused("NO_ENGINE", f"Asamblarea nu poate rula: {exc}") from exc
     except (ReferenceRequired, MediaProviderError) as exc:
+        _book_failed_assembly(engine, storyboard_id, started, correlation_id)
         raise SheetStepRefused("REFUSED", f"Asamblarea a fost refuzată: {str(exc)[:300]}") from exc
 
     job_id = str(film["job_id"])
@@ -2175,6 +3175,41 @@ def run_assemble_step(
         "qc": qc,
         "qc_letter_ro": letter,
     }
+
+
+def _book_failed_assembly(
+    engine: Engine, storyboard_id: str, since: str, correlation_id: str
+) -> int:
+    """What an assembly that failed after it started had bought (its narration), into the
+    books, as the day's own path does (`runbook.stages._record_failed_attempt`): the render
+    job this attempt left FAILED, read for what it voiced. Returns the rows written.
+
+    Until 2026-10-02 the sheet's own assemble step raised on these failures and booked
+    nothing it had voiced (MONEY-12). A narration kept as a take is not bought again by the
+    next attempt, so the next attempt's books do not count it twice.
+    """
+    from app.economy.accountant import AccountantError, record_failed_render_cost  # noqa: PLC0415
+    from app.economy.services import EconomyError  # noqa: PLC0415
+    from app.media.models import VideoRenderJob  # noqa: PLC0415
+
+    with Session(engine) as session:
+        job_id = session.scalar(
+            select(VideoRenderJob.id)
+            .where(
+                VideoRenderJob.storyboard_id == storyboard_id,
+                VideoRenderJob.status == "FAILED",
+                VideoRenderJob.started_at >= since,
+            )
+            .order_by(VideoRenderJob.started_at.desc())
+        )
+    if job_id is None:
+        return 0
+    try:
+        charged = record_failed_render_cost(engine, str(job_id), correlation_id=correlation_id)
+    except (AccountantError, EconomyError, ValueError):
+        logger.warning("failed_assembly_cost_not_recorded", extra={"storyboard_id": storyboard_id})
+        return 0
+    return int(charged["recorded"])
 
 
 # --------------------------------------------------------------- the studio's own wiring
@@ -2294,7 +3329,7 @@ def card_preview_png(
                 storyboard_id,
                 int(row.scene_index),
                 "still",
-                [still_fields(str(row.visual_prompt or ""), None)],
+                still_options(engine, scene_view(row)),
                 statuses=("APPROVED",),
             )
             background = still.path if still is not None else None

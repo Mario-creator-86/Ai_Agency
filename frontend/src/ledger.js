@@ -1,4 +1,5 @@
 import { MODE_LABEL } from './governance.js';
+import { countWords } from './plurals.js';
 
 /**
  * The live ledger: everything the studio does and says, in the order it happened.
@@ -220,6 +221,14 @@ const TASK_LABEL = {
   owner_chat: 'discuția cu Proprietarul',
   WEEKLY_REVIEW: 'bilanțul săptămânii',
   DAILY_RUN: 'rularea zilei',
+  // PAGE-12: the queue's own task types, which «Coada de lucru» names (workflows/worker.py)
+  FILM_CONTINUE: 'continuarea filmului',
+  WATCHDOG: 'supraveghetorul',
+  BACKUP: 'copia de siguranță',
+  TRENDS_REFRESH: 'tendințele zilei',
+  MODEL_RESEARCH: 'cercetarea modelelor',
+  MODEL_REVIEW: 'revizia modelelor',
+  DIRECTOR_LOOP: 'bucla Directoarei',
 };
 
 /** What a state change says in the register; IDLE and anything unlisted is «a terminat». @type {Record<string, string>} */
@@ -398,16 +407,19 @@ export function describeEvent(event, names = {}) {
       text = `${payload.reviewed ?? 0} mesaje, ${payload.applied ?? 0} decizii`;
       break;
     case 'workflow.created':
+    case 'workflow.job_fired':
     case 'workflow.job_scheduled':
     case 'workflow.job_activated':
-      if (type === 'workflow.created' && !payload.current_stage && ROUTINE_JOB[payload.workflow_type]) {
+      // AR-14: a scheduled fire no longer creates a Workflow row; it writes workflow.job_fired
+      // with the same workflow_type, and reads as the same routine row
+      if ((type === 'workflow.created' || type === 'workflow.job_fired') && !payload.current_stage && ROUTINE_JOB[payload.workflow_type]) {
         label = 'sarcină de rutină pornită';
         text = ROUTINE_JOB[payload.workflow_type];
         kind = 'system';
         routine = String(payload.workflow_type);
         break;
       }
-      label = type === 'workflow.created' ? 'a început o producție' : 'producție programată';
+      label = type === 'workflow.created' ? 'a început o producție' : type === 'workflow.job_fired' ? 'sarcină programată pornită' : 'producție programată';
       text = payload.current_stage ? `etapa: ${stageLabel(payload.current_stage)}` : '';
       break;
     case 'factual.topic_proposed':
@@ -551,7 +563,7 @@ export function describeEvent(event, names = {}) {
       break;
     case 'media.model_research_recorded':
       label = `cercetare de modele · ${payload.purpose || ''}`;
-      text = `${payload.steward ? `${payload.steward}: ` : ''}${payload.annotated ?? 0} modele judecate din ${payload.pages ?? 0} pagini${payload.recommended ? ` · recomandat ${payload.recommended}` : ''}${payload.changed ? ' · pus ca implicit' : ''}`;
+      text = `${payload.steward ? `${payload.steward}: ` : ''}${countWords(payload.annotated ?? 0, 'model judecat', 'modele judecate')} din ${countWords(payload.pages ?? 0, 'pagină', 'pagini')}${payload.recommended ? ` · recomandat ${payload.recommended}` : ''}${payload.changed ? ' · pus ca implicit' : ''}`;
       kind = 'production';
       break;
     case 'provider.resource_metadata_updated':
@@ -578,7 +590,7 @@ export function describeEvent(event, names = {}) {
       break;
     case 'runbook.daily_run_started':
       label = 'ziua a început';
-      text = `${payload.stages || ''} etape · verificare preliminară ${payload.preflight || ''}`.trim();
+      text = `${payload.stages ? `${countWords(payload.stages, 'etapă', 'etape')} · ` : ''}verificare preliminară ${payload.preflight || ''}`.trim();
       break;
     case 'runbook.stage_started':
       label = 'etapă începută';
@@ -677,7 +689,7 @@ export function describeEvent(event, names = {}) {
       break;
     case 'provider.catalog_refreshed':
       label = 'catalog actualizat';
-      text = [payload.models != null ? `${payload.models} modele` : '', payload.voices != null ? `${payload.voices} voci` : '']
+      text = [payload.models != null ? countWords(payload.models, 'model', 'modele') : '', payload.voices != null ? countWords(payload.voices, 'voce', 'voci') : '']
         .filter(Boolean)
         .join(', ');
       break;
@@ -849,7 +861,7 @@ export function productionStatus(events, now = null, closedAt = null) {
   // made nothing looked like. An event without the count says only its status.
   if (run) {
     parts.push(
-      `ultima rulare a zilei ${statusLabel(run)}${productive === null ? '' : ` · ${productive} etape au produs ceva`}`,
+      `ultima rulare a zilei ${statusLabel(run)}${productive === null ? '' : ` · ${countWords(productive, 'etapă', 'etape')} ${productive === 1 ? 'a' : 'au'} produs ceva`}`,
     );
   }
   if (!parts.length) return { stage, run, running: null, live: false, text: 'Nicio producție în lucru.' };
@@ -1068,7 +1080,7 @@ export class Ledger {
       const body = item.thread
         ? `<div class="ledger-subject">${this.escape(item.subject || item.text)}</div>` +
           (item.excerpt ? `<div class="ledger-text">${this.escape(item.excerpt)}</div>` : '') +
-          `<div class="ledger-open">Deschide firul${letters > 1 ? ` · ${letters} scrisori` : ''} ↗</div>`
+          `<div class="ledger-open">Deschide firul${letters > 1 ? ` · ${countWords(letters, 'scrisoare', 'scrisori')}` : ''} ↗</div>`
         : (() => {
             const detail = withoutEcho(`${item.who} ${item.label}`, item.text);
             return detail ? `<div class="ledger-text">${this.escape(detail)}</div>` : '';

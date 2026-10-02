@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import JSON, Boolean, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, ForeignKey, Integer, String, Text, UniqueConstraint, false
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models import Base
@@ -41,6 +41,23 @@ class ChannelRecord(Base):
     #: is the safe reading; part of the versioned policy, so a grant bumps `policy_version`.
     director_may_approve_episodes: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False
+    )
+    #: The upload's own settings (migration 0053), part of the versioned policy above and
+    #: changed only by `change_publish_policy`. ``youtube_category_id`` is YouTube's
+    #: snippet.categoryId ('28', Science & Technology, is what every upload carried before);
+    #: ``made_for_kids`` is status.selfDeclaredMadeForKids; ``default_language`` is
+    #: snippet.defaultLanguage and defaultAudioLanguage, NULL meaning the studio's content
+    #: language; ``shorts_max_seconds`` is the longest film quality control accepts for the
+    #: channel (YouTube takes vertical Shorts up to 180 s since 2024-10-15).
+    youtube_category_id: Mapped[str] = mapped_column(
+        String(4), nullable=False, default="28", server_default="28"
+    )
+    made_for_kids: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    default_language: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    shorts_max_seconds: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=60, server_default="60"
     )
     policy_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     policy_changed_event_id: Mapped[str | None] = mapped_column(
@@ -118,6 +135,13 @@ class PublicationRecord(Base):
     #: publication without it, so an audit can say which policy published what.
     policy_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     published_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    #: What YouTube itself says the video is (migration 0052, PUB-05/PUB-08), never what was
+    #: asked for: ``status.privacyStatus`` and ``status.uploadStatus`` from the insert answer,
+    #: the reconciliation or the watchdog's look at the processing, and when it last said so.
+    #: An unaudited Google Cloud project's uploads come back private whatever was requested.
+    remote_privacy_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    remote_upload_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    remote_checked_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
     error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(String(40), nullable=False)
     event_id: Mapped[str | None] = mapped_column(

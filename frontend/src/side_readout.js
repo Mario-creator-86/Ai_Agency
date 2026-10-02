@@ -1,5 +1,6 @@
 import { dayTrackWords } from './hud_charts.js';
 import { listWords, treasuryFace } from './hq_screens.js';
+import { sheetKeyFor } from './sheet_key.js';
 
 /**
  * THE STUDIO AT A GLANCE, at the foot of the side drawer on a tall screen (W8).
@@ -13,11 +14,74 @@ import { listWords, treasuryFace } from './hq_screens.js';
  *   a time only while the job is active and autonomy is on, because a time beside a stopped
  *   studio would promise a run that cannot happen.
  * A value the page does not hold is «—». Nothing here is computed beyond what its source says.
+ *
+ * PAGE_OWNER_DAY (PAGE-14): a fourth line, «Filmul zilei», from the newest run's own stages: where
+ * the day's film stands (waiting for him at a step, in production, assembled with its QC,
+ * published and how) and, when it has a sheet, the key to it.
  */
 
 /**
- * @typedef {{label: string, value: string, note?: string, tone?: 'ok'|'warn'|'alert'|'quiet'}} ReadoutRow
+ * @typedef {{label: string, value: string, note?: string, tone?: 'ok'|'warn'|'alert'|'quiet', sheet?: string|null}} ReadoutRow
  */
+
+/** A paid step, as the line says where the film waits. */
+const STEP_PLACE = { stills: 'imagini', test_shot: 'cadrul de probă', motion: 'mișcare', assemble: 'narațiune', scene_redo: 'o refacere' };
+
+/** How a film was published, in words. */
+const PRIVACY_WORDS = { private: 'privat', unlisted: 'nelistat', public: 'public' };
+
+/**
+ * «18 credite», «358 de credite».
+ * @param {number} n
+ */
+function creditsWords(n) {
+  if (n === 1) return '1 credit';
+  const rest = Math.abs(n) % 100;
+  return `${n.toLocaleString('ro-RO')}${Math.abs(n) >= 20 && (rest === 0 || rest >= 20) ? ' de' : ''} credite`;
+}
+
+/**
+ * The film of the day, from the newest run (GET /runbook/runs, its stages' artefacts).
+ * @param {any} run
+ * @returns {ReadoutRow}
+ */
+export function filmOfTheDay(run) {
+  const label = 'Filmul zilei';
+  if (!run || !Array.isArray(run.stages)) return { label, value: '—', tone: 'quiet' };
+  /** @param {string} name */
+  const stage = (name) => {
+    const found = run.stages.find((/** @type {any} */ s) => s && s.stage === name);
+    return found && found.artefacts && typeof found.artefacts === 'object' ? found.artefacts : null;
+  };
+  const media = stage('media');
+  const qc = stage('edit_and_qc');
+  const publish = stage('publish');
+  const published = publish && Array.isArray(publish.published) ? publish.published[0] : null;
+  if (published) {
+    const privacy = PRIVACY_WORDS[/** @type {keyof typeof PRIVACY_WORDS} */ (published.release_privacy)] || String(published.release_privacy || '');
+    return { label, value: `publicat ${privacy}`.trim(), note: published.channel_name ? String(published.channel_name) : undefined, tone: 'ok' };
+  }
+  if (!media) return { label, value: 'niciun film azi', tone: 'quiet' };
+  const films = Array.isArray(media.films) ? media.films : [];
+  const sheet = sheetKeyFor(media) || (films[0] && sheetKeyFor({ awaiting_owner: [films[0]] })) || null;
+  const bought = (Array.isArray(media.bought_steps) ? media.bought_steps : []).reduce((sum, /** @type {any} */ b) => sum + (Number(b && b.credits) || 0), 0);
+  const note = bought > 0 ? `cumpărat până acum: ${creditsWords(bought)}` : undefined;
+  const assembled = (Array.isArray(media.assets) && media.assets.length > 0) || films.some((/** @type {any} */ f) => f && f.status === 'ASSEMBLED');
+  if (assembled && qc && Number(qc.failed) > 0 && !Number(qc.passed)) return { label, value: 'QC picat', note, tone: 'alert', sheet };
+  if (assembled && qc && Number(qc.passed) > 0) return { label, value: 'asamblat, QC trecut', note, tone: 'ok', sheet };
+  if (assembled) return { label, value: 'asamblat', note, tone: 'ok', sheet };
+  const waiting = Array.isArray(media.awaiting_owner) ? media.awaiting_owner[0] : null;
+  if (waiting) {
+    const place = STEP_PLACE[/** @type {keyof typeof STEP_PLACE} */ (waiting.step)] || 'un pas plătit';
+    return { label, value: `te așteaptă la ${place}`, note, tone: 'warn', sheet };
+  }
+  const first = films[0];
+  if (first && first.status === 'WAITING') return { label, value: 'așteaptă decizia ta pe foaia de filmare', note, tone: 'warn', sheet };
+  if (first && first.status === 'HELD') return { label, value: 'oprit înainte de un pas plătit', note, tone: 'warn', sheet };
+  if (first && first.status === 'REFUSED') return { label, value: 'asamblarea a fost refuzată', note, tone: 'alert', sheet };
+  if (bought > 0 || first) return { label, value: 'în producție', note, tone: 'ok', sheet };
+  return { label, value: 'niciun film azi', tone: 'quiet' };
+}
 
 /**
  * The next daily run, in words.
@@ -44,7 +108,7 @@ export function nextRunWords(jobs, context = {}) {
 
 /**
  * The three lines.
- * @param {{track?: any, today?: string|null, live?: boolean, treasury?: any, budget?: any, jobs?: any[]|null, stopped?: boolean|null, timeZone?: string, reads?: Record<string, string>}} facts
+ * @param {{track?: any, today?: string|null, live?: boolean, treasury?: any, budget?: any, jobs?: any[]|null, stopped?: boolean|null, timeZone?: string, reads?: Record<string, string>, run?: any}} facts
  *   `reads`: how each list was read ('pending', 'ok', 'failed'); a list not read is never «nicio …» (W12)
  * @returns {{rows: ReadoutRow[], key: string}}
  */
@@ -75,5 +139,6 @@ export function studioReadout(facts) {
   }
   const next = nextRunWords(facts.jobs, { stopped: facts.stopped, timeZone: facts.timeZone });
   rows.push({ label: 'Următoarea rulare', value: next.value, tone: next.tone });
-  return { rows, key: rows.map((r) => `${r.label}|${r.value}|${r.note || ''}|${r.tone || ''}`).join('#') };
+  rows.push(filmOfTheDay(facts.run));
+  return { rows, key: rows.map((r) => `${r.label}|${r.value}|${r.note || ''}|${r.tone || ''}|${r.sheet || ''}`).join('#') };
 }

@@ -20,11 +20,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import ipaddress
 import json
 import math
 import re
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any
 from urllib.parse import quote, urlsplit
 
@@ -37,6 +38,7 @@ from app.providers.media_base import (
 from app.providers.media_http import (
     MediaProviderError,
     MediaProviderNotConfigured,
+    TaskStillOpen,
     image_dimensions,
     request,
     retrying,
@@ -58,6 +60,28 @@ IMAGE_TASKS = ("text_to_image",)
 #: still running then is reported as such rather than waited for indefinitely.
 IMAGE_DEADLINE_SECONDS = 240
 IMAGE_POLL_SECONDS = 3.0
+
+#: Host suffixes a task's output may be downloaded from. Runway's docs
+#: (https://docs.dev.runwayml.com/assets/outputs/, read 2026-10-01) show one example output
+#: URL on a CloudFront host but publish no list of output domains, and pinning a domain read
+#: off an example would refuse - and so lose - a paid output the day the vendor serves it
+#: elsewhere. So the tuple is empty (no suffix is required) and what is enforced is that the
+#: address is public: `_vet_output_host` before any socket, and `public_only` at the
+#: connection. A domain the vendor documents later goes here.
+OUTPUT_HOST_SUFFIXES: tuple[str, ...] = ()
+#: Names that are private by definition (RFC 6761, RFC 6762, RFC 8375 and the common
+#: internal-only conventions): refused without asking any resolver.
+PRIVATE_NAME_SUFFIXES: tuple[str, ...] = (
+    "localhost",
+    "local",
+    "internal",
+    "intranet",
+    "lan",
+    "home.arpa",
+    "corp",
+    "private",
+    "invalid",
+)
 
 #: Runway task states -> the studio's VideoGenerationResult states.
 TASK_STATES = {
@@ -397,6 +421,34 @@ def _reference_image(extra: dict[str, Any] | None) -> bytes | None:
     return bytes(payload)
 
 
+def _vet_output_host(hostname: str) -> str:
+    """The output host, if it may be asked at all; MediaProviderError before any socket if not.
+
+    No headers go to an output host (the key never leaves for it), but a confused or
+    compromised answer could still point the studio at an address inside the Owner's
+    network. Refused here without a lookup: an IP literal that is not global, a single-label
+    name and a private-use name. The resolved addresses are checked at the connection.
+    """
+    host = hostname.strip().rstrip(".").lower()
+    try:
+        literal = ipaddress.ip_address(host.split("%", 1)[0])
+    except ValueError:
+        literal = None
+    if literal is not None:
+        if not literal.is_global:
+            raise MediaProviderError("Runway named an output on a private address; not fetched")
+        return host
+    if "." not in host or any(
+        host == suffix or host.endswith("." + suffix) for suffix in PRIVATE_NAME_SUFFIXES
+    ):
+        raise MediaProviderError("Runway named an output on a private host; not fetched")
+    if OUTPUT_HOST_SUFFIXES and not any(
+        host == suffix or host.endswith("." + suffix) for suffix in OUTPUT_HOST_SUFFIXES
+    ):
+        raise MediaProviderError("Runway named an output outside its documented hosts")
+    return host
+
+
 class _RunwayClient:
     """What every Runway adapter shares: the key, the model's contract, the task plumbing."""
 
@@ -577,13 +629,56 @@ class _RunwayClient:
                 self.last_estimated_credits = credits
         return data
 
+    async def collect_task(self, task_id: str) -> dict[str, Any]:
+        """What became of a task this studio submitted earlier, asked by its id. Free.
+
+        GET /v1/tasks/{id} only: nothing is generated, nothing is bought. Returns ``state``
+        (RUNNING while the vendor works or queues, SUCCEEDED, FAILED), the outputs downloaded
+        as ``(bytes, content_type)`` when it succeeded, and the vendor's failure code and
+        sanitised reason when it failed. A poll or a download that fails raises; the caller
+        leaves the task open and asks again later.
+        """
+        data = await self._task(task_id)
+        remote = str(data["status"])
+        failure = data.get("failure")
+        code = data.get("failureCode")
+        result: dict[str, Any] = {
+            "task_id": task_id,
+            "task_status": remote,
+            "state": {"SUCCEEDED": "SUCCEEDED", "FAILED": "FAILED", "CANCELLED": "FAILED"}.get(
+                remote, "RUNNING"
+            ),
+            "outputs": [],
+            "failure_code": code if isinstance(code, str) and code else None,
+            "failure_detail": sanitise_vendor_text(failure)
+            if isinstance(failure, str) and failure.strip()
+            else None,
+            "estimated_credits": estimated_credits(data.get("estimatedCost")),
+        }
+        if result["state"] == "SUCCEEDED":
+            outputs = data.get("output")
+            urls = [u for u in outputs if isinstance(u, str)] if isinstance(outputs, list) else []
+            if not urls:
+                raise MediaProviderError("Runway reported success without an output")
+            result["outputs"] = [await self._download(url) for url in urls]
+        return result
+
     async def _download(self, url: str) -> tuple[bytes, str]:
         parts = urlsplit(url)
         if parts.scheme != "https" or not parts.hostname:
             raise MediaProviderError("Runway returned an output that is not an HTTPS URL")
+        host = _vet_output_host(parts.hostname)
         path = parts.path + ("?" + parts.query if parts.query else "")
         _, payload, content_type = await asyncio.to_thread(
-            retrying, request, parts.hostname, "GET", path, {}, timeout=120, expect_json=False
+            retrying,
+            request,
+            host,
+            "GET",
+            path,
+            {},
+            timeout=120,
+            expect_json=False,
+            public_only=True,
         )
         if not payload:
             raise MediaProviderError("Runway's output could not be downloaded")
@@ -620,10 +715,19 @@ class RunwayImageAdapter(_RunwayClient, ImageProvider):
         return {"status": "HEALTHY", "detail": ""}
 
     async def _image_outputs(self, job_id: str) -> list[str]:
-        """Poll a text_to_image task until it ends; the output URLs it served, in order."""
+        """Poll a text_to_image task until it ends; the output URLs it served, in order.
+
+        The task exists and may be billed from its submit on: a poll the vendor does not
+        answer and the deadline are TaskStillOpen (collect it later), never a refusal. Only
+        the vendor's own FAILED or CANCELLED is a refusal."""
         deadline = time.monotonic() + IMAGE_DEADLINE_SECONDS
         while True:
-            data = await self._task(job_id)
+            try:
+                data = await self._task(job_id)
+            except MediaProviderError as exc:
+                raise TaskStillOpen(
+                    "Runway did not answer about an image task it accepted", task_id=job_id
+                ) from exc
             remote = data["status"]
             if remote == "SUCCEEDED":
                 break
@@ -636,7 +740,9 @@ class RunwayImageAdapter(_RunwayClient, ImageProvider):
                     detail=sanitise_vendor_text(failure) if isinstance(failure, str) else None,
                 )
             if time.monotonic() >= deadline:
-                raise MediaProviderError("Runway image task did not finish before the deadline")
+                raise TaskStillOpen(
+                    "Runway image task did not finish before the deadline", task_id=job_id
+                )
             await asyncio.sleep(IMAGE_POLL_SECONDS)
         outputs = data.get("output")
         urls = [url for url in outputs if isinstance(url, str)] if isinstance(outputs, list) else []
@@ -652,6 +758,7 @@ class RunwayImageAdapter(_RunwayClient, ImageProvider):
         count: int = 2,
         references: Sequence[bytes] = (),
         seed: int | None = None,
+        on_submitted: Callable[[str], None] | None = None,
     ) -> list[ImageResult]:
         """``count`` candidate stills of one prompt, at exactly ``ratio``, in one purchase.
 
@@ -668,6 +775,10 @@ class RunwayImageAdapter(_RunwayClient, ImageProvider):
 
         ``last_estimated_credits`` is the vendor's price for everything bought by this call
         (the sum over its tasks), or None when any task left it unstated.
+
+        ``on_submitted(task_id)`` hears each task the moment the vendor accepts it, before any
+        poll: that is when the purchase starts to cost money, and the caller writes it down
+        then. A task whose output does not arrive raises TaskStillOpen with its id.
         """
         task = "text_to_image"
         self._require_task(task)
@@ -711,6 +822,8 @@ class RunwayImageAdapter(_RunwayClient, ImageProvider):
         prices: list[float | None] = []
         for _ in range(tasks):
             job_id = await self._submit(task, body)
+            if on_submitted is not None:
+                on_submitted(job_id)
             urls = await self._image_outputs(job_id)
             prices.append(self.last_estimated_credits)
             served += [(job_id, url) for url in urls]
@@ -719,7 +832,12 @@ class RunwayImageAdapter(_RunwayClient, ImageProvider):
         )
         results: list[ImageResult] = []
         for index, (job_id, url) in enumerate(served[:wanted]):
-            image, content_type = await self._download(url)
+            try:
+                image, content_type = await self._download(url)
+            except MediaProviderError as exc:
+                raise TaskStillOpen(
+                    "Runway's still could not be downloaded", task_id=job_id
+                ) from exc
             fmt, actual_width, actual_height = image_dimensions(image, content_type)
             results.append(
                 ImageResult(

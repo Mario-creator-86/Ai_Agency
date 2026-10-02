@@ -872,3 +872,505 @@ def test_analytics_provider_for_channel_refuses_an_unbound_slot(engine):
     provider, reason = analytics_provider_for_channel(engine, Vault(), main)
     assert provider is not None and reason == ""
     assert provider.channel_id == f"UC_{own[:8]}"
+
+
+# ------------------------------------------------- YouTube's own visibility (2026-10-02) --
+#
+# PUB-05 / SELL-07: Google keeps every upload from an unaudited API project (created after
+# 28 July 2020) private until the project passes the YouTube API Services audit. The adapter
+# read only the video id from the insert answer, and the record said what was asked for: a
+# «public, PUBLISHED» film nobody but the Owner could see. The answer's status is now kept.
+
+from app.agents.models import AgentMessage  # noqa: E402
+from app.providers.publishing_base import UploadResult  # noqa: E402
+from app.publishing.services import LOCKED_PRIVATE_LETTER  # noqa: E402
+
+
+def test_the_upload_result_carries_the_visibility_youtube_gave(monkeypatch, tmp_path):
+    video = tmp_path / "film.mp4"
+    video.write_bytes(b"x" * 8)
+    provider, _ = _youtube(
+        monkeypatch,
+        [
+            _response({}, {"Location": "https://www.googleapis.com/upload/session"}),
+            _response(
+                {"id": "vid-9", "status": {"privacyStatus": "private", "uploadStatus": "uploaded"}}
+            ),
+        ],
+    )
+
+    result = asyncio.run(
+        provider.upload_video(video, title="t", description="d", tags=[], privacy_status="public")
+    )
+
+    assert result.status == "CONFIRMED"
+    assert result.privacy_status == "private"
+    assert result.upload_status == "uploaded"
+
+
+class LockedPrivate(DeterministicPublishingAdapter):
+    """A real-looking platform that answers every upload private, as Google does for an
+    unaudited project."""
+
+    IS_SIMULATED = False
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.count = 0
+
+    async def upload_video(self, file_path: Path, **kwargs: Any) -> Any:
+        self.count += 1
+        return UploadResult(
+            remote_video_id=f"yt-{self.count}",
+            remote_url=f"https://youtube.com/shorts/yt-{self.count}",
+            status="CONFIRMED",
+            privacy_status="private",
+            upload_status="uploaded",
+        )
+
+
+def _letters(engine) -> list[AgentMessage]:
+    with Session(engine) as session:
+        return [
+            row
+            for row in session.scalars(
+                select(AgentMessage).where(AgentMessage.intent == "ESCALATE")
+            )
+            if row.to_agent_id is None and (row.body_json or {}).get("to") == "Owner"
+        ]
+
+
+def test_a_film_youtube_kept_private_is_recorded_as_private_with_one_letter(engine, tmp_path):
+    channel = _channels(engine)["MAIN_FACTUAL"]
+    _bind(engine, channel["id"], _connect(engine))
+    _to_production(engine)
+    change_publish_policy(engine, channel["id"], _command(autonomous_privacy="unlisted"))
+    platform = LockedPrivate()
+    for name in ("one", "two"):
+        bundle = _create_verified_asset_bundle(engine, tmp_path / name)
+        published = publish_media_asset(
+            engine,
+            media_asset_id=bundle["asset_id"],
+            channel_id=channel["id"],
+            title=f"Film {name}",
+            description="",
+            tags=[],
+            privacy_status="unlisted",
+            provider=platform,
+            policy_version=2,
+        )
+        assert published["status"] == "PUBLISHED"
+        with Session(engine) as session:
+            record = session.get(PublicationRecord, published["id"])
+            assert record.privacy_status == "unlisted"
+            assert record.remote_privacy_status == "private"
+            assert "auditul" in (record.error_detail or "")
+
+    assert len(_events(engine, "publishing.visibility_locked_private")) == 2
+    letters = _letters(engine)
+    assert len(letters) == 1, [letter.subject for letter in letters]
+    assert LOCKED_PRIVATE_LETTER in (letters[0].body_text or "")
+
+
+def test_a_private_upload_answered_private_is_no_lock(engine, tmp_path):
+    channel = _channels(engine)["MAIN_FACTUAL"]
+    bundle = _create_verified_asset_bundle(engine, tmp_path)
+    published = publish_media_asset(
+        engine,
+        media_asset_id=bundle["asset_id"],
+        channel_id=channel["id"],
+        title="Private film",
+        description="",
+        tags=[],
+        privacy_status="private",
+        provider=LockedPrivate(),
+    )
+    assert published["status"] == "PUBLISHED"
+    assert _events(engine, "publishing.visibility_locked_private") == []
+    assert _letters(engine) == []
+
+
+def test_the_preflight_warns_after_the_first_locked_upload_until_one_goes_out_visible(
+    engine, tmp_path
+):
+    from app.runbook.preflight import _youtube_visibility_check  # noqa: PLC0415
+
+    channel = _channels(engine)["MAIN_FACTUAL"]
+    _bind(engine, channel["id"], _connect(engine, name="Studio account"))
+    with Session(engine) as session:
+        assert _youtube_visibility_check(session)["ok"] is True
+
+    _to_production(engine)
+    change_publish_policy(engine, channel["id"], _command(autonomous_privacy="unlisted"))
+    bundle = _create_verified_asset_bundle(engine, tmp_path)
+    publish_media_asset(
+        engine,
+        media_asset_id=bundle["asset_id"],
+        channel_id=channel["id"],
+        title="Locked film",
+        description="",
+        tags=[],
+        privacy_status="unlisted",
+        provider=LockedPrivate(),
+        policy_version=2,
+    )
+    with Session(engine) as session:
+        line = _youtube_visibility_check(session)
+    assert line["ok"] is False
+    assert line["severity"] == "DEGRADING"
+    assert line["code"] == "youtube_visibility.locked_private"
+    assert "Studio account" in line["message"] and "auditul" in line["message"]
+
+
+# ------------------------------------------- the disclosure and the upload's own settings --
+# Audit PUB-07 / PUB-09 / Q9 (2026-10-02). Before: the services added "… by the <brand> studio
+# pipeline." and the adapter cut the description at 4800 characters, then added its own
+# "… by an autonomous studio pipeline." when that exact line was missing: a long description
+# lost the studio's block, a short one carried two disclosure lines. The upload hard-coded
+# categoryId 28 for both channels, selfDeclaredMadeForKids False, no language at all, and two
+# filler tags ("ai generated", "synthetic media") the containsSyntheticMedia flag already says.
+
+from app.providers.youtube import DEFAULT_DISCLOSURE  # noqa: E402
+from app.publishing import services as publishing_services  # noqa: E402
+from app.publishing.services import (  # noqa: E402
+    AI_DISCLOSURE,
+    disclosure_sentence,
+    publication_footer,
+)
+
+
+def _studio(**fields: Any) -> SimpleNamespace:
+    base: dict[str, Any] = {
+        "content_language": "en",
+        "studio_display_name": None,
+        "ai_disclosure_texts": {},
+    }
+    base.update(fields)
+    return SimpleNamespace(**base)
+
+
+def _sent(requests: list[Any]) -> dict[str, Any]:
+    return json.loads(requests[0].data.decode("utf-8"))
+
+
+def _two_answers() -> list[Any]:
+    return [
+        _response({}, {"Location": "https://www.googleapis.com/upload/session"}),
+        _response({"id": "vid-1", "status": {"privacyStatus": "private"}}),
+    ]
+
+
+def _disclosure_lines(description: str) -> list[str]:
+    return [line for line in description.splitlines() if "generative AI" in line]
+
+
+def test_a_short_description_carries_exactly_one_disclosure_line(monkeypatch, tmp_path):
+    video = tmp_path / "film.mp4"
+    video.write_bytes(b"x" * 8)
+    footer = publication_footer(None, None, None, settings=_studio())
+    provider, requests = _youtube(monkeypatch, _two_answers())
+    asyncio.run(
+        provider.upload_video(
+            video, title="t", description=f"What the film shows.\n\n{footer}", tags=[]
+        )
+    )
+    description = _sent(requests)["snippet"]["description"]
+    assert len(_disclosure_lines(description)) == 1
+    assert description == f"What the film shows.\n\n{footer}"
+
+
+def test_a_direct_upload_with_no_disclosure_gets_one_line(monkeypatch, tmp_path):
+    video = tmp_path / "film.mp4"
+    video.write_bytes(b"x" * 8)
+    provider, requests = _youtube(monkeypatch, _two_answers())
+    asyncio.run(provider.upload_video(video, title="t", description="d", tags=[]))
+    description = _sent(requests)["snippet"]["description"]
+    assert _disclosure_lines(description) == [DEFAULT_DISCLOSURE]
+
+
+def test_a_studio_disclosure_in_another_language_is_not_doubled(monkeypatch, tmp_path):
+    video = tmp_path / "film.mp4"
+    video.write_bytes(b"x" * 8)
+    footer = publication_footer(None, None, None, settings=_studio(content_language="ro"))
+    provider, requests = _youtube(monkeypatch, _two_answers())
+    asyncio.run(
+        provider.upload_video(
+            video,
+            title="t",
+            description=f"Despre film.\n\n{footer}",
+            tags=[],
+            extra={"disclosed": True},
+        )
+    )
+    description = _sent(requests)["snippet"]["description"]
+    assert description == f"Despre film.\n\n{footer}"
+    assert "Disclosure:" not in description
+
+
+def test_a_long_description_keeps_the_footer_inside_five_thousand_bytes(monkeypatch, tmp_path):
+    video = tmp_path / "film.mp4"
+    video.write_bytes(b"x" * 8)
+    footer = publication_footer(None, "https://example.org/ai", None, settings=_studio())
+    body = "Știință și țară " * 400  # about 7,600 bytes of Romanian
+    provider, requests = _youtube(monkeypatch, _two_answers())
+    asyncio.run(provider.upload_video(video, title="t", description=f"{body}\n\n{footer}", tags=[]))
+    description = _sent(requests)["snippet"]["description"]
+    assert len(description.encode("utf-8")) <= 5000
+    assert description.endswith(footer)
+    assert len(_disclosure_lines(description)) == 1
+
+
+def test_the_disclosure_text_comes_from_the_settings_per_content_language():
+    assert AI_DISCLOSURE == "Disclosure: this video was produced with generative AI."
+    assert disclosure_sentence(_studio()) == AI_DISCLOSURE
+    assert disclosure_sentence(_studio(studio_display_name="Nexus Films")) == (
+        "Disclosure: this video was produced with generative AI by Nexus Films."
+    )
+    romanian = disclosure_sentence(_studio(content_language="ro", studio_display_name="Nexus"))
+    assert romanian.startswith("Mențiune:") and romanian.endswith("de Nexus.")
+    # A language the studio has no sentence for reads the English one.
+    assert disclosure_sentence(_studio(content_language="de")) == AI_DISCLOSURE
+    # The Owner's own words for a language win, with the studio's name put in.
+    configured = _studio(
+        content_language="de",
+        studio_display_name="Nexus",
+        ai_disclosure_texts={"de": "Hinweis: mit generativer KI erstellt von {studio}."},
+    )
+    assert disclosure_sentence(configured) == "Hinweis: mit generativer KI erstellt von Nexus."
+    footer = publication_footer(None, "https://example.org/ai", None, settings=configured)
+    assert footer == "Hinweis: mit generativer KI erstellt von Nexus. https://example.org/ai"
+
+
+def test_the_studio_brand_is_never_written_in_the_disclosure_code():
+    """A buyer's films must not say this Owner's studio made them."""
+    import inspect
+
+    from app.providers import youtube
+
+    assert "AMN" not in inspect.getsource(youtube)
+    for function in (
+        disclosure_sentence,
+        publication_footer,
+        publishing_services.with_footer,
+        publishing_services.create_publication_intent,
+    ):
+        assert "AMN" not in inspect.getsource(function)
+    assert "AMN" not in AI_DISCLOSURE and "AMN" not in DEFAULT_DISCLOSURE
+
+
+def test_the_daily_footer_reads_the_studio_settings_when_none_are_given(monkeypatch):
+    """The day's stage passes only the site and the creator; the language and the name are
+    read from the studio's configuration, not hard-coded."""
+    monkeypatch.setattr(
+        publishing_services,
+        "studio_settings",
+        lambda: _studio(content_language="ro", studio_display_name="Studio Test"),
+    )
+    footer = publication_footer(None, None, None)
+    assert footer.startswith("Mențiune:") and "de Studio Test." in footer
+
+
+def test_the_upload_carries_the_channels_category_language_and_audience(
+    engine, tmp_path, monkeypatch
+):
+    channel = _channels(engine)["MAIN_FACTUAL"]
+    result = change_publish_policy(
+        engine,
+        channel["id"],
+        _command(youtube_category_id="27", made_for_kids=True, default_language="en-GB"),
+    )
+    assert result["status"] == "COMMITTED"
+    bundle = _create_verified_asset_bundle(engine, tmp_path)
+    provider, requests = _youtube(monkeypatch, _two_answers())
+    published = publish_media_asset(
+        engine,
+        media_asset_id=bundle["asset_id"],
+        channel_id=channel["id"],
+        title="Webb sees the first galaxies",
+        description="What the film shows.",
+        tags=["webb", "galaxies"],
+        privacy_status="private",
+        provider=provider,
+        footer=publication_footer(engine, None, None, settings=_studio()),
+    )
+    assert published["status"] == "PUBLISHED"
+    sent = _sent(requests)
+    snippet, status = sent["snippet"], sent["status"]
+    assert snippet["categoryId"] == "27"
+    assert snippet["defaultLanguage"] == "en-GB"
+    assert snippet["defaultAudioLanguage"] == "en-GB"
+    assert status["selfDeclaredMadeForKids"] is True
+    assert status["containsSyntheticMedia"] is True
+    # No filler tags: the flag above is the label.
+    assert snippet["tags"] == ["webb", "galaxies"]
+    # What was stored is what was sent.
+    assert snippet["description"] == published["description"]
+    assert snippet["title"] == published["title"]
+    assert len(_disclosure_lines(snippet["description"])) == 1
+
+
+def test_a_seeded_channel_keeps_todays_category_and_speaks_the_content_language(
+    engine, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        publishing_services, "studio_settings", lambda: _studio(content_language="en")
+    )
+    channels = _channels(engine)
+    factual, serial = channels["MAIN_FACTUAL"], channels["OFFICE_SERIAL"]
+    assert factual["youtube_category_id"] == "28" and serial["youtube_category_id"] == "28"
+    assert factual["made_for_kids"] is False and factual["default_language"] is None
+    assert factual["shorts_max_seconds"] == 60 and serial["shorts_max_seconds"] == 70
+    bundle = _create_verified_asset_bundle(engine, tmp_path)
+    provider, requests = _youtube(monkeypatch, _two_answers())
+    publish_media_asset(
+        engine,
+        media_asset_id=bundle["asset_id"],
+        channel_id=factual["id"],
+        title="A film",
+        description="",
+        tags=[],
+        privacy_status="private",
+        provider=provider,
+    )
+    sent = _sent(requests)
+    assert sent["snippet"]["categoryId"] == "28"
+    assert sent["snippet"]["defaultLanguage"] == "en"
+    assert sent["snippet"]["defaultAudioLanguage"] == "en"
+    assert sent["status"]["selfDeclaredMadeForKids"] is False
+    assert "ai generated" not in sent["snippet"].get("tags", [])
+
+
+def test_the_upload_settings_are_part_of_the_versioned_policy(engine):
+    channel = _channels(engine)["OFFICE_SERIAL"]
+    result = change_publish_policy(
+        engine,
+        channel["id"],
+        _command(youtube_category_id="24", shorts_max_seconds=180, default_language="ro"),
+    )
+    assert result["status"] == "COMMITTED"
+    assert result["channel"]["policy_version"] == 2
+    assert result["channel"]["youtube_category_id"] == "24"
+    assert result["channel"]["shorts_max_seconds"] == 180
+    event = _events(engine, "publishing.channel_policy_changed")[-1]
+    assert set(event.payload["changed"]) == {
+        "youtube_category_id",
+        "shorts_max_seconds",
+        "default_language",
+    }
+    # The same values again change nothing.
+    again = change_publish_policy(
+        engine,
+        channel["id"],
+        _command(expected_version=2, youtube_category_id="24", shorts_max_seconds=180),
+    )
+    assert again["status"] == "NO_CHANGE"
+    # An empty language goes back to the studio's content language.
+    cleared = change_publish_policy(
+        engine, channel["id"], _command(expected_version=2, default_language="")
+    )
+    assert cleared["channel"]["default_language"] is None
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"youtube_category_id": "science"},
+        {"youtube_category_id": "1234"},
+        {"shorts_max_seconds": 181},
+        {"shorts_max_seconds": 5},
+        {"default_language": "English"},
+    ],
+)
+def test_a_wrong_upload_setting_is_refused_before_it_is_stored(fields):
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        _command(**fields)
+
+
+# ------------------------------------------------------------- the Publisher's own answer --
+# Audit Q9 / PUB-06: the Publisher was told only "a title under 100 characters, a description
+# and up to 15 tags", and an answer one character or one tag over those numbers was refused
+# whole (ReviewError), so the film did not go out that day. Her answer is now made safe in
+# code, and she is told what a Short's metadata needs.
+
+from app.providers.youtube import tag_budget  # noqa: E402
+from test_publication_metadata_per_film import (  # noqa: E402
+    PublisherModel,
+    _prepare,
+    studio,  # noqa: F401 - the fixture
+)
+
+
+def test_the_publishers_rough_answer_is_made_safe_and_she_is_told_the_shorts_rules(
+    engine,
+    studio,  # noqa: F811
+):
+    answer = {
+        "verdict": "READY",
+        "title": "Webb <sees> " + "the earliest galaxies anyone has found " * 5,
+        "description": "What the film shows.",
+        "tags": [f"webb galaxy fact {n}" for n in range(28)],
+        "hold_reasons": [],
+    }
+    model = PublisherModel(for_episode=answer, for_factual=answer)
+    prepared = _prepare(engine, studio, model, "factual")
+    assert prepared["verdict"] == "READY"
+    assert len(prepared["title"]) <= 100 and "<" not in prepared["title"]
+    assert prepared["title"].startswith("Webb ‹sees› the earliest galaxies")
+    assert len(prepared["tags"]) <= 15 and tag_budget(prepared["tags"]) <= 500
+    prompt = model.prompts[0]
+    assert "60 characters" in prompt
+    assert "ALL CAPS" in prompt
+    assert "hashtags" in prompt
+    assert "above the fold" in prompt
+
+
+def test_migration_0053_gives_existing_channels_todays_settings_and_takes_them_back(tmp_path):
+    """A channel written before 0053 keeps what its uploads carried (category 28, not made
+    for kids, no language of its own) and the length quality control allowed its films: 60 s
+    for factual films, 70 s for the serial's episodes."""
+    import sqlite3
+
+    from app.db import create_db_engine, migrate
+    from test_migrations_0049 import _downgrade
+
+    path = tmp_path / "studio.db"
+    engine = create_db_engine(f"sqlite:///{path.as_posix()}")
+    migrate(engine)
+    _downgrade(engine, "0052_publication_remote_state")
+    with sqlite3.connect(path) as raw:
+        for name, kind in (("A", "MAIN_FACTUAL"), ("B", "OFFICE_SERIAL")):
+            raw.execute(
+                "INSERT INTO channel_record (id, channel_name, channel_type, platform, "
+                "upload_privacy_default, autonomous_privacy, public_publish_enabled, "
+                "publish_delay_minutes, director_may_approve_episodes, policy_version, "
+                "status, production_defaults_json, series_rules_json, "
+                "allow_production_override, created_at) VALUES (?, ?, ?, 'YOUTUBE', "
+                "'private', 'private', 0, 0, 0, 1, 'NOT_CONFIGURED', '{}', '{}', 1, "
+                "'2026-10-01T00:00:00+00:00')",
+                (name, name, kind),
+            )
+    migrate(engine)
+
+    def rows() -> dict[str, tuple]:
+        with sqlite3.connect(path) as raw:
+            return {
+                row[0]: row[1:]
+                for row in raw.execute(
+                    "SELECT channel_type, youtube_category_id, made_for_kids, default_language, "
+                    "shorts_max_seconds FROM channel_record"
+                )
+            }
+
+    assert rows() == {
+        "MAIN_FACTUAL": ("28", 0, None, 60),
+        "OFFICE_SERIAL": ("28", 0, None, 70),
+    }
+    _downgrade(engine, "0052_publication_remote_state")
+    with sqlite3.connect(path) as raw:
+        columns = {row[1] for row in raw.execute("PRAGMA table_info(channel_record)")}
+    assert not {"youtube_category_id", "made_for_kids", "default_language"} & columns
+    assert "shorts_max_seconds" not in columns
+    migrate(engine)
+    engine.dispose()

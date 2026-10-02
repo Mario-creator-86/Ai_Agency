@@ -192,6 +192,31 @@ a process that died under a render is released by the watchdog once it is older 
 reservation TTL, six hours. A refusal by the budget is not a silent SKIPPED line: the
 Accountant writes to the Owner once per business date.
 
+### The media stage as built (amended 2026-10-02)
+
+Amended deliberately on 2026-10-02 after the production-readiness audit (finding AR-13). In
+PRODUCTION the media stage no longer reserves one hold for a whole film: it climbs each film's
+shooting sheet (08_VIDEO_PIPELINE, "Paid staircase"), one stair per call. Before a stair is
+bought the day takes the film's `film_purchase_lease`, reserves that stair's cap (purpose
+`sheet:<step>`), checks the film's ceiling (`film_budget_usd`) and the free disk, and asks
+`may_act` with the stair's `plan_hash` (51). The hold is settled when the purchase is booked and
+released when nothing was spent; a refused booking keeps it until the reservation TTL.
+
+The walk takes every approved, unrendered factual film, oldest first. A film that stopped for a
+reason of its own with nothing bought and nothing asked (held, waiting on the Owner's look, busy,
+over its ceiling) is passed over, named in the stage's `skipped` list and given one letter, so it
+no longer blocks the films behind it. The walk stops at the first film it worked on, or at an
+account-wide refusal (low balance, the daily budget, no daily budget, low disk). A factual film
+that stood still for `film_wait_days` (default 3) business days is retired (REJECTED by the
+Director, one letter listing what was bought and booked), so its topic frees; a film with a
+pending question of his, asked that day, or waiting on his money is never retired. A film
+without a model shot plan is asked of the model again at most once a day on two days.
+
+When the Owner answers yes to a paid step, or approves a take, a `FILM_CONTINUE` task continues
+that film the same day through the same staircase (51), then quality control, repair and the
+publish stage's own gate for that film only. A FILM_CONTINUE that finds the film busy re-queues
+itself at most three times. In TEST the media stage buys nothing from the real vendors.
+
 ## 9. Edit/QC
 
 FFmpeg/render.

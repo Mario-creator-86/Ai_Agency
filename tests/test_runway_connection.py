@@ -46,9 +46,15 @@ def test_form_needs_only_a_name_and_a_key_and_discovers_the_accounts_video_model
 ):
     spec = settings_view(client, headers)["catalog"]["runway"]
     # The key is what the connection needs; the credit price is optional and the Owner's,
-    # and without it a film's cost is reported in credits rather than guessed in dollars.
-    assert [field["key"] for field in spec["fields"]] == ["api_key", "credit_usd"]
-    assert [f["required"] for f in spec["fields"]] == [True, False]
+    # and without it a film's cost is reported in credits rather than guessed in dollars. So
+    # is his statement of what his plan allows (AR-15): without it a film stays private.
+    assert [field["key"] for field in spec["fields"]] == [
+        "api_key",
+        "credit_usd",
+        "commercial_use",
+        "licence_terms",
+    ]
+    assert [f["required"] for f in spec["fields"]] == [True, False, False, False]
     assert spec["runtime"] == "media" and spec["purposes"] == ["video", "image"]
 
     identifier, response = connect(client, headers)

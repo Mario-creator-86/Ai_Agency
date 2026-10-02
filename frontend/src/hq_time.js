@@ -1,7 +1,7 @@
-import { bucharestTime } from './office_clock.js';
+import { DEFAULT_PLACE, studioPlace, studioTime } from './office_clock.js';
 
 /**
- * TimeOfDayManager: where the sun is over Bucharest right now, and what that means for the scene.
+ * TimeOfDayManager: where the sun is over the studio right now, and what that means for the scene.
  *
  * Day and night are not an hour table: the sun's elevation is computed for the real date and
  * place, so a December afternoon is dark at five and a June evening is still light at nine. The
@@ -9,7 +9,11 @@ import { bucharestTime } from './office_clock.js';
  * horizon is) and a phase name the random events are allowed or forbidden by.
  */
 
-export const BUCHAREST = { lat: 44.4268, lon: 26.1025 };
+/**
+ * The first studio's place, kept as the fallback: the page draws the place the snapshot names
+ * (office_clock.js setStudioPlace), and this one only when it names none.
+ */
+export const BUCHAREST = { lat: DEFAULT_PLACE.lat, lon: DEFAULT_PLACE.lon, timeZone: DEFAULT_PLACE.timeZone };
 
 const RAD = Math.PI / 180;
 
@@ -19,7 +23,7 @@ const RAD = Math.PI / 180;
  * @param {number} [lat]
  * @param {number} [lon]
  */
-export function solarElevation(date, lat = BUCHAREST.lat, lon = BUCHAREST.lon) {
+export function solarElevation(date, lat = studioPlace().lat, lon = studioPlace().lon) {
   const n = date.getTime() / 86400000 + 2440587.5 - 2451545.0;
   const meanLongitude = (280.46 + 0.9856474 * n) % 360;
   const anomaly = ((357.528 + 0.9856003 * n) % 360) * RAD;
@@ -44,10 +48,10 @@ export function smoothstep(a, b, x) {
 /**
  * The scene's reading of a moment.
  * @param {Date} date
- * @param {{lat:number, lon:number}} [location]
+ * @param {{lat:number, lon:number, timeZone?: string}} [location] the studio's place when not given
  */
-export function timeOfDay(date, location = BUCHAREST) {
-  const clock = bucharestTime(date);
+export function timeOfDay(date, location = studioPlace()) {
+  const clock = studioTime(date, location.timeZone || studioPlace().timeZone);
   const elevation = solarElevation(date, location.lat, location.lon);
   const daylight = smoothstep(-8, 7, elevation);
   const dusk = Math.exp(-(((elevation - 1) / 6.5) ** 2));
@@ -59,17 +63,24 @@ export function timeOfDay(date, location = BUCHAREST) {
 
 export class TimeOfDayManager {
   /**
-   * The scene is lit by the real sun over Bucharest, always. It once had a second mode that held
+   * The scene is lit by the real sun over the studio's place, always. It once had a second mode that held
    * the office at the dusk of the 2026-09-13 reference picture whatever the hour; the Owner ruled
    * on 2026-09-18/19 that the sky and the light follow the real outside conditions, never "always
    * dusk", so that mode is gone and there is nothing left to switch back on.
-   * @param {{now?: () => Date, location?: {lat:number, lon:number}}} [options]
+   * @param {{now?: () => Date, location?: {lat:number, lon:number, timeZone?: string}}} [options] without a
+   *   location the manager follows the studio's place, read again on every update, so a snapshot
+   *   that arrives after the scene was built still moves the sun
    */
   constructor(options = {}) {
     this.now = options.now || (() => new Date());
-    this.location = options.location || BUCHAREST;
+    this.fixedLocation = options.location || null;
     this.state = timeOfDay(this.now(), this.location);
     this._elapsed = 0;
+  }
+
+  /** The place the sun is computed for: the one given, else the studio's. */
+  get location() {
+    return this.fixedLocation || studioPlace();
   }
 
   /**

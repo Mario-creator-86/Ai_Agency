@@ -84,7 +84,18 @@ class Recorder:
         self.responses = list(responses)
         self.calls: list[dict] = []
 
-    def __call__(self, host, method, path, headers, body=None, *, timeout=120, expect_json=True):
+    def __call__(
+        self,
+        host,
+        method,
+        path,
+        headers,
+        body=None,
+        *,
+        timeout=120,
+        expect_json=True,
+        public_only=False,
+    ):
         self.calls.append(
             {
                 "host": host,
@@ -92,6 +103,7 @@ class Recorder:
                 "path": path,
                 "headers": headers,
                 "body": json.loads(body) if body and expect_json is not False else body,
+                "public_only": public_only,
             }
         )
         if not self.responses:
@@ -679,7 +691,7 @@ class RunwayTransport:
         self.still = still
         self.calls: list[dict] = []
 
-    def __call__(self, host, method, path, headers, body=None, *, timeout=120, expect_json=True):
+    def __call__(self, host, method, path, headers, body=None, **_kwargs):
         self.calls.append({"host": host, "method": method, "path": path, "body": body})
         if path == "/v1/text_to_image":
             return {"id": "task-1"}, b"", "application/json"
@@ -1031,3 +1043,130 @@ def test_a_failed_tasks_reason_is_kept_sanitised(monkeypatch):
     assert status.raw_response["failure_code"] == "INPUT_PREPROCESSING.SAFETY.THIRD_PARTY"
     assert status.raw_response["failure"].startswith("Input rejected:")
     assert "sig=zzz9999" not in status.raw_response["failure"]
+
+
+# --- a Runway output is fetched only from a public address (SEC-08) ----------------------
+#
+# The vendor names the address its output is served from. A compromised or confused answer
+# could name an address inside the Owner's network; the studio would then fetch it. Runway's
+# docs (https://docs.dev.runwayml.com/assets/outputs/, read 2026-10-01) show an example output
+# host but publish no list of output domains, so no domain is pinned: what is enforced is that
+# the address is public, before any socket (a literal or a private-use name) and again at the
+# connection (the name resolved, every address public, the socket pinned to one of them).
+
+
+def _finished_task(url: str) -> Recorder:
+    return Recorder(({"id": "task-1", "status": "SUCCEEDED", "output": [url]}, b"", "x/json"))
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://127.0.0.1/x",
+        "https://intranet.local/x",
+        "https://localhost/out.mp4",
+        "https://studio.localhost/out.mp4",
+        "https://10.0.0.5/out.mp4",
+        "https://169.254.169.254/latest/meta-data",
+        "https://[::1]/out.mp4",
+        "https://intranet/out.mp4",
+        "https://files.internal/out.mp4",
+        "http://cdn.example.com/out.mp4",
+    ],
+)
+def test_a_runway_output_on_a_private_address_is_refused_before_any_socket(monkeypatch, url):
+    import asyncio
+
+    from app.providers import runway
+    from app.providers.runway import RunwayVideoAdapter
+
+    recorder = _finished_task(url)
+    monkeypatch.setattr(runway, "request", recorder)
+
+    with pytest.raises(MediaProviderError):
+        asyncio.run(RunwayVideoAdapter("key", "gen4_turbo", {}).get_generation_status("task-1"))
+
+    # The task was read; nothing was asked of the address it named.
+    assert [call["path"] for call in recorder.calls] == ["/v1/tasks/task-1"]
+
+
+def test_a_runway_output_is_downloaded_only_through_a_public_pinned_connection(monkeypatch):
+    import asyncio
+
+    from app.providers import runway
+    from app.providers.runway import RunwayVideoAdapter
+
+    recorder = Recorder(
+        (
+            {"id": "task-1", "status": "SUCCEEDED", "output": ["https://cdn.vendor.example/o.mp4"]},
+            b"",
+            "application/json",
+        ),
+        (None, b"MP4BYTES", "video/mp4"),
+    )
+    monkeypatch.setattr(runway, "request", recorder)
+
+    done = asyncio.run(RunwayVideoAdapter("key", "gen4_turbo", {}).get_generation_status("t"))
+
+    assert done.video_bytes == b"MP4BYTES"
+    assert recorder.calls[-1]["host"] == "cdn.vendor.example"
+    assert recorder.calls[-1]["public_only"] is True
+    # The API itself is asked as before: its name is the vendor's, written in the code.
+    assert recorder.calls[0]["public_only"] is False
+
+
+def test_a_public_only_request_to_a_name_that_resolves_inside_is_refused(monkeypatch):
+    import socket
+
+    from app.providers import media_http
+
+    def lookup(host, *_args, **_kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.168.1.20", 443))]
+
+    opened: list[str] = []
+    monkeypatch.setattr(media_http.socket, "getaddrinfo", lookup)
+    monkeypatch.setattr(media_http, "PinnedHTTPSConnection", lambda *a, **k: opened.append("x"))
+
+    with pytest.raises(MediaProviderError) as excinfo:
+        media_http.request(
+            "cdn.vendor.example", "GET", "/o.mp4", {}, expect_json=False, public_only=True
+        )
+    assert excinfo.value.unsent is True and opened == []
+
+
+def test_a_public_only_request_connects_to_the_address_it_checked(monkeypatch):
+    import socket
+
+    from app.providers import media_http
+
+    def lookup(host, *_args, **_kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.215.14", 443))]
+
+    class Pinned:
+        made: list[tuple[str, str]] = []
+
+        def __init__(self, host, address, timeout=None):
+            Pinned.made.append((host, address))
+
+        def request(self, *_args):
+            return None
+
+        def getresponse(self):
+            answer = MagicMock()
+            answer.status = 200
+            answer.read = MagicMock(return_value=b"MP4BYTES")
+            answer.headers.get_content_type = MagicMock(return_value="video/mp4")
+            return answer
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(media_http.socket, "getaddrinfo", lookup)
+    monkeypatch.setattr(media_http, "PinnedHTTPSConnection", Pinned)
+
+    _, payload, kind = media_http.request(
+        "cdn.vendor.example", "GET", "/o.mp4", {}, expect_json=False, public_only=True
+    )
+
+    assert payload == b"MP4BYTES" and kind == "video/mp4"
+    assert Pinned.made == [("cdn.vendor.example", "93.184.215.14")]

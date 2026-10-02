@@ -498,7 +498,7 @@ def _test_clip(seconds: float) -> bytes:
         return target.read_bytes()
 
 
-class TestMotion:
+class FakeMotion:
     """The fake video model: a real clip for each shot, and the credits a vendor would name.
 
     It carries the model the studio's own chooser picked and the connection it belongs to, so
@@ -560,7 +560,7 @@ class FakeMotionChooser:
 
     def __init__(self) -> None:
         self.asked: list[dict[str, Any]] = []
-        self.delivered: list[TestMotion] = []
+        self.delivered: list[FakeMotion] = []
 
     def __call__(
         self,
@@ -575,7 +575,7 @@ class FakeMotionChooser:
         forced_model: str | None = None,
         exclude: tuple[str, ...] = (),
         max_usd_per_second: float | None = None,
-    ) -> tuple[TestMotion | None, dict]:
+    ) -> tuple[FakeMotion | None, dict]:
         from app.integrations.models import Integration, ProviderResource, ServiceSelection
         from app.media.factory import VERIFIED_STATUSES
         from app.media.production_policy import (
@@ -635,7 +635,7 @@ class FakeMotionChooser:
             pricing = resource.pricing if resource and isinstance(resource.pricing, dict) else {}
             per_second = pricing.get("per_second_usd")
             per_credit = credit_usd(session, row.id)
-            shot = TestMotion(
+            shot = FakeMotion(
                 decision["model_id"],
                 row.id,
                 float(per_second) / per_credit
@@ -894,6 +894,9 @@ def _due_daily_job(engine) -> str:
 # ------------------------------------------------------------------------- the day --
 
 
+# The one day kept on the production encode (x264 slow): the other days use the suite's quick
+# preset (tests/conftest.py quick_final_encode), and this one proves QC passes the real file.
+@pytest.mark.real_encode
 @requires_ffmpeg
 def test_the_clock_starts_a_day_that_ends_in_a_published_film_and_an_episode(
     engine, settings, studio, tmp_path
@@ -1273,7 +1276,7 @@ def test_a_test_day_with_a_video_connection_buys_its_shots_only_through_the_fake
         assert 1 <= len(records) <= limit, records
         for scene_index, record in records:
             # Every shot was the fake's, on one of this connection's models.
-            assert record["provider"] == TestMotion.PROVIDER_NAME, record
+            assert record["provider"] == FakeMotion.PROVIDER_NAME, record
             assert record["model"] in TEST_VIDEO_MODELS, record
             assert record["integration_id"] == connection, record
             shots.append((job.id, scene_index, record))

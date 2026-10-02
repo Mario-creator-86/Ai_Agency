@@ -21,8 +21,9 @@ import logging
 import re
 import socket
 import sqlite3
-import time
+import threading
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 from urllib.error import HTTPError, URLError
 from uuid import uuid4
@@ -32,7 +33,8 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.config import Settings
-from app.models import OwnerPolicy
+from app.db import lock_for_write
+from app.models import DomainEvent, OwnerPolicy
 from app.runbook.models import DailyRun, SafeModeRecord
 from app.runbook.preflight import run_preflight
 from app.services import append_event, utc_now
@@ -51,6 +53,7 @@ from app.wording import (
     stage_list,
     stage_name,
 )
+from app.workflows.models import TaskQueueItem
 from app.workflows.services import append_event_with_outbox, enqueue_task, list_queue_tasks
 
 logger = logging.getLogger("studio.runbook")
@@ -190,6 +193,31 @@ HARD = "HARD"
 #: What a stage is told when the Owner's switch ends the day under it.
 OWNER_STOP_REASON = "Oprit de AUTONOMIE OPRITĂ."
 
+#: A day in progress, as its row says from its first stage (REL-03, 2026-10-02). The row used
+#: to be written only at the very end, so a crash left no trace and the clock ran the whole
+#: day again; it is now written RUNNING when the day begins and kept current stage by stage.
+RUNNING = "RUNNING"
+#: A day that ended without finishing: the studio was stopped under it, or its process died.
+#: Never re-run by the clock (`app.workflows.worker`): what it bought stays bought, and a
+#: second day that date is the Owner's command.
+INTERRUPTED = "INTERRUPTED"
+#: Why: `request_shutdown` (the day ended itself at a boundary), or a process that died (the
+#: worker's sweep, or the watchdog, closed the row it left RUNNING).
+INTERRUPTED_BY_SHUTDOWN = "INTERRUPTED_BY_SHUTDOWN"
+INTERRUPTED_BY_CRASH = "INTERRUPTED_BY_CRASH"
+DAY_INTERRUPTED_EVENT = "runbook.daily_run_interrupted"
+#: The ``kind`` of the Owner's letter about an interrupted day.
+DAY_INTERRUPTED_LETTER = "day_interrupted"
+SHUTDOWN_REASON = (
+    "Studioul a fost oprit în timpul zilei; pasul în curs s-a încheiat și nu a mai început altul."
+)
+SHUTDOWN_BLOCKED_REASON = "Nu a fost încercată: studioul s-a oprit în timpul zilei."
+CRASH_REASON = (
+    "Procesul studioului s-a oprit în timpul zilei (o repornire, o închidere forțată sau o "
+    "cădere), fără să o încheie."
+)
+CRASH_BLOCKED_REASON = "Nu a fost încercată: ziua a fost întreruptă înainte."
+
 #: HTTP statuses that say "not now" rather than "not like that".
 _TRANSIENT_HTTP = {408, 425, 429, 500, 502, 503, 504}
 _HTTP_IN_MESSAGE = re.compile(r"\bHTTP (\d{3})\b")
@@ -255,6 +283,14 @@ def _is_transient(exc: BaseException) -> bool:
     )
 
 
+def _declares_hard(exc: BaseException) -> bool:
+    """Whether the exception's class declares its own fault class HARD (``fault_class``).
+
+    Read from the class, not imported: the media package that declares it imports this one.
+    """
+    return getattr(type(exc), "fault_class", None) == HARD
+
+
 def classify_fault(exc: BaseException) -> str:
     """TRANSIENT or HARD, from the exception and the chain it was raised from.
 
@@ -269,6 +305,11 @@ def classify_fault(exc: BaseException) -> str:
     current: BaseException | None = exc
     while current is not None and id(current) not in seen:
         seen.add(id(current))
+        if _declares_hard(current):
+            # A link that says it is HARD wins over the transient cause it was raised from:
+            # a paid step that failed after paying (`app.media.assembler.SpentStageError`)
+            # met "database is locked", and a retry would buy the same shots again.
+            return HARD
         if _is_transient(current):
             return TRANSIENT
         if current.__cause__ is not None:
@@ -280,17 +321,68 @@ def classify_fault(exc: BaseException) -> str:
     return HARD
 
 
+#: The process is being stopped (REL-10, 2026-10-02): a Ctrl+C, a stopped scheduled task, a
+#: reboot. Keyed by database, so one studio shutting down in a process (a test, a rehearsal on
+#: a copy beside it) does not stop another; `ALL_STUDIOS` is the whole process.
+_SHUTDOWN_LOCK = threading.Lock()
+_SHUTDOWN: set[str] = set()
+_SHUTDOWN_EVENT = threading.Event()
+ALL_STUDIOS = "*"
+
+
+def _studio_key(engine: Engine | None) -> str:
+    return ALL_STUDIOS if engine is None else str(engine.url)
+
+
+def request_shutdown(engine: Engine | None = None) -> None:
+    """Ask the day running on ``engine`` (every studio, without one) to stop at its next
+    boundary. `stop_requested` honours it, so the paid loops — which read it before every
+    scene and every retry — end after the scene in flight, and the runbook records the day
+    INTERRUPTED (`INTERRUPTED_BY_SHUTDOWN`). Nothing is cancelled under a purchase."""
+    with _SHUTDOWN_LOCK:
+        _SHUTDOWN.add(_studio_key(engine))
+        _SHUTDOWN_EVENT.set()
+
+
+def clear_shutdown(engine: Engine | None = None) -> None:
+    """The shutdown is over (the worker was awaited) or a studio starts again in this
+    process. Without an engine, every request is cleared."""
+    with _SHUTDOWN_LOCK:
+        if engine is None:
+            _SHUTDOWN.clear()
+        else:
+            _SHUTDOWN.discard(_studio_key(engine))
+        if not _SHUTDOWN:
+            _SHUTDOWN_EVENT.clear()
+
+
+def shutdown_requested(engine: Engine | None = None) -> bool:
+    """Is the process (or this studio's part of it) being stopped?"""
+    with _SHUTDOWN_LOCK:
+        if ALL_STUDIOS in _SHUTDOWN:
+            return True
+        return engine is not None and _studio_key(engine) in _SHUTDOWN
+
+
+def _interruptible_wait(seconds: float) -> None:
+    """The backoff between a stage's retries, cut short when a shutdown is asked for."""
+    _SHUTDOWN_EVENT.wait(seconds)
+
+
 def stop_requested(engine: Engine) -> bool:
-    """Has the Owner set AUTONOMIE OPRITĂ since the work started?
+    """Has the Owner set AUTONOMIE OPRITĂ since the work started — or is the studio shutting
+    down (`request_shutdown`)?
 
     For anything that runs long inside a stage and can stop cleanly between steps — the
     media loop between scenes, a render between shots, a publish loop between videos.
     Poll it between units of work, never mid-write, and on True stop where you are and
     return what was done so far (or raise; the run records the stage BLOCKED with
-    `OWNER_STOP_REASON` either way). One short read of the policy row; cheap enough to
-    call before every scene. The runbook itself calls it between stages, so a stage that
-    does not poll still ends the day at its own boundary.
+    `OWNER_STOP_REASON`, or INTERRUPTED on a shutdown). One short read of the policy row;
+    cheap enough to call before every scene. The runbook itself calls it between stages, so
+    a stage that does not poll still ends the day at its own boundary.
     """
+    if shutdown_requested(engine):
+        return True
     with Session(engine) as session:
         policy = session.get(OwnerPolicy, 1)
         return bool(policy is not None and policy.autonomy_stopped)
@@ -357,6 +449,26 @@ def _count(value: Any) -> int:
 #: simulated upload, a failure or a validation that went no further is not a film published.
 LEGACY_PUBLISHED_STATES = ("PUBLISHED", "REMOTE_CONFIRMED", "SCHEDULED")
 
+#: The states a film in the publish stage's ``published`` list counts in (PUB-02): on the
+#: channel or given a release time, plus the TEST studio's simulator, which is the film that
+#: studio made. A failed, unknown or refused upload in the list (a run recorded before
+#: 2026-10-02 put every upload there) is not a film published.
+NESTED_PUBLISHED_STATES = (*LEGACY_PUBLISHED_STATES, "PUBLISHED_SIMULATED")
+
+
+def _films_published(films: Any) -> int:
+    """The films of a ``published`` list that went out; an entry without a status (an older
+    shape) counts as it always did."""
+    if not isinstance(films, list):
+        return _count(films)
+    return sum(
+        1
+        for film in films
+        if not isinstance(film, dict)
+        or "publication_status" not in film
+        or film.get("publication_status") in NESTED_PUBLISHED_STATES
+    )
+
 
 def _legacy_publications(artefacts: dict[str, Any]) -> int:
     """The film a publish stage recorded before its films were listed under ``published``.
@@ -384,6 +496,8 @@ def produced_by(stage: dict[str, Any]) -> int | None:
     artefacts = stage.get("artefacts") or {}
     if stage["stage"] == "publish" and "published" not in artefacts:
         return _legacy_publications(artefacts)
+    if stage["stage"] == "publish":
+        return _films_published(artefacts.get("published"))
     return sum(_count(artefacts.get(key)) for key in keys)
 
 
@@ -400,6 +514,7 @@ def run_summary(stages: list[dict[str, Any]]) -> tuple[str, int]:
     idle = [s["stage"] for s in ran if not (s.get("produced") or 0)]
     failed = [s["stage"] for s in work if s["status"] == FAILED]
     blocked = [s["stage"] for s in work if s["status"] == BLOCKED]
+    interrupted = [s["stage"] for s in work if s["status"] == INTERRUPTED]
     made = (
         "niciuna nu a produs ceva"
         if not productive
@@ -415,6 +530,12 @@ def run_summary(stages: list[dict[str, Any]]) -> tuple[str, int]:
         parts.append("Ziua nu a produs nimic.")
     elif idle:
         parts.append("Fără rezultat: " + stage_list(idle) + ".")
+    if interrupted:
+        parts.append(
+            ("Întreruptă: " if len(interrupted) == 1 else "Întrerupte: ")
+            + stage_list(interrupted)
+            + "."
+        )
     if failed:
         parts.append(("Eșuată: " if len(failed) == 1 else "Eșuate: ") + stage_list(failed) + ".")
     if blocked:
@@ -758,11 +879,335 @@ def _finished(
 
 
 def pending_daily_run(engine: Engine) -> dict[str, Any] | None:
-    """The queued or running daily run, if the studio has one on its way."""
+    """The queued or running daily run, if the studio has one on its way.
+
+    A claim whose lease lapsed with no attempts left is not on its way: its process died,
+    and the worker's next pass dead-letters it (`sweep_interrupted_tasks`). Counting it would
+    refuse the Owner's own start for a day nobody is running.
+    """
+    now = utc_now()
     for task in list_queue_tasks(engine, limit=50):
-        if task["task_type"] == DAILY_RUN_TASK and task["status"] in PENDING_STATES:
+        if task["task_type"] != DAILY_RUN_TASK or task["status"] not in PENDING_STATES:
+            continue
+        dead = (
+            task["status"] in ("CLAIMED", "RUNNING")
+            and task["lease_expires_at"] is not None
+            and task["lease_expires_at"] < now
+            and task["attempts"] >= task["max_attempts"]
+        )
+        if not dead:
             return task
     return None
+
+
+# ------------------------------------------------------------ the day's own row --
+
+
+def _running_marker(name: str) -> dict[str, Any]:
+    """The stage a day is in, as its row shows it while it runs."""
+    return {
+        "stage": name,
+        "status": RUNNING,
+        "reason": "",
+        "artefacts": {},
+        "fault_class": None,
+        "at": utc_now(),
+    }
+
+
+def _begin_run(
+    engine: Engine,
+    *,
+    run_id: str,
+    date_iso: str,
+    preflight: dict[str, Any],
+    stages: list[dict[str, Any]],
+    started_at: str,
+    payload: dict[str, Any],
+    correlation_id: str,
+) -> None:
+    """Announce the day and write its row RUNNING, in one transaction (REL-03).
+
+    Until 2026-10-02 the row was written only when the day ended, so a process killed in the
+    middle left nothing: the clock found no run for the date and ran the whole day again.
+    """
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        event, _ = append_event_with_outbox(
+            session, "runbook.daily_run_started", "daily_run", run_id, 1, payload, correlation_id
+        )
+        session.add(
+            DailyRun(
+                id=run_id,
+                business_date=date_iso,
+                preflight_status=preflight["status"],
+                preflight_json=preflight,
+                status=RUNNING,
+                stages_json=[dict(stage) for stage in stages],
+                stages_total=len(stages),
+                stages_completed=sum(1 for s in stages if s["status"] == COMPLETED),
+                stopped_at_stage=None,
+                stop_reason=None,
+                fault_class=None,
+                started_at=started_at,
+                finished_at=None,
+                event_id=event.event_id,
+            )
+        )
+
+
+def _progress(engine: Engine, run_id: str, stages: list[dict[str, Any]], current: str) -> None:
+    """Keep the RUNNING row current: the stages so far and the one starting now.
+
+    Best effort: the day's work is not lost to a lock on its own record, and the row is
+    written in full when the day ends.
+    """
+    try:
+        with Session(engine) as session, session.begin():
+            lock_for_write(session)
+            run = session.get(DailyRun, run_id)
+            if run is None or run.status != RUNNING:
+                return
+            recorded = [dict(stage) for stage in stages] + [_running_marker(current)]
+            run.stages_json = recorded
+            run.stages_total = len(recorded)
+            run.stages_completed = sum(1 for s in recorded if s["status"] == COMPLETED)
+    except OperationalError as exc:
+        logger.warning(
+            "daily_run_progress_not_recorded",
+            extra={"run_id": run_id, "stage": current, "error_class": type(exc).__name__},
+        )
+
+
+def _interruption_words(cause: str) -> str:
+    if cause == INTERRUPTED_BY_SHUTDOWN:
+        return (
+            "studioul a fost oprit în timpul ei, așa că am încheiat pasul în curs și nu am mai "
+            "început altul"
+        )
+    return (
+        "procesul studioului s-a oprit în timpul ei (o repornire, o închidere forțată sau o "
+        "cădere), fără să o încheie"
+    )
+
+
+def tell_day_interrupted(
+    engine: Engine,
+    *,
+    date_iso: str | None,
+    stage: str | None,
+    cause: str,
+    correlation_id: str,
+) -> str | None:
+    """The Director's one letter about a day that did not finish; the letter's id.
+
+    Deterministic, like her other letters about a stopped day: written from the record, so it
+    reaches the Owner when no model answers. Written once per interruption — by the code that
+    moved the row (or the task) out of its running state, which happens once.
+    """
+    from app.agents.memory import agent_for_role  # noqa: PLC0415 - agents import the runbook
+    from app.agents.messages import post_message  # noqa: PLC0415
+
+    day = f"Ziua din {date_iso}" if date_iso else "Rularea zilnică"
+    where = (
+        f"la etapa «{stage_name(stage)}»"
+        if stage and stage != "preflight"
+        else "înainte de prima etapă de lucru"
+    )
+    subject = f"{day} a fost întreruptă {where}"
+    body = (
+        f"{subject}: {_interruption_words(cause)}; nu o repornesc singur. Ce s-a cumpărat până "
+        "atunci rămâne cumpărat și trecut în cărți, iar ce a acceptat un furnizor și nu a fost "
+        "încă adus îl colectează supraveghetorul, fără să cumpere din nou. O nouă rulare azi o "
+        "pornești tu, din panoul rulării zilnice."
+    )
+    with Session(engine) as session, session.begin():
+        director = agent_for_role(session, "Director")
+        row = post_message(
+            session,
+            intent="ESCALATE",
+            subject=subject,
+            body={
+                "kind": DAY_INTERRUPTED_LETTER,
+                "business_date": date_iso,
+                "stage": stage,
+                "cause": cause,
+            },
+            body_text=body,
+            from_agent_id=director.id if director else None,
+            to_owner=True,
+            correlation_id=correlation_id,
+        )
+        return row.id
+
+
+def interrupt_run(
+    engine: Engine, run_id: str, *, cause: str, correlation_id: str
+) -> dict[str, Any] | None:
+    """Close a day its process left RUNNING: INTERRUPTED, at the stage it was in; the record.
+
+    None when the row is not RUNNING (it finished, or was closed already): only the move out
+    of RUNNING writes the event and the letter, so a second pass changes nothing. Stages the
+    day never reached are listed BLOCKED with the reason, so the record still names all of
+    them; the day's log is not closed, so a run the Owner starts again today writes it.
+    """
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        run = session.get(DailyRun, run_id)
+        if run is None or run.status != RUNNING:
+            return None
+        stages = [dict(stage) for stage in (run.stages_json or [])]
+        stopped: str | None = None
+        for stage in stages:
+            if stage.get("status") == RUNNING:
+                stage["status"] = INTERRUPTED
+                stage["reason"] = CRASH_REASON
+                stage["interrupted_by"] = cause
+                stopped = stage["stage"]
+        seen = {stage["stage"] for stage in stages}
+        if stopped is None:
+            stopped = next((name for name in STAGES if name not in seen), stages[-1]["stage"])
+        for name in STAGES:
+            if name not in seen:
+                stages.append(_stage(name, BLOCKED, CRASH_BLOCKED_REASON))
+        for stage in stages:
+            stage.setdefault("produced", produced_by(stage))
+        summary, productive = run_summary(stages)
+        now = utc_now()
+        event, _ = append_event_with_outbox(
+            session,
+            DAY_INTERRUPTED_EVENT,
+            "daily_run",
+            run_id,
+            1,
+            {
+                "business_date": run.business_date,
+                "stage": stopped,
+                "interruption": cause,
+                "summary": summary,
+                "stages_productive": productive,
+            },
+            correlation_id,
+        )
+        run.status = INTERRUPTED
+        run.stages_json = stages
+        run.stages_total = len(stages)
+        run.stages_completed = sum(1 for s in stages if s["status"] == COMPLETED)
+        run.stopped_at_stage = stopped
+        run.stop_reason = CRASH_REASON
+        run.finished_at = now
+        run.event_id = event.event_id
+        record = {
+            "run_id": run_id,
+            "business_date": run.business_date,
+            "stage": stopped,
+            "interruption": cause,
+        }
+    logger.error("daily_run_interrupted", extra=record)
+    record["letter_id"] = tell_day_interrupted(
+        engine,
+        date_iso=record["business_date"],
+        stage=stopped,
+        cause=cause,
+        correlation_id=correlation_id,
+    )
+    return record
+
+
+def run_of_task(engine: Engine, task_id: str) -> str | None:
+    """The daily run a queue task started: the run whose start event carries its id."""
+    with Session(engine) as session:
+        return session.scalars(
+            select(DomainEvent.aggregate_id)
+            .where(
+                DomainEvent.event_type == "runbook.daily_run_started",
+                DomainEvent.correlation_id == task_id,
+            )
+            .limit(1)
+        ).first()
+
+
+def interrupt_task_day(engine: Engine, task: dict[str, Any]) -> dict[str, Any] | None:
+    """A DAILY_RUN task whose process died: close its day, or say it never began.
+
+    The day's row is found by the task's id (the run's correlation). A day that finished
+    before the lease lapsed (killed between its last write and the queue's) is left as it is.
+    """
+    run_id = run_of_task(engine, task["id"])
+    if run_id is not None:
+        return interrupt_run(engine, run_id, cause=INTERRUPTED_BY_CRASH, correlation_id=task["id"])
+    payload = task.get("payload") or {}
+    date_iso = payload.get("date") or (str(payload.get("due_at") or "")[:10] or None)
+    letter = tell_day_interrupted(
+        engine,
+        date_iso=date_iso,
+        stage=None,
+        cause=INTERRUPTED_BY_CRASH,
+        correlation_id=task["id"],
+    )
+    return {
+        "run_id": None,
+        "business_date": date_iso,
+        "stage": None,
+        "interruption": INTERRUPTED_BY_CRASH,
+        "letter_id": letter,
+    }
+
+
+def _last_activity(run: DailyRun) -> datetime:
+    stamps = [run.started_at] + [
+        str(stage.get("at")) for stage in (run.stages_json or []) if stage.get("at")
+    ]
+    parsed = []
+    for stamp in stamps:
+        try:
+            moment = datetime.fromisoformat(stamp)
+        except ValueError:
+            continue
+        parsed.append(moment if moment.tzinfo else moment.replace(tzinfo=UTC))
+    return max(parsed) if parsed else datetime.now(UTC)
+
+
+def interrupt_stale_runs(
+    engine: Engine, *, lease_seconds: int, correlation_id: str
+) -> list[dict[str, Any]]:
+    """Close every RUNNING day nobody is running any more (the watchdog's sixth job).
+
+    Alive: its queue task still holds a lease that has not lapsed — the worker's heartbeat
+    keeps a long day's lease, so age alone never closes it. Gone: its task is no longer
+    leased (finished, failed, dead-lettered), or its lease lapsed, or — a day started without
+    the queue (a rehearsal, a script) — nothing about it moved for longer than a lease.
+    """
+    now = datetime.now(UTC)
+    now_str = now.isoformat()
+    gone: list[str] = []
+    with Session(engine) as session:
+        for run in session.scalars(select(DailyRun).where(DailyRun.status == RUNNING)):
+            task_id = session.scalars(
+                select(DomainEvent.correlation_id)
+                .where(
+                    DomainEvent.event_type == "runbook.daily_run_started",
+                    DomainEvent.aggregate_id == run.id,
+                )
+                .limit(1)
+            ).first()
+            task = session.get(TaskQueueItem, task_id) if task_id else None
+            if task is not None:
+                leased = task.status in ("CLAIMED", "RUNNING")
+                if leased and task.lease_expires_at and task.lease_expires_at >= now_str:
+                    continue
+                gone.append(run.id)
+                continue
+            if (now - _last_activity(run)).total_seconds() > lease_seconds:
+                gone.append(run.id)
+    closed = []
+    for run_id in gone:
+        record = interrupt_run(
+            engine, run_id, cause=INTERRUPTED_BY_CRASH, correlation_id=correlation_id
+        )
+        if record is not None:
+            closed.append(record)
+    return closed
 
 
 def _is_waiting_retry(task: dict[str, Any]) -> bool:
@@ -875,7 +1320,7 @@ def execute_daily_run(
     """
     correlation = correlation_id or str(uuid4())
     runners = stage_runners or {}
-    wait = sleep or time.sleep
+    wait = sleep or _interruptible_wait
 
     safe = safe_mode_state(engine)
     if safe["active"]:
@@ -914,6 +1359,9 @@ def execute_daily_run(
     stop_reason: str | None = None
     fault_class: str | None = None
     owner_stopped = False
+    # The studio is being shut down (`request_shutdown`): the day ends at the boundary it is
+    # at, INTERRUPTED, and is not attempted again by the clock.
+    interrupted = False
     # What the day lost, stage by stage: a stage that FAILED or BLOCKED itself is its own
     # root; a stage blocked by `STAGE_PREREQUISITES` carries the roots it inherited. The
     # Owner's stop is not in here — it is not a loss, it is his decision.
@@ -930,11 +1378,14 @@ def execute_daily_run(
         reasons[name] = reason
         lost[name] = {"status": status, "roots": [name]}
 
-    _announce(
+    _begin_run(
         engine,
-        "runbook.daily_run_started",
-        run_id,
-        {
+        run_id=run_id,
+        date_iso=date_iso,
+        preflight=preflight,
+        stages=stages,
+        started_at=started_at,
+        payload={
             "date": date_iso,
             "preflight": preflight["status"],
             "autonomy_mode": preflight["autonomy_mode"],
@@ -942,16 +1393,27 @@ def execute_daily_run(
             "attempt": attempt,
             "attempts_allowed": attempts_allowed,
         },
-        correlation,
+        correlation_id=correlation,
     )
 
     def run_stage(name: str) -> None:
-        """Run one stage, or record why it did not run: the Owner's stop first, then the
-        dependency table, then the runner with its retries. Called for the stages before
-        the day's log is closed and, after the close, for those that read it."""
-        nonlocal owner_stopped, stopped_at, stop_reason
+        """Run one stage, or record why it did not run: a shutdown or the Owner's stop first,
+        then the dependency table, then the runner with its retries. Called for the stages
+        before the day's log is closed and, after the close, for those that read it."""
+        nonlocal owner_stopped, stopped_at, stop_reason, interrupted
+        if interrupted:
+            stages.append(_stage(name, BLOCKED, SHUTDOWN_BLOCKED_REASON))
+            return
         if owner_stopped:
             stages.append(_stage(name, BLOCKED, OWNER_STOP_REASON))
+            return
+        if shutdown_requested(engine):
+            # The studio is stopping between two stages: this one does not begin.
+            interrupted = True
+            stopped_at = name
+            stop_reason = SHUTDOWN_REASON
+            stages.append(_stage(name, BLOCKED, SHUTDOWN_BLOCKED_REASON))
+            _finished(engine, run_id, name, BLOCKED, SHUTDOWN_BLOCKED_REASON, correlation)
             return
         # The switch is read again before every stage. It used to be read once, at the
         # gate: an Owner who pressed STOP at stage three watched the studio spend the
@@ -985,6 +1447,7 @@ def execute_daily_run(
             {"stage": name, "index": STAGES.index(name) + 1, "total": len(STAGES)},
             correlation,
         )
+        _progress(engine, run_id, stages, name)
         if runner is None:
             reason = "Nicio implementare conectată pentru această etapă în această rulare."
             stages.append(_stage(name, SKIPPED, reason))
@@ -995,6 +1458,24 @@ def execute_daily_run(
         )
         if error is not None:
             reason = sentence(error_words(error))
+            if shutdown_requested(engine):
+                # A runner that raised to get out of a shutdown, or one the shutdown broke:
+                # the studio is stopping, not failing. No fault, no safe mode.
+                interrupted = True
+                stopped_at = name
+                stop_reason = SHUTDOWN_REASON
+                stages.append(
+                    _stage(
+                        name,
+                        INTERRUPTED,
+                        f"{SHUTDOWN_REASON} ({error_words(error)})",
+                        attempts=attempts,
+                        error=error,
+                    )
+                )
+                stages[-1]["interrupted_by"] = INTERRUPTED_BY_SHUTDOWN
+                _finished(engine, run_id, name, INTERRUPTED, SHUTDOWN_REASON, correlation)
+                return
             if stop_requested(engine):
                 # A runner that polls `stop_requested` may raise to get out; a runner
                 # that does not may have been failed by the stop itself (a connection
@@ -1015,6 +1496,18 @@ def execute_daily_run(
                 _finished(engine, run_id, name, BLOCKED, OWNER_STOP_REASON, correlation)
                 return
             stage_fault: str | None = classify_fault(error)
+            # The run record keeps the class and the text; the log keeps where it broke (the
+            # formatter renders frames only, never locals or the exception's text).
+            logger.error(
+                "stage_failed",
+                extra={
+                    "run_id": run_id,
+                    "stage": name,
+                    "attempts": attempts,
+                    "fault_class": stage_fault,
+                },
+                exc_info=(type(error), error, error.__traceback__),
+            )
             stages.append(
                 _stage(
                     name, FAILED, reason, fault_class=stage_fault, attempts=attempts, error=error
@@ -1037,6 +1530,24 @@ def execute_daily_run(
             return
         assert outcome is not None  # one of the two is always set
         status = str(outcome.get("status", COMPLETED))
+        if status == BLOCKED and shutdown_requested(engine):
+            # The stage stopped itself at a boundary because the studio is shutting down (the
+            # paid loops read `stop_requested` before every scene): what it did is kept.
+            interrupted = True
+            stopped_at = name
+            stop_reason = SHUTDOWN_REASON
+            stages.append(
+                _stage(
+                    name,
+                    INTERRUPTED,
+                    str(outcome.get("reason", "")) or SHUTDOWN_REASON,
+                    outcome.get("artefacts"),
+                    attempts=attempts,
+                )
+            )
+            stages[-1]["interrupted_by"] = INTERRUPTED_BY_SHUTDOWN
+            _finished(engine, run_id, name, INTERRUPTED, SHUTDOWN_REASON, correlation)
+            return
         stage_fault = None
         if status == FAILED:
             # A runner that reports its own failure says which kind, or it is hard: a
@@ -1103,7 +1614,9 @@ def execute_daily_run(
     # stage keeps the BLOCKED it was given. A day the Owner stopped before any stage ran is the
     # same: nothing happened, nothing to close.
     worked = any(s["status"] == COMPLETED for s in stages[1:])
-    if preflight["status"] != "BLOCKED" and (worked or not owner_stopped):
+    # A day cut off by a shutdown is not closed: it did not end, and a run the Owner starts
+    # again today writes the log with what that run does as well.
+    if preflight["status"] != "BLOCKED" and (worked or not owner_stopped) and not interrupted:
         stages = _close_the_day(stages, engine, settings, date_iso, run_id, wait, correlation)
         closing = next(s for s in stages if s["stage"] == "daily_log")
         if closing["status"] == FAILED:
@@ -1138,13 +1651,17 @@ def execute_daily_run(
     # The fault class is the worst of those it names: HARD if any of them is, because a
     # re-attempt would meet a hard fault again.
     named = [r for r in STAGES if r in production_roots] or broken
-    if named and not owner_stopped and preflight["status"] != "BLOCKED":
+    if named and not owner_stopped and not interrupted and preflight["status"] != "BLOCKED":
         stopped_at = named[0]
         stop_reason = reasons[named[0]]
     classes = {faults[name] for name in named if faults.get(name)}
     fault_class = HARD if HARD in classes else TRANSIENT if classes else None
 
-    if owner_stopped:
+    if interrupted:
+        # The studio was stopped under the day: it did not finish, and it is not tried again
+        # by the clock — whatever it bought stays bought, and a second day is his command.
+        status = INTERRUPTED
+    elif owner_stopped:
         # Not FAILED, whatever the stages say: the Owner ended the day, nothing broke. PARTIAL
         # if the studio did some of it, BLOCKED if it did none.
         status = "PARTIAL" if worked else "BLOCKED"
@@ -1157,7 +1674,7 @@ def execute_daily_run(
     if not broken:
         fault_class = None
     finished_at = utc_now()
-    retryable = retryable_outcome(
+    retryable = not interrupted and retryable_outcome(
         status, preflight["status"], fault_class, production_lost=production_lost
     )
     another_attempt = retryable and attempt < attempts_allowed
@@ -1171,7 +1688,15 @@ def execute_daily_run(
         ),
         None,
     )
-    if stopped_at is not None and not owner_stopped and not another_attempt:
+    if interrupted:
+        tell_day_interrupted(
+            engine,
+            date_iso=date_iso,
+            stage=stopped_at,
+            cause=INTERRUPTED_BY_SHUTDOWN,
+            correlation_id=correlation,
+        )
+    elif stopped_at is not None and not owner_stopped and not another_attempt:
         # A day that stopped is the Owner's to unblock: the Director says where and why —
         # once, after the day's last attempt, not after each of them.
         from app.agents.director import letter_to_owner  # noqa: PLC0415
@@ -1217,6 +1742,7 @@ def execute_daily_run(
         letter_to_owner(engine, subject, body, correlation)
 
     with Session(engine) as session, session.begin():
+        lock_for_write(session)
         event = append_event(
             session,
             "runbook.daily_run_finished",
@@ -1233,27 +1759,44 @@ def execute_daily_run(
                 "stages_productive": productive,
                 "production_lost": production_lost,
                 "retryable": retryable,
+                "interruption": INTERRUPTED_BY_SHUTDOWN if interrupted else None,
             },
             correlation,
         )
-        session.add(
-            DailyRun(
-                id=run_id,
-                business_date=date_iso,
-                preflight_status=preflight["status"],
-                preflight_json=preflight,
-                status=status,
-                stages_json=stages,
-                stages_total=len(stages),
-                stages_completed=sum(1 for s in stages if s["status"] == COMPLETED),
-                stopped_at_stage=stopped_at,
-                stop_reason=stop_reason,
-                fault_class=fault_class,
-                started_at=started_at,
-                finished_at=finished_at,
-                event_id=event.event_id,
+        if interrupted:
+            append_event_with_outbox(
+                session,
+                DAY_INTERRUPTED_EVENT,
+                "daily_run",
+                run_id,
+                1,
+                {
+                    "business_date": date_iso,
+                    "stage": stopped_at,
+                    "interruption": INTERRUPTED_BY_SHUTDOWN,
+                    "summary": summary,
+                    "stages_productive": productive,
+                },
+                correlation,
             )
-        )
+        # The row the day wrote RUNNING when it began, now with what really happened. Written
+        # over INTERRUPTED too: a day the watchdog gave up on that did reach its end has the
+        # end as its truth.
+        run = session.get(DailyRun, run_id)
+        if run is None:
+            run = DailyRun(id=run_id, business_date=date_iso, started_at=started_at)
+            session.add(run)
+        run.preflight_status = preflight["status"]
+        run.preflight_json = preflight
+        run.status = status
+        run.stages_json = stages
+        run.stages_total = len(stages)
+        run.stages_completed = sum(1 for s in stages if s["status"] == COMPLETED)
+        run.stopped_at_stage = stopped_at
+        run.stop_reason = stop_reason
+        run.fault_class = fault_class
+        run.finished_at = finished_at
+        run.event_id = event.event_id
         # A P0 for an unattended studio stops rather than carrying on to the next day's run
         # with an unexamined fault behind it (`SAFE_MODE_STAGES` says which, and why). A
         # transient fault never is: measured on the live copy, one "database is locked"
@@ -1261,7 +1804,7 @@ def execute_daily_run(
         # over a lock that was free a second later. Nor is a hard fault in a stage that
         # neither spends, nor publishes, nor keeps the record — it costs that stage, and the
         # letter above is how the Owner hears of it.
-        if p0 is not None and not owner_stopped:
+        if p0 is not None and not owner_stopped and not interrupted:
             _open_safe_mode(
                 session,
                 reasons.get(p0) or "O etapă a rulării zilnice a eșuat.",
@@ -1284,6 +1827,7 @@ def execute_daily_run(
         "stop_reason": stop_reason,
         "fault_class": fault_class,
         "owner_stopped": owner_stopped,
+        "interruption": INTERRUPTED_BY_SHUTDOWN if interrupted else None,
         "production_lost": production_lost,
         "attempt": attempt,
         "retryable": retryable,
@@ -1358,8 +1902,14 @@ def stored_summary(stages: list[dict[str, Any]]) -> dict[str, Any]:
 def list_runs(engine: Engine, limit: int = 20) -> list[dict[str, Any]]:
     with Session(engine) as session:
         runs = []
+        # A day still RUNNING is not a day yet: the page reads this list as the days that
+        # ended (their headline, their close), and the run in progress is in the queue's
+        # `pending`. An INTERRUPTED day ended, and is listed with why.
         for run in session.scalars(
-            select(DailyRun).order_by(DailyRun.started_at.desc()).limit(limit)
+            select(DailyRun)
+            .where(DailyRun.status != RUNNING)
+            .order_by(DailyRun.started_at.desc())
+            .limit(limit)
         ):
             stages = list(run.stages_json or [])
             told = stored_summary(stages)

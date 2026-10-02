@@ -191,8 +191,8 @@ test('the drawer shows the badges, the lint, the card rows and the Owner\'s rule
   // the seed, the sheet's hash and the Owner's rule
   assert.ok(html.includes(String(SHEET.seed)));
   assert.ok(html.includes(SHEET.sheet_hash.slice(0, 12)));
-  assert.equal(paidMediaRuleWords(SHEET.owner_rule), 'Regula ta: fiecare pas plătit al unui film îți cere aprobarea, în orice mod al studioului.');
-  assert.equal(paidMediaRuleWords({ paid_media_approval: 'OVER_USD', over_usd: 5 }), 'Regula ta: un pas plătit de peste 5,00 USD îți cere aprobarea; unul mai mic urmează modul studioului.');
+  assert.equal(paidMediaRuleWords(SHEET.owner_rule), 'Regula ta: fiecare pas plătit al unui film îți cere aprobarea, în orice mod al studioului; narațiunea urmează deocamdată modul studioului.');
+  assert.equal(paidMediaRuleWords({ paid_media_approval: 'OVER_USD', over_usd: 5 }), 'Regula ta: un pas plătit cu plafonul de peste 5,00 USD îți cere aprobarea; unul cu plafonul mai mic urmează modul studioului.');
   assert.equal(paidMediaRuleWords({ paid_media_approval: 'MODE', over_usd: null }), 'Regula ta: pașii plătiți urmează modul studioului.');
   assert.equal(paidMediaRuleWords(null), paidMediaRuleWords({ paid_media_approval: 'EVERY_PAID_STEP' }), 'an unread rule reads as the strictest');
   assert.ok(html.includes(paidMediaRuleWords(SHEET.owner_rule)));
@@ -652,7 +652,8 @@ test('his paid-media rule has three choices, each explained in one Romanian line
   const every = PAID_MEDIA_CHOICES[0];
   assert.equal(every.label, 'La fiecare pas plătit');
   assert.match(every.meaning, /imaginile, cadrul de probă, mișcarea, o refacere/);
-  assert.match(PAID_MEDIA_CHOICES[1].meaning, /peste suma/);
+  assert.match(PAID_MEDIA_CHOICES[1].meaning, /plafonul unui pas depășește suma/);
+  assert.match(PAID_MEDIA_CHOICES[0].meaning, /Narațiunea .* urmează modul studioului/);
   assert.match(PAID_MEDIA_CHOICES[2].meaning, /modul studioului/);
   const policy = { version: 7, paid_media_approval: 'OVER_USD', paid_media_approval_over_usd: 2.5 };
   const html = paidMediaFormHtml(policy, { escape: e });
@@ -679,7 +680,7 @@ test('the rule is sent with its policy version; 409 reloads and says so, 403 sho
   assert.equal(paidMediaCommand('ALWAYS', '', 7, 'c').ok, false);
   assert.deepEqual(paidMediaCommand('MODE', '', null, 'c'), { ok: false, error: 'Versiunea regulii nu a fost citită; reîncarcă pagina.' });
 
-  assert.equal(paidMediaAnswer({ command_id: 'c', status: 'COMMITTED', paid_media_approval: 'OVER_USD', over_usd: 2.5, version: 8, event_id: 'e' }), 'Salvat. Regula ta: un pas plătit de peste 2,50 USD îți cere aprobarea; unul mai mic urmează modul studioului. (versiunea 8)');
+  assert.equal(paidMediaAnswer({ command_id: 'c', status: 'COMMITTED', paid_media_approval: 'OVER_USD', over_usd: 2.5, version: 8, event_id: 'e' }), 'Salvat. Regula ta: un pas plătit cu plafonul de peste 2,50 USD îți cere aprobarea; unul cu plafonul mai mic urmează modul studioului. (versiunea 8)');
   assert.equal(paidMediaAnswer({ command_id: 'c', status: 'NO_CHANGE', paid_media_approval: 'MODE', over_usd: null, version: 8, event_id: null }), 'Nimic de schimbat: regula era deja aceasta (versiunea 8).');
 
   const saved = fakeApi([{ command_id: 'c', status: 'COMMITTED', paid_media_approval: 'MODE', over_usd: null, version: 8, event_id: 'e' }]);
@@ -710,8 +711,9 @@ test('the rule is sent with its policy version; 409 reloads and says so, 403 sho
 // --------------------------------------------------------------------- 9. main.js and the style
 
 test('main.js wires the render button through the sheet, never straight to POST /media/render', () => {
-  const handler = MAIN.slice(MAIN.indexOf("querySelectorAll('.btn-render-video')"));
-  const body = handler.slice(0, handler.indexOf('});\n    });') + 1);
+  // PAGE-17: the media list's keys are one delegated listener; the render key's branch is read
+  const handler = MAIN.slice(MAIN.indexOf("closest('.btn-render-video')"));
+  const body = handler.slice(0, handler.indexOf("closest('.btn-qc-video')"));
   assert.ok(body.includes('requestRender('), 'the button goes through requestRender');
   assert.ok(body.includes('openShootingSheet'), 'a 409 opens the drawer');
   assert.ok(!/api\(`\/media\/render\//.test(MAIN), 'no bare POST /media/render left in main.js');
@@ -739,4 +741,121 @@ test('the new parts of the drawer are styled from the page\'s tokens, with no co
   assert.ok(!/#[0-9a-f]{3,8}\b|rgba?\(/i.test(block.replace(/\/\*[\s\S]*?\*\//g, '')), 'no colour literal');
   assert.match(block, /\.sheet-qc\[data-verdict="FAILED"\][^{]*\{[^}]*var\(--alert/);
   assert.match(block, /\.sheet-qc\[data-verdict="PASSED"\][^{]*\{[^}]*var\(--ok/);
+});
+
+// -------------------------------------------- 10. PAGE_OWNER_DAY: the sheet reached from everywhere
+
+test('sheetKeyFor finds the film in a sheet letter, a media.* question and a run waiting for him', async () => {
+  const { sheetKeyFor } = await import('../src/shooting_sheet.js');
+  const letter = { id: 'm-1', body_json: { kind: 'owner_shooting_sheet', storyboard_id: ID, sheet_url: `/api/v1/media/storyboards/${ID}/shooting-sheet`, approval_id: 'a-1' } };
+  assert.equal(sheetKeyFor(letter), ID);
+  // a letter of another kind that still names the film's sheet (the TEST letter) opens it too
+  assert.equal(sheetKeyFor({ body_json: { kind: 'owner_test_environment', storyboard_id: ID, sheet_url: sheetPath(ID) } }), ID);
+  assert.equal(sheetKeyFor({ body_json: { kind: 'qc', reason: 'x' } }), null);
+  // a paid question: the action is media.*, its subject the film
+  assert.equal(sheetKeyFor({ action: 'media.motion_purchase', subject: ID }), ID);
+  assert.equal(sheetKeyFor({ action: 'media.stills_purchase', subject: 'board-1', context: { storyboard_id: ID } }), ID);
+  assert.equal(sheetKeyFor({ action: 'publishing.public_publish', subject: ID }), null, 'not a film question');
+  // a run's media stage waiting for him
+  const run = { stages: [{ stage: 'selection', artefacts: {} }, { stage: 'media', artefacts: { awaiting_owner: [{ storyboard_id: ID, step: 'stills', approval_id: 'a-2' }] } }] };
+  assert.equal(sheetKeyFor(run), ID);
+  assert.equal(sheetKeyFor(run.stages[1]), ID);
+  assert.equal(sheetKeyFor({ awaiting_owner: [{ storyboard_id: ID }] }), ID);
+  // nothing that is not a film's id
+  assert.equal(sheetKeyFor({ body_json: { kind: 'owner_shooting_sheet', storyboard_id: '../../etc' } }), null);
+  assert.equal(sheetKeyFor(null), null);
+  assert.equal(sheetKeyFor({ stages: [{ stage: 'media', artefacts: { awaiting_owner: [] } }] }), null);
+});
+
+test('while a step is being bought elsewhere, every paid button says so and none can be pressed', () => {
+  const s = withHero('APPROVED');
+  s.in_progress = { holder: 'day-1', step: 'stills', reason_ro: 'Filmul este deja în lucru: imaginile au început acum 3 minute.' };
+  s.steps.stills.in_progress = true;
+  for (const b of stepButtons(s)) {
+    assert.equal(b.disabled, true, b.step);
+    assert.match(b.reason_ro, /deja în lucru/);
+  }
+  assert.equal(assembleButton(s).disabled, true);
+  assert.match(assembleButton(s).reason_ro, /deja în lucru/);
+  // a step marked in progress with no film-wide lease still says it is being bought
+  const t = sheet();
+  t.steps.stills.in_progress = true;
+  assert.match(button(t, 'stills').reason_ro, /în curs/);
+});
+
+test('the hero gate the backend sends decides whether the motion waits for his look', () => {
+  const accepted = withHero('PAID');
+  accepted.steps.motion.hero = { status: 'ACCEPTS', reason_ro: 'Cadrul de probă a trecut controlul clipului.', rule_accepts: true };
+  assert.ok(!button(accepted, 'motion').reasons.some((/** @type {string} */ r) => /cadrul de probă/i.test(r)), 'clip QC accepts it under his rule');
+  const waiting = withHero('PAID');
+  waiting.steps.motion.hero = { status: 'WAITING', reason_ro: 'Cadrul de probă (scena 1) a trecut controlul clipului și așteaptă privirea Proprietarului.' };
+  assert.ok(button(waiting, 'motion').reasons.includes(waiting.steps.motion.hero.reason_ro));
+});
+
+test('a press shows what is being bought, and a lost answer says the purchase may still be running', async () => {
+  const { NETWORK_STEP_WORDS, buyingNotice } = await import('../src/shooting_sheet.js');
+  assert.equal(buyingNotice('stills'), 'Se cumpără imaginile: poate dura până la 45 de minute. Nu cumpăra din nou; foaia se reîncarcă singură.');
+  assert.match(buyingNotice('motion'), /^Se cumpără mișcarea: poate dura până la 45 de minute/);
+  assert.match(buyingNotice('test_shot'), /^Se cumpără cadrul de probă:/);
+  assert.match(buyingNotice('assemble'), /^Se asamblează filmul:/);
+  assert.match(buyingNotice('redo:motion:3'), /^Se reface mișcarea scenei 3:/);
+  assert.equal(NETWORK_STEP_WORDS, 'Răspunsul nu a ajuns; cumpărarea poate continua pe server. Reîncarcă foaia peste câteva minute înainte de orice altă apăsare.');
+  const lost = Object.assign(new Error('Conexiunea nu este disponibilă. Ce se vede nu mai este la zi.'), { network: true });
+  const { api } = fakeApi([lost]);
+  const result = await approveStep(api, { storyboardId: ID, step: 'stills', planHash: SHEET.sheet_hash, note: '', commandId: 'c-1' });
+  assert.deepEqual(result, { status: 'REFUSED', code: 'NETWORK', message: NETWORK_STEP_WORDS, scenes: [] });
+  // the second post, after his yes, lost the same way
+  const asked = { status: 'NEEDS_APPROVAL', approval_id: 'a-1' };
+  const later = fakeApi([asked, { status: 'COMMITTED' }, lost]);
+  assert.equal((await approveStep(later.api, { storyboardId: ID, step: 'stills', planHash: SHEET.sheet_hash, note: '', commandId: 'c-2' })).code, 'NETWORK');
+});
+
+test('a press carries its own purchase id, never the id of his yes', async () => {
+  const asked = { status: 'NEEDS_APPROVAL', approval_id: 'a-1' };
+  const { api, calls } = fakeApi([asked, { status: 'COMMITTED' }, { status: 'FINISHED' }]);
+  await approveStep(api, { storyboardId: ID, step: 'stills', planHash: SHEET.sheet_hash, note: '', commandId: 'yes-1', purchaseId: 'buy-1' });
+  assert.equal(JSON.parse(calls[0].options.body).command_id, 'buy-1');
+  assert.equal(JSON.parse(calls[1].options.body).command_id, 'yes-1');
+  assert.equal(JSON.parse(calls[2].options.body).command_id, 'buy-1', 'the same press, the same purchase');
+  const redo = fakeApi([{ status: 'DONE' }]);
+  await approveRedo(redo.api, { storyboardId: ID, kind: 'card', sceneIndex: 5, planHash: null, note: '', commandId: 'y', purchaseId: 'buy-2' });
+  assert.equal(JSON.parse(redo.calls[0].options.body).command_id, 'buy-2');
+});
+
+test('the sheet opens on a summary bar: his rule, the next step with its price and cap, a key to the steps', async () => {
+  const { sheetSummary } = await import('../src/shooting_sheet.js');
+  const s = sheet();
+  const summary = sheetSummary(s, { paid_media_approval: 'MODE', paid_media_approval_over_usd: null });
+  assert.equal(summary.rule_ro, 'Regula ta: pașii plătiți urmează modul studioului.');
+  const first = stepButtons(s).find((b) => b.to_buy.length > 0);
+  assert.ok(first, 'the fixture still has a paid step to buy');
+  assert.equal(summary.next?.step, first?.step, 'the first paid step with something to buy');
+  assert.equal(summary.next?.label, first?.label);
+  assert.match(String(summary.next?.price_ro), /credite/);
+  assert.match(String(summary.next?.cap_ro), /^plafon /);
+  const html = sheetHtml(s, { escape: e });
+  assert.ok(html.indexOf('sheet-summary-bar') >= 0 && html.indexOf('sheet-summary-bar') < html.indexOf('sheet-head'), 'the bar is the first thing');
+  assert.ok(html.includes('data-sheet-action="to-steps"'));
+  assert.ok(html.includes('Mergi la pași'));
+  // with every paid step bought, the next step is the assembly
+  assert.equal(sheetSummary(afterMotion(), null).next?.step, 'assemble');
+  assert.match(STYLE, /\.sheet-summary-bar\s*\{[^}]*position:\s*sticky/);
+});
+
+test('the film\'s own ceiling is a footer row', () => {
+  const s = sheet();
+  s.footer.film_budget = { limit_usd_micros: 15240000, spent_usd_micros: 740000, remaining_usd_micros: 14500000, limit_ro: '15,24 USD', spent_ro: '0,74 USD', source: 'default' };
+  const row = footerRows(s).find((r) => r.key === 'film_budget');
+  assert.equal(row?.label, 'Plafonul filmului');
+  assert.equal(row?.value, '0,74 USD cheltuiți din 15,24 USD; rămân 14,50 USD');
+  assert.equal(footerRows(sheet()).find((r) => r.key === 'film_budget'), undefined, 'an older studio sends none');
+});
+
+test('main.js keeps a purchase busy per film, keeps the drawer open while it buys, and opens the sheet from every key', () => {
+  assert.ok(MAIN.includes('buyingNotice('), 'the notice of what is being bought');
+  assert.ok(MAIN.includes("addEventListener('cancel'"), 'Esc does not hide a purchase');
+  assert.ok(MAIN.includes('sheetBusy'), 'busy is kept per storyboard');
+  assert.ok(!/Object\.assign\(sheetDrawer, \{[^}]*busy: false/.test(MAIN), 'reopening never clears a purchase in flight');
+  assert.ok(MAIN.includes('purchaseId: crypto.randomUUID()'));
+  for (const where of ['data-sheet-open', 'sheetKeyFor(']) assert.ok(MAIN.includes(where), where);
 });

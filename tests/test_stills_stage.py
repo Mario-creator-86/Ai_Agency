@@ -45,7 +45,7 @@ from app.media.stills_stage import (
 )
 from app.models import ApprovalRequest, DomainEvent
 from app.providers.media_base import ImageResult
-from app.providers.media_http import MediaProviderError
+from app.providers.media_http import MediaProviderError, TaskStillOpen
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from test_approvals import answer
@@ -132,10 +132,15 @@ class SpyStills:
     async def credit_balance(self):
         return self.balance
 
-    async def generate_candidates(self, prompt, *, ratio, count=2, references=(), seed=None):
+    async def generate_candidates(
+        self, prompt, *, ratio, count=2, references=(), seed=None, on_submitted=None
+    ):
         self.asked.append(
             {"prompt": prompt, "ratio": ratio, "count": count, "references": list(references)}
         )
+        if on_submitted is not None:
+            # As Runway's adapter does: the task is heard the moment it is accepted.
+            on_submitted(f"img-task-{len(self.asked)}")
         files = self.pictures(prompt, len(self.asked))[:count]
         self.last_estimated_credits = 9.0 * count
         if self.balance is not None:
@@ -459,7 +464,8 @@ def test_the_stage_refuses_without_an_approval_bound_to_the_current_plan_hash(en
             "step": "stills",
             "cap_credits": plan["cap_credits"],
         }
-        assert request.cost_usd == pytest.approx(0.72)
+        # The question carries the step's cap, the most his yes lets it spend (MONEY-08).
+        assert request.cost_usd == pytest.approx(2.16)
     assert adapter.asked == []
 
     # A hash that is not the current plan's is refused before the Owner's yes is looked at.
@@ -629,7 +635,7 @@ class Transport:
         self.outputs = outputs
         self.tasks = 0
 
-    def __call__(self, host, method, path, headers, body=None, *, timeout=120, expect_json=True):
+    def __call__(self, host, method, path, headers, body=None, **_kwargs):
         self.calls.append({"host": host, "method": method, "path": path, "body": body})
         if path == "/v1/text_to_image":
             self.tasks += 1
@@ -705,3 +711,353 @@ def test_runway_refuses_a_ratio_its_contract_does_not_list_before_any_call(monke
         asyncio.run(adapter.generate_candidates("ridges", ratio="1530:2720", count=2))
 
     assert transport.calls == []
+
+
+# --------------------------------------- a still task the vendor accepted is on the books at once
+#
+# The stills step used to keep a task's id nowhere: a poll past IMAGE_DEADLINE_SECONDS raised,
+# the request was recorded REFUSED with no id, and the next run bought the scene again. Now
+# each task is a SUBMITTED take with the vendor's id the moment it is accepted; a task whose
+# stills do not arrive keeps the scene IN_FLIGHT, it is collected with a GET, and the
+# collected candidates are judged before anything is bought for that scene.
+
+
+class OpenTaskStills(SpyStills):
+    """The image vendor whose task for the prompts in ``stuck`` is accepted (and charged) but
+    whose stills do not arrive; ``answers`` scripts what a later GET says about a task."""
+
+    def __init__(self, *args, stuck=(), **kwargs):
+        super().__init__(*args, **kwargs)
+        self.stuck = set(stuck)
+        self.answers: dict[str, dict] = {}
+        self.collected: list[str] = []
+
+    async def generate_candidates(self, prompt, *, on_submitted=None, **kwargs):
+        if any(SUBJECTS[n] in prompt for n in self.stuck):
+            self.asked.append({"prompt": prompt, **kwargs})
+            task_id = f"img-task-{len(self.asked)}"
+            if on_submitted is not None:
+                on_submitted(task_id)
+            raise TaskStillOpen("Runway image task did not finish", task_id=task_id)
+        return await super().generate_candidates(prompt, on_submitted=on_submitted, **kwargs)
+
+    async def collect_task(self, task_id):
+        self.collected.append(task_id)
+        return self.answers.get(task_id, {"state": "RUNNING", "outputs": []})
+
+
+def approved_again(engine, storyboard_id, tmp_path, adapter, judge):
+    """approved_run for an adapter that already bought something: asked, nothing bought."""
+    before = len(adapter.asked)
+    with pytest.raises(StillsStageRefused) as asked:
+        run(engine, storyboard_id, tmp_path, adapter, judge)
+    assert asked.value.status == "NEEDS_APPROVAL"
+    assert len(adapter.asked) == before, "a question bought a still"
+    answer(engine, asked.value.approval_id, "APPROVED", note="Da.")
+    return run(engine, storyboard_id, tmp_path, adapter, judge)
+
+
+def _done(*files: Path) -> dict:
+    return {"state": "SUCCEEDED", "outputs": [(path.read_bytes(), "image/jpeg") for path in files]}
+
+
+def test_every_candidate_is_written_with_its_task_id_before_it_is_judged(engine, tmp_path):
+    storyboard_id = a_film(engine, tmp_path)
+    approved_run(engine, storyboard_id, tmp_path, SpyStills(), SpyJudge())
+
+    rows = takes(engine, storyboard_id)
+    assert len(rows) == 8
+    assert {t.remote_task_id for t in rows} == {f"img-task-{n}" for n in (1, 2, 3, 4)}
+    # Judged: no candidate keeps the "not judged yet" mark.
+    assert all(t.failure_code is None for t in rows if t.status in ("APPROVED", "PAID"))
+    assert not [t for t in rows if t.status == "SUBMITTED"]
+
+
+def test_a_still_task_that_does_not_arrive_stays_submitted_and_is_not_bought_again(
+    engine, tmp_path
+):
+    storyboard_id = a_film(engine, tmp_path)
+    adapter = OpenTaskStills(stuck={1})
+
+    result = approved_run(engine, storyboard_id, tmp_path, adapter, SpyJudge())
+
+    by_scene = {entry["scene_index"]: entry for entry in result["scenes"]}
+    assert by_scene[1]["status"] == "IN_FLIGHT"
+    assert all(by_scene[n]["status"] == "NOT_BOUGHT" for n in (2, 3, 4))
+    assert result["stopped"]
+    (take,) = takes(engine, storyboard_id)
+    assert (take.status, take.remote_task_id) == ("SUBMITTED", "img-task-1")
+    assert take.credits_quoted == pytest.approx(18)
+    assert result["spent_credits_quoted"] == 18
+
+    plan = stills_plan(engine, storyboard_id)
+    assert plan["pending"] == [1] and 1 not in plan["to_buy"]
+
+    # The next run: the vendor still working. Asked about it, nothing bought for scene 1.
+    again = approved_again(engine, storyboard_id, tmp_path, adapter, SpyJudge())
+    assert adapter.collected == ["img-task-1"] * 2
+    assert len([c for c in adapter.asked if SUBJECTS[1] in c["prompt"]]) == 1
+    assert {e["scene_index"]: e["status"] for e in again["scenes"]}[1] == "IN_FLIGHT"
+
+
+def test_collected_candidates_are_judged_before_the_scene_is_bought(engine, tmp_path):
+    storyboard_id = a_film(engine, tmp_path)
+    adapter = OpenTaskStills(stuck={1})
+    approved_run(engine, storyboard_id, tmp_path, adapter, SpyJudge())
+
+    adapter.stuck.clear()
+    adapter.answers["img-task-1"] = _done(*NO_FACE)
+    judge = SpyJudge()
+    result = approved_again(engine, storyboard_id, tmp_path, adapter, judge)
+
+    by_scene = {entry["scene_index"]: entry for entry in result["scenes"]}
+    assert by_scene[1]["status"] == "APPROVED"
+    assert by_scene[1]["judged_collected"] == 2
+    # Scene 1 was bought once, ever; the others now have their Figure 1.
+    assert len([c for c in adapter.asked if SUBJECTS[1] in c["prompt"]]) == 1
+    assert all(by_scene[n]["status"] == "APPROVED" for n in (2, 3, 4))
+    scene_one = [t for t in takes(engine, storyboard_id) if t.scene_number == 1]
+    assert sorted(t.status for t in scene_one) == ["APPROVED", "PAID"]
+    assert {t.remote_task_id for t in scene_one} == {"img-task-1"}
+    assert all(t.failure_code is None for t in scene_one)
+    assert len(judge.looked_at) == 8
+
+
+def test_a_paid_candidate_never_judged_is_judged_not_bought_again(engine, tmp_path):
+    """A process killed between a candidate's row and its judgement left it PAID and unjudged;
+    the plan used to buy the scene again. It is judged first (0 credits)."""
+    from app.media.assembler import UNJUDGED_FAILURE_CODE, record_take, still_fields, take_hash
+
+    storyboard_id = a_film(engine, tmp_path)
+    with Session(engine) as session:
+        visual = (
+            session.scalars(
+                select(StoryboardScene).where(
+                    StoryboardScene.storyboard_id == storyboard_id, StoryboardScene.scene_index == 1
+                )
+            )
+            .one()
+            .visual_prompt
+        )
+    folder = tmp_path / "left_behind"
+    folder.mkdir()
+    for n, source in enumerate(NO_FACE, start=1):
+        path = folder / f"scene_01_c{n}.jpg"
+        path.write_bytes(source.read_bytes())
+        record_take(
+            engine,
+            storyboard_id=storyboard_id,
+            scene_number=1,
+            kind="still",
+            prompt_hash=take_hash(still_fields(visual, None), "seedream5_pro"),
+            model_id="seedream5_pro",
+            resolution=STILL_RATIO,
+            status="PAID",
+            correlation_id="crash",
+            credits_quoted=9.0,
+            path=path,
+            sha256=sha(path),
+            failure_code=UNJUDGED_FAILURE_CODE,
+            remote_task_id="img-task-old",
+        )
+    plan = stills_plan(engine, storyboard_id)
+    assert plan["pending"] == [1] and plan["to_buy"] == [2, 3, 4]
+
+    adapter = SpyStills()
+    result = approved_run(engine, storyboard_id, tmp_path, adapter, SpyJudge())
+
+    assert not [c for c in adapter.asked if SUBJECTS[1] in c["prompt"]]
+    by_scene = {entry["scene_index"]: entry for entry in result["scenes"]}
+    assert by_scene[1]["status"] == "APPROVED" and by_scene[1]["judged_collected"] == 2
+    assert len(adapter.asked) == 3
+
+
+def test_runway_hears_each_task_before_it_is_polled_and_an_open_task_keeps_its_id(monkeypatch):
+    from app.providers import runway
+
+    adapter, transport = runway_adapter(monkeypatch)
+    heard: list[tuple[str, int]] = []
+    monkeypatch.setattr(runway, "IMAGE_DEADLINE_SECONDS", 0)
+
+    def running(host, method, path, headers, body=None, **kwargs):
+        if path.startswith("/v1/tasks/"):
+            transport.calls.append({"host": host, "method": method, "path": path, "body": body})
+            return {"status": "RUNNING"}, b"", "application/json"
+        return Transport.__call__(transport, host, method, path, headers, body, **kwargs)
+
+    monkeypatch.setattr(runway, "request", running)
+
+    with pytest.raises(TaskStillOpen) as excinfo:
+        asyncio.run(
+            adapter.generate_candidates(
+                "ridges",
+                ratio="1530:2720",
+                count=2,
+                on_submitted=lambda task: heard.append((task, len(transport.calls))),
+            )
+        )
+
+    assert excinfo.value.task_id == "task-1"
+    # Heard right after the submit, before the first poll.
+    assert heard == [("task-1", 1)]
+    assert [c["path"] for c in transport.calls] == ["/v1/text_to_image", "/v1/tasks/task-1"]
+
+
+def test_runway_collects_a_task_by_its_id_with_a_get_only(monkeypatch):
+    adapter, transport = runway_adapter(monkeypatch)
+
+    answer = asyncio.run(adapter.collect_task("task-7"))
+
+    assert answer["state"] == "SUCCEEDED" and len(answer["outputs"]) == 2
+    assert all(kind == "image/png" for _bytes, kind in answer["outputs"])
+    assert {c["method"] for c in transport.calls} == {"GET"}
+    assert transport.calls[0]["path"] == "/v1/tasks/task-7"
+
+
+# ----------------------------- the memory of a scene: never bought again without the Owner
+#
+# 2026-10-02 (NO_REBUY_RECOVERY_REFERENCES): a scene the gate handed to the Owner, or one the
+# vendor refused for its words, was in the next plan's purchase again: under the MODE rule the
+# next day bought it again, unasked. It now stays out of the purchase until he decides.
+
+
+def _scene_two_shows_a_face(prompt, call):
+    return [FACE, FACE] if SUBJECTS[2] in prompt else list(NO_FACE)
+
+
+def test_a_scene_the_gate_sent_to_the_owner_is_held_out_of_the_next_plan(engine, tmp_path):
+    from app.media.shooting_sheet import decide_sheet_take
+
+    storyboard_id = a_film(engine, tmp_path)
+    approved_run(
+        engine, storyboard_id, tmp_path, SpyStills(pictures=_scene_two_shows_a_face), SpyJudge()
+    )
+
+    plan = stills_plan(engine, storyboard_id)
+
+    assert plan["to_buy"] == [] and plan["held"] == [2]
+    (scene_two,) = [s for s in plan["scenes"] if s["scene_index"] == 2]
+    assert scene_two["status"] == "NEEDS_OWNER"
+    assert "Proprietar" in scene_two["reason_ro"]
+    # The next run buys nothing and asks nothing.
+    again = SpyStills()
+    result = run(engine, storyboard_id, tmp_path, again, SpyJudge(), plan_hash=plan["plan_hash"])
+    assert again.asked == []
+    assert {e["scene_index"]: e["status"] for e in result["scenes"]}[2] == "NEEDS_OWNER"
+
+    # His look at the contact sheet (he rejects what he saw) lifts the hold: one more round.
+    rejected = next(t for t in takes(engine, storyboard_id) if t.scene_number == 2)
+    decide_sheet_take(engine, rejected.id, "REJECTED", note="Fețe; încă o dată.")
+    assert stills_plan(engine, storyboard_id)["to_buy"] == [2]
+
+
+def test_a_safety_refusal_holds_the_scene_out_of_the_next_plan(engine, tmp_path):
+    storyboard_id = a_film(engine, tmp_path)
+
+    class Refusing(SpyStills):
+        async def generate_candidates(self, prompt, **kwargs):
+            if SUBJECTS[3] in prompt:
+                self.asked.append({"prompt": prompt, **kwargs})
+                raise MediaProviderError(
+                    "Runway image task failed",
+                    code="SAFETY.INPUT.TEXT",
+                    detail="The prompt was flagged",
+                )
+            return await super().generate_candidates(prompt, **kwargs)
+
+    approved_run(engine, storyboard_id, tmp_path, Refusing(), SpyJudge())
+
+    plan = stills_plan(engine, storyboard_id)
+    assert plan["to_buy"] == [] and plan["held"] == [3]
+
+
+def test_a_first_scene_held_for_the_owner_leaves_nothing_to_buy(engine, tmp_path):
+    """Scene 1 is Figure 1: while it waits for the Owner the later scenes cannot be bought,
+    so the plan does not offer them (a step that would buy nothing is not a purchase)."""
+    storyboard_id = a_film(engine, tmp_path)
+
+    def pictures(prompt, call):
+        return [FACE, FACE] if SUBJECTS[1] in prompt else list(NO_FACE)
+
+    approved_run(engine, storyboard_id, tmp_path, SpyStills(pictures=pictures), SpyJudge())
+
+    plan = stills_plan(engine, storyboard_id)
+    assert plan["held"] == [1]
+    assert plan["to_buy"] == []
+    assert plan["cost_credits"] == 0
+
+
+def test_a_paid_unjudged_candidate_is_judged_with_nothing_else_to_buy(engine, tmp_path):
+    """The only open scene holds candidates collected after their step (the watchdog took
+    them in) and never judged: the plan has nothing to buy, so no step would ever run for it.
+    The day settles it: judged (vision tokens only), no image bought, no yes asked."""
+    from app.media.assembler import UNJUDGED_FAILURE_CODE, record_take, still_fields, take_hash
+
+    storyboard_id = a_film(engine, tmp_path)
+    approved_run(engine, storyboard_id, tmp_path, SpyStills(), SpyJudge())
+    # Scene 1's approved still is retired by the Owner; collected candidates wait for scene 1.
+    with Session(engine) as session, session.begin():
+        for row in session.scalars(
+            select(SceneTake).where(
+                SceneTake.storyboard_id == storyboard_id, SceneTake.scene_number == 1
+            )
+        ):
+            row.status = "REJECTED"
+            row.failure_code = "REDO.OWNER"
+        visual = (
+            session.scalars(
+                select(StoryboardScene).where(
+                    StoryboardScene.storyboard_id == storyboard_id, StoryboardScene.scene_index == 1
+                )
+            )
+            .one()
+            .visual_prompt
+        )
+    folder = tmp_path / "collected"
+    folder.mkdir()
+    for n, source in enumerate(NO_FACE, start=1):
+        path = folder / f"scene_01_collected_c{n}.jpg"
+        path.write_bytes(source.read_bytes() + b"collected")
+        record_take(
+            engine,
+            storyboard_id=storyboard_id,
+            scene_number=1,
+            kind="still",
+            prompt_hash=take_hash(still_fields(visual, None), "seedream5_pro"),
+            model_id="seedream5_pro",
+            resolution=STILL_RATIO,
+            status="PAID",
+            correlation_id="watchdog",
+            credits_quoted=9.0,
+            path=path,
+            sha256=sha(path),
+            failure_code=UNJUDGED_FAILURE_CODE,
+            remote_task_id="img-task-late",
+        )
+    plan = stills_plan(engine, storyboard_id)
+    assert plan["to_buy"] == [] and plan["pending"] == [1]
+
+    with Session(engine) as session:
+        questions = len(session.scalars(select(ApprovalRequest)).all())
+    adapter, judge = SpyStills(), SpyJudge()
+    settled = stills_stage.settle_stills(
+        engine,
+        storyboard_id,
+        str(uuid4()),
+        image_adapter=adapter,
+        registry=None,
+        judge=judge,
+        face_counter=faces_in(),
+        measure=("faces",),
+        storage_root=tmp_path / "media",
+    )
+
+    assert adapter.asked == []
+    assert len(judge.looked_at) == 2
+    assert {e["scene_index"]: e["status"] for e in settled["scenes"]} == {1: "APPROVED"}
+    with Session(engine) as session:
+        assert len(session.scalars(select(ApprovalRequest)).all()) == questions
+    approved_now = [
+        t for t in takes(engine, storyboard_id) if t.scene_number == 1 and t.status == "APPROVED"
+    ]
+    assert len(approved_now) == 1 and approved_now[0].remote_task_id == "img-task-late"

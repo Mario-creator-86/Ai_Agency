@@ -5,7 +5,7 @@ from __future__ import annotations
 import mimetypes
 from pathlib import Path
 from typing import Annotated, Any, Literal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi import Path as FPath
@@ -24,11 +24,13 @@ from app.media.assembler import (
     DEFAULT_STORAGE_ROOT,
     RenderEngineUnavailable,
     SceneRedoRefused,
+    SpentStageError,
     assemble_video_job,
     redo_plan,
     redo_scene,
     release_after_qc,
 )
+from app.media.disk import LOW_DISK, disk_refusal
 from app.media.factory import (
     PaidVendorRefused,
     abandon_unfinished_renders,
@@ -84,7 +86,10 @@ from app.media.schemas import (
     TakeDecisionCommand,
 )
 from app.media.services import (
+    DEMO_TOPIC_STATUS,
     REFERENCE_STORAGE_ROOT,
+    STORYBOARD_PAGE,
+    STORYBOARD_PAGE_MAX,
     ReferenceRequired,
     ReferenceSetError,
     generate_character_reference_set,
@@ -108,6 +113,8 @@ from app.media.shooting_sheet import (
     connection_capabilities,
     connection_video_adapters,
     decide_sheet_take,
+    recall_purchase,
+    remember_purchase,
     run_assemble_step,
     run_sheet_step,
     runway_connection_id,
@@ -116,9 +123,10 @@ from app.media.shooting_sheet import (
     sheet_overrides,
     sheet_url,
 )
+from app.media.storage import media_file_inside, media_roots
 from app.providers.media_http import MediaProviderError
 from app.security import require_owner
-from app.services import append_event, studio_environment, utc_now
+from app.services import CommandConflict, append_event, studio_environment, utc_now
 from app.wording import settings_place
 
 
@@ -187,6 +195,35 @@ class SceneRedoCommand(BaseModel):
     plan_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     note: str | None = Field(default=None, max_length=500)
     allow_over_budget: bool = False
+    #: The same press again answers what it bought and buys nothing (MONEY-04).
+    command_id: UUID | None = None
+
+
+def _spent_stage(exc: SpentStageError) -> HTTPException:
+    """A paid step that failed after it paid: 409 with the Owner's words. It is already in
+    the books and he has its letter; nothing is retried."""
+    return HTTPException(
+        status_code=409,
+        detail={
+            "status": "SPENT_AND_STOPPED",
+            "message": exc.reason_ro,
+            "credits": exc.credits,
+            "booked": exc.booked is not None,
+        },
+    )
+
+
+def _replayed(engine: Any, command_id: UUID | None, payload: dict[str, Any]) -> dict | None:
+    """What this press already bought (``replayed: true``), or None; 409 for a reused id."""
+    if command_id is None:
+        return None
+    try:
+        stored = recall_purchase(engine, str(command_id), payload)
+    except CommandConflict as exc:
+        raise HTTPException(
+            status_code=409, detail={"status": "COMMAND_REUSED", "message": str(exc)}
+        ) from exc
+    return {**stored, "replayed": True} if stored is not None else None
 
 
 def _sheet_wiring(request: Request) -> dict[str, Any]:
@@ -232,6 +269,11 @@ def _assemble_step(
         planned = render_plan(engine, state.credential_vault, storyboard_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    # The narration is bought and the film written here: a disk under the Owner's minimum
+    # refuses before anything is asked or bought (REL-08).
+    no_room = disk_refusal(Path(storage) if storage else None, settings)
+    if no_room:
+        raise HTTPException(status_code=409, detail={"status": LOW_DISK, "message": no_room})
     try:
         return run_assemble_step(
             engine,
@@ -279,12 +321,24 @@ def create_media_router() -> APIRouter:
     ) -> dict:
         char = get_character_bible(request.app.state.engine, character_id)
         if not char:
-            raise HTTPException(status_code=404, detail="Character Bible entry not found")
+            raise HTTPException(
+                status_code=404, detail="Personajul nu există în fișa personajelor."
+            )
         return char
 
     @router.get("/storyboards")
-    def get_all_storyboards(request: Request) -> dict:
-        return {"storyboards": list_storyboards(request.app.state.engine)}
+    def get_all_storyboards(
+        request: Request,
+        limit: Annotated[int, Query(ge=1, le=STORYBOARD_PAGE_MAX)] = STORYBOARD_PAGE,
+        offset: Annotated[int, Query(ge=0)] = 0,
+        qc_status: Annotated[
+            str | None, Query(pattern="^(PASSED|FAILED|FLAGGED_FOR_REVIEW|INVALIDATED)$")
+        ] = None,
+    ) -> dict:
+        """One page of summary rows, newest first (PAGE-17); the detail is its own route."""
+        return list_storyboards(
+            request.app.state.engine, limit=limit, offset=offset, qc_status=qc_status
+        )
 
     @router.get("/scripts/awaiting-storyboard")
     def get_scripts_awaiting_storyboard(request: Request) -> dict:
@@ -298,7 +352,7 @@ def create_media_router() -> APIRouter:
     ) -> dict:
         sb = get_storyboard(request.app.state.engine, storyboard_id)
         if not sb:
-            raise HTTPException(status_code=404, detail="Storyboard not found")
+            raise HTTPException(status_code=404, detail="Storyboard-ul nu există.")
         return sb
 
     @router.post("/storyboards/from-script/{script_id}", response_model=StoryboardView)
@@ -322,7 +376,8 @@ def create_media_router() -> APIRouter:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except SQLAlchemyError:
             raise HTTPException(
-                status_code=500, detail="Database error during storyboarding"
+                status_code=500,
+                detail=("Baza de date nu a putut salva storyboard-ul; nimic nu s-a schimbat."),
             ) from None
 
     @router.post("/storyboards/demo-fixture", status_code=201)
@@ -350,7 +405,9 @@ def create_media_router() -> APIRouter:
                     angle="Fixture local pentru testarea pipeline-ului factual",
                     target_audience="general",
                     novelty_score=0.95,
-                    status="PROPOSED",
+                    # DEMO, never PROPOSED: the daily run reads only PROPOSED/RESEARCHED
+                    # topics, highest novelty first, and a demo row must not feed it (PAGE-09).
+                    status=DEMO_TOPIC_STATUS,
                     created_at=now,
                 )
             )
@@ -468,7 +525,7 @@ def create_media_router() -> APIRouter:
         with Session(engine) as session:
             board = session.get(Storyboard, storyboard_id)
             if board is None:
-                raise HTTPException(status_code=404, detail="Storyboard not found")
+                raise HTTPException(status_code=404, detail="Storyboard-ul nu există.")
             script_id = board.script_draft_id
         # In PRODUCTION nothing is bought from this button any more. The second Nepal render
         # (2026-09-26) started here: no price, no prompt, no model shown, no question asked,
@@ -515,10 +572,12 @@ def create_media_router() -> APIRouter:
             )
             if vendors:
                 raise PaidVendorRefused(vendors)
+            storage = getattr(request.app.state, "media_storage_root", None)
             result = assemble_video_job(
                 engine,
                 storyboard_id,
                 correlation_id,
+                storage_root=Path(storage) if storage else None,
                 ffmpeg_path=getattr(request.app.state.settings, "ffmpeg_path", None),
                 image_adapter=injected_image or planned["image"],
                 # The vendors this film's stills may be drawn by, in order — the same chain
@@ -675,7 +734,13 @@ def create_media_router() -> APIRouter:
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"Render execution failed: {exc}") from exc
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"Randarea s-a oprit cu o eroare ({type(exc).__name__}); detaliile sunt "
+                    "în jurnalul serverului."
+                ),
+            ) from exc
 
     @router.post("/storyboards/{storyboard_id}/adopt-existing-files")
     def post_adopt_existing_files(
@@ -784,13 +849,26 @@ def create_media_router() -> APIRouter:
         each filmed scene that has no accepted take and no LOCAL_MOVE of his."""
         if step not in SHEET_STEPS and step != ASSEMBLE_STEP:
             raise HTTPException(status_code=404, detail=f"Pas necunoscut: {step}")
+        engine = request.app.state.engine
+        payload = {
+            "storyboard_id": storyboard_id,
+            "step": step,
+            "plan_hash": cmd.plan_hash,
+            "allow_over_budget": cmd.allow_over_budget,
+        }
+        replayed = _replayed(engine, cmd.command_id, payload)
+        if replayed is not None:
+            return replayed
         settings = request.app.state.settings
         wiring = _sheet_wiring(request)
         storage = getattr(request.app.state, "media_storage_root", None)
         if step == ASSEMBLE_STEP:
-            return _assemble_step(request, storyboard_id, cmd, wiring)
+            assembled = _assemble_step(request, storyboard_id, cmd, wiring)
+            if cmd.command_id is not None and isinstance(assembled, dict):
+                remember_purchase(engine, str(cmd.command_id), payload, assembled)
+            return assembled
         try:
-            return run_sheet_step(
+            bought = run_sheet_step(
                 request.app.state.engine,
                 storyboard_id,
                 step,
@@ -813,6 +891,11 @@ def create_media_router() -> APIRouter:
             if exc.http_status == 202:
                 return JSONResponse(status_code=202, content=exc.as_dict())
             raise HTTPException(status_code=exc.http_status, detail=exc.as_dict()) from exc
+        except SpentStageError as exc:
+            raise _spent_stage(exc) from exc
+        if cmd.command_id is not None:
+            remember_purchase(engine, str(cmd.command_id), payload, bought)
+        return bought
 
     @router.put("/storyboards/{storyboard_id}/shooting-sheet/scenes/{scene_index}/model")
     def put_scene_model(
@@ -891,12 +974,20 @@ def create_media_router() -> APIRouter:
         was bought, 404 for an unknown storyboard or scene.
         """
         engine = request.app.state.engine
+        payload = {
+            "storyboard_id": storyboard_id,
+            "step": "redo",
+            **cmd.model_dump(mode="json", exclude={"command_id"}),
+        }
+        replayed = _replayed(engine, cmd.command_id, payload)
+        if replayed is not None:
+            return replayed
         settings = request.app.state.settings
         storage = getattr(request.app.state, "media_storage_root", None)
         paid = cmd.kind in ("still", "motion")
         wiring = _sheet_wiring(request) if paid else {}
         try:
-            return redo_scene(
+            redone = redo_scene(
                 engine,
                 storyboard_id,
                 str(uuid4()),
@@ -921,6 +1012,11 @@ def create_media_router() -> APIRouter:
             if exc.http_status == 202:
                 return JSONResponse(status_code=202, content=exc.as_dict())
             raise HTTPException(status_code=exc.http_status, detail=exc.as_dict()) from exc
+        except SpentStageError as exc:
+            raise _spent_stage(exc) from exc
+        if cmd.command_id is not None:
+            remember_purchase(engine, str(cmd.command_id), payload, redone)
+        return redone
 
     @router.post("/takes/{take_id}/decision")
     def post_take_decision(
@@ -946,8 +1042,10 @@ def create_media_router() -> APIRouter:
         """A paid take's picture or clip, for the contact sheet."""
         with Session(request.app.state.engine) as session:
             take = session.get(SceneTake, take_id)
-            path = Path(take.path) if take is not None and take.path else None
-        if path is None or not path.is_file():
+            stored = take.path if take is not None else None
+        # only a file inside the studio's media folders, never a link (SEC-06)
+        path = media_file_inside(stored, media_roots(request.app.state))
+        if path is None:
             raise HTTPException(status_code=404, detail="Fișierul înregistrării nu există.")
         media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         return FileResponse(path, media_type=media_type)
@@ -1012,7 +1110,7 @@ def create_media_router() -> APIRouter:
         with Session(request.app.state.engine) as session:
             board = session.get(Storyboard, storyboard_id)
             if board is None:
-                raise HTTPException(status_code=404, detail="Storyboard not found")
+                raise HTTPException(status_code=404, detail="Storyboard-ul nu există.")
             return resolve_storyboard_plan(session, board)
 
     @router.put("/storyboards/{storyboard_id}/production")
@@ -1149,7 +1247,7 @@ def create_media_router() -> APIRouter:
                 .first()
             )
             if not job:
-                raise HTTPException(status_code=404, detail="Render job not found")
+                raise HTTPException(status_code=404, detail="Randarea nu există.")
             return dict(job)
 
     @router.get("/assets/{asset_id}", response_model=MediaAssetView)
@@ -1164,7 +1262,7 @@ def create_media_router() -> APIRouter:
                 .first()
             )
             if not asset:
-                raise HTTPException(status_code=404, detail="Media asset not found")
+                raise HTTPException(status_code=404, detail="Filmul nu există.")
             return dict(asset)
 
     @router.get("/assets/{asset_id}/stream")
@@ -1179,10 +1277,13 @@ def create_media_router() -> APIRouter:
                 .first()
             )
             if not asset:
-                raise HTTPException(status_code=404, detail="Media asset not found")
-            file_path = Path(asset["uri_or_path"])
-            if not file_path.is_file():
-                raise HTTPException(status_code=404, detail="Asset file missing on disk")
+                raise HTTPException(status_code=404, detail="Filmul nu există.")
+            # only a file inside the studio's media folders, never a link (SEC-06)
+            file_path = media_file_inside(asset["uri_or_path"], media_roots(request.app.state))
+            if file_path is None:
+                raise HTTPException(
+                    status_code=404, detail="Fișierul filmului lipsește de pe disc."
+                )
             return FileResponse(file_path, media_type=asset["mime_type"])
 
     @router.get("/qc/{identifier}", response_model=QCReportView)
@@ -1205,7 +1306,7 @@ def create_media_router() -> APIRouter:
                 if job and job.output_asset_id:
                     qc = get_media_qc(engine, job.output_asset_id)
         if not qc:
-            raise HTTPException(status_code=404, detail="QC report not found")
+            raise HTTPException(status_code=404, detail="Raportul controlului calității nu există.")
         return qc
 
     @router.post("/qc/{identifier}", response_model=QCReportView)
@@ -1232,7 +1333,10 @@ def create_media_router() -> APIRouter:
                 else:
                     raise HTTPException(
                         status_code=404,
-                        detail="No rendered asset found for storyboard to run QC on",
+                        detail=(
+                            "Storyboard-ul nu are încă un film randat pe care să-l verifice "
+                            "controlul calității."
+                        ),
                     )
         # Same ceiling as the day's quality control: without `settings=` the default of half
         # the scenes applies and the Owner's max_fallback_scenes is read by nobody here. And

@@ -248,7 +248,14 @@ class _Source:
         return None
 
 
+#: Paid modules outside app/providers: the configured language model (OpenAI, Anthropic)
+#: is built and called through app.integrations.llm (MONEY-14, 2026-10-02).
+PAID_MODULES_ELSEWHERE = frozenset({"app.integrations.llm"})
+
+
 def _paid_module(source: _Source, module: str) -> bool:
+    if module in PAID_MODULES_ELSEWHERE:
+        return module in source.trees
     return (
         module.startswith("app.providers.")
         and module not in FREE_PROVIDER_MODULES
@@ -322,6 +329,12 @@ def _edges(source: _Source, qualname: str) -> list[_Edge]:
                 definition = source.definition(owner, child.attr)
                 if definition:
                     edges.append(_Edge(definition, (owner, child.attr), child.lineno))
+                continue
+            # A library module's function (`asyncio.run`, `json.dumps`) leads nowhere in the
+            # application: it is not "any method of that name" (measured 2026-10-02:
+            # `asyncio.run` in sync_provider_models was followed to every `.run` method).
+            bound = local.get(child.value.id) or top.get(child.value.id)
+            if bound is not None and bound[1] is None and bound[0] not in source.trees:
                 continue
             # A class named directly (`Provider.from_verified_settings`) is resolved like a
             # module attribute; an instance's method is any method of that name.
@@ -530,3 +543,340 @@ def test_every_fake_names_something_that_exists(source):
             module,
             attribute,
         )
+
+
+# ------------------------------------------- every paid path is authorised and booked (TS-09)
+#
+# 2026-10-02 (CONTINUE_REDOS_E2E; TS-09, MONEY-14). The scan above certifies that the tests fake
+# every vendor the *day* can reach. It does not certify that a real spend is behind the Owner's
+# policy: it starts only from the day, and only app/providers counted as paid, so the routes
+# (his presses on the sheet, a redo, the reference set, a render), the worker's other tasks
+# (FILM_CONTINUE above all), the watchdog and the configured language model
+# (app.integrations.llm: OpenAI and Anthropic) were outside it.
+#
+# This second scan starts from every route (each function a router factory or app.main
+# registers, one root per route), every task the worker runs (one root per handler), the
+# worker's pass, the watchdog and the day, and follows the same call graph. A function that
+# calls the Policy Kernel or a gate of its own (`GATE_NAMES`) is a door: nothing behind it is
+# followed for the gate check. A function that writes the books (`BOOKING_NAMES`) is a door
+# for the booking check. Every function that calls a paid method of an adapter
+# (`PAID_METHODS`, by attribute or by `getattr` string) and that a root reaches through no door
+# is named with its path, unless (root, site, check) is in the reviewed allowlist with its
+# reason. Uploading spends nothing and is checked for the gate only. Over-approximated like the
+# scan above: a method called on an unknown object is followed to every method of that name.
+# What it cannot see: the order of calls inside one function (a door counts wherever it
+# stands in the function), `getattr` by computed string, code built at run time.
+
+#: The adapter methods that spend: a still, a shot, candidates, a voice, a language model's
+#: tokens; and the upload, which spends nothing but must pass the publishing gate.
+PAID_METHODS = frozenset(
+    {"create_generation", "generate_image", "generate_candidates", "synthesize", "generate"}
+)
+GATED_ONLY_METHODS = frozenset({"upload_video"})
+#: The Policy Kernel and the gates in front of money or a channel. `legacy_render_vendors` is
+#: the whole-film render's refusal of every paid vendor (PaidVendorRefused, 2026-09-26):
+#: that path buys only from fakes and local stand-ins.
+GATE_NAMES = frozenset(
+    {
+        "may_act",
+        "mode_refusal",
+        "evaluate_publishing_gate",
+        "may_run_agent",
+        "may_spend_step",
+        "legacy_render_vendors",
+    }
+)
+#: What writes a purchase into the books: the sheet's bookings, the render's cost rows, the
+#: credit ledger, and the agent run record that carries a model's tokens.
+BOOKING_NAMES = frozenset(
+    {
+        "book_purchase",
+        "book_step_cost",
+        "book_interrupted_step",
+        "_book_redo",
+        "record_render_costs",
+        "record_failed_render_cost",
+        "record_credit_spend",
+        "record_provider_cost",
+        "AgentRun",
+    }
+)
+#: The other ways work starts without a person: the worker's tasks, its pass, the watchdog,
+#: and the day.
+TASK_ROOTS = (
+    "app.workflows.worker.build_task_handlers",
+    "app.workflows.worker.worker_pass",
+    "app.workflows.watchdog.run_watchdog",
+    *ROOTS,
+)
+_ROUTE_DECORATORS = frozenset(
+    {"get", "post", "put", "patch", "delete", "websocket", "api_route", "api_websocket_route"}
+)
+
+#: Reviewed exceptions: (root, paid call site, check) -> why no door of that kind is needed
+#: on that path, or which item owns closing it. Each one was read on 2026-10-02.
+AUTHORISATION_ALLOWLIST: dict[tuple[str, str, str], str] = {}
+
+#: No upload is allowlisted (2026-10-02, PUB-04): `execute_publication` asks
+#: `evaluate_publishing_gate` again before every upload, the Owner's press and the
+#: watchdog's retry alike, so the gate is a door on those paths now.
+#: The rehearsal assembles the paid files already on disk (`rehearsal.rehearse`): no image,
+#: video or voice adapter is handed to the render (the narration is the recorded voice played
+#: back), so the vendor calls the graph reaches inside `assemble_video_job` cannot happen there.
+for _site in (
+    "app.media.assembler.assemble_video_job",
+    "app.media.assembler._generate_motion",
+    "app.media.factory.still_from_chain",
+):
+    for _check in ("gate", "booking"):
+        AUTHORISATION_ALLOWLIST[
+            ("app.media.router.create_media_router.post_adopt_existing_files", _site, _check)
+        ] = (
+            "rehearse() passes assemble_from_takes no image, video or voice adapter (recorded "
+            "voices only); the statically reachable vendor calls have no adapter to call."
+        )
+
+
+class _RouteSource(_Source):
+    """The source, with each route and each worker task as a function of its own: the
+    factories that register them are one function to the scan above, so one gate anywhere in
+    a router would have counted as a door for every route in it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.route_roots: list[str] = []
+        routers = {
+            _module_name(path)
+            for path in APP.glob("*/router.py")
+            if "__pycache__" not in path.parts
+        } | {"app.main"}
+        factories = [
+            qualname
+            for qualname, (module, _node) in list(self.functions.items())
+            if module in routers and qualname.count(".") == module.count(".") + 1
+        ]
+        for factory in [*factories, "app.workflows.worker.build_task_handlers"]:
+            module, node = self.functions[factory]
+            imports = [
+                child
+                for child in getattr(node, "body", [])
+                if isinstance(child, ast.Import | ast.ImportFrom)
+            ]
+            nested = [
+                child
+                for child in getattr(node, "body", [])
+                if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef)
+            ]
+            routes = [n for n in nested if factory.endswith("build_task_handlers") or _a_route(n)]
+            if not routes:
+                if module in routers and _a_route(node):
+                    self.route_roots.append(factory)
+                continue
+            for route in routes:
+                # The factory's own imports are in scope for the route; nothing else of it.
+                body = [*imports, *route.body]
+                copy = ast.FunctionDef(
+                    name=route.name,
+                    args=route.args,
+                    body=body,
+                    decorator_list=[],
+                    returns=None,
+                    type_params=[],
+                )
+                ast.copy_location(copy, route)
+                qualname = f"{factory}.{route.name}"
+                self.functions[qualname] = (module, copy)
+                self.route_roots.append(qualname)
+
+
+def _a_route(node: ast.AST) -> bool:
+    for decorator in getattr(node, "decorator_list", []):
+        call = decorator.func if isinstance(decorator, ast.Call) else decorator
+        if isinstance(call, ast.Attribute) and call.attr in _ROUTE_DECORATORS:
+            return True
+    return False
+
+
+@pytest.fixture(scope="module")
+def routes() -> _RouteSource:
+    return _RouteSource()
+
+
+def _roots(source: _RouteSource) -> list[str]:
+    tasks = [root for root in TASK_ROOTS if root in source.functions]
+    handlers = [r for r in source.route_roots if ".build_task_handlers." in r]
+    return [
+        *[r for r in source.route_roots if ".build_task_handlers." not in r],
+        *handlers,
+        *[t for t in tasks if t != "app.workflows.worker.build_task_handlers"],
+    ]
+
+
+def _names_called(node: ast.AST) -> set[str]:
+    """Every name a function's body refers to by a bare name or an attribute."""
+    names: set[str] = set()
+    for child in ast.walk(node):
+        if isinstance(child, ast.Name):
+            names.add(child.id)
+        elif isinstance(child, ast.Attribute):
+            names.add(child.attr)
+    return names
+
+
+def _paid_calls(node: ast.AST, methods: frozenset[str]) -> set[str]:
+    """The paid adapter methods a function calls: `x.method(...)`, or `getattr(x, "method")`."""
+    found: set[str] = set()
+    for child in ast.walk(node):
+        if not isinstance(child, ast.Call):
+            continue
+        func = child.func
+        if isinstance(func, ast.Attribute) and func.attr in methods:
+            found.add(func.attr)
+        elif (
+            isinstance(func, ast.Name)
+            and func.id == "getattr"
+            and len(child.args) >= 2
+            and isinstance(child.args[1], ast.Constant)
+            and child.args[1].value in methods
+        ):
+            found.add(str(child.args[1].value))
+    return found
+
+
+class _Graph:
+    """The call graph of `_edges`, computed once per function."""
+
+    def __init__(self, source: _RouteSource) -> None:
+        self.source = source
+        self.edges: dict[str, list[str]] = {}
+        self.names: dict[str, set[str]] = {}
+
+    def callees(self, qualname: str) -> list[str]:
+        if qualname not in self.edges:
+            targets: list[str] = []
+            for edge in _edges(self.source, qualname):
+                if edge.target in self.source.classes:
+                    targets.extend(
+                        f"{edge.target}.{m}"
+                        for m in ("__init__", "__post_init__")
+                        if f"{edge.target}.{m}" in self.source.functions
+                    )
+                elif edge.target in self.source.functions:
+                    targets.append(edge.target)
+            self.edges[qualname] = list(dict.fromkeys(targets))
+        return self.edges[qualname]
+
+    def calls(self, qualname: str) -> set[str]:
+        if qualname not in self.names:
+            self.names[qualname] = _names_called(self.source.functions[qualname][1])
+        return self.names[qualname]
+
+
+def undoored_paths(
+    graph: _Graph, root: str, doors: frozenset[str], methods: frozenset[str]
+) -> list[tuple[str, str, list[str]]]:
+    """(site, method, path) for every function calling a paid method that ``root`` reaches
+    through functions none of which calls a door."""
+    source = graph.source
+    parent: dict[str, str | None] = {root: None}
+    queue: deque[str] = deque([root])
+    found: list[tuple[str, str, list[str]]] = []
+    while queue:
+        current = queue.popleft()
+        module, node = source.functions[current]
+        if _paid_module(source, module):
+            continue  # the vendor's own insides; its callers are the sites
+        if graph.calls(current) & doors:
+            continue  # a door: what lies behind it is decided here
+        for method in sorted(_paid_calls(node, methods)):
+            chain: list[str] = []
+            step: str | None = current
+            while step is not None:
+                chain.append(step)
+                step = parent[step]
+            found.append((current, method, list(reversed(chain))))
+        for target in graph.callees(current):
+            if target not in parent:
+                parent[target] = current
+                queue.append(target)
+    return found
+
+
+CHECKS = {
+    "gate": (GATE_NAMES, PAID_METHODS | GATED_ONLY_METHODS),
+    "booking": (BOOKING_NAMES, PAID_METHODS),
+}
+
+
+@pytest.fixture(scope="module")
+def undoored(routes) -> dict[str, list[tuple[str, str, str, list[str]]]]:
+    graph = _Graph(routes)
+    found: dict[str, list[tuple[str, str, str, list[str]]]] = {}
+    for check, (doors, methods) in CHECKS.items():
+        found[check] = [
+            (root, site, method, chain)
+            for root in _roots(routes)
+            for site, method, chain in undoored_paths(graph, root, doors, methods)
+        ]
+    return found
+
+
+def _say(escaped: list[tuple[str, str, str, list[str]]]) -> str:
+    return "\n".join(
+        f"{site} calls .{method}()\n    reached by: {' -> '.join(chain)}"
+        for _root, site, method, chain in escaped
+    )
+
+
+def test_the_authorisation_scan_starts_from_each_route_each_task_and_the_day(routes):
+    roots = _roots(routes)
+    assert "app.media.router.create_media_router.post_sheet_step" in roots
+    assert "app.media.router.create_media_router.post_scene_redo" in roots
+    assert "app.workflows.worker.build_task_handlers.film_continue" in roots
+    assert "app.workflows.worker.build_task_handlers.daily_run" in roots
+    assert "app.runbook.services.execute_daily_run" in roots
+    assert len([r for r in roots if ".router." in r]) > 100, len(roots)
+    # It sees every paid method the studio calls, including the stills step's getattr.
+    called = {
+        method
+        for _qualname, (module, node) in routes.functions.items()
+        if not _paid_module(routes, module)
+        for method in _paid_calls(node, PAID_METHODS | GATED_ONLY_METHODS)
+    }
+    assert called == PAID_METHODS | GATED_ONLY_METHODS, called
+
+
+def test_the_configured_language_model_counts_as_paid(source):
+    """MONEY-14: OpenAI and Anthropic run through app.integrations.llm, outside app/providers;
+    the first scan names its construction sites too (none of them on the day's path)."""
+    sites = {site.function for site in paid_sites(source) if site.vendor == "app.integrations.llm"}
+    assert sites, "no construction of the configured language model was found"
+
+
+@pytest.mark.parametrize("check", sorted(CHECKS))
+def test_every_paid_call_has_its_door_on_every_path(undoored, check):
+    """Every paid call is behind the Owner's policy or a gate (``gate``) and its purchase is
+    written into the books on the same path (``booking``), or reviewed in the allowlist."""
+    escaped = [
+        item for item in undoored[check] if (item[0], item[1], check) not in AUTHORISATION_ALLOWLIST
+    ]
+    assert not escaped, f"paid calls reachable with no {check} door:\n" + _say(escaped)
+
+
+def test_the_allowlist_names_only_paths_that_still_exist(undoored):
+    seen = {(root, site, check) for check in CHECKS for root, site, _m, _c in undoored[check]}
+    stale = set(AUTHORISATION_ALLOWLIST) - seen
+    assert not stale, f"allowlisted paths the scan no longer finds: {sorted(stale)}"
+
+
+def test_the_scan_names_a_paid_call_when_its_door_is_taken_away(routes):
+    """A check that cannot fail certifies nothing: without the Policy Kernel among the doors,
+    the Owner's press on the sheet's motion step reaches the motion purchase undoored."""
+    graph = _Graph(routes)
+    escaped = undoored_paths(
+        graph,
+        "app.media.router.create_media_router.post_sheet_step",
+        GATE_NAMES - {"may_act", "mode_refusal", "may_spend_step"},
+        PAID_METHODS,
+    )
+    assert any(method == "create_generation" for _site, method, _chain in escaped), escaped

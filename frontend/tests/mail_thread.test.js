@@ -55,3 +55,39 @@ test('a letter to the Owner is marked as waiting for the Owner while it is open'
   assert.ok(html.includes('is-owner'));
   assert.ok(html.includes('așteaptă răspunsul tău'));
 });
+
+// PAGE_OWNER_DAY (PAGE-02): a sheet letter is a key to the film's sheet, never a raw API path.
+test('a sheet letter shows «Deschide foaia de filmare» and never prints the /api/v1 path', () => {
+  const id = '3ec1740c-0000-4000-8000-000000000001';
+  const html = renderThread(
+    {
+      thread_id: 't-5',
+      subject: 'Filmul «Nepal» așteaptă răspunsul tău',
+      messages: [{
+        id: 'm-6',
+        intent: 'ESCALATE',
+        from_name: 'Sarah (Director)',
+        to_name: 'Owner',
+        for_owner: true,
+        subject: 'Filmul «Nepal» așteaptă răspunsul tău',
+        body_json: { kind: 'owner_shooting_sheet', storyboard_id: id, sheet_url: `/api/v1/media/storyboards/${id}/shooting-sheet`, approval_id: 'a-1' },
+        body_text: `Imaginile: 18 credite.\nFoaia de filmare: /api/v1/media/storyboards/${id}/shooting-sheet`,
+        created_at: '',
+        status: 'OPEN',
+      }],
+    },
+    options,
+  );
+  assert.ok(html.includes(`data-sheet-open="${id}"`));
+  assert.ok(html.includes('Deschide foaia de filmare'));
+  assert.ok(!html.includes('/api/v1'), 'the raw path is never printed');
+  assert.ok(html.includes('Imaginile: 18 credite.'), 'the rest of the letter stays');
+});
+
+test('a letter that names no film has no sheet key', () => {
+  const html = renderThread(
+    { thread_id: 't-6', subject: 'x', messages: [{ id: 'm-7', intent: 'STATUS', subject: 'QC', body_json: { kind: 'owner_qc_failed', reason: 'x' }, body_text: 'QC a picat.', created_at: '', status: 'OPEN' }] },
+    options,
+  );
+  assert.ok(!html.includes('data-sheet-open'));
+});

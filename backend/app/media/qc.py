@@ -20,10 +20,13 @@ Following docs/architecture/08_VIDEO_PIPELINE.md:
 from __future__ import annotations
 
 import difflib
+import functools
 import hashlib
+import importlib
 import json
 import logging
 import math
+import pkgutil
 import re
 import shutil
 import subprocess
@@ -39,7 +42,9 @@ from sqlalchemy.orm import Session
 
 from app.agents.memory import agent_for_role, remember
 from app.agents.vision import SPAN_FRAME_WIDTH, frames_at
+from app.factual.editorial import dangles
 from app.factual.models import FactualClaim
+from app.media.cards import film_finish
 from app.media.models import (
     MediaAsset,
     QualityControlReport,
@@ -57,6 +62,7 @@ from app.media.toolchain import (
     find_ffprobe,
     has_filter,
     measure_loudness,
+    silence_spans,
 )
 from app.services import append_event, studio_environment, utc_now
 
@@ -119,10 +125,19 @@ def parse_srt(text: str) -> list[dict[str, Any]]:
     return cues
 
 
-def caption_problems(cues: list[dict[str, Any]]) -> list[str]:
-    """What keeps these cues from being read on a phone; empty when nothing does."""
+def caption_problems(cues: list[dict[str, Any]], *, dangling: bool = False) -> list[str]:
+    """What keeps these cues from being read on a phone; empty when nothing does.
+
+    ``dangling`` adds the phrase rule (audit Q7): a cue other than the last that ends on a
+    function word ("Nepal is paying for a") breaks its phrase in two. It is asked for by the
+    editorial check (`editorial_problems`), which is advisory until the Owner decides, so the
+    delivery check above keeps its verdict on the films made before the rule.
+    """
     problems: list[str] = []
     previous_end: float | None = None
+    if dangling:
+        for found in dangling_caption_words(cues):
+            problems.append(f"cue {found['cue']} ends on the function word '{found['word']}'")
     for cue in cues:
         index = cue.get("index")
         lines = list(cue.get("lines") or [])
@@ -143,6 +158,16 @@ def caption_problems(cues: list[dict[str, Any]]) -> list[str]:
             problems.append(f"cue {index} overlaps the cue before it")
         previous_end = float(cue["end"])
     return problems
+
+
+def dangling_caption_words(cues: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The cues (but the last) whose last word leaves its phrase open, with that word."""
+    found: list[dict[str, Any]] = []
+    for position, cue in enumerate(cues[:-1]):
+        words = " ".join(str(line) for line in cue.get("lines") or []).split()
+        if words and dangles(words[-1]):
+            found.append({"cue": cue.get("index", position + 1), "word": words[-1]})
+    return found
 
 
 def _words(text: str) -> list[str]:
@@ -316,6 +341,272 @@ def still_is_degenerate(ffmpeg: str | None, path: Path) -> str | None:
     return None
 
 
+# ------------------------------------------------------ how the film was made (A12)
+#
+# The second Nepal render (3ec1740c, 2026-09-26) was bought whole by the legacy path from
+# template prompts after its shot plan was lost, and never reached quality control: it sat in
+# the queue as a video with no verdict, one QC pass away from publishing. Real stills and shots
+# are bought on the shooting sheet only since that day, so a film that says otherwise about
+# itself fails here, whatever the file measures.
+
+#: The day the whole-film path stopped being a way to buy a film: the Nepal film, bought whole
+#: twice. A render started earlier is not judged again on the path it was made on (the films
+#: made and published before the staircase), only on what it measures.
+STAIRCASE_CUTOVER = "2026-09-26T00:00:00+00:00"
+#: The image source a film assembled from its takes records (`assembler.TAKES_VISUAL_SOURCE`).
+TAKES_SOURCE = "SCENE_TAKES"
+
+
+def paid_vendor_names() -> frozenset[str]:
+    """The ``PROVIDER_NAME`` of every paid vendor adapter, by the rule the legacy path's guard
+    applies (`factory.is_paid_vendor_class`): a sixth vendor is paid until it is listed free."""
+    return _paid_vendor_names()
+
+
+@functools.lru_cache(maxsize=1)
+def _paid_vendor_names() -> frozenset[str]:
+    import app.providers as providers  # noqa: PLC0415
+    from app.media.factory import (  # noqa: PLC0415 - factory imports the vendors
+        FREE_PROVIDER_MODULES,
+        is_paid_vendor_class,
+    )
+
+    names: set[str] = set()
+    for found in pkgutil.iter_modules(providers.__path__):
+        module_name = f"{providers.__name__}.{found.name}"
+        if module_name in FREE_PROVIDER_MODULES:
+            continue
+        try:
+            module = importlib.import_module(module_name)
+        except ImportError:  # pragma: no cover - an optional vendor's library is missing
+            continue
+        for value in vars(module).values():
+            if isinstance(value, type) and is_paid_vendor_class(value):
+                name = getattr(value, "PROVIDER_NAME", None)
+                if isinstance(name, str) and name:
+                    names.add(name)
+    return frozenset(names)
+
+
+def _made_in(manifest: Mapping[str, Any], environment: str) -> str:
+    """The environment the render was made in, as it recorded it; the studio's now if not."""
+    motion = manifest.get("motion")
+    record = motion if isinstance(motion, Mapping) else {}
+    made = record.get("environment") or record.get("run_kind")
+    return str(made or environment)
+
+
+def _bought_inside(manifest: Mapping[str, Any], paid: frozenset[str]) -> list[str]:
+    """The paid vendors the render itself bought stills or shots from, scene by scene; [] for
+    a film assembled from its takes (it buys no still and no shot)."""
+    image = manifest.get("image")
+    if isinstance(image, Mapping) and image.get("provider") == TAKES_SOURCE:
+        return []
+    vendors: set[str] = set()
+    for scene in manifest.get("scenes") or []:
+        if not isinstance(scene, Mapping):
+            continue
+        still = scene.get("image")
+        if isinstance(still, Mapping) and still.get("provider") in paid:
+            if still.get("succeeded") is not False and (still.get("images") or 1):
+                vendors.add(str(still["provider"]))
+        shot = scene.get("motion")
+        if (
+            isinstance(shot, Mapping)
+            and shot.get("provider") in paid
+            and not shot.get("reused_take")
+        ):
+            vendors.add(str(shot["provider"]))
+    return sorted(vendors)
+
+
+#: Licence statuses a film may carry. LICENSED (every component with commercial-use evidence)
+#: and PUBLIC_DOMAIN may go public; NEEDS_REVIEW passes quality control for a private upload
+#: only, and the publishing gate refuses it public or unlisted. ORIGINAL_AI_GENERATED and
+#: PROPRIETARY_STUDIO are the self-declared stamps written before the ledger (AR-15); they are
+#: still read so older films keep their verdict.
+PUBLIC_LICENCE_STATUSES = frozenset({"LICENSED", "PUBLIC_DOMAIN"})
+LEGACY_LICENCE_STATUSES = frozenset({"ORIGINAL_AI_GENERATED", "PROPRIETARY_STUDIO"})
+PRIVATE_ONLY_LICENCE_STATUSES = frozenset({"NEEDS_REVIEW"})
+
+
+def rights_verdict(license_status: str | None, manifest: Mapping[str, Any]) -> dict[str, Any]:
+    """Rights QC: what the film's licence status allows, read from its components' evidence.
+
+    ``passed`` is whether the film may be uploaded at all (privately at least);
+    ``public_allowed`` whether its components prove it may be seen. A status nobody wrote
+    (or one this studio does not know) fails."""
+    status = str(license_status or "")
+    licences = manifest.get("licences") if isinstance(manifest.get("licences"), Mapping) else {}
+    missing = [str(item) for item in (licences or {}).get("missing_ro") or []]
+    known = PUBLIC_LICENCE_STATUSES | LEGACY_LICENCE_STATUSES | PRIVATE_ONLY_LICENCE_STATUSES
+    passed = status in known
+    public_allowed = status in PUBLIC_LICENCE_STATUSES or status in LEGACY_LICENCE_STATUSES
+    if not passed:
+        detail = f"Starea licenței „{status}” nu este una cunoscută; filmul nu poate fi publicat."
+    elif status in PRIVATE_ONLY_LICENCE_STATUSES:
+        detail = (
+            "Licența filmului trebuie verificată: "
+            + ("; ".join(missing) if missing else "o componentă nu are dovada folosirii comerciale")
+            + ". Filmul poate fi încărcat privat, nu public sau nelistat."
+        )
+    elif status in LEGACY_LICENCE_STATUSES:
+        detail = "Licență declarată de studio înainte de registrul pe componente."
+    else:
+        detail = "Fiecare componentă a filmului are dovada folosirii comerciale."
+    return {
+        "passed": passed,
+        "public_allowed": passed and public_allowed,
+        "license_status": status,
+        "missing_ro": missing,
+        "components": len((licences or {}).get("components") or []),
+        "detail": detail,
+    }
+
+
+def audio_mix_verdict(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    """Audio mix QC: every music or ambience file the film carries is an entry of the Owner's
+    library as it is now (same id, same sha256, commercial use confirmed), and the bed sits
+    18-22 LU under the voice (`toolchain.BED_UNDER_VOICE_BAND_LU`). A film without a bed
+    passes, carrying the advisory that says why."""
+    from app.media import music_library  # noqa: PLC0415 - read at call time, as tests patch it
+    from app.media.toolchain import BED_UNDER_VOICE_BAND_LU  # noqa: PLC0415
+
+    audio = manifest.get("audio") if isinstance(manifest.get("audio"), Mapping) else {}
+    bed = (audio or {}).get("bed")
+    tracks = ([bed] if isinstance(bed, Mapping) else []) + [
+        item for item in (audio or {}).get("ambience") or [] if isinstance(item, Mapping)
+    ]
+    reasons: list[str] = []
+    library = music_library.load_library() if tracks else None
+    for track in tracks:
+        name = str(track.get("track_id") or "?")
+        entry = library.entry(name) if library is not None else None
+        if entry is None:
+            reasons.append(
+                f"Piesa „{name}” din film nu este în biblioteca de muzică a Proprietarului "
+                "(sau nu mai are licența confirmată)"
+            )
+        elif entry.sha256 != str(track.get("sha256") or ""):
+            reasons.append(f"Piesa „{name}” din film nu este fișierul licențiat (sha256 diferit)")
+    under: float | None = None
+    if isinstance(bed, Mapping):
+        value = bed.get("measured_lu_under_voice")
+        under = float(value) if isinstance(value, int | float) else None
+        low, high = BED_UNDER_VOICE_BAND_LU
+        if under is None:
+            reasons.append("Nivelul muzicii sub voce nu a fost măsurat")
+        elif not low - 0.5 <= under <= high + 0.5:
+            reasons.append(
+                f"Muzica stă la {under:.1f} LU sub voce, nu la {low:.0f}-{high:.0f} LU: "
+                "vocea trebuie să conducă"
+            )
+    return {
+        "passed": not reasons,
+        "bed": (bed or {}).get("track_id") if isinstance(bed, Mapping) else None,
+        "ambience": [str(track.get("track_id")) for track in tracks[1 if bed else 0 :]],
+        "lu_under_voice": under,
+        "attributions": list((audio or {}).get("attributions") or []),
+        "advisory": (audio or {}).get("advisory"),
+        "reasons_ro": reasons,
+    }
+
+
+def production_path_verdict(
+    engine: Engine,
+    session: Session,
+    render_job: VideoRenderJob | None,
+    manifest: Mapping[str, Any],
+    scenes: list[StoryboardScene],
+    *,
+    environment: str,
+) -> dict[str, Any]:
+    """Whether the film was made the way a film may be made since the staircase.
+
+    Two refusals, each with its Romanian reason. (1) In PRODUCTION, filmed scenes whose prompt
+    no model wrote (template prompts are a TEST convenience; the office serial's scenes may
+    come from the Owner's series look). (2) In any environment, stills or shots the whole-film
+    path bought from a paid vendor inside the render, rather than takes bought on the sheet.
+    Both apply to renders started from `STAIRCASE_CUTOVER` on; nothing is fetched or bought.
+    """
+    from app.media.assembler import shot_plan_sources  # noqa: PLC0415 - assembler reads qc
+
+    started = str(render_job.started_at or "") if render_job is not None else ""
+    judged = render_job is not None and started >= STAIRCASE_CUTOVER
+    made_in = _made_in(manifest, environment)
+    template_scenes: list[int] = []
+    if judged and render_job is not None and made_in == "PRODUCTION" and scenes:
+        sources = shot_plan_sources(engine, render_job.storyboard_id)
+        template_scenes = [
+            int(scene.scene_index)
+            for scene in scenes
+            if str(getattr(scene, "scene_kind", None) or "LIVE").upper() not in COMPOSED_KINDS
+            and (scene.prompt_json or {}).get("source") not in sources
+        ]
+    vendors = _bought_inside(manifest, paid_vendor_names()) if judged else []
+    reasons: list[str] = []
+    if template_scenes:
+        listed = ", ".join(map(str, template_scenes))
+        reasons.append(
+            ("Scena " if len(template_scenes) == 1 else "Scenele ")
+            + listed
+            + (" a fost filmată" if len(template_scenes) == 1 else " au fost filmate")
+            + " din prompturi-șablon, nu din planul de cadre scris de model: în PRODUCTION "
+            "un astfel de film nu se publică."
+        )
+    if vendors:
+        reasons.append(
+            "Filmul a fost cumpărat întreg pe calea veche de randare, de la "
+            + ", ".join(vendors)
+            + ", nu pas cu pas pe foaia de filmare, cu aprobarea legată de plan: nu se publică."
+        )
+    return {
+        "passed": not reasons,
+        "made_in": made_in,
+        "judged": judged,
+        "template_scenes": template_scenes,
+        "legacy_paid": bool(vendors),
+        "paid_vendors": vendors,
+        "reasons_ro": reasons,
+    }
+
+
+#: The shortest film YouTube treats as a Short worth publishing here.
+SHORTS_MIN_SECONDS = 10.0
+#: What a measured length may run past the channel's maximum: the container's own rounding
+#: and the last breath after the final word, never a second scene.
+SHORTS_LENGTH_SLACK_SECONDS = 1.0
+#: The longest a channel may set: YouTube's own limit for vertical Shorts since 2024-10-15.
+SHORTS_MAX_LIMIT_SECONDS = 180
+#: Per channel type, when the film's channel row carries no value of its own.
+SHORTS_MAX_BY_CHANNEL_TYPE = {"MAIN_FACTUAL": 60, "OFFICE_SERIAL": 70}
+
+
+def shorts_max_seconds(session: Session, media_asset_id: str) -> int:
+    """The longest film the film's channel takes: its ``shorts_max_seconds`` (migration 0053,
+    the Owner's policy), else its type's default (60 s factual, 70 s serial)."""
+    from app.publishing.models import ChannelRecord  # noqa: PLC0415
+    from app.publishing.services import channel_type_for_storyboard  # noqa: PLC0415
+
+    job = session.scalars(
+        select(VideoRenderJob).where(VideoRenderJob.output_asset_id == media_asset_id)
+    ).first()
+    board = session.get(Storyboard, job.storyboard_id) if job and job.storyboard_id else None
+    kind = channel_type_for_storyboard(board) if board is not None else "MAIN_FACTUAL"
+    channel = session.get(ChannelRecord, board.channel_id) if board and board.channel_id else None
+    if channel is None:
+        channel = session.scalars(
+            select(ChannelRecord)
+            .where(ChannelRecord.channel_type == kind)
+            .order_by(ChannelRecord.created_at)
+        ).first()
+    if channel is not None:
+        kind = channel.channel_type
+    stated = getattr(channel, "shorts_max_seconds", None)
+    value = int(stated) if stated else SHORTS_MAX_BY_CHANNEL_TYPE.get(kind, 60)
+    return max(int(SHORTS_MIN_SECONDS), min(value, SHORTS_MAX_LIMIT_SECONDS))
+
+
 def evaluate_media_qc(
     engine: Engine,
     media_asset_id: str,
@@ -398,7 +689,10 @@ def evaluate_media_qc(
         is_9_16 = (
             measured_w > 0 and measured_h > 0 and abs((measured_w / measured_h) - (9 / 16)) < 0.01
         )
-        dur_valid = 10.0 <= measured_dur <= 70.0  # Shorts bounds
+        # The Shorts bounds: 10 s at least, at most what the film's channel takes (audit
+        # PUB-15: 60 s for factual films, 70 s for the serial, up to YouTube's 180 s).
+        max_dur = shorts_max_seconds(session, asset.id)
+        dur_valid = SHORTS_MIN_SECONDS <= measured_dur <= max_dur + SHORTS_LENGTH_SLACK_SECONDS
 
         if probe.get("ok"):
             if not is_9_16:
@@ -407,7 +701,8 @@ def evaluate_media_qc(
                 )
             if not dur_valid:
                 failure_reasons.append(
-                    f"Measured duration {measured_dur}s outside vertical Short limits (10s-70s)"
+                    f"Durata măsurată, {measured_dur:.1f} s, iese din limitele unui Short pe "
+                    f"acest canal ({SHORTS_MIN_SECONDS:.0f}-{max_dur} s)"
                 )
 
         # Provenance must be verifiable, not merely present: recompute the digest.
@@ -441,6 +736,8 @@ def evaluate_media_qc(
             "measured_width": measured_w,
             "measured_height": measured_h,
             "measured_duration_seconds": measured_dur,
+            "max_duration_seconds": max_dur,
+            "duration_valid": dur_valid,
             "video_codec": probe.get("video_codec"),
             "has_audio_stream": probe.get("has_audio"),
             "declared_width": asset.width,
@@ -452,21 +749,7 @@ def evaluate_media_qc(
         }
 
         # 2. Rights / Licensing QC
-        valid_licenses = {
-            "ORIGINAL_AI_GENERATED",
-            "PROPRIETARY_STUDIO",
-            "PUBLIC_DOMAIN",
-            "LICENSED",
-        }
-        rights_passed = asset.license_status in valid_licenses
-        if not rights_passed:
-            failure_reasons.append(f"Invalid license status: {asset.license_status}")
-
-        checks["rights_qc"] = {
-            "passed": rights_passed,
-            "license_status": asset.license_status,
-            "provider_name": asset.provider_name,
-        }
+        #    Read from the components' evidence once the render's record is open (below).
 
         # 2b. Content source QC — placeholder frames are not publishable footage.
         is_placeholder = (
@@ -497,6 +780,18 @@ def evaluate_media_qc(
             if render_job is not None and isinstance(render_job.production_json, dict)
             else {}
         )
+        # 2. (continued) Rights: what the film's components prove (AR-15). NEEDS_REVIEW passes
+        #    for a private upload; the publishing gate keeps it from being seen.
+        rights = rights_verdict(asset.license_status, manifest)
+        rights_passed = bool(rights["passed"])
+        if not rights_passed:
+            failure_reasons.append(f"Invalid license status: {asset.license_status}")
+        checks["rights_qc"] = {**rights, "provider_name": asset.provider_name}
+        # 2a. The bed and the ambience: every file in the Owner's library as licensed, the
+        #     bed 18-22 LU under the voice.
+        mix_check = audio_mix_verdict(manifest)
+        failure_reasons.extend(mix_check["reasons_ro"])
+        checks["audio_mix_qc"] = mix_check
         storyboard_scenes: list[StoryboardScene] = []
         if render_job is not None:
             sb = session.get(Storyboard, render_job.storyboard_id)
@@ -633,6 +928,7 @@ def evaluate_media_qc(
             "coverage_ratio": None,
             "problems": [],
         }
+        read_cues: list[dict[str, Any]] = []
         if not srt_path.is_file():
             captions["problems"] = ["no captions file beside the film"]
             failure_reasons.append("Captions are missing: no SRT beside the film")
@@ -643,6 +939,7 @@ def evaluate_media_qc(
                 captions["problems"] = [f"captions do not parse: {str(exc)[:120]}"]
                 failure_reasons.append(f"Captions do not parse as SRT: {str(exc)[:120]}")
             else:
+                read_cues = cues
                 problems = caption_problems(cues)
                 captions["cues"] = len(cues)
                 if cues and measured_dur and cues[-1]["end"] > measured_dur + 0.5:
@@ -670,6 +967,20 @@ def evaluate_media_qc(
                     failure_reasons.append(f"Captions: {problem}")
         checks["captions_qc"] = captions
 
+        # 2d'. Editorial QC (audit Q10): the editing a viewer feels, measured on the delivered
+        #      file and the voice track beside it. Advisory unless the Owner made it blocking;
+        #      a check that could not measure (no encoder) stands down (passed None).
+        editorial = editorial_problems(
+            file_path,
+            manifest,
+            ffmpeg=ffmpeg if file_exists and probe.get("ok") else None,
+            cues=read_cues,
+            blocking=editorial_blocking(settings),
+        )
+        if editorial["passed"] is False:
+            failure_reasons.extend(f"Montaj: {reason}" for reason in editorial["reasons_ro"])
+        checks["editorial_qc"] = editorial
+
         # 2e. Motion QC — which LIVE scenes the film shows as a still. In PRODUCTION none may
         #     be, unless the Owner chose a locally animated still for that scene on the
         #     sheet: the old ceiling of half the scenes let the Nepal film's two stills
@@ -692,6 +1003,20 @@ def evaluate_media_qc(
         if not motion["passed"]:
             failure_reasons.append(f"Motion QC: {motion['reason_ro']}")
         checks["motion_qc"] = motion
+
+        # 2f. Production path — how the film was made, not only what the file measures. The
+        #     second Nepal render was bought whole by the legacy path from template prompts and
+        #     sat in the queue with no verdict (A12); it fails here, as would any like it.
+        path_check = production_path_verdict(
+            engine,
+            session,
+            render_job,
+            manifest,
+            storyboard_scenes,
+            environment=environment,
+        )
+        failure_reasons.extend(path_check["reasons_ro"])
+        checks["production_path_qc"] = path_check
 
         factual_passed = True
         claims_checked = []
@@ -763,8 +1088,11 @@ def evaluate_media_qc(
             and not is_placeholder
             and not degenerate
             and bool(audio["passed"])
+            and bool(mix_check["passed"])
             and bool(captions["passed"])
             and bool(motion["passed"])
+            and bool(path_check["passed"])
+            and editorial["passed"] is not False
             # Only a measured refusal counts against the film; a check that stood down
             # (None) leaves the verdict exactly where the other gates left it.
             and pictures["picture_qc"]["passed"] is not False
@@ -911,7 +1239,10 @@ DURATION_OVER_NARRATION_SECONDS = 1.0
 #: read from production['timeline']['spoken_tail_seconds'] when the render recorded it. The
 #: film used to be held within narration + 1.0 s, so the timeline shrank every breath to keep
 #: under 0.9 s: six speaking scenes kept about 0.11 s each and every cut felt rushed. A breath
-#: the writer planned is part of the film, not film over the narration.
+#: the writer planned is part of the film, not film over the narration. This is the fallback
+#: for a render that did not record its breath; renders since 2026-10-02 record 0.12 s, taken
+#: after the vendor's silence was trimmed from each take, and that recorded value is what
+#: counts (the narration they record is the trimmed words, so nothing is counted twice).
 BREATH_SECONDS = 0.35
 #: The scenes the studio composes itself: never filmed, never sent to a model.
 COMPOSED_KINDS = ("DATA_CARD", "TITLE_CARD", "BLACK")
@@ -2411,3 +2742,411 @@ def span_picture_qc(
         f"la {SPAN_FRAME_WIDTH} px"
     )
     return record
+
+
+# --------------------------------------------------------------------------- editorial QC
+# Audit Q10 (2026-10-02). Every check above is technical, factual or about a picture; none of
+# them sees the editing. The zero-credit Nepal rehearsal had five dead-air gaps, ended on 4.3 s
+# of near-black (freezedetect 20.29-27.875 s), cut every 4.65 s and broke its captions in the
+# middle of phrases, and it would have passed. These measure that, from the delivered file and
+# the voice track beside it. They are advisory (they name the fault and refuse nothing) until
+# the Owner makes them blocking: settings.editorial_qc_blocking, else the look file's
+# finish.editorial_qc_blocking.
+
+#: The picture is read at this width: enough for luma levels, motion and cuts, and quick.
+EDITORIAL_WIDTH = 270
+#: The longest silence allowed inside the narration, measured at -45 dB on the voice track.
+MAX_NARRATION_SILENCE_SECONDS = 0.25
+NARRATION_SILENCE_DB = -45.0
+#: The last seconds of the film, and how long the picture may be black or frozen inside them.
+END_WINDOW_SECONDS = 3.0
+MAX_END_STILL_SECONDS = 1.5
+#: Black in limited range: Y 16 is black, and a caption over black still reads at most 18.
+BLACK_YAVG = 18.0
+#: A frame whose mean difference from the one before is under this (8-bit, at 270 px) did
+#: not move.
+FROZEN_YDIF = 0.1
+#: The longest average shot a short may have, and what counts as a cut (scdet, percent).
+MAX_AVERAGE_SHOT_SECONDS = 3.5
+CUT_SCORE_PERCENT = 15.0
+#: The picture must move inside the first half-second: the first frame decides the swipe.
+OPENING_SECONDS = 0.5
+MIN_OPENING_YDIF = 0.1
+#: A shot whose colour sits this far from the hero (Delta E 1976) after the grade stands out.
+GRADE_OUTLIER_DELTA_E = 25.0
+
+
+@dataclass(frozen=True)
+class PictureTrace:
+    """Per-frame luma mean and difference, and the cuts scdet found, of one film."""
+
+    times: list[float]
+    yavg: list[float]
+    ydif: list[float]
+    cuts: list[float]
+    duration: float
+    #: scdet's score per frame (percent): how much each frame changed against the one before.
+    scores: list[float] = field(default_factory=list)
+
+
+def picture_trace(ffmpeg: str | None, film: Path | str) -> PictureTrace | None:
+    """One pass over the film at EDITORIAL_WIDTH: signalstats and scdet per frame. None when
+    the film cannot be read: nothing is assumed about a picture nobody measured."""
+    if not ffmpeg or not Path(film).is_file():
+        return None
+    result = _ffmpeg_run(
+        [
+            ffmpeg,
+            "-v",
+            "error",
+            "-nostdin",
+            "-threads",
+            "2",
+            "-i",
+            str(film),
+            "-an",
+            "-vf",
+            f"scale={EDITORIAL_WIDTH}:-2:flags=bilinear,format=yuv420p,signalstats,"
+            f"scdet=threshold={CUT_SCORE_PERCENT:g},metadata=print:file=-",
+            "-f",
+            "null",
+            "-",
+        ]
+    )
+    if result is None or result.returncode != 0:
+        return None
+    times: list[float] = []
+    yavg: list[float] = []
+    ydif: list[float] = []
+    cuts: list[float] = []
+    scores: list[float] = []
+    for line in (result.stdout or "").splitlines():
+        stamp = re.search(r"pts_time:\s*([-0-9.]+)", line)
+        if stamp:
+            times.append(float(stamp.group(1)))
+            yavg.append(0.0)
+            ydif.append(0.0)
+            scores.append(0.0)
+            continue
+        if not times:
+            continue
+        key, _, value = line.strip().partition("=")
+        try:
+            number = float(value)
+        except ValueError:
+            continue
+        if key == "lavfi.signalstats.YAVG":
+            yavg[-1] = number
+        elif key == "lavfi.signalstats.YDIF":
+            ydif[-1] = number
+        elif key == "lavfi.scd.score":
+            scores[-1] = number
+        elif key == "lavfi.scd.time":
+            cuts.append(number)
+    if len(times) < 2:
+        return None
+    step = (times[-1] - times[0]) / (len(times) - 1) if times[-1] > times[0] else 1 / 24
+    return PictureTrace(
+        times=times, yavg=yavg, ydif=ydif, cuts=cuts, duration=times[-1] + step, scores=scores
+    )
+
+
+#: A cut the timeline recorded counts when the picture changes there: its frame scores at
+#: least this (scdet, percent) and this many times the frames around it. A 15% punch-in on a
+#: flat picture scores a few percent, far under a hard cut, yet it is a new framing.
+CONFIRMED_CUT_PERCENT = 2.0
+CONFIRMED_CUT_RATIO = 4.0
+
+
+def _recorded_cuts(production: Mapping[str, Any]) -> list[float]:
+    """Where the render says the picture changes: each scene's start (but the first) and
+    each second framing (production['timeline'])."""
+    timeline = production.get("timeline")
+    spans = timeline.get("spans") if isinstance(timeline, Mapping) else None
+    found: list[float] = []
+    for position, span in enumerate(spans or []):
+        if not isinstance(span, Mapping):
+            continue
+        start = _seconds(span.get("start"))
+        if start is None:
+            continue
+        if position:
+            found.append(start)
+        framing = span.get("second_framing")
+        at = _seconds(framing.get("at")) if isinstance(framing, Mapping) else None
+        if at is not None:
+            found.append(start + at)
+    return found
+
+
+def editorial_cut_times(trace: PictureTrace, production: Mapping[str, Any]) -> list[float]:
+    """The film's cuts: every one scdet found over CUT_SCORE_PERCENT, and every cut the
+    timeline recorded that the picture confirms (a spike of CONFIRMED_CUT_PERCENT at least,
+    CONFIRMED_CUT_RATIO times its neighbourhood), each counted once."""
+    found = list(trace.cuts)
+    step = trace.duration / max(1, len(trace.times))
+    for moment in _recorded_cuts(production):
+        near = [i for i, t in enumerate(trace.times) if abs(t - moment) <= 1.5 * step]
+        if not near:
+            continue
+        peak = max(near, key=lambda i: trace.scores[i] if i < len(trace.scores) else 0.0)
+        score = trace.scores[peak] if peak < len(trace.scores) else 0.0
+        around = [
+            trace.scores[i]
+            for i, t in enumerate(trace.times)
+            if 3 * step < abs(t - trace.times[peak]) <= 12 * step and i < len(trace.scores)
+        ]
+        floor = sorted(around)[len(around) // 2] if around else 0.0
+        if score >= CONFIRMED_CUT_PERCENT and score >= CONFIRMED_CUT_RATIO * max(floor, 0.1):
+            found.append(trace.times[peak])
+    merged: list[float] = []
+    for moment in sorted(found):
+        if not merged or moment - merged[-1] > 2 * step:
+            merged.append(moment)
+    return merged
+
+
+def _longest_run(flags: list[bool], step: float) -> float:
+    longest = run = 0
+    for flag in flags:
+        run = run + 1 if flag else 0
+        longest = max(longest, run)
+    return round(longest * step, 3)
+
+
+def _silent_beats(production: Mapping[str, Any]) -> list[tuple[float, float]]:
+    """The timeline's silent composed spans: a deliberate pause, not dead air."""
+    timeline = production.get("timeline")
+    spans = timeline.get("spans") if isinstance(timeline, Mapping) else None
+    beats: list[tuple[float, float]] = []
+    for span in spans or []:
+        if not isinstance(span, Mapping):
+            continue
+        composed = bool(span.get("composed")) or _kind(span.get("kind")) in COMPOSED_KINDS
+        spoken = _seconds(span.get("spoken_seconds"))
+        start, end = _seconds(span.get("start")), _seconds(span.get("end"))
+        if composed and (spoken is None or spoken <= SILENT_SPOKEN_SECONDS):
+            if start is not None and end is not None and end > start:
+                beats.append((start, end))
+    return beats
+
+
+def _voice_source(film: Path, production: Mapping[str, Any]) -> Path:
+    """The narration as it was joined (production['audio']['voice_track']), else the film."""
+    audio = production.get("audio")
+    track = audio.get("voice_track") if isinstance(audio, Mapping) else None
+    name = track.get("path") if isinstance(track, Mapping) else None
+    if name:
+        candidate = film.parent / Path(str(name)).name
+        if candidate.is_file():
+            return candidate
+    return film
+
+
+def _narration_silences(
+    ffmpeg: str, film: Path, production: Mapping[str, Any], duration: float
+) -> list[tuple[float, float]] | None:
+    """The silences inside the narration: after its first word, before its last, and not
+    on a silent card. None when the sound could not be read."""
+    spans = silence_spans(
+        ffmpeg,
+        _voice_source(film, production),
+        threshold_db=NARRATION_SILENCE_DB,
+        min_seconds=MAX_NARRATION_SILENCE_SECONDS,
+    )
+    if spans is None:
+        return None
+    beats = _silent_beats(production)
+    inner: list[tuple[float, float]] = []
+    for position, (start, end) in enumerate(spans):
+        if start <= 0.02:
+            continue  # before the first word
+        if position == len(spans) - 1 and end >= duration - 0.05:
+            continue  # after the last word
+        overlap = max(
+            (min(end, b_end) - max(start, b_start) for b_start, b_end in beats), default=0.0
+        )
+        if overlap >= 0.5 * (end - start):
+            continue  # a silent card: the pause is the scene
+        inner.append((start, end))
+    return inner
+
+
+def _grade_outliers(production: Mapping[str, Any]) -> list[dict[str, Any]]:
+    grade = production.get("grade")
+    shots = grade.get("shots") if isinstance(grade, Mapping) else None
+    found: list[dict[str, Any]] = []
+    for entry in shots or []:
+        if not isinstance(entry, Mapping):
+            continue
+        after = _seconds(entry.get("delta_e_after"))
+        if after is not None and after > GRADE_OUTLIER_DELTA_E:
+            found.append({"scene_index": entry.get("scene_index"), "delta_e": round(after, 1)})
+    return found
+
+
+def editorial_problems(
+    film: Path | str,
+    production: Mapping[str, Any],
+    *,
+    ffmpeg: str | None = None,
+    cues: list[dict[str, Any]] | None = None,
+    blocking: bool = False,
+) -> dict[str, Any]:
+    """What a viewer would feel in the editing of ``film``, measured, with Romanian reasons.
+
+    ``production`` is the render's manifest (the timeline's silent cards, the voice track, the
+    bed, the grade); ``cues`` the captions as `parse_srt` reads them. ``status``: PASSED,
+    ADVISORY (faults found, not blocking), FAILED (faults found and ``blocking``) or
+    NOT_MEASURED (no encoder or no film: ``passed`` is None, never a pass by absence).
+    """
+    path = Path(film)
+    record: dict[str, Any] = {
+        "passed": None,
+        "status": "NOT_MEASURED",
+        "blocking": bool(blocking),
+        "problems": [],
+        "reasons_ro": [],
+        "measurements": {},
+        "limits": {
+            "narration_silence_seconds": MAX_NARRATION_SILENCE_SECONDS,
+            "end_still_seconds": MAX_END_STILL_SECONDS,
+            "end_window_seconds": END_WINDOW_SECONDS,
+            "black_yavg": BLACK_YAVG,
+            "average_shot_seconds": MAX_AVERAGE_SHOT_SECONDS,
+            "opening_seconds": OPENING_SECONDS,
+            "grade_outlier_delta_e": GRADE_OUTLIER_DELTA_E,
+        },
+    }
+    trace = picture_trace(ffmpeg, path)
+    if trace is None or not ffmpeg:
+        record["detail"] = "Montajul nu a putut fi măsurat: lipsește FFmpeg sau filmul."
+        return record
+    step = trace.duration / len(trace.times)
+    problems: list[dict[str, Any]] = []
+
+    def problem(code: str, reason: str, **measured: Any) -> None:
+        problems.append({"code": code, "reason_ro": reason, **measured})
+
+    silences = _narration_silences(ffmpeg, path, production, trace.duration)
+    longest_silence = max((end - start for start, end in silences or []), default=0.0)
+    if silences:
+        start, end = max(silences, key=lambda span: span[1] - span[0])
+        problem(
+            "dead_air",
+            f"O tăcere de {_ro_number(end - start, 2)} s în mijlocul narațiunii (la "
+            f"{_ro_number(start)} s; cel mult {_ro_number(MAX_NARRATION_SILENCE_SECONDS, 2)} s): "
+            "în golurile vocii spectatorul pleacă.",
+            seconds=round(end - start, 3),
+            at=round(start, 3),
+        )
+
+    tail = [i for i, t in enumerate(trace.times) if t >= trace.duration - END_WINDOW_SECONDS]
+    black_end = _longest_run([trace.yavg[i] <= BLACK_YAVG for i in tail], step)
+    frozen_end = _longest_run([i > 0 and trace.ydif[i] < FROZEN_YDIF for i in tail], step)
+    if black_end > MAX_END_STILL_SECONDS:
+        problem(
+            "black_ending",
+            f"Filmul se încheie pe negru: {_ro_number(black_end)} s de negru în ultimele "
+            f"{END_WINDOW_SECONDS:.0f} s (cel mult {_ro_number(MAX_END_STILL_SECONDS)} s). Un "
+            "short se reia în buclă, iar un final negru îl trimite pe spectator mai departe.",
+            seconds=black_end,
+        )
+    if frozen_end > MAX_END_STILL_SECONDS:
+        problem(
+            "frozen_ending",
+            f"Imaginea stă încremenită {_ro_number(frozen_end)} s în ultimele "
+            f"{END_WINDOW_SECONDS:.0f} s (cel mult {_ro_number(MAX_END_STILL_SECONDS)} s).",
+            seconds=frozen_end,
+        )
+
+    cuts = len(editorial_cut_times(trace, production))
+    average = round(trace.duration / (cuts + 1), 3)
+    if average > MAX_AVERAGE_SHOT_SECONDS:
+        problem(
+            "long_shots",
+            f"Un cadru durează în medie {_ro_number(average)} s (cel mult "
+            f"{_ro_number(MAX_AVERAGE_SHOT_SECONDS)} s): {cuts} "
+            f"{'tăietură' if cuts == 1 else 'tăieturi'} în {_ro_number(trace.duration)} s.",
+            seconds=average,
+        )
+
+    opening = [trace.ydif[i] for i, t in enumerate(trace.times) if 0 < i and t < OPENING_SECONDS]
+    opening_motion = round(sum(opening) / len(opening), 3) if opening else 0.0
+    if opening_motion < MIN_OPENING_YDIF:
+        problem(
+            "static_opening",
+            "Filmul începe pe o imagine nemișcată: în prima jumătate de secundă nimic nu se "
+            "mișcă, iar primul cadru decide dacă spectatorul rămâne.",
+            ydif=opening_motion,
+        )
+
+    dangling = dangling_caption_words(cues or [])
+    for found in dangling:
+        problem(
+            "dangling_caption",
+            f"Subtitrarea {found['cue']} se oprește pe cuvântul «{found['word']}», în mijlocul "
+            "frazei.",
+            cue=found["cue"],
+        )
+
+    audio = production.get("audio")
+    bed = audio.get("bed") if isinstance(audio, Mapping) else None
+    if not bed:
+        problem(
+            "no_music_bed",
+            "Filmul nu are fond: biblioteca de muzică a studioului nu are încă o piesă "
+            "licențiată folosibilă, așa că se aude doar vocea.",
+        )
+
+    outliers = _grade_outliers(production)
+    for found in outliers:
+        problem(
+            "colour_outlier",
+            f"Scena {found['scene_index']} se abate de la culoarea filmului și după corecție "
+            f"(ΔE {_ro_number(found['delta_e'])}, peste {GRADE_OUTLIER_DELTA_E:.0f}).",
+            delta_e=found["delta_e"],
+        )
+
+    grade = production.get("grade")
+    record["measurements"] = {
+        "duration_seconds": round(trace.duration, 3),
+        "longest_silence_seconds": round(longest_silence, 3),
+        "silence_measured_on": _voice_source(path, production).name,
+        "black_end_seconds": black_end,
+        "frozen_end_seconds": frozen_end,
+        "cuts": cuts,
+        "average_shot_seconds": average,
+        "opening_motion": opening_motion,
+        "dangling_captions": dangling,
+        "bed": bool(bed),
+        "grade_delta_e_max_after": (
+            grade.get("delta_e_max_after") if isinstance(grade, Mapping) else None
+        ),
+        "grade_outliers": outliers,
+    }
+    record["problems"] = problems
+    record["reasons_ro"] = [item["reason_ro"] for item in problems]
+    if not problems:
+        record.update(passed=True, status="PASSED")
+    elif blocking:
+        record.update(passed=False, status="FAILED")
+    else:
+        record.update(passed=True, status="ADVISORY")
+    count = len(problems)
+    record["detail"] = (
+        "Montajul nu are nimic de semnalat."
+        if not problems
+        else f"{count} {'observație' if count == 1 else 'observații'} de montaj"
+        + ("." if blocking else " (recomandări; nu blochează publicarea).")
+    )
+    return record
+
+
+def editorial_blocking(settings: Any | None) -> bool:
+    """Whether editorial QC refuses a film: the Owner's setting, else the look file's finish
+    (`cards.film_finish`), else False: advisory until he decides."""
+    stated = getattr(settings, "editorial_qc_blocking", None) if settings is not None else None
+    if isinstance(stated, bool):
+        return stated
+    return bool(film_finish().get("editorial_qc_blocking", False))

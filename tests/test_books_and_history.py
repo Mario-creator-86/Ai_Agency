@@ -269,11 +269,12 @@ def test_a_budget_is_measured_from_the_books_and_refuses_what_it_cannot_afford(
     )
     assert budget_status(engine)["budgets"][0]["state"] == "WARNING"
     assert budget_status(engine)["today"]["by_provider"][0]["billed_usd_micros"] == 1_000_000
-    # A new limit replaces the old one and keeps it; "0" retires it.
+    # A new limit replaces the old one and keeps it; retire=True retires it (PAGE-05: "0"
+    # is refused).
     set_budget(engine, BudgetCommand(period="DAILY", limit_usd="5"))
     assert budget_status(engine)["budgets"][0]["state"] == "EXCEEDED"
     assert not may_spend(engine, 0)["allowed"], "an exceeded budget refuses even the unpriced"
-    set_budget(engine, BudgetCommand(period="DAILY", limit_usd="0"))
+    set_budget(engine, BudgetCommand(period="DAILY", retire=True))
     assert budget_status(engine)["budgets"] == []
     view = client.get("/api/v1/economy/budget", headers=headers).json()
     assert view["today"]["spent_usd"] == "8.5"

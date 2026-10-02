@@ -544,3 +544,25 @@ def test_the_owners_stop_before_the_close_stops_tomorrows_script_too(
     # The day worked, so its record is still closed (as before this stage existed).
     assert stages["daily_log"]["status"] == COMPLETED
     assert result["status"] == "PARTIAL"
+
+
+def test_a_failed_stage_leaves_its_frames_in_the_log_not_only_its_class(
+    engine, settings, vault, studio, letters, caplog
+):
+    """Found on a copy of the Owner's studio (2026-10-02): a stage failed «O eroare neașteptată
+    în codul studioului» and the log held no line at all for it - the class and 500 characters
+    sat in the run record, the frames nowhere. Whoever diagnoses it needs where it broke."""
+    import logging
+
+    ran: list[str] = []
+    runners = _day(ran)
+    runners["research_and_verification"] = _raise(KeyError("claim_id"))
+
+    with caplog.at_level(logging.WARNING, logger="studio.runbook"):
+        execute_daily_run(engine, settings, vault, stage_runners=runners, sleep=lambda _s: None)
+
+    failed = [r for r in caplog.records if r.getMessage() == "stage_failed"]
+    assert len(failed) == 1, [r.getMessage() for r in caplog.records]
+    record = failed[0]
+    assert record.stage == "research_and_verification"
+    assert record.exc_info is not None and record.exc_info[0] is KeyError

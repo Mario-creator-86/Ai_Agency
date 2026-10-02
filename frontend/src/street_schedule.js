@@ -1,5 +1,8 @@
+import { studioPlace } from './office_clock.js';
+
 /**
- * How busy the street in front of the headquarters is, by the real hour and day in Bucharest.
+ * How busy the street in front of the headquarters is, by the real hour and day where the studio
+ * stands (office_clock.js studioPlace; Bucharest, the first studio's, is the fallback).
  *
  * The profiles are the city's rhythm as anyone who lives there knows it, not a count from a
  * sensor: the street is at its fullest in the rush hours (08:00-09:00 and 17:30-18:30 on a
@@ -69,11 +72,15 @@ export function orthodoxEaster(year) {
 const FIXED_HOLIDAYS=new Set(['01-01','01-02','01-06','01-07','01-24','05-01','06-01','08-15','11-30','12-01','12-25','12-26']);
 
 /**
- * Whether a date in Bucharest is a Romanian public holiday: the fixed ones, and Orthodox Good
- * Friday, Easter, Easter Monday, Rusalii (Pentecost) and its Monday.
+ * Whether a date is a public holiday where the studio stands. Only Romania's calendar is known to
+ * the page (the fixed ones, and Orthodox Good Friday, Easter, Easter Monday, Rusalii and its
+ * Monday); a studio elsewhere (STUDIO_HOLIDAY_COUNTRY, or none) gets ordinary days, never another
+ * country's holidays.
  * @param {number} year @param {number} month 1-12 @param {number} day
+ * @param {string} [country] ISO 3166 code; the studio's place when not given
  */
-export function isPublicHoliday(year, month, day) {
+export function isPublicHoliday(year, month, day, country = studioPlace().holidayCountry) {
+  if (country !== 'RO') return false;
   const mmdd=`${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
   if(FIXED_HOLIDAYS.has(mmdd)) return true;
   const [em,ed]=orthodoxEaster(year);

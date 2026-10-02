@@ -6,7 +6,7 @@
   "series_key": "office_serial",
   "provider_kind": "elevenlabs",
   "use_until_the_owner_binds": true,
-  "note": "A proposal the Owner may change or switch off. Each id is one of the 21 premade voices his ElevenLabs connection already lists (read on a copy of data/studio.db, 2026-09-24); nothing was synthesised to choose them. A voice he binds to a character in the character bible always wins over this file. With use_until_the_owner_binds false, a character with no bound voice speaks in the narrator's voice. The narrator is not chosen here: it is the channel's own voice (on his data the Organization default, Roger, CwhRBWXzGAHq8TQ4Fs17), which no character below uses.",
+  "note": "A proposal the Owner may change or switch off. Each id is one of ElevenLabs' public premade voices, chosen from the catalogue's names and descriptions; nothing was synthesised to choose them. A voice he binds to a character in the character bible always wins over this file. With use_until_the_owner_binds false, a character with no bound voice speaks in the narrator's voice. The narrator is not chosen here: it is the channel's own voice (the Organization default unless a channel names another), which no character below should use.",
   "voices": {
     "Sarah Executive": {
       "voice_id": "EXAVITQu4vr4xnSDxMaL",

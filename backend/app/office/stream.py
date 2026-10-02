@@ -11,8 +11,9 @@ The Owner's key (2026-09-25) is the socket's first message, not its URL: the pag
 ``{"type": "auth", "token": ...}`` when GET /office/stream says ``auth: "first_message"``. Only once
 the key is right and the signalling server has answered does the relay send the page
 ``{"type": "relay_ready"}``, and the page's stream client then begins, as it did when the socket
-opened. The key is never forwarded to the signalling server, never echoed and never logged. A page
-from before this change still puts the key in the query string; that form is read the old way.
+opened. The key is never forwarded to the signalling server, never echoed and never logged. A key
+in the query string is refused outright since 2026-10-01 (SEC-02): uvicorn logs a handshake's path
+with its query, and the Windows service kept that log on disk.
 """
 
 from __future__ import annotations
@@ -25,12 +26,12 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import websockets
-from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect, status
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, status
 
 from app.security import (
     SOCKET_AUTH,
     SOCKET_AUTH_TIMEOUT_S,
-    owner_key_matches,
+    refuse_key_in_url,
     socket_first_message_auth,
 )
 
@@ -77,21 +78,15 @@ def register_stream_gateway(
     """Registers the relay; ``connect`` opens the upstream connection (replaced in tests)."""
 
     @app.websocket(RELAY_PATH)
-    async def office_stream_signalling(
-        websocket: WebSocket,
-        token: str | None = Query(default=None),
-    ) -> None:
+    async def office_stream_signalling(websocket: WebSocket) -> None:
+        # a key in the URL is refused before the handshake, whatever it is (SEC-02)
+        if await refuse_key_in_url(websocket):
+            return
         settings = app.state.settings
         expected = settings.owner_token.get_secret_value()
-        # a page from before 2026-09-25 says the key in the URL: refused before the handshake
-        first_message = token is None
-        if not first_message and not owner_key_matches(token, expected):
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        await websocket.accept()
+        if not await socket_first_message_auth(websocket, expected, timeout_s=auth_timeout_s):
             return
-        if first_message:
-            await websocket.accept()
-            if not await socket_first_message_auth(websocket, expected, timeout_s=auth_timeout_s):
-                return
         target = signalling_target(settings)
         if target is None:
             await websocket.close(code=status.WS_1013_TRY_AGAIN_LATER)
@@ -102,11 +97,8 @@ def register_stream_gateway(
             logger.info("office_stream_unreachable", extra={"error": type(err).__name__})
             await websocket.close(code=status.WS_1013_TRY_AGAIN_LATER)
             return
-        if first_message:
-            # the page's stream client starts only now, as it did when the socket opened
-            await websocket.send_text(RELAY_READY)
-        else:
-            await websocket.accept()
+        # the page's stream client starts only now, as it did when the socket opened
+        await websocket.send_text(RELAY_READY)
         try:
             await _relay(websocket, upstream)
         finally:

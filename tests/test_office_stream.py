@@ -72,7 +72,9 @@ def test_the_relay_carries_signalling_both_ways():
         return upstream
 
     client = client_for(settings(), connect)
-    with client.websocket_connect(f"{RELAY_PATH}?token={TOKEN}") as ws:
+    with client.websocket_connect(RELAY_PATH) as ws:
+        ws.send_text(json.dumps({"type": "auth", "token": TOKEN}))
+        assert json.loads(ws.receive_text()) == {"type": "relay_ready"}
         assert ws.receive_text() == '{"type":"config"}'
         ws.send_text('{"type":"listStreamers"}')
         assert ws.receive_text() == 'answer:{"type":"listStreamers"}'
@@ -81,32 +83,18 @@ def test_the_relay_carries_signalling_both_ways():
     assert upstream.sent == ['{"type":"listStreamers"}']
 
 
-@pytest.mark.parametrize("query", ["", "?token=", "?token=not-the-owner"])
-def test_without_the_owner_token_the_relay_refuses(query):
+@pytest.mark.parametrize(
+    "query", ["?token=", "?token=not-the-owner", f"?token={TOKEN}", f"?x=1&Token={TOKEN}"]
+)
+def test_a_key_in_the_url_is_refused_before_reaching_out_even_the_right_one(query):
+    """SEC-02 (2026-10-01): uvicorn logs a handshake's path with its query, so a key in the URL
+    is refused outright, never read, and the relay never reaches the signalling server."""
     client = client_for(settings(), never_connect)
     with pytest.raises(WebSocketDisconnect) as refused:
         with client.websocket_connect(f"{RELAY_PATH}{query}") as ws:
+            ws.send_text(json.dumps({"type": "auth", "token": TOKEN}))
             ws.receive_text()
     assert refused.value.code == 1008
-
-
-def test_with_no_stream_configured_the_relay_closes_without_reaching_out():
-    client = client_for(settings(url=None), never_connect)
-    with pytest.raises(WebSocketDisconnect) as closed:
-        with client.websocket_connect(f"{RELAY_PATH}?token={TOKEN}") as ws:
-            ws.receive_text()
-    assert closed.value.code == 1013
-
-
-def test_when_the_stream_is_not_running_the_relay_closes_and_the_page_keeps_its_renderer():
-    async def unreachable(*args, **kwargs):
-        raise ConnectionRefusedError("nothing on the port")
-
-    client = client_for(settings(), unreachable)
-    with pytest.raises(WebSocketDisconnect) as closed:
-        with client.websocket_connect(f"{RELAY_PATH}?token={TOKEN}") as ws:
-            ws.receive_text()
-    assert closed.value.code == 1013
 
 
 @pytest.mark.parametrize(

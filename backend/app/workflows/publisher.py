@@ -11,6 +11,7 @@ from fastapi import WebSocket
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
+from app.db import lock_for_write
 from app.models import DomainEvent
 from app.schemas import EventView
 from app.services import utc_now
@@ -59,44 +60,87 @@ class ConnectionManager:
         return sent
 
 
-def publish_pending_outbox(
-    engine: Engine,
-    manager: ConnectionManager,
-    limit: int = 100,
-) -> int:
-    """Read pending OutboxRecord entries, broadcast to WebSockets, and mark PUBLISHED."""
-    now_str = utc_now()
-    published_count = 0
+def claim_pending_outbox(engine: Engine, limit: int = 100) -> list[dict[str, Any]]:
+    """Mark the oldest PENDING outbox rows PUBLISHED, commit, and return their messages.
 
+    The rows are marked and committed *before* anyone hears of them (REL-12, 2026-10-02). The
+    old order broadcast first and updated after, in a deferred transaction without the write
+    lock: when that commit failed beside another writer ("database is locked") the sockets had
+    been told already and the rows stayed PENDING, so the next pass told them again. Now a
+    failed commit raises here and nothing is sent; a socket that misses a message catches up
+    through `replay_events`, which is what the page's reconnect reads.
+
+    A plain read first: the dispatcher runs every second, and an empty outbox must not take
+    the studio's write lock each time.
+    """
+    with Session(engine) as session:
+        waiting = session.scalars(
+            select(OutboxRecord.sequence).where(OutboxRecord.status == "PENDING").limit(1)
+        ).first()
+    if waiting is None:
+        return []
+
+    now_str = utc_now()
+    messages: list[dict[str, Any]] = []
     with Session(engine) as session, session.begin():
+        lock_for_write(session)
         records = session.scalars(
             select(OutboxRecord)
             .where(OutboxRecord.status == "PENDING")
             .order_by(OutboxRecord.sequence.asc())
             .limit(limit)
         ).all()
+        for record in records:
+            record.status = "PUBLISHED"
+            record.published_at = now_str
+            messages.append({"type": "event", "data": record.payload})
+    # Only here, after the commit, are the messages anybody's to send.
+    return messages
 
-        if not records:
-            return 0
 
-        for r in records:
-            msg = {"type": "event", "data": r.payload}
-            try:
-                # Run broadcast safely
-                try:
-                    loop = asyncio.get_running_loop()
-                    loop.create_task(manager.broadcast(msg))
-                except RuntimeError:
-                    asyncio.run(manager.broadcast(msg))
-                r.status = "PUBLISHED"
-                r.published_at = now_str
-                published_count += 1
-            except Exception as exc:
-                logger.error("outbox_publish_failed", extra={"record_id": r.id, "error": str(exc)})
-                r.status = "FAILED"
+async def _broadcast_all(manager: ConnectionManager, messages: list[dict[str, Any]]) -> None:
+    for message in messages:
+        try:
+            await manager.broadcast(message)
+        except Exception as exc:  # noqa: BLE001 - one message must not lose the rest
+            logger.error("outbox_broadcast_failed", extra={"error": type(exc).__name__})
 
-        session.flush()
-    return published_count
+
+async def dispatch_pending_outbox(
+    engine: Engine, manager: ConnectionManager, limit: int = 100
+) -> int:
+    """One pass of the server's dispatcher: claim in a thread, then broadcast on this loop.
+
+    The database part runs off the event loop (`asyncio.to_thread`), so a write lock held
+    elsewhere makes this pass wait, not every request the server is answering; the sockets
+    belong to this loop, so the broadcasts stay here.
+    """
+    messages = await asyncio.to_thread(claim_pending_outbox, engine, limit)
+    await _broadcast_all(manager, messages)
+    return len(messages)
+
+
+def publish_pending_outbox(
+    engine: Engine,
+    manager: ConnectionManager,
+    limit: int = 100,
+) -> int:
+    """Claim the pending rows (`claim_pending_outbox`) and broadcast them; how many.
+
+    For callers without a loop of their own (scripts, tests): the broadcasts run to the end
+    here. Called from inside a running loop, they are scheduled on it — still only after the
+    rows were committed. The server's dispatcher uses `dispatch_pending_outbox`.
+    """
+    messages = claim_pending_outbox(engine, limit)
+    if not messages:
+        return 0
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(_broadcast_all(manager, messages))
+    else:
+        loop.create_task(_broadcast_all(manager, messages))
+    return len(messages)
 
 
 def replay_events(

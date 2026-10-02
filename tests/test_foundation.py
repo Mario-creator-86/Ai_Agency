@@ -71,9 +71,40 @@ def test_built_frontend_and_security_headers(client):
 
 
 def test_unmigrated_database_fails_closed(settings):
-    with pytest.raises(Exception, match="alembic_version"):
+    """An empty database file is a studio nobody bootstrapped: the start refuses, in words
+    that say what to run, not with the raw SQL error of a missing table."""
+    from sqlalchemy.exc import OperationalError
+
+    with pytest.raises(RuntimeError, match="scripts/bootstrap.py") as refused:
         with TestClient(create_app(settings)):
             pass
+    assert not isinstance(refused.value, OperationalError)
+    assert "Rulează scripts/bootstrap.py" in str(refused.value)
+    assert "no such table" not in str(refused.value)
+
+
+def test_a_database_at_an_older_revision_names_both_revisions(settings):
+    engine = create_db_engine(settings.database_url)
+    migrate(engine, "0048_production_sheet")
+    engine.dispose()
+    with pytest.raises(RuntimeError, match="0048_production_sheet") as refused:
+        with TestClient(create_app(settings)):
+            pass
+    assert "Rulează scripts/bootstrap.py" in str(refused.value)
+
+
+def test_the_expected_revision_is_the_head_of_the_migration_chain():
+    """Computed from the migrations themselves, so a new revision needs no edit here."""
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+    from app.config import ROOT
+    from app.main import expected_revision
+
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(ROOT / "backend/migrations"))
+    assert expected_revision() == ScriptDirectory.from_config(config).get_current_head()
+    # The chain's head moves with every revision; it is never older than the take intent.
+    assert expected_revision() >= "0049_take_intent"
 
 
 def test_snapshot_is_real_and_no_secrets(client, headers, settings):

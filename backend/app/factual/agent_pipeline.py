@@ -492,7 +492,11 @@ Scrie {scenes} scene. Fiecare scenă:
   ENDING sau CTA. O scenă care nu joacă niciun rol nu se scrie;
 - ULTIMA scenă închide filmul: duce finalul din "ending" și îndemnul din "cta", și se
   etichetează ENDING sau CTA. Nu termina pe EVIDENCE sau PAYOFF și nu lăsa finalul doar în
-  câmpurile de sus — se rostește în scenă;
+  câmpurile de sus — se rostește în scenă. Este o scenă "LIVE": îndemnul se spune peste o
+  imagine (răsplata sau imaginea de la început), niciodată peste negru;
+- fă din final o buclă: ultima replică duce înapoi la prima, astfel încât cine vede din nou
+  începutul să simtă că povestea continuă. Un short se privește în buclă, iar o reluare se
+  numără de două ori;
 - spune în "visual" ce se VEDE, nu ce se aude: arată informația (nori care se strâng, apa
   care urcă, un sat văzut de sus), nu repeta în imagine ce spune deja naratorul. Oamenii apar
   doar văzuți de departe sau din spate, niciodată cu fața spre cameră.
@@ -505,7 +509,8 @@ Scrie {scenes} scene. Fiecare scenă:
   "value" și "unit" se copiază EXACT dintr-o afirmație de mai jos, iar "claim_id" este
   identificatorul ei; o cifră pe care afirmația nu o conține face ca scenariul să fie
   respins. "TITLE_CARD": un titlu pe ecran, cu "card": {{"title": "..."}}. "BLACK": ecran
-  negru, pentru o tăcere sau pentru îndemnul final, cu "card": {{"cta": "..."}} dacă vrei.
+  negru, numai ca o pauză tăcută de cel mult o secundă (cel mult două cuvinte rostite) și
+  niciodată ca ultimă scenă: un final negru îl face pe spectator să dea mai departe.
   Nu cere grafice, bare sau ecran negru într-o scenă LIVE: un generator de fotografii le
   desenează greșit, iar fiecare încercare costă bani.
 

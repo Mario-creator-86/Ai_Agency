@@ -393,3 +393,146 @@ def test_a_master_that_cannot_be_encoded_raises_rather_than_returning_silence(tm
     broken.write_bytes(b"not audio at all")
     with pytest.raises(AudioMasterError):
         encode_master_audio(ffmpeg, broken, tmp_path / "out.m4a")
+
+
+# ------------------------------------------------- the encoder in a film folder of any depth
+
+
+def _deep_folder(base: Path, length: int = 300) -> Path:
+    """A film folder whose path is longer than ``length`` characters (Windows MAX_PATH is
+    260): a buyer with a deep install folder or a long user name has one. Measured
+    2026-10-01: a 258-character folder given to CreateProcess as the working directory
+    failed with NotADirectoryError (WinError 267) and the rehearsal route answered 500."""
+    folder = base
+    while len(str(folder)) <= length:
+        folder = folder / ("f" * 40)
+    folder.mkdir(parents=True)
+    return folder
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="no FFmpeg on this machine")
+def test_a_shot_is_built_in_a_film_folder_deeper_than_max_path(tmp_path):
+    from app.media.assembler import _shot_command, run_encoder
+
+    ffmpeg = find_ffmpeg()
+    folder = _deep_folder(tmp_path)
+    assert len(str(folder)) > 260
+    still = folder / "frame_01.png"
+    made = run_encoder(
+        [
+            ffmpeg,
+            "-nostdin",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=gray:s=320x568:d=1",
+            "-frames:v",
+            "1",
+            str(still),
+        ],
+        folder,
+    )
+    assert made.returncode == 0, made.stderr
+    target = folder / "shot_01.mp4"
+
+    built = run_encoder(_shot_command(ffmpeg, still, None, 0.5, target, fps=24), folder)
+
+    assert built.returncode == 0, built.stderr
+    assert target.is_file() and target.stat().st_size > 0
+    # Nothing the encoder needed was left beside the film, and nothing was left behind.
+    assert sorted(p.name for p in folder.iterdir()) == ["frame_01.png", "shot_01.mp4"]
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="no FFmpeg on this machine")
+def test_captions_named_relative_to_a_deep_film_folder_are_burnt(tmp_path):
+    """The caption filter names its ASS script and font folder relative to the encoder's
+    working directory (an absolute Windows path would need escaping twice over); they are
+    carried beside the encoder into a short folder, so a deep film folder burns them too."""
+    from app.media.assembler import (
+        CAPTION_FONTS_DIR,
+        CAPTIONS_ASS_NAME,
+        ass_captions_filter,
+        ass_from_cues,
+        has_filter,
+        install_caption_fonts,
+        run_encoder,
+    )
+
+    ffmpeg = find_ffmpeg()
+    if not has_filter(ffmpeg, "subtitles"):
+        pytest.skip("this FFmpeg has no subtitles filter")
+    folder = _deep_folder(tmp_path)
+    cues = [{"start": 0.0, "end": 0.9, "lines": ["Everestul crește"], "scene_index": 1}]
+    (folder / CAPTIONS_ASS_NAME).write_text(ass_from_cues(cues), encoding="utf-8")
+    install_caption_fonts(folder)
+    out = folder / "captioned.mp4"
+
+    burnt = run_encoder(
+        [
+            ffmpeg,
+            "-nostdin",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=1080x1920:d=1",
+            "-vf",
+            ass_captions_filter(),
+            "-frames:v",
+            "12",
+            str(out),
+        ],
+        folder,
+        carry=(CAPTIONS_ASS_NAME, CAPTION_FONTS_DIR),
+    )
+
+    assert burnt.returncode == 0, burnt.stderr
+    assert out.is_file() and out.stat().st_size > 0
+
+
+def test_an_encoder_that_cannot_start_is_a_render_engine_reason_in_romanian(tmp_path, monkeypatch):
+    """An OSError when the encoder is launched (WinError 267, a missing binary, no memory) is
+    RenderEngineUnavailable with words, which the routes answer as 503 rather than a bare 500."""
+    from app.media import assembler
+
+    def refuse(*_args, **_kwargs):
+        raise NotADirectoryError(267, "The directory name is invalid")
+
+    monkeypatch.setattr(assembler.subprocess, "run", refuse)
+    with pytest.raises(assembler.RenderEngineUnavailable) as caught:
+        assembler.run_encoder(["ffmpeg", "-version"], tmp_path)
+    assert "FFmpeg nu a putut porni" in str(caught.value)
+    assert not isinstance(caught.value, OSError)
+
+
+def test_an_encoder_past_its_time_is_a_render_engine_reason_in_romanian(tmp_path, monkeypatch):
+    import subprocess
+
+    from app.media import assembler
+
+    def stall(*_args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd="ffmpeg", timeout=kwargs.get("timeout"))
+
+    monkeypatch.setattr(assembler.subprocess, "run", stall)
+    with pytest.raises(assembler.RenderEngineUnavailable) as caught:
+        assembler.run_encoder(["ffmpeg", "-version"], tmp_path, timeout=7)
+    assert "7 secunde" in str(caught.value)
+
+
+def test_only_the_encoder_runner_chooses_a_working_directory():
+    """A ``cwd=`` naming the film folder is what broke on a deep folder; the assembler's
+    encodes all go through run_encoder, which runs them from a short temporary folder."""
+    import ast
+
+    from app.media import assembler
+
+    tree = ast.parse(Path(assembler.__file__).read_text(encoding="utf-8"))
+    owners = set()
+    for function in ast.walk(tree):
+        if not isinstance(function, ast.FunctionDef):
+            continue
+        for node in ast.walk(function):
+            if isinstance(node, ast.Call) and any(k.arg == "cwd" for k in node.keywords):
+                owners.add(function.name)
+    assert owners == {"run_encoder"}, owners

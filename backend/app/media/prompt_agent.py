@@ -244,6 +244,10 @@ class ShotPrompt(BaseModel):
     avoid: list[str] = Field(default_factory=list, max_length=10)
     # One move from prompt_lint.CAMERA_MOVES; anything else is ignored by the compiler.
     camera_move: str = Field(default="", max_length=40)
+    # A closer framing of the same picture the edit may cut to inside the scene, for nothing
+    # (assembler.plan_second_framings): {"subject", "centre_x", "centre_y"}. Any shape is
+    # accepted here and read by _second_framing, so a rough answer never costs the shot.
+    second_framing: Any = None
 
 
 class ShotPack(BaseModel):
@@ -302,7 +306,10 @@ _SHOTS_INSTRUCTIONS = (
     "50mm, 85mm compression), and choose exactly one camera_move from this list: static, "
     "slow push-in, slow pull-back, slow pan left, slow pan right, tilt up, tilt down, aerial "
     "drift forward, pedestal up, slow orbit. Vary the size and the move across the film; "
-    "never the same one three scenes in a row. In motion, say what moves in the world "
+    "never the same one three scenes in a row. Optionally give second_framing: a closer "
+    "framing of the same picture the editor can cut to halfway through a long scene, at no "
+    "extra cost — what it shows and where its centre is, as fractions of the frame's width "
+    "and height (0 left or top, 1 right or bottom). In motion, say what moves in the world "
     "(cloud, wind, water, dust, smoke) and how fast, without camera words. Name colours in "
     "words, never as hex codes or codes in capitals. When the bible says people's faces must "
     "not be seen, show people only from behind, small and distant, or their hands. Return "
@@ -311,7 +318,8 @@ _SHOTS_INSTRUCTIONS = (
     '"action": "...", "environment": "...", "camera": "...", "camera_move": "slow push-in", '
     '"lighting": "...", "composition": "...", "motion": "...", "emotion": "...", '
     '"background": "...", "continuity": "...", "ending_frame": "...", '
-    '"audio_intent": "...", "transition": "...", "avoid": ["..."]}]}.\n'
+    '"audio_intent": "...", "transition": "...", "avoid": ["..."], '
+    '"second_framing": {"subject": "...", "centre_x": 0.5, "centre_y": 0.4}}]}.\n'
 )
 
 
@@ -1128,9 +1136,10 @@ def write_shot_prompts(
             scene_facts = facts_by_index.get(scene.scene_index, {})
             shot = packs.get(scene.scene_index)
             earlier = dict(scene.prompt_json or {})
-            if lost and shot is None and earlier.get("source") == SOURCE_MODEL:
+            if (lost or not answered) and shot is None and earlier.get("source") == SOURCE_MODEL:
                 # A plan a model wrote before is never overwritten by a template because
-                # this answer could not be read.
+                # this answer could not be read, nor because no model answered at all this
+                # time (the day asks a NEEDS_SHOT_PLAN film again, and the run may be refused).
                 kept_from_before.append(scene.scene_index)
                 previous_ending = str(earlier.get("ending_frame") or "")
                 continue
@@ -1349,6 +1358,11 @@ def _validated_package(
         # prompts are a TEST convenience (SHOT_PLAN_PARSE, 2026-09-27).
         "source": SOURCE_MODEL if shot is not None else SOURCE_TEMPLATE,
     }
+    # Only when the editor gave a usable one: a package without it is the package it was,
+    # and the sheet's hashes of every film planned before stay what they were.
+    framing = _second_framing(shot.second_framing if shot else None)
+    if framing is not None:
+        package["second_framing"] = framing
     for key in ("subject", "action", "environment", "background", "composition", "ending_frame"):
         original = str(package.get(key) or "")
         cleaned = strip_on_screen_text(original)
@@ -1373,6 +1387,21 @@ def _validated_package(
                 text = re.sub(rf"\b{re.escape(value)}\b", "", text)
             package[key] = " ".join(text.split())
     return package, notes
+
+
+def _second_framing(raw: Any) -> dict[str, Any] | None:
+    """The editor's second framing as the edit reads it: a subject (cleaned of on-screen
+    text) and a centre held inside the frame; None for anything that is not one."""
+    if not isinstance(raw, dict):
+        return None
+    centre: list[float] = []
+    for key in ("centre_x", "centre_y"):
+        value = raw.get(key)
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            return None
+        centre.append(round(min(1.0, max(0.0, float(value))), 3))
+    subject = strip_on_screen_text(" ".join(str(raw.get("subject") or "").split()))[:200]
+    return {"subject": subject, "centre_x": centre[0], "centre_y": centre[1]}
 
 
 def _short_name(name: Any) -> str:

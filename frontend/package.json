@@ -6,7 +6,8 @@
   "scripts": {
     "build": "vite build",
     "test": "node --test tests/*.test.js",
-    "check": "tsc -p tsconfig.json"
+    "check": "tsc -p tsconfig.json",
+    "test:e2e": "node --test tests/e2e/owner_flows.spec.js"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",

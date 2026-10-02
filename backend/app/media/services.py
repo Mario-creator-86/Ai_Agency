@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
 from app.config import ROOT
@@ -26,6 +26,7 @@ from app.integrations.models import Integration
 from app.media.models import (
     CharacterBible,
     MediaAsset,
+    QualityControlReport,
     Storyboard,
     StoryboardScene,
     VideoRenderJob,
@@ -1570,16 +1571,90 @@ def get_storyboard(engine: Engine, storyboard_id: str) -> dict | None:
         return data
 
 
-def list_storyboards(engine: Engine) -> list[dict]:
+#: The status of a topic written by the page's «Creează un caz demo». No stage of the daily
+#: run reads it: the pool, the research and the selection read only PROPOSED and RESEARCHED.
+DEMO_TOPIC_STATUS = "DEMO"
+
+
+#: The media room's page size, and the most one request may ask for (PAGE-17).
+STORYBOARD_PAGE = 20
+STORYBOARD_PAGE_MAX = 100
+
+
+def list_storyboards(
+    engine: Engine,
+    *,
+    limit: int = STORYBOARD_PAGE,
+    offset: int = 0,
+    qc_status: str | None = None,
+) -> dict[str, Any]:
+    """One page of storyboards, newest first, as summary rows (PAGE-17).
+
+    Each row is the storyboard's own columns plus what its closed card shows: ``scene_count``,
+    ``asset_id`` (the output of its newest COMPLETED render) and ``qc_status`` (that film's
+    newest quality-control verdict). The page used to fetch every storyboard's package, detail
+    and QC report to draw the list; it now loads a card's detail only when he opens it.
+
+    ``qc_status`` keeps only the rows whose newest film carries that verdict, so «Publică
+    privat» asks for ``qc_status=PASSED&limit=1`` instead of one QC request per storyboard.
+    Three aggregate reads serve any page: the counts, the newest film per storyboard and the
+    newest verdict per film.
+    """
+    limit = max(1, min(int(limit), STORYBOARD_PAGE_MAX))
+    offset = max(0, int(offset))
     with Session(engine) as session:
-        storyboards = session.scalars(
-            select(Storyboard).order_by(Storyboard.created_at.desc())
-        ).all()
-        result = []
-        for sb in storyboards:
-            view = StoryboardView.model_validate(sb)
-            result.append(view.model_dump())
-        return result
+        boards = list(
+            session.scalars(
+                select(Storyboard).order_by(Storyboard.created_at.desc(), Storyboard.id)
+            )
+        )
+        scene_counts: dict[str, int] = {
+            board_id: int(total)
+            for board_id, total in session.execute(
+                select(StoryboardScene.storyboard_id, func.count()).group_by(
+                    StoryboardScene.storyboard_id
+                )
+            ).all()
+        }
+        films: dict[str, str] = {}
+        for board_id, asset_id in session.execute(
+            select(VideoRenderJob.storyboard_id, VideoRenderJob.output_asset_id)
+            .where(
+                VideoRenderJob.status == "COMPLETED",
+                VideoRenderJob.output_asset_id.is_not(None),
+            )
+            .order_by(VideoRenderJob.finished_at, VideoRenderJob.started_at)
+        ).all():
+            films[board_id] = asset_id  # the newest completed render wins
+        verdicts: dict[str, str] = {}
+        if films:
+            for asset_id, verdict in session.execute(
+                select(QualityControlReport.media_asset_id, QualityControlReport.status)
+                .where(QualityControlReport.media_asset_id.in_(set(films.values())))
+                .order_by(QualityControlReport.verified_at)
+            ).all():
+                verdicts[asset_id] = verdict  # the newest verdict wins
+        rows = []
+        for board in boards:
+            asset_id = films.get(board.id)
+            verdict = verdicts.get(asset_id) if asset_id else None
+            if qc_status is not None and verdict != qc_status:
+                continue
+            view = StoryboardView.model_validate(board).model_dump()
+            view.pop("scenes", None)
+            view["scene_count"] = int(scene_counts.get(board.id, 0))
+            view["asset_id"] = asset_id
+            view["qc_status"] = verdict
+            rows.append(view)
+    page = rows[offset : offset + limit]
+    following = offset + limit
+    return {
+        "storyboards": page,
+        "total": len(rows),
+        "limit": limit,
+        "offset": offset,
+        "next_offset": following if following < len(rows) else None,
+    }
 
 
 # ------------------------------------------------------- the characters' reference pictures
@@ -1656,6 +1731,58 @@ def _reference_prompt(row: CharacterBible, slot: str) -> str:
     return " ".join(" ".join(part.split()) for part in parts)
 
 
+#: The Owner's press for a character's reference set, in the Policy Kernel (T2).
+REFERENCE_SET_ACTION = "media.character_reference_set"
+#: Verdicts that speak about agents acting unasked: the Owner's own press goes on through them.
+OWNER_PRESS_PASSES = frozenset({"BLOCKED_MODE", "NEEDS_APPROVAL"})
+#: How much more than the set's price the vendor account must hold (as a paid step's margin).
+REFERENCE_BALANCE_MARGIN = 1.15
+
+
+def _published_image_price(
+    engine: Engine, integration_id: str | None, model_id: str
+) -> tuple[float | None, int | None]:
+    """(USD, credits) for one picture of ``model_id`` from the published Runway table at the
+    connection's credit price, or (None, None) when the table does not price it."""
+    from app.media.cost_plan import STILLS_RESOLUTION, UnpricedError, price_still  # noqa: PLC0415
+    from app.media.shooting_sheet import price_table_for  # noqa: PLC0415 - it imports us
+
+    table = price_table_for(engine, integration_id)
+    try:
+        credits = int(price_still(str(model_id), STILLS_RESOLUTION, 1, table=table))
+    except (UnpricedError, KeyError, ValueError):
+        return None, None
+    return credits * float(table.credit_usd), credits
+
+
+def _refuse_on_low_balance(adapter: Any, per_image_credits: int | None, slots: int) -> None:
+    """Read the vendor's balance before the first slot (one free GET), and refuse the set when
+    it is not readable or cannot pay every slot with the margin. Adapters with no balance read
+    (another vendor) and a set priced in nothing but dollars are not asked."""
+    reader = getattr(adapter, "credit_balance", None)
+    if not callable(reader):
+        return
+    try:
+        balance = asyncio.run(reader())
+    except Exception as exc:  # noqa: BLE001 - a balance that cannot be read stops the purchase
+        raise ReferenceSetError(
+            f"Soldul furnizorului nu a putut fi citit ({str(exc)[:120]}); nu se produce nimic.",
+            reason="LOW_BALANCE",
+        ) from exc
+    if per_image_credits is None or isinstance(balance, bool):
+        return
+    if not isinstance(balance, int | float):
+        return
+    needed = per_image_credits * slots * REFERENCE_BALANCE_MARGIN
+    if float(balance) < needed:
+        raise ReferenceSetError(
+            f"Soldul furnizorului ({float(balance):.0f} credite) nu acoperă setul: "
+            f"{slots} imagini × {per_image_credits} credite plus marja de 15% "
+            f"({needed:.0f} credite). Alimentați contul înainte.",
+            reason="LOW_BALANCE",
+        )
+
+
 def generate_character_reference_set(
     engine: Engine,
     vault: Any,
@@ -1673,16 +1800,39 @@ def generate_character_reference_set(
     and settles or releases the hold when it is done. A slot whose generation failed keeps
     what it held — null, in a studio that never had one — and the answer names it; nobody is
     told a picture exists that was not produced.
+
+    2026-10-02 (MONEY-13): it goes through the Policy Kernel as
+    ``media.character_reference_set`` (T2). The stop, safe mode and an unclassified action
+    refuse it like any money; the autonomy mode governs what agents do unasked and is not
+    asked of the Owner's own press. With no catalogue price the slots are priced from the
+    published Runway table (`cost_plan.price_still`), the vendor's balance is read before the
+    first slot, and every produced slot is booked.
     """
+    from app.services import may_act  # noqa: PLC0415 - services imports media
+
     with Session(engine) as session:
-        policy = session.get(OwnerPolicy, 1)
-        if policy and policy.autonomy_stopped:
-            raise ReferenceSetError(
-                "Oprirea autonomiei este activă; Owner-ul trebuie să o ridice mai întâi.",
-                reason="AUTONOMY_STOPPED",
-            )
         row = session.get(CharacterBible, character_id)
         if row is None:
+            raise ReferenceSetError("Personajul nu există.", reason="NO_CHARACTER")
+    with Session(engine) as session, session.begin():
+        verdict = may_act(
+            session,
+            REFERENCE_SET_ACTION,
+            requester="owner",
+            subject=character_id,
+            evidence=f"setul de referință al personajului {character_id}",
+            ask_owner=False,
+        )
+    if verdict["status"] == "BLOCKED_STOP":
+        raise ReferenceSetError(
+            "Oprirea autonomiei este activă; Owner-ul trebuie să o ridice mai întâi.",
+            reason="AUTONOMY_STOPPED",
+        )
+    if not verdict["allowed"] and verdict["status"] not in OWNER_PRESS_PASSES:
+        raise ReferenceSetError(str(verdict["reason"]), reason=str(verdict["status"]))
+    with Session(engine) as session:
+        row = session.get(CharacterBible, character_id)
+        if row is None:  # pragma: no cover - deleted between the two reads
             raise ReferenceSetError("Personajul nu există.", reason="NO_CHARACTER")
         declared = tuple(slots or tuple(row.reference_assets_json or {}) or REFERENCE_SLOTS)
         prompts = {slot: _reference_prompt(row, slot) for slot in declared}
@@ -1711,6 +1861,12 @@ def generate_character_reference_set(
             if integration_id and model_id
             else None
         )
+    per_image_credits: int | None = None
+    if per_image is None and model_id:
+        # No catalogue price (Runway's seedream has none): the published Runway table, the one
+        # the shooting sheet prices stills from, at this connection's credit price.
+        per_image, per_image_credits = _published_image_price(engine, integration_id, model_id)
+    _refuse_on_low_balance(adapter, per_image_credits, len(declared))
     estimate = per_image * len(declared) if per_image is not None else None
     hold = reserve_spend(
         engine,

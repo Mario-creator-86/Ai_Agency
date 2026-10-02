@@ -53,7 +53,7 @@
             <p class="helper">Cheia locală se află în fișierul .env, la STUDIO_OWNER_TOKEN. Rămâne doar în memoria acestei pagini.</p>
           </form>
         </div>
-        <p id="title-caption" class="title-caption">Sediul AMN-AI, București</p>
+        <p id="title-caption" class="title-caption">Sediul studioului</p>
       </section>
       <section id="workspace" hidden>
         <div class="workspace-grid">
@@ -91,7 +91,7 @@
               <div class="replay-letterbox" aria-hidden="true"></div>
               <!-- W28: the room whose door is open, lit (dialog_doors.js): the page's mark of what he opened. -->
               <div id="door-light" class="door-light" aria-hidden="true" hidden></div>
-              <div class="scene-readout scene-readout-info" title="Ora locală din București și vremea reală pe care o citește studioul. Fără un serviciu de vreme configurat, scena nu desenează vremea."><span class="scene-label replay-now-label">ACUM</span><span id="scene-info">—  •  BUCUREȘTI</span><span id="replay-then" class="replay-then" title="Ora din registru a momentului reluat" hidden><span class="replay-then-label">ATUNCI</span><span id="replay-then-time" class="scene-figure">—</span></span></div>
+              <div class="scene-readout scene-readout-info" title="Ora locală a studioului și vremea reală pe care o citește studioul. Fără un serviciu de vreme configurat, scena nu desenează vremea."><span class="scene-label replay-now-label">ACUM</span><span id="scene-info">—</span><span id="replay-then" class="replay-then" title="Ora din registru a momentului reluat" hidden><span class="replay-then-label">ATUNCI</span><span id="replay-then-time" class="scene-figure">—</span></span></div>
               <!-- The replayed world is lit by its own hour's sun and draws no weather: the page does
                    not know the weather of that night, and says so under the ATUNCI clock (W15). -->
               <p id="replay-weather" class="replay-weather" hidden>vremea de atunci nu e cunoscută</p>
@@ -199,8 +199,18 @@
                 <button class="quiet mode-btn" data-mode="AUTONOMOUS_CEO" type="button" title="Directoarea execută singură treptele T0–T3 în limitele politicii; T4 rămâne a Proprietarului.">CEO autonom</button>
               </div>
               <p id="autonomy-mode-note" class="helper-note" hidden></p>
+              <!-- PAGE_OWNER_DAY (PAGE-04): his rule for a film's paid steps, beside the mode it combines
+                   with, and what the next run will buy alone (governance.js dayWillWords). A form, so its
+                   radio group is its own and not the sheet's copy (shooting_sheet.js keeps that one). -->
+              <p id="day-will" class="ledger-now day-will" aria-live="polite">—</p>
+              <details class="governance-rule-box"><summary>Când te întreabă un pas plătit al unui film</summary><form id="paid-media-governance" class="governance-paid-media"></form></details>
               <div class="section-heading approvals-heading"><div><p class="eyebrow">APROBĂRI</p><h2>Ce așteaptă decizia ta</h2></div><span id="approvals-count" class="tag">—</span><button id="refresh-approvals-btn" class="quiet cam-square" type="button" title="Recitește cererile de aprobare" aria-label="Recitește cererile de aprobare"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 12a7.4 7.4 0 1 1-2.17-5.23"/><path d="M19.4 5.1v4.6h-4.6"/></svg></button></div>
               <div id="approvals-list" class="approvals-list"></div>
+              <!-- PAGE_OWNER_DAY (PAGE-07): the letters the studio wrote to him that are still open
+                   (owner_inbox.js), each with its thread, its film's sheet when it names one, and
+                   «Marchează rezolvat». -->
+              <div class="section-heading inbox-heading"><div><p class="eyebrow">SCRISORI</p><h2>Scrisori pentru tine</h2></div><span id="owner-inbox-count" class="tag">—</span><button id="refresh-inbox-btn" class="quiet cam-square" type="button" title="Recitește scrisorile pentru tine" aria-label="Recitește scrisorile pentru tine"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 12a7.4 7.4 0 1 1-2.17-5.23"/><path d="M19.4 5.1v4.6h-4.6"/></svg></button></div>
+              <div id="owner-inbox-list" class="owner-inbox-list"><div class="topics-loading">Se citesc scrisorile…</div></div>
             </section>
             <!-- THE STUDIO AT A GLANCE (side_readout.js): the side drawer's lower half. The day's run,
                  the treasury, the next scheduled run, each from the record the page already reads, «—»
@@ -259,7 +269,7 @@
             <div id="agent-history" class="chat-history"><div class="helper">Se încarcă istoricul…</div></div>
             <div id="agent-typing" class="chat-typing" hidden></div>
             <form id="agent-run-form" class="dialog-form chat-form">
-              <input id="agent-run-objective" placeholder="Întreabă ceva (ex: Ce ai decis azi și de ce?)…" required class="dialog-input" />
+              <input id="agent-run-objective" aria-label="Întrebarea pentru angajat" placeholder="Întreabă ceva (ex: Ce ai decis azi și de ce?)…" required class="dialog-input" />
               <button type="submit" class="primary dialog-submit-btn">Trimite ↗</button>
             </form>
             <div id="agent-run-output" class="dialog-output" hidden></div>
@@ -327,11 +337,11 @@
             <p id="sources-allowlist" class="helper-note">Se verifică site-urile autorizate…</p>
             <div id="allowed-hosts" class="allowed-hosts" data-door-steps></div>
             <form id="allowed-host-form" class="dialog-form source-form">
-              <input id="allowed-host-input" placeholder="Adaugă un site autorizat (ex: www.nasa.gov)" required class="dialog-input" autocomplete="off" spellcheck="false" />
+              <input id="allowed-host-input" aria-label="Site autorizat" placeholder="Adaugă un site autorizat (ex: www.nasa.gov)" required class="dialog-input" autocomplete="off" spellcheck="false" />
               <button type="submit" class="secondary dialog-submit-btn">Autorizează și testează ↗</button>
             </form>
             <form id="source-retrieve-form" class="dialog-form source-form">
-              <input id="source-url" type="url" placeholder="https://… o pagină de pe un site autorizat" required class="dialog-input" />
+              <input id="source-url" type="url" aria-label="Adresa paginii-sursă" placeholder="https://… o pagină de pe un site autorizat" required class="dialog-input" />
               <button type="submit" class="primary dialog-submit-btn">Preia sursa ↓</button>
             </form>
             <div id="source-retrieve-status" class="dialog-status-msg" hidden></div>
@@ -481,6 +491,18 @@
               <div class="topics-loading">Se încarcă rulările…</div>
             </div>
           </div>
+
+          <div id="rb-queue">
+            <div class="topics-header-row">
+              <h3 class="dialog-section-header-bright-compact">Coada de lucru</h3>
+              <button id="refresh-queue-btn" type="button" class="quiet btn-refresh">Reîncarcă</button>
+            </div>
+            <p class="helper">Sarcinile pe care lucrătorul studioului le are de făcut: tipul, vârsta, încercările și ultima eroare. O sarcină oprită definitiv se poate pune din nou în coadă.</p>
+            <div id="queue-status" class="dialog-status-msg" role="status" hidden></div>
+            <div id="work-queue" class="topics-container">
+              <div class="topics-loading">Se încarcă coada…</div>
+            </div>
+          </div>
           </div>
         </div>
       </dialog>
@@ -527,10 +549,12 @@
                   <option value="DAILY">Buget zilnic</option>
                   <option value="MONTHLY">Buget lunar</option>
                 </select>
-                <input id="budget-limit" class="dialog-input" maxlength="20" placeholder="Limită în USD, ex: 25 (0 = fără buget)" />
+                <input id="budget-limit" aria-label="Limita bugetului, în USD" class="dialog-input" maxlength="20" required inputmode="decimal" pattern="(?!0*(?:[.,]0*)?$)\d{1,9}(?:[.,]\d{1,2})?" title="O sumă pozitivă în USD, de exemplu 25 sau 12,50" placeholder="Limită în USD, ex: 25" />
               </div>
               <button type="submit" class="secondary dialog-submit-btn">Salvează bugetul</button>
             </form>
+            <!-- PAGE-05: retiring the daily budget is its own key, asked first (budget_form.js). -->
+            <button id="budget-retire" class="quiet btn-refresh" type="button">Retrage bugetul zilnic</button>
             <div id="budget-status" class="dialog-status-msg" hidden></div>
             <button id="close-books-btn" class="quiet btn-refresh">Cere Contabilului să închidă ziua</button>
           </div>
@@ -555,18 +579,18 @@
                   <option value="CAPITAL_CONTRIBUTION">Aport de capital · fără dobândă</option>
                   <option value="OWNER_LOAN">Împrumut de la Proprietar · cu dobândă</option>
                 </select>
-                <input id="funding-amount" class="dialog-input" required maxlength="20" placeholder="Suma reală depusă, ex: 5000" />
+                <input id="funding-amount" aria-label="Suma depusă" class="dialog-input" required maxlength="20" placeholder="Suma reală depusă, ex: 5000" />
               </div>
               <div class="topic-input-grid">
                 <input id="funding-currency" class="dialog-input" value="USD" maxlength="3" aria-label="Moneda banilor reali" placeholder="Moneda reală, ex: USD" />
-                <input id="funding-note" class="dialog-input" maxlength="2000" placeholder="Notă (opțional)" />
+                <input id="funding-note" aria-label="Nota depunerii (opțional)" class="dialog-input" maxlength="2000" placeholder="Notă (opțional)" />
               </div>
               <div id="funding-fx-fields" class="topic-input-grid" hidden>
-                <input id="funding-fx-rate" class="dialog-input" maxlength="20" placeholder="Curs față de USD, ex: 1.08" />
-                <input id="funding-fx-source" class="dialog-input" maxlength="120" placeholder="Sursa cursului, ex: BNR 10.09.2026" />
+                <input id="funding-fx-rate" aria-label="Cursul față de USD" class="dialog-input" maxlength="20" placeholder="Curs față de USD, ex: 1.08" />
+                <input id="funding-fx-source" aria-label="Sursa cursului" class="dialog-input" maxlength="120" placeholder="Sursa cursului, ex: BNR 10.09.2026" />
               </div>
               <div id="funding-loan-fields" class="topic-input-grid" hidden>
-                <input id="funding-rate" class="dialog-input" maxlength="8" placeholder="Dobândă anuală %, ex: 7 sau 7.25" />
+                <input id="funding-rate" aria-label="Dobânda anuală, în procente" class="dialog-input" maxlength="8" placeholder="Dobândă anuală %, ex: 7 sau 7.25" />
                 <input id="funding-maturity" class="dialog-input" type="date" aria-label="Scadență" />
               </div>
               <p id="funding-preview" class="funding-preview">Scrie suma ca să vezi câți VR$ intră în registru.</p>
@@ -645,7 +669,7 @@
         </div>
         <div id="mail-thread" class="mail-thread dialog-body"></div>
         <form id="mail-reply-form" class="mail-reply dialog-footer">
-          <textarea id="mail-reply-text" class="dialog-input" rows="3" placeholder="Scrie un răspuns… (ex: Vreau sursa pe birou până seara.)" required></textarea>
+          <textarea id="mail-reply-text" aria-label="Răspunsul tău" class="dialog-input" rows="3" placeholder="Scrie un răspuns… (ex: Vreau sursa pe birou până seara.)" required></textarea>
           <div class="mail-reply-row">
             <span id="mail-status" class="helper" hidden></span>
             <button type="submit" class="primary dialog-submit-btn">Trimite ↗</button>
@@ -676,7 +700,7 @@
               <div class="topics-header-row">
                 <h3 class="dialog-section-header-bright-compact">Fluxul activ: scenariu · storyboard · video · QC</h3>
                 <div class="media-actions-bar">
-                  <button id="generate-demo-storyboard-btn" class="quiet btn-media-action" title="Creează un subiect, un scenariu și o afirmație neverificată, ca să testezi fluxul factual">Creează un caz demo</button>
+                  <button id="generate-demo-storyboard-btn" hidden class="quiet btn-media-action" title="Creează un subiect, un scenariu și o afirmație neverificată, ca să testezi fluxul factual">Creează un caz demo</button>
                   <button id="refresh-media-btn" class="quiet btn-refresh">Reîncarcă</button>
                 </div>
               </div>
@@ -732,23 +756,18 @@
               <div class="pub-card pub-gate-card">
                 <div class="pub-card-header">
                   <h3>Verificări înainte de publicare</h3>
-                  <span class="tag">PARȚIAL</span>
+                  <span class="tag">din poarta studioului</span>
                 </div>
-                <ul class="pub-gate-list">
-                  <li><strong>1. Autonomia pornită:</strong> oprirea de urgență a Proprietarului nu este activă.</li>
-                  <li><strong>2. Fișierul pe disc:</strong> există și are dimensiune &gt; 0.</li>
-                  <li><strong>3. Raportul QC a trecut:</strong> rezoluția, durata și proveniența <em>măsurate</em> din fișier cu ffprobe.</li>
-                  <li><strong>4. Factualitate:</strong> fiecare afirmație citată este susținută de sursă.</li>
-                  <li><strong>5. Protecție la dubluri:</strong> idempotent pe fiecare canal.</li>
-                </ul>
-                <p class="pub-gate-note">Aceste verificări nu sunt încă implementate: drepturile pe pachetul final, politica platformei, noutatea pe metadatele finale, brandul, bugetul, continuitatea și confidențialitatea narativă pentru Canalul B.</p>
+                <div id="pub-gate-checks" class="pub-gate-checks" aria-live="polite">
+                  <p class="pub-gate-note">Se citește poarta de publicare…</p>
+                </div>
               </div>
             </div>
 
             <!-- Quick Action & Notification -->
             <div class="pub-actions-row">
               <div class="pub-quick-info">
-                <strong>Publicare într-un clic:</strong> trimite privat cel mai recent video care a trecut QC către Canalul A. Are nevoie de un canal autentificat și de credențiale YouTube reale.
+                <strong>Publicare privată:</strong> studioul alege cel mai nou film care a trecut QC și te întreabă, numind filmul, canalul și vizibilitatea, înainte să-l încarce privat pe Canalul A. Are nevoie de un canal autentificat și de credențiale YouTube reale.
               </div>
               <div class="media-actions-bar">
                 <button id="trigger-quick-publish-btn" class="quiet btn-media-action btn-pub-action">Publică privat</button>
@@ -756,7 +775,8 @@
               </div>
             </div>
             <div id="publisher-config-banner" class="dialog-status-msg" hidden></div>
-            <div id="publishing-status-msg" class="dialog-status-msg" hidden></div>
+            <div id="publishing-status-msg" class="dialog-status-msg" role="status" hidden></div>
+            <div id="quick-publish-confirm" class="owner-confirm decision-confirm" role="group" aria-label="Confirmă publicarea" hidden></div>
 
             <!-- Publications History Table -->
             <div class="pub-history-section" data-door-steps>

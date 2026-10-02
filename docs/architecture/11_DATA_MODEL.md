@@ -371,3 +371,51 @@ Add at minimum:
 - InventoryAsset references VendorShopOrder.
 - FinancingAgreement references approval and market-rate evidence.
 - Forecast records never directly mutate TreasuryBalanceProjection.
+
+# As built: the film's paid path and operations (amended 2026-10-02)
+
+Amended deliberately on 2026-10-02 after the production-readiness audit (finding AR-13). The
+entities above are the logical model; these are the tables the code has today for the film's paid
+path, the day and operations, with the migration that made each.
+
+## Film purchase
+- `scene_take` (0048, 0049, 0051): one row per purchase for a scene of a storyboard —
+  `storyboard_id`, `scene_number`, `kind` (`still`, `motion`, `test_shot`, `narration`),
+  `prompt_hash` (the take's identity), `model_id`, `resolution`, `seconds`, `seed`,
+  `credits_quoted`, `credits_measured`, `status` (`QUOTED`, `SUBMITTED`, `PAID`, `APPROVED`,
+  `REJECTED`, `REFUSED`, `LOST`), `failure_code`, `path`, `sha256`, `approved_by`,
+  `remote_task_id` (the vendor's task id, written before any poll), and the licence evidence
+  `licence_vendor`, `licence_terms`, `commercial_use`. Kind and status carry check constraints.
+- `film_purchase_lease` (0050): `storyboard_id` (primary key), `holder`, `step`, `acquired_at`,
+  `expires_at`: at most one buyer per film.
+- `spending_budget`: `period` (DAILY or MONTHLY), `limit_usd_micros`, `warn_ratio`, `active`,
+  `replaced_at`; set and retired only by the Owner, versioned and idempotent by command id.
+- `spend_reservation`: `purpose` (for a paid step `sheet:<step>`), `correlation_id`, `usd_micros`,
+  `status` (`RESERVED`, `SETTLED`, `RELEASED`), `settled_reference`; a hold left by a dead process
+  is released by the watchdog after `reservation_ttl_seconds`.
+- `provider_cost_record`: the books; each purchase booked once under its own reference.
+
+## The day and the queue
+- `daily_run`: `business_date`, `preflight_status`, `preflight_json`, `status` (`RUNNING`,
+  `COMPLETED`, `PARTIAL`, `BLOCKED`, `FAILED`, `INTERRUPTED`), `stages_json`, `stages_total`,
+  `stages_completed`, `stopped_at_stage`, `stop_reason`, `fault_class`, `started_at`,
+  `finished_at`. Written RUNNING after the preflight and updated before each stage (47).
+- `task_queue`: `task_type` (including `DAILY_RUN`, `FILM_CONTINUE`, `BACKUP`), `status`,
+  `attempts`, `max_attempts`, `lease_token` (one token per claim), `lease_expires_at`
+  (renewed by a heartbeat).
+- `command_record`: idempotency of the Owner's commands, including sheet purchases
+  (`SheetPurchase`) and a publication he resolved (`ResolvePublication`).
+
+## Publishing
+- `publication_record` (0052): `remote_privacy_status`, `remote_upload_status` and
+  `remote_checked_at` — what YouTube says about the upload, beside what was asked.
+- `channel_record` (0053): `youtube_category_id` (default `28`), `made_for_kids` (default false),
+  `default_language` (NULL means the studio's content language), `shorts_max_seconds` (60 factual,
+  70 serial); part of the channel's versioned publish policy.
+
+## Invariants
+- `APPROVED` on a take is the Owner's act alone; clip QC accepting a hero is an event on the
+  take, not a status.
+- A take of one identity is bought once; a still or clip collected late lands on its own
+  `SUBMITTED` row.
+- A `daily_run` becomes `INTERRUPTED` at most once and is never re-run by the clock.

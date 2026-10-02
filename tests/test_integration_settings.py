@@ -432,3 +432,156 @@ def test_a_generation_whose_request_never_left_is_sent_again(llm_script):
     )
     assert _llm().request("POST", "/chat/completions", {"model": "m"}) == {}
     assert ScriptedConnection.opened == 2
+
+
+# ---------------------------------------------------------------------------------------------
+# REL-06 / TS-03 / SELL-12: the studio starts when its stored keys cannot be read. The vault's
+# key is a file beside the database, wrapped with this Windows account's DPAPI: it is missing
+# after a restore that left it behind, foreign after a restore of another studio's key, and
+# unreadable under another account (or, plausibly, the S4U service logon). Start-up used to
+# decrypt every LLM connection inside the lifespan and died with FileNotFoundError, taking the
+# page with it, so the Owner could not even reconnect his providers.
+# ---------------------------------------------------------------------------------------------
+
+
+def _owner_letters(engine, kind):
+    from app.agents.models import AgentMessage
+
+    with Session(engine) as session:
+        rows = session.scalars(select(AgentMessage).where(AgentMessage.to_agent_id.is_(None)))
+        return [
+            r for r in rows if isinstance(r.body_json, dict) and r.body_json.get("kind") == kind
+        ]
+
+
+def _reconnect_events(engine):
+    with Session(engine) as session:
+        return [
+            e
+            for e in session.scalars(select(DomainEvent))
+            if e.event_type == "settings.integration_needs_reconnect"
+        ]
+
+
+def _break_the_key(engine, tmp_path, broken):
+    key = Path(str(engine.url.database)).with_suffix(".credentials.key")
+    assert key.is_file()
+    if broken == "deleted":
+        key.unlink()
+    elif broken == "another_vault":
+        other = CredentialVault(tmp_path / "another" / "studio.credentials.key")
+        other.encrypt({"api_key": "of another studio"})  # pragma: allowlist secret
+        key.write_bytes(other.path.read_bytes())
+    else:
+        key.write_bytes(b"this is not a wrapped key")
+    return key
+
+
+def _vault_line(client, headers):
+    preflight = client.get("/api/v1/runbook/preflight", headers=headers).json()
+    return preflight, next(c for c in preflight["checks"] if c["name"] == "credential_vault")
+
+
+@pytest.mark.parametrize("broken", ["deleted", "another_vault", "garbage"])
+def test_a_studio_whose_stored_keys_cannot_be_read_starts_and_says_so(
+    client, headers, engine, settings, tmp_path, broken
+):
+    seed_initial_workforce(engine)
+    identifier, response = put(client, headers, command())
+    assert response.status_code == 200, response.text
+    _break_the_key(engine, tmp_path, broken)
+
+    with TestClient(create_app(settings)) as restarted:
+        # the page and the API are up: the Owner can reconnect from here
+        ready = restarted.get("/health/ready")
+        assert ready.status_code == 200, ready.text
+        assert ready.json()["status"] == "DEGRADED"
+        assert ready.json()["credentials"] == "UNREADABLE"
+        assert identifier not in ready.text, "the public probe names no connection"
+        assert restarted.app.app.state.registry.get(identifier) is None
+        listed = restarted.get("/api/v1/settings", headers=headers).json()["integrations"]
+        assert [(i["id"], i["status"]) for i in listed] == [(identifier, "NEEDS_RECONNECT")]
+        preflight, line = _vault_line(restarted, headers)
+        assert line["ok"] is False and line["severity"] == "BLOCKING", line
+        assert "Cheile salvate nu pot fi citite" in line["message"]
+        assert "reconecta" in line["message"]
+        assert line["place"] == "settings:llm"
+        assert preflight["status"] == "BLOCKED", "no paid stage runs on keys it cannot read"
+    events = _reconnect_events(engine)
+    assert [e.aggregate_id for e in events] == [identifier]
+    assert events[0].payload["previous_status"] == "SAVED"
+    assert events[0].payload["reason_ro"]
+    letters = _owner_letters(engine, "credentials_unreadable")
+    assert len(letters) == 1
+    assert "Cheile salvate nu pot fi citite" in letters[0].body_text
+
+    # a second start on the same broken key: no second letter, no second event
+    with TestClient(create_app(settings)) as again:
+        assert again.get("/health/ready").json()["status"] == "DEGRADED"
+    assert len(_owner_letters(engine, "credentials_unreadable")) == 1
+    assert len(_reconnect_events(engine)) == 1
+
+
+@pytest.mark.parametrize("broken", ["deleted", "another_vault"])
+def test_the_owner_reconnects_by_typing_the_key_again(
+    client, headers, engine, settings, tmp_path, broken
+):
+    identifier, response = put(client, headers, command())
+    assert response.status_code == 200, response.text
+    _break_the_key(engine, tmp_path, broken)
+    new_secret = secrets.token_urlsafe(32)
+    with TestClient(create_app(settings)) as restarted:
+        listed = restarted.get("/api/v1/settings", headers=headers).json()["integrations"]
+        saved = restarted.put(
+            f"/api/v1/settings/integrations/{identifier}",
+            headers=headers,
+            json=command(secrets={"api_key": new_secret}, expected_version=listed[0]["version"]),
+        )
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["status"] == "SAVED"
+        restarted.app.app.state.vault_health_cache = None
+        assert restarted.get("/health/ready").json()["status"] == "HEALTHY"
+    vault = CredentialVault(Path(str(engine.url.database)).with_suffix(".credentials.key"))
+    with Session(engine) as session:
+        assert vault.decrypt(session.get(Integration, identifier).encrypted_secrets) == {
+            "api_key": new_secret
+        }
+
+
+def test_a_key_this_account_cannot_unwrap_is_said_when_saving(
+    client, headers, engine, settings, tmp_path
+):
+    identifier, response = put(client, headers, command())
+    assert response.status_code == 200, response.text
+    _break_the_key(engine, tmp_path, "garbage")
+    with TestClient(create_app(settings)) as restarted:
+        listed = restarted.get("/api/v1/settings", headers=headers).json()["integrations"]
+        saved = restarted.put(
+            f"/api/v1/settings/integrations/{identifier}",
+            headers=headers,
+            json=command(expected_version=listed[0]["version"]),
+        )
+    assert saved.status_code == 422, saved.text
+    assert "cheii" in saved.json()["detail"], saved.text
+
+
+def test_a_key_readable_again_gives_the_connection_back(client, headers, engine, settings):
+    identifier, response = put(client, headers, command())
+    assert response.status_code == 200, response.text
+    key = Path(str(engine.url.database)).with_suffix(".credentials.key")
+    kept = key.read_bytes()
+    key.unlink()
+    with TestClient(create_app(settings)) as restarted:
+        assert restarted.app.app.state.registry.get(identifier) is None
+    key.write_bytes(kept)
+    with TestClient(create_app(settings)) as healed:
+        assert healed.get("/health/ready").json()["status"] == "HEALTHY"
+        listed = healed.get("/api/v1/settings", headers=headers).json()["integrations"]
+        assert listed[0]["status"] == "SAVED"
+        assert healed.app.app.state.registry.get(identifier) is not None
+        assert _vault_line(healed, headers)[1]["ok"] is True
+
+
+def test_a_fresh_studio_without_a_key_is_healthy(client, headers):
+    assert client.get("/health/ready").json()["status"] == "HEALTHY"
+    assert _vault_line(client, headers)[1]["ok"] is True

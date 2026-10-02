@@ -755,3 +755,331 @@ def test_the_day_does_not_ask_about_a_narration_for_a_film_it_cannot_assemble(
     assert film["status"] == "WAITING" and film["refusal"] == "TAKES_NOT_ACCEPTED"
     assert film["reason"] == reason and film["bought"] == []
     assert approvals(engine) == []
+
+
+# ------------------------------------- (g) a narration is bought once, whatever fails after it
+#
+# A9 / MONEY-12 (2026-10-02): every assembly attempt voiced every scene again, and the sheet's
+# own failed assembly booked nothing of what it had voiced.
+
+
+def a_voice_connection(engine) -> str:
+    """An ElevenLabs connection (a fake key, never sent) and the Owner's price for it."""
+    from app.integrations.services import SaveIntegration, save
+    from app.integrations.vault import CredentialVault
+
+    narration_price(engine, "0.30")
+    connection = str(uuid4())
+    save(
+        engine,
+        CredentialVault(Path(str(engine.url.database)).with_suffix(".credentials.key")),
+        connection,
+        SaveIntegration(
+            kind="elevenlabs",
+            name="Voice",
+            config={},
+            secrets={"api_key": "k-" + connection},  # pragma: allowlist secret
+        ),
+    )
+    return connection
+
+
+@requires_ffmpeg
+def test_a_failed_assembly_is_booked_and_the_next_one_reuses_every_narration(
+    engine, settings, tmp_path, monkeypatch
+):
+    from app.economy.models import ProviderCostRecord
+    from app.media import assembler
+    from app.media.shooting_sheet import run_assemble_step
+    from app.media.toolchain import AudioMasterError
+    from test_film_dry_run import CountingVoice
+
+    storyboard_id = film_with_stills(engine, tmp_path, scenes=2)
+    in_environment(engine, "PRODUCTION")
+    for scene in (1, 2):
+        set_scene_model(engine, storyboard_id, scene, LOCAL_MOVE, issued_by="owner")
+    connection = a_voice_connection(engine)
+    voice = CountingVoice()
+    voice.integration_id = connection
+    voice.PROVIDER_NAME = "elevenlabs"
+    voice.model = "eleven_multilingual_v2"
+    settings.paid_generation_approval_threshold_usd = 100.0
+    real_master = assembler.encode_master_audio
+    mastered: list[str] = []
+
+    def fails_once(*args, **kwargs):
+        mastered.append("x")
+        if len(mastered) == 1:
+            raise AudioMasterError("the master could not be written (test)")
+        return real_master(*args, **kwargs)
+
+    monkeypatch.setattr(assembler, "encode_master_audio", fails_once)
+
+    def assemble(correlation: str):
+        def step():
+            sheet = build_sheet(engine, storyboard_id, capabilities=[SEEDANCE], read_live=False)
+            return run_assemble_step(
+                engine,
+                storyboard_id,
+                sheet["sheet_hash"],
+                correlation_id=correlation,
+                capabilities=[SEEDANCE],
+                settings=settings,
+                environment="PRODUCTION",
+                storage_root=tmp_path / "media",
+                tts_adapter=voice,
+            )
+
+        try:
+            return step()
+        except SheetStepRefused as asked:
+            if asked.status != "NEEDS_APPROVAL":
+                raise
+            answer(engine, asked.approval_id, "APPROVED", note="Da.")
+            return step()
+
+    with pytest.raises(SheetStepRefused) as failed:
+        assemble("first")
+    assert failed.value.status == "NO_ENGINE"
+    assert len(voice.said) == 2
+    booked = provider_costs(engine)
+    assert booked and all(row.failed for row in booked), booked
+    assert {row.attribution_json["unit"] for row in booked} == {"voice"}
+
+    # The sheet now prices the narration it already holds at 0.
+    sheet = build_sheet(engine, storyboard_id, capabilities=[SEEDANCE], read_live=False)
+    assert sheet["steps"]["assemble"]["narration"]["usd_micros"] == 0
+
+    made = assemble("second")
+
+    assert made["status"] == "ASSEMBLED"
+    assert len(voice.said) == 2, "a narration already bought was bought again"
+    with Session(engine) as session:
+        rows = list(session.scalars(select(ProviderCostRecord)))
+        voiced = session.scalars(select(SceneTake).where(SceneTake.kind == "narration")).all()
+    assert len(rows) == len(booked), "the reused narration was booked a second time"
+    assert sorted(t.scene_number for t in voiced) == [1, 2]
+    assert all(t.status == "PAID" and t.sha256 for t in voiced)
+
+
+# ------------------------- (g) the hero test shot accepted by clip QC under the Owner's rule
+#
+# 2026-10-02 (HERO_AUTO_ACCEPT, A1 / AR-01): the rest of the motion was bought only after the
+# Owner's APPROVED on the hero, in every policy, so under his MODE rule no film was ever made
+# without him. Now a hero whose clip QC PASSED is accepted when his rule and the mode would let
+# the motion step through unasked; an unchecked or failed clip, a stop or safe mode, or a rule
+# that asks still waits (or refuses), and nobody but him ever sets APPROVED.
+
+
+def _clip_check(verdict: str):
+    """qc.check_clip, faked: every shot reads as ``verdict`` (PASSED, UNCHECKED or FAILED)."""
+    from app.media import qc as clip_qc
+
+    def check(path, *, scene, **_kwargs):
+        if verdict == "PASSED":
+            checks = (clip_qc.ClipCheck("picture", "PASSED", True, None, "arată ce s-a cerut"),)
+            return clip_qc.ClipReport(
+                scene=scene,
+                path=str(path),
+                checks=checks,
+                passed=True,
+                blocks_ro=(),
+                warnings_ro=(),
+                unmeasured=(),
+            )
+        status = "NOT_RUN" if verdict == "UNCHECKED" else "FAILED"
+        words = "modelul nu a putut privi clipul" if status == "NOT_RUN" else "nu arată scena"
+        return clip_qc.ClipReport(
+            scene=scene,
+            path=str(path),
+            checks=(clip_qc.ClipCheck("picture", status, True, None, words),),
+            passed=False,
+            blocks_ro=(words,),
+            warnings_ro=(),
+            unmeasured=("picture",) if status == "NOT_RUN" else (),
+        )
+
+    return check
+
+
+def _hero_bought(engine, tmp_path, *, rule: str = "MODE", verdict: str = "PASSED"):
+    """PRODUCTION, AUTONOMOUS_CEO, his paid-media ``rule``, a daily budget, a two-scene film
+    with its stills approved and the hero test shot bought and checked as ``verdict``."""
+    from app.economy.budget import BudgetCommand, set_budget
+    from app.media.assembler import decide_take
+    from test_film_costing import approved, by_scene, run, takes
+
+    storyboard_id = film_with_stills(engine, tmp_path, scenes=2)
+    in_environment(engine, "PRODUCTION", "AUTONOMOUS_CEO")
+    with Session(engine) as session, session.begin():
+        policy = session.get(OwnerPolicy, 1)
+        policy.paid_media_approval = rule
+        policy.autonomy_stopped = False
+    set_budget(engine, BudgetCommand(period="DAILY", limit_usd="100"))
+    account = Account(10_000)
+    models = Models(SpyVideo("seedance2_5", account))
+    buy = approved if rule == "EVERY_PAID_STEP" else run
+    result = buy(
+        engine,
+        storyboard_id,
+        tmp_path,
+        "test_shot",
+        models,
+        account,
+        environment="PRODUCTION",
+        clip_check=_clip_check(verdict),
+    )
+    assert by_scene(result)[1]["status"] == "PAID", result
+    (hero,) = takes(engine, storyboard_id, "test_shot")
+    assert models.posts() == 1
+
+    def motion(**kwargs):
+        return run(
+            engine,
+            storyboard_id,
+            tmp_path,
+            "motion",
+            models,
+            account,
+            environment="PRODUCTION",
+            clip_check=_clip_check("PASSED"),
+            **kwargs,
+        )
+
+    return {
+        "storyboard_id": storyboard_id,
+        "hero": hero,
+        "models": models,
+        "motion": motion,
+        "decide": lambda: decide_take(engine, hero.id, "APPROVED", decided_by="owner", note="Da."),
+    }
+
+
+@requires_ffmpeg
+def test_under_mode_a_hero_that_passed_clip_qc_is_accepted_and_the_motion_is_bought(
+    engine, tmp_path
+):
+    from app.media.assembler import CLIP_QC_EVENT, HERO_ACCEPTED_EVENT, motion_plan
+    from test_film_costing import takes
+
+    world = _hero_bought(engine, tmp_path)
+    plan = motion_plan(engine, world["storyboard_id"], capabilities=[SEEDANCE])
+    assert plan["scenes"][0]["accepted_by"] is None  # not before the step that relies on it
+
+    result = world["motion"]()
+
+    assert world["models"].posts() == 2, result
+    assert result["hero_accepted"]["approved_by"] == "clip_qc"
+    (accepted,) = events(engine, HERO_ACCEPTED_EVENT)
+    (report,) = [e for e in events(engine, CLIP_QC_EVENT) if e.aggregate_id == world["hero"].id]
+    assert accepted.aggregate_id == world["hero"].id
+    assert accepted.payload["approved_by"] == "clip_qc"
+    assert accepted.payload["clip_qc_report_id"] == report.event_id
+    assert accepted.payload["clip_qc_verdict"] == "PASSED"
+    assert accepted.payload["paid_media_approval"] == "MODE"
+    # His APPROVED stays his alone: the take is still PAID, accepted by the check.
+    (hero,) = takes(engine, world["storyboard_id"], "test_shot")
+    assert hero.status == "PAID" and hero.approved_by is None
+    assert approvals(engine) == [], "the Owner was asked under his MODE rule"
+    plan = motion_plan(engine, world["storyboard_id"], capabilities=[SEEDANCE])
+    assert plan["scenes"][0]["accepted_by"] == "clip_qc"
+
+
+@requires_ffmpeg
+@pytest.mark.parametrize("verdict", ["UNCHECKED", "FAILED"])
+def test_an_unchecked_or_failed_hero_clip_waits_for_the_owner_and_buys_nothing(
+    engine, tmp_path, verdict
+):
+    from app.media.assembler import CLIP_QC_EVENT, HERO_ACCEPTED_EVENT, MotionStepRefused
+
+    world = _hero_bought(
+        engine, tmp_path, verdict="UNCHECKED" if verdict == "UNCHECKED" else "PASSED"
+    )
+    # (A FAILED clip is bought once more by clip QC itself and then rejected; a report that
+    # turns FAILED after the purchase is the case the gate alone decides.)
+    if verdict == "FAILED":
+        # A later look at the same clip measured it wrong: the latest report is what counts.
+        with Session(engine) as session, session.begin():
+            append_event(
+                session,
+                CLIP_QC_EVENT,
+                "scene_take",
+                world["hero"].id,
+                1,
+                {
+                    "storyboard_id": world["storyboard_id"],
+                    "scene_number": 1,
+                    "take_id": world["hero"].id,
+                    "verdict": "FAILED",
+                    "passed": False,
+                    "blocks_ro": ["nu arată scena"],
+                    "unmeasured": [],
+                },
+                "test",
+            )
+
+    with pytest.raises(MotionStepRefused) as waiting:
+        world["motion"]()
+
+    assert waiting.value.status == "HERO_NOT_APPROVED"
+    words = "nu a putut fi verificat" if verdict == "UNCHECKED" else "a picat controlul clipului"
+    assert words in waiting.value.reason_ro
+    assert "Proprietarului" in waiting.value.reason_ro
+    assert world["models"].posts() == 1
+    assert events(engine, HERO_ACCEPTED_EVENT) == []
+
+
+@requires_ffmpeg
+@pytest.mark.parametrize("gate", ["STOP", "SAFE_MODE"])
+def test_a_stop_or_safe_mode_refuses_the_motion_after_a_passed_hero(engine, tmp_path, gate):
+    from app.media.assembler import HERO_ACCEPTED_EVENT, MotionStepRefused
+    from app.runbook.models import SafeModeRecord
+    from app.services import utc_now
+
+    world = _hero_bought(engine, tmp_path)
+    with Session(engine) as session, session.begin():
+        if gate == "STOP":
+            session.get(OwnerPolicy, 1).autonomy_stopped = True
+        else:
+            session.add(
+                SafeModeRecord(
+                    id=str(uuid4()),
+                    reason="Un incident ține studioul în SAFE_MODE.",
+                    trigger="STAGE_FAILURE",
+                    run_id=None,
+                    entered_at=utc_now(),
+                    cleared_at=None,
+                    cleared_notes=None,
+                    event_id=None,
+                )
+            )
+
+    with pytest.raises(MotionStepRefused) as refused:
+        world["motion"]()
+
+    assert refused.value.status == ("BLOCKED_STOP" if gate == "STOP" else "BLOCKED_SAFE_MODE")
+    assert world["models"].posts() == 1
+    assert events(engine, HERO_ACCEPTED_EVENT) == []
+
+
+@requires_ffmpeg
+def test_under_every_paid_step_a_passed_hero_still_waits_for_the_owners_look(engine, tmp_path):
+    from app.media.assembler import HERO_ACCEPTED_EVENT, MotionStepRefused
+
+    world = _hero_bought(engine, tmp_path, rule="EVERY_PAID_STEP")
+
+    with pytest.raises(MotionStepRefused) as waiting:
+        world["motion"]()
+
+    assert waiting.value.status == "HERO_NOT_APPROVED"
+    assert "a trecut controlul clipului" in waiting.value.reason_ro
+    assert "fiecărui pas plătit" in waiting.value.reason_ro
+    assert world["models"].posts() == 1
+    assert events(engine, HERO_ACCEPTED_EVENT) == []
+    assert [a.action for a in approvals(engine)] == ["media.test_shot"]
+    # His look moves it on: the motion step is now his question, as before.
+    world["decide"]()
+    with pytest.raises(MotionStepRefused) as asked:
+        world["motion"]()
+    assert asked.value.status == "NEEDS_APPROVAL"
+    assert world["models"].posts() == 1

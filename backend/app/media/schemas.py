@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -145,15 +146,21 @@ class QCReportView(BaseModel):
 class SheetStepCommand(BaseModel):
     """The Owner's press of a step on the shooting sheet: the sheet he was shown, by hash.
 
-    ``allow_over_budget`` is his explicit consent to go over the daily budget for this step;
-    without it a step that would exceed the budget is refused (409). Neither field buys
-    anything on its own: the step still needs his yes for this very sheet.
+    ``allow_over_budget`` is his explicit consent to go over the daily budget (and, in
+    PRODUCTION, the film's own ceiling) for this step; without it a step that would exceed
+    them is refused (409). Neither field buys anything on its own: the step still needs his
+    yes for this very sheet.
+
+    ``command_id`` makes a press safe to repeat (MONEY-04): a step that bought under an id
+    answers the same id again with what it bought, ``replayed: true``, and buys nothing; the
+    same id with another body is refused (409).
     """
 
     model_config = ConfigDict(extra="forbid")
 
     plan_hash: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
     allow_over_budget: bool = False
+    command_id: UUID | None = None
 
 
 class SceneModelCommand(BaseModel):

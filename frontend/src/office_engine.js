@@ -3,7 +3,7 @@ import { HQAssets } from './hq_assets.js';
 import { WorldSimulationManager, HQRenderer } from './hq_world.js';
 import { scenePalette } from './hq_palette.js';
 import { NO_INSETS, between, easeOut, frameFit } from './game_frame.js';
-import { bucharestTime } from './office_clock.js';
+import { studioPlace, studioTime } from './office_clock.js';
 import { timeOfDay } from './hq_time.js';
 import { weatherSign } from './hq_weather.js';
 
@@ -1117,7 +1117,7 @@ export class OfficeEngine {
     if (this.infoElement && this.world) {
       // The glass keeps the live hour: while a day is replayed the world's own clock is the
       // replayed moment's, and that one stands beside it under ATUNCI (replay_player.js).
-      const text = this.world.replayAt != null ? bucharestTime(new Date()).text : this.world.time.state.text;
+      const text = this.world.replayAt != null ? studioTime(new Date()).text : this.world.time.state.text;
       const weather = this.world.weather;
       // W25: the sign follows the observed day or night (a clear night is «☾ Senin», not «☀ Senin»)
       const icon = weatherSign(weather.state.condition, weather.state.isDay, timeOfDay(new Date()).elevation);
@@ -1125,7 +1125,8 @@ export class OfficeEngine {
       this._setParts(this.infoElement, [
         ['scene-figure', text],
         ['scene-sep', separator],
-        ['scene-label', 'BUCUREȘTI'],
+        // the studio's own city (office_clock.js studioPlace), as the snapshot names it
+        ['scene-label', studioPlace().city.toLocaleUpperCase('ro')],
         ['scene-sep', separator],
         ['scene-weather', `${icon ? `${icon} ` : ''}${weather.label()}`],
       ]);

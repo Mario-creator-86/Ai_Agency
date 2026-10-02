@@ -67,7 +67,11 @@ FATAL_CHECKS = ("every_scene_is_attributed",)
 #: opening is a question about meaning, and nothing that counts words can decide it. It stays
 #: measured, it reaches the Director as a flag to look at, and it no longer refuses by itself —
 #: the reader decides.
-ADVISORY_CHECKS = ("ending_answers_the_hook",)
+#:
+#: `ending_loops_to_hook` (2026-10-02, audit Q5) asks whether the last line leads back into
+#: the opening, so a short watched in a loop reads as one story. The same limit applies: it
+#: counts shared words, and a loop can be made in other words. It is a flag for the reader.
+ADVISORY_CHECKS = ("ending_answers_the_hook", "ending_loops_to_hook")
 
 #: How many times the studio asks for a rewrite before the story is refused.
 #:

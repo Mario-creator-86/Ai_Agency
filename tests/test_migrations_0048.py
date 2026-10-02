@@ -31,8 +31,14 @@ from app.services import bootstrap_studio
 from sqlalchemy import inspect
 
 PREVIOUS = "0047_replay_reads"
-HEAD = "0048_production_sheet"
 LIVE_DB = ROOT / "data" / "studio.db"
+
+
+def _head() -> str:
+    """The chain's head, read from the migrations (0049 and later build on this one)."""
+    from app.main import expected_revision
+
+    return expected_revision()
 
 
 def _downgrade(engine, revision: str) -> None:
@@ -226,15 +232,24 @@ def test_the_value_sets_the_code_uses_are_the_ones_the_database_checks():
     import app.media.models as media_models
     import app.models as core_models
 
-    spec = importlib.util.spec_from_file_location(
-        "migration_0048", ROOT / "backend/migrations/versions/0048_production_sheet.py"
-    )
-    assert spec is not None and spec.loader is not None
-    migration = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migration)
+    def load(name: str):
+        spec = importlib.util.spec_from_file_location(
+            name, ROOT / f"backend/migrations/versions/{name}.py"
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    migration = load("0048_production_sheet")
     assert migration.SCENE_KINDS == media_models.SCENE_KINDS
-    assert migration.TAKE_KINDS == media_models.SCENE_TAKE_KINDS
-    assert migration.TAKE_STATUSES == media_models.SCENE_TAKE_STATUSES
+    # 0049 widened the take's kinds and statuses; it names 0048's sets as the ones it
+    # rebuilds from, and its own as the model's.
+    widened = load("0049_take_intent")
+    assert migration.TAKE_KINDS == widened.OLD_TAKE_KINDS
+    assert migration.TAKE_STATUSES == widened.OLD_TAKE_STATUSES
+    assert widened.TAKE_KINDS == media_models.SCENE_TAKE_KINDS
+    assert widened.TAKE_STATUSES == media_models.SCENE_TAKE_STATUSES
     assert migration.PAID_MEDIA_APPROVALS == core_models.PAID_MEDIA_APPROVALS
     assert core_models.PAID_MEDIA_APPROVALS[0] == "EVERY_PAID_STEP"
     assert StoryboardScene.__table__.c.scene_kind.server_default.arg == "LIVE"
@@ -306,7 +321,9 @@ def test_existing_scenes_become_live_and_the_downgrade_reverses_cleanly(tmp_path
     migrate(engine)
     connection = _raw(path)
     try:
-        assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (HEAD,)
+        assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
+            _head(),
+        )
         rows = connection.execute(
             "SELECT id, scene_kind, card_json FROM storyboard_scene ORDER BY scene_index"
         ).fetchall()
@@ -340,7 +357,7 @@ def test_existing_scenes_become_live_and_the_downgrade_reverses_cleanly(tmp_path
 
 
 def test_the_application_starts_on_the_new_head(tmp_path, settings):
-    """The app refuses any revision but its own head; 0048 must be that head, not 0047."""
+    """The app refuses any revision but its own head; the chain through 0048 reaches it."""
     from app.main import create_app
     from fastapi.testclient import TestClient
 

@@ -764,6 +764,8 @@ def test_in_production_the_daily_budget_that_cannot_hold_two_films_is_said_befor
     seed_default_channels(engine)
     set_budget(engine, BudgetCommand(period="DAILY", limit_usd="15"))
     set_environment(engine, "PRODUCTION")
+    # The film's ceiling, enforced before every paid step since 2026-10-02 (MONEY-07).
+    settings.film_budget_usd = 12.0
 
     result = preflight_at(engine, settings, vault)
     films = named(result, "daily_budget_films")
@@ -774,9 +776,9 @@ def test_in_production_the_daily_budget_that_cannot_hold_two_films_is_said_befor
     assert "12 USD" in films["message"] and "15 USD" in films["message"]
     assert "3 USD" in films["message"]
     assert "Trezorerie → Buget și cheltuieli" in films["message"]
-    assert "plafonul de mișcare pe film" in films["message"]
+    assert "plafonul unui film" in films["message"]
     assert films["technical"]["routes"] == ["PUT /economy/budget"]
-    assert films["technical"]["settings"] == ["STUDIO_MOTION_BUDGET_USD"]
+    assert films["technical"]["settings"] == ["STUDIO_FILM_BUDGET_USD", "STUDIO_MOTION_BUDGET_USD"]
     # The summary no longer says the studio can run above a check that foresees a film lost.
     assert "Studioul poate rula" not in result["summary"]
     assert result["first_stop"] == "daily_budget_films"

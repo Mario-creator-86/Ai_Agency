@@ -195,7 +195,16 @@ def _priced_scene_costs(
                 "voice",
                 voice_integration,
                 scene.get("model_id"),
-                {"characters": float(scene.get("characters") or 0)},
+                # The characters voiced by THIS render: a narration reused from an earlier
+                # attempt (a narration take) was bought and booked then. A record from
+                # before 2026-10-02 has no such count and every character was voiced.
+                {
+                    "characters": float(
+                        scene["characters_bought"]
+                        if "characters_bought" in scene
+                        else scene.get("characters") or 0
+                    )
+                },
             ),
             (
                 "image",
@@ -511,6 +520,96 @@ def budget_refusal_letter(
     )
 
 
+def _letter_each_time(
+    engine: Engine,
+    kind: str,
+    *,
+    subject: str,
+    body: dict[str, Any],
+    body_text: str,
+    correlation: str,
+) -> str:
+    """One letter to the Owner from the Accountant (the Director when the studio has none,
+    the studio itself when it has neither), every time: each one is about money that went
+    out, and none may be folded into another. Returns the message id."""
+    with Session(engine) as session, session.begin():
+        author = agent_for_role(session, ACCOUNTANT_ROLE) or agent_for_role(session, "Director")
+        message = post_message(
+            session,
+            intent="ESCALATE",
+            subject=subject[:200],
+            body={**body, "kind": kind, "owner_attention": True},
+            body_text=body_text,
+            from_agent_id=author.id if author is not None else None,
+            to_agent_id=None,
+            to_owner=True,
+            correlation_id=correlation,
+        )
+        return str(message.id)
+
+
+def booking_refused_letter(
+    engine: Engine,
+    *,
+    reference: str,
+    amount_ro: str,
+    reason: str,
+    correlation_id: str,
+) -> str:
+    """A purchase the books refused to record: the Owner hears it, with the sum and why.
+
+    Until 2026-10-02 a refused booking was a log line at INFO: a second purchase under the
+    same sheet was refused as a duplicate, and 2,040 credits spent showed as 680 booked.
+    """
+    return _letter_each_time(
+        engine,
+        "booking_refused",
+        subject="O cheltuială nu a putut fi trecută în registru",
+        body={"reference": reference, "reason": reason[:300]},
+        body_text=(
+            f"Către Owner. O cumpărare de {amount_ro} nu a putut fi trecută în registru "
+            f"(referința {reference}): {reason[:300]}\n"
+            "Banii au ieșit din cont, dar bugetul nu îi vede până nu sunt înregistrați. "
+            "Verificați registrul furnizorului și înregistrați suma de mână dacă lipsește."
+        ),
+        correlation=correlation_id,
+    )
+
+
+def paid_step_interrupted_letter(
+    engine: Engine,
+    *,
+    storyboard_id: str,
+    step_words: str,
+    credits_ro: str,
+    amount_ro: str,
+    booked: bool,
+    reason: str,
+    correlation_id: str,
+) -> str:
+    """A paid step that failed after it had paid: what it spent, that it is booked, and
+    that nothing is bought again until the Owner has looked."""
+    books = (
+        "Suma este trecută în registru."
+        if booked
+        else "Suma NU a putut fi trecută în registru; verificați registrul."
+    )
+    return _letter_each_time(
+        engine,
+        "paid_step_interrupted",
+        subject=f"Pasul «{step_words}» s-a oprit după ce a plătit",
+        body={"storyboard_id": storyboard_id, "booked": booked, "reason": reason[:300]},
+        body_text=(
+            f"Către Owner. Pasul «{step_words}» al filmului {storyboard_id[:8]} a trimis "
+            f"cereri plătite și apoi s-a oprit: {reason[:300]}\n"
+            f"Cheltuit sau posibil taxat: {credits_ro} ({amount_ro}). {books}\n"
+            "Pasul nu se reia automat și nimic nu se cumpără din nou; cadrele deja cerute se "
+            "ridică de la furnizor fără plată. Decideți pe foaia de filmare."
+        ),
+        correlation=correlation_id,
+    )
+
+
 def _local_moment(iso: str, timezone: str) -> str:
     """An ISO instant as the Owner reads a clock, or unchanged when it cannot be parsed.
 
@@ -654,12 +753,76 @@ def agent_tokens_since(session: Session, since_iso: str) -> int:
     return int(used[0] or 0) + int(used[1] or 0)
 
 
+#: The runs an exceeded USD budget does not stop: the Accountant's daily close is how the Owner
+#: learns that the budget is exceeded, and refusing it would silence the one escalation.
+BUDGET_EXEMPT_TASKS = frozenset({"reconcile_day"})
+
+
+def _exceeded_budget(engine: Engine, moment: datetime) -> dict[str, Any] | None:
+    """The first active budget already EXCEEDED (spent and held past its limit), or None."""
+    for period in budget_status(engine, moment)["budgets"]:
+        if period["state"] == "EXCEEDED":
+            return dict(period)
+    return None
+
+
+def _usd_budget_refusal(
+    engine: Engine,
+    period: dict[str, Any],
+    used: int,
+    ceiling: int,
+    correlation_id: str | None,
+    now: datetime | None,
+) -> dict[str, Any]:
+    """An employee's run refused because a USD budget is already exceeded (MONEY-10): the
+    verdict, and the Owner's letter once that day."""
+    word = budget_period(period["period"]).lower()
+    reason = (
+        f"Bugetul {word} de {str(period['limit_usd']).replace('.', ',')} USD este depășit "
+        f"({str(period['spent_usd']).replace('.', ',')} USD cheltuiți"
+        + (
+            f", {str(period['reserved_usd']).replace('.', ',')} USD rezervați"
+            if period.get("reserved_usd_micros")
+            else ""
+        )
+        + "): nicio rulare a angajaților până la perioada următoare sau până când ridici "
+        "bugetul în Trezorerie → Buget și cheltuieli."
+    )
+    letter = _letter_once_a_day(
+        engine,
+        "budget_exceeded_agents",
+        subject="Bugetul este depășit: angajații nu mai rulează",
+        body={
+            "period": period["period"],
+            "limit_usd": period["limit_usd"],
+            "spent_usd": period["spent_usd"],
+            "owner_attention": True,
+        },
+        body_text=(
+            f"Către Owner. {reason} Rulările refuzate sunt înregistrate BLOCKED_BUDGET; "
+            "niciun model nu este întrebat cât timp bugetul rămâne depășit."
+        ),
+        correlation=correlation_id or str(uuid4()),
+        now=now,
+    )
+    return {
+        "allowed": False,
+        "status": "BLOCKED_BUDGET",
+        "reason": reason,
+        "tokens_used": used,
+        "ceiling": ceiling,
+        "budget_period": period["period"],
+        "letter": letter,
+    }
+
+
 def may_run_agent(
     engine: Engine,
     settings: Any,
     *,
     correlation_id: str | None = None,
     now: datetime | None = None,
+    task_type: str | None = None,
 ) -> dict[str, Any]:
     """Whether another model run fits under the day's token ceiling.
 
@@ -667,6 +830,12 @@ def may_run_agent(
     until now. Past it the verdict is `BLOCKED_BUDGET` with the reason in the Owner's
     language, and the Accountant writes to the Owner once that day. Call it before opening
     the run's write transaction: the letter writes in a transaction of its own.
+
+    An active USD budget (DAILY or MONTHLY) already EXCEEDED refuses the run the same way
+    (2026-10-02, MONEY-10): `spend_since` counts the runs' own `cost_vr`, and before this an
+    exceeded budget stopped no employee's run at all. One letter a day for that as well. The
+    Accountant's daily close (``task_type`` in `BUDGET_EXEMPT_TASKS`) is not stopped by it:
+    it is the report that tells the Owner the budget is exceeded.
     """
     ceiling = int(getattr(settings, "agent_daily_token_budget", 0) or 0)
     moment = now or datetime.now(UTC)
@@ -674,6 +843,9 @@ def may_run_agent(
         since = _period_start("DAILY", moment, studio_timezone(session))
         used = agent_tokens_since(session, since)
     if ceiling <= 0 or used < ceiling:
+        exceeded = None if task_type in BUDGET_EXEMPT_TASKS else _exceeded_budget(engine, moment)
+        if exceeded is not None:
+            return _usd_budget_refusal(engine, exceeded, used, ceiling, correlation_id, now)
         return {
             "allowed": True,
             "status": None,

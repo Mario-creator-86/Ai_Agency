@@ -27,5 +27,39 @@
     "Clear separation between foreground and background."
   ],
   "min_words": 40,
-  "max_words": 60
+  "max_words": 60,
+  "finish": {
+    "note": "The finish: what the studio does to a film after its pictures are made, locally and for 0 credits. None of it reaches a model (the image model reads only rendering, slots and fill). captions: the burnt captions' colours as #RRGGBB (text, the word being spoken, numbers), their shadow (opacity 0-1, 0-4 px) and whether the spoken word and numbers are coloured. headline: the hook written at the top for its first seconds (off until the Owner chooses it). grade: every filmed shot pulled toward the hero's light and colour (strength 0-1), an optional .cube LUT in config/luts with its licence (a LUT without a licence is not used) and shared grain (0-10). second_framing: a long spoken scene cut to a closer framing of the same picture (zoom 1.12-1.2). cover: a cover image from the hero still and the hook. editorial_qc_blocking: false keeps the editing checks advisory; true makes them refuse a film. A value that is not valid is not used and the default stands.",
+    "captions": {
+      "text": "#FFFFFF",
+      "active": "#FFD23F",
+      "emphasis": "#5CE1E6",
+      "outline": "#000000",
+      "shadow": "#000000",
+      "shadow_opacity": 0.6,
+      "shadow_px": 2.5,
+      "highlight_active_word": true,
+      "emphasis_numbers": true
+    },
+    "headline": {
+      "show": false,
+      "seconds": 2.2
+    },
+    "grade": {
+      "match_to_hero": true,
+      "strength": 0.6,
+      "lut": null,
+      "lut_licence": null,
+      "grain": 0
+    },
+    "second_framing": {
+      "enabled": true,
+      "min_spoken_seconds": 3.2,
+      "zoom": 1.15
+    },
+    "cover": {
+      "compose": true
+    },
+    "editorial_qc_blocking": false
+  }
 }

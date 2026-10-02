@@ -9,6 +9,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 from app.agents.services import seed_initial_workforce  # noqa: E402
 from app.analytics.services import seed_default_strategy  # noqa: E402
+from app.backup import backup_before_migration, backup_folder, database_file  # noqa: E402
 from app.config import Settings  # noqa: E402
 from app.db import create_db_engine, migrate  # noqa: E402
 from app.economy.prices import seed_documented_prices  # noqa: E402
@@ -31,6 +32,43 @@ def main() -> None:
             handle.write(content)
         env.chmod(0o600)
     settings = Settings()  # type: ignore[call-arg]
+    made = prepare_database(settings)
+    if made is not None:
+        print(
+            f"Backup before the migration: {made['path']} "
+            f"(revision {made['revision']}, sha256 {str(made['sha256'])[:12]}...)."
+        )
+    print("Foundation database ready. Owner token is in .env (never share or commit it).")
+    print(
+        "To build the frontend and start the studio in one step, run start.cmd "
+        "(or: uv run python scripts/start.py)."
+    )
+
+
+def migration_head() -> str:
+    """The head of the migration chain, read from the migrations themselves."""
+    from alembic.config import Config  # noqa: PLC0415
+    from alembic.script import ScriptDirectory  # noqa: PLC0415
+
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(ROOT / "backend/migrations"))
+    head = ScriptDirectory.from_config(config).get_current_head()
+    if not head:
+        raise RuntimeError("The migration chain has no single head")
+    return str(head)
+
+
+def prepare_database(settings: Settings) -> dict | None:
+    """Back up a studio's database that is about to be migrated, migrate it and seed it.
+
+    start.py runs this on every start (the scheduled service included), so a database at an
+    older revision used to be migrated in place with no copy (REL-04). Now a non-empty
+    database below the head is copied first (`app.backup`, tag ``premigrare``, beside the
+    other backups); a new or current database is not. A copy that cannot be made stops here:
+    nothing is migrated without one. Returns the copy's manifest, or None.
+    """
+    database = database_file(str(settings.database_url))
+    made = backup_before_migration(database, backup_folder(settings, database), migration_head())
     engine = create_db_engine(settings.database_url)
     try:
         migrate(engine)
@@ -52,11 +90,7 @@ def main() -> None:
         seed_default_strategy(engine)
     finally:
         engine.dispose()
-    print("Foundation database ready. Owner token is in .env (never share or commit it).")
-    print(
-        "To build the frontend and start the studio in one step, run start.cmd "
-        "(or: uv run python scripts/start.py)."
-    )
+    return made
 
 
 if __name__ == "__main__":

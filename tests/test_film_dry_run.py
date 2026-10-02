@@ -698,3 +698,78 @@ def test_the_film_assembled_from_its_takes_passes_qc_and_the_report_names_measur
     # Nothing was measured, nothing is reported as spent.
     assert "necunoscut" in qc_summary_ro(report, None)
     assert sockets["seen"] == [] and sockets["refused"] == []
+
+
+# ------------------------- 4. under his MODE rule clip QC accepts the hero; the sheet says so
+
+
+def passing_clip_qc(monkeypatch) -> None:
+    """qc.check_clip, faked: every shot reads as passed (the real check is tested on its own)."""
+    from app.media import qc as clip_qc
+
+    def passing(path, *, scene, **_kwargs):
+        good = clip_qc.ClipCheck("picture", "PASSED", True, None, "arată ce s-a cerut")
+        return clip_qc.ClipReport(
+            scene=scene,
+            path=str(path),
+            checks=(good,),
+            passed=True,
+            blocks_ro=(),
+            warnings_ro=(),
+            unmeasured=(),
+        )
+
+    monkeypatch.setattr(clip_qc, "check_clip", passing)
+
+
+def test_under_mode_the_sheet_names_clip_qc_acceptance_and_the_motion_needs_no_look(
+    client, engine, headers, tmp_path, monkeypatch, sockets
+):
+    from app.models import OwnerPolicy
+
+    storyboard_id = planned_film(engine, tmp_path)
+    world = studio(client, tmp_path, monkeypatch)
+    passing_clip_qc(monkeypatch)
+
+    # His default rule, EVERY_PAID_STEP: the sheet says he looks at the hero himself.
+    every = sheet(client, headers, storyboard_id)["steps"]["motion"]
+    assert every["hero"]["rule_accepts"] is False
+    assert "Proprietarul" in every["waiting_ro"]
+    assert "controlul clipului" not in every["waiting_ro"]
+
+    with Session(engine) as session, session.begin():
+        policy = session.get(OwnerPolicy, 1)
+        policy.autonomy_mode = "AUTONOMOUS_CEO"
+        policy.autonomy_stopped = False
+        policy.paid_media_approval = "MODE"
+
+    first = sheet(client, headers, storyboard_id)["steps"]["motion"]
+    assert first["hero"]["rule_accepts"] is True, first["hero"]
+    assert "controlul clipului" in first["waiting_ro"]
+    assert "regula ta" in first["waiting_ro"]
+
+    for name in ("stills", "test_shot"):
+        bought = step(
+            client, headers, storyboard_id, name, current_hash(client, headers, storyboard_id)
+        )
+        assert bought.status_code == 200, bought.text
+    assert calls(world) == (4, 1, 0)
+    before = sheet(client, headers, storyboard_id)["steps"]["motion"]["hero"]
+    assert before["status"] == "ACCEPTS" and before["clip_verdict"] == "PASSED"
+    assert "a trecut controlul clipului" in before["reason_ro"]
+
+    motion = step(
+        client, headers, storyboard_id, "motion", current_hash(client, headers, storyboard_id)
+    )
+
+    assert motion.status_code == 200, motion.text
+    assert calls(world) == (4, 1, 3)
+    assert motion.json()["hero_accepted"]["approved_by"] == "clip_qc"
+    after = sheet(client, headers, storyboard_id)
+    assert after["steps"]["motion"]["hero"]["status"] == "ACCEPTED"
+    (shot,) = after["scenes"][0]["shots"]
+    assert shot["status"] == "PAID" and shot["accepted_by"] == "clip_qc"
+    assert shot["accepted_ro"] == "acceptat de controlul clipului"
+    assert after["scenes"][0]["motion"]["accepted_by"] == "clip_qc"
+    assert approvals(engine) == [], "the Owner was asked under his MODE rule"
+    assert sockets["seen"] == [] and sockets["refused"] == []

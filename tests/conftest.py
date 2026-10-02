@@ -1,4 +1,5 @@
 import ipaddress
+import os
 import secrets
 import socket
 import traceback
@@ -12,6 +13,50 @@ from app.db import create_db_engine, migrate
 from app.main import create_app
 from app.services import bootstrap_studio
 from fastapi.testclient import TestClient
+from suite_switches import mark_lanes
+from suite_switches import pytest_runtest_makereport as pytest_runtest_makereport  # noqa: F401
+
+#: Test modules that measure the production encode itself, so they keep it whole.
+REAL_ENCODE_MODULES = frozenset({"test_encode_spec.py"})
+#: The quick final encode's preset. veryfast keeps CABAC and the 8x8 transform, so the stream
+#: stays High profile (ultrafast would drop to Constrained Baseline and fail QC's delivery
+#: check), and at the same CRF its bitrate is a little higher, never under QC's 6 Mbps floor.
+QUICK_FINAL_PRESET = "veryfast"
+
+
+def pytest_collection_modifyitems(config, items):
+    """Lanes (film, slow) and the modules kept on the production encode."""
+    mark_lanes(items)
+    for item in items:
+        if item.path.name in REAL_ENCODE_MODULES:
+            item.add_marker(pytest.mark.real_encode)
+
+
+@pytest.fixture(autouse=True)
+def quick_final_encode(request, monkeypatch):
+    """The film's final encode on the veryfast preset, unless the test is about the encode.
+
+    Measured 2026-10-01: the six end-to-end days took 491 s of a 1,717 s run, and the final
+    encode is x264 on the slow preset at 1080x1920. Everything else in the delivery spec is
+    kept (High 4.2, CRF 17, the 14 Mbps cap, the GOP, BT.709, faststart), so QC measures the
+    same kind of file. Kept whole for a test marked real_encode (the encode spec, and one
+    end-to-end day), and for every test when STUDIO_REAL_ENCODE=1.
+    """
+    if request.node.get_closest_marker("real_encode"):
+        return
+    if os.environ.get("STUDIO_REAL_ENCODE", "").strip() == "1":
+        return
+    from app.media import assembler
+
+    production = assembler.final_video_args
+
+    def quick(*args, **kwargs):
+        encode = list(production(*args, **kwargs))
+        if "-preset" in encode:
+            encode[encode.index("-preset") + 1] = QUICK_FINAL_PRESET
+        return encode
+
+    monkeypatch.setattr(assembler, "final_video_args", quick)
 
 
 def _loopback(host: object) -> bool:
@@ -219,7 +264,9 @@ def settings(tmp_path):
 def engine(settings):
     engine = create_db_engine(settings.database_url)
     migrate(engine)
-    bootstrap_studio(engine, settings)
+    # The suite's studio is the Owner's own, which runs AUTONOMOUS_CEO; a buyer's fresh install
+    # starts MANUAL (AR-09, services.NEW_STUDIO_AUTONOMY_MODE).
+    bootstrap_studio(engine, settings, autonomy_mode="AUTONOMOUS_CEO")
     yield engine
     engine.dispose()
 

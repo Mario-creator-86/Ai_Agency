@@ -45,6 +45,26 @@ What this step does, in order, and what stops it:
    request's price. The balance before and after gives the measured credits, written on
    each take and, with the Runway integration named, as MEASURED prices.
 
+8. Every request is a SceneTake (SUBMITTED, with the vendor's task id) the moment the vendor
+   accepts it, before any poll; its candidates land on it. A task whose stills do not arrive
+   (the poll deadline, a poll or a download that fails) stays SUBMITTED, the scene IN_FLIGHT
+   and the step stops: it is collected later by its id (a GET, free), at the start of the next
+   step and by the watchdog, and never bought again. A candidate collected that way, or one
+   whose process died before it was judged, is PAID and UNJUDGED; the scene is "pending" in
+   the plan (not bought) and its candidates are judged first. When nothing else is to be
+   bought, the day settles them on its own (`settle_stills`: no purchase, no yes asked).
+9. A scene remembers what happened to it since the Owner last decided about it
+   (`assembler.scene_memory`): a scene the gate or the vendor left to him is "held", out of
+   every later purchase, until his decision on the sheet (2026-10-02: under his MODE rule
+   such a scene had been bought again every day). Past `max_paid_attempts_per_scene` paid
+   requests it waits for him too, whatever its prompt. While scene 1 (Figure 1) is held,
+   nothing later is offered for purchase.
+10. A scene showing a character with a reference picture is drawn from it: the identity of
+   its still includes the picture (as `assemble_from_takes` reads it), the picture goes to the
+   vendor as Figure 1 and the film's look as Figure 2 (`CHARACTER_FIGURE`, `FIGURE_TWO`). A
+   character whose look is locked and who has no reference refuses the step, NEEDS_REFERENCE,
+   before anything is asked or bought.
+
 Nothing here ever asks a video model: the motion step is a separate approval.
 """
 
@@ -52,6 +72,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -62,17 +83,35 @@ from uuid import uuid4
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
+from app.db import lock_for_write
 from app.media.assembler import (
     DEFAULT_STORAGE_ROOT,
+    FREE_FAILURE_KINDS,
     LIVE_KIND,
+    STILL_HOLD_EVENT,
+    UNANSWERED_FAILURE_CODE,
+    UNANSWERED_REASON,
+    UNCOUNTED_DROP_STOP,
+    UNJUDGED_DETAIL,
+    UNJUDGED_FAILURE_CODE,
+    SpendMeter,
+    _record_intent,
     classify_vendor_failure,
+    collect_submitted_takes,
     failure_code_of,
     failure_detail_of,
+    identity_key,
+    max_paid_attempts_per_scene,
+    outcome_unknown,
+    possibly_charged,
     record_take,
     scene_kind_of,
+    scene_memory,
+    scene_reference,
     shot_plan_sources,
     still_fields,
     take_hash,
+    uncounted_drop,
     usable_take,
 )
 from app.media.cost_plan import (
@@ -85,6 +124,7 @@ from app.media.cost_plan import (
     price_still,
     source_label,
 )
+from app.media.disk import LOW_DISK, disk_refusal
 from app.media.faces import FaceCounter
 from app.media.models import SceneTake, Storyboard, StoryboardScene
 from app.media.picture_qc import StillJudgement, judge_still
@@ -108,7 +148,7 @@ from app.media.still_gate import (
     next_step,
     positive_instruction,
 )
-from app.providers.media_http import MediaProviderError
+from app.providers.media_http import MediaProviderError, TaskStillOpen
 
 #: The Policy Kernel's name for this step, and the sheet step it is bound to.
 STILLS_ACTION = "media.stills_purchase"
@@ -121,12 +161,35 @@ GATE_REVIEWER = "still_gate"
 FIGURE_ONE = (
     "Use Figure 1 only for its light, palette and grain; do not copy its objects or composition."
 )
+#: The same, when the scene's character reference goes first and scene 1's still second.
+FIGURE_TWO = (
+    "Use Figure 2 only for its light, palette and grain; do not copy its objects or composition."
+)
+#: How a scene drawn from its character's reference picture is told what Figure 1 is.
+CHARACTER_FIGURE = (
+    "Figure 1 is the character reference of {name}: draw {name} with exactly this face, hair, "
+    "outfit and colours; do not copy its background or its pose."
+)
 #: The account must hold this much more than the cap before the step is asked or bought.
 BALANCE_MARGIN = 1.15
 #: The failure code a candidate the studio's own gate rejected carries.
 GATE_FAILURE_CODE = "LOCAL.STILL_GATE"
 #: Failure kinds tried once more on the same words (production_policy.classify_failure).
 RETRY_KINDS = ("TRANSIENT", "BAD_OUTPUT")
+#: A still take that was bought and is not settled yet: its task still open at the vendor, or
+#: its candidates on disk and not judged. Such a scene is not bought; it is collected or judged.
+PENDING_STATUSES = ("SUBMITTED", "PAID")
+#: Why a scene whose request the vendor accepted is not bought again, in the Owner's words.
+IN_FLIGHT_REASON = (
+    "Scena {scene}: furnizorul a primit deja cererea plătită pentru imaginile ei și nu le-a "
+    "predat încă; se ridică fără o nouă cumpărare."
+)
+IN_FLIGHT_STOP = (
+    "Scena {scene}: furnizorul a primit cererea plătită, dar imaginile nu au sosit încă; se "
+    "ridică mai târziu, fără o nouă cumpărare. În acest pas nu se mai cumpără imagini."
+)
+#: The failure code of a task the vendor accepted and answered with fewer stills than asked.
+NO_OUTPUT_CODE = "VENDOR.NO_OUTPUT"
 
 Judge = Callable[..., StillJudgement]
 
@@ -171,19 +234,44 @@ class _Scene:
     camera_move: str
     source: str | None
     reuse: SceneTake | None = None
+    #: Bought and not settled: SUBMITTED takes (task open) and UNJUDGED candidates on disk.
+    pending: list[SceneTake] = field(default_factory=list)
+    #: The character's reference picture the still is drawn from (with its bytes), or None.
+    reference: dict[str, Any] | None = None
+    #: Why the scene cannot be drawn at all: a locked character with no reference.
+    needs_reference: str | None = None
+    #: Why the scene waits for the Owner (`assembler.scene_memory`); never bought meanwhile.
+    hold_ro: str | None = None
+    #: Paid requests for the scene since the Owner last decided about it.
+    attempts: int = 0
 
 
 @dataclass
 class _Ledger:
-    """What the step has committed, against the approved cap."""
+    """What the step has committed, against the approved cap. ``meter`` is the caller's
+    (`assembler.SpendMeter`): the credits committed and the requests sent live there, so a
+    caller reads them when the step raises half-way."""
 
     cap: int
-    committed: float = 0.0
+    meter: SpendMeter = field(default_factory=SpendMeter)
     images: int = 0
     take_ids: list[str] = field(default_factory=list)
 
+    @property
+    def committed(self) -> float:
+        return self.meter.committed
+
+    @committed.setter
+    def committed(self, value: float) -> None:
+        self.meter.committed = value
+
 
 # ------------------------------------------------------------------------------ the plan
+
+
+def _usd_ro(amount: float) -> str:
+    """«2,16 USD»: an amount in the Owner's question, with a decimal comma."""
+    return f"{float(amount):.2f}".replace(".", ",") + " USD"
 
 
 def _canonical(data: Any) -> str:
@@ -191,6 +279,13 @@ def _canonical(data: Any) -> str:
 
 
 def _read_scenes(engine: Engine, storyboard_id: str) -> tuple[dict[str, Any], list[_Scene]]:
+    """The film's scenes as the step reads them: each LIVE scene's still identity (its words
+    and the reference picture of the character it shows, the identity `assemble_from_takes`
+    looks for), its approved still, what was bought and not settled, and what it remembers
+    since the Owner last decided about it (`assembler.scene_memory`)."""
+    from app.media.services import ReferenceRequired  # noqa: PLC0415 - services imports media
+
+    loaded: dict[str, bytes] = {}
     with Session(engine) as session:
         board = session.get(Storyboard, storyboard_id)
         if board is None:
@@ -211,10 +306,20 @@ def _read_scenes(engine: Engine, storyboard_id: str) -> tuple[dict[str, Any], li
             kind = scene_kind_of({"scene_kind": row.scene_kind})
             visual = str(row.visual_prompt or "")
             words = str(package.get("still_prompt") or visual) if kind == LIVE_KIND else ""
-            # The take's identity is the scene's planned still (its words and the model), the
-            # same identity `assemble_from_takes` looks for. A re-roll's positive words and
-            # Figure 1 are how this step reaches that still, not a different still.
-            identity = still_fields(visual, None)
+            # The take's identity is the scene's planned still (its words, the reference
+            # picture of its character, and the model), the same identity
+            # `assemble_from_takes` looks for. A re-roll's positive words and Figure 1 are how
+            # this step reaches that still, not a different still.
+            reference: dict[str, Any] | None = None
+            missing: str | None = None
+            if kind == LIVE_KIND:
+                try:
+                    reference = scene_reference(
+                        engine, {"character_ids": list(row.character_ids_json or [])}, cache=loaded
+                    )
+                except ReferenceRequired as exc:
+                    missing = str(exc)
+            identity = still_fields(visual, reference)
             scene = _Scene(
                 index=int(row.scene_index),
                 kind=kind,
@@ -223,16 +328,63 @@ def _read_scenes(engine: Engine, storyboard_id: str) -> tuple[dict[str, Any], li
                 look_block=str(package.get("look_block") or ""),
                 camera_move=str(package.get("camera_move") or ""),
                 source=package.get("source") if isinstance(package.get("source"), str) else None,
+                reference=reference,
+                needs_reference=missing,
             )
-            if kind == LIVE_KIND:
+            if kind == LIVE_KIND and missing is None:
                 found = usable_take(
                     session, storyboard_id, scene.index, "still", [identity], statuses=("APPROVED",)
                 )
                 if found is not None:
                     session.expunge(found)
                     scene.reuse = found
+                else:
+                    scene.pending = _pending_takes(session, storyboard_id, scene)
             scenes.append(scene)
+    # What each scene still to be bought remembers since the Owner last decided about it: a
+    # scene the gate or the vendor left to him is held, and is never bought meanwhile.
+    open_scenes = {
+        scene.index: scene
+        for scene in scenes
+        if scene.kind == LIVE_KIND and scene.reuse is None and scene.needs_reference is None
+    }
+    memory = scene_memory(
+        engine,
+        storyboard_id,
+        "still",
+        {index: scene.identity for index, scene in open_scenes.items()},
+    )
+    for index, scene in open_scenes.items():
+        remembered = memory.get(index)
+        if remembered is None:
+            continue
+        scene.attempts = remembered.attempts
+        if not scene.pending:
+            scene.hold_ro = remembered.hold_ro
     return bible, scenes
+
+
+def _pending_takes(session: Session, storyboard_id: str, scene: _Scene) -> list[SceneTake]:
+    """The scene's still takes of its current identity that were bought and not settled."""
+    rows = session.scalars(
+        select(SceneTake)
+        .where(
+            SceneTake.storyboard_id == storyboard_id,
+            SceneTake.scene_number == scene.index,
+            SceneTake.kind == "still",
+            SceneTake.status.in_(PENDING_STATUSES),
+        )
+        .order_by(SceneTake.created_at)
+    ).all()
+    pending: list[SceneTake] = []
+    for row in rows:
+        if take_hash(scene.identity, row.model_id) != row.prompt_hash:
+            continue
+        if row.status == "PAID" and row.failure_code != UNJUDGED_FAILURE_CODE:
+            continue  # a judged runner-up the Owner may pick: settled
+        session.expunge(row)
+        pending.append(row)
+    return pending
 
 
 def stills_plan(
@@ -253,7 +405,29 @@ def stills_plan(
     bible, scenes = _read_scenes(engine, storyboard_id)
     per_scene = price_still(model_id, STILLS_RESOLUTION, STILL_CANDIDATES, table=prices)
     row = prices.row(model_id, STILLS_RESOLUTION)
-    to_buy = [scene.index for scene in scenes if scene.kind == LIVE_KIND and scene.reuse is None]
+    every_live = [scene for scene in scenes if scene.kind == LIVE_KIND]
+    live = [scene for scene in every_live if scene.reuse is None]
+    # A scene with a request still open at the vendor, or candidates not judged yet, is not
+    # bought: it is collected and judged first (0 credits).
+    pending = [scene.index for scene in live if scene.pending]
+    # A scene left to the Owner (the gate, a refusal, the attempt limit) is not bought until
+    # he decides; nor is any scene of a film whose locked character has no reference picture.
+    held = [scene.index for scene in live if scene.hold_ro and not scene.pending]
+    needs_reference = [
+        {"scene_index": scene.index, "reason_ro": scene.needs_reference}
+        for scene in every_live
+        if scene.needs_reference
+    ]
+    to_buy = [
+        scene.index
+        for scene in live
+        if not scene.pending and not scene.hold_ro and not scene.needs_reference
+    ]
+    first = every_live[0] if every_live else None
+    if needs_reference or (first is not None and first.index in held):
+        # Scene 1 is Figure 1 for the film: while it waits for the Owner nothing later can be
+        # bought, and a film that cannot draw a locked character is bought for no scene.
+        to_buy = []
     cost = per_scene * len(to_buy)
     cap = cost * (1 + MAX_REROLLS)
     planned = {
@@ -271,10 +445,16 @@ def stills_plan(
                 "kind": scene.kind,
                 "still_prompt": scene.words if scene.kind == LIVE_KIND else "",
                 "reused_sha256": scene.reuse.sha256 if scene.reuse is not None else None,
+                "reference_sha256": scene.identity.get("reference_sha256"),
+                "status": _scene_status(scene, to_buy),
+                "reason_ro": scene.needs_reference or scene.hold_ro or "",
             }
             for scene in scenes
         ],
         "to_buy": to_buy,
+        "pending": pending,
+        "held": held,
+        "needs_reference": needs_reference,
         "credits_per_scene": per_scene,
         "cost_credits": cost,
         "cap_credits": cap,
@@ -288,6 +468,46 @@ def stills_plan(
         "price_source": source_label(row),
         "plan_hash": plan_hash,
     }
+
+
+def needs_reference_reason(missing: Sequence[dict[str, Any]]) -> str:
+    """The Owner's words for a film whose locked character has no reference picture."""
+    scenes = ", ".join(str(item["scene_index"]) for item in missing)
+    first = str(missing[0].get("reason_ro") or "").strip() if missing else ""
+    label = "Scena" if len(missing) == 1 else "Scenele"
+    return (
+        f"{label} {scenes}: {first} Nu se cumpără nicio imagine a filmului până nu există "
+        "imaginea de referință: un chip blocat nu se desenează din cuvinte. Setul de "
+        "referințe îl produce Proprietarul, din fișa personajului."
+    ).strip()
+
+
+def attempts_reason(scene: int, requests: int, limit: int) -> str:
+    """Why a scene is bought no more: the paid attempt limit since the Owner's last word."""
+    from app.wording import count  # noqa: PLC0415
+
+    return (
+        f"Scena {scene}: "
+        + count(requests, "cerere plătită", "cereri plătite")
+        + f" de imagini de la ultima decizie a Proprietarului, fără o imagine aprobată (limita "
+        f"este {limit}); nu se mai cumpără nimic pentru ea până nu decide el pe foaia de "
+        "filmare."
+    )
+
+
+def _scene_status(scene: _Scene, to_buy: list[int]) -> str:
+    """One scene's line in the plan: what the step will do with it."""
+    if scene.kind != LIVE_KIND:
+        return "COMPOSED"
+    if scene.reuse is not None:
+        return "APPROVED"
+    if scene.needs_reference:
+        return "NEEDS_REFERENCE"
+    if scene.pending:
+        return "PENDING"
+    if scene.hold_ro:
+        return "NEEDS_OWNER"
+    return "TO_BUY" if scene.index in to_buy else "WAITING"
 
 
 # ----------------------------------------------------------------------------- helpers
@@ -315,13 +535,43 @@ def _bible_rules(bible: dict[str, Any]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(rules))
 
 
-def _prompt(scene: _Scene, instruction: str, with_figure: bool) -> str:
+def _prompt(
+    scene: _Scene, instruction: str, with_figure: bool, *, with_character: bool = False
+) -> str:
+    """The words sent for one request: the scene, what a re-roll asks for, and what each
+    reference picture is for, in the order the pictures go (`_references`)."""
     parts = [scene.words]
     if instruction:
         parts.append(f"Show {instruction}.")
+    if with_character and scene.reference is not None:
+        name = str(scene.reference.get("canonical_name") or "the character")
+        parts.append(CHARACTER_FIGURE.format(name=name))
     if with_figure:
-        parts.append(FIGURE_ONE)
+        parts.append(FIGURE_TWO if with_character else FIGURE_ONE)
     return " ".join(part for part in parts if part)
+
+
+def _references(
+    scene: _Scene, figure_one: bytes | None, adapter: Any, *, first: bool
+) -> tuple[list[bytes], bool, bool]:
+    """(the pictures sent with the scene's request, whether its character's reference is
+    among them, whether the film's Figure 1 is). The character's reference goes first, for
+    the face, the hair and the outfit; the film's first approved still second, for its light
+    only. A vendor that does not say it takes a reference is not handed one
+    (`factory.accepts_reference_image`)."""
+    from app.media.factory import accepts_reference_image  # noqa: PLC0415 - factory reaches us
+
+    pictures: list[bytes] = []
+    with_character = False
+    if scene.reference is not None and accepts_reference_image(adapter):
+        data = scene.reference.get("bytes")
+        if isinstance(data, bytes) and data:
+            pictures.append(data)
+            with_character = True
+    with_figure = figure_one is not None and not first
+    if with_figure and figure_one is not None:
+        pictures.append(figure_one)
+    return pictures, with_character, with_figure
 
 
 def _event(engine: Engine, event_type: str, storyboard_id: str, payload: dict, corr: str) -> None:
@@ -345,15 +595,35 @@ def _read_balance(adapter: Any) -> tuple[bool, float | None, str | None]:
     return True, float(balance), None
 
 
+def _hears_submits(method: Any) -> bool:
+    """Whether a vendor method takes ``on_submitted`` (by name, or through ``**kwargs``)."""
+    try:
+        parameters = inspect.signature(method).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(
+        p.name == "on_submitted" or p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters
+    )
+
+
 def _buy(
-    adapter: Any, prompt: str, references: list[bytes], count: int
+    adapter: Any,
+    prompt: str,
+    references: list[bytes],
+    count: int,
+    on_submitted: Callable[[str], None] | None = None,
 ) -> tuple[list[Any], float | None]:
-    """The candidates of one request and the vendor's price for it (None when unstated)."""
-    if callable(getattr(adapter, "generate_candidates", None)):
+    """The candidates of one request and the vendor's price for it (None when unstated).
+
+    ``on_submitted(task_id)`` is handed to a vendor that tells when it accepted a task, so
+    the task is on the books before any poll."""
+    generate = getattr(adapter, "generate_candidates", None)
+    if callable(generate):
+        heard: dict[str, Any] = {}
+        if on_submitted is not None and _hears_submits(generate):
+            heard["on_submitted"] = on_submitted
         results = asyncio.run(
-            adapter.generate_candidates(
-                prompt, ratio=STILL_RATIO, count=count, references=list(references)
-            )
+            generate(prompt, ratio=STILL_RATIO, count=count, references=list(references), **heard)
         )
     else:
         # An image vendor without candidates: the same request, once per candidate.
@@ -421,10 +691,15 @@ def _set_verdicts(
 ) -> None:
     """APPROVED for the chosen candidate, PAID for a passing runner-up, REJECTED otherwise."""
     with Session(engine) as session, session.begin():
+        lock_for_write(session)
         for take_id, report in verdicts:
             row = session.get(SceneTake, take_id)
             if row is None:
                 continue
+            if row.failure_code == UNJUDGED_FAILURE_CODE:
+                # Judged now: the "not judged yet" mark goes, whatever the verdict.
+                row.failure_code = None
+                row.failure_detail = None
             if chosen is not None and report is chosen:
                 row.status = "APPROVED"
                 row.approved_by = GATE_REVIEWER
@@ -434,6 +709,166 @@ def _set_verdicts(
                 row.status = "REJECTED"
                 row.failure_code = GATE_FAILURE_CODE
                 row.failure_detail = ("; ".join(report.reasons_ro) or "respinsă")[:500]
+
+
+def _claim_intent(
+    open_intents: list[tuple[str | None, str]], task_id: Any, every_task: list[str]
+) -> tuple[str | None, str | None]:
+    """The SUBMITTED take a delivered candidate lands on, and its task id.
+
+    The candidate's own task when the vendor named it; else the first task still open; once
+    each task has its first candidate, a further candidate (``outputCount`` > 1) gets a row
+    of its own carrying the last task's id."""
+    named = task_id if isinstance(task_id, str) and task_id else None
+    for position, (_take, task) in enumerate(open_intents):
+        if named is None or task == named:
+            return open_intents.pop(position)
+    return None, named or (every_task[-1] if every_task else None)
+
+
+def _settle_pending(
+    engine: Engine,
+    registry: Any | None,
+    storyboard_id: str,
+    scene: _Scene,
+    correlation_id: str,
+    *,
+    environment: str,
+    judge: Judge,
+    face_counter: FaceCounter | None,
+    measure: Sequence[str],
+    ffmpeg_path: str | None,
+    faces_forbidden: bool,
+    rules: tuple[str, ...],
+) -> dict[str, Any]:
+    """A scene this step does not buy: its unjudged candidates judged, or why it waits.
+
+    Read again here, after the collection: a task collected this run has its candidates on
+    disk now. Returns the scene's entry (``path`` is the approved still's, for Figure 1)."""
+    with Session(engine) as session:
+        current = _pending_takes(session, storyboard_id, scene)
+    unjudged = [
+        take
+        for take in current
+        if take.status == "PAID" and take.path and Path(str(take.path)).is_file()
+    ]
+    if unjudged:
+        plan = StillPlan(
+            scene=scene.index,
+            still_prompt=scene.words,
+            camera_move=scene.camera_move,
+            faces_forbidden=faces_forbidden,
+            bible_rules=rules,
+            look_block=scene.look_block,
+            palette_words=_palette_words(scene.look_block),
+        )
+        verdicts = [
+            (
+                take.id,
+                _judge_candidate(
+                    engine,
+                    registry,
+                    Path(str(take.path)),
+                    plan,
+                    correlation_id,
+                    environment=environment,
+                    judge=judge,
+                    face_counter=face_counter,
+                    measure=measure,
+                    ffmpeg_path=ffmpeg_path,
+                ),
+            )
+            for take in unjudged
+        ]
+        best = choose_best([report for _take, report in verdicts])
+        _set_verdicts(engine, verdicts, best)
+        if best is not None:
+            chosen = next(take for take, report in verdicts if report is best)
+            return {
+                "status": "APPROVED",
+                "take_id": chosen,
+                "score": best.score,
+                "credits": 0,
+                "judged_collected": len(verdicts),
+                "path": str(best.path),
+            }
+        return {
+            "status": "NOT_BOUGHT",
+            "judged_collected": len(verdicts),
+            "reason": f"Scena {scene.index}: imaginile ridicate de la furnizor au fost judecate "
+            "și respinse; scena se planifică din nou pe foaia de filmare.",
+        }
+    if any(take.status == "SUBMITTED" for take in current):
+        return {"status": "IN_FLIGHT", "reason": IN_FLIGHT_REASON.format(scene=scene.index)}
+    return {
+        "status": "NOT_BOUGHT",
+        "reason": f"Scena {scene.index} nu este în planul aprobat al acestui pas; se planifică "
+        "din nou pe foaia de filmare.",
+    }
+
+
+def settle_stills(
+    engine: Engine,
+    storyboard_id: str,
+    correlation_id: str,
+    *,
+    image_adapter: Any,
+    registry: Any | None = None,
+    environment: str | None = None,
+    judge: Judge = judge_still,
+    face_counter: FaceCounter | None = None,
+    measure: Sequence[str] = ALL_CHECKS,
+    ffmpeg_path: str | None = None,
+    storage_root: Path | None = None,
+) -> dict[str, Any]:
+    """What the stills step bought and left unsettled, settled without buying anything.
+
+    A request the vendor delivered after its step ended is collected by its task id (a GET,
+    free), and every PAID candidate never judged (collected late, or left by a process that
+    died before its judgement) is judged by the gate (the local checks, then the vision model:
+    tokens, no image). Nothing is bought and no yes is asked, so it runs even when the plan has
+    nothing to buy: a film whose only open scene holds such candidates would otherwise never
+    have a step that looks at them (2026-10-02, A7)."""
+    from app.services import studio_environment  # noqa: PLC0415 - services imports media
+
+    environment = environment or studio_environment(engine)
+    collected: list[dict[str, Any]] = []
+    if image_adapter is not None:
+        collected = collect_submitted_takes(
+            engine,
+            collector_for=lambda _take: image_adapter,
+            correlation_id=correlation_id,
+            storyboard_id=storyboard_id,
+            kinds=("still",),
+            storage_root=storage_root,
+        )
+    bible, scenes = _read_scenes(engine, storyboard_id)
+    results: list[dict[str, Any]] = []
+    for scene in scenes:
+        if scene.kind != LIVE_KIND or scene.reuse is not None or not scene.pending:
+            continue
+        if not any(take.status == "PAID" for take in scene.pending):
+            continue  # a task still open at the vendor: nothing to judge yet
+        settled = _settle_pending(
+            engine,
+            registry,
+            storyboard_id,
+            scene,
+            correlation_id,
+            environment=environment,
+            judge=judge,
+            face_counter=face_counter,
+            measure=measure,
+            ffmpeg_path=ffmpeg_path,
+            faces_forbidden=bible_face_rule(bible) is not None,
+            rules=_bible_rules(bible),
+        )
+        settled.pop("path", None)
+        results.append({"scene_index": scene.index, **settled})
+    summary = {"storyboard_id": storyboard_id, "collected": collected, "scenes": results}
+    if collected or results:
+        _event(engine, "media.stills_settled", storyboard_id, summary, correlation_id)
+    return summary
 
 
 # ------------------------------------------------------------------------------ the step
@@ -457,8 +892,15 @@ def run_stills_stage(
     integration_id: str | None = None,
     table: PriceTable | None = None,
     requester: str = "video_editor",
+    meter: SpendMeter | None = None,
 ) -> dict[str, Any]:
     """The stills step of one film, bought only under the Owner's yes for this plan.
+
+    ``meter`` is kept up to date as requests are sent and credits committed, so the caller
+    can book what was spent when the step raises half-way. A request that may have been
+    charged without an answer (`assembler.possibly_charged`) is counted, never sent again
+    automatically, and stops the step; before every request the balance is read again and
+    the step stops when the account lost more than it counted.
 
     ``plan_hash`` is the hash of the plan the Owner was shown. By default the current plan is
     `stills_plan`; the shooting sheet may pass ``plan_hash_of`` so its own sheet hash is the
@@ -487,9 +929,27 @@ def run_stills_stage(
             "aprobați planul de acum.",
             plan=plan,
         )
+    if plan["needs_reference"]:
+        raise StillsStageRefused(
+            "NEEDS_REFERENCE",
+            needs_reference_reason(plan["needs_reference"]),
+            plan=plan,
+        )
     environment = environment or studio_environment(engine)
+    # What the vendor already made for this film is collected (a GET each, nothing bought)
+    # after his yes was matched to the plan he saw: collecting only takes scenes out of
+    # buying, and his yes must not go stale because the vendor delivered.
+    collected = collect_submitted_takes(
+        engine,
+        collector_for=lambda _take: image_adapter,
+        correlation_id=correlation_id,
+        storyboard_id=storyboard_id,
+        kinds=("still",),
+        storage_root=storage_root,
+    )
     bible, scenes = _read_scenes(engine, storyboard_id)
     live = [scene for scene in scenes if scene.kind == LIVE_KIND]
+    to_buy = {int(index) for index in plan["to_buy"]}
 
     if environment == "PRODUCTION":
         # The model's shot plan; for an episode of the office serial also the scenes composed
@@ -521,6 +981,32 @@ def run_stills_stage(
             plan=plan,
         )
 
+    from app.media.factory import accepts_reference_image  # noqa: PLC0415 - factory reaches us
+
+    locked = [
+        scene.index
+        for scene in live
+        if scene.index in to_buy
+        and scene.reference is not None
+        and scene.reference.get("required")
+        and not accepts_reference_image(image_adapter)
+    ]
+    if locked:
+        raise StillsStageRefused(
+            "NEEDS_REFERENCE",
+            "Scenele "
+            + ", ".join(map(str, locked))
+            + " arată un personaj cu înfățișarea blocată, iar modelul de imagine conectat nu "
+            "poate primi imaginea lui de referință: nu se cumpără imagini desenate din cuvinte "
+            "pentru un chip fixat. Alegeți un model care primește imagini de referință.",
+            plan=plan,
+        )
+    if plan["to_buy"]:
+        # A disk too full for the candidates refuses before anything is asked or bought
+        # (REL-08): a still that cannot be written is a still paid for and lost.
+        no_room = disk_refusal(storage_root or DEFAULT_STORAGE_ROOT)
+        if no_room:
+            raise StillsStageRefused(LOW_DISK, no_room, plan=plan)
     cap = int(plan["cap_credits"])
     read, before, problem = _read_balance(image_adapter) if plan["to_buy"] else (False, None, None)
     if problem is not None:
@@ -540,8 +1026,14 @@ def run_stills_stage(
                 STILLS_ACTION,
                 requester=requester,
                 subject=storyboard_id,
-                evidence=f"{len(plan['to_buy'])} scene × {STILL_CANDIDATES} imagini la 2K",
-                cost_usd=plan["cost_usd"],
+                evidence=(
+                    f"{len(plan['to_buy'])} scene × {STILL_CANDIDATES} imagini la 2K, cost "
+                    f"estimat {_usd_ro(plan['cost_usd'])}, plafon {_usd_ro(plan['cap_usd'])} "
+                    "(cu reluările)"
+                ),
+                # The cap, the most his yes lets the step spend with its re-rolls (MONEY-08):
+                # OVER_USD compares his threshold with it, not with the expected cost.
+                cost_usd=plan["cap_usd"],
                 context={"plan_hash": plan_hash, "cap_credits": cap},
             )
         if not verdict["allowed"]:
@@ -558,7 +1050,8 @@ def run_stills_stage(
     per_image = per_request / STILL_CANDIDATES
     work_dir = (storage_root or DEFAULT_STORAGE_ROOT) / storyboard_id / "stills"
     work_dir.mkdir(parents=True, exist_ok=True)
-    ledger = _Ledger(cap=cap)
+    ledger = _Ledger(cap=cap, meter=meter if meter is not None else SpendMeter())
+    limit = max_paid_attempts_per_scene()
     figure_one: bytes | None = None
     first_live = live[0].index if live else None
     results: list[dict[str, Any]] = []
@@ -576,6 +1069,33 @@ def run_stills_stage(
             entry.update(status="APPROVED", reused=True, take_id=scene.reuse.id, credits=0)
             if scene.index == first_live and scene.reuse.path:
                 figure_one = Path(scene.reuse.path).read_bytes()
+            continue
+        if scene.hold_ro and not scene.pending:
+            # Left to the Owner by an earlier step (the gate, a refusal, the attempt limit):
+            # nothing is bought for it until he decides on the sheet.
+            entry.update(status="NEEDS_OWNER", reason=scene.hold_ro, held=True, credits=0)
+            continue
+        if scene.pending or scene.index not in to_buy:
+            # Bought before and not settled, or out of this plan's purchase: nothing is bought
+            # for it here. Its collected candidates are judged (0 credits).
+            settled = _settle_pending(
+                engine,
+                registry,
+                storyboard_id,
+                scene,
+                correlation_id,
+                environment=environment,
+                judge=judge,
+                face_counter=face_counter,
+                measure=measure,
+                ffmpeg_path=ffmpeg_path,
+                faces_forbidden=bible_face_rule(bible) is not None,
+                rules=_bible_rules(bible),
+            )
+            entry.update(settled)
+            if settled["status"] == "APPROVED" and scene.index == first_live:
+                figure_one = Path(str(settled["path"])).read_bytes()
+            entry.pop("path", None)
             continue
         if stopped is not None:
             entry.update(status="NOT_BOUGHT", reason=stopped)
@@ -596,15 +1116,27 @@ def run_stills_stage(
             look_block=scene.look_block,
             palette_words=_palette_words(scene.look_block),
         )
-        references = [figure_one] if figure_one is not None and scene.index != first_live else []
+        references, with_character, with_figure = _references(
+            scene, figure_one, image_adapter, first=scene.index == first_live
+        )
         instruction = ""
         rerolls = 0
         retried = False
         outcome: dict[str, Any] | None = None
+        # The scene's paid requests since the Owner last decided about it, this step's
+        # included, and what was committed before it: read by the limit and by its event.
+        requests = scene.attempts
+        committed_before_scene = ledger.committed
         while outcome is None:
             if stop_requested(engine):
                 stopped = "Proprietarul a oprit autonomia; nu se mai cumpără imagini."
                 outcome = {"status": "NOT_BOUGHT", "reason": stopped}
+                break
+            if requests >= limit:
+                outcome = {
+                    "status": "NEEDS_OWNER",
+                    "reason": attempts_reason(scene.index, requests, limit),
+                }
                 break
             if ledger.committed + per_request > ledger.cap:
                 stopped = (
@@ -623,28 +1155,93 @@ def run_stills_stage(
                 )
                 outcome = {"status": "NOT_BOUGHT", "reason": stopped}
                 break
-            prompt = _prompt(scene, instruction, bool(references))
+            drop = uncounted_drop(before, balance, ledger.committed)
+            if drop is not None:
+                stopped = UNCOUNTED_DROP_STOP.format(drop=drop, committed=ledger.committed)
+                outcome = {"status": "NOT_BOUGHT", "reason": stopped}
+                break
+            prompt = _prompt(scene, instruction, with_figure, with_character=with_character)
+            identity = take_hash(scene.identity, model_id)
+            # (take id, task id) of each task the vendor accepted for this request.
+            intents: list[tuple[str | None, str]] = []
+
+            def submitted(
+                task_id: str,
+                *,
+                _scene: int = scene.index,
+                _identity: str = identity,
+                _intents: list[tuple[str | None, str]] = intents,
+            ) -> None:
+                _intents.append(
+                    (
+                        _record_intent(
+                            engine,
+                            task_id,
+                            storyboard_id=storyboard_id,
+                            scene_number=_scene,
+                            kind="still",
+                            prompt_hash=_identity,
+                            model_id=model_id,
+                            resolution=STILL_RATIO,
+                            correlation_id=correlation_id,
+                            credits=float(per_request),
+                        ),
+                        task_id,
+                    )
+                )
+
+            ledger.meter.attempts += 1
+            requests += 1
             try:
-                candidates, quoted = _buy(image_adapter, prompt, references, STILL_CANDIDATES)
+                candidates, quoted = _buy(
+                    image_adapter, prompt, references, STILL_CANDIDATES, on_submitted=submitted
+                )
+            except TaskStillOpen:
+                # Accepted (and charged) and not delivered: the takes stay SUBMITTED with
+                # their task ids, collected later; nothing more is bought in this step.
+                ledger.committed += per_request
+                ledger.take_ids += [take for take, _task in intents if take]
+                stopped = IN_FLIGHT_STOP.format(scene=scene.index)
+                outcome = {
+                    "status": "IN_FLIGHT",
+                    "reason": IN_FLIGHT_REASON.format(scene=scene.index),
+                    "take_ids": [take for take, _task in intents if take],
+                }
+                break
             except MediaProviderError as exc:
                 failure = classify_vendor_failure(exc, previous_kind)
                 previous_kind = failure.kind
-                ledger.committed += per_request  # a refusal may be paid like a success
-                ledger.take_ids.append(
-                    record_take(
-                        engine,
-                        storyboard_id=storyboard_id,
-                        scene_number=scene.index,
-                        kind="still",
-                        prompt_hash=take_hash(scene.identity, model_id),
-                        model_id=model_id,
-                        resolution=STILL_RATIO,
-                        status="REFUSED",
-                        correlation_id=correlation_id,
-                        failure_code=failure_code_of(exc),
-                        failure_detail=failure_detail_of(exc),
+                charged = possibly_charged(exc, submitted=bool(intents))
+                # No task heard and no answer (a vendor that names its failure code has
+                # answered): it may have been served. Counted, and never sent again
+                # automatically (MONEY-01).
+                unknown = outcome_unknown(exc, submitted=bool(intents))
+                if charged:
+                    ledger.committed += per_request  # a refusal may be paid like a success
+                for intent_take, _task in intents or [(None, "")]:
+                    ledger.take_ids.append(
+                        record_take(
+                            engine,
+                            take_id=intent_take,
+                            storyboard_id=storyboard_id,
+                            scene_number=scene.index,
+                            kind="still",
+                            prompt_hash=identity,
+                            model_id=model_id,
+                            resolution=STILL_RATIO,
+                            status="REFUSED",
+                            correlation_id=correlation_id,
+                            credits_quoted=float(per_request) if charged else None,
+                            failure_code=failure_code_of(exc)
+                            or (UNANSWERED_FAILURE_CODE if unknown else None),
+                            failure_detail=failure_detail_of(exc),
+                        )
                     )
-                )
+                if unknown:
+                    entry.update(failure_kind="UNANSWERED", failure_code=failure_code_of(exc))
+                    stopped = UNANSWERED_REASON.format(scene=scene.index)
+                    outcome = {"status": "NEEDS_OWNER", "reason": stopped}
+                    break
                 if failure.kind in RETRY_KINDS and not retried:
                     retried = True
                     continue
@@ -665,6 +1262,7 @@ def run_stills_stage(
             )
             share = (quoted / len(candidates)) if quoted and candidates else per_image
             verdicts: list[tuple[str, StillReport]] = []
+            open_intents = list(intents)
             for number, candidate in enumerate(candidates):
                 suffix = candidate.format if candidate.format in ("png", "jpeg", "webp") else "png"
                 path = work_dir / (
@@ -673,12 +1271,19 @@ def run_stills_stage(
                 )
                 path.write_bytes(candidate.image_bytes)
                 ledger.images += 1
+                raw = candidate.raw_response if isinstance(candidate.raw_response, dict) else {}
+                intent_take, task_id = _claim_intent(
+                    open_intents, raw.get("task_id"), [task for _take, task in intents]
+                )
+                # PAID and UNJUDGED until the gate below has looked: a process that dies in
+                # between leaves a candidate the next step judges instead of buying again.
                 take_id = record_take(
                     engine,
+                    take_id=intent_take,
                     storyboard_id=storyboard_id,
                     scene_number=scene.index,
                     kind="still",
-                    prompt_hash=take_hash(scene.identity, model_id),
+                    prompt_hash=identity,
                     model_id=model_id,
                     resolution=STILL_RATIO,
                     status="PAID",
@@ -686,6 +1291,9 @@ def run_stills_stage(
                     credits_quoted=float(share),
                     path=path,
                     sha256=hashlib.sha256(candidate.image_bytes).hexdigest(),
+                    failure_code=UNJUDGED_FAILURE_CODE,
+                    failure_detail=UNJUDGED_DETAIL,
+                    remote_task_id=task_id,
                 )
                 ledger.take_ids.append(take_id)
                 report = _judge_candidate(
@@ -701,6 +1309,23 @@ def run_stills_stage(
                     ffmpeg_path=ffmpeg_path,
                 )
                 verdicts.append((take_id, report))
+            for intent_take, _task in open_intents:
+                # A task the vendor accepted that handed over nothing: refused, on its own row.
+                if intent_take:
+                    record_take(
+                        engine,
+                        take_id=intent_take,
+                        storyboard_id=storyboard_id,
+                        scene_number=scene.index,
+                        kind="still",
+                        prompt_hash=identity,
+                        model_id=model_id,
+                        resolution=STILL_RATIO,
+                        status="REFUSED",
+                        correlation_id=correlation_id,
+                        failure_code=NO_OUTPUT_CODE,
+                        failure_detail="Furnizorul a încheiat sarcina fără nicio imagine.",
+                    )
             reports = [report for _take, report in verdicts]
             best = choose_best(reports)
             _set_verdicts(engine, verdicts, best)
@@ -734,9 +1359,15 @@ def run_stills_stage(
         entry.update(outcome)
         entry["rerolls"] = rerolls
         if outcome["status"] in ("NEEDS_OWNER", "COMPOSE_LOCALLY"):
+            # Whether the scene is held for the Owner (assembler.scene_memory): yes, unless
+            # what went wrong cost nothing and was the vendor's or the account's.
+            free = (
+                str(entry.get("failure_kind") or "") in FREE_FAILURE_KINDS
+                and ledger.committed <= committed_before_scene
+            )
             _event(
                 engine,
-                "media.still_needs_owner",
+                STILL_HOLD_EVENT,
                 storyboard_id,
                 {
                     "severity": "WARNING",
@@ -744,6 +1375,9 @@ def run_stills_stage(
                     "status": outcome["status"],
                     "reason": outcome["reason"],
                     "rerolls": rerolls,
+                    "failure_kind": entry.get("failure_kind"),
+                    "identity": identity_key(scene.identity),
+                    "holds": not free,
                 },
                 correlation_id,
             )
@@ -757,6 +1391,8 @@ def run_stills_stage(
     if measured is not None and ledger.images:
         each = measured / ledger.images
         with Session(engine) as session, session.begin():
+            # Read-then-write after a purchase: the write lock first (app.db.lock_for_write).
+            lock_for_write(session)
             for take_id in ledger.take_ids:
                 row = session.get(SceneTake, take_id)
                 if row is not None and row.sha256:
@@ -778,7 +1414,9 @@ def run_stills_stage(
                 table=prices,
             )
 
-    needs_owner = [e["scene_index"] for e in results if e.get("status") == "NEEDS_OWNER"]
+    needs_owner = [
+        e["scene_index"] for e in results if e.get("status") == "NEEDS_OWNER" and not e.get("held")
+    ]
     summary = {
         "storyboard_id": storyboard_id,
         "plan_hash": plan_hash,
@@ -794,6 +1432,10 @@ def run_stills_stage(
         "needs_owner": needs_owner,
         "stopped": stopped,
         "reference_unverified": unverified,
+        # Requests still open at the vendor (collected later, never bought again), and what
+        # was collected before this step looked at anything.
+        "in_flight": [e["scene_index"] for e in results if e.get("status") == "IN_FLIGHT"],
+        "collected": collected,
     }
     _event(engine, "media.stills_step_finished", storyboard_id, summary, correlation_id)
     return summary

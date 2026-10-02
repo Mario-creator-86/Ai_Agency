@@ -36,14 +36,15 @@ from app.media.models import VideoRenderJob
 from app.media.qc import evaluate_media_qc
 from app.media.toolchain import ROOT, find_ffmpeg
 from app.models import DomainEvent
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 from test_motion import a_clip
 from test_scene_redo import a_rendered_nepal_film, approvals, takes
 from test_scene_takes import SpyImages, SpyMotion, nepal_like
 
-pytestmark = pytest.mark.skipif(find_ffmpeg() is None, reason="ffmpeg not installed")
+#: The film tests need the encoder; the media root, free-space and sweep tests below do not.
+needs_ffmpeg = pytest.mark.skipif(find_ffmpeg() is None, reason="ffmpeg not installed")
 
 #: The studio's real media folder, never the per-test one conftest patches in.
 STUDIO_MEDIA = ROOT / "backend" / "storage" / "media"
@@ -88,6 +89,7 @@ def intermediates(folder: Path) -> set[str]:
 # ------------------------------------------------------------ 1. what a film test writes
 
 
+@needs_ffmpeg
 @pytest.mark.parametrize("moving", [True, False], ids=["vendor_clips", "stills_pushed_in"])
 def test_a_six_scene_film_test_writes_at_most_150_mb_and_nothing_in_the_studio_folder(
     engine, tmp_path, moving
@@ -124,6 +126,7 @@ def test_a_six_scene_film_test_writes_at_most_150_mb_and_nothing_in_the_studio_f
 # --------------------------------------- 2. the intermediates go once QC has read them
 
 
+@needs_ffmpeg
 def test_the_intermediates_go_once_the_qc_report_is_recorded_and_the_rest_stays(engine, tmp_path):
     storyboard_id, render, _images, _motion = a_rendered_nepal_film(engine, tmp_path)
     folder = Path(render["file_path"]).parent
@@ -177,6 +180,7 @@ def test_the_intermediates_go_once_the_qc_report_is_recorded_and_the_rest_stays(
     assert len(released_events(engine)) == 1
 
 
+@needs_ffmpeg
 def test_the_next_render_releases_every_reviewed_film_and_the_sweep_runs_once(engine, tmp_path):
     _first_id, first, _images, _motion = a_rendered_nepal_film(engine, tmp_path)
     first_folder = Path(first["file_path"]).parent
@@ -205,6 +209,7 @@ def test_the_next_render_releases_every_reviewed_film_and_the_sweep_runs_once(en
     assert intermediates(Path(second["file_path"]).parent) == set()
 
 
+@needs_ffmpeg
 def test_a_newer_film_waiting_for_qc_keeps_the_shots_it_shares(engine, tmp_path):
     storyboard_id, first, images, motion = a_rendered_nepal_film(engine, tmp_path)
     # The same storyboard rendered again from the same takes: the same shot files, rebuilt.
@@ -228,6 +233,7 @@ def test_a_newer_film_waiting_for_qc_keeps_the_shots_it_shares(engine, tmp_path)
     assert all(item["reason"] for item in result["kept"])
 
 
+@needs_ffmpeg
 def test_a_film_whose_shots_cannot_be_rederived_keeps_them(engine, tmp_path):
     """A render from before this change recorded no source for its shots: deleting them would
     leave a redo nothing to rejoin, so they stay."""
@@ -250,6 +256,7 @@ def test_a_film_whose_shots_cannot_be_rederived_keeps_them(engine, tmp_path):
 # ------------------------------------- 3. a redo after the release re-derives, for nothing
 
 
+@needs_ffmpeg
 def test_a_card_redo_after_the_release_rederives_every_other_shot_at_zero_credits(engine, tmp_path):
     storyboard_id, render, images, motion = a_rendered_nepal_film(engine, tmp_path)
     folder = Path(render["file_path"]).parent
@@ -288,6 +295,7 @@ def test_a_card_redo_after_the_release_rederives_every_other_shot_at_zero_credit
     assert again["film"]["rederived_shots"] == [1, 2, 3, 4, 5]
 
 
+@needs_ffmpeg
 def test_a_rejoin_whose_source_is_gone_is_refused_in_romanian(engine, tmp_path):
     storyboard_id, render, _images, _motion = a_rendered_nepal_film(engine, tmp_path)
     folder = Path(render["file_path"]).parent
@@ -307,3 +315,310 @@ def test_a_rejoin_whose_source_is_gone_is_refused_in_romanian(engine, tmp_path):
 
     assert refused.value.status == "NO_SHOTS"
     assert "Scena 2" in refused.value.reason_ro or "scenei 2" in refused.value.reason_ro
+
+
+# ------------------------------------- 2. the media root, the free-space guard, the sweep
+#
+# 2026-10-02 (REL-08): the media folder was a constant inside the repository (299 GiB measured
+# in backend/storage/media), nothing measured the free space before a paid step, and a render
+# that failed before quality control kept its shots for ever. The tests below need no encoder.
+
+GB = 1024**3
+
+
+def low_disk(monkeypatch, free_gb: float = 5.0) -> None:
+    """The media disk, as `app.media.disk` reads it, with only ``free_gb`` left."""
+    from app.media import disk
+
+    monkeypatch.setattr(disk, "free_bytes", lambda _path: int(free_gb * GB))
+
+
+def test_the_media_root_setting_is_honoured_by_the_page_the_day_and_the_watchdog(
+    settings, engine, tmp_path, monkeypatch
+):
+    from app.integrations.vault import CredentialVault
+    from app.main import create_app
+    from app.runbook.stages import sheet_wiring
+    from app.workflows import watchdog
+    from fastapi.testclient import TestClient
+
+    films = tmp_path / "films_elsewhere"
+    moved = settings.model_copy(update={"media_root": films})
+
+    assert assembler.media_root(moved) == films
+    assert assembler.media_root(settings) == assembler.DEFAULT_STORAGE_ROOT
+    assert assembler.media_root(None) == assembler.DEFAULT_STORAGE_ROOT
+
+    with TestClient(create_app(moved)) as client:
+        assert client.app.app.state.media_storage_root == films
+    with TestClient(create_app(settings)) as client:
+        assert getattr(client.app.app.state, "media_storage_root", None) is None
+
+    vault = CredentialVault(tmp_path / "wiring.credentials.key")
+    assert sheet_wiring(engine, vault, moved)["storage_root"] == films
+
+    seen: list = []
+
+    def spy(_engine, **kwargs):
+        seen.append(kwargs.get("storage_root"))
+        return []
+
+    monkeypatch.setattr(assembler, "collect_submitted_takes", spy)
+    with engine.begin() as connection:
+        connection.execute(text("UPDATE owner_policy SET autonomy_stopped = 0"))
+    watchdog.run_watchdog(engine, moved, collector_for=lambda _take: None)
+    assert seen == [films]
+
+
+def test_a_relative_media_root_is_read_from_the_studio_folder():
+    from app.config import Settings
+
+    relative = Settings(_env_file=None, owner_token="x" * 48, media_root="films")
+    assert relative.media_root == ROOT / "films"
+
+
+def test_every_call_into_a_media_step_names_its_storage_root():
+    """A call that leaves storage_root out writes into the default folder whatever the
+    Owner set: the AST scan names it. A call that forwards **kwargs passes it on."""
+    import ast
+
+    app_dir = ROOT / "backend" / "app"
+    #: function name -> the position storage_root may be passed at (None: keyword only)
+    takes_root: dict[str, int | None] = {}
+    trees = {}
+    for path in app_dir.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        trees[path] = tree
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                positional = [a.arg for a in node.args.args]
+                if "storage_root" in positional:
+                    takes_root[node.name] = positional.index("storage_root")
+                elif "storage_root" in [a.arg for a in node.args.kwonlyargs]:
+                    takes_root[node.name] = None
+    missing = []
+    for path, tree in trees.items():
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+            if name not in takes_root:
+                continue
+            keywords = {k.arg for k in node.keywords}
+            if "storage_root" in keywords or None in keywords:
+                continue
+            position = takes_root[name]
+            if position is not None and len(node.args) > position:
+                continue
+            missing.append(f"{path.relative_to(ROOT).as_posix()}:{node.lineno} {name}")
+    assert missing == [], missing
+
+
+def test_the_preflight_blocks_the_day_under_the_minimum_free_space(settings, engine, monkeypatch):
+    from app.runbook.preflight import run_preflight
+
+    low_disk(monkeypatch, 5.0)
+    settings = settings.model_copy(update={"min_free_gb": 20.0})
+    result = run_preflight(engine, settings, None)
+    line = next(check for check in result["checks"] if check["name"] == "disk_space")
+    assert result["status"] == "BLOCKED"
+    assert "disk_space" in result["blocking_failures"]
+    assert line["ok"] is False and line["code"] == "disk_space.low"
+    assert "5 GB" in line["message"] and "20 GB" in line["message"]
+    assert "STUDIO_MIN_FREE_GB" in line["technical"]["settings"]
+
+    plenty = settings.model_copy(update={"min_free_gb": 0})
+    again = run_preflight(engine, plenty, None)
+    assert next(c for c in again["checks"] if c["name"] == "disk_space")["ok"] is True
+
+
+def test_a_paid_motion_step_buys_nothing_under_the_minimum_free_space(
+    settings, engine, tmp_path, monkeypatch
+):
+    from app.media.assembler import MotionStepRefused
+    from app.models import ApprovalRequest
+    from test_film_costing import Account, Models, SpyVideo
+    from test_film_costing import a_film as costing_film
+    from test_film_costing import run as motion_run
+
+    storyboard_id = costing_film(engine, tmp_path, scenes=2)
+    account = Account(10_000)
+    models = Models(SpyVideo("seedance2_5", account))
+    low_disk(monkeypatch, 5.0)
+    settings = settings.model_copy(update={"min_free_gb": 20.0})
+    with pytest.raises(MotionStepRefused) as refused:
+        motion_run(engine, storyboard_id, tmp_path, "test_shot", models, account, settings=settings)
+    assert refused.value.status == "LOW_DISK" and refused.value.http_status == 409
+    assert "GB" in refused.value.reason_ro and "spațiu" in refused.value.reason_ro
+    assert models.posts() == 0
+    with Session(engine) as session:
+        assert session.scalars(select(ApprovalRequest)).all() == [], "he was asked anyway"
+
+
+def test_a_paid_stills_step_buys_nothing_under_the_minimum_free_space(
+    engine, tmp_path, monkeypatch
+):
+    from app.media.stills_stage import StillsStageRefused
+    from test_stills_stage import SpyJudge, SpyStills
+    from test_stills_stage import a_film as stills_film
+    from test_stills_stage import run as stills_run
+
+    storyboard_id = stills_film(engine, tmp_path)
+    adapter = SpyStills(balance=10_000)
+    low_disk(monkeypatch, 2.0)
+    # The stills step is not handed the settings: it reads STUDIO_MIN_FREE_GB itself.
+    monkeypatch.setenv("STUDIO_MIN_FREE_GB", "20")
+    with pytest.raises(StillsStageRefused) as refused:
+        stills_run(engine, storyboard_id, tmp_path, adapter, SpyJudge())
+    assert refused.value.status == "LOW_DISK"
+    assert adapter.asked == []
+
+
+def test_the_day_waits_on_a_full_disk_and_the_next_film_would_too():
+    from app.runbook.stages import ACCOUNT_WIDE, OWNER_DECIDES, _letter_headline
+
+    assert "LOW_DISK" in OWNER_DECIDES and "LOW_DISK" in ACCOUNT_WIDE
+    headline, follow = _letter_headline("WAITING", "LOW_DISK", "imaginile")
+    assert "spațiu" in headline and "disc" in follow
+
+
+def _failed_render(engine, storyboard_id: str, *, age_days: float, status: str = "FAILED"):
+    from datetime import UTC, datetime, timedelta
+
+    stamp = (datetime.now(UTC) - timedelta(days=age_days)).isoformat()
+    with Session(engine) as session, session.begin():
+        session.add(
+            VideoRenderJob(
+                id=str(uuid4()),
+                storyboard_id=storyboard_id,
+                status=status,
+                render_engine="ffmpeg",
+                command_args_json=[],
+                production_json={},
+                started_at=stamp,
+                finished_at=stamp if status == "FAILED" else None,
+            )
+        )
+
+
+def _film_folder(root: Path, storyboard_id: str, *, age_days: float) -> Path:
+    import os
+    import time
+
+    folder = root / storyboard_id
+    (folder / "motion").mkdir(parents=True)
+    (folder / "stills").mkdir()
+    files = [
+        folder / "shot_01.mp4",
+        folder / "shot_02_redo_20260901.mp4",
+        folder / "card_03.mp4",
+        folder / "final_short_9_16.mp4",
+        folder / "master_audio.wav",
+        folder / "motion" / "take_01.mp4",
+        folder / "stills" / "scene_01.png",
+    ]
+    old = time.time() - age_days * 86400
+    for path in files:
+        path.write_bytes(b"x" * 1000)
+        os.utime(path, (old, old))
+    return folder
+
+
+def test_the_failed_render_sweep_is_off_until_the_owner_turns_it_on(
+    settings, engine, tmp_path, private_media_storage
+):
+    from app.workflows.watchdog import run_watchdog
+
+    root = private_media_storage["DEFAULT_STORAGE_ROOT"]
+    storyboard_id = nepal_like(engine, tmp_path)
+    folder = _film_folder(root, storyboard_id, age_days=10)
+    _failed_render(engine, storyboard_id, age_days=10)
+    with engine.begin() as connection:
+        connection.execute(text("UPDATE owner_policy SET autonomy_stopped = 0"))
+
+    result = run_watchdog(engine, settings, collector_for=lambda _take: None)
+    assert result["intermediates"]["status"] == "OFF"
+    assert (folder / "shot_01.mp4").is_file()
+
+    on = settings.model_copy(update={"sweep_failed_intermediates": True})
+    result = run_watchdog(engine, on, collector_for=lambda _take: None)
+    swept = result["intermediates"]
+    assert swept["status"] == "SWEPT"
+    assert sorted(swept["files"]) == sorted(
+        [
+            f"{storyboard_id}/shot_01.mp4",
+            f"{storyboard_id}/shot_02_redo_20260901.mp4",
+            f"{storyboard_id}/card_03.mp4",
+        ]
+    )
+    assert swept["bytes"] == 3000
+    # Never a take, a still, the film or its sound.
+    assert names(folder) == {"final_short_9_16.mp4", "master_audio.wav"}
+    assert (folder / "motion" / "take_01.mp4").is_file()
+    assert (folder / "stills" / "scene_01.png").is_file()
+    with Session(engine) as session:
+        events = session.scalars(
+            select(DomainEvent).where(
+                DomainEvent.event_type == assembler.FAILED_INTERMEDIATES_SWEPT_EVENT
+            )
+        ).all()
+    assert len(events) == 1 and events[0].aggregate_id == storyboard_id
+
+
+def test_the_sweep_leaves_recent_failures_and_films_still_rendering(
+    settings, engine, tmp_path, private_media_storage
+):
+    root = private_media_storage["DEFAULT_STORAGE_ROOT"]
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    recent = nepal_like(engine, tmp_path / "a")
+    rendering = nepal_like(engine, tmp_path / "b")
+    recent_folder = _film_folder(root, recent, age_days=2)
+    _failed_render(engine, recent, age_days=2)
+    busy_folder = _film_folder(root, rendering, age_days=10)
+    _failed_render(engine, rendering, age_days=10)
+    _failed_render(engine, rendering, age_days=0, status="RENDERING")
+
+    result = assembler.sweep_failed_intermediates(
+        engine, storage_root=root, older_than_days=7, correlation_id="sweep"
+    )
+    assert result["files"] == []
+    assert (recent_folder / "shot_01.mp4").is_file() and (busy_folder / "shot_01.mp4").is_file()
+
+
+def _inventory():
+    import importlib.util
+    import sys
+
+    spec = importlib.util.spec_from_file_location(
+        "media_inventory", ROOT / "scripts/media_inventory.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["media_inventory"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_media_inventory_is_a_dry_run_unless_the_owner_says_delete(engine, tmp_path, capsys):
+    root = tmp_path / "media"
+    known = nepal_like(engine, tmp_path)
+    orphan = str(uuid4())
+    for folder in (root / known, root / orphan, root / "rehearsal_copy"):
+        folder.mkdir(parents=True)
+        (folder / "final_short_9_16.mp4").write_bytes(b"x" * 2048)
+    database = str(engine.url.database)
+    inventory = _inventory()
+
+    code = inventory.main(["--database", database, "--media-root", str(root)])
+    out = capsys.readouterr().out
+    assert code == 0
+    orphans_part = out.split("Fără film în baza de date")[-1]
+    assert orphan in orphans_part and known not in orphans_part
+    assert "rehearsal_copy" in out  # named as not a film folder, never deleted
+    assert (root / orphan).is_dir(), "a dry run deleted something"
+
+    code = inventory.main(["--database", database, "--media-root", str(root), "--delete"])
+    assert code == 0
+    assert not (root / orphan).exists()
+    assert (root / known).is_dir() and (root / "rehearsal_copy").is_dir()

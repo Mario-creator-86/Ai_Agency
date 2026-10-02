@@ -28,16 +28,24 @@ from app.config import Settings
 from app.economy.budget import budget_status, estimate_film_cost_micros
 from app.economy.prices import price_for
 from app.economy.services import format_micros
+from app.integrations.services import vault_health
+from app.integrations.vault import CredentialVault
+from app.media.disk import GB, MEDIA_ROOT_SETTING, MIN_FREE_SETTING, disk_reading, gb_words
 from app.media.factory import PURPOSE_LABEL as MEDIA_PURPOSE_LABEL
 from app.media.factory import describe as describe_media
 from app.media.factory import media_readiness
 from app.media.models import CharacterBible, MediaAsset
 from app.media.toolchain import find_ffprobe
 from app.models import DomainEvent, OwnerPolicy
-from app.publishing.models import ChannelRecord
+from app.publishing.models import ChannelRecord, PublicationRecord
 from app.publishing.services import bound_connection_id, channel_bindings
 from app.research.service import MIN_CLAIMS_AVAILABLE, research_health
-from app.services import studio_environment, utc_now
+from app.services import (
+    buys_paid_media_unasked,
+    paid_media_policy,
+    studio_environment,
+    utc_now,
+)
 from app.wording import (
     MEDIA_KEY_UNUSABLE,
     SETTINGS_TABS,
@@ -82,11 +90,72 @@ MODE_MEANS = {
         "Modul de autonomie este supravegheat: etapele interne de rutină merg singure, iar "
         "publicarea îți cere mai întâi aprobarea."
     ),
+    # PAGE-04: «ziua merge singură» was read as «the studio buys alone», which the strict
+    # default rule never allowed; the paid steps follow his rule, said on its own line.
     "AUTONOMOUS_CEO": (
-        "Modul de autonomie este CEO autonom: ziua merge singură în limitele politicii; "
-        "porțile dure rămân la fel de închise."
+        "Modul de autonomie este CEO autonom: etapele zilei merg singure în limitele politicii, "
+        "iar pașii plătiți ai unui film urmează regula ta pentru pașii plătiți (rândul despre "
+        "ce cumpără singură următoarea rulare); porțile dure rămân la fel de închise."
     ),
 }
+
+#: The paid steps of a film, as the Owner names them.
+PAID_STEPS_WORDS = "imaginile, cadrul de probă și restul mișcării"
+
+
+def _usd_cents(value: float) -> str:
+    """«15,00 USD»: a budget or a threshold the way the page writes it."""
+    return f"{value:,.2f}".replace(",", " ").replace(".", ",").replace(" ", ".") + " USD"
+
+
+def paid_rule_means(
+    environment: str,
+    mode: str,
+    rule: str,
+    over_usd: float | None,
+    daily_budget_usd: float | None,
+    *,
+    stopped: bool = False,
+) -> str:
+    """What the next daily run buys from the paid vendors without asking him (PAGE-04).
+
+    The same judgement the governance panel says under «Mod de autonomie»
+    (frontend/src/governance.js `dayWillWords`), from his environment, his mode, his rule for
+    the paid steps and his daily budget; it changes nothing."""
+    if stopped:
+        return "Autonomia este oprită: nu pornește nicio rulare și nu se cumpără nimic."
+    if environment != "PRODUCTION":
+        return (
+            "În mediul TEST rularea nu cumpără nimic de la furnizorii plătiți: filmele se "
+            "cumpără de pe foaia de filmare, la apăsarea ta."
+        )
+    if mode == "MANUAL":
+        return (
+            "Modul manual: rularea pregătește filmele, dar nu cumpără nimic singură; fiecare pas "
+            "plătit se cumpără de pe foaia de filmare, la apăsarea ta."
+        )
+    if rule == "EVERY_PAID_STEP" or mode == "SUPERVISED":
+        return (
+            "Rularea se oprește la imagini și te întreabă: fiecare pas plătit "
+            f"({PAID_STEPS_WORDS}) așteaptă aprobarea ta pe foaia de filmare."
+        )
+    if daily_budget_usd is None:
+        return (
+            "Rularea nu cumpără nimic singură: fără un buget zilnic activ, un pas plătit nu "
+            "trece neîntrebat. Bugetul se pune în Trezorerie → Buget și cheltuieli."
+        )
+    budget = _usd_cents(daily_budget_usd)
+    if rule == "OVER_USD" and over_usd is not None:
+        return (
+            "Rularea cumpără singură pașii plătiți cu plafonul de cel mult "
+            f"{_usd_cents(over_usd)}, "
+            f"până la bugetul de {budget}; un pas mai scump se oprește și te întreabă pe foaia "
+            "de filmare."
+        )
+    return (
+        f"Rularea cumpără singură, până la plafonul foii și bugetul de {budget}: imaginile, "
+        "cadrul de probă și, după ce controlul clipului îl acceptă, restul mișcării."
+    )
 
 
 #: A connected YouTube account, counted in the Owner's words.
@@ -255,6 +324,11 @@ def _budget_check(engine: Engine) -> dict[str, Any]:
     it simply has no limit to refuse it against, so a day of retries can spend whatever the
     vendor will sell. The figure is his and nobody else's: the Accountant escalates, it does
     not approve.
+
+    Fail closed (2026-10-02, MONEY-06 / AR-07): in PRODUCTION, when his rule and mode let the
+    studio buy a film's paid steps without asking him (`buys_paid_media_unasked`), the line is
+    BLOCKING until a DAILY budget is active — `may_act` refuses every such purchase
+    (BLOCKED_NO_BUDGET) meanwhile, and the day would buy nothing.
     """
     budgets = budget_status(engine)["budgets"]
     said = ", ".join(
@@ -262,6 +336,31 @@ def _budget_check(engine: Engine) -> dict[str, Any]:
         f"({budget_state(b['state'])})"
         for b in budgets
     )
+    with Session(engine) as session:
+        policy = session.get(OwnerPolicy, 1)
+        unasked = str(
+            getattr(policy, "environment", None) or "TEST"
+        ) == "PRODUCTION" and buys_paid_media_unasked(policy)
+    daily = any(b["period"] == "DAILY" for b in budgets)
+    if unasked and not daily:
+        return _check(
+            "spending_budget",
+            False,
+            BLOCKING,
+            "",
+            "Politica ta lasă studioul să cumpere pașii plătiți ai unui film fără să te "
+            "întrebe, dar nu există niciun buget zilnic activ: în producție nu se cumpără nimic "
+            f"neîntrebat fără o limită zilnică. Setează bugetul zilnic în {BUDGET_PLACE[2]}; "
+            "nimeni altcineva nu îl poate pune."
+            + (f" Bugetele de acum ({said}) nu sunt zilnice." if budgets else ""),
+            value=[
+                {"period": b["period"], "limit_usd": b["limit_usd"], "state": b["state"]}
+                for b in budgets
+            ],
+            failed="none_unasked",
+            place=BUDGET_PLACE,
+            technical=_technical(routes=[BUDGET_ROUTE], fields=["paid_media_approval"]),
+        )
     return _check(
         "spending_budget",
         bool(budgets),
@@ -353,6 +452,67 @@ def _price_check(session: Session) -> dict[str, Any]:
         technical=_technical(
             routes=[PRICES_ROUTE],
             fields=["provider_kind", "resource (un model sau «*» pentru tot felul)", *TOKEN_UNITS],
+        ),
+    )
+
+
+#: Model providers that bill per token whatever the Owner recorded (MONEY-10).
+PAID_LLM_KINDS = frozenset({"openai", "anthropic"})
+
+
+def _token_ceiling_check(session: Session, settings: Settings) -> dict[str, Any]:
+    """Whether an employee runs on a model that costs money while no token ceiling is set.
+
+    `agent_daily_token_budget` 0 means none; an exceeded USD budget now refuses agent runs
+    (2026-10-02, MONEY-10), but only once the money is gone and only where a price exists.
+    DEGRADING, never blocking: the ceiling is his figure, and the line says where it lives.
+    """
+    ceiling = int(getattr(settings, "agent_daily_token_budget", 0) or 0)
+    running = session.execute(
+        select(ProviderRecord.provider_type, ModelRecord.model_name)
+        .select_from(Agent)
+        .join(ModelRecord, ModelRecord.id == Agent.model_id)
+        .join(ProviderRecord, ProviderRecord.id == ModelRecord.provider_id)
+        .where(
+            Agent.lifecycle == "ACTIVE",
+            Agent.provider_id.is_not(None),
+            Agent.model_id.is_not(None),
+        )
+    ).all()
+    paid = sorted(
+        {
+            str(kind).lower()
+            for kind, model in running
+            if kind
+            and model
+            and (
+                str(kind).lower() in PAID_LLM_KINDS
+                or any(
+                    price_for(session, str(kind).lower(), str(model), unit) is not None
+                    for unit in TOKEN_UNITS
+                )
+            )
+        }
+    )
+    ok = ceiling > 0 or not paid
+    return _check(
+        "agent_token_ceiling",
+        ok,
+        DEGRADING,
+        (
+            f"Plafonul zilnic de tokeni al angajaților: {ceiling}."
+            if ceiling > 0
+            else "Niciun angajat nu rulează pe un model plătit; plafonul de tokeni nu e necesar."
+        ),
+        f"Angajații rulează pe modele plătite ({', '.join(paid)}) fără plafon zilnic de "
+        "tokeni: doar bugetul în dolari îi oprește, și numai după ce a fost depășit. Plafonul "
+        "se pune în configurația studioului, nu din pagină.",
+        value={"ceiling": ceiling, "paid_kinds": paid},
+        passed="set" if ceiling > 0 else "no_paid_model",
+        failed="none",
+        place="not_on_page",
+        technical=_technical(
+            settings=["STUDIO_AGENT_DAILY_TOKEN_BUDGET"], fields=["agent_daily_token_budget"]
         ),
     )
 
@@ -800,6 +960,54 @@ def _youtube_upload_check(slots: list[dict[str, Any]]) -> dict[str, Any]:
     )
 
 
+def _youtube_visibility_check(session: Session) -> dict[str, Any]:
+    """Whether YouTube shows the films as the channel's policy asks (PUB-05, SELL-07).
+
+    Google keeps every upload of an unaudited API project (created after 28 July 2020)
+    private until the project passes the YouTube API Services audit, whatever the upload
+    asked for; the insert answer says so, and the publication keeps it. Per channel, the
+    newest upload that asked to be seen (unlisted or public) is read: answered private, the
+    line warns, once per connection, until an upload of that channel comes back visible.
+    DEGRADING, never blocking: the films still go up, private. Reads the record only.
+    """
+    connections = {row.id: row for row in session.scalars(select(YouTubeConnection))}
+    locked: list[str] = []
+    for channel in session.scalars(
+        select(ChannelRecord).order_by(ChannelRecord.channel_type, ChannelRecord.channel_name)
+    ):
+        latest = session.scalars(
+            select(PublicationRecord)
+            .where(
+                PublicationRecord.channel_id == channel.id,
+                PublicationRecord.privacy_status.in_(("public", "unlisted")),
+                PublicationRecord.remote_privacy_status.is_not(None),
+            )
+            .order_by(PublicationRecord.created_at.desc())
+            .limit(1)
+        ).first()
+        if latest is None or latest.remote_privacy_status != "private":
+            continue
+        connection = connections.get(bound_connection_id(channel) or "")
+        account = connection.name if connection is not None else channel.channel_name
+        if account not in locked:
+            locked.append(account)
+    return _check(
+        "youtube_visibility",
+        not locked,
+        DEGRADING,
+        "Nicio încărcare cerută vizibilă nu a fost păstrată privată de YouTube.",
+        f"YouTube păstrează private filmele încărcate prin {', '.join(locked)}: proiectul "
+        "Google Cloud nu a trecut auditul YouTube API Services; până atunci orice încărcare "
+        "rămâne privată. Cere auditul (pașii sunt în docs/project/YOUTUBE_CONNECTIONS.md).",
+        passed="visible",
+        failed="locked_private",
+        place=ACCOUNTS_PLACE,
+        technical=_technical(
+            answers=[f"{account}: status.privacyStatus=private" for account in locked]
+        ),
+    )
+
+
 def _youtube_statistics_check(slots: list[dict[str, Any]]) -> dict[str, Any]:
     """Whether yesterday's numbers can be read: the statistics scope, and no standing refusal.
 
@@ -847,16 +1055,18 @@ def _youtube_statistics_check(slots: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _motion_knob(environment: str) -> tuple[str, list[str], list[str]]:
-    """The per-film motion ceiling in words, and the settings and fields that hold it.
+    """The per-film ceiling in words, and the settings and fields that hold it.
 
     Nothing on the page changes it: it is the studio's configuration on its computer, and
-    the sentence says so; the names are the line's technical record.
+    the sentence says so; the names are the line's technical record. In PRODUCTION it is the
+    film's whole ceiling (`film_budget_usd`, enforced before every paid step of the sheet
+    since 2026-10-02, MONEY-07); unset, it is the motion budget plus a six-scene stills cap.
     """
     if environment == "PRODUCTION":
         return (
-            "plafonul de mișcare pe film (în configurația studioului, nu din pagină)",
-            ["STUDIO_MOTION_BUDGET_USD"],
-            ["motion_budget_usd"],
+            "plafonul unui film (în configurația studioului, nu din pagină)",
+            ["STUDIO_FILM_BUDGET_USD", "STUDIO_MOTION_BUDGET_USD"],
+            ["film_budget_usd", "motion_budget_usd"],
         )
     return (
         "plafonul de mișcare al unui film de test (în configurația studioului, nu din pagină)",
@@ -873,15 +1083,16 @@ def _budget_films_technical(environment: str) -> dict[str, list[str]]:
 def _daily_budget_films_check(
     engine: Engine, settings: Settings, environment: str, now: datetime
 ) -> dict[str, Any]:
-    """Whether the active DAILY budget holds the day's films at the motion hold each one takes.
+    """Whether the active DAILY budget holds the day's films at the most each one may spend.
 
-    The media stage reserves, before each film, `estimate_film_cost_micros` — whose motion
-    part is the whole per-film ceiling of the environment (12 USD in PRODUCTION, two test
-    shots at 0.60 USD in TEST) — and the hold is refused when it does not fit what the day has
-    left. The same function is asked here, with no storyboard, so the figure is the stage's
-    own and the narration it adds is said rather than guessed. The factual short is held
-    first and the serial episode second (stages.py, `_media`), so the second film is the one
-    the budget refuses. In TEST, the PRODUCTION answer is a line he reads before he switches.
+    In PRODUCTION that is the film's ceiling (`shooting_sheet.film_ceiling_micros`): every
+    paid step of the sheet is refused when the film's books plus the step's cap would pass
+    it, so it is the true per-film figure (2026-10-02, MONEY-07; before, the line showed the
+    12 USD motion budget while a six-shot sheet could cap at 26 USD). In TEST it is the
+    stage's own hold (`estimate_film_cost_micros`: two test shots at 0.60 USD). The factual
+    short is held first and the serial episode second (stages.py, `_media`), so the second
+    film is the one the budget refuses. In TEST, the PRODUCTION answer is a line he reads
+    before he switches.
     """
     daily = [b for b in budget_status(engine, now)["budgets"] if b["period"] == "DAILY"]
     with Session(engine) as session:
@@ -905,6 +1116,10 @@ def _daily_budget_films_check(
     limit = min(int(b["limit_usd_micros"]) for b in daily)
 
     def hold(env: str) -> int:
+        if env == "PRODUCTION":
+            from app.media.shooting_sheet import film_ceiling_micros  # noqa: PLC0415
+
+            return film_ceiling_micros(settings)[0]
         return int(
             estimate_film_cost_micros(engine, "", environment=env, settings=settings)[
                 "motion_usd_micros"
@@ -913,7 +1128,29 @@ def _daily_budget_films_check(
 
     def refused(env: str, per_film: int) -> str:
         spare = limit - per_film
-        if spare < 0:
+        if env == "PRODUCTION":
+            # The staircase holds each paid step's cap, not the whole film at once: the step
+            # that would take the day past its budget is the one refused (OVER_DAILY_BUDGET),
+            # and the film waits there for the Owner.
+            if spare < 0:
+                said = (
+                    f"În {environment_words(env)} un film poate cheltui până la "
+                    f"{_usd(per_film)} USD (plafonul unui film), peste bugetul zilnic de "
+                    f"{_usd(limit)} USD. Niciun film nu încape întreg: scurtul factual se "
+                    "oprește la pasul plătit care ar depăși bugetul"
+                    + (", iar episodul serialului la fel." if films == 2 else ".")
+                )
+            else:
+                said = (
+                    f"În {environment_words(env)} un film poate cheltui până la "
+                    f"{_usd(per_film)} USD (plafonul unui film), iar bugetul zilnic este de "
+                    f"{_usd(limit)} USD: {count(films, 'film', 'filme')} ar cere "
+                    f"{_usd(films * per_film)} USD, deci episodul serialului, al doilea film "
+                    "al zilei, se oprește la pasul plătit care ar depăși bugetul dacă scurtul "
+                    f"factual a costat mai mult de {_usd(spare)} USD (narațiunea se adaugă "
+                    "la fiecare film)."
+                )
+        elif spare < 0:
             said = (
                 f"În {environment_words(env)} fiecare film ține {_usd(per_film)} USD "
                 "pentru mișcare, peste "
@@ -965,7 +1202,7 @@ def _daily_budget_films_check(
         )
     fits = (
         f"Bugetul zilnic de {_usd(limit)} USD ține {count(films, 'film', 'filme')} la "
-        f"plafonul de mișcare din {environment_words(environment)} ({_usd(here)} USD "
+        f"plafonul pe film din {environment_words(environment)} ({_usd(here)} USD "
         "pe film)."
     )
     if environment == "TEST":
@@ -998,6 +1235,124 @@ def _daily_budget_films_check(
     )
 
 
+def _vault_check(engine: Engine, vault: Any) -> dict[str, Any]:
+    """Whether the studio can read the keys it stored (REL-06, SELL-12).
+
+    BLOCKING when a connection the studio uses cannot be read, or the key file itself cannot
+    be opened while something is stored with it: no paid stage runs on keys it cannot open,
+    and a day that would fail at its first purchase is refused before it starts. DEGRADING
+    when only an unused connection is unreadable, or the key file is broken before anything
+    was stored with it. A studio given no vault (a script, a test) has nothing to read.
+    """
+    if not isinstance(vault, CredentialVault):
+        return _check(
+            "credential_vault",
+            True,
+            DEGRADING,
+            "Nicio cheie salvată de citit.",
+            "",
+            passed="none",
+        )
+    health = vault_health(engine, vault)
+    ok = health["status"] == "HEALTHY"
+    stored = int(health["stored"])
+    return _check(
+        "credential_vault",
+        ok,
+        BLOCKING if health["blocking"] else DEGRADING,
+        (
+            f"Cheile salvate se citesc ({count(stored, 'conexiune', 'conexiuni')})."
+            if stored
+            else "Nicio conexiune salvată încă."
+        ),
+        str(health["reason_ro"]),
+        detail=", ".join(f"«{item['name']}»" for item in health["unreadable"]),
+        value=health["code"],
+        passed="readable" if stored else "empty",
+        failed=str(health["code"] or "unreadable").lower(),
+        place=None if ok else health["place"],
+        technical=_technical(
+            fields=["integration.status", "integration.encrypted_secrets"],
+            paths=[str(vault.path)],
+        ),
+    )
+
+
+def _disk_check(settings: Settings) -> dict[str, Any]:
+    """Whether the media disk has the Owner's minimum free (REL-08). BLOCKING: a film writes
+    up to about 1.1 GB while it is made, and a disk that fills mid-film loses paid work. A
+    disk that cannot be read is said, and blocks nothing."""
+    reading = disk_reading(None, settings)
+    status = str(reading["status"])
+    free = reading["free_gb"]
+    minimum = float(reading["min_free_gb"])
+    if status == "UNKNOWN":
+        return _check(
+            "disk_space",
+            False,
+            DEGRADING,
+            "",
+            str(reading["reason_ro"]),
+            failed="unreadable",
+            place="machine",
+            technical=_technical(settings=[MEDIA_ROOT_SETTING], paths=[str(reading["root"])]),
+        )
+    return _check(
+        "disk_space",
+        status != "LOW",
+        BLOCKING,
+        (
+            f"Pe discul filmelor sunt {gb_words(float(free) * GB)} liberi"
+            + (f" (minimul: {gb_words(minimum * GB)})." if minimum > 0 else "; fără minim.")
+        ),
+        (
+            f"Pe discul filmelor au rămas {gb_words(float(free or 0) * GB)} liberi, sub minimul "
+            f"de {gb_words(minimum * GB)}: ziua nu cumpără nimic până nu faci loc pe disc sau "
+            "muți filmele pe un disc mai mare."
+        ),
+        value={"free_gb": free, "min_free_gb": minimum},
+        passed="ok" if minimum > 0 else "off",
+        failed="low",
+        place="machine",
+        technical=_technical(
+            settings=[MIN_FREE_SETTING, MEDIA_ROOT_SETTING], paths=[str(reading["root"])]
+        ),
+    )
+
+
+def _paid_rule_check(session: Session, policy: Any, autonomy_mode: str) -> dict[str, Any]:
+    """INFORMATIONAL: what the next run buys alone under his rule (PAGE-04). Never fails the
+    day: the rule is his answer, and the line only says what it means tomorrow at the run's
+    hour. ``value`` carries the facts it was judged from."""
+    from app.economy.models import SpendingBudget  # noqa: PLC0415
+
+    rule, over = paid_media_policy(policy)
+    environment = str((policy.environment if policy else None) or "TEST")
+    daily = session.scalar(
+        select(SpendingBudget).where(
+            SpendingBudget.period == "DAILY", SpendingBudget.active.is_(True)
+        )
+    )
+    daily_usd = daily.limit_usd_micros / 1_000_000 if daily is not None else None
+    stopped = bool(policy and policy.autonomy_stopped)
+    return _check(
+        "paid_media_rule",
+        True,
+        INFORMATIONAL,
+        paid_rule_means(environment, autonomy_mode, rule, over, daily_usd, stopped=stopped),
+        "",
+        value={
+            "environment": environment,
+            "autonomy_mode": autonomy_mode,
+            "paid_media_approval": rule,
+            "over_usd": over,
+            "daily_budget_usd": daily_usd,
+        },
+        passed=rule.lower(),
+        technical=_technical(fields=["paid_media_approval", "paid_media_approval_over_usd"]),
+    )
+
+
 def run_preflight(
     engine: Engine, settings: Settings, vault: Any, *, now: datetime | None = None
 ) -> dict[str, Any]:
@@ -1026,6 +1381,8 @@ def run_preflight(
             )
         )
 
+        checks.append(_vault_check(engine, vault))
+
         # Which stages the day may run at all is the Owner's mode, and the preflight is where
         # he reads the studio before it starts: a MANUAL day that films nothing should say so
         # here rather than be discovered in a run summary of skipped stages. It refuses
@@ -1044,6 +1401,7 @@ def run_preflight(
                 passed=autonomy_mode.lower(),
             )
         )
+        checks.append(_paid_rule_check(session, policy, autonomy_mode))
 
         assignable = list(
             session.scalars(select(ModelRecord).where(ModelRecord.is_available.is_(True)))
@@ -1111,7 +1469,7 @@ def run_preflight(
             technical=_technical(settings=[FFMPEG_SETTING], paths=[str(ffmpeg)] if ffmpeg else []),
         )
     )
-    ffprobe = find_ffprobe(settings.ffmpeg_path)
+    ffprobe = find_ffprobe(settings.ffmpeg_path, configured=settings.ffprobe_path)
     checks.append(
         _check(
             "media_inspection",
@@ -1127,6 +1485,7 @@ def run_preflight(
             ),
         )
     )
+    checks.append(_disk_check(settings))
 
     # A connected account is not yet a place to publish: the channel slot has to name it, or
     # publishing and analytics cannot tell which channel a video and its numbers belong to.
@@ -1307,7 +1666,10 @@ def run_preflight(
         slots = _youtube_slots(session, moment)
         checks.append(_youtube_upload_check(slots))
         checks.append(_youtube_statistics_check(slots))
+        # What YouTube actually made of the uploads that asked to be seen.
+        checks.append(_youtube_visibility_check(session))
         checks.append(_price_check(session))
+        checks.append(_token_ceiling_check(session, settings))
         checks.append(_vision_check(session))
         checks.append(_character_reference_check(session))
         checks.append(_serial_channel_check(session, bindings))

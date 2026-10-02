@@ -39,6 +39,14 @@ DEFAULT_ATTEMPTS = 3
 DEFAULT_MAX_SECONDS = 30.0
 DEFAULT_BASE_SECONDS = 1.0
 
+#: The statuses after which a billed request may be sent again: the vendor answered "not now"
+#: and did not serve it. Runway's error page (https://docs.dev.runwayml.com/errors/errors/,
+#: read 2026-10-01) lists exactly 429, 502, 503 and 504 as "May retry"; the studio applies the
+#: same narrow list to every vendor it buys from. Any other 5xx on a purchase (a 500 answered
+#: after the task was created, say) may be a request the vendor served and billed, so it is
+#: never resent: it is reported as possibly charged (`unanswered`).
+SAFE_TO_RESEND_STATUSES = frozenset({429, 502, 503, 504})
+
 #: The wait between attempts. A module attribute, not a default argument, so a test can make
 #: every adapter's retries instant with one monkeypatch instead of threading a parameter
 #: through each call site.
@@ -128,15 +136,18 @@ def retry_after_seconds(exc: BaseException) -> float | None:
 def is_transient(exc: BaseException, *, repeatable: bool = True) -> bool:
     """Whether asking again could get a different answer, and is safe to do.
 
-    Retried: 429 and 5xx (the vendor answered "not now"), and a request that never left
-    (`unsent`, `URLError`). Retried only when `repeatable`: a request that left and got no
-    answer (`unanswered`, a bare socket error or timeout, a dropped connection), because the
-    vendor may have served it. Never retried: every other 4xx, and an answer that arrived but
-    could not be read — asking again would get the same body.
+    Retried: 429, 502, 503 and 504 (the vendor answered "not now",
+    `SAFE_TO_RESEND_STATUSES`), and a request that never left (`unsent`, `URLError`).
+    Retried only when `repeatable`: any other 5xx, and a request that left and got no answer
+    (`unanswered`, a bare socket error or timeout, a dropped connection), because the vendor
+    may have served it. Never retried: every other 4xx, and an answer that arrived but could
+    not be read — asking again would get the same body.
     """
     status = _status_of(exc)
     if status is not None:
-        return status == 429 or 500 <= status <= 599
+        if status in SAFE_TO_RESEND_STATUSES:
+            return True
+        return repeatable and 500 <= status <= 599
     if getattr(exc, "unsent", False):
         return True
     if getattr(exc, "unanswered", False):

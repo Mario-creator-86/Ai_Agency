@@ -21,9 +21,24 @@ from app.models import Base
 
 #: What a scene is (migration 0048 checks these). Only LIVE reaches an image or video model.
 SCENE_KINDS: tuple[str, ...] = ("LIVE", "DATA_CARD", "TITLE_CARD", "BLACK")
-#: What a paid take is, and the states it may be in (migration 0048 checks these).
-SCENE_TAKE_KINDS: tuple[str, ...] = ("still", "motion", "test_shot")
-SCENE_TAKE_STATUSES: tuple[str, ...] = ("QUOTED", "PAID", "APPROVED", "REJECTED", "REFUSED")
+#: What a paid take is, and the states it may be in (migrations 0048 and 0049 check these).
+#: SUBMITTED: the vendor accepted the task (and may bill it), its output is not collected yet:
+#: it is never bought again, only collected. LOST: accepted and never collected before the
+#: vendor's output expired. ``narration`` is a narration purchase booked as a take.
+SCENE_TAKE_KINDS: tuple[str, ...] = ("still", "motion", "test_shot", "narration")
+SCENE_TAKE_STATUSES: tuple[str, ...] = (
+    "QUOTED",
+    "SUBMITTED",
+    "PAID",
+    "APPROVED",
+    "REJECTED",
+    "REFUSED",
+    "LOST",
+)
+
+
+def _in(column: str, values: tuple[str, ...]) -> str:
+    return f"{column} IN (" + ",".join(f"'{value}'" for value in values) + ")"
 
 
 class CharacterBible(Base):
@@ -164,20 +179,18 @@ class SceneTake(Base):
     seed), what it was quoted and what the balance actually moved (``credits_measured``, None
     until measured, never zero by assumption), and where the file is and its sha256.
 
-    QUOTED -> PAID -> APPROVED | REJECTED, or REFUSED when the vendor declined it (a refusal is
-    paid like a success, so it is recorded like one). An APPROVED take whose prompt hash is
-    unchanged is never bought again: one file of one prompt for one scene is one row
+    QUOTED -> SUBMITTED -> PAID -> APPROVED | REJECTED, or REFUSED when the vendor declined it
+    (a refusal is paid like a success, so it is recorded like one), or LOST when the vendor
+    accepted it and its output expired before the studio collected it. An APPROVED take whose
+    prompt hash is unchanged is never bought again: one file of one prompt for one scene is one row
     (``uq_scene_take_identity``). Measured on the Nepal film: a second full render bought
     every still and clip again with the same prompts, because nothing said they were paid.
     """
 
     __tablename__ = "scene_take"
     __table_args__ = (
-        CheckConstraint("kind IN ('still','motion','test_shot')", name="ck_scene_take_kind"),
-        CheckConstraint(
-            "status IN ('QUOTED','PAID','APPROVED','REJECTED','REFUSED')",
-            name="ck_scene_take_status",
-        ),
+        CheckConstraint(_in("kind", SCENE_TAKE_KINDS), name="ck_scene_take_kind"),
+        CheckConstraint(_in("status", SCENE_TAKE_STATUSES), name="ck_scene_take_status"),
         CheckConstraint("scene_number >= 1", name="ck_scene_take_scene_number"),
         UniqueConstraint(
             "storyboard_id",
@@ -188,6 +201,7 @@ class SceneTake(Base):
             name="uq_scene_take_identity",
         ),
         Index("ix_scene_take_scene", "storyboard_id", "scene_number", "kind", "status"),
+        Index("ix_scene_take_remote_task", "remote_task_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -207,7 +221,7 @@ class SceneTake(Base):
     seed: Mapped[int | None] = mapped_column(Integer, nullable=True)
     credits_quoted: Mapped[float | None] = mapped_column(Float, nullable=True)
     credits_measured: Mapped[float | None] = mapped_column(Float, nullable=True)
-    #: QUOTED | PAID | APPROVED | REJECTED | REFUSED
+    #: QUOTED | SUBMITTED | PAID | APPROVED | REJECTED | REFUSED | LOST
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="QUOTED", server_default="QUOTED"
     )
@@ -225,6 +239,41 @@ class SceneTake(Base):
     event_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("domain_event.event_id"), nullable=True
     )
+    #: The vendor's task id, written the moment the vendor accepted the request (migration
+    #: 0049), so a task whose output was not collected is collected later, never bought again.
+    remote_task_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    #: The licence it was bought under (migration 0051): the vendor, the plan or terms the
+    #: Owner recorded on the connection, and whether they allow commercial use — True only on
+    #: his explicit yes, None when nothing says so. A film is LICENSED only when every one of
+    #: its components carries that yes (`assembler.film_licences`).
+    licence_vendor: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    licence_terms: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    commercial_use: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
+
+class FilmPurchaseLease(Base):
+    """Who is buying for a film right now (migration 0050): one row per film, at most.
+
+    A film's paid steps (a stair of the shooting sheet, a paid redo, the assembly's narration,
+    the day's staircase) take it before anything is priced and let it go when they end.
+    Measured before it existed (2026-10-01): two presses of one step under the Owner's MODE
+    rule bought an extra shot and lost a paid one to "database is locked", because nothing
+    serialised two buyers who needed no yes. A second buyer finds the row and buys nothing
+    («Filmul este deja în lucru»); a row past ``expires_at`` was left by a process that died
+    under it and is taken over.
+    """
+
+    __tablename__ = "film_purchase_lease"
+
+    storyboard_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("storyboard.id"), primary_key=True
+    )
+    #: Who holds it: the run's correlation id (the day's, or one press of the Owner's).
+    holder: Mapped[str] = mapped_column(String(100), nullable=False)
+    #: What is being bought: stills | test_shot | motion | scene_redo | assemble | staircase.
+    step: Mapped[str] = mapped_column(String(20), nullable=False)
+    acquired_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    expires_at: Mapped[str] = mapped_column(String(40), nullable=False)
 
 
 class MediaAsset(Base):
@@ -245,7 +294,9 @@ class MediaAsset(Base):
         String(100), nullable=False, default="STUDIO_INTERNAL"
     )
     remote_job_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    # ORIGINAL_AI_GENERATED | PROPRIETARY_STUDIO | PUBLIC_DOMAIN | LICENSED
+    # LICENSED | NEEDS_REVIEW (a render since 2026-10-02: derived from its components'
+    # evidence, `assembler.film_licences`) | PUBLIC_DOMAIN | ORIGINAL_AI_GENERATED and
+    # PROPRIETARY_STUDIO (self-declared, written before the ledger existed)
     license_status: Mapped[str] = mapped_column(
         String(50), nullable=False, default="PROPRIETARY_STUDIO"
     )

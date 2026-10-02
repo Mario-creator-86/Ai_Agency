@@ -198,7 +198,8 @@ def test_task_queue_lease_and_expiration_recovery(phase2_engine):
     assert claimed is not None
     assert claimed["id"] == task["id"]
     assert claimed["status"] == "CLAIMED"
-    assert claimed["lease_token"] == "worker_1"
+    # Each claim has its own token, the worker's id first (QUEUE_LEASE_SHUTDOWN, AR-17).
+    assert claimed["lease_token"].startswith("worker_1:")
     assert claimed["attempts"] == 1
 
     # Worker 2 tries to claim while lease is active -> None available
@@ -213,15 +214,17 @@ def test_task_queue_lease_and_expiration_recovery(phase2_engine):
     recovered = claim_task(engine, worker_id="worker_2", lease_duration_seconds=30)
     assert recovered is not None
     assert recovered["id"] == task["id"]
-    assert recovered["lease_token"] == "worker_2"
+    assert recovered["lease_token"].startswith("worker_2:")
     assert recovered["attempts"] == 2
+    token = recovered["lease_token"]
 
-    # Worker 2 heartbeats task
-    assert heartbeat_task(engine, task["id"], lease_token="worker_2", extension_seconds=60) is True
+    # Worker 2 heartbeats task; worker 1's old token no longer holds it
+    assert heartbeat_task(engine, task["id"], lease_token=token, extension_seconds=60) is True
     assert heartbeat_task(engine, task["id"], lease_token="wrong_token") is False
+    assert heartbeat_task(engine, task["id"], lease_token=claimed["lease_token"]) is False
 
     # Worker 2 completes task
-    completed = complete_task(engine, task["id"], lease_token="worker_2")
+    completed = complete_task(engine, task["id"], lease_token=token)
     assert completed["status"] == "COMPLETED"
     assert completed["lease_token"] is None
 
@@ -246,7 +249,9 @@ def test_task_fail_backoff_and_dead_letter(phase2_engine):
     # Attempt 1: claim & fail (retryable)
     c1 = claim_task(engine, "worker_1")
     assert c1["attempts"] == 1
-    f1 = fail_task(engine, task["id"], "worker_1", error_detail="Out of GPU memory", retryable=True)
+    f1 = fail_task(
+        engine, task["id"], c1["lease_token"], error_detail="Out of GPU memory", retryable=True
+    )
     assert f1["status"] == "RETRYING"
     assert f1["error_detail"] == "Out of GPU memory"
 
@@ -259,7 +264,11 @@ def test_task_fail_backoff_and_dead_letter(phase2_engine):
     c2 = claim_task(engine, "worker_1")
     assert c2["attempts"] == 2
     f2 = fail_task(
-        engine, task["id"], "worker_1", error_detail="Out of GPU memory again", retryable=True
+        engine,
+        task["id"],
+        c2["lease_token"],
+        error_detail="Out of GPU memory again",
+        retryable=True,
     )
     assert f2["status"] == "DEAD_LETTER"
 
@@ -465,11 +474,14 @@ def test_websocket_auth_and_replay(settings, phase2_engine):
 
     with TestClient(app) as client:
         with pytest.raises(WebSocketDisconnect):
-            with client.websocket_connect("/api/v1/ws?token=invalid_token"):
-                pass
+            with client.websocket_connect("/api/v1/ws") as ws:
+                ws.send_json({"type": "auth", "token": "invalid_token"})
+                ws.receive_json()
 
-        # Authorized connection
-        with client.websocket_connect(f"/api/v1/ws?token={token}") as ws:
+        # Authorized connection: the key is the socket's first message, never its URL (SEC-02)
+        with client.websocket_connect("/api/v1/ws") as ws:
+            ws.send_json({"type": "auth", "token": token})
+            assert ws.receive_json() == {"type": "auth_ok"}
             # Ping -> pong
             ws.send_json({"type": "ping"})
             resp = ws.receive_json()
@@ -488,3 +500,35 @@ def test_websocket_auth_and_replay(settings, phase2_engine):
             complete = ws.receive_json()
             assert complete["type"] == "replay_complete"
             assert complete["count"] >= 2
+
+
+@pytest.mark.parametrize(
+    "replay",
+    [
+        {"type": "replay", "after_sequence": "x"},
+        {"type": "replay", "after_sequence": 0, "limit": "many"},
+        {"type": "replay", "after_sequence": None},
+        {"type": "replay", "after_sequence": [1]},
+        {"type": "replay", "after_sequence": 1e400},
+    ],
+)
+def test_a_malformed_replay_is_answered_and_the_socket_stays_open(settings, phase2_engine, replay):
+    """SEC-10: int() on a replay field used to raise out of the loop and end the socket 1011."""
+    import json
+    import time
+
+    token = settings.owner_token.get_secret_value()
+    with TestClient(create_app(settings)) as client:
+        manager = client.app.app.state.connection_manager
+        with client.websocket_connect("/api/v1/ws") as ws:
+            ws.send_json({"type": "auth", "token": token})
+            assert ws.receive_json() == {"type": "auth_ok"}
+            assert manager.active_count == 1
+            ws.send_text(json.dumps(replay))
+            assert ws.receive_json() == {"error": "invalid_replay"}
+            ws.send_json({"type": "ping"})
+            assert ws.receive_json() == {"type": "pong"}
+        deadline = time.monotonic() + 5
+        while manager.active_count and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert manager.active_count == 0, "a closed socket leaves the broadcast"

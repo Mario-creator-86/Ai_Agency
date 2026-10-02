@@ -14,9 +14,11 @@ when the picture cannot be read. What NOT_RUN costs a still is decided by the st
 
 The model is pinned by the SHA256 that Hugging Face publishes for
 opencv/face_detection_yunet face_detection_yunet_2023mar.onnx (read 2026-09-27); the same
-file is in github.com/opencv/opencv_zoo under models/face_detection_yunet. It is Apache-2.0
-(OpenCV Zoo). The file is not bundled until the Owner approves downloading it, together
-with the opencv-python-headless dependency; until then every count is NOT_RUN.
+file is in github.com/opencv/opencv_zoo under models/face_detection_yunet. Its own licence is
+MIT (Shiqi Yu, 2020: the model folder's LICENSE in opencv_zoo, read 2026-10-02; the zoo as a
+whole is Apache-2.0). The file IS bundled, at YUNET_MODEL_PATH, with its licence beside it
+(models/LICENSE-YuNet) and its entry in THIRD_PARTY_NOTICES.md. Without opencv installed, or
+with another file in its place, every count is NOT_RUN.
 
 YuNet misses small and profile faces. That is why a face from EITHER this detector or the
 vision model blocks a still, and why the Owner's look at the contact sheet stays the last

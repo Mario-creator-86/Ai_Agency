@@ -104,6 +104,55 @@ is still asked as `media.paid_generation` under the mode alone, and the page's r
 not consult `may_act`. The MANUAL whole-day statement above is unaffected, because the daily run's
 media stage is skipped under MANUAL before any paid step is proposed.
 
+### The staircase as built (amended 2026-10-02)
+
+Built since 2026-10-01; amended deliberately on 2026-10-02 after the production-readiness audit
+(finding A17). The paragraph above that says "Not built at this writing" is history and is kept
+as such. The four actions are called: `stills_stage.run_stills_stage` asks
+`media.stills_purchase`, `assembler.run_motion_step` asks `media.test_shot` and
+`media.motion_purchase` (through `shooting_sheet.run_sheet_step` for the Owner's press and for
+the day), and `assembler.redo_scene` asks `media.scene_redo`. In PRODUCTION the daily run's media
+stage climbs the same shooting sheet (`runbook.stages._film_staircase`), one stair per call, each
+bound to its own `plan_hash`; in TEST the day buys nothing from the real vendors and writes the
+Owner one letter that says what PRODUCTION would do under his rule. The rules as built:
+
+- **OVER_USD reads the cap** (ADR-OVER-USD-CAP). The `cost_usd` a paid step hands to `may_act` is
+  the step's credit cap in USD, not its estimate, because the cap is what the step may spend; the
+  question reads «plafon X USD».
+- **No daily budget, no unasked purchase** (ADR-DAILY-BUDGET-REQUIRED). In PRODUCTION, when MODE,
+  or OVER_USD under his amount, would let a paid step through without asking and the mode allows
+  its tier, `may_act` answers `BLOCKED_NO_BUDGET` unless an active DAILY `SpendingBudget` exists;
+  a monthly budget alone is not enough. Under `EVERY_PAID_STEP` nothing changes, because he is
+  asked anyway. The preflight line `spending_budget` is BLOCKING in exactly that case.
+- **The hero rule** (ADR-HERO-CLIP-QC). The rest of the motion follows the hero test shot only
+  when `assembler.hero_gate` allows it: the hero take is PAID, its latest clip-QC report PASSED,
+  and a dry `may_act("media.motion_purchase", cost_usd=<the motion cap>, ask_owner=False)` answers
+  ALLOWED. Under MODE, or OVER_USD with the motion cap under his amount, clip QC therefore accepts
+  the hero, recorded once per take as the event `media.hero_accepted_by_clip_qc` with the clip-QC
+  report's id; the take stays PAID, and APPROVED stays his alone. Under `EVERY_PAID_STEP`,
+  SUPERVISED or MANUAL the hero waits for his look as before. An unchecked or failed hero always
+  waits; STOP, SAFE_MODE and `BLOCKED_NO_BUDGET` refuse with their own status. No new action or
+  tier was added: the gate is the kernel's existing answer for the motion.
+- **His yes continues the film the same day** (ADR-FILM-CONTINUE). In PRODUCTION an APPROVED
+  paid-media question, or an APPROVED take, queues one `FILM_CONTINUE` task that walks only that
+  film through the same staircase, every purchase again behind `may_act`, its `plan_hash`, the
+  lease and the budgets. Paid-media questions expire after `paid_media_approval_expires_hours`
+  (48 h); every other question keeps 24 h.
+- **Budgets before buying.** One buyer per film (`film_purchase_lease`), the step's cap reserved
+  (`reserve_spend`, purpose `sheet:<step>`), and the film's own ceiling (`film_budget_usd`,
+  `OVER_FILM_BUDGET`) are checked before the kernel is asked; they add refusals and loosen nothing.
+- **The narration is not one of the four actions.** It is asked as `media.paid_generation`
+  (T2, or `media.paid_generation_over_threshold`, T3, above `paid_generation_approval_threshold_usd`),
+  bound to the sheet's `plan_hash` at step `assemble`, and the studio's mode decides whether it is
+  asked, whatever the paid-media rule says. Whether the narration becomes a fifth paid step
+  (`narration_purchase`) is the Owner's decision and is pending; this document does not decide it.
+- **Only the Owner moves the rule.** The page shows what the next run will buy under his rule and
+  mode (Guvernanță → «Mod de autonomie», and the sheet's own control) and asks a confirmation
+  before a looser choice; nothing in the studio writes `paid_media_approval` or the environment.
+
+Proven on fakes only: every vendor, the stills judge and clip QC were faked in the tests that
+show this; no real paid film has yet climbed the staircase under MODE.
+
 ## Feature flags are separate
 
 Autonomy mode alone does not imply every feature is enabled.

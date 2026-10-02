@@ -1,0 +1,4 @@
+# Text files are stored with LF; each checkout writes its platform's line ending.
+* text=auto
+# The architecture documents are hashed (scripts/check_docs.py); keep them LF on every checkout.
+docs/architecture/*.md text eol=lf

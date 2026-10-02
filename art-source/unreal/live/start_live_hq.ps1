@@ -4,9 +4,10 @@
 #
 #   powershell -File art-source/unreal/live/start_live_hq.ps1 [-ResX 1920] [-ResY 1080] [-Windowed]
 #
-# Paths come from the environment when set (AMN_PS_INFRA, AMN_PS_NODE, AMN_UE_ROOT), else the
-# defaults this machine was set up with. Epic's scripts break on spaces in paths, so the
-# infrastructure lives outside the repository in a folder without spaces.
+# Paths come from the parameters, else the environment (AMN_PS_INFRA, AMN_PS_NODE, AMN_UE_ROOT), else
+# art-source\unreal\.env.paths; with none of them the script stops and says which to set. Epic's
+# scripts break on spaces in paths, so the infrastructure lives outside the repository in a folder
+# without spaces.
 
 param(
     # The page frames the scene at 1600:840; the stream keeps that shape so clicks line up.
@@ -15,15 +16,38 @@ param(
     [switch]$Windowed,
     # Appended to the game's command line, for a measurement only: the phase gate's frame time is the
     # engine's CSV profiler (-csvCaptureFrames=N, written under AMNReference/Saved/Profiling/CSV).
-    [string[]]$ExtraArgs = @()
+    [string[]]$ExtraArgs = @(),
+    # Epic's PixelStreamingInfrastructure folder, the folder holding node.exe, and the engine's root.
+    [string]$InfraPath = "",
+    [string]$NodePath = "",
+    [string]$UeRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repo = Resolve-Path (Join-Path $here "..\..\..")
-$infra = if ($env:AMN_PS_INFRA) { $env:AMN_PS_INFRA } else { "E:\AMN_PixelStreaming\PixelStreamingInfrastructure-UE5.8-0.1.0" }
-$node = if ($env:AMN_PS_NODE) { $env:AMN_PS_NODE } else { "E:\AMN_PixelStreaming\node" }
-$ueRoot = if ($env:AMN_UE_ROOT) { $env:AMN_UE_ROOT } else { "E:\Program Files\Epic Games\UE_5.8" }
+$unrealDir = Resolve-Path (Join-Path $here "..")
+# Machine paths (SELL-11): the environment first, then art-source\unreal\.env.paths (KEY=VALUE lines,
+# ignored by Git, written once per machine), else a refusal that names both. No tracked file names a
+# drive of the first studio's PC. -Optional returns $null instead, for a path only one step needs.
+function Get-AmnPath([string]$Name, [string]$What, [switch]$Optional) {
+    $value = [Environment]::GetEnvironmentVariable($Name)
+    if (-not $value) {
+        $file = Join-Path $unrealDir ".env.paths"
+        if (Test-Path -LiteralPath $file) {
+            foreach ($line in Get-Content -LiteralPath $file -Encoding UTF8) {
+                if ($line -match '^\s*([A-Z_][A-Z0-9_]*)\s*=\s*"?([^"]*?)"?\s*$' -and $Matches[1] -eq $Name) { $value = $Matches[2] }
+            }
+        }
+    }
+    if (-not $value -and -not $Optional) {
+        throw "Set $Name to the $What (an environment variable, or a line $Name=<path> in art-source\unreal\.env.paths), or pass its -Path parameter."
+    }
+    return $value
+}
+$infra = if ($InfraPath) { $InfraPath } else { Get-AmnPath "AMN_PS_INFRA" "PixelStreamingInfrastructure folder" }
+$node = if ($NodePath) { $NodePath } else { Get-AmnPath "AMN_PS_NODE" "folder holding node.exe" }
+$ueRoot = if ($UeRoot) { $UeRoot } else { Get-AmnPath "AMN_UE_ROOT" "Unreal Engine root (the folder holding Engine\Binaries)" }
 
 $config = Get-Content (Join-Path $here "wilbur.config.json") -Raw | ConvertFrom-Json
 $wilburDist = Join-Path $infra "SignallingWebServer\dist\index.js"
@@ -41,7 +65,7 @@ $ueArgs = @(
     "`"$uproject`"", "/Game/HQ/HQ_Dusk", "-game",
     "-PixelStreamingConnectionURL=ws://127.0.0.1:$($config.streamer_port)",
     # Offer every codec (H.264, VP8, VP9, AV1) and let the browser pick one it can decode. Forced to
-    # H.264, a browser built without it (the Owner's Comet) got no video: Unreal logged "Missing codec
+    # H.264, a browser built without it got no video: Unreal logged "Missing codec
     # from recv codec capabilities", the page gave up after 13 s and retried every 15 s.
     "-PixelStreamingWebRTCNegotiateCodecs",
     # Remote Control's HTTP API (localhost only): the backend moves the scene's people from studio state.

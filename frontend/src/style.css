@@ -5960,3 +5960,37 @@ details[open].pf-ok .pf-ok-line .pf-message { white-space: normal; overflow: vis
 @media (max-width: 700px) {
   .sheet-scenes, .sheet-rows, .sheet-steps { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* --------------------------------------------- PAGE_OWNER_DAY (2026-10-02): the Owner's day */
+/* The sheet's bar: his rule and the next step with its price, kept in view over the scenes. */
+.sheet-summary-bar { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s4); padding: var(--s2) var(--s3); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface); box-shadow: var(--shadow-raised); }
+.sheet-summary-rule, .sheet-summary-next { margin: 0; font-size: var(--fs-meta); color: var(--ink-2); }
+.sheet-summary-next strong { color: var(--ink); font-weight: var(--w-semi); }
+.sheet-summary-why { color: var(--warn-ink); }
+.sheet-summary-go { margin-left: auto; }
+/* The page's own warnings: older than the studio, or something that keeps it running is wrong. */
+.page-banners { position: sticky; top: 0; z-index: 50; display: grid; gap: 0; }
+.page-banner { margin: 0; padding: var(--s2) var(--s4); font-size: var(--fs-meta); font-weight: var(--w-semi); text-align: center; border-bottom: 1px solid var(--warn-line); background: var(--warn-bg); color: var(--warn-ink); }
+.page-banner[data-tone="alert"] { border-bottom-color: var(--alert-line); background: var(--alert-bg); color: var(--alert-ink); }
+/* What the next run will buy alone, and his rule under the mode. */
+.day-will { margin: var(--s2) 0 0; }
+.governance-rule-box { margin-top: var(--s2); font-size: var(--fs-meta); color: var(--ink-2); }
+.governance-rule-box > summary { cursor: pointer; color: var(--ink); }
+.governance-paid-media { margin-top: var(--s2); }
+/* A paid card names its film and step; a T3/T4 «Aprobă» asks first. */
+.approval-film { margin: 0; font-size: var(--fs-meta); color: var(--ink-2); }
+.approval-confirm { display: grid; gap: var(--s2); padding: var(--s2) var(--s3); border: 1px solid var(--warn-line); border-radius: var(--radius-sm); background: var(--warn-bg); }
+.approval-confirm-q { margin: 0; font-size: var(--fs-meta); color: var(--warn-ink); }
+.approval-note { display: grid; gap: var(--s1); font-size: var(--fs-micro); color: var(--ink-3); }
+/* «Scrisori pentru tine». */
+.owner-inbox-list { display: grid; gap: var(--s2); }
+.inbox-letter { display: grid; gap: var(--s1); padding: var(--s2) var(--s3); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-quiet); }
+.inbox-subject { margin: 0; font-size: var(--fs-meta); color: var(--ink); }
+.inbox-meta { margin: 0; font-size: var(--fs-micro); color: var(--ink-3); }
+.mail-actions { margin-top: var(--s2); }
+.readout-key { margin-top: var(--s1); font-size: var(--fs-micro); }
+/* The question a switch that lets the studio spend asks first. */
+.consequence-dialog { width: min(560px, 94vw); }
+.consequence-body { display: grid; gap: var(--s3); }
+.consequence-question { margin: 0; }
+.consequence-words { margin: 0; font-size: var(--fs-body); color: var(--ink-2); }

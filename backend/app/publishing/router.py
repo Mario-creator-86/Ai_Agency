@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from typing import Annotated
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -26,6 +27,7 @@ from app.publishing.schemas import (
     PublishPolicyResult,
 )
 from app.publishing.services import (
+    PublicationNotResolvable,
     PublishingAssetNotFound,
     PublishingGateError,
     PublishPolicyError,
@@ -38,6 +40,7 @@ from app.publishing.services import (
     get_publication,
     list_channels,
     list_publications,
+    resolve_publication,
     seed_default_channels,
 )
 from app.security import require_owner
@@ -57,6 +60,28 @@ PUBLISHER_NOT_CONFIGURED_DETAIL = {
         "STUDIO_YOUTUBE_REFRESH_TOKEN",
     ],
 }
+
+
+class ResolvePublicationCommand(BaseModel):
+    """The Owner's answer about a publication the studio could not settle (PUB-12): the video
+    is on the channel, with its id, or it is not."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    command_id: UUID
+    found: bool
+    remote_video_id: str | None = Field(
+        default=None, min_length=6, max_length=20, pattern=r"^[A-Za-z0-9_-]+$"
+    )
+
+    @model_validator(mode="after")
+    def _found_names_the_video(self) -> ResolvePublicationCommand:
+        if self.found and not self.remote_video_id:
+            raise ValueError(
+                "„Există” cere ID-ul videoclipului de pe YouTube (partea de după /shorts/ "
+                "sau watch?v=)."
+            )
+        return self
 
 
 def get_active_publisher(request: Request) -> PublishingProvider:
@@ -327,6 +352,30 @@ def create_publishing_router() -> APIRouter:
             raise HTTPException(
                 status_code=500, detail=f"Publication execution failed: {exc}"
             ) from exc
+
+    @router.post("/publications/{publication_id}/resolve", response_model=PublicationView)
+    def resolve_publication_endpoint(
+        request: Request,
+        publication_id: Annotated[str, Path(min_length=36, max_length=36)],
+        command: ResolvePublicationCommand,
+    ) -> dict:
+        """The Owner settles a publication the studio could not verify by itself: «Există»
+        with the video's id, or «Nu există». Idempotent by command id; nothing is uploaded
+        here (a «Nu există» row is retried by the watchdog, which asks the channel first)."""
+        try:
+            return resolve_publication(
+                request.app.state.engine,
+                publication_id,
+                found=command.found,
+                remote_video_id=command.remote_video_id,
+                command_id=str(command.command_id),
+            )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (CommandConflict, PublicationNotResolvable) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @router.post("/publish-asset/{asset_id}", response_model=PublicationView)
     def quick_publish_asset(

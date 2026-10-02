@@ -216,12 +216,19 @@ def test_a_frame_over_the_cap_is_refused(tmp_path):
     assert client.get(URL).status_code == 204
 
 
+#: Moments relative to the instant the test runs. They are computed in the test body: a value
+#: computed at collection was already in the past by the time a long full run reached it.
+RELATIVE_MOMENTS_MS = {"future_10min": 10 * 60000, "past_25h": -25 * 3600 * 1000}
+
+
 @pytest.mark.parametrize(
     "at",
-    [None, "soon", "-5", "12.5", str(now_ms() + 10 * 60000), str(now_ms() - 25 * 3600 * 1000)],
+    [None, "soon", "-5", "12.5", "future_10min", "past_25h"],
 )
 def test_the_capture_time_is_a_real_recent_moment(tmp_path, at):
     client, _ = make(tmp_path)
+    if at in RELATIVE_MOMENTS_MS:
+        at = str(now_ms() + RELATIVE_MOMENTS_MS[at])
     headers = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "image/webp"}
     if at is not None:
         headers["X-Captured-At"] = at

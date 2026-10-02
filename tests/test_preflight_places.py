@@ -296,10 +296,12 @@ def test_the_films_the_budget_refuses_name_the_treasury_and_keep_the_knobs(
     set_budget(engine, BudgetCommand(period="DAILY", limit_usd="15"))
     with Session(engine) as session, session.begin():
         session.get(OwnerPolicy, 1).environment = "PRODUCTION"
+    # The film's ceiling, enforced before every paid step since 2026-10-02 (MONEY-07).
+    settings.film_budget_usd = 12.0
     films = line(run_preflight(engine, settings, vault), "daily_budget_films")
     assert films["code"] == "daily_budget_films.second_film_refused"
     assert "Trezorerie → Buget și cheltuieli" in films["message"]
-    assert "plafonul de mișcare" in films["message"]
+    assert "plafonul unui film" in films["message"]
     assert films["place"] == "treasury"
     assert "PUT /economy/budget" in films["technical"]["routes"]
     assert "STUDIO_MOTION_BUDGET_USD" in films["technical"]["settings"]
@@ -489,3 +491,75 @@ def test_the_machine_lines_and_the_settings_lines(engine, settings, vault, monke
     with Session(engine) as session:
         mode = session.get(OwnerPolicy, 1).autonomy_mode
     assert line(result, "autonomy_mode")["code"] == f"autonomy_mode.{mode.lower()}"
+
+
+# ------------------------------- PAGE-04: what the next run buys alone, under his rule and mode
+
+
+def rule(
+    engine,
+    value: str,
+    over: float | None = None,
+    *,
+    mode: str = "AUTONOMOUS_CEO",
+    environment: str = "PRODUCTION",
+) -> None:
+    with Session(engine) as session, session.begin():
+        policy = session.get(OwnerPolicy, 1)
+        policy.paid_media_approval = value
+        policy.paid_media_approval_over_usd = over
+        policy.autonomy_mode = mode
+        policy.environment = environment
+
+
+def test_the_ceo_mode_names_the_rule_instead_of_saying_the_day_runs_alone():
+    from app.runbook.preflight import MODE_MEANS
+
+    assert "regula" in MODE_MEANS["AUTONOMOUS_CEO"]
+    assert "merge singură" not in MODE_MEANS["AUTONOMOUS_CEO"]
+
+
+def test_an_informational_line_says_what_the_next_run_buys_alone(engine, settings, vault, studio):
+    rule(engine, "EVERY_PAID_STEP")
+    line_now = line(run_preflight(engine, settings, vault, now=MORNING), "paid_media_rule")
+    assert line_now["severity"] == "INFORMATIONAL" and line_now["ok"] is True
+    assert line_now["impact"] == "ok" and line_now["place"] is None
+    assert "te întreabă" in line_now["message"]
+    assert line_now["value"] == {
+        "environment": "PRODUCTION",
+        "autonomy_mode": "AUTONOMOUS_CEO",
+        "paid_media_approval": "EVERY_PAID_STEP",
+        "over_usd": None,
+        "daily_budget_usd": None,
+    }
+
+    rule(engine, "MODE")
+    no_budget = line(run_preflight(engine, settings, vault, now=MORNING), "paid_media_rule")
+    assert "fără un buget zilnic activ" in no_budget["message"]
+    assert "nu cumpără nimic singur" in no_budget["message"]
+
+    set_budget(engine, BudgetCommand(period="DAILY", limit_usd="15"))
+    alone = line(run_preflight(engine, settings, vault, now=MORNING), "paid_media_rule")
+    assert "cumpără singur" in alone["message"] and "15,00 USD" in alone["message"]
+    assert "controlul clipului" in alone["message"]
+
+    rule(engine, "OVER_USD", 5.0)
+    over = line(run_preflight(engine, settings, vault, now=MORNING), "paid_media_rule")
+    assert "cel mult 5,00 USD" in over["message"] and "te întreabă" in over["message"]
+
+    rule(engine, "MODE", mode="MANUAL")
+    manual = line(run_preflight(engine, settings, vault, now=MORNING), "paid_media_rule")
+    assert "nu cumpără nimic singur" in manual["message"]
+
+    rule(engine, "MODE", environment="TEST")
+    test_env = line(run_preflight(engine, settings, vault, now=MORNING), "paid_media_rule")
+    assert "mediul TEST" in test_env["message"]
+    for result_line in (line_now, no_budget, alone, over, manual, test_env):
+        assert_owner_words(result_line["message"], "paid_media_rule")
+
+
+def test_the_new_line_is_never_counted_against_the_day(engine, settings, vault, studio):
+    rule(engine, "MODE")
+    result = run_preflight(engine, settings, vault, now=MORNING)
+    assert line(result, "paid_media_rule")["ok"] is True
+    assert "paid_media_rule" not in {c["name"] for c in result["checks"] if not c["ok"]}
