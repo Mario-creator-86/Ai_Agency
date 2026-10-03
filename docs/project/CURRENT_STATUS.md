@@ -1,4 +1,4 @@
-# CURRENT STATUS — State on 2026-10-02
+# CURRENT STATUS — State on 2026-10-03
 
 ## Active claim — SHEET_BLOCKER_REPAIR (Codex, 2026-10-03, priority)
 
@@ -20,7 +20,8 @@ No inference, paid media or publishing is authorised by this check. Regression t
 
 Phase 10 (full automation hardening), after the production-readiness audit of 2026-10-01/02.
 Read this block for the current truth; the dated journal below it is history, newest first.
-Edit claim: the audit workflow (DOCS_AND_STATUS), 2026-10-02 — documents only.
+Edit claim: the Owner decisions workflow (DOCS_AND_STATUS), 2026-10-03 — documents and their
+tests only (the audit workflow's DOCS_AND_STATUS claim of 2026-10-02 is closed).
 
 **Proven on a real paid run.** Runway stills (seedream5_pro) and Runway image-to-video were
 bought for the Nepal film on 2026-09-26 (over 1,000 credits). The film failed QC: it was bought
@@ -56,12 +57,20 @@ on the Ollama Cloud connection (revoked key or ended plan); both YouTube connect
 `invalid_grant` since 2026-09-26; `edit_and_qc` died after four retries on "database busy" when
 daily_main, trends_daily and model_review_daily fired together at start-up (not yet fixed).
 
+**The Owner's studio, 2026-10-03.** Started at 18:06 from this tree, no auto-reload; his
+database is at `0053_channel_upload_settings`; the code's head is now `0054_owner_decisions`,
+applied by his next start. Read on a copy of his database: Ollama Cloud is VERIFIED again (runs
+succeeding since 09:00), both YouTube channels are CONNECTED (reconnected that day), and his
+15 USD/day budget holds the cheapest capable four-scene film (11.44 USD cap). From his next start
+the questions of steps 2-6 arrive as cards in his «Decizii» window (see «The Owner's decisions
+window (2026-10-03)» below), except the CI remote and the always-on host.
+
 **The Owner's next steps, in order.**
-1. Restart the studio when it suits him (start.py: backup, migration to 0053, page rebuild).
+1. Restart the studio when it suits him (start.py: backup, migration to 0054, page rebuild).
    Then run `uv sync --locked` while nothing runs from `.venv`, and `uv run python scripts/backup.py`
    once (health reports BACKUP_STALE until the first copy).
-2. Reconnect Ollama Cloud and both YouTube channels in Setări (his accounts, his act); move the
-   Google app to "In production" (docs/project/YOUTUBE_CONNECTIONS.md).
+2. Reconnect Ollama Cloud and both YouTube channels in Setări (his accounts, his act; done on
+   2026-10-03); move the Google app to "In production" (docs/project/YOUTUBE_CONNECTIONS.md).
 3. Set the daily budget (required for MODE or OVER_USD in PRODUCTION) and `STUDIO_FILM_BUDGET_USD`
    (the default 15.24 USD is below a four-scene film of 10 s scenes, whose motion cap is 27.20 USD).
 4. Answer «folosire comercială» on the Runway and ElevenLabs connections; add licensed music to
@@ -69,6 +78,48 @@ daily_main, trends_daily and model_review_daily fired together at start-up (not 
 5. Make the first capped paid film under EVERY_PAID_STEP: it is the real test of the staircase,
    the clip QC thresholds, the captions, the grade and the mix. Loosen the rule to MODE only after.
 6. Decide: a git remote or runner for CI; `narration_purchase`; LOCAL_MOVE; an always-on host.
+
+## The Owner's decisions window (2026-10-03)
+
+The Owner (2026-10-03): «Dacă sunt decizii pe care eu ca owner trebuie să le iau, trebuie să îmi
+apară un card. Trebuie să am propria mea fereastră unde pot să accept sau refuz ce îmi este
+recomandat sau trimis.» On a card he chose «Fereastră Decizii separată». Four items, each
+test-first with every provider faked, 0 credits, no run started, his studio on :8000 and the
+stream never stopped; each ran only its own tests and their neighbours. Everything below is
+**proven on fakes only**: the window has not been seen in a browser and its Playwright flow has
+not run. Decisions: 16_DECISION_LOG «The Owner's decisions window (2026-10-03)»; spec 31 amended.
+
+- **DECISIONS_CORE** — migration `0054_owner_decisions` (the `owner_decision` table, one open
+  card per `dedupe_key`); `app.decisions`: propose (writes nothing to the ledger), withdraw,
+  refresh (conditions and expiry), decide (Owner only, versioned, idempotent; ACCEPT runs his
+  own command: budget, paid-media rule, environment, autonomy mode; guided options wait
+  «în așteptarea acțiunii tale»); one feed `GET /api/v1/owner/decision-cards` (approvals,
+  decision cards, letters that ask him) and `POST /api/v1/owner/decisions/{id}/decide`; the
+  audit's questions seeded once at bootstrap and start-up. On a copy of his database: no budget
+  card (wan3, 11.44 USD cap, fits 15 USD/day), no reconnect cards (reconnected that day); his
+  window would open with 9 decision cards and 3 letters (count 12). `tests/test_owner_decisions.py`
+  seen red, green.
+- **DECISION_SOURCES** — `app.decisions.sources`: cards from a film whose paid step can never fit
+  his daily budget, a model run refused with HTTP 401/402/403, YouTube `invalid_grant`, a
+  NEEDS_REVIEW licence ledger, an empty music library and a paused sheet repair (retry now, local
+  move, wait); a refused card quiet 7 days; producers never fail their caller. New Owner command
+  `allow_repair_retry`; appliers `sheet_repair_retry` and `sheet_local_move`.
+  `tests/test_owner_decision_sources.py` (25) seen red, green.
+- **DECISIONS_WINDOW** — «Decizii (N)» in the top bar; his modal window with «Te așteaptă» and
+  «Istoric»; Accept / Refuz with a note; «Da, aplică» before money or policy moves; a paid step's
+  Accept opens its shooting sheet; letters answered in place; a 404 fallback until his restart.
+  `frontend/tests/owner_decisions.test.js` (26) seen red, green; the e2e flow «a card accepted in
+  the window» written, not yet run.
+- **DOCS_AND_STATUS** — spec 31 «Owner decision cards (amended 2026-10-03)» and its index hash;
+  six decisions in the log; this section, the changelog and the roadmap;
+  `tests/test_docs_owner_decisions.py` seen red (6), green; `tests/test_docs_truth.py`'s header
+  and changelog checks no longer pinned to the audit's date or to the first heading (its header
+  check skips live «Active claim» blocks). check_docs passes.
+
+Open: his restart (0053 → 0054, cards seeded, dist rebuilt) — until then his page gets 404 on
+the feed and the badge counts approvals plus letters; the e2e run and a look in a browser;
+narration as a paid step (spec 51 change, `record` only); a «scene to card» command; commercial
+use applied on accept; an event for a newly proposed card (today it shows on the poll).
 
 ## The production-readiness audit (2026-10-01 → 2026-10-02)
 

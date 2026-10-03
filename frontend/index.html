@@ -38,7 +38,9 @@
       <!-- THE STUDIO'S MENU. In the game frame the seven rooms come up here from the console under the
            render (drawers.js), and go back there on a narrow screen. -->
       <div id="topbar-rooms" class="topbar-rooms" hidden></div>
-      <span class="topbar-right"><span id="environment-banner" class="env-banner" role="status" hidden>—</span><span id="connection" class="connection" role="status">Neconectat</span><button id="logout" class="quiet topbar-logout" hidden>Ieși din studio</button></span>
+      <!-- «Decizii» (DECISIONS_WINDOW, 2026-10-03): the Owner's own window of decisions, with the
+           count of what waits for him; shown once his key is accepted (decisions_window.js). -->
+      <span class="topbar-right"><button id="decisions-button" class="topbar-logout decisions-button" type="button" aria-haspopup="dialog" aria-controls="decisions-window" aria-label="Decizii — nimic nu te așteaptă" hidden><span class="decisions-button-word">Decizii</span><span id="decisions-badge" class="decisions-badge" aria-hidden="true" hidden></span></button><span id="environment-banner" class="env-banner" role="status" hidden>—</span><span id="connection" class="connection" role="status">Neconectat</span><button id="logout" class="quiet topbar-logout" hidden>Ieși din studio</button></span>
     </header>
     <main>
       <section id="login" class="login" aria-labelledby="title-name">

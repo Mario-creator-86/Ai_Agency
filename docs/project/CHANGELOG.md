@@ -1,5 +1,17 @@
 # Changelog
 
+## The Owner's decisions window — 2026-10-03
+
+His words: «trebuie să îmi apară un card… propria mea fereastră unde pot să accept sau refuz». Four items, every provider faked, 0 credits; proven on fakes only, the window not yet seen in a browser.
+
+- **His window, «Decizii (N)»**: a button always in the top bar opens his own window: «Te așteaptă» and «Istoric»; each card says what, why, the recommended option and the cost or effect, then «Accept» / «Refuz» with a note; money or policy asks «Da, aplică» once more; a paid step's yes still goes to the shooting sheet.
+- **Only he decides**: agents, stages and the audit only propose a card (`propose_owner_decision`, one open card per question, nothing in the ledger); his answer is the only one taken (`POST /api/v1/owner/decisions/{id}/decide`, behind his key).
+- **His accept runs his own command**: the budget, the paid-media rule, the environment, the autonomy mode, a sheet repair retry, a local move; each applied once, refused if the state moved, the card left waiting with the reason when it fails.
+- **Guided cards wait for him**: reconnects, Google's consent screen, commercial use, music, editorial QC, the sale terms open the right place in Setări and wait «în așteptarea acțiunii tale» until done.
+- **Cards where the question arises**: a film that cannot fit his daily budget, a model connection refused (401/402/403), YouTube invalid_grant, a film without commercial-use evidence, no music, a paused sheet repair; a refused card stays quiet 7 days; the audit's pending questions seeded once.
+- **One feed**: paid-step approvals, decision cards and the letters that ask him something, newest first (`GET /api/v1/owner/decision-cards`); migration 0054_owner_decisions.
+- **Documents**: spec 31 «Owner decision cards (amended 2026-10-03)» with its hash; six decisions in the log; CURRENT_STATUS «State on 2026-10-03».
+
 ## The production-readiness audit — 2026-10-01 → 2026-10-02
 
 Twenty items, every provider faked, 0 credits. Nothing below has met a real paid vendor.

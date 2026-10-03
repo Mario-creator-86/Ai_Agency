@@ -335,6 +335,16 @@ def _record_account_refusal(
                 },
                 str(uuid4()),
             )
+            if exc.auth_refused:
+                # Google refused the account: only the Owner authorises it again (a card).
+                from app.decisions.sources import youtube_refused  # noqa: PLC0415
+
+                youtube_refused(
+                    session,
+                    session.get(YouTubeConnection, connection_id),
+                    reason,
+                    source="analytics",
+                )
     except SQLAlchemyError:
         # The day's line still says "no data" and why; only the preflight's copy is lost.
         logger.warning("analytics_refusal_not_recorded", extra={"connection_id": connection_id})

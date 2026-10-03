@@ -26,6 +26,9 @@ from app.agents.router import create_agents_router, create_providers_router
 from app.analytics.router import create_analytics_router
 from app.config import ROOT, Settings
 from app.db import create_db_engine
+from app.decisions.router import create_decisions_router
+from app.decisions.seed import seed_owner_decisions
+from app.decisions.services import refresh_owner_decisions
 from app.economy.prices import price_lookup
 from app.economy.router import create_economy_router
 from app.factual.router import create_factual_router
@@ -290,6 +293,14 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
         app.state.vault_health_cache = None
         load_registry(engine, app.state.credential_vault, app.state.registry)
         register_seeded_ollama(engine, app.state.registry)
+        # The audit's open questions to the Owner, as cards in his window, each once; and
+        # the cards whose condition cleared while the studio was down, closed. A failure
+        # here is logged and never stops the start: the page must come up.
+        try:
+            seed_owner_decisions(engine, settings)
+            refresh_owner_decisions(engine, settings)
+        except Exception as exc:  # noqa: BLE001 - logged; the studio still starts
+            logger.warning("owner_decisions_seed_failed", exc_info=exc)
         demo_exit = None
         if settings.demo_mode:
             # Every vendor seam replaced for the life of this process, and every provider's
@@ -888,6 +899,8 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
     app.include_router(create_workforce_router(), prefix="/api/v1", tags=["workforce"])
     app.include_router(create_story_router(), prefix="/api/v1", tags=["story"])
     app.include_router(create_runbook_router(), prefix="/api/v1", tags=["runbook"])
+    # The Owner's decisions window (2026-10-03): his cards, and his answers to them.
+    app.include_router(create_decisions_router(), prefix="/api/v1", tags=["owner"])
 
     if (ROOT / "frontend/dist").is_dir():
         app.mount("/", PageFiles(directory=ROOT / "frontend/dist", html=True), name="frontend")

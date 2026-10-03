@@ -54,6 +54,24 @@ cost comparison, and never at the price of a locked character's voice.
 Canonical phase numbering and original-version mapping: [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
 Early STOP/event primitives do not complete Phase 1/2/10 requirements.
 
+## Owner decisions window — 2026-10-03
+
+The Owner: «trebuie să îmi apară un card… propria mea fereastră unde pot să accept sau refuz».
+He chose «Fereastră Decizii separată». Done in code and its own tests, every provider faked
+(0 credits); proven on fakes only (see CURRENT_STATUS, «State on 2026-10-03»).
+
+- [x] DECISIONS_CORE — owner_decision table (0054), propose/withdraw/decide, appliers through his commands, conditions, one feed, the audit's questions seeded once
+- [x] DECISION_SOURCES — cards from the budget wait, refused model connections, YouTube invalid_grant, commercial use, music, the paused sheet repair; allow_repair_retry
+- [x] DECISIONS_WINDOW — «Decizii (N)» in the top bar, his window with «Te așteaptă» / «Istoric», Accept / Refuz with a note, guided cards, history
+- [x] DOCS_AND_STATUS — spec 31 «Owner decision cards» with its hash, six decisions, status, changelog, roadmap
+
+Still open:
+- [ ] Restart of his studio (migrates 0053 → 0054, seeds the cards) and a dist rebuild; until then his page gets 404 on the feed
+- [ ] Run the e2e flow «a card accepted in the window» (`npm run test:e2e --prefix frontend`, no game running) and look at the window in a browser
+- [ ] A behavioural unit test of the window's controller (focus, deferred repaint, tab keys) needs a DOM library
+- [ ] Owner decisions: narration as a paid step (spec 51 change, `record` only today); a «scene to card» command; commercial use applied on accept; an event for a newly proposed card
+- [ ] The google_oauth_production card is proposed only by the audit seed, not by the YouTube producers
+
 ## Production-readiness audit — 2026-10-01 → 2026-10-02
 
 The Owner's goal: production ready, ready to sell, films made automatically, quality 10/10.

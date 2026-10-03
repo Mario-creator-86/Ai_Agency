@@ -524,6 +524,11 @@ def _record_failure(
             {"reason": reason[:300]},
             correlation,
         )
+        if "invalid_grant" in reason:
+            # Only he can authorise the account again: a card in his window of decisions.
+            from app.decisions.sources import youtube_refused  # noqa: PLC0415
+
+            youtube_refused(session, row, reason, source="youtube")
 
 
 def mark_reconnect_needed(
@@ -558,6 +563,9 @@ def mark_reconnect_needed(
             },
             correlation_id,
         )
+        from app.decisions.sources import youtube_refused  # noqa: PLC0415
+
+        youtube_refused(session, row, words, source="publishing")
 
 
 def complete_authorization(
@@ -629,6 +637,9 @@ def complete_authorization(
         row.connected_at = utc_now()
         row.last_checked_at = row.connected_at
         row.last_error = None
+        from app.decisions.sources import youtube_reconnected  # noqa: PLC0415
+
+        youtube_reconnected(session, row.id)
         append_event(
             session,
             "youtube.connected",
@@ -699,6 +710,9 @@ def verify_connection(
         row.status = STATUS_CONNECTED
         row.last_checked_at = utc_now()
         row.last_error = None
+        from app.decisions.sources import youtube_reconnected  # noqa: PLC0415
+
+        youtube_reconnected(session, connection_id)
         append_event(
             session,
             "youtube.verified",

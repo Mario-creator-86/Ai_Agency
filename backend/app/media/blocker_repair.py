@@ -56,6 +56,9 @@ BACKOFF_BASE_SECONDS = 300
 BACKOFF_MAX_SECONDS = 6 * 3600
 #: The latest model runs read to tell a failing language model from one bad answer.
 MODEL_RUNS_READ = 3
+#: The Owner let a paused repair try again now (his accept on the pause card, 2026-10-03):
+#: the attempts before it no longer count against the guard.
+RETRY_EVENT = "media.sheet_repair_retry_allowed"
 
 
 def _when(value: Any) -> datetime | None:
@@ -85,6 +88,66 @@ def _language_model_failing(session: Session) -> str | None:
     return None
 
 
+def _latest_retry(session: Session, identifier: str) -> datetime | None:
+    """When the Owner last let this sheet's repair try again, or None."""
+    from app.models import DomainEvent  # noqa: PLC0415
+
+    stamp = session.scalars(
+        select(DomainEvent.timestamp)
+        .where(DomainEvent.event_type == RETRY_EVENT, DomainEvent.aggregate_id == identifier)
+        .order_by(DomainEvent.sequence.desc())
+        .limit(1)
+    ).first()
+    return _when(stamp) if stamp else None
+
+
+def allow_repair_retry(
+    engine: Engine,
+    storyboard_id: str,
+    *,
+    issued_by: str,
+    correlation_id: str,
+    fingerprint: Any = None,
+) -> str:
+    """The Owner lets a paused sheet repair try again now; returns the event's id.
+
+    Only he does (his accept on the pause card; ``issued_by`` is the caller's, after his key).
+    The attempts made before it stop counting against the day's ceiling and the back-off, so
+    the next scan queues a repair. Idempotent by ``correlation_id``: the same accept retried
+    records it once. Nothing is bought; the repair uses the language model only.
+    """
+    from app.models import DomainEvent  # noqa: PLC0415
+
+    if issued_by != "owner":
+        raise PermissionError(
+            "Doar Proprietarul lasă remedierea foii să încerce din nou; cererea venită de la "
+            f"«{issued_by or 'necunoscut'}» nu a schimbat nimic."
+        )
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        done = session.scalars(
+            select(DomainEvent.event_id).where(
+                DomainEvent.event_type == RETRY_EVENT,
+                DomainEvent.aggregate_id == storyboard_id,
+                DomainEvent.correlation_id == correlation_id,
+            )
+        ).first()
+        if done is not None:
+            return str(done)
+        if session.get(Storyboard, storyboard_id) is None:
+            raise LookupError("Filmul acestei foi nu mai există; nu s-a schimbat nimic.")
+        event = append_event(
+            session,
+            RETRY_EVENT,
+            "storyboard",
+            storyboard_id,
+            1,
+            {"decided_by": "owner", "fingerprint": fingerprint},
+            correlation_id,
+        )
+        return str(event.event_id)
+
+
 def _repair_guard(
     session: Session,
     sheet: dict[str, Any],
@@ -94,6 +157,10 @@ def _repair_guard(
     """Why no new attempt may start now (BACKING_OFF or PAUSED), or None when one may."""
     unresolved: list[datetime] = []
     window_start = datetime.now(UTC) - timedelta(days=1)
+    # The Owner's "try again now": the attempts before it no longer count.
+    retried = _latest_retry(session, str(sheet["storyboard_id"]))
+    if retried is not None and retried > window_start:
+        window_start = retried
     for item in tasks:
         if item.payload.get("fingerprint") != fingerprint:
             continue
@@ -136,7 +203,12 @@ def _repair_guard(
 
 
 def _pause_letter(session: Session, sheet: dict[str, Any], fingerprint: str, guard: dict) -> None:
-    """One letter to the Owner per paused sheet, cause and blockers; never one per scan."""
+    """One letter to the Owner per paused sheet, cause and blockers; never one per scan. The
+    pause is also a card in his window of decisions (DECISION_SOURCES, 2026-10-03): the cause
+    and what unblocks it, one per sheet and cause; the letter stays."""
+    from app.decisions import sources  # noqa: PLC0415 - the decisions read media lazily
+
+    sources.sheet_repair_paused(session, sheet, fingerprint, guard)
     identifier = str(sheet["storyboard_id"])
     for message in session.scalars(select(AgentMessage).where(AgentMessage.status == "OPEN")):
         body = message.body_json or {}
@@ -160,6 +232,9 @@ def _pause_letter(session: Session, sheet: dict[str, Any], fingerprint: str, gua
 
 
 def _close_pause_letters(session: Session, identifier: str) -> None:
+    from app.decisions import sources  # noqa: PLC0415
+
+    sources.sheet_repair_resumed(session, identifier)
     for message in session.scalars(select(AgentMessage).where(AgentMessage.status == "OPEN")):
         body = message.body_json or {}
         if body.get("kind") == PAUSED_KIND and body.get("storyboard_id") == identifier:

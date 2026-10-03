@@ -12,6 +12,7 @@ from app.analytics.services import seed_default_strategy  # noqa: E402
 from app.backup import backup_before_migration, backup_folder, database_file  # noqa: E402
 from app.config import Settings  # noqa: E402
 from app.db import create_db_engine, migrate  # noqa: E402
+from app.decisions.seed import seed_owner_decisions  # noqa: E402
 from app.economy.prices import seed_documented_prices  # noqa: E402
 from app.economy.services import seed_chart_of_accounts  # noqa: E402
 from app.media.services import seed_default_character_bibles  # noqa: E402
@@ -88,6 +89,9 @@ def prepare_database(settings: Settings) -> dict | None:
         # Neutral v1 editorial strategy per channel; it expresses no preference until real
         # analytics snapshots produce a recommendation the Owner applies.
         seed_default_strategy(engine)
+        # The audit's open questions to the Owner, as cards in his decisions window; each
+        # once, never again after he answered it (app.decisions.seed).
+        seed_owner_decisions(engine, settings)
     finally:
         engine.dispose()
     return made

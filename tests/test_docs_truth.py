@@ -157,10 +157,24 @@ def test_the_decision_log_records_each_decision_of_the_audit():
         assert pending in section, pending
 
 
+def _status_head(text):
+    """The title and the state block: everything before the first dated journal section.
+
+    Live «## Active claim — …» blocks (another agent's, dated) may stand between the title and
+    the state block; the state block then reads under the last of them, so the head runs to
+    the first heading that is not a claim (amended 2026-10-03)."""
+    at = text.find("\n## ")
+    while at != -1 and text.startswith("\n## Active claim", at):
+        at = text.find("\n## ", at + 1)
+    return text if at == -1 else text[:at]
+
+
 def test_the_status_header_is_dated_and_separates_proof_from_fakes():
     text = _text(PROJECT / "CURRENT_STATUS.md")
-    head = text[: text.find("\n## ", text.find("\n## ") + 1)]
-    assert head.startswith("# CURRENT STATUS — State on 2026-10-02")
+    head = _status_head(text)
+    # The header's date moves with each dated update; it is never older than the audit's.
+    date = re.match(r"^# CURRENT STATUS — State on (\d{4}-\d{2}-\d{2})\n", head)
+    assert date and date.group(1) >= "2026-10-02"
     assert "Last verified: 2026-09-09" not in head
     assert "Active edit claim: Codex" not in head
     assert "proven on fakes only" in head
@@ -172,7 +186,9 @@ def test_the_status_header_is_dated_and_separates_proof_from_fakes():
 def test_the_roadmap_and_changelog_name_every_item():
     roadmap = _text(PROJECT / "13_ROADMAP_TODO.md")
     changelog = _text(PROJECT / "CHANGELOG.md")
-    assert changelog.startswith("# Changelog\n\n## The production-readiness audit")
+    # Newest first: later sections may stand above the audit's (amended 2026-10-03).
+    assert changelog.startswith("# Changelog\n\n## ")
+    assert "\n## The production-readiness audit — 2026-10-01 → 2026-10-02\n" in changelog
     for item in ITEMS:
         assert item in roadmap, item
 

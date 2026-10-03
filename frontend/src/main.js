@@ -14,6 +14,7 @@ import { runClassName, runHeadline, stageClassName, stageProducedWord } from './
 import { attachRail } from './dialog_rail.js';
 import './style.css';
 import './serial_room.css';
+import './owner_decisions.css';
 import { approvalMessage, daysClosedNote, episodeHtml, journalCoverHtml, serialBoardHtml, serialStageNotes } from './serial_room.js';
 import { initSettings } from './settings.js';
 import { acceptSnapshot } from './projection.js';
@@ -55,6 +56,7 @@ import { MediaCache, ObjectUrls, PICTURE_CAPACITY } from './media_cache.js';
 import { countWords } from './plurals.js';
 import { CANCEL_QUESTION, QUEUE_PATH, queueHtml, retryQuestion, stuckWords } from './work_queue.js';
 import { RETIRE_QUESTION, budgetCommand, retireCommand } from './budget_form.js';
+import { DecisionsWindow } from './decisions_window.js';
 import { OWNER_LETTERS_PATH, inboxHtml, lettersWord, ownerMarkWords, readLetters, resolveCommand, resolvePath } from './owner_inbox.js';
 import { LiveWindows, eventMatchesAgent } from './live_window.js';
 import { MailThread } from './mail_thread.js';
@@ -227,6 +229,8 @@ const eventsLink = new EventsLink({
     }
     ledger.add(eventData);
     element('ledger-count').textContent = entryCountLabel(ledger.events.size);
+    // DECISIONS_WINDOW: a decision, an approval, a letter or his policy moved: his window reads again
+    decisions.onEvent(eventData);
     // A milestone plays only when the socket delivered it as it happened (moments.js).
     const moment = moments.offer(eventData, live);
     if (moment && moment.kind === 'approval') loadApprovals(true).then(() => markArrived());
@@ -1045,12 +1049,9 @@ function markArrived() {
 }
 ownerMark.addEventListener('animationend', () => ownerMark.classList.remove('is-arriving'));
 ownerMark.addEventListener('click', () => {
-  // In the game frame the approvals are in the side drawer: it opens first.
-  drawers.showApprovals();
-  const heading = document.querySelector(pendingRequests ? '.approvals-heading' : '.inbox-heading');
-  if (heading) heading.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'start' });
-  const first = /** @type {HTMLButtonElement|null} */ (approvalsList.querySelector('.btn-approval'));
-  if (first) first.focus({ preventScroll: true });
+  // DECISIONS_WINDOW: what waits for him (the requests, the letters, the recommendations) is
+  // answered in his own window; the approvals and the letters stay listed in the drawer too.
+  void decisions.open('waiting');
 });
 
 function notify(message) {
@@ -1108,6 +1109,32 @@ const settingsUI = initSettings(api, {
   modules: () => latestModules,
 });
 document.getElementById('studio-about-btn')?.addEventListener('click', () => { void settingsUI.open('about'); });
+
+/**
+ * DECISIONS_WINDOW (2026-10-03): «Decizii», the Owner's own window (decisions_window.js). The key
+ * in the top bar counts what waits for him; the window answers each card through the route it
+ * names. A guided card opens its Settings place; a letter its thread; his answer reloads the
+ * approvals, the letters and the snapshot, so the rest of the page says the same.
+ */
+const decisions = new DecisionsWindow({
+  api,
+  button: /** @type {HTMLButtonElement} */ (element('decisions-button')),
+  badge: element('decisions-badge'),
+  openSettings: (tab) => { void settingsUI.open(tab); },
+  openThread: (threadId) => { void mailThread.open(threadId); },
+  threadOf: (letterId) => {
+    const letter = lettersShown.find((l) => l.id === letterId);
+    return letter ? letter.thread_id : null;
+  },
+  timezone: () => (state && state.studio ? state.studio.timezone : undefined),
+  onAnswered: async () => {
+    await loadApprovals(true);
+    await loadOwnerLetters(true);
+    await refresh();
+  },
+  // a backend older than the window (404): the requests and the letters the page already counts
+  fallbackCount: () => pendingRequests + openLetters,
+});
 
 /**
  * The Unreal headquarters, streamed over the page's own renderer while it runs. The viewport's
@@ -4570,6 +4597,7 @@ async function refresh() {
     // The approvals have their own, slower clock; this only lets them ride the same poll.
     await loadApprovals();
     await loadOwnerLetters();
+    decisions.refreshCount();
     return true;
   } catch (error) {
     if (generation !== epoch) return false;
@@ -4601,6 +4629,7 @@ element('login-form').addEventListener('submit', async (event) => {
     endWorkspacePaintWarm({ hide: false });
     workspace.hidden = false;
     element('logout').hidden = false;
+    decisions.signedIn();
     input.value = '';
     // The key field is about to disappear; without a new home the keyboard would resume after
     // the whole title, somewhere inside the register. It lands on the register's heading, the
@@ -4724,6 +4753,7 @@ element('logout').addEventListener('click', () => {
   element('studio-name').textContent = 'AMN-AI';
   element('connection').textContent = 'Neconectat';
   element('logout').hidden = true;
+  decisions.reset();
 });
 
 environmentButton.addEventListener('click', async () => {

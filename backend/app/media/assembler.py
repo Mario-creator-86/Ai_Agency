@@ -4216,6 +4216,11 @@ def film_mix(
         offset += span
     if bed is None:
         record["advisory"] = NO_BED_ADVISORY
+        if not any(track.kind == "music" for track in library.tracks):
+            # Where the music comes from is his choice: the music card (DECISION_SOURCES).
+            from app.decisions.sources import film_without_music  # noqa: PLC0415
+
+            film_without_music(engine, title)
     try:
         mixed = mix_bed(
             ffmpeg_exe,
@@ -4546,7 +4551,7 @@ def film_licence_ledger(engine: Engine, production: dict[str, Any]) -> dict[str,
     """`licence_components` read and judged by `film_licences`; never fails a film: a ledger
     that cannot be read is NEEDS_REVIEW with the reason."""
     try:
-        return film_licences(licence_components(engine, production))
+        ledger = film_licences(licence_components(engine, production))
     except (SQLAlchemyError, OSError, ValueError, TypeError) as exc:
         logger.warning("licence_ledger_failed", exc_info=True)
         return {
@@ -4554,6 +4559,13 @@ def film_licence_ledger(engine: Engine, production: dict[str, Any]) -> dict[str,
             "components": [],
             "missing_ro": [f"licențele nu au putut fi citite ({type(exc).__name__})"],
         }
+    if ledger["status"] == NEEDS_REVIEW:
+        # A connection that does not state commercial use is his to answer: one card per
+        # vendor connection in his window of decisions (DECISION_SOURCES). Never fails the film.
+        from app.decisions.sources import film_needs_review  # noqa: PLC0415
+
+        film_needs_review(engine, ledger["components"])
+    return ledger
 
 
 def assemble_video_job(

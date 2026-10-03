@@ -172,6 +172,7 @@ class Room(Base):
 # Register Phase 1, 2, 4, 5, 6, 7 and 11 models with Base.metadata
 import app.agents.models  # noqa: F401, E402
 import app.analytics.models  # noqa: F401, E402
+import app.decisions.models  # noqa: F401, E402
 import app.economy.models  # noqa: F401, E402
 import app.factual.models  # noqa: F401, E402
 import app.integrations.models  # noqa: F401, E402

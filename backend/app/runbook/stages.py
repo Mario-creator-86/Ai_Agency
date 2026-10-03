@@ -2150,11 +2150,17 @@ def _sheet_letter(
     own facts, never a model's account of them.
     """
     from app.agents.messages import post_message  # noqa: PLC0415
+    from app.decisions.sources import film_budget  # noqa: PLC0415
     from app.media.shooting_sheet import sheet_url  # noqa: PLC0415
 
     sheet = film.get("sheet") or {}
     step = film.get("step")
     status = str(film.get("refusal") or film["status"])
+    # A paid step that cannot fit any day under his daily budget is his decision: a card in
+    # his window with what the film needs (withdrawn once the film no longer waits on it).
+    budget_card = film_budget(
+        engine, storyboard_id, film, plan_cost, step_words=STEP_WORDS.get(str(step), "")
+    )
     if status in ("LINT_BLOCKED", "NEEDS_SHOT_PLAN") and sheet.get("sheet_hash"):
         from app.media.blocker_repair import submit_sheet_issues  # noqa: PLC0415
 
@@ -2177,6 +2183,10 @@ def _sheet_letter(
     lines = [f"Către Owner. Filmul «{title}» {headline}. {follows}"]
     lines.append(sentence(str(film.get("reason") or "")))
     lines.append(rule_line)
+    if budget_card:
+        lines.append(
+            "Bugetul de care are nevoie filmul te așteaptă și ca un card în fereastra «Decizii»."
+        )
     info = (sheet.get("steps") or {}).get(step) if step else None
     if info:
         lines.append(
@@ -2576,6 +2586,9 @@ def _media_staircase(
                     moved=made["status"] == "ASSEMBLED",
                 )
             if made["status"] == "ASSEMBLED":
+                from app.decisions.sources import film_budget  # noqa: PLC0415
+
+                film_budget(engine, storyboard_id, {"status": "ASSEMBLED"}, None)
                 produced.append(str(made["asset_id"]))
                 if storyboard_id in serial_ids:
                     serial_assets.append(str(made["asset_id"]))

@@ -1,0 +1,224 @@
+/* ---------------------------------------- «Decizii» (DECISIONS_WINDOW, 2026-10-03) ---------- */
+/* The Owner's own window: the key in the top bar with the count of what waits for him, and the
+   full-height panel it opens over the page (decisions_window.js, owner_decisions.js). Every colour
+   is one of the page's tokens (style.css :root); this sheet states none of its own. The card's
+   parts are named dcard-* and decision-* apart from Setări's .decision-plate family. */
+
+/* The key: first in the top bar's cluster, quiet when nothing waits, the warm accent when
+   something does (the same gold the register's mark wears). */
+.topbar-right > .decisions-button { order: 0; }
+.decisions-button {
+  gap: var(--s2);
+  padding: 0 var(--s3);
+  font-size: var(--fs-body);
+  font-weight: var(--w-semi);
+  border-radius: var(--radius-sm);
+}
+.decisions-button.has-waiting { color: var(--gold-ink); border-color: var(--gold-line); background: var(--gold-soft); }
+.decisions-button.has-waiting:hover { color: var(--ink); border-color: var(--gold); background: var(--warn-bg); }
+body:has(#workspace[hidden]) #decisions-button { display: none; }
+.decisions-badge {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 var(--s1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  background: var(--gold);
+  color: var(--bg);
+  font-size: var(--fs-micro);
+  font-weight: var(--w-bold);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+/* The window: a full-height panel along the right edge, over the page and its backdrop. Stated
+   on [open] too, above the dialog family's centred, 90vh, two-row grid (style.css). */
+.studio-dialog.decisions-window,
+.studio-dialog.decisions-window[open] {
+  width: min(780px, 100vw);
+  max-width: none;
+  height: 100vh;
+  max-height: 100vh;
+  margin: 0 0 0 auto;
+  padding: 0;
+  border-width: 0 0 0 1px;
+  border-color: var(--line-strong);
+  border-radius: 0;
+  overflow: hidden;
+}
+.studio-dialog.decisions-window[open] { display: flex; flex-direction: column; }
+.decisions-header { margin: 0; padding: var(--s6) var(--s6) var(--s4); }
+.decisions-status {
+  margin: var(--s3) var(--s6) 0;
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--ok-line);
+  border-radius: var(--radius-sm);
+  background: var(--ok-bg);
+  color: var(--ok-ink);
+  font-size: var(--fs-meta);
+}
+.decisions-status[data-tone="alert"] { border-color: var(--alert-line); background: var(--alert-bg); color: var(--alert-ink); }
+.decisions-body { flex: 1; min-height: 0; overflow-y: auto; padding: 0 var(--s6) var(--s7); }
+.decisions-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  gap: var(--s1);
+  padding: var(--s3) 0;
+  margin-bottom: var(--s4);
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.decisions-tab {
+  min-height: var(--hit);
+  padding: 0 var(--s4);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--ink-2);
+  font-size: var(--fs-body);
+  font-weight: var(--w-semi);
+}
+.decisions-tab:hover { background: var(--surface-quiet); color: var(--ink); }
+.decisions-tab[aria-selected="true"] { background: var(--surface-quiet); border-color: var(--line-strong); color: var(--ink); }
+.decisions-tab-count {
+  min-width: 18px;
+  padding: 1px var(--s1);
+  border-radius: var(--radius-pill);
+  background: var(--surface-hi);
+  color: var(--ink-2);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.decisions-panel { display: grid; gap: var(--s4); }
+.decisions-panel:focus-visible { outline-offset: var(--s1); }
+.decisions-empty {
+  margin: 0;
+  padding: var(--s7) var(--s5);
+  text-align: center;
+  font-size: var(--fs-body);
+  color: var(--ink-3);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+}
+
+/* A card: what, why, who asked and when; the options; his keys. Its left edge says its kind. */
+.decision-card {
+  display: grid;
+  gap: var(--s3);
+  padding: var(--s4) var(--s5);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--forest-lift);
+  border-radius: var(--radius);
+  background: var(--surface-sunk);
+  box-shadow: var(--shadow-raised);
+  min-width: 0;
+}
+.decision-card[data-source-type="approval"] { border-left-color: var(--gold); }
+.decision-card[data-source-type="letter"] { border-left-color: var(--info-line); }
+.decision-card[data-status="WAITING_FOR_OWNER_ACTION"] { border-left-color: var(--teal); }
+.decision-card.is-closed { background: var(--surface); box-shadow: none; border-left-color: var(--line-strong); }
+.dcard-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s3); }
+.decision-kind { text-transform: uppercase; letter-spacing: var(--track-caps); font-size: var(--fs-micro); font-weight: var(--w-bold); color: var(--ink-3); }
+.decision-card[data-source-type="approval"] .decision-kind { color: var(--gold-ink); }
+.decision-from { font-size: var(--fs-micro); color: var(--ink-3); }
+.dcard-state {
+  margin-left: auto;
+  padding: 2px var(--s2);
+  border: 1px solid var(--info-line);
+  border-radius: var(--radius-pill);
+  background: var(--info-bg);
+  color: var(--info-ink);
+  font-size: var(--fs-micro);
+}
+.dcard-state[data-status="ACCEPTED"], .dcard-state[data-status="APPROVED"] { border-color: var(--ok-line); background: var(--ok-bg); color: var(--ok-ink); }
+.dcard-state[data-status="REFUSED"], .dcard-state[data-status="WITHDRAWN"], .dcard-state[data-status="EXPIRED"] { border-color: var(--line-strong); background: var(--surface-quiet); color: var(--ink-2); }
+.dcard-title { margin: 0; font-size: var(--fs-h3); font-weight: var(--w-semi); line-height: 1.35; color: var(--ink); }
+.decision-why { margin: 0; font-size: var(--fs-body); line-height: 1.55; color: var(--ink-2); white-space: pre-line; overflow-wrap: anywhere; }
+.decision-effect, .decision-cost, .decision-film, .decision-place, .decision-steps { margin: 0; font-size: var(--fs-meta); color: var(--ink-2); }
+.decision-cost { font-variant-numeric: tabular-nums; color: var(--ink); }
+.decision-sub { margin-right: var(--s1); text-transform: uppercase; letter-spacing: var(--track-caps); font-size: var(--fs-micro); color: var(--ink-3); }
+.decision-outcomes { margin: 0; padding-left: var(--s4); display: grid; gap: var(--s1); font-size: var(--fs-meta); color: var(--ink-2); }
+.decision-outcomes strong { color: var(--ink); font-weight: var(--w-semi); }
+.decision-guided { display: grid; gap: var(--s1); padding: var(--s2) var(--s3); border: 1px solid var(--info-line); border-radius: var(--radius-sm); background: var(--info-bg); }
+.decision-applied { margin: 0; font-size: var(--fs-body); color: var(--ink-2); }
+.decision-error { margin: 0; padding: var(--s2) var(--s3); border: 1px solid var(--alert-line); border-radius: var(--radius-sm); background: var(--alert-bg); color: var(--alert-ink); font-size: var(--fs-meta); }
+
+/* The options: the recommended one lit in the warm accent; the chosen one ringed in the teal. */
+.decision-options { margin: 0; padding: 0; border: 0; display: grid; gap: var(--s2); min-width: 0; }
+.decision-options > legend { padding: 0; margin-bottom: var(--s1); }
+.decision-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s3);
+  padding: var(--s3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+label.decision-option { cursor: pointer; }
+label.decision-option:hover { border-color: var(--line-strong); background: var(--surface-hi); }
+.decision-option[data-recommended="true"] { border-color: var(--gold-line); background: var(--gold-soft); }
+.decision-option:has(input:checked) { border-color: var(--teal); box-shadow: inset 0 0 0 1px var(--teal); }
+.decision-option input { margin: 3px 0 0; accent-color: var(--teal); flex: none; }
+.decision-option-text { display: grid; gap: 2px; min-width: 0; }
+.decision-option-label { font-size: var(--fs-body); font-weight: var(--w-semi); color: var(--ink); }
+.decision-option-effect { font-size: var(--fs-meta); color: var(--ink-2); }
+.decision-option-place { font-size: var(--fs-micro); color: var(--ink-3); }
+.decision-recommended {
+  display: inline-block;
+  margin-left: var(--s1);
+  padding: 1px var(--s2);
+  border-radius: var(--radius-pill);
+  background: var(--gold);
+  color: var(--bg);
+  font-size: var(--fs-micro);
+  font-weight: var(--w-bold);
+  letter-spacing: .02em;
+  vertical-align: 1px;
+}
+
+/* His note, his keys, and the line that asks once more before money or his policy moves. */
+.decision-note { display: grid; gap: var(--s1); font-size: var(--fs-micro); color: var(--ink-3); }
+.decision-note textarea {
+  width: 100%;
+  min-height: 52px;
+  resize: vertical;
+  padding: var(--s2);
+  border: 1px solid var(--line-field);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-body);
+}
+.decision-keys { display: flex; flex-wrap: wrap; gap: var(--s2); }
+.decision-key { min-height: var(--hit); }
+.decision-key[disabled] { opacity: .55; cursor: progress; }
+.decision-ask { display: grid; gap: var(--s2); padding: var(--s3); border: 1px solid var(--warn-line); border-radius: var(--radius-sm); background: var(--warn-bg); }
+.decision-ask-q { margin: 0; font-size: var(--fs-body); color: var(--warn-ink); }
+
+@media (max-width: 720px) {
+  .decisions-header { padding: var(--s4); }
+  .decisions-body { padding: 0 var(--s4) var(--s6); }
+  .decisions-status { margin: var(--s2) var(--s4) 0; }
+  .decision-card { padding: var(--s3) var(--s4); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .studio-dialog.decisions-window[open] { animation: decisions-arrive 220ms var(--ease) 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .studio-dialog.decisions-window[open] { animation: none; }
+}
+@keyframes decisions-arrive {
+  from { transform: translateX(var(--s6)); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}

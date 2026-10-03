@@ -246,3 +246,36 @@ test('Setări → Canale: public in TEST is refused in the studio words; unliste
   await page.waitForFunction(() => /Salvat\. .*nelistat/.test(document.querySelector('#settings-dialog .owner-answer')?.textContent || ''), null, { timeout: 30_000 });
   await context.close();
 });
+
+test('a card accepted in the window: «Decizii» opens his window, the card moves to «Istoric»', { skip }, async () => {
+  const { context, page, sent } = await signedIn();
+  // the studio seeded the audit's questions at startup; one whose recommended answer changes nothing
+  const feed = await owner(page, '/owner/decision-cards');
+  assert.equal(feed.status, 200, JSON.stringify(feed.body).slice(0, 300));
+  const card = feed.body.cards.find((/** @type {any} */ c) => c.source_type === 'decision' && c.status === 'PENDING'
+    && c.options.some((/** @type {any} */ o) => o.recommended && ['none', 'record'].includes(o.apply_type)));
+  assert.ok(card, 'a seeded card whose recommended answer applies nothing');
+  // the key in the top bar shows what waits for him
+  await page.waitForSelector('#decisions-button:not([hidden])');
+  await page.waitForFunction(() => document.getElementById('decisions-badge')?.textContent?.trim() !== '', null, { timeout: 30_000 });
+  await page.click('#decisions-button');
+  await page.waitForSelector('#decisions-window[open]');
+  const article = page.locator(`#decisions-window article[data-card="${card.card_id}"]`);
+  await article.waitFor({ state: 'visible', timeout: 30_000 });
+  assert.match(await article.textContent() || '', /Recomandat/);
+  await article.locator('[data-decision-action="accept"]').click();
+  // his answer went to the card's own route, once
+  await page.waitForFunction((id) => !document.querySelector(`#decisions-window article[data-card="${id}"]`), card.card_id, { timeout: 30_000 });
+  assert.equal(sent.filter((r) => r.method === 'POST' && r.url.endsWith(`/owner/decisions/${card.id}/decide`)).length, 1);
+  assert.match(await page.textContent('#decisions-window [data-decisions-status]') || '', /Ai ales/);
+  // the history keeps it, with what it applied
+  await page.click('#decisions-window [data-decisions-tab="history"]');
+  const closed = page.locator(`#decisions-window article[data-card="${card.card_id}"]`);
+  await closed.waitFor({ state: 'visible', timeout: 30_000 });
+  assert.match(await closed.textContent() || '', /acceptat/);
+  // Esc closes the window and gives the focus back to the key
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('#decisions-window:not([open])', { state: 'attached' });
+  assert.equal(await page.evaluate(() => document.activeElement?.id), 'decisions-button');
+  await context.close();
+});

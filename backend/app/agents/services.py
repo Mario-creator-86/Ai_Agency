@@ -832,6 +832,7 @@ def run_agent_task(
 
         model_name = model_rec.model_name
         provider_name = provider_rec.name
+        provider_id = provider_rec.id
         agent.runtime_state = "THINKING"
         agent.version += 1
         append_event_with_outbox(
@@ -889,6 +890,7 @@ def run_agent_task(
         # nothing under it. The usual cause is a model that reasoned until the token budget
         # was gone; `raw_response` says so when the provider reports it.
         raw = gen_result.raw_response if isinstance(gen_result.raw_response, dict) else {}
+        http_status: int | None = None
         if (output_text or "").strip():
             status = "SUCCEEDED"
             error_detail = None
@@ -914,6 +916,8 @@ def run_agent_task(
         # Never echo full message (may contain URLs/secrets); the provider's HTTP status is a
         # number and says what to fix.
         error_detail = _failure_detail(exc)
+        code = getattr(exc, "http_status", None)
+        http_status = code if isinstance(code, int) and not isinstance(code, bool) else None
         cost_vr = None
         prompt_tokens = None
         completion_tokens = None
@@ -963,6 +967,12 @@ def run_agent_task(
         stored.event_id = event.event_id
         session.flush()
         run = stored
+        # A connection its provider refused for a reason only the Owner fixes (401/402/403) is
+        # a card in his window of decisions; the next run that succeeds on it withdraws it
+        # (DECISION_SOURCES). Proposed in a savepoint: a card never fails the run's record.
+        from app.decisions.sources import model_run_finished  # noqa: PLC0415
+
+        model_run_finished(session, provider_id, status, http_status, error_detail)
 
         # The model's real output is the agent's operational message. Emitting it as
         # agent.message_sent (through the outbox, so it reaches the live office) is what the
