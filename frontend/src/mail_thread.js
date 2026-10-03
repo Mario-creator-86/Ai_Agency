@@ -108,7 +108,10 @@ export function renderThread(thread, { escape, timezone }) {
   }
   return newestFirst(messages, { oldestFirst: true })
     .map((m, index) => {
-      const from = m.from_name || 'Proprietar';
+      // A letter with no agent behind it is either his own or one the studio's worker wrote
+      // by itself (a sheet check); the second used to read "Proprietar" (2026-10-03).
+      const fromWorker = Boolean(m.body_json && m.body_json.executed_by_worker);
+      const from = m.from_name || (fromWorker ? 'Studioul (verificare automată)' : 'Proprietar');
       const to = m.to_name || 'Director';
       const full = letterText(m);
       const text = bodyBeyondSubject(m.subject, full);

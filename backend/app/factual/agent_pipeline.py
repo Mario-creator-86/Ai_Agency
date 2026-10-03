@@ -508,7 +508,9 @@ Scrie {scenes} scene. Fiecare scenă:
   "value": 100, "unit": "mld. USD", "claim_id": "..."}}], "highlight": "..."}}. Fiecare
   "value" și "unit" se copiază EXACT dintr-o afirmație de mai jos, iar "claim_id" este
   identificatorul ei; o cifră pe care afirmația nu o conține face ca scenariul să fie
-  respins. "TITLE_CARD": un titlu pe ecran, cu "card": {{"title": "..."}}. "BLACK": ecran
+  respins. "highlight" este EXACT "label"-ul unei singure bare (bara de subliniat), nu o
+  propoziție; lipsește dacă nu subliniezi nicio bară.
+  "TITLE_CARD": un titlu pe ecran, cu "card": {{"title": "..."}}. "BLACK": ecran
   negru, numai ca o pauză tăcută de cel mult o secundă (cel mult două cuvinte rostite) și
   niciodată ca ultimă scenă: un final negru îl face pe spectator să dea mai departe.
   Nu cere grafice, bare sau ecran negru într-o scenă LIVE: un generator de fotografii le

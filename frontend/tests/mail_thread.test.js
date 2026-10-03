@@ -91,3 +91,21 @@ test('a letter that names no film has no sheet key', () => {
   );
   assert.ok(!html.includes('data-sheet-open'));
 });
+
+test('a report the studio wrote by itself is not shown as written by the Owner', () => {
+  // 2026-10-03: the worker's "Blocaje foaie" report (no agent sender) read "Proprietar →
+  // Sarah (Director)" in the Owner's own correspondence, as if he had written it.
+  const html = renderThread(
+    {
+      thread_id: 't',
+      subject: 'Blocaje foaie',
+      messages: [
+        { id: 'a', intent: 'REQUEST_REVIEW', subject: 'Blocaje foaie', body_text: 'Foaia este blocată.', body_json: { executed_by_worker: true }, from_name: null, to_name: 'Sarah (Director)', created_at: '2026-10-03T17:36:00Z' },
+        { id: 'b', intent: 'REQUEST_INFO', subject: 'Întrebare', body_text: 'Cât costă?', body_json: { from: 'Owner' }, from_name: null, to_name: 'Sarah (Director)', created_at: '2026-10-03T17:37:00Z' },
+      ],
+    },
+    options,
+  );
+  assert.ok(html.includes('Studioul (verificare automată)'), html);
+  assert.equal((html.match(/Proprietar/g) || []).length, 1, "only the Owner's own letter is his");
+});

@@ -336,6 +336,16 @@ export function withoutEcho(headline, detail) {
  * @param {Record<string, string>} [names] agent id → display name
  * @returns {{who: string, label: string, text: string, kind: string, to?: string, thread?: string|null, forOwner?: boolean, subject?: string, excerpt?: string, routine?: string}}
  */
+/** How a sheet repair ended, in the Owner's words. */
+const SHEET_REPAIR_WORDS = {
+  RESOLVED: 'rezolvată',
+  UNRESOLVED: 'nerezolvată',
+  WAITING_OWNER: 'așteaptă Proprietarul',
+  STALE: 'foaia s-a schimbat între timp',
+  REVISED: 'filmul a fost revizuit',
+  BLOCKED: 'oprită de regula ta',
+};
+
 export function describeEvent(event, names = {}) {
   const type = String(event.event_type || '');
   const payload = event.payload && typeof event.payload === 'object' ? event.payload : {};
@@ -472,6 +482,12 @@ export function describeEvent(event, names = {}) {
     case 'media.qc_evaluated':
       label = `controlul calității: ${statusLabel(payload.status)}`;
       text = Array.isArray(payload.failures) ? payload.failures.join('; ') : '';
+      break;
+    case 'media.sheet_repair_finished':
+      // The Director's repair of a blocked shooting sheet (media/blocker_repair.py); it read
+      // "sheet repair finished · status: UNRESOLVED" in the feed (2026-10-03).
+      label = `remedierea foii: ${SHEET_REPAIR_WORDS[payload.status] || statusLabel(payload.status)}`;
+      text = payload.reason || '';
       break;
     case 'publishing.started':
       label = 'încărcare începută';

@@ -46,7 +46,12 @@ from sqlalchemy.orm import Session
 from test_agent_budget import a_running_studio
 from test_agent_error_detail import Refusing
 from test_sheet_blocker_repair import film, sheet  # noqa: F401 - the fixture is used by name
-from test_sheet_repair_guard import model_runs, paused_letters, unresolved
+from test_sheet_repair_guard import (  # noqa: F401 - the fixture is used by name
+    a_studio_running_since_long_ago,
+    model_runs,
+    paused_letters,
+    unresolved,
+)
 
 
 def cards(engine, kind: str | None = None, *, open_only: bool = False) -> list[OwnerDecision]:

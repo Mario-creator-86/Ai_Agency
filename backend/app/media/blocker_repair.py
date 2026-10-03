@@ -56,6 +56,11 @@ BACKOFF_BASE_SECONDS = 300
 BACKOFF_MAX_SECONDS = 6 * 3600
 #: The latest model runs read to tell a failing language model from one bad answer.
 MODEL_RUNS_READ = 3
+#: When this studio process started. Attempts that failed before it do not count against the
+#: ceiling or the back-off: a restart usually brings code that fixes what made them fail (the
+#: Owner, 2026-10-03: "să reparăm, și să îi lăsăm pe ei să rezolve"). Within one run of the
+#: studio the ceiling holds.
+STUDIO_STARTED_AT = datetime.now(UTC)
 #: The Owner let a paused repair try again now (his accept on the pause card, 2026-10-03):
 #: the attempts before it no longer count against the guard.
 RETRY_EVENT = "media.sheet_repair_retry_allowed"
@@ -161,6 +166,7 @@ def _repair_guard(
     retried = _latest_retry(session, str(sheet["storyboard_id"]))
     if retried is not None and retried > window_start:
         window_start = retried
+    window_start = max(window_start, STUDIO_STARTED_AT)
     for item in tasks:
         if item.payload.get("fingerprint") != fingerprint:
             continue

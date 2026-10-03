@@ -21,12 +21,19 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+import pytest
 from app.agents.models import Agent, AgentMessage, AgentRun
 from app.media import blocker_repair as repair
 from app.workflows.models import TaskQueueItem
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from test_sheet_blocker_repair import film, sheet  # noqa: F401 - the fixture is used by name
+
+
+@pytest.fixture(autouse=True)
+def a_studio_running_since_long_ago(monkeypatch):
+    """These tests date attempts hours back; the studio has been running all that time."""
+    monkeypatch.setattr(repair, "STUDIO_STARTED_AT", datetime(2000, 1, 1, tzinfo=UTC))
 
 
 def unresolved(engine, dispatched: dict, *, minutes_ago: float = 0) -> None:
@@ -182,6 +189,24 @@ def test_after_the_model_answers_again_the_repair_resumes(engine, film):  # noqa
     assert paused_letters(engine) == []
     (closed,) = paused_letters(engine, open_only=False)
     assert closed.status != "OPEN"
+
+
+def test_after_a_restart_the_repair_gets_its_attempts_back(engine, film, monkeypatch):  # noqa: F811
+    """The Owner, 2026-10-03: "Trebuie să înțelegem de ce problema nu se rezolvă, să reparăm,
+    și să îi lăsăm pe ei să rezolve." A repair paused on a cause that was in the studio's code
+    (the chart highlight that refused every rewrite) must try again once the fixed studio runs,
+    without him; within one run of the studio the ceiling still holds."""
+    reading = sheet(engine, film)
+    for n in range(repair.MAX_SAME_ISSUES_PER_DAY):
+        dispatched = repair.submit_sheet_issues(engine, reading)
+        unresolved(engine, dispatched, minutes_ago=600 - n)
+    assert repair.submit_sheet_issues(engine, reading)["status"] == "PAUSED"
+
+    monkeypatch.setattr(repair, "STUDIO_STARTED_AT", datetime.now(UTC) - timedelta(minutes=1))
+    resumed = repair.submit_sheet_issues(engine, reading)
+
+    assert resumed.get("task_id"), resumed
+    assert paused_letters(engine) == []
 
 
 def test_a_scene_with_no_model_in_the_catalogue_says_so_instead_of_an_empty_list():

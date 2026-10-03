@@ -218,3 +218,15 @@ test('the tasks the studio\'s own runs record have words, and a step of a task i
   assert.equal(taskLabel('direct_company:final'), 'conducerea companiei');
   assert.equal(taskLabel('something_new'), 'something new');
 });
+
+test('a finished sheet repair reads in Romanian, with its outcome and why', () => {
+  // 2026-10-03: the Owner's activity feed read "sheet repair finished" and "status: UNRESOLVED".
+  const item = describeEvent({
+    event_type: 'media.sheet_repair_finished',
+    timestamp: '2026-10-03T17:38:55Z',
+    payload: { status: 'UNRESOLVED', reason: 'Scenariul a fost respins.' },
+  });
+  assert.equal(item.label, 'remedierea foii: nerezolvată');
+  assert.equal(item.text, 'Scenariul a fost respins.');
+  assert.ok(!/sheet repair|UNRESOLVED/.test(`${item.label} ${item.text}`));
+});

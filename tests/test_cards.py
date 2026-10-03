@@ -246,13 +246,40 @@ def test_card_spec_reads_the_nepal_numbers_exactly() -> None:
             },
         ),
         ("DATA_CARD", {**NEPAL_CARD, "highlight": 5}),
-        ("DATA_CARD", {**NEPAL_CARD, "highlight": "Nimic"}),
         ("TITLE_CARD", {"title": "  "}),
     ],
 )
 def test_an_invalid_card_spec_is_refused(kind: str, card_json: dict) -> None:
     with pytest.raises(CardError):
         card_spec_from_json(kind, card_json)
+
+
+def test_a_highlight_written_as_a_sentence_names_the_bar_it_mentions() -> None:
+    """The Owner's LHC film, 2026-10-03: the writer wrote the highlight as the narration's
+    sentence ("Normal matter accounts for only 5% of the content of the universe."), the card
+    asked for a bar's exact label, and the whole script was refused at every attempt."""
+    universe = {
+        "title": "Ce conține universul",
+        "bars": [
+            {"label": "Normal matter", "value": 5, "unit": "%", "claim_id": "c1"},
+            {"label": "Dark matter", "value": 27, "unit": "%", "claim_id": "c2"},
+            {"label": "Dark energy", "value": 68, "unit": "%", "claim_id": "c3"},
+        ],
+    }
+    sentence = "Normal matter accounts for only 5% of the content of the universe."
+
+    assert card_spec_from_json("DATA_CARD", {**universe, "highlight": sentence}).highlight == 0
+    assert card_spec_from_json("DATA_CARD", {**universe, "highlight": "dark ENERGY"}).highlight == 2
+
+
+def test_a_highlight_that_names_no_bar_or_several_is_dropped_not_fatal() -> None:
+    """The highlight only colours a bar: a word that names none of them, or more than one,
+    leaves the chart without a highlight instead of refusing the film's script."""
+    nothing = card_spec_from_json("DATA_CARD", {**NEPAL_CARD, "highlight": "Nimic"})
+    both = card_spec_from_json("DATA_CARD", {**NEPAL_CARD, "highlight": "Promis și Livrat"})
+
+    assert nothing.highlight is None and both.highlight is None
+    assert [bar.value for bar in nothing.bars] == [100, 83]
 
 
 def test_black_needs_no_spec() -> None:

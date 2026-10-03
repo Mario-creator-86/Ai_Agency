@@ -445,11 +445,7 @@ def card_spec_from_json(kind: str, card_json: dict[str, Any] | None) -> CardSpec
             raise CardError(f"Evidențierea {highlight} nu corespunde niciunei bare.")
         index = highlight
     elif isinstance(highlight, str):
-        labels = [bar.label for bar in bars]
-        wanted = " ".join(highlight.split())
-        if wanted not in labels:
-            raise CardError(f"Evidențierea „{wanted}” nu corespunde niciunei bare.")
-        index = labels.index(wanted)
+        index = _highlighted_bar(highlight, [bar.label for bar in bars])
     else:
         raise CardError("Evidențierea graficului trebuie să numească o bară.")
 
@@ -459,6 +455,26 @@ def card_spec_from_json(kind: str, card_json: dict[str, Any] | None) -> CardSpec
         bars=bars,
         highlight=index,
     )
+
+
+def _highlighted_bar(highlight: str, labels: list[str]) -> int | None:
+    """The bar a written highlight names: its exact label, the same label in other case, or
+    the one label the text mentions. A text that names no bar, or several, only colours
+    nothing: the highlight is decoration, and the numbers it would emphasise are already
+    checked. Measured on the Owner's LHC film (2026-10-03): the writer wrote the narration's
+    sentence as the highlight, the card asked for an exact label, and every rewrite of the
+    script was refused for it."""
+    wanted = " ".join(highlight.split())
+    if wanted in labels:
+        return labels.index(wanted)
+    folded = wanted.casefold()
+    same = [i for i, label in enumerate(labels) if label.casefold() == folded]
+    if len(same) == 1:
+        return same[0]
+    mentioned = [i for i, label in enumerate(labels) if label.casefold() in folded]
+    if len(mentioned) == 1:
+        return mentioned[0]
+    return None
 
 
 def format_value(value: float) -> str:
