@@ -1,3 +1,4 @@
+import { preserveReading } from './activity_lists.js';
 /**
  * A separate window that shows, in real time, what one employee is doing.
  *
@@ -365,7 +366,10 @@ export class LiveWindows {
       body.append(text);
     }
     row.append(time, body);
+    row.setAttribute("data-card-key", dedupeKey);
+    const restore = preserveReading(entry.feed);
     entry.feed.insertBefore(row, entry.feed.firstChild);
+    restore();
 
     if (event.event_type === 'agent.state_changed') {
       const state = event.payload && event.payload.runtime_state;

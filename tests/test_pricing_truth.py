@@ -615,16 +615,22 @@ def test_bootstrap_seeds_the_documented_price_beside_the_chart_of_accounts(engin
     that `main` calls the seed, in the company of the seeds that make the books usable.
     """
     source = (ROOT / "scripts" / "bootstrap.py").read_text(encoding="utf-8")
-    main = next(
-        node
-        for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.FunctionDef) and node.name == "main"
-    )
-    called = {
-        node.func.id
-        for node in ast.walk(main)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    functions = {
+        node.name: node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.FunctionDef)
     }
+
+    def names_called(function: ast.FunctionDef) -> set[str]:
+        return {
+            node.func.id
+            for node in ast.walk(function)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+
+    # `main` hands the database to `prepare_database` (2026-10-02, the backup before a
+    # migration); what main reaches through its own helpers counts as called by it.
+    called = names_called(functions["main"])
+    for helper in [name for name in called if name in functions and name != "main"]:
+        called |= names_called(functions[helper])
     assert "seed_documented_prices" in called, "the documented seed still has no caller"
     assert "seed_chart_of_accounts" in called, "read beside the seed it belongs with"
 

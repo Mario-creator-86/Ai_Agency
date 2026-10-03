@@ -1,5 +1,23 @@
 # CURRENT STATUS — State on 2026-10-02
 
+## Active claim — SHEET_BLOCKER_REPAIR (Codex, 2026-10-03, priority)
+
+Owner: every shooting-sheet problem must reach the Director, be delegated to an employee
+and actually fixed. Scope: durable reports/tasks, Director assignment, existing VideoEditor
+shot-writing tool, recheck, bounded retries and Owner-only financial/configuration blockers.
+Include legacy RENDERED sheets; do not buy replacement media or bypass any gate.
+Pending follow-up: newest-first cards and preserved reading position on all activity lists.
+
+
+## Active claim — CONNECTION_CHECK (Codex, 2026-10-03)
+
+Owner request: make the Ollama Cloud key test say clearly whether it succeeds.
+Scope: configured LLM authentication, Settings check endpoint and per-connection feedback.
+Root cause reproduced: public /api/tags succeeds without a key; it cannot prove authentication.
+Read-only live probe: saved key /api/me HTTP 200 with identity; invalid control HTTP 401.
+No inference, paid media or publishing is authorised by this check. Regression tests first.
+
+
 Phase 10 (full automation hardening), after the production-readiness audit of 2026-10-01/02.
 Read this block for the current truth; the dated journal below it is history, newest first.
 Edit claim: the audit workflow (DOCS_AND_STATUS), 2026-10-02 — documents only.

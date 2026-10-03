@@ -1001,6 +1001,7 @@ def _sheet(
     environment: str | None = None,
     settings: Any = None,
 ) -> dict[str, Any]:
+    from app.factual.story_review import story_gate  # noqa: PLC0415
     from app.media.prompt_agent import motion_prompt_for, shot_plan_gaps  # noqa: PLC0415
     from app.media.qc import owner_local_moves  # noqa: PLC0415 - qc reads the sheet's events
     from app.models import OwnerPolicy  # noqa: PLC0415
@@ -1017,6 +1018,7 @@ def _sheet(
         if board is None:
             raise SheetNotFound("Storyboard-ul nu există.")
         title = board.title
+        story_passed, story_reason = story_gate(session, board.script_draft_id)
         bible = dict(board.visual_bible_json or {})
         rows = list(
             session.scalars(
@@ -1548,6 +1550,7 @@ def _sheet(
         "faces_forbidden": faces_forbidden,
         "owner_rule": {"paid_media_approval": rule, "over_usd": threshold},
         "shot_plan_gaps": gaps,
+        "story_review": {"passed": story_passed, "reason": story_reason},
         "reference_images_verified": _reference_verified(),
         "scenes": sheet_scenes,
         "lint": [finding.as_dict() for finding in findings],

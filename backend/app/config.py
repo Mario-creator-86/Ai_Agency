@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///data/studio.db"
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1024, le=65535)
+    sheet_blocker_scan_seconds: int = Field(default=300, ge=30, le=86400)
     allowed_hosts: list[str] = ["localhost", "127.0.0.1"]
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     # The log file (REL-05): JSON lines in <log_dir>/studio.log, rotated at

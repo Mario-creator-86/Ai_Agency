@@ -1,3 +1,4 @@
+import { newestFirst, replaceActivityHtml } from './activity_lists.js';
 import { MODE_LABEL } from './governance.js';
 import { countWords } from './plurals.js';
 
@@ -223,6 +224,8 @@ const TASK_LABEL = {
   DAILY_RUN: 'rularea zilei',
   // PAGE-12: the queue's own task types, which «Coada de lucru» names (workflows/worker.py)
   FILM_CONTINUE: 'continuarea filmului',
+  FILM_SHEET_REPAIR: 'remedierea foii de filmare',
+  sheet_repair_assignment: 'repartizarea remedierii foii',
   WATCHDOG: 'supraveghetorul',
   BACKUP: 'copia de siguranță',
   TRENDS_REFRESH: 'tendințele zilei',
@@ -1128,13 +1131,13 @@ export class Ledger {
       actSince = true;
       if (rows.length >= 150) break;
     }
-    this.list.innerHTML = rows.length
+    replaceActivityHtml(this.list, rows.length
       ? rows
           .map((row) => {
             if (row.day !== undefined) return `<li class="ledger-day">${this.escape(row.day)}</li>`;
             if (row.routine) {
               return (
-                `<li class="ledger-item ledger-routine${row.count > 1 ? ' is-repeat' : ''}${this.arrived.has(row.id) ? ' is-new' : ''}" title="${this.escape(ROUTINE_TITLE)}">` +
+                `<li class="ledger-item ledger-routine${row.count > 1 ? ' is-repeat' : ''}${this.arrived.has(row.id) ? ' is-new' : ''}" data-card-key="${this.escape(row.id)}" title="${this.escape(ROUTINE_TITLE)}">` +
                 `<time>${this.escape(row.time)}</time><div>` +
                 `<div class="ledger-head">Rutina studioului${row.count > 1 ? `<span class="ledger-repeat">×${row.count}</span>` : ''}</div>` +
                 `<div class="ledger-text">${this.escape(routineWords(row.jobs))}</div>` +
@@ -1143,7 +1146,7 @@ export class Ledger {
               );
             }
             return (
-              `<li class="ledger-item ledger-${row.kind}${row.count > 1 ? ' is-repeat' : ''}${this.arrived.has(row.id) ? ' is-new' : ''}${row.mail}">` +
+              `<li class="ledger-item ledger-${row.kind}${row.count > 1 ? ' is-repeat' : ''}${this.arrived.has(row.id) ? ' is-new' : ''}${row.mail}" data-card-key="${this.escape(row.id)}">` +
               `<time>${this.escape(row.time)}</time><div>` +
               `<div class="ledger-head">${row.route}${row.count > 1 ? `<span class="ledger-repeat">×${row.count}</span>` : ''}</div>` +
               row.body +
@@ -1152,7 +1155,7 @@ export class Ledger {
             );
           })
           .join('')
-      : '<li class="ledger-empty">Nimic înregistrat pentru acest filtru.</li>';
+      : '<li class="ledger-empty">Nimic înregistrat pentru acest filtru.</li>');
     // The highlight plays once. A later render — a filter change, the office
     // layout arriving with its names — must not replay it on the same rows.
     this.arrived.clear();

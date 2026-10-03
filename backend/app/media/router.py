@@ -821,7 +821,7 @@ def create_media_router() -> APIRouter:
 
         wiring = _sheet_wiring(request)
         try:
-            return build_sheet(
+            sheet = build_sheet(
                 request.app.state.engine,
                 storyboard_id,
                 capabilities=wiring["capabilities"],
@@ -831,6 +831,10 @@ def create_media_router() -> APIRouter:
                 stills_model=getattr(wiring["image_adapter"], "model", None),
                 face_counter=count_faces,
             )
+            from app.media.blocker_repair import repair_status  # noqa: PLC0415
+
+            sheet["remediation"] = repair_status(request.app.state.engine, storyboard_id)
+            return sheet
         except SheetNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 

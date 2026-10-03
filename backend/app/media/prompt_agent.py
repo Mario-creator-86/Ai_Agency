@@ -1009,6 +1009,8 @@ def write_shot_prompts(
     registry: Any,
     storyboard_id: str,
     correlation_id: str | None = None,
+    *,
+    repair_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Write the full prompt package for every shot of an approved film.
 
@@ -1073,6 +1075,8 @@ def write_shot_prompts(
         else:
             data = {"visual_bible": bible, "film": facts, "lessons": lessons}
             instructions, template = _SHOTS_INSTRUCTIONS, SHOTS_TEMPLATE
+        if repair_context:
+            data["repair_context"] = repair_context
         fitted, _dropped = trim_payload(data, MAX_SHOTS_PAYLOAD_CHARS)
         prompt = instructions + wrap_in_inert_boundary(_dumps(fitted), "approved-film")
         result = _run(

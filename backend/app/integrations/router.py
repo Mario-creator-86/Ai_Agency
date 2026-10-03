@@ -32,10 +32,59 @@ from app.integrations.llm import ConfiguredLLM
 from app.integrations.models import Integration, ServiceSelection
 from app.integrations.probes import probe
 from app.integrations.services import SaveIntegration, assign_agent, public, save, select_service
+from app.models import DomainEvent
 from app.publishing.models import ChannelRecord
 from app.security import require_owner
 from app.services import append_event, utc_now
 from app.youtube.models import YouTubeConnection
+
+
+def check_failure(exc: Exception) -> dict:
+    """Fixed operator messages; no vendor response or credential becomes a UI string."""
+    status = getattr(exc, "http_status", getattr(exc, "code", None))
+    if status == 401:
+        code, message = (
+            "AUTH_REQUIRED",
+            (
+                "Cheia API lipsește, este invalidă sau a fost revocată (HTTP "
+                "401). Introdu o cheie validă și verifică din nou."
+            ),
+        )
+    elif status == 403:
+        code, message = (
+            "ACCESS_DENIED",
+            (
+                "Acces refuzat de furnizor (HTTP 403). Verifică permisiunile "
+                "cheii și accesul contului."
+            ),
+        )
+    elif status == 429:
+        code, message = (
+            "RATE_LIMITED",
+            (
+                "Furnizorul a raportat o limită de utilizare (HTTP 429). "
+                "Încearcă mai târziu și verifică limitele contului."
+            ),
+        )
+    elif isinstance(status, int) and 500 <= status <= 599:
+        code, message = (
+            "SERVICE_UNAVAILABLE",
+            f"Serviciul furnizorului este indisponibil (HTTP {status}). Încearcă mai târziu.",
+        )
+    elif isinstance(exc, OSError):
+        code, message = (
+            "UNREACHABLE",
+            (
+                "Nu s-a putut verifica conexiunea cu furnizorul. Verifică "
+                "internetul și adresa serverului, apoi încearcă din nou."
+            ),
+        )
+    else:
+        code, message = (
+            "CHECK_FAILED",
+            "Verificarea a eșuat. Verifică adresa serverului, datele și accesul la serviciu.",
+        )
+    return {"status": "FAILED", "error_code": code, "message": message}
 
 
 class SelectionCommand(BaseModel):
@@ -79,7 +128,19 @@ def create_settings_router() -> APIRouter:
     def read_settings(request: Request) -> dict:
         engine = request.app.state.engine
         with Session(engine) as session:
-            integrations = [public(row) for row in session.scalars(select(Integration))]
+            integrations = [
+                {
+                    **public(row),
+                    "check_result": event.payload.get("result")
+                    if event.event_type == "settings.integration_checked"
+                    else None,
+                }
+                for row, event in session.execute(
+                    select(Integration, DomainEvent).join(
+                        DomainEvent, Integration.event_id == DomainEvent.event_id
+                    )
+                )
+            ]
             provider_catalogs = {
                 row["id"]: catalog_view(session, row["id"])
                 for row in integrations
@@ -197,23 +258,62 @@ def create_settings_router() -> APIRouter:
         runtime = CATALOG[kind]["runtime"]
         try:
             if runtime == "llm":
-                sync_provider_models(engine, request.app.state.registry, str(identifier))
+                models = sync_provider_models(engine, request.app.state.registry, str(identifier))
+                available = sum(bool(model["is_available"]) for model in models)
+                adapter = request.app.state.registry.get(str(identifier))
+                cloud = isinstance(adapter, ConfiguredLLM) and adapter.is_ollama_cloud
                 status = "VERIFIED"
+                result = {
+                    "status": status,
+                    "models_loaded": available,
+                    "generation_tested": False,
+                    "verification_scope": "AUTHENTICATION_AND_CATALOG"
+                    if cloud
+                    else "ACCESS_AND_CATALOG",
+                    "message": (
+                        "Cheia API Ollama Cloud este validă. "
+                        if cloud
+                        else "Accesul la furnizor a fost verificat. "
+                    )
+                    + (
+                        f"{available} modele disponibile încărcate. Generarea nu a "
+                        f"fost testată; o poți testa în Setări → Angajați."
+                    ),
+                }
             else:
                 # "stored" and "media" both verify by calling the vendor and comparing the answer
                 # to what was saved. Media kinds used to fall through to a YouTube health check
                 # that could only ever raise, so verifying an ElevenLabs or OpenAI media key
                 # always reported FAILED; that branch is gone with the YouTube catalog entry.
                 status = "ACCESS_VERIFIED" if probe(kind, config, secrets) else "FAILED"
+                result = {
+                    "status": status,
+                    "message": "Acces verificat. Nu s-a publicat sau generat conținut."
+                    if status == "ACCESS_VERIFIED"
+                    else (
+                        "Verificarea a eșuat. Verifică datele, permisiunile și accesul la serviciu."
+                    ),
+                }
         except NotImplementedError:
             return {"status": "NOT_SUPPORTED", "message": "Verificarea nu este încă disponibilă."}
-        except Exception:
+        except Exception as exc:
+            result = check_failure(exc)
             status = "FAILED"
         with Session(engine) as session, session.begin():
             row = session.get(Integration, str(identifier))
             if row is None or row.version != version:
                 raise HTTPException(409, "Configurația s-a schimbat în timpul verificării")
             row.status, row.checked_at = status, utc_now()
+            if runtime == "llm" and status == "FAILED":
+                provider = session.get(ProviderRecord, str(identifier))
+                if provider is not None:
+                    provider.status = {
+                        "AUTH_REQUIRED": "AUTH_REQUIRED",
+                        "ACCESS_DENIED": "AUTH_REQUIRED",
+                        "RATE_LIMITED": "RATE_LIMITED",
+                        "UNREACHABLE": "OFFLINE",
+                    }.get(str(result.get("error_code")), "DEGRADED")
+                    provider.last_health_check = row.checked_at
             row.version += 1
             event = append_event(
                 session,
@@ -221,16 +321,11 @@ def create_settings_router() -> APIRouter:
                 "integration",
                 row.id,
                 row.version,
-                {"status": status},
+                {"status": status, "result": result},
                 str(uuid4()),
             )
             row.event_id = event.event_id
-        return {
-            "status": status,
-            "message": "Acces verificat. Nu s-a publicat sau generat conținut."
-            if status in ("VERIFIED", "ACCESS_VERIFIED")
-            else "Verificarea a eșuat. Verifică datele, permisiunile și accesul la serviciu.",
-        }
+        return result
 
     @router.post("/integrations/{identifier}/refresh-resources")
     def refresh_resources(identifier: UUID, request: Request) -> dict:

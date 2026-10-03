@@ -1,3 +1,4 @@
+import { newestFirst } from './activity_lists.js';
 import { when } from './mail_thread.js';
 import { sheetKeyFor } from './sheet_key.js';
 
@@ -79,7 +80,7 @@ export function readLetters(payload) {
     : payload && typeof payload === 'object' && Array.isArray(/** @type {any} */ (payload).letters)
       ? /** @type {any} */ (payload).letters
       : [];
-  return rows
+  return newestFirst(rows)
     .filter((/** @type {any} */ row) => row && typeof row === 'object' && (row.status || 'OPEN') === 'OPEN')
     .map((/** @type {any} */ row) => ({
       id: String(row.id || ''),

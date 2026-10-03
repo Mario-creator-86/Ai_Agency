@@ -383,7 +383,61 @@ def build_task_handlers(
             "pruned": result["pruned"],
         }
 
+    def sheet_repair(task: dict[str, Any]) -> dict[str, Any]:
+        from app.media.blocker_repair import process_sheet_repair  # noqa: PLC0415
+
+        if registry is None:
+            raise NonRetryable("Remedierea foii are nevoie de furnizori AI conectați.")
+        return process_sheet_repair(
+            engine,
+            registry,
+            task["payload"],
+            correlation_id=task["id"],
+            settings=settings,
+            sheet_context=repair_wiring(),
+        )
+
+    last_sheet_scan = 0.0
+
+    def scan_sheets(_task: dict[str, Any]) -> dict[str, Any]:
+        import time  # noqa: PLC0415
+
+        from app.media.blocker_repair import allowed, scan_sheet_issues  # noqa: PLC0415
+
+        nonlocal last_sheet_scan
+        now = time.monotonic()
+        if (
+            now - last_sheet_scan < settings.sheet_blocker_scan_seconds
+            or registry is None
+            or not allowed(engine)
+        ):
+            return {"reported": []}
+        last_sheet_scan = now
+        return scan_sheet_issues(engine, read_live=True, settings=settings, **repair_wiring())
+
+    def _environment() -> str:
+        from app.models import OwnerPolicy  # noqa: PLC0415
+
+        with Session(engine) as session:
+            policy = session.get(OwnerPolicy, 1)
+            return str(policy.environment) if policy else "TEST"
+
+    def repair_wiring() -> dict[str, Any]:
+        from app.runbook.stages import sheet_wiring  # noqa: PLC0415
+
+        wiring = sheet_wiring(engine, vault, settings)
+        return {
+            "capabilities": wiring["capabilities"],
+            "integration_id": wiring["integration_id"],
+            "account": wiring["account"],
+            "resolution": wiring["resolution"],
+            "stills_model": getattr(wiring["image_adapter"], "model", None),
+            "environment": _environment(),
+        }
+
     return {
+        "SCAN_FILM_SHEETS": scan_sheets,
+        "FILM_SHEET_REPAIR": sheet_repair,
         DAILY_RUN: daily_run,
         FILM_CONTINUE: film_continue,
         WEEKLY_REVIEW: weekly_review,
@@ -625,6 +679,11 @@ def worker_pass(
     if shutdown_requested(engine):
         return {"triggered": [], "ran": [], "mail": idle, "interrupted": []}
     interrupted = announce_interrupted(engine, sweep_interrupted_tasks(engine))
+    if "SCAN_FILM_SHEETS" in handlers:
+        try:
+            handlers["SCAN_FILM_SHEETS"]({"payload": {}})
+        except Exception as exc:
+            logger.warning("sheet_blocker_scan_failed", extra={"error_class": type(exc).__name__})
     triggered = scheduler_tick(engine, leader_id=worker_id)
     ran: list[dict[str, Any]] = []
     for _ in range(TASKS_PER_PASS):

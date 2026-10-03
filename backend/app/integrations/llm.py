@@ -81,7 +81,7 @@ class ConfiguredLLM(LLMProvider):
         are billed either way. The one POST that is a read — Ollama's /api/show — may be
         repeated, on any 5xx.
         """
-        repeatable = method.upper() != "POST" or path.endswith("/api/show")
+        repeatable = method.upper() != "POST" or path.endswith(("/api/show", "/api/me"))
         return call_with_retries(
             lambda: self._request_once(method, path, body),
             repeatable=repeatable,
@@ -95,7 +95,11 @@ class ConfiguredLLM(LLMProvider):
         )
         # A cloud model writing several thousand tokens takes minutes, not seconds; a
         # thirty-second socket timeout turned long, good answers into "time-out" failures.
-        connection = cls(parsed.hostname, parsed.port, timeout=REQUEST_TIMEOUT_SECONDS)
+        connection = cls(
+            parsed.hostname,
+            parsed.port,
+            timeout=20 if path == "/api/me" else REQUEST_TIMEOUT_SECONDS,
+        )
         headers = {"Content-Type": "application/json"}
         if self.kind == "anthropic":
             headers.update({"x-api-key": self.key, "anthropic-version": "2023-06-01"})
@@ -136,7 +140,24 @@ class ConfiguredLLM(LLMProvider):
         except Exception:
             return HealthResult("OFFLINE", "Connection or authentication could not be verified")
 
+    @property
+    def is_ollama_cloud(self) -> bool:
+        return self.kind == "ollama" and urlsplit(self.base_url).hostname == "ollama.com"
+
+    def _verify_cloud_access(self) -> None:
+        # /api/tags is public. Only the authenticated identity proves this saved key.
+        if not self.key.strip():
+            raise ProviderHTTPError(401)
+        identity = self.request("POST", "/api/me", {})
+        identifier = (
+            identity.get("id") or identity.get("ID") if isinstance(identity, dict) else None
+        )
+        if not isinstance(identifier, str) or not identifier.strip():
+            raise ValueError("Provider authentication response could not be verified")
+
     async def list_models(self) -> list[ModelInfo]:
+        if self.is_ollama_cloud:
+            await asyncio.to_thread(self._verify_cloud_access)
         path = "/api/tags" if self.kind == "ollama" else "/models"
         data = await asyncio.to_thread(self.request, "GET", path)
         items = data.get("models", []) if self.kind == "ollama" else data.get("data", [])

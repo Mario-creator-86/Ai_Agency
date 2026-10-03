@@ -1469,20 +1469,40 @@ def test_a_storyboard_the_content_gate_refuses_is_named_and_the_day_goes_on(
 # then spends it and buys that step alone. The stage writes him the sheet and a letter and
 # goes on. Every vendor below is a spy; the Owner's own database is never opened.
 
-#: Only its size and time are read (`_stamp`); nothing here opens it.
+#: Only named, never opened: the guard below records every SQLite file a test opens.
 _REPO = Path(__file__).resolve().parents[1]
 LIVE_DB = _REPO / "data" / "studio.db"
 
 
-def _stamp(path: Path) -> tuple[int, int] | None:
-    if not path.exists():
-        return None
-    stat = path.stat()
-    return (stat.st_size, stat.st_mtime_ns)
+def _opened_sqlite_files(monkeypatch) -> list[str]:
+    """Every database file `sqlite3.connect` is asked for from now on, in this test.
+
+    The file's size and time were compared before (2026-10-03): the Owner's studio runs beside
+    the suite and writes its own database during a 42-minute run, so the comparison failed
+    while no test had touched it. What a test must never do is open it; that is what is read.
+    """
+    import sqlite3
+
+    opened: list[str] = []
+    real_connect = sqlite3.connect
+
+    def recording(database, *args, **kwargs):
+        opened.append(str(database))
+        return real_connect(database, *args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", recording)
+    return opened
 
 
-#: The Owner's database as this module found it; no test here may change it.
-LIVE_DB_AT_IMPORT = _stamp(LIVE_DB)
+def _is_live_db(name: str) -> bool:
+    path = name.removeprefix("file:").split("?", 1)[0]
+    if not path or path == ":memory:":
+        return False
+    try:
+        return Path(path).resolve() == LIVE_DB.resolve()
+    except OSError:
+        return False
+
 
 requires_ffmpeg = pytest.mark.skipif(find_ffmpeg() is None, reason="ffmpeg not installed")
 
@@ -1722,9 +1742,13 @@ def test_a_film_whose_prompts_carry_a_lint_block_stops_before_the_owner_is_asked
     assert "blocaj" in outcome["reason"]
     assert world["images"].asked == [] and world["models"].posts() == 0
     assert _approvals(engine) == [] and _provider_costs(engine) == []
-    (letter,) = _owner_letters(engine, "owner_shooting_sheet")
-    assert letter.body_json["status"] == "LINT_BLOCKED"
-    assert "NEPAL_CLIMATE_CRISIS" in letter.body_text
+    # A prompt block is the studio's own work (2026-10-03, the Owner: every sheet problem goes
+    # to the Director, who has it fixed; only money and configuration reach him): the stage
+    # files the Director's repair report, and no letter asks the Owner.
+    assert _owner_letters(engine, "owner_shooting_sheet") == []
+    (report,) = _owner_letters(engine, "shooting_sheet_blockers")
+    assert report.to_agent_id and not report.body_json.get("owner_attention")
+    assert "NEPAL_CLIMATE_CRISIS" in report.body_text
 
 
 @requires_ffmpeg
@@ -1868,6 +1892,7 @@ def test_the_daily_job_is_never_activated_by_any_test(engine, settings, tmp_path
     _production(engine)
     _bottom_of_the_staircase(engine, tmp_path)
     _staircase_world(engine, tmp_path, monkeypatch)
+    opened = _opened_sqlite_files(monkeypatch)
 
     stages._media(engine, settings, None, None)
 
@@ -1880,7 +1905,7 @@ def test_the_daily_job_is_never_activated_by_any_test(engine, settings, tmp_path
         )
     assert Path(str(engine.url.database)).resolve() != LIVE_DB.resolve()
     assert LIVE_DB.as_posix() not in settings.database_url
-    assert _stamp(LIVE_DB) == LIVE_DB_AT_IMPORT
+    assert not [name for name in opened if _is_live_db(name)]
     source = Path(__file__).read_text(encoding="utf-8")
     for name in ("set_job_" + "active", "scheduler_" + "tick", "ensure_scheduled_" + "job"):
         assert name not in source, name

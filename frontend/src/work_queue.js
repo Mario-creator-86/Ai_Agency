@@ -2,6 +2,7 @@
 // its retry of a dead task (POST /tasks/{id}/retry) and a workflow's cancel
 // (POST /workflows/{id}/cancel) existed in the API and nowhere on the page, and a pending run
 // read «ÎN CURS» forever. Pure: the words and the markup; main.js fetches and wires the keys.
+import { newestFirst } from './activity_lists.js';
 import { escapeHtml } from './html.js';
 import { taskLabel } from './ledger.js';
 import { countWords } from './plurals.js';
@@ -95,7 +96,7 @@ export const CANCEL_QUESTION = 'Anulezi fluxul acestei sarcini? Un flux anulat n
  * @param {any[]} tasks @param {number} now
  */
 export function queueHtml(tasks, now) {
-  const rows = Array.isArray(tasks) ? tasks : [];
+  const rows = newestFirst(Array.isArray(tasks) ? tasks : []);
   if (!rows.length) return `<div class="topics-loading">${EMPTY_QUEUE}</div>`;
   return rows
     .map((task) => {
@@ -108,7 +109,7 @@ export function queueHtml(tasks, now) {
           ? `<button type="button" class="quiet" data-workflow-cancel="${escapeHtml(task.workflow_id)}">Anulează fluxul</button>`
           : '',
       ].join('');
-      return `<div class="topic-card queue-task" data-status="${escapeHtml(task.status)}">
+      return `<div class="topic-card queue-task" data-card-key="${escapeHtml(task.id)}" data-status="${escapeHtml(task.status)}">
         <div class="topic-card-header">
           <strong class="topic-card-title" title="${escapeHtml(task.task_type)}">${escapeHtml(taskLabel(String(task.task_type)))}</strong>
           <span class="topic-card-novelty">${escapeHtml(taskStatusWord(task.status))}</span>

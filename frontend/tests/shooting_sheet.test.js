@@ -859,3 +859,11 @@ test('main.js keeps a purchase busy per film, keeps the drawer open while it buy
   assert.ok(MAIN.includes('purchaseId: crypto.randomUUID()'));
   for (const where of ['data-sheet-open', 'sheetKeyFor(']) assert.ok(MAIN.includes(where), where);
 });
+
+test('the sheet shows the backend repair state and never calls a queued repair solved', () => {
+  for (const [status, words] of [['QUEUED', 'Trimis Directorului'], ['RUNNING', 'în lucru'], ['RESOLVED', 'rezolvate'], ['UNRESOLVED', 'deschise'], ['WAITING_OWNER', 'decizia ta']]) {
+    const html = sheetHtml({ remediation: { status, reason: 'Raport <verificat>' } }, { escape: escapeHtml });
+    assert.ok(html.includes(words), status);
+    assert.ok(html.includes('Raport &lt;verificat&gt;'));
+  }
+});

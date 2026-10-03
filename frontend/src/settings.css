@@ -162,3 +162,7 @@
 .settings-dialog input, .settings-dialog select, .settings-dialog textarea {
   border-color: var(--line-field);
 }
+
+.settings-check-result { padding: .6rem .8rem; border-left: 3px solid var(--ink-3); background: var(--surface-sunk); }
+.settings-check-result[data-status="VERIFIED"], .settings-check-result[data-status="ACCESS_VERIFIED"] { border-color: var(--teal); }
+.settings-check-result.settings-error { border-color: var(--alert-ink); }

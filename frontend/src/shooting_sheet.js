@@ -844,7 +844,17 @@ export function sheetHtml(sheet, o) {
     + assembleResultHtml(o.assembled, o)
     + '</div>';
   const sound = audioRedoButton(sheet);
-  return `${sheetSummaryHtml(sheet, o)}${head}<ol class="sheet-scenes">${list}</ol>`
+  const repair = sheet?.remediation;
+  /** @type {Record<string, string>} */
+  const repairWords = {
+    QUEUED: 'Trimis Directorului', CLAIMED: 'Remediere în lucru', RUNNING: 'Remediere în lucru',
+    REVISED: 'Remedierea continuă pe foaia revizuită',
+    RESOLVED: 'Blocajele foii sunt rezolvate', UNRESOLVED: 'Blocajele rămân deschise',
+    WAITING_OWNER: 'Așteaptă decizia ta', STALE: 'Foaia s-a schimbat; raportul vechi a fost oprit',
+    DEAD_LETTER: 'Remedierea s-a oprit', BLOCKED: 'Remedierea este oprită de politica studioului',
+  };
+  const remediation = repair ? `<div class="sheet-warning" role="status"><strong>${e(repairWords[repair.status] || 'Starea remedierii: ' + repair.status)}</strong><p>${e(repair.reason || '')}</p></div>` : '';
+  return `${sheetSummaryHtml(sheet, o)}${remediation}${head}<ol class="sheet-scenes">${list}</ol>`
     + `<footer class="sheet-footer" id="sheet-steps"><dl class="sheet-rows">${rows}</dl>`
     + (sheet?.footer?.summary_ro ? `<p class="sheet-summary">${e(sheet.footer.summary_ro)}</p>` : '')
     + `<div class="sheet-steps">${steps}${assemble}</div>`

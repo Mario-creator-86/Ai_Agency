@@ -218,6 +218,7 @@ def review_story(
     correlation_id: str | None = None,
     *,
     target_seconds: int | None = None,
+    continuous: bool = False,
 ) -> dict[str, Any]:
     """Review a script before anything is generated, and record the verdict.
 
@@ -295,7 +296,7 @@ def review_story(
     # The wall: nothing has improved for the length of the budget, or the room is out of
     # readings. Either way there will be no rewrite after this one, so this reading has to be
     # a decision rather than another request.
-    at_the_wall = revisions >= MAX_REVISIONS or exchange >= MAX_EXCHANGES
+    at_the_wall = not continuous and (revisions >= MAX_REVISIONS or exchange >= MAX_EXCHANGES)
     flagged = [name for name in every_failure if name in ADVISORY_CHECKS]
     notes = revision_notes(checks)
     verdict = "PASS" if not broken else "REVISE"
@@ -325,6 +326,7 @@ def review_story(
                 last_exchange=MAX_EXCHANGES,
                 must_decide=at_the_wall,
                 earlier_notes=earlier_notes,
+                continuous=continuous,
             )
         except StoryReviewError as exc:
             logger.info("story_review_without_model", extra={"reason": str(exc)[:160]})
@@ -435,6 +437,7 @@ def _ask_director(
     last_exchange: int = 1,
     must_decide: bool = False,
     earlier_notes: list[str] | None = None,
+    continuous: bool = False,
 ) -> tuple[StoryVerdict | None, str | None]:
     """The Director's own reading of the script. Her answer is an opinion, recorded as one.
 
@@ -447,7 +450,12 @@ def _ask_director(
     """
     payload = json.dumps(facts, ensure_ascii=False, default=str)[:14000]
     prompt = _INSTRUCTIONS
-    prompt += f"\nThis is exchange {exchange} of at most {last_exchange} on this story.\n"
+    prompt += (
+        f"\nThis is exchange {exchange}. Continue revising until the checks pass; "
+        "there is no attempt limit. Never approve unsupported facts.\n"
+        if continuous
+        else f"\nThis is exchange {exchange} of at most {last_exchange} on this story.\n"
+    )
     if earlier_notes:
         prompt += (
             "What you asked for last time:\n"

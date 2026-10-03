@@ -2155,6 +2155,12 @@ def _sheet_letter(
     sheet = film.get("sheet") or {}
     step = film.get("step")
     status = str(film.get("refusal") or film["status"])
+    if status in ("LINT_BLOCKED", "NEEDS_SHOT_PLAN") and sheet.get("sheet_hash"):
+        from app.media.blocker_repair import submit_sheet_issues  # noqa: PLC0415
+
+        # A prompt/shot-plan refusal is the studio's job, never an Owner questionnaire.
+        report = submit_sheet_issues(engine, sheet)
+        return report.get("message_id")
     key = {
         "storyboard_id": storyboard_id,
         "sheet_hash": sheet.get("sheet_hash"),

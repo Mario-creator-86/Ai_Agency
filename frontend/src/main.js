@@ -1,3 +1,4 @@
+import { newestFirst, replaceActivityHtml } from './activity_lists.js';
 import { amount } from './numbers.js';
 import { loadAgentDetails } from './agent_details.js';
 import { icon } from './icons.js';
@@ -1793,27 +1794,27 @@ function timelineItem(item) {
     const prompt = !isChat && full
       ? `<details class="chat-prompt"><summary>Cererea completă</summary><pre>${escapeHtml(full)}</pre></details>`
       : '';
-    return `<div class="chat-item chat-run${isChat ? ' is-chat' : ''}"><div class="chat-meta"><span class="policy-tag policy-flexible">${escapeHtml(label)}</span> <small>${escapeHtml(timelineTime(item.at))}${meta ? ` · ${escapeHtml(meta)}` : ''}</small></div>${line ? `<div class="chat-asked">${escapeHtml(line)}</div>` : ''}${answer}${prompt}</div>`;
+    return `<div data-card-key="${escapeHtml(item.id)}" class="chat-item chat-run${isChat ? ' is-chat' : ''}"><div class="chat-meta"><span class="policy-tag policy-flexible">${escapeHtml(label)}</span> <small>${escapeHtml(timelineTime(item.at))}${meta ? ` · ${escapeHtml(meta)}` : ''}</small></div>${line ? `<div class="chat-asked">${escapeHtml(line)}</div>` : ''}${answer}${prompt}</div>`;
   }
   if (item.kind === 'message') {
     const direction = item.from_name ? `de la ${ownerName(item.from_name)}` : '';
     const to = item.to_name ? `către ${ownerName(item.to_name)}` : '';
-    return `<div class="chat-item chat-message"><div class="chat-meta"><span class="policy-tag policy-locked" title="${escapeHtml(item.intent)}">${escapeHtml(mailIntentLabel(item.intent))}</span> <small>${escapeHtml(timelineTime(item.at))} ${escapeHtml([direction, to].filter(Boolean).join(' '))} · ${escapeHtml(letterStateWord(item.status))}</small></div><div>${escapeHtml(item.subject)}</div>${item.resolution ? `<div class="helper">${escapeHtml(item.resolution)}</div>` : ''}</div>`;
+    return `<div data-card-key="${escapeHtml(item.id)}" class="chat-item chat-message"><div class="chat-meta"><span class="policy-tag policy-locked" title="${escapeHtml(item.intent)}">${escapeHtml(mailIntentLabel(item.intent))}</span> <small>${escapeHtml(timelineTime(item.at))} ${escapeHtml([direction, to].filter(Boolean).join(' '))} · ${escapeHtml(letterStateWord(item.status))}</small></div><div>${escapeHtml(item.subject)}</div>${item.resolution ? `<div class="helper">${escapeHtml(item.resolution)}</div>` : ''}</div>`;
   }
-  return `<div class="chat-item chat-memory"><div class="chat-meta"><span class="policy-tag">${escapeHtml(TIMELINE_LABEL[item.memory_class] || item.memory_class)}</span> <small>${escapeHtml(timelineTime(item.at))}</small></div><div>${escapeHtml(item.content)}</div></div>`;
+  return `<div data-card-key="${escapeHtml(item.id)}" class="chat-item chat-memory"><div class="chat-meta"><span class="policy-tag">${escapeHtml(TIMELINE_LABEL[item.memory_class] || item.memory_class)}</span> <small>${escapeHtml(timelineTime(item.at))}</small></div><div>${escapeHtml(item.content)}</div></div>`;
 }
 
 async function loadAgentHistory(agentId) {
   const box = element('agent-history');
   try {
     const data = await api(`/agents/${encodeURIComponent(agentId)}/history`);
-    const items = (data.timeline || []).slice().reverse();
-    box.innerHTML = items.length
+    const items = newestFirst(data.timeline || [], { oldestFirst: true });
+    replaceActivityHtml(box, items.length
       ? items.map(timelineItem).join('')
-      : '<div class="helper">Nimic încă: nicio sarcină, niciun mesaj și nicio decizie înregistrată.</div>';
-    box.scrollTop = box.scrollHeight;
+      : '<div class="helper">Nimic încă: nicio sarcină, niciun mesaj și nicio decizie înregistrată.</div>');
+
   } catch (error) {
-    box.innerHTML = `<div class="text-error">${escapeHtml(error instanceof Error ? error.message : 'Istoricul nu a putut fi încărcat.')}</div>`;
+    replaceActivityHtml(box, `<div class="text-error">${escapeHtml(error instanceof Error ? error.message : 'Istoricul nu a putut fi încărcat.')}</div>`);
   }
 }
 
@@ -2170,18 +2171,18 @@ async function loadTopics() {
   const listEl = element('topics-list');
   try {
     const data = await api('/factual/topics');
-    const topics = data.topics || [];
+    const topics = newestFirst(data.topics || []);
     if (topics.length === 0) {
-      listEl.innerHTML = '<div class="topics-loading">Niciun subiect propus încă.</div>';
+      replaceActivityHtml(listEl, '<div class="topics-loading">Niciun subiect propus încă.</div>');
       return;
     }
-    listEl.innerHTML = topics
+    replaceActivityHtml(listEl, topics
       .map((t) => {
         const cardClass =
           t.novelty_score >= 0.8 ? 'topic-card topic-card-high' : 'topic-card topic-card-low';
         const pct = Math.round((t.novelty_score || 0) * 100);
         return `
-        <div class="${cardClass}">
+        <div class="${cardClass}" data-card-key="${escapeHtml(t.id)}">
           <div class="topic-card-header">
             <strong class="topic-card-title">${escapeHtml(t.title)}</strong>
             <span class="topic-card-novelty">Noutate: ${pct}%</span>
@@ -2193,9 +2194,9 @@ async function loadTopics() {
         </div>
       `;
       })
-      .join('');
+      .join(''));
   } catch (err) {
-    listEl.innerHTML = `<div class="text-error">Încărcarea a eșuat: ${escapeHtml(err.message)}</div>`;
+    replaceActivityHtml(listEl, `<div class="text-error">Încărcarea a eșuat: ${escapeHtml(err.message)}</div>`);
   }
 }
 
@@ -2443,15 +2444,15 @@ async function loadSources() {
     }
     renderAllowedHosts(data.allowed_host_rows || [], health);
 
-    const sources = data.sources || [];
+    const sources = newestFirst(data.sources || []);
     if (!sources.length) {
-      listEl.innerHTML = '<div class="topics-loading">Nicio sursă preluată încă.</div>';
+      replaceActivityHtml(listEl, '<div class="topics-loading">Nicio sursă preluată încă.</div>');
       return;
     }
-    listEl.innerHTML = sources
+    replaceActivityHtml(listEl, sources
       .map(
         (src) => `
-        <div class="topic-card source-card" data-source-id="${escapeHtml(src.id)}">
+        <div data-card-key="${escapeHtml(src.id)}" class="topic-card source-card" data-source-id="${escapeHtml(src.id)}">
           <div class="topic-card-header">
             <strong class="topic-card-title">${escapeHtml(src.title)}</strong>
             <span class="topic-card-novelty">${escapeHtml(src.publisher)}</span>
@@ -2470,7 +2471,7 @@ async function loadSources() {
           <div class="claims-list" id="claims-${escapeHtml(src.id)}" hidden></div>
         </div>`,
       )
-      .join('');
+      .join(''));
 
     listEl.querySelectorAll('.btn-extract-claims').forEach((btn) => {
       btn.addEventListener('click', () => extractClaims(btn.getAttribute('data-source-id'), btn));
@@ -2479,23 +2480,22 @@ async function loadSources() {
       btn.addEventListener('click', () => loadClaims(btn.getAttribute('data-source-id')));
     });
   } catch (err) {
-    listEl.innerHTML = `<div class="text-error">Încărcarea a eșuat: ${escapeHtml(err.message)}</div>`;
+    replaceActivityHtml(listEl, `<div class="text-error">Încărcarea a eșuat: ${escapeHtml(err.message)}</div>`);
   }
 }
 
 async function loadClaims(sourceId) {
   const box = element(`claims-${sourceId}`);
   box.hidden = false;
-  box.innerHTML = '<div class="topics-loading">Se încarcă afirmațiile…</div>';
+  replaceActivityHtml(box, '<div class="topics-loading">Se încarcă afirmațiile…</div>');
   try {
     const data = await api(`/factual/claims?source_id=${encodeURIComponent(sourceId)}`);
-    const claims = data.claims || [];
+    const claims = newestFirst(data.claims || []);
     if (!claims.length) {
-      box.innerHTML =
-        '<div class="topics-loading">Nicio afirmație extrasă din această sursă.</div>';
+      replaceActivityHtml(box, '<div class="topics-loading">Nicio afirmație extrasă din această sursă.</div>');
       return;
     }
-    box.innerHTML = claims.map((c) => renderClaim(c, sourceId)).join('');
+    replaceActivityHtml(box, claims.map((c) => renderClaim(c, sourceId)).join(''));
     box.querySelectorAll('.btn-agent-verify').forEach((btn) => {
       btn.addEventListener('click', () => agentVerify(btn, sourceId));
     });
@@ -2511,7 +2511,7 @@ async function loadClaims(sourceId) {
       form.addEventListener('submit', (e) => submitOwnerVerdict(e, form, sourceId));
     });
   } catch (err) {
-    box.innerHTML = `<div class="text-error">${escapeHtml(err.message)}</div>`;
+    replaceActivityHtml(box, `<div class="text-error">${escapeHtml(err.message)}</div>`);
   }
 }
 
@@ -2732,15 +2732,15 @@ async function loadScripts() {
 
     const scripts = scriptsData.scripts || [];
     if (!scripts.length) {
-      listEl.innerHTML = '<div class="topics-loading">Niciun scenariu încă.</div>';
+      replaceActivityHtml(listEl, '<div class="topics-loading">Niciun scenariu încă.</div>');
       return;
     }
-    listEl.innerHTML = scripts.map(renderScript).join('');
+    replaceActivityHtml(listEl, scripts.map(renderScript).join(''));
     listEl.querySelectorAll('.btn-approve-script').forEach((btn) => {
-      btn.addEventListener('click', () => approveScript(btn));
+      /** @type {HTMLElement} */ (btn).onclick = () => approveScript(btn);
     });
   } catch (err) {
-    listEl.innerHTML = `<div class="text-error">${escapeHtml(err.message)}</div>`;
+    replaceActivityHtml(listEl, `<div class="text-error">${escapeHtml(err.message)}</div>`);
   }
 }
 
@@ -3146,7 +3146,7 @@ async function loadAwaitingStoryboard() {
   const listEl = element('awaiting-list');
   try {
     const data = await api('/media/scripts/awaiting-storyboard');
-    const scripts = data.scripts || [];
+    const scripts = newestFirst(data.scripts || []);
     block.hidden = scripts.length === 0;
     if (!scripts.length) return;
 
@@ -3161,7 +3161,7 @@ async function loadAwaitingStoryboard() {
     listEl.innerHTML = scripts
       .map(
         (script, index) => `
-        <div class="topic-card script-card">
+        <div data-card-key="${escapeHtml(script.id)}" class="topic-card script-card">
           <div class="topic-card-header">
             <strong class="topic-card-title">${escapeHtml(script.title)}</strong>
             <span class="topic-card-novelty">v${script.version}</span>
@@ -3181,10 +3181,10 @@ async function loadAwaitingStoryboard() {
       .join('');
 
     listEl.querySelectorAll('.btn-make-storyboard').forEach((btn) => {
-      btn.addEventListener('click', () => makeStoryboard(btn));
+      /** @type {HTMLElement} */ (btn).onclick = () => makeStoryboard(btn);
     });
     listEl.querySelectorAll('.btn-story-review').forEach((btn) => {
-      btn.addEventListener('click', () => runStoryReview(btn));
+      /** @type {HTMLElement} */ (btn).onclick = () => runStoryReview(btn);
     });
   } catch (err) {
     block.hidden = false;
@@ -3886,21 +3886,21 @@ async function loadMediaStoryboards(more = false) {
     mediaNext = data.next_offset ?? null;
     mediaTotal = Number(data.total) || mediaRows.length;
     if (mediaRows.length === 0) {
-      listEl.innerHTML = `
+      replaceActivityHtml(listEl, `
         <div class="topics-loading">
           Niciun storyboard în flux.
           ${demoCaseShown(state?.policy) ? '<br>Apasă «Creează un caz demo» pentru un caz de test: un subiect, un scenariu și o afirmație neverificată, de verificat în Cercetare.' : ''}
         </div>
-      `;
+      `);
       return;
     }
     const left = mediaTotal - mediaRows.length;
-    listEl.innerHTML = mediaRows.map(storyboardSummaryHtml).join('')
+    replaceActivityHtml(listEl, newestFirst(mediaRows).map(storyboardSummaryHtml).join('')
       + (mediaNext !== null && left > 0
         ? `<div class="source-actions"><button type="button" class="quiet" data-media-more>Încă ${escapeHtml(countWords(Math.min(left, MEDIA_PAGE), 'storyboard', 'storyboarduri'))} (din ${escapeHtml(String(left))} rămase)</button></div>`
-        : '');
+        : ''));
   } catch (err) {
-    listEl.innerHTML = `<div class="text-error">Încărcarea producției media a eșuat: ${escapeHtml(err.message)}</div>`;
+    replaceActivityHtml(listEl, `<div class="text-error">Încărcarea producției media a eșuat: ${escapeHtml(err.message)}</div>`);
   }
 }
 
@@ -4267,10 +4267,9 @@ async function loadPublishingHub() {
     void loadPublishingGate();
     const publications = pubData.publications || [];
     if (publications.length === 0) {
-      pubListEl.innerHTML =
-        '<div class="topics-loading">Nicio publicare înregistrată. Folosește butonul de mai sus ca să publici un film aprobat.</div>';
+      replaceActivityHtml(pubListEl, '<div class="topics-loading">Nicio publicare înregistrată. Folosește butonul de mai sus ca să publici un film aprobat.</div>');
     } else {
-      pubListEl.innerHTML = publications
+      replaceActivityHtml(pubListEl, publications
         .map((p) => {
           const isSimulated = p.status === 'PUBLISHED_SIMULATED';
           const isPub = p.status === 'PUBLISHED';
@@ -4310,13 +4309,13 @@ async function loadPublishingHub() {
           </div>
         `;
         })
-        .join('');
+        .join(''));
     }
   } catch (err) {
     if (channelsEl)
       channelsEl.innerHTML = `<div class="text-error">Canalele nu au putut fi încărcate: ${escapeHtml(err.message)}</div>`;
     if (pubListEl)
-      pubListEl.innerHTML = `<div class="text-error">Publicările nu au putut fi încărcate: ${escapeHtml(err.message)}</div>`;
+      replaceActivityHtml(pubListEl, `<div class="text-error">Publicările nu au putut fi încărcate: ${escapeHtml(err.message)}</div>`);
   }
 }
 
@@ -4910,9 +4909,9 @@ function approvalCard(request, now) {
 /** The pending requests last read, drawn again when the office's record arrives (who asked). @type {ReturnType<typeof readApprovals>} */
 let approvalsShown = [];
 function renderApprovals() {
-  approvalsList.innerHTML = approvalsShown.length
-    ? `${approvalsShown.map((request) => approvalCard(request, Date.now())).join('')}<p class="approval-footnote">${escapeHtml(APPROVAL_FOOTNOTE)}</p>`
-    : '<div class="topics-loading">Nicio cerere nu așteaptă decizia Proprietarului.</div>';
+  replaceActivityHtml(approvalsList, approvalsShown.length
+    ? `${newestFirst(approvalsShown).map((request) => approvalCard(request, Date.now())).join('')}<p class="approval-footnote">${escapeHtml(APPROVAL_FOOTNOTE)}</p>`
+    : '<div class="topics-loading">Nicio cerere nu așteaptă decizia Proprietarului.</div>');
   // who asked, at their desk: the scene's own portrait (roster.js)
   if (approvalsShown.length) drawPortraits(approvalsList);
 }
@@ -5169,18 +5168,17 @@ async function loadProposals() {
   const listEl = element('workforce-proposals');
   try {
     const data = await api('/workforce/proposals');
-    const proposals = data.proposals || [];
+    const proposals = newestFirst(data.proposals || []);
     if (!proposals.length) {
-      listEl.innerHTML =
-        '<div class="topics-loading">Nicio propunere. Măsurătorile nu susțin acum o schimbare de personal.</div>';
+      replaceActivityHtml(listEl, '<div class="topics-loading">Nicio propunere. Măsurătorile nu susțin acum o schimbare de personal.</div>');
       return;
     }
-    listEl.innerHTML = proposals.map(renderProposal).join('');
+    replaceActivityHtml(listEl, proposals.map(renderProposal).join(''));
     listEl.querySelectorAll('.btn-decide').forEach((btn) => {
-      btn.addEventListener('click', () => decideProposal(btn));
+      /** @type {HTMLElement} */ (btn).onclick = () => decideProposal(btn);
     });
   } catch (err) {
-    listEl.innerHTML = `<div class="text-error">${escapeHtml(err.message)}</div>`;
+    replaceActivityHtml(listEl, `<div class="text-error">${escapeHtml(err.message)}</div>`);
   }
 }
 
@@ -6000,16 +5998,15 @@ async function loadStoryLogs() {
   const listEl = element('story-logs');
   try {
     const data = await api('/story/logs');
-    const logs = data.logs || [];
+    const logs = newestFirst(data.logs || []);
     if (!logs.length) {
-      listEl.innerHTML =
-        '<div class="topics-loading">Nicio zi închisă. Închide ziua ca să se numere ce s-a întâmplat.</div>';
+      replaceActivityHtml(listEl, '<div class="topics-loading">Nicio zi închisă. Închide ziua ca să se numere ce s-a întâmplat.</div>');
       return;
     }
-    listEl.innerHTML = logs
+    replaceActivityHtml(listEl, logs
       .map(
         (log) => `
-        <div class="topic-card story-log-card" data-log-id="${escapeHtml(log.id)}">
+        <div data-card-key="${escapeHtml(log.id)}" class="topic-card story-log-card" data-log-id="${escapeHtml(log.id)}">
           <div class="topic-card-header">
             <strong class="topic-card-title">${escapeHtml(log.business_date)}</strong>
             <span class="topic-card-novelty">${countLabel(log.total_events, 'eveniment', 'evenimente')}</span>
@@ -6027,12 +6024,12 @@ async function loadStoryLogs() {
           </div>
         </div>`,
       )
-      .join('');
+      .join(''));
     listEl.querySelectorAll('.btn-write-episode').forEach((btn) => {
-      btn.addEventListener('click', () => writeEpisode(btn));
+      /** @type {HTMLElement} */ (btn).onclick = () => writeEpisode(btn);
     });
   } catch (err) {
-    listEl.innerHTML = `<div class="text-error">${escapeHtml(err.message)}</div>`;
+    replaceActivityHtml(listEl, `<div class="text-error">${escapeHtml(err.message)}</div>`);
   }
 }
 
@@ -6049,31 +6046,31 @@ async function loadEpisodes() {
       api('/story/episodes'),
       api('/story/continuity').catch(() => null),
     ]);
-    boardEl.innerHTML = serialBoardHtml(continuity);
+    replaceActivityHtml(boardEl, serialBoardHtml(continuity));
     worldFacts.episodes = data;
     worldFacts.reads.episodes = 'ok';
     pushWorldFacts();
-    const episodes = data.episodes || [];
+    const episodes = newestFirst(data.episodes || []);
     // the newest episode as the Journal's cover (W12); the list below opens on the same one
-    element('story-cover').innerHTML = journalCoverHtml(episodes[0] || null, continuity);
+    replaceActivityHtml(element('story-cover'), journalCoverHtml(episodes[0] || null, continuity));
     if (!episodes.length) {
-      listEl.innerHTML = '<div class="topics-loading">Niciun episod încă.</div>';
+      replaceActivityHtml(listEl, '<div class="topics-loading">Niciun episod încă.</div>');
       return;
     }
     const titles = new Map(episodes.map((episode) => [String(episode.id), String(episode.title || '')]));
-    listEl.innerHTML = episodes.map((episode, index) => episodeHtml(episode, { open: index === 0, titles })).join('');
+    replaceActivityHtml(listEl, episodes.map((episode, index) => episodeHtml(episode, { open: index === 0, titles })).join(''));
     listEl.querySelectorAll('.btn-check-grounding').forEach((btn) => {
-      btn.addEventListener('click', () => checkGrounding(btn));
+      /** @type {HTMLElement} */ (btn).onclick = () => checkGrounding(btn);
     });
     listEl.querySelectorAll('.btn-decide-episode').forEach((btn) => {
-      btn.addEventListener('click', () => decideEpisode(btn));
+      /** @type {HTMLElement} */ (btn).onclick = () => decideEpisode(btn);
     });
   } catch (err) {
     // not read is not empty: the cover says nothing it did not read
-    element('story-cover').innerHTML = '';
+    replaceActivityHtml(element('story-cover'), '');
     readFailed('episodes');
     pushWorldFacts();
-    listEl.innerHTML = `<div class="text-error">${escapeHtml(err.message)}</div>`;
+    replaceActivityHtml(listEl, `<div class="text-error">${escapeHtml(err.message)}</div>`);
   }
 }
 
@@ -6325,7 +6322,7 @@ function renderRunCard(run) {
   // PAGE-02: a day that waits for him at a film's paid step opens that film's sheet
   const sheet = sheetKeyFor(run);
   return `
-    <div class="${escapeHtml(runClassName(run))}">
+    <div class="${escapeHtml(runClassName(run))}" data-card-key="${escapeHtml(run.id)}">
       <div class="topic-card-header">
         <strong class="topic-card-title">${escapeHtml(isoDay(run.business_date))}</strong>
         <span class="topic-card-novelty" title="${escapeHtml(run.status)}">${escapeHtml(runStatusWord(run.status))}</span>
@@ -6365,9 +6362,9 @@ async function loadWorkQueue() {
   try {
     const tasks = await api(QUEUE_PATH);
     queueTasks = Array.isArray(tasks) ? tasks : [];
-    box.innerHTML = queueHtml(queueTasks, Date.now());
+    replaceActivityHtml(box, queueHtml(queueTasks, Date.now()));
   } catch (err) {
-    box.innerHTML = `<div class="text-error">${escapeHtml(err.message)}</div>`;
+    replaceActivityHtml(box, `<div class="text-error">${escapeHtml(err.message)}</div>`);
   }
 }
 
@@ -6418,7 +6415,7 @@ async function loadRuns() {
   const listEl = element('runbook-runs');
   try {
     const data = await api('/runbook/runs');
-    const runs = data.runs || [];
+    const runs = newestFirst(data.runs || []);
     const pending = data.pending
       ? `<div class="topic-card runbook-run rb-running">
           <div class="topic-card-header">
@@ -6430,10 +6427,10 @@ async function loadRuns() {
           <div class="claim-notes">Etapele apar în registrul din stânga pe măsură ce se întâmplă.</div>
         </div>`
       : '';
-    listEl.innerHTML = pending + (runs.length ? runs.map(renderRunCard).join('') : (pending ? '' : '<div class="topics-loading">Nicio rulare încă.</div>'));
+    replaceActivityHtml(listEl, pending + (runs.length ? runs.map(renderRunCard).join('') : (pending ? '' : '<div class="topics-loading">Nicio rulare încă.</div>')));
     return Boolean(data.pending);
   } catch (err) {
-    listEl.innerHTML = `<div class="text-error">${escapeHtml(err.message)}</div>`;
+    replaceActivityHtml(listEl, `<div class="text-error">${escapeHtml(err.message)}</div>`);
     return false;
   }
 }
@@ -7082,7 +7079,7 @@ let lettersShown = [];
 function renderOwnerLetters() {
   const list = document.getElementById('owner-inbox-list');
   if (!list) return;
-  list.innerHTML = inboxHtml(lettersShown, { escape: escapeHtml, read: lettersRead, timezone: state && state.studio ? state.studio.timezone : undefined });
+  replaceActivityHtml(list, inboxHtml(lettersShown, { escape: escapeHtml, read: lettersRead, timezone: state && state.studio ? state.studio.timezone : undefined }));
   const count = document.getElementById('owner-inbox-count');
   if (count) count.textContent = lettersRead === 'ok' ? (lettersShown.length ? lettersWord(lettersShown.length) : 'niciuna') : '—';
 }

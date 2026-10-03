@@ -5,7 +5,7 @@ import { escapeHtml } from '../src/html.js';
 
 const options = { escape: escapeHtml, timezone: 'UTC' };
 
-test('a thread renders as letters, oldest first, with both ends, the date and the text', () => {
+test('a thread renders as letters, newest first, with both ends, the date and the text', () => {
   const html = renderThread(
     {
       thread_id: 't-1',
@@ -17,7 +17,7 @@ test('a thread renders as letters, oldest first, with both ends, the date and th
     },
     options,
   );
-  assert.ok(html.indexOf('data-message="m-1"') < html.indexOf('data-message="m-2"'));
+  assert.ok(html.indexOf('data-message="m-2"') < html.indexOf('data-message="m-1"'));
   assert.ok(html.includes('<strong>Sarah (Director)</strong> <span class="mail-arrow">→</span> <strong>Elena (Fact Checker)</strong>'));
   assert.ok(html.includes('Întrebare'));
   assert.ok(html.includes('Elena, pe ce stă 40%?\nSarah'));

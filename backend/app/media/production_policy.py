@@ -2729,6 +2729,17 @@ def _choose_scene(
                 "mișcare locală.",
             )
             return entry
+        if not entry["excluded"]:
+            # No model was even considered: the catalogue the sheet read is empty (the
+            # connection's catalogue was not read, or lists no motion model). The Owner's LHC
+            # sheet said "nu poate filma această scenă: ." on every scene (2026-10-03).
+            hold(
+                "NEEDS_OWNER",
+                "Catalogul de modele de mișcare este gol: conexiunea video nu a fost citită sau "
+                "nu oferă niciun model. Verifică conexiunea Runway în Setări; până atunci "
+                "Proprietarul poate alege mișcare locală pentru această scenă.",
+            )
+            return entry
         hold(
             "NEEDS_OWNER",
             "Niciun model din setul aprobat nu poate filma această scenă: "

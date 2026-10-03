@@ -1,3 +1,4 @@
+import { newestFirst, replaceActivityHtml } from './activity_lists.js';
 /**
  * A thread of letters, read as mail.
  *
@@ -105,7 +106,7 @@ export function renderThread(thread, { escape, timezone }) {
   if (!messages.length) {
     return '<div class="helper">Firul este gol: niciun mesaj înregistrat.</div>';
   }
-  return messages
+  return newestFirst(messages, { oldestFirst: true })
     .map((m, index) => {
       const from = m.from_name || 'Proprietar';
       const to = m.to_name || 'Director';
@@ -182,7 +183,7 @@ export class MailThread {
   /** Open the window on one thread; the letters are fetched fresh every time. */
   async open(threadId) {
     if (!threadId) return;
-    this.body.innerHTML = '<div class="helper">Se încarcă firul…</div>';
+    replaceActivityHtml(this.body, '<div class="helper">Se încarcă firul…</div>');
     this.status.textContent = '';
     this.status.hidden = true;
     if (!this.dialog.open) this.dialog.showModal();
@@ -198,14 +199,14 @@ export class MailThread {
       if (opening) await this.landed();
       if (!this.thread) return;
       const count = this.thread.messages.length;
-      this.body.innerHTML = renderThread(this.thread, {
+      replaceActivityHtml(this.body, renderThread(this.thread, {
         escape: this.escape,
         timezone: this.timezone,
-      });
+      }));
       this.body.dataset.count = String(count);
-      this.body.scrollTop = this.body.scrollHeight;
+      if (opening) this.body.scrollTop = 0;
     } catch (error) {
-      this.body.innerHTML = `<div class="text-error">${this.escape(error instanceof Error ? error.message : 'Firul nu a putut fi citit.')}</div>`;
+      replaceActivityHtml(this.body, `<div class="text-error">${this.escape(error instanceof Error ? error.message : 'Firul nu a putut fi citit.')}</div>`);
     }
   }
 

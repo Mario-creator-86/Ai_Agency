@@ -255,6 +255,9 @@ def letters_awaiting_answer(session: Session, limit: int = LETTERS_PER_ROUND) ->
     ).all()
     seen_threads: set[str] = set()
     for row in rows:
+        if (row.body_json or {}).get("executed_by_worker"):
+            # A durable tool task owns this letter; conversation cannot fulfil it.
+            continue
         thread_id = row.thread_id or row.id
         if thread_id in seen_threads:
             continue

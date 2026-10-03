@@ -63,12 +63,14 @@ export function initSettings(api, hooks = {}) {
   let active = 'llm';
   let generation = 0;
   let pending = false;
+  const connectionChecks = new Map();
   
 
   function reset() {
     generation++;
     data = null;
     pending = false;
+    connectionChecks.clear();
     channels = null;
     channelsError = '';
     asking = null;
@@ -105,14 +107,21 @@ export function initSettings(api, hooks = {}) {
     render();
   }
 
-  async function run(operation, success) {
+  /** @param {Function} operation @param {string} success @param {{connectionId?: string}} [options] */
+  async function run(operation, success, options = {}) {
     if (pending) return;
     pending = true;
     const current = generation;
+    if (options.connectionId) {
+      connectionChecks.set(options.connectionId, { status: 'CHECKING', message: 'Se verifică accesul și se încarcă modelele…' });
+      render();
+      message('Se verifică conexiunea…');
+    }
     dialog.querySelectorAll('button, input, select').forEach(el => { /** @type {HTMLButtonElement} */ (el).disabled = true; });
     try {
       const result = await operation();
       if (current !== generation) return;
+      if (options.connectionId) connectionChecks.set(options.connectionId, result);
       await refresh();
       try {
         await hooks.onChange?.();
@@ -121,7 +130,13 @@ export function initSettings(api, hooks = {}) {
       }
       message(result?.message || success, result?.status === 'FAILED' || result?.discovery_status === 'ERROR');
     } catch (error) {
-      if (current === generation) message(error.message, true);
+      if (current === generation) {
+        if (options.connectionId) {
+          connectionChecks.set(options.connectionId, { status: 'FAILED', message: error.message });
+          render();
+        }
+        message(error.message, true);
+      }
     } finally {
       if (current === generation) {
         pending = false;
@@ -203,7 +218,18 @@ export function initSettings(api, hooks = {}) {
       const heading = node('h3', named.title);
       if (named.identifier) heading.title = item.name;
       card.append(heading);
-      card.append(node('p', `${spec.label} · ${statuses[item.status] || item.status}`, 'helper'));
+      const checkResult = connectionChecks.get(item.id) || item.check_result;
+      const oldCloudCheck = item.kind === 'ollama' && hostOf(item.config?.base_url) === 'ollama.com'
+        && item.status === 'VERIFIED' && !checkResult;
+      const state = oldCloudCheck ? 'Catalog încărcat · cheia netestată' : (statuses[item.status] || item.status);
+      card.append(node('p', `${spec.label} · ${state}`, 'helper'));
+      if (checkResult?.message) {
+        const report = node('p', checkResult.message, 'settings-check-result');
+        report.classList.toggle('settings-error', checkResult.status === 'FAILED' || checkResult.discovery_status === 'ERROR');
+        report.dataset.status = checkResult.status;
+        report.setAttribute('role', 'status');
+        card.append(report);
+      }
       if (item.checked_at) card.append(node('p', `Verificat: ${new Date(item.checked_at).toLocaleString('ro-RO')}`, 'helper'));
       // Three different truths, and the card says which one applies. "stored" means the
       // credentials are kept but nothing in the pipeline calls this vendor yet; "media" means
@@ -218,7 +244,7 @@ export function initSettings(api, hooks = {}) {
       modify.addEventListener('click', () => edit(content, item.kind, item));
       actions.append(modify);
       const check = node('button', spec.runtime === 'llm' ? 'Verifică și încarcă modelele' : 'Verifică accesul', 'secondary');
-      check.addEventListener('click', () => run(() => api(`/settings/integrations/${item.id}/check`, { method: 'POST' }), 'Verificarea s-a încheiat.'));
+      check.addEventListener('click', () => run(() => api(`/settings/integrations/${item.id}/check`, { method: 'POST' }), 'Verificarea s-a încheiat.', { connectionId: item.id }));
       actions.append(check);
       const remove = node('button', 'Șterge conexiunea', 'quiet');
       remove.addEventListener('click', () => {
@@ -317,7 +343,11 @@ export function initSettings(api, hooks = {}) {
       const payload = { kind, name: String(values.get('name')).trim(), config, secrets, expected_version: existing?.version || 0 };
       const identifier = existing?.id || crypto.randomUUID();
       run(async () => {
-        try { return await api(`/settings/integrations/${identifier}`, { method: 'PUT', body: JSON.stringify(payload) }); }
+        try {
+          const result = await api(`/settings/integrations/${identifier}`, { method: 'PUT', body: JSON.stringify(payload) });
+          connectionChecks.delete(identifier);
+          return result;
+        }
         finally { form.querySelectorAll('input[type=password]').forEach(input => { /** @type {HTMLInputElement} */ (input).value = ''; }); }
       }, 'Conexiune salvată. Verifică accesul înainte de folosire.');
     });

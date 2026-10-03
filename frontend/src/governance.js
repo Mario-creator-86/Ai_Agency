@@ -287,7 +287,7 @@ export function approvalCardHtml(request, o) {
     ? `<div class="approval-by">${o.person.seated ? `<span class="person-portrait approval-portrait" data-portrait="${e(o.person.id)}" aria-hidden="true"><canvas class="person-canvas" width="0" height="0"></canvas><span class="person-portrait-none">—</span></span>` : ''}<span>Cerută de <strong title="${e(request.requester)}">${e(o.person.name)}</strong></span></div>`
     : request.requester ? `<div class="approval-by"><span>Cerută de <strong>${e(request.requester)}</strong></span></div>` : '';
   return `
-    <article class="approval-card" data-tier="${e(tier)}" data-reversible="${request.reversible ? 'true' : 'false'}">
+    <article data-card-key="${e(request.id)}" class="approval-card" data-tier="${e(tier)}" data-reversible="${request.reversible ? 'true' : 'false'}">
       <div class="approval-head">
         <span class="approval-action" title="${e(request.action)}">${e(request.action_label || 'acțiune nenumită')}</span>
         <span class="tag approval-tier" title="${e(o.tierMeaning)}">${e(tier)}</span>
