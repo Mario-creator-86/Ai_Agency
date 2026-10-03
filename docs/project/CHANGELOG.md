@@ -1,5 +1,16 @@
 # Changelog
 
+## A paid step asks for its next round only — 2026-10-03
+
+His question: «De ce avem nevoie de asa de multe credite daca sa creezi o imagine costa 10-20 de credite». His choice: «Doar pentru runda următoare». Every provider faked, 0 credits; proven on fakes only.
+
+- **Next round, not the cap**: a paid step starts when the Runway balance holds its next round × 1.15 (the stills' first round, the test shot's one shot, the motion's shots, a redo's one purchase); the approved cap stays the ceiling. The LHC film's stills step now asks 166 credits, not 497.
+- **Every later purchase reads the balance again**: a re-roll, a clip-QC retry, the next shot; when the balance cannot hold it × 1.15 that scene stops cleanly (NEEDS_OWNER, LOW_BALANCE, his words with the balance and what is missing), what was bought is kept, the scene is not held against him.
+- **The sheet says it**: the footer's need is the next round's; each step shows its likely cost, its cap and its need; the page's reason names all three.
+- **His card**: a short balance at a paid step puts «Alimentez contul Runway cu cel puțin N credite» in his Decisions window, cleared by a later balance reading on the books (`balance_covers`), never by a vendor call.
+- **The repair's letter** names the film's title.
+- **The card never clears while he is still short**: it follows the film's newest need, and a step that starts withdraws it only when its balance covers what the card asks (verification pass).
+
 ## The Owner's decisions window — 2026-10-03
 
 His words: «trebuie să îmi apară un card… propria mea fereastră unde pot să accept sau refuz». Four items, every provider faked, 0 credits; proven on fakes only, the window not yet seen in a browser.

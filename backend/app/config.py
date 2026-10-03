@@ -248,9 +248,11 @@ class Settings(BaseSettings):
     #: delivered frame; 720p is the cheaper alternative the shooting sheet prices beside it.
     motion_resolution: Literal["1080p", "720p"] = "1080p"
 
-    #: How much more than a paid step's cap the vendor account must hold before the step is
-    #: asked or bought (STUDIO_PAID_STEP_BALANCE_MARGIN). 1.15: a step never starts on a
-    #: balance it could exhaust half-way, leaving a film paid for and unfinished.
+    #: How much more than a paid step's next purchase the vendor account must hold before it
+    #: is asked or bought (STUDIO_PAID_STEP_BALANCE_MARGIN): its next round to start, each
+    #: purchase after it before that purchase (the Owner's rule of 2026-10-03,
+    #: `media.balance_rule`); the cap he approved stays the step's ceiling. 1.15: a purchase is
+    #: never sent on a balance it could exhaust half-way.
     paid_step_balance_margin: float = Field(default=1.15, ge=1.0, le=3.0)
 
     #: How many paid attempts a scene may have (its still requests, or its shots) since the

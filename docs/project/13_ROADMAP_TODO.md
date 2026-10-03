@@ -54,6 +54,18 @@ cost comparison, and never at the price of a locked character's voice.
 Canonical phase numbering and original-version mapping: [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
 Early STOP/event primitives do not complete Phase 1/2/10 requirements.
 
+## Next-round balance — 2026-10-03
+
+The Owner: «De ce avem nevoie de asa de multe credite daca sa creezi o imagine costa 10-20 de
+credite». He chose «Doar pentru runda următoare». Done in code and its own tests, every provider
+faked (0 credits); proven on fakes only (see CURRENT_STATUS).
+
+- [x] NEXT_ROUND_BALANCE — `balance_rule`: start on the next round × 1.15, each later purchase × 1.15, a clean LOW_BALANCE stop per scene, the cap the ceiling; the sheet's footer and page; his low-balance card with `balance_covers`; the repair letter's title
+
+Still open:
+- [ ] Restart of his studio so it runs the new rule (the LHC sheet then asks 166 credits, his 316 start it)
+- [ ] A redo whose balance ran short (scene redo) puts no card yet; only the sheet's paid steps do
+
 ## Owner decisions window — 2026-10-03
 
 The Owner: «trebuie să îmi apară un card… propria mea fereastră unde pot să accept sau refuz».

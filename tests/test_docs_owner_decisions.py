@@ -101,7 +101,12 @@ def test_the_status_has_a_dated_section_above_the_audit_naming_each_item():
 
 def test_the_changelog_and_roadmap_lead_with_the_window():
     changelog = _text(PROJECT / "CHANGELOG.md")
-    assert changelog.startswith(f"# Changelog\n\n{CHANGELOG_HEADING}\n")
+    # Newest first: a later entry may stand above the window's (NEXT_ROUND_BALANCE, 2026-10-03).
+    assert changelog.startswith("# Changelog\n\n## ")
+    assert CHANGELOG_HEADING in changelog
+    assert changelog.find(CHANGELOG_HEADING) < changelog.find(
+        "## The production-readiness audit — 2026-10-01 → 2026-10-02"
+    )
     roadmap = _text(PROJECT / "13_ROADMAP_TODO.md")
     assert roadmap.find(ROADMAP_HEADING) < roadmap.find("## Production-readiness audit")
     section = _section(roadmap, ROADMAP_HEADING)

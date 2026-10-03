@@ -9,7 +9,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import math
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
@@ -24,6 +23,7 @@ from app.agents.models import AgentMessage
 from app.agents.structured import structured_run
 from app.db import lock_for_write
 from app.factual.sanitizer import wrap_in_inert_boundary
+from app.media.balance_rule import DEFAULT_MARGIN, needed_credits
 from app.media.models import Storyboard
 from app.media.prompt_agent import PROMPT_ROLE, PromptError, write_shot_prompts
 from app.media.sheet_story_repair import progress as story_progress
@@ -307,9 +307,11 @@ def sheet_issues(sheet: dict[str, Any]) -> list[dict[str, Any]]:
             continue
         if balance.get("read"):
             credits = balance.get("credits")
-            needed = (footer.get("balance_needed_credits") or {}).get(
-                name, math.ceil(float(step.get("cap_credits") or 0) * 1.15)
-            )
+            # The footer's need is the step's next round x the margin (the Owner's rule of
+            # 2026-10-03); a footer from before it is read by the same rule, never the cap.
+            needed = (footer.get("balance_needed_credits") or {}).get(name)
+            if needed is None:
+                needed = needed_credits(float(step.get("cost_credits") or 0), DEFAULT_MARGIN)
             if credits is None:
                 issues.append(
                     dict(
@@ -534,6 +536,13 @@ def director_assignment(
     return {**parsed.model_dump(), "run_id": final.get("id")}
 
 
+def _film_title(session: Session, storyboard_id: str) -> str:
+    """The film's title, as the Owner knows it; its short id only when it has none."""
+    board = session.get(Storyboard, storyboard_id)
+    title = str(board.title or "").strip() if board is not None else ""
+    return title or storyboard_id[:8]
+
+
 def _finish(
     engine: Engine,
     payload: dict[str, Any],
@@ -577,10 +586,12 @@ def _finish(
                 correlation_id=correlation,
             )
             if status == "WAITING_OWNER":
+                # The film by its title, as he knows it (2026-10-03), not by its id.
+                title = _film_title(session, payload["storyboard_id"])
                 post_message(
                     session,
                     intent="ESCALATE",
-                    subject=f"Foaia necesită intervenție: {payload['storyboard_id'][:8]}",
+                    subject=f"Foaia necesită intervenție: {title}"[:200],
                     body={"storyboard_id": payload["storyboard_id"], "kind": "sheet_repair_owner"},
                     body_text=note + "\n" + "\n".join(i["detail"] for i in remaining),
                     from_agent_id=director.id if director else None,

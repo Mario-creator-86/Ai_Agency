@@ -402,19 +402,23 @@ def test_a_balance_below_the_next_shots_price_stops_before_the_post(engine, tmp_
     assert models.posts() == 2, "a shot was POSTed with 200 credits left for a 340 shot"
     scenes = by_scene(result)
     assert scenes[2]["status"] == "PAID"
-    assert scenes[3]["status"] == "NOT_BOUGHT" and scenes[4]["status"] == "NOT_BOUGHT"
+    # The Owner's rule of 2026-10-03: the scene the balance cannot pay stops cleanly (his to
+    # top up, NEEDS_OWNER with LOW_BALANCE), and nothing after it is bought in this step.
+    assert scenes[3]["status"] == "NEEDS_OWNER" and scenes[3]["failure_kind"] == "LOW_BALANCE"
+    assert scenes[4]["status"] == "NOT_BOUGHT"
     assert "200" in result["stopped"] and "340" in result["stopped"]
     assert account.reads >= 4, "the balance was not read before every shot"
 
 
-def test_a_balance_below_the_step_cap_with_margin_refuses_before_asking(engine, tmp_path):
+def test_a_balance_below_the_next_round_with_margin_refuses_before_asking(engine, tmp_path):
     storyboard_id = a_film(engine, tmp_path, scenes=2)
-    account = Account(500)  # the test shot's cap is 680; 680 x 1.15 = 782
+    # The test shot's one shot is 340 credits; 340 x 1.15 = 391 (its cap of 680 is not asked).
+    account = Account(390)
     models = Models(SpyVideo("seedance2_5", account))
     with pytest.raises(MotionStepRefused) as refused:
         run(engine, storyboard_id, tmp_path, "test_shot", models, account)
     assert refused.value.status == "LOW_BALANCE" and refused.value.http_status == 409
-    assert "500" in refused.value.reason_ro
+    assert "390" in refused.value.reason_ro
     with Session(engine) as session:
         assert session.scalars(select(ApprovalRequest)).all() == []
     assert models.posts() == 0
@@ -708,7 +712,7 @@ def test_the_owners_settings_name_the_margin_and_the_resolution(engine, tmp_path
     assert settings.paid_step_balance_margin == pytest.approx(1.15)
     assert settings.motion_resolution == "1080p"
     storyboard_id = a_film(engine, tmp_path, scenes=2)
-    account = Account(1_000)  # covers 680 x 1.15 = 782, not 680 x 2
+    account = Account(500)  # covers the shot of 340 x 1.15 = 391, not 340 x 2
     models = Models(SpyVideo("seedance2_5", account))
     stricter = settings.model_copy(update={"paid_step_balance_margin": 2.0})
     with pytest.raises(MotionStepRefused) as refused:

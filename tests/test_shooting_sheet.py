@@ -335,15 +335,18 @@ def test_the_hero_step_answers_202_then_200_once_the_yes_for_this_sheet_is_spent
 
 
 @requires_ffmpeg
-def test_a_balance_of_696_under_the_cap_returns_409_before_the_owner_is_asked(
+def test_a_balance_under_the_next_round_returns_409_before_the_owner_is_asked(
     client, engine, headers, tmp_path
 ):
     storyboard_id = film_with_stills(engine, tmp_path, scenes=3)
-    account = Account(696)  # the Nepal account after the first render: 1662 - 966
+    # The Owner's rule of 2026-10-03: the hero's one shot (340) with the 15% margin is 391;
+    # its cap (680) stays the ceiling and is named, but it is not what the account must hold.
+    account = Account(390)
     models = Models(SpyVideo("seedance2_5", account))
     wire(client, tmp_path, runway_account=account, video_adapter_for_model=models)
     sheet = client.get(sheet_url(storyboard_id), headers=headers).json()
-    assert sheet["footer"]["balance"]["credits"] == 696.0
+    assert sheet["footer"]["balance"]["credits"] == 390.0
+    assert sheet["footer"]["balance_needed_credits"]["test_shot"] == 391
 
     response = client.post(
         step_url(storyboard_id, "test_shot"),
@@ -355,7 +358,8 @@ def test_a_balance_of_696_under_the_cap_returns_409_before_the_owner_is_asked(
     detail = response.json()["detail"]
     assert detail["status"] == "LOW_BALANCE"
     assert "Sold Runway insuficient" in detail["message"]
-    assert "696" in detail["message"] and "680" in detail["message"]
+    for words in ("390", "340", "391", "680"):
+        assert words in detail["message"], (words, detail["message"])
     assert approvals(engine) == [] and models.posts() == 0
 
 

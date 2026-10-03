@@ -169,6 +169,15 @@ def test_balance_block_is_escalated_and_never_funded_or_bought(engine, film, mon
         assert any(
             m.body_json.get("owner_attention") for m in session.scalars(select(AgentMessage))
         )
+        # His letter names the film by its title, not by eight characters of its id.
+        title = session.get(Storyboard, film).title
+        (letter,) = [
+            m
+            for m in session.scalars(select(AgentMessage))
+            if m.body_json.get("kind") == "sheet_repair_owner"
+        ]
+        assert letter.subject == f"Foaia necesită intervenție: {title}"
+        assert film[:8] not in letter.subject
 
 
 @pytest.mark.parametrize("stop,mode", [(True, "AUTONOMOUS_CEO"), (False, "MANUAL")])

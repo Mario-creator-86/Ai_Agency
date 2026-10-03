@@ -504,17 +504,19 @@ def test_at_every_stair_a_stale_hash_a_spent_yes_or_a_short_balance_buys_nothing
     # ---- stills
     plan_hash = current_hash(client, headers, storyboard_id)
     refused(step(client, headers, storyboard_id, "stills", foreign), "STALE_PLAN")
-    account.balance = 200  # the stills cap is 216 credits; with the 15% margin, 249
+    # The Owner's rule of 2026-10-03: the step asks its first round (72 credits) with the 15%
+    # margin, 83; its cap (216) stays the ceiling and is named.
+    account.balance = 80
     message = refused(step(client, headers, storyboard_id, "stills", plan_hash), "LOW_BALANCE")
-    assert "Sold Runway insuficient" in message and "216" in message
+    assert "Sold Runway insuficient" in message and "83" in message and "216" in message
     assert approvals(engine) == [], "a short balance still asked the Owner"
     account.balance = 10_000
     asked = step(client, headers, storyboard_id, "stills", plan_hash)
     assert asked.status_code == 202, asked.text
     owner_says_yes(client, headers, asked.json()["approval_id"], "Da, imaginile.")
-    # His yes is in hand, but the balance fell under the cap: still nothing is bought, and
+    # His yes is in hand, but the balance fell under the round: still nothing is bought, and
     # the yes is not spent on a purchase that did not happen.
-    account.balance = 200
+    account.balance = 80
     refused(step(client, headers, storyboard_id, "stills", plan_hash), "LOW_BALANCE")
     (yes,) = approvals(engine)
     assert yes.result == "APPROVED" and yes.consumed_at is None
@@ -532,7 +534,7 @@ def test_at_every_stair_a_stale_hash_a_spent_yes_or_a_short_balance_buys_nothing
 
     # ---- the hero test shot
     plan_hash = current_hash(client, headers, storyboard_id)
-    account.balance = 700  # the hero's cap is 680 credits; with the margin, 782
+    account.balance = 390  # the hero's one shot is 340 credits; with the margin, 391
     refused(step(client, headers, storyboard_id, "test_shot", plan_hash), "LOW_BALANCE")
     account.balance = 10_000
     asked = step(client, headers, storyboard_id, "test_shot", plan_hash)
@@ -567,8 +569,8 @@ def test_at_every_stair_a_stale_hash_a_spent_yes_or_a_short_balance_buys_nothing
     refused(step(client, headers, storyboard_id, "motion", before_look), "STALE_PLAN")
     current = sheet(client, headers, storyboard_id)
     plan_hash = current["sheet_hash"]
-    cap = current["steps"]["motion"]["cap_credits"]
-    account.balance = cap  # the cap itself, without the 15% margin
+    cost = current["steps"]["motion"]["cost_credits"]
+    account.balance = cost  # the round itself, without the 15% margin
     refused(step(client, headers, storyboard_id, "motion", plan_hash), "LOW_BALANCE")
     assert not any(a.action == "media.motion_purchase" for a in approvals(engine))
     account.balance = 10_000

@@ -89,7 +89,7 @@ const STEP_QUESTIONS = {
  */
 export const STEP_TIMEOUT_MS = 45 * 60 * 1000;
 
-/** The margin over a step's cap the Runway balance must hold (backend BALANCE_MARGIN). */
+/** The margin over a step's next round the Runway balance must hold to start it (backend balance_rule). */
 const BALANCE_MARGIN = 1.15;
 
 /** A scene composed locally, by kind: the word the backend's price line uses. */
@@ -400,12 +400,15 @@ export function stepButtons(sheet) {
     }
     if (toBuy.length) {
       const balance = footer.balance || {};
+      // The Owner's rule of 2026-10-03: a step starts on its next round × the margin (the
+      // backend's balance_needed_credits); its cap stays the ceiling and is named beside it.
+      const round = Number(step.cost_credits) || 0;
       const neededRaw = footer.balance_needed_credits ? footer.balance_needed_credits[name] : undefined;
-      const needed = Number.isFinite(Number(neededRaw)) ? Number(neededRaw) : Math.ceil(cap * BALANCE_MARGIN);
+      const needed = Number.isFinite(Number(neededRaw)) && neededRaw !== null ? Number(neededRaw) : Math.ceil(Math.round(round * BALANCE_MARGIN * 1e6) / 1e6);
       if (balance.credits === null || balance.credits === undefined || !Number.isFinite(Number(balance.credits))) {
         reasons.push(`Soldul Runway nu a putut fi citit (${balance.problem || 'necunoscut'}); nimic nu se cumpără pe un sold necunoscut.`);
       } else if (Number(balance.credits) < needed) {
-        reasons.push(`Sold Runway insuficient: ${creditWords(Number(balance.credits))}; pasul cere plafonul de ${creditWords(cap)} plus marja de 15% (${creditWords(needed)}).`);
+        reasons.push(`Sold Runway insuficient: ${creditWords(Number(balance.credits))}; runda următoare a pasului costă ${creditWords(round)}, cu marja de 15% ${creditWords(needed)}. Plafonul aprobat rămâne ${creditWords(cap)}.`);
       }
     }
     const daily = footer.daily_budget;

@@ -1736,6 +1736,9 @@ REFERENCE_SET_ACTION = "media.character_reference_set"
 #: Verdicts that speak about agents acting unasked: the Owner's own press goes on through them.
 OWNER_PRESS_PASSES = frozenset({"BLOCKED_MODE", "NEEDS_APPROVAL"})
 #: How much more than the set's price the vendor account must hold (as a paid step's margin).
+#: A reference set is one round (each slot bought once, never re-rolled), so the Owner's rule
+#: of 2026-10-03 (`balance_rule`: a paid step asks its next round x the margin, not its cap)
+#: is already what this check asks: every slot of that one round, x 1.15.
 REFERENCE_BALANCE_MARGIN = 1.15
 
 

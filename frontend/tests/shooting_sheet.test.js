@@ -276,7 +276,7 @@ test('every step button carries its price and its cap', () => {
   const hero = button(sheet(), 'test_shot');
   assert.equal(hero.price_ro, '340 de credite (3,40 USD)');
   assert.equal(hero.cap_ro, 'plafon 680 de credite (6,80 USD)');
-  assert.equal(hero.disabled, false, '900 credits hold the hero cap and its 15% (782)');
+  assert.equal(hero.disabled, false, '900 credits hold the hero shot and its 15% (391)');
   // the stills are all approved: nothing to buy, said in the backend's own words
   const stills = button(sheet(), 'stills');
   assert.equal(stills.disabled, true);
@@ -287,11 +287,20 @@ test('every step button carries its price and its cap', () => {
 });
 
 test('«Aprobă mișcarea» waits for the hero, an open BLOCK and the balance, and says why in Romanian', () => {
-  // the fixture: the hero test shot is not bought, and 900 credits are under the motion cap × 1.15
+  // the fixture: the hero test shot is not bought; 900 credits hold the motion's next round
+  // (460 × 1.15 = 529, the Owner's rule of 2026-10-03), so only the hero holds it
   const first = button(sheet(), 'motion');
   assert.equal(first.disabled, true);
   assert.ok(first.reasons.some((/** @type {string} */ r) => r.startsWith('Întâi cadrul de probă (scena 1)')), first.reason_ro);
-  assert.ok(first.reasons.includes('Sold Runway insuficient: 900 de credite; pasul cere plafonul de 800 de credite plus marja de 15% (920 de credite).'));
+  assert.ok(!first.reasons.some((/** @type {string} */ r) => r.startsWith('Sold Runway')), first.reason_ro);
+  // 500 credits are under the round and its margin: the reason names the round, the need and the cap
+  assert.deepEqual(button(withHero('APPROVED', 500), 'motion').reasons, ['Sold Runway insuficient: 500 de credite; runda următoare a pasului costă 460 de credite, cu marja de 15% 529 de credite. Plafonul aprobat rămâne 800 de credite.']);
+  // an older backend without balance_needed_credits: the same rule from the step's round, never its cap
+  const older = withHero('APPROVED', 529);
+  delete older.footer.balance_needed_credits;
+  assert.equal(button(older, 'motion').disabled, false);
+  older.footer.balance.credits = 528;
+  assert.equal(button(older, 'motion').disabled, true);
 
   // bought but not yet looked at
   const waiting = button(withHero('PAID'), 'motion');
@@ -311,16 +320,18 @@ test('«Aprobă mișcarea» waits for the hero, an open BLOCK and the balance, a
   assert.equal(button(blocked, 'test_shot').disabled, true, 'a BLOCK holds every paid step');
 
   // the balance under the cap, and a balance nobody could read
-  const poor = withHero('APPROVED', 900);
+  const poor = withHero('APPROVED', 500);
   assert.equal(button(poor, 'motion').disabled, true);
   const unread = withHero('APPROVED');
   unread.footer.balance = { credits: null, read: false, problem: 'niciun cont Runway conectat' };
   assert.deepEqual(button(unread, 'motion').reasons, ['Soldul Runway nu a putut fi citit (niciun cont Runway conectat); nimic nu se cumpără pe un sold necunoscut.']);
 
   // the reason is printed under the disabled button
-  const html = sheetHtml(sheet(), { escape: e });
+  const short = sheet();
+  short.footer.balance.credits = 300;
+  const html = sheetHtml(short, { escape: e });
   assert.match(html, /data-sheet-action="step" data-step="motion"[^>]*disabled/);
-  assert.ok(html.includes('Sold Runway insuficient: 900 de credite'));
+  assert.ok(html.includes('Sold Runway insuficient: 300 de credite'));
   assert.ok(html.includes('Întâi cadrul de probă (scena 1)'));
 });
 

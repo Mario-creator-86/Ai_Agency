@@ -18,7 +18,9 @@ What this step does, in order, and what stops it:
    a plan_hash that is not the current plan's (STALE_PLAN); in PRODUCTION a LIVE scene whose
    prompt was not written by the model, or for the office serial composed from its fixed
    series look (NEEDS_SHOT_PLAN); an open lint BLOCK (LINT_BLOCKED);
-   a Runway balance below the cap x 1.15, or one that could not be read (LOW_BALANCE).
+   a Runway balance below the step's first round x 1.15 (the Owner's rule of 2026-10-03,
+   `balance_rule`: the cap is the ceiling, not what the account must hold to start), or one
+   that could not be read (LOW_BALANCE).
 3. The Owner's gate: `may_act('media.stills_purchase', context={plan_hash, cap_credits})`.
    With no answer it is one ApprovalRequest (NEEDS_APPROVAL, a 202); his yes is spent there,
    in the same transaction, before the first image is bought. One yes buys one stills step
@@ -41,9 +43,12 @@ What this step does, in order, and what stops it:
    problem or a second refused request in a row stops the step.
 7. The cap binds inside the loop: before every request, the credits already committed plus
    that request's price must stay within the approved cap (STOPPED_AT_CAP otherwise). The
-   balance is read before every request (it buys nothing) and the step halts below the
-   request's price. The balance before and after gives the measured credits, written on
-   each take and, with the Runway integration named, as MEASURED prices.
+   balance is read before every request (it buys nothing) and must hold that request's price
+   x the margin: when it does not, the scene stops cleanly (NEEDS_OWNER, failure_kind
+   LOW_BALANCE, not held against the Owner), what was bought is kept and nothing more is
+   bought in the step (`balance_rule.purchase_stop_ro`; the summary's ``low_balance``). The
+   balance before and after gives the measured credits, written on each take and, with the
+   Runway integration named, as MEASURED prices.
 
 8. Every request is a SceneTake (SUBMITTED, with the vendor's task id) the moment the vendor
    accepts it, before any poll; its candidates land on it. A task whose stills do not arrive
@@ -114,6 +119,14 @@ from app.media.assembler import (
     uncounted_drop,
     usable_take,
 )
+from app.media.balance_rule import (
+    DEFAULT_MARGIN,
+    LOW_BALANCE,
+    low_balance_record,
+    needed_credits,
+    purchase_stop_ro,
+    start_refusal_ro,
+)
 from app.media.cost_plan import (
     STILL_CANDIDATES,
     STILLS_MODEL,
@@ -170,8 +183,9 @@ CHARACTER_FIGURE = (
     "Figure 1 is the character reference of {name}: draw {name} with exactly this face, hair, "
     "outfit and colours; do not copy its background or its pose."
 )
-#: The account must hold this much more than the cap before the step is asked or bought.
-BALANCE_MARGIN = 1.15
+#: The account must hold this much more than the next purchase (the first round to start,
+#: each request after it) before it is asked or bought (`balance_rule`).
+BALANCE_MARGIN = DEFAULT_MARGIN
 #: The failure code a candidate the studio's own gate rejected carries.
 GATE_FAILURE_CODE = "LOCAL.STILL_GATE"
 #: Failure kinds tried once more on the same words (production_policy.classify_failure).
@@ -893,8 +907,13 @@ def run_stills_stage(
     table: PriceTable | None = None,
     requester: str = "video_editor",
     meter: SpendMeter | None = None,
+    margin: float | None = None,
 ) -> dict[str, Any]:
     """The stills step of one film, bought only under the Owner's yes for this plan.
+
+    ``margin`` is the Owner's balance margin (``settings.paid_step_balance_margin``; 1.15 by
+    default): the step starts when the balance holds its first round x the margin, and buys
+    each request only while the balance holds that request's price x the margin.
 
     ``meter`` is kept up to date as requests are sent and credits committed, so the caller
     can book what was spent when the step raises half-way. A request that may have been
@@ -1008,14 +1027,17 @@ def run_stills_stage(
         if no_room:
             raise StillsStageRefused(LOW_DISK, no_room, plan=plan)
     cap = int(plan["cap_credits"])
+    margin = float(margin or BALANCE_MARGIN)
     read, before, problem = _read_balance(image_adapter) if plan["to_buy"] else (False, None, None)
     if problem is not None:
-        raise StillsStageRefused("LOW_BALANCE", f"Nu se cumpără imagini: {problem}.", plan=plan)
-    if before is not None and before < cap * BALANCE_MARGIN:
+        raise StillsStageRefused(LOW_BALANCE, f"Nu se cumpără imagini: {problem}.", plan=plan)
+    # The Owner's rule (2026-10-03): the step starts on its first round x the margin; the cap
+    # stays the ceiling, read inside the loop, and every later request reads the balance again.
+    first_round = int(plan["cost_credits"])
+    if before is not None and before < needed_credits(first_round, margin):
         raise StillsStageRefused(
-            "LOW_BALANCE",
-            f"Soldul Runway ({before:.0f} credite) este sub plafonul pasului de imagini "
-            f"({cap} credite) plus marja de 15%: alimentați contul înainte de aprobare.",
+            LOW_BALANCE,
+            start_refusal_ro(before, first_round, cap, margin, "pasului de imagini"),
             plan=plan,
         )
 
@@ -1058,6 +1080,8 @@ def run_stills_stage(
     stopped: str | None = None
     previous_kind: str | None = None
     unverified = False
+    # Where the balance stopped the step, if it did (`balance_rule.low_balance_record`).
+    low_balance: dict[str, Any] | None = None
 
     for scene in scenes:
         entry: dict[str, Any] = {"scene_index": scene.index, "scene_kind": scene.kind}
@@ -1146,14 +1170,19 @@ def run_stills_stage(
                 outcome = {"status": "NOT_BOUGHT", "reason": stopped}
                 break
             _read, balance, problem = _read_balance(image_adapter)
-            if problem is not None or (balance is not None and balance < per_request):
-                stopped = (
-                    f"Nu se mai cumpără imagini: {problem}."
-                    if problem
-                    else f"Soldul Runway ({balance:.0f} credite) nu mai acoperă o cerere "
-                    f"({per_request} credite)."
-                )
+            if problem is not None:
+                stopped = f"Nu se mai cumpără imagini: {problem}."
                 outcome = {"status": "NOT_BOUGHT", "reason": stopped}
+                break
+            if balance is not None and balance < needed_credits(per_request, margin):
+                # The Owner's rule (2026-10-03): this request is not bought on a balance that
+                # cannot hold it with the margin. The scene waits for his top-up; what it
+                # bought is kept and nothing more is bought in this step.
+                what = "reluarea imaginilor" if rerolls or retried else "o nouă cerere de imagini"
+                stopped = purchase_stop_ro(scene.index, balance, per_request, margin, what)
+                low_balance = low_balance_record(scene.index, balance, per_request, margin, stopped)
+                entry["failure_kind"] = LOW_BALANCE
+                outcome = {"status": "NEEDS_OWNER", "reason": stopped}
                 break
             drop = uncounted_drop(before, balance, ledger.committed)
             if drop is not None:
@@ -1361,7 +1390,8 @@ def run_stills_stage(
         if outcome["status"] in ("NEEDS_OWNER", "COMPOSE_LOCALLY"):
             # Whether the scene is held for the Owner (assembler.scene_memory): yes, unless
             # what went wrong cost nothing and was the vendor's or the account's.
-            free = (
+            # A scene the balance stopped is never held: his top-up is the decision.
+            free = entry.get("failure_kind") == LOW_BALANCE or (
                 str(entry.get("failure_kind") or "") in FREE_FAILURE_KINDS
                 and ledger.committed <= committed_before_scene
             )
@@ -1431,6 +1461,8 @@ def run_stills_stage(
         "cap_credits": cap,
         "needs_owner": needs_owner,
         "stopped": stopped,
+        # The scene the balance stopped, the balance read and what was needed (or None).
+        "low_balance": low_balance,
         "reference_unverified": unverified,
         # Requests still open at the vendor (collected later, never bought again), and what
         # was collected before this step looked at anything.

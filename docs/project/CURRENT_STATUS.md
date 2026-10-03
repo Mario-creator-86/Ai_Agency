@@ -79,6 +79,79 @@ window (2026-10-03)» below), except the CI remote and the always-on host.
    the clip QC thresholds, the captions, the grade and the mix. Loosen the rule to MODE only after.
 6. Decide: a git remote or runner for CI; `narration_purchase`; LOCAL_MOVE; an always-on host.
 
+## A paid step asks for its next round only (2026-10-03, NEXT_ROUND_BALANCE)
+
+Claim: NEXT_ROUND_BALANCE (Claude, 2026-10-03) — backend/app/media (balance_rule, stills_stage,
+shooting_sheet, assembler, blocker_repair), app/decisions (sources, services), the sheet's page
+(frontend/src/shooting_sheet.js) and their tests. Closed the same day, tested as below.
+
+The Owner (2026-10-03): «De ce avem nevoie de asa de multe credite daca sa creezi o imagine
+costa 10-20 de credite». His LHC film (storyboard 4d0da5d9) waited WAITING_OWNER on LOW_BALANCE
+with 316 credits: the stills step buys 8 LIVE scenes × 2 candidates × 9 credits = 144 credits,
+but it asked the balance for its whole cap (432, the first round plus two re-roll rounds) × 1.15
+= 497 before it started. On a card he chose «Doar pentru runda următoare». Test-first, every
+provider faked, 0 credits, no run started, his studio on :8000 not touched.
+
+- **The rule (`app.media.balance_rule`).** To start a paid step the balance must hold its next
+  round × the margin (`settings.paid_step_balance_margin`, 1.15): the stills step's first round,
+  the test shot's one shot, the motion step's shots, a redo's one purchase. Before each further
+  purchase (a stills request, a re-roll, a clip-QC retry, the next shot, a redo's re-roll) the
+  balance is read again and must hold that purchase's price × the margin; when it does not, that
+  scene stops cleanly: NEEDS_OWNER, `failure_kind` LOW_BALANCE, a Romanian reason naming the
+  balance, the price, the need and what is missing; what was bought is kept, nothing more is
+  bought in the step, and the scene is not held against him (its hold event says
+  `holds: false`), so a top-up lets it go on. The approved cap stays the step's absolute
+  ceiling (STOPPED_AT_CAP unchanged). An unreadable or refused balance still stops the step.
+  Each step summary carries `low_balance` (scene, credits read, price, need, missing, reason).
+- **The sheet.** `footer.balance_needed_credits` is the next-round need of each step; the new
+  `footer.balance_rule` gives each step's round, cap, need, margin and a line («Pornește cu …
+  în cont: runda următoare costă …, plus marja de 15%. Plafonul aprobat rămâne …»). The page's
+  reason names the round, the need and the cap. `run_sheet_step` records every reading it takes
+  (`media.paid_step_balance_read`).
+- **His card.** A LOW_BALANCE at a paid step (the start check, or a scene stopped inside the
+  step) proposes a card in his Decisions window (`low_balance:film:{storyboard}`): «Alimentez
+  contul Runway cu cel puțin N credite» (guided: top up on Runway's own site; the card opens the film's place) or «Aștept»; it clears
+  through the new condition `balance_covers`, which reads the last recorded balance reading,
+  never the vendor; a step of the film that starts withdraws it when its balance covers what
+  the card asks. The card follows the film's newest need: an unanswered card is replaced
+  with the new amount, one he accepted keeps its words and its condition takes the new
+  need, so it never clears while the account is still short. The day's letter stays.
+- **The repair.** `blocker_repair` reads the footer's need, and a footer without it falls back
+  on the same rule from the step's round (never the cap); its letter to him is titled
+  «Foaia necesită intervenție: <titlul filmului>».
+- **Character reference sets** (`media.services.REFERENCE_BALANCE_MARGIN`) are unchanged: a set
+  is one round (each slot bought once, never re-rolled), so its check already asks that round
+  × 1.15.
+- **On a copy of his database** (data/studio.db copied with -wal/-shm into the scratchpad,
+  `build_sheet(read_live=False)`, settings without .env, sockets refused): the LHC sheet's
+  stills step buys scenes 1, 3–9, 18 credits each: likely cost 144 credits, cap 432; it now asks
+  **166 credits** to start (before: 497). His 316 credits start it; after the first round about
+  172 are left, and each re-roll (18) asks 21 before it is bought.
+- **Tests.** `tests/test_next_round_balance.py` (14) is new; the old cap-based expectations were
+  rewritten in test_stills_stage, test_film_costing, test_film_dry_run, test_shooting_sheet,
+  test_sheet_blocker_repair and the page's shooting_sheet.test.js (fixture needs 391 / 529).
+  Run: those files with test_owner_decision_sources and test_owner_decisions (160 passed), and
+  the neighbours test_clip_qc_wiring, test_scene_redo, test_character_reference_set,
+  test_sheet_repair_guard, test_daily_run_stages, test_autonomous_day,
+  test_docs_owner_decisions, test_motion, test_sheet_assemble (152 passed); ruff check, ruff
+  format --check, mypy backend, scripts/check_docs.py, npm test (771) and npm run check pass.
+  Proven on fakes only; his studio runs the old rule until he restarts it.
+- **Adversarial verification (same day, Claude).** Found and fixed, test first: a card for a
+  re-roll's 21 credits stayed open unchanged when the film's next start needed 83, so a reading
+  of 50 cleared it while the account was still short; and any step that started withdrew the
+  film's card even when its balance did not cover the card's (larger) need
+  (`decisions.sources.film_low_balance` / `film_balance_covered`). Five tests added to
+  test_next_round_balance.py (19 now): the larger need replaces the card, a step on a smaller
+  need keeps a larger card, an accepted card follows the new need, an agent cannot answer the
+  card, and a cap smaller than one shot buys nothing. Run: the touched files and their
+  neighbours (stills, costing, dry run, sheet, sheet repair and its guard, decisions and their
+  sources, clip QC, scene redo, reference sets, paid-path escapes, interrupted steps, economy
+  under concurrency: 224 passed; daily stages, autonomous day, motion, sheet assemble and the
+  doc tests: 141 passed); ruff, ruff format --check, mypy backend, check_docs, npm test (771)
+  and npm run check pass. Left open: a stage-level or redo LOW_BALANCE proposes no card; the
+  sheet page builds its footer without the settings, so a margin set in .env shows as 1.15 on
+  the page (the step itself uses the setting).
+
 ## The Owner's decisions window (2026-10-03)
 
 The Owner (2026-10-03): «Dacă sunt decizii pe care eu ca owner trebuie să le iau, trebuie să îmi

@@ -489,6 +489,8 @@ CONDITIONS: dict[str, Condition] = {
     "never": _never,
     "youtube_channel_connected": _condition_from_sources("youtube_channel_connected"),
     "sheet_repair_resumed": _condition_from_sources("sheet_repair_resumed_condition"),
+    # The last balance reading a paid step recorded covers the card's need (2026-10-03).
+    "balance_covers": _condition_from_sources("balance_covers"),
 }
 
 

@@ -38,6 +38,15 @@ from app.config import ROOT
 from app.db import lock_for_write
 from app.factual.editorial import dangles
 from app.media import music_library
+from app.media.balance_rule import (
+    DEFAULT_MARGIN,
+    LOW_BALANCE,
+    low_balance_record,
+    margin_of,
+    needed_credits,
+    purchase_stop_ro,
+    start_refusal_ro,
+)
 from app.media.cards import (
     CARD_KINDS,
     CardError,
@@ -6165,8 +6174,15 @@ MOTION_STEP_ACTIONS: dict[str, str] = {
 }
 #: The take kind each step writes.
 MOTION_STEP_TAKE_KINDS: dict[str, str] = {TEST_SHOT_STEP: "test_shot", MOTION_STEP: "motion"}
-#: The account must hold this much more than a paid step's cap before it is asked or bought.
-PAID_STEP_BALANCE_MARGIN = 1.15
+#: The account must hold this much more than a paid step's next purchase before it is asked
+#: or bought: its first round to start, each shot after it (`balance_rule`, the Owner's rule
+#: of 2026-10-03). The cap he approved stays the step's ceiling.
+PAID_STEP_BALANCE_MARGIN = DEFAULT_MARGIN
+#: Each motion step in the sentence «Runda următoare a ... costă ...».
+STEP_ROUND_WORDS: dict[str, str] = {
+    TEST_SHOT_STEP: "cadrului de probă",
+    MOTION_STEP: "restului mișcării",
+}
 #: Failures tried once more on the same model, the same request and the same seed.
 MOTION_RETRY_KINDS: tuple[str, ...] = ("TRANSIENT", "BAD_OUTPUT", "TECHNICAL")
 #: The film's resolution unless the settings name another.
@@ -8432,7 +8448,7 @@ def run_motion_step(
     resolution = resolution or str(
         getattr(settings, "motion_resolution", None) or MOTION_STEP_RESOLUTION
     )
-    margin = float(getattr(settings, "paid_step_balance_margin", None) or PAID_STEP_BALANCE_MARGIN)
+    margin = margin_of(settings)
     caps = _capabilities(engine, capabilities, integration_id)
     environment = environment or studio_environment(engine)
     state = _motion_state(
@@ -8520,13 +8536,21 @@ def run_motion_step(
             source = adapter_for_model(str(view[to_buy[0]]["model_id"]))
         read, before, problem = _account_balance(source)
         if problem is not None:
-            raise MotionStepRefused("LOW_BALANCE", f"Nu se cumpără mișcare: {problem}.", plan=plan)
-        if before is not None and before < cap * margin:
+            raise MotionStepRefused(LOW_BALANCE, f"Nu se cumpără mișcare: {problem}.", plan=plan)
+        # The Owner's rule (2026-10-03): the step starts on its next round (the test shot's one
+        # shot, the motion's shots, a redo's one shot) x the margin; the cap stays the ceiling
+        # and every shot after the first reads the balance again.
+        first_round = int(step_plan["cost_credits"])
+        if before is not None and before < needed_credits(first_round, margin):
             raise MotionStepRefused(
-                "LOW_BALANCE",
-                f"Soldul furnizorului ({before:.0f} credite) este sub plafonul pasului "
-                f"({cap} credite) plus marja de {round((margin - 1) * 100)}%: alimentați "
-                "contul înainte de aprobare.",
+                LOW_BALANCE,
+                start_refusal_ro(
+                    before,
+                    first_round,
+                    cap,
+                    margin,
+                    STEP_ROUND_WORDS.get(step, f"refacerii scenei {redo_scene}"),
+                ),
                 plan=plan,
             )
         with Session(engine) as session, session.begin():
@@ -8570,6 +8594,8 @@ def run_motion_step(
     bought_now: list[int] = []
     stopped: str | None = None
     previous_kind: str | None = None
+    # Where the balance stopped the step, if it did (`balance_rule.low_balance_record`).
+    low_balance: dict[str, Any] | None = None
     # Paid requests per scene since the Owner last decided about it (scene_memory), this
     # step's included: past the limit nothing more is bought for the scene without him. A redo
     # is his own act and is not counted against it.
@@ -8639,6 +8665,8 @@ def run_motion_step(
         remembered_here = state["memory"].get(index)
         sent[index] = remembered_here.attempts if remembered_here is not None else 0
         committed_before_scene = meter.committed
+        # The clip-QC retry this scene could not buy on the balance, if any.
+        retry_short: dict[str, Any] = {}
 
         def buy_retry(
             new_seed: int,
@@ -8651,23 +8679,27 @@ def run_motion_step(
             _seconds: int = seconds,
             _still: SceneTake = still_take,
             _identity: str = identity,
+            _short: dict[str, Any] = retry_short,
         ) -> tuple[Path | None, str | None]:
             """Clip QC's one retry of this scene: the same model and still, seed + 1, the
             camera move asked more firmly; bought like any shot (balance, stop, take)."""
-            nonlocal stopped
+            nonlocal stopped, low_balance
             if stop_requested(engine):
                 stopped = "Proprietarul a oprit autonomia; nu se mai cumpără mișcare."
                 return None, None
             if over_attempts(_index):
                 return None, None
             _read, balance, problem = _account_balance(source)
-            if problem is not None or (balance is not None and balance < _price):
-                stopped = (
-                    f"Nu se mai cumpără mișcare: {problem}."
-                    if problem
-                    else f"Soldul furnizorului ({balance:.0f} credite) nu mai acoperă reluarea "
-                    f"scenei {_index} ({_price} credite)."
+            if problem is not None:
+                stopped = f"Nu se mai cumpără mișcare: {problem}."
+                return None, None
+            if balance is not None and balance < needed_credits(_price, margin):
+                # The Owner's rule (2026-10-03): the retry is a purchase like any other.
+                stopped = purchase_stop_ro(
+                    _index, balance, _price, margin, "reluarea cadrului după controlul clipului"
                 )
+                low_balance = low_balance_record(_index, balance, _price, margin, stopped)
+                _short.update(low_balance)
                 return None, None
             drop = uncounted_drop(before, balance, meter.committed)
             if drop is not None:
@@ -8802,14 +8834,24 @@ def run_motion_step(
                 outcome = {"status": "NOT_BOUGHT", "reason": stopped}
                 break
             _read, balance, problem = _account_balance(source)
-            if problem is not None or (balance is not None and balance < price):
-                stopped = (
-                    f"Nu se mai cumpără mișcare: {problem}."
-                    if problem
-                    else f"Soldul furnizorului ({balance:.0f} credite) nu mai acoperă cadrul "
-                    f"scenei {index} ({price} credite)."
-                )
+            if problem is not None:
+                stopped = f"Nu se mai cumpără mișcare: {problem}."
                 outcome = {"status": "NOT_BOUGHT", "reason": stopped}
+                break
+            if balance is not None and balance < needed_credits(price, margin):
+                # The Owner's rule (2026-10-03): this shot is not bought on a balance that
+                # cannot hold it with the margin. The scene waits for his top-up; what the step
+                # bought is kept and nothing more is bought in it.
+                stopped = purchase_stop_ro(
+                    index,
+                    balance,
+                    price,
+                    margin,
+                    "cadrul" if attempts == 0 else "o nouă încercare a cadrului",
+                )
+                low_balance = low_balance_record(index, balance, price, margin, stopped)
+                entry["failure_kind"] = LOW_BALANCE
+                outcome = {"status": "NEEDS_OWNER", "reason": stopped}
                 break
             drop = uncounted_drop(before, balance, meter.committed)
             if drop is not None:
@@ -9071,6 +9113,11 @@ def run_motion_step(
             }
             if checked["reason"]:
                 outcome["reason"] = checked["reason"]
+            if retry_short and checked["status"] != "PAID":
+                # Its retry was not bought on the balance: the scene waits for his top-up.
+                entry["failure_kind"] = LOW_BALANCE
+                outcome["reason"] = f"{outcome.get('reason') or ''} {retry_short['reason_ro']}"
+                outcome["reason"] = outcome["reason"].strip()
             if checked["status"] != "PAID" and index in bought_now:
                 bought_now.remove(index)
             if checked["cap_stop"] and stopped is None:
@@ -9079,8 +9126,9 @@ def run_motion_step(
         entry["attempts"] = attempts
         if outcome["status"] in ("NEEDS_OWNER", "NEEDS_STILL"):
             # Whether the scene is held for the Owner (scene_memory): yes, unless what went
-            # wrong cost nothing and was the vendor's or the account's (no credits, a 503).
-            free = (
+            # wrong cost nothing and was the vendor's or the account's (no credits, a 503), or
+            # the balance stopped it (his top-up is the decision, 2026-10-03).
+            free = entry.get("failure_kind") == LOW_BALANCE or (
                 str(entry.get("failure_kind") or "") in FREE_FAILURE_KINDS
                 and meter.committed <= committed_before_scene
             )
@@ -9149,6 +9197,8 @@ def run_motion_step(
         "balance_after": after,
         "cap_credits": cap,
         "stopped": stopped,
+        # The scene the balance stopped, the balance read and what was needed (or None).
+        "low_balance": low_balance,
         "needs_owner": [e["scene_index"] for e in results if e.get("status") == "NEEDS_OWNER"],
         "needs_still": [e["scene_index"] for e in results if e.get("status") == "NEEDS_STILL"],
         # Paid tasks still open at the vendor (collected later, never bought again), the
@@ -11257,15 +11307,19 @@ def _redo_still(
             findings=blocks,
         )
     cap = int(plan["cap_credits"])
-    margin = float(getattr(settings, "paid_step_balance_margin", None) or PAID_STEP_BALANCE_MARGIN)
+    margin = margin_of(settings)
     read, before, problem = stills._read_balance(image_adapter)
     if problem is not None:
-        raise SceneRedoRefused("LOW_BALANCE", f"Nu se cumpără imagini: {problem}.", plan=plan)
-    if before is not None and before < cap * margin:
+        raise SceneRedoRefused(LOW_BALANCE, f"Nu se cumpără imagini: {problem}.", plan=plan)
+    # The Owner's rule (2026-10-03): the redo starts on its one purchase (a pair of candidates)
+    # x the margin; each re-roll reads the balance again, and the cap stays the ceiling.
+    one_purchase = int(plan["credits"])
+    if before is not None and before < needed_credits(one_purchase, margin):
         raise SceneRedoRefused(
-            "LOW_BALANCE",
-            f"Soldul Runway ({before:.0f} credite) este sub plafonul refacerii ({cap} credite) "
-            f"plus marja de {round((margin - 1) * 100)}%: alimentați contul înainte de aprobare.",
+            LOW_BALANCE,
+            start_refusal_ro(
+                before, one_purchase, cap, margin, f"refacerii imaginii scenei {index}"
+            ),
             plan=plan,
         )
     with Session(engine) as session, session.begin():
@@ -11350,6 +11404,7 @@ def _redo_still(
         work_dir=work_dir,
         before=before,
         meter=meter,
+        margin=margin,
     )
     outcome = buyer.run()
     measured = _measured_still_spend(
@@ -11433,13 +11488,27 @@ class _StillRedoBuyer:
                 }
                 break
             _read, balance, problem = stills._read_balance(c["image_adapter"])
-            if problem is not None or (balance is not None and balance < per_request):
+            if problem is not None:
                 outcome = {
                     "status": "NOT_BOUGHT",
-                    "reason": f"Nu se mai cumpără imagini: {problem}."
-                    if problem
-                    else f"Soldul Runway ({balance:.0f} credite) nu mai acoperă o cerere "
-                    f"({per_request} credite).",
+                    "reason": f"Nu se mai cumpără imagini: {problem}.",
+                }
+                break
+            margin = float(c.get("margin") or PAID_STEP_BALANCE_MARGIN)
+            if balance is not None and balance < needed_credits(per_request, margin):
+                # The Owner's rule (2026-10-03): each purchase of the redo reads the balance.
+                reason = purchase_stop_ro(
+                    index,
+                    balance,
+                    per_request,
+                    margin,
+                    "reluarea imaginilor" if self.rerolls or retried else "imaginile refacerii",
+                )
+                outcome = {
+                    "status": "NEEDS_OWNER",
+                    "reason": reason,
+                    "failure_kind": LOW_BALANCE,
+                    "low_balance": low_balance_record(index, balance, per_request, margin, reason),
                 }
                 break
             drop = uncounted_drop(c.get("before"), balance, self.committed)
@@ -11564,7 +11633,8 @@ class _StillRedoBuyer:
                     "redo": True,
                     "failure_kind": outcome.get("failure_kind"),
                     "identity": identity_key(scene.identity),
-                    "holds": True,
+                    # A redo the balance stopped waits for his top-up, not for his decision.
+                    "holds": outcome.get("failure_kind") != LOW_BALANCE,
                 },
                 c["correlation_id"],
             )

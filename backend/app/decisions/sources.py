@@ -5,6 +5,11 @@ PROPOSES a card, and keeps its letter:
 
 - the daily run waiting OVER_DAILY_BUDGET (or with no daily budget) at a film's paid step:
   a budget card with what the film needs (`film_budget`, from `runbook.stages._sheet_letter`);
+- a film's paid step that did not start, or stopped a scene, on the Runway balance (the Owner's
+  rule of 2026-10-03: the balance holds the next round, or the next purchase, x the margin): a
+  card to top up the account with what is missing, cleared by a later balance reading that
+  covers it, read from the books (`film_low_balance` / `film_balance_covered`, from
+  `media.shooting_sheet`; the condition `balance_covers`);
 - a model connection its provider refused with HTTP 401, 402 or 403: a reconnect card naming
   the connection and its Settings place, withdrawn by the next run that succeeds on it
   (`model_run_finished`, from `agents.services.run_agent_task`);
@@ -39,7 +44,7 @@ from typing import Any
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from app.decisions.models import OwnerDecision
+from app.decisions.models import OPEN_STATUSES, OwnerDecision
 from app.decisions.services import (
     OWNER,
     DecisionApplyFailed,
@@ -105,6 +110,10 @@ def film_budget_key(storyboard_id: str) -> str:
 
 def sheet_repair_key(storyboard_id: str, cause: str) -> str:
     return f"sheet_repair_paused:{storyboard_id}:{cause}"
+
+
+def low_balance_key(storyboard_id: str) -> str:
+    return f"low_balance:film:{storyboard_id}"
 
 
 # ------------------------------------------------------------------------- the common rule
@@ -426,6 +435,124 @@ def film_budget(
         return card is not None
 
     return bool(_own_transaction(engine, "film_budget", work))
+
+
+# ------------------------------------------- (a2) a film's paid step the balance stopped
+
+
+def film_low_balance(
+    engine: Engine,
+    storyboard_id: str,
+    *,
+    title: str,
+    step_words: str,
+    short: Mapping[str, Any],
+) -> bool:
+    """A paid step of the film did not start, or stopped a scene, on the Runway balance (the
+    Owner's rule of 2026-10-03: the balance holds the next round, or the next purchase, x the
+    margin). A card with what is missing for that purchase, cleared by a later balance reading
+    that covers it (`balance_covers`); the step's letter, if the day writes one, stays.
+    Returns whether a card stands."""
+    needed = int(short.get("needed_credits") or 0)
+    missing = int(short.get("missing_credits") or 0)
+    if needed <= 0 or missing <= 0:
+        return False
+
+    def work(session: Session) -> bool:
+        standing = _open_low_balance_card(session, storyboard_id)
+        if standing is not None and _card_need(standing) != needed:
+            # The film's newest need is what the card asks (a re-roll's 21 credits must not
+            # clear on 50 when the next start needs 83). A card he has not answered is
+            # replaced; one he accepted and is carrying out keeps its words, and its condition
+            # follows the new need, so it never clears while the account is still short.
+            if standing.status == "PENDING":
+                withdraw_owner_decision(
+                    session,
+                    decision_id=standing.id,
+                    reason_ro="Suma necesară s-a schimbat; cardul nou spune cât lipsește acum.",
+                    source="paid_step",
+                )
+            else:
+                standing.clears_when = {"type": "balance_covers", "credits": needed}
+                return True
+        lacking = count(missing, "credit", "credite")
+        card = ask(
+            session,
+            kind="low_balance",
+            dedupe_key=low_balance_key(storyboard_id),
+            source="paid_step",
+            subject_type="storyboard",
+            subject_id=storyboard_id,
+            title_ro=f"Contul Runway nu acoperă runda următoare a filmului «{title}»",
+            why_ro=(
+                f"Filmul «{title}» așteaptă la pasul «{step_words}». "
+                f"{str(short.get('reason_ro') or '').strip()}"
+            ).strip(),
+            effect_ro=(
+                "După alimentare, pasul pornește din nou: la rularea următoare a zilei sau "
+                "când apeși pe foaia de filmare. Plafonul aprobat rămâne limita pasului."
+            ),
+            options=[
+                {
+                    "key": "top_up",
+                    "label_ro": f"Alimentez contul Runway cu cel puțin {lacking}",
+                    "effect_ro": "Soldul se citește din nou înaintea cumpărării următoare; "
+                    "cardul se închide singur când ajunge.",
+                    "recommended": True,
+                    "apply": {
+                        "type": "guided",
+                        "place": "media",
+                        "steps_ro": f"Alimentează contul Runway (pe site-ul Runway) cu cel "
+                        f"puțin {lacking}, apoi lasă filmul să continue: nu se cumpără nimic "
+                        "peste plafonul pe care l-ai aprobat.",
+                    },
+                },
+                {
+                    "key": "wait",
+                    "label_ro": "Aștept",
+                    "effect_ro": "Filmul așteaptă; nu se cumpără nimic până nu sunt bani în cont.",
+                    "apply": {"type": "none"},
+                },
+            ],
+            clears_when={"type": "balance_covers", "credits": needed},
+        )
+        return card is not None
+
+    return bool(_own_transaction(engine, "film_low_balance", work))
+
+
+def _open_low_balance_card(session: Session, storyboard_id: str) -> OwnerDecision | None:
+    return session.scalars(
+        select(OwnerDecision).where(
+            OwnerDecision.dedupe_key == low_balance_key(storyboard_id),
+            OwnerDecision.status.in_(OPEN_STATUSES),
+        )
+    ).first()
+
+
+def _card_need(row: OwnerDecision) -> float:
+    spec = row.clears_when if isinstance(row.clears_when, dict) else {}
+    value = spec.get("credits")
+    return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else 0.0
+
+
+def film_balance_covered(engine: Engine, storyboard_id: str, credits: float) -> None:
+    """A paid step of the film started on a balance of ``credits``: its low-balance card is
+    withdrawn when that balance covers what the card asks (a step that starts on a smaller
+    need of its own leaves a larger one standing)."""
+
+    def work(session: Session) -> None:
+        standing = _open_low_balance_card(session, storyboard_id)
+        if standing is None or float(credits) < _card_need(standing):
+            return
+        withdraw_owner_decision(
+            session,
+            dedupe_key=low_balance_key(storyboard_id),
+            reason_ro="Soldul Runway acoperă acum runda următoare a filmului.",
+            source="paid_step",
+        )
+
+    _own_transaction(engine, "film_balance_covered", work)
 
 
 # ------------------------------------------------- (b) a model connection its provider refused
@@ -850,3 +977,29 @@ def sheet_repair_resumed_condition(
         if body.get("kind") == PAUSED_KIND and body.get("storyboard_id") == identifier:
             return False
     return True
+
+
+def balance_covers(
+    session: Session, row: OwnerDecision, params: Mapping[str, Any], settings: Any
+) -> bool:
+    """The newest balance reading a paid step recorded after the card was written covers the
+    need the card names (`media.balance_rule.BALANCE_READ_EVENT`). Read from the books only:
+    the feed that refreshes the cards never calls the vendor."""
+    from app.media.balance_rule import BALANCE_READ_EVENT  # noqa: PLC0415 - media reads us
+    from app.models import DomainEvent  # noqa: PLC0415
+
+    newest = session.scalars(
+        select(DomainEvent)
+        .where(DomainEvent.event_type == BALANCE_READ_EVENT)
+        .order_by(DomainEvent.sequence.desc())
+        .limit(1)
+    ).first()
+    if newest is None:
+        return False
+    created, read = _when(row.created_at), _when(newest.timestamp)
+    if created is None or read is None or read <= created:
+        return False
+    credits = (newest.payload or {}).get("credits")
+    if isinstance(credits, bool) or not isinstance(credits, int | float):
+        return False
+    return float(credits) >= float(params.get("credits") or 0)

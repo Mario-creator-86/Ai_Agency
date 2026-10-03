@@ -47,7 +47,6 @@ import functools
 import hashlib
 import json
 import logging
-import math
 import subprocess
 import tempfile
 from collections.abc import Callable, Iterable, Iterator, Sequence
@@ -65,6 +64,7 @@ from app.media.assembler import (
     MOTION_STEP,
     MOTION_STEP_ACTIONS,
     SHOT_TAKE_KINDS,
+    STEP_ROUND_WORDS,
     TEST_SHOT_STEP,
     MotionStepRefused,
     SceneRedoRefused,
@@ -92,6 +92,16 @@ from app.media.assembler import (
     still_options,
     usable_take,
     voiced_scenes,
+)
+from app.media.balance_rule import (
+    DEFAULT_MARGIN,
+    LOW_BALANCE,
+    margin_of,
+    missing_credits,
+    needed_credits,
+    record_balance_reading,
+    round_line_ro,
+    start_refusal_ro,
 )
 from app.media.cards import CARD_KINDS, CardError, card_spec_from_json, compose_card
 from app.media.cost_plan import (
@@ -191,8 +201,11 @@ STEP_WORDS_RO: dict[str, str] = {
     MOTION_STEP: "restul mișcării",
     ASSEMBLE_STEP: "narațiunea și asamblarea",
 }
-#: The account must hold this much more than a step's cap before the step is asked or bought.
-BALANCE_MARGIN = 1.15
+#: The account must hold this much more than a step's next round before the step is asked
+#: or bought (the Owner's rule of 2026-10-03, `balance_rule`); the cap stays its ceiling.
+BALANCE_MARGIN = DEFAULT_MARGIN
+#: Each paid step in the sentence «Runda următoare a ... costă ...».
+ROUND_WORDS_RO: dict[str, str] = {STILLS_STEP: "pasului de imagini", **STEP_ROUND_WORDS}
 #: The film's resolution unless the Owner's settings name another.
 SHEET_RESOLUTION = "1080p"
 #: The event that records the Owner's per-scene model choice (read back, last one wins).
@@ -1494,6 +1507,7 @@ def _sheet(
         else {"credits": None, "read": False, "problem": "necitit"}
     )
     blocks = [finding for finding in findings if finding.severity == BLOCK]
+    margin = margin_of(settings)
     footer = {
         "stills_spent_credits": _stills_spent(takes),
         "stills_to_buy_credits": steps[STILLS_STEP]["cost_credits"],
@@ -1516,8 +1530,22 @@ def _sheet(
         "summary_ro": policy.get("summary_ro"),
         "alternatives": _alternatives(policy, ctx, stills_row),
         "balance": balance,
+        # What the balance must hold to START each paid step: its next round x the margin
+        # (the Owner's rule of 2026-10-03); its cap stays the ceiling, said beside it.
         "balance_needed_credits": {
-            name: math.ceil(steps[name]["cap_credits"] * BALANCE_MARGIN) for name in SHEET_STEPS
+            name: needed_credits(steps[name]["cost_credits"], margin) for name in SHEET_STEPS
+        },
+        "balance_rule": {
+            name: {
+                "round_credits": int(steps[name]["cost_credits"]),
+                "cap_credits": int(steps[name]["cap_credits"]),
+                "needed_credits": needed_credits(steps[name]["cost_credits"], margin),
+                "margin": margin,
+                "line_ro": round_line_ro(
+                    steps[name]["cost_credits"], steps[name]["cap_credits"], margin
+                ),
+            }
+            for name in SHEET_STEPS
         },
         "daily_budget": _daily_budget(engine) if read_live else None,
         # The film's own ceiling (PRODUCTION): its limit, what the books hold for it, the rest.
@@ -2590,7 +2618,7 @@ def _run_sheet_step(
         raise SheetStepRefused("NOTHING_TO_BUY", info["waiting_ro"] or "Nimic de cumpărat.")
 
     cap = int(info["cap_credits"])
-    margin = float(getattr(settings, "paid_step_balance_margin", None) or BALANCE_MARGIN)
+    margin = margin_of(settings)
     source = account
     if source is None:
         if step == STILLS_STEP:
@@ -2608,14 +2636,39 @@ def _run_sheet_step(
             f"Nu se cumpără nimic: {balance['problem']}; soldul trebuie citit înainte de "
             "orice pas plătit.",
         )
-    needed = math.ceil(cap * margin)
+    # The Owner's rule (2026-10-03, «Doar pentru runda următoare»): the step starts when the
+    # balance holds its next round x the margin. The cap stays the step's ceiling, and the
+    # stage reads the balance again before every purchase after the first.
+    round_credits = int(info["cost_credits"])
+    needed = needed_credits(round_credits, margin)
+    record_balance_reading(
+        engine,
+        balance["credits"],
+        storyboard_id=storyboard_id,
+        step=step,
+        needed=needed,
+        correlation_id=correlation_id,
+    )
     if balance["credits"] < needed:
-        raise SheetStepRefused(
-            "LOW_BALANCE",
-            f"Sold Runway insuficient: {balance['credits']:.0f} credite, iar pasul are plafonul "
-            f"de {cap} credite plus marja de {round((margin - 1) * 100)}% ({needed} credite). "
-            "Alimentați contul înainte de aprobare.",
+        reason = start_refusal_ro(
+            balance["credits"], round_credits, cap, margin, ROUND_WORDS_RO[step]
         )
+        _low_balance_card(
+            engine,
+            storyboard_id,
+            sheet,
+            step,
+            {
+                "scene_index": None,
+                "credits": float(balance["credits"]),
+                "price_credits": round_credits,
+                "needed_credits": needed,
+                "missing_credits": missing_credits(balance["credits"], needed),
+                "reason_ro": reason,
+            },
+        )
+        raise SheetStepRefused(LOW_BALANCE, reason)
+    _balance_covered(engine, storyboard_id, float(balance["credits"]))
     cap_micros = credits_to_micros(cap, ctx.table.credit_usd)
     try:
         check_film_ceiling(
@@ -2669,6 +2722,7 @@ def _run_sheet_step(
                 integration_id=integration_id,
                 table=ctx.table,
                 meter=meter,
+                margin=margin,
             )
         else:
             if adapter_for_model is None:
@@ -2761,7 +2815,44 @@ def _run_sheet_step(
         reference=reference,
         correlation_id=correlation_id,
     )
+    short = bought.get("low_balance")
+    if isinstance(short, dict):
+        # A scene stopped on the balance inside the step: the reading is kept on the books and
+        # the Owner gets the card with what the next purchase lacks.
+        record_balance_reading(
+            engine,
+            float(short["credits"]),
+            storyboard_id=storyboard_id,
+            step=step,
+            needed=int(short["needed_credits"]),
+            correlation_id=correlation_id,
+        )
+        _low_balance_card(engine, storyboard_id, sheet, step, short)
     return bought
+
+
+def _low_balance_card(
+    engine: Engine, storyboard_id: str, sheet: dict[str, Any], step: str, short: dict[str, Any]
+) -> None:
+    """The card in the Owner's Decisions window for a paid step the balance stopped
+    (`decisions.sources.film_low_balance`); its letter, if the day writes one, stays."""
+    from app.decisions.sources import film_low_balance  # noqa: PLC0415 - decisions read media
+
+    film_low_balance(
+        engine,
+        storyboard_id,
+        title=str(sheet.get("title") or storyboard_id[:8]),
+        step_words=STEP_WORDS_RO.get(step, step),
+        short=short,
+    )
+
+
+def _balance_covered(engine: Engine, storyboard_id: str, credits: float) -> None:
+    """A step of the film started on its balance: its low-balance card is withdrawn when
+    that balance covers what the card asks."""
+    from app.decisions.sources import film_balance_covered  # noqa: PLC0415
+
+    film_balance_covered(engine, storyboard_id, credits)
 
 
 def _step_refused(

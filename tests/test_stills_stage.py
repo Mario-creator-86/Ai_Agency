@@ -538,10 +538,11 @@ def test_a_lint_block_stops_the_step_before_the_owner_is_asked(engine, tmp_path)
         assert session.scalars(select(ApprovalRequest)).all() == []
 
 
-def test_a_balance_below_the_cap_stops_the_step_before_the_yes_is_spent(engine, tmp_path):
+def test_a_balance_below_the_first_round_stops_the_step_before_the_yes_is_spent(engine, tmp_path):
     storyboard_id = a_film(engine, tmp_path)
     plan = stills_plan(engine, storyboard_id)
-    adapter = SpyStills(balance=plan["cap_credits"] * 1.15 - 1)
+    # The Owner's rule of 2026-10-03: the step starts on its first round x 1.15, not its cap.
+    adapter = SpyStills(balance=plan["cost_credits"] * 1.15 - 1)
 
     with pytest.raises(StillsStageRefused) as asked:
         run(engine, storyboard_id, tmp_path, adapter, SpyJudge())
