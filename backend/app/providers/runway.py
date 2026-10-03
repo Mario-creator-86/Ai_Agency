@@ -391,16 +391,67 @@ def pick_duration(durations: Any, seconds: float) -> int:
     return wanted
 
 
-def _image_data_uri(image: bytes, what: str = "first frame") -> str:
+#: Runway refuses a picture sent inside a request whose data URI passes 5 MB: "Data URI is too
+#: large: 8.6MB exceeds the 5MB limit" (the Owner's sheet, 2026-10-03, a 2K still sent as the
+#: film's reference). A picture whose URI stays under the first figure goes as it is; a larger
+#: one is re-encoded to JPEG, smaller if it must be, until its URI is under the second.
+DATA_URI_SAFE_CHARS = 4_500_000
+DATA_URI_TARGET_CHARS = 3_500_000
+#: JPEG qualities tried in turn; after each one that is still too large the picture is scaled
+#: to 80 % of its sides. A reference carries light, palette and faces, not fine grain.
+_FIT_QUALITIES = (92, 90, 88, 85, 82, 80)
+
+
+def _image_mime(image: bytes, what: str) -> str:
     if image[:8] == b"\x89PNG\r\n\x1a\n":
-        mime = "image/png"
-    elif image[:3] == b"\xff\xd8\xff":
-        mime = "image/jpeg"
-    elif image[:4] == b"RIFF" and image[8:12] == b"WEBP":
-        mime = "image/webp"
-    else:
-        raise MediaProviderError(f"The {what} must be a PNG, JPEG or WebP image")
-    return f"data:{mime};base64," + base64.b64encode(image).decode("ascii")
+        return "image/png"
+    if image[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if image[:4] == b"RIFF" and image[8:12] == b"WEBP":
+        return "image/webp"
+    raise MediaProviderError(f"The {what} must be a PNG, JPEG or WebP image")
+
+
+def _uri_chars(size: int, mime: str) -> int:
+    """The length of the data URI of ``size`` bytes of ``mime`` (base64: 4 per 3, padded)."""
+    return len(f"data:{mime};base64,") + 4 * ((size + 2) // 3)
+
+
+def fit_request_image(image: bytes, what: str = "picture") -> bytes:
+    """The picture as it can travel inside a Runway request: itself when it fits, else the
+    same picture re-encoded to JPEG (and scaled down, keeping its proportions) under
+    ``DATA_URI_TARGET_CHARS``. A picture too large that cannot be read is refused here, before
+    the request is sent and before anything is paid."""
+    mime = _image_mime(image, what)
+    if _uri_chars(len(image), mime) <= DATA_URI_SAFE_CHARS:
+        return image
+    import cv2  # noqa: PLC0415 - only a picture too large to send needs the decoder
+    import numpy as np  # noqa: PLC0415
+
+    picture = cv2.imdecode(np.frombuffer(image, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if picture is None:
+        raise MediaProviderError(
+            f"The {what} is too large to send to Runway (over 5 MB inside the request) and "
+            "could not be read to make it smaller"
+        )
+    for quality in _FIT_QUALITIES:
+        ok, encoded = cv2.imencode(".jpg", picture, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+        if ok and _uri_chars(len(encoded), "image/jpeg") <= DATA_URI_TARGET_CHARS:
+            return bytes(encoded.tobytes())
+        height, width = picture.shape[:2]
+        picture = cv2.resize(
+            picture,
+            (max(1, round(width * 0.8)), max(1, round(height * 0.8))),
+            interpolation=cv2.INTER_AREA,
+        )
+    raise MediaProviderError(
+        f"The {what} could not be made small enough to send to Runway (5 MB inside the request)"
+    )
+
+
+def _image_data_uri(image: bytes, what: str = "first frame") -> str:
+    fitted = fit_request_image(image, what)
+    return f"data:{_image_mime(fitted, what)};base64," + base64.b64encode(fitted).decode("ascii")
 
 
 def _reference_image(extra: dict[str, Any] | None) -> bytes | None:
